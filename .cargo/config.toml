@@ -1,0 +1,16 @@
+# Workspace-wide cargo configuration.
+# Note: cargo does NOT auto-source ~/.cargo/env in non-login shells — prefix
+# commands with `source "$HOME/.cargo/env"` (see CLAUDE.md / justfile).
+
+[build]
+# Compilation caching for fast, deterministic incremental builds across sessions.
+rustc-wrapper = "sccache"
+
+[term]
+color = "always"
+
+[future-incompat-report]
+frequency = "always"
+
+# Faster linker on macOS (lld via the platform); revisit per-target in CI.
+# Cross-platform release tuning lives in each profile in the workspace Cargo.toml.
