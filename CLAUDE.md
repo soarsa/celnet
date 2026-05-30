@@ -54,6 +54,13 @@ Greenfield, started 30 May 2026.
     in the correct crate/dir, and keep **all** docs/guides/references in sync as code evolves
     — no stale or duplicate references anywhere. After any structural change,
     re-`index_repository` so the codebase-memory graph always covers the full scope.
+11. **Trader-centric API, zero-cost observability, scale-out aware.** Ship evolving client
+    SDK(s) and design the API by exercising **real-like trader/GUI/API-user workflows** as
+    tests; evolve the single current contract toward the cleanest ergonomics. Instrument for
+    mission-critical ops (structured logging, tracing, metrics, HdrHistogram p50/p99/p99.9)
+    **without diminishing performance** — the pinned zero-alloc hot core stays
+    log/lock/alloc-free; telemetry offloads over a bounded queue. Continuously assess
+    horizontal/distributed scale-out vs the latency/throughput budgets (`docs/SCALE-OUT.md`).
 
 ## Running the toolchain
 
