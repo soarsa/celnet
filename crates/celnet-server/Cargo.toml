@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Celnet service edge — the tokio async gRPC + WebSocket streaming front for the pricing engine."
+description = "Celnet service edge — the tokio async gRPC front (RFQ / RFS / surface / scenario) over the unversioned celnet-proto wire contract."
 publish = false
 
 [lints]
@@ -28,14 +28,7 @@ rtrb.workspace = true
 tokio = { workspace = true, features = ["signal"] }
 tonic.workspace = true
 prost.workspace = true
-tokio-tungstenite.workspace = true
 futures-util.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-
-[build-dependencies]
-protox.workspace = true
-tonic-build.workspace = true
 
 [dev-dependencies]
 celnet-testkit.workspace = true
