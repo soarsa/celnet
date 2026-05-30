@@ -13,7 +13,26 @@ wildcards = "deny"
 # real wildcard-version risk, so permit it.
 allow-wildcard-paths = true
 # Disallow known-problematic crates here as the tree grows.
-deny = []
+deny = [
+    # Hard gate on the wasmtime runtime family. Tier-2 untrusted plugins run on
+    # wasmi (pure-Rust, fuel-metered, deterministic); wasmtime was rejected for
+    # open 2026 RUSTSEC advisories and is replaced by wasmi (see
+    # docs/PLUGIN-HOST-ALT.md). Banning the crates makes reintroducing the
+    # runtime fail `cargo deny check`, not merely rely on it being absent.
+    { name = "wasmtime" },
+    { name = "wasmtime-cli" },
+    { name = "wasmtime-cli-flags" },
+    { name = "wasmtime-runtime" },
+    { name = "wasmtime-environ" },
+    { name = "wasmtime-cranelift" },
+    { name = "wasmtime-jit" },
+    { name = "wasmtime-wasi" },
+    { name = "wasmtime-types" },
+    { name = "wasmtime-fiber" },
+    # Pulley is wasmtime's portable interpreter backend; ban it too so the
+    # interpreter-only flavour of wasmtime cannot slip back in either.
+    { name = "pulley-interpreter" },
+]
 
 [licenses]
 version = 2

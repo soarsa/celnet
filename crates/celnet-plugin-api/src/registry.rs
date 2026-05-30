@@ -7,7 +7,7 @@
 //! trait, which is exactly what makes first-party and user plugins
 //! interchangeable (see `docs/ARCHITECTURE.md` §6.1). The registry only exposes
 //! *descriptors* here — the host turns a descriptor into a callable handle —
-//! keeping this crate dependency-light (no `wasmtime`, no dynamic-dispatch
+//! keeping this crate dependency-light (no interpreter, no dynamic-dispatch
 //! lifetime entanglement) while still pinning the discovery contract.
 
 use crate::descriptor::{ModelDescriptor, ModelId, ModelKind};

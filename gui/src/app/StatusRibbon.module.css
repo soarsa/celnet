@@ -1,0 +1,43 @@
+.ribbon {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-5);
+  border-top: var(--hairline);
+  background: oklch(from var(--bg-base) calc(l - 0.01) c h);
+  font-size: var(--type-micro);
+  color: var(--text-secondary);
+}
+
+.item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--type-micro);
+  white-space: nowrap;
+}
+
+.dot {
+  font-size: 9px;
+}
+
+.ok {
+  color: var(--bid);
+}
+.warn {
+  color: var(--warn);
+}
+
+.sep {
+  color: var(--text-tertiary);
+  opacity: 0.5;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.clock {
+  color: var(--text-primary);
+  font-weight: var(--weight-emphasis);
+}

@@ -1,14 +1,15 @@
 //! Celnet user-extensibility SDK contract.
 //!
-//! This crate defines the **single, current** contract that both a future
-//! native trait registry (compiled-in first-party models, the hot path) and a
-//! future Wasm component host (sandboxed user models) implement, so first-party
-//! and user plugins are *interchangeable* behind one registry (see
+//! This crate defines the **single, current** contract that both the native
+//! trait registry (compiled-in first-party models, the hot path) and the Wasm
+//! sandbox host (untrusted user models) implement, so first-party and user
+//! plugins are *interchangeable* behind one registry (see
 //! `docs/ARCHITECTURE.md` §6). It is intentionally dependency-light — it depends
 //! only on the two frozen interface crates, [`celnet_types`] (the vocabulary and
 //! DTOs) and [`celnet_core`] (the deterministic math and the [`celnet_core::Smile`]
-//! seam) — and pulls in **no** runtime: no `wasmtime`, no pricing-engine crate.
-//! The Wasm host weight lives entirely in `celnet-plugin-host`.
+//! seam) — and pulls in **no** runtime (no interpreter, no pricing-engine crate).
+//! The host runtime weight lives entirely in `celnet-plugin-host`, which runs the
+//! untrusted tier on the `wasmi` interpreter (the contract is runtime-agnostic).
 //!
 //! # The three model seams
 //!
@@ -33,10 +34,12 @@
 //!
 //! # The WIT mirror
 //!
-//! `wit/celnet.wit` describes the identical contract as a WASI 0.2.x `world` for
-//! future component plugins. The Rust traits here and that WIT world are kept in
-//! lock-step: the records/enums map one-to-one, so generating guest bindings (in
-//! `celnet-plugin-guest`) yields the same shape these traits expose.
+//! `wit/celnet.wit` describes the identical contract as a runtime-agnostic
+//! `world`. The Rust traits here and that WIT world are kept in lock-step: the
+//! records/enums map one-to-one. The host lowers those flat POD shapes onto a
+//! core-module `(ptr,len)` ABI for the `wasmi` interpreter (wasmi hosts core
+//! modules, not the Component Model), so a guest authored against the world
+//! exposes the same shape these traits do.
 
 #![forbid(unsafe_code)]
 

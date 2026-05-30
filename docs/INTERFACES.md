@@ -22,9 +22,10 @@ Several domains the early design split across many crates were **consolidated**:
 `celnet-surface` holds VV/SABR/SVI/SSVI + arbitrage gates + term structure;
 `celnet-exotics` holds LSV + PDE + MC + the shared numerics; `celnet-golden` is the
 QuantLib oracle/generator; `celnet-observability` owns telemetry rings/histograms;
-`celnet-gpu` is the wgpu backend + f64 CPU reconciliation. `celnet-plugin-host` is **not yet
-built** (deferred — wasmtime carries open RustSec advisories), so the SDK is contract-only
-today.
+`celnet-gpu` is the wgpu backend + f64 CPU reconciliation. `celnet-plugin-host` is **built**:
+the tiered host (Tier-0 native registry + Tier-2 **wasmi** fuel-metered sandbox + replay
+harness) behind the frozen `celnet-plugin-api` contract — wasmtime was rejected for open
+RustSec advisories (see `docs/PLUGIN-HOST-ALT.md`).
 
 ## Dependency direction (must never invert)
 
@@ -50,10 +51,11 @@ celnet-golden, celnet-testkit, celnet-bench  →  test/validation/bench only
 | `celnet-plugin-api` | 0.0.0 | **freeze-candidate** | SDK traits (`PricingModel`/`PricingBackend`) + WIT world. |
 
 > `celnet-proto` and `celnet-plugin-api` are built — **Gate G0 is reached** (consistent with
-> `docs/CAPABILITIES-VS-COMPETITION.md`). The native trait-registry and the (deferred) Wasm
-> host implement the identical `PricingModel`/`PricingBackend` contract so first-party and
-> user plugins are interchangeable; the Wasm **host** (`celnet-plugin-host`) is deferred while
-> wasmtime carries open RustSec advisories, so only the contract is frozen today.
+> `docs/CAPABILITIES-VS-COMPETITION.md`). The native trait-registry (Tier 0) and the **wasmi**
+> Wasm host (Tier 2) both implement the identical `PricingModel` contract so first-party and
+> user plugins are interchangeable behind one registry; the host (`celnet-plugin-host`) is
+> **built** (wasmtime rejected for open RustSec advisories — wasmi is the advisory-clean
+> replacement, see `docs/PLUGIN-HOST-ALT.md`).
 
 ## Determinism rules baked into the interfaces
 

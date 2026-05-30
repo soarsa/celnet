@@ -1,0 +1,138 @@
+- generic [ref=e3]:
+  - complementary "workspaces" [ref=e4]:
+    - generic "Celnet" [ref=e5]:
+      - generic [ref=e6]: ◆
+    - navigation [ref=e7]:
+      - button "⌁ Ticket" [ref=e8] [cursor=pointer]:
+        - generic [ref=e9]: ⌁
+        - generic [ref=e10]: Ticket
+      - button "≋ Stream" [ref=e11] [cursor=pointer]:
+        - generic [ref=e12]: ≋
+        - generic [ref=e13]: Stream
+      - button "◷ Surface" [ref=e14] [cursor=pointer]:
+        - generic [ref=e15]: ◷
+        - generic [ref=e16]: Surface
+      - button "⊞ Risk" [ref=e17] [cursor=pointer]:
+        - generic [ref=e18]: ⊞
+        - generic [ref=e19]: Risk
+    - button "☀" [active] [ref=e184] [cursor=pointer]:
+      - generic [ref=e22]: ☀
+  - generic [ref=e23]:
+    - banner [ref=e24]:
+      - button "Celnet · EUR/USD ▾" [ref=e29] [cursor=pointer]:
+        - generic [ref=e30]: Celnet
+        - generic [ref=e31]: ·
+        - generic [ref=e32]: EUR/USD
+        - generic [ref=e33]: ▾
+      - button "⌘K Search / command…" [ref=e34] [cursor=pointer]:
+        - generic [ref=e35]: ⌘K
+        - generic [ref=e36]: Search / command…
+    - generic [ref=e72]:
+      - generic [ref=e74]:
+        - generic [ref=e75]:
+          - generic [ref=e76]: EUR/USD
+          - generic [ref=e77]: ·
+          - combobox "structure" [ref=e78]:
+            - option "Vanilla"
+            - option "Risk Reversal" [selected]
+            - option "Strangle"
+            - option "Straddle"
+            - option "Seagull"
+          - generic [ref=e80]:
+            - generic [ref=e81]: notional
+            - spinbutton "notional mm EUR" [ref=e82]: "10"
+            - generic [ref=e83]: mm EUR
+        - generic [ref=e84]:
+          - button "ON" [ref=e85] [cursor=pointer]
+          - button "1W" [ref=e86] [cursor=pointer]
+          - button "1M" [ref=e87] [cursor=pointer]
+          - button "2M" [ref=e88] [cursor=pointer]
+          - button "3M" [ref=e89] [cursor=pointer]
+          - button "6M" [ref=e90] [cursor=pointer]
+          - button "1Y" [ref=e91] [cursor=pointer]
+        - generic [ref=e92]:
+          - generic [ref=e93]:
+            - generic [ref=e94]: LEG 1
+            - generic [ref=e95]: BUY
+            - generic [ref=e96]: Call
+            - generic [ref=e97]: 25Δ
+            - generic [ref=e98]: ▸
+            - generic [ref=e99]: K 1.0947
+          - generic [ref=e100]:
+            - generic [ref=e101]: LEG 2
+            - generic [ref=e102]: SELL
+            - generic [ref=e103]: Put
+            - generic [ref=e104]: 25Δ
+            - generic [ref=e105]: ▸
+            - generic [ref=e106]: K 1.0632
+          - 'button "Solve: zero-cost" [ref=e107] [cursor=pointer]'
+        - generic [ref=e108]:
+          - generic [ref=e136]:
+            - generic [ref=e137]:
+              - button "BID 0.005" [ref=e138] [cursor=pointer]:
+                - generic [ref=e139]: BID
+                - generic [ref=e140]: "0.005"
+              - generic [ref=e141]:
+                - generic [ref=e142]: MID
+                - generic [ref=e143]: "0.007"
+              - button "OFFER 0.009" [ref=e144] [cursor=pointer]:
+                - generic [ref=e145]: OFFER
+                - generic [ref=e146]: "0.009"
+            - generic [ref=e147]:
+              - generic "resolved conventions" [ref=e148]:
+                - generic [ref=e149]: spot Δ pa
+                - generic [ref=e150]: DNS
+                - generic [ref=e151]: NY 1000
+                - generic [ref=e152]: "% for"
+                - generic [ref=e153]: deliv
+              - generic "last-look 0.0 seconds" [ref=e185]:
+                - img [ref=e155]
+                - generic [ref=e158]: —
+          - generic [ref=e159]: "% EUR prem"
+        - generic [ref=e162]:
+          - generic "delta (spot)" [ref=e163]:
+            - generic [ref=e164]: Δ
+            - generic [ref=e165]: "+0.499"
+          - generic "gamma" [ref=e166]:
+            - generic [ref=e167]: Γ
+            - generic [ref=e168]: "+0.0000"
+          - generic "vega" [ref=e169]:
+            - generic [ref=e170]: ν
+            - generic [ref=e171]: "+0.0000"
+          - generic "theta" [ref=e172]:
+            - generic [ref=e173]: Θ
+            - generic [ref=e174]: −0.00003
+          - button "toggle full Greeks" [ref=e175] [cursor=pointer]: ⌄ full Greeks
+        - generic [ref=e176]: vol 7.55
+        - generic [ref=e126]:
+          - button "Re-request ⏎" [ref=e177] [cursor=pointer]:
+            - generic [ref=e128]: Re-request
+            - generic [ref=e129]: ⏎
+          - button "Sell 0.005" [ref=e178] [cursor=pointer]:
+            - generic [ref=e179]: Sell 0.005
+          - button "Buy 0.009 ⌘⏎" [ref=e180] [cursor=pointer]:
+            - generic [ref=e181]: Buy 0.009
+            - generic [ref=e182]: ⌘⏎
+          - generic [ref=e130]:
+            - button "Stream this ≋" [ref=e131] [cursor=pointer]:
+              - generic [ref=e132]: Stream this ≋
+            - button "Add to risk ⊞" [ref=e133] [cursor=pointer]:
+              - generic [ref=e134]: Add to risk ⊞
+      - paragraph [ref=e135]: One card = analytics + executable. Conventions on the face, Solve inline, last-look visible. Promote the exact structure to the blotter or the risk grid — same Instrument, no re-keying.
+    - contentinfo [ref=e55]:
+      - generic [ref=e56]:
+        - generic [ref=e57]: ◉
+        - text: Stream healthy
+      - generic [ref=e58]: ·
+      - generic [ref=e59]: seq 159
+      - generic [ref=e60]: ·
+      - generic [ref=e61]: 6/6 lines
+      - generic [ref=e62]: ·
+      - generic [ref=e63]: 3 LPs in competition
+      - generic [ref=e64]: ·
+      - generic [ref=e65]: 0 gaps
+      - generic "transport seam" [ref=e66]: mock/replay
+      - generic [ref=e67]: ·
+      - generic "P99 inter-frame render time (target ≤8.3ms @120Hz, ceiling 16.6ms)" [ref=e68]: P99 render 9.3ms
+      - generic [ref=e69]: ·
+      - generic [ref=e70]: ◷ 19:56:25

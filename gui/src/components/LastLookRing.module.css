@@ -1,0 +1,40 @@
+.wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.svg {
+  display: block;
+}
+
+.track {
+  stroke: var(--grid-line);
+  stroke-width: 2;
+}
+
+.arc {
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+  transition: stroke-dasharray 120ms linear, stroke 200ms var(--ease-out);
+}
+
+.warn {
+  stroke: var(--warn);
+}
+
+.expired {
+  stroke: var(--danger);
+}
+
+.secs {
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+  min-width: 30px;
+}
+
+.warnText {
+  color: var(--warn);
+  font-weight: var(--weight-emphasis);
+}

@@ -1,0 +1,28 @@
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 var(--space-3);
+  border-radius: var(--r-full);
+  background: var(--bg-inset);
+  border: var(--hairline);
+  color: var(--text-secondary);
+  font-size: var(--type-caption);
+  line-height: 1;
+  font-weight: var(--weight-emphasis);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.accent {
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--accent);
+}

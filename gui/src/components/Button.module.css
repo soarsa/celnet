@@ -1,0 +1,93 @@
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  border-radius: var(--r-sm);
+  font-weight: var(--weight-emphasis);
+  white-space: nowrap;
+  transition:
+    background-color 140ms var(--ease-out),
+    transform 80ms var(--ease-out),
+    box-shadow 140ms var(--ease-out);
+  border: var(--hairline);
+}
+
+.btn:active {
+  transform: translateY(0.5px) scale(0.99);
+}
+
+.md {
+  height: 30px;
+  padding: 0 var(--space-4);
+  font-size: var(--type-callout);
+}
+
+.lg {
+  height: 38px;
+  padding: 0 var(--space-5);
+  font-size: var(--type-body);
+  border-radius: var(--r-md);
+}
+
+.primary {
+  background: var(--accent);
+  color: oklch(0.16 0.012 250);
+  border-color: transparent;
+  box-shadow: 0 1px 0 oklch(1 0 0 / 0.18) inset;
+}
+.primary:hover {
+  background: oklch(from var(--accent) calc(l + 0.04) c h);
+}
+
+.secondary {
+  background: var(--bg-inset);
+  color: var(--text-primary);
+}
+.secondary:hover {
+  background: oklch(from var(--bg-inset) calc(l + 0.03) c h);
+}
+
+.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-secondary);
+}
+.ghost:hover {
+  color: var(--text-primary);
+  background: var(--bg-inset);
+}
+
+.bid {
+  background: oklch(from var(--bid) l c h / 0.16);
+  color: var(--bid);
+  border-color: oklch(from var(--bid) l c h / 0.32);
+}
+.bid:hover {
+  background: oklch(from var(--bid) l c h / 0.26);
+}
+
+.offer {
+  background: oklch(from var(--offer) l c h / 0.16);
+  color: var(--offer);
+  border-color: oklch(from var(--offer) l c h / 0.32);
+}
+.offer:hover {
+  background: oklch(from var(--offer) l c h / 0.26);
+}
+
+.kbd {
+  font-family: var(--font-mono);
+  font-size: var(--type-micro);
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: oklch(0 0 0 / 0.18);
+  color: currentColor;
+  opacity: 0.7;
+}
+
+.label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}

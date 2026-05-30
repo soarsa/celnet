@@ -1,0 +1,147 @@
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: var(--space-5);
+  height: 100%;
+  min-height: 0;
+}
+
+.loading {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--text-tertiary);
+}
+
+.surfacePanel {
+  min-height: 0;
+}
+
+.surfacePanel .meshHolder {
+  flex: 1;
+  min-height: 260px;
+}
+
+.meshHolder {
+  position: relative;
+  border-bottom: var(--hairline);
+}
+
+.smileHolder {
+  padding: var(--space-5);
+}
+
+.legend {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+.legendBar {
+  flex: 1;
+  height: 8px;
+  border-radius: var(--r-full);
+}
+.legendLabel {
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+}
+
+/* surface panel uses noPadding; lay out body as a column */
+.surfacePanel :global(.body),
+.markPanel {
+  display: flex;
+  flex-direction: column;
+}
+.surfacePanel > div:last-child {
+  display: flex;
+  flex-direction: column;
+}
+
+.markPanel {
+  min-height: 0;
+}
+
+.markGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.markHead,
+.markRow {
+  display: grid;
+  grid-template-columns: 44px repeat(5, 1fr);
+  align-items: center;
+  column-gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+}
+.markHead {
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+}
+.markHead span:not(:first-child),
+.markRow span:not(.tenorCell) {
+  text-align: right;
+}
+
+.markRow {
+  border-radius: var(--r-sm);
+  font-size: var(--type-callout);
+  color: var(--text-primary);
+}
+.markRow:hover {
+  background: var(--bg-inset);
+}
+.markActive {
+  background: var(--accent-soft);
+}
+
+.tenorCell {
+  text-align: left;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+.editCell {
+  width: 100%;
+  text-align: right;
+  background: var(--bg-base);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  color: var(--text-primary);
+  padding: 1px 4px;
+  font-family: var(--font-mono);
+}
+
+.provenance,
+.inspector {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+  padding: var(--space-2) 0;
+}
+.provLabel {
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+}
+.provDot {
+  color: var(--text-tertiary);
+}
+.inspector {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: var(--hairline);
+}
+
+.markActions {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}

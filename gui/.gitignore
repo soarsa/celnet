@@ -1,0 +1,11 @@
+# Celnet GUI — build artifacts & local caches (never committed)
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+.DS_Store
+*.log
+npm-debug.log*
+coverage/
+.eslintcache

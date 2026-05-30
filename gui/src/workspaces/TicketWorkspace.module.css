@@ -1,0 +1,214 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: var(--space-5);
+}
+
+.ticket {
+  width: min(720px, 100%);
+  max-height: 100%;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-5) var(--space-6) var(--space-4);
+  border-bottom: var(--hairline);
+}
+.pair {
+  font-size: var(--type-title);
+  font-weight: var(--weight-header);
+}
+.dot {
+  color: var(--text-tertiary);
+}
+.structureSelect {
+  font-family: var(--font-ui);
+  font-size: var(--type-headline);
+  font-weight: var(--weight-emphasis);
+  color: var(--text-primary);
+  background: var(--bg-inset);
+  border: var(--hairline);
+  border-radius: var(--r-sm);
+  padding: var(--space-2) var(--space-3);
+}
+.headRight {
+  margin-left: auto;
+}
+.notional {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+}
+.notional input {
+  width: 56px;
+  text-align: right;
+  background: var(--bg-inset);
+  border: var(--hairline);
+  border-radius: var(--r-sm);
+  color: var(--text-primary);
+  padding: var(--space-1) var(--space-2);
+  font-family: var(--font-mono);
+}
+
+.tenorRow {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-6) 0;
+  flex-wrap: wrap;
+}
+.tenorPill {
+  height: 24px;
+  padding: 0 var(--space-4);
+  border-radius: var(--r-full);
+  font-size: var(--type-caption);
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  background: var(--bg-inset);
+  border: var(--hairline);
+}
+.tenorActive {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: transparent;
+}
+
+.legs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-6);
+  border-bottom: var(--hairline);
+}
+.leg {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  font-size: var(--type-callout);
+}
+.legNo {
+  font-size: var(--type-micro);
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  width: 44px;
+}
+.legSide {
+  font-weight: var(--weight-header);
+  width: 40px;
+}
+.buy {
+  color: var(--offer);
+}
+.sell {
+  color: var(--bid);
+}
+.legType {
+  color: var(--text-secondary);
+  width: 40px;
+}
+.legDelta {
+  color: var(--text-primary);
+}
+.legArrow {
+  color: var(--text-tertiary);
+}
+.legStrike {
+  color: var(--text-primary);
+}
+.solveChip {
+  align-self: flex-start;
+  margin-top: var(--space-2);
+  font-size: var(--type-caption);
+  color: var(--accent);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--r-full);
+  background: var(--accent-soft);
+}
+
+.market {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  align-items: end;
+  gap: var(--space-4);
+  padding: var(--space-6);
+  position: relative;
+}
+.priceCol {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+}
+.priceLabel {
+  font-size: var(--type-micro);
+  letter-spacing: 0.1em;
+  color: var(--text-tertiary);
+}
+.placeholder {
+  font-size: var(--type-display);
+  color: var(--text-tertiary);
+}
+.unit {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+}
+.ring {
+  position: absolute;
+  right: var(--space-6);
+  bottom: var(--space-3);
+}
+
+.greeksRow {
+  padding: 0 var(--space-6) var(--space-4);
+}
+
+.convRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-6);
+  border-top: var(--hairline);
+  border-bottom: var(--hairline);
+}
+.volFace {
+  margin-left: auto;
+  font-size: var(--type-callout);
+  color: var(--text-secondary);
+}
+
+.fill {
+  margin: var(--space-3) var(--space-6) 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--r-sm);
+  font-size: var(--type-callout);
+  color: var(--bid);
+  background: oklch(from var(--bid) l c h / 0.12);
+  border-left: 2px solid var(--bid);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-5) var(--space-6) var(--space-6);
+}
+.promote {
+  margin-left: auto;
+  display: flex;
+  gap: var(--space-2);
+}
+
+.caption {
+  max-width: 720px;
+  text-align: center;
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+  line-height: var(--type-body-lh);
+}

@@ -210,7 +210,8 @@ registry in **`celnet-conventions`**; Garman-Kohlhagen + Greeks + strike↔delta
 structure)** in **`celnet-surface`**; **exotics, LSV, PDE and MC numerics** in
 **`celnet-exotics`**. GPU back-ends sit behind the `PricingBackend` trait in **`celnet-gpu`**
 (wgpu/WGSL — *not* CubeCL). User-supplied models arrive via **`celnet-plugin-api`** (WIT world
-+ traits, built); the Wasm host **`celnet-plugin-host`** is deferred (wasmtime advisories).
++ traits, built); the Wasm host **`celnet-plugin-host`** is built on **wasmi** (fuel-metered,
+deterministic; wasmtime rejected for advisories — see `docs/PLUGIN-HOST-ALT.md`).
 
 > The per-item `Crate` columns below retain the original sketch's `celnet-core` labels for
 > P0–P2 traceability; read them through the mapping above (calendar → `celnet-calendar`,
@@ -247,7 +248,7 @@ structure)** in **`celnet-surface`**; **exotics, LSV, PDE and MC numerics** in
 | Single/double barriers (KO/KI): Crank-Nicolson + Rannacher PDE, log-spot, barrier-aligned nodes | `celnet-core` |
 | Monte Carlo engine: Sobol' QMC + Brownian-bridge ordering, control variates, BGK / Brownian-bridge barrier correction | `celnet-core` (engine), `PricingBackend` for GPU |
 | NDF/NDO cash settlement at named fixing (EMTA/WMR/central-bank), fixing-to-settlement lag, settlement-curve discounting | `celnet-types` (config) + `celnet-core` (logic) |
-| `celnet-plugin-api` WIT world + `celnet-plugin-host` wasmtime embedding for user vol models / payoffs (fuel-metered, deterministic) | `celnet-plugin-api`, `celnet-plugin-host` |
+| `celnet-plugin-api` WIT world + `celnet-plugin-host` **wasmi** embedding (core modules, no-WASI capability linker) for user vol models / payoffs (fuel-metered, deterministic) | `celnet-plugin-api`, `celnet-plugin-host` |
 
 ### P2 — Full exotics + advanced models + GPU
 
