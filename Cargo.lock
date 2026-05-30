@@ -454,6 +454,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "celnet-fix"
+version = "0.0.0"
+dependencies = [
+ "celnet-conventions",
+ "celnet-golden",
+ "celnet-proto",
+ "celnet-surface",
+ "celnet-types",
+ "celnet-vanilla",
+ "proptest",
+ "tokio",
+]
+
+[[package]]
 name = "celnet-golden"
 version = "0.0.0"
 dependencies = [
