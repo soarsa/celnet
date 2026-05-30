@@ -19,6 +19,11 @@ celnet-surface.workspace = true
 serde = { workspace = true }
 serde_json.workspace = true
 time = { workspace = true }
+# Async edge runtime (workspace-pinned). `io-util` adds the AsyncRead/Write
+# extension traits the resilient subscriber + socket egress sink use; features
+# are additive over the workspace set.
+tokio = { workspace = true, features = ["io-util"] }
 
 [dev-dependencies]
 celnet-testkit.workspace = true
+tokio = { workspace = true, features = ["io-util"] }

@@ -14,6 +14,21 @@
 //! This is a leaf crate consumed only by the async edge (`celnet-server`); the
 //! pinned hot path never touches a socket or parser. Tested against REAL peers
 //! (acceptor vs initiator over a loopback socket); the dialect is cross-checked
-//! to reprice the same premium as the engine's QuantLib-gated pricer. Skeleton —
-//! implementation lands in this lane.
+//! to reprice the same premium as the engine's QuantLib-gated pricer. All of the
+//! above is implemented and exercised by the crate's unit and integration tests —
+//! framing, the FIXT/4.4 session FSM, the FX-options dialect mapping, and both
+//! acceptor/initiator roles.
 #![forbid(unsafe_code)]
+
+pub mod acceptor;
+pub mod dialect_fx;
+pub mod dictionary;
+pub mod framing;
+pub mod initiator;
+pub mod messages;
+pub mod session;
+pub mod transport;
+
+pub use dictionary::MsgType;
+pub use framing::{FrameCursor, FrameEncoder, FrameError};
+pub use session::{Role, Session, SessionConfig, SessionState};
