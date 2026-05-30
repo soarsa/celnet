@@ -13,7 +13,7 @@
 //
 // Identifiers here are purpose-named and vendor/research-neutral, mirroring the
 // `celnet-types` vocabulary (CcyPair, OptionType, the convention enums, the
-// 14-Greek set) one-to-one so the wire form and the in-process DTOs stay
+// 13-Greek set) one-to-one so the wire form and the in-process DTOs stay
 // aligned. Mathematical-method provenance lives only in doc comments, never in
 // names (inputs are `VanillaInputs`, never `GkInputs`).
 //
@@ -886,7 +886,7 @@ message PriceResponse {
 
 // One-shot pricing of a single instrument.
 service PricingService {
-  // Price an instrument and return its full 14-Greek risk.
+  // Price an instrument and return its full 13-Greek risk.
   rpc Price(PriceRequest) returns (PriceResponse);
 }
 

@@ -7,7 +7,7 @@
 //!
 //! Two cases are timed:
 //!  * [`price_only`] — a single Garman-Kohlhagen present value.
-//!  * [`price_plus_full_greeks`] — present value **and** the full 14-Greek set
+//!  * [`price_plus_full_greeks`] — present value **and** the full 13-Greek set
 //!    in one pass, which is the actual quantity the budget governs.
 //!
 //! Inputs come from [`celnet_bench::representative_inputs`] so the timed work is
@@ -30,7 +30,7 @@ fn price_only(bencher: Bencher) {
     bencher.bench_local(|| price(OptionType::Call, black_box(&inputs)));
 }
 
-/// Present value **plus** the full 14-Greek set in a single pass.
+/// Present value **plus** the full 13-Greek set in a single pass.
 ///
 /// This is the quantity the `p50 ≤ 2 µs` hot-path budget in
 /// `docs/ARCHITECTURE.md` §1.2 governs.

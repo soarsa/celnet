@@ -11,7 +11,7 @@
 //!
 //! | Workload | Target |
 //! |---|---|
-//! | Vanilla price + full 14-Greek set (cached surface), hot path | p50 ≤ 2 µs, p99 ≤ 10 µs |
+//! | Vanilla price + full 13-Greek set (cached surface), hot path | p50 ≤ 2 µs, p99 ≤ 10 µs |
 //! | Streaming quote throughput | ≥ 1M price updates/s/core |
 //!
 //! `divan` reports the **median** and **min** per operation; the median is the

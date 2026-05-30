@@ -51,6 +51,11 @@ Findings are fixed before the milestone is committed. The G1 wave already proved
 the adversarial reviewer caught a sign-inverted charm in the SDK example; we fixed it and
 added a permanent full-Greek finite-difference gate.
 
+The structural hardening gates that wrap this — the cross-platform CI matrix
+(`.github/workflows/ci.yml`), mutation testing, coverage tracking, and the
+`fuzz/` adversarial-input harness — and their latest measured kill-rate /
+coverage numbers are specified in **`docs/HARDENING.md`** (WS-T).
+
 ## 4. Dependency vetting is part of the gate (the wasmtime lesson)
 
 External deps are OSS-only **and** must pass `cargo-deny` advisories + licenses before a lane

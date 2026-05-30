@@ -1,7 +1,46 @@
 //! Celnet executable competitive-parity matrix — the claims in
 //! `docs/CAPABILITIES-VS-COMPETITION.md` rendered as gated tests, so "meets or
-//! beats Synoption / Fenics / Bloomberg" is continuously *proven*, not asserted.
+//! beats SynOption / Fenics / Bloomberg" is continuously *proven*, not asserted.
+//!
 //! Each capability row maps to a test that reprices a reference input, checks a
-//! convention/arbitrage invariant, or demonstrates a feature competitors lack.
-//! Skeleton — the matrix tests land in this lane.
+//! convention/arbitrage invariant, or demonstrates a feature the incumbents lack
+//! or treat as opaque internal machinery. Competitor names appear **only** in
+//! test-data and doc-comment context here (the binding-rule carve-out for
+//! parity), never in any product API identifier — this crate exports no public
+//! pricing surface, it is a verification harness.
+//!
+//! The tests live in `tests/` (integration targets) so they exercise the crates
+//! exactly as a downstream consumer would, through their public APIs.
+//!
+//! # Capability → gated-test map
+//!
+//! | # | Capability claim (vs incumbents) | Gated test |
+//! |---|----------------------------------|------------|
+//! | 1 | Vanilla price = closed form / textbook (vs OVML/kACE closed pricers) | `conventions::vanilla_price_matches_closed_form` |
+//! | 2 | Convention transparency: four delta conventions + ATM/DNS, strike↔delta round-trip (vs convention-opaque terminals) | `conventions::strike_delta_roundtrip_all_conventions`, `conventions::atm_dns_strike_is_delta_neutral` |
+//! | 3 | Premium-adjusted call-delta guard (the non-monotone primitive competitors hide) | `conventions::premium_adjusted_call_delta_is_guarded` |
+//! | 4 | Full 13-Greek finite-difference agreement (vs FD-unvalidated closed Greeks) | `greeks::full_greek_set_matches_finite_difference`, `greeks::second_order_wing_greeks_match_fd` |
+//! | 5 | Put-call parity holds across regimes (correctness floor) | `greeks::put_call_parity_across_regimes` |
+//! | 6 | Arbitrage-free surface: butterfly density ≥ 0 (vs ML-fill / heuristic surfaces with no guarantee) | `surface::butterfly_density_nonnegative` |
+//! | 7 | Arbitrage-free surface: vertical (call) monotonicity in strike | `surface::vertical_monotone_in_strike` |
+//! | 8 | Arbitrage-free surface: monotone total variance in business time (calendar) | `surface::calendar_total_variance_monotone` |
+//! | 9 | VV vs SSVI wing agreement + each of VV/SABR/SVI/SSVI independently selectable & usable (user-selectable smile family) | `surface::vannavolga_and_ssvi_agree_in_wings`, `surface::each_smile_family_is_selectable` |
+//! | 10 | Broker→smile reprices the market strangle exactly (the documented #1 production bug) | `broker_smile::smile_reprices_broker_strangle` |
+//! | 11 | Broker→smile on a high-RR EM case (where the naive arithmetic butterfly mismarks) | `broker_smile::high_rr_em_case_reprices` |
+//! | 12 | First-gen exotics: European digitals match QuantLib (vs closed kACE/OVML) | `exotics::digitals_match_quantlib` |
+//! | 13 | First-gen exotics: one-touch / no-touch / DNT / double-touch match QuantLib | `exotics::touches_and_dnt_match_quantlib` |
+//! | 14 | First-gen exotics: all eight single-barrier flavours + double-KO match QuantLib | `exotics::barriers_match_quantlib`, `exotics::double_barriers_match_quantlib` |
+//! | 15 | Determinism: identical inputs → bit-identical price and full Greek set | `determinism::price_and_greeks_are_bit_identical`, `determinism::smile_and_exotics_are_bit_identical` |
+//!
+//! Every row above is gated: a regression makes `cargo nextest run -p
+//! celnet-parity` fail, so the matrix cannot silently rot out of sync with the
+//! capabilities document (zero-legacy invariant).
+//!
+//! ## Property-based coverage
+//!
+//! The three static arbitrage laws (butterfly, vertical, calendar) are gated as
+//! **property tests** (`proptest`) sweeping randomized arbitrage-free smile
+//! parameters, not single fixtures — so the guarantee is proven over a domain,
+//! the way an IPV/FRTB auditor would demand, not asserted on a happy path.
+
 #![forbid(unsafe_code)]

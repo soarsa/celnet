@@ -1,0 +1,48 @@
+# Celnet fuzz harness — a STANDALONE crate, deliberately NOT a member of the
+# root workspace (so `cargo build --workspace` and the cross-platform gate stay
+# stable-toolchain and never pull in the nightly-only libFuzzer sanitizer
+# runtime). It is built and run only by the Linux-nightly fuzz CI job:
+#
+#     rustup toolchain install nightly
+#     cargo install cargo-fuzz
+#     cd fuzz && cargo +nightly fuzz run vanilla_inputs -- -max_total_time=120
+#
+# It depends on the product crates by relative path; it never re-implements any
+# product logic. The targets feed arbitrary adversarial bytes into the public
+# pricing API and assert the contract: no panic, finite output.
+[package]
+name = "celnet-fuzz"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.96"
+publish = false
+license = "LicenseRef-Proprietary"
+
+[package.metadata]
+# Marks this as a cargo-fuzz harness package (consumed by `cargo fuzz`).
+cargo-fuzz = true
+
+[dependencies]
+# Nightly-only libFuzzer bindings; pulled only on the fuzz CI lane.
+libfuzzer-sys = "0.4"
+# `arbitrary` turns raw fuzzer bytes into structured, in-domain inputs.
+arbitrary = { version = "1", features = ["derive"] }
+# Correctly-rounded, cross-platform `tanh` for the in-domain input squash.
+libm = "0.2"
+# Product crates under test — referenced by path, no duplicated logic.
+celnet-types = { path = "../crates/celnet-types" }
+celnet-vanilla = { path = "../crates/celnet-vanilla" }
+
+[[bin]]
+name = "vanilla_inputs"
+path = "fuzz_targets/vanilla_inputs.rs"
+test = false
+doc = false
+bench = false
+
+# Release-with-debug profile: optimized fuzzing throughput, symbols for crashes.
+[profile.release]
+debug = 1
+
+# Keep `cargo build --workspace` from ever treating this as a member crate.
+[workspace]

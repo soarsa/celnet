@@ -73,7 +73,7 @@ impl core::fmt::Display for PriceError {
 
 impl std::error::Error for PriceError {}
 
-/// The fully priced result for one instrument: the 14-Greek set, the strike the
+/// The fully priced result for one instrument: the 13-Greek set, the strike the
 /// pricing resolved to (the same as the input for an absolute strike; the solved
 /// strike for a delta key), and the Black vol used for the headline leg.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -252,7 +252,7 @@ fn bump_vol(m: &WireMarketContext, d: f64) -> WireMarketContext {
     }
 }
 
-/// Build the full 14-Greek set of an exotic from central finite differences of
+/// Build the full 13-Greek set of an exotic from central finite differences of
 /// its closed-form price. `price` reprices the product at any market context;
 /// `expiry_years` is bumped for the time Greeks via the `price_at_expiry` closure.
 fn exotic_greeks(

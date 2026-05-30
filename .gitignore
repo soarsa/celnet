@@ -13,6 +13,10 @@
 /coverage
 lcov.info
 
+# cargo-mutants output (regenerable mutation-testing artifact)
+/mutants.out
+/mutants.out.old
+
 # Criterion benchmark output
 /target/criterion
 
