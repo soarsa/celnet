@@ -72,9 +72,15 @@ because contribution and trading are entitlement-gated, audited, and (optionally
 ### Path A (primary): `celnet-excel` — Office.js streaming custom functions + task pane
 
 - **What it is.** An Office Web Add-in (manifest + JS custom-function runtime + task-pane
-  SPA), checked into the repo at `addins/celnet-excel/` (TypeScript). It is the
-  cross-platform path: identical on Excel for Windows, Mac, the web, and iPad, because
-  Office.js is the only Excel surface that runs everywhere.
+  SPA), implemented at the top-level **`excel/`** directory (hand-rolled Vite + TypeScript
+  strict; outside the cargo workspace). It is the cross-platform path: identical on Excel
+  for Windows, Mac, the web, and iPad, because Office.js is the only Excel surface that runs
+  everywhere. Its TS contract layer (`excel/src/contract/`) is a minimal, semantics-identical
+  projection of `gui/src/data/{contract,enums,wsCodec}.ts` — one `celnet.wire` contract, no
+  fork — and the WS transport (`excel/src/transport/`) speaks the same tagged-JSON the
+  `crates/celnet-server/src/ws` mirror defines. See `excel/README.md` for the function
+  surface, the headless e2e (`npm run verify:headless`, asserted against a live server), and
+  the Excel sideload guide.
 - **Transport.** The add-in talks to `celnet-server` over the **WebSocket mirror**
   (`crates/celnet-server/src/ws/`) for streaming (W1/W5/W6) and **gRPC-web** (unary, behind
   the same tonic server) for request/response (W2/W3/W4/W7/W8). Both carry the *same* proto

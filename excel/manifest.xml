@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Celnet FX-options Office Add-in manifest.
+
+  Declares the CELNET custom-function namespace (worksheet functions
+  =CELNET.PRICE / GREEKS / SURFACE / RFQ / SUBSCRIBE / MARK) and the ticket task
+  pane. Custom functions run in a shared JS runtime; the task pane is a separate
+  page. Both are served over HTTPS from the dev server (https://localhost:3000)
+  during development and from the deployment host in production.
+
+  This is the unified (v1.1, TaskPaneApp) manifest with the Excel custom-functions
+  extension points. The function metadata itself (parameters/streaming flags) is
+  in src/functions/functions.json, generated/maintained alongside functions.ts.
+-->
+<OfficeApp
+  xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+  xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
+  xsi:type="TaskPaneApp">
+
+  <Id>b8e3a1c2-4f6d-4e7a-9c10-celnetexcel01</Id>
+  <Version>1.0.0.0</Version>
+  <ProviderName>Celnet</ProviderName>
+  <DefaultLocale>en-US</DefaultLocale>
+  <DisplayName DefaultValue="Celnet FX Options" />
+  <Description DefaultValue="Celnet FX-options pricing in Excel: live streaming custom functions, RFQ, and surface contribution over the single Celnet contract." />
+  <IconUrl DefaultValue="https://localhost:3000/assets/icon-32.png" />
+  <HighResolutionIconUrl DefaultValue="https://localhost:3000/assets/icon-80.png" />
+  <SupportUrl DefaultValue="https://localhost:3000/taskpane.html" />
+
+  <AppDomains>
+    <AppDomain>https://localhost:3000</AppDomain>
+  </AppDomains>
+
+  <Hosts>
+    <Host Name="Workbook" />
+  </Hosts>
+
+  <Requirements>
+    <Sets DefaultMinVersion="1.1">
+      <Set Name="CustomFunctionsRuntime" MinVersion="1.1" />
+    </Sets>
+  </Requirements>
+
+  <DefaultSettings>
+    <SourceLocation DefaultValue="https://localhost:3000/taskpane.html" />
+  </DefaultSettings>
+
+  <Permissions>ReadWriteDocument</Permissions>
+
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
+    <Hosts>
+      <Host xsi:type="Workbook">
+        <Runtimes>
+          <Runtime resid="Celnet.Functions.Runtime" lifetime="long" />
+        </Runtimes>
+
+        <AllFormFactors>
+          <ExtensionPoint xsi:type="CustomFunctions">
+            <Script>
+              <SourceLocation resid="Celnet.Functions.Script" />
+            </Script>
+            <Page>
+              <SourceLocation resid="Celnet.Functions.Page" />
+            </Page>
+            <Metadata>
+              <SourceLocation resid="Celnet.Functions.Metadata" />
+            </Metadata>
+            <Namespace resid="Celnet.Functions.Namespace" />
+          </ExtensionPoint>
+        </AllFormFactors>
+
+        <DesktopFormFactor>
+          <GetStarted>
+            <Title resid="Celnet.GetStarted.Title" />
+            <Description resid="Celnet.GetStarted.Description" />
+            <LearnMoreUrl resid="Celnet.Taskpane.Url" />
+          </GetStarted>
+          <ExtensionPoint xsi:type="PrimaryCommandSurface">
+            <OfficeTab id="TabHome">
+              <Group id="Celnet.Group">
+                <Label resid="Celnet.Group.Label" />
+                <Icon>
+                  <bt:Image size="16" resid="Celnet.Icon.16" />
+                  <bt:Image size="32" resid="Celnet.Icon.32" />
+                  <bt:Image size="80" resid="Celnet.Icon.80" />
+                </Icon>
+                <Control xsi:type="Button" id="Celnet.OpenTaskpane">
+                  <Label resid="Celnet.Taskpane.Label" />
+                  <Supertip>
+                    <Title resid="Celnet.Taskpane.Label" />
+                    <Description resid="Celnet.Taskpane.Tooltip" />
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Celnet.Icon.16" />
+                    <bt:Image size="32" resid="Celnet.Icon.32" />
+                    <bt:Image size="80" resid="Celnet.Icon.80" />
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <TaskpaneId>Celnet.Taskpane</TaskpaneId>
+                    <SourceLocation resid="Celnet.Taskpane.Url" />
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+    </Hosts>
+
+    <Resources>
+      <bt:Images>
+        <bt:Image id="Celnet.Icon.16" DefaultValue="https://localhost:3000/assets/icon-16.png" />
+        <bt:Image id="Celnet.Icon.32" DefaultValue="https://localhost:3000/assets/icon-32.png" />
+        <bt:Image id="Celnet.Icon.80" DefaultValue="https://localhost:3000/assets/icon-80.png" />
+      </bt:Images>
+      <bt:Urls>
+        <bt:Url id="Celnet.Functions.Script" DefaultValue="https://localhost:3000/functions.js" />
+        <bt:Url id="Celnet.Functions.Page" DefaultValue="https://localhost:3000/functions.html" />
+        <bt:Url id="Celnet.Functions.Metadata" DefaultValue="https://localhost:3000/functions.json" />
+        <bt:Url id="Celnet.Taskpane.Url" DefaultValue="https://localhost:3000/taskpane.html" />
+      </bt:Urls>
+      <bt:ShortStrings>
+        <bt:String id="Celnet.Functions.Namespace" DefaultValue="CELNET" />
+        <bt:String id="Celnet.Group.Label" DefaultValue="Celnet FX Options" />
+        <bt:String id="Celnet.Taskpane.Label" DefaultValue="Celnet Ticket" />
+        <bt:String id="Celnet.GetStarted.Title" DefaultValue="Celnet FX Options is ready." />
+      </bt:ShortStrings>
+      <bt:LongStrings>
+        <bt:String id="Celnet.Taskpane.Tooltip" DefaultValue="Open the Celnet ticket: RFQ, click-to-trade, and surface contribution." />
+        <bt:String id="Celnet.GetStarted.Description" DefaultValue="Use =CELNET.PRICE, =CELNET.GREEKS, =CELNET.SURFACE, =CELNET.RFQ, =CELNET.SUBSCRIBE and =CELNET.MARK, and open the Celnet Ticket task pane." />
+      </bt:LongStrings>
+      <bt:Runtimes>
+        <bt:Runtime id="Celnet.Functions.Runtime" resid="Celnet.Functions.Page" />
+      </bt:Runtimes>
+    </Resources>
+  </VersionOverrides>
+</OfficeApp>
