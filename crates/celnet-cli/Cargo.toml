@@ -1,0 +1,25 @@
+[package]
+name = "celnet-cli"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet operator/quant CLI — price, build surfaces, price exotics, and inspect from the terminal."
+publish = false
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "celnet"
+path = "src/main.rs"
+
+[dependencies]
+celnet-types.workspace = true
+celnet-core.workspace = true
+celnet-vanilla.workspace = true
+celnet-conventions.workspace = true
+celnet-surface.workspace = true
+celnet-exotics.workspace = true
+clap.workspace = true
