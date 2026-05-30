@@ -12,14 +12,24 @@ license = "LicenseRef-Proprietary"
 authors = ["Celer Technologies"]
 
 [workspace.dependencies]
-# Internal crates
+# Internal crates — registered centrally so parallel "lane" agents never edit this
+# file (the sole shared manifest); each agent only touches its own crates/<name>/.
 celnet-types = { path = "crates/celnet-types" }
 celnet-core = { path = "crates/celnet-core" }
 celnet-vanilla = { path = "crates/celnet-vanilla" }
-# External — pinned once, used everywhere
+celnet-calendar = { path = "crates/celnet-calendar" }
+celnet-conventions = { path = "crates/celnet-conventions" }
+celnet-testkit = { path = "crates/celnet-testkit" }
+celnet-proto = { path = "crates/celnet-proto" }
+celnet-plugin-api = { path = "crates/celnet-plugin-api" }
+# External — pinned once, used everywhere (OSS / permissively licensed only)
 libm = "0.2"                                   # rust-lang/libm: correctly-rounded, cross-platform-identical transcendentals
 serde = { version = "1", features = ["derive"] }
 proptest = "1"
+time = { version = "0.3", default-features = false, features = ["std", "macros"] } # MIT/Apache-2.0 civil-date arithmetic
+prost = "0.13"                                 # Apache-2.0 protobuf runtime (single current contract; no version negotiation)
+protox = "0.7"                                 # MIT/Apache-2.0 pure-Rust protobuf compiler (no system protoc needed)
+prost-build = "0.13"                           # Apache-2.0 codegen used with protox FileDescriptorSet
 
 # deny(warnings) is enforced via `just lint` (clippy -D warnings); here we set the
 # lint *policy* every crate opts into with `[lints] workspace = true`.

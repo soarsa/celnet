@@ -1,0 +1,19 @@
+[package]
+name = "celnet-plugin-api"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet user-extensibility SDK contract — pricing/smile/calibration traits and WIT world."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+celnet-types.workspace = true
+celnet-core.workspace = true
+
+[dev-dependencies]
+celnet-vanilla.workspace = true

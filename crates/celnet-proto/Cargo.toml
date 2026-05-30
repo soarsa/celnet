@@ -1,0 +1,19 @@
+[package]
+name = "celnet-proto"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet wire contract — a single current, unversioned message schema for pricing/quote/risk."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+prost.workspace = true
+
+[build-dependencies]
+protox.workspace = true
+prost-build.workspace = true
