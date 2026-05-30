@@ -1,4 +1,4 @@
-# CelerOption task runner. Every recipe sources the cargo env first because the
+# Celnet task runner. Every recipe sources the cargo env first because the
 # shell does not persist it between invocations.
 set shell := ["bash", "-uc"]
 export PATH := env_var('HOME') + "/.cargo/bin:" + env_var('PATH')
