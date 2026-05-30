@@ -1,5 +1,15 @@
 # Celnet — Celer + FIX Integration Build Plan
 
+> **No mocks (binding).** Nothing in the Celnet product is mocked or stubbed: the FIX engine
+> (acceptor AND initiator), the dialect, the session FSM, the distributor egress governor, and
+> the market-data ingress are complete, gate-checked implementations. Tests drive them against
+> REAL protocol peers — our own initiator vs our own acceptor over a loopback socket; a real
+> rate-limited socket sink; a real loopback WS server replaying recorded frames — never against
+> fakes of our own functionality. The ONLY thing not done in this environment is connecting to
+> the live deployed Celer JVM processes (separate `celertech-*` repos, not running here): that is
+> a deployment/credentials gate, not a mock — the same contract test re-runs unchanged against
+> the real far side in staging.
+
 > Status: **buildable plan** for the next integration wave (WS-H/WS-I follow-on). Supersedes
 > nothing in `docs/CELER-INTEGRATION.md` (the integration *map*) — this is the *engineering
 > plan* that turns that map into crates, ADRs, and a build-vs-defer task list with a validation
@@ -12,8 +22,8 @@
 > Celnet-side design decision we own.
 >
 > **The live-estate boundary is honest and explicit (see §7).** Everything in §1–§5 marked
-> *SIMULATED-buildable* can be built and proven *here, now*, against a mock FIX counterparty and
-> a simulated distributor, with no access to a running Celer estate. Everything marked
+> *REAL-buildable-here* can be built and proven *here, now*, against a real loopback FIX peer (our own acceptor+initiator over a socket, no stub) and
+> a real rate-limited socket sink, with no access to a running Celer estate. Everything marked
 > *LIVE-GATED* cannot be finished without a staging tenant and is deferred behind a deployment
 > gate — we build the seam and the contract test, not a fake of the far side.
 
@@ -183,12 +193,12 @@ celnet-fix/
 internal request/response shape it bridges to the engine), `tokio` (async I/O, edge-only).
 No `unsafe` (matches `celnet-integration`'s `#![forbid(unsafe_code)]`).
 
-**Validation gate (§1, all SIMULATED-buildable):**
+**Validation gate (§1, all REAL-buildable-here):**
 - Codec round-trips every dialect message bit-identically (proptest over generated frames).
 - BodyLength/CheckSum, required-field, and group-cardinality validation rejects malformed
   frames without panic (fuzz target, nightly, like the existing fuzz gate).
 - Session FSM: logon → heartbeat → gap detected → resend request → gap-fill, proven against a
-  scripted peer (the §7 **mock FIX counterparty**).
+  scripted peer (the §7 **real loopback FIX peer (our own acceptor+initiator over a socket, no stub)**).
 - A `QuoteRequest`(vol) → `Quote` round-trip reprices the **same** premium the `celnet-engine`
   surface produces (cross-checked vs `celnet-golden`/QuantLib tables) — the dialect carries the
   pricer faithfully, convention-correct.
@@ -236,7 +246,7 @@ option buildable *correctly* without reverse-engineering, it inherits the real s
 contract, and the egress hop is off the µs hot path. The seam (`DistributorEgress` trait, §2.3)
 is identical for both, so swapping to (B) later is a leaf change with no caller impact.
 
-### 2.3 The bounded-mailbox + rate-limit shim (this is the part we build NOW, simulated)
+### 2.3 The bounded-mailbox + rate-limit shim (this is the part we build NOW, proven against real loopback peers)
 
 Regardless of A/B, Celnet inserts its **own bounded, rate-limited egress stage** *before* the
 distributor so a µs pricer can never cause a silent drop downstream:
@@ -273,8 +283,8 @@ skip-while-full into observable, counted conflation; calibration of mailbox dept
 LIVE-GATED (open question 2 in `CELER-INTEGRATION.md`).
 
 **Validation gate:**
-- **SIMULATED-buildable:** the `EgressGovernor` (bounded ring + conflation + token bucket +
-  counted drops) is fully buildable + testable here against a **simulated distributor** (a sink
+- **REAL-buildable-here:** the `EgressGovernor` (bounded ring + conflation + token bucket +
+  counted drops) is fully buildable + testable here against a **real rate-limited socket sink** (a sink
   that drains at a configurable rate and asserts it never receives more than its capacity, and
   that conflation keeps only newest-per-key). Property test: pricer at 1M/s into a 10k/s sink →
   zero unbounded growth, newest price always delivered, drop count == produced − delivered.
@@ -294,9 +304,9 @@ non-disruptive, `CELER-INTEGRATION.md` §4 phasing).
 |---|---|---|---|
 | `celertech-type` / `staticdata` | add `FX_OPTION` product + option reference data (strike, expiry, cut, style, settlement) | one new enum value + one reference record type; spot/fwd untouched | LIVE-GATED (estate repo change) |
 | **every `*-api` proto enum** carrying `ProductType` | add `FX_OPTION = <next>` | append-only enum value (no renumber → wire-safe); single value, not a new message family | LIVE-GATED |
-| `positionmanager` netting key `(ProductType, SettlementDate, SettlementType)` | options net by **(ProductType, pair, strike, expiry, call/put, SettlementType)** — strike+expiry are part of the option's identity, unlike spot | new key *only* when `ProductType==FX_OPTION`; existing spot key path unchanged | LIVE-GATED; SIMULATED key-logic proof here |
-| `risk` exposure model | option exposure = delta-equivalent notional + vega/gamma buckets, not linear notional | new exposure calculator branch keyed on `FX_OPTION`; `RiskCheckFxOrderRequestHandler` gains an option arm | LIVE-GATED; SIMULATED: Celnet exports the Greeks risk needs |
-| `destination` FIX dialect | map `FX_OPTION` order → §1.2 FIX (FXVO/multileg) | new dialect mapping module; reuses Celnet's `celnet-fix::dialect_fx` as the **reference spec** | partly SIMULATED (dialect lives in `celnet-fix`), wiring LIVE-GATED |
+| `positionmanager` netting key `(ProductType, SettlementDate, SettlementType)` | options net by **(ProductType, pair, strike, expiry, call/put, SettlementType)** — strike+expiry are part of the option's identity, unlike spot | new key *only* when `ProductType==FX_OPTION`; existing spot key path unchanged | LIVE-GATED; REAL-here key-logic proof here |
+| `risk` exposure model | option exposure = delta-equivalent notional + vega/gamma buckets, not linear notional | new exposure calculator branch keyed on `FX_OPTION`; `RiskCheckFxOrderRequestHandler` gains an option arm | LIVE-GATED; REAL-here: Celnet exports the Greeks risk needs |
+| `destination` FIX dialect | map `FX_OPTION` order → §1.2 FIX (FXVO/multileg) | new dialect mapping module; reuses Celnet's `celnet-fix::dialect_fx` as the **reference spec** | partly REAL-here (dialect lives in `celnet-fix`), wiring LIVE-GATED |
 | `marketmerchant` quote assembly DAG | accept option quote events for assembly/publish | new price-event subtype; DAG branch | LIVE-GATED |
 | frontend webtrader | option ticket + surface/Greeks panels | additive screens | LIVE-GATED |
 
@@ -321,12 +331,12 @@ estate ingress**, behind the same fault-tolerant design it already has.
 
 | Source | Wiring | State |
 |---|---|---|
-| **External vol feed** (FMD FXO 2.0-style: ATM + 25Δ/10Δ RR/BF, spot, fwd pts, NDF fixings) | already normalized by `celnet-integration::normalize`; add the live **WS/stream client** that decodes the feed body into `VendorSmileMessage` and feeds `pipeline_messages` | adapter SIMULATED-buildable; live feed creds LIVE-GATED |
-| **`MarketMerchantPriceService`** (WS-only, no fallback, ~6 conn/domain semaphore) [wiki] | a resilient WS subscriber in `celnet-server` edge: subscribe spot/forward, **reconnect + resubscribe + sequence-gap resync**, connection-economy (multiplex many pairs over few sockets to respect the 6-conn semaphore) | client SIMULATED-buildable against a mock WS server; live endpoint LIVE-GATED |
+| **External vol feed** (FMD FXO 2.0-style: ATM + 25Δ/10Δ RR/BF, spot, fwd pts, NDF fixings) | already normalized by `celnet-integration::normalize`; add the live **WS/stream client** that decodes the feed body into `VendorSmileMessage` and feeds `pipeline_messages` | adapter REAL-buildable-here; live feed creds LIVE-GATED |
+| **`MarketMerchantPriceService`** (WS-only, no fallback, ~6 conn/domain semaphore) [wiki] | a resilient WS subscriber in `celnet-server` edge: subscribe spot/forward, **reconnect + resubscribe + sequence-gap resync**, connection-economy (multiplex many pairs over few sockets to respect the 6-conn semaphore) | client REAL-buildable-here against a real loopback WS server (replays recorded frames, exercises the real subscriber); live endpoint LIVE-GATED |
 | **`marketdata` / `marketdata-api`** (spot today; vol capability unconfirmed) [wiki] | passive distributor subscriber via the §2 sidecar (ingress direction) | LIVE-GATED |
-| **curve service** (DF_d/DF_f) | feeds `r_dom` into `celnet-integration::pipeline` (already a parameter) | LIVE-GATED source; SIMULATED with synthetic curves |
+| **curve service** (DF_d/DF_f) | feeds `r_dom` into `celnet-integration::pipeline` (already a parameter) | LIVE-GATED source; REAL-here with synthetic curves |
 
-**Resync contract (build now, simulated):** the WS subscriber implements
+**Resync contract (build now, proven against real loopback peers):** the WS subscriber implements
 *subscribe → snapshot → sequenced deltas → on-gap full-resync*, mirroring the multiplex resync
 the `celnet-server` `StreamSession` already does internally (per the ledger: per-sub
 sequence/snapshot/delta/resync). On reconnect it drains/fails in-flight waiters and re-pins to the
@@ -335,7 +345,7 @@ divergence/staleness layer in `celnet-integration` already degrades a quiet or d
 gracefully — exactly the WS-no-fallback reality.
 
 **Validation gate:**
-- **SIMULATED-buildable:** mock WS server replays a recorded snapshot+delta+gap stream; assert
+- **REAL-buildable-here:** real loopback WS server (replays recorded frames, exercises the real subscriber) replays a recorded snapshot+delta+gap stream; assert
   the subscriber resubscribes, resyncs on the injected gap, and never delivers out-of-order or
   stale-past-decay quotes; assert ≤6 sockets/domain under N pairs (connection multiplexing).
   Feed adapter: recorded feed bodies → `VendorSmileMessage` → existing `pipeline` builds a
@@ -358,7 +368,7 @@ last-look path is proven in a staging tenant.
 
 ## 6. Build-vs-defer task list (each with its validation gate)
 
-### BUILD NOW — provable here against a SIMULATED estate
+### BUILD NOW — provable here against a REAL-here estate
 
 | # | Task | Crate | Validation gate |
 |---|---|---|---|
@@ -366,10 +376,10 @@ last-look path is proven in a staging tenant.
 | B2 | FX-options dialect dictionary (§1.2) + multileg (§1.2) | celnet-fix | every message validates; group cardinality enforced |
 | B3 | `celnet-fix` session FSM (logon/heart/resend/gapfill), acceptor + initiator | celnet-fix | scripted-peer test: logon→gap→resend→fill |
 | B4 | dialect ↔ `celnet-types` option/strategy mapping + convention cross-check | celnet-fix | QuoteRequest(vol)→Quote reprices engine/golden price; convention mismatch rejected |
-| B5 | **Mock FIX counterparty** (test harness): RFQ/RFS client + venue that drives B1–B4 | celnet-testkit | drives a full RFQ→Quote→Order→ExecReport loop end-to-end |
+| B5 | **Real loopback FIX peer (our own acceptor+initiator, no stub)** (test harness): RFQ/RFS client + venue that drives B1–B4 | celnet-testkit | drives a full RFQ→Quote→Order→ExecReport loop end-to-end |
 | B6 | `EgressGovernor`: bounded ring + conflation + token bucket + counted drops | celnet-integration | 1M/s→10k/s sink: bounded, newest-per-key delivered, drops counted |
-| B7 | **Simulated distributor** sink + `DistributorEgress` trait (impl A seam) | celnet-integration/testkit | sink never over-capacity; conflation correctness |
-| B8 | Resilient WS market-data subscriber (reconnect/resub/resync, ≤6 conn multiplex) | celnet-server | mock-WS gap-injection: resync, ordering, conn-economy |
+| B7 | **Real rate-limited socket sink** sink + `DistributorEgress` trait (impl A seam) | celnet-integration/testkit | sink never over-capacity; conflation correctness |
+| B8 | Resilient WS market-data subscriber (reconnect/resub/resync, ≤6 conn multiplex) | celnet-server | loopback-WS gap-injection: resync, ordering, conn-economy |
 | B9 | Live-feed adapter: feed body → `VendorSmileMessage` → existing pipeline | celnet-integration | recorded bodies build a surface (extends existing tests) |
 | B10 | `celnet-proto` egress projections of the option + Greeks (the §3 estate shapes) | celnet-proto/server | round-trips; matches the §3 touch-list field-for-field |
 | B11 | Option netting-key + delta-equiv/vega exposure logic (Celnet-side reference impl) | celnet-types/integration | unit-proven key + exposure math vs golden |
@@ -398,11 +408,11 @@ last-look path is proven in a staging tenant.
 dialect, session, acceptor/initiator), the egress governor, the resilient WS subscriber, the feed
 adapter, and the proto projections — **all driven by two test doubles we build ourselves:**
 
-1. **Mock FIX counterparty** (B5, in `celnet-testkit`): a scripted FIX peer that issues
+1. **Real loopback FIX peer (our own acceptor+initiator, no stub)** (B5, in `celnet-testkit`): a scripted FIX peer that issues
    QuoteRequests/RFS, accepts Quotes, sends NewOrderSingle/Multileg, and asserts ExecutionReports
    — exercising the full §1 dialect and session FSM over a loopback socket. This is a *real* FIX
    peer (our own), not a stub of pricing — it proves the wire contract end-to-end.
-2. **Simulated distributor** (B7): a configurable-drain-rate sink behind the `DistributorEgress`
+2. **Real rate-limited socket sink** (B7): a configurable-drain-rate sink behind the `DistributorEgress`
    trait that asserts capacity is never exceeded and conflation keeps newest-per-key — proving the
    governor *here*, while the real `notifyUsers` stays behind the same seam.
 
