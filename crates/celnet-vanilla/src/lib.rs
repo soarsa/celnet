@@ -20,8 +20,8 @@
 
 #![forbid(unsafe_code)]
 
-use celer_core::math::{ln, norm_cdf, norm_pdf, sqrt};
-use celer_types::{GkInputs, Greeks, OptionType};
+use celnet_core::math::{ln, norm_cdf, norm_pdf, sqrt};
+use celnet_types::{Greeks, OptionType, VanillaInputs};
 
 /// Intermediate quantities shared by price and Greeks.
 struct Aux {
@@ -32,7 +32,7 @@ struct Aux {
 }
 
 #[inline]
-fn aux(i: &GkInputs) -> Aux {
+fn aux(i: &VanillaInputs) -> Aux {
     let sqt = sqrt(i.t);
     let vsqt = i.vol * sqt;
     let d1 = (ln(i.spot / i.strike) + (i.r_dom - i.r_for + 0.5 * i.vol * i.vol) * i.t) / vsqt;
@@ -42,7 +42,7 @@ fn aux(i: &GkInputs) -> Aux {
 
 /// Present value (domestic premium per 1 unit of base notional).
 #[must_use]
-pub fn price(opt: OptionType, i: &GkInputs) -> f64 {
+pub fn price(opt: OptionType, i: &VanillaInputs) -> f64 {
     let a = aux(i);
     let s_disc = i.spot * i.df_for();
     let k_disc = i.strike * i.df_dom();
@@ -57,7 +57,7 @@ pub fn price(opt: OptionType, i: &GkInputs) -> f64 {
 /// See [`Greeks`] for the precise definition and units of each sensitivity.
 #[must_use]
 #[allow(clippy::similar_names)] // d1/d2, nd1/nd2 are the canonical option-pricing names
-pub fn greeks(opt: OptionType, i: &GkInputs) -> Greeks {
+pub fn greeks(opt: OptionType, i: &VanillaInputs) -> Greeks {
     let a = aux(i);
     let (d1, d2, sqt, vsqt) = (a.d1, a.d2, a.sqt, a.vsqt);
     let (s, k, t, vol) = (i.spot, i.strike, i.t, i.vol);
@@ -147,7 +147,7 @@ pub fn greeks(opt: OptionType, i: &GkInputs) -> Greeks {
 
 #[cfg(test)]
 mod tests {
-    use celer_core::assert_close;
+    use celnet_core::assert_close;
     use proptest::prelude::*;
 
     use super::*;
@@ -156,7 +156,7 @@ mod tests {
     /// Reference values are the standard analytic results.
     #[test]
     fn black_scholes_reference() {
-        let i = GkInputs::new(100.0, 100.0, 0.2, 1.0, 0.05, 0.0);
+        let i = VanillaInputs::new(100.0, 100.0, 0.2, 1.0, 0.05, 0.0);
         assert_close!(
             price(OptionType::Call, &i),
             10.450_583_572_185_565,
@@ -175,7 +175,7 @@ mod tests {
     /// C − P = S·e^{−r_f t} − K·e^{−r_d t}.
     #[test]
     fn put_call_parity_point() {
-        let i = GkInputs::new(1.2345, 1.30, 0.11, 0.75, 0.03, 0.01);
+        let i = VanillaInputs::new(1.2345, 1.30, 0.11, 0.75, 0.03, 0.01);
         let lhs = price(OptionType::Call, &i) - price(OptionType::Put, &i);
         let rhs = i.spot * i.df_for() - i.strike * i.df_dom();
         assert_close!(lhs, rhs, 1e-12, 1e-12);
@@ -187,25 +187,25 @@ mod tests {
         (f(x + h) - f(x - h)) / (2.0 * h)
     }
 
-    fn with_spot(i: &GkInputs, s: f64) -> GkInputs {
-        GkInputs { spot: s, ..*i }
+    fn with_spot(i: &VanillaInputs, s: f64) -> VanillaInputs {
+        VanillaInputs { spot: s, ..*i }
     }
-    fn with_vol(i: &GkInputs, v: f64) -> GkInputs {
-        GkInputs { vol: v, ..*i }
+    fn with_vol(i: &VanillaInputs, v: f64) -> VanillaInputs {
+        VanillaInputs { vol: v, ..*i }
     }
-    fn with_t(i: &GkInputs, t: f64) -> GkInputs {
-        GkInputs { t, ..*i }
+    fn with_t(i: &VanillaInputs, t: f64) -> VanillaInputs {
+        VanillaInputs { t, ..*i }
     }
-    fn with_rd(i: &GkInputs, r: f64) -> GkInputs {
-        GkInputs { r_dom: r, ..*i }
+    fn with_rd(i: &VanillaInputs, r: f64) -> VanillaInputs {
+        VanillaInputs { r_dom: r, ..*i }
     }
-    fn with_rf(i: &GkInputs, r: f64) -> GkInputs {
-        GkInputs { r_for: r, ..*i }
+    fn with_rf(i: &VanillaInputs, r: f64) -> VanillaInputs {
+        VanillaInputs { r_for: r, ..*i }
     }
 
-    fn check_greeks(opt: OptionType, i: &GkInputs) {
+    fn check_greeks(opt: OptionType, i: &VanillaInputs) {
         let g = greeks(opt, i);
-        let p = |x: &GkInputs| price(opt, x);
+        let p = |x: &VanillaInputs| price(opt, x);
 
         // First-order.
         let hs = 1e-4 * i.spot;
@@ -233,7 +233,7 @@ mod tests {
 
         // Second-order via differencing the relevant first-order Greek.
         let ds = |s: f64| greeks(opt, &with_spot(i, s)).delta_spot;
-        let gam = |x: &GkInputs| greeks(opt, x).gamma;
+        let gam = |x: &VanillaInputs| greeks(opt, x).gamma;
         assert_close!(g.gamma, fd1(ds, i.spot, hs), 1e-3, 1e-6);
         assert_close!(
             g.vanna,
@@ -272,10 +272,10 @@ mod tests {
     fn greeks_vs_finite_difference() {
         // A spread of regimes: ITM/OTM, low/high vol, short/long, +/- carry.
         let cases = [
-            GkInputs::new(100.0, 100.0, 0.2, 1.0, 0.05, 0.0),
-            GkInputs::new(1.10, 1.25, 0.09, 0.5, 0.02, 0.01),
-            GkInputs::new(1.35, 1.20, 0.14, 2.0, 0.04, 0.015),
-            GkInputs::new(110.0, 95.0, 0.30, 0.25, 0.01, 0.03),
+            VanillaInputs::new(100.0, 100.0, 0.2, 1.0, 0.05, 0.0),
+            VanillaInputs::new(1.10, 1.25, 0.09, 0.5, 0.02, 0.01),
+            VanillaInputs::new(1.35, 1.20, 0.14, 2.0, 0.04, 0.015),
+            VanillaInputs::new(110.0, 95.0, 0.30, 0.25, 0.01, 0.03),
         ];
         for i in &cases {
             check_greeks(OptionType::Call, i);
@@ -294,10 +294,10 @@ mod tests {
             r_dom in -0.02f64..0.10,
             r_for in -0.02f64..0.10,
         ) {
-            let i = GkInputs::new(s, k, vol, t, r_dom, r_for);
+            let i = VanillaInputs::new(s, k, vol, t, r_dom, r_for);
             let lhs = price(OptionType::Call, &i) - price(OptionType::Put, &i);
             let rhs = i.spot * i.df_for() - i.strike * i.df_dom();
-            prop_assert!(celer_core::is_close(lhs, rhs, 1e-9, 1e-9));
+            prop_assert!(celnet_core::is_close(lhs, rhs, 1e-9, 1e-9));
         }
 
         #[test]
@@ -309,7 +309,7 @@ mod tests {
             r_dom in 0.0f64..0.10,
             r_for in 0.0f64..0.10,
         ) {
-            let i = GkInputs::new(s, k, vol, t, r_dom, r_for);
+            let i = VanillaInputs::new(s, k, vol, t, r_dom, r_for);
             let c = price(OptionType::Call, &i);
             let pp = price(OptionType::Put, &i);
             // Non-negative and bounded by the discounted underlying / strike.

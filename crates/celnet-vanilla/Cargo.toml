@@ -1,19 +1,19 @@
 [package]
-name = "celer-core"
+name = "celnet-vanilla"
 version = "0.0.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Celnet pure-domain math primitives, deterministic float comparison, and core traits."
+description = "Celnet Garman-Kohlhagen vanilla FX-option pricing and the full FX Greek set."
 publish = false
 
 [lints]
 workspace = true
 
 [dependencies]
-celer-types.workspace = true
-libm.workspace = true
+celnet-types.workspace = true
+celnet-core.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

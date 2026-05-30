@@ -6,7 +6,7 @@
 //! interface PR. It defines the FX-options *vocabulary* — currencies, pairs,
 //! tenors, option type — and the **convention enums** that make Celnet
 //! convention-correct rather than convention-defaulted, plus the data-transfer
-//! objects (`GkInputs`, `Greeks`) shared across the pricing layers.
+//! objects (`VanillaInputs`, `Greeks`) shared across the pricing layers.
 
 #![forbid(unsafe_code)]
 
@@ -274,7 +274,7 @@ pub struct Time(pub f64);
 /// forward and the two discount factors are derived (`forward`, `df_dom`,
 /// `df_for`). Times are year fractions on the vol-time day-count.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct GkInputs {
+pub struct VanillaInputs {
     /// Spot FX rate (quote per 1 unit of base).
     pub spot: f64,
     /// Strike (quote per 1 unit of base).
@@ -289,7 +289,7 @@ pub struct GkInputs {
     pub r_for: f64,
 }
 
-impl GkInputs {
+impl VanillaInputs {
     /// Convenience constructor.
     #[must_use]
     pub const fn new(spot: f64, strike: f64, vol: f64, t: f64, r_dom: f64, r_for: f64) -> Self {
@@ -322,10 +322,10 @@ impl GkInputs {
     }
 }
 
-// We avoid a dependency on `celer-core` here (it depends on us); a tiny local
+// We avoid a dependency on `celnet-core` here (it depends on us); a tiny local
 // `exp` keeps this crate leaf-pure. `f64::exp` is the std intrinsic and is
 // sufficient for the derived-quantity helpers above (canonical math lives in
-// `celer-core::math`).
+// `celnet-core::math`).
 #[inline]
 fn libm_exp(x: f64) -> f64 {
     x.exp()
@@ -338,7 +338,7 @@ fn libm_exp(x: f64) -> f64 {
 /// theta is `∂V/∂t` per year (time decay; `−∂V/∂T`); rhos are per `1.0` of
 /// continuously-compounded rate. Delta is reported in both spot and forward
 /// (premium-unadjusted) conventions; convention-specific deltas are derived in
-/// `celer-vanilla` from the configured `DeltaConvention`.
+/// `celnet-vanilla` from the configured `DeltaConvention`.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Greeks {
     /// Present value (premium) in domestic currency, per 1 unit of base notional.
@@ -401,7 +401,7 @@ mod tests {
 
     #[test]
     fn gk_derived_quantities() {
-        let i = GkInputs::new(100.0, 100.0, 0.2, 1.0, 0.05, 0.0);
+        let i = VanillaInputs::new(100.0, 100.0, 0.2, 1.0, 0.05, 0.0);
         // r_for = 0 → df_for = 1, forward = spot·e^{0.05}.
         assert!((i.df_for() - 1.0).abs() < 1e-15);
         assert!((i.forward() - 100.0 * (0.05_f64).exp()).abs() < 1e-9);

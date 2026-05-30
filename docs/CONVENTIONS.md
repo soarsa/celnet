@@ -2,10 +2,10 @@
 
 The authoritative, detailed convention/analytics treatment lives in
 [`ANALYTICS-SPEC.md`](./ANALYTICS-SPEC.md). This file is the quick map from those market
-conventions to the **`celer-types` enums** that encode them as first-class per-`(pair, tenor)`
+conventions to the **`celnet-types` enums** that encode them as first-class per-`(pair, tenor)`
 configuration (never global defaults — convention errors dwarf model error).
 
-| Convention | Type (`celer-types`) | Variants | Notes |
+| Convention | Type (`celnet-types`) | Variants | Notes |
 |---|---|---|---|
 | Delta | `DeltaConvention` | `SpotUnadjusted`, `ForwardUnadjusted`, `SpotPremiumAdjusted`, `ForwardPremiumAdjusted` | Premium-adjusted when premium paid in FOR/base ccy. Short tenors → spot; long (≳1–2Y) → forward. |
 | ATM | `AtmConvention` | `AtmForward`, `DeltaNeutralStraddle` | DNS dominant interbank. DNS strike: `F·e^{+½σ²T}` (unadj) vs `F·e^{−½σ²T}` (prem-adj). |
@@ -17,5 +17,5 @@ configuration (never global defaults — convention errors dwarf model error).
 **Quoting:** smile is given as ATM vol + `RR_25/RR_10` (skew) + `BF_25/BF_10` (convexity); the
 **broker (market) strangle → smile strangle** calibration is mandatory (never arithmetic
 average). Strike↔delta is a guarded root-find in the configured delta convention
-(premium-adjusted call delta is non-monotone). These land in `celer-conventions` (WS-A),
-`celer-vanilla` (WS-B), and `celer-surface` (WS-C).
+(premium-adjusted call delta is non-monotone). These land in `celnet-conventions` (WS-A),
+`celnet-vanilla` (WS-B), and `celnet-surface` (WS-C).

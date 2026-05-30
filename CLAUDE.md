@@ -2,7 +2,8 @@
 
 State-of-the-art FX **Options** pricing platform in Rust. Ultra-low-latency, scalable,
 mission-critical, hot-upgradable; integrates into the Celer trade-lifecycle estate and
-front end, consumes Fenics market data, and exposes user-extensible analytics via SDKs.
+front end, consumes external vendor FX-options market-data feeds, and exposes
+user-extensible analytics via SDKs.
 Greenfield, started 30 May 2026.
 
 ## Hard guardrails (non-negotiable)
@@ -34,6 +35,21 @@ Greenfield, started 30 May 2026.
    golden oracle is fine. Any unavoidable proprietary-but-free toolkit (e.g. the CUDA
    toolkit behind CubeCL) is recorded as an ADR with the open fallback (wgpu/Vulkan) kept
    first-class. `cargo-deny` license policy enforces the OSS license set.
+8. **Naming is `celnet`-logical & vendor-neutral.** Every product artifact (crate, module,
+   type, trait, fn) is named for its **purpose** under the `celnet-` namespace. **No**
+   commercial-product / competitor / vendor names (Bloomberg, Fenics, Synoption, Murex,
+   Numerix, QuantLib, MKL, …) and **no** person/paper/framework names in API identifiers —
+   e.g. inputs are `VanillaInputs`, not `GkInputs`. Mathematical-method provenance may appear
+   in doc comments only, never in names. (The parent firm **Celer** and its `celertech`
+   estate are our own systems; their names are fine in integration/docs context, never in
+   core product identifiers.)
+9. **No versioned APIs.** We have no external users — there is exactly **one clean, current
+   contract**. No `schema_version`, no N/N-1 negotiation, no back-compat shims. Evolve and
+   refactor freely; upgrades deploy a single uniform version (no mixed-version window).
+10. **Always refactor to cleanest; zero legacy.** Continuously delete dead code, keep files
+    in the correct crate/dir, and keep **all** docs/guides/references in sync as code evolves
+    — no stale or duplicate references anywhere. After any structural change,
+    re-`index_repository` so the codebase-memory graph always covers the full scope.
 
 ## Running the toolchain
 
@@ -64,8 +80,10 @@ validated in CI/containers on Linux. **GPU strategy:** `wgpu` (Metal/Vulkan/DX12
 - `docs/ARCHITECTURE.md` — system architecture, crate layout, concurrency/latency model,
   GPU abstraction, hot-upgrade strategy, SDK/plugin model, data flow.
 - `docs/ANALYTICS-SPEC.md` — the market-standard FX-options analytics to implement.
-- `docs/COMPETITIVE-ANALYSIS.md` — Synoption / Fenics / Bloomberg critique & positioning.
-- `docs/CELER-INTEGRATION.md` — integration map with Celer services + Fenics.
+- `docs/COMPETITIVE-ANALYSIS.md` — competitor critique & positioning (analysis doc only).
+- `docs/CELER-INTEGRATION.md` — integration map with the Celer estate + vendor feeds.
+- `docs/INTERFACES.md` — frozen-interface registry (the current contracts).
+- `docs/CONVENTIONS.md` — FX convention spec mapped to the `celnet-types` enums.
 - `docs/ROADMAP.md` — phased plan + crate-ownership workstreams for parallel sessions.
 
 Cross-session durable facts/decisions live in the auto-memory at
@@ -82,12 +100,12 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
-- 2026-05-30 — **P0/P1 vertical slice green.** Flat workspace live; `celer-types` (frozen
-  vocab + convention enums + DTOs), `celer-core` (libm math, deterministic `assert_close`,
-  `Smile` trait), `celer-vanilla` (Garman-Kohlhagen + full 14-Greek set). 17 tests pass:
+- 2026-05-30 — **P0/P1 vertical slice green.** Flat workspace live; `celnet-types` (frozen
+  vocab + convention enums + DTOs), `celnet-core` (libm math, deterministic `assert_close`,
+  `Smile` trait), `celnet-vanilla` (Garman-Kohlhagen + full 14-Greek set). 17 tests pass:
   BS textbook benchmark, put-call parity (512 proptest cases), finite-difference validation
   of every Greek. `just check` fully green (fmt/clippy-D/nextest/deny). **Next:** complete
-  G0 (`celer-proto`, `celer-plugin-api`), then fan out post-G0 workstreams via a workflow.
+  G0 (`celnet-proto`, `celnet-plugin-api`), then fan out post-G0 workstreams via a workflow.
 - 2026-05-30 — Design corpus written to `docs/` (ARCHITECTURE, ANALYTICS-SPEC,
   COMPETITIVE-ANALYSIS, CELER-INTEGRATION, ROADMAP + `_research/`). Product renamed
   CelerOption → **Celnet**.
@@ -101,14 +119,14 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 | Stream | Crates (owned) | Status | Owner | Dep gate | Notes |
 |--------|----------------|--------|-------|----------|-------|
-| WS-0 | celer-types, celer-core, celer-proto, celer-plugin-api | IN-PROGRESS | this session | — | types+core DONE & frozen-candidate; proto/plugin-api pending → completes G0 |
-| WS-A | celer-conventions, celer-calendar | UNCLAIMED | — | G0 | |
-| WS-B | celer-vanilla | IN-PROGRESS | this session | G0 | GK price + 14 Greeks DONE & validated; strike↔delta solver (convention-aware) pending |
-| WS-C | celer-surface | BLOCKED | — | G1 | |
-| WS-D | celer-exotics | BLOCKED | — | G2 | |
-| WS-E | celer-gpu | UNCLAIMED | — | G0 | runs parallel to WS-D on PricingBackend |
-| WS-F | celer-engine | UNCLAIMED | — | G1/G3 | |
-| WS-G | celer-plugin-host | UNCLAIMED | — | G0 | |
-| WS-H | celer-integration | UNCLAIMED | — | G0/WS-C | |
-| WS-I | celer-server, celer-cli | BLOCKED | — | G3 | |
+| WS-0 | celnet-types, celnet-core, celnet-proto, celnet-plugin-api | IN-PROGRESS | this session | — | types+core DONE & frozen-candidate; proto/plugin-api pending → completes G0 |
+| WS-A | celnet-conventions, celnet-calendar | UNCLAIMED | — | G0 | |
+| WS-B | celnet-vanilla | IN-PROGRESS | this session | G0 | GK price + 14 Greeks DONE & validated; strike↔delta solver (convention-aware) pending |
+| WS-C | celnet-surface | BLOCKED | — | G1 | |
+| WS-D | celnet-exotics | BLOCKED | — | G2 | |
+| WS-E | celnet-gpu | UNCLAIMED | — | G0 | runs parallel to WS-D on PricingBackend |
+| WS-F | celnet-engine | UNCLAIMED | — | G1/G3 | |
+| WS-G | celnet-plugin-host | UNCLAIMED | — | G0 | |
+| WS-H | celnet-integration | UNCLAIMED | — | G0/WS-C | |
+| WS-I | celnet-server, celnet-cli | BLOCKED | — | G3 | |
 | WS-T | CI/test/deny/golden-gen | UNCLAIMED | — | G0 | cross-cutting; config+test files only |

@@ -5,6 +5,13 @@
 > **edition 2024**. Primary dev host: Apple M4 / Metal 4 (`aarch64-apple-darwin`); CUDA
 > validated in CI/containers on Linux.
 
+> **Binding-rules override (2026-05-30):** where this document predates the current product
+> rules it is superseded by `CLAUDE.md` guardrails: crate prefix is **`celnet-`** (not
+> `celer-`); API identifiers are vendor/research-neutral and purpose-named; **there are no
+> versioned APIs** — the wire contract is single-and-current and zero-downtime upgrades use
+> **blue-green / full cutover** (no `schema_version` / N–N-1). Passages below mentioning a
+> "versioned wire protocol" or `celer-*` crates are scrubbed as those areas are built.
+
 This document is the source of truth for the system architecture: guiding principles and
 non-functional requirements, the multi-crate Cargo workspace, the concurrency/latency
 model, the GPU compute abstraction, the zero-downtime/hot-upgrade strategy, the
@@ -86,87 +93,87 @@ celnet/
 ├── deny.toml  rustfmt.toml  justfile
 └── crates/
     ├── core/                  # Layer 0 — pure domain
-    │   ├── celer-num          # float policy, ULP/approx compare, libm wiring, SIMD (wide) helpers
-    │   ├── celer-core         # FX domain: dates/calendars, conventions, GK/forward math, Greeks — ZERO IO/framework deps
-    │   ├── celer-types        # canonical DTOs (option, leg, surface point, quote, Greeks); serde
-    │   └── celer-conventions  # per-(pair,tenor) convention registry: delta type, ATM type, premium ccy, cut, day-count, spot lag
+    │   ├── celnet-num          # float policy, ULP/approx compare, libm wiring, SIMD (wide) helpers
+    │   ├── celnet-core         # FX domain: dates/calendars, conventions, GK/forward math, Greeks — ZERO IO/framework deps
+    │   ├── celnet-types        # canonical DTOs (option, leg, surface point, quote, Greeks); serde
+    │   └── celnet-conventions  # per-(pair,tenor) convention registry: delta type, ATM type, premium ccy, cut, day-count, spot lag
     ├── models/                # Layer 1 — pricing models
-    │   ├── celer-vanilla      # Garman-Kohlhagen vanilla + strike↔delta root-find (Brent/Newton, premium-adj branch-safe)
-    │   ├── celer-vannavolga   # Vanna-Volga engine (Castagna-Mercurio 2nd approx) + survival-prob exotic weighting
-    │   ├── celer-sabr         # SABR (Hagan 2002 expansion) + arbitrage-free PDE SABR (Hagan 2014) + shifted/normal
-    │   ├── celer-svi          # SVI / SSVI (Gatheral-Jacquier 2014) arbitrage-free surface parameterization
-    │   ├── celer-lsv          # Local-Stochastic-Vol: Heston backbone + Dupire leverage, particle-method calibration
-    │   ├── celer-exotics      # payoff catalog: barriers/touches/DNT/digitals, window barriers, TARF/accumulator, Asian, lookback, varswap/volswap
-    │   └── celer-numerics     # shared numerical engines: PDE (Crank-Nicolson+Rannacher, ADI Craig-Sneyd), MC drivers, Philox/Sobol, Brownian-bridge
+    │   ├── celnet-vanilla      # Garman-Kohlhagen vanilla + strike↔delta root-find (Brent/Newton, premium-adj branch-safe)
+    │   ├── celnet-vannavolga   # Vanna-Volga engine (Castagna-Mercurio 2nd approx) + survival-prob exotic weighting
+    │   ├── celnet-sabr         # SABR (Hagan 2002 expansion) + arbitrage-free PDE SABR (Hagan 2014) + shifted/normal
+    │   ├── celnet-svi          # SVI / SSVI (Gatheral-Jacquier 2014) arbitrage-free surface parameterization
+    │   ├── celnet-lsv          # Local-Stochastic-Vol: Heston backbone + Dupire leverage, particle-method calibration
+    │   ├── celnet-exotics      # payoff catalog: barriers/touches/DNT/digitals, window barriers, TARF/accumulator, Asian, lookback, varswap/volswap
+    │   └── celnet-numerics     # shared numerical engines: PDE (Crank-Nicolson+Rannacher, ADI Craig-Sneyd), MC drivers, Philox/Sobol, Brownian-bridge
     ├── surface/               # Layer 2 — vol surface construction
-    │   ├── celer-surface      # canonical surface object: delta-space, broker→smile fly conversion, arbitrage checks (butterfly/calendar/vertical)
-    │   └── celer-surface-build# orchestration: pick model (VV/SSVI/SABR), tenor interpolation in total-variance/business-time, event weighting
+    │   ├── celnet-surface      # canonical surface object: delta-space, broker→smile fly conversion, arbitrage checks (butterfly/calendar/vertical)
+    │   └── celnet-surface-build# orchestration: pick model (VV/SSVI/SABR), tenor interpolation in total-variance/business-time, event weighting
     ├── marketdata/            # Layer 3 — market-data adapters (ingest only)
-    │   ├── celer-md-api       # MarketDataSource trait: stream surfaces/spot/fwd/NDF fixings; resilience contracts
-    │   ├── celer-md-fenics    # Fenics FMD FXO 2.0 adapter (ATM/25d&10d RR/BF per tenor, spot/fwd pts/NDF) via FMD API or LSEG redistribution; convention normalization
-    │   ├── celer-md-celer     # Celer marketdata-api feed handler (MarketMerchantPriceService WS, reconnect/resync)
-    │   └── celer-md-blend     # multi-source blend/validate, staleness decay, divergence flagging
+    │   ├── celnet-md-api       # MarketDataSource trait: stream surfaces/spot/fwd/NDF fixings; resilience contracts
+    │   ├── celnet-md-fenics    # Fenics FMD FXO 2.0 adapter (ATM/25d&10d RR/BF per tenor, spot/fwd pts/NDF) via FMD API or LSEG redistribution; convention normalization
+    │   ├── celnet-md-celer     # Celer marketdata-api feed handler (MarketMerchantPriceService WS, reconnect/resync)
+    │   └── celnet-md-blend     # multi-source blend/validate, staleness decay, divergence flagging
     ├── engine/                # Layer 4 — pricing engine & orchestration (the hot core)
-    │   ├── celer-engine       # stateful low-latency core: book state, recompute graph, dispatch hot vs GPU, Greeks/risk
-    │   ├── celer-pricer       # model-agnostic pricing facade behind a registry of PricingModel impls
-    │   ├── celer-risk         # portfolio Greeks (incl. vanna/volga/charm/speed/zomma/color), vega buckets, scenario/stress, P&L attribution, IPV
-    │   └── celer-rt           # latency runtime: core pinning, SPSC rings, arenas, seqlock/arc-swap publish, allocator wiring
+    │   ├── celnet-engine       # stateful low-latency core: book state, recompute graph, dispatch hot vs GPU, Greeks/risk
+    │   ├── celnet-pricer       # model-agnostic pricing facade behind a registry of PricingModel impls
+    │   ├── celnet-risk         # portfolio Greeks (incl. vanna/volga/charm/speed/zomma/color), vega buckets, scenario/stress, P&L attribution, IPV
+    │   └── celnet-rt           # latency runtime: core pinning, SPSC rings, arenas, seqlock/arc-swap publish, allocator wiring
     ├── gpu/                   # Layer 5 — GPU compute abstraction
-    │   ├── celer-compute      # PricingBackend trait (simulate_paths / reduce_payoff / solve_pde); scalar-generic
-    │   ├── celer-compute-cubecl # CubeCL backend (CUDA/Metal/Vulkan/WGSL/CPU-SIMD) — primary
-    │   └── celer-compute-cpu  # rayon + `wide` f64 CPU fallback & reconciliation oracle
+    │   ├── celnet-compute      # PricingBackend trait (simulate_paths / reduce_payoff / solve_pde); scalar-generic
+    │   ├── celnet-compute-cubecl # CubeCL backend (CUDA/Metal/Vulkan/WGSL/CPU-SIMD) — primary
+    │   └── celnet-compute-cpu  # rayon + `wide` f64 CPU fallback & reconciliation oracle
     ├── sdk/                   # Layer 6 — user-extensibility SDK / plugin host
-    │   ├── celer-plugin-api   # the SDK: PricingModel/Payoff/Calibration traits + WIT world; semver-versioned product
-    │   ├── celer-plugin-host  # wasmtime 45 embedding: Linker capabilities, fuel metering, deterministic config
-    │   └── celer-plugin-guest # guest-side bindings + helpers for authoring Wasm plugins in Rust
+    │   ├── celnet-plugin-api   # the SDK: PricingModel/Payoff/Calibration traits + WIT world; semver-versioned product
+    │   ├── celnet-plugin-host  # wasmtime 45 embedding: Linker capabilities, fuel metering, deterministic config
+    │   └── celnet-plugin-guest # guest-side bindings + helpers for authoring Wasm plugins in Rust
     ├── transport/             # Layer 7 — service & transport
-    │   ├── celer-proto        # versioned wire protocol (prost 0.14): message headers + schema-version gating
-    │   ├── celer-server       # tokio async edge: tonic gRPC + WebSocket RFS streaming; control plane
-    │   ├── celer-fix          # hand-rolled zero-copy FIX dialect (Celer destination / venue wire)
-    │   └── celer-ipc          # rkyv 0.8 zero-copy shared-memory / UDS for in-host and upgrade handoff
+    │   ├── celnet-proto        # versioned wire protocol (prost 0.14): message headers + schema-version gating
+    │   ├── celnet-server       # tokio async edge: tonic gRPC + WebSocket RFS streaming; control plane
+    │   ├── celnet-fix          # hand-rolled zero-copy FIX dialect (Celer destination / venue wire)
+    │   └── celnet-ipc          # rkyv 0.8 zero-copy shared-memory / UDS for in-host and upgrade handoff
     ├── integration/           # Layer 8 — Celer estate adapters
-    │   ├── celer-distributor  # bridge to Celer in-proc disruptor distributor (JVM adapter or DistributorProducerChannelHandler socket)
-    │   ├── celer-staticdata   # staticdata / celertech-type product-type & netting-key mapping for FX option product
-    │   └── celer-lifecycle    # OMS/EMS booking, exercise/expiry/fixing/barrier lifecycle, STP execution reports
+    │   ├── celnet-distributor  # bridge to Celer in-proc disruptor distributor (JVM adapter or DistributorProducerChannelHandler socket)
+    │   ├── celnet-staticdata   # staticdata / celertech-type product-type & netting-key mapping for FX option product
+    │   └── celnet-lifecycle    # OMS/EMS booking, exercise/expiry/fixing/barrier lifecycle, STP execution reports
     ├── tools/                 # Layer 9 — CLI & operator tools
-    │   ├── celer-cli          # operator/quant CLI: price, calibrate, dump surface, replay, stress
-    │   └── celer-goldgen      # frozen QuantLib reference-table generator (version-pinned oracle)
+    │   ├── celnet-cli          # operator/quant CLI: price, calibrate, dump surface, replay, stress
+    │   └── celnet-goldgen      # frozen QuantLib reference-table generator (version-pinned oracle)
     └── testkit/               # Layer 10 — test & bench harness (shared)
-        ├── celer-testkit      # invariant assertions (put-call parity, monotonicity, no-arb), proptest strategies, fixture loaders
-        └── celer-bench        # criterion/divan suites + committed baselines + iai-callgrind gates
+        ├── celnet-testkit      # invariant assertions (put-call parity, monotonicity, no-arb), proptest strategies, fixture loaders
+        └── celnet-bench        # criterion/divan suites + committed baselines + iai-callgrind gates
 ```
 
 ### 2.1 Why this split aids performance
 
-- **`celer-core` is dependency-free and IO-free.** The hottest math (GK, forward, Greeks,
+- **`celnet-core` is dependency-free and IO-free.** The hottest math (GK, forward, Greeks,
   date logic) compiles fast, has no framework/runtime in scope, and so cannot accidentally
   allocate, lock, or call a runtime. Determinism and zero-alloc are *structurally*
   enforceable here.
 - **The hot core (`engine/`) never depends on the async edge (`transport/`).** The
   dependency arrow points one way: `transport` → `engine` → `models`/`surface` → `core`.
-  Nothing on the pricing path can reach `tokio`, `tonic`, or a socket. `celer-rt` owns the
+  Nothing on the pricing path can reach `tokio`, `tonic`, or a socket. `celnet-rt` owns the
   runtime primitives (pinning, SPSC rings, arenas, `seqlock`/`arc-swap` publication) so the
   latency discipline lives in one auditable crate.
-- **GPU is behind a trait (`celer-compute`) with swappable backends.** The engine depends on
+- **GPU is behind a trait (`celnet-compute`) with swappable backends.** The engine depends on
   the abstraction, not on CubeCL/CUDA, so the heavy/optional GPU stack never bloats the hot
   core's compile or binary and can degrade to CPU at runtime.
-- **The plugin host is isolated.** `celer-plugin-host` (wasmtime) is a leaf the engine calls
-  through `celer-plugin-api`; the Wasm runtime's weight and security surface never touch the
+- **The plugin host is isolated.** `celnet-plugin-host` (wasmtime) is a leaf the engine calls
+  through `celnet-plugin-api`; the Wasm runtime's weight and security surface never touch the
   native hot path for first-party models.
-- **`celer-proto` centralizes the wire format,** so schema evolution and N/N-1 compatibility
+- **`celnet-proto` centralizes the wire format,** so schema evolution and N/N-1 compatibility
   are gated in one place (§8) rather than smeared across services.
 
 ### 2.2 Why this split aids parallel multi-agent maintenance
 
-- **Disjoint ownership, stable seams.** Interface crates (`celer-types`, `celer-core`,
-  `celer-conventions`, `celer-compute`, `celer-plugin-api`, `celer-proto`) are stabilized
+- **Disjoint ownership, stable seams.** Interface crates (`celnet-types`, `celnet-core`,
+  `celnet-conventions`, `celnet-compute`, `celnet-plugin-api`, `celnet-proto`) are stabilized
   *first* and changed only with coordination. Every other crate is a leaf an agent can own
-  end-to-end: e.g. one session owns `celer-svi`, another `celer-lsv`, another
-  `celer-md-fenics` — they never touch the same files, so there are no merge conflicts.
+  end-to-end: e.g. one session owns `celnet-svi`, another `celnet-lsv`, another
+  `celnet-md-fenics` — they never touch the same files, so there are no merge conflicts.
 - **Compile-time fences match team fences.** Because layers only depend downward, a change
-  in `celer-md-fenics` can't ripple into `celer-vanilla`; CI rebuilds only the affected
+  in `celnet-md-fenics` can't ripple into `celnet-vanilla`; CI rebuilds only the affected
   subtree, keeping the multi-agent feedback loop short.
-- **Test ownership is local.** `celer-testkit` provides shared invariants/strategies so each
+- **Test ownership is local.** `celnet-testkit` provides shared invariants/strategies so each
   model crate carries its own property + golden tests without duplicating harness code.
 
 ### 2.3 Workspace hygiene
@@ -255,7 +262,7 @@ pluggable compute backend. The abstraction is a Rust trait, scalar-generic over 
 type, selected at runtime by probing for an adapter.
 
 ```rust
-// crates/gpu/celer-compute
+// crates/gpu/celnet-compute
 pub trait PricingBackend {
     fn simulate_paths(&self, spec: &PathSpec, variates: VariateSource) -> PathBuffer;
     fn reduce_payoff(&self, paths: &PathBuffer, payoff: &PayoffKernel) -> Reduction;
@@ -272,7 +279,7 @@ pub trait PricingBackend {
 - **Numeric policy: f32 on GPU, f64 on CPU.** Metal and WebGPU/WGSL have **no native f64**
   (WGSL scalars are only `f32`/`f16`/`i32`/`u32`; atomics are integer-only); even where
   Vulkan/CUDA support f64 it is 16–64× slower than f32. So we **standardize GPU pricing on
-  f32** and run a periodic **f64 CPU reconciliation** (`celer-compute-cpu`: `rayon` +
+  f32** and run a periodic **f64 CPU reconciliation** (`celnet-compute-cpu`: `rayon` +
   `wide`) as the validation oracle to bound numerical error for FX exotics. Payoff
   accumulation uses integer-atomic / tree-reduction (no float atomics on WGSL).
 - **RNG: counter-based Philox-4×32-10** implemented as a `#[cube]` kernel, each variate
@@ -309,7 +316,7 @@ out of the box — we implement app-level handoff.
    instance. A `/readyz` + connection-drain phase gates the cutover.
 2. **Live state handoff** of book state, open RFQ/quote sessions and in-flight orders over a
    Unix-domain socket / shared memory using **`rkyv` zero-copy** framing carried in
-   **`celer-proto`** (versioned). `SO_REUSEPORT` alone does *not* migrate session state —
+   **`celnet-proto`** (versioned). `SO_REUSEPORT` alone does *not* migrate session state —
    the explicit, versioned transfer protocol is what makes the handoff safe.
 3. **Hot model swap.** Pricing models (first-party native via the registry, and user Wasm
    modules) are swapped behind `arc-swap` with **no maintenance window** — a new model set
@@ -342,7 +349,7 @@ run them *in-engine* — keeping their proprietary IP, not consuming a vendor's 
 
 | Path | Use | Mechanism | Why |
 |---|---|---|---|
-| **Wasm (primary, default)** | *Any* user/third-party model or workflow | `wasmtime 45.0.0` + Component Model + WASI 0.2.x; contract defined as a **WIT world** in `celer-plugin-api` | Only Wasm gives a true **security sandbox** *and* **determinism**. Untrusted code cannot corrupt memory, crash the engine, or stall the hot path. |
+| **Wasm (primary, default)** | *Any* user/third-party model or workflow | `wasmtime 45.0.0` + Component Model + WASI 0.2.x; contract defined as a **WIT world** in `celnet-plugin-api` | Only Wasm gives a true **security sandbox** *and* **determinism**. Untrusted code cannot corrupt memory, crash the engine, or stall the hot path. |
 | **Native trait registry (first-party, compiled-in)** | Hot first-party models shipped in the binary | `inventory` of `dyn PricingModel`, same trait shape the Wasm host implements | Fastest path, no ABI/sandbox concerns; first-party and user plugins are interchangeable behind one registry. |
 | **Native dynamic `.so`/`.dylib` (trusted partners only)** | Trusted partner C++/Rust models needing full native speed | **`stabby` 72.1.x** (not `abi_stable`), code-signed + trusted-publisher allowlist | `abi_stable` is effectively unmaintained (last release Oct 2023). Native plugins have **no sandbox and no determinism** — never loaded untrusted. |
 
@@ -361,8 +368,8 @@ run them *in-engine* — keeping their proprietary IP, not consuming a vendor's 
 
 ### 6.3 The SDK as a product
 
-- `celer-plugin-api` is **semver-versioned**; guest bindings are generated from the WIT
-  world (`celer-plugin-guest`). A **deterministic test harness** replays fixed market-data
+- `celnet-plugin-api` is **semver-versioned**; guest bindings are generated from the WIT
+  world (`celnet-plugin-guest`). A **deterministic test harness** replays fixed market-data
   snapshots through the fuel-metered sandbox and asserts **bit-identical** pricing output,
   so user models are reproducible and auditable.
 - We track WASI P3 / component-model `struct`/`map` support but build today on **stable WASI
@@ -382,10 +389,10 @@ boxed; the async edge sits at the boundaries.
   ───────────────────                          ────────────────────────────────────────────────────
  ┌────────────────────┐
  │ Fenics FMD FXO 2.0 │  ATM / 25d&10d RR / 25d&10d BF per tenor, spot, fwd pts, NDF fixings
- │ (API or LSEG feed) │──┐    via celer-md-fenics  (normalize Fenics conventions → canonical)
+ │ (API or LSEG feed) │──┐    via celnet-md-fenics  (normalize Fenics conventions → canonical)
  └────────────────────┘  │
  ┌────────────────────┐  │   ┌───────────────────┐      ┌──────────────────────────┐
- │ Celer marketdata-  │  ├──►│  celer-md-blend   │ rtrb │   celer-surface(-build)  │
+ │ Celer marketdata-  │  ├──►│  celnet-md-blend   │ rtrb │   celnet-surface(-build)  │
  │ api (WS, spot/vol) │──┘   │ blend · staleness │ SPSC │ broker→smile fly convert │
  │ MarketMerchantPrice│      │ decay · divergence│─────►│ VV / SSVI / SABR fit     │
  └────────────────────┘      │ flag              │      │ delta-space, arb checks  │
@@ -394,44 +401,44 @@ boxed; the async edge sits at the boundaries.
                                                           arc-swap publish (atomic surface)
                                                                        ▼
    convention registry ─────► ┌──────────────────────────────────────────────────────────┐
-   (celer-conventions,        │                    celer-engine / celer-pricer            │
+   (celnet-conventions,        │                    celnet-engine / celnet-pricer            │
     arc-swap)                 │  PricingModel registry: native (inventory) + Wasm (fuel)  │
                               │  ┌───────────────┐   ┌──────────────────┐   GPU dispatch  │
-                              │  │ celer-vanilla │   │ celer-vannavolga │   ┌───────────┐ │
-   plugin host ──────────────►│  │ GK + Greeks   │   │ first-gen exotic │──►│celer-     │ │
-   (celer-plugin-host,        │  └───────────────┘   └──────────────────┘   │compute    │ │
+                              │  │ celnet-vanilla │   │ celnet-vannavolga │   ┌───────────┐ │
+   plugin host ──────────────►│  │ GK + Greeks   │   │ first-gen exotic │──►│celnet-     │ │
+   (celnet-plugin-host,        │  └───────────────┘   └──────────────────┘   │compute    │ │
     wasmtime, sandboxed)      │  ┌───────────────────────────────────────┐  │(CubeCL):  │ │
-                              │  │ celer-lsv / celer-exotics (path-dep.)  │─►│CUDA/Metal │ │
+                              │  │ celnet-lsv / celnet-exotics (path-dep.)  │─►│CUDA/Metal │ │
                               │  └───────────────────────────────────────┘  │/WGSL/CPU  │ │
                               └───────────────────────────┬─────────────────└───────────┘─┘
                                        seqlock publish     ▼
                               ┌──────────────────────────────────────────┐
-                              │             celer-risk                    │
+                              │             celnet-risk                    │
                               │ portfolio Greeks (Δ,Γ,vega,θ, ρ_d, ρ_f,   │
                               │ vanna,volga,charm,speed,zomma,color),     │
                               │ vega buckets · scenario/stress · PnL · IPV│
                               └───────────────────────┬───────────────────┘
                                      rtrb SPSC         ▼
   ASYNC EDGE (tokio)          ┌──────────────────────────────────────────┐
-  ───────────────            │   celer-server (tonic gRPC + WS RFS)       │──►  Celer front end
-                              │   celer-fix (FIX dialect)                  │──►  venues / destination
-                              │   celer-distributor (in-proc disruptor)    │──►  Celer OMS/EMS/risk
-                              │   celer-lifecycle (booking, STP, fixings)  │──►  positionmanager / clearing
+  ───────────────            │   celnet-server (tonic gRPC + WS RFS)       │──►  Celer front end
+                              │   celnet-fix (FIX dialect)                  │──►  venues / destination
+                              │   celnet-distributor (in-proc disruptor)    │──►  Celer OMS/EMS/risk
+                              │   celnet-lifecycle (booking, STP, fixings)  │──►  positionmanager / clearing
                               └────────────────────────────────────────────┘
 ```
 
 **Notes on the Celer integration edge (from the integration research):**
 - The Celer distributor is an **in-process disruptor mailbox in the JVM** with
   *skip-while-full* back-pressure — a high-frequency option pricer can cause silent price
-  drops, so `celer-distributor` sizes mailboxes and rate-limits, and a Rust process joins via
+  drops, so `celnet-distributor` sizes mailboxes and rate-limits, and a Rust process joins via
   a **JVM adapter or the `DistributorProducerChannelHandler` socket protocol** (decision
-  deferred but scoped in `celer-distributor`).
+  deferred but scoped in `celnet-distributor`).
 - Adding an FX-**option** product type is a broad change touching `celertech-type`,
   staticdata, every API proto enum, positionmanager netting keys, risk exposure models, and
-  the destination FIX dialect — concentrated in `celer-staticdata` + `celer-proto` +
-  `celer-fix` so the blast radius is contained.
+  the destination FIX dialect — concentrated in `celnet-staticdata` + `celnet-proto` +
+  `celnet-fix` so the blast radius is contained.
 - `MarketMerchantPriceService` is WS-only (no fallback, ~6 concurrent HTTP connections per
-  domain) — `celer-md-celer` is built resilient to WS disconnects with resync.
+  domain) — `celnet-md-celer` is built resilient to WS disconnects with resync.
 
 ---
 
@@ -442,7 +449,7 @@ boxed; the async edge sits at the boundaries.
 - **Math library:** prefer **`rust-lang/libm`** (correctly-rounded, verified ≤ 1.0 ULP vs
   MPFR) over the system libm so transcendental results are **identical across OS/arch and
   across libm updates** — correct rounding yields exactly one answer.
-- **Float policy (in `celer-num`):** IEEE-754; **forbid FMA contraction and fast-math on
+- **Float policy (in `celnet-num`):** IEEE-754; **forbid FMA contraction and fast-math on
   reproducibility-critical paths** (FP addition is non-associative, so reduction/parallel
   order changes low bits). Centralize all float comparison in one `assert_close` /
   ULP+relative+absolute helper (`approx`-style); **never** compare with `==` or assert on
@@ -456,12 +463,12 @@ boxed; the async edge sits at the boundaries.
 
 ### 8.2 Validation layered on determinism
 
-- **Golden / reference oracle:** `celer-goldgen` produces a frozen, version-pinned table of
+- **Golden / reference oracle:** `celnet-goldgen` produces a frozen, version-pinned table of
   **QuantLib** prices + Greeks across a parameter grid (committed); the Rust engine must
   match within documented ULP/relative/absolute tolerances. Re-generated only under explicit
   review, tracking the QuantLib version (treating QuantLib as ground truth without pinning is
   a known risk).
-- **Financial invariants as property tests** (`celer-testkit`, `proptest` — chosen over
+- **Financial invariants as property tests** (`celnet-testkit`, `proptest` — chosen over
   quickcheck for Strategy-based generation + superior shrinking): put-call parity, price
   monotonicity in spot/vol/maturity, **convexity in strike (butterfly ≥ 0)**, **non-negative
   risk-neutral density**, **no calendar-spread arbitrage** (non-crossing total variance),
@@ -477,7 +484,7 @@ boxed; the async edge sits at the boundaries.
 
 ### 8.3 Versioned wire protocol
 
-- **`celer-proto` (prost 0.14.x)** carries a **protocol/schema version in every message
+- **`celnet-proto` (prost 0.14.x)** carries a **protocol/schema version in every message
   header**. Strict Protobuf-evolution discipline: **never reuse/renumber field tags, reserve
   removed numbers, add fields as optional, avoid lossy `oneof` edits.** Protobuf Editions
   (`minimum_required_edition`) gate incompatible descriptors.
@@ -487,7 +494,7 @@ boxed; the async edge sits at the boundaries.
   mixed-version windows, so they are caught in CI, not production.
 - **Two internal framings:** **`rkyv` 0.8** zero-copy for in-host IPC, shared-memory and
   upgrade-handoff (access archived bytes directly, `no_std`/`no_alloc` capable); **`tonic` +
-  `prost`** for external service RPC; **hand-rolled zero-copy FIX** (`celer-fix`) for the
+  `prost`** for external service RPC; **hand-rolled zero-copy FIX** (`celnet-fix`) for the
   venue/Celer-destination wire, with SIMD (`wide`) field scanning.
 
 ---
@@ -512,24 +519,24 @@ boxed; the async edge sits at the boundaries.
 
 The analytics standard (see `docs/ANALYTICS-SPEC.md`) maps onto crates as follows:
 - **Garman-Kohlhagen** priced off the forward `F = S·e^{(r_d−r_f)T}` storing two discount
-  factors `(DF_d, DF_f)` separately (clean deliverable vs NDO and dual-curve) → `celer-core`,
-  `celer-vanilla`.
+  factors `(DF_d, DF_f)` separately (clean deliverable vs NDO and dual-curve) → `celnet-core`,
+  `celnet-vanilla`.
 - **Four delta conventions** (spot/forward × premium-adjusted/unadjusted) and **ATM types**
   (ATMF vs delta-neutral-straddle, premium in/out) as per-(pair, tenor) config →
-  `celer-conventions`; branch-safe strike↔delta root-find (premium-adjusted delta is
-  non-monotone) → `celer-vanilla`.
+  `celnet-conventions`; branch-safe strike↔delta root-find (premium-adjusted delta is
+  non-monotone) → `celnet-vanilla`.
 - **Smile from ATM + 25d/10d RR + BF**, with explicit **broker(market) → smile strangle**
-  calibration → `celer-surface`.
+  calibration → `celnet-surface`.
 - **Vanna-Volga** (Castagna-Mercurio) with survival-probability weighting for first-gen
-  exotics → `celer-vannavolga`; **SVI/SSVI**, **SABR / arb-free PDE SABR** →
-  `celer-svi`/`celer-sabr`; **LSV** (Heston + Dupire leverage, particle method) →
-  `celer-lsv`.
+  exotics → `celnet-vannavolga`; **SVI/SSVI**, **SABR / arb-free PDE SABR** →
+  `celnet-svi`/`celnet-sabr`; **LSV** (Heston + Dupire leverage, particle method) →
+  `celnet-lsv`.
 - **Two rhos (ρ_d, ρ_f)** and the full higher-order Greek set (vanna, volga, charm, speed,
-  zomma, color) + bucketed vega → `celer-risk`.
+  zomma, color) + bucketed vega → `celnet-risk`.
 - **Calendar/date engine** (intersect both currency calendars + USD; spot/delivery by
   identical lag; modified-following + EOM; NY 10am / Tokyo 3pm cut), and **NDO/NDF cash
-  settlement** at named fixings (EMTA/WMR) → `celer-core`, `celer-conventions`.
+  settlement** at named fixings (EMTA/WMR) → `celnet-core`, `celnet-conventions`.
 - **Numerical engines** — PDE (Crank-Nicolson + Rannacher, ADI Craig-Sneyd / Hundsdorfer-
   Verwer), MC (Andersen QE, Sobol + Brownian-bridge, Broadie-Glasserman-Kou 0.5826·σ·√dt
-  barrier shift) → `celer-numerics`; variance-swap log-contract replication + volatility-swap
-  convexity adjustment → `celer-exotics`.
+  barrier shift) → `celnet-numerics`; variance-swap log-contract replication + volatility-swap
+  convexity adjustment → `celnet-exotics`.

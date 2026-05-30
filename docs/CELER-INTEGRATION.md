@@ -1,6 +1,6 @@
 # Celnet — Celer Integration Map
 
-> Status: design document for a greenfield Rust service (`/Users/adrian/code/celeroption`). All Celer-side service names, hops, transports and constraints below are drawn from the `celer-integration` research findings. Items the research flagged as **inferred** (not runtime-traced) or otherwise unconfirmed are called out explicitly and collected in the Open Questions section. Do not treat them as verified until checked against the real services.
+> Status: design document for a greenfield Rust service (`/Users/adrian/code/celeroption`). All Celer-side service names, hops, transports and constraints below are drawn from the `celnet-integration` research findings. Items the research flagged as **inferred** (not runtime-traced) or otherwise unconfirmed are called out explicitly and collected in the Open Questions section. Do not treat them as verified until checked against the real services.
 
 ---
 
@@ -14,7 +14,7 @@ These are hard facts from the integration research that shape every decision bel
 - **Several hops are inferred, not traced.** `orderrouting → risk`, `risk → destination`, `destination → clearing`, `clearing → positionmanager` are inferred from API deps and handler signatures — validate before relying on them.
 - **`MarketMerchantPriceService` is WS-only with no fallback** and has a ~6 concurrent HTTP connection semaphore per domain. Any new option price stream must be resilient to WS disconnects.
 - **No option product type exists in the estate today.** Adding one touches `celertech-type`, `staticdata`, every API proto enum, `positionmanager` netting keys, `risk` exposure models, and `destination` FIX dialect mappings. This is a broad, cross-cutting change.
-- **Config is layered at deploy time via `celer-client` tenant overlays**, not baked into artifacts; the `celer-client` subgroup is not in the default repo pull, so config wiring may be invisible locally. Confirm tenant overlay ownership with devops.
+- **Config is layered at deploy time via `celnet-client` tenant overlays**, not baked into artifacts; the `celnet-client` subgroup is not in the default repo pull, so config wiring may be invisible locally. Confirm tenant overlay ownership with devops.
 - **FX options need a vol surface + Greeks inputs that spot-only marketdata may not supply.** Verify `marketdata-api` can deliver vol data or plan an additional feed handler (this is where Fenics FXO 2.0 comes in — see below).
 
 ---
@@ -105,7 +105,7 @@ For Garman-Kohlhagen vanilla pricing and the LSV/VV exotics engine, Celnet requi
 | `clearing` | Post-trade | Verify hops |
 | `staticdata` | Reference data/curves | New option reference data |
 | `celertech-type` | Shared types | New option product type |
-| `celer-client` | Tenant config overlays (deploy-time) | Confirm overlay ownership w/ devops |
+| `celnet-client` | Tenant config overlays (deploy-time) | Confirm overlay ownership w/ devops |
 | API proto definitions | Protobuf enums/messages | Add option product type to **every** enum |
 | Fenics FMD FXO 2.0 (external) | Vol surface + spot/fwd/NDF source | Build FMD ingest adapter |
 
@@ -118,7 +118,7 @@ The estate has **no option product type today**, so the strategy is to add Celne
 **Phase 0 — Decide the bus boundary & map the estate (no code in the hot path).**
 - Decide JVM adapter vs `DistributorProducerChannelHandler` socket protocol for distributor connectivity.
 - Manually build and review the cross-service dependency map (Spring config + distributor `notifyUsers` names); validate the four **inferred** hops.
-- Confirm `marketdata-api` vol capability vs Fenics dependency; confirm `celer-client` tenant overlay ownership.
+- Confirm `marketdata-api` vol capability vs Fenics dependency; confirm `celnet-client` tenant overlay ownership.
 
 **Phase 1 — Ingress, read-only.**
 - Build the **Fenics FMD adapter** (ATM/RR/BF wings, spot, forward points, NDF fixings → canonical surface) and, if available, a Celer vol feed handler.
@@ -138,7 +138,7 @@ The estate has **no option product type today**, so the strategy is to add Celne
 **Phase 5 — Frontend & desk tooling.**
 - Wire the React webtrader to the live surface, Greeks, and scenario/stress feeds over WS; ship bespoke pre-trade/structuring/stress screens.
 
-Throughout: tenant-overlay config (`celer-client`) gates rollout per client so no existing service behavior changes until the option product is explicitly enabled.
+Throughout: tenant-overlay config (`celnet-client`) gates rollout per client so no existing service behavior changes until the option product is explicitly enabled.
 
 ---
 
@@ -152,7 +152,7 @@ Throughout: tenant-overlay config (`celer-client`) gates rollout per client so n
 6. **Webtrader transport:** does the React webtrader consume gRPC-web, raw WS, or WS-carrying-Protobuf, and what is the auth/session model? How does the ~6-connection-per-domain semaphore affect a streaming surface + Greeks feed?
 7. **`MarketMerchantPriceService` reconnection semantics:** subscription replay on reconnect, sequence/gap handling, and whether option quotes are a first-class price type there.
 8. **Option product type plumbing:** the full list of API proto enums, `positionmanager` netting keys, `risk` exposure models, and `destination` FIX dialects that must change — confirm completeness.
-9. **`celer-client` tenant overlays:** who owns them, are they in scope for the default repo pull, and how is per-tenant option enablement gated?
+9. **`celnet-client` tenant overlays:** who owns them, are they in scope for the default repo pull, and how is per-tenant option enablement gated?
 10. **NDF/NDO settlement:** which fixing sources (EMTA/WMR/central-bank) and fixing-to-settlement lags does the estate already model, and where do `destination`/`clearing` expect them?
 11. **`notifyUsers` channel names:** enumerate the exact distributor channel names for spot/forward in (ingress) and quotes/Greeks out (egress).
 12. **Curve source:** which service supplies DF_d/DF_f discount curves, and in what message type?
