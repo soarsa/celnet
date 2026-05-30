@@ -1,7 +1,8 @@
 //! Celnet typed async client SDK — the ergonomic GUI/API-user surface over the
-//! gRPC + WebSocket edge: RFQ (request→quote→accept→execution), RFS streaming
-//! (subscribe→snapshot+sequenced deltas+resync), surface reads/marks, and
-//! risk/scenario, with reconnect and resync built in (work-stream WS-I/client).
+//! gRPC + WebSocket edge: RFQ (request→quote→accept→execution), a multiplexed RFS
+//! streaming session (one connection → many subscriptions + click-to-trade),
+//! surface reads/marks, and risk/scenario (point Greeks + book-shaped risk), with
+//! reconnect and resync built in (work-stream WS-I/client).
 //!
 //! # What the SDK gives a caller
 //!
@@ -9,9 +10,10 @@
 //! futures-based API speaking the celnet domain vocabulary
 //! ([`celnet_types`] + this crate's [`vocab`] / [`surface_vocab`]), never raw
 //! proto. The caller works with [`InstrumentSpec`], [`Conventions`], [`Quote`],
-//! [`Execution`], [`Smile`], [`ScenarioGrid`] and a typed [`StreamEvent`] stream —
-//! the wire `Option`-wrapped messages, sequence numbers, idempotency keys, and the
-//! bidirectional control protocol are all handled inside the SDK.
+//! [`Execution`], [`Smile`], [`ScenarioGrid`], [`BucketedRisk`] and a typed
+//! [`StreamEvent`] stream — the wire `Option`-wrapped messages, sequence numbers,
+//! idempotency keys, click-to-trade tokens, and the bidirectional control protocol
+//! are all handled inside the SDK.
 //!
 //! ## RFQ — request → quote → accept
 //!
@@ -20,19 +22,27 @@
 //! [`Rfq::request`] returns the *same* [`Quote`], and a retried [`Rfq::accept`]
 //! returns the *same* [`Execution`] — a network retry can never double-book.
 //!
-//! ## RFS — subscribe → snapshot + deltas, with auto-resync / reconnect
+//! ## RFS — one multiplexed session, many subscriptions, click-to-trade
 //!
-//! [`Client::subscribe`] opens a [`Subscription`]: a typed async [`Stream`] of
-//! [`StreamEvent`]s. The SDK tracks the per-subscription sequence, detects a gap
-//! and auto-[`Resync`](celnet_proto::Resync)s, recovers a `LAGGED` drop, and
-//! transparently re-dials + re-subscribes across a `DRAINING` blue-green cutover.
+//! [`Client::open_session`] opens a [`StreamSession`]: ONE bidirectional connection
+//! over which [`StreamSession::subscribe`] opens any number of [`Subscription`]s —
+//! a blotter watching hundreds of structures uses a single connection, not one
+//! stream per line. Each subscription is a typed async [`Stream`] of
+//! [`StreamEvent`]s; the SDK tracks per-subscription sequence, detects a gap and
+//! auto-resyncs, recovers a `LAGGED` drop, and transparently re-dials +
+//! re-subscribes every live subscription across a `DRAINING` blue-green cutover.
+//! [`Subscription::execute`] click-trades *exactly* a streamed [`StreamLine`] on a
+//! side — the SDK presents the maker's `tradable_token` for the caller and returns
+//! a typed [`ExecuteOutcome`] (booked, or rejected by last-look).
 //!
 //! ## Surface & risk
 //!
 //! [`Client::get_smile`] / [`Client::mark_surface`] read and (re)mark the vol
 //! surface from broker ATM/RR/BF quotes with an arbitrage report; [`Client::price`]
 //! one-shot-prices an instrument; [`Client::scenario`] runs a spot/vol/rate shock
-//! grid — each returning typed results a quant branches on directly.
+//! grid; [`Client::scenario_with_risk`] additionally returns the book-shaped risk
+//! decomposition ([`BucketedRisk`]: bucketed vega + cross-gamma + theta roll) in one
+//! round-trip — each returning typed results a quant branches on directly.
 //!
 //! # Transports
 //!
@@ -59,19 +69,20 @@ pub mod surface_vocab;
 pub mod vocab;
 
 pub use error::{ClientError, ClientResult};
-pub use rfs::{StreamEvent, StreamLine, Subscription};
+pub use rfs::{
+    ClickExecution, ExecuteOutcome, RejectReason, StreamEvent, StreamLine, StreamSession,
+    Subscription, TradableLine,
+};
 pub use surface_vocab::{
-    ArbReport, BrokerQuoteSet, MarkedSurface, MarketContext, ScenarioGrid, ScenarioNode, ShockAxis,
-    ShockFactor, Smile, SmilePoint,
+    ArbReport, BrokerQuoteSet, BucketedRisk, CrossGammaTerm, MarkedSurface, MarketContext,
+    RiskRequest, ScenarioGrid, ScenarioNode, ScenarioRisk, ShockAxis, ShockFactor, Smile,
+    SmilePoint, VegaPillar,
 };
 pub use vocab::{
     BarrierKind, BarrierSide, Conventions, DigitalStyle, Execution, InstrumentSpec, Leg,
     PricedLine, Product, Quantity, Quote, RejectAck, Side, StrategyKind, StrikeSpec, TouchKind,
     TwoWay,
 };
-
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use celnet_proto::pricing_service_client::PricingServiceClient;
 use celnet_proto::quote_service_client::QuoteServiceClient;
@@ -95,8 +106,6 @@ use idempotency::KeyMinter;
 pub struct Client {
     channel: Channel,
     keys: KeyMinter,
-    /// Monotonic per-client subscription id source for RFS streams.
-    next_sub_id: Arc<AtomicU64>,
 }
 
 impl Client {
@@ -124,7 +133,6 @@ impl Client {
         Self {
             channel,
             keys: KeyMinter::new(),
-            next_sub_id: Arc::new(AtomicU64::new(1)),
         }
     }
 
@@ -163,6 +171,8 @@ impl Client {
             instrument: Some(instrument.to_wire()),
             market: Some(market.to_wire()),
             conventions: Some(conventions.to_wire()),
+            correlation_id: None,
+            surface_version: None,
         };
         let resp = svc.price(request).await?.into_inner();
         let greeks = resp
@@ -248,6 +258,8 @@ impl Client {
             base_market: Some(base_market.to_wire()),
             conventions: Some(conventions.to_wire()),
             axes: axes.iter().map(|a| a.to_wire()).collect(),
+            expiry_years: instrument.expiry_years,
+            risk_buckets: None,
         };
         let resp = svc.scenario(request).await?.into_inner();
         ScenarioGrid::from_wire(resp)
@@ -255,20 +267,47 @@ impl Client {
 
     // ---- RFS streaming ----------------------------------------------------
 
-    /// Open a request-for-stream subscription for `instrument`, returning a typed
-    /// [`Subscription`] stream of [`StreamEvent`]s with gap-detection, resync, and
-    /// reconnect handled by the SDK. The subscription id is minted per client.
+    /// Open a multiplexed [`StreamSession`] over this client's connection: one
+    /// bidirectional gRPC channel over which the caller opens many
+    /// [`Subscription`]s and executes click-to-trade off the streamed lines. Many
+    /// instruments stream over ONE connection (a blotter uses one session, not one
+    /// stream per line), with gap-detection, resync, and reconnect handled by the
+    /// SDK.
     ///
     /// # Errors
     ///
-    /// [`ClientError`] if the bidirectional stream cannot be opened.
-    pub async fn subscribe(
+    /// [`ClientError`] if the bidirectional session stream cannot be opened.
+    pub async fn open_session(&self) -> ClientResult<StreamSession> {
+        StreamSession::open(self.channel.clone(), self.keys.clone()).await
+    }
+
+    /// Run a scenario / what-if grid (see [`Client::scenario`]) **and** the
+    /// book-shaped risk decomposition (bucketed vega per `(tenor, delta)` pillar,
+    /// cross-gamma per factor pair, theta roll over horizons) in one round-trip,
+    /// returning both the typed [`ScenarioGrid`] and the typed [`ScenarioRisk`].
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure or a malformed response.
+    pub async fn scenario_with_risk(
         &self,
-        instrument: InstrumentSpec,
+        instrument: &InstrumentSpec,
+        base_market: MarketContext,
+        axes: &[ShockAxis],
+        risk: &RiskRequest,
         conventions: Conventions,
-    ) -> ClientResult<Subscription> {
-        let sub_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
-        Subscription::open(self.channel.clone(), sub_id, instrument, conventions).await
+    ) -> ClientResult<ScenarioRisk> {
+        let mut svc = SurfaceServiceClient::new(self.channel.clone());
+        let request = ScenarioRequest {
+            instrument: Some(instrument.to_wire()),
+            base_market: Some(base_market.to_wire()),
+            conventions: Some(conventions.to_wire()),
+            axes: axes.iter().map(|a| a.to_wire()).collect(),
+            expiry_years: instrument.expiry_years,
+            risk_buckets: Some(risk.to_wire()),
+        };
+        let resp = svc.scenario(request).await?.into_inner();
+        ScenarioRisk::from_wire(resp)
     }
 }
 
@@ -305,6 +344,8 @@ impl Rfq {
             idempotency_key: self.idempotency_key.clone(),
             instrument: Some(self.instrument.to_wire()),
             conventions: Some(self.conventions.to_wire()),
+            correlation_id: None,
+            surface_version: None,
         };
         let resp = svc.request_quote(request).await?.into_inner();
         Quote::from_wire(resp)

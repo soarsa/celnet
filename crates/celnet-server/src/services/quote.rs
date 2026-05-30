@@ -73,7 +73,9 @@ use crate::clock::Clock;
 use crate::core_link::CoreLink;
 use crate::pricer::{ConventionSet, price_instrument};
 use crate::readiness::ReadinessGate;
+use crate::services::pin::{PinnedVol, resolve_pinned_vol};
 use crate::spread::SpreadModel;
+use crate::surface_book::SurfaceBook;
 
 /// How long an issued quote stays valid for a last-look accept, in nanoseconds
 /// (5 seconds — the typical OTC last-look window).
@@ -123,6 +125,9 @@ pub struct QuoteEdge {
     /// pricing path, so it does not touch the deterministic core.
     quote_id_secret: u64,
     store: Mutex<QuoteStore>,
+    /// The shared versioned marked-surface registry: a `QuoteRequest` carrying a
+    /// pinned `surface_version` prices against the marked surface (and echoes it).
+    surface_book: Arc<SurfaceBook>,
 }
 
 impl QuoteEdge {
@@ -133,6 +138,7 @@ impl QuoteEdge {
         gate: Arc<ReadinessGate>,
         spread: SpreadModel,
         clock: Clock,
+        surface_book: Arc<SurfaceBook>,
     ) -> Self {
         // Mint a process-unique unguessable secret from the OS-seeded hasher. This
         // is a control-plane identity concern, *not* a pricing path, so OS entropy
@@ -148,6 +154,7 @@ impl QuoteEdge {
             next_execution_id: AtomicU64::new(1),
             quote_id_secret,
             store: Mutex::new(QuoteStore::default()),
+            surface_book,
         }
     }
 
@@ -269,7 +276,19 @@ impl QuoteService for QuoteEdge {
             .map_err(|e| Status::invalid_argument(e.to_string()))?;
 
         let market = self.live_market().await?;
-        let priced = price_instrument(&instrument, &market, &conv)
+        // Resolve the optional pinned `surface_version`: an honoured pin prices the
+        // quote against the marked surface and is echoed on the `Quote`; an unknown
+        // pinned version is refused (the pin cannot be honoured).
+        let PinnedVol {
+            market: effective_market,
+            echo_version,
+        } = resolve_pinned_vol(
+            &self.surface_book,
+            req.surface_version,
+            &instrument,
+            &market,
+        )?;
+        let priced = price_instrument(&instrument, &effective_market, &conv)
             .map_err(|e| Status::invalid_argument(e.to_string()))?;
 
         let two_way = self.spread.two_way(priced.greeks.price, &priced.greeks);
@@ -285,6 +304,8 @@ impl QuoteService for QuoteEdge {
             resolved_strike: priced.resolved_strike,
             epoch_nanos: now,
             valid_until_nanos: now + QUOTE_VALIDITY_NANOS,
+            correlation_id: req.correlation_id,
+            surface_version: echo_version,
         };
 
         // Store under both keys (id always; idempotency key when present).

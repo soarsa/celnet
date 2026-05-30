@@ -1,0 +1,29 @@
+# cargo-nextest configuration — Celnet test execution policy.
+#
+# The engine's lock-free concurrency probes and the zero-allocation proof are
+# *global-resource sensitive*: the zero-alloc tests share a process-global counting
+# allocator (a thread-gated `ALLOCS`/`DEALLOCS` pair), and the seqlock/arc-swap
+# probes spin many reads against a hammering writer. If these co-schedule with each
+# other (or with each other's threads) they contend for CPU and, for the allocator
+# tests, would corrupt each other's global counters. We therefore pin them all to a
+# single serialized test-group so exactly one runs at a time — making the engine
+# suite fast and stable in BOTH `-p celnet-engine` (isolation) and `--workspace`.
+
+[profile.default]
+# A generous slow-timeout for the spin-heavy / allocator-sensitive tests: they are
+# internally wall-clock-capped (concurrency.rs `SPIN_CAP`) and finish in well under a
+# second normally, but on a heavily loaded CI box give them room before nextest flags
+# them slow — and a hard terminate so a wedged test can never hang the suite.
+slow-timeout = { period = "30s", terminate-after = 4 }
+
+# Serialize the global-resource-sensitive engine tests: at most one of the group runs
+# at any instant, across the whole run. This is what keeps the process-global alloc
+# counters uncorrupted and the spinning reads from starving each other.
+[test-groups]
+engine-serial = { max-threads = 1 }
+
+[[profile.default.overrides]]
+# The zero-allocation proofs (share the process-global counting allocator) and the
+# lock-free concurrency probes (CPU-spinning torn-read/coherent-publish detectors).
+filter = 'package(celnet-engine) & (test(/zero_alloc/) | binary(zero_alloc) | binary(concurrency))'
+test-group = 'engine-serial'

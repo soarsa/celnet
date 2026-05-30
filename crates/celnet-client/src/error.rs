@@ -33,6 +33,12 @@ pub enum ClientError {
     /// The RFS stream closed before the SDK could establish a baseline snapshot,
     /// or closed for a non-recoverable reason while a subscription was open.
     StreamClosed,
+    /// A click-to-trade [`crate::ExecuteOutcome`] could not be resolved because the
+    /// session re-dialed (a `DRAINING` blue-green cutover) while the click was in
+    /// flight: the in-flight token belonged to the pre-cutover session and can no
+    /// longer be booked, so the click is failed promptly rather than left to hang.
+    /// The caller re-clicks the *current* line on the reconnected session.
+    Reconnected,
     /// The endpoint URI handed to [`crate::Client::connect`] was malformed.
     InvalidEndpoint(String),
 }
@@ -49,6 +55,10 @@ impl core::fmt::Display for ClientError {
             }
             ClientError::Wire(e) => write!(f, "wire decode error: {e}"),
             ClientError::StreamClosed => write!(f, "RFS stream closed unexpectedly"),
+            ClientError::Reconnected => write!(
+                f,
+                "session re-dialed (blue-green cutover) while the click-to-trade was in flight; re-click the current line"
+            ),
             ClientError::InvalidEndpoint(uri) => write!(f, "invalid endpoint URI: {uri}"),
         }
     }

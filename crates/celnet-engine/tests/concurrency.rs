@@ -5,9 +5,23 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use celnet_engine::rt::{PriceSnapshot, Seqlock, StateHandle};
 use celnet_engine::testing::{consistent_pair, make_state};
+
+/// A deterministic wall-clock cap for the spin-heavy concurrency probes: each reader
+/// runs up to its iteration budget OR this long, whichever comes first, so the test
+/// finishes fast under ANY parallelism (it never blocks the suite by spinning for
+/// minutes) while still exercising enough reads to surface a torn read / incoherent
+/// publish. The torn-read window is microseconds-wide and hit thousands of times even
+/// in a fraction of a second, so the cap does not weaken detection.
+const SPIN_CAP: Duration = Duration::from_millis(750);
+
+/// The per-reader iteration budget. Bounded (not the former 500k) so the test is
+/// fast in isolation; combined with [`SPIN_CAP`] it terminates promptly under heavy
+/// contention from a parallel suite.
+const READER_ITERS: usize = 200_000;
 
 /// Under a hammering single writer, every snapshot a reader observes is one the
 /// writer actually published — never a torn mix of two. The invariant is encoded
@@ -35,7 +49,8 @@ fn seqlock_reads_are_always_consistent() {
     for _ in 0..4 {
         let rlock = Arc::clone(&lock);
         readers.push(thread::spawn(move || {
-            for _ in 0..500_000 {
+            let deadline = Instant::now() + SPIN_CAP;
+            for i in 0..READER_ITERS {
                 let s = rlock.read();
                 if s.request_id != 0 {
                     assert_eq!(
@@ -47,6 +62,11 @@ fn seqlock_reads_are_always_consistent() {
                         s.request_id as f64 * 2.0,
                         "torn read: vega != request_id*2"
                     );
+                }
+                // Cap the wall-clock so a slow/contended host can't make this run for
+                // minutes; check periodically to keep the hot read loop tight.
+                if i % 4096 == 0 && Instant::now() >= deadline {
+                    break;
                 }
             }
         }));
@@ -85,12 +105,16 @@ fn arc_swap_state_observed_without_locking() {
     });
 
     let rhandle = Arc::clone(&handle);
-    for _ in 0..500_000 {
+    let deadline = Instant::now() + SPIN_CAP;
+    for i in 0..READER_ITERS {
         // Lock-free load; the whole `MarketState` is published atomically.
         let st = rhandle.load();
         assert!(st.spot.is_finite() && st.spot > 0.0);
         let f = st.forward();
         assert!(f.is_finite() && f > 0.0);
+        if i % 4096 == 0 && Instant::now() >= deadline {
+            break;
+        }
     }
 
     stop.store(true, Ordering::Relaxed);

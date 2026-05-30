@@ -20,9 +20,11 @@
 //! * **`PricingService`** — one-shot instrument pricing ([`services::pricing`]);
 //! * **`QuoteService`** — the RFQ lifecycle (request → quote → accept → execution)
 //!   with client idempotency and a last-look validity window ([`services::quote`]);
-//! * **`StreamService`** — the bidirectional RFS subscription (per-instrument
-//!   snapshot + sequenced deltas + heartbeat + server-assisted resync)
-//!   ([`services::stream`]);
+//! * **`StreamService`** — the multiplexed bidirectional RFS session: one channel
+//!   carrying many subscriptions (each per-subscription snapshot + sequenced
+//!   deltas + heartbeat + server-assisted resync), in-place
+//!   [`celnet_proto::Modify`], and click-to-trade [`celnet_proto::Execute`]
+//!   booking off the streamed lines ([`services::stream`]);
 //! * **`SurfaceService`** — `GetSmile` / `MarkSurface` / `Scenario`
 //!   ([`services::surface`]).
 //!
@@ -37,6 +39,9 @@
 //! * [`pricer`] — the deterministic instrument→Greeks analytics router shared by
 //!   every service (vanilla / strategy / barrier / digital / touch).
 //! * [`spread`] — the maker two-way bid/offer model around a mid price.
+//! * [`surface_book`] — the versioned marked-surface registry every service shares:
+//!   `MarkSurface` deposits calibrated smiles under a fresh `surface_version`; the
+//!   pricing / RFQ / RFS paths pin a request to a marked surface against it.
 //! * [`clock`] — the edge wall-clock for message timestamping (outside pricing).
 //! * [`tick`] — a deterministic, seeded tick source for the RFS stream.
 //!
@@ -57,6 +62,7 @@ pub mod pricer;
 pub mod readiness;
 pub mod services;
 pub mod spread;
+pub mod surface_book;
 pub mod tick;
 
 pub use clock::Clock;
@@ -66,6 +72,7 @@ pub use core_link::{
 pub use pricer::{ConventionSet, PriceError, Priced, price_instrument};
 pub use readiness::{ReadinessGate, ServiceState};
 pub use spread::SpreadModel;
+pub use surface_book::{PinError, SurfaceBook};
 pub use tick::TickSource;
 
 use std::net::SocketAddr;
@@ -98,6 +105,7 @@ pub struct Edge {
     grpc_addr: SocketAddr,
     gate: Arc<ReadinessGate>,
     link: Arc<CoreLink>,
+    surface_book: Arc<SurfaceBook>,
     grpc_shutdown: oneshot::Sender<()>,
     grpc_task: tokio::task::JoinHandle<Result<(), tonic::transport::Error>>,
 }
@@ -125,28 +133,38 @@ impl Edge {
         clock: Clock,
     ) -> std::io::Result<Self> {
         let gate = Arc::new(ReadinessGate::new());
+        // The single versioned marked-surface registry every service shares: the
+        // surface edge deposits marks; the pricing / RFQ / RFS paths resolve a
+        // pinned `surface_version` against it (§ surface_version pinning).
+        let surface_book = Arc::new(SurfaceBook::new());
 
         let listener = TcpListener::bind(grpc_addr).await?;
         let bound = listener.local_addr()?;
         let (grpc_shutdown, grpc_rx) = oneshot::channel::<()>();
 
-        let pricing = PricingServiceServer::new(PricingEdge::new(Arc::clone(&gate)));
+        let pricing = PricingServiceServer::new(PricingEdge::new(
+            Arc::clone(&gate),
+            Arc::clone(&surface_book),
+        ));
         let quote = QuoteServiceServer::new(QuoteEdge::new(
             Arc::clone(&link),
             Arc::clone(&gate),
             spread,
             clock.clone(),
+            Arc::clone(&surface_book),
         ));
         let stream = StreamServiceServer::new(StreamEdge::new(
             Arc::clone(&link),
             Arc::clone(&gate),
             spread,
             clock.clone(),
+            Arc::clone(&surface_book),
         ));
         let surface = SurfaceServiceServer::new(SurfaceEdge::new(
             Arc::clone(&link),
             Arc::clone(&gate),
             clock,
+            Arc::clone(&surface_book),
         ));
 
         let incoming = tonic::transport::server::TcpIncoming::from_listener(listener, true, None)
@@ -167,6 +185,7 @@ impl Edge {
             grpc_addr: bound,
             gate,
             link,
+            surface_book,
             grpc_shutdown,
             grpc_task,
         })
@@ -188,6 +207,13 @@ impl Edge {
     #[must_use]
     pub fn link(&self) -> &Arc<CoreLink> {
         &self.link
+    }
+
+    /// The shared versioned marked-surface registry (so a test or admin path can
+    /// inspect which surface versions have been marked).
+    #[must_use]
+    pub fn surface_book(&self) -> &Arc<SurfaceBook> {
+        &self.surface_book
     }
 
     /// Gracefully drain and stop the edge for a blue-green cutover (§5).
