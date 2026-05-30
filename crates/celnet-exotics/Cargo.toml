@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Celnet FX exotics — barriers, touches, digitals, and the PDE/Monte-Carlo numerical engines."
+description = "Celnet FX exotics — analytic digitals, touches, double-no-touch and single/double barriers with a survival-weighted Vanna-Volga smile overlay."
 publish = false
 
 [lints]
@@ -15,8 +15,11 @@ workspace = true
 celnet-types.workspace = true
 celnet-core.workspace = true
 celnet-vanilla.workspace = true
-celnet-conventions.workspace = true
 celnet-surface.workspace = true
+# Deterministic software trig (sin/cos) for the Box-Muller normal route, on the
+# same `rust-lang/libm` path celnet-core's math uses — keeps every transcendental
+# bit-identical across platforms (celnet-core re-exports exp/ln/sqrt but not trig).
+libm.workspace = true
 
 [dev-dependencies]
 celnet-testkit.workspace = true

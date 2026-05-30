@@ -15,4 +15,4 @@ workspace = true
 celnet-types.workspace = true
 celnet-core.workspace = true
 celnet-vanilla.workspace = true
-celnet-surface.workspace = true
+celnet-exotics.workspace = true

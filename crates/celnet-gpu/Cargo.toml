@@ -14,6 +14,15 @@ workspace = true
 [dependencies]
 celnet-types.workspace = true
 celnet-core.workspace = true
+libm.workspace = true
 bytemuck.workspace = true
-wgpu.workspace = true
+# Enable the platform GPU backends here (cargo unions these with the workspace
+# `wgsl` feature). Metal drives this M4 host; vulkan/gles cover Linux CI
+# (incl. Lavapipe software Vulkan for headless runners) and dx12 covers Windows.
+# When none is available at runtime the backend falls back to the CPU oracle.
+wgpu = { workspace = true, features = ["metal", "vulkan", "gles", "dx12"] }
 pollster.workspace = true
+
+[dev-dependencies]
+# f64 closed-form oracle the Monte-Carlo backends reconcile against.
+celnet-vanilla.workspace = true
