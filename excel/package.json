@@ -17,6 +17,7 @@
     "@types/custom-functions-runtime": "^1.6.12",
     "@types/office-js": "1.0.460",
     "@types/ws": "8.5.13",
+    "exceljs": "^4.4.0",
     "tsx": "4.19.2",
     "typescript": "5.7.2",
     "vite": "6.0.7",

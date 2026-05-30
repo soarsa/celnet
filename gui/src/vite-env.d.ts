@@ -1,12 +1,13 @@
 /// <reference types="vite/client" />
 
-// Build-time transport selection (src/data/transportConfig.ts). Both optional;
-// unset ⇒ the deterministic in-app mock (the standalone default). One contract,
-// two transports — chosen at build time, never mixed at runtime.
+// Transport selection (src/data/transportConfig.ts). Both optional. The DEFAULT
+// is the LIVE WebSocket mirror against celnet-server; the in-app mock is an
+// explicit offline opt-in (`?mock` URL flag or VITE_CELNET_TRANSPORT=mock). One
+// contract, two transports — never mixed at runtime.
 interface ImportMetaEnv {
-  /** "ws" selects the live WebSocket transport; anything else keeps the mock. */
+  /** "mock" forces the offline in-app source; otherwise the live WS transport. */
   readonly VITE_CELNET_TRANSPORT?: string;
-  /** The `celnet-server` WS mirror endpoint, e.g. "ws://127.0.0.1:8081". */
+  /** Override the live `celnet-server` WS endpoint, e.g. "ws://127.0.0.1:8081". */
   readonly VITE_CELNET_WS_URL?: string;
 }
 

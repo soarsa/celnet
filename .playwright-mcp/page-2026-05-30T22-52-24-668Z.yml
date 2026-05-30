@@ -1,0 +1,147 @@
+- generic [ref=e3]:
+  - complementary "workspaces" [ref=e4]:
+    - generic "Celnet" [ref=e5]:
+      - generic [ref=e6]: ◆
+    - navigation [ref=e7]:
+      - button "⌁ Ticket" [ref=e8] [cursor=pointer]:
+        - generic [ref=e9]: ⌁
+        - generic [ref=e10]: Ticket
+      - button "≋ Stream" [ref=e11] [cursor=pointer]:
+        - generic [ref=e12]: ≋
+        - generic [ref=e13]: Stream
+      - button "◷ Surface" [ref=e14] [cursor=pointer]:
+        - generic [ref=e15]: ◷
+        - generic [ref=e16]: Surface
+      - button "⊞ Risk" [ref=e17] [cursor=pointer]:
+        - generic [ref=e18]: ⊞
+        - generic [ref=e19]: Risk
+    - button "☾" [ref=e21] [cursor=pointer]:
+      - generic [ref=e22]: ☾
+  - generic [ref=e23]:
+    - banner [ref=e24]:
+      - button "Celnet · EUR/USD ▾" [ref=e29] [cursor=pointer]:
+        - generic [ref=e30]: Celnet
+        - generic [ref=e31]: ·
+        - generic [ref=e32]: EUR/USD
+        - generic [ref=e33]: ▾
+      - button "⌘K Search / command…" [ref=e34] [cursor=pointer]:
+        - generic [ref=e35]: ⌘K
+        - generic [ref=e36]: Search / command…
+    - generic [ref=e38]:
+      - generic [ref=e39]:
+        - generic [ref=e40]: Pair
+        - generic [ref=e41]: Structure
+        - generic [ref=e42]: Tenor
+        - generic [ref=e43]: Bid
+        - generic [ref=e44]: Mid
+        - generic [ref=e45]: Offer
+        - generic [ref=e46]: Trend
+        - generic [ref=e47]: Δ
+        - generic [ref=e48]: σ
+        - generic "stream health" [ref=e49]: ◉
+      - grid "streaming two-way markets" [ref=e50]:
+        - generic [ref=e71]:
+          - generic [ref=e72]: EUR/USD
+          - generic [ref=e73]: ATM straddle
+          - generic [ref=e74]: 1M
+          - button "0.024" [ref=e75] [cursor=pointer]:
+            - generic [ref=e76]: "0.024"
+          - generic [ref=e77]: "0.027"
+          - button "0.029" [ref=e78] [cursor=pointer]:
+            - generic [ref=e79]:
+              - generic [ref=e80]: ▼
+              - text: "0.029"
+          - generic [ref=e83]: "+0.024"
+          - generic [ref=e84]: "10.55"
+          - img "stream healthy" [ref=e86]: ◉
+        - generic [ref=e87]:
+          - generic [ref=e88]: EUR/USD
+          - generic [ref=e89]: 25Δ RR
+          - generic [ref=e90]: 1M
+          - button "0.000" [disabled] [ref=e91]:
+            - generic [ref=e92]: "0.000"
+          - generic [ref=e93]: "0.000"
+          - button "0.000" [disabled] [ref=e94]:
+            - generic [ref=e95]:
+              - generic [ref=e96]: ▼
+              - text: "0.000"
+          - generic [ref=e99]: "+0.500"
+          - generic [ref=e100]: "10.55"
+          - img "stream healthy" [ref=e102]: ◉
+        - generic [ref=e103]:
+          - generic [ref=e104]: GBP/USD
+          - generic [ref=e105]: 10Δ strangle
+          - generic [ref=e106]: 2M
+          - button "0.004" [ref=e107] [cursor=pointer]:
+            - generic [ref=e108]: "0.004"
+          - generic [ref=e109]: "0.004"
+          - button "0.005" [ref=e110] [cursor=pointer]:
+            - generic [ref=e111]:
+              - generic [ref=e112]: ▼
+              - text: "0.005"
+          - generic [ref=e115]: "+0.004"
+          - generic [ref=e116]: "10.55"
+          - img "stream healthy" [ref=e118]: ◉
+        - generic [ref=e119]:
+          - generic [ref=e120]: USD/JPY
+          - generic [ref=e121]: ATM
+          - generic [ref=e122]: "ON"
+          - button "0.000" [disabled] [ref=e123]:
+            - generic [ref=e124]: "0.000"
+          - generic [ref=e125]: "0.005"
+          - button "0.009" [disabled] [ref=e126]:
+            - generic [ref=e127]:
+              - generic [ref=e128]: ▼
+              - text: "0.009"
+          - generic [ref=e131]: "+0.502"
+          - generic [ref=e132]: "10.55"
+          - img "stream healthy" [ref=e134]: ◉
+        - generic [ref=e135]:
+          - generic [ref=e136]: AUD/USD
+          - generic [ref=e137]: 10Δ strangle
+          - generic [ref=e138]: 3M
+          - button "0.005" [ref=e139] [cursor=pointer]:
+            - generic [ref=e140]: "0.005"
+          - generic [ref=e141]: "0.005"
+          - button "0.006" [ref=e142] [cursor=pointer]:
+            - generic [ref=e143]:
+              - generic [ref=e144]: ▲
+              - text: "0.006"
+          - generic [ref=e147]: "+0.005"
+          - generic [ref=e148]: "10.55"
+          - img "stream healthy" [ref=e150]: ◉
+        - generic [ref=e151]:
+          - generic [ref=e152]: EUR/USD
+          - generic [ref=e153]: seagull
+          - generic [ref=e154]: 3M
+          - button "0.000" [disabled] [ref=e155]:
+            - generic [ref=e156]: "0.000"
+          - generic [ref=e157]: "-0.001"
+          - button "-0.002" [disabled] [ref=e158]:
+            - generic [ref=e159]:
+              - generic [ref=e160]: ▲
+              - text: "-0.002"
+          - generic [ref=e163]: "+0.398"
+          - generic [ref=e164]: "10.55"
+          - img "stream healthy" [ref=e166]: ◉
+      - generic [ref=e51]:
+        - button "+ Subscribe (⌘K)" [ref=e52] [cursor=pointer]:
+          - generic [ref=e53]: + Subscribe (⌘K)
+        - generic [ref=e54]: Conflated 60Hz · click a side to trade · 3 LPs in competition
+    - contentinfo [ref=e55]:
+      - generic [ref=e56]:
+        - generic [ref=e57]: ◉
+        - text: Stream healthy
+      - generic [ref=e58]: ·
+      - generic [ref=e59]: seq 868
+      - generic [ref=e60]: ·
+      - generic [ref=e61]: 6/6 lines
+      - generic [ref=e62]: ·
+      - generic [ref=e63]: 3 LPs in competition
+      - generic [ref=e64]: ·
+      - generic [ref=e65]: 0 gaps
+      - generic "transport seam" [ref=e66]: live ws://127.0.0.1:8081
+      - generic [ref=e67]: ·
+      - generic "P99 inter-frame render time (target ≤8.3ms @120Hz, ceiling 16.6ms)" [ref=e68]: P99 render 9.4ms
+      - generic [ref=e69]: ·
+      - generic [ref=e70]: ◷ 23:52:24

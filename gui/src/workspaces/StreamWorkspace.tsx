@@ -53,7 +53,7 @@ function BlotterRow({ row }: { row: StreamRow }): React.ReactElement {
       <button
         className={`${styles.priceCell} ${styles.bidCell}`}
         disabled={!tradable || !sell}
-        onClick={() => sell && app.stream.execute(row.subscriptionId, sell.token)}
+        onClick={() => sell && app.stream.execute(row.subscriptionId, "SELL")}
         title={tradable ? "Hit the bid (SELL)" : "not tradable"}
       >
         <PriceTile value={row.price.bid} format={fmtPremiumPct} side="bid" />
@@ -62,7 +62,7 @@ function BlotterRow({ row }: { row: StreamRow }): React.ReactElement {
       <button
         className={`${styles.priceCell} ${styles.offerCell}`}
         disabled={!tradable || !buy}
-        onClick={() => buy && app.stream.execute(row.subscriptionId, buy.token)}
+        onClick={() => buy && app.stream.execute(row.subscriptionId, "BUY")}
         title={tradable ? "Lift the offer (BUY)" : "not tradable"}
       >
         <PriceTile value={row.price.offer} format={fmtPremiumPct} side="offer" showGlyph />

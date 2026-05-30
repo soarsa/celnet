@@ -1,0 +1,5 @@
+[      42ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=e0855137:20100
+[   10054ms] WsTransportError: request `mark_surface` timed out
+    at http://localhost:5173/src/data/wsTransport.ts?t=1780180629151:165:18
+[   10054ms] WsTransportError: request `mark_surface` timed out
+    at http://localhost:5173/src/data/wsTransport.ts?t=1780180629151:165:18
