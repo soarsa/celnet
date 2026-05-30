@@ -34,6 +34,7 @@ celnet-parity = { path = "crates/celnet-parity" }
 celnet-plugin-host = { path = "crates/celnet-plugin-host" }
 celnet-router = { path = "crates/celnet-router" }
 celnet-fix = { path = "crates/celnet-fix" }
+celnet-journal = { path = "crates/celnet-journal" }
 # External — pinned once, used everywhere (OSS / permissively licensed only)
 libm = "0.2"                                   # rust-lang/libm: correctly-rounded, cross-platform-identical transcendentals
 serde = { version = "1", features = ["derive"] }
