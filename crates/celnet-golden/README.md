@@ -17,7 +17,10 @@ as a failing test rather than a silently-mutated reference.
 - **QuantLib 1.42.1**, via the Python bindings in the venv at `~/.celnet-goldenv`.
 - Engine: `GarmanKohlagenProcess` + `AnalyticEuropeanEngine` (vanilla),
   `AnalyticBarrierEngine` (single barrier), `CashOrNothingPayoff` /
-  `AssetOrNothingPayoff` via `AnalyticEuropeanEngine` (digitals).
+  `AssetOrNothingPayoff` via `AnalyticEuropeanEngine` (digitals),
+  `AnalyticDoubleBarrierBinaryEngine` (touch / no-touch / DNT / double-touch —
+  single touches via the wide-corridor limit), `AnalyticDoubleBarrierEngine`
+  (double knock-out, with knock-in derived as `vanilla − KO`).
 - Frozen evaluation context: eval date 2026-06-15, Actual/365-Fixed day count,
   `NullCalendar`. Maturities are snapped to an integral number of Act/365F days
   so the year fraction QuantLib sees equals the `t` written to the CSV.
@@ -29,8 +32,10 @@ as a failing test rather than a silently-mutated reference.
 | `vanilla_gk.csv` | 3200 | price + spot delta, gamma, vega, theta, rho_dom, rho_for over spot × moneyness × vol × maturity × rate-pair × {call,put} |
 | `barrier_gk.csv` | 288 | analytic single-barrier prices over all eight flavours (down/up × in/out × call/put), zero rebate |
 | `digital_gk.csv` | 192 | analytic digital prices over both styles (cash-/asset-or-nothing) × call/put |
+| `touch_gk.csv` | 1224 | one-touch / no-touch / double-no-touch / double-touch (at-expiry rebate) over corridor/barrier × vol × maturity × rate-pair |
+| `double_barrier_gk.csv` | 432 | double-barrier knock-out (and knock-in complement) of a vanilla over corridor × strike × vol × maturity × rate-pair × {call,put} |
 
-All three tables are actively gated against the Celnet pricers:
+All five tables are actively gated against the Celnet pricers:
 
 - `vanilla_gk.csv` → `celnet-vanilla` (`tests/vanilla_grid.rs`).
 - `barrier_gk.csv` → `celnet-exotics::single_barrier_price` (`tests/barrier_grid.rs`).
@@ -41,6 +46,17 @@ All three tables are actively gated against the Celnet pricers:
 - `digital_gk.csv` → `celnet-exotics::digital_price` (`tests/digital_grid.rs`),
   for both settlement styles. The Celnet pricer returns the value per one payout
   unit, so the oracle row is scaled by its `payout`.
+- `touch_gk.csv` → `celnet-exotics::{one_touch_price, no_touch_price,
+  double_no_touch_price, double_touch_price}` (`tests/touch_grid.rs`). The
+  *independent* oracle the exotics crate's own complementarity checks cannot be:
+  `no_touch = df − one_touch` and `double_touch = df − dnt` hold by construction,
+  so they cannot catch a common-mode survival-series error — QuantLib's separate
+  double-barrier-binary reflection series can. Single touches are the
+  wide-corridor limit (one wall pushed ≳ 12σ√T away).
+- `double_barrier_gk.csv` → `celnet-exotics::double_knock_out_price`
+  (`tests/double_barrier_grid.rs`), KO directly and KI as `vanilla − KO`. The
+  independent oracle for the Ikeda-Kunitomo image series (it caught a put-leg sign
+  bug that the in-crate call-only Monte-Carlo check missed).
 
 Each table additionally carries a structural self-check (well-formed, finite,
 sane bounds) in `src/table.rs`.

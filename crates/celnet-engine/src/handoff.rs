@@ -25,7 +25,7 @@
 //! bit-identically to the source (validated in the tests).
 
 use celnet_conventions::ConventionRecord;
-use celnet_surface::VannaVolgaSmile;
+use celnet_surface::MarketHedgeSmile;
 use celnet_types::{
     AtmConvention, Cut, DayCount, DeltaConvention, OptionType, PremiumStyle, Settlement,
 };
@@ -292,7 +292,7 @@ pub fn serialize_state(market: &MarketState, book: &BookState) -> Vec<u8> {
     write_conventions(&mut w, &market.conventions);
 
     // Smile: three benchmark pillars + reference forward/time. This is the exact
-    // state from which `VannaVolgaSmile::new` reconstructs the identical smile.
+    // state from which `MarketHedgeSmile::new` reconstructs the identical smile.
     let strikes = market.smile.benchmark_strikes();
     let vols = market.smile.benchmark_vols();
     for &k in &strikes {
@@ -340,7 +340,7 @@ pub fn restore_state(bytes: &[u8]) -> Result<(MarketState, BookState), HandoffEr
     let vols = [r.f64()?, r.f64()?, r.f64()?];
     let smile_forward = r.f64()?;
     let smile_t = r.f64()?;
-    let smile = VannaVolgaSmile::new(strikes, vols, smile_forward, smile_t);
+    let smile = MarketHedgeSmile::new(strikes, vols, smile_forward, smile_t);
 
     let n = r.u64()? as usize;
     let mut entries = Vec::with_capacity(n);

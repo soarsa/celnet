@@ -78,10 +78,13 @@ pub enum RebateTiming {
 /// Present value of a **one-touch** paying `rebate` (domestic) if the spot
 /// touches `barrier` before `T`, with the rebate paid per [`RebateTiming`].
 ///
-/// The value is clamped to `[0, rebate]` (a probability-weighted payout cannot
-/// exceed the rebate nor fall below zero). `i.strike` is ignored — a touch has no
-/// strike. `side` is inferred from `barrier` vs `i.spot` if you use
-/// [`one_touch_price`]; the raw side-explicit form is private.
+/// The value is clamped to `[0, R·max(1, e^{−r_d T})]`: a probability-weighted
+/// payout cannot fall below zero nor exceed the rebate scaled by the largest
+/// applicable discount factor (under non-negative rates simply the rebate `R`;
+/// under negative domestic rates the deferred/at-hit payout can exceed the face).
+/// `i.strike` is ignored — a touch has no strike. `side` is inferred from
+/// `barrier` vs `i.spot` if you use [`one_touch_price`]; the raw side-explicit
+/// form is private.
 #[must_use]
 pub fn one_touch_price(i: &VanillaInputs, barrier: f64, rebate: f64, timing: RebateTiming) -> f64 {
     let side = TouchSide::from_levels(i.spot, barrier);
@@ -151,8 +154,16 @@ fn one_touch_with_side(
             rebate * exp(-i.r_dom * i.t) * prob
         }
     };
+    // Upper bound on a (discounted) touch value: the touch probability is ≤ 1, so
+    // the value cannot exceed the rebate times the largest applicable discount
+    // factor. Under non-negative rates that is the rebate itself; under *negative*
+    // domestic rates the deferred payout `R·e^{−r_d T}` (or the at-hit payout at
+    // the latest possible hit time) exceeds `R`, so clamping at `R` would wrongly
+    // truncate it. We therefore clamp by `R·max(1, e^{−r_d T})`.
+    let max_df = exp(-i.r_dom * i.t).max(1.0);
+    let upper = rebate.max(0.0) * max_df;
     if value.is_finite() {
-        value.clamp(0.0, rebate.max(0.0))
+        value.clamp(0.0, upper)
     } else {
         0.0
     }
@@ -178,8 +189,12 @@ fn pow_cdf(ln_hs: f64, p: f64, arg: f64) -> f64 {
 /// **deferred** one-touch (matching discount timing).
 #[must_use]
 pub fn no_touch_price(i: &VanillaInputs, barrier: f64, rebate: f64) -> f64 {
+    let df = exp(-i.r_dom * i.t);
     let ot = one_touch_price(i, barrier, rebate, RebateTiming::AtExpiry);
-    (rebate * exp(-i.r_dom * i.t) - ot).clamp(0.0, rebate.max(0.0))
+    // Bounded by the discounted rebate (the survive-probability ≤ 1 paid at expiry),
+    // which under negative domestic rates exceeds the rebate face — clamp by it, not
+    // by `rebate`, so the value is not wrongly truncated.
+    (rebate * df - ot).clamp(0.0, rebate.max(0.0) * df.max(1.0))
 }
 
 /// A double-no-touch contract: pays a domestic rebate at expiry iff the spot
@@ -325,8 +340,12 @@ fn single_wall_hit_prob(mu: f64, vsqt: f64, z: f64) -> f64 {
 /// `[0, R]`.
 #[must_use]
 pub fn double_no_touch_price(i: &VanillaInputs, dnt: DoubleNoTouch) -> f64 {
+    let df = exp(-i.r_dom * i.t);
     let surv = dnt_survival(i, dnt.lower, dnt.upper);
-    (dnt.rebate * exp(-i.r_dom * i.t) * surv).clamp(0.0, dnt.rebate.max(0.0))
+    // Survival ∈ [0, 1] is already enforced in `dnt_survival`; the value is that
+    // survival paid at expiry, bounded by the discounted rebate (which exceeds the
+    // face under negative domestic rates).
+    (dnt.rebate * df * surv).clamp(0.0, dnt.rebate.max(0.0) * df.max(1.0))
 }
 
 /// Present value of a **double-touch** (also "double-one-touch"): pays `rebate`
@@ -336,8 +355,9 @@ pub fn double_no_touch_price(i: &VanillaInputs, dnt: DoubleNoTouch) -> f64 {
 /// `[0, R]`.
 #[must_use]
 pub fn double_touch_price(i: &VanillaInputs, dnt: DoubleNoTouch) -> f64 {
+    let df = exp(-i.r_dom * i.t);
     let nt = double_no_touch_price(i, dnt);
-    (dnt.rebate * exp(-i.r_dom * i.t) - nt).clamp(0.0, dnt.rebate.max(0.0))
+    (dnt.rebate * df - nt).clamp(0.0, dnt.rebate.max(0.0) * df.max(1.0))
 }
 
 #[cfg(test)]
@@ -611,10 +631,12 @@ mod proptests {
             let ot_hit = one_touch_price(&i, barrier, 1.0, RebateTiming::AtHit);
             let ot_exp = one_touch_price(&i, barrier, 1.0, RebateTiming::AtExpiry);
             let nt = no_touch_price(&i, barrier, 1.0);
-            // The S1 [0, notional] clamp always holds.
-            prop_assert!((0.0..=1.0).contains(&ot_hit));
-            prop_assert!((0.0..=1.0).contains(&ot_exp));
-            prop_assert!((0.0..=1.0).contains(&nt));
+            // Probability-weighted (discounted) payouts lie in [0, max(1, df)] —
+            // under negative domestic rates the discounted face exceeds the notional.
+            let cap = exp(-i.r_dom * i.t).max(1.0) + 1e-12;
+            prop_assert!((0.0..=cap).contains(&ot_hit));
+            prop_assert!((0.0..=cap).contains(&ot_exp));
+            prop_assert!((0.0..=cap).contains(&nt));
             // Exact complementarity & timing dominance hold when the discounted
             // rebate ≤ rebate (non-negative domestic rate ⇒ clamp inactive).
             if i.r_dom >= 0.0 {
@@ -638,8 +660,10 @@ mod proptests {
             let dnt = DoubleNoTouch::new(lower, upper, 1.0);
             let nt = double_no_touch_price(&i, dnt);
             let dt = double_touch_price(&i, dnt);
-            prop_assert!((0.0..=1.0).contains(&nt));
-            prop_assert!((0.0..=1.0).contains(&dt));
+            // Discounted payouts in [0, max(1, df)] (df > 1 under negative r_d).
+            let cap = exp(-i.r_dom * i.t).max(1.0) + 1e-12;
+            prop_assert!((0.0..=cap).contains(&nt));
+            prop_assert!((0.0..=cap).contains(&dt));
             // Below each single no-touch (adding a wall only lowers survival).
             // The two prices come from different closed forms (image series vs the
             // 2-term touch formula); the inequality is numerically meaningful only

@@ -18,7 +18,13 @@
 //! * [`core`] — the **zero-allocation pricing core** (§3.3): consumes
 //!   [`celnet_vanilla`] and a published [`MarketState`] smile, producing price +
 //!   the full Greek set with **no heap allocation on the hot path** (all pools
-//!   pre-sized at construction).
+//!   pre-sized at construction). It owns the busy-poll lifecycle:
+//!   [`core::PricingCore::run`] drives the loop until a `stop` flag is set, with
+//!   a documented, race-free shutdown that performs a final lossless drain and
+//!   then returns (so a joining caller is guaranteed termination);
+//!   [`core::PricingCore::drain`] is the one-shot bounded poll the loop is built
+//!   from. Thread pinning for the core is provided by
+//!   [`rt::pin_current_thread_to_core`].
 //! * [`handoff`] — the **blue-green state handoff** (§5): a single, current,
 //!   *un-versioned* (ADR-0007) byte serialization of the engine's live book /
 //!   convention state, so a freshly-started process can restore the running
@@ -27,9 +33,13 @@
 //! # Determinism
 //!
 //! Every transcendental routes through `celnet_core::math`; every float compare
-//! routes through `celnet_core::is_close` / `assert_close!`. The hot path never
-//! allocates, never locks (readers are wait-free; the single writer publishes via
-//! `arc-swap` / seqlock), and never blocks.
+//! routes through `celnet_core::is_close` / `assert_close!`. The hot path
+//! **acquires no memory** — it never `alloc`/`realloc`s, never locks (readers
+//! are wait-free via a cached [`rt::StateReader`]; the single writer publishes
+//! via `arc-swap` / seqlock), and never blocks. (Reclaiming a *superseded*
+//! published [`MarketState`] when its `Arc` refcount reaches zero on a market
+//! tick is a `dealloc`, never an allocation; `tests/zero_alloc.rs` proves the
+//! acquiring count stays zero even under a concurrent publisher.)
 
 // NOTE: this crate intentionally does **not** `#![forbid(unsafe_code)]` — the
 // seqlock (`rt::seqlock`) and the allocation-counting test guard need a tightly
@@ -45,5 +55,5 @@ pub use core::{PriceRequest, PriceResponse, PricingCore};
 pub use handoff::{HandoffError, restore_state, serialize_state};
 pub use rt::{
     BookState, MarketState, PaddedCounter, PriceSnapshot, RequestRing, ResponseRing, Seqlock,
-    StateHandle, pin_current_thread_to_core,
+    StateHandle, StateReader, pin_current_thread_to_core,
 };

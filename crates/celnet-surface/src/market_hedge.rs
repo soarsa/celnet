@@ -41,6 +41,7 @@
 //! to detect that and fall back to an arbitrage-free model.
 
 use celnet_core::Smile;
+use celnet_core::is_close;
 use celnet_core::math::{ln, sqrt};
 use celnet_types::Vol;
 
@@ -48,7 +49,7 @@ use celnet_types::Vol;
 /// vanna-volga smile (typically the `dΔ` put wing, the ATM, and the `dΔ` call
 /// wing). `K₂` is the ATM strike and `σ₂` the ATM volatility used as `σ₀`.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct VannaVolgaSmile {
+pub struct MarketHedgeSmile {
     /// Benchmark strikes, strictly increasing `K₁ < K₂ < K₃`.
     strikes: [f64; 3],
     /// Benchmark volatilities at [`Self::strikes`].
@@ -59,7 +60,7 @@ pub struct VannaVolgaSmile {
     t: f64,
 }
 
-impl VannaVolgaSmile {
+impl MarketHedgeSmile {
     /// Construct a vanna-volga smile from three ordered benchmark pillars.
     ///
     /// `strikes` must be strictly increasing and positive; `vols` strictly
@@ -71,25 +72,50 @@ impl VannaVolgaSmile {
     /// Panics if the strikes are not strictly increasing and positive, if any
     /// vol is non-positive, or if `forward`/`t` are non-positive — these are
     /// construction-time programming errors, not runtime market conditions.
+    ///
+    /// Use [`Self::try_new`] for any smile built from **calibration-derived** or
+    /// **market-derived** volatilities, which can be degenerate (e.g. a
+    /// non-positive wing vol for an extreme risk-reversal): a library smile must
+    /// never panic on market input.
     #[must_use]
     pub fn new(strikes: [f64; 3], vols: [f64; 3], forward: f64, t: f64) -> Self {
-        assert!(
-            strikes[0] > 0.0 && strikes[0] < strikes[1] && strikes[1] < strikes[2],
-            "vanna-volga benchmark strikes must be strictly increasing and positive: {strikes:?}"
-        );
-        assert!(
-            vols.iter().all(|&v| v > 0.0),
-            "vanna-volga benchmark vols must be strictly positive: {vols:?}"
-        );
-        assert!(
-            forward > 0.0 && t > 0.0,
-            "vanna-volga forward and t must be positive: F={forward}, t={t}"
-        );
-        Self {
-            strikes,
-            vols,
-            forward,
-            t,
+        match Self::try_new(strikes, vols, forward, t) {
+            Some(s) => s,
+            None => panic!(
+                "vanna-volga benchmark pillars must be well-posed (strictly-increasing positive \
+                 strikes, strictly-positive vols, positive forward/t): \
+                 strikes={strikes:?}, vols={vols:?}, F={forward}, t={t}"
+            ),
+        }
+    }
+
+    /// Fallible constructor: build a vanna-volga smile from three benchmark
+    /// pillars, returning `None` instead of panicking when the inputs are not
+    /// well-posed.
+    ///
+    /// Returns `None` if `strikes` are not strictly increasing and positive, if
+    /// any `vol` is non-positive (`≤ 0` or non-finite), or if `forward`/`t` are
+    /// non-positive. This is the constructor to use anywhere the pillar
+    /// volatilities come from a **calibration** or directly from **market**
+    /// data, where a degenerate quote can force a non-positive wing vol — such
+    /// inputs are out-of-domain and must be rejected, never paniced on.
+    #[must_use]
+    pub fn try_new(strikes: [f64; 3], vols: [f64; 3], forward: f64, t: f64) -> Option<Self> {
+        let strikes_ok = strikes.iter().all(|&k| k.is_finite())
+            && strikes[0] > 0.0
+            && strikes[0] < strikes[1]
+            && strikes[1] < strikes[2];
+        let vols_ok = vols.iter().all(|&v| v.is_finite() && v > 0.0);
+        let scale_ok = forward.is_finite() && t.is_finite() && forward > 0.0 && t > 0.0;
+        if strikes_ok && vols_ok && scale_ok {
+            Some(Self {
+                strikes,
+                vols,
+                forward,
+                t,
+            })
+        } else {
+            None
         }
     }
 
@@ -211,7 +237,7 @@ impl VannaVolgaSmile {
     }
 }
 
-impl Smile for VannaVolgaSmile {
+impl Smile for MarketHedgeSmile {
     /// Implied vol at `strike`. The `forward`/`t` arguments let the engine
     /// re-evaluate the same smile at a (close) re-derived forward/time; the
     /// vanna-volga corrections are recomputed against the supplied `forward`/`t`
@@ -222,10 +248,13 @@ impl Smile for VannaVolgaSmile {
         // reference (the engine may pass a freshly-derived forward). Build a
         // transient view with the requested forward/time; the benchmark vols and
         // strikes are sticky-delta anchors and do not move.
-        if forward == self.forward && t == self.t {
+        // Exact-identity fast path: route the equality through `is_close` with
+        // zero tolerances (the platform's sanctioned way to test exact float
+        // equality, NaN-safe) rather than a literal `==`.
+        if is_close(forward, self.forward, 0.0, 0.0) && is_close(t, self.t, 0.0, 0.0) {
             Vol(self.vol_at(strike))
         } else {
-            let view = VannaVolgaSmile {
+            let view = MarketHedgeSmile {
                 strikes: self.strikes,
                 vols: self.vols,
                 forward,
@@ -242,9 +271,9 @@ mod tests {
     use celnet_core::is_close;
 
     /// A representative skewed smile: put wing 12.5, ATM 11, call wing 11.8.
-    fn smile() -> VannaVolgaSmile {
+    fn smile() -> MarketHedgeSmile {
         // EURUSD-like 1Y: F ≈ 1.11, strikes spread around it.
-        VannaVolgaSmile::new([1.02, 1.11, 1.20], [0.125, 0.11, 0.118], 1.11, 1.0)
+        MarketHedgeSmile::new([1.02, 1.11, 1.20], [0.125, 0.11, 0.118], 1.11, 1.0)
     }
 
     /// The smile reprices each benchmark exactly (the defining VV property).

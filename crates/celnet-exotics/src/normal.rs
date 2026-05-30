@@ -8,7 +8,7 @@
 //!   the Brownian bridge, because it is *monotone* in `u`: it maps the
 //!   one-dimensional low-discrepancy structure of `u` straight onto the normal
 //!   axis without the angular scrambling a Box-Muller pair would introduce.
-//! * [`box_muller`] — the classic trigonometric pair transform, turning two
+//! * [`gaussian_pair_from_uniforms`] — the classic trigonometric pair transform, turning two
 //!   uniforms into two independent normals. Provided as the second mandated route
 //!   and cross-checked against [`inverse_cdf`] on the distribution moments.
 //!
@@ -59,7 +59,7 @@ const D: [f64; 4] = [
 /// Standard-normal inverse cumulative distribution `Φ⁻¹(p)` for `p ∈ (0,1)`.
 ///
 /// Returns `±∞` only at the open-interval endpoints, which the
-/// [`crate::rng::PhiloxStream`] never produces. Accuracy is full double
+/// [`crate::rng::CounterRng`] never produces. Accuracy is full double
 /// precision after one Halley step.
 #[must_use]
 pub fn inverse_cdf(p: f64) -> f64 {
@@ -95,7 +95,7 @@ pub fn inverse_cdf(p: f64) -> f64 {
 /// Used as the second normal-generation route mandated by the engine spec. The
 /// `u1` argument feeds the radial part (`√(−2 ln u1)`) and `u2` the angle.
 #[must_use]
-pub fn box_muller(u1: f64, u2: f64) -> (f64, f64) {
+pub fn gaussian_pair_from_uniforms(u1: f64, u2: f64) -> (f64, f64) {
     let r = sqrt(-2.0 * ln(u1));
     let theta = core::f64::consts::TAU * u2;
     // Trig goes through the `rust-lang/libm` software routines (not the system
@@ -151,12 +151,12 @@ mod tests {
 
     /// Box-Muller produces unit-variance, zero-mean normals (moment check).
     #[test]
-    fn box_muller_moments() {
-        let mut s = crate::rng::PhiloxStream::new(0xAA55, 0, 0, 0);
+    fn gaussian_pair_moments() {
+        let mut s = crate::rng::CounterRng::new(0xAA55, 0, 0, 0);
         let n = 500_000usize;
         let (mut sum, mut sumsq) = (0.0, 0.0);
         for _ in 0..n {
-            let (z0, z1) = box_muller(s.next_u01(), s.next_u01());
+            let (z0, z1) = gaussian_pair_from_uniforms(s.next_u01(), s.next_u01());
             sum += z0 + z1;
             sumsq += z0 * z0 + z1 * z1;
         }

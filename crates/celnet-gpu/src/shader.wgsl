@@ -36,7 +36,7 @@ struct Params {
 
 const WG_SIZE : u32 = 256u;
 
-// Philox-4x32-10 constants — identical to crate::philox.
+// Philox-4x32-10 constants — identical to crate::counter_rng.
 const PHILOX_MUL_0 : u32 = 0xD2511F53u;
 const PHILOX_MUL_1 : u32 = 0xCD9E8D57u;
 const PHILOX_KEY_BUMP_0 : u32 = 0x9E3779B9u;
@@ -73,8 +73,8 @@ fn mul_hi_lo(a : u32, b : u32) -> vec2<u32> {
     return vec2<u32>(hi, lo);
 }
 
-// One Philox round on counter c under key k (matches crate::philox::philox_round).
-fn philox_round(c : vec4<u32>, k : vec2<u32>) -> vec4<u32> {
+// One Philox round on counter c under key k (matches crate::counter_rng::counter_round).
+fn counter_round(c : vec4<u32>, k : vec2<u32>) -> vec4<u32> {
     let m0 = mul_hi_lo(PHILOX_MUL_0, c.x); // (hi0, lo0)
     let m1 = mul_hi_lo(PHILOX_MUL_1, c.z); // (hi1, lo1)
     return vec4<u32>(
@@ -85,23 +85,23 @@ fn philox_round(c : vec4<u32>, k : vec2<u32>) -> vec4<u32> {
     );
 }
 
-// Full 10-round Philox-4x32-10 bijection (matches crate::philox::philox_4x32_10).
-fn philox_4x32_10(counter : vec4<u32>, key_in : vec2<u32>) -> vec4<u32> {
+// Full 10-round Philox-4x32-10 bijection (matches crate::counter_rng::counter_block).
+fn counter_block(counter : vec4<u32>, key_in : vec2<u32>) -> vec4<u32> {
     var c = counter;
     var k = key_in;
     for (var r : u32 = 0u; r < 10u; r = r + 1u) {
-        c = philox_round(c, k);
+        c = counter_round(c, k);
         k.x = k.x + PHILOX_KEY_BUMP_0;
         k.y = k.y + PHILOX_KEY_BUMP_1;
     }
     return c;
 }
 
-// Raw uniform integer for (path, step, dim) — matches PhiloxNormals::raw_u32.
-fn philox_raw(path : u32, step : u32, dim : u32) -> u32 {
+// Raw uniform integer for (path, step, dim) — matches CounterNormals::raw_u32.
+fn counter_raw(path : u32, step : u32, dim : u32) -> u32 {
     let counter = vec4<u32>(path, step, dim >> 2u, PHILOX_DOMAIN_TAG);
     let key = vec2<u32>(params.seed_lo, params.seed_hi);
-    let block = philox_4x32_10(counter, key);
+    let block = counter_block(counter, key);
     let lane = dim & 3u;
     // Index the block lane without dynamic array indexing.
     if (lane == 0u) { return block.x; }
@@ -110,17 +110,17 @@ fn philox_raw(path : u32, step : u32, dim : u32) -> u32 {
     return block.w;
 }
 
-// Open-interval uniform (0,1) in f32 — matches PhiloxNormals::uniform.
-fn philox_uniform(path : u32, step : u32, dim : u32) -> f32 {
-    let u = philox_raw(path, step, dim);
+// Open-interval uniform (0,1) in f32 — matches CounterNormals::uniform.
+fn counter_uniform(path : u32, step : u32, dim : u32) -> f32 {
+    let u = counter_raw(path, step, dim);
     // (u + 0.5) * 2^-32 in f32.
     return (f32(u) + 0.5) * (1.0 / 4294967296.0);
 }
 
-// Standard normal via Box-Muller cosine branch — matches PhiloxNormals::normal.
-fn philox_normal(path : u32, step : u32, dim : u32) -> f32 {
-    let u1 = philox_uniform(path, step, 2u * dim);
-    let u2 = philox_uniform(path, step, 2u * dim + 1u);
+// Standard normal via Box-Muller cosine branch — matches CounterNormals::normal.
+fn counter_normal(path : u32, step : u32, dim : u32) -> f32 {
+    let u1 = counter_uniform(path, step, 2u * dim);
+    let u2 = counter_uniform(path, step, 2u * dim + 1u);
     let r = sqrt(-2.0 * log(u1));
     return r * cos(TAU * u2);
 }
@@ -134,7 +134,7 @@ fn mc_vanilla(
     let path = gid.x;
     var payoff : f32 = 0.0;
     if (path < params.paths) {
-        let z = philox_normal(path, 0u, 0u);
+        let z = counter_normal(path, 0u, 0u);
         let ln_st = params.ln_spot + params.mu_term + params.vol_sqrt_t * z;
         let st = exp(ln_st);
         payoff = max(params.sign * (st - params.strike), 0.0);

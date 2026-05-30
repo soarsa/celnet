@@ -11,9 +11,11 @@
 //!    state — see below), producing a mid and the full Greek set;
 //! 2. turns the mid into a tradable two-way bid/offer via the [`crate::spread`]
 //!    model;
-//! 3. assigns a stable, monotonic `quote_id`, stamps a publication time and a
-//!    `valid_until` last-look deadline, and stores the quote keyed by both
-//!    `quote_id` and the client idempotency key.
+//! 3. assigns a stable, **unguessable** `quote_id` (a fresh monotonic counter
+//!    folded through a per-process-keyed `splitmix64` bijection — unique but not
+//!    enumerable), stamps a publication time and a `valid_until` last-look
+//!    deadline, and stores the quote keyed by both `quote_id` and the client
+//!    idempotency key.
 //!
 //! # Idempotency
 //!
@@ -22,6 +24,23 @@
 //! (same `quote_id`, same prices), never re-pricing and never issuing a new id. A
 //! retried `AcceptQuote` on an already-booked quote returns the **same**
 //! [`celnet_proto::Execution`], so a network retry can never double-book.
+//!
+//! # Trust model (request-matched accept / unguessable id)
+//!
+//! `quote_id` is **not** an authority token. `AcceptQuote` is request-matched to
+//! the originating idempotency key: an accept whose `idempotency_key` does not
+//! equal the key the quote was minted under is refused with `invalid_argument`, so
+//! a party that merely learns a `quote_id` cannot accept (or hijack the booking
+//! of) another requester's live quote. An accept-retry returns the stored
+//! execution only when both the key **and** the traded side match; a side flip is
+//! a different intent and is refused with `failed_precondition`.
+//!
+//! `RejectQuote` carries no key on the wire (the contract has only `quote_id` +
+//! free-text `reason`), so it cannot be request-matched the same way. Instead,
+//! every `quote_id` is **unguessable** — minted by folding a strictly-fresh
+//! monotonic counter through a `splitmix64` bijection keyed by a per-process
+//! secret — so the id space is sparse and unenumerable: only a party that received
+//! the quote (and thus holds its id) can decline it. A re-reject is idempotent.
 //!
 //! # Market context
 //!
@@ -34,10 +53,13 @@
 
 #![allow(clippy::result_large_err)]
 
+use std::collections::HashMap;
+use std::collections::hash_map::RandomState;
+use std::hash::{BuildHasher, Hasher};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use std::collections::HashMap;
+use crate::tick::TickSource;
 
 use celnet_proto::quote_service_server::QuoteService;
 use celnet_proto::{
@@ -92,6 +114,14 @@ pub struct QuoteEdge {
     clock: Clock,
     next_quote_id: AtomicU64,
     next_execution_id: AtomicU64,
+    /// A per-process secret folded into every minted `quote_id` so ids are
+    /// **unguessable** (not a dense monotonic sequence a third party can
+    /// enumerate). Combined with the idempotency-key match on accept, this is the
+    /// in-band trust model: `quote_id` alone is not an authority token — accepting
+    /// requires the originating key, and rejecting requires possession of the
+    /// (unguessable) id. Seeded from the OS-random [`RandomState`], never the
+    /// pricing path, so it does not touch the deterministic core.
+    quote_id_secret: u64,
     store: Mutex<QuoteStore>,
 }
 
@@ -104,6 +134,11 @@ impl QuoteEdge {
         spread: SpreadModel,
         clock: Clock,
     ) -> Self {
+        // Mint a process-unique unguessable secret from the OS-seeded hasher. This
+        // is a control-plane identity concern, *not* a pricing path, so OS entropy
+        // is appropriate (the determinism / counter-RNG guardrail governs pricing,
+        // which never consumes this value).
+        let quote_id_secret = RandomState::new().build_hasher().finish();
         Self {
             link,
             gate,
@@ -111,7 +146,24 @@ impl QuoteEdge {
             clock,
             next_quote_id: AtomicU64::new(1),
             next_execution_id: AtomicU64::new(1),
+            quote_id_secret,
             store: Mutex::new(QuoteStore::default()),
+        }
+    }
+
+    /// Mint the next **unguessable** `quote_id`: a strictly-fresh monotonic counter
+    /// folded through the public-domain `splitmix64` bijection keyed by the
+    /// per-process secret. `splitmix64` is a bijection over `u64`, so distinct
+    /// counters yield distinct ids (no collision) while the secret makes the id
+    /// space sparse and unenumerable. The lone counter that would map to `0` is
+    /// skipped so every id is `>= 1` (a valid, non-sentinel quote id).
+    fn mint_quote_id(&self) -> u64 {
+        loop {
+            let n = self.next_quote_id.fetch_add(1, Ordering::Relaxed);
+            let id = TickSource::splitmix64(self.quote_id_secret ^ n);
+            if id != 0 {
+                return id;
+            }
         }
     }
 
@@ -164,6 +216,18 @@ fn idempotency_conflict(key: &str) -> Status {
     ))
 }
 
+/// The status returned when an `AcceptQuote` carries an idempotency key that does
+/// not match the key the quote was minted under — `invalid_argument`. The accept
+/// must be request-matched to the originating key; a `quote_id` alone is not an
+/// authority token, so a party that merely learns the id cannot accept another
+/// requester's quote. The key value is never echoed (avoid leaking the secret).
+fn accept_key_mismatch(quote_id: u64) -> Status {
+    Status::invalid_argument(format!(
+        "accept for quote {quote_id} did not carry the originating idempotency key; \
+         an accept must be request-matched to the key the quote was issued under"
+    ))
+}
+
 #[tonic::async_trait]
 impl QuoteService for QuoteEdge {
     async fn request_quote(
@@ -211,7 +275,7 @@ impl QuoteService for QuoteEdge {
         let two_way = self.spread.two_way(priced.greeks.price, &priced.greeks);
 
         let now = self.clock.now_nanos();
-        let quote_id = self.next_quote_id.fetch_add(1, Ordering::Relaxed);
+        let quote_id = self.mint_quote_id();
         let quote = Quote {
             quote_id,
             idempotency_key: req.idempotency_key.clone(),
@@ -270,8 +334,36 @@ impl QuoteService for QuoteEdge {
             .ok_or_else(|| Status::not_found(format!("unknown quote_id {}", acc.quote_id)))?
             .clone();
 
-        // Idempotent accept: a retry returns the already-booked execution.
+        // Request-matched idempotency: an accept must carry the *same* idempotency
+        // key the quote was minted under. The `quote_id` alone is not an authority
+        // token; binding the accept to the originating key stops any party that
+        // merely learns a `quote_id` from accepting another requester's live quote,
+        // and makes an accept-retry safe only for the genuine originator. (Mirrors
+        // the request-matched contract `RequestQuote` already enforces.)
+        if acc.idempotency_key != rec.quote.idempotency_key {
+            return Err(accept_key_mismatch(acc.quote_id));
+        }
+
+        // Idempotent accept: a retry returns the already-booked execution — but
+        // only when the retry's traded side matches the booked side. A second
+        // accept that flips the side is a different trade intent, not a retry, so
+        // it is refused (`failed_precondition`) rather than handed a booking it did
+        // not ask for. The key already matched above.
         if let Some(exec) = &rec.execution {
+            let retry_side = Side::try_from(acc.side).unwrap_or(Side::Buy);
+            let booked_side = Side::try_from(exec.side).unwrap_or(Side::Buy);
+            let effective_retry_side = if retry_side == Side::Sell {
+                Side::Sell
+            } else {
+                Side::Buy
+            };
+            if effective_retry_side != booked_side {
+                return Err(Status::failed_precondition(format!(
+                    "quote {} already booked on side {booked_side:?}; \
+                     accept-retry requested side {effective_retry_side:?}",
+                    acc.quote_id
+                )));
+            }
             return Ok(Response::new(exec.clone()));
         }
 
@@ -331,8 +423,11 @@ impl QuoteService for QuoteEdge {
         let rej = request.into_inner();
 
         let mut store = self.store.lock().await;
-        // A reject on an unknown quote is a client error; a reject on a booked
-        // quote is rejected (it already traded).
+        // The reject is authorised by possession of the (unguessable) quote_id —
+        // see the module "Trust model" doc: the id space is sparse/unenumerable, so
+        // only a party that received the quote can decline it. A reject on an
+        // unknown quote is a client error; a reject on a booked quote is refused (it
+        // already traded).
         let rec = store
             .by_id
             .get_mut(&rej.quote_id)

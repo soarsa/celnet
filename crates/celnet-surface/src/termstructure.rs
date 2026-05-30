@@ -270,7 +270,7 @@ impl<S: Smile + Clone, C: BusinessClock> TermStructure<S, C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::svi::SviSlice;
+    use crate::parametric::ParametricSlice;
     use celnet_core::FlatSmile;
 
     /// Two flat-smile pillars with increasing total variance produce a
@@ -291,8 +291,8 @@ mod tests {
     /// Total variance is monotone even when interpolating between SVI pillars.
     #[test]
     fn svi_pillars_calendar_free() {
-        let s0 = SviSlice::new(0.004, 0.03, -0.2, 0.0, 0.08, 1.10, 0.5);
-        let s1 = SviSlice::new(0.010, 0.05, -0.2, 0.0, 0.10, 1.11, 1.5);
+        let s0 = ParametricSlice::new(0.004, 0.03, -0.2, 0.0, 0.08, 1.10, 0.5);
+        let s1 = ParametricSlice::new(0.010, 0.05, -0.2, 0.0, 0.10, 1.11, 1.5);
         let p0 = TenorPillar::new(s0, 1.10, 0.5);
         let p1 = TenorPillar::new(s1, 1.11, 1.5);
         let ts = TermStructure::new(vec![p0, p1]);

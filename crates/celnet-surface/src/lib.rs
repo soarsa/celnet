@@ -17,35 +17,35 @@
 //!    smile-strangle calibration ([`strangle`]) — an *iterative* fixed point, not
 //!    the naive arithmetic average that silently biases the wings (the "#1
 //!    production bug", `docs/ANALYTICS-SPEC.md` §1.4);
-//! 3. evaluates as a **Vanna-Volga** smile ([`vannavolga`]) implementing
-//!    [`celnet_core::Smile`], the FX-market-standard light interpolation in its
-//!    second-order, exact-repricing form;
+//! 3. evaluates as a market-hedge smile ([`market_hedge`]) implementing
+//!    [`celnet_core::Smile`], the FX-market-standard light interpolation (the
+//!    vanna-volga method) in its second-order, exact-repricing form;
 //! 4. is checked against **static no-arbitrage laws** ([`arbitrage`]) — butterfly
 //!    (implied density ≥ 0) and vertical-spread monotonicity — which the surface
-//!    layer uses to detect when Vanna-Volga must fall back to an arbitrage-free
-//!    model in the wings.
+//!    layer uses to detect when the market-hedge baseline must fall back to an
+//!    arbitrage-free model in the wings.
 //!
 //! # Pipeline
 //!
 //! [`build_smile`] is the end-to-end entry point: resolve conventions →
 //! locate the ATM strike → calibrate the inner (`25Δ`) pillar against its broker
 //! strangle → assemble the three anchor pillars (put wing, ATM, call wing) →
-//! return a [`vannavolga::VannaVolgaSmile`]. The lower-level modules are public so
+//! return a [`market_hedge::MarketHedgeSmile`]. The lower-level modules are public so
 //! the engine layer can compose them differently (e.g. five-point smiles, or a
 //! different smile model anchored on the same calibrated pillars).
 //!
 //! # Beyond the broker baseline (S2)
 //!
-//! On top of the Vanna-Volga baseline this crate provides the production smile
+//! On top of the market-hedge baseline this crate provides the production smile
 //! models and the term-structure machinery that tie tenor slices into a full,
 //! re-strikable, arbitrage-aware surface:
 //!
-//! * [`sabr`] — a stochastic-alpha-beta-rho smile (the singular-perturbation
+//! * [`stochvol`] — a stochastic-volatility smile (the singular-perturbation
 //!   lognormal expansion plus an arbitrage-free density-PDE refinement for the
-//!   wings) implementing [`celnet_core::Smile`];
-//! * [`svi`] / [`ssvi`] — the stochastic-volatility-inspired **raw** slice and
-//!   the **surface** form, the latter carrying closed-form static
-//!   no-arbitrage (butterfly + calendar) conditions;
+//!   wings, the SABR method) implementing [`celnet_core::Smile`];
+//! * [`parametric`] / [`parametric_surface`] — the parametric total-variance
+//!   **slice** and the **surface** form (the SVI / SSVI methods), the latter
+//!   carrying closed-form static no-arbitrage (butterfly + calendar) conditions;
 //! * [`termstructure`] — interpolation in **total variance / business time**
 //!   (calendar-arbitrage-free: total variance non-decreasing in maturity), tying
 //!   slices into a continuously re-strikable surface;
@@ -54,39 +54,41 @@
 //!
 //! # Method provenance (doc-only)
 //!
-//! Vanna-volga: Castagna & Mercurio (2007). Market→smile strangle calibration:
-//! Reiswich & Wystup (2010); Clark (2011). SABR expansion and arbitrage-free
-//! density: Hagan, Kumar, Lesniewski & Woodward (2002, 2014). SVI/SSVI and the
-//! closed-form no-arbitrage conditions: Gatheral (2004), Gatheral & Jacquier
-//! (2014). Density / arbitrage conditions: Breeden-Litzenberger; Durrleman.
-//! Provenance lives in doc comments only — identifiers are purpose-named and
-//! vendor/research-neutral (SABR/SVI/SSVI are established neutral acronyms).
+//! The market-hedge baseline uses the vanna-volga method (Castagna & Mercurio,
+//! 2007). Market→smile strangle calibration: Reiswich & Wystup (2010); Clark
+//! (2011). The stochastic-volatility smile uses the SABR expansion and an
+//! arbitrage-free density: Hagan, Kumar, Lesniewski & Woodward (2002, 2014). The
+//! parametric slice / surface use the SVI / SSVI methods and their closed-form
+//! no-arbitrage conditions: Gatheral (2004), Gatheral & Jacquier (2014). Density
+//! / arbitrage conditions: Breeden-Litzenberger; Durrleman. All such names are
+//! provenance only — every public identifier is purpose-named and
+//! vendor/research-neutral.
 
 #![forbid(unsafe_code)]
 
 pub mod arbitrage;
+pub mod market_hedge;
+pub mod parametric;
+pub mod parametric_surface;
 pub mod quotes;
-pub mod sabr;
-pub mod ssvi;
+pub mod stochvol;
 pub mod strangle;
 pub mod surface;
-pub mod svi;
 pub mod termstructure;
-pub mod vannavolga;
 
 mod mathx;
 
 pub use arbitrage::{ArbitrageReport, check_slice, implied_density};
+pub use market_hedge::MarketHedgeSmile;
+pub use parametric::ParametricSlice;
+pub use parametric_surface::ParametricSurface;
 pub use quotes::{DeltaPillar, MarketContext, MarketQuotes, RiskReversalButterfly};
-pub use sabr::{SabrParams, SabrSmile};
-pub use ssvi::SsviSurface;
+pub use stochvol::{StochasticVolParams, StochasticVolSmile, WingDensity};
 pub use strangle::{
     CalibratedPillar, CalibrationError, MarketStrangle, calibrate_pillar, market_strangle,
 };
 pub use surface::{SmileModel, SurfaceArbitrageReport, VolSurface};
-pub use svi::SviSlice;
 pub use termstructure::{BusinessClock, CalendarClock, TenorPillar, TermStructure};
-pub use vannavolga::VannaVolgaSmile;
 
 /// Build a calibrated Vanna-Volga smile from broker market quotes.
 ///
@@ -95,7 +97,7 @@ pub use vannavolga::VannaVolgaSmile;
 /// `10Δ`), runs the market(broker)-strangle → smile-strangle calibration on the
 /// **inner (`25Δ`)** pillar so the smile reprices the broker strangle exactly,
 /// and assembles the three anchor pillars (put wing, ATM, call wing) into a
-/// [`VannaVolgaSmile`] implementing [`celnet_core::Smile`].
+/// [`MarketHedgeSmile`] implementing [`celnet_core::Smile`].
 ///
 /// The `10Δ` pillar, when present, is used only to *validate* the constructed
 /// smile (the three-point Vanna-Volga anchors on the `25Δ` wings; the `10Δ` wing
@@ -110,7 +112,7 @@ pub use vannavolga::VannaVolgaSmile;
 pub fn build_smile(
     ctx: &MarketContext,
     quotes: &MarketQuotes,
-) -> Result<VannaVolgaSmile, CalibrationError> {
+) -> Result<MarketHedgeSmile, CalibrationError> {
     Ok(build_smile_and_outer(ctx, quotes)?.0)
 }
 
@@ -125,7 +127,7 @@ pub fn build_smile(
 pub fn build_smile_and_outer(
     ctx: &MarketContext,
     quotes: &MarketQuotes,
-) -> Result<(VannaVolgaSmile, Option<CalibratedPillar>), CalibrationError> {
+) -> Result<(MarketHedgeSmile, Option<CalibratedPillar>), CalibrationError> {
     let atm_vol = quotes.atm_vol;
 
     // Calibrate the inner (25Δ) pillar to its broker strangle.
@@ -138,10 +140,16 @@ pub fn build_smile_and_outer(
     };
 
     // Assemble the three Vanna-Volga anchor pillars: put wing, ATM, call wing.
+    // The pillar came from `calibrate_pillar`, whose Ok already guarantees
+    // strictly-positive wing vols and a well-ordered slice; we still build the
+    // smile through the fallible constructor so the assembly is *robust* — a
+    // library smile must never panic on quote-derived inputs. A degenerate set
+    // surfaces as a calibration error, never a panic.
     let atm_strike = ctx.atm_strike(atm_vol);
     let strikes = [inner.put_strike, atm_strike, inner.call_strike];
     let vols = [inner.put_vol, atm_vol, inner.call_vol];
-    let smile = VannaVolgaSmile::new(strikes, vols, ctx.forward(), ctx.t);
+    let smile = MarketHedgeSmile::try_new(strikes, vols, ctx.forward(), ctx.t)
+        .ok_or(CalibrationError::DegenerateQuote)?;
 
     Ok((smile, outer))
 }
@@ -202,15 +210,23 @@ mod tests {
             1e-12
         ));
 
-        // And the broker (market) strangle is repriced by the smile wings.
-        let call = price(OptionType::Call, &c.template(cal.call_strike, cal.call_vol));
-        let put = price(OptionType::Put, &c.template(cal.put_strike, cal.put_vol));
-        assert!(is_close(
+        // NON-VACUOUS broker reprice: evaluate the constructed smile AT THE
+        // BROKER strangle strikes (which are not smile pillars) and require the
+        // two options, priced at the smile's interpolated vols there, to sum to
+        // the market strangle. This exercises smile.implied_vol() at the broker
+        // strikes — the step the audit found missing.
+        let ms = market_strangle(&c, q.atm_vol, q.inner).unwrap();
+        let f = c.forward();
+        let vol_call = smile.implied_vol(ms.call_strike, f, c.t).0;
+        let vol_put = smile.implied_vol(ms.put_strike, f, c.t).0;
+        let call = price(OptionType::Call, &c.template(ms.call_strike, vol_call));
+        let put = price(OptionType::Put, &c.template(ms.put_strike, vol_put));
+        assert!(
+            is_close(call + put, cal.market_strangle_price, 1e-9, 1e-11),
+            "smile @ broker strikes {} must reprice market strangle {}",
             call + put,
-            cal.market_strangle_price,
-            1e-10,
-            1e-12
-        ));
+            cal.market_strangle_price
+        );
     }
 
     /// The constructed mild-quote smile passes the static arbitrage checks.
@@ -266,28 +282,35 @@ mod tests {
             ms.price
         );
 
-        // The calibrated smile DOES reprice it.
+        // The calibrated smile DOES reprice it — evaluated at the BROKER strikes
+        // `ms.call_strike`/`ms.put_strike` (the same strikes the naive smile
+        // mis-prices above), not at the smile's own pillars.
         let smile = build_smile(&c, &q).unwrap();
         let smile_call = price(
             OptionType::Call,
             &c.template(
-                cal.call_strike,
-                smile.implied_vol(cal.call_strike, c.forward(), c.t).0,
+                ms.call_strike,
+                smile.implied_vol(ms.call_strike, c.forward(), c.t).0,
             ),
         );
         let smile_put = price(
             OptionType::Put,
             &c.template(
-                cal.put_strike,
-                smile.implied_vol(cal.put_strike, c.forward(), c.t).0,
+                ms.put_strike,
+                smile.implied_vol(ms.put_strike, c.forward(), c.t).0,
             ),
         );
-        assert!(is_close(
+        assert!(
+            is_close(
+                smile_call + smile_put,
+                cal.market_strangle_price,
+                1e-9,
+                1e-11
+            ),
+            "calibrated smile @ broker strikes {} must reprice market strangle {}",
             smile_call + smile_put,
-            cal.market_strangle_price,
-            1e-9,
-            1e-11
-        ));
+            cal.market_strangle_price
+        );
     }
 
     /// Works for a long-tenor forward-delta convention (the convention-aware

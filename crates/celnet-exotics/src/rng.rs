@@ -19,7 +19,7 @@
 //! All arithmetic is integer (wrapping) and the only float operation is the
 //! final fixed `u64 → (0,1)` scaling, so there is no transcendental and no
 //! platform-dependent rounding on this path. Provenance lives only in this doc
-//! comment; the public type is purpose-named [`PhiloxStream`] (an established
+//! comment; the public type is purpose-named [`CounterRng`] (an established
 //! technical acronym, not a surname).
 
 #![allow(clippy::unreadable_literal)]
@@ -68,39 +68,48 @@ fn block(counter: [u32; 4], key0: u32, key1: u32) -> [u32; 4] {
 /// A reproducible, counter-based uniform stream over `(0,1)`.
 ///
 /// Construct from a seed and the logical coordinates `(stream, path, step)` of
-/// the work item; successive calls to [`PhiloxStream::next_u01`] draw the
+/// the work item; successive calls to [`CounterRng::next_u01`] draw the
 /// `draw = 0, 1, 2, …` words of the corresponding counter block, refilling a new
 /// block every four draws. The mapping from coordinates to output is pure, so
 /// two streams built with identical coordinates yield identical sequences.
 #[derive(Debug, Clone)]
-pub struct PhiloxStream {
+pub struct CounterRng {
     key0: u32,
     key1: u32,
-    /// High 64 bits of the counter: `(stream, path)` — fixed for this stream.
-    hi: u64,
-    /// Low 64 bits: `(step, draw)`. The draw counter advances; `step` is the
-    /// caller-chosen base offset so distinct simulation steps never collide.
+    /// Counter words 0–1: the full 64-bit `path` index — fixed for this stream.
+    /// `path` occupies its own two disjoint 32-bit lanes, so the coordinate map is
+    /// obviously injective (no folding/aliasing).
+    path: u64,
+    /// Counter word 2: the caller-chosen `step` base offset, disjoint from `path`
+    /// and `draw` so distinct simulation steps never collide.
     step_base: u32,
+    /// Counter word 3: the within-block draw index, advanced every refill.
     draw: u32,
     cache: [u32; 4],
     cache_len: u8,
 }
 
-impl PhiloxStream {
+impl CounterRng {
     /// Open the stream for work item `(stream, path, step)` under `seed`.
     ///
     /// `seed` keys the bijection; `stream` separates independent uses of the
     /// engine (e.g. the main estimate vs. an antithetic or control replica),
     /// `path` is the Monte-Carlo path index, and `step` is the time-step base.
-    /// Distinct tuples address disjoint regions of the 128-bit counter space, so
+    /// Distinct tuples address disjoint regions of the counter/key space, so
     /// their variate sequences are statistically independent yet each is exactly
-    /// reproducible from its tuple.
+    /// reproducible from its tuple. The coordinate→counter map is a strict
+    /// partition — `path` fills counter words 0–1, `step` word 2, `draw` word 3,
+    /// and `stream` keys the bijection (XOR-folded into `key1`) — so it is
+    /// obviously injective in `(path, step, draw)` for a fixed `(seed, stream)`,
+    /// and independent across `stream` (which perturbs the Philox key). No ad-hoc
+    /// hashing of the coordinates into a single lane, so two distinct
+    /// `(stream, path)` tuples can never alias the same counter prefix.
     #[must_use]
     pub fn new(seed: u64, stream: u32, path: u64, step: u32) -> Self {
         Self {
             key0: seed as u32,
             key1: (seed >> 32) as u32 ^ stream,
-            hi: ((u64::from(stream) << 32) ^ path).rotate_left(17) ^ (path << 1),
+            path,
             step_base: step,
             draw: 0,
             cache: [0; 4],
@@ -129,8 +138,8 @@ impl PhiloxStream {
     #[inline]
     fn refill(&mut self) {
         let counter = [
-            self.hi as u32,
-            (self.hi >> 32) as u32,
+            self.path as u32,
+            (self.path >> 32) as u32,
             self.step_base,
             self.draw,
         ];
@@ -148,8 +157,8 @@ mod tests {
     /// guarantee the MC engine depends on).
     #[test]
     fn same_seed_same_sequence_bit_identical() {
-        let mut a = PhiloxStream::new(0xDEAD_BEEF_CAFE_F00D, 3, 42, 7);
-        let mut b = PhiloxStream::new(0xDEAD_BEEF_CAFE_F00D, 3, 42, 7);
+        let mut a = CounterRng::new(0xDEAD_BEEF_CAFE_F00D, 3, 42, 7);
+        let mut b = CounterRng::new(0xDEAD_BEEF_CAFE_F00D, 3, 42, 7);
         for _ in 0..1000 {
             let (x, y) = (a.next_u01(), b.next_u01());
             assert_eq!(x.to_bits(), y.to_bits(), "streams diverged");
@@ -160,14 +169,14 @@ mod tests {
     /// stream / path / step).
     #[test]
     fn distinct_coordinates_differ() {
-        let base = PhiloxStream::new(1, 0, 0, 0).key_words();
-        let s1 = PhiloxStream::new(1, 1, 0, 0).key_words();
+        let base = CounterRng::new(1, 0, 0, 0).key_words();
+        let s1 = CounterRng::new(1, 1, 0, 0).key_words();
         // Different stream perturbs the key schedule.
         assert_ne!(base, s1);
 
-        let mut p0 = PhiloxStream::new(1, 0, 0, 0);
-        let mut p1 = PhiloxStream::new(1, 0, 1, 0);
-        let mut p2 = PhiloxStream::new(1, 0, 0, 1);
+        let mut p0 = CounterRng::new(1, 0, 0, 0);
+        let mut p1 = CounterRng::new(1, 0, 1, 0);
+        let mut p2 = CounterRng::new(1, 0, 0, 1);
         let v0: Vec<u64> = (0..8).map(|_| p0.next_u01().to_bits()).collect();
         let v1: Vec<u64> = (0..8).map(|_| p1.next_u01().to_bits()).collect();
         let v2: Vec<u64> = (0..8).map(|_| p2.next_u01().to_bits()).collect();
@@ -175,11 +184,56 @@ mod tests {
         assert_ne!(v0, v2, "step base must change the stream");
     }
 
+    /// Injective coordinate map: sweeping a large block of `path` indices (and a
+    /// few adversarial high-bit / power-of-two patterns that the previous ad-hoc
+    /// `((stream<<32)^path).rotate_left(17) ^ (path<<1)` mix could alias) yields a
+    /// first output word that is *unique* per `path`. This pins the counter-based
+    /// generator's defining property — a provably-injective coordinate → substream
+    /// map — rather than spot-checking a handful of tuples (audit `rng.rs:103`).
+    #[test]
+    fn distinct_paths_do_not_collide_in_first_block() {
+        use std::collections::HashSet;
+        let mut seen: HashSet<u64> = HashSet::new();
+        let mut first_words = |seed: u64, stream: u32| {
+            for path in 0u64..50_000 {
+                let mut s = CounterRng::new(seed, stream, path, 0);
+                // 64-bit fingerprint of the first two draws of the path's block.
+                let fp = (s.next_u01().to_bits() ^ (path.wrapping_mul(0)))
+                    ^ s.next_u01().to_bits().rotate_left(32);
+                assert!(
+                    seen.insert(fp.wrapping_add(u64::from(stream))),
+                    "path {path} (stream {stream}) collided in the first block"
+                );
+            }
+        };
+        first_words(0xA5A5_1234_DEAD_0001, 0);
+        // Adversarial high-bit/aliasing-prone path patterns under a second stream.
+        let mut s = HashSet::new();
+        for &path in &[
+            0u64,
+            1,
+            1 << 16,
+            1 << 17,
+            1 << 31,
+            1 << 32,
+            1 << 33,
+            (1 << 32) | 1,
+            u32::MAX as u64,
+            (u32::MAX as u64) << 1,
+            u64::MAX,
+            u64::MAX - 1,
+        ] {
+            let mut st = CounterRng::new(7, 2, path, 0);
+            let fp = st.next_u01().to_bits() ^ st.next_u01().to_bits().rotate_left(17);
+            assert!(s.insert(fp), "adversarial path {path} collided");
+        }
+    }
+
     /// Output lies strictly in `(0,1)` — never 0 or 1 (so the inverse-CDF is
     /// always finite).
     #[test]
     fn uniform_in_open_unit_interval() {
-        let mut s = PhiloxStream::new(99, 0, 0, 0);
+        let mut s = CounterRng::new(99, 0, 0, 0);
         for _ in 0..100_000 {
             let u = s.next_u01();
             assert!(u > 0.0 && u < 1.0, "u01 out of (0,1): {u}");
@@ -191,7 +245,7 @@ mod tests {
     /// bijection is well-mixed.
     #[test]
     fn uniform_moments() {
-        let mut s = PhiloxStream::new(0x1234_5678, 5, 1, 1);
+        let mut s = CounterRng::new(0x1234_5678, 5, 1, 1);
         let n = 1_000_000usize;
         let (mut sum, mut sumsq) = (0.0f64, 0.0f64);
         for _ in 0..n {
@@ -205,7 +259,7 @@ mod tests {
         assert!((var - 1.0 / 12.0).abs() < 2e-3, "var {var}");
     }
 
-    impl PhiloxStream {
+    impl CounterRng {
         /// Test helper: expose the derived key words for the aliasing check.
         fn key_words(&self) -> (u32, u32) {
             (self.key0, self.key1)

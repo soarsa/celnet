@@ -154,14 +154,32 @@ impl SpotTick {
         }
     }
 
-    /// The next deterministically-bumped spot. Reuses the same public-domain
-    /// `splitmix64` mixer as [`crate::tick::TickSource`].
-    fn next_spot(&mut self) -> f64 {
-        let mixed =
-            TickSource::splitmix64(self.seed ^ self.counter.wrapping_mul(0x2545_F491_4F6C_DD1D));
-        self.counter = self.counter.wrapping_add(1);
+    /// The deterministically-bumped spot for a given counter value, *without*
+    /// advancing the counter. Reuses the same public-domain `splitmix64` mixer as
+    /// [`crate::tick::TickSource`] so the path is bit-identical to the tick source.
+    ///
+    /// Centering and bumping use *separate* multiply/add (never a fused `mul_add`):
+    /// FMA rounds the fused op once at a rounding not guaranteed bit-identical
+    /// across targets/opt-levels, which would break the cross-target bit-stable
+    /// reproduction the RFS determinism discipline promises.
+    fn spot_at(&self, counter: u64) -> f64 {
+        let mixed = TickSource::splitmix64(self.seed ^ counter.wrapping_mul(0x2545_F491_4F6C_DD1D));
         let u = TickSource::unit_signed(mixed);
-        self.base_spot * u.mul_add(STREAM_BUMP, 1.0)
+        self.base_spot * (u * STREAM_BUMP + 1.0)
+    }
+
+    /// The next deterministically-bumped spot the upcoming live tick will use,
+    /// *without* consuming it. Used by a fresh resync snapshot so its baseline is
+    /// priced on the same spot the immediately-following [`Update`] continues from.
+    fn peek_spot(&self) -> f64 {
+        self.spot_at(self.counter)
+    }
+
+    /// The next deterministically-bumped spot, advancing the internal counter.
+    fn next_spot(&mut self) -> f64 {
+        let spot = self.spot_at(self.counter);
+        self.counter = self.counter.wrapping_add(1);
+        spot
     }
 }
 
@@ -480,8 +498,18 @@ async fn handle_resync(
     } else {
         let seq = sub.sequence + 1;
         sub.sequence = seq;
-        let base = sub.base_market;
-        let snap = match make_snapshot(sub, seq, &base, spread, clock) {
+        // The gap predates the retained buffer, so we send a fresh snapshot
+        // baseline. It MUST be priced on the current live path, not the fixed
+        // subscription-open spot (`base_market`): the immediately-following live
+        // `drive_tick` will price its `Update` at `sub.tick.next_spot()`, so we
+        // peek that very spot here and price the snapshot at it. Otherwise the
+        // client would briefly hold an off-path baseline before the next Update
+        // snapped it onto the resumed deterministic path.
+        let market = MarketContext {
+            spot: sub.tick.peek_spot(),
+            ..sub.base_market
+        };
+        let snap = match make_snapshot(sub, seq, &market, spread, clock) {
             Ok(m) => m,
             Err(status) => {
                 let _ = out_tx.send(Err(status)).await;
@@ -701,6 +729,17 @@ mod tests {
         }
     }
 
+    /// Extract the priced `(two_way, vol)` a snapshot or update carries (for the
+    /// on-path baseline check). Heartbeats / stream-ends carry no price.
+    fn price_of(msg: &ServerStreamMessage) -> Option<(celnet_proto::TwoWayPrice, f64)> {
+        match msg.message.as_ref()? {
+            server_stream_message::Message::Snapshot(s) => Some((s.price?, s.vol)),
+            server_stream_message::Message::Update(u) => Some((u.price?, u.vol)),
+            server_stream_message::Message::Heartbeat(_)
+            | server_stream_message::Message::StreamEnd(_) => None,
+        }
+    }
+
     fn is_lagged_end(msg: &ServerStreamMessage) -> bool {
         matches!(
             msg.message.as_ref(),
@@ -909,6 +948,130 @@ mod tests {
                     "applied stream is gap-free and duplicate-free across resync: {applied:?}"
                 );
             }
+        })
+        .await
+        .expect("test must not hang");
+    }
+
+    /// `peek_spot` must return exactly the value the next `next_spot` consumes (and
+    /// not advance the counter), so a fresh resync snapshot can be priced on the
+    /// very spot the immediately-following live tick continues from.
+    #[test]
+    fn peek_spot_matches_the_next_consumed_spot() {
+        let mut t = SpotTick::new(1.2345, 99);
+        for _ in 0..32 {
+            let peeked = t.peek_spot();
+            // Peeking is idempotent and does not advance.
+            assert_eq!(
+                t.peek_spot().to_bits(),
+                peeked.to_bits(),
+                "peek must not advance the counter"
+            );
+            let consumed = t.next_spot();
+            assert_eq!(
+                consumed.to_bits(),
+                peeked.to_bits(),
+                "the consumed spot must be bit-identical to the peeked spot"
+            );
+        }
+    }
+
+    /// Regression for the resync stale-baseline bug: when the client's gap predates
+    /// the retained buffer, `handle_resync` sends a **fresh snapshot**. That
+    /// snapshot must be priced on the *current live path* (the spot the next live
+    /// `Update` will continue from) — NOT the fixed subscription-open `base_market`.
+    /// We assert the fresh-snapshot price/vol is bit-identical to the next live
+    /// update's, so the consumer never holds an off-path baseline. With the old
+    /// (base_market) baseline the snapshot would price at the open spot while the
+    /// next update priced at a bumped spot, so the two would differ.
+    #[tokio::test]
+    async fn fresh_resync_snapshot_is_priced_on_the_live_path() {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let spread = SpreadModel::default();
+            let clock = Clock::system();
+            let (tx, mut rx) = mpsc::channel::<Result<ServerStreamMessage, Status>>(256);
+            let mut subs: HashMap<u64, Subscription> = HashMap::new();
+            subs.insert(1, make_test_sub(1, &spread, &clock));
+
+            // Advance the live path several ticks so the tick counter is non-zero
+            // (the open spot is no longer on-path).
+            for _ in 0..5 {
+                assert!(drive_tick(&mut subs, &spread, &clock, &tx));
+            }
+            // Drain everything buffered so far.
+            while rx.try_recv().is_ok() {}
+
+            // Resync with a last_sequence FAR before the retained buffer front so the
+            // replay branch cannot satisfy it and the fresh-snapshot branch is taken.
+            // (last_sequence = 0; the buffer front seq is >= 1, so 0+1 < front only
+            // once seqs advanced — the baseline at seq 1 was retained, so to force
+            // the fresh branch we evict it: REPLAY_DEPTH is large, so instead we use
+            // the explicit invariant that front > last_sequence + 1 cannot hold for
+            // last_sequence well below front. Here front == 1, so request a resync
+            // that cannot replay by clearing the buffer to simulate eviction.)
+            {
+                let sub = subs.get_mut(&1).expect("sub present");
+                sub.replay.clear(); // emulate a gap older than the retained buffer.
+            }
+
+            let resumed = handle_resync(
+                subs.get_mut(&1).expect("sub present"),
+                0,
+                &spread,
+                &clock,
+                &tx,
+            )
+            .await;
+            assert!(resumed, "resync succeeds while the channel has room");
+
+            // The fresh snapshot just emitted.
+            let snap_msg = rx
+                .try_recv()
+                .expect("a fresh snapshot was emitted")
+                .expect("no error frame");
+            let (snap_price, snap_vol) =
+                price_of(&snap_msg).expect("the fresh resync message is a priced snapshot");
+            assert!(
+                matches!(
+                    snap_msg.message.as_ref(),
+                    Some(server_stream_message::Message::Snapshot(_))
+                ),
+                "the before-buffer recovery sends a Snapshot baseline"
+            );
+
+            // The very next live tick's update.
+            assert!(drive_tick(&mut subs, &spread, &clock, &tx));
+            let next_update = loop {
+                let m = rx
+                    .try_recv()
+                    .expect("the next live update was emitted")
+                    .expect("no error frame");
+                if matches!(
+                    m.message.as_ref(),
+                    Some(server_stream_message::Message::Update(_))
+                ) {
+                    break m;
+                }
+            };
+            let (next_price, next_vol) =
+                price_of(&next_update).expect("the next live message is a priced update");
+
+            // The baseline is on the resumed live path: bit-identical price + vol.
+            assert_eq!(
+                snap_price.bid.to_bits(),
+                next_price.bid.to_bits(),
+                "fresh snapshot bid must match the next live update (on-path baseline)"
+            );
+            assert_eq!(
+                snap_price.offer.to_bits(),
+                next_price.offer.to_bits(),
+                "fresh snapshot offer must match the next live update (on-path baseline)"
+            );
+            assert_eq!(
+                snap_vol.to_bits(),
+                next_vol.to_bits(),
+                "fresh snapshot vol must match the next live update"
+            );
         })
         .await
         .expect("test must not hang");

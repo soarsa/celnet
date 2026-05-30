@@ -4,7 +4,7 @@
 //! risk-neutral measure and prices barrier and Asian payoffs with the full set of
 //! variance-reduction and bias-correction techniques the spec mandates:
 //!
-//! * **Counter-based RNG** ([`crate::rng::PhiloxStream`]) seeded by
+//! * **Counter-based RNG** ([`crate::rng::CounterRng`]) seeded by
 //!   `(stream, path, step)`, so identical seeds give **bit-identical** results
 //!   regardless of evaluation order or parallelism.
 //! * **Inverse-CDF normals** ([`crate::normal::inverse_cdf`]) as the default
@@ -34,7 +34,7 @@ use celnet_vanilla::price as vanilla_price;
 
 use crate::normal::inverse_cdf;
 use crate::payoff::{ArithmeticAsian, DiscreteBarrier};
-use crate::rng::PhiloxStream;
+use crate::rng::CounterRng;
 
 /// The Broadie-Glasserman-Kou continuity-correction constant `β = −ζ(½)/√(2π)`.
 ///
@@ -88,9 +88,9 @@ impl Dynamics {
 /// counter-based sub-stream, via the monotone inverse-CDF transform.
 #[inline]
 fn draw_increments(seed: u64, stream: u32, path: u64, steps: usize, out: &mut [f64]) {
-    // One PhiloxStream per (path) keyed on a fixed step base; successive draws
+    // One CounterRng per (path) keyed on a fixed step base; successive draws
     // address successive normals. Reproducible from (seed, stream, path).
-    let mut rng = PhiloxStream::new(seed, stream, path, 0);
+    let mut rng = CounterRng::new(seed, stream, path, 0);
     for z in out.iter_mut().take(steps) {
         *z = inverse_cdf(rng.next_u01());
     }

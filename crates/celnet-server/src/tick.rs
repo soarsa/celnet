@@ -28,9 +28,13 @@ const fn splitmix64(mut z: u64) -> u64 {
 
 /// Map a uniform `u64` to a value in `[-1.0, 1.0)` deterministically.
 fn unit_signed(bits: u64) -> f64 {
-    // Take 53 bits for a double in [0,1), then center to [-1,1).
+    // Take 53 bits for a double in [0,1), then center to [-1,1). The centering
+    // uses *separate* multiply and subtract (never a fused `mul_add`): FMA fuses
+    // the two ops at a single rounding that is not guaranteed bit-identical across
+    // targets/opt-levels, which would break the cross-target bit-stability the RFS
+    // determinism discipline promises (see module docs).
     let unit = (bits >> 11) as f64 / (1u64 << 53) as f64;
-    unit.mul_add(2.0, -1.0)
+    unit * 2.0 - 1.0
 }
 
 impl TickSource {
@@ -102,7 +106,8 @@ impl TickSource {
         let mixed = splitmix64(self.seed ^ self.counter.wrapping_mul(0x2545_F491_4F6C_DD1D));
         self.counter = self.counter.wrapping_add(1);
         let u = unit_signed(mixed);
-        let spot = self.base.spot * u.mul_add(self.bump, 1.0);
+        // Separate multiply/add (no FMA) for cross-target bit-stable reproduction.
+        let spot = self.base.spot * (u * self.bump + 1.0);
         let mut state = self.base.clone();
         state.spot = spot;
         state

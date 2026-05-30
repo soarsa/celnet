@@ -9,11 +9,15 @@
 //! * **Wait-free SPSC rings** — [`RequestRing`] / [`ResponseRing`] (over `rtrb`)
 //!   carry `Copy`/POD request and response records edge→core and core→edge.
 //! * **Lock-free read-mostly publication** — [`StateHandle`] (over `arc-swap`)
-//!   publishes the whole live [`MarketState`] atomically; readers load it with
-//!   no lock and no contention, and a writer hot-swaps it in one atomic store.
+//!   publishes the whole live [`MarketState`] atomically; the hot core reads it
+//!   through a cached [`StateReader`] ([`StateHandle::reader`]) with no lock and
+//!   no allocation even under concurrent publishes, and a writer hot-swaps it in
+//!   one atomic store.
 //! * **Single-writer seqlock** — [`Seqlock`] publishes a small `Copy`
 //!   [`PriceSnapshot`] to many readers with no reader-side locking (readers
-//!   retry on a torn read).
+//!   retry on a torn read). The payload is copied **per word with atomic
+//!   accesses**, so the reader/writer overlap is never a data race (see the
+//!   `seqlock` module docs for the soundness argument).
 //! * **False-sharing guard** — [`PaddedCounter`] wraps a hot atomic in a
 //!   `crossbeam-utils` `CachePadded` so independent counters never share a cache
 //!   line.
@@ -22,7 +26,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use arc_swap::ArcSwap;
-use celnet_surface::VannaVolgaSmile;
+use celnet_surface::MarketHedgeSmile;
 use crossbeam_utils::CachePadded;
 
 use celnet_conventions::ConventionRecord;
@@ -39,7 +43,7 @@ pub const RING_CAPACITY: usize = 1 << 12;
 /// request.
 ///
 /// This is the read-mostly state hot-swapped behind [`StateHandle`]: the
-/// calibrated smile (a [`VannaVolgaSmile`], which implements
+/// calibrated smile (a [`MarketHedgeSmile`], which implements
 /// [`celnet_core::Smile`]), the market state needed to form the Garman-Kohlhagen
 /// inputs (spot, the two continuously-compounded rates), and the resolved FX
 /// [`ConventionRecord`] for the slice. It is an immutable snapshot: a new market
@@ -59,7 +63,7 @@ pub struct MarketState {
     pub conventions: ConventionRecord,
     /// The calibrated smile evaluated by the pricing core to obtain the Black
     /// vol at the requested strike.
-    pub smile: VannaVolgaSmile,
+    pub smile: MarketHedgeSmile,
 }
 
 impl MarketState {
@@ -80,9 +84,9 @@ impl MarketState {
 /// `store()`s a brand-new state (a market tick or a recalibration / hot model
 /// swap, §5.1) in one atomic, wait-free operation. Readers in flight keep the
 /// `Arc` they loaded alive; the swap never blocks them.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct StateHandle {
-    inner: ArcSwap<MarketState>,
+    inner: Arc<ArcSwap<MarketState>>,
 }
 
 impl StateHandle {
@@ -90,15 +94,21 @@ impl StateHandle {
     #[must_use]
     pub fn new(initial: MarketState) -> Self {
         Self {
-            inner: ArcSwap::from_pointee(initial),
+            inner: Arc::new(ArcSwap::from_pointee(initial)),
         }
     }
 
-    /// Load the current state with a lock-free, wait-free read.
+    /// Load the current state with a lock-free, wait-free read, returning an
+    /// owned `Arc`.
     ///
-    /// Returns an `Arc` guard; the underlying state stays alive for as long as
-    /// the guard is held even if a concurrent [`StateHandle::publish`] swaps in a
-    /// new one.
+    /// The underlying state stays alive for as long as the returned `Arc` is
+    /// held even if a concurrent [`StateHandle::publish`] swaps in a new one.
+    ///
+    /// Note: this uses `arc_swap::ArcSwap::load_full`. On the **hot pricing
+    /// path** prefer a [`StateReader`] ([`StateHandle::reader`]), whose cached
+    /// revalidation is unconditionally allocation-free — even while a writer
+    /// hammers `publish` — because it never takes `arc-swap`'s per-load
+    /// debt-reclamation path.
     #[must_use]
     pub fn load(&self) -> Arc<MarketState> {
         self.inner.load_full()
@@ -110,6 +120,46 @@ impl StateHandle {
     /// either the old or the new state in full, never a mix.
     pub fn publish(&self, state: MarketState) {
         self.inner.store(Arc::new(state));
+    }
+
+    /// Build a [`StateReader`] — the allocation-free hot-path read handle.
+    ///
+    /// The reader caches the loaded `Arc` and, on each [`StateReader::load`],
+    /// cheaply revalidates it against the live pointer: an unchanged pointer is a
+    /// pure atomic compare (no clone, no allocation); a changed pointer triggers
+    /// a single `Arc` strong-count clone (a refcount bump, **not** a heap
+    /// allocation). Crucially this read path never uses `arc-swap`'s cheap-guard
+    /// debt slots, so it cannot fall back to the slower debt-reclamation path
+    /// that can allocate under concurrent `publish` — making it unconditionally
+    /// allocation-free on the steady-state hot loop.
+    #[must_use]
+    pub fn reader(&self) -> StateReader {
+        StateReader {
+            cache: arc_swap::Cache::new(Arc::clone(&self.inner)),
+        }
+    }
+}
+
+/// An allocation-free, cached reader of the live [`MarketState`] for the hot
+/// pricing loop.
+///
+/// Created by [`StateHandle::reader`]. Each [`StateReader::load`] returns the
+/// current state, revalidating a cached `Arc` against the live pointer. On the
+/// steady-state hot loop it performs **no heap allocation** even while a writer
+/// concurrently publishes new states (proven in `tests/zero_alloc.rs`).
+#[derive(Debug)]
+pub struct StateReader {
+    cache: arc_swap::Cache<Arc<ArcSwap<MarketState>>, Arc<MarketState>>,
+}
+
+impl StateReader {
+    /// Load the current [`MarketState`], allocation-free.
+    ///
+    /// Returns a borrow valid until the next `load`. An unchanged underlying
+    /// pointer costs a single atomic load + compare; a changed pointer costs one
+    /// `Arc` strong-count clone (no heap allocation).
+    pub fn load(&mut self) -> &Arc<MarketState> {
+        self.cache.load()
     }
 }
 
@@ -161,24 +211,75 @@ mod seqlock {
     //! sequence protocol plus the **single-writer contract** (at most one thread
     //! calls `store` at a time). Two concurrent writers are a contract violation
     //! (and would, as in any seqlock, corrupt the protocol).
+    //!
+    //! # Why the payload is stored as per-word atomics, not a plain `UnsafeCell<T>`
+    //!
+    //! A naïve seqlock copies the payload with plain (non-atomic) reads and
+    //! writes, relying on the sequence check to *discard* a torn read. That is a
+    //! **data race / undefined behavior** under the C++20 / Rust memory model:
+    //! the reader's load and the writer's store touch the same bytes without
+    //! synchronization, and the model forbids the racing access from *occurring*
+    //! at all — it does not merely make the *result* unspecified. A conforming
+    //! compiler may then assume the race never happens and miscompile the load
+    //! (tear it across the sequence checks, hoist it, or synthesize a trap
+    //! value). This is the textbook reason real seqlocks (the `seqlock` crate,
+    //! Folly `SeqLock`, the Linux kernel's `READ_ONCE`/`WRITE_ONCE`) never use a
+    //! plain field copy.
+    //!
+    //! We make the copy sound by storing the payload as a fixed array of
+    //! [`AtomicUsize`] words and copying it **per word with relaxed atomic
+    //! accesses**. Per-word atomic load/store is, by definition, never a data
+    //! race even when reader and writer touch the same word concurrently — the
+    //! reader simply observes one of the two values for that word. The sequence
+    //! protocol (Acquire/Release on `seq`) still provides the *consistency*
+    //! guarantee: a reader that observes a stable even sequence around its copy
+    //! is guaranteed the per-word values it read all belong to the same publish.
+    //! The relaxed per-word ordering is sufficient because the Acquire load of
+    //! `seq` *after* the copy, paired with the writer's Release store of `seq`,
+    //! establishes the happens-before edge that orders the payload words; the
+    //! reader only *returns* a value once that edge is confirmed by `before ==
+    //! after`.
 
-    use std::cell::UnsafeCell;
-    use std::sync::atomic::{AtomicU64, Ordering, fence};
+    use std::marker::PhantomData;
+    use std::mem::{MaybeUninit, align_of, size_of};
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+
+    /// Number of `usize` words needed to cover `T`'s byte image (rounding up so
+    /// any trailing padding bytes are also copied through the atomic words).
+    fn word_count<T>() -> usize {
+        size_of::<T>().div_ceil(size_of::<usize>())
+    }
 
     /// A single-writer, many-reader seqlock over a `Copy` payload `T`.
+    ///
+    /// The payload is held as a fixed-length, boxed slice of [`AtomicUsize`]
+    /// words (`ceil(size_of::<T>() / size_of::<usize>())` of them), allocated
+    /// **once at construction**, so reader/writer copies are per-word atomic and
+    /// therefore never a data race; see the module docs for the soundness
+    /// argument. The slice never reallocates after construction, so the hot
+    /// `store`/`read` paths perform no allocation.
     #[derive(Debug)]
     pub struct Seqlock<T: Copy> {
         seq: AtomicU64,
-        value: UnsafeCell<T>,
+        words: Box<[AtomicUsize]>,
+        /// Catches an accidental *second* concurrent writer under
+        /// `debug_assertions`: `store` flips it to `true` on entry and back to
+        /// `false` on exit, asserting it was `false` on entry. The single-writer
+        /// contract makes this a pure diagnostic — it carries no release/acquire
+        /// obligation and is compiled out in release builds.
+        #[cfg(debug_assertions)]
+        writer_active: std::sync::atomic::AtomicBool,
+        _marker: PhantomData<T>,
     }
 
-    // SAFETY: the seqlock protocol makes concurrent access sound. By contract at
-    // most one thread calls `store` at a time; readers only ever read the cell
-    // between two acquire-loads of an even sequence and discard the result on a
-    // torn read, so no reader ever observes a half-written value as live. The
-    // `UnsafeCell<T>` is the only shared-mutable state and `T: Copy` (no
-    // destructors / interior pointers), so publishing across threads is sound for
-    // any `T: Copy + Send`.
+    // SAFETY: the payload lives in a `Box<[AtomicUsize]>`, so every concurrent
+    // reader/writer access to the shared bytes is a per-word atomic access and is
+    // not a data race for any thread count. The atomic `seq` sequence protocol
+    // provides the *consistency* guarantee (a reader returns a value only when it
+    // bracketed the copy with two equal even sequence reads). `T: Copy` means no
+    // destructors / no interior owning pointers, so reconstituting a `T` from the
+    // copied words is sound. Thus sharing across threads is sound for any
+    // `T: Copy + Send`.
     #[allow(unsafe_code)]
     unsafe impl<T: Copy + Send> Sync for Seqlock<T> {}
 
@@ -192,10 +293,86 @@ mod seqlock {
         /// Construct a seqlock holding `initial`.
         #[must_use]
         pub fn new(initial: T) -> Self {
-            Self {
+            // The atomic-word copy reinterprets `T`'s bytes through `usize`-aligned
+            // storage; assert `T` is not over-aligned relative to `usize` so the
+            // `copy_nonoverlapping` in `read_words`/`write_words` is sound.
+            assert!(
+                align_of::<T>() <= align_of::<usize>(),
+                "Seqlock payload alignment must not exceed usize alignment"
+            );
+            let words = (0..word_count::<T>())
+                .map(|_| AtomicUsize::new(0))
+                .collect::<Vec<_>>()
+                .into_boxed_slice();
+            let lock = Self {
                 seq: AtomicU64::new(0),
-                value: UnsafeCell::new(initial),
+                words,
+                #[cfg(debug_assertions)]
+                writer_active: std::sync::atomic::AtomicBool::new(false),
+                _marker: PhantomData,
+            };
+            // Seed the payload words through the same atomic path the readers use,
+            // so the initial value is observable before any `store`.
+            lock.write_words(initial);
+            lock
+        }
+
+        /// Decompose `value` into its `usize` words and store each atomically
+        /// (relaxed — consistency is carried by the `seq` Release store the
+        /// caller performs afterwards). The final partial word (if `T` does not
+        /// fill a whole word) is zero-padded so the byte image is fully defined.
+        ///
+        /// Allocation-free: the per-word staging value is a single `usize` on the
+        /// stack.
+        #[allow(unsafe_code)]
+        fn write_words(&self, value: T) {
+            let total = size_of::<T>();
+            // Raw byte view of the source `value` (a live local; never aliased).
+            let src = (&raw const value).cast::<u8>();
+            let word = size_of::<usize>();
+            for (i, slot) in self.words.iter().enumerate() {
+                // Bytes this word covers: a full word, or the zero-padded tail.
+                let off = i * word;
+                let n = (total - off).min(word);
+                // A zeroed stack word guarantees the tail/padding bytes are 0.
+                let mut buf: usize = 0;
+                // SAFETY: `off + n <= total = size_of::<T>()`, so the source range
+                // is within `value`'s byte image; `buf` is a `usize` on the stack
+                // (one word, properly aligned), so writing `n <= word` bytes to
+                // its front is in bounds. Both pointers are valid and non-aliasing
+                // (distinct locals).
+                unsafe {
+                    std::ptr::copy_nonoverlapping(src.add(off), (&raw mut buf).cast::<u8>(), n);
+                }
+                slot.store(buf, Ordering::Relaxed);
             }
+        }
+
+        /// Atomically load each payload word and reassemble a `T`.
+        ///
+        /// Allocation-free: copies each loaded word into a stack `MaybeUninit<T>`.
+        #[allow(unsafe_code)]
+        fn read_words(&self) -> T {
+            let total = size_of::<T>();
+            let word = size_of::<usize>();
+            let mut out = MaybeUninit::<T>::uninit();
+            let dst = out.as_mut_ptr().cast::<u8>();
+            for (i, slot) in self.words.iter().enumerate() {
+                let buf = slot.load(Ordering::Relaxed);
+                let off = i * word;
+                let n = (total - off).min(word);
+                // SAFETY: `off + n <= total = size_of::<T>()`, so the destination
+                // range is within `out`'s storage; `buf` is a stack `usize`
+                // (>= `n` bytes). After the loop every byte of `out` has been
+                // written exactly once, fully initializing the `T`. `T: Copy`, so
+                // the reconstituted byte image is a valid `T` (a bitwise copy of a
+                // `T` previously written by `write_words`).
+                unsafe {
+                    std::ptr::copy_nonoverlapping((&raw const buf).cast::<u8>(), dst.add(off), n);
+                }
+            }
+            // SAFETY: the loop above wrote all `size_of::<T>()` bytes of `out`.
+            unsafe { out.assume_init() }
         }
 
         /// Publish a new value.
@@ -203,22 +380,39 @@ mod seqlock {
         /// Takes `&self` so the lock can be shared with readers behind an `Arc`.
         /// **Single-writer contract:** the caller must ensure at most one thread
         /// invokes `store` at a time (the engine satisfies this by giving the
-        /// pricing core sole ownership of the writer endpoint).
-        #[allow(unsafe_code)]
+        /// pricing core sole ownership of the writer endpoint). A violation is
+        /// caught by a `debug_assert!` under `debug_assertions`.
         pub fn store(&self, value: T) {
-            // Enter the write critical section: make the sequence odd.
-            let seq = self.seq.load(Ordering::Relaxed);
-            self.seq.store(seq.wrapping_add(1), Ordering::Relaxed);
-            // Ensure the odd sequence is visible before the payload write.
-            fence(Ordering::Release);
-            // SAFETY: single-writer by contract; readers never treat a value read
-            // during an odd sequence (or a sequence that changed across the read)
-            // as live, so this exclusive write never races an observed read.
-            unsafe {
-                *self.value.get() = value;
+            #[cfg(debug_assertions)]
+            {
+                // Single-writer guard: must not already be inside a `store`.
+                let was_active = self
+                    .writer_active
+                    .swap(true, std::sync::atomic::Ordering::Relaxed);
+                debug_assert!(
+                    !was_active,
+                    "Seqlock single-writer contract violated: a second thread \
+                     entered store() concurrently"
+                );
             }
-            // Publish the payload, then leave the critical section (even seq).
+
+            // Enter the write critical section: make the sequence odd. The single
+            // writer owns `seq`, so the load/store pair is uncontended; Release on
+            // the odd store orders it before the payload words for any reader that
+            // later Acquire-loads it.
+            let seq = self.seq.load(Ordering::Relaxed);
+            self.seq.store(seq.wrapping_add(1), Ordering::Release);
+            // Write the payload word-by-word (relaxed atomics — never a race).
+            self.write_words(value);
+            // Publish: leave the critical section with an even seq, Release so the
+            // payload words happen-before any reader's confirming Acquire load.
             self.seq.store(seq.wrapping_add(2), Ordering::Release);
+
+            #[cfg(debug_assertions)]
+            {
+                self.writer_active
+                    .store(false, std::sync::atomic::Ordering::Relaxed);
+            }
         }
 
         /// Read a consistent snapshot, retrying on a torn read.
@@ -226,7 +420,6 @@ mod seqlock {
         /// Wait-free for the writer; the reader spins only while the writer is
         /// mid-write (a bounded, single-writer window).
         #[must_use]
-        #[allow(unsafe_code)]
         pub fn read(&self) -> T {
             loop {
                 let before = self.seq.load(Ordering::Acquire);
@@ -235,12 +428,10 @@ mod seqlock {
                     std::hint::spin_loop();
                     continue;
                 }
-                // SAFETY: `T: Copy`, so this is a plain bitwise copy with no
-                // aliasing of a live `&mut`. If the copy races a write we detect
-                // it via the sequence check below and discard the result.
-                let value = unsafe { *self.value.get() };
-                fence(Ordering::Acquire);
-                let after = self.seq.load(Ordering::Relaxed);
+                // Per-word atomic copy: never a data race even if it overlaps a
+                // concurrent write; any torn combination is rejected below.
+                let value = self.read_words();
+                let after = self.seq.load(Ordering::Acquire);
                 if before == after {
                     return value;
                 }
@@ -253,6 +444,16 @@ mod seqlock {
         #[must_use]
         pub fn sequence(&self) -> u64 {
             self.seq.load(Ordering::Acquire)
+        }
+
+        /// Test-only: pretend a writer is already inside the critical section,
+        /// so the next `store` deterministically trips the single-writer
+        /// `debug_assert!`. Lets the guard be exercised without relying on a
+        /// racy thread-overlap.
+        #[cfg(all(test, debug_assertions))]
+        pub(crate) fn force_writer_active_for_test(&self) {
+            self.writer_active
+                .store(true, std::sync::atomic::Ordering::Relaxed);
         }
     }
 }
@@ -421,6 +622,76 @@ mod tests {
         assert_eq!(s.read(), snap);
         // Sequence is even after a completed write.
         assert_eq!(s.sequence() & 1, 0);
+    }
+
+    /// The initial value seeded by `new` is readable before any `store`, and the
+    /// per-word copy reproduces it bit-for-bit.
+    #[test]
+    fn seqlock_initial_value_is_readable() {
+        let snap = PriceSnapshot {
+            request_id: 99,
+            price: -2.5,
+            delta_spot: 0.123_456_789,
+            vega: 1e-12,
+            vol: 0.0987,
+        };
+        let s = Seqlock::new(snap);
+        assert_eq!(s.read(), snap);
+        assert_eq!(s.sequence(), 0);
+    }
+
+    /// Regression for the data-race blocker + the partial-tail-word path: a
+    /// payload whose size is **not** a multiple of the word size must round-trip
+    /// bit-exactly through the per-word atomic copy (the final partial word is
+    /// zero-padded and reassembled correctly).
+    #[test]
+    fn seqlock_roundtrips_non_word_multiple_payload() {
+        // 9 fields of mixed width incl. a bool + u8 so the byte image has a
+        // ragged tail and interior padding, exercising `write_words`/`read_words`
+        // boundary handling.
+        #[derive(Clone, Copy, PartialEq, Debug, Default)]
+        struct Ragged {
+            a: u8,
+            b: u64,
+            c: u16,
+            d: f64,
+            e: bool,
+        }
+        let s = Seqlock::<Ragged>::default();
+        let v = Ragged {
+            a: 0xAB,
+            b: 0x0123_4567_89AB_CDEF,
+            c: 0xBEEF,
+            d: core::f64::consts::PI,
+            e: true,
+        };
+        s.store(v);
+        assert_eq!(s.read(), v);
+    }
+
+    /// Regression for the minor single-writer-contract finding: a second writer
+    /// entering the critical section must trip the `debug_assert!` guard (panic)
+    /// rather than silently corrupt the protocol. Deterministic: we mark the
+    /// writer active (as a concurrent second writer would) then expect `store`
+    /// to panic. Only meaningful under `debug_assertions`.
+    #[cfg(debug_assertions)]
+    #[test]
+    fn seqlock_detects_second_concurrent_writer() {
+        let s = Seqlock::new(PriceSnapshot::default());
+        s.force_writer_active_for_test();
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            s.store(PriceSnapshot {
+                request_id: 1,
+                ..Default::default()
+            });
+        }));
+        std::panic::set_hook(prev);
+        assert!(
+            r.is_err(),
+            "a second concurrent writer must trip the single-writer debug guard"
+        );
     }
 
     #[test]

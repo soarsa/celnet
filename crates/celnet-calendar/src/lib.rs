@@ -24,11 +24,16 @@
 //!
 //! # Determinism
 //!
-//! All date arithmetic uses the `time` crate's exact civil-date types — there
-//! is no floating point in the calendar logic itself; only [`daycount`] divides
-//! an exact integer day count by a fixed denominator, and its tests compare via
-//! `celnet_core::assert_close!`. The API is purpose-named and vendor-neutral,
-//! and is the date layer consumed by `celnet-conventions`.
+//! All date arithmetic uses the `time` crate's exact civil-date types. Civil
+//! date logic is integer-only **except** for two bounded, documented uses of
+//! floating point: (1) [`daycount`] divides an exact integer day count by a
+//! fixed denominator, and (2) the Japanese vernal/autumnal equinox holidays use
+//! the standard published polynomial approximation, valid for years **1980–2099**
+//! (see [`holiday`]); outside that window the equinox day is not guaranteed and
+//! callers must restrict expiries accordingly. Both float paths are bit-identical
+//! across platforms (no transcendentals), so determinism holds. Tests compare via
+//! `celnet_core::assert_close!`. The API is purpose-named and vendor-neutral, and
+//! is the date layer consumed by `celnet-conventions`.
 
 #![forbid(unsafe_code)]
 

@@ -51,7 +51,7 @@
 use celnet_core::math::{exp, ln, sqrt};
 
 use crate::normal::inverse_cdf;
-use crate::rng::PhiloxStream;
+use crate::rng::CounterRng;
 
 /// Parameters of the mean-reverting square-root variance backbone.
 ///
@@ -257,7 +257,7 @@ pub fn log_spot_increment(
 /// path is bit-reproducible from `(seed, path, step)`.
 #[must_use]
 pub fn step_uniforms(seed: u64, stream: u32, path: u64, step: u32) -> (f64, f64) {
-    let mut rng = PhiloxStream::new(seed, stream, path, step);
+    let mut rng = CounterRng::new(seed, stream, path, step);
     (rng.next_u01(), rng.next_u01())
 }
 
@@ -294,7 +294,7 @@ mod tests {
         let e = exp(-p.mean_reversion * dt);
         let expected = p.long_var + (v - p.long_var) * e;
 
-        let mut rng = PhiloxStream::new(0x0E_5EED, 0, 0, 0);
+        let mut rng = CounterRng::new(0x0E_5EED, 0, 0, 0);
         let n = 400_000;
         let mut sum = 0.0;
         for _ in 0..n {
@@ -313,7 +313,7 @@ mod tests {
     #[test]
     fn qe_is_non_negative() {
         let p = VarianceParams::new(0.04, 0.5, 0.04, 1.2, -0.7); // strongly Feller-violating
-        let mut rng = PhiloxStream::new(123, 0, 0, 0);
+        let mut rng = CounterRng::new(123, 0, 0, 0);
         for _ in 0..200_000 {
             let v = qe_variance_step(&p, 1e-6, 1.0 / 12.0, rng.next_u01());
             assert!(v >= 0.0, "negative variance {v}");

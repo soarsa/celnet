@@ -9,7 +9,7 @@
 
 use celnet_core::Smile;
 use celnet_surface::{
-    ArbitrageReport, CalibrationError, MarketContext, MarketQuotes, VannaVolgaSmile, build_smile,
+    ArbitrageReport, CalibrationError, MarketContext, MarketHedgeSmile, MarketQuotes, build_smile,
     check_slice,
 };
 use celnet_types::CcyPair;
@@ -68,7 +68,7 @@ pub(crate) struct SurfaceResult {
     /// The static-arbitrage diagnostics over the grid.
     pub(crate) arbitrage: ArbitrageReport,
     /// The calibrated smile (kept so callers can evaluate further points).
-    pub(crate) smile: VannaVolgaSmile,
+    pub(crate) smile: MarketHedgeSmile,
 }
 
 /// Calibrate the smile and evaluate it across `points` strikes spanning the

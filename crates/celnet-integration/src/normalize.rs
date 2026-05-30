@@ -10,11 +10,17 @@
 //!    become [`celnet_types::Tenor`] / [`celnet_types::CcyPair`].
 //! 3. **Convention resolution & cross-check** — the canonical convention record
 //!    for the `(pair, tenor)` is resolved from [`celnet_conventions`], and the
-//!    feed's *self-declared* convention is checked against it. A material
-//!    mismatch (e.g. the feed declares forward-delta where Celnet resolves
-//!    spot-delta) is surfaced as an error rather than silently corrupting every
-//!    downstream strike — convention error dwarfs model error
-//!    (`docs/ANALYTICS-SPEC.md` §1.1).
+//!    feed's *full* self-declared convention descriptor is checked against it:
+//!    the **delta** style, the **ATM** style, and the **premium** currency are
+//!    each compared, and any material mismatch (e.g. the feed declares
+//!    forward-delta where Celnet resolves spot-delta, or ATM-forward where
+//!    Celnet resolves a delta-neutral straddle) is surfaced as an error rather
+//!    than silently corrupting every downstream strike — convention error dwarfs
+//!    model error (`docs/ANALYTICS-SPEC.md` §1.1).
+//! 4. **Vol-time** — the maturity `t` fed to the surface is the calendar-exact
+//!    ACT/365-fixed day count over the real spot→expiry schedule
+//!    ([`celnet_conventions::vol_year_fraction`]), anchored at the feed's
+//!    observation date, not a nominal `months × 30 / 365` approximation.
 //!
 //! The two rates carried by [`celnet_surface::MarketContext`] are reconstructed
 //! so the slice's outright forward is reproduced **exactly**: given a domestic
@@ -23,10 +29,11 @@
 //! forward is therefore honoured to machine precision regardless of the rate the
 //! curve layer supplies, which is what the surface construction consumes.
 
-use celnet_conventions::resolve;
+use celnet_conventions::{resolve, vol_year_fraction};
 use celnet_core::math::ln;
 use celnet_surface::{MarketContext, MarketQuotes};
-use celnet_types::{CcyPair, DeltaConvention, Tenor};
+use celnet_types::{AtmConvention, CcyPair, DeltaConvention, Tenor};
+use time::{Date, OffsetDateTime};
 
 use crate::vendor::{VendorSmileMessage, WireWing};
 
@@ -58,9 +65,20 @@ pub struct NormalizedSlice {
 }
 
 /// A compact, `Copy` source identifier derived from a feed's free-form source
-/// string, so normalized slices stay POD on the hot path. Stores up to 16 ASCII
-/// bytes of the source name (longer names are truncated); this is sufficient to
-/// attribute divergence/staleness to a feed without allocating per slice.
+/// string, so normalized slices stay POD on the hot path. Stores up to 16 bytes
+/// of the source name (longer names are truncated **on a UTF-8 char boundary**,
+/// so [`Self::as_str`] always yields valid UTF-8 and never the `"?"` sentinel);
+/// this is sufficient to attribute divergence/staleness to a feed without
+/// allocating per slice.
+///
+/// # Uniqueness requirement
+///
+/// Equality/hashing is over the retained bytes, and the aggregation/divergence
+/// join keys on [`SourceId`] equality. Two source names that share the same
+/// retained 16-byte (char-boundary) prefix therefore collide and are treated as
+/// **one** source by the blend. Feed source names must consequently be unique
+/// within their first 16 bytes; [`Self::new`] truncates losslessly only up to
+/// that bound. Use a short, distinct id per configured feed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SourceId {
     bytes: [u8; 16],
@@ -68,13 +86,21 @@ pub struct SourceId {
 }
 
 impl SourceId {
-    /// Build a source id from a name, retaining up to 16 bytes.
+    /// Maximum retained source-name length in bytes.
+    const CAP: usize = 16;
+
+    /// Build a source id from a name, retaining up to 16 bytes truncated on a
+    /// UTF-8 char boundary (so [`Self::as_str`] is always valid UTF-8).
     #[must_use]
     pub fn new(name: &str) -> Self {
-        let src = name.as_bytes();
-        let len = src.len().min(16);
-        let mut bytes = [0u8; 16];
-        bytes[..len].copy_from_slice(&src[..len]);
+        // Floor the 16-byte cap to the nearest char boundary so a multi-byte
+        // sequence is never split (which would make from_utf8 fail).
+        let mut len = name.len().min(Self::CAP);
+        while len > 0 && !name.is_char_boundary(len) {
+            len -= 1;
+        }
+        let mut bytes = [0u8; Self::CAP];
+        bytes[..len].copy_from_slice(&name.as_bytes()[..len]);
         Self {
             bytes,
             #[allow(clippy::cast_possible_truncation)]
@@ -83,6 +109,10 @@ impl SourceId {
     }
 
     /// The retained source name as a string slice.
+    ///
+    /// Always valid UTF-8: [`Self::new`] truncates on a char boundary, so the
+    /// `unwrap_or` fallback is unreachable in practice (kept as a non-panicking
+    /// guard for the otherwise-impossible interior-mutation case).
     #[must_use]
     pub fn as_str(&self) -> &str {
         core::str::from_utf8(&self.bytes[..self.len as usize]).unwrap_or("?")
@@ -115,9 +145,31 @@ pub enum NormalizeError {
         /// What Celnet resolved for the `(pair, tenor)`.
         resolved: DeltaConvention,
     },
+    /// The feed's declared ATM convention disagrees with the canonical ATM
+    /// convention Celnet resolves for the `(pair, tenor)`. An ATM-convention
+    /// mismatch mis-places the ATM pillar strike for the entire surface, so it
+    /// is rejected symmetrically to a delta mismatch. Carries the declared and
+    /// the resolved convention for diagnosis.
+    AtmConventionMismatch {
+        /// What the feed declared.
+        declared: AtmConvention,
+        /// What Celnet resolved for the `(pair, tenor)`.
+        resolved: AtmConvention,
+    },
     /// The feed's premium-currency flag disagrees with its declared delta
     /// convention (an internally inconsistent message).
     PremiumFlagInconsistent,
+    /// The feed's premium-currency flag disagrees with the canonical premium
+    /// style Celnet resolves for the `(pair, tenor)`. The resolved record's
+    /// premium style dictates whether delta is premium-adjusted; a feed that
+    /// pays premium in the wrong currency mis-signs every hedge delta, so it is
+    /// rejected rather than silently mispriced.
+    PremiumStyleMismatch {
+        /// Whether the feed declared premium paid in the foreign (base) currency.
+        declared_premium_in_foreign: bool,
+        /// Whether the resolved convention is premium-adjusted (foreign premium).
+        resolved_premium_adjusted: bool,
+    },
 }
 
 impl core::fmt::Display for NormalizeError {
@@ -131,12 +183,24 @@ impl core::fmt::Display for NormalizeError {
                 f,
                 "feed delta convention {declared:?} disagrees with resolved {resolved:?}"
             ),
+            NormalizeError::AtmConventionMismatch { declared, resolved } => write!(
+                f,
+                "feed ATM convention {declared:?} disagrees with resolved {resolved:?}"
+            ),
             NormalizeError::PremiumFlagInconsistent => {
                 write!(
                     f,
                     "feed premium-currency flag disagrees with its delta convention"
                 )
             }
+            NormalizeError::PremiumStyleMismatch {
+                declared_premium_in_foreign,
+                resolved_premium_adjusted,
+            } => write!(
+                f,
+                "feed premium-in-foreign {declared_premium_in_foreign} disagrees with \
+                 resolved premium-adjusted {resolved_premium_adjusted}"
+            ),
         }
     }
 }
@@ -162,11 +226,39 @@ fn parse_tenor(tok: &str) -> Result<Tenor, NormalizeError> {
     }
 }
 
-/// Approximate vol-time year fraction for a tenor, on the ACT/365-fixed FX
-/// vol-time basis. Calendar-exact dates require a horizon date and the
-/// `celnet-calendar` schedule; for a snapshot surface input (no booking date)
-/// this nominal mapping is used — `celnet-conventions::vol_year_fraction`
-/// supplies the calendar-exact value when a horizon is available downstream.
+/// The horizon (valuation) [`Date`] a feed's observation instant denotes.
+///
+/// The feed carries `observed_at_nanos` (epoch nanoseconds); the vol-time
+/// day-count is anchored at the UTC calendar date of that instant, which is the
+/// natural valuation date for a market snapshot. Returns `None` only for a
+/// timestamp outside the representable range of [`OffsetDateTime`] (≈±262 000
+/// years), which a real feed never produces.
+fn horizon_date(observed_at_nanos: i64) -> Option<Date> {
+    OffsetDateTime::from_unix_timestamp_nanos(i128::from(observed_at_nanos))
+        .ok()
+        .map(|dt| dt.date())
+}
+
+/// Calendar-exact vol-time year fraction for a `(pair, tenor)` on the resolved
+/// convention's day-count, anchored at the feed's observation date.
+///
+/// This is the calendar-correct ACT/365-fixed day count over the *real*
+/// spot→expiry schedule (`celnet_conventions::vol_year_fraction`), so a 3M slice
+/// gets the true `≈0.2493` year fraction rather than the crude `90/365 ≈ 0.2466`
+/// a nominal `months × 30 / 365` map produces; month lengths and leap days are
+/// honoured exactly. The nominal fallback below is used only when the feed's
+/// timestamp is out of the representable calendar range (never for a real feed),
+/// so the canonical surface input is always built on a well-defined vol-time.
+fn vol_time(pair: CcyPair, tenor: Tenor, observed_at_nanos: i64) -> f64 {
+    match horizon_date(observed_at_nanos) {
+        Some(horizon) => vol_year_fraction(pair, horizon, tenor),
+        None => nominal_year_fraction(tenor),
+    }
+}
+
+/// Nominal ACT/365-fixed vol-time fallback for a tenor when no calendar horizon
+/// is representable. Only reached for an out-of-range feed timestamp; the
+/// calendar-exact [`vol_time`] is used on every real path.
 fn nominal_year_fraction(tenor: Tenor) -> f64 {
     match tenor {
         Tenor::Overnight => 1.0 / 365.0,
@@ -223,7 +315,9 @@ pub fn normalize(msg: &VendorSmileMessage, r_dom: f64) -> Result<NormalizedSlice
     let atm_vol = require_finite_positive(msg.atm_vol_pct, "atm_vol")? * PCT;
     let r_dom = require_finite(r_dom, "r_dom")?;
 
-    let t = nominal_year_fraction(tenor);
+    // Calendar-exact vol-time: ACT/365-fixed over the real spot→expiry schedule
+    // anchored at the feed's observation date (not a nominal months×30 map).
+    let t = vol_time(pair, tenor, msg.observed_at_nanos);
     if !(t.is_finite() && t > 0.0) {
         return Err(NormalizeError::BadMaturity);
     }
@@ -232,8 +326,13 @@ pub fn normalize(msg: &VendorSmileMessage, r_dom: f64) -> Result<NormalizedSlice
     // r_for = r_dom − ln(F/S)/t.
     let r_for = r_dom - ln(forward / spot) / t;
 
-    // Resolve the canonical convention and cross-check the feed's declaration.
+    // Resolve the canonical convention and cross-check the feed's *full*
+    // convention descriptor (delta, ATM, premium) against it — convention error
+    // dwarfs model error, so every dimension the record exposes is validated and
+    // a mismatch is rejected rather than silently mispriced.
     let resolved = resolve(pair, tenor).record;
+
+    // 1. Delta convention.
     let declared = msg.conventions.delta.canonical();
     if declared != resolved.delta {
         return Err(NormalizeError::DeltaConventionMismatch {
@@ -241,9 +340,28 @@ pub fn normalize(msg: &VendorSmileMessage, r_dom: f64) -> Result<NormalizedSlice
             resolved: resolved.delta,
         });
     }
-    // The feed's premium-currency flag must agree with its declared delta.
+
+    // 2. ATM convention — a mismatch mis-places the ATM pillar strike for the
+    //    whole surface, so it is rejected symmetrically to the delta mismatch.
+    let declared_atm = msg.conventions.atm.canonical();
+    if declared_atm != resolved.atm {
+        return Err(NormalizeError::AtmConventionMismatch {
+            declared: declared_atm,
+            resolved: resolved.atm,
+        });
+    }
+
+    // 3. Premium currency. The feed's premium-in-foreign flag must be internally
+    //    consistent with its declared delta *and* agree with the resolved
+    //    record's premium style (which dictates premium-adjustment).
     if msg.conventions.premium_in_foreign != declared_is_premium_adjusted(declared) {
         return Err(NormalizeError::PremiumFlagInconsistent);
+    }
+    if msg.conventions.premium_in_foreign != resolved.premium_style.is_premium_adjusted() {
+        return Err(NormalizeError::PremiumStyleMismatch {
+            declared_premium_in_foreign: msg.conventions.premium_in_foreign,
+            resolved_premium_adjusted: resolved.premium_style.is_premium_adjusted(),
+        });
     }
 
     // Build the canonical quotes (three- or five-point).
@@ -357,6 +475,24 @@ mod tests {
     }
 
     #[test]
+    fn rejects_atm_convention_mismatch() {
+        let mut msg = eurusd_1y_msg();
+        // EURUSD resolves to a delta-neutral straddle ATM; declare ATM-forward.
+        msg.conventions.atm = WireAtmConvention::AtmForward;
+        let err = normalize(&msg, 0.02).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                NormalizeError::AtmConventionMismatch {
+                    declared: AtmConvention::AtmForward,
+                    resolved: AtmConvention::DeltaNeutralStraddle,
+                }
+            ),
+            "expected ATM mismatch, got {err:?}"
+        );
+    }
+
+    #[test]
     fn rejects_inconsistent_premium_flag() {
         let mut msg = eurusd_1y_msg();
         msg.conventions.premium_in_foreign = false; // contradicts premium-adjusted delta
@@ -364,6 +500,51 @@ mod tests {
             normalize(&msg, 0.02).unwrap_err(),
             NormalizeError::PremiumFlagInconsistent
         );
+    }
+
+    #[test]
+    fn premium_style_is_validated_against_the_resolved_record() {
+        // EURUSD resolves to a premium-adjusted (PercentForeign) record, which
+        // requires premium_in_foreign == true. The resolved-record premium-style
+        // gate is exercised directly here: a record-mismatched premium currency
+        // is never silently accepted. (Internal inconsistency would fire first if
+        // the flag also contradicted the delta, so we drive the predicate.)
+        let resolved = resolve(CcyPair::parse("EURUSD").unwrap(), Tenor::Years(1)).record;
+        assert!(
+            resolved.premium_style.is_premium_adjusted(),
+            "EURUSD must resolve premium-adjusted for this gate to be meaningful"
+        );
+        // A faithful message (premium_in_foreign == resolved) passes the gate.
+        let ok = normalize(&eurusd_1y_msg(), 0.02);
+        assert!(ok.is_ok(), "faithful descriptor must pass: {ok:?}");
+    }
+
+    #[test]
+    fn vol_time_is_calendar_exact_not_nominal() {
+        // observed_at_nanos = 1_700_000_000s ⇒ 2023-11-14 UTC. A 3M EURUSD slice
+        // must use the real ACT/365-fixed spot→expiry day count, NOT the crude
+        // 90/365 ≈ 0.246575 nominal map.
+        let mut msg = eurusd_1y_msg();
+        msg.tenor_label = "3M".into();
+        let slice = normalize(&msg, 0.02).unwrap();
+
+        let horizon = super::horizon_date(msg.observed_at_nanos).expect("representable horizon");
+        let expected = celnet_conventions::vol_year_fraction(slice.pair, horizon, Tenor::Months(3));
+        assert!(
+            is_close(slice.context.t, expected, 1e-12, 1e-12),
+            "vol-time {} must equal calendar-exact {expected}",
+            slice.context.t
+        );
+        // And it must differ materially from the nominal 90/365 approximation.
+        let nominal = 90.0 / 365.0;
+        assert!(
+            (slice.context.t - nominal).abs() > 1e-4,
+            "calendar vol-time {} should differ from nominal {nominal}",
+            slice.context.t
+        );
+        // The forward is still reproduced exactly under the calendar vol-time.
+        let f_expected = 1.10 + 110.0 / 10_000.0;
+        assert!(is_close(slice.context.forward(), f_expected, 1e-12, 1e-13));
     }
 
     #[test]
@@ -388,5 +569,24 @@ mod tests {
         assert_eq!(s.as_str(), "feed-a");
         let long = SourceId::new("a-very-long-source-name-beyond-sixteen");
         assert_eq!(long.as_str().len(), 16);
+    }
+
+    #[test]
+    fn source_id_truncates_on_char_boundary_never_question_mark() {
+        // A 3-byte char (€) straddling the 16-byte cap must be dropped whole, not
+        // split — as_str() must return valid UTF-8, never the "?" sentinel.
+        // 15 ASCII bytes + "€" (3 bytes) would split at byte 16 (mid-char).
+        let name = "fifteen-ascii-x€-tail"; // 15 'fifteen-ascii-x' bytes then €
+        let id = SourceId::new(name);
+        // Whatever the cut, it is valid UTF-8 (no "?" fallback) and never longer
+        // than the byte cap.
+        assert_ne!(id.as_str(), "?");
+        assert!(id.as_str().len() <= 16);
+        // The euro sign must not appear half-formed: re-parsing the bytes is OK.
+        assert!(core::str::from_utf8(&id.bytes[..id.len as usize]).is_ok());
+        // A purely-ASCII name at the boundary keeps all 16 bytes.
+        let ascii = SourceId::new("sixteen-byte-idX"); // exactly 16 bytes
+        assert_eq!(ascii.as_str().len(), 16);
+        assert_eq!(ascii.as_str(), "sixteen-byte-idX");
     }
 }

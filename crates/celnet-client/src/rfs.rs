@@ -15,13 +15,15 @@
 //!   sends a [`celnet_proto::Resync`] with the last good sequence, emitting
 //!   [`StreamEvent::GapDetected`] then resuming from the replayed messages /
 //!   fresh snapshot the server returns;
-//! * on a [`celnet_proto::StreamEnd`] with reason `LAGGED` automatically resyncs,
-//!   and with reason `DRAINING` (a blue-green cutover) automatically re-dials a new
+//! * on a [`celnet_proto::StreamEnd`] with reason `LAGGED` automatically resyncs
+//!   on the same stream, emitting a distinct [`StreamEvent::Lagged`] (a server-side
+//!   drop, kept separate from a client-detected [`StreamEvent::GapDetected`]), and
+//!   with reason `DRAINING` (a blue-green cutover) automatically re-dials a new
 //!   stream and re-subscribes, transparent to the caller, emitting
 //!   [`StreamEvent::Reconnected`];
 //! * surfaces [`celnet_proto::Heartbeat`]s as [`StreamEvent::Heartbeat`] so a
-//!   caller can monitor liveness, and forwards a clean unsubscribe end as
-//!   [`StreamEvent::Closed`].
+//!   caller can monitor liveness, and ends the stream (the next
+//!   [`Subscription::next_event`] yields `None`) on a clean unsubscribe / expiry.
 //!
 //! The subscription owns a background driver task joined to a bounded channel, so
 //! polling the [`Stream`] never blocks on the network and a slow caller applies
@@ -101,6 +103,18 @@ pub enum StreamEvent {
         last_good: u64,
         /// The out-of-order sequence that revealed the gap.
         observed: u64,
+    },
+    /// The server dropped this subscription for lagging (a `LAGGED`
+    /// [`celnet_proto::StreamEnd`]) and the SDK is auto-resyncing on the **same**
+    /// stream from `last_good`. Distinct from [`StreamEvent::GapDetected`]: no
+    /// client-side sequence gap was observed — the server shed a slow consumer —
+    /// so lag and gap telemetry stay separable. The next replayed
+    /// [`StreamEvent::Tick`]s or a fresh [`StreamEvent::Snapshot`] re-establish the
+    /// baseline.
+    Lagged {
+        /// The last in-order sequence the SDK had applied when it was dropped, and
+        /// the sequence the resync requests replay from.
+        last_good: u64,
     },
     /// The server drained for a blue-green cutover and the SDK transparently
     /// re-dialed a fresh stream and re-subscribed. A fresh
@@ -416,12 +430,15 @@ async fn handle_server_message(
             match stream_end::Reason::try_from(end.reason) {
                 Ok(stream_end::Reason::Lagged) => {
                     // We were dropped for lagging: resync from our last good seq to
-                    // recover, staying on the same stream.
-                    let gap = StreamEvent::GapDetected {
+                    // recover, staying on the same stream. This is a server-side
+                    // drop-and-resync, not a client-detected sequence gap, so it is
+                    // surfaced as a distinct `Lagged` event (never `GapDetected`
+                    // with last_good == observed, which would muddy lag-vs-gap
+                    // telemetry a consumer cannot otherwise disambiguate).
+                    let lagged = StreamEvent::Lagged {
                         last_good: *last_seq,
-                        observed: *last_seq,
                     };
-                    if matches!(emit(event_tx, Ok(gap)).await, Flow::CallerGone) {
+                    if matches!(emit(event_tx, Ok(lagged)).await, Flow::CallerGone) {
                         return Flow::CallerGone;
                     }
                     if send_resync(control, sub_id, *last_seq).await.is_err() {
@@ -498,7 +515,93 @@ fn decode_line(
 
 #[cfg(test)]
 mod tests {
-    use super::{is_gap, is_stale};
+    use celnet_proto::{StreamEnd, SubscriptionId, server_stream_message, stream_end};
+    use tokio::sync::mpsc;
+
+    use super::{Flow, StreamEvent, handle_server_message, is_gap, is_stale};
+
+    const SUB_ID: u64 = 7;
+
+    fn stream_end(reason: stream_end::Reason) -> server_stream_message::Message {
+        server_stream_message::Message::StreamEnd(StreamEnd {
+            subscription: Some(SubscriptionId { value: SUB_ID }),
+            reason: reason as i32,
+        })
+    }
+
+    /// Regression for the lag-vs-gap telemetry trap: a `LAGGED` StreamEnd is a
+    /// server-side drop-and-resync, so the SDK surfaces a distinct
+    /// [`StreamEvent::Lagged`] carrying `last_good`, and emits a `Resync` from that
+    /// sequence — it must NOT synthesize a degenerate `GapDetected{last_good ==
+    /// observed}` (a "gap" with no missed sequence a consumer cannot interpret).
+    #[tokio::test]
+    async fn lagged_stream_end_emits_distinct_lagged_event_and_resyncs() {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let (event_tx, mut event_rx) = mpsc::channel(8);
+            let (control_tx, mut control_rx) = mpsc::channel(8);
+            let mut last_seq: u64 = 42;
+
+            let flow = handle_server_message(
+                stream_end(stream_end::Reason::Lagged),
+                &mut last_seq,
+                &control_tx,
+                SUB_ID,
+                &event_tx,
+            )
+            .await;
+            assert!(matches!(flow, Flow::Continue), "lag resyncs in place");
+
+            // The caller sees a typed Lagged event, never a degenerate GapDetected.
+            match event_rx.recv().await.expect("an event").expect("ok event") {
+                StreamEvent::Lagged { last_good } => {
+                    assert_eq!(last_good, 42, "lag carries the last good sequence");
+                }
+                other => panic!("expected StreamEvent::Lagged, got {other:?}"),
+            }
+
+            // The SDK asked the server to replay from the last good sequence.
+            let ctrl = control_rx.recv().await.expect("a control message");
+            match ctrl.message.expect("a control payload") {
+                celnet_proto::client_stream_message::Message::Resync(r) => {
+                    assert_eq!(r.subscription.expect("sub id").value, SUB_ID);
+                    assert_eq!(r.last_sequence, 42, "resync replays from last good");
+                }
+                other => panic!("expected a Resync control message, got {other:?}"),
+            }
+            // last_seq is unchanged: the replay/snapshot re-establishes it.
+            assert_eq!(last_seq, 42);
+        })
+        .await
+        .expect("test must not hang");
+    }
+
+    /// A `DRAINING` StreamEnd is a cutover, not a lag: it signals a reconnect and
+    /// emits no `Lagged`/`GapDetected` event.
+    #[tokio::test]
+    async fn draining_stream_end_signals_reconnect_without_a_lag_event() {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let (event_tx, mut event_rx) = mpsc::channel(8);
+            let (control_tx, _control_rx) = mpsc::channel(8);
+            let mut last_seq: u64 = 10;
+
+            let flow = handle_server_message(
+                stream_end(stream_end::Reason::Draining),
+                &mut last_seq,
+                &control_tx,
+                SUB_ID,
+                &event_tx,
+            )
+            .await;
+            assert!(
+                matches!(flow, Flow::Reconnect),
+                "drain triggers a reconnect"
+            );
+            // No event is emitted here; the driver emits Reconnected after re-dial.
+            assert!(event_rx.try_recv().is_err(), "drain emits no lag/gap event");
+        })
+        .await
+        .expect("test must not hang");
+    }
 
     #[test]
     fn no_gap_before_a_baseline_is_established() {

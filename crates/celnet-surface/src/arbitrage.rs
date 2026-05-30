@@ -160,7 +160,7 @@ pub fn forward_call_strike_slope<S: Smile>(smile: &S, strike: f64, forward: f64,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vannavolga::VannaVolgaSmile;
+    use crate::market_hedge::MarketHedgeSmile;
     use celnet_core::FlatSmile;
 
     fn grid(lo: f64, hi: f64, n: usize) -> Vec<f64> {
@@ -187,7 +187,7 @@ mod tests {
     /// spanning the wings.
     #[test]
     fn mild_vanna_volga_is_arbitrage_free() {
-        let s = VannaVolgaSmile::new([1.02, 1.11, 1.20], [0.118, 0.11, 0.114], 1.11, 1.0);
+        let s = MarketHedgeSmile::new([1.02, 1.11, 1.20], [0.118, 0.11, 0.114], 1.11, 1.0);
         let g = grid(0.85, 1.5, 61);
         let rep = check_slice(&s, &g, s.forward(), s.reference_t(), 1e-3);
         assert!(
@@ -200,7 +200,7 @@ mod tests {
     /// price Φ(d2) is a probability).
     #[test]
     fn call_strike_slope_is_bounded() {
-        let s = VannaVolgaSmile::new([1.02, 1.11, 1.20], [0.118, 0.11, 0.114], 1.11, 1.0);
+        let s = MarketHedgeSmile::new([1.02, 1.11, 1.20], [0.118, 0.11, 0.114], 1.11, 1.0);
         for k in grid(0.9, 1.4, 21) {
             let slope = forward_call_strike_slope(&s, k, s.forward(), s.reference_t());
             assert!(
@@ -216,7 +216,7 @@ mod tests {
     fn detects_negative_density() {
         // A V-shaped "smile" with an extreme central dip and high wings creates a
         // concave region in the call price ⇒ negative density.
-        let s = VannaVolgaSmile::new([1.05, 1.11, 1.17], [0.40, 0.08, 0.40], 1.11, 0.10);
+        let s = MarketHedgeSmile::new([1.05, 1.11, 1.17], [0.40, 0.08, 0.40], 1.11, 0.10);
         let g = grid(0.95, 1.30, 81);
         let rep = check_slice(&s, &g, s.forward(), s.reference_t(), 5e-4);
         assert!(

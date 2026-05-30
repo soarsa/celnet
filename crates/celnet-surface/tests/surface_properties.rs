@@ -15,8 +15,8 @@
 use celnet_core::math::norm_cdf;
 use celnet_core::{Smile, is_close};
 use celnet_surface::{
-    CalendarClock, SabrParams, SabrSmile, SsviSurface, SviSlice, TenorPillar, TermStructure,
-    VannaVolgaSmile,
+    CalendarClock, MarketHedgeSmile, ParametricSlice, ParametricSurface, StochasticVolParams,
+    StochasticVolSmile, TenorPillar, TermStructure,
 };
 use proptest::prelude::*;
 
@@ -40,10 +40,10 @@ fn sabr_reprices_its_atm() {
     // SABR ATM Black vol is a deterministic function of (alpha,beta,rho,nu,F,t):
     // the model "reprices" its own ATM by construction; assert it is the closed
     // form and finite.
-    let p = SabrParams::new(0.12, 1.0, -0.15, 0.5, 1.25, 0.75);
+    let p = StochasticVolParams::new(0.12, 1.0, -0.15, 0.5, 1.25, 0.75);
     let atm = p.black_vol(p.forward);
     assert!(atm > 0.0 && atm.is_finite());
-    let s = SabrSmile::new(p);
+    let s = StochasticVolSmile::new(p);
     assert!(is_close(
         s.implied_vol(p.forward, p.forward, p.t).0,
         atm,
@@ -56,7 +56,7 @@ fn sabr_reprices_its_atm() {
 fn svi_reprices_total_variance_targets() {
     // Build an SVI slice and verify it reproduces chosen (k, w) target points to
     // machine precision — the raw parameterization is an exact functional form.
-    let s = SviSlice::new(0.009, 0.05, -0.25, 0.02, 0.12, 1.10, 1.0);
+    let s = ParametricSlice::new(0.009, 0.05, -0.25, 0.02, 0.12, 1.10, 1.0);
     for &k in &[-0.5, -0.2, 0.0, 0.1, 0.4] {
         let w = s.total_variance(k);
         // Re-deriving vol from w and back to w is exact.
@@ -67,7 +67,7 @@ fn svi_reprices_total_variance_targets() {
 
 #[test]
 fn ssvi_to_raw_is_exact() {
-    let surf = SsviSurface::new(-0.3, 0.7, 0.45);
+    let surf = ParametricSurface::new(-0.3, 0.7, 0.45);
     let theta = 0.012;
     let raw = surf.to_slice(theta, 1.10, 1.0);
     for &k in &[-0.4, -0.1, 0.0, 0.2, 0.5] {
@@ -120,7 +120,7 @@ proptest! {
     ) {
         // Constrain to the no-arbitrage regime: b(1+|rho|) bounded keeps g ≥ 0.
         prop_assume!(b * (1.0 + rho.abs()) < 0.5);
-        let s = SviSlice::new(a, b, rho, 0.0, sigma, 1.10, 1.0);
+        let s = ParametricSlice::new(a, b, rho, 0.0, sigma, 1.10, 1.0);
         prop_assert!(
             s.is_butterfly_free(1.5, 1e-7),
             "min butterfly density factor g = {}",
@@ -146,7 +146,7 @@ proptest! {
         nu in 0.1f64..0.8,
         t in 0.25f64..2.0,
     ) {
-        let p = SabrParams::new(alpha, 1.0, rho, nu, 1.20, t);
+        let p = StochasticVolParams::new(alpha, 1.0, rho, nu, 1.20, t);
         let f = p.forward;
         let mut min_g = f64::INFINITY;
         for i in 0..200 {
@@ -175,14 +175,14 @@ fn vanna_volga_vs_ssvi_agree_in_wings() {
     // wing 10.6 — small skew, small convexity).
     let k_put = 0.95;
     let k_call = 1.26;
-    let vv = VannaVolgaSmile::new([k_put, f, k_call], [0.108, atm, 0.106], f, t);
+    let vv = MarketHedgeSmile::new([k_put, f, k_call], [0.108, atm, 0.106], f, t);
 
     // Match an SSVI slice to the same ATM total variance theta = atm²·t, with a
     // small negative correlation (downward skew) and a curvature chosen so the
     // 25Δ-ish wing convexity is comparable. theta is exact at ATM; eta/gamma set
     // a mild, arbitrage-free curvature.
     let theta = atm * atm * t;
-    let ssvi = SsviSurface::new(-0.06, 0.30, 0.5);
+    let ssvi = ParametricSurface::new(-0.06, 0.30, 0.5);
     assert!(
         ssvi.is_butterfly_free(theta),
         "SSVI slice must be arbitrage-free"

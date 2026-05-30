@@ -37,14 +37,14 @@
 #![forbid(unsafe_code)]
 
 pub mod backend;
+pub mod counter_rng;
 pub mod cpu;
 pub mod gpu;
-pub mod philox;
 
 pub use backend::{PathSpec, PayoffKernel, PricingBackend, Reduction};
+pub use counter_rng::{CounterAddress, CounterNormals};
 pub use cpu::CpuBackend;
 pub use gpu::GpuBackend;
-pub use philox::{PhiloxAddress, PhiloxNormals};
 
 /// The simulation precision a [`PricingBackend`] computes in.
 ///

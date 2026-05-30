@@ -309,6 +309,274 @@ def generate_digital() -> int:
     return len(rows)
 
 
+# --- Touch / no-touch / double-no-touch / double-touch references -------------
+#
+# These are the flagship FX "touch" products. QuantLib exposes them through the
+# *double*-barrier binary engine (`AnalyticDoubleBarrierBinaryEngine`, European
+# exercise, cash-or-nothing payout 1.0): a `DoubleBarrier.KnockOut` cash binary
+# pays the discounted cash iff the spot never leaves the corridor `(L, U)` — i.e.
+# it *is* the double-no-touch. Its `KnockIn` complement is the double-touch.
+#
+# Crucially, the *single*-barrier touch family is recovered as the wide-corridor
+# limit of the very same independent QuantLib engine: pushing one wall far away
+# (`L → 0` or `U → ∞`) leaves a single live wall, so the KnockOut cash binary
+# collapses to the single **no-touch** (rebate paid at expiry) and its complement
+# to the single **one-touch** (deferred / at-expiry). This makes QuantLib a fully
+# independent oracle for the whole touch family — not the tautological
+# `no_touch = df − one_touch` identity the in-crate tests use, but a separate
+# implementation (QuantLib's reflection series) of the survival probability.
+#
+# The one-touch *at-hit* timing has no clean QuantLib analytic engine (QuantLib's
+# `AnalyticBinaryBarrierEngine` prices a different knock-and-in-the-money binary),
+# so the frozen grid validates the *at-expiry* timing — which shares all of the
+# drift/exponent/sign machinery with the at-hit form — and the at-hit form is
+# pinned separately in-crate by the `at_hit_dominates_deferred` ordering plus the
+# Monte-Carlo cross-check. The CSV's `timing` column records `AT_EXPIRY`.
+
+def _far_wall(spot: float, vol: float, t: float, up: bool) -> float:
+    """A wall placed `n_std` standard deviations of `ln S_T` away from spot.
+
+    `n_std = 12` puts the wall ≳ 12σ√T out, so the conditional probability of ever
+    touching it is below `1e-30` — numerically a single live wall — while keeping
+    the QuantLib reflection series well-conditioned (an effectively-infinite wall
+    makes the series fail to converge). This recovers the *single* no-touch as the
+    wide-corridor limit of the independent double-barrier-binary engine.
+    """
+    n_std = 12.0
+    spread = n_std * vol * (t**0.5)
+    return spot * (2.718_281_828_459_045**spread) if up else spot / (
+        2.718_281_828_459_045**spread
+    )
+
+
+def _double_binary_no_touch(
+    proc: object, expiry: ql.Date, lower: float, upper: float
+) -> float:
+    """QuantLib double-no-touch value: discounted cash (=1) iff spot stays in (L,U).
+
+    Uses the European cash-or-nothing double-barrier binary KnockOut engine — an
+    implementation fully independent of Celnet's image series.
+    """
+    payoff = ql.CashOrNothingPayoff(ql.Option.Call, 0.0, 1.0)
+    option = ql.DoubleBarrierOption(
+        ql.DoubleBarrier.KnockOut, lower, upper, 0.0, payoff,
+        ql.EuropeanExercise(expiry),
+    )
+    option.setPricingEngine(ql.AnalyticDoubleBarrierBinaryEngine(proc))
+    return option.NPV()
+
+
+TOUCH_SPOT = 100.0
+# Corridors span tight (≈5% wide) through wide, symmetric and skewed, so the
+# image-series term count and the single-wall cap are exercised across regimes.
+TOUCH_CORRIDORS = [
+    (95.0, 106.0),
+    (90.0, 112.0),
+    (85.0, 120.0),
+    (80.0, 130.0),
+    (70.0, 145.0),
+    (92.0, 130.0),
+    (75.0, 108.0),
+]
+# Single barriers on each side of spot, near→far, for the single-touch limit.
+TOUCH_SINGLE_UPPER = [105.0, 110.0, 115.0, 125.0, 140.0]
+TOUCH_SINGLE_LOWER = [95.0, 90.0, 85.0, 75.0, 60.0]
+TOUCH_VOLS = [0.08, 0.15, 0.25, 0.40]
+TOUCH_MATS = [0.0833, 0.25, 1.0]  # ~1m, 3m, 1y
+TOUCH_RATES = [(0.05, 0.01), (0.01, 0.03), (-0.005, 0.02)]
+
+
+def generate_touch() -> int:
+    """Write the frozen single/double touch + no-touch + double-touch grid.
+
+    Single rows carry `kind ∈ {ONE_TOUCH, NO_TOUCH}` with `barrier` set and the
+    unused corridor wall left blank; double rows carry
+    `kind ∈ {DNT, DOUBLE_TOUCH}` with `lower`/`upper` set. Every price is the
+    QuantLib double-barrier-binary value (single rows via the wide-corridor
+    limit), so the Rust gate is an *independent* oracle for the whole family.
+    Returns the row count.
+    """
+    _setup()
+    rows = []
+    for vol in TOUCH_VOLS:
+        for t_target in TOUCH_MATS:
+            expiry, t = _expiry_for(t_target)
+            for r_dom, r_for in TOUCH_RATES:
+                proc = _gk_process(TOUCH_SPOT, r_dom, r_for, vol)
+                df = ql.FlatForward(EVAL_DATE, r_dom, DAY_COUNT).discount(expiry)
+
+                # --- single upper / lower no-touch & one-touch (wide-corridor) --
+                far_lo = _far_wall(TOUCH_SPOT, vol, t, up=False)
+                far_hi = _far_wall(TOUCH_SPOT, vol, t, up=True)
+                for barrier in TOUCH_SINGLE_UPPER:
+                    nt = _double_binary_no_touch(proc, expiry, far_lo, barrier)
+                    _push_touch_single(rows, "NO_TOUCH", barrier, vol, t,
+                                       r_dom, r_for, nt)
+                    _push_touch_single(rows, "ONE_TOUCH", barrier, vol, t,
+                                       r_dom, r_for, df - nt)
+                for barrier in TOUCH_SINGLE_LOWER:
+                    nt = _double_binary_no_touch(proc, expiry, barrier, far_hi)
+                    _push_touch_single(rows, "NO_TOUCH", barrier, vol, t,
+                                       r_dom, r_for, nt)
+                    _push_touch_single(rows, "ONE_TOUCH", barrier, vol, t,
+                                       r_dom, r_for, df - nt)
+
+                # --- double-no-touch & double-touch -----------------------------
+                for lower, upper in TOUCH_CORRIDORS:
+                    dnt = _double_binary_no_touch(proc, expiry, lower, upper)
+                    _push_touch_double(rows, "DNT", lower, upper, vol, t,
+                                      r_dom, r_for, dnt)
+                    _push_touch_double(rows, "DOUBLE_TOUCH", lower, upper, vol,
+                                      t, r_dom, r_for, df - dnt)
+
+    out = OUT_DIR / "touch_gk.csv"
+    fields = [
+        "kind",
+        "timing",
+        "spot",
+        "barrier",
+        "lower",
+        "upper",
+        "rebate",
+        "vol",
+        "t",
+        "r_dom",
+        "r_for",
+        "price",
+    ]
+    _write_csv(out, fields, rows)
+    return len(rows)
+
+
+def _push_touch_single(
+    rows: list,
+    kind: str,
+    barrier: float,
+    vol: float,
+    t: float,
+    r_dom: float,
+    r_for: float,
+    price: float,
+) -> None:
+    rows.append(
+        {
+            "kind": kind,
+            "timing": "AT_EXPIRY",
+            "spot": TOUCH_SPOT,
+            "barrier": barrier,
+            "lower": "",
+            "upper": "",
+            "rebate": 1.0,
+            "vol": vol,
+            "t": t,
+            "r_dom": r_dom,
+            "r_for": r_for,
+            "price": price,
+        }
+    )
+
+
+def _push_touch_double(
+    rows: list,
+    kind: str,
+    lower: float,
+    upper: float,
+    vol: float,
+    t: float,
+    r_dom: float,
+    r_for: float,
+    price: float,
+) -> None:
+    rows.append(
+        {
+            "kind": kind,
+            "timing": "AT_EXPIRY",
+            "spot": TOUCH_SPOT,
+            "barrier": "",
+            "lower": lower,
+            "upper": upper,
+            "rebate": 1.0,
+            "vol": vol,
+            "t": t,
+            "r_dom": r_dom,
+            "r_for": r_for,
+            "price": price,
+        }
+    )
+
+
+# --- Double knock-out / knock-in (vanilla payoff) references ------------------
+
+
+def generate_double_barrier() -> int:
+    """Write analytic double-barrier knock-out and knock-in references.
+
+    `AnalyticDoubleBarrierEngine` (KnockOut) prices the corridor knock-out vanilla
+    directly — an oracle fully independent of Celnet's Ikeda-Kunitomo image
+    series. The KnockIn row is the *independent* knock-in value (QuantLib's own
+    KIKO/KOKI machinery is sensitive to which wall arms; we instead record the
+    knock-in as `vanilla − KO_quantlib` computed from QuantLib's own vanilla and
+    KO — still QuantLib-sourced on both legs, so a Celnet block error surfaces).
+    Returns the row count.
+    """
+    _setup()
+    rows = []
+    spot = 100.0
+    for vol in [0.10, 0.20, 0.35]:
+        for t_target in [0.25, 1.0]:
+            expiry, t = _expiry_for(t_target)
+            for r_dom, r_for in [(0.05, 0.01), (0.01, 0.03)]:
+                proc = _gk_process(spot, r_dom, r_for, vol)
+                for lower, upper in [(85.0, 120.0), (90.0, 112.0), (80.0, 130.0)]:
+                    for type_name, opt_type in OPTION_TYPES:
+                        for strike in [90.0, 100.0, 110.0]:
+                            payoff = ql.PlainVanillaPayoff(opt_type, strike)
+                            ko = ql.DoubleBarrierOption(
+                                ql.DoubleBarrier.KnockOut, lower, upper, 0.0,
+                                payoff, ql.EuropeanExercise(expiry),
+                            )
+                            ko.setPricingEngine(ql.AnalyticDoubleBarrierEngine(proc))
+                            van = ql.VanillaOption(
+                                payoff, ql.EuropeanExercise(expiry)
+                            )
+                            van.setPricingEngine(ql.AnalyticEuropeanEngine(proc))
+                            ko_npv = ko.NPV()
+                            ki_npv = van.NPV() - ko_npv
+                            for dko_kind, price in [("KO", ko_npv), ("KI", ki_npv)]:
+                                rows.append(
+                                    {
+                                        "kind": dko_kind,
+                                        "option_type": type_name,
+                                        "spot": spot,
+                                        "strike": strike,
+                                        "lower": lower,
+                                        "upper": upper,
+                                        "vol": vol,
+                                        "t": t,
+                                        "r_dom": r_dom,
+                                        "r_for": r_for,
+                                        "price": price,
+                                    }
+                                )
+
+    out = OUT_DIR / "double_barrier_gk.csv"
+    fields = [
+        "kind",
+        "option_type",
+        "spot",
+        "strike",
+        "lower",
+        "upper",
+        "vol",
+        "t",
+        "r_dom",
+        "r_for",
+        "price",
+    ]
+    _write_csv(out, fields, rows)
+    return len(rows)
+
+
 def _write_csv(path: Path, fields: list[str], rows: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="") as fh:
@@ -330,10 +598,14 @@ def main() -> None:
     n_v = generate_vanilla()
     n_b = generate_barrier()
     n_d = generate_digital()
+    n_t = generate_touch()
+    n_db = generate_double_barrier()
     print(f"QuantLib {ql.__version__}")
-    print(f"vanilla_gk.csv  : {n_v} rows")
-    print(f"barrier_gk.csv  : {n_b} rows")
-    print(f"digital_gk.csv  : {n_d} rows")
+    print(f"vanilla_gk.csv         : {n_v} rows")
+    print(f"barrier_gk.csv         : {n_b} rows")
+    print(f"digital_gk.csv         : {n_d} rows")
+    print(f"touch_gk.csv           : {n_t} rows")
+    print(f"double_barrier_gk.csv  : {n_db} rows")
     print(f"written to {OUT_DIR}")
 
 

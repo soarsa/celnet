@@ -29,28 +29,39 @@ use celnet_types::{
 
 use crate::record::{ConventionRecord, ResolutionSource, ResolvedConvention};
 
-/// The number of whole months in a tenor, used to apply the short-vs-long delta
-/// term-structure rule. Overnight and weeks are short by construction; years are
-/// multiplied out.
+/// The approximate number of calendar days in a tenor, used to apply the
+/// short-vs-long delta term-structure rule on a single common axis so that
+/// week-expressed and month/year-expressed tenors are classified consistently.
+///
+/// Weeks are 7 days each; months are approximated at 365/12 days and years at
+/// 365 days (the same ACT/365 basis vol-time uses). This is a coarse axis used
+/// only for the short/long delta split, not for date arithmetic (that lives in
+/// `celnet-calendar`).
 #[must_use]
-fn tenor_months(tenor: Tenor) -> u32 {
+fn tenor_days(tenor: Tenor) -> u32 {
     match tenor {
-        Tenor::Overnight => 0,
-        // A week is < 1 month; floor to 0 so anything sub-monthly is "short".
-        Tenor::Weeks(w) => u32::from(w) / 5,
-        Tenor::Months(m) => u32::from(m),
-        Tenor::Years(y) => u32::from(y) * 12,
+        Tenor::Overnight => 1,
+        Tenor::Weeks(w) => u32::from(w) * 7,
+        // 365/12 ≈ 30.4167 days/month, rounded to nearest day.
+        Tenor::Months(m) => (u32::from(m) * 365 + 6) / 12,
+        Tenor::Years(y) => u32::from(y) * 365,
     }
 }
 
 /// Whether a tenor is "long" for delta-convention purposes: strictly beyond one
-/// year (`> 12M`). At and below 1Y is "short". This is the §1.2 threshold
-/// ("long tenors > ~1–2Y use forward/driftless delta"); we cut at 1Y, which is
-/// the conservative, widely-quoted boundary and matches the USDJPY worked
-/// example ("USDJPY <= 1Y uses spot premium-adjusted delta").
+/// year. At and below 1Y is "short". This is the §1.2 threshold ("long tenors >
+/// ~1–2Y use forward/driftless delta"); we cut at 1Y, which is the conservative,
+/// widely-quoted boundary and matches the USDJPY worked example ("USDJPY <= 1Y
+/// uses spot premium-adjusted delta").
+///
+/// The comparison is on an approximate-day axis ([`tenor_days`]) so that a
+/// long tenor expressed in weeks (e.g. `Weeks(60)` ≈ 13.8 months) is correctly
+/// classified as long rather than being mis-bucketed by an ad-hoc weeks→months
+/// integer heuristic. Exactly 12 months / 1 year (= 365 days) is short; 366+
+/// days is long.
 #[must_use]
 fn is_long_tenor(tenor: Tenor) -> bool {
-    tenor_months(tenor) > 12
+    tenor_days(tenor) > 365
 }
 
 /// Whether a delta convention is the premium-adjusted variant of its family.
@@ -85,6 +96,29 @@ struct PairProfile {
 }
 
 impl PairProfile {
+    /// Re-express this profile (written for the canonical market-quotation
+    /// orientation) in the **inverted orientation** (base↔quote swapped).
+    ///
+    /// The premium is paid in the same physical currency, but that currency's
+    /// role flips between foreign (base) and domestic (quote), so the premium
+    /// style — and hence the premium-adjusted flag that drives the delta — flips
+    /// too. The two money-market accrual legs (FOR/DOM) likewise swap. ATM, cut
+    /// and settlement are pair properties, invariant under orientation. Failing
+    /// to apply this transform mislabels premium-adjustment for inverted majors
+    /// (e.g. `CADUSD` vs `USDCAD`), the exact "convention error dwarfs model
+    /// error" failure this crate exists to prevent.
+    #[must_use]
+    fn inverted(self) -> PairProfile {
+        PairProfile {
+            atm: self.atm,
+            premium_style: self.premium_style.flip_orientation(),
+            cut: self.cut,
+            day_count_accrual_for: self.day_count_accrual_dom,
+            day_count_accrual_dom: self.day_count_accrual_for,
+            settlement: self.settlement,
+        }
+    }
+
     /// Build the resolved record for this profile at a given tenor, applying the
     /// short(spot)/long(forward) delta term-structure rule. Premium-adjustment
     /// is fixed by the premium style and is invariant across tenors.
@@ -105,42 +139,71 @@ impl PairProfile {
     }
 }
 
-/// Money-market accrual basis for a currency's domestic-rate leg.
+/// Money-market accrual basis for a currency's rate leg — the **single source of
+/// truth** per currency.
 ///
-/// Most majors accrue ACT/360; the sterling bloc (GBP) accrues ACT/365-fixed.
-/// This is the conventional money-market day-count, not the vol-time basis.
+/// Accrual day-count is a property of the currency, not of whether a pair
+/// happens to carry a bespoke profile, so both [`PairProfile`] construction and
+/// the region default derive their accrual legs from here. The sterling bloc
+/// (GBP) and the Antipodean dollars (AUD, NZD) accrue ACT/365-fixed; the
+/// remaining majors accrue ACT/360. This is the conventional money-market
+/// day-count, not the vol-time basis.
 #[must_use]
 fn accrual_basis(ccy: Ccy) -> DayCount {
-    if ccy == Ccy::GBP {
+    if ccy == Ccy::GBP || ccy == Ccy::AUD || ccy == Ccy::NZD {
         DayCount::Act365Fixed
     } else {
         DayCount::Act360
     }
 }
 
-/// The bespoke profile for a covered pair, if one exists.
+/// The bespoke profile for a covered pair, if one exists, **expressed in the
+/// queried orientation**.
 ///
 /// The covered set is the G10 majors named in `docs/ANALYTICS-SPEC.md` plus the
 /// USDKRW non-deliverable example. Each entry encodes that pair's real OTC
-/// market practice. Lookups are tried in both leg orderings so `CADUSD`
-/// resolves to the `USDCAD` profile.
+/// market practice in its canonical market-quotation ordering. Lookups are tried
+/// in both leg orderings so `CADUSD` resolves from the `USDCAD` profile — but
+/// when the queried pair is the *inverted* orientation, the profile is
+/// transformed via [`PairProfile::inverted`] so premium-adjustment, the delta,
+/// and the accrual legs are correct for the caller's orientation rather than
+/// copied verbatim from the canonical one.
 #[must_use]
 fn pair_profile(pair: CcyPair) -> Option<PairProfile> {
-    let canonical = canonicalize(pair)?;
-    Some(profile_for_canonical(canonical))
+    let resolution = canonicalize(pair)?;
+    let canonical = profile_for_canonical(resolution.key);
+    Some(if resolution.flipped {
+        canonical.inverted()
+    } else {
+        canonical
+    })
 }
 
-/// The canonical six-letter key for a covered pair (market-quotation ordering),
-/// or `None` if the pair is not in the covered set.
+/// The result of resolving a queried pair to a covered canonical key.
+struct Canonical {
+    /// The canonical (market-quotation ordering) six-byte key.
+    key: [u8; 6],
+    /// Whether the queried pair was the *inverted* orientation of `key`.
+    flipped: bool,
+}
+
+/// The canonical key for a covered pair plus whether the queried pair was the
+/// inverted orientation, or `None` if the pair is not in the covered set.
 #[must_use]
-fn canonicalize(pair: CcyPair) -> Option<[u8; 6]> {
+fn canonicalize(pair: CcyPair) -> Option<Canonical> {
     let direct = key(pair);
     if is_covered_key(direct) {
-        return Some(direct);
+        return Some(Canonical {
+            key: direct,
+            flipped: false,
+        });
     }
     let flipped = key(CcyPair::new(pair.quote, pair.base));
     if is_covered_key(flipped) {
-        return Some(flipped);
+        return Some(Canonical {
+            key: flipped,
+            flipped: true,
+        });
     }
     None
 }
@@ -172,93 +235,103 @@ fn is_covered_key(k: [u8; 6]) -> bool {
 /// The profile for a canonical covered key. The key is guaranteed covered by the
 /// caller, so the catch-all is unreachable in practice and falls back to the
 /// EURUSD-style G10 profile.
+///
+/// The money-market accrual legs are derived from [`accrual_basis`] keyed on the
+/// canonical pair's FOR/DOM currencies — the single source of truth per currency
+/// — so a covered pair and an uncovered cross of the same currency get the same
+/// accrual day-count (e.g. AUD is ACT/365 in both covered AUDUSD and an
+/// uncovered AUD cross), rather than each profile hard-coding its own.
 #[must_use]
 fn profile_for_canonical(k: [u8; 6]) -> PairProfile {
+    // FOR (base) is bytes 0..3, DOM (quote) is bytes 3..6 of the canonical key.
+    let accrual_for = Ccy::new([k[0], k[1], k[2]]).map_or(DayCount::Act360, accrual_basis);
+    let accrual_dom = Ccy::new([k[3], k[4], k[5]]).map_or(DayCount::Act360, accrual_basis);
+    // Each arm fixes the orientation-independent pair properties (ATM, premium
+    // style, cut, settlement) and takes its accrual legs from `accrual_basis`
+    // (keyed on the canonical pair's currencies) so the per-currency day-count
+    // is the single source of truth.
     match &k {
         // EURUSD: premium in EUR (FOR) → premium-adjusted; DNS ATM; NY cut;
-        // EUR & USD both accrue ACT/360; physically deliverable. (§1.2, §1.3)
+        // physically deliverable. (§1.2, §1.3)
         b"EURUSD" => PairProfile {
             atm: AtmConvention::DeltaNeutralStraddle,
             premium_style: PremiumStyle::PercentForeign,
             cut: Cut::NewYork1000,
-            day_count_accrual_for: DayCount::Act360, // EUR
-            day_count_accrual_dom: DayCount::Act360, // USD
+            day_count_accrual_for: accrual_for,
+            day_count_accrual_dom: accrual_dom,
             settlement: Settlement::Deliverable,
         },
         // USDJPY: premium in USD; for USDJPY USD is the FOR (base) leg, so the
         // premium is in the foreign ccy → premium-adjusted. Tokyo cut for the
         // JPY-region business; spot delta ≤1Y, forward >1Y (the §1.2 worked
-        // example). JPY accrues ACT/360; USD ACT/360. Deliverable.
+        // example). Deliverable.
         b"USDJPY" => PairProfile {
             atm: AtmConvention::DeltaNeutralStraddle,
             premium_style: PremiumStyle::PercentForeign,
             cut: Cut::Tokyo1500,
-            day_count_accrual_for: DayCount::Act360, // USD
-            day_count_accrual_dom: DayCount::Act360, // JPY
+            day_count_accrual_for: accrual_for,
+            day_count_accrual_dom: accrual_dom,
             settlement: Settlement::Deliverable,
         },
         // GBPUSD: premium in USD = DOM (quote) → NOT premium-adjusted (the
-        // textbook unadjusted-delta major). DNS ATM, NY cut. GBP accrues
-        // ACT/365-fixed; USD ACT/360. Deliverable. (§1.2)
+        // textbook unadjusted-delta major). DNS ATM, NY cut. Deliverable. (§1.2)
         b"GBPUSD" => PairProfile {
             atm: AtmConvention::DeltaNeutralStraddle,
             premium_style: PremiumStyle::DomesticPips,
             cut: Cut::NewYork1000,
-            day_count_accrual_for: DayCount::Act365Fixed, // GBP
-            day_count_accrual_dom: DayCount::Act360,      // USD
+            day_count_accrual_for: accrual_for,
+            day_count_accrual_dom: accrual_dom,
             settlement: Settlement::Deliverable,
         },
-        // AUDUSD: premium in USD = DOM → unadjusted. DNS ATM, NY cut. AUD & USD
-        // ACT/365 and ACT/360 respectively (AUD money market is ACT/365).
+        // AUDUSD: premium in USD = DOM → unadjusted. DNS ATM, NY cut.
         b"AUDUSD" => PairProfile {
             atm: AtmConvention::DeltaNeutralStraddle,
             premium_style: PremiumStyle::DomesticPips,
             cut: Cut::NewYork1000,
-            day_count_accrual_for: DayCount::Act365Fixed, // AUD
-            day_count_accrual_dom: DayCount::Act360,      // USD
+            day_count_accrual_for: accrual_for,
+            day_count_accrual_dom: accrual_dom,
             settlement: Settlement::Deliverable,
         },
         // USDCHF: premium in USD = FOR (base) → premium-adjusted. DNS, NY cut.
-        // USD & CHF ACT/360. Deliverable.
+        // Deliverable.
         b"USDCHF" => PairProfile {
             atm: AtmConvention::DeltaNeutralStraddle,
             premium_style: PremiumStyle::PercentForeign,
             cut: Cut::NewYork1000,
-            day_count_accrual_for: DayCount::Act360, // USD
-            day_count_accrual_dom: DayCount::Act360, // CHF
+            day_count_accrual_for: accrual_for,
+            day_count_accrual_dom: accrual_dom,
             settlement: Settlement::Deliverable,
         },
         // USDCAD: premium in USD = FOR (base) → premium-adjusted. DNS, NY cut.
         // T+1 spot lag is handled by the calendar layer, not the convention
-        // record. USD & CAD ACT/360. Deliverable.
+        // record. Deliverable.
         b"USDCAD" => PairProfile {
             atm: AtmConvention::DeltaNeutralStraddle,
             premium_style: PremiumStyle::PercentForeign,
             cut: Cut::NewYork1000,
-            day_count_accrual_for: DayCount::Act360, // USD
-            day_count_accrual_dom: DayCount::Act360, // CAD
+            day_count_accrual_for: accrual_for,
+            day_count_accrual_dom: accrual_dom,
             settlement: Settlement::Deliverable,
         },
-        // NZDUSD: premium in USD = DOM → unadjusted. DNS, NY cut. NZD ACT/365,
-        // USD ACT/360. Deliverable.
+        // NZDUSD: premium in USD = DOM → unadjusted. DNS, NY cut. Deliverable.
         b"NZDUSD" => PairProfile {
             atm: AtmConvention::DeltaNeutralStraddle,
             premium_style: PremiumStyle::DomesticPips,
             cut: Cut::NewYork1000,
-            day_count_accrual_for: DayCount::Act365Fixed, // NZD
-            day_count_accrual_dom: DayCount::Act360,      // USD
+            day_count_accrual_for: accrual_for,
+            day_count_accrual_dom: accrual_dom,
             settlement: Settlement::Deliverable,
         },
         // USDKRW: the non-deliverable example. NDOs cash-settle in USD at a
         // published fixing (KFTC18). Premium in USD = FOR (base) → premium-
-        // adjusted. DNS ATM, Tokyo cut (Asian fixing region). USD & KRW ACT/360.
-        // Non-deliverable. (§1.6)
+        // adjusted. DNS ATM, Tokyo cut (Asian fixing region). Non-deliverable.
+        // (§1.6)
         b"USDKRW" => PairProfile {
             atm: AtmConvention::DeltaNeutralStraddle,
             premium_style: PremiumStyle::PercentForeign,
             cut: Cut::Tokyo1500,
-            day_count_accrual_for: DayCount::Act360, // USD
-            day_count_accrual_dom: DayCount::Act360, // KRW
+            day_count_accrual_for: accrual_for,
+            day_count_accrual_dom: accrual_dom,
             settlement: Settlement::NonDeliverable,
         },
         // Unreachable: caller guarantees the key is covered. Fall back to a
@@ -267,8 +340,8 @@ fn profile_for_canonical(k: [u8; 6]) -> PairProfile {
             atm: AtmConvention::DeltaNeutralStraddle,
             premium_style: PremiumStyle::PercentForeign,
             cut: Cut::NewYork1000,
-            day_count_accrual_for: DayCount::Act360,
-            day_count_accrual_dom: DayCount::Act360,
+            day_count_accrual_for: accrual_for,
+            day_count_accrual_dom: accrual_dom,
             settlement: Settlement::Deliverable,
         },
     }
@@ -368,12 +441,13 @@ mod tests {
     }
 
     #[test]
-    fn tenor_month_count() {
-        assert_eq!(tenor_months(Tenor::Overnight), 0);
-        assert_eq!(tenor_months(Tenor::Weeks(4)), 0); // sub-monthly
-        assert_eq!(tenor_months(Tenor::Weeks(10)), 2);
-        assert_eq!(tenor_months(Tenor::Months(6)), 6);
-        assert_eq!(tenor_months(Tenor::Years(2)), 24);
+    fn tenor_day_count() {
+        assert_eq!(tenor_days(Tenor::Overnight), 1);
+        assert_eq!(tenor_days(Tenor::Weeks(4)), 28);
+        assert_eq!(tenor_days(Tenor::Weeks(10)), 70);
+        assert_eq!(tenor_days(Tenor::Months(6)), 183); // (6·365+6)/12
+        assert_eq!(tenor_days(Tenor::Months(12)), 365);
+        assert_eq!(tenor_days(Tenor::Years(2)), 730);
     }
 
     #[test]
@@ -385,12 +459,76 @@ mod tests {
     }
 
     #[test]
-    fn flipped_legs_resolve_to_same_profile() {
+    fn flipped_legs_resolve_to_orientation_correct_profile() {
+        // Both orientations are covered, but the records must NOT be identical:
+        // the inverted orientation re-expresses premium/delta/accrual correctly.
         assert!(has_pair_profile(pair("USDCAD")));
         assert!(has_pair_profile(pair("CADUSD")));
-        assert_eq!(
-            resolve(pair("USDCAD"), Tenor::Months(3)).record,
-            resolve(pair("CADUSD"), Tenor::Months(3)).record
-        );
+
+        let canon = resolve(pair("USDCAD"), Tenor::Months(3)).record;
+        let inv = resolve(pair("CADUSD"), Tenor::Months(3)).record;
+
+        // Canonical USDCAD: premium in USD (FOR/base) → premium-adjusted.
+        assert_eq!(canon.premium_style, PremiumStyle::PercentForeign);
+        assert!(canon.is_delta_premium_adjusted());
+        assert!(canon.is_consistent());
+
+        // Inverted CADUSD: the same USD premium is now in the QUOTE leg →
+        // premium-unadjusted; the flag and delta must flip accordingly.
+        assert_eq!(inv.premium_style, PremiumStyle::PercentDomestic);
+        assert!(!inv.is_delta_premium_adjusted());
+        assert!(inv.is_consistent());
+
+        // The records differ precisely because of the orientation transform.
+        assert_ne!(canon, inv);
+
+        // Orientation-invariant pair properties are preserved.
+        assert_eq!(canon.atm, inv.atm);
+        assert_eq!(canon.cut, inv.cut);
+        assert_eq!(canon.settlement, inv.settlement);
+    }
+
+    #[test]
+    fn inverted_orientation_swaps_accrual_legs() {
+        // AUDUSD canonical: FOR=AUD (Act365), DOM=USD (Act360).
+        let canon = resolve(pair("AUDUSD"), Tenor::Months(6)).record;
+        assert_eq!(canon.day_count_accrual_for, DayCount::Act365Fixed);
+        assert_eq!(canon.day_count_accrual_dom, DayCount::Act360);
+
+        // USDAUD inverted: legs swap so FOR=USD (Act360), DOM=AUD (Act365).
+        let inv = resolve(pair("USDAUD"), Tenor::Months(6)).record;
+        assert_eq!(inv.day_count_accrual_for, DayCount::Act360);
+        assert_eq!(inv.day_count_accrual_dom, DayCount::Act365Fixed);
+    }
+
+    #[test]
+    fn accrual_basis_is_single_source_of_truth() {
+        // AUD must accrue ACT/365 whether the pair is covered (AUDUSD) or an
+        // uncovered cross (AUDJPY via region default), since accrual is a
+        // currency property, not a pair property.
+        let covered = resolve(pair("AUDUSD"), Tenor::Months(3)).record;
+        let cross = resolve(pair("AUDJPY"), Tenor::Months(3));
+        assert_eq!(cross.source, ResolutionSource::RegionDefault);
+        // AUD is the FOR leg in both.
+        assert_eq!(covered.day_count_accrual_for, DayCount::Act365Fixed);
+        assert_eq!(cross.record.day_count_accrual_for, DayCount::Act365Fixed);
+    }
+
+    #[test]
+    fn long_week_tenor_is_classified_long() {
+        // Weeks(60) ≈ 420 days > 1Y → must use the forward (long) delta, not be
+        // mis-bucketed as short by an ad-hoc weeks→months heuristic.
+        assert!(is_long_tenor(Tenor::Weeks(60)));
+        // A short week tenor stays short.
+        assert!(!is_long_tenor(Tenor::Weeks(4)));
+        // 52 weeks (= 364 days) is at/under 1Y → short; 53 weeks is long.
+        assert!(!is_long_tenor(Tenor::Weeks(52)));
+        assert!(is_long_tenor(Tenor::Weeks(53)));
+
+        // End-to-end through resolve: a long week tenor on a covered premium-
+        // adjusted pair yields the FORWARD premium-adjusted delta.
+        let rec = resolve(pair("USDJPY"), Tenor::Weeks(60)).record;
+        assert!(rec.is_delta_forward());
+        assert!(rec.is_delta_premium_adjusted());
     }
 }

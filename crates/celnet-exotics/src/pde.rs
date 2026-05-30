@@ -108,6 +108,7 @@ pub fn solve(i: &VanillaInputs, problem: PdeProblem, grid: PdeGrid) -> f64 {
     layout.apply_dirichlet(&mut v);
 
     let dtau = i.t / grid.time_steps as f64;
+    let far = FarField::new(i, problem);
 
     // Pre-factored operators. Backward-Euler (Rannacher) and Crank-Nicolson
     // share the same constant tridiagonal coefficients; only the θ weighting of
@@ -128,6 +129,12 @@ pub fn solve(i: &VanillaInputs, problem: PdeProblem, grid: PdeGrid) -> f64 {
             // Crank-Nicolson: second-order, A-stable.
             0.5
         };
+        // Remaining time-to-expiry *after* this step completes (τ runs backward
+        // from `i.t` at the terminal layer to `0` at valuation). The free far-field
+        // edges are refreshed to the analytic discounted-forward asymptotic at this
+        // τ before the solve folds them into the RHS.
+        let tau = i.t - (step + 1) as f64 * dtau;
+        far.apply(&mut v, &layout, tau);
         step_implicit(
             &mut v,
             &mut rhs,
@@ -244,9 +251,10 @@ impl GridLayout {
         self.x0 + j as f64 * self.dx
     }
 
-    /// Zero the value on the dead side of a knock-out wall (and at the outer
-    /// Dirichlet edges, which carry the far-field payoff approximated as the
-    /// truncated intrinsic — handled by the natural decay of the domain width).
+    /// Zero the value on the dead side of a knock-out wall. The two *free* outer
+    /// edges (those that are not a knock-out wall) are handled separately by
+    /// [`FarField`], which refreshes them each step to the analytic
+    /// discounted-forward asymptotic; this method only enforces the zero wall.
     fn apply_dirichlet(&self, v: &mut [f64]) {
         if let Some((idx, up)) = self.wall {
             if up {
@@ -264,6 +272,66 @@ impl GridLayout {
     /// Linear read of the solution at the initial spot node.
     fn read_at_spot(&self, v: &[f64]) -> f64 {
         v[self.spot_index]
+    }
+}
+
+/// Analytic far-field Dirichlet values for the two *free* outer edges of the
+/// log-spot domain (the ones that are not a knock-out wall).
+///
+/// As `S → ∞` (and `S → 0`) the vanilla/knock-out value approaches the
+/// **discounted forward intrinsic**: for a call the deep-ITM upper edge tends to
+/// `S·e^{−r_f τ} − K·e^{−r_d τ}` (the exercise is certain, so the value is the
+/// present value of receiving the asset and paying the strike at expiry) and the
+/// deep-OTM lower edge tends to `0`; for a put the roles swap. Freezing the edge
+/// at the *undiscounted terminal intrinsic* `max(φ(S−K), 0)` instead — as a naive
+/// solver does — injects an `O(discount)` boundary error that is only masked by a
+/// very wide domain and silently degrades accuracy at higher rates, longer `T`, or
+/// a narrower domain (audit finding `pde.rs:250-262`). Refreshing these edges each
+/// step with the correct asymptotic removes that error.
+///
+/// A knock-out wall keeps its zero Dirichlet value (re-imposed separately); only
+/// the genuinely-free outer edges are touched here.
+struct FarField {
+    option: OptionType,
+    strike: f64,
+    r_dom: f64,
+    r_for: f64,
+}
+
+impl FarField {
+    fn new(i: &VanillaInputs, problem: PdeProblem) -> Self {
+        Self {
+            option: problem.option,
+            strike: problem.strike,
+            r_dom: i.r_dom,
+            r_for: i.r_for,
+        }
+    }
+
+    /// Discounted-forward intrinsic at log-spot `x` with `tau` years remaining:
+    /// `max(φ·(S·e^{−r_f τ} − K·e^{−r_d τ}), 0)`. In the deep tails exactly one of
+    /// the two payoff branches dominates, so this is the certain-exercise present
+    /// value the edge converges to.
+    #[inline]
+    fn value(&self, x: f64, tau: f64) -> f64 {
+        let s = exp(x);
+        let fwd = s * exp(-self.r_for * tau) - self.strike * exp(-self.r_dom * tau);
+        (self.option.sign() * fwd).max(0.0)
+    }
+
+    /// Refresh the two free outer Dirichlet edges (node 0 and node `n−1`) to the
+    /// discounted-forward asymptotic at `tau`. Edges coinciding with a knock-out
+    /// wall are left for [`GridLayout::apply_dirichlet`] to zero.
+    fn apply(&self, v: &mut [f64], layout: &GridLayout, tau: f64) {
+        let n = v.len();
+        let wall_low = matches!(layout.wall, Some((idx, false)) if idx == 0);
+        let wall_high = matches!(layout.wall, Some((idx, true)) if idx == n - 1);
+        if !wall_low {
+            v[0] = self.value(layout.x(0), tau);
+        }
+        if !wall_high {
+            v[n - 1] = self.value(layout.x(n - 1), tau);
+        }
     }
 }
 
@@ -495,6 +563,93 @@ mod tests {
             "down-and-out put: PDE {pde} vs analytic {analytic} (|diff|={})",
             (pde - analytic).abs()
         );
+    }
+
+    /// Far-field boundary value (audit `pde.rs:250-262`): the [`FarField`] edge is
+    /// the **discounted-forward intrinsic** `max(φ·(S·e^{−r_f τ} − K·e^{−r_d τ}),
+    /// 0)`, NOT the frozen undiscounted terminal intrinsic `max(φ·(S − K), 0)` the
+    /// old code held constant for the whole solve. This pins the corrected boundary
+    /// directly: it must (a) discount both legs at `τ > 0`, differing from the
+    /// undiscounted intrinsic by the rate-driven amount, (b) be zero on the
+    /// deep-OTM edge, and (c) collapse to the terminal intrinsic at `τ = 0`.
+    #[test]
+    fn far_field_is_discounted_forward_not_frozen_intrinsic() {
+        let i = VanillaInputs::new(100.0, 100.0, 0.20, 1.0, 0.20, 0.02);
+        let tau = 1.0;
+        let call = FarField::new(
+            &i,
+            PdeProblem {
+                option: OptionType::Call,
+                strike: 70.0,
+                knock_out: None,
+            },
+        );
+        let (s, x) = (200.0, ln(200.0)); // deep-ITM upper edge
+        let want = s * exp(-i.r_for * tau) - 70.0 * exp(-i.r_dom * tau);
+        let frozen = s - 70.0; // the old (wrong) frozen terminal intrinsic
+        let got = call.value(x, tau);
+        assert!(
+            (got - want).abs() < 1e-12,
+            "call far-field {got} must equal discounted forward {want}"
+        );
+        assert!(
+            (got - frozen).abs() > 1.0,
+            "discounted-forward {got} must differ from frozen intrinsic {frozen}"
+        );
+        assert!(
+            (call.value(x, 0.0) - frozen).abs() < 1e-9,
+            "τ=0 ⇒ intrinsic"
+        );
+        assert!(
+            call.value(ln(40.0), tau).abs() < 1e-12,
+            "deep-OTM edge is 0"
+        );
+
+        let put = FarField::new(
+            &i,
+            PdeProblem {
+                option: OptionType::Put,
+                strike: 140.0,
+                knock_out: None,
+            },
+        );
+        let sp = 40.0;
+        let want_p = 140.0 * exp(-i.r_dom * tau) - sp * exp(-i.r_for * tau);
+        assert!((put.value(ln(sp), tau) - want_p).abs() < 1e-12);
+        assert!(put.value(ln(400.0), tau).abs() < 1e-12);
+    }
+
+    /// End-to-end: with the corrected boundary the no-barrier PDE matches the
+    /// Garman-Kohlhagen closed form across call/put and deep ITM/OTM strikes at a
+    /// **high** domestic rate (the regime where a wrong far-field boundary would
+    /// leak an `O(discount)` error into the price).
+    #[test]
+    fn pde_reprices_vanilla_high_rate() {
+        let i = VanillaInputs::new(100.0, 100.0, 0.20, 1.0, 0.20, 0.02);
+        let grid = PdeGrid {
+            space_steps: 1500,
+            time_steps: 800,
+            ..PdeGrid::default()
+        };
+        for option in [OptionType::Call, OptionType::Put] {
+            for k in [70.0, 100.0, 140.0] {
+                let pde = solve(
+                    &i,
+                    PdeProblem {
+                        option,
+                        strike: k,
+                        knock_out: None,
+                    },
+                    grid,
+                );
+                let exact = vanilla_price(option, &VanillaInputs { strike: k, ..i });
+                assert!(
+                    (pde - exact).abs() < 5e-3,
+                    "{option:?} K={k}: PDE {pde} vs analytic {exact} (|diff|={})",
+                    (pde - exact).abs()
+                );
+            }
+        }
     }
 
     /// The barrier node lands exactly on the grid (alignment property): the wall

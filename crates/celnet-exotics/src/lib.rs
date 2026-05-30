@@ -19,7 +19,7 @@
 //!      method-of-images series; in/out parity (`KI + KO = vanilla`) holds by
 //!      construction.
 //!
-//! 2. **Smile overlay** — [`vannavolga_overlay`] adds the FX-market-standard
+//! 2. **Smile overlay** — [`market_hedge_overlay`] adds the FX-market-standard
 //!    Vanna-Volga *cost* of the static vega/vanna/volga hedge, **scaled by the
 //!    survival (no-touch / first-exit) probability** of the exotic, so a barrier
 //!    or touch priced at flat ATM vol is shifted toward the value implied by the
@@ -31,7 +31,7 @@
 //!    second-generation exotics that have no usable closed form:
 //!    * [`pde`] — a 1-D Crank-Nicolson finite-difference solver with Rannacher
 //!      start-up smoothing on a log-spot grid with barrier-aligned nodes;
-//!    * [`mc`] — a Monte-Carlo engine over a [`rng::PhiloxStream`] counter-based
+//!    * [`mc`] — a Monte-Carlo engine over a [`rng::CounterRng`] counter-based
 //!      generator (seeded by `(stream, path, step)` for bit-reproducibility),
 //!      [`normal`] inverse-CDF / Box-Muller normals, antithetic variates, a
 //!      geometric-Asian control variate, and a Brownian-bridge construction with
@@ -74,9 +74,15 @@
 //! # Determinism
 //!
 //! Every transcendental routes through [`celnet_core::math`] (the deterministic
-//! `rust-lang/libm` software implementation); no float is compared with `==`; all
-//! validation uses [`celnet_core::is_close`] / [`celnet_core::assert_close`]. The
-//! analytic layer is allocation-free on the hot path.
+//! `rust-lang/libm` software implementation), with **one documented exception**:
+//! [`gaussian_pair_from_uniforms`] calls `libm::sin`/`libm::cos` directly (the `celnet_core::math`
+//! seam exposes `exp`/`ln`/`sqrt`/`erfc` but not trig). This is still the same
+//! `rust-lang/libm` software backend — bit-identical across OS/arch — so the
+//! determinism contract holds; the dependency on `libm` is declared solely for
+//! that trig pair and is the only transcendental not behind the `celnet_core`
+//! seam. No float is compared with `==`; all validation uses
+//! [`celnet_core::is_close`] / [`celnet_core::assert_close`]. The analytic layer
+//! is allocation-free on the hot path.
 
 #![forbid(unsafe_code)]
 
@@ -85,6 +91,7 @@ pub mod barrier;
 pub mod digital;
 pub mod leverage;
 pub mod lsv;
+pub mod market_hedge_overlay;
 pub mod mc;
 pub mod normal;
 pub mod particle;
@@ -93,7 +100,6 @@ pub mod pde;
 pub mod rng;
 pub mod stochvol;
 pub mod touch;
-pub mod vannavolga_overlay;
 
 pub use adi::{AdiGrid, AdiProblem, WindowSpec, solve as adi_solve, solve_window};
 pub use barrier::{
@@ -103,25 +109,25 @@ pub use barrier::{
 pub use digital::{DigitalKind, DigitalStyle, digital_greeks, digital_price};
 pub use leverage::{ImpliedVolSurface, LeverageSurface, LocalVolSurface};
 pub use lsv::{LsvModel, SurfaceTarget, WindowBarrier};
+pub use market_hedge_overlay::{
+    ExoticSensitivities, MarketCrossPrices, OverlayResult, SurvivalWeight, exotic_sensitivities_fd,
+    hedge_smile_cost, hedge_smile_overlay, market_price_of_hedge_smile,
+};
 pub use mc::{
     BGK_BETA, McConfig, McEstimate, geometric_asian_price, price_asian, price_barrier,
     price_barrier_bgk_shifted,
 };
-pub use normal::{box_muller, inverse_cdf};
+pub use normal::{gaussian_pair_from_uniforms, inverse_cdf};
 pub use particle::{CalibrationResult, ParticleConfig, calibrate_leverage};
 pub use payoff::{ArithmeticAsian, DiscreteBarrier, vanilla_intrinsic};
 pub use pde::{PdeGrid, PdeProblem, solve as pde_solve};
-pub use rng::PhiloxStream;
+pub use rng::CounterRng;
 pub use stochvol::{
     QE_SWITCH, VarianceParams, log_spot_increment, qe_variance_step, step_uniforms,
 };
 pub use touch::{
     DoubleNoTouch, RebateTiming, TouchSide, double_no_touch_price, double_touch_price,
     no_touch_price, one_touch_price,
-};
-pub use vannavolga_overlay::{
-    ExoticSensitivities, MarketCrossPrices, OverlayResult, SurvivalWeight, exotic_sensitivities_fd,
-    market_price_of_vanna_volga, vanna_volga_cost, vanna_volga_overlay,
 };
 
 use celnet_core::math::{exp, ln, sqrt};
@@ -232,7 +238,7 @@ mod tests {
     }
 
     /// End-to-end smile-consistency check: build a real arbitrage-free smile in
-    /// `celnet-surface` (a calibrated [`celnet_surface::VannaVolgaSmile`]) with a
+    /// `celnet-surface` (a calibrated [`celnet_surface::MarketHedgeSmile`]) with a
     /// positive butterfly (convex wings), then apply the survival-weighted
     /// Vanna-Volga overlay to a flat-vol double-no-touch. A long-volga product
     /// (the DNT, which is long convexity — it benefits from the corridor staying
@@ -240,12 +246,12 @@ mod tests {
     /// smile, and the shift must be damped by the survival probability.
     #[test]
     fn overlay_consumes_surface_smile_and_shifts_in_documented_direction() {
-        use crate::touch::{DoubleNoTouch, double_no_touch_price};
-        use crate::vannavolga_overlay::{
-            SurvivalWeight, exotic_sensitivities_fd, market_price_of_vanna_volga,
-            vanna_volga_overlay,
+        use crate::market_hedge_overlay::{
+            SurvivalWeight, exotic_sensitivities_fd, hedge_smile_overlay,
+            market_price_of_hedge_smile,
         };
-        use celnet_surface::VannaVolgaSmile;
+        use crate::touch::{DoubleNoTouch, double_no_touch_price};
+        use celnet_surface::MarketHedgeSmile;
 
         // Market: EURUSD-like 1Y, ATM 10 vol.
         let i = VanillaInputs::new(1.30, 1.30, 0.10, 1.0, 0.03, 0.01);
@@ -254,10 +260,10 @@ mod tests {
         // Build a convex (positive-butterfly), symmetric smile in celnet-surface:
         // wings at 11.5 vol, ATM at 10 vol, strikes log-symmetric around F.
         let (kp, kc) = (f / 1.10, f * 1.10);
-        let smile = VannaVolgaSmile::new([kp, f, kc], [0.115, 0.10, 0.115], f, i.t);
+        let smile = MarketHedgeSmile::new([kp, f, kc], [0.115, 0.10, 0.115], f, i.t);
 
         // Market price of vanna/volga read off the surface smile at the wings.
-        let market = market_price_of_vanna_volga(&smile, &i, kp, kc);
+        let market = market_price_of_hedge_smile(&smile, &i, kp, kc);
         assert!(
             market.volga_price > 0.0,
             "convex smile ⇒ positive volga price"
@@ -281,8 +287,8 @@ mod tests {
         // overlay correction is damped by the probability the option is still
         // alive (first-exit weighting). The flat DNT price is e^{−r_d T}·p.
         let survival = SurvivalWeight::new(flat / (i.df_dom() * dnt.rebate));
-        let full = vanna_volga_overlay(flat, x, market, SurvivalWeight::EUROPEAN);
-        let weighted = vanna_volga_overlay(flat, x, market, survival);
+        let full = hedge_smile_overlay(flat, x, market, SurvivalWeight::EUROPEAN);
+        let weighted = hedge_smile_overlay(flat, x, market, survival);
 
         // The DNT is long volga (positive ∂²V/∂σ²) — a positive-butterfly smile
         // therefore raises its value. The documented direction is an upward shift.
@@ -295,8 +301,8 @@ mod tests {
         );
         // Survival weighting damps (does not reverse) the correction.
         assert!(
-            weighted.vanna_volga_cost.abs() <= full.vanna_volga_cost.abs() + 1e-12
-                && weighted.vanna_volga_cost.signum() == full.vanna_volga_cost.signum()
+            weighted.hedge_smile_cost.abs() <= full.hedge_smile_cost.abs() + 1e-12
+                && weighted.hedge_smile_cost.signum() == full.hedge_smile_cost.signum()
         );
         // Smile-consistent price stays a valid DNT value in [0, notional].
         assert!(weighted.smile_price >= 0.0 && weighted.smile_price <= dnt.rebate);
