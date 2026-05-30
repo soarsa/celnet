@@ -8,8 +8,20 @@ authors.workspace = true
 description = "Celnet pricing engine — the core-pinned, zero-alloc, lock-free hot path and blue-green upgrade handoff."
 publish = false
 
-[lints]
-workspace = true
+# This crate cannot inherit the workspace `unsafe_code = "forbid"`: the seqlock
+# snapshot publication (§3.2) and the allocation-counting test guard (§3.3) are
+# irreducibly `unsafe` (raw `UnsafeCell` torn-read protocol; `GlobalAlloc`).
+# `forbid` cannot be relaxed by a local `#[allow]`, so we restate the workspace
+# lint policy here with `unsafe_code = "deny"` (still denied by default; opted
+# into only in the two audited modules via an explicit `#[allow(unsafe_code)]`
+# with a `// SAFETY:` rationale). Every other lint matches the workspace exactly.
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+unreachable_pub = "warn"
+
+[lints.clippy]
+all = "warn"
 
 [dependencies]
 celnet-types.workspace = true

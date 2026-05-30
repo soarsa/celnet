@@ -1,5 +1,415 @@
-//! Celnet FX exotics — first-generation analytic/Vanna-Volga pricers (digitals,
-//! one-touch/no-touch, double-no-touch, single/double barriers) and the shared
-//! PDE / Monte-Carlo numerical engines (work-stream WS-D, gate G3). Skeleton —
-//! implementation lands in this lane.
+//! Celnet FX exotics — first-generation analytic layer (digitals,
+//! one-touch / no-touch, double-no-touch, single / double barriers) priced with
+//! the closed-form Black-Scholes-Merton / Garman-Kohlhagen barrier & touch
+//! formulae, made **smile-consistent** by a Vanna-Volga overlay with
+//! survival-probability (first-exit) weighting (work-stream WS-D, gate G3).
+//!
+//! # Two layers
+//!
+//! 1. **Analytic core** — exact closed forms for the lognormal (flat-vol)
+//!    Garman-Kohlhagen world:
+//!    * [`digital`] — European cash-or-nothing / asset-or-nothing binaries
+//!      (price + closed-form delta/gamma/vega), each cross-checked against the
+//!      `−∂(vanilla)/∂K` strike-derivative limit;
+//!    * [`touch`] — one-touch / no-touch (with deferred or at-hit rebate),
+//!      double-no-touch and the double-touch it complements, via the
+//!      reflection-principle (image) construction;
+//!    * [`barrier`] — the eight standard single-barrier knock-in/knock-out
+//!      flavours with rebate, and the double-barrier knock-out via the
+//!      method-of-images series; in/out parity (`KI + KO = vanilla`) holds by
+//!      construction.
+//!
+//! 2. **Smile overlay** — [`vannavolga_overlay`] adds the FX-market-standard
+//!    Vanna-Volga *cost* of the static vega/vanna/volga hedge, **scaled by the
+//!    survival (no-touch / first-exit) probability** of the exotic, so a barrier
+//!    or touch priced at flat ATM vol is shifted toward the value implied by the
+//!    arbitrage-free smile from [`celnet_surface`]
+//!    ([`celnet_core::Smile`] / `VolSurface` / `SmileModel`). Touch and
+//!    double-no-touch values are clamped to `[0, notional]`.
+//!
+//! 3. **Numerical engines** — the shared machinery for path-dependent and
+//!    second-generation exotics that have no usable closed form:
+//!    * [`pde`] — a 1-D Crank-Nicolson finite-difference solver with Rannacher
+//!      start-up smoothing on a log-spot grid with barrier-aligned nodes;
+//!    * [`mc`] — a Monte-Carlo engine over a [`rng::PhiloxStream`] counter-based
+//!      generator (seeded by `(stream, path, step)` for bit-reproducibility),
+//!      [`normal`] inverse-CDF / Box-Muller normals, antithetic variates, a
+//!      geometric-Asian control variate, and a Brownian-bridge construction with
+//!      the Broadie-Glasserman-Kou continuity correction for discretely-monitored
+//!      barriers;
+//!    * [`payoff`] — the engine-agnostic path-dependent payoff vocabulary.
+//!
+//!    Both engines are cross-validated against the analytic layer (and each
+//!    other) on the overlap — see the crate-level `cross_validation` tests.
+//!
+//! # Method provenance (doc comments only)
+//!
+//! Reflection-principle / image closed forms for barriers and touches:
+//! Reiner-Rubinstein (1991); Rubinstein-Reiner (1991); the unified
+//! generalised-BSM presentation in Haug (2007). Double-barrier method of images:
+//! Kunitomo-Ikeda (1992); Geman-Yor (1996). Vanna-Volga exotic overlay with
+//! survival weighting: Bossens, Rayée, Skantzos & Deelstra (2010); Wystup (2017,
+//! *FX Options and Structured Products*), Castagna-Mercurio (2007). All
+//! identifiers here are purpose-named and vendor/research-neutral; provenance
+//! lives only in documentation.
+//!
+//! # Determinism
+//!
+//! Every transcendental routes through [`celnet_core::math`] (the deterministic
+//! `rust-lang/libm` software implementation); no float is compared with `==`; all
+//! validation uses [`celnet_core::is_close`] / [`celnet_core::assert_close`]. The
+//! analytic layer is allocation-free on the hot path.
+
 #![forbid(unsafe_code)]
+
+pub mod barrier;
+pub mod digital;
+pub mod mc;
+pub mod normal;
+pub mod payoff;
+pub mod pde;
+pub mod rng;
+pub mod touch;
+pub mod vannavolga_overlay;
+
+pub use barrier::{
+    BarrierKind, BarrierStyle, DoubleBarrierKnockOut, SingleBarrier, double_knock_out_price,
+    single_barrier_price,
+};
+pub use digital::{DigitalKind, DigitalStyle, digital_greeks, digital_price};
+pub use mc::{
+    BGK_BETA, McConfig, McEstimate, geometric_asian_price, price_asian, price_barrier,
+    price_barrier_bgk_shifted,
+};
+pub use normal::{box_muller, inverse_cdf};
+pub use payoff::{ArithmeticAsian, DiscreteBarrier, vanilla_intrinsic};
+pub use pde::{PdeGrid, PdeProblem, solve as pde_solve};
+pub use rng::PhiloxStream;
+pub use touch::{
+    DoubleNoTouch, RebateTiming, TouchSide, double_no_touch_price, double_touch_price,
+    no_touch_price, one_touch_price,
+};
+pub use vannavolga_overlay::{
+    ExoticSensitivities, MarketCrossPrices, OverlayResult, SurvivalWeight, exotic_sensitivities_fd,
+    market_price_of_vanna_volga, vanna_volga_cost, vanna_volga_overlay,
+};
+
+use celnet_core::math::{exp, ln, sqrt};
+use celnet_types::VanillaInputs;
+
+/// Shared lognormal Garman-Kohlhagen scaffolding reused by every analytic
+/// exotic in this crate.
+///
+/// These are the carry / forward / drift quantities the reflection-principle
+/// closed forms are written in. Holding them in one place keeps the touch,
+/// barrier and digital modules consistent and avoids re-deriving `μ`, `λ` and the
+/// power exponents in each formula.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Lognormal {
+    /// Annualised Black volatility `σ`.
+    pub vol: f64,
+    /// Time to expiry in years `T`.
+    pub t: f64,
+    /// Continuously-compounded domestic (quote) rate `r_d`.
+    pub r_dom: f64,
+    /// Continuously-compounded foreign (base) rate `r_f`.
+    pub r_for: f64,
+}
+
+impl Lognormal {
+    /// Build the scaffolding from the canonical [`VanillaInputs`] (the `strike`
+    /// field is unused — touches and barriers are parameterised by their own
+    /// barrier/strike levels).
+    #[inline]
+    pub(crate) fn from_inputs(i: &VanillaInputs) -> Self {
+        Self {
+            vol: i.vol,
+            t: i.t,
+            r_dom: i.r_dom,
+            r_for: i.r_for,
+        }
+    }
+
+    /// Cost of carry `b = r_d − r_f` (the Garman-Kohlhagen drift of the spot
+    /// under the domestic risk-neutral measure).
+    #[inline]
+    pub(crate) fn carry(&self) -> f64 {
+        self.r_dom - self.r_for
+    }
+
+    /// Domestic discount factor `e^{−r_d·T}`.
+    #[inline]
+    pub(crate) fn df_dom(&self) -> f64 {
+        exp(-self.r_dom * self.t)
+    }
+
+    /// Foreign discount factor `e^{−r_f·T}`.
+    #[inline]
+    pub(crate) fn df_for(&self) -> f64 {
+        exp(-self.r_for * self.t)
+    }
+
+    /// `σ·√T`, the total Black standard deviation.
+    #[inline]
+    pub(crate) fn sigma_sqrt_t(&self) -> f64 {
+        self.vol * sqrt(self.t)
+    }
+
+    /// The reflection-principle drift parameter `μ = b/σ² − ½`.
+    ///
+    /// In `x = ln(S)` coordinates the log-spot drifts at `(b − ½σ²)`; written per
+    /// unit `σ²` (the form the image formulae use) this is `μ`.
+    #[inline]
+    pub(crate) fn mu(&self) -> f64 {
+        self.carry() / (self.vol * self.vol) - 0.5
+    }
+
+    /// `√(μ² + 2·r_d/σ²)`, the discounted-hit exponent (the `λ` of the
+    /// Reiner-Rubinstein touch formulae).
+    #[inline]
+    pub(crate) fn lambda(&self) -> f64 {
+        let m = self.mu();
+        sqrt(m * m + 2.0 * self.r_dom / (self.vol * self.vol))
+    }
+}
+
+/// Natural log helper that routes through the deterministic core math, used by
+/// the closed forms' log-moneyness terms.
+#[inline]
+pub(crate) fn dlog(x: f64) -> f64 {
+    ln(x)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lognormal_carry_and_discounts() {
+        let i = VanillaInputs::new(1.30, 1.30, 0.10, 1.0, 0.03, 0.01);
+        let l = Lognormal::from_inputs(&i);
+        celnet_core::assert_close!(l.carry(), 0.02, 1e-15, 1e-15);
+        celnet_core::assert_close!(l.df_dom(), exp(-0.03), 1e-15, 1e-15);
+        celnet_core::assert_close!(l.df_for(), exp(-0.01), 1e-15, 1e-15);
+        celnet_core::assert_close!(l.sigma_sqrt_t(), 0.10, 1e-15, 1e-15);
+    }
+
+    #[test]
+    fn lambda_is_non_negative() {
+        let i = VanillaInputs::new(100.0, 100.0, 0.2, 0.5, 0.05, 0.02);
+        let l = Lognormal::from_inputs(&i);
+        assert!(l.lambda() >= 0.0);
+    }
+
+    /// End-to-end smile-consistency check: build a real arbitrage-free smile in
+    /// `celnet-surface` (a calibrated [`celnet_surface::VannaVolgaSmile`]) with a
+    /// positive butterfly (convex wings), then apply the survival-weighted
+    /// Vanna-Volga overlay to a flat-vol double-no-touch. A long-volga product
+    /// (the DNT, which is long convexity — it benefits from the corridor staying
+    /// quiet) must be shifted in the documented direction by a positive-butterfly
+    /// smile, and the shift must be damped by the survival probability.
+    #[test]
+    fn overlay_consumes_surface_smile_and_shifts_in_documented_direction() {
+        use crate::touch::{DoubleNoTouch, double_no_touch_price};
+        use crate::vannavolga_overlay::{
+            SurvivalWeight, exotic_sensitivities_fd, market_price_of_vanna_volga,
+            vanna_volga_overlay,
+        };
+        use celnet_surface::VannaVolgaSmile;
+
+        // Market: EURUSD-like 1Y, ATM 10 vol.
+        let i = VanillaInputs::new(1.30, 1.30, 0.10, 1.0, 0.03, 0.01);
+        let f = i.forward();
+
+        // Build a convex (positive-butterfly), symmetric smile in celnet-surface:
+        // wings at 11.5 vol, ATM at 10 vol, strikes log-symmetric around F.
+        let (kp, kc) = (f / 1.10, f * 1.10);
+        let smile = VannaVolgaSmile::new([kp, f, kc], [0.115, 0.10, 0.115], f, i.t);
+
+        // Market price of vanna/volga read off the surface smile at the wings.
+        let market = market_price_of_vanna_volga(&smile, &i, kp, kc);
+        assert!(
+            market.volga_price > 0.0,
+            "convex smile ⇒ positive volga price"
+        );
+
+        // A double-no-touch corridor around spot; its flat-vol price.
+        let dnt = DoubleNoTouch::new(1.18, 1.43, 1.0);
+        let flat = double_no_touch_price(&i, dnt);
+
+        // Exotic vanna/volga by finite differences of the flat-vol closed form.
+        let x = exotic_sensitivities_fd(
+            |spot, vol| {
+                let bumped = VanillaInputs { spot, vol, ..i };
+                double_no_touch_price(&bumped, dnt)
+            },
+            i.spot,
+            i.vol,
+        );
+
+        // Survival weight = the DNT's own survival (no-touch) probability: the
+        // overlay correction is damped by the probability the option is still
+        // alive (first-exit weighting). The flat DNT price is e^{−r_d T}·p.
+        let survival = SurvivalWeight::new(flat / (i.df_dom() * dnt.rebate));
+        let full = vanna_volga_overlay(flat, x, market, SurvivalWeight::EUROPEAN);
+        let weighted = vanna_volga_overlay(flat, x, market, survival);
+
+        // The DNT is long volga (positive ∂²V/∂σ²) — a positive-butterfly smile
+        // therefore raises its value. The documented direction is an upward shift.
+        assert!(x.volga > 0.0, "a DNT is long volga, got {}", x.volga);
+        assert!(
+            full.smile_price > flat,
+            "positive-BF smile must shift the long-volga DNT up: {} > {}",
+            full.smile_price,
+            flat
+        );
+        // Survival weighting damps (does not reverse) the correction.
+        assert!(
+            weighted.vanna_volga_cost.abs() <= full.vanna_volga_cost.abs() + 1e-12
+                && weighted.vanna_volga_cost.signum() == full.vanna_volga_cost.signum()
+        );
+        // Smile-consistent price stays a valid DNT value in [0, notional].
+        assert!(weighted.smile_price >= 0.0 && weighted.smile_price <= dnt.rebate);
+    }
+}
+
+/// Three-way cross-validation: the analytic S1 closed form, the PDE engine and
+/// the Monte-Carlo engine must agree on the prices they all overlap on, within
+/// documented tolerance. This is the headline correctness guarantee for the
+/// numerical layer — each engine is an independent implementation of the same
+/// Garman-Kohlhagen world, so their agreement is strong evidence that all three
+/// are right.
+#[cfg(test)]
+mod cross_validation {
+    use crate::barrier::{BarrierKind, BarrierStyle, SingleBarrier, single_barrier_price};
+    use crate::mc::{McConfig, price_barrier};
+    use crate::payoff::DiscreteBarrier;
+    use crate::pde::{PdeGrid, PdeProblem, solve as pde_solve};
+    use celnet_types::{OptionType, VanillaInputs};
+    use celnet_vanilla::price as vanilla_price;
+
+    fn base() -> VanillaInputs {
+        VanillaInputs::new(100.0, 100.0, 0.20, 1.0, 0.05, 0.02)
+    }
+
+    /// Vanilla: analytic == PDE == MC (MC of a 1-step "barrier" far from spot
+    /// degenerates to a vanilla). The triangle closes for the simplest payoff.
+    #[test]
+    fn vanilla_triangle() {
+        let i = base();
+        let analytic = vanilla_price(OptionType::Call, &i);
+
+        let pde = pde_solve(
+            &i,
+            PdeProblem {
+                option: OptionType::Call,
+                strike: 100.0,
+                knock_out: None,
+            },
+            PdeGrid {
+                space_steps: 1000,
+                time_steps: 600,
+                ..PdeGrid::default()
+            },
+        );
+
+        // A knock-out with a barrier so far away it never binds ≈ vanilla.
+        let mc = price_barrier(
+            &i,
+            DiscreteBarrier {
+                option: OptionType::Call,
+                strike: 100.0,
+                barrier: 1.0e6,
+                up: true,
+                knock_in: false,
+            },
+            McConfig {
+                pairs: 100_000,
+                steps: 50,
+                seed: 0x1111,
+            },
+        );
+
+        assert!(
+            (pde - analytic).abs() < 5e-3,
+            "PDE {pde} vs analytic {analytic}"
+        );
+        assert!(
+            (mc.price - analytic).abs() < 3.0 * mc.std_error + 5e-3,
+            "MC {} vs analytic {analytic} (se {})",
+            mc.price,
+            mc.std_error
+        );
+    }
+
+    /// Up-and-out call: analytic ≈ PDE ≈ MC. The three independent engines
+    /// (closed form, finite difference, simulation) must agree on the same
+    /// continuously-monitored barrier price.
+    #[test]
+    fn up_and_out_call_triangle() {
+        let i = base();
+        let (k, h) = (100.0, 130.0);
+
+        let analytic = single_barrier_price(
+            &i,
+            SingleBarrier {
+                kind: BarrierKind {
+                    up: true,
+                    style: BarrierStyle::KnockOut,
+                    option: OptionType::Call,
+                },
+                strike: k,
+                barrier: h,
+                rebate: 0.0,
+            },
+        );
+
+        let pde = pde_solve(
+            &i,
+            PdeProblem {
+                option: OptionType::Call,
+                strike: k,
+                knock_out: Some((h, true)),
+            },
+            PdeGrid {
+                space_steps: 1200,
+                time_steps: 800,
+                ..PdeGrid::default()
+            },
+        );
+
+        let mc = price_barrier(
+            &i,
+            DiscreteBarrier {
+                option: OptionType::Call,
+                strike: k,
+                barrier: h,
+                up: true,
+                knock_in: false,
+            },
+            McConfig {
+                pairs: 150_000,
+                steps: 120,
+                seed: 0x2222,
+            },
+        );
+
+        // PDE is the tight reference (deterministic, ~1e-3); MC carries O(1/√N).
+        assert!(
+            (pde - analytic).abs() < 5e-3,
+            "PDE {pde} vs analytic {analytic}"
+        );
+        let mc_tol = 3.0 * mc.std_error + 3e-2;
+        assert!(
+            (mc.price - analytic).abs() < mc_tol,
+            "MC {} vs analytic {analytic} (se {}, tol {mc_tol})",
+            mc.price,
+            mc.std_error
+        );
+        assert!(
+            (mc.price - pde).abs() < mc_tol,
+            "MC {} vs PDE {pde}",
+            mc.price
+        );
+    }
+}

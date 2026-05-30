@@ -1,0 +1,18 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 9b5f0e71340c9b40523f01e89812292cf6542c5f910b29c8610c9aa6c56ec5ce # shrinks to i = VanillaInputs { spot: 0.25, strike: 0.25, vol: 0.02, t: 0.02, r_dom: 0.0, r_for: 0.034275990210119664 }, lo_off = 0.05, hi_off = 0.23232273339170675
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc cfb29bbd65130fd99f97ca8a57030603963e9d0626a087c4391105ef5684001e # shrinks to i = VanillaInputs { spot: 0.25, strike: 0.25, vol: 0.02, t: 0.02, r_dom: -0.013367855231864295, r_for: 0.0 }, up = false, offset = 0.05
+cc 2755c32cb12bb204210e5f4ed698a63c49226217e618ef1f33a18d1acc9aedfc # shrinks to i = VanillaInputs { spot: 0.25, strike: 0.25, vol: 0.32317654405783086, t: 4.798521062679023, r_dom: -0.010746905619300093, r_for: 0.0 }, lo_off = 0.05, hi_off = 0.05
+cc 97c9576e99e7640dfbf36fb44a99fac8f1a5b80ec178f35d62fa82856badef74 # shrinks to i = VanillaInputs { spot: 0.25, strike: 0.25, vol: 0.02, t: 0.02, r_dom: -0.0058302027054376645, r_for: 0.0 }, up = false, offset = 0.05
+cc d49c168ebf9c05fab4a5f07a94ee9bb394ec932f216c6dcb2d14b97133667de2 # shrinks to i = VanillaInputs { spot: 0.25, strike: 0.25, vol: 0.02, t: 2.3076925364664445, r_dom: 0.0, r_for: 0.0 }, lo_off = 0.3191910753256885, hi_off = 0.05
+cc dcbc9e954d26dc787fdb688368981a33a395cd3aaf96aa54a8b785e747065e1d # shrinks to i = VanillaInputs { spot: 0.25, strike: 0.25, vol: 0.02, t: 3.6287259448530964, r_dom: 0.0, r_for: 0.10350660443367617 }, lo_off = 0.2370128522917659, hi_off = 0.05
