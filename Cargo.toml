@@ -31,6 +31,7 @@ celnet-server = { path = "crates/celnet-server" }
 celnet-client = { path = "crates/celnet-client" }
 celnet-observability = { path = "crates/celnet-observability" }
 celnet-parity = { path = "crates/celnet-parity" }
+celnet-plugin-host = { path = "crates/celnet-plugin-host" }
 # External — pinned once, used everywhere (OSS / permissively licensed only)
 libm = "0.2"                                   # rust-lang/libm: correctly-rounded, cross-platform-identical transcendentals
 serde = { version = "1", features = ["derive"] }
@@ -64,8 +65,10 @@ tracing = "0.1"                                # MIT structured tracing facade
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] } # MIT subscriber
 hdrhistogram = "7"                             # MIT/Apache-2.0 p50/p99/p99.9 latency (coordinated-omission aware)
 metrics = "0.24"                               # MIT counters/gauges/histograms facade
-# wasmtime (plugin-host) deferred: current releases carry open 2026 RustSec advisories;
-# re-add at a patched version when building celnet-plugin-host (WS-G). See ledger.
+# Plugin-host sandbox (vetted: deny advisories+licenses ok) — wasmtime REJECTED for open
+# 2026 RUSTSEC advisories; wasmi is the pure-Rust, fuel-metered, advisory-clean replacement.
+wasmi = "1"                                    # Apache-2.0/MIT pure-Rust fuel-metered Wasm interpreter (deterministic untrusted sandbox)
+wat = "1"                                      # Apache-2.0/MIT WAT->wasm (test fixtures only)
 
 # deny(warnings) is enforced via `just lint` (clippy -D warnings); here we set the
 # lint *policy* every crate opts into with `[lints] workspace = true`.
