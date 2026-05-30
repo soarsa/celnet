@@ -23,6 +23,9 @@ celnet-testkit = { path = "crates/celnet-testkit" }
 celnet-proto = { path = "crates/celnet-proto" }
 celnet-plugin-api = { path = "crates/celnet-plugin-api" }
 celnet-surface = { path = "crates/celnet-surface" }
+celnet-exotics = { path = "crates/celnet-exotics" }
+celnet-gpu = { path = "crates/celnet-gpu" }
+celnet-engine = { path = "crates/celnet-engine" }
 # External — pinned once, used everywhere (OSS / permissively licensed only)
 libm = "0.2"                                   # rust-lang/libm: correctly-rounded, cross-platform-identical transcendentals
 serde = { version = "1", features = ["derive"] }
@@ -32,6 +35,15 @@ prost = "0.13"                                 # Apache-2.0 protobuf runtime (si
 protox = "0.7"                                 # MIT/Apache-2.0 pure-Rust protobuf compiler (no system protoc needed)
 prost-build = "0.13"                           # Apache-2.0 codegen used with protox FileDescriptorSet
 divan = "0.1"                                  # MIT/Apache-2.0 micro-benchmark harness (latency/throughput proof)
+# GPU lane (vetted: deny advisories+licenses ok)
+wgpu = { version = "29", default-features = false, features = ["wgsl"] } # Apache-2.0/MIT cross-platform GPU (Metal/Vulkan/DX12)
+bytemuck = { version = "1", features = ["derive"] } # MIT/Apache-2.0 POD casts for GPU buffers
+pollster = "0.4"                               # MIT/Apache-2.0 minimal block-on for wgpu async
+# Engine hot-path lane (vetted: deny advisories+licenses ok)
+rtrb = "0.3"                                   # MIT/Apache-2.0 wait-free SPSC ring buffer
+arc-swap = "1"                                 # MIT/Apache-2.0 lock-free read-mostly publication
+crossbeam-utils = "0.8"                        # MIT/Apache-2.0 CachePadded (false-sharing guard)
+core_affinity = "0.8"                          # MIT/Apache-2.0 core pinning for the hot path
 # wasmtime (plugin-host) deferred: current releases carry open 2026 RustSec advisories;
 # re-add at a patched version when building celnet-plugin-host (WS-G). See ledger.
 
