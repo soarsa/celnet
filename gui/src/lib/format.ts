@@ -29,9 +29,16 @@ const PIPS = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
 });
 
-/** A premium in percent-of-notional, e.g. 0.155 → "0.155". */
+/**
+ * A premium quoted in a *percent* style (PERCENT_FOREIGN / PERCENT_DOMESTIC),
+ * rendered as a true percent. The wire premium is a fraction of notional
+ * (e.g. a 25Δ call at 0.0035 = 0.350% of foreign notional), so the value is
+ * scaled ×100 to read in percent under a "%" unit label: 0.0035 → "0.350".
+ * (Previously this printed the bare fraction "0.004" under a "%" column — a
+ * 100× unit mismatch; the number and its unit now agree.)
+ */
 export function fmtPremiumPct(value: number): string {
-  return PCT.format(value);
+  return PCT.format(value * 100);
 }
 
 /** A volatility in vol points, e.g. 0.0755 → "7.55". */
@@ -62,12 +69,23 @@ export function fmtDeltaPillar(delta: number): string {
   return Math.round(Math.abs(delta) * 100).toString();
 }
 
-/** P&L in thousands with a k suffix and diverging sign, e.g. -41200 → "−41k". */
-export function fmtPnlK(value: number): string {
-  const k = value / 1000;
-  const rounded = Math.round(k);
-  const s = `${Math.abs(rounded)}k`;
-  return rounded < 0 ? `−${s}` : rounded > 0 ? `+${s}` : "0";
+/**
+ * Magnitude-adaptive P&L so a *real* but small mark-to-market value stays visible
+ * rather than rounding to a misleading "0". Large books read in `k`/`m`; sub-`k`
+ * P&L (common for near-zero-cost structures like a risk-reversal, where a 2% spot
+ * shock is genuinely ~hundreds of units on 10mm) reads in whole units. The sign is
+ * an explicit diverging glyph; exact zero is the only value that shows "0".
+ */
+export function fmtPnlAdaptive(value: number): string {
+  const sign = value < 0 ? "−" : value > 0 ? "+" : "";
+  const a = Math.abs(value);
+  if (a === 0) return "0";
+  let body: string;
+  if (a >= 1_000_000) body = `${(a / 1_000_000).toFixed(a >= 10_000_000 ? 0 : 1)}m`;
+  else if (a >= 1_000) body = `${(a / 1_000).toFixed(a >= 10_000 ? 0 : 1)}k`;
+  else if (a >= 1) body = `${Math.round(a)}`;
+  else body = a.toFixed(2);
+  return `${sign}${body}`;
 }
 
 /** Pips (domestic-pips premium style). */

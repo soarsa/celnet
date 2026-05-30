@@ -12,6 +12,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useApp } from "../app/AppContext";
 import type {
   Instrument,
+  RiskBucketRequest,
   ScenarioResult,
   ShockAxis,
 } from "../data/contract";
@@ -19,11 +20,16 @@ import { Panel } from "../components/Panel";
 import { Button } from "../components/Button";
 import { strategyInstrument } from "../data/seed";
 import { rampColor } from "../viz/ramp";
-import { fmtPnlK, fmtSigned } from "../lib/format";
+import { fmtPnlAdaptive, fmtSigned } from "../lib/format";
 import styles from "./RiskWorkspace.module.css";
 
 const SPOT_STEPS = [-0.015, -0.005, 0, 0.005, 0.015];
 const VOL_STEPS = [-0.02, -0.01, 0, 0.01, 0.02];
+
+/** The delta pillars the vega ladder buckets on (signed convention deltas). */
+const VEGA_DELTA_PILLARS = [0.5, 0.25, -0.25, 0.1, -0.1];
+/** The theta-roll horizons (years rolled forward): overnight, a week, a month. */
+const ROLL_HORIZONS = [1 / 365, 7 / 365, 30 / 365];
 
 const METRICS = [
   { id: "pnl", label: "P&L" },
@@ -53,17 +59,39 @@ export function RiskWorkspace(): React.ReactElement {
     [],
   );
 
+  // The book-shaped risk decomposition the server computes alongside the grid —
+  // present ONLY when we ask for it (the server returns `bucketedRisk: null`
+  // otherwise). Vega is bucketed per (tenor, delta) pillar: a single-expiry
+  // structure carries vega only at its own expiry tenor, so we request that tenor
+  // across the standard delta pillars (other tenors are honestly zero). Cross-gamma
+  // covers the desk's coupled second-orders; theta rolls the standard horizons.
+  const riskBuckets: RiskBucketRequest = useMemo(
+    () => ({
+      vegaPillars: VEGA_DELTA_PILLARS.map((delta) => ({
+        tenorYears: instrument.expiryYears,
+        delta,
+      })),
+      crossGammaPairs: [
+        { factorA: "SPOT", factorB: "VOL" },
+        { factorA: "RATE_DOM", factorB: "SPOT" },
+        { factorA: "SPOT", factorB: "TIME" },
+      ],
+      rollHorizonsYears: ROLL_HORIZONS,
+    }),
+    [instrument.expiryYears],
+  );
+
   useEffect(() => {
     let live = true;
     void app.transport
-      .scenario(instrument, app.pairCtx.market, app.conventions, axes)
+      .scenario(instrument, app.pairCtx.market, app.conventions, axes, riskBuckets)
       .then((r) => {
         if (live) setResult(r);
       });
     return () => {
       live = false;
     };
-  }, [app.transport, instrument, app.pairCtx.market, app.conventions, axes]);
+  }, [app.transport, instrument, app.pairCtx.market, app.conventions, axes, riskBuckets]);
 
   if (!result) return <div className={styles.loading}>Repricing scenario…</div>;
 
@@ -91,7 +119,7 @@ export function RiskWorkspace(): React.ReactElement {
   for (const s of SPOT_STEPS) for (const v of VOL_STEPS) maxAbs = Math.max(maxAbs, Math.abs(cellValue(s, v)));
 
   const fmtCell = (v: number): string => {
-    if (metric === "pnl") return fmtPnlK(v);
+    if (metric === "pnl") return fmtPnlAdaptive(v);
     if (metric === "delta") return fmtSigned(v, 3);
     return fmtSigned(v, 4);
   };
@@ -188,39 +216,107 @@ export function RiskWorkspace(): React.ReactElement {
       </Panel>
 
       <Panel glyph="Σ" title="Vega ladder" className={styles.ladderPanel}>
-        <div className={styles.ladder}>
-          <div className={styles.ladderHead}>
-            <span>Tenor</span>
-            <span>Pillar</span>
-            <span>Vega</span>
-          </div>
-          {result.bucketedRisk.vegaBuckets.slice(0, 25).map((b, i) => {
-            const max = Math.max(...result.bucketedRisk.vegaBuckets.map((x) => Math.abs(x.vega)), 1e-9);
-            return (
-              <div key={i} className={styles.ladderRow}>
-                <span className="num">{tenorName(b.tenorYears)}</span>
-                <span className="num">{pillarName(b.delta)}</span>
-                <span className={styles.bar}>
-                  <span
-                    className={styles.barFill}
-                    style={{ width: `${(Math.abs(b.vega) / max) * 100}%` }}
-                  />
-                  <span className={`num ${styles.barVal}`}>{fmtSigned(b.vega, 3)}</span>
-                </span>
-              </div>
-            );
-          })}
+        {renderLadder(result, notional, basePrice)}
+      </Panel>
+    </div>
+  );
+}
+
+/**
+ * The book-shaped risk disclosure: bucketed vega per (tenor, delta) pillar and the
+ * off-diagonal cross-gamma. Renders the server's real decomposition when present.
+ * When the server returns no decomposition at all (`bucketedRisk === null`, e.g.
+ * an edge that did not honor the risk-bucket request), or when every bucket is a
+ * structural zero (an honest "no exposure at these pillars" — never fabricated),
+ * an explicit empty-state is shown instead of a row of zeros that masquerade as
+ * data. Position-level attribution (the desk's actual book vega, not this single
+ * structure's) awaits the server's Positions/`AttributePnl` API — surfaced here as
+ * a backlog note, not faked.
+ */
+function renderLadder(
+  result: ScenarioResult,
+  notional: number,
+  basePrice: number,
+): React.ReactElement {
+  const br = result.bucketedRisk;
+  if (!br) {
+    return (
+      <div className={styles.emptyState}>
+        <p className={styles.emptyTitle}>No book-shaped risk returned</p>
+        <p className={styles.emptyBody}>
+          The edge did not return a risk decomposition for this scenario. Bucketed
+          vega and cross-gamma are computed by the server only; nothing is
+          fabricated here. Position-level P&amp;L attribution awaits the server&apos;s
+          Positions / AttributePnl API.
+        </p>
+      </div>
+    );
+  }
+
+  // The vega in the buckets is the structure's value sensitivity to a 1-vol-point
+  // move of a pillar (premium-fraction units); scale to the book's notional so the
+  // ladder reads in P&L-per-vol-point, consistent with the grid's notional view.
+  const vegaPerPoint = (v: number): number => v * notional * 0.01;
+  const anyVega = br.vegaBuckets.some((b) => Math.abs(b.vega) > 0);
+  const max = Math.max(...br.vegaBuckets.map((x) => Math.abs(x.vega)), 1e-12);
+
+  return (
+    <>
+      <div className={styles.ladder}>
+        <div className={styles.ladderHead}>
+          <span>Tenor</span>
+          <span>Pillar</span>
+          <span>Vega / vol-pt</span>
         </div>
-        <div className={styles.crossGamma}>
-          <span className={styles.provLabel}>cross-gamma</span>
-          {result.bucketedRisk.crossGammas.map((cg, i) => (
+        {anyVega ? (
+          br.vegaBuckets.slice(0, 25).map((b, i) => (
+            <div key={i} className={styles.ladderRow}>
+              <span className="num">{tenorName(b.tenorYears)}</span>
+              <span className="num">{pillarName(b.delta)}</span>
+              <span className={styles.bar}>
+                <span
+                  className={styles.barFill}
+                  style={{ width: `${(Math.abs(b.vega) / max) * 100}%` }}
+                />
+                <span className={`num ${styles.barVal}`}>
+                  {fmtPnlAdaptive(vegaPerPoint(b.vega))}
+                </span>
+              </span>
+            </div>
+          ))
+        ) : (
+          <div className={styles.emptyInline}>
+            No vega at the requested pillars — this single-expiry structure carries
+            vega only at its own expiry tenor.
+          </div>
+        )}
+      </div>
+      <div className={styles.crossGamma}>
+        <span className={styles.provLabel}>cross-gamma</span>
+        {br.crossGammas.length > 0 ? (
+          br.crossGammas.map((cg, i) => (
             <span key={i} className="num">
               {cg.factorA}×{cg.factorB} {fmtSigned(cg.value, 4)}
             </span>
-          ))}
-        </div>
-      </Panel>
-    </div>
+          ))
+        ) : (
+          <span className={styles.emptyInline}>none requested</span>
+        )}
+      </div>
+      <div className={styles.crossGamma}>
+        <span className={styles.provLabel}>theta roll</span>
+        {br.thetaRoll.length > 0 ? (
+          br.thetaRoll.map((pv, i) => (
+            <span key={i} className="num">
+              {tenorName(br.rollHorizonsYears[i] ?? 0)}{" "}
+              {fmtPnlAdaptive((pv - basePrice) * notional)}
+            </span>
+          ))
+        ) : (
+          <span className={styles.emptyInline}>none requested</span>
+        )}
+      </div>
+    </>
   );
 }
 
