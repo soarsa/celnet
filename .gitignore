@@ -1,0 +1,28 @@
+# Rust
+/target
+**/target
+**/*.rs.bk
+*.pdb
+
+# sccache / build caches
+.sccache/
+
+# Coverage
+*.profraw
+*.profdata
+/coverage
+lcov.info
+
+# Criterion benchmark output
+/target/criterion
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Local env overrides
+.env
+.env.local
