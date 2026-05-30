@@ -1,5 +1,19 @@
 # Celnet — GA-Readiness Synthesis
 
+> **REV 3 (2026-05-30, GA close-out wave).** The remaining gaps are closed: structured-product
+> breadth (TARF / accumulator / lookback / quanto, MC/closed-form cross-validated), the
+> WebSocket mirror of the single contract + a live-wired GUI seam, the `celnet-router` fleet
+> scale-out tier (HRW partition map + hot-standby failover + bounded backpressure), the
+> **end-to-end latency-under-load harness + CI bench-regression gate** (the prior GA gating
+> caveat — now MET), and CI mutation/coverage gates. **22 crates + `gui/`, 618 tests green,
+> `just check` terminating.** **Verdict: GO for the Celnet pricing-platform GA.** Remaining
+> work is deployment/hardware-gated only — GPU perf-on-real-NVIDIA and live-Celer/FIX wiring —
+> each with a written plan (`GPU-AT-SCALE-PLAN.md`, `CELER-FIX-INTEGRATION-PLAN.md`) and a
+> contract test that re-runs against the real far side in staging; plus the post-GA breadth
+> roadmap (`POST-GA-ROADMAP.md`: pair/asset-class + crypto). Nothing remaining is research or
+> correctness risk. Rows below are the prior rev-2 detail (still valid); the caveat in §3/§4 is
+> superseded by this header.
+
 > **Purpose.** A single, evidence-graded assessment of Celnet against a production /
 > general-availability definition-of-done. Each criterion is marked **MET**, **PARTIAL**,
 > or **OPEN**, with the concrete test / bench / doc that backs the verdict. The closing
