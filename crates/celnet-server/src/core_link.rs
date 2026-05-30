@@ -96,6 +96,28 @@ pub struct SurfaceVol {
     pub forward: f64,
 }
 
+/// A read-only projection of the live [`MarketState`] for the async edge: the
+/// diffusion state plus the ATM Black vol (the smile vol at the forward).
+///
+/// The RFQ / scenario services price client-supplied instruments against the
+/// maker's *own* current market; this snapshot is how the edge reads that market
+/// off the core thread without touching the hot pricing ring.
+#[derive(Debug, Clone, Copy)]
+pub struct MarketSnapshot {
+    /// Spot FX rate (quote per 1 unit of base).
+    pub spot: f64,
+    /// Continuously-compounded domestic (quote) rate.
+    pub r_dom: f64,
+    /// Continuously-compounded foreign (base) rate.
+    pub r_for: f64,
+    /// Vol-time to expiry of the published slice (years).
+    pub t: f64,
+    /// The outright forward at the slice tenor.
+    pub forward: f64,
+    /// The ATM Black vol (the smile vol at the forward).
+    pub atm_vol: f64,
+}
+
 /// The barrier topology of a single-barrier exotic: the direction the barrier
 /// sits relative to spot and whether it knocks the option in or out.
 ///
@@ -176,6 +198,8 @@ enum Control {
     Publish(MarketState, Option<oneshot::Sender<()>>),
     /// Evaluate the surface vol at a point, replying on the `oneshot`.
     Surface(SurfaceQuery, oneshot::Sender<SurfaceVol>),
+    /// Read a projection of the live market state, replying on the `oneshot`.
+    Snapshot(oneshot::Sender<MarketSnapshot>),
     /// Price a single-barrier exotic, replying on the `oneshot`.
     Exotic(ExoticQuery, oneshot::Sender<f64>),
     /// Stop the busy-poll loop and join the thread.
@@ -471,6 +495,20 @@ impl CoreLink {
         rx.await.map_err(|_| CoreLinkError::CoreUnavailable)
     }
 
+    /// Read a projection of the live market state (spot, rates, vol-time, forward,
+    /// ATM vol) for the async edge's RFQ / scenario pricing.
+    ///
+    /// # Errors
+    ///
+    /// [`CoreLinkError::CoreUnavailable`] if the core has shut down.
+    pub async fn market_snapshot(&self) -> Result<MarketSnapshot, CoreLinkError> {
+        let (tx, rx) = oneshot::channel();
+        self.control_tx
+            .send(Control::Snapshot(tx))
+            .map_err(|_| CoreLinkError::CoreUnavailable)?;
+        rx.await.map_err(|_| CoreLinkError::CoreUnavailable)
+    }
+
     /// Price a single-barrier exotic against the live market state.
     ///
     /// # Errors
@@ -565,6 +603,21 @@ fn run_core(
                     let forward = st.forward();
                     let vol = celnet_core::Smile::implied_vol(&st.smile, q.strike, forward, st.t).0;
                     let _ = reply.send(SurfaceVol { vol, forward });
+                    handled_control = true;
+                }
+                Ok(Control::Snapshot(reply)) => {
+                    let st = core.state().load();
+                    let forward = st.forward();
+                    let atm_vol =
+                        celnet_core::Smile::implied_vol(&st.smile, forward, forward, st.t).0;
+                    let _ = reply.send(MarketSnapshot {
+                        spot: st.spot,
+                        r_dom: st.r_dom,
+                        r_for: st.r_for,
+                        t: st.t,
+                        forward,
+                        atm_vol,
+                    });
                     handled_control = true;
                 }
                 Ok(Control::Exotic(q, reply)) => {

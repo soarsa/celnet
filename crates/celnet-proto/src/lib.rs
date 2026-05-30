@@ -1,5 +1,6 @@
-//! Celnet wire contract — the single, current message schema for the pricing /
-//! quote / risk surface (work-stream WS-0, gate G0).
+//! Celnet wire contract — the single, current, trader-shaped message schema for
+//! the pricing / quote / RFQ / RFS / surface / risk surface (work-stream WS-0,
+//! gate G0).
 //!
 //! There is exactly **one clean, current contract** (ADR-0007): no
 //! `schema_version` field, no version-negotiation handshake, no N/N-1
@@ -7,14 +8,48 @@
 //! message on the wire is always interpreted against *this* schema; evolving the
 //! contract means changing the `.proto` and every dependent in the same change.
 //!
-//! The messages are generated from `proto/celnet.proto` by the pure-Rust
-//! `protox` compiler driving `prost-build` in `build.rs` — no system `protoc`
-//! is required, keeping the build hermetic and reproducible on every platform.
+//! The messages **and** the gRPC service stubs (client + server) are generated
+//! from `proto/celnet.proto` by the pure-Rust `protox` compiler driving
+//! `tonic-build`/`prost-build` in `build.rs` — no system `protoc` is required,
+//! keeping the build hermetic and reproducible on every platform.
 //!
-//! The wire identifiers mirror the [`celnet_types`] vocabulary one-to-one
-//! (`CcyPair`, `OptionType`, the convention enums, and the 14-member Greek set)
-//! so the on-wire form and the in-process DTOs never drift apart. Conversions
-//! between the two live in this crate (see [`convert`]).
+//! ## Contract shape
+//!
+//! The schema is organized as five logical families inside one package
+//! (`celnet.wire`), modelling how an FX-options desk actually works:
+//!
+//! * **vocabulary** — enums and value messages mirroring [`celnet_types`]
+//!   one-to-one ([`CcyPair`], [`OptionType`], the convention enums, [`Tenor`],
+//!   [`Conventions`], and the 14-member [`Greeks`] set) so the on-wire form and
+//!   the in-process DTOs never drift apart.
+//! * **instrument** — the unified [`Instrument`] `oneof` every workflow speaks:
+//!   vanilla, multi-leg [`Strategy`] (risk-reversal / strangle / straddle /
+//!   seagull), [`SingleBarrier`] / [`DoubleBarrier`], [`Digital`], and [`Touch`]
+//!   (one-touch / no-touch / double-no-touch / double-one-touch), carrying a
+//!   [`Quantity`], a [`Side`], and an optional [`Solve`] directive.
+//! * **quote** — the RFQ lifecycle: [`QuoteRequest`] (client idempotency key +
+//!   instrument) → [`Quote`] (two-way bid/offer + Greeks + `quote_id` +
+//!   `valid_until_nanos`) → [`QuoteAccept`] / [`QuoteReject`] → [`Execution`].
+//! * **stream** — the RFS bidirectional subscription: [`ClientStreamMessage`]
+//!   ([`Subscribe`] / [`Unsubscribe`] / [`Resync`] / [`Heartbeat`]) and
+//!   [`ServerStreamMessage`] ([`Snapshot`] then sequenced [`Update`] deltas +
+//!   [`Heartbeat`] + [`StreamEnd`]) with a monotonic per-subscription sequence
+//!   for gap detection and server-assisted resync.
+//! * **surface** — the surface workflow: [`GetSmileRequest`] → [`Smile`]
+//!   (delta-axis vols + [`BrokerQuoteSet`] + [`ArbReport`]),
+//!   [`MarkSurfaceRequest`] → [`MarkSurfaceResponse`], and [`ScenarioRequest`] →
+//!   [`ScenarioResponse`] (spot/vol/rate shock grid → repriced [`Greeks`]).
+//!
+//! Conversions between the wire vocabulary and the [`celnet_types`] DTOs live in
+//! [`convert`].
+//!
+//! ## Services
+//!
+//! The generated tonic stubs are surfaced under their package modules:
+//! [`pricing_service_client`] / [`pricing_service_server`],
+//! [`quote_service_client`] / [`quote_service_server`],
+//! [`stream_service_client`] / [`stream_service_server`], and
+//! [`surface_service_client`] / [`surface_service_server`].
 //!
 //! ## Encoding / decoding
 //!
@@ -22,22 +57,24 @@
 //! through that trait directly:
 //!
 //! ```
-//! use celnet_proto::{Envelope, Heartbeat, envelope::Payload};
+//! use celnet_proto::{Heartbeat, SubscriptionId};
 //! use prost::Message as _;
 //!
-//! let env = Envelope {
-//!     payload: Some(Payload::Heartbeat(Heartbeat { sequence: 7, epoch_nanos: 42 })),
+//! let hb = Heartbeat {
+//!     subscription: Some(SubscriptionId { value: 7 }),
+//!     sequence: 42,
+//!     epoch_nanos: 1_717_000_000_000_000_000,
 //! };
-//! let bytes = env.encode_to_vec();
-//! let back = Envelope::decode(bytes.as_slice()).unwrap();
-//! assert_eq!(env, back);
+//! let bytes = hb.encode_to_vec();
+//! let back = Heartbeat::decode(bytes.as_slice()).unwrap();
+//! assert_eq!(hb, back);
 //! ```
 
 #![forbid(unsafe_code)]
 
-// The generated module. `prost-build` writes one file per proto `package`,
+// The generated module. `tonic-build` writes one file per proto `package`,
 // named `celnet.wire.rs`; we surface its contents at the crate root so callers
-// import `celnet_proto::Envelope` rather than a nested path.
+// import `celnet_proto::Instrument` rather than a nested path.
 mod generated {
     include!(concat!(env!("OUT_DIR"), "/celnet.wire.rs"));
 }
@@ -58,14 +95,14 @@ mod tests {
         }
     }
 
-    fn sample_inputs() -> VanillaInputs {
-        VanillaInputs {
-            spot: 1.1000,
-            strike: 1.1050,
-            vol: 0.0825,
-            t: 0.5,
-            r_dom: 0.0450,
-            r_for: 0.0300,
+    fn sample_conventions() -> Conventions {
+        Conventions {
+            delta_convention: DeltaConvention::SpotPremiumAdjusted as i32,
+            atm_convention: AtmConvention::DeltaNeutralStraddle as i32,
+            premium_style: PremiumStyle::PercentForeign as i32,
+            cut: Cut::NewYork1000 as i32,
+            day_count: DayCount::Act365Fixed as i32,
+            settlement: Settlement::Deliverable as i32,
         }
     }
 
@@ -88,6 +125,40 @@ mod tests {
         }
     }
 
+    fn sample_quantity() -> Quantity {
+        Quantity {
+            notional: 10_000_000.0,
+            base_ccy: true,
+        }
+    }
+
+    fn sample_tenor() -> Tenor {
+        Tenor {
+            unit: tenor::Unit::Months as i32,
+            count: 3,
+        }
+    }
+
+    fn vanilla_instrument() -> Instrument {
+        Instrument {
+            pair: Some(sample_pair()),
+            tenor: Some(sample_tenor()),
+            expiry_years: 0.25,
+            quantity: Some(sample_quantity()),
+            side: Side::TwoWay as i32,
+            solve: Some(Solve {
+                target: solve::Target::None as i32,
+                target_premium: 0.0,
+            }),
+            product: Some(instrument::Product::Vanilla(Vanilla {
+                option_type: OptionType::Call as i32,
+                strike: Some(StrikeOrDelta {
+                    spec: Some(strike_or_delta::Spec::Delta(0.25)),
+                }),
+            })),
+        }
+    }
+
     /// Generic round-trip: encode any prost message and decode it back.
     fn round_trip<M: Message + Default + PartialEq + Clone>(msg: &M) {
         let bytes = msg.encode_to_vec();
@@ -99,140 +170,394 @@ mod tests {
     }
 
     #[test]
-    fn round_trip_pricing_request() {
-        let msg = PricingRequest {
+    fn round_trip_price_request_response() {
+        let req = PriceRequest {
             request_id: 0xDEAD_BEEF,
-            pair: Some(sample_pair()),
-            option_type: OptionType::Call as i32,
-            inputs: Some(sample_inputs()),
-            delta_convention: DeltaConvention::SpotPremiumAdjusted as i32,
-            premium_style: PremiumStyle::PercentForeign as i32,
+            instrument: Some(vanilla_instrument()),
+            market: Some(MarketContext {
+                spot: 1.10,
+                vol: 0.0825,
+                r_dom: 0.045,
+                r_for: 0.030,
+            }),
+            conventions: Some(sample_conventions()),
         };
-        round_trip(&msg);
-    }
+        round_trip(&req);
 
-    #[test]
-    fn round_trip_pricing_response() {
-        let msg = PricingResponse {
+        let resp = PriceResponse {
             request_id: 0xDEAD_BEEF,
             greeks: Some(sample_greeks()),
-            delta_convention_value: 0.4821,
+            resolved_strike: 1.1050,
+            conventions: Some(sample_conventions()),
         };
-        round_trip(&msg);
+        round_trip(&resp);
     }
 
     #[test]
-    fn round_trip_quote() {
-        let msg = Quote {
+    fn round_trip_strategy_instrument() {
+        let leg = |ot: OptionType, delta: f64, side: Side| Leg {
+            option_type: ot as i32,
+            strike: Some(StrikeOrDelta {
+                spec: Some(strike_or_delta::Spec::Delta(delta)),
+            }),
+            side: side as i32,
+            ratio: 1.0,
+        };
+        let instr = Instrument {
+            pair: Some(sample_pair()),
+            tenor: Some(sample_tenor()),
+            expiry_years: 0.25,
+            quantity: Some(sample_quantity()),
+            side: Side::Buy as i32,
+            solve: Some(Solve {
+                target: solve::Target::Strike as i32,
+                target_premium: 0.0,
+            }),
+            product: Some(instrument::Product::Strategy(Strategy {
+                kind: StrategyKind::RiskReversal as i32,
+                legs: vec![
+                    leg(OptionType::Call, 0.25, Side::Buy),
+                    leg(OptionType::Put, -0.25, Side::Sell),
+                ],
+            })),
+        };
+        round_trip(&instr);
+    }
+
+    #[test]
+    fn round_trip_barrier_digital_touch_instruments() {
+        let barrier = Instrument {
+            pair: Some(sample_pair()),
+            tenor: Some(sample_tenor()),
+            expiry_years: 1.0,
+            quantity: Some(sample_quantity()),
+            side: Side::Buy as i32,
+            solve: None,
+            product: Some(instrument::Product::SingleBarrier(SingleBarrier {
+                vanilla: Some(Vanilla {
+                    option_type: OptionType::Call as i32,
+                    strike: Some(StrikeOrDelta {
+                        spec: Some(strike_or_delta::Spec::Strike(1.10)),
+                    }),
+                }),
+                kind: BarrierKind::KnockOut as i32,
+                side: BarrierSide::Up as i32,
+                barrier: 1.20,
+                rebate: 0.0,
+                monitoring: MonitoringStyle::Continuous as i32,
+            })),
+        };
+        round_trip(&barrier);
+
+        let double = Instrument {
+            pair: Some(sample_pair()),
+            tenor: Some(sample_tenor()),
+            expiry_years: 0.5,
+            quantity: Some(sample_quantity()),
+            side: Side::Buy as i32,
+            solve: None,
+            product: Some(instrument::Product::DoubleBarrier(DoubleBarrier {
+                vanilla: Some(Vanilla {
+                    option_type: OptionType::Put as i32,
+                    strike: Some(StrikeOrDelta {
+                        spec: Some(strike_or_delta::Spec::Strike(1.05)),
+                    }),
+                }),
+                kind: BarrierKind::KnockIn as i32,
+                lower_barrier: 1.00,
+                upper_barrier: 1.20,
+                rebate: 0.001,
+                monitoring: MonitoringStyle::Discrete as i32,
+            })),
+        };
+        round_trip(&double);
+
+        let digital = Instrument {
+            pair: Some(sample_pair()),
+            tenor: Some(sample_tenor()),
+            expiry_years: 0.25,
+            quantity: Some(sample_quantity()),
+            side: Side::Sell as i32,
+            solve: None,
+            product: Some(instrument::Product::Digital(Digital {
+                option_type: OptionType::Call as i32,
+                strike: 1.12,
+                style: DigitalStyle::CashOrNothing as i32,
+                payout: 1_000_000.0,
+            })),
+        };
+        round_trip(&digital);
+
+        let touch = Instrument {
+            pair: Some(sample_pair()),
+            tenor: Some(sample_tenor()),
+            expiry_years: 0.75,
+            quantity: Some(sample_quantity()),
+            side: Side::Buy as i32,
+            solve: None,
+            product: Some(instrument::Product::Touch(Touch {
+                kind: TouchKind::DoubleNoTouch as i32,
+                lower_barrier: 1.05,
+                upper_barrier: 1.15,
+                rebate: 250_000.0,
+                monitoring: MonitoringStyle::Continuous as i32,
+            })),
+        };
+        round_trip(&touch);
+    }
+
+    #[test]
+    fn round_trip_rfq_lifecycle() {
+        let request = QuoteRequest {
+            idempotency_key: "5f0c1b2e-2a4d-4f8a-9c1e-7b6a5d4c3b2a".to_owned(),
+            instrument: Some(vanilla_instrument()),
+            conventions: Some(sample_conventions()),
+        };
+        round_trip(&request);
+
+        let quote = Quote {
             quote_id: 1_001,
-            pair: Some(sample_pair()),
-            option_type: OptionType::Put as i32,
-            strike: 1.0950,
-            tenor_years: 0.25,
-            bid: 0.0081,
-            ask: 0.0089,
-            premium_style: PremiumStyle::DomesticPips as i32,
+            idempotency_key: request.idempotency_key.clone(),
+            price: Some(TwoWayPrice {
+                bid: 0.0081,
+                offer: 0.0089,
+            }),
+            greeks: Some(sample_greeks()),
+            conventions: Some(sample_conventions()),
+            resolved_strike: 1.1050,
             epoch_nanos: 1_717_000_000_000_000_000,
+            valid_until_nanos: 1_717_000_300_000_000_000,
         };
-        round_trip(&msg);
+        round_trip(&quote);
+
+        let accept = QuoteAccept {
+            quote_id: 1_001,
+            idempotency_key: request.idempotency_key.clone(),
+            side: Side::Buy as i32,
+        };
+        round_trip(&accept);
+
+        let reject = QuoteReject {
+            quote_id: 1_001,
+            reason: "off-market".to_owned(),
+        };
+        round_trip(&reject);
+
+        let execution = Execution {
+            execution_id: 9_001,
+            quote_id: 1_001,
+            side: Side::Buy as i32,
+            traded_premium: 0.0089,
+            instrument: Some(vanilla_instrument()),
+            epoch_nanos: 1_717_000_001_000_000_000,
+        };
+        round_trip(&execution);
     }
 
     #[test]
-    fn round_trip_surface_snapshot() {
-        let msg = SurfaceSnapshot {
+    fn round_trip_stream_messages() {
+        let sub = SubscriptionId { value: 77 };
+        let conv = sample_conventions();
+
+        let subscribe = ClientStreamMessage {
+            message: Some(client_stream_message::Message::Subscribe(Subscribe {
+                subscription: Some(sub),
+                instrument: Some(vanilla_instrument()),
+                conventions: Some(conv),
+                throttle_nanos: 1_000_000,
+            })),
+        };
+        round_trip(&subscribe);
+
+        let resync = ClientStreamMessage {
+            message: Some(client_stream_message::Message::Resync(Resync {
+                subscription: Some(sub),
+                last_sequence: 41,
+            })),
+        };
+        round_trip(&resync);
+
+        let unsubscribe = ClientStreamMessage {
+            message: Some(client_stream_message::Message::Unsubscribe(Unsubscribe {
+                subscription: Some(sub),
+            })),
+        };
+        round_trip(&unsubscribe);
+
+        let client_hb = ClientStreamMessage {
+            message: Some(client_stream_message::Message::Heartbeat(Heartbeat {
+                subscription: Some(sub),
+                sequence: 42,
+                epoch_nanos: 1,
+            })),
+        };
+        round_trip(&client_hb);
+
+        let snapshot = ServerStreamMessage {
+            message: Some(server_stream_message::Message::Snapshot(Snapshot {
+                subscription: Some(sub),
+                sequence: 1,
+                price: Some(TwoWayPrice {
+                    bid: 0.0081,
+                    offer: 0.0089,
+                }),
+                greeks: Some(sample_greeks()),
+                vol: 0.0825,
+                conventions: Some(conv),
+                resolved_strike: 1.1050,
+                epoch_nanos: 1,
+            })),
+        };
+        round_trip(&snapshot);
+
+        let update = ServerStreamMessage {
+            message: Some(server_stream_message::Message::Update(Update {
+                subscription: Some(sub),
+                sequence: 2,
+                price: Some(TwoWayPrice {
+                    bid: 0.0082,
+                    offer: 0.0090,
+                }),
+                greeks: Some(sample_greeks()),
+                vol: 0.0830,
+                epoch_nanos: 2,
+            })),
+        };
+        round_trip(&update);
+
+        let server_hb = ServerStreamMessage {
+            message: Some(server_stream_message::Message::Heartbeat(Heartbeat {
+                subscription: Some(sub),
+                sequence: 2,
+                epoch_nanos: 3,
+            })),
+        };
+        round_trip(&server_hb);
+
+        let end = ServerStreamMessage {
+            message: Some(server_stream_message::Message::StreamEnd(StreamEnd {
+                subscription: Some(sub),
+                reason: stream_end::Reason::Lagged as i32,
+            })),
+        };
+        round_trip(&end);
+    }
+
+    #[test]
+    fn round_trip_surface_messages() {
+        let broker = BrokerQuoteSet {
+            tenor_years: 0.25,
+            atm_vol: 0.0840,
+            rr_25: -0.0030,
+            bf_25: 0.0025,
+            rr_10: -0.0060,
+            bf_10: 0.0080,
+            has_ten_delta: true,
+        };
+
+        let get_smile = GetSmileRequest {
             pair: Some(sample_pair()),
+            tenor_years: 0.25,
+            conventions: Some(sample_conventions()),
+        };
+        round_trip(&get_smile);
+
+        let smile = Smile {
+            pair: Some(sample_pair()),
+            tenor_years: 0.25,
+            broker_quotes: Some(broker),
             points: vec![
                 SmilePoint {
                     delta: -0.10,
-                    tenor_years: 0.0833,
+                    tenor_years: 0.25,
                     vol: 0.0951,
                 },
                 SmilePoint {
-                    delta: -0.25,
-                    tenor_years: 0.0833,
-                    vol: 0.0883,
-                },
-                SmilePoint {
                     delta: 0.50,
-                    tenor_years: 0.0833,
+                    tenor_years: 0.25,
                     vol: 0.0840,
                 },
                 SmilePoint {
-                    delta: 0.25,
-                    tenor_years: 0.0833,
-                    vol: 0.0869,
-                },
-                SmilePoint {
                     delta: 0.10,
-                    tenor_years: 0.0833,
+                    tenor_years: 0.25,
                     vol: 0.0922,
                 },
             ],
+            conventions: Some(sample_conventions()),
+            arbitrage: Some(ArbReport {
+                butterfly_arbitrage_free: true,
+                calendar_arbitrage_free: true,
+                worst_density: 0.0,
+                note: "no repair applied".to_owned(),
+            }),
             epoch_nanos: 1_717_000_000_000_000_000,
         };
-        round_trip(&msg);
-    }
+        round_trip(&smile);
 
-    #[test]
-    fn round_trip_heartbeat() {
-        let msg = Heartbeat {
-            sequence: u64::MAX,
-            epoch_nanos: -1, // pre-epoch timestamps must survive the round-trip too.
+        let mark_req = MarkSurfaceRequest {
+            pair: Some(sample_pair()),
+            broker_quotes: vec![broker],
+            conventions: Some(sample_conventions()),
         };
-        round_trip(&msg);
+        round_trip(&mark_req);
+
+        let mark_resp = MarkSurfaceResponse {
+            pair: Some(sample_pair()),
+            surface_version: 7,
+            smiles: vec![smile],
+            epoch_nanos: 1_717_000_000_000_000_000,
+        };
+        round_trip(&mark_resp);
     }
 
     #[test]
-    fn round_trip_envelope_each_variant() {
-        let variants = [
-            envelope::Payload::PricingRequest(PricingRequest {
-                request_id: 1,
-                pair: Some(sample_pair()),
-                option_type: OptionType::Call as i32,
-                inputs: Some(sample_inputs()),
-                delta_convention: DeltaConvention::ForwardUnadjusted as i32,
-                premium_style: PremiumStyle::DomesticPips as i32,
+    fn round_trip_scenario_grid() {
+        let req = ScenarioRequest {
+            instrument: Some(vanilla_instrument()),
+            base_market: Some(MarketContext {
+                spot: 1.10,
+                vol: 0.0825,
+                r_dom: 0.045,
+                r_for: 0.030,
             }),
-            envelope::Payload::PricingResponse(PricingResponse {
-                request_id: 1,
+            conventions: Some(sample_conventions()),
+            axes: vec![
+                ShockAxis {
+                    factor: shock_axis::Factor::Spot as i32,
+                    relative: true,
+                    steps: vec![-0.20, -0.10, 0.0, 0.10, 0.20],
+                },
+                ShockAxis {
+                    factor: shock_axis::Factor::Vol as i32,
+                    relative: true,
+                    steps: vec![0.0, 1.0],
+                },
+            ],
+        };
+        round_trip(&req);
+
+        let resp = ScenarioResponse {
+            points: vec![ScenarioPoint {
+                applied_shocks: vec![-0.20, 0.0],
+                shocked_market: Some(MarketContext {
+                    spot: 0.88,
+                    vol: 0.0825,
+                    r_dom: 0.045,
+                    r_for: 0.030,
+                }),
                 greeks: Some(sample_greeks()),
-                delta_convention_value: 0.5,
-            }),
-            envelope::Payload::Quote(Quote {
-                quote_id: 2,
-                pair: Some(sample_pair()),
-                option_type: OptionType::Put as i32,
-                strike: 1.1,
-                tenor_years: 1.0,
-                bid: 0.01,
-                ask: 0.011,
-                premium_style: PremiumStyle::PercentDomestic as i32,
-                epoch_nanos: 1,
-            }),
-            envelope::Payload::SurfaceSnapshot(SurfaceSnapshot {
-                pair: Some(sample_pair()),
-                points: vec![SmilePoint {
-                    delta: 0.5,
-                    tenor_years: 1.0,
-                    vol: 0.08,
-                }],
-                epoch_nanos: 1,
-            }),
-            envelope::Payload::Heartbeat(Heartbeat {
-                sequence: 9,
-                epoch_nanos: 1,
-            }),
-        ];
-        for payload in variants {
-            round_trip(&Envelope {
-                payload: Some(payload),
-            });
-        }
+            }],
+        };
+        round_trip(&resp);
     }
 
     #[test]
-    fn empty_envelope_round_trips_to_none() {
-        // An envelope with no payload is a legitimate (if unusual) zero message.
-        round_trip(&Envelope { payload: None });
+    fn strike_or_delta_each_variant_round_trips() {
+        for spec in [
+            strike_or_delta::Spec::Strike(1.105),
+            strike_or_delta::Spec::Delta(0.25),
+        ] {
+            round_trip(&StrikeOrDelta { spec: Some(spec) });
+        }
     }
 }

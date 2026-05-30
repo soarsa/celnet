@@ -9,13 +9,15 @@
 //! ever drifting apart.
 
 use celnet_types::{
-    Ccy, CcyPair, DeltaConvention, Greeks, OptionType, PremiumStyle, VanillaInputs,
+    AtmConvention, Ccy, CcyPair, Cut, DayCount, DeltaConvention, Greeks, OptionType, PremiumStyle,
+    Settlement, Tenor, VanillaInputs,
 };
 
 use crate::{
-    CcyPair as WireCcyPair, DeltaConvention as WireDeltaConvention, Greeks as WireGreeks,
-    OptionType as WireOptionType, PremiumStyle as WirePremiumStyle,
-    VanillaInputs as WireVanillaInputs,
+    AtmConvention as WireAtmConvention, CcyPair as WireCcyPair, Cut as WireCut,
+    DayCount as WireDayCount, DeltaConvention as WireDeltaConvention, Greeks as WireGreeks,
+    OptionType as WireOptionType, PremiumStyle as WirePremiumStyle, Settlement as WireSettlement,
+    Tenor as WireTenor, VanillaInputs as WireVanillaInputs, tenor,
 };
 
 /// A decode-side mapping failure: the wire carried a value the domain type
@@ -41,6 +43,14 @@ pub enum WireError {
         /// The absent field's name.
         field: &'static str,
     },
+    /// A wire scalar carried a value outside the domain type's representable
+    /// range (e.g. a tenor count that does not fit a `u16`).
+    OutOfRange {
+        /// The offending field's name.
+        field: &'static str,
+        /// The out-of-range value as received on the wire.
+        value: i64,
+    },
 }
 
 impl core::fmt::Display for WireError {
@@ -54,6 +64,9 @@ impl core::fmt::Display for WireError {
             }
             WireError::MissingField { field } => {
                 write!(f, "missing required field `{field}`")
+            }
+            WireError::OutOfRange { field, value } => {
+                write!(f, "value {value} out of range for `{field}`")
             }
         }
     }
@@ -126,6 +139,127 @@ impl From<WirePremiumStyle> for PremiumStyle {
             WirePremiumStyle::PercentDomestic => PremiumStyle::PercentDomestic,
             WirePremiumStyle::ForeignPips => PremiumStyle::ForeignPips,
         }
+    }
+}
+
+// ---- AtmConvention ---------------------------------------------------------
+
+impl From<AtmConvention> for WireAtmConvention {
+    fn from(value: AtmConvention) -> Self {
+        match value {
+            AtmConvention::AtmForward => WireAtmConvention::AtmForward,
+            AtmConvention::DeltaNeutralStraddle => WireAtmConvention::DeltaNeutralStraddle,
+        }
+    }
+}
+
+impl From<WireAtmConvention> for AtmConvention {
+    fn from(value: WireAtmConvention) -> Self {
+        match value {
+            WireAtmConvention::AtmForward => AtmConvention::AtmForward,
+            WireAtmConvention::DeltaNeutralStraddle => AtmConvention::DeltaNeutralStraddle,
+        }
+    }
+}
+
+// ---- Cut -------------------------------------------------------------------
+
+impl From<Cut> for WireCut {
+    fn from(value: Cut) -> Self {
+        match value {
+            Cut::NewYork1000 => WireCut::NewYork1000,
+            Cut::Tokyo1500 => WireCut::Tokyo1500,
+        }
+    }
+}
+
+impl From<WireCut> for Cut {
+    fn from(value: WireCut) -> Self {
+        match value {
+            WireCut::NewYork1000 => Cut::NewYork1000,
+            WireCut::Tokyo1500 => Cut::Tokyo1500,
+        }
+    }
+}
+
+// ---- DayCount --------------------------------------------------------------
+
+impl From<DayCount> for WireDayCount {
+    fn from(value: DayCount) -> Self {
+        match value {
+            DayCount::Act365Fixed => WireDayCount::Act365Fixed,
+            DayCount::Act360 => WireDayCount::Act360,
+        }
+    }
+}
+
+impl From<WireDayCount> for DayCount {
+    fn from(value: WireDayCount) -> Self {
+        match value {
+            WireDayCount::Act365Fixed => DayCount::Act365Fixed,
+            WireDayCount::Act360 => DayCount::Act360,
+        }
+    }
+}
+
+// ---- Settlement ------------------------------------------------------------
+
+impl From<Settlement> for WireSettlement {
+    fn from(value: Settlement) -> Self {
+        match value {
+            Settlement::Deliverable => WireSettlement::Deliverable,
+            Settlement::NonDeliverable => WireSettlement::NonDeliverable,
+        }
+    }
+}
+
+impl From<WireSettlement> for Settlement {
+    fn from(value: WireSettlement) -> Self {
+        match value {
+            WireSettlement::Deliverable => Settlement::Deliverable,
+            WireSettlement::NonDeliverable => Settlement::NonDeliverable,
+        }
+    }
+}
+
+// ---- Tenor -----------------------------------------------------------------
+
+impl From<Tenor> for WireTenor {
+    fn from(value: Tenor) -> Self {
+        let (unit, count) = match value {
+            Tenor::Overnight => (tenor::Unit::Overnight, 0_u32),
+            Tenor::Weeks(n) => (tenor::Unit::Weeks, u32::from(n)),
+            Tenor::Months(n) => (tenor::Unit::Months, u32::from(n)),
+            Tenor::Years(n) => (tenor::Unit::Years, u32::from(n)),
+        };
+        WireTenor {
+            unit: unit as i32,
+            count,
+        }
+    }
+}
+
+impl TryFrom<WireTenor> for Tenor {
+    type Error = WireError;
+
+    fn try_from(value: WireTenor) -> Result<Self, Self::Error> {
+        let unit = tenor::Unit::try_from(value.unit).map_err(|_| WireError::UnknownEnum {
+            kind: "Tenor.Unit",
+            tag: value.unit,
+        })?;
+        // A tenor count must fit a `u16`; reject an out-of-range wire value.
+        let count_u16 = || {
+            u16::try_from(value.count).map_err(|_| WireError::OutOfRange {
+                field: "Tenor.count",
+                value: i64::from(value.count),
+            })
+        };
+        Ok(match unit {
+            tenor::Unit::Overnight => Tenor::Overnight,
+            tenor::Unit::Weeks => Tenor::Weeks(count_u16()?),
+            tenor::Unit::Months => Tenor::Months(count_u16()?),
+            tenor::Unit::Years => Tenor::Years(count_u16()?),
+        })
     }
 }
 
@@ -262,6 +396,77 @@ mod tests {
         ] {
             assert_eq!(PremiumStyle::from(WirePremiumStyle::from(ps)), ps);
         }
+    }
+
+    #[test]
+    fn atm_convention_round_trips() {
+        for ac in [
+            AtmConvention::AtmForward,
+            AtmConvention::DeltaNeutralStraddle,
+        ] {
+            assert_eq!(AtmConvention::from(WireAtmConvention::from(ac)), ac);
+        }
+    }
+
+    #[test]
+    fn cut_round_trips() {
+        for c in [Cut::NewYork1000, Cut::Tokyo1500] {
+            assert_eq!(Cut::from(WireCut::from(c)), c);
+        }
+    }
+
+    #[test]
+    fn day_count_round_trips() {
+        for dc in [DayCount::Act365Fixed, DayCount::Act360] {
+            assert_eq!(DayCount::from(WireDayCount::from(dc)), dc);
+        }
+    }
+
+    #[test]
+    fn settlement_round_trips() {
+        for s in [Settlement::Deliverable, Settlement::NonDeliverable] {
+            assert_eq!(Settlement::from(WireSettlement::from(s)), s);
+        }
+    }
+
+    #[test]
+    fn tenor_round_trips() {
+        for t in [
+            Tenor::Overnight,
+            Tenor::Weeks(2),
+            Tenor::Months(3),
+            Tenor::Years(1),
+        ] {
+            let back = Tenor::try_from(WireTenor::from(t)).expect("tenor must round-trip");
+            assert_eq!(back, t);
+        }
+    }
+
+    #[test]
+    fn tenor_rejects_out_of_range_count() {
+        let wire = WireTenor {
+            unit: tenor::Unit::Months as i32,
+            count: u32::from(u16::MAX) + 1,
+        };
+        assert_eq!(
+            Tenor::try_from(wire),
+            Err(WireError::OutOfRange {
+                field: "Tenor.count",
+                value: i64::from(u16::MAX) + 1,
+            })
+        );
+    }
+
+    #[test]
+    fn tenor_rejects_unknown_unit() {
+        let wire = WireTenor { unit: 99, count: 1 };
+        assert_eq!(
+            Tenor::try_from(wire),
+            Err(WireError::UnknownEnum {
+                kind: "Tenor.Unit",
+                tag: 99,
+            })
+        );
     }
 
     #[test]

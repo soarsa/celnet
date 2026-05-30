@@ -1,5 +1,5 @@
-// Celnet wire contract — the single, current message schema for the pricing /
-// quote / risk surface.
+// Celnet wire contract — the single, current, trader-shaped message schema for
+// the pricing / quote / RFQ / RFS / surface / risk surface.
 //
 // There is exactly ONE clean, current contract (ADR-0007): no `schema_version`
 // field, no version-negotiation handshake, no N/N-1 back-compat shims. Upgrades
@@ -7,15 +7,30 @@
 // wire is always interpreted against this schema. Evolving the contract means
 // editing this file and every dependent in the same change.
 //
-// proto3, no `optional` presence wrappers: every field carries a meaningful
-// value (a price of 0.0 or a rate of 0.0 is a legitimate quantity, not "absent").
+// proto3, no `optional` presence wrappers: every scalar field carries a
+// meaningful value (a price of 0.0 or a rate of 0.0 is a legitimate quantity,
+// not "absent"). Nested messages and `oneof`s carry their own presence.
+//
 // Identifiers here are purpose-named and vendor/research-neutral, mirroring the
 // `celnet-types` vocabulary (CcyPair, OptionType, the convention enums, the
-// 14-Greek set) one-to-one so the wire form and the in-process DTOs stay aligned.
+// 14-Greek set) one-to-one so the wire form and the in-process DTOs stay
+// aligned. Mathematical-method provenance lives only in doc comments, never in
+// names (inputs are `VanillaInputs`, never `GkInputs`).
+//
+// The contract is organized as five logical families inside one package:
+//   * vocabulary  — enums + small value messages mirroring `celnet-types`
+//   * instrument  — the unified `Instrument` oneof every workflow speaks
+//   * quote       — the RFQ lifecycle (RequestQuote/AcceptQuote/RejectQuote)
+//   * stream      — the RFS bidirectional subscription (snapshot+delta+resync)
+//   * surface     — smile read / broker mark / arbitrage report / scenario risk
 
 syntax = "proto3";
 
 package celnet.wire;
+
+// ===========================================================================
+// vocabulary — enums + value messages mirroring `celnet-types`
+// ===========================================================================
 
 // Call or put — mirrors `celnet_types::OptionType`.
 enum OptionType {
@@ -23,6 +38,19 @@ enum OptionType {
   OPTION_TYPE_CALL = 0;
   // Right to sell the base currency.
   OPTION_TYPE_PUT = 1;
+}
+
+// The side a counterparty takes in an instrument or leg — buy or sell.
+//
+// Omit a top-level side on an RFQ to request a two-way (bid/offer) market, as
+// FIX `QuoteRequest` does when side/quantity are absent.
+enum Side {
+  // proto3 zero default. The client (or leg) buys the instrument.
+  SIDE_BUY = 0;
+  // The client (or leg) sells the instrument.
+  SIDE_SELL = 1;
+  // No directional side: request a two-way bid/offer market.
+  SIDE_TWO_WAY = 2;
 }
 
 // Quoted delta convention — mirrors `celnet_types::DeltaConvention`.
@@ -37,6 +65,14 @@ enum DeltaConvention {
   DELTA_CONVENTION_FORWARD_PREMIUM_ADJUSTED = 3;
 }
 
+// At-the-money strike convention — mirrors `celnet_types::AtmConvention`.
+enum AtmConvention {
+  // ATM-forward: K = F.
+  ATM_CONVENTION_ATM_FORWARD = 0;
+  // Delta-neutral straddle: strike where call delta + put delta = 0.
+  ATM_CONVENTION_DELTA_NEUTRAL_STRADDLE = 1;
+}
+
 // Premium quotation style — mirrors `celnet_types::PremiumStyle`.
 enum PremiumStyle {
   // Domestic pips (quote-ccy per 1 unit of base notional).
@@ -47,6 +83,87 @@ enum PremiumStyle {
   PREMIUM_STYLE_PERCENT_DOMESTIC = 2;
   // Foreign pips.
   PREMIUM_STYLE_FOREIGN_PIPS = 3;
+}
+
+// Expiry cut (fixing time) convention — mirrors `celnet_types::Cut`.
+enum Cut {
+  // New York 10:00 — the standard interbank OTC cut for most pairs.
+  CUT_NEW_YORK_1000 = 0;
+  // Tokyo 15:00 — standard for JPY-region / Asian business.
+  CUT_TOKYO_1500 = 1;
+}
+
+// Day-count basis — mirrors `celnet_types::DayCount`.
+enum DayCount {
+  // Actual/365 fixed — typical for option vol-time.
+  DAY_COUNT_ACT_365_FIXED = 0;
+  // Actual/360 — typical money-market accrual (USD/EUR).
+  DAY_COUNT_ACT_360 = 1;
+}
+
+// Settlement style — mirrors `celnet_types::Settlement`.
+enum Settlement {
+  // Physically deliverable: both currencies exchanged on delivery.
+  SETTLEMENT_DELIVERABLE = 0;
+  // Non-deliverable option: cash-settled at a published fixing.
+  SETTLEMENT_NON_DELIVERABLE = 1;
+}
+
+// Barrier crossing semantics for a single barrier level.
+enum BarrierKind {
+  // Knock-in: the option activates if the barrier is touched.
+  BARRIER_KIND_KNOCK_IN = 0;
+  // Knock-out: the option extinguishes if the barrier is touched.
+  BARRIER_KIND_KNOCK_OUT = 1;
+}
+
+// Where a barrier sits relative to spot at inception.
+enum BarrierSide {
+  // Barrier above spot at inception (up-and-*).
+  BARRIER_SIDE_UP = 0;
+  // Barrier below spot at inception (down-and-*).
+  BARRIER_SIDE_DOWN = 1;
+}
+
+// How a barrier / touch is monitored along the path.
+enum MonitoringStyle {
+  // Continuous monitoring (any touch at any instant triggers).
+  MONITORING_STYLE_CONTINUOUS = 0;
+  // Discrete monitoring at scheduled fixing instants only.
+  MONITORING_STYLE_DISCRETE = 1;
+}
+
+// Touch family for one-touch / no-touch / double-no-touch structures.
+enum TouchKind {
+  // One-touch: pays the rebate if the barrier IS touched before expiry.
+  TOUCH_KIND_ONE_TOUCH = 0;
+  // No-touch: pays the rebate if the barrier is NOT touched before expiry.
+  TOUCH_KIND_NO_TOUCH = 1;
+  // Double-no-touch: pays if NEITHER of two barriers is touched.
+  TOUCH_KIND_DOUBLE_NO_TOUCH = 2;
+  // Double-one-touch: pays if EITHER of two barriers is touched.
+  TOUCH_KIND_DOUBLE_ONE_TOUCH = 3;
+}
+
+// Digital (binary) settlement style.
+enum DigitalStyle {
+  // Cash-or-nothing: pays a fixed cash amount if in-the-money at expiry.
+  DIGITAL_STYLE_CASH_OR_NOTHING = 0;
+  // Asset-or-nothing: pays one unit of the asset if in-the-money at expiry.
+  DIGITAL_STYLE_ASSET_OR_NOTHING = 1;
+}
+
+// A recognized multi-leg vol strategy template — mirrors the `Strategy`
+// instrument leg sets the desk books as a single contract.
+enum StrategyKind {
+  // Risk reversal: long one wing, short the opposite wing.
+  STRATEGY_KIND_RISK_REVERSAL = 0;
+  // Strangle: long (or short) both out-of-the-money wings.
+  STRATEGY_KIND_STRANGLE = 1;
+  // Straddle: a call and a put struck at the same (ATM) strike.
+  STRATEGY_KIND_STRADDLE = 2;
+  // Seagull: a three-leg collar-with-wing (e.g. long call spread, short put).
+  STRATEGY_KIND_SEAGULL = 3;
 }
 
 // An FX currency pair `BASE/QUOTE` (market form `CCY1CCY2`), e.g. "EURUSD".
@@ -62,9 +179,61 @@ message CcyPair {
   string quote = 2;
 }
 
+// A standard FX-options tenor measured from the spot date — mirrors
+// `celnet_types::Tenor`. Exactly one unit field is meaningful per `unit`.
+message Tenor {
+  // The calendar unit the count is measured in.
+  enum Unit {
+    // Overnight (next business day). `count` is ignored (implicitly 1).
+    UNIT_OVERNIGHT = 0;
+    // `count` calendar weeks.
+    UNIT_WEEKS = 1;
+    // `count` calendar months.
+    UNIT_MONTHS = 2;
+    // `count` calendar years.
+    UNIT_YEARS = 3;
+  }
+  // The tenor unit.
+  Unit unit = 1;
+  // The number of units (weeks/months/years). Ignored for OVERNIGHT.
+  uint32 count = 2;
+}
+
+// The trade conventions a quote / surface is expressed under. Carrying these
+// explicitly on every priced message is a Celnet differentiator: the consumer
+// always knows *why* a delta or premium is what it is, never inferring it.
+message Conventions {
+  // Which delta the convention-specific delta is reported against.
+  DeltaConvention delta_convention = 1;
+  // The ATM strike convention used for the surface / ATM leg.
+  AtmConvention atm_convention = 2;
+  // The premium quotation style bids/offers are expressed in.
+  PremiumStyle premium_style = 3;
+  // The expiry cut (fixing time).
+  Cut cut = 4;
+  // The day-count basis converting dates to year fractions.
+  DayCount day_count = 5;
+  // The settlement style (deliverable / non-deliverable).
+  Settlement settlement = 6;
+}
+
+// The market context an instrument is priced against — spot, vol, and the two
+// continuous rates. Mirrors the non-strike inputs to `celnet_types::VanillaInputs`
+// hoisted to the instrument level so a multi-leg structure shares one context.
+message MarketContext {
+  // Spot FX rate (quote per 1 unit of base).
+  double spot = 1;
+  // Annualized volatility (absolute, e.g. 0.10 = 10 vol).
+  double vol = 2;
+  // Continuously-compounded domestic (quote) interest rate.
+  double r_dom = 3;
+  // Continuously-compounded foreign (base) interest rate.
+  double r_for = 4;
+}
+
 // Inputs to the vanilla (Garman-Kohlhagen) model — mirrors
-// `celnet_types::VanillaInputs`. Continuous rates; times are vol-time year
-// fractions. The forward and discount factors are derived, never sent.
+// `celnet_types::VanillaInputs`. Continuous rates; `t` is a vol-time year
+// fraction. The forward and discount factors are derived, never sent.
 message VanillaInputs {
   // Spot FX rate (quote per 1 unit of base).
   double spot = 1;
@@ -78,6 +247,43 @@ message VanillaInputs {
   double r_dom = 5;
   // Continuously-compounded foreign (base) interest rate.
   double r_for = 6;
+}
+
+// A trade notional and the currency leg it is denominated in.
+message Quantity {
+  // The notional amount (always positive; direction is carried by `Side`).
+  double notional = 1;
+  // True if the notional is in the base/foreign currency (CCY1); false if it
+  // is in the quote/domestic currency (CCY2).
+  bool base_ccy = 2;
+}
+
+// A solve directive: instead of a fixed value, solve a free parameter so the
+// structure satisfies a target (typically zero upfront premium).
+message Solve {
+  // Which free parameter to solve for.
+  enum Target {
+    // Solve nothing; use the supplied strikes/levels as given.
+    TARGET_NONE = 0;
+    // Solve the strike so the structure has the target premium.
+    TARGET_STRIKE = 1;
+    // Solve the premium (report it) for the supplied strike.
+    TARGET_PREMIUM = 2;
+  }
+  // The parameter to solve.
+  Target target = 1;
+  // The target premium (in `Conventions.premium_style` units) to solve to;
+  // typically 0.0 for a zero-cost structure. Ignored when target is NONE.
+  double target_premium = 2;
+}
+
+// A discrete fixing schedule for path-dependent structures (TARF / accumulator
+// / discretely-monitored barriers). Year fractions are on the surface day-count.
+message FixingSchedule {
+  // The fixing year fractions, ascending, each ≤ the structure's expiry.
+  repeated double fixing_years = 1;
+  // The notional that accrues at each fixing (usually one leg notional).
+  double fixing_notional = 2;
 }
 
 // The full FX-options Greek set — mirrors `celnet_types::Greeks` field-for-field.
@@ -113,42 +319,393 @@ message Greeks {
   double color = 14;
 }
 
-// A request to price a vanilla FX option and return its full risk.
-//
-// `request_id` correlates the response on a multiplexed stream; it carries no
-// schema meaning. `delta_convention` and `premium_style` select how the
-// convention-specific delta / premium are reported, matching the `celnet-types`
-// convention enums.
-message PricingRequest {
-  // Opaque client correlation id, echoed in `PricingResponse.request_id`.
-  uint64 request_id = 1;
-  // The currency pair being priced.
-  CcyPair pair = 2;
-  // Call or put.
-  OptionType option_type = 3;
-  // Garman-Kohlhagen inputs.
-  VanillaInputs inputs = 4;
-  // Delta convention to report the convention-specific delta against.
-  DeltaConvention delta_convention = 5;
-  // Premium quotation style for the reported premium.
-  PremiumStyle premium_style = 6;
+// A two-way (bid / offer) market in `Conventions.premium_style` units.
+message TwoWayPrice {
+  // Bid premium (the price the maker buys at).
+  double bid = 1;
+  // Offer / ask premium (the price the maker sells at).
+  double offer = 2;
 }
 
-// The priced result: the full Greek set plus the convention-resolved delta.
-message PricingResponse {
-  // Correlates with `PricingRequest.request_id`.
-  uint64 request_id = 1;
-  // The full 14-member Greek set (price + sensitivities).
-  Greeks greeks = 2;
-  // Delta resolved under the request's `DeltaConvention`.
-  double delta_convention_value = 3;
+// ===========================================================================
+// instrument — the unified `Instrument` model every workflow speaks
+// ===========================================================================
+
+// A strike expressed either as an absolute level or as a signed convention
+// delta (e.g. 0.25 call, -0.25 put), so a trader can quote "the 25-delta".
+message StrikeOrDelta {
+  // The strike specification: exactly one is set.
+  oneof spec {
+    // Absolute strike (quote per 1 unit of base).
+    double strike = 1;
+    // Signed convention delta, resolved to a strike under `Conventions`.
+    double delta = 2;
+  }
 }
+
+// A vanilla single-leg European FX option.
+message Vanilla {
+  // Call or put.
+  OptionType option_type = 1;
+  // Strike, as an absolute level or a convention delta.
+  StrikeOrDelta strike = 2;
+}
+
+// One leg of a multi-leg strategy.
+message Leg {
+  // Call or put for this leg.
+  OptionType option_type = 1;
+  // The leg strike (absolute or delta).
+  StrikeOrDelta strike = 2;
+  // Buy or sell this leg.
+  Side side = 3;
+  // The leg ratio relative to the base notional (e.g. 1.0, or 2.0 for a 1x2).
+  double ratio = 4;
+}
+
+// A recognized multi-leg vol strategy booked as one contract (risk reversal,
+// strangle, straddle, seagull). The legs fully define the structure; `kind`
+// records the trader's intent / template for display and validation.
+message Strategy {
+  // The strategy template the legs realize.
+  StrategyKind kind = 1;
+  // The legs, in book order. A risk reversal has 2; a seagull has 3.
+  repeated Leg legs = 2;
+}
+
+// A single-barrier knock-in / knock-out option (vanilla payoff, one barrier).
+message SingleBarrier {
+  // The underlying vanilla payoff (call/put + strike).
+  Vanilla vanilla = 1;
+  // Knock-in or knock-out.
+  BarrierKind kind = 2;
+  // Barrier above or below spot at inception.
+  BarrierSide side = 3;
+  // The barrier level (quote per 1 unit of base).
+  double barrier = 4;
+  // Rebate paid if the barrier event extinguishes/never activates the option.
+  double rebate = 5;
+  // Continuous or discrete monitoring.
+  MonitoringStyle monitoring = 6;
+}
+
+// A double-barrier option bounded by a lower and an upper barrier.
+message DoubleBarrier {
+  // The underlying vanilla payoff (call/put + strike).
+  Vanilla vanilla = 1;
+  // Knock-in or knock-out (applied to whichever barrier is touched).
+  BarrierKind kind = 2;
+  // The lower barrier level.
+  double lower_barrier = 3;
+  // The upper barrier level.
+  double upper_barrier = 4;
+  // Rebate paid on the barrier event.
+  double rebate = 5;
+  // Continuous or discrete monitoring.
+  MonitoringStyle monitoring = 6;
+}
+
+// A digital (binary) option paying a fixed amount on an in-the-money expiry.
+message Digital {
+  // Call or put (above-strike vs below-strike payoff).
+  OptionType option_type = 1;
+  // The strike (quote per 1 unit of base).
+  double strike = 2;
+  // Cash-or-nothing vs asset-or-nothing.
+  DigitalStyle style = 3;
+  // The fixed payout amount (in domestic ccy for cash-or-nothing).
+  double payout = 4;
+}
+
+// A touch structure: one-touch / no-touch / double-no-touch / double-one-touch.
+// `upper_barrier` is ignored for the single-barrier (one-/no-touch) kinds.
+message Touch {
+  // The touch family.
+  TouchKind kind = 1;
+  // The (lower / sole) barrier level.
+  double lower_barrier = 2;
+  // The upper barrier level (double structures only).
+  double upper_barrier = 3;
+  // The rebate paid when the touch condition is satisfied.
+  double rebate = 4;
+  // Continuous or discrete monitoring.
+  MonitoringStyle monitoring = 5;
+}
+
+// The unified instrument every Celnet workflow speaks. Exactly one variant is
+// set. Pricing, RFQ, RFS, and scenario all carry an `Instrument`, so adding a
+// product type is a single additive change here.
+message Instrument {
+  // The currency pair the instrument trades.
+  CcyPair pair = 1;
+  // The expiry tenor (mutually informative with `expiry_years`).
+  Tenor tenor = 2;
+  // The expiry as a year fraction on the surface day-count (authoritative for
+  // pricing; `tenor` is the trader-facing label).
+  double expiry_years = 3;
+  // The trade notional and its currency leg.
+  Quantity quantity = 4;
+  // The top-level side (BUY/SELL, or TWO_WAY to request a two-way market).
+  Side side = 5;
+  // Optional solve directive (e.g. solve strike for zero premium).
+  Solve solve = 6;
+  // The product payoff: exactly one variant is set.
+  oneof product {
+    // A vanilla European option.
+    Vanilla vanilla = 7;
+    // A multi-leg strategy (risk reversal / strangle / straddle / seagull).
+    Strategy strategy = 8;
+    // A single-barrier knock-in / knock-out option.
+    SingleBarrier single_barrier = 9;
+    // A double-barrier option.
+    DoubleBarrier double_barrier = 10;
+    // A digital (binary) option.
+    Digital digital = 11;
+    // A touch structure (one-/no-/double-no-/double-one-touch).
+    Touch touch = 12;
+  }
+}
+
+// ===========================================================================
+// quote — the RFQ lifecycle (RequestQuote / AcceptQuote / RejectQuote)
+// ===========================================================================
+
+// A request for a tradable quote on an instrument.
+//
+// `idempotency_key` is a client-supplied unique token (e.g. a UUID): a retry
+// after a timeout carrying the same key returns the same `quote_id`, never
+// double-requesting. Omit `Instrument.side` (set TWO_WAY) to request a two-way
+// market, as FIX `QuoteRequest` does when side is absent.
+message QuoteRequest {
+  // Client-supplied idempotency token; identical retries are deduplicated.
+  string idempotency_key = 1;
+  // The instrument to quote.
+  Instrument instrument = 2;
+  // The trade conventions the quote should be expressed under.
+  Conventions conventions = 3;
+}
+
+// A tradable two-way quote returned for a `QuoteRequest`.
+message Quote {
+  // Server-assigned stable quote identifier.
+  uint64 quote_id = 1;
+  // Echo of the originating request's idempotency key.
+  string idempotency_key = 2;
+  // The two-way bid/offer premium in `conventions.premium_style` units.
+  TwoWayPrice price = 3;
+  // The full 14-member Greek set for the quoted instrument.
+  Greeks greeks = 4;
+  // The conventions the quote is expressed under (resolved server-side).
+  Conventions conventions = 5;
+  // The strike resolved if the request used a delta or a solve directive.
+  double resolved_strike = 6;
+  // Publication time, nanoseconds since the Unix epoch (UTC).
+  int64 epoch_nanos = 7;
+  // Quote validity deadline (last-look window), nanoseconds since the Unix
+  // epoch (UTC). An accept after this instant is rejected as expired.
+  int64 valid_until_nanos = 8;
+}
+
+// A client acceptance of a previously issued `Quote`.
+message QuoteAccept {
+  // The quote being accepted.
+  uint64 quote_id = 1;
+  // Echo of the idempotency key, so an accept retry is deduplicated too.
+  string idempotency_key = 2;
+  // The side the client trades on a two-way quote (BUY = lift the offer,
+  // SELL = hit the bid). Ignored for an already one-way quote.
+  Side side = 3;
+}
+
+// A client rejection of a previously issued `Quote` (declines to trade).
+message QuoteReject {
+  // The quote being rejected.
+  uint64 quote_id = 1;
+  // A free-text reason for the audit trail.
+  string reason = 2;
+}
+
+// The acknowledgement produced by rejecting a quote. A reject never books a
+// trade, so it returns a purpose-typed ack (not an `Execution`): the quote is
+// marked declined and can no longer be accepted.
+message RejectAck {
+  // The quote that was declined.
+  uint64 quote_id = 1;
+  // Acknowledgement time, nanoseconds since the Unix epoch (UTC).
+  int64 epoch_nanos = 2;
+}
+
+// The booking confirmation produced by accepting a quote.
+message Execution {
+  // Server-assigned execution / booking identifier.
+  uint64 execution_id = 1;
+  // The quote that was traded.
+  uint64 quote_id = 2;
+  // The side actually traded.
+  Side side = 3;
+  // The premium traded (the lifted/hit side of the two-way), in the quote's
+  // `conventions.premium_style` units.
+  double traded_premium = 4;
+  // The traded instrument (echoed for the booking record).
+  Instrument instrument = 5;
+  // Booking time, nanoseconds since the Unix epoch (UTC).
+  int64 epoch_nanos = 6;
+}
+
+// ===========================================================================
+// stream — the RFS bidirectional subscription (snapshot + delta + resync)
+// ===========================================================================
+
+// A client-assigned subscription identifier, unique within a client session,
+// keying the request-for-stream so the server can route per-subscriber.
+message SubscriptionId {
+  // The opaque client-unique subscription token.
+  uint64 value = 1;
+}
+
+// Open a request-for-stream on a specific instrument: the server replies with a
+// `Snapshot` then a sequence of `Update` deltas + `Heartbeat`s until torn down.
+message Subscribe {
+  // The client-assigned subscription id this stream is keyed on.
+  SubscriptionId subscription = 1;
+  // The instrument to stream a two-way market for.
+  Instrument instrument = 2;
+  // The conventions the streamed prices are expressed under.
+  Conventions conventions = 3;
+  // A client throttle hint: minimum nanoseconds between updates the client
+  // wants (the server conflates deltas to honour it). 0 = no throttling.
+  uint64 throttle_nanos = 4;
+}
+
+// Tear down a previously opened subscription.
+message Unsubscribe {
+  // The subscription to close.
+  SubscriptionId subscription = 1;
+}
+
+// A server-assisted resync: the client detected a sequence gap and asks the
+// server to re-deliver a fresh `Snapshot` (with the current sequence) so the
+// client can resume from a known-good baseline.
+message Resync {
+  // The subscription to resynchronize.
+  SubscriptionId subscription = 1;
+  // The last in-sequence number the client successfully applied. The server
+  // replies with a fresh snapshot bearing a sequence ≥ this value.
+  uint64 last_sequence = 2;
+}
+
+// Liveness/keepalive on a streaming channel, sent both ways.
+//
+// `sequence` mirrors the per-subscription stream sequence so a missed update is
+// detectable across heartbeats; `epoch_nanos` is the send time.
+message Heartbeat {
+  // The subscription the heartbeat belongs to.
+  SubscriptionId subscription = 1;
+  // The current per-subscription sequence number.
+  uint64 sequence = 2;
+  // Send time, nanoseconds since the Unix epoch (UTC).
+  int64 epoch_nanos = 3;
+}
+
+// The full state of a streamed instrument at a sequence point — the baseline a
+// consumer applies whole before consuming deltas.
+message Snapshot {
+  // The subscription this snapshot answers.
+  SubscriptionId subscription = 1;
+  // The monotonic per-subscription sequence number of this snapshot.
+  uint64 sequence = 2;
+  // The current two-way market.
+  TwoWayPrice price = 3;
+  // The full Greek set at this snapshot.
+  Greeks greeks = 4;
+  // The instrument vol used (absolute) at this snapshot.
+  double vol = 5;
+  // The conventions the prices are expressed under.
+  Conventions conventions = 6;
+  // The strike resolved (if the subscription used a delta/solve).
+  double resolved_strike = 7;
+  // Snapshot time, nanoseconds since the Unix epoch (UTC).
+  int64 epoch_nanos = 8;
+}
+
+// A sequenced delta update on a streamed instrument. Carries the changed
+// price/Greeks at the next sequence number; a gap in `sequence` signals loss
+// and prompts a `Resync`.
+message Update {
+  // The subscription this update advances.
+  SubscriptionId subscription = 1;
+  // The monotonic per-subscription sequence number (snapshot seq + n).
+  uint64 sequence = 2;
+  // The updated two-way market.
+  TwoWayPrice price = 3;
+  // The updated Greek set.
+  Greeks greeks = 4;
+  // The updated instrument vol (absolute).
+  double vol = 5;
+  // Update time, nanoseconds since the Unix epoch (UTC).
+  int64 epoch_nanos = 6;
+}
+
+// The server signals a subscription was dropped (e.g. slow consumer lagged the
+// per-subscriber buffer, or the engine is draining for a blue-green cutover).
+// The client should `Resync` (lag) or re-`Subscribe` after cutover (drain).
+message StreamEnd {
+  // The subscription that ended.
+  SubscriptionId subscription = 1;
+  // Why the stream ended.
+  enum Reason {
+    // The consumer fell behind and was dropped; reconnect via Resync.
+    REASON_LAGGED = 0;
+    // The engine is draining for a blue-green cutover; re-subscribe after.
+    REASON_DRAINING = 1;
+    // The client requested teardown (acknowledges an Unsubscribe).
+    REASON_UNSUBSCRIBED = 2;
+    // The instrument is no longer quotable (e.g. expired).
+    REASON_EXPIRED = 3;
+  }
+  // The reason the stream ended.
+  Reason reason = 2;
+}
+
+// The client→server message on the bidirectional RFS stream. Exactly one set.
+message ClientStreamMessage {
+  // The carried client control message.
+  oneof message {
+    // Open a subscription.
+    Subscribe subscribe = 1;
+    // Close a subscription.
+    Unsubscribe unsubscribe = 2;
+    // Request a server-assisted resync after a detected gap.
+    Resync resync = 3;
+    // Client liveness heartbeat.
+    Heartbeat heartbeat = 4;
+  }
+}
+
+// The server→client message on the bidirectional RFS stream. Exactly one set.
+message ServerStreamMessage {
+  // The carried server stream message.
+  oneof message {
+    // The baseline state for a subscription.
+    Snapshot snapshot = 1;
+    // A sequenced delta advancing a subscription.
+    Update update = 2;
+    // Server liveness heartbeat.
+    Heartbeat heartbeat = 3;
+    // A subscription ended (lag/drain/teardown/expiry).
+    StreamEnd stream_end = 4;
+  }
+}
+
+// ===========================================================================
+// surface — smile read / broker mark / arbitrage report / scenario risk
+// ===========================================================================
 
 // One quoted vol point on the surface, keyed by delta and expiry tenor.
 //
 // `delta` is the signed convention delta (e.g. 0.25 for a 25-delta call,
-// -0.25 for a 25-delta put); `tenor_years` is the year fraction to expiry on
-// the surface day-count. `vol` is absolute (0.10 = 10 vol).
+// -0.25 for a 25-delta put); `tenor_years` is the year fraction to expiry.
+// `vol` is absolute (0.10 = 10 vol).
 message SmilePoint {
   // Signed convention delta of the point.
   double delta = 1;
@@ -158,73 +715,206 @@ message SmilePoint {
   double vol = 3;
 }
 
-// A two-way tradable quote for a single instrument at a point in time.
-//
-// Bid/ask are premiums in the units implied by `premium_style`. `quote_id`
-// identifies the quote; `epoch_nanos` is the publication timestamp in
-// nanoseconds since the Unix epoch (UTC).
-message Quote {
-  // Server-assigned quote identifier.
-  uint64 quote_id = 1;
-  // Instrument currency pair.
-  CcyPair pair = 2;
-  // Call or put.
-  OptionType option_type = 3;
-  // Strike (quote per 1 unit of base).
-  double strike = 4;
-  // Expiry as a year fraction.
-  double tenor_years = 5;
-  // Bid premium in `premium_style` units.
-  double bid = 6;
-  // Ask premium in `premium_style` units.
-  double ask = 7;
-  // Units the bid/ask are expressed in.
-  PremiumStyle premium_style = 8;
-  // Publication time, nanoseconds since the Unix epoch (UTC).
-  int64 epoch_nanos = 9;
+// The broker market-quote set for a single tenor: ATM plus the 25-delta and
+// 10-delta risk reversals and butterflies (broker fly), the standard inputs a
+// desk marks a smile from.
+message BrokerQuoteSet {
+  // The tenor (year fraction) this quote set marks.
+  double tenor_years = 1;
+  // At-the-money volatility (absolute).
+  double atm_vol = 2;
+  // 25-delta risk reversal (call vol − put vol).
+  double rr_25 = 3;
+  // 25-delta butterfly (broker fly: wing avg − ATM).
+  double bf_25 = 4;
+  // 10-delta risk reversal.
+  double rr_10 = 5;
+  // 10-delta butterfly.
+  double bf_10 = 6;
+  // Whether the 10Δ wings (`rr_10`/`bf_10`) are present and should be used to
+  // calibrate a five-point smile. When false, the set is a three-point mark and
+  // the 10Δ fields are ignored — this explicit presence flag (not a float test
+  // on `rr_10`/`bf_10`) decides five-point vs three-point, so a genuine but
+  // present zero 10Δ wing is honoured.
+  bool has_ten_delta = 7;
 }
 
-// A point-in-time snapshot of a full volatility surface for one pair.
-//
-// The surface is the unordered set of quoted `SmilePoint`s spanning the
-// available tenors and deltas; `epoch_nanos` stamps the snapshot. Atomic on the
-// wire: a consumer applies the whole snapshot or none of it.
-message SurfaceSnapshot {
-  // Pair the surface belongs to.
+// A request to read the smile for a single (pair, tenor) on the delta axis.
+message GetSmileRequest {
+  // The pair to read.
   CcyPair pair = 1;
-  // All quoted vol points (delta x tenor) in the snapshot.
-  repeated SmilePoint points = 2;
-  // Snapshot time, nanoseconds since the Unix epoch (UTC).
-  int64 epoch_nanos = 3;
+  // The tenor (year fraction) to read.
+  double tenor_years = 2;
+  // The conventions to express the smile under.
+  Conventions conventions = 3;
 }
 
-// Liveness/keepalive on a streaming channel.
-//
-// `sequence` increases monotonically per channel so a consumer detects gaps;
-// `epoch_nanos` is the send time. Carries no payload and no schema metadata.
-message Heartbeat {
-  // Monotonic per-channel sequence number.
-  uint64 sequence = 1;
-  // Send time, nanoseconds since the Unix epoch (UTC).
-  int64 epoch_nanos = 2;
+// The arbitrage status of a calibrated smile/surface — the transparency a desk
+// wants when marking ("why is this point what it is").
+message ArbReport {
+  // True if the smile is free of butterfly (vertical) arbitrage.
+  bool butterfly_arbitrage_free = 1;
+  // True if the surface is free of calendar (horizontal) arbitrage.
+  bool calendar_arbitrage_free = 2;
+  // The worst negative density observed (0.0 = none); larger magnitude = worse.
+  double worst_density = 3;
+  // A human-readable note describing any repair applied during calibration.
+  string note = 4;
 }
 
-// The envelope multiplexing every wire message over a single channel.
-//
-// Exactly one payload is set (proto3 `oneof`). There is deliberately no version
-// or schema-id field: the envelope itself IS the current contract (ADR-0007).
-message Envelope {
-  // The carried message; exactly one variant is populated.
-  oneof payload {
-    // A request to price a vanilla option.
-    PricingRequest pricing_request = 1;
-    // A priced result.
-    PricingResponse pricing_response = 2;
-    // A two-way tradable quote.
-    Quote quote = 3;
-    // A full volatility-surface snapshot.
-    SurfaceSnapshot surface_snapshot = 4;
-    // A liveness heartbeat.
-    Heartbeat heartbeat = 5;
+// The smile for one (pair, tenor): the marked broker quote set, the calibrated
+// delta-axis points, and the arbitrage report.
+message Smile {
+  // The pair the smile belongs to.
+  CcyPair pair = 1;
+  // The tenor (year fraction).
+  double tenor_years = 2;
+  // The broker quote set the smile was marked from.
+  BrokerQuoteSet broker_quotes = 3;
+  // The calibrated delta-axis vol points.
+  repeated SmilePoint points = 4;
+  // The conventions the smile is expressed under.
+  Conventions conventions = 5;
+  // The arbitrage status of the calibrated smile.
+  ArbReport arbitrage = 6;
+  // Calibration time, nanoseconds since the Unix epoch (UTC).
+  int64 epoch_nanos = 7;
+}
+
+// A request to mark/recalibrate the surface for a pair from a broker quote set
+// across tenors — the intraday re-mark loop.
+message MarkSurfaceRequest {
+  // The pair to mark.
+  CcyPair pair = 1;
+  // The broker quote sets, one per marked tenor.
+  repeated BrokerQuoteSet broker_quotes = 2;
+  // The conventions the broker quotes are expressed under.
+  Conventions conventions = 3;
+}
+
+// The result of a surface mark: a server-assigned surface version id and the
+// per-tenor calibrated smiles with their arbitrage reports.
+message MarkSurfaceResponse {
+  // The pair that was marked.
+  CcyPair pair = 1;
+  // A monotonic server-assigned surface version id for this calibration.
+  uint64 surface_version = 2;
+  // The calibrated per-tenor smiles.
+  repeated Smile smiles = 3;
+  // Mark time, nanoseconds since the Unix epoch (UTC).
+  int64 epoch_nanos = 4;
+}
+
+// A single shock axis in a scenario grid: a swept perturbation applied to a
+// risk factor. Shocks may be relative (multiplicative) or absolute (additive).
+message ShockAxis {
+  // Which risk factor this axis shocks.
+  enum Factor {
+    // Shock the spot FX rate.
+    FACTOR_SPOT = 0;
+    // Shock the volatility.
+    FACTOR_VOL = 1;
+    // Shock the domestic rate.
+    FACTOR_RATE_DOM = 2;
+    // Shock the foreign rate.
+    FACTOR_RATE_FOR = 3;
   }
+  // The risk factor swept by this axis.
+  Factor factor = 1;
+  // True if each step is relative (multiply: 1+step); false if absolute (add).
+  bool relative = 2;
+  // The swept shock steps (e.g. -0.2, -0.1, 0.0, 0.1, 0.2).
+  repeated double steps = 3;
+}
+
+// A scenario / what-if request: reprice an instrument across the Cartesian
+// product of one or more shock axes.
+message ScenarioRequest {
+  // The instrument to reprice under shocks.
+  Instrument instrument = 1;
+  // The base market context shocks are applied to.
+  MarketContext base_market = 2;
+  // The conventions to express the repriced Greeks under.
+  Conventions conventions = 3;
+  // The shock axes; the grid is their Cartesian product.
+  repeated ShockAxis axes = 4;
+}
+
+// One repriced node of a scenario grid.
+message ScenarioPoint {
+  // The applied shock per axis, in axis order (parallel to `ScenarioRequest.axes`).
+  repeated double applied_shocks = 1;
+  // The shocked market context this node was priced against.
+  MarketContext shocked_market = 2;
+  // The full Greek set at this node.
+  Greeks greeks = 3;
+}
+
+// The repriced scenario grid.
+message ScenarioResponse {
+  // The repriced grid nodes (Cartesian product of the request axes).
+  repeated ScenarioPoint points = 1;
+}
+
+// A request to price a single instrument and return its full risk.
+message PriceRequest {
+  // Opaque client correlation id, echoed in `PriceResponse.request_id`.
+  uint64 request_id = 1;
+  // The instrument to price.
+  Instrument instrument = 2;
+  // The market context to price against.
+  MarketContext market = 3;
+  // The conventions to express the result under.
+  Conventions conventions = 4;
+}
+
+// The priced result for a single instrument.
+message PriceResponse {
+  // Correlates with `PriceRequest.request_id`.
+  uint64 request_id = 1;
+  // The full 14-member Greek set (price + sensitivities).
+  Greeks greeks = 2;
+  // The strike resolved (if the request used a delta/solve directive).
+  double resolved_strike = 3;
+  // The conventions the result is expressed under.
+  Conventions conventions = 4;
+}
+
+// ===========================================================================
+// services — the gRPC surface over the contract
+// ===========================================================================
+
+// One-shot pricing of a single instrument.
+service PricingService {
+  // Price an instrument and return its full 14-Greek risk.
+  rpc Price(PriceRequest) returns (PriceResponse);
+}
+
+// The RFQ lifecycle: request a quote, then accept or reject it.
+service QuoteService {
+  // Request a tradable two-way quote for an instrument (idempotent on key).
+  rpc RequestQuote(QuoteRequest) returns (Quote);
+  // Accept a quote and book the resulting execution.
+  rpc AcceptQuote(QuoteAccept) returns (Execution);
+  // Reject a quote (decline to trade); returns a typed acknowledgement, not an
+  // execution (a reject never books a trade).
+  rpc RejectQuote(QuoteReject) returns (RejectAck);
+}
+
+// The request-for-stream: a bidirectional channel carrying subscribe/resync/
+// heartbeat from the client and snapshot/update/heartbeat/stream-end back.
+service StreamService {
+  // Open the bidirectional RFS channel for this client session.
+  rpc Stream(stream ClientStreamMessage) returns (stream ServerStreamMessage);
+}
+
+// The surface workflow: read a smile, mark/recalibrate from broker quotes, and
+// run scenario / what-if shock grids.
+service SurfaceService {
+  // Read the calibrated smile for one (pair, tenor) on the delta axis.
+  rpc GetSmile(GetSmileRequest) returns (Smile);
+  // Mark/recalibrate the surface for a pair from a broker quote set.
+  rpc MarkSurface(MarkSurfaceRequest) returns (MarkSurfaceResponse);
+  // Reprice an instrument across a spot/vol/rate shock grid.
+  rpc Scenario(ScenarioRequest) returns (ScenarioResponse);
 }

@@ -33,6 +33,23 @@ fn unit_signed(bits: u64) -> f64 {
     unit.mul_add(2.0, -1.0)
 }
 
+impl TickSource {
+    /// The public-domain `splitmix64` counter mixer, exposed so the RFS stream
+    /// driver can share the exact same deterministic perturbation discipline (a
+    /// per-subscription spot tick) without duplicating the constants.
+    #[must_use]
+    pub const fn splitmix64(z: u64) -> u64 {
+        splitmix64(z)
+    }
+
+    /// Map a uniform `u64` to `[-1.0, 1.0)`, the signed unit draw the spot bump is
+    /// built from. Shared with the RFS stream driver.
+    #[must_use]
+    pub fn unit_signed(bits: u64) -> f64 {
+        unit_signed(bits)
+    }
+}
+
 /// A deterministic source of market ticks for the RFS stream.
 ///
 /// Holds the base market state, a seed, a per-tick spot volatility (the maximum

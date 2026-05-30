@@ -8,15 +8,35 @@ authors.workspace = true
 description = "Celnet mission-critical observability — tracing, metrics and HdrHistogram latency, with zero hot-path cost."
 publish = false
 
-[lints]
-workspace = true
+# This crate cannot inherit the workspace `unsafe_code = "forbid"`: the
+# allocation-counting perf-guard (`tests/zero_alloc.rs`) is irreducibly `unsafe`
+# (it installs a custom `#[global_allocator]` implementing `GlobalAlloc` to count
+# heap traffic around hot-path publishes). `forbid` cannot be relaxed by a local
+# `#[allow]`, so — exactly like `celnet-engine` — we restate the workspace lint
+# policy here with `unsafe_code = "deny"` (still denied by default; opted into
+# only in the audited test harness with an explicit `#[allow(unsafe_code)]` and a
+# `// SAFETY:` rationale). Every other lint matches the workspace exactly. The
+# library code itself contains **zero** `unsafe`.
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+unreachable_pub = "warn"
+
+[lints.clippy]
+all = "warn"
 
 [dependencies]
 celnet-types.workspace = true
 celnet-core.workspace = true
+serde.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
+# `time` adds the `UtcTime` RFC-3339 timestamper used by the JSON subscriber; it
+# is additive to the workspace-pinned `["env-filter", "json"]` feature set.
+tracing-subscriber = { workspace = true, features = ["time"] }
 hdrhistogram.workspace = true
 metrics.workspace = true
 crossbeam-utils.workspace = true
 rtrb.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

@@ -13,16 +13,15 @@ workspace = true
 
 [dependencies]
 celnet-types.workspace = true
-celnet-core.workspace = true
 celnet-proto.workspace = true
 tokio.workspace = true
 tonic.workspace = true
-prost.workspace = true
-tokio-tungstenite.workspace = true
 futures-util.workspace = true
 
 [dev-dependencies]
+celnet-core.workspace = true
 celnet-server.workspace = true
+celnet-engine.workspace = true
 celnet-vanilla.workspace = true
-celnet-surface.workspace = true
+celnet-exotics.workspace = true
 celnet-conventions.workspace = true
