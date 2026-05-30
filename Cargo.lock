@@ -504,6 +504,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "celnet-journal"
+version = "0.0.0"
+dependencies = [
+ "celnet-core",
+ "celnet-types",
+ "celnet-vanilla",
+]
+
+[[package]]
 name = "celnet-observability"
 version = "0.0.0"
 dependencies = [

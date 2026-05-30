@@ -120,6 +120,20 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-05-31 — **Live demo + Excel + GUI all REAL (no mocks); building durable journal.**
+  `celnet-fix` (real FIX 4.4 engine, acceptor+initiator, dialect, loopback-tested) +
+  `celnet-integration` egress governor/ingress/deployment-mode seam + `celnet-router`
+  (fleet HRW partition map). Excel add-in (`excel/`, Office.js `CELNET.*`) + `gui/`
+  (React/WebGPU trader UI) both verified end-to-end against a LIVE seeded server
+  (`cargo run -p celnet-server --example demo_edge`). GUI flipped to **live WS by default**
+  (mock demoted to `?mock`), stuck-resync + click-to-trade fixed, Risk shows real
+  cross-gamma/theta-roll/vega. Headless e2e PASS (PRICE==server, MARK→version pin,
+  forged-token reject). **Persistence audit (this session):** recovery = deterministic replay;
+  durable today = `celnet-fix` FileStore + `celnet-observability` lossless audit (committer
+  seam); blue-green handoff = in-memory; integrated-mode trade/position durability = the Celer
+  estate; **gap = a standalone durable event-log/WAL (SCALE-OUT §8 "designed only")** → now
+  being built as `celnet-journal` (task #37). See memory [[session-state-2026-05-31]] for the
+  running services + how to resume.
 - 2026-05-30 — **GA sign-off (rev 2).** All open-gap streams closed: plugin-host (wasmi) +
   trader GUI built; API-v2 optimized (multiplex session, click-to-trade keyed-MAC token,
   book-shaped risk, surface_version — no versioning). 21 crates + `gui/`, **555 tests green**,
