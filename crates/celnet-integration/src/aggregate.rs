@@ -240,10 +240,13 @@ pub fn blend(slices: &[NormalizedSlice], cfg: BlendConfig) -> Result<BlendedSlic
     let mut outer_acc: Option<(f64, f64, f64)> = None; // (rr10, bf10, weight)
 
     for (w, s) in weights.iter().zip(slices) {
-        let fw = w.final_weight;
-        if fw == 0.0 {
+        // Skip divergence-excluded sources by their semantic flag rather than a
+        // float-equality test on the weight (an excluded source's final_weight
+        // is the exact sentinel 0.0, but the flag is the source of truth).
+        if w.excluded {
             continue;
         }
+        let fw = w.final_weight;
         let q = &s.quotes;
         atm += fw * q.atm_vol;
         rr25 += fw * q.inner.risk_reversal;

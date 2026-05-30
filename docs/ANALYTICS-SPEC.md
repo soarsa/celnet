@@ -201,7 +201,25 @@ Variance is a CIR sqrt process: mean-reversion `kappa`, long-run `theta`, vol-of
 
 ## 6. Prioritized Implementation Order (P0 / P1 / P2) by Workspace Crate
 
-Crates per the Celnet flat virtual Cargo workspace: pure-domain math lives in **`celnet-core`**; surface construction is a **`celnet-core`** module; calibration solvers in **`celnet-core`**; convention/config types in **`celnet-types`**; the calendar engine in **`celnet-core`** (date logic) with holiday data in **`celnet-types`**. GPU exotics back-ends sit behind the `PricingBackend` trait. User-supplied models arrive via **`celnet-plugin-api`** (WIT world) / **`celnet-plugin-host`** (wasmtime).
+Crate homes in the **implemented** 19-crate tree (this section was written against an early
+all-in-`celnet-core` sketch; the real homes are): pure math primitives (libm-routed
+transcendentals, `is_close`, `Smile` trait) in **`celnet-core`**; POD/convention/config types
+in **`celnet-types`**; the **calendar/date engine** in **`celnet-calendar`**; the convention
+registry in **`celnet-conventions`**; Garman-Kohlhagen + Greeks + strike↔delta solver in
+**`celnet-vanilla`**; **surface construction (VV/SABR/SVI/SSVI + arbitrage gates + term
+structure)** in **`celnet-surface`**; **exotics, LSV, PDE and MC numerics** in
+**`celnet-exotics`**. GPU back-ends sit behind the `PricingBackend` trait in **`celnet-gpu`**
+(wgpu/WGSL — *not* CubeCL). User-supplied models arrive via **`celnet-plugin-api`** (WIT world
++ traits, built); the Wasm host **`celnet-plugin-host`** is deferred (wasmtime advisories).
+
+> The per-item `Crate` columns below retain the original sketch's `celnet-core` labels for
+> P0–P2 traceability; read them through the mapping above (calendar → `celnet-calendar`,
+> surface/smiles → `celnet-surface`, exotics/LSV/PDE/MC → `celnet-exotics`, GPU → `celnet-gpu`).
+> **Implemented-status note (vs spec):** the MC engine ships **Philox** pseudo-random paths,
+> the **BGK** barrier shift and control variates today; **Sobol' QMC + Brownian-bridge path
+> construction are designed but not yet implemented** (so wherever §3–§5/§6 cite Sobol or
+> Brownian-bridge they describe the target method, not current code). The GPU backend is
+> **wgpu/WGSL**, not `CubeClBackend`.
 
 ### P0 — Foundational vanilla + surface (must ship first)
 
@@ -242,7 +260,7 @@ Crates per the Celnet flat virtual Cargo workspace: pure-domain math lives in **
 | Lookbacks, forward-start / cliquet (LSV via MC/PDE) | `celnet-core` |
 | TARF / accumulator / decumulator: MC under LV/LSV, explicit gap/digital-risk modelling + reserves | `celnet-core` |
 | Variance swap (log-contract `1/K^2` replication); volatility swap (Carr-Lee convexity adjustment) | `celnet-core` |
-| GPU exotics back-end: CubeCL `#[cube]` kernels (CUDA/Metal/Vulkan/WGSL/CPU), f32 GPU numerics with f64 CPU reconciliation, Philox-4x32-10 counter-based RNG, Sobol direction numbers + Brownian bridge | `PricingBackend` impls (`CubeClBackend` / `CpuBackend`) |
+| GPU exotics back-end: **wgpu/WGSL** kernels (Metal/Vulkan/GLES/DX12), f32 GPU numerics with f64 CPU reconciliation, Philox-4x32-10 counter-based RNG (Sobol direction numbers + Brownian bridge are deferred QMC work) | `celnet-gpu` `PricingBackend` impls (wgpu GPU / CPU) |
 
 ### Cross-cutting validation (all phases)
 

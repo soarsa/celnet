@@ -12,4 +12,5 @@ publish = false
 workspace = true
 
 [dependencies]
+libm.workspace = true
 serde.workspace = true

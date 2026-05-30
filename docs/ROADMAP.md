@@ -38,21 +38,29 @@ celnet/
    # ── SHARED INTERFACE LAYER (freeze FIRST — see §3) ──
    ├─ celnet-types/                 # POD value types: Ccy, CcyPair, Tenor, Money, Rate, Vol, Delta, scalar policy
    ├─ celnet-core/                  # pure-domain TRAITS + math primitives (zero IO, zero framework deps)
-   ├─ celnet-proto/                 # versioned wire protocol (prost 0.14.x); message header w/ schema version
-   ├─ celnet-plugin-api/            # SDK: PricingModel/VolModel traits + WIT world; semver product
+   ├─ celnet-proto/                 # single current wire contract (prost 0.13 / tonic 0.12); NO version field
+   ├─ celnet-plugin-api/            # SDK: PricingModel/PricingBackend traits + WIT world
    # ── ENGINE / IMPLEMENTATION LAYER ──
    ├─ celnet-conventions/           # FX conventions config: per-(pair,tenor) delta/ATM/premium/cut/daycount
    ├─ celnet-calendar/              # holiday calendars, spot lag, delivery, modified-following, EOM
    ├─ celnet-vanilla/               # Garman-Kohlhagen, full Greek set, strike<->delta solver
    ├─ celnet-surface/               # vol-surface construction: VV, SABR, SVI/SSVI, broker->smile fly
    ├─ celnet-exotics/               # barriers/touches/DNT/digitals (VV), LSV, PDE + MC engines
-   ├─ celnet-gpu/                   # CubeCL backend(s) + CPU fallback; PricingBackend impls
+   ├─ celnet-gpu/                   # wgpu/WGSL backend + f64 CPU reconciliation; PricingBackend impls
    ├─ celnet-engine/                # stateful low-latency service; hot path; hot-upgrade handoff
-   ├─ celnet-plugin-host/           # wasmtime 45 embedding; fuel metering; capability linker
-   ├─ celnet-integration/           # Celer estate adapters (distributor, Protobuf, FIX) + marketdata feed
-   ├─ celnet-server/                # thin binary: gRPC/WebSocket edge (tokio + tonic)
-   └─ celnet-cli/                   # thin binary: admin/diagnostics
+   ├─ celnet-integration/           # Celer estate + vendor FX-options marketdata adapters; multi-source aggregation
+   ├─ celnet-server/                # thin binary: gRPC edge (tokio + tonic); WS mirror designed
+   ├─ celnet-cli/                   # thin binary: admin/diagnostics
+   ├─ celnet-client/               # typed async Rust SDK over the wire contract
+   ├─ celnet-observability/        # telemetry rings + drain + HdrHistogram + metrics + audit
+   ├─ celnet-golden/               # frozen QuantLib 1.42.1 reference tables (oracle + generator)
+   ├─ celnet-testkit/              # invariant assertions, proptest strategies, fixtures
+   └─ celnet-bench/                # divan latency/throughput suites + committed baseline
 ```
+
+> **Implemented tree = 19 crates** (above). `celnet-plugin-host` (Wasm sandbox) is **deferred**
+> (wasmtime open RustSec advisories) and does **not** yet exist; the SDK ships as the
+> `celnet-plugin-api` contract only. See `docs/INTERFACES.md` and `docs/ARCHITECTURE.md` §2.
 
 **Dependency direction (must never invert):**
 `celnet-types` ← `celnet-core` ← {`celnet-conventions`, `celnet-calendar`, `celnet-vanilla`, `celnet-surface`, `celnet-exotics`, `celnet-gpu`} ← `celnet-engine` ← {`celnet-server`, `celnet-cli`}.
@@ -67,9 +75,9 @@ celnet/
 | **P0** | Foundations & interface freeze | Virtual workspace builds; `celnet-types`, `celnet-core` traits, `celnet-proto` v0, `celnet-plugin-api` v0 are **semver-tagged & frozen**; CI matrix (ubuntu/macos/windows × {stable, MSRV}) on `cargo-nextest` green; `clippy -D warnings`, `cargo fmt --check`, `cargo-deny`, coverage (Linux) wired; `CLAUDE.md` ledger + `docs/INTERFACES.md` live; float-compare helper (`assert_close`, ULP+rel+abs) shipped in `celnet-core`. |
 | **P1** | Vanilla core | `celnet-conventions` + `celnet-calendar` complete; `celnet-vanilla` prices GK call/put off forward F=S·e^{(r_d−r_f)T} with separate DF_d/DF_f; full first/second/higher Greeks (two rhos, vanna, volga, charm, speed, zomma, color); strike↔delta solver respecting all 4 delta conventions; **validated against Reiswich-Wystup (2010) & Clark worked numbers** within documented tolerances. |
 | **P2** | Vol surface | `celnet-surface` builds delta-space smile from ATM/25d/10d RR/BF; **broker→smile strangle calibration** implemented; VV (Castagna-Mercurio 2nd approx), SABR (Hagan + arbitrage-free PDE), SVI/SSVI (Gatheral-Jacquier) selectable; arbitrage gates (butterfly density ≥0, calendar total-variance monotone, vertical) pass as tests; total-variance/business-time tenor interpolation. |
-| **P3** | Exotics + GPU | `celnet-exotics` two-tier (fast VV for 1st-gen with survival-probability weighting; LSV [Heston+Dupire leverage, particle calibration] for booking/2nd-gen); PDE (Crank-Nicolson+Rannacher, ADI Craig-Sneyd) + MC (Andersen QE, Sobol+Brownian-bridge, BGK barrier correction); `celnet-gpu` CubeCL path (CUDA/Metal/Vulkan/WGSL) with f32 + CPU f64 reconciliation, Philox RNG. |
-| **P4** | Engine, SDK, integration | `celnet-engine` hot path (non-async, core-pinned, zero-alloc, SPSC rtrb); zero-downtime SO_REUSEPORT handoff + versioned state transfer; `celnet-plugin-host` wasmtime 45 fuel-metered sandbox; `celnet-plugin-api` SDK shippable with deterministic replay harness; `celnet-integration` consumes Celer distributor/marketdata + FMD-style surface feed; `celnet-server`/`celnet-cli` expose gRPC/WS. |
-| **GA** | Hardening & release | Full numerical golden suite vs QuantLib pinned oracle; property + fuzz + mutation gates met (≥90% coverage core modules; kill-rate gate); p99/p99.9 latency budgets met & regression-gated; hot-upgrade N↔N-1 wire-compat CI gate green; supply-chain (cargo-deny + cargo-vet baseline) clean; deployment (NVIDIA container toolkit + Lavapipe CI fallback) verified; docs complete. |
+| **P3** | Exotics + GPU | `celnet-exotics` two-tier (fast VV for 1st-gen with survival-probability weighting; LSV [Heston+Dupire leverage, particle calibration] for booking/2nd-gen); PDE (Crank-Nicolson+Rannacher, HV-ADI) + MC (Andersen QE, Philox + BGK barrier correction + control variates; Sobol+Brownian-bridge deferred); `celnet-gpu` **wgpu/WGSL** path (Metal/Vulkan/DX12/GLES) with f32 + CPU f64 reconciliation, Philox RNG. |
+| **P4** | Engine, SDK, integration | `celnet-engine` hot path (non-async, core-pinned, zero-alloc, SPSC rtrb); zero-downtime SO_REUSEPORT handoff + single-current-contract state transfer; `celnet-plugin-api` SDK contract (Wasm `celnet-plugin-host` deferred — wasmtime advisories); `celnet-integration` consumes Celer marketdata + FMD-style surface feed; `celnet-server`/`celnet-client` expose the gRPC contract (WS mirror designed). |
+| **GA** | Hardening & release | Full numerical golden suite vs QuantLib **1.42.1** pinned oracle; property + fuzz + mutation gates met (≥90% coverage core modules; kill-rate gate); p99/p99.9 latency budgets met & regression-gated; **blue-green single-version state-handoff** CI gate green (no mixed-version window); supply-chain (cargo-deny) clean; deployment (Lavapipe CI fallback) verified; docs complete. |
 
 ---
 
@@ -79,10 +87,10 @@ celnet/
 
 1. **`celnet-types`** — POD, `Copy`, no IO: `Ccy`, `CcyPair` (FOR=base/CCY1, DOM=quote/CCY2), `Tenor`, `Money`, discount factors `Df`, `Vol`, `Delta`, `Strike`, scalar policy (`f64` CPU canonical / `f32` GPU), enums for `DeltaConvention {SpotUnadj, FwdUnadj, SpotPremAdj, FwdPremAdj}`, `AtmConvention {Atmf, Dns}`, `PremiumStyle {DomPips, For%, Dom%, ForPips}`, `Cut {NY1000, Tokyo1500}`, `DayCount {Act365, Act360}`, `Settlement {Deliverable, Ndo}`. **Frozen first — everything depends on it.**
 2. **`celnet-core` traits** — `PricingModel`, `VolModel`/`SmileModel`, `PricingBackend { simulate_paths, reduce_payoff, solve_pde }`, `Calendar`, `CalibrationTarget`, plus the `assert_close` ULP/rel/abs float helper and the scalar abstraction. Trait *shapes* must match what both the trait-object registry and the wasm host implement (so first-party and user plugins are interchangeable).
-3. **`celnet-proto`** — message envelope with explicit `schema_version`; prost 0.14.x; evolution discipline documented in `docs/INTERFACES.md` (never renumber tags, reserve removed tags, additive optional fields). N/N-1 compat test scaffold.
+3. **`celnet-proto`** — single current wire contract (prost 0.13 / tonic 0.12); **no** `schema_version`, no version negotiation (CLAUDE.md rule 9). Evolution discipline (`docs/INTERFACES.md`): change the contract **and every dependent in one PR**; no old reader ever decodes a new message, so no reserve/renumber ceremony.
 4. **`celnet-plugin-api`** — the SDK trait surface + WIT `world` definition for wasm plugins; semver-tagged as a *product*.
 
-**Rule:** Any later change to a frozen interface crate is a **dedicated interface PR**: bump semver, update `docs/INTERFACES.md`, run the N/N-1 compat gate, and announce in `CLAUDE.md`. Implementation sessions rebase, never edit interface crates ad hoc.
+**Rule:** Any later change to a frozen interface crate is a **dedicated interface PR**: edit the interface crate **and every dependent in the same change**, update `docs/INTERFACES.md`, re-index the memory graph, and announce in `CLAUDE.md`. There is no N/N-1 compat gate (single current contract — rule 9). Implementation sessions rebase, never edit interface crates ad hoc.
 
 **Gate G1 (end of P1):** `celnet-vanilla` + `celnet-conventions` + `celnet-calendar` stable → unblocks `celnet-surface`.
 **Gate G2 (end of P2):** `celnet-surface` stable → unblocks `celnet-exotics` (needs arbitrage-free smile as upstream input for Dupire local vol).
@@ -120,21 +128,21 @@ celnet/
 
 ### WS-D · Exotics & Numerical Engines
 - **Owns:** `celnet-exotics`.
-- **Deliverables:** **two-tier** — (1) fast VV for 1st-gen (one-touch, no-touch, DNT, single/double barriers, European digitals) with survival-probability/first-exit-time weighting and `[0,notional]` clamps; (2) **LSV** (Heston backbone + Dupire leverage L²=σ_Dupire²/E[v|S], **particle-method** calibration, exposed mixing weight η) for booking/Greeks/2nd-gen (window/partial barriers, TARFs/accumulators, Asians, lookbacks, forward-starts). PDE: Crank-Nicolson + **Rannacher** start-up, ADI Craig-Sneyd / Hundsdorfer-Verwer for 2D LSV, log-spot grids, barrier-aligned nodes. MC: **Andersen QE** for CIR variance (full-truncation when Feller violated), Sobol QMC + Brownian-bridge dimension ordering, geometric-Asian/vanilla control variates, **BGK 0.5826·σ·√dt** + Brownian-bridge barrier corrections. Variance swap via log-contract (1/K² strip); vol swap with explicit convexity adjustment.
+- **Deliverables:** **two-tier** — (1) fast VV for 1st-gen (one-touch, no-touch, DNT, single/double barriers, European digitals) with survival-probability/first-exit-time weighting and `[0,notional]` clamps; (2) **LSV** (Heston backbone + Dupire leverage L²=σ_Dupire²/E[v|S], **particle-method** calibration, exposed mixing weight η) for booking/Greeks/2nd-gen (window/partial barriers, TARFs/accumulators, Asians, lookbacks, forward-starts). PDE: Crank-Nicolson + **Rannacher** start-up, ADI Craig-Sneyd / Hundsdorfer-Verwer for 2D LSV, log-spot grids, barrier-aligned nodes. MC: **Andersen QE** for CIR variance (full-truncation when Feller violated), **Philox** counter-based RNG, geometric-Asian/vanilla control variates, **BGK 0.5826·σ·√dt** barrier correction (**Sobol QMC + Brownian-bridge dimension ordering are deferred** — not yet implemented). Variance swap via log-contract (1/K² strip); vol swap with explicit convexity adjustment.
 - **Depends on:** G2 (needs arbitrage-free smile for Dupire); coordinates with WS-E via the `PricingBackend` trait (frozen at G0).
 - **Gates:** cross-method validation (VV vs LSV-PDE vs LSV-MC) within tolerance; barrier/touch reconciled to broker DNT/one-touch as SV-mixing target; geometric-Asian closed-form vs MC control variate; explicit TARF gap-risk stress test; Rannacher-vs-naive oscillation regression on digitals.
 
 ### WS-E · GPU Acceleration
 - **Owns:** `celnet-gpu`.
-- **Deliverables:** `CubeClBackend` (v0.10.x, features cuda/wgpu/hip/cpu) implementing `PricingBackend`; **f32 on GPU, f64 CPU reconciliation** path (rayon + `wide`); **Philox-4x32-10** counter-based RNG (`#[cube]`) seeded from (global_seed, path_index, step, dim); Sobol QMC (host-precomputed direction numbers, Brownian-bridge dim assignment); FD stencil kernels (tiled shared-memory; PCR/cyclic-reduction tridiagonal for implicit); runtime adapter probing → CPU fallback when no GPU; integer-atomic / tree-reduction payoff accumulation (no float atomics in WGSL).
+- **Deliverables:** a **wgpu 29 + WGSL** backend (Metal/Vulkan/DX12/GLES) implementing `PricingBackend`; **f32 on GPU, f64 CPU reconciliation** path; **Philox-4x32-10** counter-based RNG (WGSL kernel) seeded from (global_seed, path_index, step, dim); FD stencil kernels (tiled shared-memory; PCR/cyclic-reduction tridiagonal for implicit); runtime adapter probing → CPU fallback when no GPU; integer-atomic / tree-reduction payoff accumulation (no float atomics in WGSL). **Sobol QMC + Brownian-bridge dim assignment are deferred.**
 - **Depends on:** G0 (`PricingBackend` trait + scalar policy). Can run **in parallel with WS-D** because both target the same frozen trait; integrate at G3.
-- **Gates:** GPU f32 vs CPU f64 reconciliation within documented error bound on vanillas; Philox bit-stability across backends; Sobol convergence vs MC; Lavapipe software-Vulkan CI path exercises the same wgpu code; pinned NVIDIA driver/toolkit container smoke test.
+- **Gates:** GPU f32 vs CPU f64 reconciliation within documented error bound on vanillas; Philox bit-stability across backends; Lavapipe software-Vulkan CI path exercises the same wgpu code; pinned NVIDIA driver/toolkit container smoke test. *(Sobol convergence gate added when Sobol QMC lands.)*
 
 ### WS-F · Engine & Hot Upgrade
 - **Owns:** `celnet-engine`.
-- **Deliverables:** two-tier architecture — non-async, **core-pinned** (`core_affinity` + isolcpus/nohz_full/rcu_nocbs) busy-poll hot path for pricing/risk; **zero-alloc** (pre-allocated pools, arrayvec/smallvec/heapless); `rtrb` SPSC ring buffers between hot path and async edge (not channels); `arc-swap` for hot-reloadable reference data, `seqlock` for single-writer price snapshots, `CachePadded` on shared atomics; mimalloc/tikv-jemallocator global allocator (benchmarked); **zero-downtime upgrade** via SO_REUSEPORT graceful socket handoff + drain + versioned live-state transfer over `celnet-proto` (UDS/shared memory); full-book Greeks + spot/vol stress recompute.
+- **Deliverables:** two-tier architecture — non-async, **core-pinned** (`core_affinity` + isolcpus/nohz_full/rcu_nocbs) busy-poll hot path for pricing/risk; **zero-alloc** (pre-allocated pools, arrayvec/smallvec/heapless); `rtrb` SPSC ring buffers between hot path and async edge (not channels); `arc-swap` for hot-reloadable reference data, `seqlock` for single-writer price snapshots, `CachePadded` on shared atomics; default global allocator (tuned allocator deferred, benchmark-gated); **zero-downtime upgrade** via SO_REUSEPORT graceful socket handoff + drain + single-current-contract live-state transfer (rkyv over UDS/shared memory); full-book Greeks + spot/vol stress recompute.
 - **Depends on:** G1 (vanilla), G3 ideally for full wiring; can scaffold hot-path + handoff against trait stubs after G0.
-- **Gates:** HdrHistogram p99/p99.9 budgets met; zero-alloc assertion in hot loop (dhat/counting-allocator guard in tests); **N↔N-1 wire-compat** handoff test (no dropped/corrupted state across versions); no synchronous logging on hot path (telemetry over bounded queue to non-critical core).
+- **Gates:** HdrHistogram p99/p99.9 budgets met; zero-alloc assertion in hot loop (counting-allocator guard in tests); **blue-green single-version state-handoff** test (no dropped/corrupted state across cutover; no mixed-version window); no synchronous logging on hot path (telemetry over bounded queue to non-critical core).
 
 ### WS-G · Plugin Host & SDK
 - **Owns:** `celnet-plugin-host`; co-owns `celnet-plugin-api` *contract evolution only* via interface PRs.
@@ -156,7 +164,7 @@ celnet/
 
 ### WS-T · Test/CI/Determinism Backbone (cross-cutting, low-conflict)
 - **Owns:** CI workflow files, `deny.toml`, `supply-chain/`, the QuantLib golden-table generator harness, fuzz targets directory, mutation/coverage config. *Edits config + test-only files; does not edit other streams' `src/`.*
-- **Deliverables:** layered pyramid — golden vs **QuantLib (version-pinned, e.g. PyQL 1.40) frozen tables**, invariant tests, **proptest** (Strategy generators for valid market inputs; commit `proptest-regressions/`), **cargo-fuzz** (Arbitrary → adversarial inputs; Linux nightly job only; commit corpus/crashes), `insta` snapshots (CI=1 fails stale), criterion/divan perf gates with committed baselines; `cargo-llvm-cov nextest` fail-under (≥90% core); `cargo-mutants` (incremental on PR diff, full scheduled on main); `cargo-deny` + `cargo-vet` per PR; MSRV-pinned job.
+- **Deliverables:** layered pyramid — golden vs **QuantLib 1.42.1 (version-pinned) frozen tables** in `celnet-golden` (the implemented numerical oracle; Reiswich-Wystup / Clark are the convention references checked manually, not test fixtures), invariant tests, **proptest** (Strategy generators for valid market inputs; commit `proptest-regressions/`), **cargo-fuzz** (Arbitrary → adversarial inputs; Linux nightly job only; commit corpus/crashes), `insta` snapshots (CI=1 fails stale), criterion/divan perf gates with committed baselines; `cargo-llvm-cov nextest` fail-under (≥90% core); `cargo-mutants` (incremental on PR diff, full scheduled on main); `cargo-deny` + `cargo-vet` per PR; MSRV-pinned job.
 - **Depends on:** G0; then continuously supports all streams.
 - **Gates:** every other stream's gates are *defined and enforced here*; benchmark gate lenient off protected branches, strict on main with per-key tolerances; Windows excluded from coverage gate (known-broken); fuzz isolated to Linux nightly.
 
@@ -205,7 +213,7 @@ Every Claude session, on every pickup, follows this loop:
 4. Confirm your stream's crates are **disjoint** from every other `IN-PROGRESS` claim. If overlap, pick another stream.
 
 ### 7.2 Do work
-5. Work **only inside your owned crate(s)**. Never edit a frozen interface crate directly — if you need an interface change, open a dedicated **interface PR** (bump semver, update `docs/INTERFACES.md`, run N/N-1 compat gate, announce in ledger) and pause dependent work until it lands.
+5. Work **only inside your owned crate(s)**. Never edit a frozen interface crate directly — if you need an interface change, open a dedicated **interface PR** (edit the interface crate + every dependent in one change, update `docs/INTERFACES.md`, re-index the memory graph, announce in ledger) and pause dependent work until it lands. No N/N-1 compat gate (single current contract — rule 9).
 6. Consume frozen interfaces by their semver-tagged version. Rebase onto interface updates; do not fork them.
 7. Keep determinism rules: `assert_close` for floats, `rust-lang/libm`, no FMA on reproducible paths, no NaN-bit assertions, GPU=f32.
 

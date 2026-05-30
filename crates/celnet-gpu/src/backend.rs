@@ -19,9 +19,16 @@ use crate::Scalar;
 /// `ln S_T = ln S_0 + (μ − ½σ²)·T + σ·√T·Z_p`, with `Z_p` the path's standard
 /// normal drawn from the Philox stream. For a Garman-Kohlhagen FX option the
 /// risk-neutral drift is `μ = r_dom − r_for`; the present value discounts the
-/// expected payoff by `e^{−r_dom·T}`. One time step suffices for the terminal
-/// distribution of a vanilla; `steps` is carried for path-dependent extensions
-/// and currently advances the Philox `step` coordinate.
+/// expected payoff by `e^{−r_dom·T}`. One exact step reproduces the terminal
+/// distribution of a vanilla, which is all this backend prices today.
+///
+/// `steps` is a **reserved** field for forthcoming path-dependent extensions
+/// (barrier/touch/Asian kernels). It is clamped to `≥ 1` by [`PathSpec::gbm`]
+/// but the current single-step terminal engine (both [`crate::CpuBackend`] and
+/// the WGSL kernel) draws only the `step = 0` normal and ignores any larger
+/// value: a caller setting `steps > 1` gets the exact one-step terminal, not a
+/// multi-step path. The field is wired now so the multi-step engine can land
+/// without a `PathSpec` interface change.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PathSpec {
     /// Initial spot `S_0`.
@@ -36,7 +43,9 @@ pub struct PathSpec {
     pub r_dom: f64,
     /// Number of Monte-Carlo paths in the batch.
     pub paths: u32,
-    /// Number of Euler time steps (≥ 1). One step is exact for GBM terminals.
+    /// Reserved step count (≥ 1) for forthcoming path-dependent kernels. One
+    /// step is exact for a GBM terminal, which is all the current engine prices;
+    /// values `> 1` are accepted but ignored (see the type-level docs).
     pub steps: u32,
     /// Global Philox run seed (fixes the entire reproducible bitstream).
     pub seed: u64,

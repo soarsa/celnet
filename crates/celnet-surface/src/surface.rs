@@ -16,8 +16,8 @@
 //! # Model selection
 //!
 //! The surface is generic over the per-slice smile type `S: Smile`, so it works
-//! uniformly with the [`crate::vannavolga::VannaVolgaSmile`] baseline, a
-//! [`crate::sabr::SabrSmile`], or an [`crate::svi::SviSlice`] / SSVI-derived
+//! uniformly with the [`crate::market_hedge::MarketHedgeSmile`] baseline, a
+//! [`crate::stochvol::StochasticVolSmile`], or an [`crate::parametric::ParametricSlice`] / SSVI-derived
 //! slice. [`SmileModel`] names the selected family for diagnostics and so the
 //! engine can record which model produced a mark; the evaluation path is the same
 //! trait call regardless.
@@ -29,17 +29,18 @@ use crate::termstructure::{BusinessClock, CalendarClock, TenorPillar, TermStruct
 
 /// The smile-model family backing a surface, recorded for diagnostics / audit.
 ///
-/// The acronyms are established neutral technical terms (no person names).
+/// Variant names describe the modelling *purpose*; mathematical-method
+/// provenance lives in the doc comments only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SmileModel {
-    /// Vanna-Volga light interpolation (the FX broker baseline).
-    VannaVolga,
-    /// Stochastic-alpha-beta-rho with arbitrage-free wing density.
-    Sabr,
-    /// Raw stochastic-volatility-inspired slice.
-    Svi,
-    /// Surface stochastic-volatility-inspired (closed-form arbitrage-free).
-    Ssvi,
+    /// Market-hedge interpolation (the FX broker baseline; vanna-volga method).
+    MarketHedge,
+    /// Stochastic-volatility smile with arbitrage-free wing density (SABR method).
+    StochasticVol,
+    /// Single parametric total-variance slice (SVI method).
+    Parametric,
+    /// Surface-level parametric family, closed-form arbitrage-free (SSVI method).
+    ParametricSurface,
 }
 
 /// The consolidated static no-arbitrage report for a whole surface: the
@@ -225,17 +226,17 @@ impl<S: Smile + Clone, C: BusinessClock> Smile for MaturitySlice<'_, S, C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::svi::SviSlice;
+    use crate::parametric::ParametricSlice;
     use crate::termstructure::TenorPillar;
     use celnet_core::is_close;
 
-    fn svi_surface() -> VolSurface<SviSlice, CalendarClock> {
+    fn svi_surface() -> VolSurface<ParametricSlice, CalendarClock> {
         // Two mild, monotone-in-total-variance SVI pillars.
-        let s0 = SviSlice::new(0.004, 0.02, -0.15, 0.0, 0.10, 1.10, 0.5);
-        let s1 = SviSlice::new(0.010, 0.03, -0.15, 0.0, 0.12, 1.11, 1.5);
+        let s0 = ParametricSlice::new(0.004, 0.02, -0.15, 0.0, 0.10, 1.10, 0.5);
+        let s1 = ParametricSlice::new(0.010, 0.03, -0.15, 0.0, 0.12, 1.11, 1.5);
         let p0 = TenorPillar::new(s0, 1.10, 0.5);
         let p1 = TenorPillar::new(s1, 1.11, 1.5);
-        VolSurface::new(SmileModel::Svi, vec![p0, p1])
+        VolSurface::new(SmileModel::Parametric, vec![p0, p1])
     }
 
     /// The unified surface evaluates and re-strikes; at a pillar it reproduces the
@@ -245,7 +246,7 @@ mod tests {
         let s = svi_surface();
         let v = s.implied_vol(1.10, 0.5);
         assert!(v > 0.0 && v.is_finite());
-        assert_eq!(s.model(), SmileModel::Svi);
+        assert_eq!(s.model(), SmileModel::Parametric);
         // Mid-maturity is finite & positive (re-strikable continuity).
         let mid = s.implied_vol(1.05, 1.0);
         assert!(mid.is_finite() && mid > 0.0);
@@ -267,7 +268,7 @@ mod tests {
     #[test]
     fn pillar_maturity_matches_slice() {
         let s = svi_surface();
-        let slice = SviSlice::new(0.004, 0.02, -0.15, 0.0, 0.10, 1.10, 0.5);
+        let slice = ParametricSlice::new(0.004, 0.02, -0.15, 0.0, 0.10, 1.10, 0.5);
         let strike = 1.07;
         let direct = slice.vol_at(strike);
         let via_surface = s.implied_vol(strike, 0.5);

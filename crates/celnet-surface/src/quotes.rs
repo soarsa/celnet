@@ -140,7 +140,7 @@ impl MarketQuotes {
 /// (spot, the two rates, vol-time) and the resolved FX conventions.
 ///
 /// This is the single object the calibration ([`crate::strangle`]) and the smile
-/// model ([`crate::vannavolga`]) consult to turn a delta pillar into a strike and
+/// model ([`crate::market_hedge`]) consult to turn a delta pillar into a strike and
 /// to price a benchmark option. It owns no quotes — those live in
 /// [`MarketQuotes`] — only the *market state* and *conventions* that determine
 /// the delta↔strike map.

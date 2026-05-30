@@ -97,6 +97,89 @@ pub struct DigitalRecord {
     pub price: f64,
 }
 
+/// One frozen touch-family reference (one-touch / no-touch / double-no-touch /
+/// double-touch), all priced by QuantLib's *independent* double-barrier-binary
+/// engine (single rows via the wide-corridor limit). The rebate is one unit of
+/// domestic cash, paid at expiry (`AT_EXPIRY` timing).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TouchRecord {
+    /// Which touch product this row encodes.
+    pub kind: TouchKind,
+    /// Spot FX rate.
+    pub spot: f64,
+    /// Single barrier `H` (`Some` for `OneTouch`/`NoTouch`, `None` for the
+    /// double-corridor kinds).
+    pub barrier: Option<f64>,
+    /// Lower corridor wall `L` (`Some` for `Dnt`/`DoubleTouch`).
+    pub lower: Option<f64>,
+    /// Upper corridor wall `U` (`Some` for `Dnt`/`DoubleTouch`).
+    pub upper: Option<f64>,
+    /// Rebate (one unit of domestic cash in this grid).
+    pub rebate: f64,
+    /// Annualized volatility.
+    pub vol: f64,
+    /// Time to expiry in years.
+    pub t: f64,
+    /// Domestic rate.
+    pub r_dom: f64,
+    /// Foreign rate.
+    pub r_for: f64,
+    /// Reference present value.
+    pub price: f64,
+}
+
+/// Touch-family product kind in the frozen touch table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TouchKind {
+    /// Single one-touch (deferred / at-expiry rebate): pays if `barrier` is hit.
+    OneTouch,
+    /// Single no-touch: pays if `barrier` is never hit.
+    NoTouch,
+    /// Double-no-touch: pays if spot stays inside `(lower, upper)`.
+    Dnt,
+    /// Double-touch: pays if *either* corridor wall is hit.
+    DoubleTouch,
+}
+
+/// One frozen double-barrier reference (corridor knock-out / knock-in of a
+/// vanilla payoff), with the knock-out priced by QuantLib's independent
+/// `AnalyticDoubleBarrierEngine` and the knock-in derived as
+/// `vanilla_quantlib − ko_quantlib` (both QuantLib-sourced).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DoubleBarrierRecord {
+    /// Knock-out or knock-in corridor.
+    pub kind: DoubleBarrierKind,
+    /// Call or put underlying payoff.
+    pub option_type: OptionType,
+    /// Spot FX rate.
+    pub spot: f64,
+    /// Strike of the underlying vanilla.
+    pub strike: f64,
+    /// Lower corridor wall `L`.
+    pub lower: f64,
+    /// Upper corridor wall `U`.
+    pub upper: f64,
+    /// Annualized volatility.
+    pub vol: f64,
+    /// Time to expiry in years.
+    pub t: f64,
+    /// Domestic rate.
+    pub r_dom: f64,
+    /// Foreign rate.
+    pub r_for: f64,
+    /// Reference present value.
+    pub price: f64,
+}
+
+/// Corridor knock kind in the frozen double-barrier table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DoubleBarrierKind {
+    /// Knocks out if *either* wall is touched.
+    KnockOut,
+    /// Knocks in if *either* wall is touched.
+    KnockIn,
+}
+
 /// Settlement style of a digital in the frozen digital table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DigitalSettlement {
@@ -152,6 +235,32 @@ fn parse_barrier_type(s: &str) -> Result<BarrierType, CsvError> {
         other => Err(CsvError::Parse {
             row: 0,
             column: "barrier_type".to_owned(),
+            value: other.to_owned(),
+        }),
+    }
+}
+
+fn parse_touch_kind(s: &str) -> Result<TouchKind, CsvError> {
+    match s {
+        "ONE_TOUCH" => Ok(TouchKind::OneTouch),
+        "NO_TOUCH" => Ok(TouchKind::NoTouch),
+        "DNT" => Ok(TouchKind::Dnt),
+        "DOUBLE_TOUCH" => Ok(TouchKind::DoubleTouch),
+        other => Err(CsvError::Parse {
+            row: 0,
+            column: "kind".to_owned(),
+            value: other.to_owned(),
+        }),
+    }
+}
+
+fn parse_double_barrier_kind(s: &str) -> Result<DoubleBarrierKind, CsvError> {
+    match s {
+        "KO" => Ok(DoubleBarrierKind::KnockOut),
+        "KI" => Ok(DoubleBarrierKind::KnockIn),
+        other => Err(CsvError::Parse {
+            row: 0,
+            column: "kind".to_owned(),
             value: other.to_owned(),
         }),
     }
@@ -239,9 +348,116 @@ pub fn load_digital() -> Result<Vec<DigitalRecord>, CsvError> {
     Ok(out)
 }
 
+/// Load the frozen touch-family table (`data/touch_gk.csv`).
+///
+/// # Errors
+/// Propagates any [`CsvError`] from reading or parsing the table.
+pub fn load_touch() -> Result<Vec<TouchRecord>, CsvError> {
+    let t = CsvTable::load(data_path("touch_gk.csv"))?;
+    let mut out = Vec::with_capacity(t.len());
+    for row in 0..t.len() {
+        out.push(TouchRecord {
+            kind: parse_touch_kind(t.get(row, "kind")?)?,
+            spot: t.get_f64(row, "spot")?,
+            barrier: t.get_opt_f64(row, "barrier")?,
+            lower: t.get_opt_f64(row, "lower")?,
+            upper: t.get_opt_f64(row, "upper")?,
+            rebate: t.get_f64(row, "rebate")?,
+            vol: t.get_f64(row, "vol")?,
+            t: t.get_f64(row, "t")?,
+            r_dom: t.get_f64(row, "r_dom")?,
+            r_for: t.get_f64(row, "r_for")?,
+            price: t.get_f64(row, "price")?,
+        });
+    }
+    Ok(out)
+}
+
+/// Load the frozen double-barrier table (`data/double_barrier_gk.csv`).
+///
+/// # Errors
+/// Propagates any [`CsvError`] from reading or parsing the table.
+pub fn load_double_barrier() -> Result<Vec<DoubleBarrierRecord>, CsvError> {
+    let t = CsvTable::load(data_path("double_barrier_gk.csv"))?;
+    let mut out = Vec::with_capacity(t.len());
+    for row in 0..t.len() {
+        out.push(DoubleBarrierRecord {
+            kind: parse_double_barrier_kind(t.get(row, "kind")?)?,
+            option_type: parse_option_type(t.get(row, "option_type")?)?,
+            spot: t.get_f64(row, "spot")?,
+            strike: t.get_f64(row, "strike")?,
+            lower: t.get_f64(row, "lower")?,
+            upper: t.get_f64(row, "upper")?,
+            vol: t.get_f64(row, "vol")?,
+            t: t.get_f64(row, "t")?,
+            r_dom: t.get_f64(row, "r_dom")?,
+            r_for: t.get_f64(row, "r_for")?,
+            price: t.get_f64(row, "price")?,
+        });
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn touch_table_loads_and_is_well_formed() {
+        let recs = load_touch().expect("touch table loads");
+        assert!(!recs.is_empty(), "touch grid must be non-empty");
+        for r in &recs {
+            for v in [r.spot, r.rebate, r.vol, r.t, r.r_dom, r.r_for, r.price] {
+                assert!(v.is_finite(), "non-finite touch field: {v}");
+            }
+            // A touch payout is non-negative and bounded by its *discounted*
+            // rebate (which exceeds the face under negative domestic rates).
+            let df = (-r.r_dom * r.t).exp();
+            assert!(r.price >= -1e-9 && r.price <= r.rebate * df.max(1.0) + 1e-9);
+            // Single kinds carry a barrier and no corridor; double kinds the inverse.
+            match r.kind {
+                TouchKind::OneTouch | TouchKind::NoTouch => {
+                    assert!(r.barrier.is_some() && r.lower.is_none() && r.upper.is_none());
+                }
+                TouchKind::Dnt | TouchKind::DoubleTouch => {
+                    assert!(r.barrier.is_none());
+                    let (l, u) = (r.lower.expect("lower"), r.upper.expect("upper"));
+                    assert!(0.0 < l && l < u, "corridor must satisfy 0<L<U: {l},{u}");
+                }
+            }
+        }
+        // Every kind must be exercised by the grid.
+        for k in [
+            TouchKind::OneTouch,
+            TouchKind::NoTouch,
+            TouchKind::Dnt,
+            TouchKind::DoubleTouch,
+        ] {
+            assert!(
+                recs.iter().any(|r| r.kind == k),
+                "touch kind {k:?} missing from grid"
+            );
+        }
+    }
+
+    #[test]
+    fn double_barrier_table_loads_and_is_well_formed() {
+        let recs = load_double_barrier().expect("double-barrier table loads");
+        assert!(!recs.is_empty());
+        for r in &recs {
+            for v in [r.spot, r.strike, r.lower, r.upper, r.vol, r.t, r.price] {
+                assert!(v.is_finite(), "non-finite double-barrier field: {v}");
+            }
+            assert!(0.0 < r.lower && r.lower < r.upper);
+            assert!(
+                r.price >= -1e-9,
+                "double-barrier price must be non-negative"
+            );
+        }
+        for k in [DoubleBarrierKind::KnockOut, DoubleBarrierKind::KnockIn] {
+            assert!(recs.iter().any(|r| r.kind == k), "kind {k:?} missing");
+        }
+    }
 
     #[test]
     fn vanilla_table_loads_and_is_finite() {

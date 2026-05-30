@@ -263,11 +263,13 @@ impl LsvModel {
     #[must_use]
     pub fn price_window_barrier_mc(&self, spec: WindowBarrier, cfg: McConfig) -> McEstimate {
         self.simulate(cfg, Some(spec), &|path| {
-            if path.window_breached {
-                0.0
-            } else {
-                crate::payoff::vanilla_intrinsic(spec.option, path.terminal_spot, spec.strike)
-            }
+            // Knock-out value = (continuous survival probability) × terminal
+            // intrinsic. Weighting by the fractional survival — rather than a hard
+            // breached/not-breached indicator — is the unbiased continuous-monitoring
+            // estimator and matches the PDE leg, removing the median-rule survivorship
+            // bias (audit `lsv.rs:379-393`).
+            path.window_survival
+                * crate::payoff::vanilla_intrinsic(spec.option, path.terminal_spot, spec.strike)
         })
     }
 
@@ -303,9 +305,18 @@ impl LsvModel {
         }
     }
 
-    /// Simulate one antithetic LSV path (sign `s ∈ {±1}` flips the orthogonal
-    /// spot normal and the variance driver's symmetric image), returning the
-    /// terminal spot and the window-breach flag.
+    /// Simulate one antithetic LSV path (sign `s ∈ {±1}` reflects the driving
+    /// uniforms about ½ for the `−s` twin), returning the terminal spot and the
+    /// fractional window survival.
+    ///
+    /// The antithetic is *exact* for the orthogonal spot leg (`Φ⁻¹(1−u) = −Φ⁻¹(u)`,
+    /// so the twin's idiosyncratic shock is the negation of the original) but only
+    /// *approximate* for the QE variance leg: in the squared-Gaussian branch
+    /// `v' = a(b+z)²` is not symmetric under `z → −z` unless `b = 0`, so the twin
+    /// follows a different (not merely reflected) variance trajectory. The pairing
+    /// therefore reduces variance strongly on the spot-driven part of the payoff
+    /// but only partially on the variance-driven part — it remains a valid,
+    /// unbiased estimator, just less efficient than a perfectly-reflected pair.
     #[allow(clippy::too_many_arguments)]
     fn run_path(
         &self,
@@ -320,13 +331,14 @@ impl LsvModel {
         let var = &self.var;
         let mut ln_s = ln(self.inputs.spot);
         let mut v = var.v0;
-        let mut window_breached = false;
+        let mut window_survival = 1.0_f64;
 
         for step in 0..cfg.steps {
             let t0 = step as f64 * dt;
             let (u_var, u_perp) = step_uniforms(cfg.seed, 0, path, step as u32);
-            // Antithetic: reflect both uniforms about ½ for the −s twin (keeps the
-            // pair exactly variance-reducing while staying in (0,1)).
+            // Antithetic: reflect both uniforms about ½ for the −s twin. Exact
+            // reflection for the orthogonal spot leg; approximate for the QE
+            // variance leg (see the method doc). Stays strictly inside (0,1).
             let (u_var, u_perp) = if s < 0.0 {
                 (1.0 - u_var, 1.0 - u_perp)
             } else {
@@ -339,16 +351,15 @@ impl LsvModel {
             let incr = log_spot_increment(var, v, v_next, dt, lev, z_perp);
             let ln_next = ln_s + carry * dt + incr;
 
-            // Window-barrier monitoring with the Brownian-bridge crossing
+            // Window-barrier monitoring with the Brownian-bridge *survival*
             // probability *inside the active window only*. A step lies in the
-            // window if its mid-time is within [start, end].
+            // window if its mid-time is within [start, end]. The per-step
+            // no-crossing probability is multiplied into the path's survival
+            // weight (continuous-monitoring, unbiased), not thresholded.
             if let (Some(w), Some(lh)) = (window, ln_h) {
                 let t_mid = t0 + 0.5 * dt;
                 if t_mid >= w.start && t_mid <= w.end {
-                    let crossed = bridge_crossed(ln_s, ln_next, lh, lev, v, dt, w.up);
-                    if crossed {
-                        window_breached = true;
-                    }
+                    window_survival *= bridge_survival(ln_s, ln_next, lh, lev, v, dt, w.up);
                 }
             }
             ln_s = ln_next;
@@ -357,45 +368,56 @@ impl LsvModel {
 
         PathResult {
             terminal_spot: exp(ln_s),
-            window_breached,
+            window_survival,
         }
     }
 }
 
-/// Bridge-crossing decision for the MC window barrier: a step is treated as a
-/// crossing if either endpoint is on the far side of the barrier, or — when both
-/// endpoints are on the near side — with the Brownian-bridge probability for the
-/// inter-node segment, compared against a *deterministic* threshold derived from
-/// the bridge probability (so the estimator stays bit-reproducible: there is no
-/// extra random draw; the conditional crossing probability is folded as a
-/// fractional survival the same way the existing 1-D engine does).
+/// Brownian-bridge **survival** probability of one inter-node segment for the MC
+/// window barrier: the conditional probability that the (continuously-monitored)
+/// log-spot path did *not* cross the barrier `ln_h` between the two sampled
+/// endpoints, given the endpoints `ln_a → ln_b`.
 ///
-/// To keep the simulator's per-path payoff a clean indicator (so a path either
-/// survives the window or not), we use the **first-passage** decision at the
-/// nodes augmented by the bridge: the segment is declared crossed when the bridge
-/// crossing probability exceeds ½, which is the unbiased median rule for the
-/// continuously-monitored window and matches the analytic continuous barrier in
-/// the refinement limit.
+/// If either endpoint is already on the far side of the barrier the segment has
+/// surely crossed, so survival is `0`. Otherwise, with local diffusion variance
+/// `σ²_seg = (L·√v)²·dt`, the classical Brownian-bridge no-crossing probability is
+///
+/// ```text
+///   P(no cross) = 1 − exp(−2·(H − a)·(H − b)/σ²_seg) ,
+/// ```
+///
+/// where `a = ln_a`, `b = ln_b`, `H = ln_h` (the same expression the 1-D engine
+/// [`crate::mc::price_barrier`] uses). Multiplying these per-step survivals into a
+/// path weight is the **unbiased** continuous-monitoring estimator; the previous
+/// `prob > ½` median-rule indicator converged to the *discrete*-monitoring
+/// indicator as `dt → 0`, systematically under-counting crossings and biasing the
+/// knock-out price upward (audit `lsv.rs:379-393`). No extra random draw is taken,
+/// so the estimator stays bit-reproducible.
 #[inline]
-fn bridge_crossed(ln_a: f64, ln_b: f64, ln_h: f64, lev: f64, v: f64, dt: f64, up: bool) -> bool {
+fn bridge_survival(ln_a: f64, ln_b: f64, ln_h: f64, lev: f64, v: f64, dt: f64, up: bool) -> f64 {
     let breached_endpoint = if up {
         ln_a >= ln_h || ln_b >= ln_h
     } else {
         ln_a <= ln_h || ln_b <= ln_h
     };
     if breached_endpoint {
-        return true;
+        return 0.0;
     }
     // Local diffusion variance of the segment: (L √v)² dt.
     let seg_var = (lev * lev * v * dt).max(1e-300);
-    let prob = exp(-2.0 * (ln_h - ln_a) * (ln_h - ln_b) / seg_var);
-    prob > 0.5
+    let p_cross = exp(-2.0 * (ln_h - ln_a) * (ln_h - ln_b) / seg_var);
+    (1.0 - p_cross).clamp(0.0, 1.0)
 }
 
 /// The outcome of one simulated LSV path.
 struct PathResult {
     terminal_spot: f64,
-    window_breached: bool,
+    /// Fractional **survival** of the window barrier on this path: the product of
+    /// the per-step Brownian-bridge no-crossing probabilities over the active
+    /// window (`1.0` for a path with no window). This is the *unbiased*
+    /// continuous-monitoring weight (matching the 1-D engine's
+    /// [`crate::mc::price_barrier`]), not a `0.5`-threshold indicator.
+    window_survival: f64,
 }
 
 /// Online mean/variance accumulator (Welford), local to the LSV MC driver.
@@ -599,7 +621,10 @@ mod tests {
                 seed: 0xB17,
             },
         );
-        let tol = 3.0 * mc.std_error + 2.5e-2;
+        // With the unbiased fractional-survival estimator (no median-rule bias),
+        // the remaining gap is MC noise + ADI/MC discretisation only, so the
+        // absolute slack is tightened from the previous 2.5e-2 to 1.2e-2.
+        let tol = 3.0 * mc.std_error + 1.2e-2;
         assert!(
             (pde - mc.price).abs() < tol,
             "window-barrier PDE {pde} vs MC {} (se {}, tol {tol})",
@@ -614,15 +639,15 @@ mod tests {
     /// production path from market surface → leverage → consistent exotic price.
     #[test]
     fn calibrates_to_celnet_surface_and_reprices() {
-        use celnet_surface::{SmileModel, SviSlice, TenorPillar, VolSurface};
+        use celnet_surface::{ParametricSlice, SmileModel, TenorPillar, VolSurface};
 
         // A mild, smooth SVI surface around forward ≈ 1.30·e^{0.02} on two pillars.
         let f0 = 1.30 * exp(0.02 * 0.5);
         let f1 = 1.30 * exp(0.02 * 1.0);
-        let s0 = SviSlice::new(0.0045, 0.02, -0.10, 0.0, 0.10, f0, 0.5);
-        let s1 = SviSlice::new(0.0095, 0.03, -0.10, 0.0, 0.12, f1, 1.0);
+        let s0 = ParametricSlice::new(0.0045, 0.02, -0.10, 0.0, 0.10, f0, 0.5);
+        let s1 = ParametricSlice::new(0.0095, 0.03, -0.10, 0.0, 0.12, f1, 1.0);
         let surface = VolSurface::new(
-            SmileModel::Svi,
+            SmileModel::Parametric,
             vec![TenorPillar::new(s0, f0, 0.5), TenorPillar::new(s1, f1, 1.0)],
         );
         // Sanity: the surface is arbitrage-free.
@@ -680,6 +705,35 @@ mod tests {
             (pde - black).abs() < 3e-2,
             "LSV-on-surface ATM PDE {pde} vs Black(surface vol) {black}"
         );
+
+        // **Wing repricing** (audit `lsv.rs:507-546`): the leverage calibration's
+        // entire job is to match the smile away from the money, where the Dupire
+        // local vol differs from ATM. Reprice OTM put and call wings at ≈ ±0.6
+        // log-moneyness-standardised strikes against the surface's own Black price.
+        // A leverage surface that is right only at ATM (where leverage ≈ 1 for a
+        // mild input) but wrong on the wings fails here.
+        for (opt, strike) in [
+            (OptionType::Put, k * exp(-0.10)),
+            (OptionType::Put, k * exp(-0.05)),
+            (OptionType::Call, k * exp(0.05)),
+            (OptionType::Call, k * exp(0.10)),
+        ] {
+            let wing_vol = surface.implied_vol(strike, 1.0);
+            let wing_black = vanilla_price(
+                opt,
+                &VanillaInputs {
+                    strike,
+                    vol: wing_vol,
+                    ..i
+                },
+            );
+            let wing_pde = model.price_european_pde(opt, strike, agrid);
+            assert!(
+                (wing_pde - wing_black).abs() < 3e-2,
+                "LSV-on-surface wing {opt:?} K={strike}: PDE {wing_pde} vs \
+                 Black(surface vol {wing_vol}) {wing_black}"
+            );
+        }
     }
 
     /// Determinism: the LSV MC price is bit-reproducible for a fixed seed.

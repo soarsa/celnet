@@ -205,13 +205,23 @@ fn next_weekday_observed(d: Date) -> Date {
 // Per-currency holiday rule sets.
 // ---------------------------------------------------------------------------
 
-/// US Federal Reserve settlement holidays (the SIFMA/bank-holiday set).
+/// US FX settlement holidays — the **Fedwire / USD bank-settlement** calendar
+/// used for FX spot, expiry and delivery.
 ///
 /// New Year's Day, Birthday of M.L. King Jr. (3rd Mon Jan), Washington's
 /// Birthday (3rd Mon Feb), Memorial Day (last Mon May), Juneteenth (19 Jun,
 /// federal from 2021), Independence Day (4 Jul), Labor Day (1st Mon Sep),
-/// Columbus Day (2nd Mon Oct), Veterans Day (11 Nov), Thanksgiving (4th Thu
-/// Nov), Christmas (25 Dec). Fixed-date holidays use the nearest-weekday rule.
+/// Thanksgiving (4th Thu Nov), Christmas (25 Dec). Fixed-date holidays use the
+/// nearest-weekday rule.
+///
+/// **Columbus Day (2nd Mon Oct) and Veterans Day (11 Nov) are deliberately
+/// excluded.** They are SIFMA bond-market recommended closes only; Fedwire is
+/// open and USD FX still settles on those days, so treating them as USD
+/// non-business days would wrongly shift spot/expiry/delivery for every
+/// USD-legged and USD-cross pair twice a year. A SIFMA bond calendar, if needed
+/// elsewhere, must be modelled as a separate centre rather than overloaded here.
+/// (Sources: Federal Reserve Bank holiday schedule; SIFMA US holiday
+/// recommendations.)
 fn is_us_holiday(d: Date) -> bool {
     let y = d.year();
     if d == us_observed(date(y, Month::January, 1)) {
@@ -234,12 +244,6 @@ fn is_us_holiday(d: Date) -> bool {
     }
     if d == nth_weekday(y, Month::September, Weekday::Monday, 1) {
         return true; // Labor Day
-    }
-    if d == nth_weekday(y, Month::October, Weekday::Monday, 2) {
-        return true; // Columbus Day
-    }
-    if d == us_observed(date(y, Month::November, 11)) {
-        return true; // Veterans Day
     }
     if d == nth_weekday(y, Month::November, Weekday::Thursday, 4) {
         return true; // Thanksgiving
@@ -327,9 +331,18 @@ fn is_uk_christmas_substitute(d: Date) -> bool {
 
 /// Japan (Tokyo) bank holidays. Banks observe the national public holidays plus
 /// the New-Year bank closure (1–3 Jan) and 31 Dec. Public holidays follow the
-/// "transfer holiday" rule (a holiday on Sunday is observed the next non-holiday
-/// weekday) and the "citizens' holiday" rule (a weekday sandwiched between two
-/// holidays — relevant to early May — becomes a holiday).
+/// "transfer holiday" rule (furikae kyūjitsu) and the "citizens' holiday" rule
+/// (kokumin no kyūjitsu):
+///
+/// * **Transfer holiday (furikae):** when a public holiday falls on a Sunday,
+///   the closure transfers to the next day that is *not itself* a public
+///   holiday. During consecutive-holiday stretches (Golden Week) this can roll
+///   several days forward, so it is implemented as a forward loop, not a single
+///   Sunday→Monday step.
+/// * **Citizens' holiday (kokumin):** any single weekday that is flanked on both
+///   sides by public holidays becomes a holiday itself. This is the general
+///   sandwich rule (it produced 4 May before its 2007 fixed designation, and can
+///   arise whenever two holidays are separated by exactly one ordinary day).
 fn is_japan_holiday(d: Date) -> bool {
     // Bank year-end / new-year closure and 31 Dec.
     if d.month() == Month::December && d.day() == 31 {
@@ -341,18 +354,60 @@ fn is_japan_holiday(d: Date) -> bool {
     if is_japan_public_holiday(d) {
         return true;
     }
-    // Transfer holiday: if the previous day is a Sunday public holiday, this
-    // (Monday) is a substitute holiday.
-    let prev = d - time::Duration::days(1);
-    if d.weekday() == Weekday::Monday
-        && prev.weekday() == Weekday::Sunday
-        && is_japan_public_holiday(prev)
-    {
+    if is_japan_transfer_holiday(d) {
         return true;
     }
-    // Citizens' holiday (national holiday between two holidays): in practice
-    // 4 May before its 2007 fixed designation. Covered by Greenery Day below.
+    if is_japan_citizens_holiday(d) {
+        return true;
+    }
     false
+}
+
+/// Transfer holiday (furikae kyūjitsu): `d` is a substitute closure if some
+/// earlier public holiday fell on a Sunday and the substitute rolled forward
+/// (past any intervening public holidays) to land exactly on `d`.
+///
+/// The substitute is the first day strictly after the Sunday holiday that is
+/// neither a Sunday nor itself a public holiday. We search backward over the
+/// short run of preceding days for a Sunday public holiday and replay the roll;
+/// a one-week look-back comfortably covers the longest Japanese holiday run
+/// (Golden Week), and the loop is bounded so it never spins.
+fn is_japan_transfer_holiday(d: Date) -> bool {
+    // A transfer holiday is never a Sunday and never a base public holiday.
+    if d.weekday() == Weekday::Sunday || is_japan_public_holiday(d) {
+        return false;
+    }
+    // Look back up to 7 days for the originating Sunday public holiday.
+    for back in 1..=7i64 {
+        let cand_sunday = d - time::Duration::days(back);
+        if cand_sunday.weekday() == Weekday::Sunday && is_japan_public_holiday(cand_sunday) {
+            // Roll forward from the day after the Sunday holiday to the first
+            // day that is neither Sunday nor a public holiday.
+            let mut sub = cand_sunday + time::Duration::days(1);
+            while sub.weekday() == Weekday::Sunday || is_japan_public_holiday(sub) {
+                sub += time::Duration::days(1);
+            }
+            if sub == d {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Citizens' holiday (kokumin no kyūjitsu): an ordinary day becomes a holiday
+/// when it is a single weekday flanked on both sides by public holidays.
+///
+/// By statute the day must not itself be a Sunday and must not already be a
+/// public holiday; both neighbours must be public holidays. (The classic case
+/// is a day wedged between two fixed/movable holidays one day apart.)
+fn is_japan_citizens_holiday(d: Date) -> bool {
+    if d.weekday() == Weekday::Sunday || is_japan_public_holiday(d) {
+        return false;
+    }
+    let prev = d - time::Duration::days(1);
+    let next = d + time::Duration::days(1);
+    is_japan_public_holiday(prev) && is_japan_public_holiday(next)
 }
 
 /// The Japanese national public holidays (Showa-era law as amended), excluding
@@ -411,15 +466,34 @@ fn is_japan_public_holiday(d: Date) -> bool {
     false
 }
 
+/// The inclusive year range over which the equinox approximations below are
+/// valid. Outside this window the polynomial is not guaranteed; callers (the FX
+/// schedule layer) must restrict JPY expiries accordingly.
+const EQUINOX_VALID_YEARS: core::ops::RangeInclusive<i32> = 1980..=2099;
+
 /// Day of the Vernal Equinox holiday in March, per the standard published
-/// approximation valid for 1980–2099.
+/// approximation valid for [`EQUINOX_VALID_YEARS`] (1980–2099). The arithmetic
+/// is `f64` multiply + `floor`, which is bit-identical across platforms (no
+/// transcendentals), preserving determinism. A `debug_assert` flags any
+/// out-of-range year in tests rather than silently desynchronising Tokyo
+/// closures.
 fn spring_equinox_day(year: i32) -> u8 {
+    debug_assert!(
+        EQUINOX_VALID_YEARS.contains(&year),
+        "vernal equinox approximation is only valid for 1980–2099 (got {year})"
+    );
     let y = year as f64;
     (20.8431 + 0.242_194 * (y - 1980.0) - ((y - 1980.0) / 4.0).floor()).floor() as u8
 }
 
-/// Day of the Autumnal Equinox holiday in September (1980–2099 approximation).
+/// Day of the Autumnal Equinox holiday in September, per the standard published
+/// approximation valid for [`EQUINOX_VALID_YEARS`] (1980–2099). See
+/// [`spring_equinox_day`] for the determinism and validity notes.
 fn autumn_equinox_day(year: i32) -> u8 {
+    debug_assert!(
+        EQUINOX_VALID_YEARS.contains(&year),
+        "autumnal equinox approximation is only valid for 1980–2099 (got {year})"
+    );
     let y = year as f64;
     (23.2488 + 0.242_194 * (y - 1980.0) - ((y - 1980.0) / 4.0).floor()).floor() as u8
 }
@@ -708,6 +782,40 @@ mod tests {
         let nz = SettlementCentre::new(CentreId::NewZealand);
         assert!(nz.is_holiday(d(2021, Month::February, 8)));
         assert!(nz.is_holiday(d(2024, Month::October, 28))); // Labour Day 4th Mon Oct
+    }
+
+    #[test]
+    fn us_fx_calendar_excludes_columbus_and_veterans_day() {
+        // Fedwire/USD FX settlement is OPEN on SIFMA-only bond closes. These
+        // were wrongly closed before; spot/expiry/delivery must not shift.
+        let us = SettlementCentre::new(CentreId::UnitedStates);
+        assert!(!us.is_holiday(d(2024, Month::October, 14))); // Columbus Day (2nd Mon Oct)
+        assert!(!us.is_holiday(d(2024, Month::November, 11))); // Veterans Day
+        // Sanity: a genuine USD holiday in the same period is still closed.
+        assert!(us.is_holiday(d(2024, Month::November, 28))); // Thanksgiving
+    }
+
+    #[test]
+    fn japan_rolling_transfer_holiday_golden_week_2008() {
+        // 4 May 2008 (Greenery Day) fell on a Sunday. The substitute cannot be
+        // 5 May (Children's Day, itself a holiday), so it rolls forward to
+        // Tue 6 May 2008. The old single-step Sunday→Monday rule missed this.
+        let jp = SettlementCentre::new(CentreId::Japan);
+        assert!(jp.is_holiday(d(2008, Month::May, 4))); // base holiday (Sunday)
+        assert!(jp.is_holiday(d(2008, Month::May, 5))); // Children's Day
+        assert!(jp.is_holiday(d(2008, Month::May, 6))); // rolled substitute (Tue)
+        // 7 May 2008 (Wed) is an ordinary business day.
+        assert!(!jp.is_holiday(d(2008, Month::May, 7)));
+    }
+
+    #[test]
+    fn japan_citizens_holiday_silver_week_2015() {
+        // 21 Sep 2015 = Respect-for-the-Aged (3rd Mon), 23 Sep = Autumnal
+        // Equinox. The Tuesday 22 Sep between them is a citizens' holiday.
+        let jp = SettlementCentre::new(CentreId::Japan);
+        assert!(jp.is_holiday(d(2015, Month::September, 21)));
+        assert!(jp.is_holiday(d(2015, Month::September, 22))); // kokumin sandwich
+        assert!(jp.is_holiday(d(2015, Month::September, 23)));
     }
 
     #[test]

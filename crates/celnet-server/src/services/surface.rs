@@ -30,7 +30,7 @@ use tonic::{Request, Response, Status};
 
 use celnet_conventions::ConventionRecord;
 use celnet_surface::{
-    ArbitrageReport, MarketContext as SurfaceContext, MarketQuotes, VannaVolgaSmile, build_smile,
+    ArbitrageReport, MarketContext as SurfaceContext, MarketHedgeSmile, MarketQuotes, build_smile,
     check_slice,
 };
 use celnet_types::{
@@ -101,7 +101,7 @@ fn calibrate(
     broker: &BrokerQuoteSet,
     market: &WireMarketContext,
     conv: &ConventionSet,
-) -> Result<VannaVolgaSmile, Status> {
+) -> Result<MarketHedgeSmile, Status> {
     let record = convention_record(conv);
     let ctx = SurfaceContext::new(
         market.spot,
@@ -140,7 +140,7 @@ fn quotes_from_broker(broker: &BrokerQuoteSet) -> MarketQuotes {
 fn smile_to_wire(
     pair: Option<celnet_proto::CcyPair>,
     broker: &BrokerQuoteSet,
-    smile: &VannaVolgaSmile,
+    smile: &MarketHedgeSmile,
     conv: &ConventionSet,
     market: &WireMarketContext,
     clock: &Clock,
@@ -167,7 +167,11 @@ fn smile_to_wire(
             market.r_dom,
             market.r_for,
         );
-        let strike = if (d - 0.50).abs() < f64::EPSILON {
+        // The 0.50 entry in `REPORT_DELTAS` is the ATM pillar (priced at the
+        // forward, no delta inversion). Detect it via `celnet_core::is_close` with
+        // explicit tolerances (the determinism guardrail forbids ad-hoc float
+        // equality); the value is a fixed literal, so a tight tolerance is exact.
+        let strike = if celnet_core::is_close(d, 0.50, 0.0, 1e-12) {
             forward
         } else {
             celnet_vanilla::strike_from_delta(ctx.delta_convention(), option, target, &template)
@@ -197,7 +201,7 @@ fn smile_to_wire(
 
 /// Run the static no-arbitrage checks on a calibrated smile and project them onto
 /// the wire [`ArbReport`].
-fn arb_report(smile: &VannaVolgaSmile, forward: f64, t: f64) -> ArbReport {
+fn arb_report(smile: &MarketHedgeSmile, forward: f64, t: f64) -> ArbReport {
     // A symmetric strike grid around the forward for the density / vertical checks.
     let grid: Vec<f64> = (1..=9)
         .map(|i| forward * (0.80 + 0.05 * f64::from(i - 1)))

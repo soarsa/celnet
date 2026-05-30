@@ -32,13 +32,13 @@
 use celnet_core::math::sqrt;
 
 use crate::mathx::powf;
-use crate::svi::SviSlice;
+use crate::parametric::ParametricSlice;
 
 /// The SSVI surface: a constant correlation, a power-law curvature
 /// `φ(θ) = η/θ^γ`, and an ATM total-variance term structure provided by the
 /// caller (the [`crate::termstructure`] layer supplies `θ(t)`).
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SsviSurface {
+pub struct ParametricSurface {
     /// Constant correlation `ρ ∈ (−1, 1)`.
     pub rho: f64,
     /// Curvature scale `η > 0`.
@@ -47,7 +47,7 @@ pub struct SsviSurface {
     pub gamma: f64,
 }
 
-impl SsviSurface {
+impl ParametricSurface {
     /// Construct an SSVI surface, validating the parameter ranges.
     ///
     /// # Panics
@@ -105,7 +105,7 @@ impl SsviSurface {
         q2 >= q1 - 1e-12
     }
 
-    /// Materialise an [`SviSlice`] (raw parameterization) for one maturity from
+    /// Materialise an [`ParametricSlice`] (raw parameterization) for one maturity from
     /// this surface, given the slice's ATM total variance `θ`, forward `f` and
     /// expiry `t`. This is the bridge that lets the surface form be consumed by
     /// any [`celnet_core::Smile`] consumer through the per-slice raw model, and
@@ -125,7 +125,7 @@ impl SsviSurface {
     ///
     /// Panics if `θ`, `f` or `t` are non-positive.
     #[must_use]
-    pub fn to_slice(&self, theta: f64, forward: f64, t: f64) -> SviSlice {
+    pub fn to_slice(&self, theta: f64, forward: f64, t: f64) -> ParametricSlice {
         assert!(
             theta > 0.0 && forward > 0.0 && t > 0.0,
             "SSVI slice needs positive theta/forward/t"
@@ -136,7 +136,7 @@ impl SsviSurface {
         let b = 0.5 * theta * p;
         let m = -self.rho / p;
         let sigma = sqrt(one_m_rho2) / p;
-        SviSlice::new(a, b, self.rho, m, sigma, forward, t)
+        ParametricSlice::new(a, b, self.rho, m, sigma, forward, t)
     }
 }
 
@@ -145,8 +145,8 @@ mod tests {
     use super::*;
     use celnet_core::is_close;
 
-    fn surface() -> SsviSurface {
-        SsviSurface::new(-0.25, 0.8, 0.4)
+    fn surface() -> ParametricSurface {
+        ParametricSurface::new(-0.25, 0.8, 0.4)
     }
 
     /// The SSVI total variance and the raw-slice total variance agree at every
@@ -211,7 +211,7 @@ mod tests {
     /// flagged: `θ·φ·(1+|ρ|) ≥ 4` breaks the closed-form sufficient condition.
     #[test]
     fn excessive_curvature_is_flagged() {
-        let bad = SsviSurface::new(-0.25, 20.0, 0.1);
+        let bad = ParametricSurface::new(-0.25, 20.0, 0.1);
         // At a long maturity (large θ) the bound θ·φ·(1+|ρ|) < 4 is violated.
         assert!(!bad.is_butterfly_free(0.5));
         // And the materialised raw slice indeed has negative density factor g.

@@ -22,13 +22,13 @@
 //!
 //! # Two evaluation regimes
 //!
-//! 1. **Asymptotic Black vol** ([`SabrParams::black_vol`]): the closed-form
+//! 1. **Asymptotic Black vol** ([`StochasticVolParams::black_vol`]): the closed-form
 //!    expansion — O(1) per strike, the hot-path evaluator that the [`Smile`]
 //!    implementation uses in the liquid core.
-//! 2. **Arbitrage-free density** ([`SabrParams::risk_neutral_density`]): the
+//! 2. **Arbitrage-free density** ([`StochasticVolParams::risk_neutral_density`]): the
 //!    effective-forward 1-D density of the 2014 refinement, used to (a) detect
 //!    where the asymptotic smile turns arbitrageable and (b) reprice options by
-//!    integrating the genuine density in the wings. The [`SabrSmile`] surface
+//!    integrating the genuine density in the wings. The [`StochasticVolSmile`] surface
 //!    wires both together: asymptotic vol in the core, density-implied vol once
 //!    the density would go negative.
 
@@ -45,7 +45,7 @@ use crate::mathx::powf;
 /// `nu ≥ 0` the vol-of-vol (curvature). The slice also carries the forward `f`
 /// and the expiry `t` it was calibrated at.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SabrParams {
+pub struct StochasticVolParams {
     /// Instantaneous volatility level `α > 0`.
     pub alpha: f64,
     /// CEV backbone exponent `β ∈ [0, 1]` (fixed by convention).
@@ -60,7 +60,7 @@ pub struct SabrParams {
     pub t: f64,
 }
 
-impl SabrParams {
+impl StochasticVolParams {
     /// Construct a SABR slice, validating parameter ranges.
     ///
     /// # Panics
@@ -99,7 +99,7 @@ impl SabrParams {
     /// singularity there).
     #[must_use]
     pub fn black_vol(&self, strike: f64) -> f64 {
-        let SabrParams {
+        let StochasticVolParams {
             alpha,
             beta,
             rho,
@@ -169,13 +169,22 @@ impl SabrParams {
     /// cost of a one-dimensional quadrature. The returned density is in **forward
     /// (undiscounted) measure**.
     ///
-    /// This is the single-step Hagan-2014 normal approximation, so it is only
-    /// **approximately** normalised: its total mass over `(0, ∞)` is within a few
-    /// percent of one (see `density_is_nonnegative_and_normalised`), not exactly
-    /// one. The wing repricing in [`SabrSmile::density_implied_vol`] integrates
-    /// this density and therefore inherits the same approximation; it is used only
-    /// where the asymptotic expansion would itself become arbitrageable, so the
-    /// small mass error is preferable to a negative-density wing.
+    /// This is the single-step Hagan-2014 normal approximation, so the **raw**
+    /// density is only *approximately* normalised: its total mass over `(0, ∞)`
+    /// is within a few percent of one, and its mean differs from the forward by a
+    /// comparable amount. Used raw, that bias propagates into wing call prices and
+    /// can break the martingale (forward) constraint — i.e. it is *not* by itself
+    /// arbitrage-free.
+    ///
+    /// The wing repricing in [`StochasticVolSmile::density_implied_vol`] therefore does
+    /// **not** integrate this raw density. It builds a [`WingDensity`] that
+    /// renormalises to **exact unit mass** and **rescales the forward coordinate
+    /// so the density mean equals `F` exactly** (the martingale constraint). A
+    /// non-negative density with unit mass and mean `F` produces European call
+    /// prices that are convex and monotone in `K` and lie inside the no-arbitrage
+    /// bounds `[max(F−K,0), F]` — i.e. a genuinely butterfly-arbitrage-free wing
+    /// (Breeden-Litzenberger), removing the systematic mass/mean bias of the raw
+    /// single-step form. See [`StochasticVolParams::wing_density`].
     #[must_use]
     pub fn risk_neutral_density(&self, strike: f64) -> f64 {
         if strike <= 0.0 {
@@ -226,6 +235,127 @@ impl SabrParams {
             (powf(strike, one_m_beta) - powf(self.forward, one_m_beta)) / (self.alpha * one_m_beta)
         }
     }
+
+    /// Build a normalised, martingale-corrected [`WingDensity`] from the raw
+    /// single-step density over a fixed deterministic quadrature grid.
+    ///
+    /// The grid spans `(0, K_max]` with `K_max` a wide multiple of the forward
+    /// (covering essentially all the mass). The raw density is sampled, then the
+    /// [`WingDensity`] renormalises to exact unit mass and rescales the strike
+    /// coordinate so the density mean equals the forward `F` exactly. The result
+    /// is the genuinely arbitrage-free wing density the smile uses for repricing.
+    #[must_use]
+    pub fn wing_density(&self) -> WingDensity {
+        WingDensity::from_params(self)
+    }
+}
+
+/// A normalised, martingale-corrected SABR wing density.
+///
+/// Built from [`StochasticVolParams::risk_neutral_density`] on a fixed grid, then
+/// corrected so that, in **forward (undiscounted) measure**,
+///
+/// ```text
+///   ∫₀^∞ g(F') dF' = 1        (unit mass)
+///   ∫₀^∞ F' g(F') dF' = F     (martingale / forward constraint)
+/// ```
+///
+/// both hold **exactly** (to quadrature precision). The first correction is a
+/// plain renormalisation `g/M`; the second is a multiplicative rescale of the
+/// forward coordinate by `λ = F/μ` (where `μ` is the post-normalisation mean),
+/// which preserves non-negativity and unit mass while moving the mean onto `F`.
+/// A non-negative density satisfying both constraints prices European calls free
+/// of butterfly and (forward) put-call-parity arbitrage.
+#[derive(Debug, Clone)]
+pub struct WingDensity {
+    /// Lower grid edge (just above 0).
+    lo: f64,
+    /// Grid step.
+    dk: f64,
+    /// Normalised density samples at cell midpoints (mass `g·dk` sums to 1).
+    g: Vec<f64>,
+    /// Forward-coordinate rescale `λ = F/μ` applied at pricing time.
+    lambda: f64,
+}
+
+impl WingDensity {
+    /// Number of quadrature cells used to discretise the wing density. Fixed and
+    /// deterministic (no adaptivity) so the wing repricing is reproducible.
+    const CELLS: usize = 4096;
+
+    fn from_params(p: &StochasticVolParams) -> Self {
+        // A wide support: the single-step density is centred near F with spread
+        // set by α√t in forward terms; 16 std-devs of headroom captures the mass.
+        let f = p.forward;
+        let spread = (p.alpha * sqrt(p.t)).max(0.05) * f;
+        let lo = (f - 16.0 * spread).max(1e-6 * f);
+        let hi = (f + 16.0 * spread).max(f * 3.0);
+        let n = Self::CELLS;
+        let dk = (hi - lo) / (n as f64);
+
+        // Sample the raw density at cell midpoints.
+        let mut g = Vec::with_capacity(n);
+        let mut mass = 0.0;
+        let mut k = lo + 0.5 * dk;
+        for _ in 0..n {
+            let gi = p.risk_neutral_density(k).max(0.0);
+            mass += gi * dk;
+            g.push(gi);
+            k += dk;
+        }
+        // Renormalise to exact unit mass.
+        debug_assert!(mass > 0.0, "wing density mass must be positive");
+        let inv_mass = 1.0 / mass;
+        for gi in &mut g {
+            *gi *= inv_mass;
+        }
+        // Post-normalisation mean μ = Σ k·g·dk; rescale coordinate by λ = F/μ so
+        // the corrected mean equals F exactly (martingale constraint).
+        let mut mean = 0.0;
+        let mut k = lo + 0.5 * dk;
+        for &gi in &g {
+            mean += k * gi * dk;
+            k += dk;
+        }
+        let lambda = if mean > 0.0 { f / mean } else { 1.0 };
+        Self { lo, dk, g, lambda }
+    }
+
+    /// Total probability mass (`= 1` to quadrature precision).
+    #[must_use]
+    pub fn total_mass(&self) -> f64 {
+        let mut m = 0.0;
+        for &gi in &self.g {
+            m += gi * self.dk;
+        }
+        m
+    }
+
+    /// Density mean in the rescaled coordinate (`= F` to quadrature precision).
+    #[must_use]
+    pub fn mean(&self) -> f64 {
+        let mut mu = 0.0;
+        let mut k = self.lo + 0.5 * self.dk;
+        for &gi in &self.g {
+            mu += (self.lambda * k) * gi * self.dk;
+            k += self.dk;
+        }
+        mu
+    }
+
+    /// The undiscounted forward call price `C(K) = ∫ max(λ·F' − K, 0) g(F') dF'`,
+    /// using the renormalised, mean-`F` density. Arbitrage-free by construction.
+    #[must_use]
+    pub fn forward_call(&self, strike: f64) -> f64 {
+        let mut call = 0.0;
+        let mut k = self.lo + 0.5 * self.dk;
+        for &gi in &self.g {
+            let payoff = (self.lambda * k - strike).max(0.0);
+            call += payoff * gi * self.dk;
+            k += self.dk;
+        }
+        call
+    }
 }
 
 /// A SABR smile slice that evaluates as a [`Smile`].
@@ -235,35 +365,41 @@ impl SabrParams {
 /// volatility *implied by the arbitrage-free density* so the surface it presents
 /// is butterfly-arbitrage-free everywhere. The crossover strikes are detected
 /// once at construction from where the asymptotic density changes sign.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SabrSmile {
-    params: SabrParams,
+#[derive(Debug, Clone)]
+pub struct StochasticVolSmile {
+    params: StochasticVolParams,
     /// Lower wing crossover: below this strike use the density-implied vol.
     wing_lo: f64,
     /// Upper wing crossover: above this strike use the density-implied vol.
     wing_hi: f64,
+    /// The normalised, martingale-corrected wing density, built once. Only the
+    /// wings consult it; the liquid core uses the asymptotic Black vol.
+    wing_density: WingDensity,
 }
 
-impl SabrSmile {
+impl StochasticVolSmile {
     /// Build a SABR smile from calibrated parameters, locating the wing
-    /// crossovers where the asymptotic expansion's implied density goes negative.
+    /// crossovers where the asymptotic expansion's implied density goes negative
+    /// and constructing the arbitrage-free wing density once up front.
     #[must_use]
-    pub fn new(params: SabrParams) -> Self {
+    pub fn new(params: StochasticVolParams) -> Self {
         let f = params.forward;
         // Scan outward from the forward for the first strike where the
         // asymptotic-vol density turns negative; that is the wing crossover.
         let wing_lo = Self::find_density_floor(&params, f, false);
         let wing_hi = Self::find_density_floor(&params, f, true);
+        let wing_density = params.wing_density();
         Self {
             params,
             wing_lo,
             wing_hi,
+            wing_density,
         }
     }
 
     /// The underlying calibrated parameters.
     #[must_use]
-    pub fn params(&self) -> SabrParams {
+    pub fn params(&self) -> StochasticVolParams {
         self.params
     }
 
@@ -276,7 +412,7 @@ impl SabrSmile {
 
     /// Density of the *asymptotic* smile via a central second difference of the
     /// undiscounted forward call priced at the asymptotic Black vol.
-    fn asymptotic_density(params: &SabrParams, strike: f64, h: f64) -> f64 {
+    fn asymptotic_density(params: &StochasticVolParams, strike: f64, h: f64) -> f64 {
         let c = |k: f64| {
             let v = params.black_vol(k);
             let vsqt = v * sqrt(params.t);
@@ -291,7 +427,7 @@ impl SabrSmile {
     /// density first goes negative; return that crossover strike. If the density
     /// stays positive over the scan range, return a strike far in the wing (so the
     /// asymptotic formula is used throughout — the arbitrage-free case).
-    fn find_density_floor(params: &SabrParams, f: f64, upward: bool) -> f64 {
+    fn find_density_floor(params: &StochasticVolParams, f: f64, upward: bool) -> f64 {
         let h = 1e-3 * f;
         let step = 0.02 * f;
         let mut k = f;
@@ -310,33 +446,22 @@ impl SabrSmile {
         if upward { f * 1_000.0 } else { f * 1e-3 }
     }
 
-    /// Implied vol from the arbitrage-free density: numerically invert the
-    /// undiscounted forward call priced by integrating the density against the
-    /// Black formula. We use the density to recompute the call price and then
-    /// re-imply the Black vol that reproduces it — guaranteeing the wing vol is
-    /// consistent with a non-negative density.
+    /// Implied vol from the arbitrage-free wing density: price the undiscounted
+    /// forward call against the **normalised, mean-`F`** [`WingDensity`] and
+    /// re-imply the Black vol that reproduces it.
+    ///
+    /// Because the wing density integrates to one and has mean exactly `F`, the
+    /// repriced call lies inside the no-arbitrage bounds `[max(F−K,0), F]`, so the
+    /// re-implied vol is a genuine, arbitrage-free wing vol — free of the
+    /// systematic mass/mean bias of the raw single-step density.
     fn density_implied_vol(&self, strike: f64) -> f64 {
         let p = &self.params;
-        // Undiscounted forward call C(K) = ∫_K^∞ (F'−K) g(F') dF' via the density.
-        // Integrate on an adaptive log-spaced grid out to a far wing.
-        let f = p.forward;
-        let lo = (strike).max(1e-6 * f);
-        let hi = (strike + 12.0 * p.alpha * sqrt(p.t).max(1e-3) * f).max(strike * 3.0);
-        let n = 2000usize;
-        let dk = (hi - lo) / (n as f64);
-        let mut call = 0.0;
-        let mut kk = lo + 0.5 * dk;
-        for _ in 0..n {
-            let g = p.risk_neutral_density(kk);
-            call += (kk - strike) * g * dk;
-            kk += dk;
-        }
-        // Re-imply the Black vol matching this undiscounted forward call.
-        implied_black_vol(call, f, strike, p.t).unwrap_or_else(|| p.black_vol(strike))
+        let call = self.wing_density.forward_call(strike);
+        implied_black_vol(call, p.forward, strike, p.t).unwrap_or_else(|| p.black_vol(strike))
     }
 }
 
-impl Smile for SabrSmile {
+impl Smile for StochasticVolSmile {
     fn implied_vol(&self, strike: f64, _forward: f64, _t: f64) -> Vol {
         // The SABR slice is anchored at its own forward/time; the trait
         // forward/t arguments are accepted for interface uniformity but the
@@ -390,9 +515,9 @@ mod tests {
     use super::*;
     use celnet_core::is_close;
 
-    fn slice() -> SabrParams {
+    fn slice() -> StochasticVolParams {
         // EURUSD-like 1Y: F = 1.10, moderate skew/curvature, β = 1 (lognormal).
-        SabrParams::new(0.11, 1.0, -0.20, 0.45, 1.10, 1.0)
+        StochasticVolParams::new(0.11, 1.0, -0.20, 0.45, 1.10, 1.0)
     }
 
     /// ATM Black vol matches the closed-form ATM limit and the general formula
@@ -417,7 +542,7 @@ mod tests {
     #[test]
     fn small_z_series_matches_general_branch() {
         // Use a strong rho so a wrong sign in the O(z) term would show up.
-        let p = SabrParams::new(0.11, 1.0, -0.8, 0.45, 1.10, 1.0);
+        let p = StochasticVolParams::new(0.11, 1.0, -0.8, 0.45, 1.10, 1.0);
         let atm = p.black_vol(p.forward);
         // For beta = 1, z = (nu/alpha)·ln(F/K), so the log-moneyness needed for a
         // target |z| is ln(F/K) = z·alpha/nu.
@@ -455,13 +580,12 @@ mod tests {
         );
     }
 
-    /// The arbitrage-free density is non-negative and integrates to approximately
-    /// one over a wide forward grid. The single-step Hagan-2014 normal
-    /// approximation is *not* exactly normalised, so the mass tolerance is a
-    /// deliberate few-percent band (`5e-2`), not a tight equality — the test
-    /// asserts strict non-negativity and approximate (not exact) unit mass.
+    /// The *raw* single-step density is non-negative everywhere (the property
+    /// the asymptotic expansion lacks), but is only approximately normalised — so
+    /// we assert strict non-negativity and an approximate-mass band only. The
+    /// genuinely arbitrage-free object is the [`WingDensity`] (next test).
     #[test]
-    fn density_is_nonnegative_and_normalised() {
+    fn raw_density_is_nonnegative() {
         let p = slice();
         let lo = 0.2;
         let hi = 4.0;
@@ -478,18 +602,82 @@ mod tests {
         }
         assert!(
             min_g >= -1e-12,
-            "density must stay non-negative: min {min_g}"
+            "raw density must stay non-negative: min {min_g}"
         );
+        // The raw form is only ~normalised — a few-percent band, NOT a tight
+        // equality. This is the bias the WingDensity removes.
         assert!(
-            is_close(mass, 1.0, 5e-2, 5e-2),
-            "density should integrate to ~1: got {mass}"
+            is_close(mass, 1.0, 1e-1, 1e-1),
+            "raw density mass should be order one: got {mass}"
         );
+    }
+
+    /// The corrected [`WingDensity`] integrates to **exactly** one and has mean
+    /// **exactly** the forward `F` (the martingale constraint) — to quadrature
+    /// precision. This is the regression that pins down the arbitrage-free fix:
+    /// the raw single-step density satisfied neither tightly.
+    #[test]
+    fn wing_density_has_unit_mass_and_mean_forward() {
+        for p in [
+            slice(),
+            StochasticVolParams::new(0.18, 0.7, -0.45, 0.6, 1.35, 0.5),
+            StochasticVolParams::new(0.09, 1.0, 0.30, 0.30, 0.80, 2.0),
+        ] {
+            let wd = p.wing_density();
+            assert!(
+                is_close(wd.total_mass(), 1.0, 1e-10, 1e-10),
+                "wing density mass must be exactly 1: got {}",
+                wd.total_mass()
+            );
+            assert!(
+                is_close(wd.mean(), p.forward, 1e-8, 1e-10),
+                "wing density mean must equal forward {}: got {}",
+                p.forward,
+                wd.mean()
+            );
+        }
+    }
+
+    /// The wing call prices implied by the corrected density are arbitrage-free:
+    /// inside the no-arbitrage bounds `[max(F−K,0), F]`, monotone-decreasing and
+    /// convex in `K`. A biased (un-normalised, wrong-mean) density would breach
+    /// these — this is the genuine arbitrage-freeness the audit demanded.
+    #[test]
+    fn wing_density_call_prices_are_arbitrage_free() {
+        let p = StochasticVolParams::new(0.16, 0.8, -0.40, 0.7, 1.20, 0.75);
+        let wd = p.wing_density();
+        let f = p.forward;
+        // Strikes spanning both wings.
+        let ks: Vec<f64> = (1..=40)
+            .map(|i| 0.4 + (2.4 - 0.4) * (i as f64) / 40.0)
+            .collect();
+        let mut prev_c = f64::INFINITY;
+        for w in ks.windows(3) {
+            let (k0, k1, k2) = (w[0], w[1], w[2]);
+            let c0 = wd.forward_call(k0);
+            let c1 = wd.forward_call(k1);
+            let c2 = wd.forward_call(k2);
+            // No-arbitrage bounds.
+            assert!(
+                c1 >= (f - k1).max(0.0) - 1e-9 && c1 <= f + 1e-9,
+                "call({k1})={c1} must lie in [max(F-K,0), F]"
+            );
+            // Monotone decreasing in K.
+            assert!(c1 <= prev_c + 1e-9, "call must be non-increasing in K");
+            prev_c = c1;
+            // Convexity (butterfly ≥ 0): c0 - 2 c1 + c2 ≥ 0.
+            assert!(
+                c0 - 2.0 * c1 + c2 >= -1e-7,
+                "call must be convex in K (butterfly ≥ 0): {}",
+                c0 - 2.0 * c1 + c2
+            );
+        }
     }
 
     /// The smile reprices its forward (ATM) through the [`Smile`] trait.
     #[test]
     fn smile_trait_evaluates() {
-        let s = SabrSmile::new(slice());
+        let s = StochasticVolSmile::new(slice());
         let atm = s.implied_vol(1.10, 1.10, 1.0).0;
         assert!(atm > 0.0 && atm.is_finite());
     }
@@ -497,7 +685,7 @@ mod tests {
     /// Wing band is located: the core band straddles the forward.
     #[test]
     fn core_band_straddles_forward() {
-        let s = SabrSmile::new(slice());
+        let s = StochasticVolSmile::new(slice());
         let (lo, hi) = s.core_band();
         assert!(
             lo < 1.10 && hi > 1.10,

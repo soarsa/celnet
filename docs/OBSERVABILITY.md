@@ -1,15 +1,149 @@
-The document is written to `/Users/adrian/code/celeroption/docs/OBSERVABILITY.md`.
+# Celnet — Observability (zero hot-path cost)
 
-Wrote `/Users/adrian/code/celeroption/docs/OBSERVABILITY.md` — Celnet's zero-hot-path-cost observability design. It covers, all mapped to owning crates:
+> Design doc for `celnet-observability` and the observability seam between the pinned
+> hot core (`celnet-engine`) and the async edge (`celnet-server`). The governing rule:
+> **the hot core never logs, locks, or allocates** — all formatting, aggregation and
+> export happen off the critical path. This document describes what is *implemented*
+> today and explicitly marks what is *deferred*; it is kept in sync with the crate
+> manifests (zero-legacy, CLAUDE.md rule 10).
 
-- **Hot-path rule**: the pinned zero-alloc core (`celnet-engine`, `src/core.rs`/`src/rt.rs`) only bumps `Relaxed` `CachePadded` atomics, reads TSC/`cntvct`, and pushes one POD `PriceSample` to a bounded `rtrb` SPSC ring (drop-on-full for telemetry); all formatting/aggregation/export is offloaded to a drain thread on a non-critical, NUMA-local core.
-- **Stack (concrete crates)**: `tracing`/`tracing-subscriber` (edge+drain only), `opentelemetry`+`opentelemetry-otlp` (metrics stable; tracing-export treated as pre-release and SLO-isolated), `hdrhistogram`, `usdt` probes, `crossbeam-utils::CachePadded`, plus `criterion`/`divan`/`iai-callgrind`.
-- **HdrHistogram p50/p99/p99.9** with mandatory coordinated-omission correction (`record_correct`), per-`(OpKind, core_id)`, validated against the §1.2 budgets (vanilla p50 ≤ 2 µs / p99 ≤ 10 µs / p99.9 ≤ 25 µs), with both in-core and edge wire-to-wire / RFS quote-to-tick numbers.
-- **Health/readiness/liveness**: `/livez` (core progress + drain heartbeat), `/readyz` (the existing `ReadinessGate` blue-green state machine in `src/readiness.rs`), `/healthz` composite, served via HTTP + the gRPC `Readiness` RPC.
-- **Audit logging** for the quote/trade lifecycle on a *separate, lossless, backpressured* ring/drain with `fsync` and idempotency-store handoff across blue-green cutover (never drops, unlike telemetry).
-- **Structured error taxonomy**: a `#[repr(u16)] ErrorClass` carried as a discriminant in the POD sample (no string/alloc on the path), with deterministic gRPC-status mapping.
-- **Proof of zero hot-path cost**: the allocation-counting `GlobalAlloc` guard (`tests/zero_alloc.rs`) run *with telemetry enabled* must stay at zero allocations/syscalls (plus a negative control), and a telemetry-on-vs-off `criterion`/`iai-callgrind` benchmark regression gate against committed baselines.
+---
 
-New crate proposed: **`celnet-observability`** (POD records, rings, drain threads, histograms, OTLP, audit, error taxonomy), keeping `celnet-engine` free of `tracing`/`hdrhistogram`/`opentelemetry` deps and `celnet-server` owning the edge spans, OTLP lifecycle, and health endpoints.
+## 1. Governing principle — measure without perturbing
 
-This directly addresses pending task #18.
+Synchronous logging, lock-based metrics, and inline string formatting on a busy-poll
+pricing core are stealth tail-latency killers: a single `format!` or mutex acquisition on
+the path injects jitter that dwarfs a 2 µs price. So observability is split in two:
+
+1. **On the hot core (`celnet-engine`):** the pinned, zero-alloc loop only bumps
+   `Relaxed` atomic counters (each `CachePadded` to avoid false sharing) and pushes one
+   plain-old-data `PriceSample` record into a bounded wait-free SPSC ring (`rtrb`). On a
+   full ring the telemetry sample is **dropped** (telemetry is lossy by design — see §6).
+   No formatting, no allocation, no syscall, no lock. This is proven, not asserted (§5).
+2. **Off the path (`celnet-observability` drain + `celnet-server` edge):** a drain thread
+   pinned to a non-critical core consumes the ring, folds samples into HdrHistograms,
+   updates `metrics` facade counters/gauges, and emits `tracing` spans/events. All cost
+   lives here, where jitter does not touch a quoted price.
+
+Deferred formatting is dramatically cheaper on the path than inline formatted logging: the
+core pays one atomic store + one ring push (~ns), the drain pays the formatting cost
+amortized across many samples.
+
+---
+
+## 2. Stack (implemented vs deferred)
+
+The **implemented** stack (verified against `crates/celnet-observability/Cargo.toml` and
+`crates/celnet-bench`):
+
+| Concern | Crate / mechanism | Where it runs |
+|---|---|---|
+| Structured events & spans | `tracing` + `tracing-subscriber` (`time` feature) | edge + drain only — **never** the hot core |
+| Latency distributions | `hdrhistogram` (p50/p99/p99.9, coordinated-omission aware) | drain thread |
+| Counters / gauges / histograms facade | `metrics` 0.24 | drain + edge |
+| Micro-benchmark / latency proof | `divan` (`celnet-bench`) | CI / offline |
+| False-sharing-free hot counters | atomics padded to a cache line | hot core |
+| Hot→drain transport | bounded wait-free SPSC ring (`rtrb`) | core→drain |
+
+**Deferred (not yet a dependency — do not claim as built):**
+
+- **OTLP export** (`opentelemetry` / `opentelemetry-otlp`). OTel Rust *metrics* are stable
+  and *tracing-export* is still pre-release; an OTLP bridge from the `metrics`/`tracing`
+  layer is on the roadmap but not wired today.
+- **USDT probes** (`usdt`) — free when disabled, but not yet attached.
+- **`iai-callgrind`** instruction-count regression gate — `divan` is the only bench
+  harness currently committed; a deterministic instruction-count gate is planned for the
+  hardening (WS-T) wave.
+
+These are listed so no consumer over-reads the observability posture; promote them to the
+implemented table only when they appear in the manifest with passing tests.
+
+---
+
+## 3. Latency histograms & coordinated-omission correction
+
+HdrHistogram records p50/p99/p99.9 per logical operation, keyed by `(OpKind, core_id)` so a
+slow core or op-class is visible rather than averaged away. Tail measurement uses
+**coordinated-omission correction** (`record_correct` with the expected inter-arrival
+interval): a stall that delays subsequent samples is back-filled, so a GC-free busy-poll
+core that hiccups cannot hide its tail behind the missing samples it would otherwise drop.
+
+Two measurement planes:
+
+- **In-core latency** — the time the pinned loop spends pricing + risk for one request,
+  captured from the monotonic cycle counter (TSC / `cntvct` on aarch64) and pushed in the
+  POD sample; folded into the histogram by the drain. Compared against the
+  `docs/ARCHITECTURE.md` §1.2 budgets (vanilla price + full Greeks p50 ≤ 2 µs / p99 ≤ 10 µs
+  / p99.9 ≤ 25 µs).
+- **Edge wire-to-wire** — request-arrival to response-flush at the `celnet-server` edge, and
+  RFS quote-to-tick, measured on the async side where blocking is acceptable.
+
+The committed `celnet-bench` (`divan`) reference run on the Apple M4 single core is the
+offline counterpart of the in-core plane and is the single source of truth for the headline
+latency numbers cited elsewhere (see `crates/celnet-bench/benches/README.md`).
+
+---
+
+## 4. Health, readiness, liveness
+
+The async edge exposes three orthogonal signals, composed from engine state rather than
+from log scraping:
+
+- **`/livez`** — the core is making progress (counter monotonically advancing) and the
+  drain thread heartbeat is fresh; a wedged core or dead drain fails liveness.
+- **`/readyz`** — gated by the blue-green readiness state machine: a draining instance
+  reports *not ready* so the router stops sending it new connections during cutover, while
+  in-flight work finishes (see `docs/ARCHITECTURE.md` §5 and `docs/SCALE-OUT.md` §7).
+- **`/healthz`** — composite of the two plus dependency checks.
+
+These are served over HTTP and mirrored on the gRPC `Readiness` RPC so both transports of
+the single current contract agree on instance state.
+
+---
+
+## 5. Proof of zero hot-path cost
+
+The zero-cost claim is *tested*, not asserted:
+
+- An allocation-counting global allocator guard (`tests/zero_alloc.rs`) runs the hot loop
+  **with telemetry enabled** and asserts **zero** heap allocations and zero syscalls on the
+  path, plus a negative control that deliberately allocates so the guard is proven to fire.
+- A telemetry-on vs telemetry-off `divan` benchmark bounds the residual cost of the atomic
+  counter bump + ring push, gated against the committed `celnet-bench` baseline so a
+  regression that adds path cost fails CI.
+
+---
+
+## 6. Telemetry (lossy) vs audit (lossless)
+
+Telemetry and the quote/trade **audit** trail have opposite delivery guarantees and so use
+**separate** rings and drains:
+
+- **Telemetry** — drop-on-full. Losing a latency sample is acceptable; back-pressuring the
+  pricing core to deliver one is not.
+- **Audit** — the quote/RFQ/execution lifecycle is written to a *separate, lossless,
+  back-pressured* ring with `fsync` on the drain side and idempotency-store handoff across
+  a blue-green cutover, so it **never** drops a booking-relevant event. A slow audit sink
+  applies back-pressure to the edge, never to the hot core.
+
+A structured `#[repr(u16)] ErrorClass` discriminant travels inside the POD sample (no
+string, no allocation on the path) and maps deterministically to gRPC status at the edge,
+so error taxonomy is observable without formatting on the core.
+
+---
+
+## 7. Crate ownership
+
+`celnet-observability` owns the POD records, the rings, the drain threads, the
+HdrHistograms, the `metrics` registration and the error taxonomy. This keeps `celnet-engine`
+free of `tracing`/`hdrhistogram`/`metrics` dependencies (so the hot core cannot accidentally
+take a logging or allocating dependency), while `celnet-server` owns the edge spans and the
+health/readiness endpoints.
+
+---
+
+*Sources: `docs/_research/api-obs-scale.json` (observability topic);
+`crates/celnet-observability/Cargo.toml`; `crates/celnet-bench/benches/README.md`;
+`docs/ARCHITECTURE.md` §1.2/§3.3/§5. Stale opentelemetry/usdt/criterion/iai-callgrind
+references from the prior draft have been demoted to the deferred list to match the real
+manifest.*

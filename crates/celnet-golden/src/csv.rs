@@ -167,6 +167,24 @@ impl CsvTable {
             value: raw.to_owned(),
         })
     }
+
+    /// Parse the field at `(row, column-name)` as an optional `f64`: an empty
+    /// field yields `None` (used for the touch table's mutually-exclusive
+    /// single-`barrier` vs corridor-`lower`/`upper` columns).
+    ///
+    /// # Errors
+    /// Returns [`CsvError::UnknownColumn`] or [`CsvError::Parse`].
+    pub fn get_opt_f64(&self, row: usize, column: &str) -> Result<Option<f64>, CsvError> {
+        let raw = self.get(row, column)?;
+        if raw.is_empty() {
+            return Ok(None);
+        }
+        raw.parse::<f64>().map(Some).map_err(|_| CsvError::Parse {
+            row,
+            column: column.to_owned(),
+            value: raw.to_owned(),
+        })
+    }
 }
 
 /// Split a single line into comma-separated, whitespace-trimmed fields.

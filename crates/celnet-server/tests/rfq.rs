@@ -300,6 +300,210 @@ async fn rfq_idempotency_key_collision_is_rejected() {
     .expect("test must not hang");
 }
 
+/// Regression for the accept-authority bug: `AcceptQuote` must be request-matched
+/// to the originating idempotency key. An accept carrying a wrong/empty key (a
+/// party that merely learned the `quote_id`) must be refused with
+/// `InvalidArgument` and book nothing; the genuine key still books.
+#[tokio::test]
+async fn rfq_accept_requires_originating_idempotency_key() {
+    tokio::time::timeout(TEST_DEADLINE, async {
+        let (edge, addr) = start_ready_edge().await;
+        let mut client = tokio::time::timeout(
+            STEP_DEADLINE,
+            QuoteServiceClient::connect(format!("http://{addr}")),
+        )
+        .await
+        .expect("client connects in time")
+        .expect("client connects");
+
+        let quote = tokio::time::timeout(
+            STEP_DEADLINE,
+            client.request_quote(QuoteRequest {
+                idempotency_key: "owner-key-xyz".to_owned(),
+                instrument: Some(vanilla_call(1.10)),
+                conventions: Some(wire_conventions()),
+            }),
+        )
+        .await
+        .expect("quote in time")
+        .expect("quote ok")
+        .into_inner();
+
+        // A third party knows the quote_id but presents the WRONG key → refused.
+        let wrong = tokio::time::timeout(
+            STEP_DEADLINE,
+            client.accept_quote(QuoteAccept {
+                quote_id: quote.quote_id,
+                idempotency_key: "not-the-owner".to_owned(),
+                side: Side::Buy as i32,
+            }),
+        )
+        .await
+        .expect("accept returns in time")
+        .expect_err("an accept with a non-matching key must be refused");
+        assert_eq!(wrong.code(), tonic::Code::InvalidArgument);
+
+        // An EMPTY key is likewise refused (no silent keyless accept).
+        let empty = tokio::time::timeout(
+            STEP_DEADLINE,
+            client.accept_quote(QuoteAccept {
+                quote_id: quote.quote_id,
+                idempotency_key: String::new(),
+                side: Side::Buy as i32,
+            }),
+        )
+        .await
+        .expect("accept returns in time")
+        .expect_err("an accept with an empty key must be refused");
+        assert_eq!(empty.code(), tonic::Code::InvalidArgument);
+
+        // The genuine originator (matching key) still books.
+        let exec = tokio::time::timeout(
+            STEP_DEADLINE,
+            client.accept_quote(QuoteAccept {
+                quote_id: quote.quote_id,
+                idempotency_key: "owner-key-xyz".to_owned(),
+                side: Side::Buy as i32,
+            }),
+        )
+        .await
+        .expect("accept returns in time")
+        .expect("the originating key accepts")
+        .into_inner();
+        assert_eq!(exec.quote_id, quote.quote_id);
+
+        edge.shutdown(Duration::from_secs(5)).await;
+    })
+    .await
+    .expect("test must not hang");
+}
+
+/// Regression for the accept-retry side guard: once a quote is booked on one side,
+/// an accept-retry that flips the side (even with the right key) is a different
+/// intent and must be refused with `FailedPrecondition`, never handed the
+/// opposite-side booking. A same-side retry still returns the original execution.
+#[tokio::test]
+async fn rfq_accept_retry_side_flip_is_refused() {
+    tokio::time::timeout(TEST_DEADLINE, async {
+        let (edge, addr) = start_ready_edge().await;
+        let mut client = tokio::time::timeout(
+            STEP_DEADLINE,
+            QuoteServiceClient::connect(format!("http://{addr}")),
+        )
+        .await
+        .expect("client connects in time")
+        .expect("client connects");
+
+        let quote = tokio::time::timeout(
+            STEP_DEADLINE,
+            client.request_quote(QuoteRequest {
+                idempotency_key: "flip-key".to_owned(),
+                instrument: Some(vanilla_call(1.10)),
+                conventions: Some(wire_conventions()),
+            }),
+        )
+        .await
+        .expect("quote in time")
+        .expect("quote ok")
+        .into_inner();
+
+        // Book BUY (lift the offer).
+        let buy = tokio::time::timeout(
+            STEP_DEADLINE,
+            client.accept_quote(QuoteAccept {
+                quote_id: quote.quote_id,
+                idempotency_key: "flip-key".to_owned(),
+                side: Side::Buy as i32,
+            }),
+        )
+        .await
+        .expect("accept in time")
+        .expect("buy accepts")
+        .into_inner();
+        assert_eq!(buy.side, Side::Buy as i32);
+
+        // Retry SELL with the same key → refused (side flip, not a retry).
+        let flip = tokio::time::timeout(
+            STEP_DEADLINE,
+            client.accept_quote(QuoteAccept {
+                quote_id: quote.quote_id,
+                idempotency_key: "flip-key".to_owned(),
+                side: Side::Sell as i32,
+            }),
+        )
+        .await
+        .expect("accept returns in time")
+        .expect_err("a side-flipping accept-retry must be refused");
+        assert_eq!(flip.code(), tonic::Code::FailedPrecondition);
+
+        // Same-side retry still returns the SAME booking (idempotent).
+        let buy2 = tokio::time::timeout(
+            STEP_DEADLINE,
+            client.accept_quote(QuoteAccept {
+                quote_id: quote.quote_id,
+                idempotency_key: "flip-key".to_owned(),
+                side: Side::Buy as i32,
+            }),
+        )
+        .await
+        .expect("accept in time")
+        .expect("same-side retry ok")
+        .into_inner();
+        assert_eq!(buy2.execution_id, buy.execution_id);
+
+        edge.shutdown(Duration::from_secs(5)).await;
+    })
+    .await
+    .expect("test must not hang");
+}
+
+/// Regression for the unguessable-quote-id property: minted ids are not the dense
+/// `1,2,3,…` sequence (which a third party could enumerate to reject/accept other
+/// parties' quotes). Two distinct quotes get distinct, non-adjacent, `>= 1` ids.
+#[tokio::test]
+async fn rfq_quote_ids_are_unguessable() {
+    tokio::time::timeout(TEST_DEADLINE, async {
+        let (edge, addr) = start_ready_edge().await;
+        let mut client = tokio::time::timeout(
+            STEP_DEADLINE,
+            QuoteServiceClient::connect(format!("http://{addr}")),
+        )
+        .await
+        .expect("client connects in time")
+        .expect("client connects");
+
+        let mk = |k: &str, strike: f64| QuoteRequest {
+            idempotency_key: k.to_owned(),
+            instrument: Some(vanilla_call(strike)),
+            conventions: Some(wire_conventions()),
+        };
+        let a = tokio::time::timeout(STEP_DEADLINE, client.request_quote(mk("a", 1.10)))
+            .await
+            .expect("quote a in time")
+            .expect("quote a ok")
+            .into_inner();
+        let b = tokio::time::timeout(STEP_DEADLINE, client.request_quote(mk("b", 1.11)))
+            .await
+            .expect("quote b in time")
+            .expect("quote b ok")
+            .into_inner();
+
+        assert!(a.quote_id >= 1 && b.quote_id >= 1, "ids are valid (>= 1)");
+        assert_ne!(a.quote_id, b.quote_id, "distinct quotes get distinct ids");
+        // Not a dense monotonic pair (the whole point of unguessability): the two
+        // consecutive ids must not differ by exactly 1.
+        assert_ne!(
+            a.quote_id.abs_diff(b.quote_id),
+            1,
+            "ids must not be a dense enumerable sequence"
+        );
+
+        edge.shutdown(Duration::from_secs(5)).await;
+    })
+    .await
+    .expect("test must not hang");
+}
+
 /// Regression for the RejectQuote contract: `RejectQuote` returns a purpose-typed
 /// acknowledgement (`RejectAck` with the quote_id and a timestamp), not an
 /// `Execution`; and after a reject the quote can no longer be accepted.

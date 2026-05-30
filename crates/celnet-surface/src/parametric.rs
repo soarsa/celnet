@@ -24,16 +24,30 @@
 //! A single slice is **butterfly-arbitrage-free** iff its density factor
 //! `g(k) ≥ 0` for all `k` (the Durrleman g-function of Gatheral-Jacquier 2014,
 //! eq. 2.1), where `g` is built from `w`, `w'`, `w''`.
-//! [`SviSlice::min_butterfly_density_factor`] samples it.
+//! [`ParametricSlice::min_butterfly_density_factor`] samples it.
 //!
-//! [`SviSlice::new`] validates the parameter **ranges** (`b ≥ 0`, `|ρ| < 1`,
+//! [`ParametricSlice::new`] validates the parameter **ranges** (`b ≥ 0`, `|ρ| < 1`,
 //! `σ > 0`, positive forward/expiry) and that the minimum total variance is
 //! non-negative (`a + b·σ·√(1−ρ²) ≥ 0`). The classic necessary large-strike
-//! bound `b·(1+|ρ|) ≤ 4/t` (Gatheral 2004) is checked separately by
-//! [`SviSlice::satisfies_wing_bound`] rather than at construction, so callers can
+//! bound `b·(1+|ρ|) ≤ 2` is checked separately by
+//! [`ParametricSlice::satisfies_wing_bound`] rather than at construction, so callers can
 //! build a slice and inspect both no-arbitrage notions explicitly. Calendar
 //! (cross-slice) no-arbitrage lives in [`crate::termstructure`] /
-//! [`crate::ssvi`].
+//! [`crate::parametric_surface`].
+//!
+//! ## The large-strike wing bound (and why there is no `1/t`)
+//!
+//! `w(k)` above is **total implied variance** `σ²(k)·t`, *not* variance per unit
+//! time. Roger Lee's moment formula (Lee 2004, "The moment formula for implied
+//! volatility at extreme strikes") bounds the asymptotic slope of total implied
+//! variance — `lim sup_{k→±∞} w(k)/|k| ≤ 2` — and that bound is **dimensionless
+//! and maturity-independent** (the `t` is already inside `w`). For raw SVI the
+//! right-wing slope of `w` is `b(1+ρ)` and the left-wing slope is `b(1−ρ)`, so
+//! Lee's bound is exactly `b(1+ρ) ≤ 2` and `b(1−ρ) ≤ 2`, i.e. `b(1+|ρ|) ≤ 2`
+//! (Gatheral & Jacquier 2014, §3.1, the necessary large-strike condition). A
+//! spurious `1/t` factor would make the threshold tighter for short maturities
+//! and looser for long ones — a maturity dependence the moment formula does not
+//! have — which is why [`ParametricSlice::satisfies_wing_bound`] carries **no** `t`.
 
 use celnet_core::Smile;
 use celnet_core::math::{ln, sqrt};
@@ -43,7 +57,7 @@ use celnet_types::Vol;
 /// slice is anchored at (so it can map strike ↔ log-moneyness and total variance
 /// ↔ Black vol).
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SviSlice {
+pub struct ParametricSlice {
     /// Level parameter `a` (vertical offset of total variance).
     pub a: f64,
     /// Wing-slope parameter `b ≥ 0`.
@@ -60,7 +74,7 @@ pub struct SviSlice {
     pub t: f64,
 }
 
-impl SviSlice {
+impl ParametricSlice {
     /// Construct a raw-SVI slice, validating the parameter ranges.
     ///
     /// # Panics
@@ -162,14 +176,20 @@ impl SviSlice {
         min_g
     }
 
-    /// Whether the slice satisfies the classic necessary large-strike wing bound
-    /// `b·(1+|ρ|) ≤ 4/t` (Gatheral 2004): a violation guarantees butterfly
-    /// arbitrage in the wings. This is a *necessary* (not sufficient) condition,
-    /// complementary to the full density-factor scan in
-    /// [`Self::min_butterfly_density_factor`].
+    /// Whether the slice satisfies the necessary large-strike wing bound
+    /// `b·(1+|ρ|) ≤ 2`: a violation guarantees butterfly arbitrage in the wings.
+    ///
+    /// This is Roger Lee's moment formula applied to the raw-SVI asymptotic
+    /// slopes (Gatheral & Jacquier 2014, §3.1): the slope of **total implied
+    /// variance** `w(k)` as `k → +∞` is `b(1+ρ)` and as `k → −∞` is `b(1−ρ)`, and
+    /// Lee's formula caps each at `2`. The bound is **dimensionless** — `w`
+    /// already contains the maturity `t`, so there is no `1/t` factor (a `1/t`
+    /// would wrongly make the threshold maturity-dependent). This is a *necessary*
+    /// (not sufficient) condition, complementary to the full density-factor scan
+    /// in [`Self::min_butterfly_density_factor`].
     #[must_use]
     pub fn satisfies_wing_bound(&self) -> bool {
-        self.b * (1.0 + self.rho.abs()) <= 4.0 / self.t
+        self.b * (1.0 + self.rho.abs()) <= 2.0
     }
 
     /// Whether the slice is butterfly-arbitrage-free to tolerance `tol` over the
@@ -188,7 +208,7 @@ impl SviSlice {
     }
 }
 
-impl Smile for SviSlice {
+impl Smile for ParametricSlice {
     fn implied_vol(&self, strike: f64, _forward: f64, _t: f64) -> Vol {
         // The slice is anchored at its calibrated forward/expiry; the trait
         // forward/t are accepted for interface uniformity (an SVI slice carries
@@ -203,9 +223,9 @@ mod tests {
     use celnet_core::is_close;
 
     /// A representative skewed-but-arbitrage-free slice (1Y, ATM ≈ 10 vol).
-    fn slice() -> SviSlice {
+    fn slice() -> ParametricSlice {
         // w_atm ≈ a + b·σ ≈ 0.01 ⇒ σ_atm ≈ 10%.
-        SviSlice::new(0.008, 0.04, -0.3, 0.0, 0.10, 1.0, 1.0)
+        ParametricSlice::new(0.008, 0.04, -0.3, 0.0, 0.10, 1.0, 1.0)
     }
 
     /// Total variance reproduces a chosen ATM vol at k = 0 (within the model).
@@ -250,11 +270,58 @@ mod tests {
     /// butterfly condition — the detector fires.
     #[test]
     fn pathological_slice_has_arbitrage() {
-        let bad = SviSlice::new(0.005, 0.9, -0.95, 0.0, 0.02, 1.0, 1.0);
+        let bad = ParametricSlice::new(0.005, 0.9, -0.95, 0.0, 0.02, 1.0, 1.0);
         assert!(
             !bad.is_butterfly_free(2.0, 1e-6),
             "min g = {}",
             bad.min_butterfly_density_factor(2.0, 4096)
+        );
+    }
+
+    /// The large-strike wing bound is the dimensionless Lee/Gatheral-Jacquier
+    /// `b(1+|ρ|) ≤ 2`, NOT a maturity-dependent `b(1+|ρ|) ≤ 4/t`. This test pins
+    /// both the correct *constant* (2, not 4) and the *absence of any `t`
+    /// dependence* — the precise regression the audit flagged.
+    #[test]
+    fn wing_bound_is_dimensionless_and_uses_constant_two() {
+        // A slice with b(1+|ρ|) = 1.5·(1+0.0) = 1.5: under the bound (passes).
+        // The OLD buggy `4/t` at t = 1 would also pass — so to separate the two
+        // we need a slope strictly between the correct (2) and the old (4)
+        // thresholds.
+        let slope = 3.0; // b(1+|ρ|) = 3: > 2 (correct ⇒ FAIL), < 4 (old ⇒ pass).
+        let b = slope; // ρ = 0 ⇒ b(1+|ρ|) = b.
+
+        // At t = 1 the OLD bound 4/t = 4 ≥ 3 would (wrongly) pass; correct ⇒ fail.
+        let s1 = ParametricSlice::new(0.30, b, 0.0, 0.0, 0.10, 1.0, 1.0);
+        assert!(
+            !s1.satisfies_wing_bound(),
+            "slope {slope} exceeds the dimensionless bound 2 and must FAIL \
+             regardless of maturity"
+        );
+
+        // Maturity-independence: the SAME parameters at a very different t give
+        // the SAME verdict. The OLD `4/t` would FLIP the verdict (4/0.01 = 400 at
+        // short t ⇒ pass; 4/100 = 0.04 at long t ⇒ fail), so this pins out any t.
+        let s_short = ParametricSlice::new(0.30, b, 0.0, 0.0, 0.10, 1.0, 0.01);
+        let s_long = ParametricSlice::new(0.30, b, 0.0, 0.0, 0.10, 1.0, 100.0);
+        assert_eq!(
+            s1.satisfies_wing_bound(),
+            s_short.satisfies_wing_bound(),
+            "wing bound verdict must not depend on maturity (short t)"
+        );
+        assert_eq!(
+            s1.satisfies_wing_bound(),
+            s_long.satisfies_wing_bound(),
+            "wing bound verdict must not depend on maturity (long t)"
+        );
+
+        // A slope just below 2 passes at every maturity (right at the Lee cap).
+        let ok = ParametricSlice::new(0.30, 1.9, 0.0, 0.0, 0.10, 1.0, 0.01);
+        assert!(ok.satisfies_wing_bound(), "slope 1.9 < 2 must pass");
+        let ok_long = ParametricSlice::new(0.30, 1.9, 0.0, 0.0, 0.10, 1.0, 50.0);
+        assert!(
+            ok_long.satisfies_wing_bound(),
+            "slope 1.9 < 2 must pass at long t"
         );
     }
 

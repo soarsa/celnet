@@ -2,7 +2,7 @@
 //!
 //! This backend is the *ground truth* against which the f32 GPU path is
 //! reconciled. It draws standard normals from the counter-based
-//! [`crate::philox::PhiloxNormals`] stream, evolves a single-asset
+//! [`crate::counter_rng::CounterNormals`] stream, evolves a single-asset
 //! geometric-Brownian-motion to expiry, and reduces the vanilla payoff with a
 //! **deterministic pairwise (tree) reduction** — never a single running float
 //! accumulator — so floating-point non-associativity cannot make the result
@@ -11,7 +11,7 @@
 //! across OS and architecture.
 
 use crate::backend::{PathSpec, PayoffKernel, PricingBackend, Reduction};
-use crate::philox::PhiloxNormals;
+use crate::counter_rng::CounterNormals;
 
 /// Pure-Rust f64 Monte-Carlo backend; the reconciliation oracle.
 #[derive(Debug, Clone, Copy, Default)]
@@ -29,7 +29,7 @@ impl CpuBackend {
     /// the f64 and f32 terminal spots path-by-path, not just the aggregate price.
     #[inline]
     #[must_use]
-    pub fn terminal_spot(spec: &PathSpec, rng: &PhiloxNormals, p: u32) -> f64 {
+    pub fn terminal_spot(spec: &PathSpec, rng: &CounterNormals, p: u32) -> f64 {
         // One exact GBM step to expiry: ln S_T = ln S_0 + (μ − ½σ²)T + σ√T·Z.
         let half_var = 0.5 * spec.vol * spec.vol;
         let sqrt_t = celnet_core::math::sqrt(spec.t);
@@ -70,7 +70,7 @@ impl PricingBackend for CpuBackend {
     }
 
     fn simulate_paths(&self, spec: &PathSpec) -> Vec<f64> {
-        let rng = PhiloxNormals::new(spec.seed);
+        let rng = CounterNormals::new(spec.seed);
         (0..spec.paths)
             .map(|p| Self::terminal_spot(spec, &rng, p))
             .collect()

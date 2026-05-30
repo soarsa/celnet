@@ -30,6 +30,22 @@
 //! * `data/digital_gk.csv` — analytic cash-or-nothing and asset-or-nothing
 //!   references across both settlement styles × call/put, priced with
 //!   [`celnet_exotics::digital_price`] and asserted against QuantLib.
+//! * `data/touch_gk.csv` — one-touch / no-touch / double-no-touch / double-touch
+//!   references, all priced by QuantLib's `AnalyticDoubleBarrierBinaryEngine`
+//!   (single rows via the wide-corridor limit, double rows directly). This is the
+//!   *independent* oracle the exotics crate's own complementarity checks cannot
+//!   be: `no_touch = df − one_touch` and `double_touch = df − dnt` hold **by
+//!   construction** in the Celnet code, so they cannot catch a common-mode error
+//!   in the survival series — QuantLib's separate reflection series can. Priced
+//!   with [`celnet_exotics::one_touch_price`] /
+//!   [`celnet_exotics::no_touch_price`] /
+//!   [`celnet_exotics::double_no_touch_price`] /
+//!   [`celnet_exotics::double_touch_price`].
+//! * `data/double_barrier_gk.csv` — corridor double-barrier knock-out (and the
+//!   knock-in complement) of a vanilla payoff, with the knock-out priced by
+//!   QuantLib's `AnalyticDoubleBarrierEngine` — an oracle independent of Celnet's
+//!   Ikeda-Kunitomo image series — and asserted against
+//!   [`celnet_exotics::double_knock_out_price`].
 //!
 //! Each table additionally carries a structural self-check (well-formed, finite,
 //! sane bounds) so it cannot rot independently of the pricing assertions.
@@ -43,8 +59,9 @@ pub mod table;
 
 pub use csv::{CsvError, CsvTable};
 pub use table::{
-    BarrierRecord, BarrierType, DigitalRecord, DigitalSettlement, VanillaRecord, load_barrier,
-    load_digital, load_vanilla,
+    BarrierRecord, BarrierType, DigitalRecord, DigitalSettlement, DoubleBarrierKind,
+    DoubleBarrierRecord, TouchKind, TouchRecord, VanillaRecord, load_barrier, load_digital,
+    load_double_barrier, load_touch, load_vanilla,
 };
 
 /// Directory holding the frozen reference tables, relative to the crate root.

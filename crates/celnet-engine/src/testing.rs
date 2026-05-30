@@ -8,11 +8,11 @@
 //! external dependency — can reuse it.
 
 use celnet_conventions::ConventionRecord;
-use celnet_surface::{MarketContext, MarketQuotes, VannaVolgaSmile, build_smile};
+use celnet_surface::{MarketContext, MarketHedgeSmile, MarketQuotes, build_smile};
 
 use crate::rt::{MarketState, PriceSnapshot};
 
-/// Build a calibrated [`VannaVolgaSmile`] for a EURUSD-like slice from broker
+/// Build a calibrated [`MarketHedgeSmile`] for a EURUSD-like slice from broker
 /// quotes (ATM / 25Δ risk-reversal / 25Δ butterfly).
 ///
 /// # Panics
@@ -27,7 +27,7 @@ pub fn smile(
     bf: f64,
     conv: ConventionRecord,
     t: f64,
-) -> VannaVolgaSmile {
+) -> MarketHedgeSmile {
     let ctx = MarketContext::new(spot, 0.02, 0.01, t, conv);
     let q = MarketQuotes::three_point(atm, rr, bf);
     build_smile(&ctx, &q).expect("calibration converges for mild EURUSD quotes")

@@ -83,8 +83,12 @@ impl Ccy {
     /// The code as an uppercase string slice.
     #[must_use]
     pub fn as_str(&self) -> &str {
-        // SAFETY-free: bytes are validated ASCII-alphabetic on construction.
-        core::str::from_utf8(&self.0).unwrap_or("???")
+        // The bytes are validated ASCII-alphabetic on every constructor
+        // (`new`/`parse`) and the only field is private, so this conversion is
+        // infallible by construction. We `expect` rather than substitute a
+        // sentinel so any future invariant break fails loudly instead of
+        // silently propagating a bogus currency code.
+        core::str::from_utf8(&self.0).expect("Ccy bytes are validated ASCII on construction")
     }
 
     // Common majors, available as compile-time constants.
@@ -209,6 +213,27 @@ impl PremiumStyle {
             PremiumStyle::PercentForeign | PremiumStyle::ForeignPips
         )
     }
+
+    /// The premium style for the **inverted pair orientation** (base↔quote
+    /// swapped).
+    ///
+    /// The premium is always paid in the *same physical currency*, but inverting
+    /// the pair swaps that currency's role between foreign (base) and domestic
+    /// (quote). A premium paid in `EURUSD`'s base (EUR) is `PercentForeign`
+    /// (premium-adjusted); quoting `USDEUR` makes EUR the *quote*, so the same
+    /// premium is now `PercentDomestic` (premium-unadjusted). This is the
+    /// orientation transform required when a covered profile is consulted for the
+    /// flipped pair, otherwise the premium-adjusted flag is systematically wrong
+    /// for inverted majors.
+    #[must_use]
+    pub const fn flip_orientation(self) -> PremiumStyle {
+        match self {
+            PremiumStyle::DomesticPips => PremiumStyle::ForeignPips,
+            PremiumStyle::PercentForeign => PremiumStyle::PercentDomestic,
+            PremiumStyle::PercentDomestic => PremiumStyle::PercentForeign,
+            PremiumStyle::ForeignPips => PremiumStyle::DomesticPips,
+        }
+    }
 }
 
 /// Expiry cut (fixing time) convention.
@@ -306,29 +331,20 @@ impl VanillaInputs {
     /// Domestic discount factor `e^{-r_dom · t}`.
     #[must_use]
     pub fn df_dom(&self) -> f64 {
-        libm_exp(-self.r_dom * self.t)
+        libm::exp(-self.r_dom * self.t)
     }
 
     /// Foreign discount factor `e^{-r_for · t}`.
     #[must_use]
     pub fn df_for(&self) -> f64 {
-        libm_exp(-self.r_for * self.t)
+        libm::exp(-self.r_for * self.t)
     }
 
     /// Outright forward `F = S · e^{(r_dom − r_for)·t}`.
     #[must_use]
     pub fn forward(&self) -> f64 {
-        self.spot * libm_exp((self.r_dom - self.r_for) * self.t)
+        self.spot * libm::exp((self.r_dom - self.r_for) * self.t)
     }
-}
-
-// We avoid a dependency on `celnet-core` here (it depends on us); a tiny local
-// `exp` keeps this crate leaf-pure. `f64::exp` is the std intrinsic and is
-// sufficient for the derived-quantity helpers above (canonical math lives in
-// `celnet-core::math`).
-#[inline]
-fn libm_exp(x: f64) -> f64 {
-    x.exp()
 }
 
 /// The full FX-options Greek set produced by the vanilla engine.
@@ -411,5 +427,22 @@ mod tests {
     fn premium_adjusted_flag() {
         assert!(PremiumStyle::PercentForeign.is_premium_adjusted());
         assert!(!PremiumStyle::DomesticPips.is_premium_adjusted());
+    }
+
+    /// Determinism guardrail: the derived discount/forward quantities feed the
+    /// actual pricing path, so they must be **bit-identical** to `libm::exp`
+    /// (the same software implementation `celnet-core::math::exp` wraps), not
+    /// the platform-dependent `f64::exp` intrinsic. A regression that reroutes
+    /// these through the std intrinsic would break cross-platform reproducible
+    /// pricing; this asserts exact bit equality, not approximate closeness.
+    #[test]
+    fn derived_quantities_are_bit_identical_to_libm() {
+        let i = VanillaInputs::new(123.45, 130.0, 0.18, 1.37, 0.043, 0.011);
+        assert_eq!(i.df_dom().to_bits(), libm::exp(-0.043 * 1.37).to_bits());
+        assert_eq!(i.df_for().to_bits(), libm::exp(-0.011 * 1.37).to_bits());
+        assert_eq!(
+            i.forward().to_bits(),
+            (123.45 * libm::exp((0.043 - 0.011) * 1.37)).to_bits()
+        );
     }
 }

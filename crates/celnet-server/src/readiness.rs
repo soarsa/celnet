@@ -32,7 +32,11 @@ use std::time::Duration;
 use tokio::sync::Notify;
 use tokio::time::Instant;
 
-/// The blue-green lifecycle state of the edge — mirrors the proto `ServiceState`.
+/// The blue-green lifecycle state of the edge.
+///
+/// This is an **internal** edge state machine: the wire contract carries readiness
+/// only implicitly (a not-ready instance answers calls with `unavailable`), so
+/// there is deliberately no `ServiceState` message in `celnet.proto`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServiceState {
     /// Process up, core not yet warm; not accepting traffic.

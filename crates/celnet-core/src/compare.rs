@@ -10,15 +10,33 @@
 /// `abs` or a relative tolerance `rel` (relative to the larger magnitude).
 ///
 /// `NaN` never compares close (to anything, including itself); infinities are
-/// close only when identical.
+/// close only when identical. `is_close(0.0, -0.0, ..)` is `true` (the two
+/// zeros are equal under IEEE-754 ordering).
+///
+/// The `a == b` fast path below is the **single sanctioned use of exact float
+/// equality** in the platform. It is the canonical closeness primitive's own
+/// definition of "exactly equal" (also covering equal infinities and ±0.0), not
+/// a correctness comparison on a computed pricing quantity; the project's
+/// "never compare floats with `==`" rule means callers route equality through
+/// `is_close`, which is exactly this. Future reviewers should not "fix" or flag
+/// it.
+///
+/// The tolerances must be finite and non-negative. A `NaN` tolerance would
+/// silently make every comparison report "not close" (NaN fails all `<=`),
+/// quietly weakening any assertion whose tolerance was derived from a computed
+/// quantity; a `debug_assert!` catches such malformed tolerances in tests.
 #[must_use]
 #[allow(clippy::float_cmp)] // exact-equality fast path is intentional and correct here
 pub fn is_close(a: f64, b: f64, rel: f64, abs: f64) -> bool {
+    debug_assert!(
+        rel.is_finite() && rel >= 0.0 && abs.is_finite() && abs >= 0.0,
+        "is_close tolerances must be finite and non-negative (rel={rel}, abs={abs})"
+    );
     if a.is_nan() || b.is_nan() {
         return false;
     }
     if a == b {
-        return true; // covers equal infinities and exact equality
+        return true; // covers exact equality, equal infinities, and ±0.0
     }
     if a.is_infinite() || b.is_infinite() {
         return false;
@@ -71,6 +89,22 @@ mod tests {
         assert!(!is_close(f64::NAN, f64::NAN, 1.0, 1.0));
         assert!(is_close(f64::INFINITY, f64::INFINITY, 0.0, 0.0));
         assert!(!is_close(f64::INFINITY, 1e300, 1.0, 1.0));
+    }
+
+    #[test]
+    fn signed_zero_is_close() {
+        // The sanctioned `a == b` fast path treats +0.0 and -0.0 as equal even
+        // with zero tolerances.
+        assert!(is_close(0.0, -0.0, 0.0, 0.0));
+        assert!(is_close(-0.0, 0.0, 0.0, 0.0));
+    }
+
+    #[test]
+    #[should_panic(expected = "tolerances must be finite")]
+    fn nan_tolerance_panics_in_debug() {
+        // A malformed (NaN) tolerance must fail loudly under debug assertions
+        // rather than silently weakening the comparison.
+        let _ = is_close(1.0, 1.0, f64::NAN, 1e-12);
     }
 
     #[test]

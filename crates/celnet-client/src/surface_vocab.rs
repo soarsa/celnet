@@ -12,6 +12,14 @@ use celnet_types::Greeks;
 use crate::error::{ClientError, ClientResult};
 use crate::vocab::Conventions;
 
+/// Relative tolerance for matching a calibrated smile pillar by its signed
+/// convention delta. Pillars sit at conventional deltas (0.10, 0.25, 0.50, …),
+/// so a tight relative band cleanly distinguishes adjacent pillars while
+/// absorbing the last-ULP wobble of a round-tripped wire value.
+const DELTA_MATCH_REL: f64 = 1e-9;
+/// Absolute tolerance for the delta-pillar match, covering a near-zero delta.
+const DELTA_MATCH_ABS: f64 = 1e-9;
+
 /// The market context a scenario / what-if grid is shocked around — spot, vol,
 /// and the two continuous rates. The typed form of the wire `MarketContext`.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -200,7 +208,7 @@ impl Smile {
     pub fn vol_at_delta(&self, delta: f64) -> Option<f64> {
         self.points
             .iter()
-            .find(|p| (p.delta - delta).abs() < 1e-9)
+            .find(|p| celnet_core::is_close(p.delta, delta, DELTA_MATCH_REL, DELTA_MATCH_ABS))
             .map(|p| p.vol)
     }
 
@@ -413,5 +421,77 @@ mod tests {
             "three-point marks the 10Δ wings absent"
         );
         assert!(!BrokerQuoteSet::from_wire(&three.to_wire()).has_ten_delta);
+    }
+
+    fn smile_with_points(points: Vec<SmilePoint>) -> Smile {
+        Smile {
+            tenor_years: 1.0,
+            broker_quotes: BrokerQuoteSet::three_point(1.0, 0.10, -0.004, 0.002),
+            points,
+            conventions: Conventions::major_default(),
+            arbitrage: ArbReport {
+                butterfly_arbitrage_free: true,
+                calendar_arbitrage_free: true,
+                worst_density: 0.0,
+                note: String::new(),
+            },
+            epoch_nanos: 0,
+        }
+    }
+
+    /// Regression for the float-`<` discriminator: pillar lookup routes through
+    /// `celnet_core::is_close` (the determinism rule), matches a pillar within the
+    /// tolerance band, and crucially does *not* alias adjacent conventional pillars
+    /// (0.25 must never resolve a 0.10 query, and vice versa).
+    #[test]
+    fn vol_at_delta_matches_within_tolerance_without_pillar_aliasing() {
+        let smile = smile_with_points(vec![
+            SmilePoint {
+                delta: -0.10,
+                tenor_years: 1.0,
+                vol: 0.130,
+            },
+            SmilePoint {
+                delta: -0.25,
+                tenor_years: 1.0,
+                vol: 0.115,
+            },
+            SmilePoint {
+                delta: 0.50,
+                tenor_years: 1.0,
+                vol: 0.100,
+            },
+            SmilePoint {
+                delta: 0.25,
+                tenor_years: 1.0,
+                vol: 0.108,
+            },
+            SmilePoint {
+                delta: 0.10,
+                tenor_years: 1.0,
+                vol: 0.121,
+            },
+        ]);
+
+        // Exact pillar hits.
+        assert_eq!(smile.vol_at_delta(-0.25), Some(0.115));
+        assert_eq!(smile.atm_vol(), Some(0.100));
+
+        // A query a hair inside the tolerance band still resolves the pillar.
+        assert_eq!(
+            smile.vol_at_delta(0.25 + DELTA_MATCH_ABS / 2.0),
+            Some(0.108),
+            "a query within tolerance resolves the 25Δ pillar"
+        );
+
+        // A query between two pillars resolves neither (no aliasing/fallthrough).
+        assert_eq!(
+            smile.vol_at_delta(0.175),
+            None,
+            "a delta between the 10Δ and 25Δ pillars matches no pillar"
+        );
+
+        // A pillar absent from the smile yields None, never a neighbour's vol.
+        assert_eq!(smile.vol_at_delta(0.40), None);
     }
 }

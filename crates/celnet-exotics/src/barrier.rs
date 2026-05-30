@@ -18,7 +18,14 @@
 //!   knock_in + knock_out = vanilla            (zero rebate)
 //! ```
 //!
-//! holds by construction and is the headline cross-check in the test suite.
+//! holds **by construction**: knock-out is computed as `vanilla − knock_in`, so
+//! parity is a *structural identity*, not an independent cross-check — it cannot
+//! detect an error in the Reiner-Rubinstein block formulas or the regime
+//! selection. The genuine, independent validation of the block selection is the
+//! frozen QuantLib golden grid (`celnet-golden::single_barrier_grid`, all eight
+//! flavours at `1e-9` relative); the in-crate suite additionally pins a small set
+//! of hard-coded reference knock-in prices so a block error is caught without
+//! leaving the crate.
 //!
 //! # Double barriers
 //!
@@ -387,21 +394,66 @@ pub fn double_knock_out_price(i: &VanillaInputs, spec: DoubleBarrierKnockOut) ->
         sum += asset - cash;
     }
 
-    (phi * sum).max(0.0)
+    // `phi` already orients every `norm_cdf(phi · d)` argument inside the loop, so
+    // `sum` is the put/call value directly; the payoff floor is the only guard.
+    // (A spurious outer `phi·sum` would negate the put, clamping it to zero — the
+    // bug the `double_barrier_grid` QuantLib golden gate now catches.)
+    sum.max(0.0)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use celnet_core::assert_close;
+    use celnet_core::{assert_close, is_close};
 
     fn base() -> VanillaInputs {
         // S=100, K varies, σ=20%, 1Y, r_d=5%, r_f=2%.
         VanillaInputs::new(100.0, 100.0, 0.20, 1.0, 0.05, 0.02)
     }
 
+    /// Hard-coded knock-in reference prices from QuantLib 1.42.1's
+    /// `AnalyticBarrierEngine` (Garman-Kohlhagen, `S=100, σ=20%, T=1y, r_d=5%,
+    /// r_f=2%`). Unlike the in/out parity identity — which holds *by construction*
+    /// because knock-out is `vanilla − knock_in` and therefore cannot validate the
+    /// Reiner-Rubinstein block selection — these pin the actual knock-in block
+    /// formulas to an external oracle *inside the crate*, so a mis-selected block
+    /// is caught here without the `celnet-golden` grid (audit `barrier.rs`).
+    #[test]
+    fn knock_in_matches_quantlib_reference() {
+        let i = base();
+        // (up, option, K, H, QuantLib KI price).
+        let cases = [
+            (false, OptionType::Call, 100.0, 80.0, 0.093_699_071_656),
+            (true, OptionType::Call, 100.0, 120.0, 8.094_513_367_157),
+            (false, OptionType::Put, 100.0, 80.0, 4.597_402_864_380),
+            (true, OptionType::Put, 100.0, 120.0, 0.230_613_308_713),
+        ];
+        for &(up, option, k, h, reference) in &cases {
+            let ki = single_barrier_price(
+                &i,
+                SingleBarrier {
+                    kind: BarrierKind {
+                        up,
+                        style: BarrierStyle::KnockIn,
+                        option,
+                    },
+                    strike: k,
+                    barrier: h,
+                    rebate: 0.0,
+                },
+            );
+            assert_close!(ki, reference, 1e-9, 1e-11);
+        }
+    }
+
     /// In/out parity for every single-barrier flavour: KI + KO = vanilla (zero
     /// rebate), across up/down × call/put × K-above/below-barrier regimes.
+    ///
+    /// NOTE: this is a **structural** identity (knock-out is computed as
+    /// `vanilla − knock_in`), so it cannot catch a wrong Reiner-Rubinstein block —
+    /// the independent block validation is [`knock_in_matches_quantlib_reference`]
+    /// (in-crate) and the `celnet-golden` QuantLib grid (cross-crate). It is kept
+    /// as a cheap invariant guard, not as the headline correctness check.
     #[test]
     fn in_out_parity_all_flavours() {
         let i = base();
@@ -546,6 +598,35 @@ mod tests {
             with_reb > bare,
             "rebate should add value: {with_reb} > {bare}"
         );
+    }
+
+    /// Hard-coded double-knock-out reference prices from QuantLib 1.42.1's
+    /// `AnalyticDoubleBarrierEngine` (`S=100, σ=20%, T=1y, r_d=5%, r_f=2%`,
+    /// corridor `(85,120)`), for **both** call and put across strikes. The put
+    /// rows are the regression for the Ikeda-Kunitomo sign bug an earlier version
+    /// carried (a spurious outer `φ·sum` negated the put leg, clamping it to zero);
+    /// the in-crate Monte-Carlo cross-check exercised only the call, so the bug was
+    /// invisible until this external reference and the `celnet-golden`
+    /// double-barrier grid were added.
+    #[test]
+    fn double_ko_matches_quantlib_reference() {
+        let i = base();
+        let cases = [
+            (OptionType::Call, 90.0, 2.646_056_291_260),
+            (OptionType::Call, 100.0, 0.897_576_951_965),
+            (OptionType::Call, 110.0, 0.117_517_109_455),
+            (OptionType::Put, 90.0, 0.025_103_294_543),
+            (OptionType::Put, 100.0, 0.573_400_152_430),
+            (OptionType::Put, 110.0, 2.090_116_507_102),
+        ];
+        for &(option, k, reference) in &cases {
+            let dko =
+                double_knock_out_price(&i, DoubleBarrierKnockOut::new(option, k, 85.0, 120.0));
+            assert!(
+                is_close(dko, reference, 1e-6, 1e-8),
+                "DKO {option:?} K={k}: celnet {dko} vs QuantLib {reference}"
+            );
+        }
     }
 
     /// A double-barrier knock-out is non-negative, no greater than the vanilla,

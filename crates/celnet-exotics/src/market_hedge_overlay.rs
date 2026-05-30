@@ -78,8 +78,8 @@ pub struct OverlayResult {
     /// The flat-vol (ATM) analytic price the overlay started from.
     pub flat_vol_price: f64,
     /// The (survival-weighted) Vanna-Volga cost added to it.
-    pub vanna_volga_cost: f64,
-    /// The smile-consistent price `flat_vol_price + vanna_volga_cost`.
+    pub hedge_smile_cost: f64,
+    /// The smile-consistent price `flat_vol_price + hedge_smile_cost`.
     pub smile_price: f64,
 }
 
@@ -104,7 +104,7 @@ pub struct ExoticSensitivities {
 /// These are the "cost of a unit of vanna / volga" the Vanna-Volga method extracts
 /// from the smile: how much the market pays, per unit of benchmark vanna / volga,
 /// over the flat-vol Black-Scholes value. They are derived once per `(pair, tenor)`
-/// from the calibrated smile via [`market_price_of_vanna_volga`].
+/// from the calibrated smile via [`market_price_of_hedge_smile`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MarketCrossPrices {
     /// Market price per unit of vanna (skew / risk-reversal driven).
@@ -148,7 +148,7 @@ fn bench_greeks(forward: f64, strike: f64, vol: f64, t: f64, df_dom: f64) -> Ben
 ///
 /// The result is independent of the exotic — compute it once per slice and reuse.
 #[must_use]
-pub fn market_price_of_vanna_volga<S: Smile>(
+pub fn market_price_of_hedge_smile<S: Smile>(
     smile: &S,
     i: &VanillaInputs,
     put_strike: f64,
@@ -206,7 +206,7 @@ pub fn market_price_of_vanna_volga<S: Smile>(
 ///
 /// `cost = vanna_X · vanna_price + volga_X · volga_price`.
 #[must_use]
-pub fn vanna_volga_cost(x: ExoticSensitivities, market: MarketCrossPrices) -> f64 {
+pub fn hedge_smile_cost(x: ExoticSensitivities, market: MarketCrossPrices) -> f64 {
     x.vanna * market.vanna_price + x.volga * market.volga_price
 }
 
@@ -255,17 +255,17 @@ pub fn exotic_sensitivities_fd<F: Fn(f64, f64) -> f64>(
 /// probability for path-dependent exotics). Returns the breakdown so callers can
 /// audit the correction.
 #[must_use]
-pub fn vanna_volga_overlay(
+pub fn hedge_smile_overlay(
     flat_vol_price: f64,
     x: ExoticSensitivities,
     market: MarketCrossPrices,
     survival: SurvivalWeight,
 ) -> OverlayResult {
-    let raw = vanna_volga_cost(x, market);
+    let raw = hedge_smile_cost(x, market);
     let cost = survival.probability * raw;
     OverlayResult {
         flat_vol_price,
-        vanna_volga_cost: cost,
+        hedge_smile_cost: cost,
         smile_price: flat_vol_price + cost,
     }
 }
@@ -289,7 +289,7 @@ mod tests {
         let f = i.forward();
         // Symmetric 25Δ-ish wings around the forward in log space.
         let (kp, kc) = (f * 0.92, f * 1.08);
-        let market = market_price_of_vanna_volga(&smile, &i, kp, kc);
+        let market = market_price_of_hedge_smile(&smile, &i, kp, kc);
         assert_close!(market.vanna_price, 0.0, 1e-9, 1e-10);
         assert_close!(market.volga_price, 0.0, 1e-9, 1e-10);
 
@@ -297,7 +297,7 @@ mod tests {
             vanna: 0.7,
             volga: -1.3,
         };
-        let r = vanna_volga_overlay(2.5, x, market, SurvivalWeight::EUROPEAN);
+        let r = hedge_smile_overlay(2.5, x, market, SurvivalWeight::EUROPEAN);
         assert_close!(r.smile_price, 2.5, 1e-9, 1e-10);
     }
 
@@ -319,7 +319,7 @@ mod tests {
             call_vol: 0.12,
             atm_vol: 0.10,
         };
-        let market = market_price_of_vanna_volga(&skewed, &i, kp, kc);
+        let market = market_price_of_hedge_smile(&skewed, &i, kp, kc);
         assert!(
             market.vanna_price > 0.0,
             "positive RR ⇒ positive vanna price, got {}",
@@ -330,14 +330,14 @@ mod tests {
             vanna: 1.0,
             volga: 0.0,
         };
-        let up = vanna_volga_overlay(1.0, pos_vanna, market, SurvivalWeight::EUROPEAN);
+        let up = hedge_smile_overlay(1.0, pos_vanna, market, SurvivalWeight::EUROPEAN);
         assert!(up.smile_price > 1.0, "positive-vanna exotic must shift up");
 
         let neg_vanna = ExoticSensitivities {
             vanna: -1.0,
             volga: 0.0,
         };
-        let down = vanna_volga_overlay(1.0, neg_vanna, market, SurvivalWeight::EUROPEAN);
+        let down = hedge_smile_overlay(1.0, neg_vanna, market, SurvivalWeight::EUROPEAN);
         assert!(
             down.smile_price < 1.0,
             "negative-vanna exotic must shift down"
@@ -361,7 +361,7 @@ mod tests {
             call_vol: 0.115,
             atm_vol: 0.10,
         };
-        let market = market_price_of_vanna_volga(&convex, &i, kp, kc);
+        let market = market_price_of_hedge_smile(&convex, &i, kp, kc);
         assert!(
             market.volga_price > 0.0,
             "positive BF ⇒ positive volga price, got {}",
@@ -381,7 +381,7 @@ mod tests {
             vanna: 0.0,
             volga: 2.0,
         };
-        let r = vanna_volga_overlay(1.0, pos_volga, market, SurvivalWeight::EUROPEAN);
+        let r = hedge_smile_overlay(1.0, pos_volga, market, SurvivalWeight::EUROPEAN);
         assert!(r.smile_price > 1.0, "positive-volga exotic must shift up");
     }
 
@@ -399,18 +399,18 @@ mod tests {
             call_vol: 0.12,
             atm_vol: 0.10,
         };
-        let market = market_price_of_vanna_volga(&skewed, &i, kp, kc);
+        let market = market_price_of_hedge_smile(&skewed, &i, kp, kc);
         let x = ExoticSensitivities {
             vanna: 1.0,
             volga: 0.5,
         };
-        let full = vanna_volga_overlay(1.0, x, market, SurvivalWeight::EUROPEAN);
-        let half = vanna_volga_overlay(1.0, x, market, SurvivalWeight::new(0.5));
-        let none = vanna_volga_overlay(1.0, x, market, SurvivalWeight::new(0.0));
-        assert_close!(none.vanna_volga_cost, 0.0, 1e-12, 1e-12);
+        let full = hedge_smile_overlay(1.0, x, market, SurvivalWeight::EUROPEAN);
+        let half = hedge_smile_overlay(1.0, x, market, SurvivalWeight::new(0.5));
+        let none = hedge_smile_overlay(1.0, x, market, SurvivalWeight::new(0.0));
+        assert_close!(none.hedge_smile_cost, 0.0, 1e-12, 1e-12);
         assert_close!(
-            half.vanna_volga_cost,
-            0.5 * full.vanna_volga_cost,
+            half.hedge_smile_cost,
+            0.5 * full.hedge_smile_cost,
             1e-12,
             1e-12
         );
@@ -424,7 +424,7 @@ mod tests {
     }
 
     /// A minimal three-point smile used only by these unit tests (the production
-    /// path consumes `celnet_surface::VannaVolgaSmile` / `VolSurface` through the
+    /// path consumes `celnet_surface::MarketHedgeSmile` / `VolSurface` through the
     /// same [`Smile`] trait). Linear-in-log-strike interpolation suffices here.
     #[derive(Clone, Copy)]
     struct ThreePointSmile {

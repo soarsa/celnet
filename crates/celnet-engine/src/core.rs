@@ -19,10 +19,12 @@
 //! [`MarketState`]: crate::rt::MarketState
 //! [`StateHandle`]: crate::rt::StateHandle
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use celnet_core::Smile;
 use celnet_types::{Greeks, OptionType};
 
-use crate::rt::{MarketState, PriceSnapshot, Seqlock, StateHandle};
+use crate::rt::{MarketState, PriceSnapshot, Seqlock, StateHandle, StateReader};
 
 /// A `Copy`/POD price request flowing edge→core over the SPSC ring.
 ///
@@ -91,6 +93,7 @@ impl PriceResponse {
 #[derive(Debug)]
 pub struct PricingCore {
     state: StateHandle,
+    reader: StateReader,
     top_of_book: Seqlock<PriceSnapshot>,
     priced: u64,
 }
@@ -99,8 +102,11 @@ impl PricingCore {
     /// Construct a core bound to an initial published market state.
     #[must_use]
     pub fn new(initial: MarketState) -> Self {
+        let state = StateHandle::new(initial);
+        let reader = state.reader();
         Self {
-            state: StateHandle::new(initial),
+            state,
+            reader,
             top_of_book: Seqlock::new(PriceSnapshot::default()),
             priced: 0,
         }
@@ -110,6 +116,21 @@ impl PricingCore {
     #[must_use]
     pub fn state(&self) -> &StateHandle {
         &self.state
+    }
+
+    /// A clone of the state handle, so the async **edge** can publish market
+    /// ticks / recalibrations from another thread *concurrently* with the pinned
+    /// core pricing.
+    ///
+    /// [`StateHandle`] is a cheap `Arc`-backed handle (`Clone`), so the returned
+    /// value publishes into the *same* underlying storage the core reads.
+    /// Publication is lock-free and wait-free (`arc-swap`), so a tick landing
+    /// mid-pricing never blocks the core; the core's next [`price`](Self::price)
+    /// loads the new state atomically. This is the production wiring: the edge
+    /// owns this handle, the core owns the `&mut self` pricing path.
+    #[must_use]
+    pub fn shared_state(&self) -> StateHandle {
+        self.state.clone()
     }
 
     /// Read the latest published top-of-book snapshot (lock-free).
@@ -126,14 +147,19 @@ impl PricingCore {
 
     /// Price a single request against the live state — the hot path.
     ///
-    /// **Zero-allocation:** loads the published state (an `Arc` clone — a refcount
-    /// bump, not a heap allocation), evaluates the smile (pure arithmetic), runs
-    /// the closed-form Garman-Kohlhagen greeks, and returns a `Copy`
+    /// **Zero-allocation:** loads the published state via the cached
+    /// [`StateReader`] (a cheap atomic revalidation; a refcount clone at most on
+    /// a tick boundary — never a heap allocation, even under concurrent
+    /// [`StateHandle::publish`]), evaluates the smile (pure arithmetic), runs the
+    /// closed-form Garman-Kohlhagen greeks, and returns a `Copy`
     /// [`PriceResponse`]. No `Vec`, `Box`, or formatting on this path. Also
     /// publishes the result into the top-of-book seqlock.
+    ///
+    /// [`StateHandle::publish`]: crate::rt::StateHandle::publish
+    /// [`StateReader`]: crate::rt::StateReader
     #[must_use]
     pub fn price(&mut self, req: PriceRequest) -> PriceResponse {
-        let st = self.state.load();
+        let st = self.reader.load();
         let forward = st.forward();
         // Smile lookup: the published smile assigns a Black vol to this strike.
         let vol = st.smile.implied_vol(req.strike, forward, st.t).0;
@@ -182,6 +208,61 @@ impl PricingCore {
             }
         }
         done
+    }
+
+    /// Run the busy-poll pricing loop until `stop` is set, then drain once more
+    /// and return — the owned hot-core lifecycle (`docs/ARCHITECTURE.md` §3.3).
+    ///
+    /// This is the steady-state driver of the pinned pricing core: it
+    /// repeatedly [`drain`](Self::drain)s up to `budget` requests per poll from
+    /// `rx`, pushing responses to `tx`, with no allocation, no locking and no
+    /// blocking on the hot path. When a poll finds the request ring empty it
+    /// issues a `spin_loop` hint and re-polls, never parking the core.
+    ///
+    /// # Shutdown always terminates
+    ///
+    /// The loop checks `stop` (a `Relaxed` load — shutdown carries no
+    /// happens-before obligation on priced data, only liveness) once per poll.
+    /// Because every poll either makes bounded progress or observes the empty
+    /// ring and re-checks `stop`, the loop is guaranteed to observe a set `stop`
+    /// within one poll and exit; there is no path that blocks indefinitely. On
+    /// exit it performs one final unbounded-by-`stop` drain so any request the
+    /// edge enqueued *before* signalling shutdown is still priced and answered,
+    /// giving a clean, lossless quiesce. Returns the total number of requests
+    /// priced across the whole run.
+    ///
+    /// The caller signals shutdown by setting `stop` and then joining the thread
+    /// that called `run`; the race-free contract is: edge enqueues all final
+    /// requests, *then* sets `stop`, *then* joins — the final drain observes
+    /// those requests because the ring `push` happens-before the `stop` store on
+    /// the edge thread and the join synchronizes the return.
+    pub fn run(
+        &mut self,
+        rx: &mut rtrb::Consumer<PriceRequest>,
+        tx: &mut rtrb::Producer<PriceResponse>,
+        budget: usize,
+        stop: &AtomicBool,
+    ) -> u64 {
+        let mut total: u64 = 0;
+        while !stop.load(Ordering::Relaxed) {
+            let n = self.drain(rx, tx, budget);
+            total += n as u64;
+            if n == 0 {
+                // Ring was empty (or response ring full): hint the CPU and
+                // re-poll. We never park, so we always re-observe `stop`.
+                std::hint::spin_loop();
+            }
+        }
+        // Final quiesce: price anything enqueued before `stop` was observed.
+        // Bounded by the ring's finite occupancy — `drain` returns 0 once empty.
+        loop {
+            let n = self.drain(rx, tx, budget);
+            total += n as u64;
+            if n == 0 {
+                break;
+            }
+        }
+        total
     }
 }
 
@@ -255,6 +336,79 @@ mod tests {
         // The top-of-book seqlock holds the last priced line.
         let tob = core.top_of_book();
         assert_eq!(tob.request_id, (strikes.len() - 1) as u64);
+    }
+
+    #[test]
+    fn run_drains_then_shuts_down_losslessly() {
+        use std::sync::atomic::AtomicBool;
+        use std::time::{Duration, Instant};
+
+        let st = market_state(1.10, 0.105, 0.015, 0.0035, conv());
+        let mut core = PricingCore::new(st);
+        let (mut req_tx, mut req_rx) = request_ring();
+        let (mut resp_tx, mut resp_rx) = response_ring();
+        let stop = AtomicBool::new(false);
+
+        const N: u64 = 1000;
+
+        // Run the busy-poll core on a scoped thread; the main thread plays the
+        // edge: enqueue all requests, signal stop, then join. The final drain
+        // must price every enqueued request (lossless quiesce).
+        let total = std::thread::scope(|s| {
+            let stop_ref = &stop;
+            let handle = s.spawn(move || core.run(&mut req_rx, &mut resp_tx, 64, stop_ref));
+
+            // Edge enqueues N requests (retrying on a transiently-full ring).
+            for id in 0..N {
+                loop {
+                    if req_tx
+                        .push(PriceRequest::new(id, OptionType::Call, 1.10))
+                        .is_ok()
+                    {
+                        break;
+                    }
+                    std::hint::spin_loop();
+                }
+            }
+            // Signal shutdown only AFTER all requests are enqueued: the push
+            // happens-before the stop store, so the final drain sees them all.
+            stop.store(true, Ordering::Relaxed);
+
+            // Bounded watchdog: join must complete promptly (the loop never
+            // blocks). If it does not, fail loudly rather than hang the suite.
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !handle.is_finished() {
+                assert!(Instant::now() < deadline, "run() failed to terminate");
+                std::hint::spin_loop();
+            }
+            handle.join().expect("core thread joins")
+        });
+
+        // Every request was priced exactly once (lossless).
+        assert_eq!(total, N, "shutdown drain must price every enqueued request");
+
+        // Every response is readable, in order, with matching ids.
+        let mut seen = 0u64;
+        while let Ok(resp) = resp_rx.pop() {
+            assert_eq!(resp.request_id, seen);
+            seen += 1;
+        }
+        assert_eq!(seen, N, "every response must reach the edge");
+    }
+
+    #[test]
+    fn run_terminates_when_stop_already_set() {
+        use std::sync::atomic::AtomicBool;
+
+        // If stop is already set, run() must do a single final drain and return
+        // immediately — never spin forever.
+        let st = market_state(1.10, 0.105, 0.015, 0.0035, conv());
+        let mut core = PricingCore::new(st);
+        let (_req_tx, mut req_rx) = request_ring();
+        let (mut resp_tx, _resp_rx) = response_ring();
+        let stop = AtomicBool::new(true);
+        let total = core.run(&mut req_rx, &mut resp_tx, 64, &stop);
+        assert_eq!(total, 0);
     }
 
     #[test]

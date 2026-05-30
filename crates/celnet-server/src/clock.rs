@@ -10,8 +10,8 @@
 //!
 //! The [`Clock`] is an injectable source so tests can drive deterministic time
 //! (e.g. to force a quote past its validity deadline without sleeping): the
-//! default reads the system clock; a [`Clock::fixed`] returns a frozen instant and
-//! a [`Clock::manual`] advances under explicit control.
+//! default reads the system clock; a [`Clock::manual`] starts at an explicit
+//! instant and advances only under explicit control (it never reads the OS).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
