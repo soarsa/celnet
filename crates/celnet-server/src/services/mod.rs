@@ -9,8 +9,11 @@
 //! * [`pricing`] — `PricingService::Price`: one-shot instrument pricing.
 //! * [`quote`] — `QuoteService`: the RFQ lifecycle (request → quote → accept →
 //!   execution) with client idempotency and a last-look validity window.
-//! * [`stream`] — `StreamService::Stream`: the bidirectional RFS subscription
-//!   (snapshot + sequenced deltas + heartbeat + server-assisted resync).
+//! * [`stream`] — `StreamService::StreamSession`: the multiplexed bidirectional
+//!   RFS session (per-subscription snapshot + sequenced deltas + heartbeat +
+//!   server-assisted resync, in-place modify, and click-to-trade execution).
+//! * [`pin`] — shared `surface_version` pinning: resolve a request's optional
+//!   pinned surface version into the marked vol it prices against.
 //! * [`surface`] — `SurfaceService`: `GetSmile` / `MarkSurface` / `Scenario`.
 //!
 //! Every RPC enters the readiness gate (bumping the in-flight drain counter) and
@@ -21,4 +24,5 @@ pub mod quote;
 pub mod stream;
 pub mod surface;
 
+mod pin;
 mod stream_rx;

@@ -74,16 +74,19 @@ async fn rfs_snapshot_then_sequenced_deltas() {
                 instrument: Some(vanilla_call(1.12)),
                 conventions: Some(wire_conventions()),
                 throttle_nanos: 0,
+                correlation_id: None,
+                surface_version: None,
             })),
         })
         .await
         .unwrap();
 
-        let mut inbound = tokio::time::timeout(STEP_DEADLINE, client.stream(ClientOutbound { rx }))
-            .await
-            .expect("stream opens in time")
-            .expect("stream opens")
-            .into_inner();
+        let mut inbound =
+            tokio::time::timeout(STEP_DEADLINE, client.stream_session(ClientOutbound { rx }))
+                .await
+                .expect("stream opens in time")
+                .expect("stream opens")
+                .into_inner();
 
         // First message: the baseline snapshot at sequence 1 for OUR subscription.
         let snap = match next_msg(&mut inbound).await {
@@ -171,16 +174,19 @@ async fn rfs_resync_replays_missing_sequence() {
                 instrument: Some(vanilla_call(1.10)),
                 conventions: Some(wire_conventions()),
                 throttle_nanos: 0,
+                correlation_id: None,
+                surface_version: None,
             })),
         })
         .await
         .unwrap();
 
-        let mut inbound = tokio::time::timeout(STEP_DEADLINE, client.stream(ClientOutbound { rx }))
-            .await
-            .expect("stream opens in time")
-            .expect("stream opens")
-            .into_inner();
+        let mut inbound =
+            tokio::time::timeout(STEP_DEADLINE, client.stream_session(ClientOutbound { rx }))
+                .await
+                .expect("stream opens in time")
+                .expect("stream opens")
+                .into_inner();
 
         // Consume the snapshot and a few updates to advance the sequence well past 1.
         let mut highest = 0u64;

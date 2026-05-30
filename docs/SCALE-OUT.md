@@ -2,10 +2,39 @@
 
 > Design doc for scaling Celnet to investment-banking-sized portfolios and
 > high-performance counterparty fan-out without violating the §1.2 latency budgets.
-> Governing rule: **scale *around* the hot path, never *through* it.** This is a design
-> document; components marked *build now* are sequenced into the engine/integration crates,
-> components marked *defer* are gated on a measured bottleneck. Crate names match the real
-> 19-crate tree.
+> Governing rule: **scale *around* the hot path, never *through* it.** This is a **design
+> document, not a record of what is built.** §0 states precisely which primitives exist in
+> the tree today vs. which are designed-but-unbuilt. Components marked *build now* are
+> sequenced (planned next); components marked *defer* are gated on a measured bottleneck.
+> Crate names match the real 19-crate tree. Validated against `docs/ARCHITECTURE.md` §1.2
+> NFRs and current (2026) low-latency distributed-pricing literature (sources, end).
+
+---
+
+## 0. Built today vs. designed (no overclaim)
+
+This doc describes the **target** distributed topology. The **single-shard substrate** that
+the fleet layer composes already exists and is validated; the **cross-node fleet layer**
+(router tier, HRW map, replicated log, hot-standby) is **designed, not yet built** — there
+is no `celnet-cluster`/`celnet-router` crate, and no code performs cross-node routing,
+consensus, or partition assignment. The honest split:
+
+| Mechanism | Status in tree | Where |
+|---|---|---|
+| Node-local **whole-`MarketState` snapshot** via `arc-swap` (surface+curves+conventions) | **Built** | `celnet-engine` `rt::StateHandle`/`StateReader` (load path avoids `arc-swap`'s allocating guard) |
+| Node-local **top-of-book** publication via single-writer **seqlock** (small `Copy` snapshot) | **Built** | `celnet-engine` `rt::Seqlock`, `core::PricingCore` |
+| Core→edge **SPSC** ring (hot path stays SPSC) | **Built** (`rtrb`) | `celnet-engine`, `celnet-server` `core_link` |
+| Edge async fan-in/fan-out + per-session stream | **Built** (tokio `mpsc` + bounded broadcast depth 256) | `celnet-server` `services/stream`, `core_link` |
+| Blue-green **live-state handoff** over a hand-rolled little-endian codec | **Built** (not `rkyv`) | `celnet-engine` `handoff` |
+| Multi-source MD aggregation + divergence detection | **Built** | `celnet-integration` |
+| HRW/rendezvous **partition map** + stateless **router tier** | **Designed only** | — (build-now, §12) |
+| Thin **Raft/Aeron-style replicated log** + hot-standby + replay | **Designed only** | — (build-now, §12) |
+| In-proc **LMAX-disruptor SPMC** fan-out ring | **Designed only** (today: tokio broadcast) | — (build-now, §12) |
+| `SO_REUSEPORT` sharded accept + eBPF steering; `io_uring`/XDP tier | **Designed only** (readiness probe references the handoff intent) | — (build-now, §12) |
+| DPDK/RDMA multicast tier | **Deferred** (ADR-gated on measured bottleneck) | — (§12) |
+
+Everything below the §0 line is the **design**; treat "shard", "router", and "log" as the
+target topology, not deployed components.
 
 ---
 
@@ -51,6 +80,25 @@ blows the SLA. Distribution belongs *around* shards and via *node-local* snapsho
 split a tenant's cross-pair risk across shards. Joint portfolio Greeks / IPV run **off the
 hot path** as a separate fan-in, not by co-locating everything.
 
+**Concrete capacity model (worked):** the partition unit is the **(ccy-pair → optional book/
+tenant sub-key)** pair; the routing key is `hrw(node_i, partition_key)` → argmax node. Sizing
+is driven by the §1.2 per-core budgets:
+
+- *Liquid universe:* ~28 G10 pairs × O(10–20) standard tenors. Surface rebuild is
+  per-pair-all-tenors at p99 ≤ 150 µs, so a single core comfortably owns several **cold/warm**
+  pairs (rebuilds are event-driven, not continuous).
+- *Hot pairs:* EURUSD/USDJPY/GBPUSD can each saturate a core on quote throughput
+  (≥ 1M updates/s/core ceiling). These get a **dedicated shard**, and if a single pair still
+  exceeds one core it is **sub-sharded by book/tenant** (the secondary key), with risk-netted
+  books pinned together.
+- *Tenant fan-out:* a large IB tenant's book set is spread for load but cross-pair-netted
+  books are co-located on one shard where netting matters; everything else load-balances.
+- *Scale-out shape:* capacity is added by **adding shards** (more nodes), each owning a
+  disjoint HRW slice; adding/removing a node reshuffles only ~`1/N` of partitions (HRW
+  property), and the partition map is versioned + gossiped so routers converge without a
+  global token-ring recompute. This is **horizontal, not vertical** — a single shard never
+  has to hold the whole IB portfolio.
+
 ---
 
 ## 3. Stateless router tier
@@ -69,13 +117,21 @@ Shared state (the arbitrage-free surface + curves) is distributed as an **event-
 replicated log**, fanned out to a **node-local** surface cache per shard — never read remotely
 per price:
 
-- Each pricer reads a lock-free **`arc-swap`** snapshot of the latest surface; the
-  market-data consumer thread swaps in new surfaces atomically. Readers never block →
-  near-zero staleness, zero cross-node read on the hot path, cache-coherent within the node.
+- Each pricer reads a lock-free **`arc-swap`** snapshot of the whole live `MarketState`
+  (surface + curves + conventions); the market-data consumer thread `publish()`es a new
+  state atomically. This is **built today** in `celnet-engine` `rt::StateHandle`: the hot
+  read path deliberately avoids `arc-swap`'s cheap-but-allocating load guard so it stays
+  alloc-free even under concurrent publishes. Readers never block → near-zero staleness,
+  zero cross-node read on the hot path, cache-coherent within the node. The small `Copy`
+  top-of-book is published separately through a **single-writer seqlock** (`rt::Seqlock`),
+  also built.
 - Every quote/tick is tagged with the **surface epoch** it was priced against, so a price is
   always attributable to an exact surface version (deterministic replay).
 - This reuses Celnet's existing `arc-swap` hot model-swap mechanism (the same primitive that
   publishes a new model set during a hot upgrade).
+- **Fleet distribution of the log feeding these node-local snapshots is the designed-only
+  part** (§0): today the snapshot is fed in-process by `celnet-integration`'s aggregator,
+  not by a cross-node replicated log.
 
 **Staleness vs throughput:** aggressive conflation lowers load but can serve a quote against a
 slightly stale surface during a fast move. Mitigation: bound and measure publish-to-snapshot
@@ -86,18 +142,35 @@ update used for booking.
 
 ## 5. Market-data fan-out & counterparty streaming
 
-- **In-process SPMC fan-out per shard** (LMAX-Disruptor pattern): one producer (the pricing
-  core) publishes every event; many consumer threads (one per counterparty session group)
-  read the ring with batch consumption and no per-consumer queue contention. This is the
-  pattern `celnet-integration` bridges to for the Celer in-proc distributor; mature Rust
-  implementations exist (`disruptor`-style SPMC, broadcast rings). Note: a simple
+- **In-process SPMC fan-out per shard** (LMAX-Disruptor pattern, *designed*): one producer
+  (the pricing core) publishes every event; many consumer threads (one per counterparty
+  session group) read the ring with batch consumption and no per-consumer queue contention.
+  Mature Rust implementations exist (`disruptor`-style SPMC, broadcast rings). Note: a simple
   `crossbeam` SPSC/MPSC can beat the disruptor for trivial cases — the disruptor's win is
   multi-consumer fan-out with batch publish, which is exactly the quoting use case.
-- **Network edge:** default to `SO_REUSEPORT` sharded accept + eBPF steering (already used for
-  blue-green graceful handoff) with conflation. Adopt `io_uring`/XDP as the next performance
-  tier. Reserve full **DPDK** kernel-bypass for a dedicated ultra-low-latency multicast tier
-  **only after** a single shard's edge fan-out is measured as the bottleneck — recorded as an
-  ADR with the `io_uring` fallback kept first-class (mirroring the wgpu-vs-CUDA precedent).
+  **What is built today** (§0): the hot path is the `rtrb` **SPSC** core→edge ring, and the
+  async edge fans out to per-session subscribers with a tokio `mpsc` + a bounded **broadcast
+  depth 256**. The disruptor SPMC ring is the planned upgrade when measured fan-out fan-degree
+  per shard makes the broadcast the bottleneck — it does **not** exist in the tree yet.
+- **Network edge:** default to `SO_REUSEPORT` sharded accept + eBPF steering (the intended
+  blue-green graceful-handoff mechanism; the readiness probe in `celnet-server` is wired for
+  it, the socket-level handoff itself is *designed*) with conflation. Adopt `io_uring`/XDP as
+  the next performance tier — current (2026) measurements put `io_uring` as a "hybrid bypass"
+  (headers still through the kernel TCP stack) that is closing on, but not yet matching, full
+  DPDK bypass, while being far easier to operate. Reserve full **DPDK** kernel-bypass for a
+  dedicated ultra-low-latency multicast tier **only after** a single shard's edge fan-out is
+  measured as the bottleneck — recorded as an ADR with the `io_uring` fallback kept
+  first-class (mirroring the wgpu-vs-CUDA precedent).
+- **Fan-out to *many* counterparties (cloud/many-receiver tier, designed):** for 100s–1000s of
+  streaming counterparties, point-to-point unicast from one shard does not scale linearly and
+  blows tail fairness. The target is a **proxy multicast tree** (Jasper, arXiv:2402.09527):
+  fan-out `F=10`, depth `D = ⌈log₁₀ N⌉`, optional **VM hedging** (each proxy takes the
+  first-arriving of redundant parent/sibling copies, `H=2`) to cut spatial latency variance,
+  and **clock-synced fair delivery** (Huygens-style deadlines) so all counterparties see a
+  quote within a bounded window — preventing a structural last-look advantage. Reported scale:
+  median ~129 µs to 100 receivers, ~238 µs to 1000 receivers, 84–93% perfect-fairness
+  probability, on a DPDK/eBPF datapath. This is the **defer/ADR tier**, gated on a measured
+  single-shard fan-out limit; the OSS-first datapath (`io_uring`/eBPF) stays the fallback.
 - **One contract, two transports:** the typed gRPC bidi stream is the primary low-latency
   path; the WebSocket mirror is the firewall-friendly transport. Both serialize the **same**
   single current contract (see `docs/API-CLIENTS.md`).
@@ -115,8 +188,10 @@ stream is the one exception: it is lossless and back-pressures the edge, never t
 
 ## 7. Blue-green across a fleet
 
-Celnet's per-shard zero-downtime upgrade (`SO_REUSEPORT` socket handoff + `rkyv` zero-copy
-live-state transfer + `arc-swap` model swap + SHADOW-style pre-warm) is preserved per shard.
+Celnet's per-shard zero-downtime upgrade (`SO_REUSEPORT` socket handoff *(designed)* + a
+**built** little-endian live-state handoff codec in `celnet-engine` `handoff` — **not `rkyv`**;
+zero-copy `rkyv` is a possible future optimization, not the current mechanism — plus the
+built `arc-swap` model swap and a SHADOW-style pre-warm) is preserved per shard.
 The distributed layer adds a **router-coordinated rolling upgrade**: drain and cut over **one
 shard at a time** while hot standbys cover, preserving zero dropped connections and zero
 in-flight quote/order loss across the fleet. There is **no mixed-version window** — the wire
@@ -185,22 +260,33 @@ granularity of shards (capacity + HA) and the market-data/event log (consistency
 
 ## 11. Fleet-level SLOs
 
-Beyond the per-shard §1.2 NFRs, the fleet adds measured (HdrHistogram) targets:
+Beyond the per-shard §1.2 NFRs, the fleet adds measured (HdrHistogram) acceptance criteria.
+Each row is a **benchmark to write before declaring the fleet layer built** — none are
+asserted, all are measured against committed baselines (mirroring §1.2's discipline):
 
-- cross-shard routing overhead budget (router add ≪ in-shard price);
-- surface-staleness bound (publish-to-local-snapshot lag);
-- failover time bound (~2× election timeout);
-- conflation latency for slow subscribers.
+| SLO | Acceptance target | How to prove (benchmark) |
+|---|---|---|
+| In-shard price (regression guard) | p50 ≤ 2 µs / p99 ≤ 10 µs (= §1.2, unchanged by fleet) | `celnet-bench` divan + `iai-callgrind` instruction-count gate; must not regress when fleet code is linked in |
+| Cross-shard routing overhead | router add p99 ≤ 25 µs (≤ ~10× an in-shard price; **never** on the critical price path — routing is connection-setup/subscription, not per-tick) | bench the router hop in isolation; assert the per-tick path never crosses it (architectural test, not just latency) |
+| Surface publish→local-snapshot lag | p99 ≤ 150 µs (= surface-rebuild budget; staleness ≤ one rebuild) | timestamp at log append vs. `StateHandle::publish` visible to a reader; HdrHistogram in `celnet-engine` test harness |
+| Sustained per-shard throughput | ≥ 1M price updates/s/core (= §1.2) at the above tail under fan-out load | load-gen N subscribers, measure producer steady-state under conflation |
+| Many-counterparty fan-out tail | bounded delivery window across all subscribers (target: < quote-validity window) at 100/1000 subs | Jasper-style tree bench; record per-receiver delivery-time spread + fairness probability |
+| Conflation correctness for slow subs | a slow subscriber **never** back-pressures the core (last-value wins; no unbounded queue) | inject a stalled consumer; assert core throughput + p99 unchanged and memory bounded |
+| Failover time | ≤ ~2× election timeout, zero in-flight order loss | kill a primary under load; measure standby takeover + assert replay reproduces bit-identical prices via the f64 oracle |
+| Fleet rolling upgrade | zero dropped connections / zero in-flight quote loss, one shard at a time, single uniform contract | drain+cutover one shard under live streams; assert no connection reset, no quote gap |
 
-These should be appended to `docs/ARCHITECTURE.md` §1.2 when the fleet layer is built.
+These rows should be appended to `docs/ARCHITECTURE.md` §1.2 **when** the fleet layer is
+built — not before, to avoid documenting unmeasured targets as guarantees.
 
 ---
 
 ## 12. Build now vs defer
 
-- **Build now:** HRW partitioner + versioned partition map; stateless shard router; per-shard
-  node-local surface snapshot (`arc-swap`) fed by a replicated MD log; in-proc SPMC fan-out
-  with conflation; hot-standby shard + deterministic replay from the log.
+- **Build now** (planned next — *none of these exist in the tree yet*, see §0; the only piece
+  already built is the per-shard node-local `arc-swap`/seqlock snapshot substrate): HRW
+  partitioner + versioned partition map; stateless shard router; the **replicated MD log**
+  feeding the (already-built) node-local snapshot; in-proc SPMC fan-out with conflation;
+  hot-standby shard + deterministic replay from the log.
 - **Defer (gate on measured single-shard limits):** full DPDK multicast tier; RDMA cross-node
   fabric; dynamic cluster membership; any cross-node distribution of a single option's pricing.
 
@@ -227,8 +313,16 @@ These should be appended to `docs/ARCHITECTURE.md` §1.2 when the fleet layer is
 
 ---
 
-*Sources: `docs/_research/api-obs-scale.json` (scaling topic); `docs/ARCHITECTURE.md` §1.2/§5;
-`docs/OBSERVABILITY.md`; `docs/API-CLIENTS.md`. Crate references corrected to the real tree
-(`celnet-engine`/`celnet-integration`; there is no `celnet-distributor`), and the N/N-1
-wire-compat phrasing replaced with the single-current-contract blue-green model per CLAUDE.md
-rule 9.*
+*Sources — internal: `docs/_research/api-obs-scale.json` (scaling topic);
+`docs/ARCHITECTURE.md` §1.2/§5; `docs/OBSERVABILITY.md`; `docs/API-CLIENTS.md`; and a
+read-only audit of the tree (`celnet-engine` `rt`/`core`/`handoff`, `celnet-server`
+`core_link`/`services/stream`, `celnet-integration`) to fix overclaims — §0 now separates
+built vs. designed, the §7 handoff is corrected from `rkyv` to the built little-endian codec,
+and the §5 fan-out notes the built tokio-broadcast reality vs. the designed disruptor SPMC.
+External (2026): rendezvous/HRW sharding for shard-key→node assignment (chaotic.land,
+*Data Sharding Algorithms*); DPDK vs io_uring vs Linux-stack packet-processing comparison
+(Linköping Univ., diva2:1789103) and io_uring "hybrid bypass" trajectory; Jasper — scalable
+fair multicast for cloud financial exchanges (arXiv:2402.09527) for the many-counterparty
+proxy-tree fan-out tier (F=10, D=⌈log₁₀N⌉, VM hedging, Huygens clock-sync fairness,
+129–238 µs to 100–1000 receivers). The N/N-1 wire-compat phrasing was previously replaced
+with the single-current-contract blue-green model per CLAUDE.md rule 9.*

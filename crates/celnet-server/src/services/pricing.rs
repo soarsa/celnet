@@ -19,18 +19,21 @@ use tonic::{Request, Response, Status};
 
 use crate::pricer::{ConventionSet, price_instrument};
 use crate::readiness::ReadinessGate;
+use crate::services::pin::{PinnedVol, resolve_pinned_vol};
+use crate::surface_book::SurfaceBook;
 
 /// The one-shot pricing service over the readiness gate.
 #[derive(Debug)]
 pub struct PricingEdge {
     gate: Arc<ReadinessGate>,
+    surface_book: Arc<SurfaceBook>,
 }
 
 impl PricingEdge {
     /// Construct the pricing service.
     #[must_use]
-    pub fn new(gate: Arc<ReadinessGate>) -> Self {
-        Self { gate }
+    pub fn new(gate: Arc<ReadinessGate>, surface_book: Arc<SurfaceBook>) -> Self {
+        Self { gate, surface_book }
     }
 
     fn require_ready(&self) -> Result<(), Status> {
@@ -66,7 +69,20 @@ impl PricingService for PricingEdge {
         let conv = ConventionSet::decode(&wire_conv)
             .map_err(|e| Status::invalid_argument(e.to_string()))?;
 
-        let priced = price_instrument(&instrument, &market, &conv)
+        // Resolve the optional pinned `surface_version`: an honoured pin prices
+        // against the marked surface's vol and is echoed on the reply; an unknown
+        // pinned version is refused (the pin cannot be honoured).
+        let PinnedVol {
+            market: effective_market,
+            echo_version,
+        } = resolve_pinned_vol(
+            &self.surface_book,
+            req.surface_version,
+            &instrument,
+            &market,
+        )?;
+
+        let priced = price_instrument(&instrument, &effective_market, &conv)
             .map_err(|e| Status::invalid_argument(e.to_string()))?;
 
         Ok(Response::new(PriceResponse {
@@ -74,6 +90,8 @@ impl PricingService for PricingEdge {
             greeks: Some(priced.greeks.into()),
             resolved_strike: priced.resolved_strike,
             conventions: Some(wire_conv),
+            correlation_id: req.correlation_id,
+            surface_version: echo_version,
         }))
     }
 }

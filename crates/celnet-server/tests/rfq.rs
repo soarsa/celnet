@@ -40,6 +40,8 @@ async fn rfq_quote_accept_matches_direct_price() {
             idempotency_key: "rfq-key-001".to_owned(),
             instrument: Some(vanilla_call(strike)),
             conventions: Some(wire_conventions()),
+            correlation_id: None,
+            surface_version: None,
         };
         let quote = tokio::time::timeout(STEP_DEADLINE, client.request_quote(req))
             .await
@@ -125,6 +127,8 @@ async fn rfq_idempotent_retry_returns_same_quote_and_execution() {
             idempotency_key: "dedup-42".to_owned(),
             instrument: Some(vanilla_call(1.10)),
             conventions: Some(wire_conventions()),
+            correlation_id: None,
+            surface_version: None,
         };
 
         let first = tokio::time::timeout(STEP_DEADLINE, client.request_quote(req()))
@@ -197,6 +201,8 @@ async fn rfq_accept_after_validity_is_rejected() {
                 idempotency_key: "expiring".to_owned(),
                 instrument: Some(vanilla_call(1.10)),
                 conventions: Some(wire_conventions()),
+                correlation_id: None,
+                surface_version: None,
             }),
         )
         .await
@@ -249,6 +255,8 @@ async fn rfq_idempotency_key_collision_is_rejected() {
                 idempotency_key: "collide".to_owned(),
                 instrument: Some(vanilla_call(1.10)),
                 conventions: Some(wire_conventions()),
+                correlation_id: None,
+                surface_version: None,
             }),
         )
         .await
@@ -263,6 +271,8 @@ async fn rfq_idempotency_key_collision_is_rejected() {
                 idempotency_key: "collide".to_owned(),
                 instrument: Some(vanilla_call(1.10)),
                 conventions: Some(wire_conventions()),
+                correlation_id: None,
+                surface_version: None,
             }),
         )
         .await
@@ -283,6 +293,8 @@ async fn rfq_idempotency_key_collision_is_rejected() {
                 idempotency_key: "collide".to_owned(),
                 instrument: Some(vanilla_call(1.20)),
                 conventions: Some(wire_conventions()),
+                correlation_id: None,
+                surface_version: None,
             }),
         )
         .await
@@ -322,6 +334,8 @@ async fn rfq_accept_requires_originating_idempotency_key() {
                 idempotency_key: "owner-key-xyz".to_owned(),
                 instrument: Some(vanilla_call(1.10)),
                 conventions: Some(wire_conventions()),
+                correlation_id: None,
+                surface_version: None,
             }),
         )
         .await
@@ -400,6 +414,8 @@ async fn rfq_accept_retry_side_flip_is_refused() {
                 idempotency_key: "flip-key".to_owned(),
                 instrument: Some(vanilla_call(1.10)),
                 conventions: Some(wire_conventions()),
+                correlation_id: None,
+                surface_version: None,
             }),
         )
         .await
@@ -476,6 +492,8 @@ async fn rfq_quote_ids_are_unguessable() {
             idempotency_key: k.to_owned(),
             instrument: Some(vanilla_call(strike)),
             conventions: Some(wire_conventions()),
+            correlation_id: None,
+            surface_version: None,
         };
         let a = tokio::time::timeout(STEP_DEADLINE, client.request_quote(mk("a", 1.10)))
             .await
@@ -525,6 +543,8 @@ async fn rfq_reject_returns_typed_ack_and_blocks_accept() {
                 idempotency_key: "reject-me".to_owned(),
                 instrument: Some(vanilla_call(1.11)),
                 conventions: Some(wire_conventions()),
+                correlation_id: None,
+                surface_version: None,
             }),
         )
         .await

@@ -39,6 +39,8 @@ async fn pricing_rejected_until_ready_then_succeeds() {
             instrument: Some(vanilla_call(1.10)),
             market: Some(m),
             conventions: Some(wire_conventions()),
+            correlation_id: None,
+            surface_version: None,
         };
 
         let status = tokio::time::timeout(STEP_DEADLINE, client.price(req()))

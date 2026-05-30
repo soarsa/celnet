@@ -327,6 +327,32 @@ message TwoWayPrice {
   double offer = 2;
 }
 
+// A short-lived click-to-trade token stamped on a streamed price line so a
+// trader can execute *that exact streamed price* without a separate RFQ
+// round-trip (the RFS "click on the stream" workflow). The token binds a
+// specific (subscription, sequence, side, premium) to a bounded validity
+// window; an `Execute` carrying the token within the window books at the
+// stamped price, eliminating the price-it-then-re-request race that a separate
+// RequestQuote→AcceptQuote round-trip introduces. After `valid_until_nanos` the
+// token is dead and an `Execute` is rejected as expired (last-look semantics
+// identical to the RFQ `valid_until` deadline).
+//
+// A streamed `TwoWayPrice` carries two tokens — one to *sell* at the bid and
+// one to *buy* at the offer — so a click on either side of the market executes
+// exactly that side's stamped premium with no ambiguity.
+message TradableToken {
+  // The opaque server-minted token authenticating a click-to-trade execution.
+  uint64 token = 1;
+  // The side this token executes: BUY lifts the offer, SELL hits the bid.
+  Side side = 2;
+  // The premium this token books at (the bid for a SELL, the offer for a BUY),
+  // in the stream's `Conventions.premium_style` units.
+  double premium = 3;
+  // Token validity deadline, nanoseconds since the Unix epoch (UTC). An
+  // `Execute` after this instant is rejected as expired.
+  int64 valid_until_nanos = 4;
+}
+
 // ===========================================================================
 // instrument — the unified `Instrument` model every workflow speaks
 // ===========================================================================
@@ -483,6 +509,17 @@ message QuoteRequest {
   Instrument instrument = 2;
   // The trade conventions the quote should be expressed under.
   Conventions conventions = 3;
+  // Optional caller correlation id (an opaque client trace/blotter key), echoed
+  // verbatim on the resulting `Quote` so a client can join the asynchronous
+  // reply to its originating request without depending on the server-assigned
+  // `quote_id`. Presence-tracked: absent ⇒ no correlation requested.
+  optional uint64 correlation_id = 4;
+  // Optional marked-surface version to price against, so the quote is
+  // reproducibly tied to a specific surface mark (the version a
+  // `MarkSurfaceResponse` assigned). Presence-tracked: absent ⇒ the engine
+  // prices against its current live mark. This is a *data* field selecting a
+  // surface, NOT an API version (the contract itself is unversioned, rule 9).
+  optional uint64 surface_version = 5;
 }
 
 // A tradable two-way quote returned for a `QuoteRequest`.
@@ -504,6 +541,13 @@ message Quote {
   // Quote validity deadline (last-look window), nanoseconds since the Unix
   // epoch (UTC). An accept after this instant is rejected as expired.
   int64 valid_until_nanos = 8;
+  // Echo of the originating `QuoteRequest.correlation_id`, if one was supplied
+  // (presence-tracked), so a client joins this reply to its request.
+  optional uint64 correlation_id = 9;
+  // The marked-surface version this quote was priced against (presence-tracked):
+  // the requested `QuoteRequest.surface_version` if one was supplied, else the
+  // live mark the engine resolved. A *data* field, not an API version.
+  optional uint64 surface_version = 10;
 }
 
 // A client acceptance of a previously issued `Quote`.
@@ -563,10 +607,15 @@ message SubscriptionId {
   uint64 value = 1;
 }
 
-// Open a request-for-stream on a specific instrument: the server replies with a
-// `Snapshot` then a sequence of `Update` deltas + `Heartbeat`s until torn down.
+// Open a request-for-stream on a specific instrument *within a multiplexed
+// session*: one bidirectional `StreamSession` carries many concurrent
+// subscriptions, each keyed by its own `SubscriptionId`, so a blotter watching
+// hundreds of structures uses a single connection rather than one gRPC stream
+// per line. The server replies with a `Snapshot` then a sequence of `Update`
+// deltas + `Heartbeat`s for this subscription until it is torn down.
 message Subscribe {
-  // The client-assigned subscription id this stream is keyed on.
+  // The client-assigned subscription id this stream is keyed on (unique within
+  // the multiplexed session).
   SubscriptionId subscription = 1;
   // The instrument to stream a two-way market for.
   Instrument instrument = 2;
@@ -575,9 +624,39 @@ message Subscribe {
   // A client throttle hint: minimum nanoseconds between updates the client
   // wants (the server conflates deltas to honour it). 0 = no throttling.
   uint64 throttle_nanos = 4;
+  // Optional caller correlation id, echoed on this subscription's `Snapshot`
+  // (presence-tracked): a blotter joins each opened line to the request that
+  // opened it without depending on the `SubscriptionId` alone. Absent ⇒ none.
+  optional uint64 correlation_id = 5;
+  // Optional marked-surface version to stream against, so the streamed prices
+  // are reproducibly tied to a specific surface mark. Presence-tracked: absent
+  // ⇒ the engine streams against its current live mark and re-marks roll the
+  // stream forward. A *data* field selecting a surface, NOT an API version.
+  optional uint64 surface_version = 6;
 }
 
-// Tear down a previously opened subscription.
+// Modify a live subscription *in place* within the multiplexed session: change
+// the streamed structure (e.g. roll the strike/tenor or switch the two-way
+// notional), the conventions, the throttle hint, or the pinned surface version
+// without tearing the subscription down and re-opening it. The server answers a
+// `Modify` with a fresh `Snapshot` at the next sequence number carrying the new
+// terms, so the client rebaselines exactly as it does on `Subscribe`/`Resync`.
+message Modify {
+  // The live subscription to modify (must already be open in this session).
+  SubscriptionId subscription = 1;
+  // The new instrument to stream (replaces the prior structure wholesale).
+  Instrument instrument = 2;
+  // The new conventions the streamed prices are expressed under.
+  Conventions conventions = 3;
+  // The new client throttle hint (minimum nanoseconds between updates).
+  uint64 throttle_nanos = 4;
+  // Optional new pinned marked-surface version (presence-tracked): absent ⇒
+  // unpin and follow the live mark. A *data* field, not an API version.
+  optional uint64 surface_version = 5;
+}
+
+// Tear down a previously opened subscription (the rest of the multiplexed
+// session's subscriptions are unaffected).
 message Unsubscribe {
   // The subscription to close.
   SubscriptionId subscription = 1;
@@ -624,8 +703,20 @@ message Snapshot {
   Conventions conventions = 6;
   // The strike resolved (if the subscription used a delta/solve).
   double resolved_strike = 7;
+  // The click-to-trade tokens for this line: one to SELL at the bid and one to
+  // BUY at the offer, each bound to (subscription, sequence) and bounded by its
+  // own `valid_until_nanos`. A client clicks a side and `Execute`s its token to
+  // book exactly the stamped premium. Empty ⇒ the line is indicative-only.
+  repeated TradableToken tradable = 8;
+  // The marked-surface version these prices were computed against
+  // (presence-tracked): the subscription's pinned version, else the live mark
+  // the engine resolved. A *data* field, not an API version.
+  optional uint64 surface_version = 9;
+  // Echo of the opening `Subscribe.correlation_id`, if one was supplied
+  // (presence-tracked), so a blotter joins this line to its open request.
+  optional uint64 correlation_id = 10;
   // Snapshot time, nanoseconds since the Unix epoch (UTC).
-  int64 epoch_nanos = 8;
+  int64 epoch_nanos = 11;
 }
 
 // A sequenced delta update on a streamed instrument. Carries the changed
@@ -642,8 +733,15 @@ message Update {
   Greeks greeks = 4;
   // The updated instrument vol (absolute).
   double vol = 5;
+  // The refreshed click-to-trade tokens for this sequence (SELL@bid, BUY@offer):
+  // a new sequence mints new tokens and retires the prior ones, so a click
+  // always executes the *current* streamed premium. Empty ⇒ indicative-only.
+  repeated TradableToken tradable = 6;
+  // The marked-surface version these prices were computed against
+  // (presence-tracked). A *data* field, not an API version.
+  optional uint64 surface_version = 7;
   // Update time, nanoseconds since the Unix epoch (UTC).
-  int64 epoch_nanos = 6;
+  int64 epoch_nanos = 8;
 }
 
 // The server signals a subscription was dropped (e.g. slow consumer lagged the
@@ -667,22 +765,92 @@ message StreamEnd {
   Reason reason = 2;
 }
 
-// The client→server message on the bidirectional RFS stream. Exactly one set.
+// Click-to-trade off the stream: book *exactly* a streamed price line by
+// presenting the `TradableToken` the server stamped on the `Snapshot`/`Update`
+// the trader clicked. The token already binds the side and premium, so an
+// `Execute` needs no re-pricing round-trip; the server validates the token is
+// live (within its `valid_until_nanos`) and books, replying with an `Executed`
+// on success or a `StreamReject` if the token is expired/unknown (last-look).
+message Execute {
+  // The subscription the clicked line belongs to.
+  SubscriptionId subscription = 1;
+  // The opaque token from the clicked line's `TradableToken` (carries side and
+  // premium), authenticating the execution at the stamped price.
+  uint64 token = 2;
+  // A client idempotency token (e.g. a UUID): an `Execute` retry carrying the
+  // same key returns the same `Executed` rather than double-booking.
+  string idempotency_key = 3;
+  // Optional caller correlation id, echoed on the `Executed`/`StreamReject`
+  // (presence-tracked) so a blotter joins the booking to its click.
+  optional uint64 correlation_id = 4;
+}
+
+// The booking confirmation for a successful click-to-trade `Execute`.
+message Executed {
+  // The subscription the executed line belonged to.
+  SubscriptionId subscription = 1;
+  // The token that was presented and booked.
+  uint64 token = 2;
+  // Server-assigned execution / booking identifier.
+  uint64 execution_id = 3;
+  // The side actually traded (BUY lifted the offer, SELL hit the bid).
+  Side side = 4;
+  // The premium booked (the token's stamped premium), in the stream's
+  // `Conventions.premium_style` units.
+  double traded_premium = 5;
+  // Echo of the originating `Execute.correlation_id`, if supplied.
+  optional uint64 correlation_id = 6;
+  // Booking time, nanoseconds since the Unix epoch (UTC).
+  int64 epoch_nanos = 7;
+}
+
+// The server declines a click-to-trade `Execute` (the token expired, was
+// unknown, or had already been consumed). A reject never books a trade.
+message StreamReject {
+  // The subscription the rejected `Execute` referenced.
+  SubscriptionId subscription = 1;
+  // The token that was presented and declined.
+  uint64 token = 2;
+  // Why the execution was declined.
+  enum Reason {
+    // The token's `valid_until_nanos` had passed when the Execute arrived.
+    REASON_EXPIRED = 0;
+    // The token did not match any live stamped line for this subscription.
+    REASON_UNKNOWN_TOKEN = 1;
+    // The token was already consumed by a prior accepted Execute.
+    REASON_ALREADY_CONSUMED = 2;
+  }
+  // The reason the execution was declined.
+  Reason reason = 3;
+  // Echo of the originating `Execute.correlation_id`, if supplied.
+  optional uint64 correlation_id = 4;
+  // Reject time, nanoseconds since the Unix epoch (UTC).
+  int64 epoch_nanos = 5;
+}
+
+// The client→server message on the multiplexed bidirectional `StreamSession`.
+// Exactly one is set. One session carries control + click-to-trade for many
+// subscriptions, each addressed by its `SubscriptionId`.
 message ClientStreamMessage {
   // The carried client control message.
   oneof message {
     // Open a subscription.
     Subscribe subscribe = 1;
+    // Modify a live subscription in place (re-baselines with a fresh Snapshot).
+    Modify modify = 2;
     // Close a subscription.
-    Unsubscribe unsubscribe = 2;
+    Unsubscribe unsubscribe = 3;
     // Request a server-assisted resync after a detected gap.
-    Resync resync = 3;
+    Resync resync = 4;
+    // Click-to-trade: book a streamed line by its stamped token.
+    Execute execute = 5;
     // Client liveness heartbeat.
-    Heartbeat heartbeat = 4;
+    Heartbeat heartbeat = 6;
   }
 }
 
-// The server→client message on the bidirectional RFS stream. Exactly one set.
+// The server→client message on the multiplexed bidirectional `StreamSession`.
+// Exactly one is set.
 message ServerStreamMessage {
   // The carried server stream message.
   oneof message {
@@ -694,6 +862,10 @@ message ServerStreamMessage {
     Heartbeat heartbeat = 3;
     // A subscription ended (lag/drain/teardown/expiry).
     StreamEnd stream_end = 4;
+    // A click-to-trade `Execute` booked successfully.
+    Executed executed = 5;
+    // A click-to-trade `Execute` was declined (expired/unknown/consumed token).
+    StreamReject stream_reject = 6;
   }
 }
 
@@ -818,6 +990,11 @@ message ShockAxis {
     FACTOR_RATE_DOM = 2;
     // Shock the foreign rate.
     FACTOR_RATE_FOR = 3;
+    // Roll calendar time forward (theta roll): each step is a number of years
+    // subtracted from time-to-expiry, holding the market still, so a desk sees
+    // the book's value/Greeks decay overnight and over the weekend. Always an
+    // absolute (additive) shock to the year fraction; `relative` is ignored.
+    FACTOR_TIME = 4;
   }
   // The risk factor swept by this axis.
   Factor factor = 1;
@@ -827,8 +1004,24 @@ message ShockAxis {
   repeated double steps = 3;
 }
 
+// A request for the book-shaped risk decomposition (bucketed vega, cross-gamma,
+// theta roll). Attached to a `ScenarioRequest` so a desk gets the shock grid and
+// the hedge-shaped risk in one round-trip. Each repeated field is independently
+// optional: empty ⇒ that part of the decomposition is not computed.
+message RiskBucketRequest {
+  // The (tenor, delta) pillars to report bucketed vega for. Each pillar's
+  // `vega` field is ignored on the request; the tenor/delta select the bucket.
+  repeated VegaBucket vega_pillars = 1;
+  // The factor pairs to report cross-gamma for; each pair must name two
+  // distinct factors.
+  repeated CrossGamma cross_gamma_pairs = 2;
+  // The horizons (years rolled forward) to report the theta roll over.
+  repeated double roll_horizons_years = 3;
+}
+
 // A scenario / what-if request: reprice an instrument across the Cartesian
-// product of one or more shock axes.
+// product of one or more shock axes, optionally with the book-shaped risk
+// decomposition.
 message ScenarioRequest {
   // The instrument to reprice under shocks.
   Instrument instrument = 1;
@@ -838,6 +1031,13 @@ message ScenarioRequest {
   Conventions conventions = 3;
   // The shock axes; the grid is their Cartesian product.
   repeated ShockAxis axes = 4;
+  // The base year fraction to expiry, the anchor a `FACTOR_TIME` theta-roll axis
+  // and the `risk_buckets` theta roll decay from. Mirrors `Instrument.expiry_years`
+  // and is authoritative for the time-roll arithmetic.
+  double expiry_years = 5;
+  // Optional book-shaped risk decomposition to compute at the base market
+  // (presence-tracked): absent ⇒ only the shock grid is returned.
+  optional RiskBucketRequest risk_buckets = 6;
 }
 
 // One repriced node of a scenario grid.
@@ -848,12 +1048,64 @@ message ScenarioPoint {
   MarketContext shocked_market = 2;
   // The full Greek set at this node.
   Greeks greeks = 3;
+  // The year fraction to expiry this node was priced at: the base expiry minus
+  // any applied `FACTOR_TIME` (theta-roll) shock. Equal to the base expiry on
+  // nodes with no time axis. Lets the consumer plot the theta roll explicitly.
+  double expiry_years = 4;
 }
 
-// The repriced scenario grid.
+// Vega bucketed by (tenor, delta-pillar): the book's sensitivity to a 1.0
+// absolute-vol move of the single smile pillar at (`tenor_years`, `delta`),
+// holding every other pillar still. This is the desk's working representation
+// of vega risk — vega is not one number but a grid across the surface the
+// trader hedges pillar by pillar (ATM, 25Δ and 10Δ wings per tenor).
+message VegaBucket {
+  // The pillar tenor (year fraction) this bucket isolates.
+  double tenor_years = 1;
+  // The signed convention delta-pillar (e.g. 0.50 ATM, ±0.25, ±0.10).
+  double delta = 2;
+  // dV/dσ for a bump of this pillar alone (per 1.0 absolute vol).
+  double vega = 3;
+}
+
+// A cross-gamma term: the mixed second-order sensitivity of value to a
+// simultaneous move of two distinct risk factors, d²V/(dx_a dx_b) — the
+// off-diagonal book risk a single-factor Greek set misses (e.g. spot×vol is the
+// book-level vanna aggregate; rate×spot couples the discounting and forward).
+message CrossGamma {
+  // The first risk factor of the pair.
+  ShockAxis.Factor factor_a = 1;
+  // The second risk factor of the pair (distinct from `factor_a`).
+  ShockAxis.Factor factor_b = 2;
+  // The mixed second derivative d²V/(dx_a dx_b).
+  double value = 3;
+}
+
+// Book-shaped risk: the trader-facing decomposition a desk actually hedges
+// against — vega bucketed across the (tenor, delta-pillar) grid, the
+// off-diagonal cross-gamma terms, and the theta roll over a horizon — sitting
+// alongside the point Greek set rather than replacing it.
+message BucketedRisk {
+  // Vega across the (tenor, delta-pillar) grid.
+  repeated VegaBucket vega_buckets = 1;
+  // The off-diagonal cross-gamma terms requested.
+  repeated CrossGamma cross_gammas = 2;
+  // The theta roll: value (Greeks.price) at each rolled horizon, parallel to
+  // `roll_horizons_years`, holding the market still — the overnight/weekend
+  // decay of the book. Empty if no roll was requested.
+  repeated double theta_roll = 3;
+  // The horizons (years rolled forward) the `theta_roll` values correspond to.
+  repeated double roll_horizons_years = 4;
+}
+
+// The repriced scenario grid, with the book-shaped risk decomposition.
 message ScenarioResponse {
   // The repriced grid nodes (Cartesian product of the request axes).
   repeated ScenarioPoint points = 1;
+  // The book-shaped risk decomposition (bucketed vega, cross-gamma, theta roll)
+  // for the scenario's instrument at its base market. Present when the request
+  // asked for it; otherwise its repeated fields are empty.
+  BucketedRisk bucketed_risk = 2;
 }
 
 // A request to price a single instrument and return its full risk.
@@ -866,6 +1118,17 @@ message PriceRequest {
   MarketContext market = 3;
   // The conventions to express the result under.
   Conventions conventions = 4;
+  // Optional caller correlation id (an opaque client trace/blotter key), echoed
+  // verbatim on the `PriceResponse` so a client can join an asynchronous reply
+  // to its originating request independently of the mandatory `request_id`
+  // round-trip echo. Presence-tracked: absent ⇒ no correlation requested.
+  optional uint64 correlation_id = 5;
+  // Optional marked-surface version to price against, so the price is
+  // reproducibly tied to a specific surface mark (the version a
+  // `MarkSurfaceResponse` assigned). Presence-tracked: absent ⇒ the engine
+  // prices against its current live mark. This is a *data* field selecting a
+  // surface, NOT an API version (the contract itself is unversioned, rule 9).
+  optional uint64 surface_version = 6;
 }
 
 // The priced result for a single instrument.
@@ -878,6 +1141,13 @@ message PriceResponse {
   double resolved_strike = 3;
   // The conventions the result is expressed under.
   Conventions conventions = 4;
+  // Echo of the originating `PriceRequest.correlation_id`, if one was supplied
+  // (presence-tracked), so a client joins this reply to its request.
+  optional uint64 correlation_id = 5;
+  // The marked-surface version this price was computed against (presence-tracked):
+  // the requested `PriceRequest.surface_version` if one was supplied, else the
+  // live mark the engine resolved. A *data* field, not an API version.
+  optional uint64 surface_version = 6;
 }
 
 // ===========================================================================
@@ -901,11 +1171,15 @@ service QuoteService {
   rpc RejectQuote(QuoteReject) returns (RejectAck);
 }
 
-// The request-for-stream: a bidirectional channel carrying subscribe/resync/
-// heartbeat from the client and snapshot/update/heartbeat/stream-end back.
+// The multiplexed request-for-stream session: ONE bidirectional channel
+// carrying subscribe/modify/unsubscribe/resync/execute/heartbeat from the client
+// and snapshot/update/heartbeat/stream-end/executed/stream-reject back, for many
+// concurrent subscriptions each keyed by its `SubscriptionId`. A blotter
+// watching hundreds of structures uses a single session, not one stream per
+// line, and clicks-to-trade execute off the same session via `Execute`.
 service StreamService {
-  // Open the bidirectional RFS channel for this client session.
-  rpc Stream(stream ClientStreamMessage) returns (stream ServerStreamMessage);
+  // Open the multiplexed bidirectional `StreamSession` for this client.
+  rpc StreamSession(stream ClientStreamMessage) returns (stream ServerStreamMessage);
 }
 
 // The surface workflow: read a smile, mark/recalibrate from broker quotes, and

@@ -120,6 +120,39 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-05-30 — **GA-push critique "needs-work" findings closed (client/server/engine + GUI doc).**
+  (1) Client RFS reconnect-liveness bug fixed: `reconnect_session` + session-close now drain the
+  click-to-trade waiter table via `fail_all_waiters`, resolving every pending `execute` with a
+  typed `ClientError::Reconnected`/`StreamClosed` (no more infinite await across a blue-green
+  cutover); regression tests are timeout-bounded. (2) Server `consumed_tokens` bounded:
+  `HashMap<token, valid_until>` with expiry eviction on insert (`record_consumed`/`is_consumed`) —
+  replay protection still holds *within* the validity window; bounded-growth test added. (3)
+  Forgeable token minter replaced by a **keyed-MAC** `TokenMinter` (`blake3` keyed hash over the
+  line-binding tuple under a 256-bit OS-CSPRNG secret drawn once at session start — runtime
+  control-plane identity, NOT a pricing input, so pricing determinism is untouched); key-bound +
+  field-bound MAC tests added. (4) Engine flaky tests fixed: zero-alloc concurrent-publish proof
+  made deterministic (reclamation proven in a separate single-thread armed micro-window; racy
+  `deallocs>0` sub-assert removed, zero-alloc guarantee UNWEAKENED); seqlock/arc-swap probes
+  wall-clock-capped (`SPIN_CAP`); new `.config/nextest.toml` serializes the global-allocator/
+  spin-sensitive engine tests (`engine-serial` group) + slow-timeout. Engine suite now ~0.9 s in
+  isolation AND `--workspace`, stable across repeated runs. (5) `docs/GUI-DESIGN.md` §2/§4.2/§8/§10
+  updated: `StreamService.StreamSession` (multiplex) is the contract and click-to-trade is
+  *implemented* (Positions/P&L `GetPosition`/`AttributePnl` remains the only honest API-v2 gap).
+  `blake3`/`getrandom` vetted clean by cargo-deny (advisories/licenses/bans ok). `just check`
+  fully green.
+- 2026-05-30 — **API-v2 stage 2/3: celnet-server on the optimized celnet-proto.** Server
+  caught up to the multiplex/click-to-trade/book-risk/surface-version contract. New
+  `surface_book` (versioned marked-surface registry: `MarkSurface` deposits calibrated
+  smiles under a fresh `surface_version`; the pricing/RFQ/RFS paths pin against it via the
+  shared `services::pin` resolver — unknown version ⇒ `failed_precondition`, never silent
+  live fallback). `stream.rs` rewritten to the multiplex `StreamSession` driver: one session,
+  many subscriptions, per-sub sequence/snapshot/delta/resync, in-place `Modify`, and
+  click-to-trade — unguessable `splitmix64`-minted `TradableToken`s (SELL@bid/BUY@offer) with
+  `valid_until` last-look + `Execute` idempotency, rejecting stale/forged/already-consumed.
+  Scenario now book-shaped: theta-roll (`FACTOR_TIME`) axis rolling expiry per node, bucketed
+  vega per (tenor,delta) pillar, cross-gamma 2-D stencil. Pricing/Quote echo
+  `correlation_id`+`surface_version`. celnet-client updated to the new contract.
+  **59 server tests + 22 client tests pass (suite < 0.1 s); clippy -D clean, fmt clean.**
 - 2026-05-30 — **Full-implementation audit → remediation → GA-evidence (verified).** 19-lane
   read-only audit (98 findings: 7 blockers/30 majors/43 minors/18 gaps) → layered remediation
   resolving ALL blockers+majors (libm determinism, seqlock UB, method/person-name purge,

@@ -293,6 +293,10 @@ pub enum ShockFactor {
     RateDom,
     /// Shock the foreign rate.
     RateFor,
+    /// Roll calendar time forward (theta roll): each step is a number of years
+    /// subtracted from time-to-expiry, holding the market still. Always an absolute
+    /// (additive) shock to the year fraction.
+    Time,
 }
 
 impl ShockFactor {
@@ -302,7 +306,28 @@ impl ShockFactor {
             ShockFactor::Vol => celnet_proto::shock_axis::Factor::Vol,
             ShockFactor::RateDom => celnet_proto::shock_axis::Factor::RateDom,
             ShockFactor::RateFor => celnet_proto::shock_axis::Factor::RateFor,
+            ShockFactor::Time => celnet_proto::shock_axis::Factor::Time,
         }
+    }
+
+    /// Decode a wire `ShockAxis.Factor` tag, mapping an out-of-range tag to a
+    /// [`ClientError::Wire`].
+    fn from_wire(tag: i32) -> ClientResult<Self> {
+        use celnet_proto::convert::WireError;
+        Ok(match celnet_proto::shock_axis::Factor::try_from(tag) {
+            Ok(celnet_proto::shock_axis::Factor::Spot) => ShockFactor::Spot,
+            Ok(celnet_proto::shock_axis::Factor::Vol) => ShockFactor::Vol,
+            Ok(celnet_proto::shock_axis::Factor::RateDom) => ShockFactor::RateDom,
+            Ok(celnet_proto::shock_axis::Factor::RateFor) => ShockFactor::RateFor,
+            Ok(celnet_proto::shock_axis::Factor::Time) => ShockFactor::Time,
+            Err(_) => {
+                return Err(WireError::UnknownEnum {
+                    kind: "ShockAxis.Factor",
+                    tag,
+                }
+                .into());
+            }
+        })
     }
 }
 
@@ -377,25 +402,221 @@ impl ScenarioGrid {
     }
 
     pub(crate) fn from_wire(w: celnet_proto::ScenarioResponse) -> ClientResult<Self> {
-        let mut nodes = Vec::with_capacity(w.points.len());
-        for p in w.points {
-            let shocked_market = p
-                .shocked_market
-                .as_ref()
-                .map(MarketContext::from_wire)
-                .ok_or(ClientError::MissingField("ScenarioPoint.shocked_market"))?;
-            let greeks = p
-                .greeks
-                .as_ref()
-                .map(crate::vocab::greeks_from_wire)
-                .ok_or(ClientError::MissingField("ScenarioPoint.greeks"))?;
-            nodes.push(ScenarioNode {
-                applied_shocks: p.applied_shocks,
-                shocked_market,
-                greeks,
+        let nodes = nodes_from_wire(w.points)?;
+        Ok(Self { nodes })
+    }
+}
+
+/// Decode the repriced scenario grid nodes from the wire points.
+fn nodes_from_wire(points: Vec<celnet_proto::ScenarioPoint>) -> ClientResult<Vec<ScenarioNode>> {
+    let mut nodes = Vec::with_capacity(points.len());
+    for p in points {
+        let shocked_market = p
+            .shocked_market
+            .as_ref()
+            .map(MarketContext::from_wire)
+            .ok_or(ClientError::MissingField("ScenarioPoint.shocked_market"))?;
+        let greeks = p
+            .greeks
+            .as_ref()
+            .map(crate::vocab::greeks_from_wire)
+            .ok_or(ClientError::MissingField("ScenarioPoint.greeks"))?;
+        nodes.push(ScenarioNode {
+            applied_shocks: p.applied_shocks,
+            shocked_market,
+            greeks,
+        });
+    }
+    Ok(nodes)
+}
+
+/// A request for the book-shaped risk decomposition a desk hedges against — the
+/// typed form of the wire `RiskBucketRequest`. Each part is independently optional:
+/// leave a field empty to omit that part of the decomposition.
+///
+/// * `vega_pillars` — the `(tenor, delta)` pillars to report bucketed vega for;
+/// * `cross_gamma` — the factor pairs to report cross-gamma `d²V/(dx_a dx_b)` for;
+/// * `roll_horizons_years` — the horizons (years rolled forward) for the theta roll.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RiskRequest {
+    /// The `(tenor_years, signed-delta)` pillars to bucket vega across.
+    pub vega_pillars: Vec<(f64, f64)>,
+    /// The factor pairs to report cross-gamma for (each must name two distinct
+    /// factors).
+    pub cross_gamma: Vec<(ShockFactor, ShockFactor)>,
+    /// The horizons (years rolled forward) the theta roll decays the book over.
+    pub roll_horizons_years: Vec<f64>,
+}
+
+impl RiskRequest {
+    /// A request for bucketed vega at the given `(tenor, delta)` pillars only.
+    #[must_use]
+    pub fn vega(pillars: Vec<(f64, f64)>) -> Self {
+        Self {
+            vega_pillars: pillars,
+            ..Self::default()
+        }
+    }
+
+    /// Builder: add the cross-gamma factor pairs to report.
+    #[must_use]
+    pub fn with_cross_gamma(mut self, pairs: Vec<(ShockFactor, ShockFactor)>) -> Self {
+        self.cross_gamma = pairs;
+        self
+    }
+
+    /// Builder: add the theta-roll horizons (years rolled forward).
+    #[must_use]
+    pub fn with_roll_horizons(mut self, horizons: Vec<f64>) -> Self {
+        self.roll_horizons_years = horizons;
+        self
+    }
+
+    pub(crate) fn to_wire(&self) -> celnet_proto::RiskBucketRequest {
+        celnet_proto::RiskBucketRequest {
+            vega_pillars: self
+                .vega_pillars
+                .iter()
+                .map(|&(tenor_years, delta)| celnet_proto::VegaBucket {
+                    tenor_years,
+                    delta,
+                    vega: 0.0, // ignored on the request; the pillar selects the bucket.
+                })
+                .collect(),
+            cross_gamma_pairs: self
+                .cross_gamma
+                .iter()
+                .map(|&(a, b)| celnet_proto::CrossGamma {
+                    factor_a: a.to_wire() as i32,
+                    factor_b: b.to_wire() as i32,
+                    value: 0.0, // ignored on the request.
+                })
+                .collect(),
+            roll_horizons_years: self.roll_horizons_years.clone(),
+        }
+    }
+}
+
+/// One bucketed-vega pillar: the book's value sensitivity to a 1.0-absolute-vol move
+/// of the single smile pillar at `(tenor_years, delta)`, holding every other pillar
+/// still. The typed form of the wire `VegaBucket`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VegaPillar {
+    /// The pillar tenor (year fraction) this bucket isolates.
+    pub tenor_years: f64,
+    /// The signed convention delta-pillar (e.g. `0.50` ATM, `±0.25`, `±0.10`).
+    pub delta: f64,
+    /// `dV/dσ` for a bump of this pillar alone (per 1.0 absolute vol).
+    pub vega: f64,
+}
+
+/// One cross-gamma term: the mixed second-order sensitivity of value to a
+/// simultaneous move of two distinct risk factors, `d²V/(dx_a dx_b)`. The typed form
+/// of the wire `CrossGamma`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CrossGammaTerm {
+    /// The first risk factor of the pair.
+    pub factor_a: ShockFactor,
+    /// The second risk factor of the pair (distinct from `factor_a`).
+    pub factor_b: ShockFactor,
+    /// The mixed second derivative `d²V/(dx_a dx_b)`.
+    pub value: f64,
+}
+
+/// Book-shaped risk: the trader-facing decomposition a desk actually hedges against
+/// — vega bucketed across the `(tenor, delta-pillar)` grid, the off-diagonal
+/// cross-gamma terms, and the theta roll over a horizon. The typed form of the wire
+/// `BucketedRisk`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BucketedRisk {
+    /// Vega across the requested `(tenor, delta-pillar)` grid.
+    pub vega_buckets: Vec<VegaPillar>,
+    /// The off-diagonal cross-gamma terms requested.
+    pub cross_gammas: Vec<CrossGammaTerm>,
+    /// The theta roll: book value at each rolled horizon, holding the market still,
+    /// parallel to `roll_horizons_years`.
+    pub theta_roll: Vec<f64>,
+    /// The horizons (years rolled forward) the `theta_roll` values correspond to.
+    pub roll_horizons_years: Vec<f64>,
+}
+
+impl BucketedRisk {
+    /// The bucketed vega at the `(tenor, delta)` pillar matching `tenor_years` and
+    /// `delta` (within a tight tolerance), if present.
+    #[must_use]
+    pub fn vega_at(&self, tenor_years: f64, delta: f64) -> Option<f64> {
+        self.vega_buckets
+            .iter()
+            .find(|b| {
+                celnet_core::is_close(b.tenor_years, tenor_years, DELTA_MATCH_REL, DELTA_MATCH_ABS)
+                    && celnet_core::is_close(b.delta, delta, DELTA_MATCH_REL, DELTA_MATCH_ABS)
+            })
+            .map(|b| b.vega)
+    }
+
+    /// The cross-gamma term for the unordered `{factor_a, factor_b}` pair, if present.
+    #[must_use]
+    pub fn cross_gamma(&self, factor_a: ShockFactor, factor_b: ShockFactor) -> Option<f64> {
+        self.cross_gammas
+            .iter()
+            .find(|c| {
+                (c.factor_a == factor_a && c.factor_b == factor_b)
+                    || (c.factor_a == factor_b && c.factor_b == factor_a)
+            })
+            .map(|c| c.value)
+    }
+
+    fn from_wire(w: &celnet_proto::BucketedRisk) -> ClientResult<Self> {
+        let vega_buckets = w
+            .vega_buckets
+            .iter()
+            .map(|b| VegaPillar {
+                tenor_years: b.tenor_years,
+                delta: b.delta,
+                vega: b.vega,
+            })
+            .collect();
+        let mut cross_gammas = Vec::with_capacity(w.cross_gammas.len());
+        for c in &w.cross_gammas {
+            cross_gammas.push(CrossGammaTerm {
+                factor_a: ShockFactor::from_wire(c.factor_a)?,
+                factor_b: ShockFactor::from_wire(c.factor_b)?,
+                value: c.value,
             });
         }
-        Ok(Self { nodes })
+        Ok(Self {
+            vega_buckets,
+            cross_gammas,
+            theta_roll: w.theta_roll.clone(),
+            roll_horizons_years: w.roll_horizons_years.clone(),
+        })
+    }
+}
+
+/// A scenario result carrying both the repriced shock grid and the book-shaped risk
+/// decomposition — the typed form of a `ScenarioResponse` produced by
+/// [`crate::Client::scenario_with_risk`].
+#[derive(Debug, Clone)]
+pub struct ScenarioRisk {
+    /// The repriced scenario grid.
+    pub grid: ScenarioGrid,
+    /// The book-shaped risk decomposition (bucketed vega, cross-gamma, theta roll)
+    /// at the base market.
+    pub risk: BucketedRisk,
+}
+
+impl ScenarioRisk {
+    pub(crate) fn from_wire(w: celnet_proto::ScenarioResponse) -> ClientResult<Self> {
+        let risk = w
+            .bucketed_risk
+            .as_ref()
+            .map(BucketedRisk::from_wire)
+            .transpose()?
+            .unwrap_or_default();
+        let grid = ScenarioGrid {
+            nodes: nodes_from_wire(w.points)?,
+        };
+        Ok(Self { grid, risk })
     }
 }
 

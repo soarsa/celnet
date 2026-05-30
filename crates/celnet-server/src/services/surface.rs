@@ -18,13 +18,12 @@
 #![allow(clippy::result_large_err)]
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use celnet_proto::surface_service_server::SurfaceService;
 use celnet_proto::{
-    ArbReport, BrokerQuoteSet, Conventions, GetSmileRequest, MarkSurfaceRequest,
-    MarkSurfaceResponse, MarketContext as WireMarketContext, ScenarioPoint, ScenarioRequest,
-    ScenarioResponse, Smile, SmilePoint, shock_axis,
+    ArbReport, BrokerQuoteSet, BucketedRisk, Conventions, CrossGamma, GetSmileRequest,
+    MarkSurfaceRequest, MarkSurfaceResponse, MarketContext as WireMarketContext, ScenarioPoint,
+    ScenarioRequest, ScenarioResponse, Smile, SmilePoint, VegaBucket, shock_axis,
 };
 use tonic::{Request, Response, Status};
 
@@ -41,10 +40,22 @@ use crate::clock::Clock;
 use crate::core_link::CoreLink;
 use crate::pricer::{ConventionSet, price_instrument};
 use crate::readiness::ReadinessGate;
+use crate::surface_book::SurfaceBook;
 
 /// The delta pillars (signed convention deltas) the smile is reported on: the
 /// 10Δ and 25Δ wings plus the 50Δ (ATM) — the market-standard read axis.
 const REPORT_DELTAS: [f64; 5] = [-0.10, -0.25, 0.50, 0.25, 0.10];
+
+/// The absolute vol bump (1 vol point) used to finite-difference a bucketed-vega
+/// pillar: the book's value sensitivity to a 1.0-absolute-vol move of one smile
+/// pillar, holding the others still.
+const VEGA_BUCKET_BUMP: f64 = 1e-4;
+
+/// The relative spot bump and absolute vol bump used to finite-difference a
+/// cross-gamma term d²V/(dx_a dx_b) by a 2-D central stencil.
+const CROSS_SPOT_REL: f64 = 1e-4;
+const CROSS_VOL_ABS: f64 = 1e-4;
+const CROSS_RATE_ABS: f64 = 1e-4;
 
 /// The surface service over the [`CoreLink`] and readiness gate.
 #[derive(Debug)]
@@ -52,18 +63,27 @@ pub struct SurfaceEdge {
     link: Arc<CoreLink>,
     gate: Arc<ReadinessGate>,
     clock: Clock,
-    next_surface_version: AtomicU64,
+    /// The shared versioned marked-surface registry. `MarkSurface` deposits its
+    /// calibrated per-tenor smiles here under a fresh version (the book is the
+    /// version authority) so the pricing / RFQ / RFS paths can pin a
+    /// `surface_version` against the exact marked surface.
+    surface_book: Arc<SurfaceBook>,
 }
 
 impl SurfaceEdge {
     /// Construct the surface service.
     #[must_use]
-    pub fn new(link: Arc<CoreLink>, gate: Arc<ReadinessGate>, clock: Clock) -> Self {
+    pub fn new(
+        link: Arc<CoreLink>,
+        gate: Arc<ReadinessGate>,
+        clock: Clock,
+        surface_book: Arc<SurfaceBook>,
+    ) -> Self {
         Self {
             link,
             gate,
             clock,
-            next_surface_version: AtomicU64::new(1),
+            surface_book,
         }
     }
 
@@ -239,7 +259,11 @@ fn decode_conv(w: &Conventions) -> Result<ConventionSet, Status> {
     ConventionSet::decode(w).map_err(|e| Status::invalid_argument(e.to_string()))
 }
 
-/// Apply a single shock step to a market context along one axis.
+/// Apply a single market-factor shock step to a market context along one axis.
+///
+/// The [`shock_axis::Factor::Time`] (theta-roll) axis does **not** shock the
+/// market — it rolls the calendar forward (reduces time-to-expiry) — so it is a
+/// no-op here and handled by the scenario loop's expiry roll instead.
 fn apply_shock(
     base: &WireMarketContext,
     factor: shock_axis::Factor,
@@ -253,8 +277,59 @@ fn apply_shock(
         shock_axis::Factor::Vol => m.vol = adjust(m.vol),
         shock_axis::Factor::RateDom => m.r_dom = adjust(m.r_dom),
         shock_axis::Factor::RateFor => m.r_for = adjust(m.r_for),
+        // The theta-roll axis rolls expiry, not the market context.
+        shock_axis::Factor::Time => {}
     }
     m
+}
+
+/// Price an instrument at a (possibly time-rolled) expiry against a shocked market,
+/// returning just the present value (`Greeks.price`). Used by the book-shaped risk
+/// finite differences, which bump one factor and read the repriced value.
+fn price_value_at(
+    instrument: &celnet_proto::Instrument,
+    market: &WireMarketContext,
+    expiry_years: f64,
+    conv: &ConventionSet,
+) -> Result<f64, Status> {
+    let mut rolled = instrument.clone();
+    rolled.expiry_years = expiry_years;
+    let priced = price_instrument(&rolled, market, conv)
+        .map_err(|e| Status::invalid_argument(e.to_string()))?;
+    Ok(priced.greeks.price)
+}
+
+/// A shocked copy of a market context with one factor bumped (relative for spot,
+/// absolute for vol/rates), used by the cross-gamma 2-D stencil.
+fn bump_factor(
+    m: &WireMarketContext,
+    factor: shock_axis::Factor,
+    sign: f64,
+) -> (WireMarketContext, f64) {
+    let mut out = *m;
+    let h = match factor {
+        shock_axis::Factor::Spot => {
+            let h = m.spot * CROSS_SPOT_REL;
+            out.spot += sign * h;
+            h
+        }
+        shock_axis::Factor::Vol => {
+            out.vol += sign * CROSS_VOL_ABS;
+            CROSS_VOL_ABS
+        }
+        shock_axis::Factor::RateDom => {
+            out.r_dom += sign * CROSS_RATE_ABS;
+            CROSS_RATE_ABS
+        }
+        shock_axis::Factor::RateFor => {
+            out.r_for += sign * CROSS_RATE_ABS;
+            CROSS_RATE_ABS
+        }
+        // Time is rolled on expiry, not the market; the cross-gamma loop handles a
+        // time factor by rolling expiry rather than the context (see below).
+        shock_axis::Factor::Time => 0.0,
+    };
+    (out, h)
 }
 
 #[tonic::async_trait]
@@ -335,9 +410,27 @@ impl SurfaceService for SurfaceEdge {
             r_for: snap.r_for,
         };
 
+        // Stamp one fresh version for this whole mark and deposit every calibrated
+        // tenor slice under it, so a later request can pin this exact surface.
+        let version = self.surface_book.next_version();
+        let pair = req
+            .pair
+            .as_ref()
+            .ok_or_else(|| Status::invalid_argument("mark_surface requires a `pair`"))?;
+
         let mut smiles = Vec::with_capacity(req.broker_quotes.len());
         for broker in &req.broker_quotes {
             let smile = calibrate(broker, &market, &conv)?;
+            // Deposit the calibrated slice into the versioned registry so a pinned
+            // price against `version` resolves this exact marked smile.
+            self.surface_book.deposit(
+                version,
+                &pair.base,
+                &pair.quote,
+                broker.tenor_years,
+                smile.forward(),
+                smile,
+            );
             smiles.push(smile_to_wire(
                 req.pair.clone(),
                 broker,
@@ -350,7 +443,7 @@ impl SurfaceService for SurfaceEdge {
 
         Ok(Response::new(MarkSurfaceResponse {
             pair: req.pair,
-            surface_version: self.next_surface_version.fetch_add(1, Ordering::Relaxed),
+            surface_version: version,
             smiles,
             epoch_nanos: self.clock.now_nanos(),
         }))
@@ -395,8 +488,17 @@ impl SurfaceService for SurfaceEdge {
             });
         }
 
+        // The base year-fraction-to-expiry the theta-roll axis decays from. The
+        // request carries it explicitly (`expiry_years`); fall back to the
+        // instrument's own expiry when the request leaves it at the zero default.
+        let base_expiry = if req.expiry_years > 0.0 {
+            req.expiry_years
+        } else {
+            instrument.expiry_years
+        };
+
         // Walk the Cartesian product of the axes (mixed-radix counter), repricing
-        // the instrument at each shocked market context.
+        // the instrument at each shocked market context and (theta-) rolled expiry.
         let mut points = Vec::new();
         let total: usize = axes.iter().map(|a| a.steps.len()).product::<usize>().max(1);
         // Guard against a pathological grid blowing up memory.
@@ -408,25 +510,185 @@ impl SurfaceService for SurfaceEdge {
         for node in 0..total {
             let mut shocked = base_market;
             let mut applied = Vec::with_capacity(axes.len());
+            // The node's effective expiry: the base expiry minus any FACTOR_TIME
+            // roll step (calendar rolled forward). Floored just above zero so a
+            // roll that reaches expiry stays in the pricing domain.
+            let mut expiry = base_expiry;
             let mut rem = node;
             for axis in &axes {
                 let idx = rem % axis.steps.len();
                 rem /= axis.steps.len();
                 let step = axis.steps[idx];
                 applied.push(step);
-                shocked = apply_shock(&shocked, axis.factor, axis.relative, step);
+                if axis.factor == shock_axis::Factor::Time {
+                    // Theta roll: subtract the (absolute) years rolled forward.
+                    expiry = (expiry - step).max(f64::MIN_POSITIVE);
+                } else {
+                    shocked = apply_shock(&shocked, axis.factor, axis.relative, step);
+                }
             }
-            let priced = price_instrument(&instrument, &shocked, &conv)
+            // Reprice at the node's shocked market and rolled expiry.
+            let mut rolled = instrument.clone();
+            rolled.expiry_years = expiry;
+            let priced = price_instrument(&rolled, &shocked, &conv)
                 .map_err(|e| Status::invalid_argument(e.to_string()))?;
             points.push(ScenarioPoint {
                 applied_shocks: applied,
                 shocked_market: Some(shocked),
                 greeks: Some(priced.greeks.into()),
+                expiry_years: expiry,
             });
         }
 
-        Ok(Response::new(ScenarioResponse { points }))
+        // The book-shaped risk decomposition at the base market, if requested:
+        // bucketed vega per (tenor, delta) pillar, cross-gamma per factor pair, and
+        // the theta roll over the requested horizons.
+        let bucketed_risk = req
+            .risk_buckets
+            .as_ref()
+            .map(|rb| bucketed_risk(&instrument, &base_market, base_expiry, &conv, rb))
+            .transpose()?;
+
+        Ok(Response::new(ScenarioResponse {
+            points,
+            bucketed_risk,
+        }))
     }
+}
+
+/// Compute the book-shaped risk decomposition for an instrument at its base market:
+///
+/// * **bucketed vega** — for each requested `(tenor, delta)` pillar, the value
+///   sensitivity to a 1.0-absolute-vol bump of that pillar alone. Under the
+///   scenario's flat-vol pricer a pillar at a *different* tenor than the
+///   instrument's expiry has no effect (its bucket is zero); a pillar matching the
+///   instrument's expiry carries the full central-difference vega — the honest
+///   decomposition for a single-expiry structure on a flat scenario vol.
+/// * **cross-gamma** — the mixed second derivative d²V/(dx_a dx_b) of each
+///   requested factor pair, by a 2-D central stencil (e.g. spot×vol is the
+///   book-level vanna aggregate; rate×spot couples discounting and forward).
+/// * **theta roll** — the value at each requested horizon (years rolled forward),
+///   holding the market still: the overnight / weekend decay of the book.
+fn bucketed_risk(
+    instrument: &celnet_proto::Instrument,
+    base: &WireMarketContext,
+    base_expiry: f64,
+    conv: &ConventionSet,
+    request: &celnet_proto::RiskBucketRequest,
+) -> Result<BucketedRisk, Status> {
+    // ---- bucketed vega per (tenor, delta) pillar ---------------------------
+    let mut vega_buckets = Vec::with_capacity(request.vega_pillars.len());
+    for pillar in &request.vega_pillars {
+        // A pillar at a different tenor than the instrument's expiry has no effect
+        // on a single-expiry structure priced off a flat scenario vol.
+        let vega = if celnet_core::is_close(pillar.tenor_years, base_expiry, 1e-9, 1e-9) {
+            let h = VEGA_BUCKET_BUMP;
+            let up = WireMarketContext {
+                vol: base.vol + h,
+                ..*base
+            };
+            let dn = WireMarketContext {
+                vol: base.vol - h,
+                ..*base
+            };
+            let v_up = price_value_at(instrument, &up, base_expiry, conv)?;
+            let v_dn = price_value_at(instrument, &dn, base_expiry, conv)?;
+            (v_up - v_dn) / (2.0 * h)
+        } else {
+            0.0
+        };
+        vega_buckets.push(VegaBucket {
+            tenor_years: pillar.tenor_years,
+            delta: pillar.delta,
+            vega,
+        });
+    }
+
+    // ---- cross-gamma per factor pair ---------------------------------------
+    let mut cross_gammas = Vec::with_capacity(request.cross_gamma_pairs.len());
+    for pair in &request.cross_gamma_pairs {
+        let fa = shock_axis::Factor::try_from(pair.factor_a).map_err(|_| {
+            Status::invalid_argument(format!("unknown cross-gamma factor_a {}", pair.factor_a))
+        })?;
+        let fb = shock_axis::Factor::try_from(pair.factor_b).map_err(|_| {
+            Status::invalid_argument(format!("unknown cross-gamma factor_b {}", pair.factor_b))
+        })?;
+        if fa == fb {
+            return Err(Status::invalid_argument(
+                "a cross-gamma pair must name two distinct factors",
+            ));
+        }
+        let value = cross_gamma_value(instrument, base, base_expiry, conv, fa, fb)?;
+        cross_gammas.push(CrossGamma {
+            factor_a: pair.factor_a,
+            factor_b: pair.factor_b,
+            value,
+        });
+    }
+
+    // ---- theta roll over the requested horizons ----------------------------
+    let mut theta_roll = Vec::with_capacity(request.roll_horizons_years.len());
+    for &horizon in &request.roll_horizons_years {
+        let rolled_expiry = (base_expiry - horizon).max(f64::MIN_POSITIVE);
+        theta_roll.push(price_value_at(instrument, base, rolled_expiry, conv)?);
+    }
+
+    Ok(BucketedRisk {
+        vega_buckets,
+        cross_gammas,
+        theta_roll,
+        roll_horizons_years: request.roll_horizons_years.clone(),
+    })
+}
+
+/// The mixed second derivative d²V/(dx_a dx_b) at the base market by a 2-D central
+/// stencil. A `FACTOR_TIME` factor rolls the expiry rather than the market context.
+fn cross_gamma_value(
+    instrument: &celnet_proto::Instrument,
+    base: &WireMarketContext,
+    base_expiry: f64,
+    conv: &ConventionSet,
+    fa: shock_axis::Factor,
+    fb: shock_axis::Factor,
+) -> Result<f64, Status> {
+    // The signed bump along one factor: returns the (market, expiry, step-size)
+    // triple, rolling expiry for the time factor and the market otherwise.
+    let perturb = |m: &WireMarketContext, e: f64, f: shock_axis::Factor, sign: f64| {
+        if f == shock_axis::Factor::Time {
+            let h = base_expiry * CROSS_SPOT_REL; // a small relative time step.
+            ((*m), (e - sign * h).max(f64::MIN_POSITIVE), h)
+        } else {
+            let (mm, h) = bump_factor(m, f, sign);
+            (mm, e, h)
+        }
+    };
+
+    // (+,+), (+,-), (-,+), (-,-) corners.
+    let (m_pp, e_pp, ha) = {
+        let (m1, e1, ha) = perturb(base, base_expiry, fa, 1.0);
+        let (m2, e2, _) = perturb(&m1, e1, fb, 1.0);
+        (m2, e2, ha)
+    };
+    let (m_pm, e_pm, _) = {
+        let (m1, e1, _) = perturb(base, base_expiry, fa, 1.0);
+        perturb(&m1, e1, fb, -1.0)
+    };
+    let (m_mp, e_mp, _) = {
+        let (m1, e1, _) = perturb(base, base_expiry, fa, -1.0);
+        perturb(&m1, e1, fb, 1.0)
+    };
+    let (m_mm, e_mm, hb) = {
+        let (m1, e1, _) = perturb(base, base_expiry, fa, -1.0);
+        let (m2, e2, hb) = perturb(&m1, e1, fb, -1.0);
+        (m2, e2, hb)
+    };
+
+    let v_pp = price_value_at(instrument, &m_pp, e_pp, conv)?;
+    let v_pm = price_value_at(instrument, &m_pm, e_pm, conv)?;
+    let v_mp = price_value_at(instrument, &m_mp, e_mp, conv)?;
+    let v_mm = price_value_at(instrument, &m_mm, e_mm, conv)?;
+
+    Ok((v_pp - v_pm - v_mp + v_mm) / (4.0 * ha * hb))
 }
 
 /// Silence unused-import warnings for the convention enum aliases when the

@@ -13,8 +13,17 @@
 //!  * [`hot_pricing_under_concurrent_publish_allocates_zero`] — the production
 //!    scenario where a publisher hammers `StateHandle::publish` while the core
 //!    prices. The acquiring count stays zero; superseded states are *freed*
-//!    (a `dealloc`, asserted > 0 to prove the contention was real), never
-//!    allocated.
+//!    (a `dealloc`), never allocated. That reclamation-happens-on-the-reader proof
+//!    is made **deterministic** in a separate single-threaded armed micro-window
+//!    (not left to publisher-thread timing), so the test is not flaky.
+//!
+//! # Determinism of the counters (no cross-test interference)
+//!
+//! The allocator counters are process-global, so two tests in this binary that both
+//! `arm` would corrupt each other's deltas. These tests are therefore placed in a
+//! serialized nextest test-group (`.config/nextest.toml`, group `engine-serial`) so
+//! they never co-schedule, and counting is gated to the **armed thread only** via a
+//! thread-local so a parallel non-armed thread's allocations are never tallied.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -230,6 +239,9 @@ fn hot_pricing_under_concurrent_publish_allocates_zero() {
     // The publisher gets its own `Arc` to the core's handle (the production edge
     // wiring), independent of the `&mut core` drain borrow.
     let pub_handle = core.shared_state();
+    // A second handle retained on this thread for the deterministic reclamation proof
+    // after the publisher is joined.
+    let prove_handle = core.shared_state();
 
     let mut total = 0usize;
     std::thread::scope(|s| {
@@ -263,12 +275,11 @@ fn hot_pricing_under_concurrent_publish_allocates_zero() {
             }
         });
         let after_alloc = ALLOCS.load(Ordering::Relaxed);
-        let after_dealloc = DEALLOCS.load(Ordering::Relaxed);
 
         stop.store(true, Ordering::Relaxed);
 
         assert_eq!(total, N);
-        // The hard guarantee: the hot pricing path acquired NO memory
+        // The hard guarantee (UNWEAKENED): the hot pricing path acquired NO memory
         // (`alloc`/`realloc`) even while a publisher hammered `publish`.
         assert_eq!(
             after_alloc,
@@ -276,14 +287,43 @@ fn hot_pricing_under_concurrent_publish_allocates_zero() {
             "concurrent-publish hot path acquired memory {} times (must be zero)",
             after_alloc.wrapping_sub(before_alloc)
         );
-        // Sanity: superseded states *are* reclaimed (so we are genuinely
-        // load-under-publish, not a degenerate no-op). This count is expected to
-        // be > 0 and is NOT a violation — it frees memory, never acquires it.
-        let deallocs = after_dealloc.wrapping_sub(before_dealloc);
-        assert!(
-            deallocs > 0,
-            "expected the cache to reclaim superseded states (proves contention \
-             actually occurred); saw {deallocs}"
-        );
+        // `before_dealloc` was captured for the deterministic reclamation proof
+        // below; it is intentionally not asserted against the racy concurrent
+        // window (whether a supersession's free landed on the armed thread during
+        // the window depends on publisher timing — the former flaky sub-assert).
+        let _ = before_dealloc;
     });
+
+    // ---- deterministic reclamation proof (no publisher-timing race) ----------
+    // Prove the read path *frees* a superseded state ON THE READING THREAD — the
+    // property the concurrent window relies on — without depending on a racy
+    // publisher. We publish a NEW state from this (main) thread while DISARMED, then
+    // arm and `price` once: the cached reader revalidates, swaps to the new state,
+    // and drops the previously-cached `Arc` on this armed thread, which the counter
+    // records as exactly the reclamation `dealloc` we expect. Acquiring ops still
+    // stay zero across this armed step (the guarantee holds here too).
+    let fresh = states[1].clone(); // clone DISARMED (startup-class allocation).
+    prove_handle.publish(fresh); // publish DISARMED (the publisher's job allocates).
+    let before_dealloc = DEALLOCS.load(Ordering::Relaxed);
+    let before_alloc = ALLOCS.load(Ordering::Relaxed);
+    armed(|| {
+        // One priced read: revalidates the cache against the just-published pointer,
+        // adopts it, and drops the prior cached `Arc` here → a reclamation dealloc.
+        let _ = core.price(PriceRequest::new(N as u64, OptionType::Call, 1.10));
+    });
+    let after_dealloc = DEALLOCS.load(Ordering::Relaxed);
+    let after_alloc = ALLOCS.load(Ordering::Relaxed);
+    assert_eq!(
+        after_alloc, before_alloc,
+        "the reclaiming read still acquired no memory (zero-alloc holds)"
+    );
+    // The superseded `Arc<MarketState>` (and the smile data it owns) is freed on the
+    // reading thread: at least one reclamation dealloc, deterministically — never the
+    // former race on whether the publisher's churn happened to free during the window.
+    let reclaimed = after_dealloc.wrapping_sub(before_dealloc);
+    assert!(
+        reclaimed >= 1,
+        "a superseded state must be reclaimed on the reading thread \
+         (deterministic; no publisher-timing race); saw {reclaimed}"
+    );
 }

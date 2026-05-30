@@ -28,17 +28,24 @@
 //!   (one-touch / no-touch / double-no-touch / double-one-touch), carrying a
 //!   [`Quantity`], a [`Side`], and an optional [`Solve`] directive.
 //! * **quote** — the RFQ lifecycle: [`QuoteRequest`] (client idempotency key +
-//!   instrument) → [`Quote`] (two-way bid/offer + Greeks + `quote_id` +
-//!   `valid_until_nanos`) → [`QuoteAccept`] / [`QuoteReject`] → [`Execution`].
-//! * **stream** — the RFS bidirectional subscription: [`ClientStreamMessage`]
-//!   ([`Subscribe`] / [`Unsubscribe`] / [`Resync`] / [`Heartbeat`]) and
-//!   [`ServerStreamMessage`] ([`Snapshot`] then sequenced [`Update`] deltas +
-//!   [`Heartbeat`] + [`StreamEnd`]) with a monotonic per-subscription sequence
-//!   for gap detection and server-assisted resync.
+//!   instrument, optional `correlation_id` + pinned `surface_version`) →
+//!   [`Quote`] (two-way bid/offer + Greeks + `quote_id` + `valid_until_nanos`) →
+//!   [`QuoteAccept`] / [`QuoteReject`] → [`Execution`].
+//! * **stream** — the multiplexed RFS [`StreamService::StreamSession`]: ONE
+//!   bidirectional channel carrying many subscriptions, each keyed by a
+//!   [`SubscriptionId`]. [`ClientStreamMessage`] is [`Subscribe`] / [`Modify`]
+//!   (re-baseline in place) / [`Unsubscribe`] / [`Resync`] / [`Execute`]
+//!   (click-to-trade) / [`Heartbeat`]; [`ServerStreamMessage`] is [`Snapshot`]
+//!   then sequenced [`Update`] deltas (each stamped with [`TradableToken`]s for
+//!   click-to-trade) + [`Heartbeat`] + [`StreamEnd`] + [`Executed`] /
+//!   [`StreamReject`]. A monotonic per-subscription sequence drives gap
+//!   detection and server-assisted resync.
 //! * **surface** — the surface workflow: [`GetSmileRequest`] → [`Smile`]
 //!   (delta-axis vols + [`BrokerQuoteSet`] + [`ArbReport`]),
 //!   [`MarkSurfaceRequest`] → [`MarkSurfaceResponse`], and [`ScenarioRequest`] →
-//!   [`ScenarioResponse`] (spot/vol/rate shock grid → repriced [`Greeks`]).
+//!   [`ScenarioResponse`]: a spot/vol/rate/**time** (theta-roll) shock grid of
+//!   repriced [`Greeks`] plus an optional [`BucketedRisk`] decomposition
+//!   ([`VegaBucket`] by (tenor, delta-pillar), [`CrossGamma`], theta roll).
 //!
 //! Conversions between the wire vocabulary and the [`celnet_types`] DTOs live in
 //! [`convert`].
@@ -181,14 +188,34 @@ mod tests {
                 r_for: 0.030,
             }),
             conventions: Some(sample_conventions()),
+            correlation_id: Some(0x0102_0304),
+            surface_version: Some(11),
         };
         round_trip(&req);
+
+        // Absent optionals must survive the round-trip as `None`.
+        let req_no_optionals = PriceRequest {
+            request_id: 7,
+            instrument: Some(vanilla_instrument()),
+            market: Some(MarketContext {
+                spot: 1.10,
+                vol: 0.0825,
+                r_dom: 0.045,
+                r_for: 0.030,
+            }),
+            conventions: Some(sample_conventions()),
+            correlation_id: None,
+            surface_version: None,
+        };
+        round_trip(&req_no_optionals);
 
         let resp = PriceResponse {
             request_id: 0xDEAD_BEEF,
             greeks: Some(sample_greeks()),
             resolved_strike: 1.1050,
             conventions: Some(sample_conventions()),
+            correlation_id: Some(0x0102_0304),
+            surface_version: Some(11),
         };
         round_trip(&resp);
     }
@@ -312,8 +339,21 @@ mod tests {
             idempotency_key: "5f0c1b2e-2a4d-4f8a-9c1e-7b6a5d4c3b2a".to_owned(),
             instrument: Some(vanilla_instrument()),
             conventions: Some(sample_conventions()),
+            correlation_id: Some(0xCAFE_F00D),
+            surface_version: Some(42),
         };
         round_trip(&request);
+
+        // The optional correlation/surface fields are presence-tracked: an
+        // absent pair must round-trip back to `None`, not a sentinel zero.
+        let request_no_optionals = QuoteRequest {
+            idempotency_key: "no-optionals".to_owned(),
+            instrument: Some(vanilla_instrument()),
+            conventions: Some(sample_conventions()),
+            correlation_id: None,
+            surface_version: None,
+        };
+        round_trip(&request_no_optionals);
 
         let quote = Quote {
             quote_id: 1_001,
@@ -327,6 +367,8 @@ mod tests {
             resolved_strike: 1.1050,
             epoch_nanos: 1_717_000_000_000_000_000,
             valid_until_nanos: 1_717_000_300_000_000_000,
+            correlation_id: Some(0xCAFE_F00D),
+            surface_version: Some(42),
         };
         round_trip(&quote);
 
@@ -359,15 +401,60 @@ mod tests {
         let sub = SubscriptionId { value: 77 };
         let conv = sample_conventions();
 
+        // The two click-to-trade tokens stamped on a streamed line: SELL@bid
+        // and BUY@offer, each bounded by its own validity deadline.
+        let tradable = || {
+            vec![
+                TradableToken {
+                    token: 0xA1,
+                    side: Side::Sell as i32,
+                    premium: 0.0081,
+                    valid_until_nanos: 1_717_000_000_500_000_000,
+                },
+                TradableToken {
+                    token: 0xA2,
+                    side: Side::Buy as i32,
+                    premium: 0.0089,
+                    valid_until_nanos: 1_717_000_000_500_000_000,
+                },
+            ]
+        };
+
         let subscribe = ClientStreamMessage {
             message: Some(client_stream_message::Message::Subscribe(Subscribe {
                 subscription: Some(sub),
                 instrument: Some(vanilla_instrument()),
                 conventions: Some(conv),
                 throttle_nanos: 1_000_000,
+                correlation_id: Some(0xBEEF),
+                surface_version: Some(13),
             })),
         };
         round_trip(&subscribe);
+
+        // Subscribe with both optionals absent — presence must round-trip.
+        let subscribe_bare = ClientStreamMessage {
+            message: Some(client_stream_message::Message::Subscribe(Subscribe {
+                subscription: Some(sub),
+                instrument: Some(vanilla_instrument()),
+                conventions: Some(conv),
+                throttle_nanos: 0,
+                correlation_id: None,
+                surface_version: None,
+            })),
+        };
+        round_trip(&subscribe_bare);
+
+        let modify = ClientStreamMessage {
+            message: Some(client_stream_message::Message::Modify(Modify {
+                subscription: Some(sub),
+                instrument: Some(vanilla_instrument()),
+                conventions: Some(conv),
+                throttle_nanos: 2_000_000,
+                surface_version: None,
+            })),
+        };
+        round_trip(&modify);
 
         let resync = ClientStreamMessage {
             message: Some(client_stream_message::Message::Resync(Resync {
@@ -383,6 +470,16 @@ mod tests {
             })),
         };
         round_trip(&unsubscribe);
+
+        let execute = ClientStreamMessage {
+            message: Some(client_stream_message::Message::Execute(Execute {
+                subscription: Some(sub),
+                token: 0xA2,
+                idempotency_key: "click-1".to_owned(),
+                correlation_id: Some(0xBEEF),
+            })),
+        };
+        round_trip(&execute);
 
         let client_hb = ClientStreamMessage {
             message: Some(client_stream_message::Message::Heartbeat(Heartbeat {
@@ -405,6 +502,9 @@ mod tests {
                 vol: 0.0825,
                 conventions: Some(conv),
                 resolved_strike: 1.1050,
+                tradable: tradable(),
+                surface_version: Some(13),
+                correlation_id: Some(0xBEEF),
                 epoch_nanos: 1,
             })),
         };
@@ -420,6 +520,8 @@ mod tests {
                 }),
                 greeks: Some(sample_greeks()),
                 vol: 0.0830,
+                tradable: tradable(),
+                surface_version: Some(13),
                 epoch_nanos: 2,
             })),
         };
@@ -433,6 +535,30 @@ mod tests {
             })),
         };
         round_trip(&server_hb);
+
+        let executed = ServerStreamMessage {
+            message: Some(server_stream_message::Message::Executed(Executed {
+                subscription: Some(sub),
+                token: 0xA2,
+                execution_id: 9_100,
+                side: Side::Buy as i32,
+                traded_premium: 0.0089,
+                correlation_id: Some(0xBEEF),
+                epoch_nanos: 4,
+            })),
+        };
+        round_trip(&executed);
+
+        let stream_reject = ServerStreamMessage {
+            message: Some(server_stream_message::Message::StreamReject(StreamReject {
+                subscription: Some(sub),
+                token: 0xDEAD,
+                reason: stream_reject::Reason::Expired as i32,
+                correlation_id: None,
+                epoch_nanos: 5,
+            })),
+        };
+        round_trip(&stream_reject);
 
         let end = ServerStreamMessage {
             message: Some(server_stream_message::Message::StreamEnd(StreamEnd {
@@ -532,13 +658,65 @@ mod tests {
                     relative: true,
                     steps: vec![0.0, 1.0],
                 },
+                // Theta-roll axis: roll calendar time forward (always absolute).
+                ShockAxis {
+                    factor: shock_axis::Factor::Time as i32,
+                    relative: false,
+                    steps: vec![0.0, 1.0 / 365.0, 3.0 / 365.0],
+                },
             ],
+            expiry_years: 0.25,
+            risk_buckets: Some(RiskBucketRequest {
+                vega_pillars: vec![
+                    VegaBucket {
+                        tenor_years: 0.25,
+                        delta: 0.50,
+                        vega: 0.0,
+                    },
+                    VegaBucket {
+                        tenor_years: 0.25,
+                        delta: 0.25,
+                        vega: 0.0,
+                    },
+                    VegaBucket {
+                        tenor_years: 0.25,
+                        delta: -0.25,
+                        vega: 0.0,
+                    },
+                ],
+                cross_gamma_pairs: vec![CrossGamma {
+                    factor_a: shock_axis::Factor::Spot as i32,
+                    factor_b: shock_axis::Factor::Vol as i32,
+                    value: 0.0,
+                }],
+                roll_horizons_years: vec![1.0 / 365.0, 3.0 / 365.0],
+            }),
         };
         round_trip(&req);
 
+        // Scenario request without the book-shaped risk decomposition.
+        let req_grid_only = ScenarioRequest {
+            instrument: Some(vanilla_instrument()),
+            base_market: Some(MarketContext {
+                spot: 1.10,
+                vol: 0.0825,
+                r_dom: 0.045,
+                r_for: 0.030,
+            }),
+            conventions: Some(sample_conventions()),
+            axes: vec![ShockAxis {
+                factor: shock_axis::Factor::Spot as i32,
+                relative: true,
+                steps: vec![0.0],
+            }],
+            expiry_years: 0.25,
+            risk_buckets: None,
+        };
+        round_trip(&req_grid_only);
+
         let resp = ScenarioResponse {
             points: vec![ScenarioPoint {
-                applied_shocks: vec![-0.20, 0.0],
+                applied_shocks: vec![-0.20, 0.0, 1.0 / 365.0],
                 shocked_market: Some(MarketContext {
                     spot: 0.88,
                     vol: 0.0825,
@@ -546,7 +724,34 @@ mod tests {
                     r_for: 0.030,
                 }),
                 greeks: Some(sample_greeks()),
+                expiry_years: 0.25 - 1.0 / 365.0,
             }],
+            bucketed_risk: Some(BucketedRisk {
+                vega_buckets: vec![
+                    VegaBucket {
+                        tenor_years: 0.25,
+                        delta: 0.50,
+                        vega: 0.0305,
+                    },
+                    VegaBucket {
+                        tenor_years: 0.25,
+                        delta: 0.25,
+                        vega: 0.0142,
+                    },
+                    VegaBucket {
+                        tenor_years: 0.25,
+                        delta: -0.25,
+                        vega: 0.0138,
+                    },
+                ],
+                cross_gammas: vec![CrossGamma {
+                    factor_a: shock_axis::Factor::Spot as i32,
+                    factor_b: shock_axis::Factor::Vol as i32,
+                    value: -0.072,
+                }],
+                theta_roll: vec![0.012_28, 0.012_10],
+                roll_horizons_years: vec![1.0 / 365.0, 3.0 / 365.0],
+            }),
         };
         round_trip(&resp);
     }
@@ -559,5 +764,79 @@ mod tests {
         ] {
             round_trip(&StrikeOrDelta { spec: Some(spec) });
         }
+    }
+
+    #[test]
+    fn round_trip_tradable_token_each_side() {
+        for (side, premium) in [(Side::Sell, 0.0081), (Side::Buy, 0.0089)] {
+            round_trip(&TradableToken {
+                token: 0xFEED,
+                side: side as i32,
+                premium,
+                valid_until_nanos: 1_717_000_000_500_000_000,
+            });
+        }
+    }
+
+    #[test]
+    fn round_trip_stream_reject_each_reason() {
+        for reason in [
+            stream_reject::Reason::Expired,
+            stream_reject::Reason::UnknownToken,
+            stream_reject::Reason::AlreadyConsumed,
+        ] {
+            round_trip(&StreamReject {
+                subscription: Some(SubscriptionId { value: 5 }),
+                token: 0xBAD,
+                reason: reason as i32,
+                correlation_id: Some(9),
+                epoch_nanos: 1,
+            });
+        }
+    }
+
+    #[test]
+    fn round_trip_bucketed_risk_standalone() {
+        // Bucketed risk with every part populated, and with all parts empty,
+        // to pin the repeated-field presence in both directions.
+        let full = BucketedRisk {
+            vega_buckets: vec![VegaBucket {
+                tenor_years: 1.0,
+                delta: -0.10,
+                vega: 0.021,
+            }],
+            cross_gammas: vec![CrossGamma {
+                factor_a: shock_axis::Factor::RateDom as i32,
+                factor_b: shock_axis::Factor::Spot as i32,
+                value: 0.004,
+            }],
+            theta_roll: vec![0.01, 0.009],
+            roll_horizons_years: vec![1.0 / 365.0, 2.0 / 365.0],
+        };
+        round_trip(&full);
+        round_trip(&BucketedRisk::default());
+    }
+
+    #[test]
+    fn round_trip_executed_with_and_without_correlation() {
+        let sub = SubscriptionId { value: 3 };
+        round_trip(&Executed {
+            subscription: Some(sub),
+            token: 1,
+            execution_id: 100,
+            side: Side::Sell as i32,
+            traded_premium: 0.0081,
+            correlation_id: Some(77),
+            epoch_nanos: 9,
+        });
+        round_trip(&Executed {
+            subscription: Some(sub),
+            token: 1,
+            execution_id: 100,
+            side: Side::Sell as i32,
+            traded_premium: 0.0081,
+            correlation_id: None,
+            epoch_nanos: 9,
+        });
     }
 }

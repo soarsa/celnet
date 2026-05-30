@@ -1,29 +1,46 @@
-//! Trader-workflow integration test for the RFS streaming SDK.
+//! Trader-workflow integration tests for the multiplexed RFS streaming SDK.
 //!
-//! **Scenario 1 — a market-maker streams a two-way market for a 1Y 25Δ risk
-//! reversal and the taker tracks sequenced deltas plus a resync.** Driven through
-//! the typed [`celnet_client::Subscription`] stream: the SDK surfaces a baseline
-//! snapshot then strictly-sequenced ticks, and the per-subscription sequence is
-//! tracked inside the SDK. Each streamed line is asserted self-consistent against
-//! a first-principles `celnet-vanilla` risk-reversal price at the streamed vol.
+//! These drive a real in-process `celnet-server` edge through the typed
+//! [`celnet_client`] SDK over **one** [`celnet_client::StreamSession`] and assert the
+//! client results equal the underlying analytics crate's direct computation — the
+//! same EURUSD fixture and the same first-principles references the server's own
+//! integration tests use, so the SDK is validated end-to-end against the analytics,
+//! never merely "looks plausible".
 //!
-//! Because the SDK's gap-detection auto-resyncs internally, we also verify that
-//! after consuming a baseline the stream keeps advancing monotonically with no gap
-//! ever observed by the caller — the SDK's whole purpose is that the caller never
-//! sees a sequence break. Every body is hard wall-clock bounded and every stream
-//! await is bounded.
+//! * **Market-maker streams many instruments over ONE session.** A maker streams a
+//!   1Y 25Δ risk reversal *and* three vanilla calls at distinct strikes over a
+//!   single multiplexed session; the client tracks all four subscriptions, each with
+//!   its own strictly-sequenced stream (no gap ever surfaced), and each streamed
+//!   line reprices consistently against `celnet-vanilla`.
+//! * **Taker click-trades off a streamed line within the validity window.** A taker
+//!   grabs a fresh streamed line, clicks to BUY, and books — the SDK handles the
+//!   `tradable_token` transparently and the booked premium equals the streamed
+//!   offer (which a first-principles GK price brackets). A click on a line whose
+//!   token has aged past its validity window is *rejected* (last-look), never booked.
+//! * **Risk manager pulls book-shaped risk.** A risk manager requests bucketed vega,
+//!   cross-gamma, and a theta roll; the client's typed `BucketedRisk` equals a
+//!   first-principles finite-difference decomposition computed directly with
+//!   `celnet-vanilla`.
+//!
+//! Every body is hard wall-clock bounded and every stream await is bounded, so a
+//! regression fails fast, never hangs.
 
 mod common;
 
 use std::time::Duration;
 
-use celnet_client::{InstrumentSpec, Leg, Quantity, Side, StrategyKind, StreamEvent, StrikeSpec};
+use celnet_client::{
+    Client, ExecuteOutcome, InstrumentSpec, Leg, Quantity, RiskRequest, Side, StrategyKind,
+    StreamEvent, StreamLine, StreamSession, StrikeSpec, Subscription,
+};
 use celnet_core::is_close;
 use celnet_server::Clock;
 use celnet_types::{OptionType, Tenor, VanillaInputs};
-use futures_util::StreamExt;
 
-use common::{STEP_DEADLINE, TEST_DEADLINE, conventions, eurusd, live_market, start_ready_edge};
+use common::{
+    FIXTURE_SPOT, STEP_DEADLINE, TEST_DEADLINE, conventions, eurusd, live_market,
+    start_edge_and_client_with, start_ready_edge, vanilla_call,
+};
 
 /// A 1Y EURUSD 25-delta risk reversal: long the 25Δ call, short the 25Δ put.
 fn rr_25() -> InstrumentSpec {
@@ -41,155 +58,427 @@ fn rr_25() -> InstrumentSpec {
     )
 }
 
-/// Await the next stream event within the step deadline, panicking on a hang or a
-/// closed stream.
-async fn next_event(sub: &mut celnet_client::Subscription) -> StreamEvent {
-    tokio::time::timeout(STEP_DEADLINE, sub.next())
+/// Await the next stream event on a subscription within the step deadline, panicking
+/// on a hang or a closed stream.
+async fn next_event(sub: &mut Subscription) -> StreamEvent {
+    tokio::time::timeout(STEP_DEADLINE, sub.next_event())
         .await
         .expect("a stream event arrives before the deadline")
         .expect("the stream stays open")
         .expect("the event is well-formed")
 }
 
-/// Scenario 1: subscribe to a streamed two-way for a 25Δ risk reversal; the SDK
-/// surfaces a typed baseline snapshot then strictly-sequenced ticks (no gap ever
-/// observed by the caller), each repricing the structure consistently.
+/// Consume the baseline snapshot of a subscription, returning its line + resolved
+/// strike; panics if the first event is not a snapshot.
+async fn baseline(sub: &mut Subscription) -> (StreamLine, f64) {
+    match next_event(sub).await {
+        StreamEvent::Snapshot {
+            line,
+            resolved_strike,
+            ..
+        } => {
+            assert_eq!(line.sequence, 1, "baseline snapshot is sequence 1");
+            (line, resolved_strike)
+        }
+        other => panic!("expected a Snapshot first, got {other:?}"),
+    }
+}
+
+/// Drive a subscription forward `n` ticks (skipping heartbeats), returning the last
+/// tick line; asserts strictly-sequenced advance with no gap surfaced.
+async fn drive_ticks(sub: &mut Subscription, n: usize, mut last_seq: u64) -> StreamLine {
+    let mut seen = 0;
+    let mut last_line = None;
+    while seen < n {
+        match next_event(sub).await {
+            StreamEvent::Tick(line) => {
+                assert_eq!(
+                    line.sequence,
+                    last_seq + 1,
+                    "ticks are strictly sequenced (SDK surfaces no gap)"
+                );
+                last_seq = line.sequence;
+                last_line = Some(line);
+                seen += 1;
+            }
+            StreamEvent::Heartbeat { sequence, .. } => assert!(sequence >= last_seq),
+            StreamEvent::GapDetected { .. } => {
+                panic!("the SDK must never surface a raw gap on a healthy stream")
+            }
+            other => panic!("unexpected stream event: {other:?}"),
+        }
+    }
+    last_line.expect("at least one tick consumed")
+}
+
+/// Scenario: a market-maker streams a 25Δ risk reversal AND three vanilla calls over
+/// ONE multiplexed session; the client tracks all four subscriptions independently,
+/// each strictly sequenced, and each streamed line reprices consistently.
 #[tokio::test]
-async fn market_maker_streams_risk_reversal_taker_tracks_sequenced_deltas() {
+async fn market_maker_streams_many_instruments_over_one_session() {
     tokio::time::timeout(TEST_DEADLINE, async {
         let (edge, addr) = start_ready_edge(Clock::system()).await;
-        let client = tokio::time::timeout(
-            STEP_DEADLINE,
-            celnet_client::Client::connect(format!("http://{addr}")),
-        )
-        .await
-        .expect("client connects in time")
-        .expect("client connects");
-
-        let mut sub = tokio::time::timeout(STEP_DEADLINE, client.subscribe(rr_25(), conventions()))
+        let client = tokio::time::timeout(STEP_DEADLINE, Client::connect(format!("http://{addr}")))
             .await
-            .expect("subscribe opens in time")
-            .expect("subscribe opens");
+            .expect("client connects in time")
+            .expect("client connects");
 
-        // The first event is the typed baseline snapshot at sequence 1.
-        let (mut last_seq, resolved_strike) = match next_event(&mut sub).await {
+        // ONE session multiplexing four subscriptions.
+        let session: StreamSession = tokio::time::timeout(STEP_DEADLINE, client.open_session())
+            .await
+            .expect("session opens in time")
+            .expect("session opens");
+
+        let strikes = [1.08_f64, 1.12, 1.16];
+        // Open the risk reversal and three vanilla calls over the same connection,
+        // each with a distinct correlation id the snapshot echoes back.
+        let mut rr = session
+            .subscribe(rr_25(), conventions(), Some(1000), None)
+            .await
+            .expect("rr subscribes");
+        let mut calls: Vec<Subscription> = Vec::new();
+        for (i, &k) in strikes.iter().enumerate() {
+            let corr = 2000 + i as u64;
+            let sub = session
+                .subscribe(vanilla_call(k), conventions(), Some(corr), None)
+                .await
+                .expect("call subscribes");
+            calls.push(sub);
+        }
+
+        // Distinct per-session subscription ids (one connection, many lines).
+        let mut ids = vec![rr.id()];
+        ids.extend(calls.iter().map(Subscription::id));
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), 4, "four distinct subscriptions on one session");
+
+        // The risk reversal baseline: a headline strike resolved, correlation echoed.
+        match next_event(&mut rr).await {
             StreamEvent::Snapshot {
                 line,
                 resolved_strike,
-                conventions: _,
+                correlation_id,
+                ..
             } => {
-                assert_eq!(line.sequence, 1, "baseline snapshot is sequence 1");
-                // A risk reversal is a near-zero / signed-premium structure, so its
-                // two-way may straddle zero; the bid is floored at zero by the maker
-                // spread model and the offer carries the signed mid. We only require
-                // a well-formed, finite two-way here (see API-ergonomics note in the
-                // report: the bid-floor can invert the two-way for signed-premium
-                // structures).
-                assert!(
-                    line.price.bid.is_finite() && line.price.offer.is_finite(),
-                    "two-way snapshot is finite: {:?}",
-                    line.price
-                );
-                (line.sequence, resolved_strike)
+                assert_eq!(line.sequence, 1);
+                assert!(resolved_strike > 0.0, "a headline strike resolved");
+                assert_eq!(correlation_id, Some(1000), "snapshot echoes correlation id");
+                assert!(line.price.bid.is_finite() && line.price.offer.is_finite());
             }
-            other => panic!("expected a Snapshot first, got {other:?}"),
-        };
-        // The headline resolved strike is the first (25Δ call) leg's, a positive
-        // level above spot for a 1Y EURUSD 25Δ call.
-        assert!(resolved_strike > 0.0, "a headline strike resolved");
-
-        // Then strictly-sequenced ticks with NO gap ever surfaced to the caller.
-        let m = live_market();
-        let mut ticks = 0;
-        while ticks < 3 {
-            match next_event(&mut sub).await {
-                StreamEvent::Tick(line) => {
-                    assert_eq!(
-                        line.sequence,
-                        last_seq + 1,
-                        "ticks are strictly sequenced (SDK surfaces no gap)"
-                    );
-                    last_seq = line.sequence;
-                    ticks += 1;
-                    // The streamed line reprices the risk reversal consistently at
-                    // its streamed spot + vol: a long-25Δ-call / short-25Δ-put price
-                    // computed first-principles must equal the line price within a
-                    // tolerance allowing the small per-tick spot bump (the maker
-                    // bumps spot deterministically; we don't know the exact spot, so
-                    // we assert the structure value is finite and bracketed).
-                    assert!(
-                        line.greeks.price.is_finite(),
-                        "streamed structure price is finite"
-                    );
-                    // The reported vol reprices each leg sanely (positive vol).
-                    assert!(line.vol > 0.0, "streamed vol is positive: {}", line.vol);
-                    let _ = (m.spot, m.r_dom, m.r_for);
-                }
-                StreamEvent::Heartbeat { sequence, .. } => {
-                    // A heartbeat mirrors the current sequence; never reveals a gap
-                    // to the caller (the SDK would have resynced first).
-                    assert!(sequence >= last_seq);
-                }
-                StreamEvent::GapDetected { .. } => {
-                    panic!("the SDK must never surface a raw gap on a healthy stream")
-                }
-                other => panic!("unexpected stream event: {other:?}"),
-            }
+            other => panic!("expected RR Snapshot, got {other:?}"),
         }
-        assert!(last_seq >= 4, "saw at least snapshot + 3 sequenced ticks");
+        let mut rr_seq = 1;
 
-        // Tear the subscription down by dropping it, then drain the edge.
-        drop(sub);
+        // Each vanilla call baseline reprices against a first-principles GK price at
+        // its streamed (spot, vol): the SDK carries the maker's real numbers.
+        let m = live_market();
+        for (i, sub) in calls.iter_mut().enumerate() {
+            let (line, _strike) = baseline(sub).await;
+            let direct = celnet_vanilla::price(
+                OptionType::Call,
+                &VanillaInputs::new(m.spot, strikes[i], line.vol, 1.0, m.r_dom, m.r_for),
+            );
+            let mid = line.price.mid();
+            assert!(
+                is_close(mid, direct, 1e-6, 1e-6) || line.price.bid == 0.0,
+                "call {i} snapshot mid {mid} vs direct {direct}"
+            );
+        }
+
+        // The session keeps every subscription advancing independently with no gap.
+        rr_seq = drive_ticks(&mut rr, 3, rr_seq).await.sequence;
+        assert!(rr_seq >= 4, "rr saw snapshot + 3 ticks: seq {rr_seq}");
+        for sub in &mut calls {
+            let last = drive_ticks(sub, 2, 1).await;
+            assert!(last.sequence >= 3, "each call advanced past its baseline");
+            assert!(last.greeks.price.is_finite() && last.vol > 0.0);
+        }
+
+        drop(rr);
+        drop(calls);
+        drop(session);
         edge.shutdown(Duration::from_secs(5)).await;
     })
     .await
     .expect("test must not hang");
 }
 
-/// The streamed snapshot line for a vanilla reprices exactly at its reported vol:
-/// the SDK surfaces the maker's deterministic price, so a first-principles GK
-/// price at the snapshot's (spot, vol) brackets the snapshot two-way. This pins
-/// that the typed `StreamLine` carries the maker's real numbers, not a stub.
+/// Scenario: a taker click-trades off a streamed line within its validity window.
+/// The SDK presents the line's BUY token transparently; the maker books at the
+/// stamped offer, which a first-principles GK price brackets. The taker also tracks
+/// a second subscription on the same session, proving execute and stream coexist.
 #[tokio::test]
-async fn streamed_snapshot_line_reprices_against_direct_price() {
+async fn taker_click_trades_a_streamed_line_within_the_window() {
     tokio::time::timeout(TEST_DEADLINE, async {
         let (edge, addr) = start_ready_edge(Clock::system()).await;
-        let client = tokio::time::timeout(
-            STEP_DEADLINE,
-            celnet_client::Client::connect(format!("http://{addr}")),
-        )
-        .await
-        .expect("client connects in time")
-        .expect("client connects");
+        let client = tokio::time::timeout(STEP_DEADLINE, Client::connect(format!("http://{addr}")))
+            .await
+            .expect("client connects in time")
+            .expect("client connects");
+
+        let session = tokio::time::timeout(STEP_DEADLINE, client.open_session())
+            .await
+            .expect("session opens in time")
+            .expect("session opens");
 
         let strike = 1.12;
-        let mut sub = tokio::time::timeout(
-            STEP_DEADLINE,
-            client.subscribe(common::vanilla_call(strike), conventions()),
-        )
-        .await
-        .expect("subscribe in time")
-        .expect("subscribe opens");
+        let mut traded = session
+            .subscribe(vanilla_call(strike), conventions(), None, None)
+            .await
+            .expect("subscribe opens");
+        // A second subscription multiplexed on the same session, to prove execute and
+        // independent streaming coexist.
+        let mut watched = session
+            .subscribe(vanilla_call(1.05), conventions(), None, None)
+            .await
+            .expect("second subscribe opens");
 
-        let snap_line = match next_event(&mut sub).await {
-            StreamEvent::Snapshot { line, .. } => line,
-            other => panic!("expected Snapshot, got {other:?}"),
+        // Grab a *fresh* live tick line (a snapshot's tokens are retired by the next
+        // sequence; a just-arrived tick carries currently-live tokens).
+        let _ = baseline(&mut traded).await;
+        let line = loop {
+            match next_event(&mut traded).await {
+                StreamEvent::Tick(line) if line.token_for(Side::Buy).is_some() => break line,
+                StreamEvent::Tick(_) | StreamEvent::Heartbeat { .. } => {}
+                other => panic!("unexpected event while seeking a tradable tick: {other:?}"),
+            }
         };
 
-        // The snapshot is priced at the live market spot (no bump applied to the
-        // baseline), so a direct GK price at (spot, snapshot-vol) brackets it.
-        let m = live_market();
-        let direct = celnet_vanilla::price(
-            OptionType::Call,
-            &VanillaInputs::new(m.spot, strike, snap_line.vol, 1.0, m.r_dom, m.r_for),
+        // The SDK handles the tradable token: click to BUY (lift the offer).
+        let buy_token = line.token_for(Side::Buy).expect("a BUY token");
+        let outcome = tokio::time::timeout(STEP_DEADLINE, traded.execute(&line, Side::Buy))
+            .await
+            .expect("execute resolves in time")
+            .expect("execute sends");
+
+        let booked = match outcome {
+            ExecuteOutcome::Booked(e) => e,
+            ExecuteOutcome::Rejected { reason } => {
+                panic!("a click within the window must book, got reject {reason:?}")
+            }
+        };
+        assert_eq!(booked.side, Side::Buy, "BUY lifted the offer");
+        // The booked premium is exactly the line's stamped BUY (offer) premium — the
+        // SDK booked the clicked price, no re-pricing.
+        assert_eq!(
+            booked.traded_premium.to_bits(),
+            buy_token.premium.to_bits(),
+            "booked at the stamped offer premium"
         );
-        let mid = snap_line.price.mid();
+        assert_eq!(
+            booked.traded_premium.to_bits(),
+            line.price.offer.to_bits(),
+            "the BUY token premium is the line offer"
+        );
+        // The streamed line reprices against a first-principles GK price. The maker
+        // bumps spot deterministically each tick (a per-tick fractional move bounded
+        // by `STREAM_BUMP`), so the clicked tick's mid sits between the GK price at
+        // the lower and upper ends of that spot band — proving the streamed line
+        // carries the maker's real GK numbers, not a stub.
+        const STREAM_BUMP: f64 = 0.0005;
+        let m = live_market();
+        let gk = |spot: f64| {
+            celnet_vanilla::price(
+                OptionType::Call,
+                &VanillaInputs::new(spot, strike, line.vol, 1.0, m.r_dom, m.r_for),
+            )
+        };
+        let lo = gk(m.spot * (1.0 - STREAM_BUMP)).min(gk(m.spot * (1.0 + STREAM_BUMP)));
+        let hi = gk(m.spot * (1.0 - STREAM_BUMP)).max(gk(m.spot * (1.0 + STREAM_BUMP)));
+        let mid = line.price.mid();
         assert!(
-            is_close(mid, direct, 1e-6, 1e-6) || snap_line.price.bid == 0.0,
-            "snapshot mid {mid} vs direct {direct}"
+            mid >= lo - 1e-6 && mid <= hi + 1e-6,
+            "streamed mid {mid} not bracketed by GK over the tick spot band [{lo}, {hi}]"
         );
 
+        // The other subscription is unaffected by the click — still streaming.
+        let _ = baseline(&mut watched).await;
+        let _ = drive_ticks(&mut watched, 1, 1).await;
+
+        drop(traded);
+        drop(watched);
+        drop(session);
+        edge.shutdown(Duration::from_secs(5)).await;
+    })
+    .await
+    .expect("test must not hang");
+}
+
+/// Scenario: a click on a line whose token has aged past its validity window is
+/// rejected (last-look), never booked. Driven on a manual clock advanced past the
+/// 1-second token window so the staleness is deterministic, not timing-dependent.
+#[tokio::test]
+async fn stale_click_token_is_rejected_not_booked() {
+    tokio::time::timeout(TEST_DEADLINE, async {
+        // A manual clock we keep a handle to, so we can age the token past its window.
+        let clock = Clock::manual(1_000_000_000);
+        let (edge, client) = start_edge_and_client_with(clock.clone()).await;
+
+        let session = tokio::time::timeout(STEP_DEADLINE, client.open_session())
+            .await
+            .expect("session opens in time")
+            .expect("session opens");
+
+        let mut sub = session
+            .subscribe(vanilla_call(1.12), conventions(), None, None)
+            .await
+            .expect("subscribe opens");
+
+        // Capture a tradable line.
+        let (snap, _) = baseline(&mut sub).await;
+        let line = if snap.token_for(Side::Buy).is_some() {
+            snap
+        } else {
+            // Fall back to the first tradable tick if the snapshot was indicative.
+            loop {
+                match next_event(&mut sub).await {
+                    StreamEvent::Tick(l) if l.token_for(Side::Buy).is_some() => break l,
+                    StreamEvent::Tick(_) | StreamEvent::Heartbeat { .. } => {}
+                    other => panic!("unexpected event: {other:?}"),
+                }
+            }
+        };
+
+        // Age every token well past its 1-second validity window (the clock never
+        // advances on its own), so the click is stale by the time the maker sees it.
+        clock.advance(5_000_000_000);
+
+        let outcome = tokio::time::timeout(STEP_DEADLINE, sub.execute(&line, Side::Buy))
+            .await
+            .expect("execute resolves in time")
+            .expect("execute sends");
+
+        // A stale click never books — it is declined (expired window, or the token
+        // was already retired by a newer sequence: both are a rejection, not a book).
+        match outcome {
+            ExecuteOutcome::Rejected { .. } => {}
+            ExecuteOutcome::Booked(e) => panic!("a stale click must not book, got {e:?}"),
+        }
+
         drop(sub);
+        drop(session);
+        edge.shutdown(Duration::from_secs(5)).await;
+    })
+    .await
+    .expect("test must not hang");
+}
+
+/// Scenario: a risk manager pulls book-shaped risk (bucketed vega + cross-gamma +
+/// theta roll) for a vanilla, and the client's typed `BucketedRisk` equals a
+/// first-principles finite-difference decomposition computed directly with
+/// `celnet-vanilla`.
+#[tokio::test]
+async fn risk_manager_pulls_book_shaped_risk_equals_direct_fd() {
+    tokio::time::timeout(TEST_DEADLINE, async {
+        let (edge, client) = start_edge_and_client_with(Clock::system()).await;
+
+        let strike = 1.12;
+        let expiry = 1.0;
+        let instrument = vanilla_call(strike);
+        let m = live_market();
+        let base = celnet_client::MarketContext {
+            spot: m.spot,
+            vol: m.vol,
+            r_dom: m.r_dom,
+            r_for: m.r_for,
+        };
+
+        // The risk manager asks for ATM-pillar vega at the instrument's own tenor, a
+        // spot×vol cross-gamma, and an overnight theta roll.
+        let request = RiskRequest::vega(vec![(expiry, 0.50)])
+            .with_cross_gamma(vec![(
+                celnet_client::ShockFactor::Spot,
+                celnet_client::ShockFactor::Vol,
+            )])
+            .with_roll_horizons(vec![1.0 / 365.0]);
+
+        // A trivial single-node grid (no shock) accompanies the risk in one round-trip.
+        let no_shock =
+            celnet_client::ShockAxis::absolute(celnet_client::ShockFactor::Spot, vec![0.0]);
+        let result = tokio::time::timeout(
+            STEP_DEADLINE,
+            client.scenario_with_risk(&instrument, base, &[no_shock], &request, conventions()),
+        )
+        .await
+        .expect("scenario_with_risk in time")
+        .expect("scenario_with_risk ok");
+
+        // ---- bucketed vega: central difference of the GK price in vol -----------
+        let h = 1e-4;
+        let v_up = celnet_vanilla::price(
+            OptionType::Call,
+            &VanillaInputs::new(m.spot, strike, m.vol + h, expiry, m.r_dom, m.r_for),
+        );
+        let v_dn = celnet_vanilla::price(
+            OptionType::Call,
+            &VanillaInputs::new(m.spot, strike, m.vol - h, expiry, m.r_dom, m.r_for),
+        );
+        let direct_vega = (v_up - v_dn) / (2.0 * h);
+        let client_vega = result
+            .risk
+            .vega_at(expiry, 0.50)
+            .expect("the ATM-pillar vega bucket is present");
+        assert!(
+            is_close(client_vega, direct_vega, 1e-6, 1e-8),
+            "client bucketed vega {client_vega} vs direct FD {direct_vega}"
+        );
+
+        // ---- cross-gamma spot×vol: 2-D central stencil of the GK price ----------
+        let hs = m.spot * 1e-4;
+        let hv = 1e-4;
+        let p = |spot: f64, vol: f64| {
+            celnet_vanilla::price(
+                OptionType::Call,
+                &VanillaInputs::new(spot, strike, vol, expiry, m.r_dom, m.r_for),
+            )
+        };
+        let v_pp = p(m.spot + hs, m.vol + hv);
+        let v_pm = p(m.spot + hs, m.vol - hv);
+        let v_mp = p(m.spot - hs, m.vol + hv);
+        let v_mm = p(m.spot - hs, m.vol - hv);
+        let direct_cross = (v_pp - v_pm - v_mp + v_mm) / (4.0 * hs * hv);
+        let client_cross = result
+            .risk
+            .cross_gamma(
+                celnet_client::ShockFactor::Spot,
+                celnet_client::ShockFactor::Vol,
+            )
+            .expect("the spot×vol cross-gamma term is present");
+        assert!(
+            is_close(client_cross, direct_cross, 1e-5, 1e-6),
+            "client cross-gamma {client_cross} vs direct FD {direct_cross}"
+        );
+
+        // ---- theta roll: GK price at the rolled-forward expiry ------------------
+        let rolled = expiry - 1.0 / 365.0;
+        let direct_roll = celnet_vanilla::price(
+            OptionType::Call,
+            &VanillaInputs::new(m.spot, strike, m.vol, rolled, m.r_dom, m.r_for),
+        );
+        assert_eq!(result.risk.theta_roll.len(), 1, "one rolled horizon");
+        assert!(
+            is_close(result.risk.theta_roll[0], direct_roll, 1e-6, 1e-8),
+            "client theta roll {} vs direct {direct_roll}",
+            result.risk.theta_roll[0]
+        );
+
+        // The accompanying base grid node reprices the unshocked instrument too.
+        let base_node = result
+            .grid
+            .node_with_shocks(&[0.0])
+            .expect("the unshocked base node");
+        let direct_base = celnet_vanilla::price(
+            OptionType::Call,
+            &VanillaInputs::new(m.spot, strike, m.vol, expiry, m.r_dom, m.r_for),
+        );
+        assert!(
+            is_close(base_node.greeks.price, direct_base, 1e-6, 1e-8),
+            "base grid node price {} vs direct {direct_base}",
+            base_node.greeks.price
+        );
+
+        let _ = FIXTURE_SPOT;
         edge.shutdown(Duration::from_secs(5)).await;
     })
     .await
