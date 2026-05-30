@@ -69,21 +69,27 @@ Requires Node ≥ 22 (developed on Node 26 / npm 11).
 - `transport.ts` — the **isolated transport seam** (`CelnetTransport`): the only
   interface the app talks to. Two transports satisfy it, selected once at the app
   root by `transportConfig.ts`:
-  - the deterministic in-app `mockSource.ts` (seeded PRNG tape, real GK pricing +
-    14 Greeks, surface calibration, scenario repricing) — **the default**, so the
-    app runs standalone with no server;
   - `wsTransport.ts` — a **live** client over the `celnet-server` WebSocket JSON
-    mirror (`crates/celnet-server/src/ws`), speaking the SAME single `celnet.wire`
-    contract encoded as the mirror's type-tagged snake_case JSON (`wsCodec.ts` +
-    `enums.ts` mirror the server's `codec.rs` field-for-field). It multiplexes the
-    RFS session and the request/response calls over one connection, tracks
-    per-subscription sequence with **gap-detect → server-assisted `resync`**, and
-    **auto-reconnects** with capped backoff (re-subscribing and resyncing every
-    live line; pending request/response calls are failed fast across a drop).
-  Select the live transport at build time with `VITE_CELNET_TRANSPORT=ws`
-  (endpoint via `VITE_CELNET_WS_URL`, default `ws://127.0.0.1:8081`). Nothing else
-  in the app changes; `contract.ts` is swapped for the `buf`-generated module when
-  that lands so the GUI cannot drift from the wire.
+    mirror (`crates/celnet-server/src/ws`) — **the default**, so every number on
+    every screen is the server's (the GUI adds no pricing). It speaks the SAME
+    single `celnet.wire` contract encoded as the mirror's type-tagged snake_case
+    JSON (`wsCodec.ts` + `enums.ts` mirror the server's `codec.rs` field-for-field),
+    multiplexes the RFS session and the request/response calls over one connection,
+    tracks per-subscription sequence with **gap-detect → server-assisted `resync`**,
+    matches correlation-less replies (`smile` / `mark_surface_response` / `scenario`)
+    to their FIFO waiter, parses/serializes 64-bit identities (tradable `token`,
+    nanos, ids) **losslessly** so click-to-trade `Execute`-by-token round-trips
+    exactly, and **auto-reconnects** with capped backoff (re-subscribing and
+    resyncing every live line; pending request/response calls fail fast on a drop);
+  - the deterministic in-app `mockSource.ts` (seeded PRNG tape, real GK pricing +
+    14 Greeks, surface calibration, scenario repricing) — an explicit **offline
+    opt-in** for a no-server demo / design review.
+  The default is live `ws://127.0.0.1:8081`; override the endpoint with the URL
+  param `?ws=ws://host:port` or build-time env `VITE_CELNET_WS_URL`. Force the
+  offline mock with the URL flag `?mock` or `VITE_CELNET_TRANSPORT=mock` — the
+  status ribbon reads `live ws://…` by default and `mock/replay` only when opted in.
+  Nothing else in the app changes; `contract.ts` is swapped for the `buf`-generated
+  module when that lands so the GUI cannot drift from the wire.
 
 ## Performance discipline
 

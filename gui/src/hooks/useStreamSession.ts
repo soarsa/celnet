@@ -53,7 +53,13 @@ export interface StreamApi {
   toasts: TradeToast[];
   subscribe: (instrument: Instrument, conventions: Conventions, label: string) => bigint;
   unsubscribe: (subscriptionId: bigint) => void;
-  execute: (subscriptionId: bigint, token: bigint) => void;
+  /**
+   * Click-to-trade a side. Resolves the FRESHEST live token for that side from the
+   * authoritative row map (not the React-committed row, which lags the tape by up
+   * to one coalesced frame), so a click trades against the maker's current token
+   * rather than a just-superseded one. Returns false if no live token is present.
+   */
+  execute: (subscriptionId: bigint, side: "BUY" | "SELL") => boolean;
   dismissToast: (id: number) => void;
   /** Aggregate health for the status ribbon. */
   totalSeq: bigint;
@@ -268,8 +274,17 @@ export function useStreamSession(
     sessionRef.current?.unsubscribe(subscriptionId);
     setRows([...rowMap.current.values()]);
   };
-  const execute = (subscriptionId: bigint, token: bigint) => {
-    sessionRef.current?.execute(subscriptionId, token, `exec-${subscriptionId}-${token}`);
+  const execute = (subscriptionId: bigint, side: "BUY" | "SELL"): boolean => {
+    const session = sessionRef.current;
+    if (!session) return false;
+    // Resolve the freshest token for the side straight from the live row map (the
+    // ref the stream callback mutates every tick), so the click trades the maker's
+    // current token, never a token from a frame the rAF batcher hasn't committed.
+    const row = rowMap.current.get(subscriptionId);
+    const tradable = row?.tradable.find((t) => t.side === side);
+    if (!tradable) return false;
+    session.execute(subscriptionId, tradable.token, `exec-${subscriptionId}-${tradable.token}`);
+    return true;
   };
   const dismissToast = (id: number) => setToasts((ts) => ts.filter((t) => t.id !== id));
 

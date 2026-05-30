@@ -52,6 +52,134 @@ import * as e from "./enums";
 export type WireObject = Record<string, unknown>;
 
 // ---------------------------------------------------------------------------
+// lossless 64-bit framing — same wire bytes, no precision loss
+// ---------------------------------------------------------------------------
+//
+// The server (`serde_json`) emits proto `uint64`/`int64` fields (tradable `token`,
+// `valid_until_nanos`, `epoch_nanos`, ids, `sequence`) as full-precision JSON
+// integer literals — many of which exceed `Number.MAX_SAFE_INTEGER` (a minted
+// token is a 64-bit value). Plain `JSON.parse` rounds those to the nearest f64,
+// which silently corrupts a `token` so that a click-to-trade `Execute` is rejected
+// `UNKNOWN_TOKEN`. We therefore parse inbound frames with a tokenizer that keeps
+// any integer literal too large to be a safe `Number` as a `bigint`, and we send
+// outbound frames with a serializer that writes `bigint` fields as bare integer
+// literals. This is NOT a second contract — it is the SAME type-tagged JSON over
+// the wire, only parsed/printed without losing the 64-bit identities the contract
+// already defines (it is what the codec's `numToBigInt` always intended).
+
+/** Max integer that survives a JS `Number` round-trip without rounding. */
+const MAX_SAFE = "9007199254740991";
+
+/** True iff a positive integer's digit string exceeds `Number.MAX_SAFE_INTEGER`. */
+function exceedsSafeInteger(digits: string): boolean {
+  const d = digits.replace(/^0+(?=\d)/, "");
+  if (d.length !== MAX_SAFE.length) return d.length > MAX_SAFE.length;
+  return d > MAX_SAFE;
+}
+
+/**
+ * Parse a JSON text frame WITHOUT losing 64-bit integer precision. Plain
+ * `JSON.parse` rounds an integer literal beyond `Number.MAX_SAFE_INTEGER` to the
+ * nearest `f64` — which silently corrupts a tradable `token` (a minted 64-bit
+ * value) so a click-to-trade `Execute` is rejected `UNKNOWN_TOKEN`. We rewrite any
+ * top-level/structural integer literal that is too large into a JSON *string*
+ * before parsing; the decoders' `numToBigInt` already recovers a string into the
+ * exact `bigint`. Smaller integers and all non-integers are untouched, so the
+ * frame is otherwise byte-identical to a normal parse. This is NOT a second
+ * contract — it is the SAME type-tagged JSON, only read without precision loss.
+ */
+export function parseFrame(raw: string): unknown {
+  return JSON.parse(requoteLargeIntegers(raw));
+}
+
+/**
+ * Rewrite JSON `value` positions whose integer literal exceeds the JS safe range
+ * into quoted strings, leaving string contents, smaller numbers and structure
+ * intact. A small state machine tracks whether we are inside a string so digits
+ * inside string values are never touched.
+ */
+function requoteLargeIntegers(raw: string): string {
+  let out = "";
+  let i = 0;
+  let inString = false;
+  const n = raw.length;
+  while (i < n) {
+    const ch = raw[i]!;
+    if (inString) {
+      out += ch;
+      if (ch === "\\") {
+        // Copy the escaped character verbatim.
+        if (i + 1 < n) out += raw[i + 1]!;
+        i += 2;
+        continue;
+      }
+      if (ch === '"') inString = false;
+      i += 1;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      out += ch;
+      i += 1;
+      continue;
+    }
+    // A number literal can start with `-` or a digit. Consume the WHOLE JSON
+    // number (integer + optional fraction + optional exponent) in one pass — never
+    // re-scan the fractional/exponent tail as a separate integer — then requote
+    // ONLY when the literal is a pure integer beyond the JS safe range.
+    if (ch === "-" || (ch >= "0" && ch <= "9")) {
+      let j = i;
+      if (raw[j] === "-") j += 1;
+      const intStart = j;
+      while (j < n && raw[j]! >= "0" && raw[j]! <= "9") j += 1;
+      const intDigits = raw.slice(intStart, j);
+      let isInteger = intDigits.length > 0;
+      // Optional fraction.
+      if (raw[j] === ".") {
+        isInteger = false;
+        j += 1;
+        while (j < n && raw[j]! >= "0" && raw[j]! <= "9") j += 1;
+      }
+      // Optional exponent.
+      if (raw[j] === "e" || raw[j] === "E") {
+        isInteger = false;
+        j += 1;
+        if (raw[j] === "+" || raw[j] === "-") j += 1;
+        while (j < n && raw[j]! >= "0" && raw[j]! <= "9") j += 1;
+      }
+      const literal = raw.slice(i, j);
+      if (isInteger && exceedsSafeInteger(intDigits)) {
+        // Quote it so JSON.parse yields a string; numToBigInt recovers the bigint.
+        out += `"${literal}"`;
+      } else {
+        out += literal;
+      }
+      i = j;
+      continue;
+    }
+    out += ch;
+    i += 1;
+  }
+  return out;
+}
+
+/**
+ * Serialize an outbound frame, writing any `bigint` value as a bare integer
+ * literal (JSON has no bigint, and `JSON.stringify` throws on one). Used for the
+ * `Execute` frame so the exact 64-bit `token` is echoed to the server verbatim.
+ */
+export function serializeFrame(frame: WireObject): string {
+  // Tag a bigint as a string `@celnet-bigint@<digits>@`, then unwrap the quoted
+  // tag into a bare integer literal. The delimiters are pure ASCII (no whitespace,
+  // no JSON-escapable character), so the unwrap regex matches deterministically and
+  // the tag cannot collide with any contract string field.
+  const text = JSON.stringify(frame, (_key, value: unknown) =>
+    typeof value === "bigint" ? `@celnet-bigint@${value.toString()}@` : value,
+  );
+  return text.replace(/"@celnet-bigint@(-?\d+)@"/g, "$1");
+}
+
+// ---------------------------------------------------------------------------
 // scalar accessors (decode side) — defensive against a malformed frame
 // ---------------------------------------------------------------------------
 

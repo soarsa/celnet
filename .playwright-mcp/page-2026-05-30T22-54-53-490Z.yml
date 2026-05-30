@@ -1,0 +1,121 @@
+- generic [ref=e3]:
+  - complementary "workspaces" [ref=e4]:
+    - generic "Celnet" [ref=e5]:
+      - generic [ref=e6]: ◆
+    - navigation [ref=e7]:
+      - button "⌁ Ticket" [ref=e8] [cursor=pointer]:
+        - generic [ref=e9]: ⌁
+        - generic [ref=e10]: Ticket
+      - button "≋ Stream" [ref=e11] [cursor=pointer]:
+        - generic [ref=e12]: ≋
+        - generic [ref=e13]: Stream
+      - button "◷ Surface" [ref=e14] [cursor=pointer]:
+        - generic [ref=e15]: ◷
+        - generic [ref=e16]: Surface
+      - button "⊞ Risk" [active] [ref=e17] [cursor=pointer]:
+        - generic [ref=e18]: ⊞
+        - generic [ref=e19]: Risk
+    - button "☾" [ref=e21] [cursor=pointer]:
+      - generic [ref=e22]: ☾
+  - generic [ref=e23]:
+    - banner [ref=e24]:
+      - button "Celnet · EUR/USD ▾" [ref=e29] [cursor=pointer]:
+        - generic [ref=e30]: Celnet
+        - generic [ref=e31]: ·
+        - generic [ref=e32]: EUR/USD
+        - generic [ref=e33]: ▾
+      - button "⌘K Search / command…" [ref=e34] [cursor=pointer]:
+        - generic [ref=e35]: ⌘K
+        - generic [ref=e36]: Search / command…
+    - generic [ref=e281]:
+      - generic [ref=e282]:
+        - generic [ref=e283]:
+          - generic [ref=e284]: ⊞
+          - heading "Risk · EUR/USD 25Δ RR (10mm)" [level=2] [ref=e285]
+          - generic [ref=e287]:
+            - button "P&L" [ref=e288] [cursor=pointer]
+            - button "Δ" [ref=e289] [cursor=pointer]
+            - button "ν" [ref=e290] [cursor=pointer]
+        - generic [ref=e291]:
+          - generic [ref=e292]:
+            - generic [ref=e293]: vol →
+            - table [ref=e294]:
+              - rowgroup [ref=e295]:
+                - row "spot ↓ −2% −1% ATM +1% +2%" [ref=e296]:
+                  - columnheader "spot ↓" [ref=e297]
+                  - columnheader "−2%" [ref=e298]
+                  - columnheader "−1%" [ref=e299]
+                  - columnheader "ATM" [ref=e300]
+                  - columnheader "+1%" [ref=e301]
+                  - columnheader "+2%" [ref=e302]
+              - rowgroup [ref=e303]:
+                - row "−1.5% 0 0 0 0 0" [ref=e304]:
+                  - rowheader "−1.5%" [ref=e305]
+                  - cell "0" [ref=e306]
+                  - cell "0" [ref=e307]
+                  - cell "0" [ref=e308]
+                  - cell "0" [ref=e309]
+                  - cell "0" [ref=e310]
+                - row "−0.5% 0 0 0 0 0" [ref=e311]:
+                  - rowheader "−0.5%" [ref=e312]
+                  - cell "0" [ref=e313]
+                  - cell "0" [ref=e314]
+                  - cell "0" [ref=e315]
+                  - cell "0" [ref=e316]
+                  - cell "0" [ref=e317]
+                - row "0.0% 0 0 ▣ 0 0 0" [ref=e318]:
+                  - rowheader "0.0%" [ref=e319]
+                  - cell "0" [ref=e320]
+                  - cell "0" [ref=e321]
+                  - cell "▣ 0" [ref=e322]:
+                    - generic [ref=e323]: ▣
+                    - text: "0"
+                  - cell "0" [ref=e324]
+                  - cell "0" [ref=e325]
+                - row "+0.5% 0 0 0 0 0" [ref=e326]:
+                  - rowheader "+0.5%" [ref=e327]
+                  - cell "0" [ref=e328]
+                  - cell "0" [ref=e329]
+                  - cell "0" [ref=e330]
+                  - cell "0" [ref=e331]
+                  - cell "0" [ref=e332]
+                - row "+1.5% 0 0 0 0 0" [ref=e333]:
+                  - rowheader "+1.5%" [ref=e334]
+                  - cell "0" [ref=e335]
+                  - cell "0" [ref=e336]
+                  - cell "0" [ref=e337]
+                  - cell "0" [ref=e338]
+                  - cell "0" [ref=e339]
+          - generic [ref=e340]:
+            - button "▶ Pin scenario" [ref=e341] [cursor=pointer]:
+              - generic [ref=e342]: ▶ Pin scenario
+            - generic [ref=e343]:
+              - generic [ref=e344]: −
+              - generic [ref=e346]: +
+      - generic [ref=e347]:
+        - generic [ref=e348]:
+          - generic [ref=e349]: Σ
+          - heading "Vega ladder" [level=2] [ref=e350]
+        - generic [ref=e351]:
+          - generic [ref=e353]:
+            - generic [ref=e354]: Tenor
+            - generic [ref=e355]: Pillar
+            - generic [ref=e356]: Vega
+          - generic [ref=e358]: cross-gamma
+    - contentinfo [ref=e55]:
+      - generic [ref=e56]:
+        - generic [ref=e57]: ◉
+        - text: Stream healthy
+      - generic [ref=e58]: ·
+      - generic [ref=e59]: seq 15434
+      - generic [ref=e60]: ·
+      - generic [ref=e61]: 6/6 lines
+      - generic [ref=e62]: ·
+      - generic [ref=e63]: 3 LPs in competition
+      - generic [ref=e64]: ·
+      - generic [ref=e65]: 0 gaps
+      - generic "transport seam" [ref=e66]: live ws://127.0.0.1:8081
+      - generic [ref=e67]: ·
+      - generic "P99 inter-frame render time (target ≤8.3ms @120Hz, ceiling 16.6ms)" [ref=e68]: P99 render 9.4ms
+      - generic [ref=e69]: ·
+      - generic [ref=e70]: ◷ 23:54:53

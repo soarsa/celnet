@@ -1,0 +1,112 @@
+- generic [ref=e3]:
+  - complementary "workspaces" [ref=e4]:
+    - generic "Celnet" [ref=e5]:
+      - generic [ref=e6]: ◆
+    - navigation [ref=e7]:
+      - button "⌁ Ticket" [active] [ref=e8] [cursor=pointer]:
+        - generic [ref=e9]: ⌁
+        - generic [ref=e10]: Ticket
+      - button "≋ Stream" [ref=e11] [cursor=pointer]:
+        - generic [ref=e12]: ≋
+        - generic [ref=e13]: Stream
+      - button "◷ Surface" [ref=e14] [cursor=pointer]:
+        - generic [ref=e15]: ◷
+        - generic [ref=e16]: Surface
+      - button "⊞ Risk" [ref=e17] [cursor=pointer]:
+        - generic [ref=e18]: ⊞
+        - generic [ref=e19]: Risk
+    - button "☾" [ref=e21] [cursor=pointer]:
+      - generic [ref=e22]: ☾
+  - generic [ref=e23]:
+    - banner [ref=e24]:
+      - button "Celnet · EUR/USD ▾" [ref=e29] [cursor=pointer]:
+        - generic [ref=e30]: Celnet
+        - generic [ref=e31]: ·
+        - generic [ref=e32]: EUR/USD
+        - generic [ref=e33]: ▾
+      - button "⌘K Search / command…" [ref=e34] [cursor=pointer]:
+        - generic [ref=e35]: ⌘K
+        - generic [ref=e36]: Search / command…
+    - generic [ref=e168]:
+      - generic [ref=e170]:
+        - generic [ref=e171]:
+          - generic [ref=e172]: EUR/USD
+          - generic [ref=e173]: ·
+          - combobox "structure" [ref=e174]:
+            - option "Vanilla"
+            - option "Risk Reversal" [selected]
+            - option "Strangle"
+            - option "Straddle"
+            - option "Seagull"
+          - generic [ref=e176]:
+            - generic [ref=e177]: notional
+            - spinbutton "notional mm EUR" [ref=e178]: "10"
+            - generic [ref=e179]: mm EUR
+        - generic [ref=e180]:
+          - button "ON" [ref=e181] [cursor=pointer]
+          - button "1W" [ref=e182] [cursor=pointer]
+          - button "1M" [ref=e183] [cursor=pointer]
+          - button "2M" [ref=e184] [cursor=pointer]
+          - button "3M" [ref=e185] [cursor=pointer]
+          - button "6M" [ref=e186] [cursor=pointer]
+          - button "1Y" [ref=e187] [cursor=pointer]
+        - generic [ref=e188]:
+          - generic [ref=e189]:
+            - generic [ref=e190]: LEG 1
+            - generic [ref=e191]: BUY
+            - generic [ref=e192]: Call
+            - generic [ref=e193]: 25Δ
+            - generic [ref=e194]: ▸
+            - generic [ref=e195]: K 1.0947
+          - generic [ref=e196]:
+            - generic [ref=e197]: LEG 2
+            - generic [ref=e198]: SELL
+            - generic [ref=e199]: Put
+            - generic [ref=e200]: 25Δ
+            - generic [ref=e201]: ▸
+            - generic [ref=e202]: K 1.0632
+          - 'button "Solve: zero-cost" [ref=e203] [cursor=pointer]'
+        - generic [ref=e204]:
+          - generic [ref=e205]:
+            - generic [ref=e206]: BID
+            - generic [ref=e207]: — · —
+          - generic [ref=e208]:
+            - generic [ref=e209]: MID
+            - generic [ref=e210]: — · —
+          - generic [ref=e211]:
+            - generic [ref=e212]: OFFER
+            - generic [ref=e213]: — · —
+            - generic [ref=e214]: "% EUR prem"
+        - generic "resolved conventions" [ref=e216]:
+          - generic [ref=e217]: spot Δ pa
+          - generic [ref=e218]: DNS
+          - generic [ref=e219]: NY 1000
+          - generic [ref=e220]: "% for"
+          - generic [ref=e221]: deliv
+        - generic [ref=e222]:
+          - button "Request quote ⏎" [ref=e223] [cursor=pointer]:
+            - generic [ref=e224]: Request quote
+            - generic [ref=e225]: ⏎
+          - generic [ref=e226]:
+            - button "Stream this ≋" [ref=e227] [cursor=pointer]:
+              - generic [ref=e228]: Stream this ≋
+            - button "Add to risk ⊞" [ref=e229] [cursor=pointer]:
+              - generic [ref=e230]: Add to risk ⊞
+      - paragraph [ref=e231]: One card = analytics + executable. Conventions on the face, Solve inline, last-look visible. Promote the exact structure to the blotter or the risk grid — same Instrument, no re-keying.
+    - contentinfo [ref=e55]:
+      - generic [ref=e56]:
+        - generic [ref=e57]: ◉
+        - text: Stream healthy
+      - generic [ref=e58]: ·
+      - generic [ref=e59]: seq 11968
+      - generic [ref=e60]: ·
+      - generic [ref=e61]: 6/6 lines
+      - generic [ref=e62]: ·
+      - generic [ref=e63]: 3 LPs in competition
+      - generic [ref=e64]: ·
+      - generic [ref=e65]: 0 gaps
+      - generic "transport seam" [ref=e66]: live ws://127.0.0.1:8081
+      - generic [ref=e67]: ·
+      - generic "P99 inter-frame render time (target ≤8.3ms @120Hz, ceiling 16.6ms)" [ref=e68]: P99 render 10.2ms
+      - generic [ref=e69]: ·
+      - generic [ref=e70]: ◷ 23:59:10

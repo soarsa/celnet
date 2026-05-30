@@ -1,0 +1,154 @@
+- generic [ref=e3]:
+  - complementary "workspaces" [ref=e4]:
+    - generic "Celnet" [ref=e5]:
+      - generic [ref=e6]: ◆
+    - navigation [ref=e7]:
+      - button "⌁ Ticket" [ref=e8] [cursor=pointer]:
+        - generic [ref=e9]: ⌁
+        - generic [ref=e10]: Ticket
+      - button "≋ Stream" [ref=e11] [cursor=pointer]:
+        - generic [ref=e12]: ≋
+        - generic [ref=e13]: Stream
+      - button "◷ Surface" [active] [ref=e14] [cursor=pointer]:
+        - generic [ref=e15]: ◷
+        - generic [ref=e16]: Surface
+      - button "⊞ Risk" [ref=e17] [cursor=pointer]:
+        - generic [ref=e18]: ⊞
+        - generic [ref=e19]: Risk
+    - button "☾" [ref=e21] [cursor=pointer]:
+      - generic [ref=e22]: ☾
+  - generic [ref=e23]:
+    - banner [ref=e24]:
+      - button "Celnet · EUR/USD ▾" [ref=e29] [cursor=pointer]:
+        - generic [ref=e30]: Celnet
+        - generic [ref=e31]: ·
+        - generic [ref=e32]: EUR/USD
+        - generic [ref=e33]: ▾
+      - button "⌘K Search / command…" [ref=e34] [cursor=pointer]:
+        - generic [ref=e35]: ⌘K
+        - generic [ref=e36]: Search / command…
+    - generic [ref=e233]:
+      - generic [ref=e234]:
+        - generic [ref=e235]:
+          - generic [ref=e236]: ◷
+          - heading "Surface · EUR/USD" [level=2] [ref=e237]
+        - generic [ref=e238]:
+          - generic [ref=e240]:
+            - generic:
+              - generic: delta →
+              - generic: tenor →
+              - generic: vol ▲
+            - generic "renderer backend" [ref=e242]: WebGPU-ready · Canvas mesh
+          - generic [ref=e243]:
+            - generic [ref=e245]:
+              - generic [ref=e246]: smile · 1M
+              - generic [ref=e247]: ATM 7.94
+            - generic [ref=e249]:
+              - generic [ref=e250]: low
+              - generic [ref=e252]: high
+      - generic [ref=e253]:
+        - generic [ref=e254]:
+          - generic [ref=e255]: ⌗
+          - heading "Marking" [level=2] [ref=e256]
+        - generic [ref=e257]:
+          - generic [ref=e258]:
+            - generic [ref=e259]:
+              - generic [ref=e260]: Tenor
+              - generic [ref=e261]: ATM
+              - generic [ref=e262]: 25RR
+              - generic [ref=e263]: 25BF
+              - generic [ref=e264]: 10RR
+              - generic [ref=e265]: 10BF
+            - button "ON 7.16 −0.30 +0.16 −0.56 +0.37" [ref=e266] [cursor=pointer]:
+              - generic [ref=e267]: "ON"
+              - generic [ref=e268]: "7.16"
+              - generic [ref=e269]: −0.30
+              - generic [ref=e270]: "+0.16"
+              - generic [ref=e271]: −0.56
+              - generic [ref=e272]: "+0.37"
+            - button "1W 7.65 −0.39 +0.22 −0.72 +0.51" [ref=e273] [cursor=pointer]:
+              - generic [ref=e274]: 1W
+              - generic [ref=e275]: "7.65"
+              - generic [ref=e276]: −0.39
+              - generic [ref=e277]: "+0.22"
+              - generic [ref=e278]: −0.72
+              - generic [ref=e279]: "+0.51"
+            - button "2W 7.74 −0.48 +0.28 −0.89 +0.64" [ref=e280] [cursor=pointer]:
+              - generic [ref=e281]: 2W
+              - generic [ref=e282]: "7.74"
+              - generic [ref=e283]: −0.48
+              - generic [ref=e284]: "+0.28"
+              - generic [ref=e285]: −0.89
+              - generic [ref=e286]: "+0.64"
+            - button "1M 7.94 −0.57 +0.34 −1.05 +0.78" [ref=e287] [cursor=pointer]:
+              - generic [ref=e288]: 1M
+              - spinbutton [ref=e289]: "7.94"
+              - generic [ref=e290]: −0.57
+              - generic [ref=e291]: "+0.34"
+              - generic [ref=e292]: −1.05
+              - generic [ref=e293]: "+0.78"
+            - button "2M 8.24 −0.66 +0.40 −1.22 +0.92" [ref=e294] [cursor=pointer]:
+              - generic [ref=e295]: 2M
+              - generic [ref=e296]: "8.24"
+              - generic [ref=e297]: −0.66
+              - generic [ref=e298]: "+0.40"
+              - generic [ref=e299]: −1.22
+              - generic [ref=e300]: "+0.92"
+            - button "3M 8.49 −0.75 +0.46 −1.39 +1.06" [ref=e301] [cursor=pointer]:
+              - generic [ref=e302]: 3M
+              - generic [ref=e303]: "8.49"
+              - generic [ref=e304]: −0.75
+              - generic [ref=e305]: "+0.46"
+              - generic [ref=e306]: −1.39
+              - generic [ref=e307]: "+1.06"
+            - button "6M 9.04 −0.84 +0.52 −1.55 +1.20" [ref=e308] [cursor=pointer]:
+              - generic [ref=e309]: 6M
+              - generic [ref=e310]: "9.04"
+              - generic [ref=e311]: −0.84
+              - generic [ref=e312]: "+0.52"
+              - generic [ref=e313]: −1.55
+              - generic [ref=e314]: "+1.20"
+            - button "1Y 9.74 −0.93 +0.58 −1.72 +1.33" [ref=e315] [cursor=pointer]:
+              - generic [ref=e316]: 1Y
+              - generic [ref=e317]: "9.74"
+              - generic [ref=e318]: −0.93
+              - generic [ref=e319]: "+0.58"
+              - generic [ref=e320]: −1.72
+              - generic [ref=e321]: "+1.33"
+          - status [ref=e322]:
+            - generic [ref=e323]: ◉
+            - generic [ref=e324]:
+              - text: arb-free
+              - generic [ref=e325]: ✓ butterfly ≥ 0 · ✓ calendar
+          - generic [ref=e326]:
+            - generic [ref=e327]: source
+            - generic [ref=e328]: 5-pt broker
+            - generic [ref=e329]: ·
+            - generic [ref=e330]: 23:58:10
+            - generic [ref=e331]: ·
+            - generic [ref=e332]: surf v82
+          - generic [ref=e333]:
+            - button "Re-mark" [ref=e334] [cursor=pointer]:
+              - generic [ref=e335]: Re-mark
+            - button "Publish" [ref=e336] [cursor=pointer]:
+              - generic [ref=e337]: Publish
+          - generic [ref=e338]:
+            - generic [ref=e339]: selected
+            - generic [ref=e340]: 25Δ put · 8.50
+    - contentinfo [ref=e55]:
+      - generic [ref=e56]:
+        - generic [ref=e57]: ◉
+        - text: Stream healthy
+      - generic [ref=e58]: ·
+      - generic [ref=e59]: seq 14091
+      - generic [ref=e60]: ·
+      - generic [ref=e61]: 6/6 lines
+      - generic [ref=e62]: ·
+      - generic [ref=e63]: 3 LPs in competition
+      - generic [ref=e64]: ·
+      - generic [ref=e65]: 0 gaps
+      - generic "transport seam" [ref=e66]: live ws://127.0.0.1:8081
+      - generic [ref=e67]: ·
+      - generic "P99 inter-frame render time (target ≤8.3ms @120Hz, ceiling 16.6ms)" [ref=e68]: P99 render 9.4ms
+      - generic [ref=e69]: ·
+      - generic [ref=e70]: ◷ 23:59:21

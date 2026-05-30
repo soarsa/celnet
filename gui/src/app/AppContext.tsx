@@ -57,9 +57,10 @@ export function useApp(): AppState {
 }
 
 export function AppProvider({ children }: { children: React.ReactNode }): React.ReactElement {
-  // The transport is selected once at the app root: the deterministic in-app mock
-  // by default (standalone), or the live WebSocket mirror when configured via the
-  // build-time env flag (src/data/transportConfig.ts). One contract, two transports.
+  // The transport is selected once at the app root: the LIVE WebSocket mirror
+  // against celnet-server by default (every number is the server's), or the
+  // explicit offline in-app mock when `?mock` is set (src/data/transportConfig.ts).
+  // One contract, two transports.
   const transport = useMemo(() => resolveTransport().transport, []);
   const conventions = DEFAULT_CONVENTIONS;
 

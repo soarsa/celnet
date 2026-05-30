@@ -42,8 +42,10 @@ import {
   instrumentToWire,
   markedSurfaceFromWire,
   marketToWire,
+  parseFrame,
   quoteFromWire,
   scenarioResultFromWire,
+  serializeFrame,
   shockAxisToWire,
   smileFromWire,
   snapshotFromWire,
@@ -189,7 +191,9 @@ class WsConnection {
   private dispatch(raw: string): void {
     let frame: WireObject;
     try {
-      const parsed: unknown = JSON.parse(raw);
+      // Lossless parse: 64-bit identity fields (token / nanos / ids) over the safe
+      // integer range are recovered as `bigint` so a tradable `token` is exact.
+      const parsed: unknown = parseFrame(raw);
       if (!parsed || typeof parsed !== "object") return;
       frame = parsed as WireObject;
     } catch {
@@ -212,14 +216,33 @@ class WsConnection {
         return;
       }
     }
-    // Otherwise it is an RFS server message (no correlation id, or unmatched) —
-    // hand it to the live session, which routes by subscription id.
+    // Some contract reply messages do not carry a `correlation_id` — the `smile`,
+    // `mark_surface_response`, `scenario_response` and `reject_ack` proto messages
+    // have no correlation field, so the server cannot echo one. Match such a reply
+    // to the oldest in-flight waiter that `expect`s this reply `type`: a single
+    // connection preserves request/reply order (FIFO) per reply type. This keeps
+    // the contract single — we invent no field the server must echo — and is the
+    // same resolution the Excel add-in's shared connection uses.
+    if (type !== "" && type !== "error") {
+      for (const [key, waiter] of this.waiters) {
+        if (waiter.expect === type) {
+          this.waiters.delete(key);
+          clearTimeout(waiter.timer);
+          waiter.resolve(frame);
+          return;
+        }
+      }
+    }
+    // Otherwise it is an RFS server message — hand it to the live session, which
+    // routes by subscription id.
     this.session?.onServerFrame(type, frame);
   }
 
   /** Send a fire-and-forget control frame (queued if the socket is down). */
   send(frame: WireObject): void {
-    const text = JSON.stringify(frame);
+    // `serializeFrame` writes any `bigint` field (notably a tradable `token`) as a
+    // bare integer literal so the server sees the exact 64-bit identity it minted.
+    const text = serializeFrame(frame);
     if (this.isOpen() && this.ws) {
       this.ws.send(text);
     } else {
@@ -290,6 +313,8 @@ interface WsSub {
   lastSequence: bigint;
   /** True once the baseline snapshot has been seen (post-subscribe/post-resync). */
   baselined: boolean;
+  /** The health last emitted, so we only emit on a transition. */
+  health: "HEALTHY" | "RESYNCING" | "STALE";
 }
 
 /**
@@ -329,9 +354,17 @@ class WsStreamSession implements StreamSession {
       label,
       lastSequence: 0n,
       baselined: false,
+      health: "RESYNCING",
     });
     this.sendSubscribe(id, instrument, conventions);
     return id;
+  }
+
+  /** Emit a health transition for a subscription (only on an actual change). */
+  private setHealth(sub: WsSub, health: "HEALTHY" | "RESYNCING" | "STALE"): void {
+    if (sub.health === health) return;
+    sub.health = health;
+    this.emit({ kind: "health", subscriptionId: sub.id, health });
   }
 
   private sendSubscribe(id: bigint, instrument: Instrument, conventions: Conventions): void {
@@ -356,7 +389,10 @@ class WsStreamSession implements StreamSession {
     this.conn.send({
       type: "execute",
       subscription: { value: Number(subscriptionId) },
-      token: Number(token),
+      // The token is the maker's exact 64-bit identity; pass it as a `bigint` so
+      // `serializeFrame` writes the full-precision integer literal the server
+      // minted. (A lossy `Number(token)` would be rejected `UNKNOWN_TOKEN`.)
+      token,
       idempotency_key: idempotencyKey,
     });
   }
@@ -386,9 +422,10 @@ class WsStreamSession implements StreamSession {
         this.conn.send({
           type: "resync",
           subscription: { value: Number(sub.id) },
-          last_sequence: Number(sub.lastSequence),
+          last_sequence: sub.lastSequence,
         });
       }
+      this.setHealth(sub, "RESYNCING");
     }
   }
 
@@ -403,7 +440,7 @@ class WsStreamSession implements StreamSession {
         sub.lastSequence = snapshot.sequence;
         sub.baselined = true;
         this.emit({ kind: "snapshot", snapshot });
-        this.emit({ kind: "health", subscriptionId: sub.id, health: "HEALTHY" });
+        this.setHealth(sub, "HEALTHY");
         break;
       }
       case "update": {
@@ -415,20 +452,37 @@ class WsStreamSession implements StreamSession {
           // Detected a gap: ask the server to resync from our last good sequence
           // and mark the row resyncing until a fresh baseline lands. We still
           // apply this update so the price stays live, then reconcile on snapshot.
-          this.emit({ kind: "health", subscriptionId: sub.id, health: "RESYNCING" });
+          this.setHealth(sub, "RESYNCING");
           this.conn.send({
             type: "resync",
             subscription: { value: Number(sub.id) },
-            last_sequence: Number(sub.lastSequence),
+            last_sequence: sub.lastSequence,
           });
+        } else {
+          // An in-sequence update confirms the line is live — clear any prior
+          // RESYNCING/STALE so the row's health badge is honest.
+          this.setHealth(sub, "HEALTHY");
         }
         if (update.sequence > sub.lastSequence) sub.lastSequence = update.sequence;
         this.emit({ kind: "update", update });
         break;
       }
       case "heartbeat": {
-        // Liveness only; the contract's heartbeat carries the current sequence so
-        // a silent gap is detectable. We do not advance state on it.
+        // Liveness only: a heartbeat carries the current sequence so a silent gap
+        // is detectable. It does not advance the applied sequence — but a
+        // heartbeat ahead of our last applied sequence signals a missed update, so
+        // resync to recover (matching the SDK / add-in connection).
+        const sub = this.subs.get(subscriptionIdOf(frame) ?? -1n);
+        if (!sub || !sub.baselined) break;
+        const seq = bigField(frame, "sequence");
+        if (seq > sub.lastSequence) {
+          this.setHealth(sub, "RESYNCING");
+          this.conn.send({
+            type: "resync",
+            subscription: { value: Number(sub.id) },
+            last_sequence: sub.lastSequence,
+          });
+        }
         break;
       }
       case "executed": {
@@ -442,16 +496,12 @@ class WsStreamSession implements StreamSession {
       case "stream_end": {
         // The server ended this subscription (LAGGED / DRAINING / …). Mark it
         // stale; a reconnect (or the next snapshot) re-baselines it.
-        const subId = frame["subscription"];
-        if (subId && typeof subId === "object") {
-          const value = (subId as WireObject)["value"];
-          if (typeof value === "number") {
-            const id = BigInt(value);
-            const sub = this.subs.get(id);
-            if (sub) {
-              sub.baselined = false;
-              this.emit({ kind: "health", subscriptionId: id, health: "STALE" });
-            }
+        const id = subscriptionIdOf(frame);
+        if (id !== undefined) {
+          const sub = this.subs.get(id);
+          if (sub) {
+            sub.baselined = false;
+            this.setHealth(sub, "STALE");
           }
         }
         break;
@@ -481,9 +531,8 @@ export class WsTransport implements CelnetTransport {
 
   constructor(opts: WsTransportOptions) {
     this.conn = new WsConnection(opts);
-    // The ribbon shows the endpoint host so the operator sees which edge is live.
-    const host = endpointHost(opts.url);
-    this.label = `live:${host}`;
+    // The ribbon reads "live ws://host:port" so the operator sees the real edge.
+    this.label = `live ${normalizeWsUrl(opts.url)}`;
   }
 
   /** Subscribe to connection-open state (for diagnostics / a future indicator). */
@@ -658,11 +707,22 @@ function bigField(o: WireObject, key: string): bigint {
   return 0n;
 }
 
-/** The host:port of a ws(s) URL for the status-ribbon label. */
-function endpointHost(url: string): string {
+/** The subscription id of an RFS server frame, or undefined for a bare frame. */
+function subscriptionIdOf(o: WireObject): bigint | undefined {
+  const sub = o["subscription"];
+  if (!sub || typeof sub !== "object") return undefined;
+  const value = (sub as WireObject)["value"];
+  if (typeof value === "number") return BigInt(value);
+  if (typeof value === "bigint") return value;
+  return undefined;
+}
+
+/** Normalize a ws(s) URL to `scheme://host:port` for the status-ribbon label. */
+function normalizeWsUrl(url: string): string {
   try {
     const u = new URL(url);
-    return u.host || url;
+    const origin = `${u.protocol}//${u.host}`;
+    return u.pathname && u.pathname !== "/" ? origin + u.pathname : origin;
   } catch {
     return url;
   }
