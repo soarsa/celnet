@@ -1,0 +1,4 @@
+.canvas {
+  display: block;
+  border-radius: var(--r-sm);
+}

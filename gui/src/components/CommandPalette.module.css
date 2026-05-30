@@ -1,0 +1,113 @@
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 14vh;
+  background: oklch(0 0 0 / 0.32);
+  animation: scrim-in 140ms var(--ease-out);
+}
+
+.palette {
+  width: min(640px, 92vw);
+  background: var(--bg-overlay);
+  -webkit-backdrop-filter: blur(var(--blur-hud)) saturate(1.8);
+  backdrop-filter: blur(var(--blur-hud)) saturate(1.8);
+  border: var(--hairline);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-hud);
+  overflow: hidden;
+  animation: palette-in 180ms var(--ease-spring);
+}
+
+.inputRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: var(--hairline);
+}
+
+.prompt {
+  font-family: var(--font-mono);
+  font-size: var(--type-caption);
+  color: var(--accent);
+  padding: 2px 6px;
+  border-radius: var(--r-sm);
+  background: var(--accent-soft);
+}
+
+.input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-size: var(--type-headline);
+  font-family: var(--font-ui);
+}
+.input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.list {
+  list-style: none;
+  max-height: 52vh;
+  overflow: auto;
+  padding: var(--space-2);
+}
+
+.item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+.activeItem {
+  background: var(--accent-soft);
+}
+
+.group {
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+  min-width: 70px;
+}
+
+.itemTitle {
+  font-size: var(--type-body);
+  color: var(--text-primary);
+  font-weight: var(--weight-emphasis);
+}
+
+.hint {
+  margin-left: auto;
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+.empty {
+  padding: var(--space-5);
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: var(--type-callout);
+}
+
+@keyframes scrim-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes palette-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+}

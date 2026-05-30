@@ -1,0 +1,29 @@
+.wrap {
+  width: 100%;
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.title {
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+}
+
+.atm {
+  margin-left: auto;
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+}
+
+.canvas {
+  display: block;
+  width: 100%;
+  cursor: crosshair;
+}

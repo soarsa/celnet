@@ -1,0 +1,46 @@
+.strip {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.primary,
+.secondary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-5);
+  align-items: center;
+}
+
+.secondary {
+  padding-top: var(--space-3);
+  border-top: var(--hairline);
+  gap: var(--space-4) var(--space-5);
+}
+
+.cell {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--type-callout);
+  color: var(--text-primary);
+}
+
+.glyph {
+  color: var(--text-tertiary);
+  font-size: var(--type-caption);
+  font-weight: var(--weight-emphasis);
+  font-style: italic;
+}
+
+.toggle {
+  margin-left: auto;
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+  padding: 2px 6px;
+  border-radius: var(--r-sm);
+}
+.toggle:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+}

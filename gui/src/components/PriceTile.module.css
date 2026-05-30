@@ -1,0 +1,79 @@
+.tile {
+  position: relative;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 1px 4px;
+  border-radius: var(--r-sm);
+  color: var(--text-primary);
+  transition: background-color var(--flash-decay) var(--ease-out);
+}
+
+.display {
+  font-size: var(--type-display);
+  line-height: var(--type-display-lh);
+  font-weight: var(--weight-header);
+  letter-spacing: -0.02em;
+}
+
+.headline {
+  font-size: var(--type-headline);
+  line-height: var(--type-headline-lh);
+  font-weight: var(--weight-emphasis);
+}
+
+.callout {
+  font-size: var(--type-callout);
+  line-height: var(--type-callout-lh);
+}
+
+.bid {
+  color: var(--bid);
+}
+.offer {
+  color: var(--offer);
+}
+
+.glyph {
+  font-size: 0.7em;
+  opacity: 0.9;
+}
+
+/* The flash: the class is removed + re-added imperatively (with a forced
+   reflow) on each tick, replaying the decay even for same-direction ticks. */
+.flashUp {
+  animation: flash-up var(--flash-decay) var(--ease-out);
+}
+.flashDn {
+  animation: flash-dn var(--flash-decay) var(--ease-out);
+}
+
+@keyframes flash-up {
+  0% {
+    background-color: var(--flash-up);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+@keyframes flash-dn {
+  0% {
+    background-color: var(--flash-dn);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flashUp,
+  .flashDn {
+    animation: none;
+  }
+  .tile[data-dir="up"] {
+    background-color: var(--flash-up);
+  }
+  .tile[data-dir="down"] {
+    background-color: var(--flash-dn);
+  }
+}

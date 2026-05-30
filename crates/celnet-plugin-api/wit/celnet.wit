@@ -1,21 +1,30 @@
-// Celnet user-extensibility SDK — WASI 0.2.x WIT contract.
+// Celnet user-extensibility SDK — WIT contract (runtime-agnostic).
 //
-// This `world` is the Wasm-component mirror of the Rust trait contract in
-// `src/` (PricingModel / SmileModel / Calibration). It is a SPEC/DOC artifact:
-// there is no bindgen build step in this crate yet — `celnet-plugin-guest` will
-// generate guest bindings from this world, and `celnet-plugin-host` (wasmtime
-// 45, fuel-metered, NaN-canonicalized) will host components that target it.
+// This `world` is the structural mirror of the Rust trait contract in `src/`
+// (PricingModel / SmileModel / Calibration). It is a SPEC/DOC artifact: the
+// records/enums here map one-to-one to the Rust types and are FROZEN. The
+// contract is deliberately runtime-agnostic — only the *host runtime* choice has
+// changed (see docs/PLUGIN-HOST-ALT.md / ADR).
+//
+// Host runtime: `celnet-plugin-host` runs the Tier-2 untrusted sandbox on
+// **wasmi** (the pure-Rust, fuel-metered interpreter — NOT wasmtime, which
+// carries open 2026 RustSec advisories). wasmi hosts **core Wasm modules**, not
+// the Component Model (wasmi's Component Model is WIP), so the host lowers these
+// records onto a host-controlled core-module `(ptr,len)` ABI rather than
+// component-model bindings. The shapes below are unchanged either way; if/when
+// wasmi ships an advisory-clean Component Model we can lift this world directly.
 //
 // Design rules (see docs/ARCHITECTURE.md §6.3):
 //   * Single, current contract — NO version negotiation, NO schema_version.
 //   * Records/enums map ONE-TO-ONE to the Rust types so first-party native
 //     models and Wasm user plugins are interchangeable behind one registry.
-//   * We build on STABLE WASI 0.2.x. We deliberately avoid experimental WIT
-//     `map`/`struct`/resource features (still experimental in wasmtime 45):
-//     calibration targets cross as a `list<calibration-target>`.
+//   * Flat POD shapes only (no experimental WIT `map`/`struct`/resource
+//     features): calibration targets cross as a `list<calibration-target>`,
+//     which lowers cleanly onto the core-module ABI.
 //   * `f64` is the CPU-canonical scalar (the Rust contract's policy). The host
-//     pins float behaviour (NaN canonicalization, no FMA contraction) so
-//     transcendentals are bit-identical across platforms.
+//     pins float behaviour (NaN canonicalization at every boundary value, libm
+//     transcendentals, no FMA contraction) so output is bit-identical across
+//     platforms — the determinism the replay harness asserts.
 
 package celnet:plugin-api;
 

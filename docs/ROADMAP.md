@@ -58,9 +58,10 @@ celnet/
    └─ celnet-bench/                # divan latency/throughput suites + committed baseline
 ```
 
-> **Implemented tree = 19 crates** (above). `celnet-plugin-host` (Wasm sandbox) is **deferred**
-> (wasmtime open RustSec advisories) and does **not** yet exist; the SDK ships as the
-> `celnet-plugin-api` contract only. See `docs/INTERFACES.md` and `docs/ARCHITECTURE.md` §2.
+> `celnet-plugin-host` (the tiered host: Tier-0 native registry + Tier-2 **wasmi** fuel-metered
+> sandbox) is **built** behind the frozen `celnet-plugin-api` contract — wasmtime was rejected
+> for open 2026 RustSec advisories (see `docs/PLUGIN-HOST-ALT.md` / WS-G below).
+> See `docs/INTERFACES.md` and `docs/ARCHITECTURE.md` §2/§6.
 
 **Dependency direction (must never invert):**
 `celnet-types` ← `celnet-core` ← {`celnet-conventions`, `celnet-calendar`, `celnet-vanilla`, `celnet-surface`, `celnet-exotics`, `celnet-gpu`} ← `celnet-engine` ← {`celnet-server`, `celnet-cli`}.
@@ -76,7 +77,7 @@ celnet/
 | **P1** | Vanilla core | `celnet-conventions` + `celnet-calendar` complete; `celnet-vanilla` prices GK call/put off forward F=S·e^{(r_d−r_f)T} with separate DF_d/DF_f; full first/second/higher Greeks (two rhos, vanna, volga, charm, speed, zomma, color); strike↔delta solver respecting all 4 delta conventions; **validated against Reiswich-Wystup (2010) & Clark worked numbers** within documented tolerances. |
 | **P2** | Vol surface | `celnet-surface` builds delta-space smile from ATM/25d/10d RR/BF; **broker→smile strangle calibration** implemented; VV (Castagna-Mercurio 2nd approx), SABR (Hagan + arbitrage-free PDE), SVI/SSVI (Gatheral-Jacquier) selectable; arbitrage gates (butterfly density ≥0, calendar total-variance monotone, vertical) pass as tests; total-variance/business-time tenor interpolation. |
 | **P3** | Exotics + GPU | `celnet-exotics` two-tier (fast VV for 1st-gen with survival-probability weighting; LSV [Heston+Dupire leverage, particle calibration] for booking/2nd-gen); PDE (Crank-Nicolson+Rannacher, HV-ADI) + MC (Andersen QE, Philox + BGK barrier correction + control variates; Sobol+Brownian-bridge deferred); `celnet-gpu` **wgpu/WGSL** path (Metal/Vulkan/DX12/GLES) with f32 + CPU f64 reconciliation, Philox RNG. |
-| **P4** | Engine, SDK, integration | `celnet-engine` hot path (non-async, core-pinned, zero-alloc, SPSC rtrb); zero-downtime SO_REUSEPORT handoff + single-current-contract state transfer; `celnet-plugin-api` SDK contract (Wasm `celnet-plugin-host` deferred — wasmtime advisories); `celnet-integration` consumes Celer marketdata + FMD-style surface feed; `celnet-server`/`celnet-client` expose the gRPC contract (WS mirror designed). |
+| **P4** | Engine, SDK, integration | `celnet-engine` hot path (non-async, core-pinned, zero-alloc, SPSC rtrb); zero-downtime SO_REUSEPORT handoff + single-current-contract state transfer; `celnet-plugin-api` SDK contract + the tiered `celnet-plugin-host` (Tier-0 native + Tier-2 wasmi fuel-metered sandbox; wasmtime rejected for advisories); `celnet-integration` consumes Celer marketdata + FMD-style surface feed; `celnet-server`/`celnet-client` expose the gRPC contract (WS mirror designed). |
 | **GA** | Hardening & release | Full numerical golden suite vs QuantLib **1.42.1** pinned oracle; property + fuzz + mutation gates met (≥90% coverage core modules; kill-rate gate); p99/p99.9 latency budgets met & regression-gated; **blue-green single-version state-handoff** CI gate green (no mixed-version window); supply-chain (cargo-deny) clean; deployment (Lavapipe CI fallback) verified; docs complete. |
 
 ---
@@ -146,9 +147,29 @@ celnet/
 
 ### WS-G · Plugin Host & SDK
 - **Owns:** `celnet-plugin-host`; co-owns `celnet-plugin-api` *contract evolution only* via interface PRs.
-- **Deliverables:** wasmtime **45.0.0** + Component Model + WASI 0.2.x embedding; capability-based `Linker` exposing only explicit market-data/pricing primitives; **deterministic execution** — `Config::consume_fuel(true)` with per-call fuel budget as compute SLA, NaN canonicalization, no wall-clock/RNG/threads imports unless seeded; trait-object registry for compiled-in first-party models (same trait shape as wasm host → interchangeable); deterministic replay harness (fixed market-data snapshot → bit-identical pricing output). Native `.so`/`.dylib` path **only** via `stabby` 72.1.x behind code-signing + allowlist (abi_stable is unmaintained — not used).
+- **Status: DONE.** Tiered host built behind the frozen `celnet-plugin-api` contract; all four
+  gates green; the wasmtime blocker is closed. See `docs/PLUGIN-HOST-ALT.md` (ADR + evaluation).
+- **Deliverables (shipped):** **`wasmi 1.0.9`** (pure-Rust, fuel-metered interpreter — replaces
+  the originally-planned wasmtime, which is blocked by open 2026 RustSec advisories) embedding
+  **core Wasm modules** (not the Component Model — wasmi CM is WIP); a no-WASI capability
+  `Linker` exposing **only** the explicit libm `celnet_core::math` pricing primitives (zero
+  ambient authority — no clock/RNG/threads/fs/net); **deterministic execution** —
+  `Config::consume_fuel(true)` with a per-call `FuelBudget` as the compute SLA (exhaustion ⇒
+  typed `HostError::FuelExhausted`, never a hang), NaN-canonicalization on every boundary value,
+  a host-controlled `(ptr,len)` core-module ABI marshalling the Copy-POD `VanillaInputs`→`Greeks`
+  records; a unified `ModelRegistry` routing **Tier-0 native** (`dyn PricingModel`) and **Tier-2
+  wasm** models identically via the tier-blind `HostModel` seam; a deterministic **replay
+  harness** (fixed snapshot → `to_bits`-identical price/Greeks across runs, cross-platform via
+  the libm requirement). The Tier-1 trusted-partner native `.so`/`.dylib` path (via `stabby`
+  72.x behind code-signing + allowlist; abi_stable is unmaintained — not used) and the optional
+  Tier-3 Landlock/seccomp Linux ring are designed in `docs/PLUGIN-HOST-ALT.md` §4 and not yet
+  wired.
 - **Depends on:** G0 (`celnet-plugin-api` WIT world + traits).
-- **Gates:** sandbox escape test (capability denial); fuel-exhaustion bounded-runtime test; replay determinism (bit-identical) gate; first-party-vs-wasm interchangeability test through one registry.
+- **Gates (all passing):** capability-denial (a module importing anything outside the granted
+  set fails to load); fuel-exhaustion bounded-runtime (an infinite-loop guest traps within
+  budget, proven under a watchdog timeout — never hangs); replay determinism (bit-identical
+  `to_bits` across runs); Tier-0 == Tier-2 interchangeability (a native and a wasm twin of one
+  trivial pricer route through one registry and agree to the bit).
 
 ### WS-H · Celer Estate Integration & Feeds
 - **Owns:** `celnet-integration`.

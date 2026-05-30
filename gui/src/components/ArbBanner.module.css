@@ -1,0 +1,44 @@
+.banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--r-sm);
+  font-size: var(--type-caption);
+  margin: var(--space-4) 0;
+}
+
+.ok {
+  background: oklch(from var(--bid) l c h / 0.1);
+  color: var(--bid);
+  border-left: 2px solid var(--bid);
+}
+
+.danger {
+  background: oklch(from var(--danger) l c h / 0.12);
+  color: var(--danger);
+  border-left: 2px solid var(--danger);
+}
+
+.glyph {
+  font-size: 11px;
+}
+
+.text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-weight: var(--weight-emphasis);
+}
+
+.detail {
+  font-size: var(--type-micro);
+  color: var(--text-secondary);
+  font-weight: var(--weight-regular);
+}
+
+.note {
+  margin-left: auto;
+  font-size: var(--type-micro);
+  opacity: 0.9;
+}

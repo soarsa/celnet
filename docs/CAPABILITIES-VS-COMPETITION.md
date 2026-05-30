@@ -31,10 +31,13 @@ mirror designed) with a client SDK, zero-downtime blue-green upgrades, zero-cost
 and native Celer trade-lifecycle integration — validated against QuantLib 1.42.1.
 
 > **Top-line gaps (called out, not buried in the matrix):**
-> 1. **The customer-extensible quant SDK — the headline "out-functions" differentiator — is
->    contract-only.** `celnet-plugin-api` (WIT + traits) is built, but the sandbox **host**
->    `celnet-plugin-host` is **not** (wasmtime carries open 2026 RustSec advisories). Until the
->    host ships, this differentiator is "contract frozen, runtime pending," not a current win.
+> 1. **The customer-extensible quant SDK — the headline "out-functions" differentiator — now
+>    ships end-to-end.** `celnet-plugin-api` (WIT + traits) is frozen **and** the sandbox host
+>    `celnet-plugin-host` is **built**: a tiered host (Tier-0 native registry + Tier-2 **wasmi**
+>    fuel-metered, no-WASI, deterministic sandbox) behind one registry, with a bit-identical
+>    replay harness. wasmtime was rejected for open 2026 RustSec advisories; wasmi is the
+>    advisory-clean pure-Rust replacement (see `docs/PLUGIN-HOST-ALT.md`). All four WS-G gates
+>    pass — this is now a current win, not a pending one.
 > 2. **No structured products (TARF / accumulator / pivot).** SynOption/Fenics/Bloomberg
 >    monetize these; Celnet's LSV+MC+PDE substrate can build them but has not yet. Celnet
 >    out-functions on the vanilla + first-generation-exotic core, not the structured book.
@@ -175,7 +178,8 @@ and native Celer trade-lifecycle integration — validated against QuantLib 1.42
   charm, an RFS lag-recovery hole, an idempotency key-collision, overstated docs) before each
   milestone committed. Nothing unverified ships.
 - **OSS-only** supply chain (cargo-deny advisories + licenses); dependencies vetted before use
-  (e.g. wasmtime deferred for open RUSTSEC advisories rather than shipped vulnerable).
+  (e.g. wasmtime **rejected** for open RUSTSEC advisories — the plugin host runs on the
+  advisory-clean, audited, pure-Rust **wasmi** interpreter instead).
 
 ---
 
@@ -184,7 +188,7 @@ and native Celer trade-lifecycle integration — validated against QuantLib 1.42
 | Gap | Status | Plan |
 |---|---|---|
 | TARF / accumulator / pivot; quanto / lookback breadth | ⛔ deferred (LSV+MC stack ready; Asian + window-barrier already ✅) | Next exotics wave on the existing engines |
-| Customer quant SDK runtime (wasm sandbox) | ⛔ host deferred — wasmtime open RUSTSEC advisories | Re-vet a patched wasmtime; API contract (`celnet-plugin-api`) already built |
+| Customer quant SDK runtime (wasm sandbox) | ✅ shipped — tiered `celnet-plugin-host` on **wasmi** (pure-Rust, fuel-metered, no-WASI, deterministic); four WS-G gates green; wasmtime rejected for RUSTSEC advisories | Tier-1 trusted `.so` (stabby) + Tier-3 Landlock ring designed (`PLUGIN-HOST-ALT.md`), wire as needed |
 | API evolution v2 (multiplex RFS session, click-to-trade, book-shaped risk, surface versioning) | 🟡 critique captured (task #20) | Apply the trader-ergonomics critique; wire observability into engine/server |
 | Distributed / horizontal scale-out | 🟡 designed (`SCALE-OUT.md`) | Validate partitioning vs latency budgets |
 | Hardening: fuzz, mutation, coverage gates, cross-platform CI | 🟡 partial (golden + bench done) | WS-T wave |

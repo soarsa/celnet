@@ -1,0 +1,52 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.market {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  align-items: end;
+  gap: var(--space-3);
+}
+
+.side,
+.midCol {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-radius: var(--r-md);
+}
+
+.side:not(:disabled) {
+  transition: background-color 120ms var(--ease-out), box-shadow 120ms var(--ease-out);
+}
+.bid:not(:disabled):hover {
+  background: oklch(from var(--bid) l c h / 0.14);
+  box-shadow: inset 0 0 0 1px oklch(from var(--bid) l c h / 0.36);
+}
+.offer:not(:disabled):hover {
+  background: oklch(from var(--offer) l c h / 0.14);
+  box-shadow: inset 0 0 0 1px oklch(from var(--offer) l c h / 0.36);
+}
+.side:disabled {
+  cursor: default;
+}
+
+.label {
+  font-size: var(--type-micro);
+  letter-spacing: 0.1em;
+  color: var(--text-tertiary);
+}
+
+.foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+.foot > :first-child {
+  flex: 1;
+}

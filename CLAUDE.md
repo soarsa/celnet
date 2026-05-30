@@ -120,6 +120,21 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-05-30 — **WS-G plugin host built — wasmtime blocker CLOSED.** `celnet-plugin-host` is a
+  tiered host behind the frozen `celnet-plugin-api` contract: a unified `ModelRegistry` routes
+  **Tier-0 native** (`dyn PricingModel` via the tier-blind `HostModel` seam) and **Tier-2 wasm**
+  models identically. Tier-2 is the deterministic sandbox on **wasmi 1.0.9** (pure-Rust,
+  fuel-metered, advisory-clean — replaces wasmtime): `Config::consume_fuel`, a no-WASI capability
+  `Linker` exposing ONLY the libm `celnet_core::math` primitives (zero ambient authority),
+  per-call `FuelBudget` SLA (exhaustion ⇒ typed `HostError::FuelExhausted`, never a hang),
+  boundary NaN-canonicalization, and a host-controlled `(ptr,len)` core-module ABI marshalling
+  `VanillaInputs`→`Greeks`. Deterministic **replay** harness asserts `to_bits` identity across
+  runs. 14 tests green (all four WS-G gates: capability-denial, fuel-exhaustion bounded under a
+  watchdog, replay bit-identity, Tier-0==Tier-2 interchangeability via WAT fixtures). `cargo fmt`
+  + `clippy -D warnings` + `nextest` + `cargo-deny` (advisories/bans/licenses) all green. Docs
+  synced (ARCHITECTURE §6, ROADMAP WS-G, CAPABILITIES-VS-COMPETITION, `wit/celnet.wit` header →
+  wasmi/core-modules). No `unsafe`. **Next:** Tier-1 `stabby` signed-`.so` + Tier-3 Landlock ring
+  (designed in `PLUGIN-HOST-ALT.md`), GA sign-off (#15).
 - 2026-05-30 — **GA-push critique "needs-work" findings closed (client/server/engine + GUI doc).**
   (1) Client RFS reconnect-liveness bug fixed: `reconnect_session` + session-close now drain the
   click-to-trade waiter table via `fail_all_waiters`, resolving every pending `execute` with a
@@ -161,7 +176,7 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
   `celnet-parity` (15 capability rows gated vs incumbents), CI matrix + nightly fuzz,
   mutation kill-rate 78→88.4% on vanilla, 96% core coverage, true 13-Greek count reconciled.
   **509 tests, `just check` green & terminating.** Remaining to GA: API-v2 (#20), scale-out
-  validation (#19), plugin-host (#10, blocked on a patched wasmtime), GA sign-off (#15).
+  validation (#19), plugin-host (#10 — since DONE on wasmi, see top of ledger), GA sign-off (#15).
 
 - 2026-05-30 — **G3 reached (wide 4-lane wave).** `celnet-exotics` (digitals/touches/DNT/
   all-8 barriers + survival-weighted VV overlay; PDE Crank-Nicolson+Rannacher & Philox MC,
@@ -212,7 +227,7 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 | WS-D | celnet-exotics | **DONE (1st-gen)** | — | G2 | digitals/touches/DNT/barriers + PDE/MC, QuantLib-gated. LSV booking model pending (task #16). |
 | WS-E | celnet-gpu | **DONE (core)** | — | G0 | PricingBackend wgpu/Metal + CPU oracle, Philox, f32↔f64 reconciled. Sobol QMC = enhancement. |
 | WS-F | celnet-engine | **DONE (hot path)** | — | G1/G3 | core-pinned zero-alloc rt + blue-green handoff. Full edge wiring = WS-I. |
-| WS-G | celnet-plugin-host | DEFERRED | — | G0 | api DONE; host blocked on a patched wasmtime (open 2026 RUSTSEC). |
+| WS-G | celnet-plugin-host | **DONE** | — | G0 | Tiered host: Tier-0 native registry + Tier-2 **wasmi 1.0.9** fuel-metered no-WASI sandbox + replay harness, behind frozen `celnet-plugin-api`. 14 tests, all 4 gates green; deny clean. wasmtime blocker CLOSED. Tier-1 stabby `.so` + Tier-3 Landlock ring designed, not yet wired. |
 | WS-H | celnet-integration | UNBLOCKED | — | G0/WS-C | **next** — vendor feed normalization + multi-source surface aggregation/divergence. |
 | WS-I | celnet-server, celnet-cli | UNBLOCKED (G3) | — | G3 | **next** — streaming gRPC/WS edge + admin CLI (tokio/tonic vetted). |
 | WS-T | CI/test/deny/golden/bench | PARTIAL | — | G0 | testkit + QuantLib golden + latency bench DONE; pending: fuzz/mutation/coverage gates, CI matrix, executable parity matrix (#14). |

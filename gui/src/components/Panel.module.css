@@ -1,0 +1,81 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-radius: var(--r-md);
+  position: relative;
+  overflow: hidden;
+}
+
+.panel::before {
+  /* hairline top highlight — the material's edge of light */
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: var(--highlight-top);
+  pointer-events: none;
+}
+
+.panel.panel {
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-panel);
+  border: var(--hairline);
+}
+
+.float {
+  background: var(--bg-overlay);
+  -webkit-backdrop-filter: blur(var(--blur-float)) saturate(1.7);
+  backdrop-filter: blur(var(--blur-float)) saturate(1.7);
+  box-shadow: var(--shadow-float);
+  border: var(--hairline);
+  border-radius: var(--r-lg);
+}
+
+.hud {
+  background: var(--bg-overlay);
+  -webkit-backdrop-filter: blur(var(--blur-hud)) saturate(1.8);
+  backdrop-filter: blur(var(--blur-hud)) saturate(1.8);
+  box-shadow: var(--shadow-hud);
+  border: var(--hairline);
+  border-radius: var(--r-lg);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: var(--hairline);
+}
+
+.glyph {
+  color: var(--text-tertiary);
+  font-size: var(--type-headline);
+}
+
+.title {
+  font-size: var(--type-callout);
+  font-weight: var(--weight-header);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.actions {
+  margin-left: auto;
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  padding: var(--space-5);
+  overflow: auto;
+}
+
+.noPadding .body {
+  padding: 0;
+}

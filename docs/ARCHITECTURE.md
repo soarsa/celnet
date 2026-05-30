@@ -129,8 +129,9 @@ celnet/
     └── celnet-bench           # divan latency/throughput suites + committed baseline (benches/README.md)
 ```
 
-> **Not yet built (deferred, not in the tree):** `celnet-plugin-host` (Wasm sandbox — wasmtime
-> deferred for open RustSec advisories). The native `.so`/FIX/IPC crates the early design
+> **Built:** `celnet-plugin-host` — the tiered plugin host (Tier-0 native registry + Tier-2
+> **wasmi** fuel-metered sandbox; wasmtime was rejected for open 2026 RustSec advisories, see
+> §6 and `docs/PLUGIN-HOST-ALT.md`). The native `.so`/FIX/IPC crates the early design
 > sketched (`celnet-fix`, `celnet-ipc`, `celnet-plugin-guest`) are not separate crates today;
 > FIX/IPC framing is integration-wave work. Provenance-named draft crates (`celnet-num`,
 > `celnet-vannavolga`, `celnet-sabr`, `celnet-svi`, `celnet-lsv`, `celnet-numerics`,
@@ -362,40 +363,54 @@ out of the box — we implement app-level handoff.
 Desks must add/override **vol models, exotic payoffs, calibrations and stress logic** and
 run them *in-engine* — keeping their proprietary IP, not consuming a vendor's models.
 
-### 6.1 Chosen approach: WebAssembly first, native only for trusted first-party
+### 6.1 Chosen approach: a tiered host — WebAssembly (wasmi) first, native only for trusted first-party
+
+The untrusted-plugin runtime is **wasmi**, the pure-Rust, fuel-metered interpreter — **not
+wasmtime**, which carries open 2026 RustSec advisories (including an out-of-sandbox-load class)
+and is blocked by guardrail 7 + the `cargo-deny` gate. The full decision, candidate evaluation
+and ADR are in `docs/PLUGIN-HOST-ALT.md`; the `celnet-plugin-api` contract (Rust traits + the
+`wit/celnet.wit` world) was deliberately runtime-agnostic and is **unchanged** — only the host
+runtime differs. wasmi hosts **core Wasm modules** (its Component Model is WIP), so the host
+lowers the frozen POD records onto a host-controlled core-module `(ptr,len)` ABI.
 
 | Path | Use | Mechanism | Why |
 |---|---|---|---|
-| **Wasm (primary, default)** | *Any* user/third-party model or workflow | `wasmtime 45.0.0` + Component Model + WASI 0.2.x; contract defined as a **WIT world** in `celnet-plugin-api` | Only Wasm gives a true **security sandbox** *and* **determinism**. Untrusted code cannot corrupt memory, crash the engine, or stall the hot path. |
-| **Native trait registry (first-party, compiled-in)** | Hot first-party models shipped in the binary | `inventory` of `dyn PricingModel`, same trait shape the Wasm host implements | Fastest path, no ABI/sandbox concerns; first-party and user plugins are interchangeable behind one registry. |
-| **Native dynamic `.so`/`.dylib` (trusted partners only)** | Trusted partner C++/Rust models needing full native speed | **`stabby` 72.1.x** (not `abi_stable`), code-signed + trusted-publisher allowlist | `abi_stable` is effectively unmaintained (last release Oct 2023). Native plugins have **no sandbox and no determinism** — never loaded untrusted. |
+| **Wasm — Tier 2 (primary, default for untrusted)** | *Any* user/third-party model or workflow | **`wasmi 1.0.9`** (pure-Rust interpreter), no-WASI capability `Linker`, `Config::consume_fuel`; contract mirrored as a **WIT world** in `celnet-plugin-api`, lowered to a core-module ABI | Only Wasm gives a true **security sandbox** *and* **determinism**. wasmi is advisory-clean, audited, and a pure interpreter (no JIT/native-codegen attack surface). Untrusted code cannot corrupt memory, crash the engine, or stall the hot path. |
+| **Native trait registry — Tier 0 (first-party, compiled-in)** | Hot first-party models shipped in the binary | `inventory`/explicit registration of `dyn PricingModel`, same trait shape the Wasm host implements; adapted to the host's tier-blind `HostModel` seam | Fastest path, no ABI/sandbox concerns; first-party and user plugins are interchangeable behind **one** `ModelRegistry`. |
+| **Native dynamic `.so`/`.dylib` — Tier 1 (trusted partners only)** | Trusted partner C++/Rust models needing full native speed | **`stabby` 72.x** (not `abi_stable`), code-signed + trusted-publisher allowlist | `abi_stable` is effectively unmaintained. Native plugins have **no sandbox and no determinism** — never loaded untrusted. |
+| **OS-process ring — Tier 3 (optional, Linux)** | Highest-distrust multi-tenant prod | Child process under Landlock + seccomp-bpf around Tier 2 | Kernel-enforced second ring; config-gated, Linux-only, never load-bearing for correctness. |
 
-### 6.2 Determinism for plugin execution (Wasm)
+### 6.2 Determinism for plugin execution (wasmi Tier 2)
 
-- **Fuel metering** (`Config::consume_fuel(true)`), not epochs — fuel is fully deterministic
-  (same input + same fuel ⇒ interrupt at the same instruction). A **per-call fuel budget is
-  the plugin's latency/compute SLA**.
-- **NaN canonicalization / pinned float behavior**, and **no non-deterministic host
-  imports** — no wall-clock, no RNG (unless explicitly seeded), no threads — locked down at
-  the `Linker`. Capability-based security: the host decides exactly which market-data /
-  pricing primitives a plugin may touch.
-- **Hot-path caveat:** Wasm fuel metering has meaningful overhead vs native; ultra-hot
-  per-tick models compile natively via the trait registry, and Wasm is reserved for
-  user-supplied / less-hot-path models. The same `PricingModel` trait shape unifies both.
+- **Fuel metering** (`Config::consume_fuel(true)`), not wall-clock epochs — fuel is fully
+  deterministic (same input + same fuel ⇒ interrupt at the same instruction). A **per-call
+  fuel budget is the plugin's latency/compute SLA**; exhaustion is a typed
+  `HostError::FuelExhausted` (a bounded trap), never a hang or panic.
+- **NaN canonicalization at every boundary value** (host↔guest, both directions) and **no
+  non-deterministic host imports** — no wall-clock, no RNG, no threads, no filesystem, no
+  network — locked down at the `Linker` (no WASI is linked, so a guest has **zero ambient
+  authority**). Capability-based security: the host grants exactly one audited primitive set
+  (the libm `celnet_core::math` transcendentals), and any other import fails to link.
+- **Hot-path caveat:** a pure interpreter is ~10–50× slower than a JIT; ultra-hot per-tick
+  models compile natively via the Tier-0 registry, and wasmi is reserved for user-supplied /
+  less-hot-path (per-quote, calibration) models. The same `PricingModel`/`HostModel` shape
+  unifies both.
 
 ### 6.3 The SDK as a product
 
-- `celnet-plugin-api` (the WIT world + `PricingModel`/`PricingBackend` traits) is **built and a
-  freeze-candidate**. The **runtime** is deferred: the Wasm sandbox host and the guest-binding
-  crate do **not** exist yet (wasmtime carries open 2026 RustSec advisories), so the
-  fuel-metered execution path and the deterministic replay harness are **designed, not shipped**.
-  When the host lands, a deterministic test harness will replay fixed market-data snapshots
-  through the fuel-metered sandbox and assert **bit-identical** pricing output so user models
-  are reproducible and auditable. (See `docs/CAPABILITIES-VS-COMPETITION.md` — this is the top
+- `celnet-plugin-api` (the WIT world + `PricingModel`/`SmileModel`/`Calibration` traits) is
+  **built and frozen**. `celnet-plugin-host` is now **built**: the tiered host with the Tier-0
+  native registry and the Tier-2 wasmi sandbox behind one `ModelRegistry`, plus the
+  deterministic **replay harness** that replays a fixed market snapshot through a wasm model and
+  asserts **bit-identical** output across runs (`to_bits` equality). The four WS-G gates pass:
+  capability-denial, fuel-exhaustion bounded, replay bit-identity, and Tier-0 == Tier-2
+  interchangeability. (See `docs/CAPABILITIES-VS-COMPETITION.md` — this closes the top
   GA-blocking gap.)
-- We track WASI P3 / component-model `struct`/`map` support but build today on **stable WASI
-  0.2.x** (map/struct WIT support in wasmtime 45 is still experimental) to avoid depending
-  on experimental WIT features in production.
+- Cross-platform bit-identity additionally requires libm transcendentals (the contract mandates
+  this and the host enforces it by exposing `celnet_core::math` as the guest's math imports), so
+  a model is reproducible on the aarch64-apple-darwin dev box and the Linux CI runner alike.
+- We build today on **core Wasm modules**, not the Component Model (wasmi's CM is WIP); the WIT
+  world is kept lift-ready for the day wasmi ships an advisory-clean Component Model.
 
 ---
 
@@ -537,8 +552,8 @@ Pins below reflect the **workspace manifest** (`Cargo.toml`), not aspiration.
 | Zero-copy IPC / handoff | rkyv (in-host state transfer) |
 | GPU | **wgpu 29** (Metal/Vulkan/GLES/DX12) + hand-written WGSL + Philox; f64 CPU reconciliation; **no CubeCL**; Mesa Lavapipe for CI |
 | Lock-free / publication | rtrb 0.3 (SPSC), arc-swap 1, seqlock, crossbeam-utils `CachePadded` |
-| Plugin runtime | **deferred** — wasmtime carries open 2026 RustSec advisories; `celnet-plugin-host` not built. Contract (`celnet-plugin-api` WIT + traits) is built |
-| Native plugin ABI | deferred (would use `stabby`, NOT abi_stable) |
+| Plugin runtime | **`wasmi 1.0.9`** (pure-Rust, fuel-metered interpreter) for the untrusted Tier-2 sandbox — wasmtime rejected for open 2026 RustSec advisories. `celnet-plugin-host` (tiered host + replay harness) is **built**; contract (`celnet-plugin-api` WIT + traits) is frozen. Test fixtures: `wat 1` (WAT→wasm, dev-only) |
+| Native plugin ABI | Tier 1 trusted-partner path would use `stabby` 72.x (NOT abi_stable); not yet wired |
 | SIMD | scalar autovectorized today; `wide` deferred (§3.4); `std::simd` nightly-only, not used |
 | Math | rust-lang/libm (correctly rounded) via `celnet-core::math` |
 | Bench / metrics | divan; metrics 0.24; hdrhistogram 7; tracing/tracing-subscriber |
