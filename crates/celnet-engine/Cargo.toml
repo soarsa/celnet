@@ -29,6 +29,7 @@ celnet-core.workspace = true
 celnet-vanilla.workspace = true
 celnet-conventions.workspace = true
 celnet-surface.workspace = true
+celnet-journal.workspace = true
 rtrb.workspace = true
 arc-swap.workspace = true
 crossbeam-utils.workspace = true

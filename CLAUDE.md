@@ -120,6 +120,20 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-05-31 — **`celnet-journal` DONE — standalone durable crash-recovery (closes SCALE-OUT
+  §8 "designed-only" gap, task #37).** Dependency-free `fsync`'d append-only sequence-ordered
+  log: per-record CRC-32, clean torn-tail truncation on open (crash mid-append heals to last
+  good record; interior corruption surfaced, not silently healed), `MAX_PAYLOAD_LEN` guard on
+  the recovery allocation, payload-agnostic `EventCodec` seam. Compaction/checkpoint *designed*
+  in module docs, honestly not built (no placeholder). Wired into `celnet-engine::journal`:
+  `DurableBook` `fsync`s each book/mark via the **shared** handoff byte codec (extracted
+  `write_book_entry`/`read_book_entry` — no format fork, guardrail #9); `recover()` rebuilds
+  `BookState`+`MarketState` at **startup**, strictly off the hot path. Proofs: kill/restart
+  **byte-identical** book + **bit-identical** repricing over the full **14-Greek** set, two-cycle
+  full-history replay, and a new `zero_alloc` test (`pricing_a_journalled_book_allocates_zero`)
+  confirming `price()` never touches the journal. 11 journal + 29 engine tests green; **full
+  `just check` green** (fmt, clippy -D, nextest, cargo-deny). Also fmt-healed a stray
+  `demo_edge.rs`. Recovery model now: deterministic replay **+** standalone WAL.
 - 2026-05-31 — **Live demo + Excel + GUI all REAL (no mocks); building durable journal.**
   `celnet-fix` (real FIX 4.4 engine, acceptor+initiator, dialect, loopback-tested) +
   `celnet-integration` egress governor/ingress/deployment-mode seam + `celnet-router`

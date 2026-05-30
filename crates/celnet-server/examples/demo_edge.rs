@@ -56,7 +56,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Bootstrap market state: the engine's calibrated EURUSD 1Y fixture — the same
     // fixture the gRPC/WS integration tests price against, so a verify harness can
     // form a first-principles reference from the same numbers.
-    let conv = celnet_conventions::resolve(CcyPair::parse("EURUSD").unwrap(), Tenor::Years(1)).record;
+    let conv =
+        celnet_conventions::resolve(CcyPair::parse("EURUSD").unwrap(), Tenor::Years(1)).record;
     let initial = make_state(1.10, conv);
 
     // Start the pinned pricing core + async bridge.
