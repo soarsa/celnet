@@ -458,6 +458,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "celnet-parity"
+version = "0.0.0"
+dependencies = [
+ "celnet-conventions",
+ "celnet-core",
+ "celnet-exotics",
+ "celnet-surface",
+ "celnet-testkit",
+ "celnet-types",
+ "celnet-vanilla",
+ "proptest",
+]
+
+[[package]]
 name = "celnet-plugin-api"
 version = "0.0.0"
 dependencies = [
