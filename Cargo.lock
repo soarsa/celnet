@@ -535,6 +535,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "celnet-router"
+version = "0.0.0"
+dependencies = [
+ "celnet-core",
+ "celnet-types",
+ "proptest",
+]
+
+[[package]]
 name = "celnet-server"
 version = "0.0.0"
 dependencies = [
