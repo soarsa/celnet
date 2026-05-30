@@ -3,7 +3,7 @@
 //!
 //! This crate has **zero IO and zero framework dependencies** — it cannot
 //! allocate, lock, or call a runtime — so determinism and zero-alloc are
-//! structurally enforceable here. It sits just above [`celer_types`] in the
+//! structurally enforceable here. It sits just above [`celnet_types`] in the
 //! frozen interface layer (see `docs/ROADMAP.md`).
 
 #![forbid(unsafe_code)]
@@ -13,12 +13,12 @@ pub mod math;
 mod compare;
 pub use compare::{DEFAULT_ABS, DEFAULT_REL, is_close};
 
-use celer_types::Vol;
+use celnet_types::Vol;
 
 /// A volatility smile/surface evaluated in strike space.
 ///
 /// This is the seam between the surface-construction layer
-/// (`celer-surface`: Vanna-Volga, SABR, SVI/SSVI) and any consumer that needs an
+/// (`celnet-surface`: Vanna-Volga, SABR, SVI/SSVI) and any consumer that needs an
 /// implied volatility at a given strike — the vanilla and exotic engines depend
 /// on this trait, never on a concrete surface model, so models are swappable.
 pub trait Smile {

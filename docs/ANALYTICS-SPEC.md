@@ -201,47 +201,47 @@ Variance is a CIR sqrt process: mean-reversion `kappa`, long-run `theta`, vol-of
 
 ## 6. Prioritized Implementation Order (P0 / P1 / P2) by Workspace Crate
 
-Crates per the Celnet flat virtual Cargo workspace: pure-domain math lives in **`celer-core`**; surface construction is a **`celer-core`** module; calibration solvers in **`celer-core`**; convention/config types in **`celer-types`**; the calendar engine in **`celer-core`** (date logic) with holiday data in **`celer-types`**. GPU exotics back-ends sit behind the `PricingBackend` trait. User-supplied models arrive via **`celer-plugin-api`** (WIT world) / **`celer-plugin-host`** (wasmtime).
+Crates per the Celnet flat virtual Cargo workspace: pure-domain math lives in **`celnet-core`**; surface construction is a **`celnet-core`** module; calibration solvers in **`celnet-core`**; convention/config types in **`celnet-types`**; the calendar engine in **`celnet-core`** (date logic) with holiday data in **`celnet-types`**. GPU exotics back-ends sit behind the `PricingBackend` trait. User-supplied models arrive via **`celnet-plugin-api`** (WIT world) / **`celnet-plugin-host`** (wasmtime).
 
 ### P0 — Foundational vanilla + surface (must ship first)
 
 | Item | Crate |
 |---|---|
-| Convention record types: delta type (4), ATM (ATMF/DNS), premium ccy + pips/percent, spot lag, cut, day counts, settlement style — per (pair, tenor) | `celer-types` |
-| Calendar engine: dual-calendar (+USD) intersection, horizon->spot, expiry->delivery, modified-following, end-of-month, NY/Tokyo cut | `celer-core` |
-| Garman-Kohlhagen vanilla pricer off `F`, `DF_d`, `DF_f` (call/put) | `celer-core` |
-| Full Greek set: delta (per convention), vega (+ tenor-bucketed ladder), theta, **rho-domestic AND rho-foreign**, gamma, vanna, volga, charm, speed, zomma, color | `celer-core` |
-| Strike<->delta root-finder (Brent/Newton), premium-adjusted non-monotone branch handling | `celer-core` |
-| Vanna-Volga (Castagna-Mercurio 2nd approximation) baseline smile | `celer-core` |
-| Broker(market)-strangle -> smile-strangle calibration (Reiswich-Wystup / Clark); 5-point delta-space smile | `celer-core` |
-| Delta-space interpolation + term-structure (ATM/RR/BF separately, total-variance / business-time, event weighting) | `celer-core` |
-| Arbitrage checks: butterfly (density >= 0), calendar (non-decreasing total variance), vertical | `celer-core` |
-| Deliverable settlement; trait-object `PricingModel` registry for first-party models | `celer-core` |
+| Convention record types: delta type (4), ATM (ATMF/DNS), premium ccy + pips/percent, spot lag, cut, day counts, settlement style — per (pair, tenor) | `celnet-types` |
+| Calendar engine: dual-calendar (+USD) intersection, horizon->spot, expiry->delivery, modified-following, end-of-month, NY/Tokyo cut | `celnet-core` |
+| Garman-Kohlhagen vanilla pricer off `F`, `DF_d`, `DF_f` (call/put) | `celnet-core` |
+| Full Greek set: delta (per convention), vega (+ tenor-bucketed ladder), theta, **rho-domestic AND rho-foreign**, gamma, vanna, volga, charm, speed, zomma, color | `celnet-core` |
+| Strike<->delta root-finder (Brent/Newton), premium-adjusted non-monotone branch handling | `celnet-core` |
+| Vanna-Volga (Castagna-Mercurio 2nd approximation) baseline smile | `celnet-core` |
+| Broker(market)-strangle -> smile-strangle calibration (Reiswich-Wystup / Clark); 5-point delta-space smile | `celnet-core` |
+| Delta-space interpolation + term-structure (ATM/RR/BF separately, total-variance / business-time, event weighting) | `celnet-core` |
+| Arbitrage checks: butterfly (density >= 0), calendar (non-decreasing total variance), vertical | `celnet-core` |
+| Deliverable settlement; trait-object `PricingModel` registry for first-party models | `celnet-core` |
 
 ### P1 — Production surface + first-generation exotics + NDF
 
 | Item | Crate |
 |---|---|
-| SSVI surface (Gatheral-Jacquier) with closed-form no-arbitrage conditions; arbitrage-free production surface for stripping | `celer-core` |
-| SABR (Hagan 2002 lognormal expansion; fixed beta) + arbitrage-free PDE SABR (Hagan 2014) for wings/low-rate | `celer-core` |
-| Dupire local vol from arbitrage-free smile | `celer-core` |
-| European digitals, one-touch / no-touch / DNT via Reiner-Rubinstein + VV survival-probability weighting | `celer-core` |
-| Single/double barriers (KO/KI): Crank-Nicolson + Rannacher PDE, log-spot, barrier-aligned nodes | `celer-core` |
-| Monte Carlo engine: Sobol' QMC + Brownian-bridge ordering, control variates, BGK / Brownian-bridge barrier correction | `celer-core` (engine), `PricingBackend` for GPU |
-| NDF/NDO cash settlement at named fixing (EMTA/WMR/central-bank), fixing-to-settlement lag, settlement-curve discounting | `celer-types` (config) + `celer-core` (logic) |
-| `celer-plugin-api` WIT world + `celer-plugin-host` wasmtime embedding for user vol models / payoffs (fuel-metered, deterministic) | `celer-plugin-api`, `celer-plugin-host` |
+| SSVI surface (Gatheral-Jacquier) with closed-form no-arbitrage conditions; arbitrage-free production surface for stripping | `celnet-core` |
+| SABR (Hagan 2002 lognormal expansion; fixed beta) + arbitrage-free PDE SABR (Hagan 2014) for wings/low-rate | `celnet-core` |
+| Dupire local vol from arbitrage-free smile | `celnet-core` |
+| European digitals, one-touch / no-touch / DNT via Reiner-Rubinstein + VV survival-probability weighting | `celnet-core` |
+| Single/double barriers (KO/KI): Crank-Nicolson + Rannacher PDE, log-spot, barrier-aligned nodes | `celnet-core` |
+| Monte Carlo engine: Sobol' QMC + Brownian-bridge ordering, control variates, BGK / Brownian-bridge barrier correction | `celnet-core` (engine), `PricingBackend` for GPU |
+| NDF/NDO cash settlement at named fixing (EMTA/WMR/central-bank), fixing-to-settlement lag, settlement-curve discounting | `celnet-types` (config) + `celnet-core` (logic) |
+| `celnet-plugin-api` WIT world + `celnet-plugin-host` wasmtime embedding for user vol models / payoffs (fuel-metered, deterministic) | `celnet-plugin-api`, `celnet-plugin-host` |
 
 ### P2 — Full exotics + advanced models + GPU
 
 | Item | Crate |
 |---|---|
-| Heston (FFT / COS / Lewis), QE / full-truncation simulation, NLS calibration | `celer-core` |
-| LSV: Heston backbone + Dupire leverage, particle-method calibration (Gyongy / Markovian projection), mixing weight `eta` | `celer-core` |
-| Window/partial barriers (time-dependent BC PDE; piecewise-constant Heston) | `celer-core` |
-| Asians: geometric closed form; arithmetic via Turnbull-Wakeman / Levy / Curran, Rogers-Shi / Vecer, MC + control variate | `celer-core` |
-| Lookbacks, forward-start / cliquet (LSV via MC/PDE) | `celer-core` |
-| TARF / accumulator / decumulator: MC under LV/LSV, explicit gap/digital-risk modelling + reserves | `celer-core` |
-| Variance swap (log-contract `1/K^2` replication); volatility swap (Carr-Lee convexity adjustment) | `celer-core` |
+| Heston (FFT / COS / Lewis), QE / full-truncation simulation, NLS calibration | `celnet-core` |
+| LSV: Heston backbone + Dupire leverage, particle-method calibration (Gyongy / Markovian projection), mixing weight `eta` | `celnet-core` |
+| Window/partial barriers (time-dependent BC PDE; piecewise-constant Heston) | `celnet-core` |
+| Asians: geometric closed form; arithmetic via Turnbull-Wakeman / Levy / Curran, Rogers-Shi / Vecer, MC + control variate | `celnet-core` |
+| Lookbacks, forward-start / cliquet (LSV via MC/PDE) | `celnet-core` |
+| TARF / accumulator / decumulator: MC under LV/LSV, explicit gap/digital-risk modelling + reserves | `celnet-core` |
+| Variance swap (log-contract `1/K^2` replication); volatility swap (Carr-Lee convexity adjustment) | `celnet-core` |
 | GPU exotics back-end: CubeCL `#[cube]` kernels (CUDA/Metal/Vulkan/WGSL/CPU), f32 GPU numerics with f64 CPU reconciliation, Philox-4x32-10 counter-based RNG, Sobol direction numbers + Brownian bridge | `PricingBackend` impls (`CubeClBackend` / `CpuBackend`) |
 
 ### Cross-cutting validation (all phases)

@@ -13,9 +13,9 @@ authors = ["Celer Technologies"]
 
 [workspace.dependencies]
 # Internal crates
-celer-types = { path = "crates/celer-types" }
-celer-core = { path = "crates/celer-core" }
-celer-vanilla = { path = "crates/celer-vanilla" }
+celnet-types = { path = "crates/celnet-types" }
+celnet-core = { path = "crates/celnet-core" }
+celnet-vanilla = { path = "crates/celnet-vanilla" }
 # External — pinned once, used everywhere
 libm = "0.2"                                   # rust-lang/libm: correctly-rounded, cross-platform-identical transcendentals
 serde = { version = "1", features = ["derive"] }

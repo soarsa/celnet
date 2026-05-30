@@ -36,27 +36,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c4512299f36f043ab09a583e57bceb5a5aab7a73db1805848e8fef3c9e8c78b3"
 
 [[package]]
-name = "celer-core"
+name = "celnet-core"
 version = "0.0.0"
 dependencies = [
- "celer-types",
+ "celnet-types",
  "libm",
  "proptest",
 ]
 
 [[package]]
-name = "celer-types"
+name = "celnet-types"
 version = "0.0.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
-name = "celer-vanilla"
+name = "celnet-vanilla"
 version = "0.0.0"
 dependencies = [
- "celer-core",
- "celer-types",
+ "celnet-core",
+ "celnet-types",
  "proptest",
 ]
 
