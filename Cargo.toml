@@ -26,6 +26,8 @@ celnet-surface = { path = "crates/celnet-surface" }
 celnet-exotics = { path = "crates/celnet-exotics" }
 celnet-gpu = { path = "crates/celnet-gpu" }
 celnet-engine = { path = "crates/celnet-engine" }
+celnet-integration = { path = "crates/celnet-integration" }
+celnet-server = { path = "crates/celnet-server" }
 # External — pinned once, used everywhere (OSS / permissively licensed only)
 libm = "0.2"                                   # rust-lang/libm: correctly-rounded, cross-platform-identical transcendentals
 serde = { version = "1", features = ["derive"] }
@@ -44,6 +46,14 @@ rtrb = "0.3"                                   # MIT/Apache-2.0 wait-free SPSC r
 arc-swap = "1"                                 # MIT/Apache-2.0 lock-free read-mostly publication
 crossbeam-utils = "0.8"                        # MIT/Apache-2.0 CachePadded (false-sharing guard)
 core_affinity = "0.8"                          # MIT/Apache-2.0 core pinning for the hot path
+# Integration + edge lanes (vetted: deny advisories+licenses ok)
+serde_json = "1"                               # MIT/Apache-2.0 vendor-feed (FMD-style) JSON normalization
+tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time", "macros"] } # MIT async edge runtime
+tonic = "0.12"                                 # MIT gRPC over the wire contract
+tonic-build = "0.12"                           # MIT tonic service codegen (build dep)
+tokio-tungstenite = "0.24"                     # MIT WebSocket RFS streaming
+futures-util = "0.3"                           # MIT/Apache-2.0 stream combinators
+clap = { version = "4", features = ["derive"] } # MIT/Apache-2.0 admin CLI
 # wasmtime (plugin-host) deferred: current releases carry open 2026 RustSec advisories;
 # re-add at a patched version when building celnet-plugin-host (WS-G). See ledger.
 

@@ -113,6 +113,20 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-05-30 — **G3 reached (wide 4-lane wave).** `celnet-exotics` (digitals/touches/DNT/
+  all-8 barriers + survival-weighted VV overlay; PDE Crank-Nicolson+Rannacher & Philox MC,
+  PDE≈MC≈analytic cross-validated), `celnet-gpu` (PricingBackend over wgpu/Metal + f64 CPU
+  oracle, Philox bit-stable, f32↔f64 reconciled), `celnet-engine` (core-pinned zero-alloc hot
+  path: rtrb SPSC, arc-swap/seqlock, blue-green handoff; audited seqlock unsafe),
+  `celnet-golden` (QuantLib 1.42.1 frozen tables; vanilla + all-8 barriers + both digital
+  styles gated to ~1e-10/last-bit — independent oracle). 284 tests, full `just check` green;
+  adversarial verdict production-grade. Auto-index live (post-commit + Stop hooks). **Next
+  (wide wave):** LSV booking model, vendor/multi-source integration, streaming edge
+  (server/cli), competitive parity matrix as executable tests, WS-T hardening.
+- 2026-05-30 — **G2 reached.** `celnet-surface` (VV + broker→smile + SABR/SVI/SSVI +
+  arb-free term structure) + `celnet-bench` (measured: vanilla price 8.85ns, +14 Greeks
+  ~19ns, 64-strike batch ~6.75µs). Adversarial review caught + fixed a person-named public
+  fn + overstated docs + a SABR sign error.
 - 2026-05-30 — **G0 + G1 reached (3 parallel lanes).** `celnet-calendar` (43 tests),
   `celnet-conventions`, `celnet-vanilla` strike↔delta solver + 4 delta conventions + ATM/DNS,
   `celnet-testkit` (shared invariants/strategies), `celnet-proto` (single unversioned wire
@@ -144,11 +158,11 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 | WS-0 | celnet-types, celnet-core, celnet-proto, celnet-plugin-api | **DONE** | — | — | G0 complete; all four frozen. Wire contract unversioned (ADR-0007). |
 | WS-A | celnet-conventions, celnet-calendar | **DONE** | — | G0 | calendar (43 tests) + convention registry green & validated. |
 | WS-B | celnet-vanilla | **DONE** | — | G0 | GK + 14 Greeks + 4 delta conventions + ATM/DNS + strike↔delta solver. G1 reached. |
-| WS-C | celnet-surface | UNBLOCKED (G1) | — | G1 | **next, highest-leverage** — VV/SABR/SVI/SSVI, broker→smile, arb-free. |
-| WS-D | celnet-exotics | BLOCKED | — | G2 | |
-| WS-E | celnet-gpu | UNCLAIMED | — | G0 | runs parallel to WS-D on PricingBackend |
-| WS-F | celnet-engine | UNCLAIMED | — | G1/G3 | |
-| WS-G | celnet-plugin-host | UNCLAIMED | — | G0 | api ready; host (wasmtime) can start now |
-| WS-H | celnet-integration | UNCLAIMED | — | G0/WS-C | |
-| WS-I | celnet-server, celnet-cli | BLOCKED | — | G3 | |
-| WS-T | CI/test/deny/golden-gen/bench | PARTIAL | — | G0 | testkit DONE; pending: QuantLib golden oracle, latency bench, fuzz/mutation/coverage, CI matrix |
+| WS-C | celnet-surface | **DONE** | — | G1 | VV/SABR/SVI/SSVI + broker→smile + arb-free term structure. G2 reached. |
+| WS-D | celnet-exotics | **DONE (1st-gen)** | — | G2 | digitals/touches/DNT/barriers + PDE/MC, QuantLib-gated. LSV booking model pending (task #16). |
+| WS-E | celnet-gpu | **DONE (core)** | — | G0 | PricingBackend wgpu/Metal + CPU oracle, Philox, f32↔f64 reconciled. Sobol QMC = enhancement. |
+| WS-F | celnet-engine | **DONE (hot path)** | — | G1/G3 | core-pinned zero-alloc rt + blue-green handoff. Full edge wiring = WS-I. |
+| WS-G | celnet-plugin-host | DEFERRED | — | G0 | api DONE; host blocked on a patched wasmtime (open 2026 RUSTSEC). |
+| WS-H | celnet-integration | UNBLOCKED | — | G0/WS-C | **next** — vendor feed normalization + multi-source surface aggregation/divergence. |
+| WS-I | celnet-server, celnet-cli | UNBLOCKED (G3) | — | G3 | **next** — streaming gRPC/WS edge + admin CLI (tokio/tonic vetted). |
+| WS-T | CI/test/deny/golden/bench | PARTIAL | — | G0 | testkit + QuantLib golden + latency bench DONE; pending: fuzz/mutation/coverage gates, CI matrix, executable parity matrix (#14). |

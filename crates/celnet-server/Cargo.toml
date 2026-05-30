@@ -1,0 +1,29 @@
+[package]
+name = "celnet-server"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet service edge — the tokio async gRPC + WebSocket streaming front for the pricing engine."
+publish = false
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "celnet-server"
+path = "src/main.rs"
+
+[dependencies]
+celnet-types.workspace = true
+celnet-core.workspace = true
+celnet-vanilla.workspace = true
+celnet-surface.workspace = true
+celnet-engine.workspace = true
+celnet-proto.workspace = true
+tokio.workspace = true
+tonic.workspace = true
+prost.workspace = true
+tokio-tungstenite.workspace = true
+futures-util.workspace = true
