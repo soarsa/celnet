@@ -1,0 +1,24 @@
+[package]
+name = "celnet-parity"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet executable competitive-parity matrix — each capability claim vs incumbents backed by a gated test."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+celnet-types.workspace = true
+celnet-core.workspace = true
+
+[dev-dependencies]
+celnet-vanilla.workspace = true
+celnet-conventions.workspace = true
+celnet-surface.workspace = true
+celnet-exotics.workspace = true
+celnet-testkit.workspace = true
+proptest.workspace = true
