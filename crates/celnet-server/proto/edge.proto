@@ -1,0 +1,242 @@
+// Celnet service-edge gRPC contract — the request/response surface the async
+// tonic edge exposes for the pricing core.
+//
+// There is exactly ONE clean, current contract (ADR-0007): no `schema_version`
+// field, no version-negotiation handshake, no N/N-1 back-compat shims. Upgrades
+// deploy a single uniform version via blue-green cutover, so a message on the
+// wire is always interpreted against this schema. Evolving the contract means
+// editing this file and every dependent in the same change.
+//
+// The message *bodies* mirror the `celnet-proto` wire vocabulary and the
+// `celnet-types` DTOs one-to-one (CcyPair, OptionType, the convention enums,
+// the 14-Greek set), so the edge form and the in-process types never drift.
+// Identifiers are purpose-named and vendor/research-neutral; mathematical-method
+// provenance lives only in doc comments, never in identifiers.
+//
+// proto3, no `optional` presence wrappers: every scalar carries a meaningful
+// value (a price or rate of 0.0 is a legitimate quantity, never "absent").
+
+syntax = "proto3";
+
+package celnet.edge;
+
+// Call or put — mirrors `celnet_types::OptionType`.
+enum OptionType {
+  // proto3 requires a zero default; CALL is the canonical first member.
+  OPTION_TYPE_CALL = 0;
+  // Right to sell the base currency.
+  OPTION_TYPE_PUT = 1;
+}
+
+// Quoted delta convention — mirrors `celnet_types::DeltaConvention`.
+enum DeltaConvention {
+  // Spot delta, premium-unadjusted.
+  DELTA_CONVENTION_SPOT_UNADJUSTED = 0;
+  // Forward (driftless) delta, premium-unadjusted.
+  DELTA_CONVENTION_FORWARD_UNADJUSTED = 1;
+  // Spot delta, premium-adjusted.
+  DELTA_CONVENTION_SPOT_PREMIUM_ADJUSTED = 2;
+  // Forward delta, premium-adjusted.
+  DELTA_CONVENTION_FORWARD_PREMIUM_ADJUSTED = 3;
+}
+
+// Premium quotation style — mirrors `celnet_types::PremiumStyle`.
+enum PremiumStyle {
+  // Domestic pips (quote-ccy per 1 unit of base notional).
+  PREMIUM_STYLE_DOMESTIC_PIPS = 0;
+  // Percentage of foreign (base) notional.
+  PREMIUM_STYLE_PERCENT_FOREIGN = 1;
+  // Percentage of domestic (quote) notional.
+  PREMIUM_STYLE_PERCENT_DOMESTIC = 2;
+  // Foreign pips.
+  PREMIUM_STYLE_FOREIGN_PIPS = 3;
+}
+
+// An FX currency pair BASE/QUOTE (market form CCY1CCY2), e.g. "EURUSD".
+// Mirrors `celnet_types::CcyPair`.
+message CcyPair {
+  // Foreign / asset currency (CCY1), e.g. "EUR".
+  string base = 1;
+  // Domestic / numeraire currency (CCY2), e.g. "USD".
+  string quote = 2;
+}
+
+// Inputs to the vanilla (Garman-Kohlhagen) model — mirrors
+// `celnet_types::VanillaInputs`. Continuous rates; `t` is a vol-time year
+// fraction. The forward and discount factors are derived, never sent.
+message VanillaInputs {
+  // Spot FX rate (quote per 1 unit of base).
+  double spot = 1;
+  // Strike (quote per 1 unit of base).
+  double strike = 2;
+  // Annualized volatility (absolute, e.g. 0.10 = 10 vol).
+  double vol = 3;
+  // Time to expiry in years (vol-time).
+  double t = 4;
+  // Continuously-compounded domestic (quote) interest rate.
+  double r_dom = 5;
+  // Continuously-compounded foreign (base) interest rate.
+  double r_for = 6;
+}
+
+// The full FX-options Greek set — mirrors `celnet_types::Greeks` field-for-field.
+message Greeks {
+  // Present value (premium) in domestic currency, per 1 unit of base notional.
+  double price = 1;
+  // Spot delta (premium-unadjusted).
+  double delta_spot = 2;
+  // Forward delta (premium-unadjusted).
+  double delta_forward = 3;
+  // Gamma.
+  double gamma = 4;
+  // Vega (per 1.0 absolute vol).
+  double vega = 5;
+  // Theta (per year).
+  double theta = 6;
+  // Rho domestic.
+  double rho_dom = 7;
+  // Rho foreign.
+  double rho_for = 8;
+  // Vanna.
+  double vanna = 9;
+  // Volga / vomma.
+  double volga = 10;
+  // Charm (per year).
+  double charm = 11;
+  // Speed.
+  double speed = 12;
+  // Zomma.
+  double zomma = 13;
+  // Color.
+  double color = 14;
+}
+
+// A request to price a vanilla FX option and return its full risk.
+message PriceVanillaRequest {
+  // Opaque client correlation id, echoed in the response.
+  uint64 request_id = 1;
+  // The currency pair being priced.
+  CcyPair pair = 2;
+  // Call or put.
+  OptionType option_type = 3;
+  // Garman-Kohlhagen inputs.
+  VanillaInputs inputs = 4;
+  // Delta convention to report the convention-specific delta against.
+  DeltaConvention delta_convention = 5;
+  // Premium quotation style for the reported premium.
+  PremiumStyle premium_style = 6;
+}
+
+// The priced vanilla result: the full Greek set plus the convention-resolved
+// delta.
+message PriceVanillaResponse {
+  // Correlates with the request's `request_id`.
+  uint64 request_id = 1;
+  // The full 14-member Greek set (price + sensitivities).
+  Greeks greeks = 2;
+  // Delta resolved under the request's `DeltaConvention`.
+  double delta_convention_value = 3;
+}
+
+// A request to evaluate the calibrated volatility surface at a (strike, tenor)
+// for a pair — the surface read path.
+message SurfaceVolRequest {
+  // Opaque client correlation id, echoed in the response.
+  uint64 request_id = 1;
+  // The currency pair whose surface is queried.
+  CcyPair pair = 2;
+  // Strike to evaluate the smile at (quote per 1 unit of base).
+  double strike = 3;
+  // Tenor as a year fraction.
+  double tenor_years = 4;
+}
+
+// The surface read result: the calibrated Black vol at the requested point.
+message SurfaceVolResponse {
+  // Correlates with the request's `request_id`.
+  uint64 request_id = 1;
+  // The calibrated Black vol at (strike, tenor) (absolute, 0.10 = 10 vol).
+  double vol = 2;
+  // The outright forward implied by the surface market state at the tenor.
+  double forward = 3;
+}
+
+// The barrier topology of a knock-style exotic — mirrors the exotics catalog's
+// single-barrier kinds.
+enum BarrierKind {
+  // Knock-out with the barrier below spot (down-and-out).
+  BARRIER_KIND_DOWN_AND_OUT = 0;
+  // Knock-out with the barrier above spot (up-and-out).
+  BARRIER_KIND_UP_AND_OUT = 1;
+  // Knock-in with the barrier below spot (down-and-in).
+  BARRIER_KIND_DOWN_AND_IN = 2;
+  // Knock-in with the barrier above spot (up-and-in).
+  BARRIER_KIND_UP_AND_IN = 3;
+}
+
+// A request to price a single-barrier FX option (closed-form continuous
+// monitoring) — the exotic read path.
+message PriceBarrierRequest {
+  // Opaque client correlation id, echoed in the response.
+  uint64 request_id = 1;
+  // The currency pair being priced.
+  CcyPair pair = 2;
+  // Call or put.
+  OptionType option_type = 3;
+  // Garman-Kohlhagen inputs for the underlying vanilla.
+  VanillaInputs inputs = 4;
+  // Barrier topology (knock-in/out, up/down).
+  BarrierKind barrier_kind = 5;
+  // Barrier level (quote per 1 unit of base).
+  double barrier = 6;
+  // Rebate paid on the terminating event, in domestic currency.
+  double rebate = 7;
+}
+
+// The barrier price result.
+message PriceBarrierResponse {
+  // Correlates with the request's `request_id`.
+  uint64 request_id = 1;
+  // Present value (domestic premium per 1 unit of base notional).
+  double price = 2;
+}
+
+// Empty readiness probe argument.
+message ReadinessRequest {}
+
+// The edge's blue-green readiness state — mirrors the lifecycle states the
+// `/readyz` gate transitions through (§5).
+enum ServiceState {
+  // Process started, core not yet warm; not accepting traffic.
+  SERVICE_STATE_STARTING = 0;
+  // Warm and serving; the cutover gate reports ready.
+  SERVICE_STATE_READY = 1;
+  // Draining in-flight work for a graceful blue-green cutover; not ready.
+  SERVICE_STATE_DRAINING = 2;
+}
+
+// The readiness probe result the orchestrator polls before/after cutover.
+message ReadinessResponse {
+  // Current lifecycle state.
+  ServiceState state = 1;
+  // Whether the edge is accepting new traffic (true only in READY).
+  bool ready = 2;
+  // In-flight requests still being served (gates a graceful drain to zero).
+  uint64 in_flight = 3;
+}
+
+// The Celnet pricing service edge.
+//
+// Unary methods front the lock-free pricing core over wait-free rings; the core
+// is never blocked by the async edge. `Readiness` is the `/readyz`-style probe
+// that gates blue-green cutover.
+service PricingEdge {
+  // Price a vanilla option and return its full risk.
+  rpc PriceVanilla(PriceVanillaRequest) returns (PriceVanillaResponse);
+  // Evaluate the calibrated volatility surface at a point.
+  rpc SurfaceVol(SurfaceVolRequest) returns (SurfaceVolResponse);
+  // Price a single-barrier exotic.
+  rpc PriceBarrier(PriceBarrierRequest) returns (PriceBarrierResponse);
+  // Readiness / drain probe for blue-green cutover.
+  rpc Readiness(ReadinessRequest) returns (ReadinessResponse);
+}

@@ -18,12 +18,24 @@ path = "src/main.rs"
 [dependencies]
 celnet-types.workspace = true
 celnet-core.workspace = true
+celnet-conventions.workspace = true
 celnet-vanilla.workspace = true
 celnet-surface.workspace = true
+celnet-exotics.workspace = true
 celnet-engine.workspace = true
 celnet-proto.workspace = true
-tokio.workspace = true
+rtrb.workspace = true
+tokio = { workspace = true, features = ["signal"] }
 tonic.workspace = true
 prost.workspace = true
 tokio-tungstenite.workspace = true
 futures-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[build-dependencies]
+protox.workspace = true
+tonic-build.workspace = true
+
+[dev-dependencies]
+celnet-testkit.workspace = true
