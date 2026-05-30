@@ -1,0 +1,81 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/office-js/custom-functions.schema.json",
+  "functions": [
+    {
+      "id": "PRICE",
+      "name": "PRICE",
+      "description": "Price one structure (premium in the convention's premium-ccy/style).",
+      "result": { "dimensionality": "scalar", "type": "number" },
+      "parameters": [
+        { "name": "pair", "description": "Currency pair, e.g. EURUSD.", "type": "string" },
+        { "name": "tenor", "description": "Tenor, e.g. 1Y, 3M, ON.", "type": "string" },
+        { "name": "strikeOrDelta", "description": "Absolute strike (1.12) or delta (25dP, ATM).", "type": "string" },
+        { "name": "callPut", "description": "C for call, P for put.", "type": "string" },
+        { "name": "notional", "description": "Trade notional in the base currency.", "type": "number" }
+      ]
+    },
+    {
+      "id": "GREEKS",
+      "name": "GREEKS",
+      "description": "The 13-Greek vector as a vertical spill [name, value] with a convention footer.",
+      "result": { "dimensionality": "matrix", "type": "any" },
+      "parameters": [
+        { "name": "pair", "description": "Currency pair, e.g. EURUSD.", "type": "string" },
+        { "name": "tenor", "description": "Tenor, e.g. 1Y.", "type": "string" },
+        { "name": "strikeOrDelta", "description": "Absolute strike or delta.", "type": "string" },
+        { "name": "callPut", "description": "C or P.", "type": "string" },
+        { "name": "notional", "description": "Trade notional in the base currency.", "type": "number" }
+      ]
+    },
+    {
+      "id": "SURFACE",
+      "name": "SURFACE",
+      "description": "The marked smile for a (pair, tenor) as a delta x vol grid with an arb + convention footer.",
+      "result": { "dimensionality": "matrix", "type": "any" },
+      "parameters": [
+        { "name": "pair", "description": "Currency pair, e.g. EURUSD.", "type": "string" },
+        { "name": "tenor", "description": "Tenor, e.g. 1Y.", "type": "string" }
+      ]
+    },
+    {
+      "id": "RFQ",
+      "name": "RFQ",
+      "description": "RFQ for a structure: spill [bid, offer, quoteId, validUntil] + convention footer.",
+      "result": { "dimensionality": "matrix", "type": "any" },
+      "parameters": [
+        { "name": "pair", "description": "Currency pair, e.g. EURUSD.", "type": "string" },
+        { "name": "tenor", "description": "Tenor, e.g. 1Y.", "type": "string" },
+        { "name": "strikeOrDelta", "description": "Absolute strike or delta.", "type": "string" },
+        { "name": "callPut", "description": "C or P.", "type": "string" },
+        { "name": "notional", "description": "Trade notional in the base currency.", "type": "number" }
+      ]
+    },
+    {
+      "id": "SUBSCRIBE",
+      "name": "SUBSCRIBE",
+      "description": "Stream a live two-way for a structure (multiplexed, coalesced, stale-aware).",
+      "options": { "stream": true, "cancelable": true },
+      "result": { "dimensionality": "scalar", "type": "string" },
+      "parameters": [
+        { "name": "pair", "description": "Currency pair, e.g. EURUSD.", "type": "string" },
+        { "name": "tenor", "description": "Tenor, e.g. 1Y.", "type": "string" },
+        { "name": "strikeOrDelta", "description": "Absolute strike or delta.", "type": "string" },
+        { "name": "callPut", "description": "C or P.", "type": "string" },
+        { "name": "notional", "description": "Trade notional in the base currency.", "type": "number" }
+      ]
+    },
+    {
+      "id": "MARK",
+      "name": "MARK",
+      "description": "Stage a manual vol/mark contribution (two-phase, idempotent; commits via the task pane).",
+      "result": { "dimensionality": "matrix", "type": "any" },
+      "parameters": [
+        { "name": "pair", "description": "Currency pair, e.g. EURUSD.", "type": "string" },
+        { "name": "tenor", "description": "Tenor, e.g. 1Y.", "type": "string" },
+        { "name": "pillar", "description": "Delta pillar (ATM, 25dP, 10dC).", "type": "string" },
+        { "name": "vol", "description": "Absolute volatility, e.g. 0.102.", "type": "number" },
+        { "name": "comment", "description": "Optional contribution comment.", "type": "string", "optional": true }
+      ]
+    }
+  ]
+}

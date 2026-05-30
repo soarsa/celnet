@@ -1,0 +1,26 @@
+{
+  "name": "celnet-excel",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Celnet FX-options Office.js add-in: CELNET.* streaming custom functions + ticket task pane over the celnet-server WS JSON mirror (the ONE current contract). No commercial add-in SDK; hand-rolled Vite + TypeScript.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "build:only": "vite build",
+    "typecheck": "tsc --noEmit",
+    "dev": "vite",
+    "test": "vitest run",
+    "verify:headless": "node --import tsx scripts/verifyHeadless.ts"
+  },
+  "devDependencies": {
+    "@types/custom-functions-runtime": "^1.6.12",
+    "@types/office-js": "1.0.460",
+    "@types/ws": "8.5.13",
+    "tsx": "4.19.2",
+    "typescript": "5.7.2",
+    "vite": "6.0.7",
+    "vitest": "2.1.8",
+    "ws": "8.18.0"
+  }
+}

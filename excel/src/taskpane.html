@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Celnet Ticket</title>
+    <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+    <link rel="stylesheet" href="./taskpane/taskpane.css" />
+    <script type="module" src="./taskpane/taskpane.ts"></script>
+  </head>
+  <body>
+    <main id="app" class="app">
+      <header class="hdr">
+        <h1>Celnet Ticket</h1>
+        <span id="conn" class="pill pill-off">disconnected</span>
+      </header>
+
+      <section class="card">
+        <h2>RFQ</h2>
+        <div class="grid">
+          <label>Pair <input id="rfq-pair" value="EURUSD" /></label>
+          <label>Tenor <input id="rfq-tenor" value="1Y" /></label>
+          <label>Strike/Δ <input id="rfq-strike" value="1.12" /></label>
+          <label>C/P <input id="rfq-cp" value="C" /></label>
+          <label>Notional <input id="rfq-notional" value="1000000" /></label>
+        </div>
+        <div class="row">
+          <button id="rfq-go">Request quote</button>
+          <span id="rfq-state" class="state"></span>
+        </div>
+        <div id="rfq-result" class="result"></div>
+        <div class="row">
+          <button id="trade-buy" disabled>Trade BUY (lift offer)</button>
+          <button id="trade-sell" disabled>Trade SELL (hit bid)</button>
+          <span id="trade-state" class="state"></span>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Contribute mark</h2>
+        <div class="grid">
+          <label>Pair <input id="mk-pair" value="EURUSD" /></label>
+          <label>Tenor <input id="mk-tenor" value="1Y" /></label>
+          <label>Pillar <input id="mk-pillar" value="ATM" /></label>
+          <label>Vol <input id="mk-vol" value="0.102" /></label>
+        </div>
+        <label class="full">Comment <input id="mk-comment" value="" /></label>
+        <div class="row">
+          <button id="mk-stage">Stage</button>
+          <button id="mk-commit" disabled>Confirm &amp; contribute</button>
+          <span id="mk-state" class="state"></span>
+        </div>
+        <div id="mk-pending" class="result"></div>
+      </section>
+    </main>
+  </body>
+</html>

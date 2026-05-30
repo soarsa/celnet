@@ -149,6 +149,32 @@ impl Edge {
         spread: SpreadModel,
         clock: Clock,
     ) -> std::io::Result<Self> {
+        // The WS mirror binds on the same host as the gRPC listener with an
+        // OS-assigned ephemeral port (read back via [`Edge::ws_addr`]).
+        let ws_addr = SocketAddr::new(grpc_addr.ip(), 0);
+        Self::start_on(grpc_addr, ws_addr, link, spread, clock).await
+    }
+
+    /// Like [`Edge::start`], but binds the WebSocket mirror on an **explicit**
+    /// `ws_addr` (a fixed port) instead of an OS-assigned ephemeral one.
+    ///
+    /// This is the entry point for a long-lived local demo / verification edge that
+    /// an out-of-process client (the Excel add-in harness, the GUI) dials at a
+    /// well-known `ws://HOST:PORT`. Pass a port of `0` in `ws_addr` to fall back to
+    /// an ephemeral port (the [`Edge::start`] behaviour). The resolved address is
+    /// always readable via [`Edge::ws_addr`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`std::io::Error`] if either listener cannot bind or be wrapped
+    /// for serving.
+    pub async fn start_on(
+        grpc_addr: SocketAddr,
+        ws_addr: SocketAddr,
+        link: Arc<CoreLink>,
+        spread: SpreadModel,
+        clock: Clock,
+    ) -> std::io::Result<Self> {
         let gate = Arc::new(ReadinessGate::new());
         // The single versioned marked-surface registry every service shares: the
         // surface edge deposits marks; the pricing / RFQ / RFS paths resolve a
@@ -201,8 +227,8 @@ impl Edge {
         // The WebSocket JSON mirror: the SAME single contract over WS, driven by the
         // SAME shared services (one `CoreLink`, one `SurfaceBook`, one readiness gate,
         // one spread/clock) — a second encoding of one pricing path, never a fork
-        // (`CLAUDE.md` rule 9). Bound on the same host as the gRPC listener with an
-        // OS-assigned ephemeral port (read back via [`Edge::ws_addr`]).
+        // (`CLAUDE.md` rule 9). Bound on the caller-supplied `ws_addr` (a fixed port
+        // for a demo edge, or `:0` for an OS-assigned ephemeral port).
         let ws_services = ws::WsServices::new(
             Arc::clone(&link),
             Arc::clone(&gate),
@@ -210,8 +236,7 @@ impl Edge {
             clock,
             Arc::clone(&surface_book),
         );
-        let ws_bind = SocketAddr::new(bound.ip(), 0);
-        let ws_mirror = ws::WsMirror::start(ws_bind, ws_services).await?;
+        let ws_mirror = ws::WsMirror::start(ws_addr, ws_services).await?;
 
         Ok(Self {
             grpc_addr: bound,
