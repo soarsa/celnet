@@ -120,6 +120,13 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-05-30 — **GA sign-off (rev 2).** All open-gap streams closed: plugin-host (wasmi) +
+  trader GUI built; API-v2 optimized (multiplex session, click-to-trade keyed-MAC token,
+  book-shaped risk, surface_version — no versioning). 21 crates + `gui/`, **555 tests green**,
+  full `just check` terminating. `docs/GA-READINESS.md`: **GO** for the pricing-platform GA with
+  one honest gating caveat — end-to-end latency-under-load proof + CI bench gate before the
+  wire-latency headline is GA-grade; fleet layer, GPU-at-scale, live Celer/FIX, WS-mirror, and
+  TARF/quanto breadth are de-risked post-GA execution.
 - 2026-05-30 — **WS-G plugin host built — wasmtime blocker CLOSED.** `celnet-plugin-host` is a
   tiered host behind the frozen `celnet-plugin-api` contract: a unified `ModelRegistry` routes
   **Tier-0 native** (`dyn PricingModel` via the tier-blind `HostModel` seam) and **Tier-2 wasm**
