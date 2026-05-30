@@ -28,6 +28,8 @@ celnet-gpu = { path = "crates/celnet-gpu" }
 celnet-engine = { path = "crates/celnet-engine" }
 celnet-integration = { path = "crates/celnet-integration" }
 celnet-server = { path = "crates/celnet-server" }
+celnet-client = { path = "crates/celnet-client" }
+celnet-observability = { path = "crates/celnet-observability" }
 # External — pinned once, used everywhere (OSS / permissively licensed only)
 libm = "0.2"                                   # rust-lang/libm: correctly-rounded, cross-platform-identical transcendentals
 serde = { version = "1", features = ["derive"] }
@@ -54,6 +56,11 @@ tonic-build = "0.12"                           # MIT tonic service codegen (buil
 tokio-tungstenite = "0.24"                     # MIT WebSocket RFS streaming
 futures-util = "0.3"                           # MIT/Apache-2.0 stream combinators
 clap = { version = "4", features = ["derive"] } # MIT/Apache-2.0 admin CLI
+# Observability lane (vetted: deny advisories+licenses ok) — async edge only, never the hot core
+tracing = "0.1"                                # MIT structured tracing facade
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] } # MIT subscriber
+hdrhistogram = "7"                             # MIT/Apache-2.0 p50/p99/p99.9 latency (coordinated-omission aware)
+metrics = "0.24"                               # MIT counters/gauges/histograms facade
 # wasmtime (plugin-host) deferred: current releases carry open 2026 RustSec advisories;
 # re-add at a patched version when building celnet-plugin-host (WS-G). See ledger.
 
