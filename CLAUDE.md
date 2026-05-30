@@ -109,6 +109,15 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-05-30 — **G0 + G1 reached (3 parallel lanes).** `celnet-calendar` (43 tests),
+  `celnet-conventions`, `celnet-vanilla` strike↔delta solver + 4 delta conventions + ATM/DNS,
+  `celnet-testkit` (shared invariants/strategies), `celnet-proto` (single unversioned wire
+  contract, protox build), `celnet-plugin-api` (SDK traits + WIT + validated example). 130
+  tests, full `just check` green. Adversarial review caught + fixed a sign-inverted charm in
+  the SDK example (added full-Greek FD gate). Incremental build recipes (`check-crate`,
+  `check-changed`) + lane infra (central dep registry, skeletons). **Next (parallel lanes):**
+  G2 `celnet-surface` (highest-leverage Synoption gap), latency-bench harness + QuantLib
+  golden oracle (WS-T), then exotics ∥ gpu ∥ plugin-host ∥ integration.
 - 2026-05-30 — **P0/P1 vertical slice green.** Flat workspace live; `celnet-types` (frozen
   vocab + convention enums + DTOs), `celnet-core` (libm math, deterministic `assert_close`,
   `Smile` trait), `celnet-vanilla` (Garman-Kohlhagen + full 14-Greek set). 17 tests pass:
@@ -128,14 +137,14 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 | Stream | Crates (owned) | Status | Owner | Dep gate | Notes |
 |--------|----------------|--------|-------|----------|-------|
-| WS-0 | celnet-types, celnet-core, celnet-proto, celnet-plugin-api | IN-PROGRESS | this session | — | types+core DONE & frozen-candidate; proto/plugin-api pending → completes G0 |
-| WS-A | celnet-conventions, celnet-calendar | UNCLAIMED | — | G0 | |
-| WS-B | celnet-vanilla | IN-PROGRESS | this session | G0 | GK price + 14 Greeks DONE & validated; strike↔delta solver (convention-aware) pending |
-| WS-C | celnet-surface | BLOCKED | — | G1 | |
+| WS-0 | celnet-types, celnet-core, celnet-proto, celnet-plugin-api | **DONE** | — | — | G0 complete; all four frozen. Wire contract unversioned (ADR-0007). |
+| WS-A | celnet-conventions, celnet-calendar | **DONE** | — | G0 | calendar (43 tests) + convention registry green & validated. |
+| WS-B | celnet-vanilla | **DONE** | — | G0 | GK + 14 Greeks + 4 delta conventions + ATM/DNS + strike↔delta solver. G1 reached. |
+| WS-C | celnet-surface | UNBLOCKED (G1) | — | G1 | **next, highest-leverage** — VV/SABR/SVI/SSVI, broker→smile, arb-free. |
 | WS-D | celnet-exotics | BLOCKED | — | G2 | |
 | WS-E | celnet-gpu | UNCLAIMED | — | G0 | runs parallel to WS-D on PricingBackend |
 | WS-F | celnet-engine | UNCLAIMED | — | G1/G3 | |
-| WS-G | celnet-plugin-host | UNCLAIMED | — | G0 | |
+| WS-G | celnet-plugin-host | UNCLAIMED | — | G0 | api ready; host (wasmtime) can start now |
 | WS-H | celnet-integration | UNCLAIMED | — | G0/WS-C | |
 | WS-I | celnet-server, celnet-cli | BLOCKED | — | G3 | |
-| WS-T | CI/test/deny/golden-gen | UNCLAIMED | — | G0 | cross-cutting; config+test files only |
+| WS-T | CI/test/deny/golden-gen/bench | PARTIAL | — | G0 | testkit DONE; pending: QuantLib golden oracle, latency bench, fuzz/mutation/coverage, CI matrix |

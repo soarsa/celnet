@@ -1,5 +1,19 @@
 # Celnet Competitive Analysis & Positioning
 
+> **Live parity tracker (updated per gate).** As of G1 (2026-05-30): Celnet leads on
+> *convention transparency* (all four delta conventions, ATM/DNS, premium styles, NY/Tokyo
+> cut, NDF — first-class, code-level, documented; competitors hide these), a validated
+> convention-aware strike↔delta solver, and a finite-difference-proven full 14-Greek set with
+> an open calendar/delivery engine — all reproducible under `just check`. **Open gaps to
+> close for demonstrable superiority** (now sequenced in the backlog): (1) **vol surface**
+> (`celnet-surface`, G2) — the single biggest gap vs SynOption Primus / Fenics FXO / BVOL;
+> (2) **exotics** (digitals/touches/DNT/barriers, then TARF/accumulators) vs SynOption
+> Optimus; (3) **published latency/throughput proof** (bench harness) to convert the
+> microsecond claim into evidence; (4) **multi-source surface aggregation**; (5) **streaming
+> RFS/auto-quote**; (6) **GPU batch** + (7) **Wasm model SDK** — capabilities *no* competitor
+> offers as a live service. Each becomes a row in the parity matrix as it lands, with the
+> test/benchmark that proves it.
+
 ## Executive Summary
 
 The FX-options technology stack in 2026 is fragmented into four archetypes — closed desktop terminals (Bloomberg), monolithic front-to-back platforms (Murex, Numerix), data/venue players (Fenics, SynOption, ICE, 360T, Digital Vega), and early modern entrants (Quantifi, Quantra, RustQuant). None combines an **open extensibility SDK, genuine Rust microsecond latency, zero-downtime upgrades, native trade-lifecycle integration, and GPU-accelerated exotics** in one product. That gap is precisely the seam Celnet targets.
