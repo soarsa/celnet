@@ -14,8 +14,12 @@ Greenfield, started 30 May 2026.
    implementations. If scope can't be finished, narrow it — never fake depth. Split large
    implementations across files/crates instead of abbreviating.
 3. **codebase-memory-mcp first** for code discovery (`search_graph`, `trace_path`,
-   `get_code_snippet`, `query_graph`, `get_architecture`); fall back to Grep/Read only for
-   non-code text. Re-`index_repository` as the workspace grows. Saves tokens, stays exact.
+   `get_code_snippet`, `query_graph`, `get_architecture`, `detect_changes`, `manage_adr`);
+   fall back to Grep/Read only for non-code text. The graph **auto-indexes** (git post-commit
+   hook + a Stop hook in `.claude/settings.json`, both running `codebase-memory-mcp cli
+   index_repository … mode:fast`), so its scope always covers new files — no manual
+   re-indexing needed. Use `detect_changes` to scope builds/tests; keep ADRs current via
+   `manage_adr`. Saves tokens, stays exact, never forgets.
 4. **LSP for code intel.** Use the LSP tool (rust-analyzer) for goToDefinition,
    findReferences, hover, document/workspace symbols, call hierarchy — not guesswork.
 5. **Every change passes the gates** before it's "done": `just check` (fmt, clippy -D

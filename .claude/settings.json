@@ -44,5 +44,17 @@
   "env": {
     "RUSTC_WRAPPER": "sccache",
     "CARGO_TERM_COLOR": "always"
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "nohup \"$HOME/.local/bin/codebase-memory-mcp\" cli index_repository '{\"repo_path\":\"/Users/adrian/code/celeroption\",\"mode\":\"fast\"}' >/dev/null 2>&1 & exit 0"
+          }
+        ]
+      }
+    ]
   }
 }
