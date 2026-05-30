@@ -120,6 +120,16 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-05-30 — **Full-implementation audit → remediation → GA-evidence (verified).** 19-lane
+  read-only audit (98 findings: 7 blockers/30 majors/43 minors/18 gaps) → layered remediation
+  resolving ALL blockers+majors (libm determinism, seqlock UB, method/person-name purge,
+  honesty/doc fixes, broker→smile calibration + DegenerateQuote guard, holiday/convention
+  fixes, idempotency/resync) → re-audit verdict production-grade. Then GA-evidence:
+  `celnet-parity` (15 capability rows gated vs incumbents), CI matrix + nightly fuzz,
+  mutation kill-rate 78→88.4% on vanilla, 96% core coverage, true 13-Greek count reconciled.
+  **509 tests, `just check` green & terminating.** Remaining to GA: API-v2 (#20), scale-out
+  validation (#19), plugin-host (#10, blocked on a patched wasmtime), GA sign-off (#15).
+
 - 2026-05-30 — **G3 reached (wide 4-lane wave).** `celnet-exotics` (digitals/touches/DNT/
   all-8 barriers + survival-weighted VV overlay; PDE Crank-Nicolson+Rannacher & Philox MC,
   PDE≈MC≈analytic cross-validated), `celnet-gpu` (PricingBackend over wgpu/Metal + f64 CPU
