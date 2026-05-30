@@ -12,8 +12,11 @@ publish = false
 workspace = true
 
 [dependencies]
+# Domain vocabulary (CcyPair, currencies) the partition key is built from. The
+# router is pure routing logic — it does no pricing, so it needs no numeric
+# crate (celnet-core); its hashing is a self-contained, frozen integer mixer
+# (see `src/hash.rs`) chosen for cross-fleet bit-stable rendezvous weights.
 celnet-types.workspace = true
-celnet-core.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

@@ -473,6 +473,98 @@ mod tests {
         );
     }
 
+    /// **An out-of-range unadjusted target is reported `Unreachable` — and the
+    /// bracket-expansion loop terminates while doing so.** For the unadjusted
+    /// conventions the achievable call delta is capped by the carry factor
+    /// (`e^{−r_f T}` for spot, `1` for forward); a target strictly above that cap
+    /// has no finite strike. The geometric bracket never finds a sign change, so
+    /// the expansion's safety counter (`bracket` line 197 `iters += 1`) MUST
+    /// advance to its cap (line 198) and return `Unreachable`.
+    ///
+    /// This pins the counter's *monotonic advance*: a mutant that turns the
+    /// `iters += 1` into `iters -= 1` or `iters *= 1` makes the counter never
+    /// reach the cap, so the loop spins forever on an unreachable target — a
+    /// non-terminating behaviour the (timeout-bounded) mutation harness flags,
+    /// and which this test's expectation of a prompt `Unreachable` return
+    /// enforces. The unmutated solver returns immediately.
+    #[test]
+    fn out_of_range_unadjusted_target_is_unreachable() {
+        let i = base();
+        // Spot-unadjusted call cap = e^{-r_f T}; pick a target above it but ≤ 1.
+        let cap_spot = (-i.r_for * i.t).exp();
+        let above_cap = 0.5 * (cap_spot + 1.0);
+        assert!(above_cap > cap_spot && above_cap < 1.0);
+        assert_eq!(
+            strike_from_delta(
+                DeltaConvention::SpotUnadjusted,
+                OptionType::Call,
+                above_cap,
+                &i
+            ),
+            Err(DeltaSolveError::Unreachable),
+            "a spot-unadjusted call delta above the carry-factor cap {cap_spot} is unreachable"
+        );
+        // A magnitude above 1 is unreachable for every unadjusted convention and
+        // both option types (|Δ| ≤ factor ≤ 1).
+        for conv in [
+            DeltaConvention::SpotUnadjusted,
+            DeltaConvention::ForwardUnadjusted,
+        ] {
+            assert_eq!(
+                strike_from_delta(conv, OptionType::Call, 1.5, &i),
+                Err(DeltaSolveError::Unreachable),
+                "{conv:?} call Δ*=1.5 must be Unreachable"
+            );
+            assert_eq!(
+                strike_from_delta(conv, OptionType::Put, -1.5, &i),
+                Err(DeltaSolveError::Unreachable),
+                "{conv:?} put Δ*=-1.5 must be Unreachable"
+            );
+        }
+    }
+
+    /// **Zero is a sign-valid (if unreachable-in-the-limit) delta, NOT a
+    /// wrong-sign target.** The sign guard rejects a *strictly* mis-signed
+    /// target: a call delta `< 0` (line 67) or a put delta `> 0` (line 68). A
+    /// zero target has the correct sign for either option type — the delta of a
+    /// call tends to `0` from above as `K → ∞` (a put from below), so `0` is the
+    /// limiting wing value, never a sign violation. The solver must therefore
+    /// treat `Δ* = 0` as a reachability question (it returns `Unreachable`, since
+    /// the limit is not attained at a finite strike), never `WrongSign`.
+    ///
+    /// A mutant that loosens the guard to `≤ 0` (call) or `≥ 0` (put) would
+    /// mis-route `Δ* = 0` to `WrongSign`; we pin that exact boundary.
+    #[test]
+    fn zero_delta_is_not_wrong_sign() {
+        let i = base();
+        for conv in ALL {
+            let call = strike_from_delta(conv, OptionType::Call, 0.0, &i);
+            assert_ne!(
+                call,
+                Err(DeltaSolveError::WrongSign),
+                "{conv:?} call Δ*=0 must not be WrongSign (0 is a valid call-delta sign); got {call:?}"
+            );
+            let put = strike_from_delta(conv, OptionType::Put, 0.0, &i);
+            assert_ne!(
+                put,
+                Err(DeltaSolveError::WrongSign),
+                "{conv:?} put Δ*=0 must not be WrongSign (0 is a valid put-delta sign); got {put:?}"
+            );
+            // And the strictly mis-signed targets ARE rejected as WrongSign —
+            // pinning that the guard still fires on the correct side.
+            assert_eq!(
+                strike_from_delta(conv, OptionType::Call, -1e-6, &i),
+                Err(DeltaSolveError::WrongSign),
+                "{conv:?} negative call delta must be WrongSign"
+            );
+            assert_eq!(
+                strike_from_delta(conv, OptionType::Put, 1e-6, &i),
+                Err(DeltaSolveError::WrongSign),
+                "{conv:?} positive put delta must be WrongSign"
+            );
+        }
+    }
+
     /// Pin solver correctness with a TIGHT residual and an independent
     /// (derivative-free) bisection oracle. The production solver uses Newton
     /// steps off `delta_d_strike`; a wrong-arithmetic mutant there can be masked
@@ -563,6 +655,202 @@ mod tests {
             }
         }
         0.5 * (a + b)
+    }
+
+    /// A deterministic, wide market-state grid covering the regimes where the
+    /// solver's iteration internals become load-bearing: very low vol, very short
+    /// and very long expiries, large and small rate spreads, and large strikes.
+    /// These are the cells where a perturbed Newton step / guard / convergence
+    /// width (mutating `strike_from_delta` lines 88/95/108/109/114/120/125/126)
+    /// or a perturbed bracket-expansion (lines 162–206) or `tiny_strike`
+    /// (219/220) actually moves the converged answer off the root or makes the
+    /// solver fail — masked at the benign EURUSD `base()` regime but exposed here.
+    fn wide_regimes() -> [VanillaInputs; 12] {
+        [
+            VanillaInputs::new(1.10, 1.10, 0.10, 1.0, 0.02, 0.01),
+            VanillaInputs::new(50.0, 50.0, 0.021, 0.05, -0.01, 0.073), // low vol, short T
+            VanillaInputs::new(135.0, 135.0, 0.031, 3.0, 0.064, 0.052), // long T, low vol
+            VanillaInputs::new(2.70, 2.70, 0.032, 3.1, 0.031, 0.058),
+            VanillaInputs::new(100.0, 100.0, 0.45, 0.25, 0.05, 0.0), // high vol, short T
+            VanillaInputs::new(0.80, 0.80, 0.20, 1.0, -0.01, 0.06),
+            VanillaInputs::new(1.25, 1.25, 0.60, 2.0, 0.03, 0.03),
+            VanillaInputs::new(7.50, 7.50, 0.08, 0.10, 0.09, -0.02),
+            VanillaInputs::new(0.65, 0.65, 0.12, 0.5, 0.04, 0.04),
+            VanillaInputs::new(180.0, 180.0, 0.18, 1.5, 0.01, 0.07),
+            // High vol + very long T: the premium-adjusted-call hi-expansion leg
+            // (`bracket` lines 169–177) sweeps many doublings here, and a corrupted
+            // residual `g(k)` on that leg (line 170 `at−td` → `at/td`) blows the
+            // expansion past its 64-step cap, failing a reachable target.
+            VanillaInputs::new(97.0, 97.0, 0.58, 4.5, 0.02, -0.007),
+            VanillaInputs::new(21.0, 21.0, 0.55, 4.9, 0.06, 0.078),
+        ]
+    }
+
+    /// The reachable, signed delta grid for `(conv, opt, i)` — for the
+    /// premium-adjusted call the magnitude is capped strictly below the peak
+    /// delta so every entry is a genuinely solvable target.
+    fn reachable_targets(conv: DeltaConvention, opt: OptionType, i: &VanillaInputs) -> Vec<f64> {
+        let mags = [0.005_f64, 0.01, 0.05, 0.10, 0.25, 0.40, 0.45];
+        let pa_call = matches!(
+            conv,
+            DeltaConvention::SpotPremiumAdjusted | DeltaConvention::ForwardPremiumAdjusted
+        ) && opt == OptionType::Call;
+        let cap = if pa_call {
+            let k_max = premium_adjusted_call_delta_max(i);
+            let mut at = *i;
+            at.strike = k_max;
+            0.9 * delta(conv, OptionType::Call, &at)
+        } else {
+            f64::INFINITY
+        };
+        mags.iter()
+            .map(|&m| if opt == OptionType::Call { m } else { -m })
+            .map(|t| if pa_call { t.min(cap) } else { t })
+            .collect()
+    }
+
+    /// **Solver tolerance is the SOLVER's, not the test's.** The production loop
+    /// declares convergence at a `1e-12` delta residual (`DELTA_TOL`), so a
+    /// correct solve must reproduce the target delta to that order. We assert a
+    /// `5e-12` absolute residual across the full wide grid × all four conventions
+    /// × both option types × the reachable delta grid.
+    ///
+    /// This is the gate that the looser `1e-11` round-trip / oracle tests cannot
+    /// be: several iteration-internal mutants (`strike_from_delta`'s Newton-step
+    /// arithmetic at line 109, its in-bracket Newton guard at 114, the slope-
+    /// magnitude test at 108) leave the guarded bisection *converging*, but only
+    /// to a `~3e-11` residual — above `5e-12` yet below `1e-11`. Likewise a
+    /// broken premium-adjusted hi-expansion factor (line 169) or a corrupted
+    /// `tiny_strike` carry (line 220) lands the answer a finite distance off the
+    /// root. Pinning the residual at the solver's own `DELTA_TOL` order, in the
+    /// low-vol / short-and-long-T regimes where the Newton step is most active,
+    /// kills them without ever referencing the convergence trajectory.
+    #[test]
+    fn solver_residual_is_at_solver_tolerance_on_wide_grid() {
+        for i in wide_regimes() {
+            for conv in ALL {
+                for opt in [OptionType::Call, OptionType::Put] {
+                    for target in reachable_targets(conv, opt, &i) {
+                        let k = strike_from_delta(conv, opt, target, &i).unwrap_or_else(|e| {
+                            panic!(
+                                "{conv:?} {opt:?} Δ*={target} on {i:?} unexpectedly failed: {e:?}"
+                            )
+                        });
+                        let mut probe = i;
+                        probe.strike = k;
+                        let residual = delta(conv, opt, &probe) - target;
+                        assert!(
+                            residual.abs() < 5e-12,
+                            "{conv:?} {opt:?} Δ*={target} on {i:?}: residual {residual:e} \
+                             exceeds the solver tolerance (K={k})"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// **Every reachable target must SOLVE — no spurious failure or panic.** A
+    /// mutant that corrupts the initial Newton midpoint (`strike_from_delta` line
+    /// 88, `0.5*(lo+hi)` → `0.5+(lo+hi)` / `0.5*(lo−hi)` / `0.5*(lo*hi)`), the
+    /// bracket-expansion step or its safety counter on the premium-adjusted call
+    /// hi-leg (lines 174/177) or the unadjusted leg (lines 197/206), or the
+    /// `tiny_strike` lower-bound carry (line 220 `f*e` → `f/e`) does NOT change a
+    /// converged value — it instead drives the iteration out of its bracket or
+    /// trips the iteration cap, so the solver returns `NoConvergence` /
+    /// `Unreachable` (or panics on a NaN bracket) for a target it must reach.
+    /// Asserting `Ok` over the full reachable grid catches exactly that failure
+    /// mode, which a residual-only test cannot see.
+    #[test]
+    fn every_reachable_target_solves_without_failure() {
+        for i in wide_regimes() {
+            for conv in ALL {
+                for opt in [OptionType::Call, OptionType::Put] {
+                    for target in reachable_targets(conv, opt, &i) {
+                        let got = strike_from_delta(conv, opt, target, &i);
+                        assert!(
+                            got.is_ok(),
+                            "{conv:?} {opt:?} reachable Δ*={target} on {i:?} must solve, got {got:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// **Premium-adjusted call reachability boundary is pinned at the peak
+    /// delta.** The branch rejects `target > Δ(K_max) + 1e-12` (`bracket` line
+    /// 162). Two adjacent probes pin the predicate sharply:
+    ///
+    ///  * a target a hair *below* the peak (`Δ(K_max) − 5e-10`) is reachable and
+    ///    must solve — this kills the `+ 1e-12 → − 1e-12` mutant (line 162:37),
+    ///    which would shrink the reachable ceiling and wrongly reject it;
+    ///  * a target a hair *above* the peak (`Δ(K_max) + 1e-6`) is unreachable and
+    ///    must return `Unreachable` — this pins the `>`/`>=` boundary (line
+    ///    162:25) and the rejection itself.
+    ///
+    /// The solved near-peak strike must also reproduce its target to solver
+    /// tolerance and sit on the OTM (decreasing, `K ≥ K_max`) branch.
+    #[test]
+    fn premium_adjusted_call_reachability_boundary_is_exact() {
+        for conv in [
+            DeltaConvention::SpotPremiumAdjusted,
+            DeltaConvention::ForwardPremiumAdjusted,
+        ] {
+            for i in wide_regimes() {
+                let k_max = premium_adjusted_call_delta_max(&i);
+                let mut at_max = i;
+                at_max.strike = k_max;
+                let dmax = delta(conv, OptionType::Call, &at_max);
+
+                // Just below the peak, INSIDE the `+1e-12` reachability margin:
+                // a target in `(Δ(K_max) − 1e-12, Δ(K_max)]` is reachable under
+                // the production `target > Δ(K_max) + 1e-12` test, but a mutant
+                // that flips the margin sign to `Δ(K_max) − 1e-12` (line 162:37)
+                // would classify it as *unreachable* and wrongly reject it.
+                // Sitting the probe at `Δ(K_max) − 5e-13` straddles exactly that
+                // mutated boundary, so the solve must still succeed.
+                let just_below = dmax - 5e-13;
+                if just_below > 0.0 {
+                    let k = strike_from_delta(conv, OptionType::Call, just_below, &i)
+                        .unwrap_or_else(|e| {
+                            panic!(
+                                "{conv:?} near-peak Δ*={just_below} (peak {dmax}) on {i:?} \
+                                 must be reachable, got {e:?}"
+                            )
+                        });
+                    let mut probe = i;
+                    probe.strike = k;
+                    let back = delta(conv, OptionType::Call, &probe);
+                    assert!(
+                        is_close(back, just_below, 1e-7, 1e-9),
+                        "{conv:?} near-peak Δ*={just_below} back={back} K={k} on {i:?}"
+                    );
+                    assert!(
+                        k >= k_max * (1.0 - 1e-9),
+                        "{conv:?} near-peak solve K={k} must be on the OTM branch K≥K_max={k_max}"
+                    );
+                }
+                // A clearly-reachable target well below the peak also solves — this
+                // keeps the test honest if the near-peak point is numerically
+                // pathological for some regime.
+                let clearly = 0.5 * dmax;
+                if clearly > 0.0 {
+                    assert!(
+                        strike_from_delta(conv, OptionType::Call, clearly, &i).is_ok(),
+                        "{conv:?} mid-branch Δ*={clearly} (peak {dmax}) on {i:?} must solve"
+                    );
+                }
+
+                // Just above the peak: unreachable, rejected.
+                let just_above = dmax + 1e-6;
+                assert_eq!(
+                    strike_from_delta(conv, OptionType::Call, just_above, &i),
+                    Err(DeltaSolveError::Unreachable),
+                    "{conv:?} Δ*={just_above} above peak {dmax} on {i:?} must be Unreachable"
+                );
+            }
+        }
     }
 
     proptest::proptest! {

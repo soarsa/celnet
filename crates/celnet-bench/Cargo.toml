@@ -15,10 +15,30 @@ workspace = true
 celnet-types.workspace = true
 celnet-core.workspace = true
 celnet-vanilla.workspace = true
+# Wire-path (end-to-end) latency-under-load proof: the load harness spins the
+# real service edge in-process, drives sustained RFQ + RFS streaming load over
+# the loopback gRPC wire, and records the client-observed round-trip in an
+# HdrHistogram (coordinated-omission aware). The edge crates below are READ as
+# library dependencies — the harness only constructs and dials the public
+# `celnet-server` API, it never modifies the edge.
+celnet-conventions.workspace = true
+celnet-engine.workspace = true
+celnet-proto.workspace = true
+celnet-server.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "sync", "time", "macros"] }
+tonic.workspace = true
+futures-util.workspace = true
+hdrhistogram.workspace = true
+serde = { workspace = true }
+serde_json.workspace = true
 
 [dev-dependencies]
 divan.workspace = true
 
+# ---------------------------------------------------------------------------
+# In-core micro-benchmarks (divan). These measure the pinned hot core in
+# isolation (no wire); the wire-path figure is the `wire_load` binary below.
+# ---------------------------------------------------------------------------
 [[bench]]
 name = "vanilla"
 harness = false
@@ -26,3 +46,18 @@ harness = false
 [[bench]]
 name = "batch"
 harness = false
+
+# ---------------------------------------------------------------------------
+# End-to-end wire-path latency-under-load harness + the CI bench-regression
+# gate. Both are bounded binaries (self-terminating, timeout-friendly): the
+# load run drives a fixed request budget under a hard wall-clock cap; the gate
+# replays a short run and compares the measured percentiles to a committed
+# baseline within tolerance.
+# ---------------------------------------------------------------------------
+[[bin]]
+name = "wire_load"
+path = "src/bin/wire_load.rs"
+
+[[bin]]
+name = "bench_gate"
+path = "src/bin/bench_gate.rs"

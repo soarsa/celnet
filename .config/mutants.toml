@@ -1,0 +1,117 @@
+# cargo-mutants gate configuration — Celnet mutation-testing policy.
+#
+# How the gate works
+# ------------------
+# `cargo mutants` generates a syntactic mutant for every operator / comparison /
+# return value, applies it, and re-runs the test suite. A mutant that the suite
+# still passes ("MISSED") is a test gap; a mutant the suite catches (fail / panic
+# / hang→timeout) is "caught". The gate (`just mutants-gate-vanilla`, the CI
+# `mutation-gate` job) FAILS on any *non-equivalent* survivor, so a regression
+# that weakens the suite below the kill bar blocks the merge.
+#
+# Equivalent mutants
+# ------------------
+# A handful of mutants are *semantically equivalent* to the original: they mutate
+# an internal of the strike↔delta root-finder whose result is, by construction,
+# unobservable. The solver is a **bracketing bisection with Newton acceleration**
+# guarded so the bracket is never left: the bracket is established by a
+# self-correcting geometric expansion and convergence is declared by several
+# independent exits (residual ≤ DELTA_TOL, bracket width, post-loop fallback).
+# Perturbing the *initial guess*, the *expansion factor/direction*, a
+# *sign-identical comparison*, a never-hit *safety counter cap*, or the
+# *deep-wing lower-bound value* changes the iteration trajectory but NOT the
+# converged strike (to solver tolerance) nor the reachable/unreachable verdict.
+# We verified each below against a 200k-case differential oracle (independent
+# re-implementation, randomized over a far wider market domain than the suite):
+# every one reproduces the unmutated result bit-for-bit on the result and the
+# error class. They are therefore excluded from the kill bar — listed exhaustively
+# so the exclusion stays auditable and any NEW survivor (not on this list) fails
+# the gate.
+#
+# See docs/HARDENING.md §"Mutation gate (celnet-vanilla)" for the recorded
+# kill-rate and the equivalence argument per cluster.
+exclude_re = [
+  # --- premium_adjusted_call_delta_max: bisection tie-break ---
+  # `g(mid) > 0` vs `>=`: differs only when g(mid) is *exactly* 0.0, which a
+  # floating-point bisection midpoint never hits; the root is identical.
+  "delta\\.rs:140:19: replace > with >=",
+
+  # --- strike_from_delta: initial guess, sign-identical tests, dead exits ---
+  # Initial Newton midpoint `0.5*(lo+hi)`: a starting guess; the guarded loop
+  # converges from any in-bracket start, so the converged strike is unchanged.
+  "solver\\.rs:88:21: replace \\* with \\+ in strike_from_delta",
+  # `glo*gk <= 0` vs `glo/gk <= 0`: the loop returns at gk==0, so gk≠0 here and
+  # the sign of the product equals the sign of the quotient — identical branch.
+  "solver\\.rs:95:16: replace \\* with / in strike_from_delta",
+  # `slope.abs() > MIN_POSITIVE` vs `>=`: differs only at the subnormal boundary
+  # slope.abs()==MIN_POSITIVE, never reached for a well-conditioned delta slope.
+  "solver\\.rs:108:35: replace > with >= in strike_from_delta",
+  # Newton in-bracket guard `next>lo && next<hi`: `>`→`>=` / `<`→`<=` only change
+  # the (measure-zero) endpoint case; the bisection fallback covers it identically.
+  "solver\\.rs:114:41: replace > with >= in strike_from_delta",
+  "solver\\.rs:114:54: replace < with <= in strike_from_delta",
+  # Width early-return `(hi-lo) <= DELTA_TOL*(1.0+k)`: an *optimization* exit. Any
+  # arithmetic perturbation here only defers convergence to the residual exit at
+  # line 91 (same loop) — the returned strike is unchanged.
+  "solver\\.rs:120:16: replace - with \\+ in strike_from_delta",
+  "solver\\.rs:120:16: replace - with / in strike_from_delta",
+  "solver\\.rs:120:35: replace \\* with / in strike_from_delta",
+  "solver\\.rs:120:42: replace \\+ with - in strike_from_delta",
+  "solver\\.rs:120:42: replace \\+ with \\* in strike_from_delta",
+  # Post-loop fallback `0.5*(lo+hi)` and its acceptance test `<= 1e-9`: only
+  # reached if the 200-iteration loop fails to converge, which never happens for a
+  # well-posed bracketed problem — dead safety code, unobservable.
+  "solver\\.rs:125:17: replace \\* with \\+ in strike_from_delta",
+  "solver\\.rs:125:17: replace \\* with / in strike_from_delta",
+  "solver\\.rs:125:23: replace \\+ with - in strike_from_delta",
+  "solver\\.rs:125:23: replace \\+ with \\* in strike_from_delta",
+  "solver\\.rs:126:19: replace <= with > in strike_from_delta",
+
+  # --- bracket: reachability boundary, expansion factor/direction, safety caps ---
+  # Reachability `target > Δ(K_max) + 1e-12` vs `>=`: differs only at the exact
+  # boundary value; the +1e-12 margin (whose *sign* IS gated by a test) dominates.
+  "solver\\.rs:162:25: replace > with >= in bracket",
+  # PA-call initial hi `f.max(K_max)*2.0` → `+2.0`: a starting upper bound; the
+  # doubling loop (line 177) drives it past the root regardless, same result.
+  "solver\\.rs:169:35: replace \\* with \\+ in bracket",
+  # PA-call expansion guard `g(hi) > 0` vs `>=` and its safety counter cap
+  # (`iters > 64` vs `==`/`>=`, `iters += 1` vs `-=`/`*=`): the cap is a watchdog
+  # never tripped for a *reachable* PA-call target (unreachable ones are rejected
+  # earlier at line 162), so the loop terminates by the natural `g(hi) ≤ 0` exit.
+  "solver\\.rs:172:21: replace > with >= in bracket",
+  "solver\\.rs:173:19: replace \\+= with -= in bracket",
+  "solver\\.rs:173:19: replace \\+= with \\*= in bracket",
+  "solver\\.rs:174:22: replace > with == in bracket",
+  "solver\\.rs:174:22: replace > with >= in bracket",
+  # Unadjusted straddle test `glo*ghi > 0` (`*`→`/` sign-identical; `>`→`>=` only
+  # the measure-zero exact-root endpoint) and its cap comparison `iters > 64`
+  # (`==`/`>=` still fire as the monotone counter passes 64). NOTE: the *counter
+  # advance* itself (line 197 `iters += 1` → `-=`/`*=`) is NOT excluded — those are
+  # CAUGHT (they stop the watchdog, so an unreachable target spins forever and the
+  # mutation harness times out; pinned by `out_of_range_unadjusted_target_is_unreachable`).
+  "solver\\.rs:196:21: replace > with >= in bracket",
+  "solver\\.rs:196:15: replace \\* with / in bracket",
+  "solver\\.rs:198:18: replace > with == in bracket",
+  "solver\\.rs:198:18: replace > with >= in bracket",
+  # Expansion-direction pick `glo.abs() < ghi.abs()` (`<`→`<=`/`==`) and the
+  # expansion factors `lo *= 0.5` (`+=`/`/=`) and `hi *= 2.0` (`+=`): choosing the
+  # other side or a different step still produces a straddling bracket from which
+  # bisection converges to the same root — robust by construction.
+  "solver\\.rs:202:22: replace < with == in bracket",
+  "solver\\.rs:202:22: replace < with <= in bracket",
+  "solver\\.rs:203:16: replace \\*= with \\+= in bracket",
+  "solver\\.rs:203:16: replace \\*= with /= in bracket",
+
+  # --- tiny_strike: deep-wing lower-bound VALUE ---
+  # `tiny_strike` returns *a* strictly-positive lower bound far below the forward;
+  # its exact value is non-load-bearing because the bracket's geometric `lo *= 0.5`
+  # expansion (line 203) self-corrects to a straddle from any positive bound. The
+  # `vol*sqrt(t)` and `-12.0*vsqt` products (lines 219/220) shift that bound but
+  # never break the expansion, so the solved strike is unchanged. (Its sign /
+  # positivity / below-forward CONTRACT is still pinned by
+  # `tiny_strike_is_a_valid_lower_bound`.)
+  "solver\\.rs:219:29: replace \\* with \\+ in tiny_strike",
+  "solver\\.rs:219:29: replace \\* with / in tiny_strike",
+  "solver\\.rs:220:38: replace \\* with \\+ in tiny_strike",
+  "solver\\.rs:220:38: replace \\* with / in tiny_strike",
+]

@@ -67,12 +67,23 @@ Requires Node ≥ 22 (developed on Node 26 / npm 11).
   contract (`celnet.wire`): Instrument / Quote / Snapshot+Update / Greeks /
   Smile / Scenario, etc. One contract, no versioning (CLAUDE.md rule 9).
 - `transport.ts` — the **isolated transport seam** (`CelnetTransport`): the only
-  interface the app talks to. Today satisfied by the deterministic in-app
-  `mockSource.ts` (seeded PRNG tape, real GK pricing + 14 Greeks, surface
-  calibration, scenario repricing). When the build wave wires the
-  gRPC-Web/Connect or WebSocket JSON-mirror client to `celnet-server`, it
-  implements this same interface and **nothing else changes** — and `contract.ts`
-  is swapped for the `buf`-generated module so the GUI cannot drift from the wire.
+  interface the app talks to. Two transports satisfy it, selected once at the app
+  root by `transportConfig.ts`:
+  - the deterministic in-app `mockSource.ts` (seeded PRNG tape, real GK pricing +
+    14 Greeks, surface calibration, scenario repricing) — **the default**, so the
+    app runs standalone with no server;
+  - `wsTransport.ts` — a **live** client over the `celnet-server` WebSocket JSON
+    mirror (`crates/celnet-server/src/ws`), speaking the SAME single `celnet.wire`
+    contract encoded as the mirror's type-tagged snake_case JSON (`wsCodec.ts` +
+    `enums.ts` mirror the server's `codec.rs` field-for-field). It multiplexes the
+    RFS session and the request/response calls over one connection, tracks
+    per-subscription sequence with **gap-detect → server-assisted `resync`**, and
+    **auto-reconnects** with capped backoff (re-subscribing and resyncing every
+    live line; pending request/response calls are failed fast across a drop).
+  Select the live transport at build time with `VITE_CELNET_TRANSPORT=ws`
+  (endpoint via `VITE_CELNET_WS_URL`, default `ws://127.0.0.1:8081`). Nothing else
+  in the app changes; `contract.ts` is swapped for the `buf`-generated module when
+  that lands so the GUI cannot drift from the wire.
 
 ## Performance discipline
 

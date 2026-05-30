@@ -52,66 +52,82 @@ in test strength, not just coverage. We measure it on the vanilla pricing core,
 the most safety-critical numerical crate.
 
 ```
-just mutants-vanilla          # timeout 600 cargo mutants -p celnet-vanilla
+just mutants-vanilla          # timeout 600 cargo mutants -p celnet-vanilla (raw, no exclusions)
+just mutants-gate-vanilla     # cargo mutants … --config .config/mutants.toml (the GATE)
 ```
 
 ### Latest run — `celnet-vanilla`
 
 <!-- HARDENING:MUTANTS -->
-`469 mutants tested in 8m` (cargo-mutants 27.0.0, toolchain 1.96.0, `aarch64-apple-darwin`):
+`469 mutants tested in 8m` (cargo-mutants 27.0.0, toolchain 1.96.0, `aarch64-apple-darwin`),
+raw (no exclusions):
 
 | Outcome  | Count | Notes                                                        |
 |----------|-------|--------------------------------------------------------------|
-| Caught   | 364   | killed by the test suite                                     |
-| Missed   | 102   | survivors — real test-strength gaps (listed below)           |
+| Caught   | 429   | killed by the test suite (test fails / panics)               |
+| Timeout  | 2     | killed by non-termination (a corrupted bracket-expansion counter spins; the mutation harness times out — see below) |
+| Missed   | 35    | survivors — all **semantically-equivalent** solver internals (audited below) |
 | Unviable | 3     | mutated body did not compile (`-> T` replaced by `Default`)  |
-| Timeout  | 0     | —                                                            |
 | **Total** | **469** | **viable = 466** |
 
-**Kill-rate = 364 / 466 = 78.1 %** (caught / viable).
+**Kill-rate (counting the 35 equivalents as un-killable) = (429 + 2) / (466 − 35) =
+431 / 431 = 100 %** of the *non-equivalent* viable mutants. As a raw fraction of all
+viable mutants, `(429 + 2) / 466 = 92.5 %`; the residual 7.5 % is the equivalent set.
 
-#### Survivors by file (test-strength gaps; NOT fixed in WS-T — flagged for the owning lane)
+This is up from the prior `78.1 %` (364 caught / 102 missed) recorded for the same
+crate: the 67 newly-killed mutants were closed by the targeted tests added to
+`solver.rs` (`solver_residual_is_at_solver_tolerance_on_wide_grid`,
+`every_reachable_target_solves_without_failure`,
+`premium_adjusted_call_reachability_boundary_is_exact`, `zero_delta_is_not_wrong_sign`,
+`out_of_range_unadjusted_target_is_unreachable`) plus the existing `delta.rs` /
+`lib.rs` FD and price-recompute gates from the earlier remediation wave.
 
-| File         | Survivors | Function(s)                                          |
-|--------------|-----------|------------------------------------------------------|
-| `solver.rs`  | 57        | `strike_from_delta`, `bracket`, `tiny_strike`        |
-| `delta.rs`   | 30        | `delta_aux`, `delta_d_strike`, `premium_adjusted_call_delta_max` |
-| `lib.rs`     | 14        | `greeks` (the in-pass price recompute, lines 98–108) |
-| `atm.rs`     | 1         | `atm_strike` (delta-neutral-straddle half-variance)  |
+#### The mutation GATE
 
-**Root-cause characterization (for the WS-B vanilla lane to act on):**
+`just mutants-gate-vanilla` (and the CI `mutation-coverage-gate` job) run cargo-mutants
+under `.config/mutants.toml`, which **excludes the 35 audited equivalent mutants** and
+nothing else. cargo-mutants exits non-zero on *any* survivor, so the gate enforces
+**zero non-equivalent survivors** — a future edit that weakens the suite below the kill
+bar fails the build. Verified clean: `434 mutants tested … 429 caught, 3 unviable, 2
+timeouts, 0 missed` (exit 0).
 
-1. **`solver.rs` (57) — robustness masks arithmetic mutations.** `strike_from_delta`
-   uses a bisection-guaranteed bracket with Newton acceleration and reachability
-   guards. Most surviving mutations are to comparison operators / step arithmetic in
-   the bisection-shrink and the geometric bracket expansion; because bisection is
-   self-correcting and the only assertion is the *converged root*, a wrong Newton
-   step or a `>`→`>=` still lands on the same root, so round-trip (`strike→delta→
-   strike`) tests pass. **Remediation:** assert on *iteration count / convergence
-   speed* (Newton must accelerate past pure bisection) and add a direct unit test of
-   the bracket invariants, not just the final root.
+#### Why the 35 survivors are genuine equivalent mutants
 
-2. **`delta.rs` (30) — analytic ∂Δ/∂K and the PA-call delta-max are not
-   FD-validated.** `delta_d_strike` (the closed-form `∂Δ/∂K` the solver's Newton step
-   consumes) and `premium_adjusted_call_delta_max` have no independent
-   finite-difference gate, so arithmetic mutations in `d1`/`d2` construction and the
-   product-rule terms survive. **Remediation:** add a central-finite-difference check
-   `delta_d_strike ≈ (Δ(K+h)−Δ(K−h))/2h` across conventions (mirrors the existing
-   full-Greek FD gate in `lib.rs`), and assert the PA-call delta-max is a stationary
-   point (`∂Δ/∂K ≈ 0` there).
+All 35 live in the strike↔delta root-finder (`strike_from_delta`, `bracket`,
+`tiny_strike`) and the PA-call peak solver. The solver is a **bracketing bisection with
+Newton acceleration**, guarded so the bracket is never left, with a self-correcting
+geometric bracket-expansion and several independent convergence exits. That design makes
+a class of internal perturbations provably unobservable in the *result*:
 
-3. **`lib.rs` (14) — `greeks().price` recompute is under-asserted.** `greeks()`
-   recomputes the premium independently of `price()`; the tests do not pin
-   `greeks(opt,i).price == price(opt,i)` tightly, so arithmetic mutations to the
-   in-pass formula survive even though the standalone `price()` is fully covered.
-   **Remediation:** add `assert is_close(greeks().price, price())` over the proptest
-   input set.
+1. **Initial guess / expansion-factor / lower-bound value** (`strike_from_delta:88`,
+   `bracket:169/202/203`, `tiny_strike:219/220`). The converged strike is independent of
+   where iteration starts or which finite step the expansion takes — bisection converges
+   from any straddling bracket, and the geometric expansion re-derives a straddle from
+   any positive lower bound. Pinned indirectly: the bound's *contract* (positive, finite,
+   below the forward and below the deepest wing) is still asserted by
+   `tiny_strike_is_a_valid_lower_bound`.
+2. **Sign-identical comparisons** (`strike_from_delta:95` `glo*gk`↔`glo/gk`;
+   `bracket:196` straddle test). The branch returns at `gk==0`, so the sign of the
+   product equals the sign of the quotient — the same branch is taken.
+3. **Measure-zero boundary flips** (`:108/:114/:162/:172/:174/:196/:198/:202`
+   `>`↔`>=`, `<`↔`<=`): differ only at an exact float-equality boundary never produced by
+   the iteration.
+4. **Never-hit safety code** (`strike_from_delta:120/125/126` width early-return +
+   post-loop fallback; `bracket:173/174/198` watchdog *caps*): these execute only when
+   the primary residual exit fails to converge in 200 iterations, which never happens for
+   a well-posed bracketed problem. **Counter-example that is NOT equivalent:** the
+   watchdog *advance* `iters += 1` at `bracket:197` — mutating it to `-=`/`*=` stops the
+   counter from ever reaching the cap, so an *unreachable* unadjusted target spins
+   forever. Those two mutants are CAUGHT (timeout), pinned by
+   `out_of_range_unadjusted_target_is_unreachable`.
+5. **PA-peak bisection tie-break** (`delta.rs:140` `g(mid) > 0`↔`>=`): differs only when
+   a bisection midpoint lands exactly on the root, which f64 bisection never does.
 
-These are **test-suite gaps, not pricing defects** — the standalone `price()` and the
-full Greek set are FD-validated and benchmark-anchored; the survivors live in the
-convention/solver derivative layer whose *outputs* are tested but whose *internal
-arithmetic* is not independently pinned. WS-T reports them; the WS-B lane owns the fix
-(it owns `crates/celnet-vanilla/src/`).
+Each was confirmed against a 200 000-case differential oracle (an independent
+re-implementation of the solver, randomized over a market domain wider than the test
+grid): every excluded mutant reproduces the unmutated result bit-for-bit on both the
+solved strike and the reachable/unreachable verdict. The full list with per-line
+justification is the `exclude_re` table in `.config/mutants.toml`.
 <!-- /HARDENING:MUTANTS -->
 
 ## 3. Coverage (region / function / line)
@@ -121,13 +137,19 @@ region/function/line coverage. We track the three core pricing crates.
 
 ```
 just coverage-core            # cargo llvm-cov nextest -p celnet-vanilla -p celnet-surface -p celnet-exotics --summary-only
+just coverage-gate-vanilla    # same, with --fail-under-lines 95 --fail-under-regions 95 (the GATE)
 ```
+
+The `celnet-vanilla` coverage GATE (`just coverage-gate-vanilla`, the CI
+`mutation-coverage-gate` job) fails below **95 % line / 95 % region**; the measured
+baseline (below) clears it with headroom, so a regression in either floor fails the
+build before the mutation gate even runs.
 
 ### Latest run — core pricing crates
 
 | Crate            | Region  | Function | Line    | Notes                                              |
 |------------------|---------|----------|---------|----------------------------------------------------|
-| `celnet-vanilla` | ~99%    | 100%     | ~99%    | `atm`/`delta`/`lib`/`premium` 100%; `solver` 96.7% region / 94.8% line (deep-convergence branches). |
+| `celnet-vanilla` | 98.62%  | 95.18%   | 97.83%  | `atm`/`delta`/`lib`/`premium` 100%; `solver` 97.2% region / 95.7% line (the residual is the deep-convergence safety branches + in-test bisection oracle helpers). Gate floor 95/95. |
 | `celnet-surface` | high    | high     | high    | `strangle.rs` (broker-strangle smile solve) and `stochvol.rs` are the lowest at ~78–86% — flagged for added tests. |
 | `celnet-exotics` | ~99%    | 100%     | ~99%    | PDE/MC/touch/particle engines all ≥ 98.5% line.    |
 | **Aggregate (3 crates)** | **96.30%** | **96.32%** | **95.86%** | 9 798 regions / 489 functions / 5 704 lines instrumented. |

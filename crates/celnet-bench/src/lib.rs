@@ -27,7 +27,24 @@
 //! of work a surface rebuild or a portfolio repricing iterates over. Both are
 //! shared verbatim by the benches and by the in-crate unit test so the numbers
 //! published as proof are the numbers exercised by the test suite.
+//!
+//! ## Wire-path latency-under-load (end-to-end proof)
+//!
+//! The micro-benchmarks above measure the *pinned hot core* in isolation (no
+//! wire, ~tens of nanoseconds). The complementary, GA-gating figure is the
+//! **wire-path** latency: the round-trip a real counterparty observes when it
+//! dials the running service edge over the network and prices an option *while
+//! the edge is under sustained streaming + RFQ load*. The [`wire`] module hosts
+//! that harness — it spins the real [`celnet_server::Edge`] in-process on an
+//! ephemeral loopback port, opens many concurrent RFS streaming subscriptions
+//! to load the edge, fires a fixed budget of RFQ round-trips, and records each
+//! client-observed round-trip into an [`hdrhistogram::Histogram`]
+//! (coordinated-omission aware). It reports p50 / p99 / p99.9 / p99.99 and the
+//! achieved throughput, and serializes a [`wire::WireReport`] the CI
+//! bench-regression gate compares against a committed baseline.
 #![forbid(unsafe_code)]
+
+pub mod wire;
 
 use celnet_core::math::ln;
 use celnet_types::VanillaInputs;

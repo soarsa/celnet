@@ -105,6 +105,21 @@ check: fmt-check lint test deny
 mutants-vanilla:
     timeout 600 {{_cargo}} mutants -p celnet-vanilla
 
+# Mutation GATE on the vanilla pricing core. Uses `.config/mutants.toml` to
+# exclude the audited set of semantically-equivalent solver-internal mutants
+# (each justified there), so this exits non-zero on ANY non-equivalent survivor
+# — i.e. it fails the build if a future edit weakens the suite below the kill
+# bar. This is the enforceable per-crate mutation contract (see docs/HARDENING.md).
+mutants-gate-vanilla:
+    timeout 700 {{_cargo}} mutants -p celnet-vanilla --config .config/mutants.toml
+
+# Coverage GATE on the vanilla pricing core: fail if region/line coverage drops
+# below the committed floor (see docs/HARDENING.md). `--fail-under-lines` /
+# `--fail-under-regions` make llvm-cov exit non-zero below the threshold.
+coverage-gate-vanilla:
+    timeout 600 {{_cargo}} llvm-cov nextest -p celnet-vanilla \
+        --fail-under-lines 95 --fail-under-regions 95 --summary-only
+
 # Coverage summary for the core pricing crates (region/function/line %).
 coverage-core:
     timeout 600 {{_cargo}} llvm-cov nextest -p celnet-vanilla -p celnet-surface -p celnet-exotics --summary-only
@@ -112,6 +127,28 @@ coverage-core:
 # Coverage summary for the whole workspace (region/function/line %).
 coverage-summary:
     {{_cargo}} llvm-cov nextest --workspace --all-features --summary-only
+
+# ---------------------------------------------------------------------------
+# Wire-path latency-under-load proof + CI bench-regression gate (celnet-bench).
+# Both binaries spin the real service edge in-process, drive sustained RFS +
+# RFQ load over the loopback gRPC wire, and record the client-observed RFQ
+# round-trip in an HdrHistogram. Both self-terminate (request budget + hard
+# wall-clock cap); the timeouts here are belt-and-braces so a wedge fails fast.
+# ---------------------------------------------------------------------------
+
+# Published wire-path proof: large sustained load, prints the p50/p99/p99.9/p99.99
+# histogram + throughput. Pass a path to also write the JSON report.
+bench-wire PATH="":
+    timeout 200 {{_cargo}} run --release -p celnet-bench --bin wire_load -- {{PATH}}
+
+# Re-baseline the committed CI wire-path baseline on THIS host (gate-sized load).
+bench-baseline:
+    timeout 200 {{_cargo}} run --release -p celnet-bench --bin wire_load -- --ci crates/celnet-bench/baselines/wire_path.json
+
+# CI bench-regression gate: re-measure the gate-sized wire-path load and fail if
+# any RFQ percentile regresses beyond the committed baseline tolerance.
+bench-gate:
+    timeout 200 {{_cargo}} run --release -p celnet-bench --bin bench_gate
 
 # Run the standalone Linux-nightly fuzz harness (NOT a workspace member).
 # Requires: rustup toolchain install nightly && cargo install cargo-fuzz.
