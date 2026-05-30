@@ -1,0 +1,22 @@
+[package]
+name = "celnet-surface"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet FX volatility surface — arbitrage-free smile construction and term-structure interpolation."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+celnet-types.workspace = true
+celnet-core.workspace = true
+celnet-vanilla.workspace = true
+celnet-conventions.workspace = true
+
+[dev-dependencies]
+celnet-testkit.workspace = true
+proptest.workspace = true
