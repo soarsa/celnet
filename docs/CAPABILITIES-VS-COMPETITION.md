@@ -74,9 +74,12 @@ trade-lifecycle integration — validated against QuantLib to ~1e-10.
   publication, CachePadded) with **blue-green zero-downtime state handoff**.
 - ✅ **Cross-platform GPU Monte-Carlo** (wgpu → Metal/Vulkan/DX12) with an f64 CPU reconciliation
   oracle and bit-stable Philox — a live-service capability **no competitor exposes**.
-- ✅ **Measured latency (Apple M4, release):** vanilla price **8.85 ns**; price + full 14-Greek set
-  **~19 ns**; 64-strike batch price **~1.98 µs**, price+Greeks **~6.75 µs**. **The only published,
-  reproducible FX-option latency figures among this competitor set.**
+- ✅ **Measured latency (Apple M4, single core, release, `divan`):** price + full 14-Greek set
+  **~27 ns median** (25,600 iters, stable); single vanilla price **~40 ns** (low-iteration sample,
+  treat as an upper bound); 64-strike batch price **~2.8 µs**, price+Greeks **~5.7 µs**. Re-run via
+  `cargo bench -p celnet-bench`. **The only published, reproducible FX-option latency figures among
+  this competitor set.** (NB: these are the verified numbers; an earlier draft cited inconsistent
+  figures — corrected per the full-implementation audit.)
 
 ### API, client, integration, observability
 - ✅ **Trader-shaped wire contract** (single current version, no versioning): Instrument model
@@ -109,7 +112,7 @@ trade-lifecycle integration — validated against QuantLib to ~1e-10.
 | TARF / accumulator / pivot | ⛔ deferred (scaffolded) | ✅ | ✅ | ✅ MARS | ✅ |
 | Window/quanto/Asian/lookback breadth | ⛔ deferred | ✅ | ✅ kACE | ✅ | ✅ |
 | GPU-accelerated MC/PDE as a service | ✅ wgpu + CPU reconcile | ❌ | ❌ | ❌ | ❌ |
-| Microsecond pricing, **published numbers** | ✅ 8.85 ns / ~19 ns | ❌ none | ❌ snapshot feed | ❌ terminal | ❌ batch/EOD |
+| Microsecond pricing, **published numbers** | ✅ ~27 ns price+Greeks; ~2.8 µs 64-strike batch | ❌ none | ❌ snapshot feed | ❌ terminal | ❌ batch/EOD |
 | Typed gRPC + streaming API contract | ✅ single current | ❌ FIX/UI | ❌ data feed | ❌ BLPAPI/terminal | ❌ |
 | RFQ lifecycle + caller idempotency | ✅ | ✅ venue | ⚠️ | ⚠️ | ✅ |
 | RFS per-subscription streaming + resync | ✅ | ⚠️ indicative | ❌ | ❌ | ❌ |
@@ -133,7 +136,7 @@ trade-lifecycle integration — validated against QuantLib to ~1e-10.
   broker→smile calibration that reprices the desk's own quotes exactly, and a trader-shaped
   RFQ/RFS API a desk reads 1:1 to how it works — versus convention-opaque, closed-construction
   terminals.
-- **Out-performs** — a core-pinned, zero-allocation Rust hot path with **published 8.85 ns / ~19 ns**
+- **Out-performs** — a core-pinned, zero-allocation Rust hot path with **published ~27 ns price+Greeks**
   pricing and blue-green zero-downtime upgrades, versus RFQ/seconds-scale, terminal, or
   batch/EOD architectures with no latency numbers and painful upgrade cycles.
 
