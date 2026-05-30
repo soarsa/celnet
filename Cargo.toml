@@ -22,6 +22,7 @@ celnet-conventions = { path = "crates/celnet-conventions" }
 celnet-testkit = { path = "crates/celnet-testkit" }
 celnet-proto = { path = "crates/celnet-proto" }
 celnet-plugin-api = { path = "crates/celnet-plugin-api" }
+celnet-surface = { path = "crates/celnet-surface" }
 # External — pinned once, used everywhere (OSS / permissively licensed only)
 libm = "0.2"                                   # rust-lang/libm: correctly-rounded, cross-platform-identical transcendentals
 serde = { version = "1", features = ["derive"] }
@@ -30,6 +31,9 @@ time = { version = "0.3", default-features = false, features = ["std", "macros"]
 prost = "0.13"                                 # Apache-2.0 protobuf runtime (single current contract; no version negotiation)
 protox = "0.7"                                 # MIT/Apache-2.0 pure-Rust protobuf compiler (no system protoc needed)
 prost-build = "0.13"                           # Apache-2.0 codegen used with protox FileDescriptorSet
+divan = "0.1"                                  # MIT/Apache-2.0 micro-benchmark harness (latency/throughput proof)
+# wasmtime (plugin-host) deferred: current releases carry open 2026 RustSec advisories;
+# re-add at a patched version when building celnet-plugin-host (WS-G). See ledger.
 
 # deny(warnings) is enforced via `just lint` (clippy -D warnings); here we set the
 # lint *policy* every crate opts into with `[lints] workspace = true`.
