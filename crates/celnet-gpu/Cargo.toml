@@ -1,0 +1,19 @@
+[package]
+name = "celnet-gpu"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet cross-platform GPU compute backend (f32 GPU + f64 CPU reconciliation) with a CPU fallback."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+celnet-types.workspace = true
+celnet-core.workspace = true
+bytemuck.workspace = true
+wgpu.workspace = true
+pollster.workspace = true
