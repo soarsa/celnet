@@ -9,6 +9,9 @@ ignore = []
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# Internal workspace crates are referenced by path (no version) — that is not a
+# real wildcard-version risk, so permit it.
+allow-wildcard-paths = true
 # Disallow known-problematic crates here as the tree grows.
 deny = []
 
@@ -28,6 +31,8 @@ allow = [
     "CC0-1.0",
 ]
 confidence-threshold = 0.9
+# Our own workspace crates are proprietary and never published; don't license-check them.
+private = { ignore = true }
 
 [sources]
 unknown-registry = "deny"

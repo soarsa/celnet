@@ -1,4 +1,4 @@
-# CelerOption — Claude Operating Guide
+# Celnet — Claude Operating Guide
 
 State-of-the-art FX **Options** pricing platform in Rust. Ultra-low-latency, scalable,
 mission-critical, hot-upgradable; integrates into the Celer trade-lifecycle estate and
@@ -20,6 +20,20 @@ Greenfield, started 30 May 2026.
 5. **Every change passes the gates** before it's "done": `just check` (fmt, clippy -D
    warnings, nextest, cargo-deny). Numerical code is validated against references
    (QuantLib / published prices), never merely asserted plausible.
+6. **Scale & performance are requirements, not afterthoughts.** Every component must scale
+   to **investment-banking-sized portfolios** and stream prices to **high-performance
+   counterparties** at the latency/throughput budgets in `docs/ARCHITECTURE.md` §1.2.
+   Design for horizontal scale-out and many-instrument/many-tenor batch from day one; pick
+   algorithms and data structures accordingly. **Leverage the latest academic research** to
+   optimize and scale wherever it helps — cite the paper/method in code comments and in
+   `docs/`.
+7. **No commercial products — anywhere.** Use only open-source, permissively-licensed
+   (MIT/Apache-2.0/BSD/etc.) software and free, academically-grounded methods. No paid
+   libraries, no proprietary commercial SDKs/solvers/data products (e.g. no Intel MKL,
+   no commercial market-data terminals as runtime deps). QuantLib (open-source) as the
+   golden oracle is fine. Any unavoidable proprietary-but-free toolkit (e.g. the CUDA
+   toolkit behind CubeCL) is recorded as an ADR with the open fallback (wgpu/Vulkan) kept
+   first-class. `cargo-deny` license policy enforces the OSS license set.
 
 ## Running the toolchain
 
@@ -68,8 +82,33 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
-- 2026-05-30 — Foundations: git (local-only) init; Rust 1.96.0 + tooling installed;
-  rust-analyzer-lsp plugin; memory bootstrapped; settings/guardrails; toolchain/config
-  files (rust-toolchain, rustfmt, deny, .cargo/config, justfile). Research/design workflow
-  running to produce `docs/`. **Next:** write design docs, scaffold Cargo workspace per
-  ARCHITECTURE.md, stabilize interface crates, begin P0 pricing core.
+- 2026-05-30 — **P0/P1 vertical slice green.** Flat workspace live; `celer-types` (frozen
+  vocab + convention enums + DTOs), `celer-core` (libm math, deterministic `assert_close`,
+  `Smile` trait), `celer-vanilla` (Garman-Kohlhagen + full 14-Greek set). 17 tests pass:
+  BS textbook benchmark, put-call parity (512 proptest cases), finite-difference validation
+  of every Greek. `just check` fully green (fmt/clippy-D/nextest/deny). **Next:** complete
+  G0 (`celer-proto`, `celer-plugin-api`), then fan out post-G0 workstreams via a workflow.
+- 2026-05-30 — Design corpus written to `docs/` (ARCHITECTURE, ANALYTICS-SPEC,
+  COMPETITIVE-ANALYSIS, CELER-INTEGRATION, ROADMAP + `_research/`). Product renamed
+  CelerOption → **Celnet**.
+- 2026-05-30 — Foundations: git (local-only) init; Rust 1.96.0 + tooling; rust-analyzer-lsp
+  plugin; memory bootstrapped; settings/guardrails; toolchain/config files.
+
+## Work-stream ledger
+
+> Live ownership for parallel sessions (see `docs/ROADMAP.md` §4/§7). Claim a row by
+> editing it before starting. One owner per row at a time; crates are disjoint.
+
+| Stream | Crates (owned) | Status | Owner | Dep gate | Notes |
+|--------|----------------|--------|-------|----------|-------|
+| WS-0 | celer-types, celer-core, celer-proto, celer-plugin-api | IN-PROGRESS | this session | — | types+core DONE & frozen-candidate; proto/plugin-api pending → completes G0 |
+| WS-A | celer-conventions, celer-calendar | UNCLAIMED | — | G0 | |
+| WS-B | celer-vanilla | IN-PROGRESS | this session | G0 | GK price + 14 Greeks DONE & validated; strike↔delta solver (convention-aware) pending |
+| WS-C | celer-surface | BLOCKED | — | G1 | |
+| WS-D | celer-exotics | BLOCKED | — | G2 | |
+| WS-E | celer-gpu | UNCLAIMED | — | G0 | runs parallel to WS-D on PricingBackend |
+| WS-F | celer-engine | UNCLAIMED | — | G1/G3 | |
+| WS-G | celer-plugin-host | UNCLAIMED | — | G0 | |
+| WS-H | celer-integration | UNCLAIMED | — | G0/WS-C | |
+| WS-I | celer-server, celer-cli | BLOCKED | — | G3 | |
+| WS-T | CI/test/deny/golden-gen | UNCLAIMED | — | G0 | cross-cutting; config+test files only |

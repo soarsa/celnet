@@ -1,0 +1,39 @@
+# Celnet — flat virtual workspace (matklad/rust-analyzer style).
+# Crate folders under crates/ are named identically to their crate names.
+# Versions and lint policy are pinned centrally here; one committed Cargo.lock.
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.96"
+license = "LicenseRef-Proprietary"
+authors = ["Celer Technologies"]
+
+[workspace.dependencies]
+# Internal crates
+celer-types = { path = "crates/celer-types" }
+celer-core = { path = "crates/celer-core" }
+celer-vanilla = { path = "crates/celer-vanilla" }
+# External — pinned once, used everywhere
+libm = "0.2"                                   # rust-lang/libm: correctly-rounded, cross-platform-identical transcendentals
+serde = { version = "1", features = ["derive"] }
+proptest = "1"
+
+# deny(warnings) is enforced via `just lint` (clippy -D warnings); here we set the
+# lint *policy* every crate opts into with `[lints] workspace = true`.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+all = "warn"
+
+# Release profile tuned for the latency-sensitive product; reproducible (codegen-units=1).
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+debug = "line-tables-only"

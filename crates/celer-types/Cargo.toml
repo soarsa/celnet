@@ -1,0 +1,15 @@
+[package]
+name = "celer-types"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet canonical POD domain types and FX-options convention vocabulary."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
