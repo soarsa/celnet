@@ -33,3 +33,6 @@ lcov.info
 
 # codebase-memory-mcp local index artifact (machine-local, regenerable, not synced)
 .codebase-memory/
+
+# GUI incremental TS build info (regenerable)
+gui/**/*.tsbuildinfo

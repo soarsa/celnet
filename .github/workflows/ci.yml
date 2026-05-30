@@ -128,6 +128,98 @@ jobs:
         run: cargo nextest run -p celnet-gpu --all-features
 
   # ---------------------------------------------------------------------------
+  # Wire-path latency-under-load regression gate (Linux). Closes the GA gating
+  # caveat: the end-to-end wire-path latency is proven under sustained streaming
+  # + RFQ load, not merely asserted. `bench_gate` spins the real service edge
+  # in-process on an ephemeral loopback port, drives the gate-sized load (RFS
+  # streaming subscriptions + concurrent RFQ round-trips), records the
+  # client-observed RFQ round-trip in an HdrHistogram, and fails the job if any
+  # gated percentile (p50/p99/p99.9/p99.99) regresses beyond the committed
+  # baseline (`crates/celnet-bench/baselines/wire_path.json`) tolerance.
+  #
+  # Built/run with `--release` so the measured numbers reflect the optimized
+  # binary (the only meaningful latency baseline). The harness self-terminates
+  # (request budget + hard wall-clock cap); the `timeout` step is belt-and-braces
+  # so a wedged edge fails the lane fast instead of hanging the pipeline. CI
+  # runners are shared, variable-core hosts, so the gate tolerance is generous
+  # (+100% = 2x baseline) — it catches a *structural* regression, not jitter.
+  bench-gate:
+    name: wire-path latency regression gate (linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: bench-gate
+
+      # Build the gate binary first (outside the timed step) so the timeout
+      # bounds only the measured load run, not a cold compile.
+      - name: Build bench_gate (release)
+        run: cargo build --release -p celnet-bench --bin bench_gate
+
+      - name: Wire-path bench-regression gate
+        run: timeout 200 cargo run --release -p celnet-bench --bin bench_gate
+
+  # ---------------------------------------------------------------------------
+  # Mutation + coverage gate for the vanilla pricing core (Linux). This is the
+  # test-suite-QUALITY gate: it proves the suite actually *kills* injected faults
+  # in the convention/strike↔delta machinery, not merely that it runs green.
+  #
+  #   * Mutation: `cargo mutants -p celnet-vanilla` under `.config/mutants.toml`,
+  #     which excludes the audited set of semantically-equivalent solver-internal
+  #     mutants (each justified in that file + docs/HARDENING.md). cargo-mutants
+  #     exits non-zero on ANY *non-equivalent* survivor, so a future edit that
+  #     weakens the suite below the kill bar fails this job. The committed
+  #     baseline is 429 caught / 2 timeout(=caught) / 0 missed over 434 viable
+  #     mutants (the full crate is 469 mutants, 35 audited-equivalent excluded).
+  #   * Coverage: `cargo llvm-cov` with `--fail-under-lines 95
+  #     --fail-under-regions 95` on the same crate (measured baseline: 97.8% line
+  #     / 98.6% region), so a coverage regression also fails the job.
+  #
+  # Both steps are time-boxed (`timeout`) so a wedged build/test can never hang
+  # the pipeline. Kept off the cross-OS `gate` matrix (it is a single-platform
+  # quality bar, not a portability check) to avoid 6x redundant mutation runs.
+  mutation-coverage-gate:
+    name: mutation + coverage gate (linux / celnet-vanilla)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: llvm-tools-preview
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: mutation-coverage-gate
+
+      - name: Install gate binaries (nextest, cargo-mutants, cargo-llvm-cov)
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest,cargo-mutants,cargo-llvm-cov
+
+      # Coverage floor first (fast): fail the job below the committed thresholds.
+      - name: Coverage gate (celnet-vanilla)
+        run: |
+          timeout 600 cargo llvm-cov nextest -p celnet-vanilla \
+            --fail-under-lines 95 --fail-under-regions 95 --summary-only
+
+      # Mutation kill gate: zero non-equivalent survivors (equivalents excluded
+      # via .config/mutants.toml). Exits non-zero on any survivor → fails CI.
+      - name: Mutation gate (celnet-vanilla)
+        run: timeout 1200 cargo mutants -p celnet-vanilla --config .config/mutants.toml
+
+  # ---------------------------------------------------------------------------
   # Fuzz lane (Linux only, nightly). The fuzz harness under `fuzz/` is a
   # standalone, non-workspace crate carrying the nightly-only libFuzzer
   # (cargo-fuzz) targets, so it cannot run on the pinned stable gate. This job

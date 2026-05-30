@@ -2,10 +2,11 @@
 //!
 //! A deliberately **thin** binary: all logic lives in the library
 //! ([`celnet_server`]). It builds a bootstrap market state, starts the async
-//! [`Edge`] (the four gRPC services of the `celnet-proto` contract) over the
-//! configured bind address, marks the readiness gate ready, and runs until
-//! `SIGINT`/`Ctrl-C`, at which point it performs a graceful blue-green drain
-//! (`docs/ARCHITECTURE.md` §5).
+//! [`Edge`] (the four gRPC services of the `celnet-proto` contract **plus** the
+//! WebSocket JSON mirror of that same single contract — same services, same
+//! pricing path, a second encoding for browsers/GUIs) over the configured bind
+//! address, marks the readiness gate ready, and runs until `SIGINT`/`Ctrl-C`, at
+//! which point it performs a graceful blue-green drain (`docs/ARCHITECTURE.md` §5).
 //!
 //! The bind address is read from the environment so the same binary serves any
 //! deployment without recompilation:
@@ -55,7 +56,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The core is warm: open the `/readyz` gate.
     edge.gate().mark_ready();
 
-    eprintln!("celnet-server ready — gRPC {}", edge.grpc_addr());
+    eprintln!(
+        "celnet-server ready — gRPC {} | WS-mirror ws://{}",
+        edge.grpc_addr(),
+        edge.ws_addr()
+    );
 
     // Run until Ctrl-C, then drain gracefully for a zero-loss cutover.
     tokio::signal::ctrl_c().await?;

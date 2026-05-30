@@ -60,6 +60,24 @@
 //!      and on the [`mc`] Monte-Carlo engine, cross-validated against each other
 //!      and against the pure-local-vol (`ξ=0`) Dupire limit.
 //!
+//! 5. **Structured & path-dependent breadth** — the products a flow-options desk
+//!    quotes alongside the second-generation barriers, each priced on the engines
+//!    above and cross-validated against an independent reference:
+//!    * [`quanto`] — correlation-adjusted (quanto-drift) vanilla and
+//!      cash-or-nothing digital, with **exact closed forms** (the carry shifted by
+//!      `−ρ σ_S σ_Z`) cross-validated against settlement-measure Monte-Carlo;
+//!    * [`lookback`] — fixed- and floating-strike lookbacks on the running
+//!      extremum, with the Goldman-Sosin-Gatto / Conze-Viswanathan continuous
+//!      closed forms cross-validated against a **Brownian-bridge extremum**
+//!      Monte-Carlo (the discrete path samples the continuous min/max exactly);
+//!    * [`tarf`] — the **Target-Redemption Forward**: a strip of fixings with a
+//!      cumulative-gain redemption (knock-out on target), downside gearing, and
+//!      explicit [`tarf::RedemptionStyle`] **gap-risk** handling at the breaching
+//!      fixing, priced by Monte-Carlo;
+//!    * [`accumulator`] — periodic accumulation at a discounted pivot with an
+//!      up-and-out knock-out barrier (discrete or Brownian-bridge continuous) and
+//!      below-pivot gearing, priced by Monte-Carlo.
+//!
 //! # Method provenance (doc comments only)
 //!
 //! Reflection-principle / image closed forms for barriers and touches:
@@ -86,10 +104,12 @@
 
 #![forbid(unsafe_code)]
 
+pub mod accumulator;
 pub mod adi;
 pub mod barrier;
 pub mod digital;
 pub mod leverage;
+pub mod lookback;
 pub mod lsv;
 pub mod market_hedge_overlay;
 pub mod mc;
@@ -97,10 +117,15 @@ pub mod normal;
 pub mod particle;
 pub mod payoff;
 pub mod pde;
+pub mod quanto;
 pub mod rng;
 pub mod stochvol;
+pub mod tarf;
 pub mod touch;
 
+pub use accumulator::{
+    Accumulator, AccumulatorMcConfig, AccumulatorResult, Monitoring, accumulator_price,
+};
 pub use adi::{AdiGrid, AdiProblem, WindowSpec, solve as adi_solve, solve_window};
 pub use barrier::{
     BarrierKind, BarrierStyle, DoubleBarrierKnockOut, SingleBarrier, double_knock_out_price,
@@ -108,6 +133,10 @@ pub use barrier::{
 };
 pub use digital::{DigitalKind, DigitalStyle, digital_greeks, digital_price};
 pub use leverage::{ImpliedVolSurface, LeverageSurface, LocalVolSurface};
+pub use lookback::{
+    Lookback, LookbackEstimate, LookbackMcConfig, LookbackStyle, fixed_lookback_price,
+    floating_lookback_price, lookback_mc,
+};
 pub use lsv::{LsvModel, SurfaceTarget, WindowBarrier};
 pub use market_hedge_overlay::{
     ExoticSensitivities, MarketCrossPrices, OverlayResult, SurvivalWeight, exotic_sensitivities_fd,
@@ -121,10 +150,15 @@ pub use normal::{gaussian_pair_from_uniforms, inverse_cdf};
 pub use particle::{CalibrationResult, ParticleConfig, calibrate_leverage};
 pub use payoff::{ArithmeticAsian, DiscreteBarrier, vanilla_intrinsic};
 pub use pde::{PdeGrid, PdeProblem, solve as pde_solve};
+pub use quanto::{
+    QuantoEstimate, QuantoMcConfig, QuantoParams, quanto_digital_mc, quanto_digital_price,
+    quanto_vanilla_mc, quanto_vanilla_price,
+};
 pub use rng::CounterRng;
 pub use stochvol::{
     QE_SWITCH, VarianceParams, log_spot_increment, qe_variance_step, step_uniforms,
 };
+pub use tarf::{RedemptionStyle, Tarf, TarfMcConfig, TarfResult, tarf_price};
 pub use touch::{
     DoubleNoTouch, RebateTiming, TouchSide, double_no_touch_price, double_touch_price,
     no_touch_price, one_touch_price,

@@ -28,6 +28,19 @@
 //! * **`SurfaceService`** — `GetSmile` / `MarkSurface` / `Scenario`
 //!   ([`services::surface`]).
 //!
+//! # WebSocket mirror
+//!
+//! Alongside the gRPC server, the edge serves a **WebSocket JSON mirror** ([`ws`])
+//! of the *same single, current contract* so a browser/GUI client gets exactly what
+//! gRPC clients get — RFQ, the multiplexed RFS [`services::stream`] session
+//! (subscribe / snapshot / sequenced-delta / heartbeat / resync + click-to-trade
+//! `Execute`-by-token), and surface read/mark/scenario — serialized as type-tagged
+//! JSON. It is a second *encoding*, never a contract fork: every WS frame decodes to
+//! the same [`celnet_proto`] message and dispatches onto the **same** service edges
+//! over the **same** [`CoreLink`] / [`SurfaceBook`], so a WS price is byte-identical
+//! to the gRPC/direct one. The mirror shares the [`readiness`] gate and drain (it
+//! never blocks the pinned core; a slow socket is paused, not back-pressured).
+//!
 //! # Modules
 //!
 //! * [`core_link`] — the async⇄core bridge: a dedicated busy-poll pricing thread
@@ -64,6 +77,7 @@ pub mod services;
 pub mod spread;
 pub mod surface_book;
 pub mod tick;
+pub mod ws;
 
 pub use clock::Clock;
 pub use core_link::{
@@ -74,6 +88,7 @@ pub use readiness::{ReadinessGate, ServiceState};
 pub use spread::SpreadModel;
 pub use surface_book::{PinError, SurfaceBook};
 pub use tick::TickSource;
+pub use ws::{WsMirror, WsServices};
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -103,11 +118,13 @@ use services::surface::SurfaceEdge;
 #[derive(Debug)]
 pub struct Edge {
     grpc_addr: SocketAddr,
+    ws_addr: SocketAddr,
     gate: Arc<ReadinessGate>,
     link: Arc<CoreLink>,
     surface_book: Arc<SurfaceBook>,
     grpc_shutdown: oneshot::Sender<()>,
     grpc_task: tokio::task::JoinHandle<Result<(), tonic::transport::Error>>,
+    ws_mirror: WsMirror,
 }
 
 impl Edge {
@@ -163,7 +180,7 @@ impl Edge {
         let surface = SurfaceServiceServer::new(SurfaceEdge::new(
             Arc::clone(&link),
             Arc::clone(&gate),
-            clock,
+            clock.clone(),
             Arc::clone(&surface_book),
         ));
 
@@ -181,13 +198,30 @@ impl Edge {
                 .await
         });
 
+        // The WebSocket JSON mirror: the SAME single contract over WS, driven by the
+        // SAME shared services (one `CoreLink`, one `SurfaceBook`, one readiness gate,
+        // one spread/clock) — a second encoding of one pricing path, never a fork
+        // (`CLAUDE.md` rule 9). Bound on the same host as the gRPC listener with an
+        // OS-assigned ephemeral port (read back via [`Edge::ws_addr`]).
+        let ws_services = ws::WsServices::new(
+            Arc::clone(&link),
+            Arc::clone(&gate),
+            spread,
+            clock,
+            Arc::clone(&surface_book),
+        );
+        let ws_bind = SocketAddr::new(bound.ip(), 0);
+        let ws_mirror = ws::WsMirror::start(ws_bind, ws_services).await?;
+
         Ok(Self {
             grpc_addr: bound,
+            ws_addr: ws_mirror.addr(),
             gate,
             link,
             surface_book,
             grpc_shutdown,
             grpc_task,
+            ws_mirror,
         })
     }
 
@@ -195,6 +229,13 @@ impl Edge {
     #[must_use]
     pub fn grpc_addr(&self) -> SocketAddr {
         self.grpc_addr
+    }
+
+    /// The actually-bound WebSocket-mirror socket address (resolves the ephemeral
+    /// port the WS JSON mirror serves the single current contract on).
+    #[must_use]
+    pub fn ws_addr(&self) -> SocketAddr {
+        self.ws_addr
     }
 
     /// The shared readiness gate driving the `/readyz` probe and drain state.
@@ -226,7 +267,13 @@ impl Edge {
     pub async fn shutdown(self, drain_timeout: std::time::Duration) {
         self.gate.begin_drain();
         self.gate.await_drained(drain_timeout).await;
+        // Stop the gRPC listener and the WS-mirror accept loop. The drain above
+        // already let in-flight requests (gRPC calls and WS sessions, both holding
+        // an in-flight guard on the shared gate) finish; the WS accept loop is then
+        // aborted so no new connections are taken (a draining instance also refuses
+        // the upgrade at the readiness gate).
         let _ = self.grpc_shutdown.send(());
         let _ = self.grpc_task.await;
+        self.ws_mirror.abort();
     }
 }

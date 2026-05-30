@@ -558,67 +558,101 @@ impl StreamService for StreamEdge {
             ));
         }
 
-        let mut inbound = request.into_inner();
+        let inbound = request.into_inner();
         let (out_tx, out_rx) = mpsc::channel::<Result<ServerStreamMessage, Status>>(CHANNEL_DEPTH);
-        let link = Arc::clone(&self.link);
-        let spread = self.spread;
-        let clock = self.clock.clone();
-        let surface_book = Arc::clone(&self.surface_book);
-        let next_execution_id = Arc::clone(&self.next_execution_id);
 
         // The session driver: owns every subscription multiplexed on this session,
         // reads client control + click-to-trade messages, and emits server
         // messages. One task per session keeps the per-subscription state
         // single-owner (no locks) and tears everything down when the stream closes.
+        // The same driver backs the WebSocket mirror (`crate::ws`): a session is
+        // transport-agnostic — it only needs an inbound `ClientStreamMessage` stream
+        // and an outbound channel — so gRPC and WS share one pricing/streaming path
+        // and one contract.
+        let driver = self.session_driver();
         tokio::spawn(async move {
             let _guard = guard; // held for the session lifetime (drain barrier).
-            let minter = TokenMinter::new();
-            let mut session = Session {
-                subs: HashMap::new(),
-                link,
-                spread,
-                clock,
-                surface_book,
-                minter,
-                next_execution_id,
-            };
-            let mut ticker = tokio::time::interval(TICK_INTERVAL);
-            // Skip the immediate first tick so the loop parks until either a
-            // control message or the first real interval.
-            ticker.tick().await;
-
-            loop {
-                tokio::select! {
-                    // ---- client → server control + click-to-trade ----------
-                    incoming = inbound.next() => {
-                        match incoming {
-                            Some(Ok(msg)) => {
-                                if !session.handle_client_message(msg, &out_tx).await {
-                                    break; // a fatal send failure: tear down.
-                                }
-                            }
-                            Some(Err(_)) | None => break, // client closed / errored.
-                        }
-                    }
-                    // ---- deterministic market tick → updates ---------------
-                    _ = ticker.tick() => {
-                        if session.subs.is_empty() {
-                            continue;
-                        }
-                        if !session.drive_tick(&out_tx) {
-                            break; // channel closed: client gone.
-                        }
-                    }
-                }
-            }
+            // Adapt the tonic `Streaming` (yields `Result`) to the driver's
+            // infallible stream: a transport error closes the inbound side, exactly
+            // as a closed stream does.
+            let inbound = inbound.filter_map(|r| async move { r.ok() });
+            tokio::pin!(inbound);
+            run_session(driver, inbound, out_tx).await;
         });
 
         Ok(Response::new(ReceiverStream::new(out_rx)))
     }
 }
 
+impl StreamEdge {
+    /// Build a fresh single-session driver bound to the shared core/spread/clock/
+    /// surface registry. One [`Session`] per opened channel keeps the
+    /// per-subscription state single-owner (no locks); every session shares the same
+    /// [`CoreLink`] (and thus the same pinned pricing core) and the same execution-id
+    /// counter, so gRPC and the WebSocket mirror book against one path.
+    #[must_use]
+    pub(crate) fn session_driver(&self) -> Session {
+        Session {
+            subs: HashMap::new(),
+            link: Arc::clone(&self.link),
+            spread: self.spread,
+            clock: self.clock.clone(),
+            surface_book: Arc::clone(&self.surface_book),
+            minter: TokenMinter::new(),
+            next_execution_id: Arc::clone(&self.next_execution_id),
+        }
+    }
+}
+
+/// Drive one multiplexed RFS session to completion over a transport-agnostic
+/// inbound [`ClientStreamMessage`] stream and an outbound server-message channel.
+///
+/// This is the single session loop shared by the gRPC `StreamSession` handler and
+/// the WebSocket mirror ([`crate::ws`]): it interleaves client control + click-to-
+/// trade messages with the deterministic market tick, emitting `Snapshot` /
+/// sequenced `Update` / `Heartbeat` / `Executed` / `StreamReject` / `StreamEnd`
+/// frames. It returns when the inbound stream ends (client close / transport error)
+/// or the outbound channel closes (consumer gone), tearing the session down.
+pub(crate) async fn run_session<S>(
+    mut session: Session,
+    mut inbound: S,
+    out_tx: mpsc::Sender<Result<ServerStreamMessage, Status>>,
+) where
+    S: futures_util::Stream<Item = ClientStreamMessage> + Unpin,
+{
+    let mut ticker = tokio::time::interval(TICK_INTERVAL);
+    // Skip the immediate first tick so the loop parks until either a control
+    // message or the first real interval.
+    ticker.tick().await;
+
+    loop {
+        tokio::select! {
+            // ---- client → server control + click-to-trade ----------
+            incoming = inbound.next() => {
+                match incoming {
+                    Some(msg) => {
+                        if !session.handle_client_message(msg, &out_tx).await {
+                            break; // a fatal send failure: tear down.
+                        }
+                    }
+                    None => break, // client closed / errored.
+                }
+            }
+            // ---- deterministic market tick → updates ---------------
+            _ = ticker.tick() => {
+                if session.subs.is_empty() {
+                    continue;
+                }
+                if !session.drive_tick(&out_tx) {
+                    break; // channel closed: client gone.
+                }
+            }
+        }
+    }
+}
+
 /// The single-owner per-session state and the operations over it.
-struct Session {
+pub(crate) struct Session {
     subs: HashMap<u64, Subscription>,
     link: Arc<CoreLink>,
     spread: SpreadModel,

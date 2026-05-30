@@ -13,8 +13,8 @@ import {
   useState,
 } from "react";
 import type { CcyPair, Conventions, MarkedSurface } from "../data/contract";
-import { createMockTransport } from "../data/mockSource";
 import type { CelnetTransport } from "../data/transport";
+import { resolveTransport } from "../data/transportConfig";
 import {
   brokerLadder,
   DEFAULT_CONVENTIONS,
@@ -57,7 +57,10 @@ export function useApp(): AppState {
 }
 
 export function AppProvider({ children }: { children: React.ReactNode }): React.ReactElement {
-  const transport = useMemo(() => createMockTransport(), []);
+  // The transport is selected once at the app root: the deterministic in-app mock
+  // by default (standalone), or the live WebSocket mirror when configured via the
+  // build-time env flag (src/data/transportConfig.ts). One contract, two transports.
+  const transport = useMemo(() => resolveTransport().transport, []);
   const conventions = DEFAULT_CONVENTIONS;
 
   const [workspace, setWorkspace] = useState<WorkspaceId>("stream");
