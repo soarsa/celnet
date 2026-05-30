@@ -13,6 +13,10 @@ workspace = true
 
 [dependencies]
 prost.workspace = true
+celnet-types.workspace = true
+
+[dev-dependencies]
+celnet-core.workspace = true
 
 [build-dependencies]
 protox.workspace = true

@@ -1,0 +1,230 @@
+// Celnet wire contract — the single, current message schema for the pricing /
+// quote / risk surface.
+//
+// There is exactly ONE clean, current contract (ADR-0007): no `schema_version`
+// field, no version-negotiation handshake, no N/N-1 back-compat shims. Upgrades
+// deploy a single uniform version via blue-green cutover, so a message on the
+// wire is always interpreted against this schema. Evolving the contract means
+// editing this file and every dependent in the same change.
+//
+// proto3, no `optional` presence wrappers: every field carries a meaningful
+// value (a price of 0.0 or a rate of 0.0 is a legitimate quantity, not "absent").
+// Identifiers here are purpose-named and vendor/research-neutral, mirroring the
+// `celnet-types` vocabulary (CcyPair, OptionType, the convention enums, the
+// 14-Greek set) one-to-one so the wire form and the in-process DTOs stay aligned.
+
+syntax = "proto3";
+
+package celnet.wire;
+
+// Call or put — mirrors `celnet_types::OptionType`.
+enum OptionType {
+  // proto3 requires a zero default; CALL is the canonical first member.
+  OPTION_TYPE_CALL = 0;
+  // Right to sell the base currency.
+  OPTION_TYPE_PUT = 1;
+}
+
+// Quoted delta convention — mirrors `celnet_types::DeltaConvention`.
+enum DeltaConvention {
+  // Spot delta, premium-unadjusted: e^{-r_f T} N(d1).
+  DELTA_CONVENTION_SPOT_UNADJUSTED = 0;
+  // Forward (driftless) delta, premium-unadjusted: N(d1).
+  DELTA_CONVENTION_FORWARD_UNADJUSTED = 1;
+  // Spot delta, premium-adjusted: e^{-r_f T} (K/F) N(d2).
+  DELTA_CONVENTION_SPOT_PREMIUM_ADJUSTED = 2;
+  // Forward delta, premium-adjusted: (K/F) N(d2).
+  DELTA_CONVENTION_FORWARD_PREMIUM_ADJUSTED = 3;
+}
+
+// Premium quotation style — mirrors `celnet_types::PremiumStyle`.
+enum PremiumStyle {
+  // Domestic pips (quote-ccy per 1 unit of base notional).
+  PREMIUM_STYLE_DOMESTIC_PIPS = 0;
+  // Percentage of foreign (base) notional.
+  PREMIUM_STYLE_PERCENT_FOREIGN = 1;
+  // Percentage of domestic (quote) notional.
+  PREMIUM_STYLE_PERCENT_DOMESTIC = 2;
+  // Foreign pips.
+  PREMIUM_STYLE_FOREIGN_PIPS = 3;
+}
+
+// An FX currency pair `BASE/QUOTE` (market form `CCY1CCY2`), e.g. "EURUSD".
+//
+// Mirrors `celnet_types::CcyPair`: `base` is the foreign/asset currency (CCY1),
+// `quote` is the domestic/numeraire currency (CCY2). Each leg is a 3-letter
+// uppercase ISO-4217-style code carried as a UTF-8 string for wire legibility;
+// validation back to the compact `Ccy` newtype happens at the codec boundary.
+message CcyPair {
+  // Foreign / asset currency (CCY1), e.g. "EUR".
+  string base = 1;
+  // Domestic / numeraire currency (CCY2), e.g. "USD".
+  string quote = 2;
+}
+
+// Inputs to the vanilla (Garman-Kohlhagen) model — mirrors
+// `celnet_types::VanillaInputs`. Continuous rates; times are vol-time year
+// fractions. The forward and discount factors are derived, never sent.
+message VanillaInputs {
+  // Spot FX rate (quote per 1 unit of base).
+  double spot = 1;
+  // Strike (quote per 1 unit of base).
+  double strike = 2;
+  // Annualized volatility (absolute, e.g. 0.10 = 10 vol).
+  double vol = 3;
+  // Time to expiry in years (vol-time).
+  double t = 4;
+  // Continuously-compounded domestic (quote) interest rate.
+  double r_dom = 5;
+  // Continuously-compounded foreign (base) interest rate.
+  double r_for = 6;
+}
+
+// The full FX-options Greek set — mirrors `celnet_types::Greeks` field-for-field.
+// All sensitivities are raw (per unit of the underlying quantity).
+message Greeks {
+  // Present value (premium) in domestic currency, per 1 unit of base notional.
+  double price = 1;
+  // Spot delta (premium-unadjusted).
+  double delta_spot = 2;
+  // Forward delta (premium-unadjusted).
+  double delta_forward = 3;
+  // Gamma: d2V/dS2.
+  double gamma = 4;
+  // Vega: dV/dsigma (per 1.0 absolute vol).
+  double vega = 5;
+  // Theta: dV/dt per year (-dV/dT).
+  double theta = 6;
+  // Rho domestic: dV/dr_dom.
+  double rho_dom = 7;
+  // Rho foreign: dV/dr_for.
+  double rho_for = 8;
+  // Vanna: d2V/dS dsigma.
+  double vanna = 9;
+  // Volga / vomma: d2V/dsigma2.
+  double volga = 10;
+  // Charm: d(delta_spot)/dT (delta decay, per year).
+  double charm = 11;
+  // Speed: d3V/dS3.
+  double speed = 12;
+  // Zomma: d(gamma)/dsigma.
+  double zomma = 13;
+  // Color: d(gamma)/dT.
+  double color = 14;
+}
+
+// A request to price a vanilla FX option and return its full risk.
+//
+// `request_id` correlates the response on a multiplexed stream; it carries no
+// schema meaning. `delta_convention` and `premium_style` select how the
+// convention-specific delta / premium are reported, matching the `celnet-types`
+// convention enums.
+message PricingRequest {
+  // Opaque client correlation id, echoed in `PricingResponse.request_id`.
+  uint64 request_id = 1;
+  // The currency pair being priced.
+  CcyPair pair = 2;
+  // Call or put.
+  OptionType option_type = 3;
+  // Garman-Kohlhagen inputs.
+  VanillaInputs inputs = 4;
+  // Delta convention to report the convention-specific delta against.
+  DeltaConvention delta_convention = 5;
+  // Premium quotation style for the reported premium.
+  PremiumStyle premium_style = 6;
+}
+
+// The priced result: the full Greek set plus the convention-resolved delta.
+message PricingResponse {
+  // Correlates with `PricingRequest.request_id`.
+  uint64 request_id = 1;
+  // The full 14-member Greek set (price + sensitivities).
+  Greeks greeks = 2;
+  // Delta resolved under the request's `DeltaConvention`.
+  double delta_convention_value = 3;
+}
+
+// One quoted vol point on the surface, keyed by delta and expiry tenor.
+//
+// `delta` is the signed convention delta (e.g. 0.25 for a 25-delta call,
+// -0.25 for a 25-delta put); `tenor_years` is the year fraction to expiry on
+// the surface day-count. `vol` is absolute (0.10 = 10 vol).
+message SmilePoint {
+  // Signed convention delta of the point.
+  double delta = 1;
+  // Expiry as a year fraction.
+  double tenor_years = 2;
+  // Absolute volatility at this (delta, tenor).
+  double vol = 3;
+}
+
+// A two-way tradable quote for a single instrument at a point in time.
+//
+// Bid/ask are premiums in the units implied by `premium_style`. `quote_id`
+// identifies the quote; `epoch_nanos` is the publication timestamp in
+// nanoseconds since the Unix epoch (UTC).
+message Quote {
+  // Server-assigned quote identifier.
+  uint64 quote_id = 1;
+  // Instrument currency pair.
+  CcyPair pair = 2;
+  // Call or put.
+  OptionType option_type = 3;
+  // Strike (quote per 1 unit of base).
+  double strike = 4;
+  // Expiry as a year fraction.
+  double tenor_years = 5;
+  // Bid premium in `premium_style` units.
+  double bid = 6;
+  // Ask premium in `premium_style` units.
+  double ask = 7;
+  // Units the bid/ask are expressed in.
+  PremiumStyle premium_style = 8;
+  // Publication time, nanoseconds since the Unix epoch (UTC).
+  int64 epoch_nanos = 9;
+}
+
+// A point-in-time snapshot of a full volatility surface for one pair.
+//
+// The surface is the unordered set of quoted `SmilePoint`s spanning the
+// available tenors and deltas; `epoch_nanos` stamps the snapshot. Atomic on the
+// wire: a consumer applies the whole snapshot or none of it.
+message SurfaceSnapshot {
+  // Pair the surface belongs to.
+  CcyPair pair = 1;
+  // All quoted vol points (delta x tenor) in the snapshot.
+  repeated SmilePoint points = 2;
+  // Snapshot time, nanoseconds since the Unix epoch (UTC).
+  int64 epoch_nanos = 3;
+}
+
+// Liveness/keepalive on a streaming channel.
+//
+// `sequence` increases monotonically per channel so a consumer detects gaps;
+// `epoch_nanos` is the send time. Carries no payload and no schema metadata.
+message Heartbeat {
+  // Monotonic per-channel sequence number.
+  uint64 sequence = 1;
+  // Send time, nanoseconds since the Unix epoch (UTC).
+  int64 epoch_nanos = 2;
+}
+
+// The envelope multiplexing every wire message over a single channel.
+//
+// Exactly one payload is set (proto3 `oneof`). There is deliberately no version
+// or schema-id field: the envelope itself IS the current contract (ADR-0007).
+message Envelope {
+  // The carried message; exactly one variant is populated.
+  oneof payload {
+    // A request to price a vanilla option.
+    PricingRequest pricing_request = 1;
+    // A priced result.
+    PricingResponse pricing_response = 2;
+    // A two-way tradable quote.
+    Quote quote = 3;
+    // A full volatility-surface snapshot.
+    SurfaceSnapshot surface_snapshot = 4;
+    // A liveness heartbeat.
+    Heartbeat heartbeat = 5;
+  }
+}

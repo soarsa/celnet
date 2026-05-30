@@ -1,0 +1,185 @@
+// Celnet user-extensibility SDK — WASI 0.2.x WIT contract.
+//
+// This `world` is the Wasm-component mirror of the Rust trait contract in
+// `src/` (PricingModel / SmileModel / Calibration). It is a SPEC/DOC artifact:
+// there is no bindgen build step in this crate yet — `celnet-plugin-guest` will
+// generate guest bindings from this world, and `celnet-plugin-host` (wasmtime
+// 45, fuel-metered, NaN-canonicalized) will host components that target it.
+//
+// Design rules (see docs/ARCHITECTURE.md §6.3):
+//   * Single, current contract — NO version negotiation, NO schema_version.
+//   * Records/enums map ONE-TO-ONE to the Rust types so first-party native
+//     models and Wasm user plugins are interchangeable behind one registry.
+//   * We build on STABLE WASI 0.2.x. We deliberately avoid experimental WIT
+//     `map`/`struct`/resource features (still experimental in wasmtime 45):
+//     calibration targets cross as a `list<calibration-target>`.
+//   * `f64` is the CPU-canonical scalar (the Rust contract's policy). The host
+//     pins float behaviour (NaN canonicalization, no FMA contraction) so
+//     transcendentals are bit-identical across platforms.
+
+package celnet:plugin-api;
+
+// ---------------------------------------------------------------------------
+// Shared vocabulary — mirrors `celnet-types` DTOs / enums.
+// ---------------------------------------------------------------------------
+interface types {
+    // OptionType (celnet_types::OptionType).
+    enum option-type {
+        call,
+        put,
+    }
+
+    // VanillaInputs (celnet_types::VanillaInputs). Continuously-compounded
+    // rates; `t` is a vol-time year fraction; `vol` is absolute (0.10 = 10 vol).
+    record vanilla-inputs {
+        spot: f64,
+        strike: f64,
+        vol: f64,
+        t: f64,
+        r-dom: f64,
+        r-for: f64,
+    }
+
+    // Greeks (celnet_types::Greeks) — the full Celnet sensitivity set, raw units.
+    record greeks {
+        price: f64,
+        delta-spot: f64,
+        delta-forward: f64,
+        gamma: f64,
+        vega: f64,
+        theta: f64,
+        rho-dom: f64,
+        rho-for: f64,
+        vanna: f64,
+        volga: f64,
+        charm: f64,
+        speed: f64,
+        zomma: f64,
+        color: f64,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Portable error + descriptor — mirror `PluginError` / `ModelDescriptor`.
+// ---------------------------------------------------------------------------
+interface diagnostics {
+    // PluginError (crate::PluginError). The detail string is provenance-neutral
+    // and carries no user data, matching the `&'static str` payloads natively.
+    variant plugin-error {
+        invalid-input(string),
+        unsupported(string),
+        did-not-converge(string),
+        calibration-failed(string),
+        not-found(string),
+    }
+
+    // ModelKind (crate::ModelKind).
+    enum model-kind {
+        pricing,
+        smile,
+        calibration,
+    }
+
+    // GreekSupport (crate::GreekSupport).
+    record greek-support {
+        first-order: bool,
+        second-order: bool,
+        third-order: bool,
+    }
+
+    // ModelDescriptor (crate::ModelDescriptor). `id` is the purpose-named
+    // ModelId string.
+    record model-descriptor {
+        id: string,
+        kind: model-kind,
+        greeks: greek-support,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Calibration vocabulary — mirrors `CalibrationTarget` / `CalibrationReport`.
+// ---------------------------------------------------------------------------
+interface calibration-types {
+    // CalibrationTarget (crate::CalibrationTarget).
+    record calibration-target {
+        abscissa: f64,
+        observed: f64,
+        weight: f64,
+    }
+
+    // CalibrationReport (crate::CalibrationReport).
+    record calibration-report {
+        iterations: u32,
+        rms-residual: f64,
+        max-residual: f64,
+    }
+
+    // The flat scalar parameters a calibrator produces. A concrete user model
+    // exports its own parameter record; the reference flat-vol model fits a
+    // single volatility, expressed here as the canonical result shape.
+    record calibrated-params {
+        // Fitted parameters, in the model's own order (e.g. `[flat-vol]`).
+        params: list<f64>,
+        report: calibration-report,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The three model seams a component may export. A plugin component exports
+// `describe` plus whichever of the three interfaces it implements; the host
+// admits it to the matching registry slot by its declared `model-kind`.
+// ---------------------------------------------------------------------------
+
+// PricingModel (crate::PricingModel).
+interface pricing-model {
+    use types.{option-type, vanilla-inputs, greeks};
+    use diagnostics.{plugin-error};
+
+    // Present value in domestic currency, per 1 unit of base notional.
+    price: func(opt: option-type, inputs: vanilla-inputs) -> result<f64, plugin-error>;
+
+    // Price plus the full Greek set in one pass (Unsupported if not provided).
+    price-and-greeks: func(opt: option-type, inputs: vanilla-inputs)
+        -> result<greeks, plugin-error>;
+}
+
+// SmileModel (crate::SmileModel : celnet_core::Smile).
+interface smile-model {
+    use diagnostics.{plugin-error};
+
+    // Implied (Black) volatility at `strike` given `forward` and time `t`.
+    implied-vol: func(strike: f64, forward: f64, t: f64) -> result<f64, plugin-error>;
+
+    // ATM-forward volatility convenience (strike == forward).
+    atm-forward-vol: func(forward: f64, t: f64) -> result<f64, plugin-error>;
+
+    // Static (butterfly) no-arbitrage self-check over a strike grid.
+    check-no-arbitrage: func(forward: f64, t: f64, strikes: list<f64>)
+        -> result<_, plugin-error>;
+}
+
+// Calibration (crate::Calibration).
+interface calibration {
+    use calibration-types.{calibration-target, calibrated-params};
+    use diagnostics.{plugin-error};
+
+    // Fit model parameters to weighted targets at `forward` / time `t`.
+    calibrate: func(forward: f64, t: f64, targets: list<calibration-target>)
+        -> result<calibrated-params, plugin-error>;
+}
+
+// ---------------------------------------------------------------------------
+// Worlds. A plugin targets `celnet-plugin`; it MUST export `describe` and at
+// least one model interface. The reference flat-vol plugin exports all three.
+// ---------------------------------------------------------------------------
+world celnet-plugin {
+    use diagnostics.{model-descriptor};
+
+    // Self-description used by the host registry to route work by purpose
+    // without knowing the component's concrete model type.
+    export describe: func() -> model-descriptor;
+
+    export pricing-model;
+    export smile-model;
+    export calibration;
+}

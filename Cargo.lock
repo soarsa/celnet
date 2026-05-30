@@ -71,8 +71,10 @@ name = "celnet-conventions"
 version = "0.0.0"
 dependencies = [
  "celnet-calendar",
+ "celnet-core",
  "celnet-types",
  "proptest",
+ "time",
 ]
 
 [[package]]
@@ -96,6 +98,8 @@ dependencies = [
 name = "celnet-proto"
 version = "0.0.0"
 dependencies = [
+ "celnet-core",
+ "celnet-types",
  "prost",
  "prost-build",
  "protox",
@@ -122,6 +126,7 @@ dependencies = [
 name = "celnet-vanilla"
 version = "0.0.0"
 dependencies = [
+ "celnet-conventions",
  "celnet-core",
  "celnet-types",
  "proptest",

@@ -18,10 +18,30 @@
 //! cross-validated against central finite differences in the test suite, and
 //! prices are validated against the Black-Scholes textbook benchmark.
 
+//! ## Convention-aware strike↔delta machinery
+//!
+//! On top of the pricer this crate exposes the FX-desk convention layer that
+//! turns a quoted *delta* into a *strike* and back, in any of the four
+//! [`celnet_types::DeltaConvention`] variants, plus the premium re-expression
+//! and the ATM-strike rules. See the [`delta`], [`premium`], [`atm`] and
+//! [`solver`] modules. These consume [`celnet_types::VanillaInputs`] and the
+//! convention enums and are validated against the standard FX-smile literature
+//! (Clark 2011; Reiswich & Wystup 2010; Wystup 2017) in the test suite.
+
 #![forbid(unsafe_code)]
 
 use celnet_core::math::{ln, norm_cdf, norm_pdf, sqrt};
 use celnet_types::{Greeks, OptionType, VanillaInputs};
+
+pub mod atm;
+pub mod delta;
+pub mod premium;
+pub mod solver;
+
+pub use atm::{atm_strike, atm_strike_from_inputs};
+pub use delta::{delta as convention_delta, delta_d_strike, premium_adjusted_call_delta_max};
+pub use premium::{premium, premium_from_domestic_pips};
+pub use solver::{DeltaSolveError, strike_from_delta};
 
 /// Intermediate quantities shared by price and Greeks.
 struct Aux {
@@ -152,10 +172,10 @@ mod tests {
 
     use super::*;
 
-    /// Black-Scholes textbook benchmark: S=K=100, T=1, r=5%, q=0, σ=20%.
-    /// Reference values are the standard analytic results.
+    /// Textbook vanilla benchmark: S=K=100, T=1, r_dom=5%, r_for=0, σ=20%.
+    /// Reference values are the standard closed-form analytic results.
     #[test]
-    fn black_scholes_reference() {
+    fn vanilla_reference_price() {
         let i = VanillaInputs::new(100.0, 100.0, 0.2, 1.0, 0.05, 0.0);
         assert_close!(
             price(OptionType::Call, &i),
