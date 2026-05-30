@@ -66,37 +66,48 @@ impl std::error::Error for HandoffError {}
 
 /// A minimal append-only little-endian writer (heap `Vec`; handoff is an
 /// off-the-hot-path, control-plane operation).
-struct Writer {
+///
+/// Crate-internal so the durable journal ([`crate::journal`]) reuses the **same**
+/// encoders for its per-event records — there is one current byte contract, not a
+/// fork (guardrail #9).
+pub(crate) struct Writer {
     buf: Vec<u8>,
 }
 
 impl Writer {
-    fn with_capacity(cap: usize) -> Self {
+    pub(crate) fn with_capacity(cap: usize) -> Self {
         Self {
             buf: Vec::with_capacity(cap),
         }
     }
-    fn u8(&mut self, v: u8) {
+    pub(crate) fn u8(&mut self, v: u8) {
         self.buf.push(v);
     }
-    fn u64(&mut self, v: u64) {
+    pub(crate) fn u64(&mut self, v: u64) {
         self.buf.extend_from_slice(&v.to_le_bytes());
     }
-    fn f64(&mut self, v: f64) {
+    pub(crate) fn f64(&mut self, v: f64) {
         // Serialize the exact IEEE-754 bit pattern so the restored value is
         // bit-identical (never a decimal round-trip).
         self.buf.extend_from_slice(&v.to_bits().to_le_bytes());
     }
+    /// The accumulated bytes.
+    pub(crate) fn into_bytes(self) -> Vec<u8> {
+        self.buf
+    }
 }
 
 /// A bounds-checked little-endian reader over a borrowed buffer.
-struct Reader<'a> {
+///
+/// Crate-internal so [`crate::journal`] decodes its event payloads with the same
+/// reader the handoff path uses (one contract).
+pub(crate) struct Reader<'a> {
     buf: &'a [u8],
     pos: usize,
 }
 
 impl<'a> Reader<'a> {
-    fn new(buf: &'a [u8]) -> Self {
+    pub(crate) fn new(buf: &'a [u8]) -> Self {
         Self { buf, pos: 0 }
     }
     fn take(&mut self, n: usize) -> Result<&'a [u8], HandoffError> {
@@ -105,19 +116,19 @@ impl<'a> Reader<'a> {
         self.pos = end;
         Ok(slice)
     }
-    fn u8(&mut self) -> Result<u8, HandoffError> {
+    pub(crate) fn u8(&mut self) -> Result<u8, HandoffError> {
         Ok(self.take(1)?[0])
     }
-    fn u64(&mut self) -> Result<u64, HandoffError> {
+    pub(crate) fn u64(&mut self) -> Result<u64, HandoffError> {
         let b = self.take(8)?;
         Ok(u64::from_le_bytes(
             b.try_into().expect("took exactly 8 bytes"),
         ))
     }
-    fn f64(&mut self) -> Result<f64, HandoffError> {
+    pub(crate) fn f64(&mut self) -> Result<f64, HandoffError> {
         Ok(f64::from_bits(self.u64()?))
     }
-    fn finish(self) -> Result<(), HandoffError> {
+    pub(crate) fn finish(self) -> Result<(), HandoffError> {
         if self.pos == self.buf.len() {
             Ok(())
         } else {
@@ -140,6 +151,31 @@ fn dec_option_type(b: u8) -> Result<OptionType, HandoffError> {
         1 => Ok(OptionType::Put),
         _ => Err(HandoffError::BadDiscriminant),
     }
+}
+
+/// Encode a single [`BookEntry`] in the **same** fixed-width little-endian form
+/// used for each entry inside [`serialize_state`]'s book section. Reused by the
+/// durable journal so a booked-line event and a handoff entry share one byte
+/// contract (no format fork; guardrail #9).
+pub(crate) fn write_book_entry(w: &mut Writer, e: &BookEntry) {
+    w.u64(e.id);
+    w.u8(enc_option_type(e.option_type));
+    w.f64(e.strike);
+    w.f64(e.notional);
+}
+
+/// Decode a single [`BookEntry`] written by [`write_book_entry`].
+pub(crate) fn read_book_entry(r: &mut Reader<'_>) -> Result<BookEntry, HandoffError> {
+    let id = r.u64()?;
+    let option_type = dec_option_type(r.u8()?)?;
+    let strike = r.f64()?;
+    let notional = r.f64()?;
+    Ok(BookEntry {
+        id,
+        option_type,
+        strike,
+        notional,
+    })
 }
 
 fn enc_delta(v: DeltaConvention) -> u8 {
@@ -307,13 +343,10 @@ pub fn serialize_state(market: &MarketState, book: &BookState) -> Vec<u8> {
     // Book.
     w.u64(book.entries.len() as u64);
     for e in &book.entries {
-        w.u64(e.id);
-        w.u8(enc_option_type(e.option_type));
-        w.f64(e.strike);
-        w.f64(e.notional);
+        write_book_entry(&mut w, e);
     }
 
-    w.buf
+    w.into_bytes()
 }
 
 /// Restore the live engine state from a buffer produced by [`serialize_state`].
@@ -345,16 +378,7 @@ pub fn restore_state(bytes: &[u8]) -> Result<(MarketState, BookState), HandoffEr
     let n = r.u64()? as usize;
     let mut entries = Vec::with_capacity(n);
     for _ in 0..n {
-        let id = r.u64()?;
-        let option_type = dec_option_type(r.u8()?)?;
-        let strike = r.f64()?;
-        let notional = r.f64()?;
-        entries.push(BookEntry {
-            id,
-            option_type,
-            strike,
-            notional,
-        });
+        entries.push(read_book_entry(&mut r)?);
     }
 
     r.finish()?;

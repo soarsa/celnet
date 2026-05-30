@@ -29,6 +29,13 @@
 //!   *un-versioned* (ADR-0007) byte serialization of the engine's live book /
 //!   convention state, so a freshly-started process can restore the running
 //!   book and reprice identically.
+//! * [`journal`] — **durable crash recovery** (§5): wires the control-plane
+//!   booking / accepted-market-state path to a `fsync`'d [`celnet_journal`] log,
+//!   reusing the [`handoff`] byte codec (no format fork). [`DurableBook`] appends
+//!   each booked line / accepted mark durably; [`recover`] replays the log **at
+//!   startup** to rebuild a [`BookState`] / [`MarketState`] that reprices
+//!   bit-identically. This is strictly off the hot path — the price() loop never
+//!   touches the journal (asserted in `tests/zero_alloc.rs`).
 //!
 //! # Determinism
 //!
@@ -48,11 +55,13 @@
 
 pub mod core;
 pub mod handoff;
+pub mod journal;
 pub mod rt;
 pub mod testing;
 
 pub use core::{PriceRequest, PriceResponse, PricingCore};
 pub use handoff::{HandoffError, restore_state, serialize_state};
+pub use journal::{DurableBook, RecoveryError, recover};
 pub use rt::{
     BookState, MarketState, PaddedCounter, PriceSnapshot, RequestRing, ResponseRing, Seqlock,
     StateHandle, StateReader, pin_current_thread_to_core,

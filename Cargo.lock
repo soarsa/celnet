@@ -431,6 +431,7 @@ dependencies = [
  "arc-swap",
  "celnet-conventions",
  "celnet-core",
+ "celnet-journal",
  "celnet-surface",
  "celnet-testkit",
  "celnet-types",
@@ -507,9 +508,7 @@ dependencies = [
 name = "celnet-journal"
 version = "0.0.0"
 dependencies = [
- "celnet-core",
  "celnet-types",
- "celnet-vanilla",
 ]
 
 [[package]]

@@ -11,9 +11,12 @@ publish = false
 [lints]
 workspace = true
 
+# The journal is deliberately dependency-free in its public build (std fs only +
+# a self-contained CRC-32) — it is the lowest-level durable substrate and must add
+# no supply-chain surface. Domain types are needed only by the `EventCodec`
+# round-trip test, hence dev-only.
+
 [dependencies]
-celnet-types.workspace = true
-celnet-core.workspace = true
 
 [dev-dependencies]
-celnet-vanilla.workspace = true
+celnet-types.workspace = true

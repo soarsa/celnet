@@ -8,7 +8,7 @@
 //! price a large batch of requests through the SPSC ring + pricing core, and
 //! assert the acquiring count did not move.
 //!
-//! Two proofs:
+//! Three proofs:
 //!  * [`hot_pricing_loop_allocates_zero`] — the steady-state single-thread loop.
 //!  * [`hot_pricing_under_concurrent_publish_allocates_zero`] — the production
 //!    scenario where a publisher hammers `StateHandle::publish` while the core
@@ -16,6 +16,13 @@
 //!    (a `dealloc`), never allocated. That reclamation-happens-on-the-reader proof
 //!    is made **deterministic** in a separate single-threaded armed micro-window
 //!    (not left to publisher-thread timing), so the test is not flaky.
+//!  * [`pricing_a_journalled_book_allocates_zero`] — the durable-recovery
+//!    invariant: the journal (an `fsync`'d, allocating, control-plane substrate)
+//!    is touched **only** on the booking / mark path, never by `price()`. We
+//!    durably book a set of lines (startup-class allocation — fine), then in an
+//!    armed window price the entire recovered book against its marked state and
+//!    assert the hot path acquired **no** memory. This is the structural guarantee
+//!    that journaling is off the hot loop.
 //!
 //! # Determinism of the counters (no cross-test interference)
 //!
@@ -29,8 +36,9 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use celnet_engine::DurableBook;
 use celnet_engine::core::{PriceRequest, PricingCore};
-use celnet_engine::rt::{request_ring, response_ring};
+use celnet_engine::rt::{BookEntry, request_ring, response_ring};
 use celnet_surface::{MarketContext, MarketQuotes, build_smile};
 use celnet_types::{CcyPair, OptionType, Tenor};
 
@@ -326,4 +334,85 @@ fn hot_pricing_under_concurrent_publish_allocates_zero() {
         "a superseded state must be reclaimed on the reading thread \
          (deterministic; no publisher-timing race); saw {reclaimed}"
     );
+}
+
+/// Durable-recovery invariant: journaling is a control-plane concern, never on the
+/// hot pricing loop. We durably `mark` a state and `book` a set of lines (these do
+/// IO + `fsync` + allocate — that is the *booking* path, off the hot loop, so they
+/// run **disarmed**), then in an armed window price the whole recovered book and
+/// assert the price() path acquired no memory. If `price()` ever touched the
+/// journal (or otherwise allocated), this fails.
+#[test]
+fn pricing_a_journalled_book_allocates_zero() {
+    let conv =
+        celnet_conventions::resolve(CcyPair::parse("EURUSD").unwrap(), Tenor::Years(1)).record;
+    let ctx = MarketContext::new(1.10, 0.02, 0.01, 1.0, conv);
+    let q = MarketQuotes::three_point(0.105, 0.015, 0.0035);
+    let smile = build_smile(&ctx, &q).expect("calibration converges");
+    let market = celnet_engine::rt::MarketState {
+        spot: 1.10,
+        r_dom: 0.02,
+        r_for: 0.01,
+        t: 1.0,
+        conventions: conv,
+        smile,
+    };
+
+    // Unique temp journal path (PID + nanos) so parallel binaries never collide.
+    let mut path = std::env::temp_dir();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    path.push(format!(
+        "celnet-engine-zeroalloc-journal-{}-{nanos}.journal",
+        std::process::id()
+    ));
+
+    // --- booking path (DISARMED): durable, allocating, fsync'd — off the hot loop.
+    const N: u64 = 256;
+    {
+        let mut db = DurableBook::open(&path).expect("open durable book");
+        db.mark(market.clone()).expect("durable mark");
+        for id in 0..N {
+            let k = 0.90 + 0.40 * (id as f64) / (N as f64);
+            db.book(BookEntry {
+                id,
+                option_type: OptionType::Call,
+                strike: k,
+                notional: 1_000_000.0,
+            })
+            .expect("durable book line");
+        }
+    }
+
+    // --- recover (DISARMED): startup-class replay, allocates — off the hot loop.
+    let (recovered_market, recovered_book) =
+        celnet_engine::recover(&path).expect("recover the journalled book");
+    let mut core = PricingCore::new(recovered_market);
+
+    // Warm the path once outside the measured window.
+    let _ = core.price(PriceRequest::new(0, OptionType::Call, 1.10));
+
+    // --- measured hot window: price the entire recovered book ---
+    let before = ALLOCS.load(Ordering::Relaxed);
+    let mut priced = 0usize;
+    armed(|| {
+        for e in &recovered_book.entries {
+            let _ = core.price(PriceRequest::new(e.id, e.option_type, e.strike));
+            priced += 1;
+        }
+    });
+    let after = ALLOCS.load(Ordering::Relaxed);
+
+    assert_eq!(priced, N as usize, "every recovered line priced");
+    assert_eq!(
+        after,
+        before,
+        "pricing a journalled book allocated {} times (the journal must never \
+         touch the hot path)",
+        after - before
+    );
+
+    let _ = std::fs::remove_file(&path);
 }
