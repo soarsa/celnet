@@ -22,3 +22,7 @@ celnet-surface.workspace = true
 celnet-exotics.workspace = true
 celnet-testkit.workspace = true
 proptest.workspace = true
+# The QuantLib-sourced golden reference tables are the independent oracle for the
+# exotics parity rows (rows 12–14). Not in the workspace dependency table (it is
+# itself a leaf test-data crate), so referenced by path here in the parity lane.
+celnet-golden = { path = "../celnet-golden" }

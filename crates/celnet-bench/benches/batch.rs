@@ -41,7 +41,7 @@ fn batch_price(bencher: Bencher) {
         });
 }
 
-/// Price + full 14-Greek set across the whole many-strike slice.
+/// Price + full 13-Greek set across the whole many-strike slice.
 ///
 /// This is the portfolio/surface analogue of the single-option hot-path budget:
 /// the per-item amortized median should track the `p50 ≤ 2 µs` per-option target

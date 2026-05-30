@@ -464,6 +464,7 @@ dependencies = [
  "celnet-conventions",
  "celnet-core",
  "celnet-exotics",
+ "celnet-golden",
  "celnet-surface",
  "celnet-testkit",
  "celnet-types",

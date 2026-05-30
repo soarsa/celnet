@@ -1,0 +1,171 @@
+# Celnet CI — the full gate (fmt, clippy -D warnings, nextest, cargo-deny) across
+# Linux/macOS/Windows on the pinned stable toolchain (1.96.0) and the MSRV (1.96).
+#
+# Notes on this workflow:
+#   * The toolchain is pinned by `rust-toolchain.toml` to 1.96.0 (= the MSRV), so
+#     "stable" and "MSRV" coincide today. We still model them as a matrix so that
+#     when the pinned stable is later bumped above the MSRV, the MSRV lane keeps
+#     proving 1.96 builds without any workflow surgery — only the matrix values move.
+#   * cargo-deny / nextest are installed from prebuilt binaries (taiki-e actions)
+#     so CI does not pay a from-source compile on every run.
+#   * The GPU/Lavapipe lane (software Vulkan via Mesa llvmpipe) is a separate
+#     Linux-only job so the wgpu Vulkan path and the f64 CPU reconciliation are
+#     exercised in headless CI where no physical GPU exists.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# One in-flight run per ref; cancel superseded runs to save CI minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Fail the build on any rustc/cargo warning in addition to clippy's -D warnings.
+  RUSTFLAGS: "-D warnings"
+  RUST_BACKTRACE: 1
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Cross-platform gate: fmt --check, clippy -D warnings, nextest, cargo-deny.
+  # Matrix over {ubuntu, macos, windows} x {stable(=1.96.0), msrv(1.96)}.
+  # ---------------------------------------------------------------------------
+  gate:
+    name: gate (${{ matrix.os }} / ${{ matrix.toolchain }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        # "stable" resolves via rust-toolchain.toml (1.96.0); "1.96" is the explicit
+        # MSRV floor. Both are listed so a future stable bump leaves an MSRV lane.
+        toolchain: [stable, "1.96"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (${{ matrix.toolchain }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          components: rustfmt, clippy
+
+      # Shared compilation cache keyed on the lock + matrix leg.
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}-${{ matrix.toolchain }}
+          # Save the cache only from the canonical lane to avoid cross-leg churn.
+          save-if: ${{ matrix.toolchain == 'stable' }}
+
+      - name: Install gate binaries (nextest, cargo-deny)
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest,cargo-deny
+
+      # fmt check is toolchain-independent; run it once on the stable Linux leg.
+      - name: rustfmt --check
+        if: matrix.os == 'ubuntu-latest' && matrix.toolchain == 'stable'
+        run: cargo fmt --all -- --check
+
+      - name: clippy -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: nextest
+        run: cargo nextest run --workspace --all-features
+
+      # Doctests are not executed by nextest; run them explicitly.
+      - name: doctests
+        run: cargo test --workspace --doc
+
+      # Supply-chain (advisories, bans, licenses, sources). Platform-independent:
+      # run it once on the canonical leg to avoid 6x redundant graph resolution.
+      - name: cargo-deny
+        if: matrix.os == 'ubuntu-latest' && matrix.toolchain == 'stable'
+        run: cargo deny check
+
+  # ---------------------------------------------------------------------------
+  # GPU / Lavapipe lane (Linux only). Exercises the wgpu Vulkan backend against
+  # Mesa's software rasterizer (llvmpipe/lavapipe) so the GPU compute path and
+  # its f64 CPU reconciliation run in headless CI with no physical device.
+  # Software Vulkan is f32-only; the reconciliation tolerance lives in the test.
+  # ---------------------------------------------------------------------------
+  gpu-lavapipe:
+    name: gpu (linux / lavapipe software vulkan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: gpu-lavapipe
+
+      - name: Install Mesa software Vulkan (lavapipe) + Vulkan loader
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            mesa-vulkan-drivers libvulkan1 vulkan-tools
+          # Force the loader to select the llvmpipe/lavapipe software ICD.
+          echo "VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json" >> "$GITHUB_ENV"
+          echo "WGPU_BACKEND=vulkan" >> "$GITHUB_ENV"
+
+      - name: Install nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: GPU backend tests (software Vulkan)
+        run: cargo nextest run -p celnet-gpu --all-features
+
+  # ---------------------------------------------------------------------------
+  # Fuzz lane (Linux only, nightly). The fuzz harness under `fuzz/` is a
+  # standalone, non-workspace crate carrying the nightly-only libFuzzer
+  # (cargo-fuzz) targets, so it cannot run on the pinned stable gate. This job
+  # builds and runs it time-boxed on nightly so the `vanilla_inputs` target is
+  # exercised in CI (contract: no panic; premium finite/≥0; all 13 Greeks finite)
+  # — not merely runnable by hand. The run is short (a smoke budget) so it does
+  # not become a long pole; longer campaigns are run out-of-band.
+  # ---------------------------------------------------------------------------
+  fuzz:
+    name: fuzz (linux / nightly, time-boxed)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: fuzz-nightly
+          # The fuzz crate is outside the root workspace; cache its target dir
+          # too (one "<dir> -> <target>" mapping per line).
+          workspaces: |
+            . -> target
+            fuzz -> fuzz/target
+
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+
+      # Time-boxed smoke run of the vanilla_inputs target. -max_total_time keeps
+      # the lane short and deterministic; a crash (panic / contract break / new
+      # coverage stall into UB) fails the job. Working dir is the standalone
+      # fuzz crate so its own [workspace] table and nightly profile apply.
+      - name: Fuzz vanilla_inputs (60s smoke)
+        working-directory: fuzz
+        run: cargo +nightly fuzz run vanilla_inputs -- -max_total_time=60

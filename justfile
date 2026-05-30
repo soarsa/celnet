@@ -95,3 +95,30 @@ check-changed:
 # Run before committing a milestone; per-iteration use `check-changed` / `check-crate`.
 check: fmt-check lint test deny
     @echo "All gates passed."
+
+# ---------------------------------------------------------------------------
+# Hardening recipes (WS-T). See docs/HARDENING.md for the gate definitions and
+# the latest recorded kill-rate / coverage numbers.
+# ---------------------------------------------------------------------------
+
+# Mutation testing on the vanilla pricing core (kill-rate; survivors = test gaps).
+mutants-vanilla:
+    timeout 600 {{_cargo}} mutants -p celnet-vanilla
+
+# Coverage summary for the core pricing crates (region/function/line %).
+coverage-core:
+    timeout 600 {{_cargo}} llvm-cov nextest -p celnet-vanilla -p celnet-surface -p celnet-exotics --summary-only
+
+# Coverage summary for the whole workspace (region/function/line %).
+coverage-summary:
+    {{_cargo}} llvm-cov nextest --workspace --all-features --summary-only
+
+# Run the standalone Linux-nightly fuzz harness (NOT a workspace member).
+# Requires: rustup toolchain install nightly && cargo install cargo-fuzz.
+# DURATION is the per-target wall-clock budget in seconds (default 120).
+fuzz-vanilla DURATION="120":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source "$HOME/.cargo/env"
+    cd fuzz
+    cargo +nightly fuzz run vanilla_inputs -- -max_total_time={{DURATION}}

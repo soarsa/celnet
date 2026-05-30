@@ -2,7 +2,7 @@
 //!
 //! The simplest edge RPC: price a single [`celnet_proto::Instrument`] against a
 //! caller-supplied [`celnet_proto::MarketContext`] under a
-//! [`celnet_proto::Conventions`], returning the full 14-Greek set and the resolved
+//! [`celnet_proto::Conventions`], returning the full 13-Greek set and the resolved
 //! strike. Unlike RFQ, the caller supplies the market context explicitly (this is
 //! a calculation RPC, not a tradable quote), so no live-market read is needed.
 //!

@@ -236,6 +236,17 @@ mod tests {
             1e-7
         );
         assert_close!(g.vega, fd1(|v| p(&with_vol(i, v)), i.vol, 1e-5), 1e-4, 1e-7);
+
+        // delta_forward = ∂V_fwd/∂F: difference the UNDISCOUNTED forward value
+        // V_fwd = price·e^{r_d T} in the forward (bumped through spot via the
+        // carry F = S·e^{(r_d−r_f)T}), then divide by the carry to convert
+        // ∂/∂S → ∂/∂F. An in-crate FD gate for the forward delta (the parity-crate
+        // FD check does not run under `cargo mutants -p celnet-vanilla`).
+        let carry = celnet_core::math::exp((i.r_dom - i.r_for) * i.t);
+        let edomt = celnet_core::math::exp(i.r_dom * i.t);
+        let dvfwd_ds = fd1(|s| p(&with_spot(i, s)) * edomt, i.spot, hs);
+        assert_close!(g.delta_forward, dvfwd_ds / carry, 1e-4, 1e-7);
+
         // theta = −∂V/∂T
         assert_close!(g.theta, -fd1(|t| p(&with_t(i, t)), i.t, 1e-5), 5e-4, 1e-6);
         assert_close!(
@@ -286,6 +297,38 @@ mod tests {
             1e-5
         );
         assert_close!(g.color, fd1(|t| gam(&with_t(i, t)), i.t, 1e-5), 1e-2, 1e-5);
+    }
+
+    /// `greeks(opt, i).price` MUST be the **bit-identical** value returned by
+    /// `price(opt, i)`: the Greek pass recomputes the present value from the same
+    /// shared `aux`/discount factors, and the contract is that this is exactly the
+    /// standalone pricer's output — not merely close. This is a *reproducibility /
+    /// bit-identity* check (the documented carve-out from the "no float `==`"
+    /// rule, asserted via `to_bits()`), and it kills the mutation survivors where
+    /// the greeks-pass price recomputation is perturbed (a wrong sign or dropped
+    /// discount term in the `greeks` price branch leaves the FD Greek checks
+    /// passing but breaks this exact tie).
+    #[test]
+    fn greeks_price_is_bit_identical_to_price() {
+        let cases = [
+            VanillaInputs::new(100.0, 100.0, 0.2, 1.0, 0.05, 0.0),
+            VanillaInputs::new(1.10, 1.25, 0.09, 0.5, 0.02, 0.01),
+            VanillaInputs::new(1.35, 1.20, 0.14, 2.0, 0.04, 0.015),
+            VanillaInputs::new(110.0, 95.0, 0.30, 0.25, 0.01, 0.03),
+            VanillaInputs::new(0.80, 0.95, 0.45, 3.0, -0.01, 0.06),
+        ];
+        for i in &cases {
+            for opt in [OptionType::Call, OptionType::Put] {
+                let standalone = price(opt, i);
+                let from_greeks = greeks(opt, i).price;
+                assert_eq!(
+                    standalone.to_bits(),
+                    from_greeks.to_bits(),
+                    "greeks().price must be bit-identical to price(): {opt:?} {i:?} \
+                     standalone={standalone} from_greeks={from_greeks}"
+                );
+            }
+        }
     }
 
     #[test]

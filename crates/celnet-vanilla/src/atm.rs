@@ -78,6 +78,32 @@ mod tests {
         VanillaInputs::new(1.10, strike, 0.12, 1.0, 0.02, 0.01)
     }
 
+    /// The DNS strike equals the closed form `F·exp(±½σ²t)` exactly (unadjusted
+    /// `+`, premium-adjusted `−`). Pins the `½σ²t` term directly so a mutant that
+    /// perturbs the variance arithmetic (`σ·σ` → `σ/σ`, a dropped factor) — which
+    /// the delta-neutrality test can absorb at this regime — is caught.
+    #[test]
+    fn dns_strike_matches_closed_form() {
+        // Use vol≠1, t≠1, and vol≠t so every `*` in `½σ²t` is load-bearing: a
+        // mutant that turns any product into a division (e.g. `σ²·t`→`σ²/t` or
+        // `σ·σ`→`σ/σ`) changes the result and is caught (a t=1 / σ=1 regime would
+        // make those mutants numerically equivalent).
+        let f = 1.10_f64;
+        let vol = 0.20_f64;
+        let t = 2.5_f64;
+        let half_var = 0.5 * vol * vol * t;
+        for (dc, sign) in [
+            (DeltaConvention::ForwardUnadjusted, 1.0_f64),
+            (DeltaConvention::SpotUnadjusted, 1.0),
+            (DeltaConvention::ForwardPremiumAdjusted, -1.0),
+            (DeltaConvention::SpotPremiumAdjusted, -1.0),
+        ] {
+            let k = atm_strike(AtmConvention::DeltaNeutralStraddle, dc, f, vol, t);
+            let expected = f * celnet_core::math::exp(sign * half_var);
+            assert_close!(k, expected, 1e-13, 1e-14);
+        }
+    }
+
     /// ATMF is exactly the forward, independent of delta convention.
     #[test]
     fn atmf_is_forward() {

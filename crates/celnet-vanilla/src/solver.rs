@@ -237,6 +237,129 @@ mod tests {
         DeltaConvention::ForwardPremiumAdjusted,
     ];
 
+    /// Deep-wing & extreme-delta solves that genuinely exercise the
+    /// **bracketing** machinery (`bracket` / `tiny_strike`), not just the
+    /// converged root. Bisection is self-correcting, so a degraded bracket
+    /// (wrong `tiny_strike` lower bound, wrong geometric-expansion factor, or a
+    /// flipped expansion comparison) still converges *whenever it happens to
+    /// straddle the root* — which masks those mutants on near-ATM targets. Here
+    /// we drive the solver into regimes where the root lies far outside the
+    /// initial `[tiny_strike, F]` bracket, so a broken lower bound or expansion
+    /// either fails to straddle (→ `Unreachable`/`NoConvergence`) or lands on the
+    /// wrong side:
+    ///
+    ///  * very small deltas (1Δ, 0.5Δ) ⇒ a strike far in the OTM wing, forcing
+    ///    several `hi *= 2` expansions (a too-slow `+=` expansion hits the
+    ///    64-step cap) and, for puts, a very small `tiny_strike` lower bound;
+    ///  * large unadjusted call deltas (deep ITM) ⇒ a strike far below `F`,
+    ///    forcing `lo` expansion down toward `tiny_strike` (a `tiny_strike` that
+    ///    is too large, zero, or wrongly signed cannot bracket the root);
+    ///  * a very low-vol, long-dated regime where `tiny_strike`'s
+    ///    `exp(−12σ√T − 6)` exponent must be small enough to clear the wing.
+    ///
+    /// Every solve must succeed AND round-trip to tight tolerance.
+    #[test]
+    fn deep_wing_solves_exercise_bracketing() {
+        let regimes = [
+            VanillaInputs::new(1.10, 1.10, 0.10, 1.0, 0.02, 0.01),
+            VanillaInputs::new(1.10, 1.10, 0.04, 3.0, 0.02, 0.01), // low vol, long T
+            VanillaInputs::new(100.0, 100.0, 0.45, 0.25, 0.05, 0.0), // high vol, short T
+            VanillaInputs::new(0.80, 0.80, 0.20, 1.0, -0.01, 0.06),
+        ];
+        for i in &regimes {
+            for conv in [
+                DeltaConvention::SpotUnadjusted,
+                DeltaConvention::ForwardUnadjusted,
+            ] {
+                // Tiny OTM deltas — far OTM wing strikes (forces hi-expansion for
+                // calls, lo→tiny_strike for puts).
+                for &mag in &[0.01_f64, 0.005, 0.02] {
+                    for opt in [OptionType::Call, OptionType::Put] {
+                        let target = if opt == OptionType::Call { mag } else { -mag };
+                        let k = strike_from_delta(conv, opt, target, i).unwrap_or_else(|e| {
+                            panic!("{conv:?} {opt:?} tiny Δ={target} on {i:?} failed: {e:?}")
+                        });
+                        let mut probe = *i;
+                        probe.strike = k;
+                        let back = delta(conv, opt, &probe);
+                        assert!(
+                            is_close(back, target, 1e-9, 1e-11),
+                            "{conv:?} {opt:?} tiny Δ*={target} back={back} K={k} on {i:?}"
+                        );
+                        // OTM wing geometry: a tiny call delta sits ABOVE the
+                        // forward; a tiny put delta BELOW.
+                        let f = i.forward();
+                        if opt == OptionType::Call {
+                            assert!(k > f, "{conv:?} tiny call wing K={k} must exceed F={f}");
+                        } else {
+                            assert!(k < f, "{conv:?} tiny put wing K={k} must be below F={f}");
+                        }
+                    }
+                }
+                // Large unadjusted CALL delta (deep ITM) — strike far below F,
+                // forcing lo to expand down toward tiny_strike. The unadjusted
+                // call delta is capped by the discount factor (e^{−r_f T} for
+                // spot, 1 for forward), so target a high fraction of that cap to
+                // stay reachable yet deep enough to drive lo-expansion.
+                let cap = match conv {
+                    DeltaConvention::SpotUnadjusted => (-i.r_for * i.t).exp(),
+                    _ => 1.0,
+                };
+                for &frac in &[0.90_f64, 0.97] {
+                    let mag = frac * cap;
+                    let k = strike_from_delta(conv, OptionType::Call, mag, i).unwrap_or_else(|e| {
+                        panic!("{conv:?} deep-ITM call Δ={mag} (cap {cap}) on {i:?} failed: {e:?}")
+                    });
+                    let mut probe = *i;
+                    probe.strike = k;
+                    let back = delta(conv, OptionType::Call, &probe);
+                    assert!(
+                        is_close(back, mag, 1e-9, 1e-11),
+                        "{conv:?} deep-ITM call Δ*={mag} back={back} K={k} on {i:?}"
+                    );
+                    assert!(
+                        k < i.forward(),
+                        "{conv:?} deep-ITM call K={k} must be below F={}",
+                        i.forward()
+                    );
+                }
+            }
+        }
+    }
+
+    /// `tiny_strike` must be a strictly positive lower bound that sits **below**
+    /// the deepest reachable wing strike for the regime, so the unadjusted
+    /// bracket always straddles. We pin its contract directly (independent of the
+    /// solver): it is positive, finite, far below the forward, and below the
+    /// 0.5Δ-put strike (the deepest wing the solver is asked to reach in
+    /// practice) — a mutant that returns `0.0`, inflates it, or flips a factor
+    /// breaks at least one of these.
+    #[test]
+    fn tiny_strike_is_a_valid_lower_bound() {
+        for i in [
+            base(),
+            VanillaInputs::new(1.10, 1.10, 0.04, 3.0, 0.02, 0.01),
+            VanillaInputs::new(100.0, 100.0, 0.45, 0.25, 0.05, 0.0),
+        ] {
+            let f = i.forward();
+            let ts = tiny_strike(&i, f);
+            assert!(
+                ts.is_finite() && ts > 0.0,
+                "tiny_strike must be positive finite: {ts}"
+            );
+            assert!(ts < f, "tiny_strike {ts} must be below forward {f}");
+            // Below the 0.5Δ-put strike (the deepest OTM-put wing exercised).
+            let deep_put =
+                strike_from_delta(DeltaConvention::SpotUnadjusted, OptionType::Put, -0.005, &i)
+                    .unwrap();
+            assert!(
+                ts < deep_put,
+                "tiny_strike {ts} must sit below the 0.5Δ-put strike {deep_put} so the \
+                 bracket straddles"
+            );
+        }
+    }
+
     /// strike → delta → strike round-trips across all four conventions, both
     /// option types, a 25Δ/10Δ set.
     #[test]
@@ -348,6 +471,98 @@ mod tests {
             ),
             Err(DeltaSolveError::WrongSign)
         );
+    }
+
+    /// Pin solver correctness with a TIGHT residual and an independent
+    /// (derivative-free) bisection oracle. The production solver uses Newton
+    /// steps off `delta_d_strike`; a wrong-arithmetic mutant there can be masked
+    /// because the guarded bisection still converges. So here we (a) require the
+    /// returned strike to reproduce the target delta to a far tighter tolerance
+    /// than the `1e-6` round-trip property, and (b) cross-check it against a pure
+    /// bisection that never touches `delta_d_strike` — the two must agree to
+    /// machine-ish precision, which catches a solver that "converges to the wrong
+    /// place" yet still self-consistently round-trips its own (mutated) delta.
+    #[test]
+    fn solver_strike_matches_independent_bisection() {
+        let i = base();
+        for conv in ALL {
+            for opt in [OptionType::Call, OptionType::Put] {
+                for mag in [0.10_f64, 0.25, 0.40] {
+                    let target = match opt {
+                        OptionType::Call => mag,
+                        OptionType::Put => -mag,
+                    };
+                    let k = strike_from_delta(conv, opt, target, &i).unwrap();
+
+                    // (a) Tight residual: the solved strike reproduces target.
+                    let mut probe = i;
+                    probe.strike = k;
+                    let residual = delta(conv, opt, &probe) - target;
+                    assert!(
+                        residual.abs() < 1e-11,
+                        "{conv:?} {opt:?} loose residual {residual} at K={k}"
+                    );
+
+                    // (b) Independent derivative-free bisection oracle. For the
+                    // premium-adjusted call we restrict to the OTM (decreasing)
+                    // branch K ≥ K_max, matching the production branch choice; all
+                    // other conventions are monotone over (0, ∞).
+                    let prem_adj_call = matches!(
+                        conv,
+                        DeltaConvention::SpotPremiumAdjusted
+                            | DeltaConvention::ForwardPremiumAdjusted
+                    ) && opt == OptionType::Call;
+                    let lo0 = if prem_adj_call {
+                        premium_adjusted_call_delta_max(&i)
+                    } else {
+                        1e-6 * i.forward()
+                    };
+                    let oracle = bisect_strike(conv, opt, target, &i, lo0, 50.0 * i.forward());
+                    assert!(
+                        is_close(k, oracle, 1e-7, 1e-9),
+                        "{conv:?} {opt:?} solver K={k} disagrees with bisection oracle {oracle}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A pure, derivative-free bisection on `Δ(K) − target` over `[lo, hi]`,
+    /// independent of the production solver's Newton step / `delta_d_strike`.
+    fn bisect_strike(
+        conv: DeltaConvention,
+        opt: OptionType,
+        target: f64,
+        template: &VanillaInputs,
+        lo: f64,
+        hi: f64,
+    ) -> f64 {
+        let g = |k: f64| {
+            let mut inp = *template;
+            inp.strike = k;
+            delta(conv, opt, &inp) - target
+        };
+        let (mut a, mut b) = (lo, hi);
+        let (mut ga, gb) = (g(a), g(b));
+        assert!(
+            ga * gb <= 0.0,
+            "oracle bracket must straddle: g(lo)={ga} g(hi)={gb}"
+        );
+        for _ in 0..200 {
+            let m = 0.5 * (a + b);
+            let gm = g(m);
+            // Converged when the residual or the bracket width is negligible.
+            if gm.abs() < 1e-15 || (b - a) < 1e-13 * (1.0 + m) {
+                return m;
+            }
+            if ga * gm <= 0.0 {
+                b = m;
+            } else {
+                a = m;
+                ga = gm;
+            }
+        }
+        0.5 * (a + b)
     }
 
     proptest::proptest! {

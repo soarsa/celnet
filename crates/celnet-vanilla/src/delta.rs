@@ -148,3 +148,140 @@ pub fn premium_adjusted_call_delta_max(i: &VanillaInputs) -> f64 {
     let m = -0.5 * vsqt * vsqt - d2_star * vsqt;
     f * exp(m)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use celnet_core::is_close;
+
+    const ALL: [DeltaConvention; 4] = [
+        DeltaConvention::SpotUnadjusted,
+        DeltaConvention::ForwardUnadjusted,
+        DeltaConvention::SpotPremiumAdjusted,
+        DeltaConvention::ForwardPremiumAdjusted,
+    ];
+
+    fn base() -> VanillaInputs {
+        VanillaInputs::new(1.20, 1.25, 0.12, 0.75, 0.03, 0.015)
+    }
+
+    /// The spot-delta carry factor `e^{−r_f T}` must be applied EXACTLY: the spot
+    /// unadjusted call delta equals `e^{−r_f T}·N(d1)` and the forward unadjusted
+    /// call delta equals `N(d1)` (factor 1). Round-trip tests can absorb a wrong
+    /// `factor` (the strike↔delta map stays self-consistent), so we pin the
+    /// closed-form delta VALUE here — killing a mutant that drops the minus sign
+    /// or flips the `r_for·t` product in `delta_aux`.
+    #[test]
+    fn spot_vs_forward_delta_carry_factor_is_exact() {
+        let i = base();
+        let a = delta_aux(DeltaConvention::SpotUnadjusted, &i);
+        let nd1 = celnet_core::math::norm_cdf(a.d1);
+        let carry = celnet_core::math::exp(-i.r_for * i.t);
+
+        let spot_call = delta(DeltaConvention::SpotUnadjusted, OptionType::Call, &i);
+        let fwd_call = delta(DeltaConvention::ForwardUnadjusted, OptionType::Call, &i);
+        assert!(
+            is_close(spot_call, carry * nd1, 1e-13, 1e-14),
+            "spot call delta {spot_call} must equal e^(-r_f T)·N(d1) = {}",
+            carry * nd1
+        );
+        assert!(
+            is_close(fwd_call, nd1, 1e-13, 1e-14),
+            "forward call delta {fwd_call} must equal N(d1) = {nd1}"
+        );
+        // The spot/forward ratio is exactly the carry factor (≠ 1 here since
+        // r_for ≠ 0) — a dropped minus or wrong product breaks this.
+        assert!(
+            is_close(spot_call / fwd_call, carry, 1e-12, 1e-13),
+            "spot/forward call-delta ratio must be the carry factor {carry}"
+        );
+        assert!(carry < 1.0, "with r_for>0 the carry factor must be < 1");
+    }
+
+    fn central_difference<F: Fn(f64) -> f64>(f: F, x: f64, h: f64) -> f64 {
+        (f(x + h) - f(x - h)) / (2.0 * h)
+    }
+
+    /// `delta_d_strike` is the analytic `∂Δ/∂K`; difference the analytic `delta`
+    /// in strike and require agreement, for every convention and option type.
+    /// This is an INDEPENDENT finite-difference oracle for the solver's Newton
+    /// slope — a mutant that flips a sign or drops a term in `delta_d_strike`
+    /// would still leave bisection converging in the solver, so only a direct FD
+    /// gate kills it.
+    #[test]
+    fn delta_d_strike_matches_finite_difference() {
+        let i = base();
+        let hk = 1e-6 * i.strike;
+        for conv in ALL {
+            for opt in [OptionType::Call, OptionType::Put] {
+                // Stay clear of the premium-adjusted call turning point so the FD
+                // is well-conditioned (the analytic identity holds everywhere; we
+                // sample a clean point either side of the forward).
+                for strike in [0.9 * i.forward(), 1.05 * i.forward(), 1.2 * i.forward()] {
+                    let inp = VanillaInputs { strike, ..i };
+                    let analytic = delta_d_strike(conv, opt, &inp);
+                    let fd = central_difference(
+                        |k| delta(conv, opt, &VanillaInputs { strike: k, ..inp }),
+                        strike,
+                        hk,
+                    );
+                    assert!(
+                        is_close(analytic, fd, 1e-5, 1e-8),
+                        "{conv:?} {opt:?} K={strike}: ∂Δ/∂K analytic {analytic} vs FD {fd}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// At the premium-adjusted call maximum `K_max`, the call delta's strike
+    /// derivative is exactly zero (the defining first-order condition of the
+    /// turning point). This pins `premium_adjusted_call_delta_max` against the
+    /// independent `delta_d_strike` oracle: a mutant that perturbs the bisection
+    /// arithmetic (wrong `g`, wrong moneyness back-out) moves `K_max` off the
+    /// stationary point and is caught.
+    #[test]
+    fn premium_adjusted_call_max_is_the_stationary_point() {
+        for conv in [
+            DeltaConvention::SpotPremiumAdjusted,
+            DeltaConvention::ForwardPremiumAdjusted,
+        ] {
+            for i in [
+                VanillaInputs::new(1.20, 1.20, 0.12, 0.75, 0.03, 0.015),
+                VanillaInputs::new(100.0, 100.0, 0.25, 1.5, 0.02, 0.04),
+                VanillaInputs::new(0.85, 0.85, 0.08, 0.25, 0.05, 0.01),
+            ] {
+                let k_max = premium_adjusted_call_delta_max(&i);
+                let at_max = VanillaInputs { strike: k_max, ..i };
+                // First-order condition: ∂Δ_call/∂K = 0 at K_max.
+                let slope = delta_d_strike(conv, OptionType::Call, &at_max);
+                assert!(
+                    slope.abs() < 1e-7,
+                    "{conv:?} K_max={k_max} not stationary: ∂Δ/∂K={slope}"
+                );
+                // And it is a MAXIMUM: delta is lower just either side.
+                let dmax = delta(conv, OptionType::Call, &at_max);
+                let lo = delta(
+                    conv,
+                    OptionType::Call,
+                    &VanillaInputs {
+                        strike: k_max * 0.97,
+                        ..i
+                    },
+                );
+                let hi = delta(
+                    conv,
+                    OptionType::Call,
+                    &VanillaInputs {
+                        strike: k_max * 1.03,
+                        ..i
+                    },
+                );
+                assert!(
+                    dmax >= lo && dmax >= hi,
+                    "{conv:?} K_max delta {dmax} is not a maximum (lo={lo}, hi={hi})"
+                );
+            }
+        }
+    }
+}
