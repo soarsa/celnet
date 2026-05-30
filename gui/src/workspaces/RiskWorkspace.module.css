@@ -188,3 +188,32 @@
   letter-spacing: 0.06em;
   color: var(--text-tertiary);
 }
+
+/* honest empty-states — shown when the server returns no decomposition, never
+   a row of zeros that masquerade as data */
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: var(--hairline);
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+}
+.emptyTitle {
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+  margin: 0;
+}
+.emptyBody {
+  font-size: var(--type-micro);
+  line-height: 1.5;
+  color: var(--text-tertiary);
+  margin: 0;
+}
+.emptyInline {
+  grid-column: 1 / -1;
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+  padding: var(--space-2) 0;
+}

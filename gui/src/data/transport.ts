@@ -25,6 +25,7 @@ import type {
   MarkedSurface,
   MarketContext,
   Quote,
+  RiskBucketRequest,
   ScenarioResult,
   ShockAxis,
   Smile,
@@ -103,11 +104,17 @@ export interface CelnetTransport {
     conventions: Conventions,
   ): Promise<MarkedSurface>;
 
-  /** SurfaceService.Scenario */
+  /**
+   * SurfaceService.Scenario — reprice across the Cartesian product of the shock
+   * axes. When `riskBuckets` is supplied the server additionally returns the
+   * book-shaped risk decomposition (`bucketedRisk`); when omitted, `bucketedRisk`
+   * is `null` (the server computes it only on request).
+   */
   scenario(
     instrument: Instrument,
     baseMarket: MarketContext,
     conventions: Conventions,
     axes: ShockAxis[],
+    riskBuckets?: RiskBucketRequest,
   ): Promise<ScenarioResult>;
 }

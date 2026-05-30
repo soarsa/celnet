@@ -28,6 +28,7 @@ import type {
   MarkedSurface,
   MarketContext,
   Quote,
+  RiskBucketRequest,
   ScenarioResult,
   ShockAxis,
   Smile,
@@ -44,6 +45,7 @@ import {
   marketToWire,
   parseFrame,
   quoteFromWire,
+  riskBucketRequestToWire,
   scenarioResultFromWire,
   serializeFrame,
   shockAxisToWire,
@@ -665,18 +667,19 @@ export class WsTransport implements CelnetTransport {
     baseMarket: MarketContext,
     conventions: Conventions,
     axes: ShockAxis[],
+    riskBuckets?: RiskBucketRequest,
   ): Promise<ScenarioResult> {
-    const reply = await this.conn.request(
-      "scenario",
-      {
-        instrument: instrumentToWire(instrument),
-        base_market: marketToWire(baseMarket),
-        conventions: conventionsToWire(conventions),
-        axes: axes.map(shockAxisToWire),
-        expiry_years: instrument.expiryYears,
-      },
-      "scenario_response",
-    );
+    const body: Record<string, unknown> = {
+      instrument: instrumentToWire(instrument),
+      base_market: marketToWire(baseMarket),
+      conventions: conventionsToWire(conventions),
+      axes: axes.map(shockAxisToWire),
+      expiry_years: instrument.expiryYears,
+    };
+    // The book-shaped risk decomposition is computed by the server ONLY when the
+    // request carries a `risk_buckets` block — otherwise `bucketed_risk` is null.
+    if (riskBuckets) body["risk_buckets"] = riskBucketRequestToWire(riskBuckets);
+    const reply = await this.conn.request("scenario", body, "scenario_response");
     return scenarioResultFromWire(reply);
   }
 

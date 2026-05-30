@@ -31,6 +31,7 @@ import type {
   MarkedSurface,
   MarketContext,
   Quote,
+  RiskBucketRequest,
   ScenarioPoint,
   ScenarioResult,
   ShockAxis,
@@ -528,6 +529,25 @@ export function shockAxisToWire(a: ShockAxis): WireObject {
   return { factor: e.shockFactor.toWire(a.factor), relative: a.relative, steps: a.steps };
 }
 
+/**
+ * Encode the book-shaped risk decomposition request that rides on a `Scenario`
+ * call. The mirror's `RiskBucketRequest` (crates/celnet-server/src/ws/codec.rs
+ * `risk_bucket_request_from_json`) reads each vega pillar FLAT as
+ * `{tenor_years, delta}` and each cross-gamma pair FLAT as `{factor_a, factor_b}`
+ * (proto enum tags), plus a bare `roll_horizons_years` array — supplying this is
+ * what makes the server populate `bucketed_risk` at all (it is `null` otherwise).
+ */
+export function riskBucketRequestToWire(r: RiskBucketRequest): WireObject {
+  return {
+    vega_pillars: r.vegaPillars.map((p) => ({ tenor_years: p.tenorYears, delta: p.delta })),
+    cross_gamma_pairs: r.crossGammaPairs.map((c) => ({
+      factor_a: e.shockFactor.toWire(c.factorA),
+      factor_b: e.shockFactor.toWire(c.factorB),
+    })),
+    roll_horizons_years: r.rollHorizonsYears,
+  };
+}
+
 function scenarioPointFromWire(o: WireObject): ScenarioPoint {
   return {
     appliedShocks: numberArray(o, "applied_shocks"),
@@ -564,9 +584,16 @@ function bucketedRiskFromWire(o: WireObject): BucketedRisk {
 }
 
 export function scenarioResultFromWire(o: WireObject): ScenarioResult {
+  // `bucketed_risk` is an optional proto message: the server emits it only when the
+  // request carried a `RiskBucketRequest`, and serializes the absent case as JSON
+  // `null` (or omits it). Decode that to `null` so the workspace shows an honest
+  // "not requested / no position" empty-state rather than a row of zeros.
+  const br = o["bucketed_risk"];
+  const bucketedRisk =
+    br && typeof br === "object" ? bucketedRiskFromWire(br as WireObject) : null;
   return {
     points: array(o, "points").map(scenarioPointFromWire),
-    bucketedRisk: bucketedRiskFromWire(child(o, "bucketed_risk")),
+    bucketedRisk,
   };
 }
 

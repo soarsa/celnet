@@ -21,6 +21,7 @@ import type {
   MarkedSurface,
   MarketContext,
   Quote,
+  RiskBucketRequest,
   ScenarioPoint,
   ScenarioResult,
   ShockAxis,
@@ -34,13 +35,7 @@ import type {
 } from "./contract";
 import { forward, priceInstrument, strikeFromDelta } from "./pricing";
 import { Rng } from "./rng";
-import {
-  brokerLadder,
-  DEFAULT_CONVENTIONS,
-  PAIRS,
-  TENOR_LADDER,
-  type PairContext,
-} from "./seed";
+import { brokerLadder, DEFAULT_CONVENTIONS, PAIRS, type PairContext } from "./seed";
 import { calibrateSmile, markSurface } from "./surface";
 import type {
   CelnetTransport,
@@ -404,6 +399,7 @@ export class MockTransport implements CelnetTransport {
     baseMarket: MarketContext,
     _conventions: Conventions,
     axes: ShockAxis[],
+    riskBuckets?: RiskBucketRequest,
   ): Promise<ScenarioResult> {
     const points: ScenarioPoint[] = [];
     // Lock strikes to absolute levels at the base market so a spot/vol shock
@@ -411,7 +407,6 @@ export class MockTransport implements CelnetTransport {
     // silently re-striking to the same delta on every shocked market — which
     // would neutralize the directional P&L the trader is shocking for.
     const fixed = freezeStrikes(instrument, baseMarket);
-    const basePrice = priceInstrument(fixed, baseMarket).greeks.price;
 
     // Cartesian product of the axes (the contract's grid semantics).
     const indices = axes.map(() => 0);
@@ -436,49 +431,50 @@ export class MockTransport implements CelnetTransport {
       }
     }
 
-    const vegaBuckets = this.bucketVega(instrument, baseMarket);
+    // The book-shaped risk decomposition is computed ONLY when requested — exactly
+    // like the live server, which returns `bucketed_risk: null` for a bare scenario.
+    if (!riskBuckets) {
+      return { points, bucketedRisk: null };
+    }
+    const vegaBuckets: VegaBucket[] = riskBuckets.vegaPillars.map((p) => {
+      const strike = strikeFromDelta(p.delta, baseMarket, p.tenorYears);
+      const bumped: Instrument = {
+        ...instrument,
+        expiryYears: p.tenorYears,
+        product: {
+          kind: "vanilla",
+          vanilla: { optionType: p.delta >= 0 ? "CALL" : "PUT", strike: { kind: "strike", strike } },
+        },
+      };
+      const vega = priceInstrument(bumped, baseMarket).greeks.vega;
+      return { tenorYears: p.tenorYears, delta: p.delta, vega };
+    });
+    const crossGammas = riskBuckets.crossGammaPairs.map((pair) => ({
+      factorA: pair.factorA,
+      factorB: pair.factorB,
+      value: crossGamma(instrument, baseMarket, pair.factorA, pair.factorB),
+    }));
+    // The theta roll is the *absolute* repriced value at each rolled expiry
+    // (matching the server's `theta_roll`, which carries values, not differences);
+    // the consumer differences against the base value to read the decay P&L.
+    const thetaRoll = riskBuckets.rollHorizonsYears.map((h) => {
+      const rolled: Instrument = {
+        ...fixed,
+        expiryYears: Math.max(1 / 365, fixed.expiryYears - h),
+      };
+      return priceInstrument(rolled, baseMarket).greeks.price;
+    });
     return {
       points,
       bucketedRisk: {
         vegaBuckets,
-        crossGammas: [
-          {
-            factorA: "SPOT",
-            factorB: "VOL",
-            value: crossGamma(instrument, baseMarket, "SPOT", "VOL"),
-          },
-        ],
-        thetaRoll: [1 / 365, 3 / 365, 7 / 365].map((h) => {
-          const rolled: Instrument = {
-            ...fixed,
-            expiryYears: Math.max(1 / 365, fixed.expiryYears - h),
-          };
-          return priceInstrument(rolled, baseMarket).greeks.price - basePrice;
-        }),
-        rollHorizonsYears: [1 / 365, 3 / 365, 7 / 365],
+        crossGammas,
+        thetaRoll,
+        rollHorizonsYears: riskBuckets.rollHorizonsYears,
       },
     };
   }
 
-  /** Bucketed vega across (tenor, delta-pillar) — the desk's hedge representation. */
-  private bucketVega(instrument: Instrument, market: MarketContext): VegaBucket[] {
-    const pillars = [-0.1, -0.25, 0.5, 0.25, 0.1];
-    return TENOR_LADDER.slice(0, 5).flatMap((t) =>
-      pillars.map((delta) => {
-        const strike = strikeFromDelta(delta, market, t.years);
-        const bumped: Instrument = {
-          ...instrument,
-          expiryYears: t.years,
-          product: {
-            kind: "vanilla",
-            vanilla: { optionType: delta >= 0 ? "CALL" : "PUT", strike: { kind: "strike", strike } },
-          },
-        };
-        const vega = priceInstrument(bumped, market).greeks.vega;
-        return { tenorYears: t.years, delta, vega };
-      }),
-    );
-  }
 }
 
 /**

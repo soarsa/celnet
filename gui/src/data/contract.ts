@@ -355,5 +355,34 @@ export interface BucketedRisk {
 
 export interface ScenarioResult {
   points: ScenarioPoint[];
-  bucketedRisk: BucketedRisk;
+  /**
+   * Book-shaped risk decomposition. Present only when the scenario request asked
+   * for it (a `RiskBucketRequest`); `null` when the request omitted risk buckets,
+   * so a caller can render an honest "not requested" state rather than zeros.
+   */
+  bucketedRisk: BucketedRisk | null;
+}
+
+/** A single vega pillar to bucket on: a `(tenor, delta)` node of the surface. */
+export interface VegaPillar {
+  tenorYears: number;
+  delta: number;
+}
+
+/** A factor pair to compute the off-diagonal cross-gamma for. */
+export interface CrossGammaPair {
+  factorA: ShockFactor;
+  factorB: ShockFactor;
+}
+
+/**
+ * The book-shaped risk decomposition request that accompanies a `Scenario` call.
+ * The server only computes `bucketed_risk` when this is supplied — vega bucketed
+ * per `(tenor, delta)` pillar, cross-gamma per distinct factor pair, and the theta
+ * roll over the requested horizons (years rolled forward).
+ */
+export interface RiskBucketRequest {
+  vegaPillars: VegaPillar[];
+  crossGammaPairs: CrossGammaPair[];
+  rollHorizonsYears: number[];
 }

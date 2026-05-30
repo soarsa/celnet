@@ -94,8 +94,43 @@ export function AppProvider({ children }: { children: React.ReactNode }): React.
     [transport, pairCtx, conventions],
   );
 
+  // Cold-start surface load with a BOUNDED retry. On a fresh edge the first mark
+  // can fail transiently — the readiness gate replies `unavailable` while the
+  // instance is still starting/draining, or the request times out before the
+  // socket is up. Without a retry the Surface workspace would be stuck on its
+  // "Marking surface…" state until the user manually re-marks. We retry with
+  // capped exponential backoff for a bounded number of attempts; once a surface
+  // lands (or the pair/transport changes, or we unmount) the loop stops. This is
+  // recovery only — it never fabricates a surface; a genuine persistent failure
+  // simply leaves the honest loading state and stops retrying.
   useEffect(() => {
-    void remarkSurface();
+    let live = true;
+    let attempt = 0;
+    const MAX_ATTEMPTS = 8;
+    const BASE_MS = 300;
+    const MAX_MS = 4_000;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const tryMark = async (): Promise<void> => {
+      if (!live) return;
+      try {
+        await remarkSurface();
+        // Success: stop retrying (the surface state is set inside remarkSurface).
+      } catch {
+        attempt += 1;
+        if (!live || attempt >= MAX_ATTEMPTS) return;
+        const delay = Math.min(MAX_MS, BASE_MS * 2 ** (attempt - 1));
+        timer = setTimeout(() => {
+          void tryMark();
+        }, delay);
+      }
+    };
+
+    void tryMark();
+    return () => {
+      live = false;
+      if (timer !== undefined) clearTimeout(timer);
+    };
   }, [remarkSurface]);
 
   const setPair = (pair: CcyPair) => {
