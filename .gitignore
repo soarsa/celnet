@@ -26,3 +26,6 @@ lcov.info
 # Local env overrides
 .env
 .env.local
+
+# codebase-memory-mcp local index artifact (machine-local, regenerable, not synced)
+.codebase-memory/
