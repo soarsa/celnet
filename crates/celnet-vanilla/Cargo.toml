@@ -17,3 +17,4 @@ celnet-core.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+celnet-conventions.workspace = true

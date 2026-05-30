@@ -63,6 +63,15 @@ source "$HOME/.cargo/env" && cargo <...>
 Or use the **justfile** (each recipe sources the env): `just build`, `just test`,
 `just lint`, `just fmt`, `just deny`, `just coverage`, `just mutants`, `just check`.
 
+**Build incrementally — gate only what changed.** Per iteration, verify the modified
+crate(s) only: `just check-crate <crate>` (one crate) or `just check-changed` (all crates
+touched in the working tree). These use `cargo … -p <crate>`, so unchanged crates are
+neither recompiled (sccache + cargo incremental) nor re-tested. Reserve the full-workspace
+`just check` for the **cross-crate integration gate before committing a milestone**. The
+crate split exists precisely so a change rebuilds/tests a minimal subtree — keep crates
+small and dependencies pointing one way (see `docs/INTERFACES.md`). Use `detect_changes`
+(codebase-memory) to see a diff's blast radius before choosing the gate scope.
+
 Toolchain pinned to **1.96.0** via `rust-toolchain.toml`. Edition **2024**.
 Installed tooling: cargo-nextest, cargo-deny, cargo-audit, cargo-llvm-cov, cargo-mutants,
 cargo-machete, just, sccache (build cache, wired via `.cargo/config.toml`).
