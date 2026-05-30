@@ -14,12 +14,13 @@ workspace = true
 [dependencies]
 celnet-types.workspace = true
 celnet-conventions.workspace = true
-celnet-proto.workspace = true
-tokio.workspace = true
+# The async edge needs the AsyncRead/AsyncWrite extension traits (`io-util`) on
+# top of the workspace tokio feature set; declared here (not relied upon via
+# cross-crate feature unification) so this crate builds standalone.
+tokio = { workspace = true, features = ["io-util"] }
 
 [dev-dependencies]
 celnet-vanilla.workspace = true
-celnet-surface.workspace = true
 # golden reference tables (leaf test-data crate; not in the central dep table)
 celnet-golden = { path = "../celnet-golden" }
 proptest.workspace = true

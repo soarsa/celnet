@@ -459,8 +459,6 @@ version = "0.0.0"
 dependencies = [
  "celnet-conventions",
  "celnet-golden",
- "celnet-proto",
- "celnet-surface",
  "celnet-types",
  "celnet-vanilla",
  "proptest",
@@ -502,6 +500,7 @@ dependencies = [
  "serde",
  "serde_json",
  "time",
+ "tokio",
 ]
 
 [[package]]

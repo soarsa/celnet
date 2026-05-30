@@ -56,13 +56,28 @@
 #![forbid(unsafe_code)]
 
 pub mod aggregate;
+pub mod deployment;
 pub mod divergence;
+pub mod egress;
 pub mod normalize;
+pub mod subscriber;
 pub mod vendor;
 
 pub use aggregate::{BlendConfig, BlendError, BlendQuality, BlendedSlice, SourceWeight, blend};
+pub use deployment::{
+    DeploymentMode, Edge, EdgeBuilder, StandaloneSink, StandaloneSinkError, StandaloneSource,
+    StandaloneTransport, frame_message,
+};
 pub use divergence::{DivergenceReport, SmileVols, SourceDivergence, divergence_report};
+pub use egress::{
+    DistributorEgress, EgressConfig, EgressError, EgressGovernor, EgressMetrics, MonotonicClock,
+    NanoClock, PriceKey, PriceSink, PriceUpdate,
+};
 pub use normalize::{NormalizeError, NormalizedSlice, SourceId, normalize};
+pub use subscriber::{
+    FeedFrame, FeedTransport, MarketDataSource, ResilientSubscriber, SubscriberStats,
+    SubscriptionKey, TickConsumer, subscription_set,
+};
 pub use vendor::{
     VendorSmileMessage, WireAtmConvention, WireConventions, WireDeltaConvention, WireForward,
     WireWing,
