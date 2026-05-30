@@ -1,0 +1,22 @@
+[package]
+name = "celnet-plugin-host"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet plugin host — tiered user-analytics execution: native registry + deterministic fuel-metered wasmi sandbox."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+celnet-types.workspace = true
+celnet-core.workspace = true
+celnet-plugin-api.workspace = true
+wasmi.workspace = true
+
+[dev-dependencies]
+celnet-vanilla.workspace = true
+wat.workspace = true
