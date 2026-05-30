@@ -42,6 +42,24 @@
 //!    Both engines are cross-validated against the analytic layer (and each
 //!    other) on the overlap — see the crate-level `cross_validation` tests.
 //!
+//! 4. **Local-stochastic-volatility (LSV) booking model** — a full second-
+//!    generation model that prices on *both* numerical engines from one calibrated
+//!    state:
+//!    * [`stochvol`] — the mean-reverting square-root **variance backbone** with
+//!      the quadratic-exponential discretisation and the full-truncation
+//!      log-spot integration;
+//!    * [`leverage`] — the **Dupire local-volatility** extraction (implied-total-
+//!      variance form) and the tabulated **leverage** surface `L(S,t)`;
+//!    * [`particle`] — the **interacting-particle** calibration that fills the
+//!      leverage so the model reprices the arbitrage-free vanilla surface
+//!      (`L² = σ_Dupire² / E[v | S]`);
+//!    * [`adi`] — a 2-D **Hundsdorfer-Verwer ADI** finite-difference solver for the
+//!      `(spot, variance)` PDE (mixed-term-explicit, direction-implicit);
+//!    * [`lsv`] — the [`LsvModel`] orchestration: calibrate once, then price
+//!      European and second-generation **window-barrier** payoffs on the ADI PDE
+//!      and on the [`mc`] Monte-Carlo engine, cross-validated against each other
+//!      and against the pure-local-vol (`ξ=0`) Dupire limit.
+//!
 //! # Method provenance (doc comments only)
 //!
 //! Reflection-principle / image closed forms for barriers and touches:
@@ -62,29 +80,41 @@
 
 #![forbid(unsafe_code)]
 
+pub mod adi;
 pub mod barrier;
 pub mod digital;
+pub mod leverage;
+pub mod lsv;
 pub mod mc;
 pub mod normal;
+pub mod particle;
 pub mod payoff;
 pub mod pde;
 pub mod rng;
+pub mod stochvol;
 pub mod touch;
 pub mod vannavolga_overlay;
 
+pub use adi::{AdiGrid, AdiProblem, WindowSpec, solve as adi_solve, solve_window};
 pub use barrier::{
     BarrierKind, BarrierStyle, DoubleBarrierKnockOut, SingleBarrier, double_knock_out_price,
     single_barrier_price,
 };
 pub use digital::{DigitalKind, DigitalStyle, digital_greeks, digital_price};
+pub use leverage::{ImpliedVolSurface, LeverageSurface, LocalVolSurface};
+pub use lsv::{LsvModel, SurfaceTarget, WindowBarrier};
 pub use mc::{
     BGK_BETA, McConfig, McEstimate, geometric_asian_price, price_asian, price_barrier,
     price_barrier_bgk_shifted,
 };
 pub use normal::{box_muller, inverse_cdf};
+pub use particle::{CalibrationResult, ParticleConfig, calibrate_leverage};
 pub use payoff::{ArithmeticAsian, DiscreteBarrier, vanilla_intrinsic};
 pub use pde::{PdeGrid, PdeProblem, solve as pde_solve};
 pub use rng::PhiloxStream;
+pub use stochvol::{
+    QE_SWITCH, VarianceParams, log_spot_increment, qe_variance_step, step_uniforms,
+};
 pub use touch::{
     DoubleNoTouch, RebateTiming, TouchSide, double_no_touch_price, double_touch_price,
     no_touch_price, one_touch_price,
