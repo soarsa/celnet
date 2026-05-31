@@ -62,7 +62,7 @@ export function SmileChart({
     pointsRef.current = pts.map((p, i) => ({ x: x(i), delta: p.delta }));
 
     const root = getComputedStyle(document.documentElement);
-    const accent = root.getPropertyValue("--accent").trim() || "#6aa6ff";
+    const accent = root.getPropertyValue("--accent").trim() || "oklch(0.62 0.19 280)";
     const line = root.getPropertyValue("--grid-line").trim() || "rgba(255,255,255,0.06)";
     const text = root.getPropertyValue("--text-tertiary").trim() || "#888";
 
@@ -96,7 +96,7 @@ export function SmileChart({
       const selected = selectedDelta !== null && selectedDelta !== undefined && Math.abs(p.delta - selectedDelta) < 1e-6;
       ctx.beginPath();
       ctx.arc(x(i), y(p.vol), selected ? 4.5 : 2.6, 0, Math.PI * 2);
-      ctx.fillStyle = selected ? accent : "oklch(0.8 0.02 250)";
+      ctx.fillStyle = selected ? accent : "oklch(0.8 0.02 264)";
       ctx.fill();
       if (selected) {
         ctx.strokeStyle = accent;

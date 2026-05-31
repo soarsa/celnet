@@ -17,18 +17,17 @@
 }
 
 .brand {
-  margin-bottom: var(--space-4);
-}
-.mark {
   display: grid;
   place-items: center;
   width: 34px;
   height: 34px;
-  border-radius: var(--r-md);
-  font-size: 16px;
-  color: oklch(0.16 0.012 250);
-  background: linear-gradient(135deg, var(--accent), var(--bid));
-  box-shadow: 0 2px 10px oklch(from var(--accent) l c h / 0.4);
+  margin-bottom: var(--space-4);
+}
+/* The Celer pinwheel mark renders in brand coral (set on the SVG via its own
+ * module) with a soft brand glow — no longer a gradient diamond glyph. */
+.mark {
+  color: var(--brand);
+  filter: drop-shadow(0 2px 8px oklch(from var(--brand) l c h / 0.45));
 }
 
 .nav {
@@ -74,7 +73,8 @@
 /* --- main column --- */
 .main {
   display: grid;
-  grid-template-rows: 44px 1fr 28px;
+  /* title bar · pair strip · workspace canvas · status ribbon */
+  grid-template-rows: 44px auto 1fr 28px;
   min-width: 0;
   min-height: 0;
 }
@@ -109,6 +109,9 @@
   background: oklch(0.78 0.16 145);
 }
 
+.lockup {
+  flex: none;
+}
 .pairSwitch {
   display: flex;
   align-items: center;
@@ -119,12 +122,9 @@
 .pairSwitch:hover {
   background: var(--bg-inset);
 }
-.product {
-  font-weight: var(--weight-header);
-  color: var(--text-primary);
-}
 .divider {
   color: var(--text-tertiary);
+  opacity: 0.6;
 }
 .pair {
   font-weight: var(--weight-emphasis);

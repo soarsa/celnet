@@ -15,6 +15,12 @@ interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
 
+// Build-time stamp constants injected by Vite `define` (vite.config.ts). Real
+// values: the git short SHA (or package version off a git tree) and the UTC
+// build time. Surfaced in the status ribbon (Celer login-footer signature).
+declare const __CELNET_BUILD_HASH__: string;
+declare const __CELNET_BUILD_TIME__: string;
+
 // Typed CSS Modules: every `*.module.css` import is a class-name map. Keeps the
 // design-system styling type-safe under `strict` without a heavy build plugin.
 declare module "*.module.css" {

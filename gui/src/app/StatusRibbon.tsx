@@ -49,6 +49,14 @@ function useRenderP99(): number {
   return p99;
 }
 
+/** Compact UTC stamp "YYYY-MM-DD HH:MM:SSZ" from the build-time ISO string. */
+function fmtBuildTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const p = (n: number) => n.toString().padStart(2, "0");
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}Z`;
+}
+
 export function StatusRibbon(): React.ReactElement {
   const app = useApp();
   const now = useSecondClock();
@@ -106,6 +114,16 @@ export function StatusRibbon(): React.ReactElement {
         ·
       </span>
       <span className={`num ${styles.clock}`}>◷ {fmtClock(now)}</span>
+      <span className={styles.sep} aria-hidden>
+        ·
+      </span>
+      {/* Celer login-footer signature: a real build hash · UTC build time. */}
+      <span
+        className={`num ${styles.build}`}
+        title="build provenance — git short SHA · UTC build time"
+      >
+        celnet {__CELNET_BUILD_HASH__} · {fmtBuildTime(__CELNET_BUILD_TIME__)}
+      </span>
     </footer>
   );
 }

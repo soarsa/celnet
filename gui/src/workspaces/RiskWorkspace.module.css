@@ -68,7 +68,8 @@
   border-radius: var(--r-sm);
   font-size: var(--type-callout);
   font-weight: var(--weight-emphasis);
-  color: oklch(0.18 0.02 250);
+  /* dark ink legible on the heatmap ramp — track the navy hue (264) */
+  color: oklch(0.18 0.02 264);
   min-width: 64px;
 }
 .anchored {
@@ -137,6 +138,7 @@
   font-size: var(--type-caption);
 }
 .ladderHead {
+  font-family: var(--font-brand);
   font-size: var(--type-micro);
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -183,6 +185,7 @@
   align-items: baseline;
 }
 .provLabel {
+  font-family: var(--font-brand);
   font-size: var(--type-micro);
   text-transform: uppercase;
   letter-spacing: 0.06em;

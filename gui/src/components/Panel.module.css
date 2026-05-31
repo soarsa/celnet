@@ -55,6 +55,7 @@
 }
 
 .title {
+  font-family: var(--font-brand);
   font-size: var(--type-callout);
   font-weight: var(--weight-header);
   letter-spacing: 0.06em;

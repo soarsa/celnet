@@ -1,0 +1,251 @@
+/* BookWorkspace — desk-wide aggregated risk. Aurora materials + Celer identity:
+   Anaheim letter-spaced labels, mono numerics, coral only for section/brand
+   accents, semantic bid/offer green/red for risk signs. */
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  height: 100%;
+  min-height: 0;
+}
+
+.loading {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--text-tertiary);
+}
+
+/* --- honest empty-state --- */
+.empty {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  height: 100%;
+  gap: var(--space-3);
+  text-align: center;
+  padding: var(--space-8);
+}
+.emptyGlyph {
+  font-size: 40px;
+  line-height: 1;
+  color: var(--brand);
+  opacity: 0.7;
+}
+.emptyTitle {
+  font-family: var(--font-brand);
+  font-size: var(--type-headline);
+  color: var(--text-secondary);
+}
+.emptyBody {
+  max-width: 46ch;
+  font-size: var(--type-callout);
+  line-height: var(--type-body-lh);
+  color: var(--text-tertiary);
+}
+
+/* --- summary cards --- */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-4);
+}
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-5);
+  border-radius: var(--r-md);
+  background: var(--bg-raised);
+  border: var(--hairline);
+  box-shadow: var(--shadow-panel);
+  position: relative;
+  overflow: hidden;
+}
+/* coral accent rule = Celer brand mark on each card (identity, not a risk sign) */
+.card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: var(--brand);
+  opacity: 0.6;
+}
+.cardLabel {
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+}
+.cardValue {
+  font-size: var(--type-title);
+  font-weight: var(--weight-emphasis);
+  color: var(--text-primary);
+}
+
+/* --- two-column body: breakdown table | aggregate ladder --- */
+.cols {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: var(--space-5);
+  flex: 1;
+  min-height: 0;
+}
+
+/* --- breakdown table --- */
+.tablePanel {
+  min-height: 0;
+}
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--type-body);
+}
+.table thead th {
+  text-align: right;
+  padding: var(--space-2) var(--space-4);
+  font-family: var(--font-brand);
+  font-size: var(--type-caption);
+  font-weight: var(--weight-header);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  border-bottom: var(--hairline);
+  white-space: nowrap;
+}
+.colPair {
+  text-align: left !important;
+}
+.colNum {
+  min-width: 56px;
+}
+.table td {
+  padding: var(--space-3) var(--space-4);
+  text-align: right;
+  border-bottom: 0.5px solid var(--grid-line);
+  white-space: nowrap;
+}
+.table tbody tr:hover {
+  background: oklch(from var(--accent) l c h / 0.06);
+}
+.pairCell {
+  text-align: left;
+  font-family: var(--font-brand);
+  font-weight: var(--weight-emphasis);
+  letter-spacing: 0.03em;
+  color: var(--text-primary);
+}
+.notional {
+  color: var(--text-secondary);
+}
+.table tfoot td {
+  border-top: var(--hairline);
+  border-bottom: none;
+  font-weight: var(--weight-emphasis);
+}
+.table tfoot .pairCell {
+  color: var(--text-primary);
+}
+.note {
+  margin-top: var(--space-4);
+  font-size: var(--type-caption);
+  line-height: var(--type-callout-lh);
+  color: var(--text-tertiary);
+}
+
+/* --- aggregate vega ladder --- */
+.ladderPanel {
+  min-height: 0;
+}
+.ladder {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.ladderHead,
+.ladderRow {
+  display: grid;
+  grid-template-columns: 44px 52px 1fr;
+  align-items: center;
+  column-gap: var(--space-3);
+  font-size: var(--type-caption);
+}
+.ladderHead {
+  font-family: var(--font-brand);
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  padding-bottom: var(--space-2);
+}
+.ladderRow {
+  padding: 2px 0;
+  color: var(--text-secondary);
+}
+.bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 16px;
+  background: var(--bg-inset);
+  border-radius: var(--r-sm);
+}
+.barFill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: var(--r-sm);
+}
+.barVal {
+  position: relative;
+  margin-left: auto;
+  padding-right: var(--space-2);
+  font-size: var(--type-micro);
+}
+
+/* --- cross-gamma / theta-roll disclosures --- */
+.disclosure {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: var(--hairline);
+}
+.discLabel {
+  display: block;
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+  margin-bottom: var(--space-2);
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: 2px 8px;
+  border-radius: var(--r-full);
+  background: var(--bg-inset);
+  border: var(--hairline);
+  font-size: var(--type-caption);
+}
+.chipKey {
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+}
+.emptyInline {
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+}
+
+/* --- semantic risk signs (bid green / offer red) — NEVER coral --- */
+.pos {
+  color: var(--bid);
+}
+.neg {
+  color: var(--offer);
+}

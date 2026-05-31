@@ -1,11 +1,26 @@
 /*
- * Celnet Aurora — design tokens (GUI-DESIGN §3).
+ * Celnet Aurora × Celer — design tokens (GUI-DESIGN §3).
  *
  * Semantic tokens only; components never reach for raw hex. All color is OKLCH
  * for perceptual uniformity so semantic up/down greens/reds are equally vivid in
  * light and dark and survive contrast tuning. Three appearances: Dark (default),
  * Light, and Increased-Contrast (AAA numerics). prefers-reduced-motion and
  * prefers-reduced-transparency are honoured at the bottom.
+ *
+ * Celer brand layer (authoritative brand kit):
+ *   --brand        coral  #ff7357 → oklch(0.72 0.17 35)  — the signature Celer
+ *                  colour: logo/pinwheel, brand pulse, the "live" accent, the
+ *                  active-pair marker. NOT a semantic up/down; bid/offer stay
+ *                  green/red. --brand-soft is its low-alpha tint.
+ *   --accent       Celer indigo/periwinkle #6b6bf5 → oklch(0.62 0.19 280) —
+ *                  focus rings, selection, primary buttons, links. Replaces the
+ *                  previous azure (hue ~250).
+ *   navy base      #1B1F2A and raised #282C3E set the dark surfaces; hue nudged
+ *                  toward ~264 to sit under the indigo accent.
+ *   --text-secondary periwinkle-grey #979CB7. Labels are uppercase + ~0.06em.
+ *   --font-brand   "Anaheim" (Celer brand typeface) over the UI fallback; used
+ *                  for display/title/headline/brand/labels. --font-mono (SF Mono)
+ *                  stays the only face for ALL numerics (prices, greeks, spots).
  */
 
 :root {
@@ -29,6 +44,10 @@
 
   --font-ui: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui,
     sans-serif;
+  /* Celer brand typeface — used for display/title/headline/brand/labels. Numerics
+   * NEVER use this; they stay on --font-mono. Anaheim loads via the Google Fonts
+   * <link> in index.html; --font-ui is the immediate fallback (no layout shift). */
+  --font-brand: "Anaheim", var(--font-ui);
   --font-mono: ui-monospace, "SF Mono", "IBM Plex Mono", "Menlo", "Consolas",
     monospace;
 
@@ -68,18 +87,26 @@
   --blur-hud: 40px;
 
   /* --- DARK appearance (default trading-floor) --- */
-  --bg-base: oklch(0.16 0.012 250);
-  --bg-raised: oklch(0.2 0.015 250);
-  --bg-overlay: oklch(0.24 0.02 250 / 0.82);
-  --bg-overlay-solid: oklch(0.24 0.02 250);
-  --bg-inset: oklch(0.13 0.01 250);
+  /* Celer navy: base ≈ #1B1F2A (L≈0.255), raised ≈ #282C3E (L≈0.315), hue ~264
+   * to sit warm-cool-neutral under the indigo accent. */
+  --bg-base: oklch(0.255 0.018 264);
+  --bg-raised: oklch(0.315 0.022 264);
+  --bg-overlay: oklch(0.345 0.026 264 / 0.82);
+  --bg-overlay-solid: oklch(0.345 0.026 264);
+  --bg-inset: oklch(0.21 0.016 264);
 
-  --text-primary: oklch(0.97 0.01 250);
-  --text-secondary: oklch(0.72 0.015 250);
-  --text-tertiary: oklch(0.55 0.015 250);
+  --text-primary: oklch(0.97 0.008 264);
+  /* Celer secondary text ≈ #979CB7 (periwinkle-grey). */
+  --text-secondary: oklch(0.68 0.03 276);
+  --text-tertiary: oklch(0.55 0.025 276);
 
-  --accent: oklch(0.72 0.15 250);
-  --accent-soft: oklch(0.72 0.15 250 / 0.18);
+  /* Celer brand coral #ff7357 — logo/pulse/active-pair marker (NOT up/down). */
+  --brand: oklch(0.72 0.17 35);
+  --brand-soft: oklch(0.72 0.17 35 / 0.16);
+
+  /* Celer indigo/periwinkle #6b6bf5 — focus, selection, primary, links. */
+  --accent: oklch(0.62 0.19 280);
+  --accent-soft: oklch(0.62 0.19 280 / 0.2);
 
   --bid: oklch(0.78 0.16 155);
   --offer: oklch(0.7 0.17 25);
@@ -89,10 +116,11 @@
   --flash-up: oklch(0.85 0.18 155 / 0.5);
   --flash-dn: oklch(0.78 0.19 25 / 0.5);
 
-  /* diverging heatmap ramp (cool → neutral → warm), perceptually uniform */
-  --ramp-neg-2: oklch(0.55 0.14 255);
-  --ramp-neg-1: oklch(0.68 0.09 250);
-  --ramp-mid: oklch(0.8 0.01 250);
+  /* diverging heatmap ramp (cool indigo → neutral → warm green), perceptually
+   * uniform. The cool pole tracks the Celer indigo accent hue (~280). */
+  --ramp-neg-2: oklch(0.55 0.15 280);
+  --ramp-neg-1: oklch(0.68 0.09 278);
+  --ramp-mid: oklch(0.8 0.01 264);
   --ramp-pos-1: oklch(0.74 0.1 145);
   --ramp-pos-2: oklch(0.62 0.16 150);
 
@@ -108,18 +136,22 @@
   --shadow-hud: 0 24px 64px oklch(0 0 0 / 0.22), 0 2px 8px oklch(0 0 0 / 0.14);
   --hairline: 0.5px solid oklch(0 0 0 / 0.1);
 
-  --bg-base: oklch(0.99 0.003 250);
-  --bg-raised: oklch(0.975 0.004 250);
+  --bg-base: oklch(0.99 0.003 264);
+  --bg-raised: oklch(0.975 0.004 264);
   --bg-overlay: oklch(1 0 0 / 0.86);
   --bg-overlay-solid: oklch(1 0 0);
-  --bg-inset: oklch(0.96 0.005 250);
+  --bg-inset: oklch(0.96 0.005 264);
 
-  --text-primary: oklch(0.2 0.02 250);
-  --text-secondary: oklch(0.45 0.02 250);
-  --text-tertiary: oklch(0.6 0.015 250);
+  --text-primary: oklch(0.22 0.02 264);
+  --text-secondary: oklch(0.46 0.03 276);
+  --text-tertiary: oklch(0.6 0.025 276);
 
-  --accent: oklch(0.55 0.17 255);
-  --accent-soft: oklch(0.55 0.17 255 / 0.12);
+  /* Brand coral holds across appearances (it is the identity, not a theme). */
+  --brand: oklch(0.66 0.18 35);
+  --brand-soft: oklch(0.66 0.18 35 / 0.12);
+
+  --accent: oklch(0.55 0.2 280);
+  --accent-soft: oklch(0.55 0.2 280 / 0.12);
 
   --bid: oklch(0.55 0.15 155);
   --offer: oklch(0.55 0.19 27);
@@ -129,9 +161,9 @@
   --flash-up: oklch(0.7 0.16 155 / 0.32);
   --flash-dn: oklch(0.68 0.18 27 / 0.32);
 
-  --ramp-neg-2: oklch(0.6 0.15 255);
-  --ramp-neg-1: oklch(0.78 0.08 250);
-  --ramp-mid: oklch(0.95 0.005 250);
+  --ramp-neg-2: oklch(0.6 0.16 280);
+  --ramp-neg-1: oklch(0.78 0.08 278);
+  --ramp-mid: oklch(0.95 0.005 264);
   --ramp-pos-1: oklch(0.82 0.1 145);
   --ramp-pos-2: oklch(0.62 0.16 150);
 
@@ -142,8 +174,12 @@
 /* Increased-Contrast: AAA numerics, stronger hues, no translucency. */
 :root[data-contrast="high"] {
   --text-primary: oklch(1 0 0 / 1);
-  --text-secondary: oklch(0.85 0.01 250);
-  --text-tertiary: oklch(0.7 0.01 250);
+  --text-secondary: oklch(0.85 0.02 276);
+  --text-tertiary: oklch(0.7 0.02 276);
+  --brand: oklch(0.76 0.19 35);
+  --brand-soft: oklch(0.76 0.19 35 / 0.24);
+  --accent: oklch(0.7 0.2 280);
+  --accent-soft: oklch(0.7 0.2 280 / 0.26);
   --bid: oklch(0.85 0.18 155);
   --offer: oklch(0.75 0.2 25);
   --bg-overlay: var(--bg-overlay-solid);
@@ -151,8 +187,11 @@
 }
 
 :root[data-appearance="light"][data-contrast="high"] {
-  --text-primary: oklch(0.12 0.02 250);
-  --text-secondary: oklch(0.3 0.02 250);
+  --text-primary: oklch(0.12 0.02 264);
+  --text-secondary: oklch(0.3 0.03 276);
+  --brand: oklch(0.58 0.2 35);
+  --accent: oklch(0.48 0.22 280);
+  --accent-soft: oklch(0.48 0.22 280 / 0.16);
   --bid: oklch(0.45 0.16 155);
   --offer: oklch(0.45 0.22 27);
   --grid-line: oklch(0 0 0 / 0.18);

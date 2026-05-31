@@ -151,7 +151,7 @@ export function SurfaceMesh({ surface, selected }: SurfaceMeshProps): React.Reac
     if (selected) {
       const accent =
         getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() ||
-        "#6aa6ff";
+        "oklch(0.62 0.19 280)";
       ctx.beginPath();
       const tFrac = (selected.tenorYears - tMin) / (tMax - tMin || 1);
       const ti = Math.round(tFrac * TROWS);

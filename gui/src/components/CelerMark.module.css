@@ -1,0 +1,47 @@
+/* CelerMark / CelerLockup layout. The mark colour defaults to brand coral; the
+ * wordmark uses the Celer brand typeface; the caption is a letter-spaced label. */
+
+.mark {
+  display: block;
+  flex: none;
+  color: var(--brand);
+}
+
+.lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.lockupMark {
+  /* The mark carries the brand colour even when the lockup sits on tinted UI. */
+  color: var(--brand);
+  filter: drop-shadow(0 1px 4px oklch(from var(--brand) l c h / 0.45));
+}
+
+.lockupText {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  min-width: 0;
+}
+
+.wordmark {
+  font-family: var(--font-brand);
+  font-weight: 600;
+  font-size: var(--type-headline);
+  line-height: 1;
+  letter-spacing: 0.01em;
+  color: var(--text-primary);
+}
+
+.caption {
+  font-family: var(--font-brand);
+  font-size: var(--type-micro);
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-tertiary);
+}
