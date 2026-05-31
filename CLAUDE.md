@@ -120,6 +120,42 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-05-31 — **Configurable in-process / out-of-process node scaling — ENABLED + fully tested
+  across scale up/down (commits `4118fe8`, `614bdd5`, `b220787`).** Researched + critiqued the
+  optimal route (Plan-mode, approved) → mirror the `DEPLOYMENT-MODES.md` §1 pattern: *engine never
+  changes; only the deploy-time-bound adapter does.* One knob — **`FleetTopology`**
+  (`celnet-risk-fleet`), bound at `Edge` boot from **`CELNET_FLEET_MODE`/`CELNET_FLEET_BACKENDS`** —
+  selects **`InProcess` (DEFAULT, byte-identical to single-node, zero overhead)** or
+  **`Distributed{endpoints}`**. **(1) Seam (`4118fe8`):** object-safe `ShardRiskSource` (additive
+  cheap path vs constituent gather, split per SCALE-OUT §2) + `InProcessShards` + generic reducers,
+  added UNDER the existing fleet API (13 tests untouched + 6 new); server resolves the topology, default
+  path unchanged, Distributed fails loud. **(2) Distributed federation (`614bdd5`):** the
+  `celnet-server` edge is a **client of the same `RiskService` it serves**, federating across N backend
+  processes over **real gRPC** — additive summed in wire space (linear ⇒ exact, cheap), non-additive
+  **re-gathered** via `position_to_fact` over the union and re-derived once (exact); `route`
+  (health-aware) for reach, `natural_owner` for ownership, **`Status::unavailable`** on an unreachable
+  slice (never a silent partial). `tests/risk_federation.rs` (8): boots real gRPC backends on ephemeral
+  ports, proves **federated == single-node** (additive 1e-12, non-additive 1e-9) for FIRM + grouped dims
+  + grant-all/deny-walled principals; scale-up/down + standby/no-standby failover. In-process churn
+  ladder 1→2→3→5→4→3 invariant across all measures (`celnet-risk-fleet` +3). **(3) Forwarding + harness
+  (`b220787`):** owned-pair Pricing/Quote/Surface forwarded by HRW route to the owning backend
+  (`services/forward.rs`); Stream relayed (session pinned to first-sub owner; cross-owner-per-session
+  mux honestly deferred); `tests/forwarding.rs` (5) forwarded==direct-to-owner. **Runnable OS-process
+  harness** `examples/scale_harness.rs` (`cargo run -p celnet-server --example scale_harness`) spawns
+  REAL backend+edge OS processes, drives EVERY capability through the edge via `celnet-client`
+  (price+14 Greeks, surface mark/smile/scenario, RFS stream+click-to-trade, risk
+  aggregate/drill/limits/list incl. scoped-deny), and holds firm Δ/vega/VaR/ES/prices/positions
+  **bit-invariant across 3→4→2 node scaling**, with honest `unavailable` on a killed-without-rehome
+  backend. **NO `celnet.proto` change** (single contract, guardrail 9); only internal deps added
+  (`celnet-risk-fleet`/`celnet-router`/`celnet-client`, acyclic). Verified by hand: **full `just check`
+  green at each milestone**; fleet 22 / server 109; harness run end-to-end ("ALL SCALE STEPS PASSED").
+  Built via three implement→adversarial-verify workflows (all accept), independently re-gated +
+  diff-reviewed + harness re-run. Docs reconciled: `SCALE-OUT.md` §0 (serving federation now Built;
+  cross-DC hardening / replicated-log / hot-standby-prewarm / latency-SLOs still deferred),
+  `DEPLOYMENT-MODES.md` §1.1 (the topology knob). **Honest deferral:** localhost multi-process over real
+  gRPC proves correctness + routing + churn + failover + full-API parity; the §11 latency SLOs, cross-DC
+  datapath, replicated log, and hot-standby pre-warm remain drop-ins behind the now-built seam.
+
 - 2026-05-31 — **Cross-fleet distributed risk fan-out (aggregation algebra) — DONE; closes the
   LAST frontier item.** New clean crate **`celnet-risk-fleet`** (one-way deps → {`celnet-risk-cube`,
   `celnet-router`, `celnet-types`}; verified acyclic — neither cube nor router gains a fleet dep).
