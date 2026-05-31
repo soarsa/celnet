@@ -167,6 +167,16 @@ impl Client {
         }
     }
 
+    /// The underlying HTTP/2 [`Channel`] (a cheap clone — shares the connection
+    /// pool). Exposed so a caller that needs a generated `celnet-proto` service
+    /// client not surfaced as an ergonomic method (e.g. a server federating the
+    /// `RiskService` across backend edges) can build it directly off this channel,
+    /// rather than re-dialling.
+    #[must_use]
+    pub fn channel(&self) -> Channel {
+        self.channel.clone()
+    }
+
     // ---- RFQ --------------------------------------------------------------
 
     /// Begin a request-for-quote for `instrument` under `conventions`, returning an

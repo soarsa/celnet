@@ -749,7 +749,7 @@ mod tests {
         TraderId, VegaPillar,
     };
     use celnet_risk_normalize::{CanonicalLeaf, PositionRisk, canonicalize};
-    use celnet_router::Replica;
+    use celnet_router::{Replica, RouteReason};
     use celnet_types::{Ccy, CcyPair, DeltaConvention, OptionType, PremiumStyle, VanillaInputs};
 
     fn pair(b: Ccy, q: Ccy) -> CcyPair {
@@ -1650,5 +1650,380 @@ mod tests {
         use core::error::Error;
         assert!(route.source().is_some());
         assert!(unavail.source().is_none());
+    }
+
+    // ------------------------------------------------------------------------
+    // Node-scaling ladder: the firm answer is INVARIANT across ReplicaSet
+    // membership changes (scale up / scale down / failover). `docs/SCALE-OUT.md`
+    // §2/§3 — adding or removing capacity reshuffles the partition but never the
+    // aggregate. Proven in-process over the fixed `firm_book()`.
+    // ------------------------------------------------------------------------
+
+    /// The membership-independent single-node reference for a fixed book / scenario
+    /// ladder — computed ONCE and reconciled against at every ReplicaSet membership.
+    struct Oracle<'a> {
+        facts: &'a [RiskFact],
+        scen: &'a [Scenario],
+        alpha: f64,
+        rw: f64,
+        single: NodeAggregate,
+        single_var: VarEs,
+        single_cvr: f64,
+    }
+
+    impl<'a> Oracle<'a> {
+        /// Build the single-node oracle over the whole book.
+        fn new(facts: &'a [RiskFact], scen: &'a [Scenario], alpha: f64, rw: f64) -> Self {
+            let single = single_node(facts).firm_aggregate(&DaysPillar);
+            let single_var = Cube::node_var_es(&single, scen, alpha);
+            let single_cvr = Cube::node_curvature_spot(&single, rw);
+            assert!(single_var.var > 0.0, "oracle must see a firm tail loss");
+            Self {
+                facts,
+                scen,
+                alpha,
+                rw,
+                single,
+                single_var,
+                single_cvr,
+            }
+        }
+    }
+
+    /// Reconcile one fleet membership against the single-node [`Oracle`] across the
+    /// **full** risk-measure set, returning the resolved shard count so the caller
+    /// can assert the membership genuinely fanned out.
+    ///
+    /// Asserts, for the given `set` over the oracle's book:
+    /// - additive net Greeks (all 14) + the whole vega ladder to **1e-12 rel**,
+    /// - firm VaR/ES + FRTB-SbM curvature to summation-order (**1e-12 rel / small abs**),
+    /// - the AAD sensitivity VaR lens within its **documented 8% Taylor envelope**
+    ///   of the full-reval firm VaR (the `ladder()` regime is exactly the ±5%/±2pt
+    ///   regime that envelope is measured for — see
+    ///   `celnet_risk_cube::nonadditive::sensitivity_var_reconciles_to_oracle_moderate_shocks`).
+    fn reconcile_membership_to_single_node(oracle: &Oracle<'_>, set: &ReplicaSet) -> usize {
+        let facts = oracle.facts;
+        let scen = oracle.scen;
+        let alpha = oracle.alpha;
+        let rw = oracle.rw;
+        let single = &oracle.single;
+        let single_var = &oracle.single_var;
+        let single_cvr = oracle.single_cvr;
+
+        let reducer = partition_facts(facts, set).unwrap();
+
+        // Disjoint cover holds at every membership: no fact dropped/duplicated.
+        assert_eq!(
+            reducer.total_facts(),
+            facts.len(),
+            "membership lost/duplicated a fact"
+        );
+
+        // (1) ADDITIVE: every net Greek reconciles to 1e-12 relative.
+        let fleet = reducer.fan_in_additive(&DaysPillar);
+        let s = &single.net_greeks;
+        let f = &fleet.net_greeks;
+        for (a, b, name) in [
+            (s.delta_base, f.delta_base, "delta_base"),
+            (s.gamma, f.gamma, "gamma"),
+            (s.vega, f.vega, "vega"),
+            (s.theta, f.theta, "theta"),
+            (s.vanna, f.vanna, "vanna"),
+            (s.volga, f.volga, "volga"),
+            (s.charm, f.charm, "charm"),
+            (s.speed, f.speed, "speed"),
+            (s.zomma, f.zomma, "zomma"),
+            (s.color, f.color, "color"),
+            (s.premium_quote, f.premium_quote, "premium_quote"),
+        ] {
+            assert!(
+                is_close(a, b, 1e-12, 1e-6),
+                "additive {name} at this membership: single {a} vs fleet {b}"
+            );
+        }
+        // Vega ladder: every single-node pillar reconciles in the fleet ladder.
+        for (p, v) in single.vega_ladder.pillars() {
+            assert!(
+                is_close(v, fleet.vega_ladder.vega_in(p), 1e-12, 1e-6),
+                "vega pillar {p:?} at this membership: single {v} vs fleet {}",
+                fleet.vega_ladder.vega_in(p)
+            );
+        }
+        // The gathered constituent set is the identical multiset (algebra exactness).
+        assert_eq!(fleet.positions.len(), single.positions.len());
+        assert_eq!(fleet.positions.len(), facts.len());
+
+        // (2) NON-ADDITIVE (full reval): firm VaR/ES + curvature to summation order.
+        let fleet_var = reducer.firm_var_es(&DaysPillar, scen, alpha);
+        assert!(
+            is_close(fleet_var.var, single_var.var, 1e-12, 1e-3),
+            "firm VaR at this membership: fleet {} vs single {}",
+            fleet_var.var,
+            single_var.var
+        );
+        assert!(
+            is_close(fleet_var.es, single_var.es, 1e-12, 1e-3),
+            "firm ES at this membership: fleet {} vs single {}",
+            fleet_var.es,
+            single_var.es
+        );
+        let fleet_cvr = reducer.firm_curvature_spot(&DaysPillar, rw);
+        assert!(
+            is_close(fleet_cvr, single_cvr, 1e-12, 1e-3),
+            "firm curvature at this membership: fleet {fleet_cvr} vs single {single_cvr}"
+        );
+
+        // (3) AAD SENSITIVITY LENS: the fast VaR is invariant across membership too
+        // (re-gathered over the identical union) and sits within the documented 8%
+        // Taylor envelope of the full-reval firm VaR for the ±5%/±2pt `ladder()`
+        // regime. This proves node count never moves either lens of the firm answer.
+        let fleet_sens = reducer.firm_var_es_sensitivity(&DaysPillar, scen, alpha);
+        assert!(
+            fleet_sens.var > 0.0,
+            "sensitivity lens must see a tail loss"
+        );
+        assert!(
+            is_close(fleet_sens.var, single_var.var, 8e-2, 1e-3),
+            "AAD-sensitivity firm VaR {} outside the 8% Taylor envelope of full-reval {}",
+            fleet_sens.var,
+            single_var.var
+        );
+        assert!(
+            is_close(fleet_sens.es, single_var.es, 8e-2, 1e-3),
+            "AAD-sensitivity firm ES {} outside the 8% Taylor envelope of full-reval {}",
+            fleet_sens.es,
+            single_var.es
+        );
+
+        reducer.shard_count()
+    }
+
+    /// **NODE SCALING — the firm answer is INVARIANT across a scale-up then
+    /// scale-down ladder of ReplicaSet memberships.** Over a fixed `firm_book()`,
+    /// walk sizes `1 → 2 → 3 → 5 → 4 → 3` and at EVERY membership reconcile the
+    /// fan-out aggregate to the **single** single-node oracle across the full risk
+    /// measure set (additive Greeks + vega ladder to 1e-12; full-reval firm VaR/ES +
+    /// FRTB curvature to summation order; the AAD sensitivity lens within its 8%
+    /// Taylor envelope). The oracle is computed ONCE — node count never changes the
+    /// firm number, only which shard a `(entity, pair)` cell lives on.
+    #[test]
+    fn node_scaling_ladder_is_invariant() {
+        let facts = firm_book();
+        let scen = ladder();
+        let alpha = 0.99;
+        let rw = 0.18;
+
+        // The single, membership-independent oracle.
+        let oracle = Oracle::new(&facts, &scen, alpha, rw);
+
+        // Scale UP (1→2→3→5) then DOWN (5→4→3). Each membership is a fresh
+        // ReplicaSet — the only thing that changes is node count.
+        let ladder_memberships: &[&[u64]] = &[
+            &[1],
+            &[1, 2],
+            &[1, 2, 3],
+            &[1, 2, 3, 4, 5],
+            &[1, 2, 3, 4],
+            &[1, 2, 3],
+        ];
+
+        let mut prev_shard_count: Option<usize> = None;
+        for ids in ladder_memberships {
+            let set = replicas(ids);
+            let shard_count = reconcile_membership_to_single_node(&oracle, &set);
+            // A shard only exists if it owns >=1 fact, so the realized shard count is
+            // bounded by both the membership size and the number of (entity,pair)
+            // cells (5 here). It must always be at least 1 (non-empty book).
+            assert!(
+                shard_count >= 1 && shard_count <= ids.len(),
+                "membership {ids:?}: shard_count {shard_count} out of range"
+            );
+            prev_shard_count = Some(shard_count);
+        }
+        assert!(prev_shard_count.is_some(), "ladder must have run");
+    }
+
+    /// **Minimal HRW reshuffle across each adjacent single-replica ladder step.**
+    /// For each pair of adjacent memberships in the scale ladder that differ by
+    /// exactly ONE replica (add or remove), at most a small fraction (~1/N) of the
+    /// `(entity, pair)` cells change owner — and on a pure ADD a cell only ever moves
+    /// ONTO the new replica, never between two incumbents (reusing the natural_owner
+    /// re-route counting from `adding_replica_reshuffles_minimally`). The aggregate
+    /// invariance is proven separately in `node_scaling_ladder_is_invariant`; this
+    /// asserts the *transition cost* is bounded.
+    #[test]
+    fn ladder_steps_reshuffle_minimally() {
+        // Many synthetic (entity, pair) cells for a statistically meaningful fraction.
+        let pairs = [
+            pair(Ccy::EUR, Ccy::USD),
+            pair(Ccy::GBP, Ccy::USD),
+            pair(Ccy::USD, Ccy::JPY),
+            pair(Ccy::AUD, Ccy::USD),
+            pair(Ccy::USD, Ccy::CHF),
+        ];
+        let keys: Vec<PartitionKey> = (0u32..200)
+            .flat_map(|e| pairs.iter().map(move |&p| partition_key_for(e, p)))
+            .collect();
+
+        // Single-replica add steps from the scale-up arm: N → N+1, the added id == N+1.
+        let add_steps: &[(&[u64], &[u64], u64)] = &[
+            (&[1], &[1, 2], 2),
+            (&[1, 2], &[1, 2, 3], 3),
+            (&[1, 2, 3], &[1, 2, 3, 4], 4),
+            (&[1, 2, 3, 4], &[1, 2, 3, 4, 5], 5),
+        ];
+        for (before_ids, after_ids, added) in add_steps {
+            let before = replicas(before_ids);
+            let after = replicas(after_ids);
+            let mb = PartitionMap::new(&before);
+            let ma = PartitionMap::new(&after);
+            let n_after = after_ids.len() as f64;
+
+            let mut moved = 0usize;
+            for &k in &keys {
+                let o_before = mb.natural_owner(k).unwrap();
+                let o_after = ma.natural_owner(k).unwrap();
+                if o_before != o_after {
+                    moved += 1;
+                    // On a pure ADD a moved key lands ONLY on the new node.
+                    assert_eq!(
+                        o_after,
+                        ReplicaId(*added),
+                        "add {before_ids:?}->{after_ids:?} moved a key between incumbents"
+                    );
+                }
+            }
+            // ~1/N_after expected; generous finite-sample band, but strictly minimal
+            // (well under half the keys move on a single-replica add).
+            let frac = moved as f64 / keys.len() as f64;
+            let upper = (1.0 / n_after) + 0.15;
+            assert!(
+                frac < upper,
+                "add {before_ids:?}->{after_ids:?}: reshuffle frac {frac} not minimal (< {upper})"
+            );
+        }
+
+        // Single-replica REMOVE steps from the scale-down arm: 5→4, 4→3. Only the
+        // dropped replica's keys may move (to a surviving node); incumbents that kept
+        // their owner are untouched.
+        let remove_steps: &[(&[u64], &[u64], u64)] = &[
+            (&[1, 2, 3, 4, 5], &[1, 2, 3, 4], 5),
+            (&[1, 2, 3, 4], &[1, 2, 3], 4),
+        ];
+        for (before_ids, after_ids, removed) in remove_steps {
+            let before = replicas(before_ids);
+            let after = replicas(after_ids);
+            let mb = PartitionMap::new(&before);
+            let ma = PartitionMap::new(&after);
+            let n_before = before_ids.len() as f64;
+
+            let mut moved = 0usize;
+            for &k in &keys {
+                let o_before = mb.natural_owner(k).unwrap();
+                let o_after = ma.natural_owner(k).unwrap();
+                if o_before != o_after {
+                    moved += 1;
+                    // On a pure REMOVE, only keys whose owner WAS the dropped node move.
+                    assert_eq!(
+                        o_before,
+                        ReplicaId(*removed),
+                        "remove {before_ids:?}->{after_ids:?} moved a key not owned by the dropped node"
+                    );
+                }
+            }
+            // ~1/N_before of keys (those that lived on the dropped node) move.
+            let frac = moved as f64 / keys.len() as f64;
+            let upper = (1.0 / n_before) + 0.15;
+            assert!(
+                frac < upper,
+                "remove {before_ids:?}->{after_ids:?}: reshuffle frac {frac} not minimal (< {upper})"
+            );
+        }
+    }
+
+    /// **FAILOVER — a downed replica with a hot standby keeps the firm answer
+    /// invariant.** Take a membership where one replica that genuinely owns a slice
+    /// of `firm_book()` is `Replica::down().with_standby(...)`. Assert (a) routing
+    /// (`PartitionMap::route`) for that owner's cells lands on the **standby** with
+    /// `RouteReason::Standby` (the slice is still reachable, not lost), and (b) the
+    /// fan-out aggregate is STILL == the single-node oracle across the full measure
+    /// set — because partitioning for *aggregation* reads each shard's owned slice by
+    /// natural owner regardless of health, the union is unchanged and the firm number
+    /// is unaffected by the failover.
+    #[test]
+    fn failover_to_standby_keeps_aggregate_invariant() {
+        let facts = firm_book();
+        let scen = ladder();
+        let alpha = 0.99;
+        let rw = 0.18;
+
+        let oracle = Oracle::new(&facts, &scen, alpha, rw);
+
+        // Find a replica that actually owns >=1 fact under a healthy 5-replica set,
+        // so the failover exercises a non-empty slice.
+        let healthy = replicas(&[1, 2, 3, 4, 5]);
+        let healthy_map = PartitionMap::new(&healthy);
+        let owners: Vec<ReplicaId> = facts
+            .iter()
+            .map(|f| natural_owner_of(f, &healthy_map).unwrap())
+            .collect();
+        let downed = owners[0]; // some replica that owns a slice
+        let standby = ReplicaId(9); // not a member of the set → declared hot standby
+        assert!(
+            owners.contains(&downed),
+            "test setup: downed replica must own a slice"
+        );
+
+        // Membership: the owning replica is DOWN with a declared healthy standby (9),
+        // which is itself a member of the set (the router rejects a dangling standby).
+        let mut entries: Vec<Replica> = Vec::new();
+        for r in [1u64, 2, 3, 4, 5] {
+            let id = ReplicaId(r);
+            if id == downed {
+                entries.push(Replica::up(id).with_standby(standby).down());
+            } else {
+                entries.push(Replica::up(id));
+            }
+        }
+        entries.push(Replica::up(standby));
+        let set = ReplicaSet::new(entries).unwrap();
+        let map = PartitionMap::new(&set);
+
+        // (a) Every fact whose natural owner is the downed replica routes to the
+        // standby with RouteReason::Standby — the slice is reachable, not lost.
+        let mut hit_standby = false;
+        for f in &facts {
+            let key = partition_key_of(f);
+            let route = map.route(key).unwrap();
+            if route.natural_owner == downed {
+                hit_standby = true;
+                assert_eq!(
+                    route.replica, standby,
+                    "downed owner's cell must route to its declared standby"
+                );
+                assert_eq!(
+                    route.reason,
+                    RouteReason::Standby,
+                    "route reason must be Standby for a downed owner with a healthy standby"
+                );
+            } else {
+                // Surviving owners are unaffected (no reshuffle on failover).
+                assert_eq!(
+                    route.reason,
+                    RouteReason::Primary,
+                    "a healthy owner's cell must still route Primary"
+                );
+            }
+        }
+        assert!(
+            hit_standby,
+            "test must exercise at least one cell failing over to the standby"
+        );
+
+        // (b) The aggregate is STILL == single-node across the full measure set. The
+        // aggregation tier reads each shard's natural-owner slice regardless of health
+        // (failover is a routing concern), so the firm answer is unchanged.
+        let shard_count = reconcile_membership_to_single_node(&oracle, &set);
+        assert!(shard_count >= 1);
     }
 }

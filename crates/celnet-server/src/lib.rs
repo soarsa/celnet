@@ -246,11 +246,23 @@ impl Edge {
             clock.clone(),
             Arc::clone(&surface_book),
         ));
-        let risk = RiskServiceServer::new(RiskEdge::with_topology(
-            Arc::clone(&store),
-            Arc::clone(&gate),
-            topology.clone(),
-        ));
+        // The risk edge: for a distributed topology this connects the backend fleet
+        // (one `celnet_client::Client` per endpoint) so every RiskService RPC fans
+        // out across the fleet and reconciles to the single-node answer over the union
+        // book (Phase 3, `docs/RISK-HIERARCHY.md` §3.4). A dial failure surfaces here,
+        // at boot, as an `io::Error` rather than on the first request. The SAME
+        // connected edge backs both the gRPC server and the WS mirror (one fleet of
+        // backend channels, not two), shared behind an `Arc`.
+        let risk_edge = Arc::new(
+            RiskEdge::with_topology_connected(
+                Arc::clone(&store),
+                Arc::clone(&gate),
+                topology.clone(),
+            )
+            .await
+            .map_err(|s| std::io::Error::other(s.to_string()))?,
+        );
+        let risk = RiskServiceServer::from_arc(Arc::clone(&risk_edge));
 
         let incoming = tonic::transport::server::TcpIncoming::from_listener(listener, true, None)
             .map_err(std::io::Error::other)?;
@@ -279,7 +291,7 @@ impl Edge {
             clock,
             Arc::clone(&surface_book),
             Arc::clone(&store),
-            topology,
+            Arc::clone(&risk_edge),
         );
         let ws_mirror = ws::WsMirror::start(ws_addr, ws_services).await?;
 

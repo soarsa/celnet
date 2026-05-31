@@ -57,7 +57,7 @@ use celnet_limits::LimitTree;
 /// monotonically-increasing handles starting at `1` (handle `0` is reserved as the
 /// "resolve from parent / unknown" sentinel the wire `OrgKey` uses). The reverse
 /// map recovers the original string for a handle.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct Interner {
     forward: HashMap<String, u32>,
     reverse: Vec<String>,
@@ -157,6 +157,29 @@ impl PositionStore {
     pub fn new() -> Self {
         Self {
             inner: RwLock::new(StoreInner::default()),
+        }
+    }
+
+    /// A fresh store that **inherits this store's firm configuration** — the org
+    /// [`Hierarchy`] parent pointers, the name interner, and the [`LimitTree`] — but
+    /// holds **no facts**. Used by the distributed risk federation to stage a gathered
+    /// union of positions against the firm-consistent hierarchy + limit policy so a
+    /// re-derivation / limit check over the union resolves org groups and limit scopes
+    /// exactly as the single-node oracle would (the interner is copied so the same org
+    /// names resolve to the same handles, and the staged facts arrive with explicit
+    /// firm-consistent handles from the wire `OrgKey`).
+    #[must_use]
+    pub fn fork_config(&self) -> Self {
+        let g = self.inner.read().expect("position store lock poisoned");
+        Self {
+            inner: RwLock::new(StoreInner {
+                facts: Vec::new(),
+                hierarchy: g.hierarchy.clone(),
+                interner: g.interner.clone(),
+                attribution: HashMap::new(),
+                wire_ids: HashMap::new(),
+                limits: g.limits.clone(),
+            }),
         }
     }
 
