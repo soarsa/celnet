@@ -15,6 +15,13 @@ workspace = true
 celnet-types.workspace = true
 celnet-core.workspace = true
 celnet-vanilla.workspace = true
+# Risk-path acceleration benches: AAD vs bump-and-revalue (celnet-risk-normalize),
+# and GPU-batched vs CPU node-by-node scenario grids (celnet-risk-cube + the
+# batched kernel in celnet-gpu). Read-only library deps — the benches construct
+# the public APIs, they never modify those crates.
+celnet-risk-normalize.workspace = true
+celnet-risk-cube.workspace = true
+celnet-gpu.workspace = true
 # Wire-path (end-to-end) latency-under-load proof: the load harness spins the
 # real service edge in-process, drives sustained RFQ + RFS streaming load over
 # the loopback gRPC wire, and records the client-observed round-trip in an
@@ -45,6 +52,17 @@ harness = false
 
 [[bench]]
 name = "batch"
+harness = false
+
+# Risk-path acceleration: reverse-mode AAD vs bump-and-revalue for the full Greek
+# block (expect ~O(1) vs O(n)), and the GPU-batched scenario grid vs the CPU
+# node-by-node oracle. See docs/RISK-HIERARCHY.md §3.3.
+[[bench]]
+name = "aad"
+harness = false
+
+[[bench]]
+name = "scenario"
 harness = false
 
 # ---------------------------------------------------------------------------

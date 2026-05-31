@@ -21,9 +21,12 @@
 //!   and a new fact touches O(depth) ancestor sums.
 //! - **Non-additive measures** — **VaR / Expected Shortfall**, **FRTB-SbM
 //!   curvature**, and **correlation-weighted vega** — are **NOT** summed from
-//!   child results. They are **re-derived per node** by **bump-and-revalue** over
-//!   the node's constituent positions: shock a risk factor, reprice every position
-//!   with `celnet-vanilla`'s closed forms, and reduce.
+//!   child results. They are **re-derived per node** over the node's constituent
+//!   positions. VaR/ES offers two reconcilable lenses: full **bump-and-revalue**
+//!   (the exact oracle, [`Cube::node_var_es`]) and the **AAD sensitivity** scale
+//!   path ([`Cube::node_var_es_sensitivity`]) — one reverse-mode
+//!   `celnet_vanilla::adjoint_greeks` sweep per position expanded by a second-order
+//!   Taylor series across all scenarios.
 //!
 //! Roll-up and drill-down run over the **same** immutable facts, so a node total
 //! is always reconcilable to its constituents (§2.5) — [`NodeAggregate`] carries
@@ -31,14 +34,23 @@
 //!
 //! # Honest scope & deferred optimisations
 //!
-//! - **Bump-and-revalue is the reference, not the scale path.** It is correct but
-//!   O(positions × scenarios) repricings per node. `docs/RISK-HIERARCHY.md` §3.3
-//!   names the real throughput lever: **adjoint algorithmic differentiation (AAD)
-//!   plus batched-GPU** (`celnet-gpu`). That is **deliberately deferred** and
-//!   **not faked** — there is no stub adjoint anywhere here. This crate's
-//!   bump-and-revalue result is the **oracle** the future AAD path will be
-//!   validated against, which is why it is built first (the same honesty
-//!   discipline as `celnet-journal`'s deferred compaction).
+//! - **AAD is wired as the scale path; bump-and-revalue is retained as the
+//!   oracle.** `docs/RISK-HIERARCHY.md` §3.3 names **adjoint algorithmic
+//!   differentiation (AAD)** as the throughput lever, and it is now live:
+//!   [`crate::nonadditive::sensitivity_var_es`] computes each position's full Greek
+//!   set in ONE genuine reverse-mode `celnet_vanilla::adjoint_greeks` sweep
+//!   (O(positions) sweeps) and expands every scenario's P&L by a second-order
+//!   Taylor series (O(positions × scenarios) cheap arithmetic), versus the oracle's
+//!   O(positions × scenarios) full repricings. The bump-and-revalue
+//!   [`crate::nonadditive::historical_var_es`] is **retained, never deleted**, as
+//!   the exact reference the AAD lens is reconciled against (within a documented
+//!   Taylor tolerance over a moderate shock regime; the gap widens for large shocks
+//!   — the honest 2nd-order truncation regime). **The batched-GPU Monte-Carlo
+//!   `celnet_gpu::ScenarioPricer` is deliberately NOT wired into this closed-form
+//!   VaR path** (mixing MC estimator noise into an exact closed-form reval would be
+//!   a numerical regression); the right GPU lever here is a batched *closed-form*
+//!   vanilla kernel (`docs/GPU-AT-SCALE-PLAN.md` Workload A / G2), the distinct next
+//!   GPU increment.
 //! - **Single-node only.** This cube aggregates the facts it holds. Distributed
 //!   **cross-shard reduction** (§3.4) over the **designed-only** `celnet-router`
 //!   HRW partition map is out of scope. The **shard-merge seam** is
@@ -79,6 +91,7 @@ pub mod additive;
 pub mod cube;
 pub mod dimension;
 pub mod nonadditive;
+pub mod scenario_grid;
 
 pub use additive::{NetGreeks, VegaLadder, VegaPillar};
 pub use cube::{Cube, NodeAggregate, VegaPillarMap};
@@ -87,9 +100,10 @@ pub use dimension::{
     RiskFact, TraderId,
 };
 pub use nonadditive::{
-    Scenario, VarEs, correlation_weighted_vega, historical_var_es, node_pnl, position_pnl,
-    sbm_curvature_spot,
+    PositionSensitivity, Scenario, VarEs, correlation_weighted_vega, historical_var_es, node_pnl,
+    node_sensitivities, position_pnl, sbm_curvature_spot, sensitivity_var_es,
 };
+pub use scenario_grid::{NodeScenarioGrid, analytic_pv_grid, gpu_pv_grid};
 
 #[cfg(test)]
 mod tests {
@@ -322,6 +336,82 @@ mod tests {
             "offsetting book VaR {var_combined} should be ~0, not {} (sum of legs)",
             var_long + var_short
         );
+    }
+
+    /// **The AAD sensitivity lens reconciles to the oracle THROUGH the cube API.**
+    /// A multi-position firm node's `node_var_es_sensitivity` (one adjoint sweep per
+    /// position, Taylor-expanded) matches the bump-and-revalue `node_var_es` oracle
+    /// to the documented worst-corner Taylor tolerance (8% relative at ±5%/±2pt; see
+    /// `nonadditive::sensitivity_var_reconciles_to_oracle_moderate_shocks`) over a
+    /// moderate ladder — proving the wired lens, not just the free function.
+    #[test]
+    fn cube_sensitivity_var_reconciles_to_oracle() {
+        let mut cube = Cube::new();
+        cube.upsert(fact(
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            pos(
+                eurusd(),
+                OptionType::Call,
+                10_000_000.0,
+                VanillaInputs::new(1.10, 1.12, 0.10, 1.0, 0.04, 0.02),
+            ),
+        ));
+        cube.upsert(fact(
+            2,
+            1,
+            1,
+            1,
+            1,
+            1,
+            pos(
+                eurusd(),
+                OptionType::Put,
+                6_000_000.0,
+                VanillaInputs::new(1.10, 1.06, 0.115, 0.75, 0.04, 0.02),
+            ),
+        ));
+        cube.upsert(fact(
+            3,
+            1,
+            1,
+            1,
+            1,
+            1,
+            pos(
+                eurusd(),
+                OptionType::Call,
+                -4_000_000.0,
+                VanillaInputs::new(1.10, 1.15, 0.095, 1.5, 0.04, 0.02),
+            ),
+        ));
+        let node = cube.firm_aggregate(&DaysPillar);
+        // Moderate ladder: spot ±5% × vol ±2 vol-pts.
+        let mut scen = Vec::new();
+        for si in -5..=5 {
+            for vj in -4..=4 {
+                scen.push(Scenario {
+                    spot_rel: f64::from(si) * 0.01,
+                    vol_abs: f64::from(vj) * 0.005,
+                    rate_dom_abs: 0.0,
+                    rate_for_abs: 0.0,
+                });
+            }
+        }
+        let oracle = Cube::node_var_es(&node, &scen, 0.99);
+        let fast = Cube::node_var_es_sensitivity(&node, &scen, 0.99);
+        assert!(oracle.var > 0.0);
+        assert!(
+            is_close(fast.var, oracle.var, 8e-2, 1e-3),
+            "cube AAD VaR {} vs oracle {}",
+            fast.var,
+            oracle.var
+        );
+        assert!(is_close(fast.es, oracle.es, 8e-2, 1e-3));
     }
 
     /// **VaR/ES correctness on a known distribution.** A single long call repriced

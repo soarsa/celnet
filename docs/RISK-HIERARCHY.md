@@ -60,9 +60,16 @@ quietly dropped.
 > `LimitStatus`) and **served by `celnet-server`** over both gRPC and the WS mirror, off a shared live
 > `PositionStore` the RFS click-to-trade path books vanilla fills into — so aggregation is now done
 > **server-side**, retiring the client-side roll-up. See `docs/INTERFACES.md` §"Phase-2 contract:
-> `RiskService`". **Still deferred (target architecture, not shipped):** AAD / batched-GPU non-additive
-> reval (§3.3 — non-additive measures are re-derived by bump-and-revalue today), and the cross-shard /
-> HRW-router fleet tier (§3.4 — single-node only). The client lanes (GUI Book, `celnet-client` SDK,
+> `RiskService`". **Now built (§3.3):** the **AAD adjoint-Greek** scale path is wired —
+> `celnet-risk-normalize::canonicalize` derives the additive leaf from a single reverse-mode sweep
+> (`celnet_vanilla::adjoint_greeks`) by default, and `celnet_risk_cube::sensitivity_var_es` re-derives
+> the non-additive VaR/ES from one adjoint sweep per position + a second-order Taylor expansion; the
+> **batched-GPU scenario grid** (`celnet_risk_cube::gpu_pv_grid` over `celnet-gpu`'s `ScenarioPricer`)
+> prices a whole spot×vol ladder in one dispatch. Both are validated against the bump-and-revalue /
+> closed-form oracle, which is **retained** as the reference (not removed). Measured (M4 Metal,
+> `celnet-bench`): AAD first-order block ~42 ns vs ~129 ns bump-and-revalue (~3.0×, O(1) vs O(factors));
+> batched-GPU scenario grid ~13 ms vs ~165 ms unbatched per-node MC (~12.7×). **Still deferred (target
+> architecture, not shipped):** the cross-shard / HRW-router fleet tier (§3.4 — single-node only). The client lanes (GUI Book, `celnet-client` SDK,
 > Excel `CELNET.*`) **all now consume the served contract in lockstep** — the GUI Book's client-side
 > roll-up is **deleted** (`gui/src/data/portfolioRisk.ts` removed; the Book drives `AggregateRisk`/
 > `LimitStatus`/`DrillRisk` server-side), the SDK exposes the four calls as typed `Client` methods, and
@@ -368,17 +375,43 @@ Celnet's answer is three-fold:
 2. **Non-additive measures use a recompute-trigger strategy**, not every-tick reval: delta-driven
    (recompute a node only when its constituents' risk moves beyond a threshold) and throttled
    (bounded cadence per node), so the cube cost tracks *activity*, not clock ticks.
-3. **Scenario/VaR/curvature reval should use adjoint algorithmic differentiation (AAD) and batched GPU**
+3. **Scenario/VaR/curvature reval uses adjoint algorithmic differentiation (AAD) and batched GPU**
    (`celnet-gpu`) — the same Philox-seeded, f32-GPU/f64-CPU-reconciled path used in pricing. This is
    the **single most important throughput requirement**: a firm-hierarchical risk claim that relied
    on bump-and-revalue would lose on throughput exactly where it claims to win. Numerix's headline
-   scaling lever for portfolio Greeks is AAD *(numerix.com/oneview-xva — high)*; Celnet must match it
-   with AAD and/or batched-GPU or the scale claim is hollow. *(Design requirement — flagged as the
-   top technical risk in the summary; see §7 honest gaps.)* **Build-status honesty: this is deferred,
-   not shipped.** The served `RiskService` re-derives the non-additive node measures
-   (`celnet_risk_cube::node_var_es` / `node_curvature_spot`) by **bump-and-revalue** over the node's
-   constituents today — correct, and bounded by the recompute-trigger strategy of point 2, but the
-   AAD / batched-GPU lever is the target for the scale-out throughput work, not a current capability.
+   scaling lever for portfolio Greeks is AAD *(numerix.com/oneview-xva — high)*; Celnet matches it.
+   **Build-status honesty: this is built, validated, and benched.** Two levers:
+   - **AAD adjoint Greeks.** `celnet_vanilla::adjoint_greeks` is **genuine reverse-mode** algorithmic
+     differentiation of the Garman-Kohlhagen graph (a forward struct-tape record → a reverse adjoint
+     sweep, *not* finite differences and *not* the analytic closed forms renamed). One sweep yields the
+     full first-order block (`delta`, `vega`, `theta`, `rho_d`, `rho_f`) at a small constant multiple of
+     one price, *independent of factor count* (O(1) vs bump-and-revalue's O(factors)); `gamma`/`vanna`/
+     `volga` come from a reverse-over-reverse second-order sweep, and the mixed/third-order
+     `charm`/`speed`/`zomma`/`color` are taken verbatim from the validated analytic closed forms (this
+     boundary is documented honestly in the module, not faked as AAD). It is wired as the **default**
+     additive leaf (`celnet-risk-normalize::canonicalize`) and as the engine of the non-additive
+     **sensitivity-based** VaR/ES (`celnet_risk_cube::sensitivity_var_es`): one adjoint sweep per
+     position, then each scenario's node P&L is a second-order Taylor expansion in the shocked factors —
+     `O(positions)` sweeps + `O(positions × scenarios)` cheap arithmetic, versus
+     `O(positions × scenarios)` repricings for bump-and-revalue.
+   - **Batched-GPU scenario reval.** `celnet_risk_cube::gpu_pv_grid` drives `celnet-gpu`'s
+     `ScenarioPricer::price_scenario_batch` — one GPU dispatch per position over a whole spot×vol
+     ladder under common random numbers — falling back to the exact f64 CPU oracle when no adapter is
+     present (headless CI). The f32 GPU result reconciles per-node to the f64 CPU/closed-form oracle
+     within `celnet-gpu`'s first-principles f32 bound, and `NodeScenarioGrid::reconciles_to_analytic`
+     gates each node against the closed-form analytic PV inside the Monte-Carlo standard-error band.
+
+   The **bump-and-revalue / closed-form path is retained as the oracle** the AAD/GPU paths are
+   validated against (`celnet_risk_cube::node_var_es` / `node_curvature_spot` / `analytic_pv_grid`),
+   never removed. **Measured (M4 Metal, `celnet-bench`):** the AAD first-order block runs ~42 ns vs
+   ~129 ns for central-difference bump-and-revalue (~3.0× on a 5-factor block; the gap widens linearly
+   with factor count). The batched-GPU scenario grid (121 nodes × 3 positions, 65 536 paths/node) runs
+   ~13 ms vs ~165 ms for unbatched per-node MC dispatch (~12.7× — the genuine batching win within the
+   Monte-Carlo regime). **Honest crossover:** for *vanilla* payoffs the exact closed form (~9.6 µs)
+   dominates both MC paths, because vanillas need no paths; the GPU-batched MC kernel is the scale path
+   for path-dependent / no-closed-form payoffs and for grids large enough to amortize MC, not for
+   analytic vanillas. The remaining throughput frontier is the cross-shard fleet fan-out (§3.4), which
+   stays deferred.
 
 ### 3.4 Scale-out
 
@@ -662,5 +695,8 @@ material — defensible.)*
 > canonical-convention choice (§2.2), service decomposition (§3.2), entitlement pre-aggregation
 > pruning (§4), limit tree (§5), and UX (§6) are the **Celnet design proposal** — engineering
 > decisions grounded in the verified facts but not themselves vendor-sourced. The two most important
-> honest risks: (1) the firm-hierarchical scale claim **depends on AAD/batched-GPU**, not
-> bump-and-revalue (§3.3); (2) the router/HRW scale-out tier is **designed, not built** (§2.9/§3.4).
+> honest risks: (1) the firm-hierarchical scale claim **depends on AAD/batched-GPU** rather than
+> bump-and-revalue — **now built and benched** (§3.3: genuine reverse-mode AAD as the additive leaf +
+> sensitivity-VaR engine, ~3.0× vs bumps; batched-GPU scenario grid, ~12.7× vs unbatched MC; the
+> bump/closed-form oracle is retained as the validation reference); (2) the router/HRW scale-out tier
+> is **designed, not built** (§2.9/§3.4) — the one remaining throughput frontier.

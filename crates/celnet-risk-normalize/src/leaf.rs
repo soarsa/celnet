@@ -20,7 +20,52 @@
 use celnet_types::{
     Ccy, CcyPair, DeltaConvention, Greeks, OptionType, PremiumStyle, VanillaInputs,
 };
-use celnet_vanilla::{convention_delta, greeks as vanilla_greeks};
+use celnet_vanilla::{adjoint_greeks, convention_delta, greeks as vanilla_greeks};
+
+/// Which differentiation engine produces the per-position Greek set inside
+/// [`canonicalize_with`].
+///
+/// The canonical leaf carries the **full** [`Greeks`] set; how those Greeks are
+/// computed is an *internal acceleration* choice that does not change the
+/// contract — both engines target the same mathematical sensitivities and are
+/// gated equal to numerical tolerance in this crate's test suite.
+///
+/// - [`Adjoint`](GreekEngine::Adjoint) — **reverse-mode algorithmic
+///   differentiation** (`celnet_vanilla::adjoint_greeks`). One reverse sweep of
+///   the recorded Garman-Kohlhagen graph yields the whole first-order block at a
+///   small constant multiple of one price, *independent of the number of risk
+///   factors* — versus bump-and-revalue's O(n) repricings. This is the
+///   `docs/RISK-HIERARCHY.md` §3.3 scale path for portfolio risk and is the
+///   **default**, chosen only because the equivalence test
+///   (`adjoint_leaf_matches_analytic_leaf`) proves it agrees with the analytic
+///   oracle to ~1e-9.
+/// - [`Analytic`](GreekEngine::Analytic) — the closed-form Greeks
+///   (`celnet_vanilla::greeks`). Retained as the **validation oracle / fallback**:
+///   it is the reference the adjoint path is checked against, and a caller that
+///   wants the bit-for-bit analytic leaf (e.g. to re-validate, or to bisect a
+///   discrepancy) selects it explicitly.
+///
+/// Provenance lives here in the doc comment only; the identifier is purpose-named
+/// (`Adjoint`, not a person/method name) per guardrail #8.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GreekEngine {
+    /// Reverse-mode adjoint AD — the scale path, and the default.
+    #[default]
+    Adjoint,
+    /// Closed-form analytic Greeks — the validation oracle / fallback.
+    Analytic,
+}
+
+impl GreekEngine {
+    /// Produce the full Greek set for `opt`/`inputs` under this engine.
+    #[must_use]
+    fn greeks(self, opt: OptionType, inputs: &VanillaInputs) -> Greeks {
+        match self {
+            GreekEngine::Adjoint => adjoint_greeks(opt, inputs),
+            GreekEngine::Analytic => vanilla_greeks(opt, inputs),
+        }
+    }
+}
 
 /// One position's risk **as reported**, in its own (possibly bespoke) pricing
 /// conventions — the heterogeneous input to canonicalization.
@@ -165,20 +210,45 @@ impl CanonicalLeaf {
     }
 }
 
-/// Re-derive a position's risk into the canonical convention (§2.2).
+/// Re-derive a position's risk into the canonical convention (§2.2), using the
+/// **default** Greek engine ([`GreekEngine::Adjoint`] — reverse-mode AD).
 ///
 /// Pure and deterministic: computes the spot-unadjusted, premium-excluded Greek
-/// set from the position's pricing inputs via `celnet-vanilla`'s closed forms,
-/// scales by notional, and splits the premium out as a separate quote-currency
-/// monetary line. The quoted conventions on the input are consulted only to record
-/// provenance (`quoted_was_premium_adjusted`) — they never alter the canonical
-/// numbers, which is precisely what makes the result safe to aggregate.
+/// set from the position's pricing inputs, scales by notional, and splits the
+/// premium out as a separate quote-currency monetary line. The quoted conventions
+/// on the input are consulted only to record provenance
+/// (`quoted_was_premium_adjusted`) — they never alter the canonical numbers, which
+/// is precisely what makes the result safe to aggregate.
+///
+/// The Greek set is produced by the **adjoint** engine by default — a single
+/// reverse sweep delivers the full first-order block at ~O(1) price-cost
+/// regardless of factor count (`docs/RISK-HIERARCHY.md` §3.3), replacing the
+/// O(factors) bump-and-revalue for the additive leaf. The analytic closed form
+/// remains the validation oracle / fallback via [`canonicalize_with`]; the two are
+/// asserted equal to numerical tolerance in this crate's test suite, which is what
+/// licenses defaulting to the faster path.
 #[must_use]
 pub fn canonicalize(pos: &PositionRisk) -> CanonicalLeaf {
+    canonicalize_with(GreekEngine::default(), pos)
+}
+
+/// Re-derive a position's risk into the canonical convention (§2.2) under an
+/// explicit [`GreekEngine`].
+///
+/// Identical to [`canonicalize`] except the caller picks the differentiation
+/// engine: [`GreekEngine::Adjoint`] (the fast scale path, default) or
+/// [`GreekEngine::Analytic`] (the closed-form oracle / fallback). Both target the
+/// same sensitivities; the choice is internal acceleration and does not change the
+/// canonical leaf's meaning. The canonical *delta* is always pinned to the named
+/// `SpotUnadjusted` convention via [`convention_delta`] independently of the
+/// engine, so the delta leg is engine-invariant by construction.
+#[must_use]
+pub fn canonicalize_with(engine: GreekEngine, pos: &PositionRisk) -> CanonicalLeaf {
     let n = pos.notional_base;
-    // Closed-form Greeks under the model (spot/forward delta both reported by the
-    // vanilla engine; we take the SPOT, premium-UNADJUSTED leg as canonical).
-    let g: Greeks = vanilla_greeks(pos.option, &pos.inputs);
+    // Full Greek set under the selected engine. The adjoint engine (default) is a
+    // single reverse sweep of the GK graph; the analytic engine is the closed-form
+    // oracle. We take the SPOT, premium-UNADJUSTED delta leg as canonical.
+    let g: Greeks = engine.greeks(pos.option, &pos.inputs);
     // The canonical delta is the spot-unadjusted delta. The vanilla `Greeks`
     // already carries `delta_spot` as the premium-unadjusted spot delta, but we
     // re-derive it through `convention_delta` so the canonical definition is
@@ -369,6 +439,98 @@ mod tests {
             is_close(reconstructed, direct, 1e-9, 1.0),
             "reconstructed premium-adjusted delta {reconstructed} != direct {direct}"
         );
+    }
+
+    /// **The adjoint (default) leaf equals the analytic (oracle) leaf** to
+    /// numerical tolerance — the equivalence that licenses defaulting
+    /// [`canonicalize`] to the fast reverse-mode path. Every canonical Greek and
+    /// the premium line must agree across a spread of strikes, vols, tenors, signs
+    /// and pairs; a mismatch here means the fast path must NOT be the default.
+    #[test]
+    fn adjoint_leaf_matches_analytic_leaf() {
+        let cases = [
+            (
+                eurusd(),
+                OptionType::Call,
+                10_000_000.0,
+                VanillaInputs::new(1.10, 1.12, 0.10, 1.0, 0.04, 0.02),
+            ),
+            (
+                eurusd(),
+                OptionType::Put,
+                -5_000_000.0,
+                VanillaInputs::new(1.10, 1.05, 0.14, 0.25, 0.03, 0.05),
+            ),
+            (
+                usdjpy(),
+                OptionType::Call,
+                8_000_000.0,
+                VanillaInputs::new(156.0, 160.0, 0.09, 2.0, 0.05, 0.01),
+            ),
+            (
+                usdjpy(),
+                OptionType::Put,
+                -3_000_000.0,
+                VanillaInputs::new(156.0, 150.0, 0.18, 0.10, 0.01, 0.04),
+            ),
+            (
+                CcyPair::new(Ccy::GBP, Ccy::USD),
+                OptionType::Call,
+                1_000_000.0,
+                VanillaInputs::new(1.30, 1.30, 0.07, 0.5, 0.045, 0.005),
+            ),
+        ];
+        for (pair, opt, notional, inputs) in cases {
+            let mk = |eng| {
+                canonicalize_with(
+                    eng,
+                    &PositionRisk::new(
+                        pair,
+                        opt,
+                        notional,
+                        inputs,
+                        DeltaConvention::SpotUnadjusted,
+                        PremiumStyle::DomesticPips,
+                    ),
+                )
+            };
+            let aad = mk(GreekEngine::Adjoint);
+            let ana = mk(GreekEngine::Analytic);
+            // The default `canonicalize` IS the adjoint path.
+            assert_eq!(
+                canonicalize(&PositionRisk::new(
+                    pair,
+                    opt,
+                    notional,
+                    inputs,
+                    DeltaConvention::SpotUnadjusted,
+                    PremiumStyle::DomesticPips
+                )),
+                aad
+            );
+            // Delta is convention-pinned → bit-identical regardless of engine.
+            assert_eq!(aad.greeks.delta_base, ana.greeks.delta_base);
+            // The remaining additive Greeks agree to AAD-vs-analytic tolerance.
+            let pairs = [
+                (aad.greeks.gamma, ana.greeks.gamma, "gamma"),
+                (aad.greeks.vega, ana.greeks.vega, "vega"),
+                (aad.greeks.theta, ana.greeks.theta, "theta"),
+                (aad.greeks.vanna, ana.greeks.vanna, "vanna"),
+                (aad.greeks.volga, ana.greeks.volga, "volga"),
+                (aad.greeks.charm, ana.greeks.charm, "charm"),
+                (aad.greeks.speed, ana.greeks.speed, "speed"),
+                (aad.greeks.zomma, ana.greeks.zomma, "zomma"),
+                (aad.greeks.color, ana.greeks.color, "color"),
+                (aad.premium_quote, ana.premium_quote, "premium"),
+            ];
+            for (a, b, name) in pairs {
+                // Scaled by notional up to 1e7, so use a relative tolerance.
+                assert!(
+                    is_close(a, b, 1e-7, 1e-9 * notional.abs().max(1.0)),
+                    "{name}: adjoint {a} vs analytic {b} on {pair:?} {opt:?}"
+                );
+            }
+        }
     }
 
     /// Greeks scale linearly in notional and flip with its sign (a short position

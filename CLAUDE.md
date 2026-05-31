@@ -120,6 +120,55 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-05-31 — **AAD adjoint Greeks + GPU-batched scenario — built AND wired into the risk
+  estate (closes the first frontier item; bump-and-revalue/analytic kept as oracles).** Resumed
+  the in-flight dynamic workflow and finished it end-to-end. **(1) `celnet-vanilla::adjoint_greeks`**
+  — genuine reverse-mode AAD over the GK graph: one reverse sweep yields the full first-order block
+  (delta/vega/theta/two-rho) + second-order gamma/vanna/volga (reverse-over-reverse); charm/speed/
+  zomma/color stay analytic (boundary documented, not faked). Gated to ~1e-12 vs the analytic Greeks
+  AND an independent central-FD oracle; price bit-identical to `price()`; bit-reproducible.
+  **(2) `celnet-gpu` batched scenario kernel** (`scenario.rs`/`scenario.wgsl`, `ScenarioPricer`/
+  `ScenarioAxes`/`ScenarioGrid`) — one dispatch prices a whole spot×vol shock grid of a vanilla under
+  **common random numbers** (smooth ladder, no MC-noise crossings), f32 GPU reconciled to the f64 CPU
+  oracle node-by-node within the crate's derived bound; transparent CPU fallback for headless/CI;
+  bounded readback deadline (never hangs). **(3) Wired into the risk estate (the part that makes the
+  firm-scale claim real):** `celnet-risk-normalize` canonical leaf now defaults to the **adjoint**
+  engine (`GreekEngine::Adjoint`, purpose-named per guardrail 8) — one O(1)-in-factors sweep replaces
+  O(factors) bump — with the closed-form analytic engine retained as the validation oracle/fallback,
+  the two gated equal to ~1e-9 (`adjoint_leaf_matches_analytic_leaf`). `celnet-risk-cube::nonadditive`
+  gains an AAD **sensitivity-based VaR/ES lens** (`sensitivity_var_es`: Greeks computed ONCE per
+  position, reused across scenarios via a 2nd-order Taylor P&L — O(positions) sweeps vs the oracle's
+  O(positions×scenarios) repricings); `historical_var_es` full bump-and-revalue **retained as the
+  oracle**, the two reconciled to a documented ≤8% rel envelope over a daily-VaR-scale ladder with a
+  test proving the Taylor residual shrinks O(shock³) (tight regime <2%) and an honest large-shock
+  divergence test. `celnet-risk-cube::scenario_grid` adds a node spot×vol GPU scenario-PV grid
+  (one dispatch/position) reconciled to the analytic grid within the MC std-error band. **Honestly
+  NOT done:** GPU-MC was deliberately NOT plumbed into the closed-form VaR path (mixing MC noise into
+  an exact reval is a regression) — the right GPU lever there is a batched **closed-form** vanilla
+  kernel (GPU-AT-SCALE Workload A / G2), still the distinct next GPU increment; GPU pathwise/LR Greeks
+  (G6) still deferred. Verified by hand: **full `just check` green ("All gates passed.")** — per-crate
+  AAD 38 / gpu 24 / risk-cube 19 / risk-normalize green; built via an implement→adversarial-verify
+  dynamic workflow (verdict accept) then independently re-gated + diff-reviewed (no mocks/placeholders;
+  agent under-reported its diff — reviewed in full before commit). **Next frontier (the one remaining
+  item):** cross-fleet distributed risk fan-out — shard-local roll-up + cross-shard reducer over the
+  built `celnet-router` HRW map, reconciled fan-out == single-node aggregate.
+
+- 2026-05-31 — **GUI IB-scale views (commit `547b7bd`).** Built via parallel lanes off a
+  token-optimized file-handoff seam (`/tmp/celnet-scale-seam.md`): **UniverseNavigator** (⌘B/
+  toolbar "Pairs" — command-palette-style, grouped Majors/Crosses/EM, favourites, keyboard-first,
+  registry-ready over the seeded set, honestly labelled), **virtualised blotter** (StreamWorkspace +
+  dependency-free `lib/virtual.ts` windowing → scales to thousands of rows; group/collapse by
+  pair/tenor with real aggregates; sortable sticky columns), **vol-cube pivot/heatmap**
+  (CubeWorkspace via a Surface mark|cube toggle; pair×tenor×delta heat from the server's calibrated
+  smiles via `data/cube.ts`; perceptual ramp; honest "—" empties; cell→smile drill; no client-side
+  vol math), and a **broken-date/event-aware ticket** (TicketWorkspace + DatePicker; tenor incl.
+  ON/TN/SN/IMM OR arbitrary broken date; prices end-to-end through the real transport via the
+  BrokenDate Tenor + expiry_years — confirmed; event-clock jump-vol honestly labelled deferred).
+  Verified by hand: `npm run build` green (106 modules) + live QA (navigator + cube render real
+  data vs the demo edge). **Frontier remaining (both honestly deferred-by-design in the docs):**
+  AAD adjoint Greeks + GPU-batched scenario (perf; bump-and-revalue oracle built to validate),
+  and cross-fleet distributed risk fan-out (needs `celnet-router`, currently designed-only).
+
 - 2026-05-31 — **Firm-scale hierarchical risk REAL end-to-end (commit `4c42762`) — closes the
   client-side-aggregation parity gap.** New **`RiskService`** in the one `celnet-proto` contract
   (ListPositions/AggregateRisk/DrillRisk/LimitStatus): `RiskDimension`
