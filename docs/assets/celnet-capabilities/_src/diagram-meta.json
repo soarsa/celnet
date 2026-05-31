@@ -1,0 +1,93 @@
+[
+ {
+  "figname": "fig-01-system-architecture-adaptability",
+  "w": 1680,
+  "h": 1000,
+  "caption": "Celnet's adaptable architecture \u2014 pluggable market-data and product adapters flow into one celnet-proto contract wrapping a pinned zero-allocation hot core, emit bit-identical pricing surfaces across the GUI, Excel, SDK, CLI, WebSocket, FIX and Celer Trader, and deploy three ways through reversible adapter swaps behind a conflating egress governor.",
+  "alt": "Architecture diagram: inbound vendor and Celer feeds enter via a market-data seam into a navy Celnet core framed by the single celnet-proto contract (async edge, wait-free rings, pinned hot cores for ingest/surface, pricer/Greeks, risk, GPU/telemetry), with parity client surfaces on the right, a risk and scale-out band, and Standalone/Hybrid/CelerIntegrated deployment modes plus an egress governor along the bottom."
+ },
+ {
+  "figname": "fig-02-api-first-parity",
+  "w": 1500,
+  "h": 860,
+  "caption": "Celnet exposes one clean, unversioned contract served by the Celnet server and fanned out to six surfaces \u2014 gRPC, a byte-identical WebSocket JSON mirror, the Rust client SDK, the CLI, the Excel CELNET.* add-in, and the React/WebGPU GUI \u2014 so the front-end uses the same APIs as any client and every value is bit-identical across them all.",
+  "alt": "Architecture diagram showing a central coral-marked Celnet contract hub fanning out to six client surfaces (gRPC, WebSocket mirror, Rust SDK, CLI, Excel add-in, GUI), each labelled same contract and value bit-identical, with the contract carrying pricing, quote/RFQ, multiplex stream, surface marking with smile-model selector, market-series feed, and attribution identity."
+ },
+ {
+  "figname": "fig-03-quant-coverage",
+  "w": 1680,
+  "h": 1000,
+  "caption": "Celnet's quant and pricing methodology coverage \u2014 Garman-Kohlhagen vanilla with the full FX desk Greek set, the volatility smile and arbitrage-free surface engine, and a first-generation exotics catalogue priced by complementary analytic, PDE, Monte-Carlo and Vanna-Volga methods, all validated to machine precision against an independent reference and extensible via the Open Quant SDK.",
+  "alt": "Three-column architecture diagram: Vanilla and Greeks, Smile and Surface, and an Exotics product-by-method matrix, over a band noting independent-reference validation and SDK extensibility."
+ },
+ {
+  "figname": "fig-04-surface-pipeline",
+  "w": 1500,
+  "h": 720,
+  "caption": "Celnet's surface pipeline turns broker ATM and risk-reversal/butterfly quotes into a versioned, arbitrage-free marked surface \u2014 market-to-smile strangle calibration, a switchable smile-model selector, and butterfly, calendar and vertical no-arbitrage gates \u2014 which pricing, RFQ and RFS consume by pinned version, rejecting any unknown version rather than silently falling back to live.",
+  "alt": "Left-to-right surface construction pipeline from broker quotes through strangle calibration, smile-model selector and arbitrage gates to a versioned marked surface, with an official-versus-live registry below where pricing paths pin a surface version and unknown versions are rejected."
+ },
+ {
+  "figname": "fig-05-plugin-tiers",
+  "w": 1620,
+  "h": 980,
+  "caption": "Celnet's Open Quant SDK: one frozen trait contract and a tier-blind model registry route every model \u2014 native, WebAssembly-sandboxed, signed shared-object or OS-isolated \u2014 through the same calling convention, with only the core math primitives crossing a zero-ambient-authority capability boundary and a built-in butterfly no-arbitrage self-check, so desks run private-IP custom models in-engine without forking Celnet.",
+  "alt": "Architecture diagram of Celnet's tiered plugin host: a frozen Open Quant SDK contract and self-describing model registry feed a tier-blind registry that fans out to native, WebAssembly sandbox, signed shared-object, and OS-sandbox execution tiers, with a capability boundary admitting only exp/ln/sqrt/norm_pdf/norm_cdf into the guest, a no-arbitrage self-check, and a desk band listing the full quant catalogue."
+ },
+ {
+  "figname": "fig-06-risk-architecture",
+  "w": 1680,
+  "h": 980,
+  "caption": "Celnet's risk architecture spans book-shaped scenario risk \u2014 real repricing across a spot-vol shock grid, bucketed vega, cross-gamma and theta-roll horizons against versioned marked surfaces \u2014 and a firm-wide OLAP position-fact cube with convention-canonicalized netting, eight-axis roll-up, cascading limits and entitlement pruning, where Book and Risk are two zooms of one cube exposed identically to GUI, SDK and Excel.",
+  "alt": "Two-band diagram: book-shaped scenario risk from the pricing hot core into shock grid, bucketed vega, cross-gamma and theta-roll feeding a versioned marked-surface registry; and a firm-wide eight-dimension position-fact cube fed by a normalized fact stream, pruned by entitlements and limits, served to GUI, SDK and Excel."
+ },
+ {
+  "figname": "fig-07-performance-ladder",
+  "w": 1500,
+  "h": 820,
+  "caption": "A qualitative latency ladder showing that in-core pricing and full-Greek computation sit far at the fast end while the network round-trip dominates the budget, so pricing is never the bottleneck \u2014 flanked by zero-cost tail-percentile observability, regression-gated benchmarks, machine-precision validation, and a deterministic build.",
+  "alt": "Stepped latency-ladder diagram with pricing steps far to the fast end and the network round-trip dominating, plus a side panel of observability, benchmark, validation and build-quality capabilities."
+ },
+ {
+  "figname": "fig-08-scaleout",
+  "w": 1560,
+  "h": 900,
+  "caption": "Celnet's node-local hot substrate prices investment-bank-sized portfolios in-core, while a rendezvous partition map shards the book across the fleet and a conflating egress governor fans continuous two-way prices out to many high-performance counterparties.",
+  "alt": "Two-zone architecture diagram: a node-local hot substrate (wait-free rings, pinned zero-allocation cores, atomic snapshot, seqlock top-of-book, blue-green handoff, durable journal, batched pricing, cross-platform GPU backend) feeding a horizontal scale-out fabric (highest-random-weight sharding across nodes, replicated state, egress fan-out to counterparties)."
+ },
+ {
+  "figname": "fig-09-celer-lifecycle",
+  "w": 1720,
+  "h": 1000,
+  "caption": "Celnet sits as the FX-options pricing system-of-record inside the Celer trade lifecycle, injecting price, Greeks and surface into the market-data price path and option risk into the pre-trade and position path.",
+  "alt": "Two-swimlane diagram of the Celer trade lifecycle: a price path from venues through FIX-in, marketdata, marketmerchant, distributor and WebSocket to Celer Trader, and an order path from Celer Trader through orderrouting, risk, destination, clearing and positionmanager, with coral Celnet callouts and a Celnet pricing-core, book-and-risk cube and one-contract panel beneath."
+ },
+ {
+  "figname": "fig-10-deployment-modes",
+  "w": 1620,
+  "h": 820,
+  "caption": "Celnet runs from one codebase in three deployment modes \u2014 Standalone, Hybrid and CelerIntegrated \u2014 selected only by binding three adapter seams (market-data source, price sink, order and execution), with a conflating egress governor between the pricer and the estate distributor, so Celnet stays the FX-options pricing system-of-record in every mode and migration is a reversible adapter swap.",
+  "alt": "A diagram showing the shared Celnet pricing core and three seam traits feeding three side-by-side deployment-mode columns (Standalone, Hybrid, CelerIntegrated), with a conflating egress governor routing prices to the estate distributor."
+ },
+ {
+  "figname": "fig-11-streamsession-clicktrade",
+  "w": 1560,
+  "h": 860,
+  "caption": "One bidirectional StreamSession multiplexes many subscriptions through Subscribe, Snapshot, sequenced Update, Heartbeat, gap-driven Resync and in-place Modify, then turns a streamed price into a confirmed fill via an unguessable line-bound tradable token with last-look validity and idempotent, typed execution.",
+  "alt": "Architecture diagram of Celnet's multiplex StreamSession and click-to-trade flow, showing the subscription lifecycle, resync and modify paths, and server-minted keyed-MAC tradable tokens resolving to an executed fill or a typed reject."
+ },
+ {
+  "figname": "fig-12-capability-landscape",
+  "w": 1680,
+  "h": 920,
+  "caption": "The Celnet capability landscape: pricing and analytics, risk, the real-time edge, extensibility, clients and platform clustered around the Celnet pricing core and the Celer trade lifecycle.",
+  "alt": "One-page map of Celnet capabilities in six labelled clusters around a navy Celnet core, with the Celer trade-lifecycle integration panel."
+ },
+ {
+  "figname": "fig-13-engine-concurrency",
+  "w": 1560,
+  "h": 880,
+  "caption": "Celnet's two-tier engine joins a concurrency-rich async edge (gRPC, byte-identical WebSocket mirror, FIX) to pinned zero-allocation hot cores through wait-free single-producer/single-consumer request and response rings, publishing market state lock-free via an atomically-swapped snapshot, a single-writer seqlock top-of-book and cache-padded counters, with blue-green zero-downtime handoff, a durable checksummed journal, and partition-map scale-out.",
+  "alt": "Architecture diagram showing an async edge feeding pinned zero-allocation hot cores through wait-free SPSC rings, with lock-free state publication, blue-green handoff, a durable journal, and horizontal scale-out."
+ }
+]

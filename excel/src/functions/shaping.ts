@@ -28,6 +28,16 @@ import type {
   Tenor,
   TenorUnit,
 } from "../contract/contract";
+import type {
+  AdditiveRisk,
+  LimitUtilization,
+  NumeraireRate,
+  ReportingNumeraire,
+  RiskDimension,
+  RiskNode,
+  RiskPosition,
+  RiskScope,
+} from "../contract/riskCodec";
 
 /** The canonical desk default convention (spot-unadjusted Δ / ATM-forward / …),
  * matching the server fixture (`crates/celnet-server/tests/common` wire_conventions).
@@ -218,6 +228,106 @@ export function parseDeltaWing(raw: string | number): number {
     throw new ShapingError(`delta wing \`${raw}\` out of range (expected 0 < δ < 0.5)`);
   }
   return wing;
+}
+
+// ---------------------------------------------------------------------------
+// risk shaping (RiskService — server-side hierarchical risk)
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse an org-dimension selector string into the contract `RiskDimension` (the
+ * `aggregate_risk` group-by axis / scope dimension). Accepts the trader-facing
+ * short names (`FIRM`, `TRADER`, `BOOK`, `DESK`, `PAIR`/`CCYPAIR`, `LOCATION`/
+ * `LOC`, `ENTITY`/`LE`), case-insensitive. Empty/absent ⇒ `FIRM` (the apex, the
+ * proto3 default), so an omitted argument rolls the whole entitled book to one node.
+ */
+export function parseRiskDimension(raw: string | undefined): RiskDimension {
+  const s = (raw ?? "").trim().toUpperCase();
+  switch (s) {
+    case "":
+    case "FIRM":
+      return "FIRM";
+    case "TRADER":
+      return "TRADER";
+    case "BOOK":
+      return "BOOK";
+    case "DESK":
+      return "DESK";
+    case "PAIR":
+    case "CCYPAIR":
+    case "CCY_PAIR":
+      return "CCY_PAIR";
+    case "LOCATION":
+    case "LOC":
+      return "LOCATION";
+    case "ENTITY":
+    case "LE":
+      return "ENTITY";
+    default:
+      throw new ShapingError(
+        `invalid dimension \`${raw}\` (expected FIRM, TRADER, BOOK, DESK, PAIR, LOCATION or ENTITY)`,
+      );
+  }
+}
+
+/** Parse a numeraire ccy code (3 letters), upper-cased. */
+export function parseNumeraireCcy(raw: string | undefined): string {
+  const s = (raw ?? "").trim().toUpperCase();
+  if (s === "") return "USD"; // a sensible reporting default; overridable per call
+  if (!/^[A-Z]{3}$/.test(s)) {
+    throw new ShapingError(`invalid numeraire \`${raw}\` (expected a 3-letter code, e.g. USD)`);
+  }
+  return s;
+}
+
+/**
+ * Shape a `ReportingNumeraire` from a numeraire code and an optional `[ccy, rate]`
+ * spill range. The numeraire's own rate is implicit 1.0; every other currency in
+ * the book needs a rate (units of numeraire per 1 unit of ccy at spot). The rates
+ * arrive as the 2-D cell range Excel passes for the optional argument — rows of
+ * `[ccyString, rateNumber]`; a blank/short row is skipped. A row naming the
+ * numeraire itself is dropped (it is implicitly 1.0).
+ */
+export function shapeReportingNumeraire(
+  numeraireCcy: string,
+  rateRange: unknown,
+): ReportingNumeraire {
+  const numeraire = parseNumeraireCcy(numeraireCcy);
+  const rates: NumeraireRate[] = [];
+  if (Array.isArray(rateRange)) {
+    for (const row of rateRange) {
+      if (!Array.isArray(row) || row.length < 2) continue;
+      const ccyCell = row[0];
+      const rateCell = row[1];
+      if (ccyCell === "" || ccyCell === null || ccyCell === undefined) continue;
+      const ccy = String(ccyCell).trim().toUpperCase();
+      if (!/^[A-Z]{3}$/.test(ccy)) {
+        throw new ShapingError(`invalid rate ccy \`${ccyCell}\` (expected a 3-letter code)`);
+      }
+      if (ccy === numeraire) continue; // implicitly 1.0
+      const rate = typeof rateCell === "number" ? rateCell : Number(rateCell);
+      if (!Number.isFinite(rate) || rate <= 0) {
+        throw new ShapingError(`invalid numeraire rate for ${ccy}: \`${rateCell}\` (finite, > 0)`);
+      }
+      rates.push({ ccy, rate });
+    }
+  }
+  return { numeraire, rates };
+}
+
+/**
+ * Parse a scope argument `<DIM>:<value>` (e.g. `DESK:99`) into a `RiskScope`, or
+ * undefined for an empty/`ALL`/`FIRM` scope (the whole entitled book). The value is
+ * the cube's interned group handle (a non-negative integer).
+ */
+export function parseRiskScope(raw: string | undefined): RiskScope | undefined {
+  const s = (raw ?? "").trim();
+  if (s === "" || s.toUpperCase() === "ALL" || s.toUpperCase() === "FIRM") return undefined;
+  const m = /^([A-Za-z_]+)\s*[:=]\s*(\d+)$/.exec(s);
+  if (!m || m[1] === undefined || m[2] === undefined) {
+    throw new ShapingError(`invalid scope \`${raw}\` (expected DIM:value, e.g. DESK:99, or ALL)`);
+  }
+  return { dimension: parseRiskDimension(m[1]), value: BigInt(m[2]) };
 }
 
 // ---------------------------------------------------------------------------
@@ -528,6 +638,167 @@ export interface MarkStatus {
 /** Format CELNET.MARK as a 1×3 status spill `[status, surfaceVersionAfter, detail]`. */
 export function formatMarkStatusSpill(m: MarkStatus): SpillMatrix {
   return [[m.status, m.surfaceVersionAfter === undefined ? m.stagingId : `v${m.surfaceVersionAfter}`, m.detail]];
+}
+
+// ---------------------------------------------------------------------------
+// risk spill formatting (RiskService — server-side hierarchical risk)
+// ---------------------------------------------------------------------------
+
+/**
+ * The additive node columns surfaced by CELNET.RISK, in a stable order: the
+ * numeraire-collapsed measures the desk reads. `delta_numeraire`/`vega_numeraire`/
+ * `premium_numeraire` are in the reporting numeraire (the §2.2/§2.3 collapse), so a
+ * cell is NEVER in native premium units — the old "native premium units" caveat is
+ * resolved (aggregation goes through celnet-risk-normalize server-side).
+ */
+const RISK_MEASURE_COLUMNS: readonly { readonly label: string; readonly key: keyof AdditiveRisk }[] =
+  [
+    { label: "delta", key: "deltaNumeraire" },
+    { label: "gamma", key: "gamma" },
+    { label: "vega", key: "vegaNumeraire" },
+    { label: "theta", key: "theta" },
+    { label: "vanna", key: "vanna" },
+    { label: "volga", key: "volga" },
+    { label: "premium", key: "premiumNumeraire" },
+  ];
+
+/** A footer summarising the reporting numeraire + roll-up dimension (transparency). */
+function riskFooter(numeraire: string, dimension: RiskDimension, nodeCount: number): string {
+  return `roll-up by ${dimension} | reporting ${numeraire} | ${nodeCount} node${nodeCount === 1 ? "" : "s"} | server-aggregated (celnet-risk-normalize)`;
+}
+
+/**
+ * Format CELNET.RISK as a node grid: a header row
+ * `[group, count, delta, gamma, vega, theta, vanna, volga, premium, VaR, ES, curvature]`,
+ * one row per rolled-up node (the value column for each additive measure plus the
+ * presence-tracked non-additive measures rendered as a blank when absent — never a
+ * spurious zero), then a numeraire/dimension footer. Aggregation is the server's;
+ * this only lays the server-returned node tree out in cells.
+ */
+export function formatRiskSpill(
+  dimension: RiskDimension,
+  numeraire: string,
+  nodes: readonly RiskNode[],
+): SpillMatrix {
+  const header: (string | number)[] = [
+    "group",
+    "count",
+    ...RISK_MEASURE_COLUMNS.map((c) => c.label),
+    "VaR",
+    "ES",
+    "curvature",
+  ];
+  const rows: SpillMatrix = [header];
+  for (const node of nodes) {
+    const row: (string | number)[] = [
+      // FIRM rolls to the apex (group 0); show "FIRM" rather than a bare 0 so the
+      // single-node firm view reads honestly.
+      node.dimension === "FIRM" ? "FIRM" : node.group.toString(),
+      node.positionCount,
+      ...RISK_MEASURE_COLUMNS.map((c) => node.additive[c.key] as number),
+      node.nonadditive.var ?? "",
+      node.nonadditive.es ?? "",
+      node.nonadditive.curvatureSpot ?? "",
+    ];
+    rows.push(row);
+  }
+  rows.push([riskFooter(numeraire, dimension, nodes.length)]);
+  return rows;
+}
+
+/**
+ * Format CELNET.POSITIONS as a leaf grid: a header row
+ * `[position_id, book, trader, pair, type, notional, strike, vol, t, surface, attribution]`,
+ * one row per entitled open position, then a count footer. The position id /
+ * surface version are rendered as strings to avoid 64-bit precision loss.
+ */
+export function formatPositionsSpill(positions: readonly RiskPosition[]): SpillMatrix {
+  const header: (string | number)[] = [
+    "position_id",
+    "book",
+    "trader",
+    "pair",
+    "type",
+    "notional",
+    "strike",
+    "vol",
+    "t",
+    "surface",
+    "attribution",
+  ];
+  const rows: SpillMatrix = [header];
+  for (const p of positions) {
+    rows.push([
+      p.positionId.toString(),
+      p.org.book,
+      p.org.trader,
+      `${p.org.ccyPair.base}${p.org.ccyPair.quote}`,
+      p.optionType,
+      p.notionalBase,
+      p.inputs.strike,
+      p.inputs.vol,
+      p.inputs.t,
+      `v${p.surfaceVersion}`,
+      p.attribution ?? "—",
+    ]);
+  }
+  if (positions.length === 0) {
+    // Honest empty-state: no entitled open positions (a real, not error, state).
+    rows.push(["(no entitled open positions)"]);
+  } else {
+    rows.push([`${positions.length} position${positions.length === 1 ? "" : "s"}`]);
+  }
+  return rows;
+}
+
+/**
+ * Format CELNET.LIMITS as a utilization grid: a header row
+ * `[metric, cap, exposure, ratio, status, enforcement, headroom]`, one row per
+ * limit at the scope, then a worst-RAG / hard-breach footer. A `VEGA_BUCKET` /
+ * `TENOR_VEGA` metric annotates its pillar/tenor on the metric label so the row is
+ * self-describing.
+ */
+export function formatLimitsSpill(
+  scopeLabel: string,
+  limits: readonly LimitUtilization[],
+  worst: string,
+  hardBreach: boolean,
+): SpillMatrix {
+  const header: (string | number)[] = [
+    "metric",
+    "cap",
+    "exposure",
+    "ratio",
+    "status",
+    "enforcement",
+    "headroom",
+  ];
+  const rows: SpillMatrix = [header];
+  for (const l of limits) {
+    let metricLabel: string = l.metric;
+    if (l.metric === "VEGA_BUCKET") {
+      metricLabel = `VEGA_BUCKET(${l.vegaPillar.tenorDays}d,${l.vegaPillar.deltaBp}bp)`;
+    } else if (l.metric === "TENOR_VEGA") {
+      metricLabel = `TENOR_VEGA(${l.tenorDays}d)`;
+    }
+    rows.push([
+      metricLabel,
+      l.cap,
+      l.exposure,
+      l.ratio,
+      l.status,
+      l.enforcement,
+      l.headroom,
+    ]);
+  }
+  if (limits.length === 0) {
+    rows.push([`scope ${scopeLabel}: no limits configured`]);
+  } else {
+    rows.push([
+      `scope ${scopeLabel} | worst ${worst}${hardBreach ? " | HARD BREACH" : ""}`,
+    ]);
+  }
+  return rows;
 }
 
 // ---------------------------------------------------------------------------

@@ -3,8 +3,8 @@
   Celnet FX-options Office Add-in manifest.
 
   Declares the CELNET custom-function namespace (worksheet functions
-  =CELNET.PRICE / GREEKS / SURFACE / MARKSURFACE / RFQ / SUBSCRIBE / SERIES / MARK)
-  and the ticket task
+  =CELNET.PRICE / GREEKS / SURFACE / MARKSURFACE / RFQ / SUBSCRIBE / SERIES / MARK /
+  RISK / POSITIONS / LIMITS) and the ticket task
   pane. Custom functions run in a shared JS runtime; the task pane is a separate
   page. Both are served over HTTPS from the dev server (https://localhost:3000)
   during development and from the deployment host in production.
@@ -130,7 +130,7 @@
       </bt:ShortStrings>
       <bt:LongStrings>
         <bt:String id="Celnet.Taskpane.Tooltip" DefaultValue="Open the Celnet ticket: RFQ, click-to-trade, and surface contribution." />
-        <bt:String id="Celnet.GetStarted.Description" DefaultValue="Use =CELNET.PRICE, =CELNET.GREEKS, =CELNET.SURFACE, =CELNET.MARKSURFACE, =CELNET.RFQ, =CELNET.SUBSCRIBE, =CELNET.SERIES and =CELNET.MARK, and open the Celnet Ticket task pane." />
+        <bt:String id="Celnet.GetStarted.Description" DefaultValue="Use =CELNET.PRICE, =CELNET.GREEKS, =CELNET.SURFACE, =CELNET.MARKSURFACE, =CELNET.RFQ, =CELNET.SUBSCRIBE, =CELNET.SERIES, =CELNET.MARK, =CELNET.RISK, =CELNET.POSITIONS and =CELNET.LIMITS, and open the Celnet Ticket task pane." />
       </bt:LongStrings>
       <bt:Runtimes>
         <bt:Runtime id="Celnet.Functions.Runtime" resid="Celnet.Functions.Page" />

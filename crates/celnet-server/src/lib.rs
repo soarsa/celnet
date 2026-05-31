@@ -99,11 +99,14 @@ use tokio::sync::oneshot;
 
 use celnet_proto::pricing_service_server::PricingServiceServer;
 use celnet_proto::quote_service_server::QuoteServiceServer;
+use celnet_proto::risk_service_server::RiskServiceServer;
 use celnet_proto::stream_service_server::StreamServiceServer;
 use celnet_proto::surface_service_server::SurfaceServiceServer;
 
 use services::pricing::PricingEdge;
 use services::quote::QuoteEdge;
+use services::risk::RiskEdge;
+use services::risk::store::PositionStore;
 use services::stream::StreamEdge;
 use services::surface::SurfaceEdge;
 
@@ -123,6 +126,7 @@ pub struct Edge {
     gate: Arc<ReadinessGate>,
     link: Arc<CoreLink>,
     surface_book: Arc<SurfaceBook>,
+    store: Arc<PositionStore>,
     grpc_shutdown: oneshot::Sender<()>,
     grpc_task: tokio::task::JoinHandle<Result<(), tonic::transport::Error>>,
     ws_mirror: WsMirror,
@@ -181,6 +185,11 @@ impl Edge {
         // surface edge deposits marks; the pricing / RFQ / RFS paths resolve a
         // pinned `surface_version` against it (§ surface_version pinning).
         let surface_book = Arc::new(SurfaceBook::new());
+        // The single shared live position book: the RFS click-to-trade path records
+        // booked vanilla lines into it, and `RiskService` aggregates the same book
+        // (API-first parity: the Book/Risk views read the server's aggregate, never
+        // looping positions client-side).
+        let store = Arc::new(PositionStore::new());
 
         let listener = TcpListener::bind(grpc_addr).await?;
         let bound = listener.local_addr()?;
@@ -197,12 +206,13 @@ impl Edge {
             clock.clone(),
             Arc::clone(&surface_book),
         ));
-        let stream = StreamServiceServer::new(StreamEdge::new(
+        let stream = StreamServiceServer::new(StreamEdge::with_store(
             Arc::clone(&link),
             Arc::clone(&gate),
             spread,
             clock.clone(),
             Arc::clone(&surface_book),
+            Arc::clone(&store),
         ));
         let surface = SurfaceServiceServer::new(SurfaceEdge::new(
             Arc::clone(&link),
@@ -210,6 +220,7 @@ impl Edge {
             clock.clone(),
             Arc::clone(&surface_book),
         ));
+        let risk = RiskServiceServer::new(RiskEdge::new(Arc::clone(&store), Arc::clone(&gate)));
 
         let incoming = tonic::transport::server::TcpIncoming::from_listener(listener, true, None)
             .map_err(std::io::Error::other)?;
@@ -219,6 +230,7 @@ impl Edge {
                 .add_service(quote)
                 .add_service(stream)
                 .add_service(surface)
+                .add_service(risk)
                 .serve_with_incoming_shutdown(incoming, async {
                     let _ = grpc_rx.await;
                 })
@@ -236,6 +248,7 @@ impl Edge {
             spread,
             clock,
             Arc::clone(&surface_book),
+            Arc::clone(&store),
         );
         let ws_mirror = ws::WsMirror::start(ws_addr, ws_services).await?;
 
@@ -245,6 +258,7 @@ impl Edge {
             gate,
             link,
             surface_book,
+            store,
             grpc_shutdown,
             grpc_task,
             ws_mirror,
@@ -281,6 +295,14 @@ impl Edge {
     #[must_use]
     pub fn surface_book(&self) -> &Arc<SurfaceBook> {
         &self.surface_book
+    }
+
+    /// The shared live position book the RFS path books into and `RiskService`
+    /// aggregates (so a test / admin path can configure the org hierarchy + limit
+    /// tree and inspect the live positions).
+    #[must_use]
+    pub fn store(&self) -> &Arc<PositionStore> {
+        &self.store
     }
 
     /// Gracefully drain and stop the edge for a blue-green cutover (§5).

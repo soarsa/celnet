@@ -17,27 +17,48 @@
  */
 
 import type {
+  AdditiveRisk,
+  AggregateRiskRequest,
+  AggregateRiskResponse,
   ArbReport,
   AttributionRecord,
   BookId,
   BrokerQuoteSet,
   BucketedRisk,
+  CcyExposureLeg,
   CcyPair,
   Conventions,
   CrossGamma,
+  DrillRiskRequest,
+  DrillRiskResponse,
+  EntitlementPrincipal,
+  EntitlementRule,
   Executed,
   Execution,
   Greeks,
   Instrument,
   Leg,
+  LimitStatusRequest,
+  LimitStatusResponse,
+  LimitUtilization,
+  ListPositionsRequest,
+  ListPositionsResponse,
   MarkedSurface,
   MarketContext,
   MarketObservable,
   MarketSeriesPoint,
   MarketSeriesSnapshot,
+  NonAdditiveRisk,
+  NumeraireRate,
+  OrgKey,
   Owner,
   Quote,
+  ReportingNumeraire,
   RiskBucketRequest,
+  RiskNode,
+  RiskPosition,
+  RiskScope,
+  RiskVegaPillar,
   ScenarioPoint,
   ScenarioResult,
   ShockAxis,
@@ -53,7 +74,9 @@ import type {
   TradableToken,
   TwoWayPrice,
   Update,
+  VanillaInputs,
   VegaBucket,
+  VegaLadderBucket,
 } from "./contract";
 import * as e from "./enums";
 
@@ -757,6 +780,262 @@ export function scenarioResultFromWire(o: WireObject): ScenarioResult {
     points: array(o, "points").map(scenarioPointFromWire),
     bucketedRisk,
   };
+}
+
+// ---------------------------------------------------------------------------
+// hierarchical risk (RiskService) — encode requests, decode responses
+// ---------------------------------------------------------------------------
+//
+// The same single contract, second encoding (rule 9): every object maps the proto
+// message field-for-field by the proto snake_case field name, every enum rides by
+// its canonical proto enum number, and `optional` (presence-tracked) fields are
+// `null`/absent when `None`. These mirror the server codec in
+// `crates/celnet-server/src/ws/codec.rs` (the four `*_request_from_json` /
+// `*_response_to_json` fns). The request `type`/`correlation_id` are added by the
+// transport; these encoders/decoders cover only the message body.
+
+/** An optional presence-tracked number (`null`/absent ⇒ undefined). */
+function optNum(o: WireObject, key: string): number | undefined {
+  const v = o[key];
+  return typeof v === "number" ? v : undefined;
+}
+
+// --- shared value codecs (encode GUI → wire) -------------------------------
+
+export function riskScopeToWire(s: RiskScope): WireObject {
+  return { dimension: e.riskDimension.toWire(s.dimension), value: s.value };
+}
+
+function entitlementRuleToWire(r: EntitlementRule): WireObject {
+  return { scopes: r.scopes.map(riskScopeToWire) };
+}
+
+export function principalToWire(p: EntitlementPrincipal): WireObject {
+  return {
+    grant_all: p.grantAll,
+    grants: p.grants.map(entitlementRuleToWire),
+    denies: p.denies.map(entitlementRuleToWire),
+  };
+}
+
+function numeraireRateToWire(r: NumeraireRate): WireObject {
+  return { ccy: r.ccy, rate: r.rate };
+}
+
+export function numeraireToWire(n: ReportingNumeraire): WireObject {
+  return { numeraire: n.numeraire, rates: n.rates.map(numeraireRateToWire) };
+}
+
+export function vegaPillarToWire(p: RiskVegaPillar): WireObject {
+  return { tenor_days: p.tenorDays, delta_bp: p.deltaBp };
+}
+
+// --- shared value codecs (decode wire → GUI) -------------------------------
+
+function riskScopeFromWire(o: WireObject): RiskScope {
+  return {
+    dimension: e.riskDimension.fromWire(enumNum(o, "dimension")),
+    value: numToBigInt(o, "value"),
+  };
+}
+
+function orgKeyFromWire(o: WireObject): OrgKey {
+  return {
+    trader: num(o, "trader"),
+    book: num(o, "book"),
+    desk: num(o, "desk"),
+    ccyPair: ccyPairFromWire(child(o, "ccy_pair")),
+    location: num(o, "location"),
+    entity: num(o, "entity"),
+  };
+}
+
+function vanillaInputsFromWire(o: WireObject): VanillaInputs {
+  return {
+    spot: num(o, "spot"),
+    strike: num(o, "strike"),
+    vol: num(o, "vol"),
+    t: num(o, "t"),
+    rDom: num(o, "r_dom"),
+    rFor: num(o, "r_for"),
+  };
+}
+
+function vegaPillarFromWire(o: WireObject): RiskVegaPillar {
+  return { tenorDays: num(o, "tenor_days"), deltaBp: num(o, "delta_bp") };
+}
+
+function ccyExposureLegFromWire(o: WireObject): CcyExposureLeg {
+  return { ccy: str(o, "ccy"), amount: num(o, "amount") };
+}
+
+function vegaLadderBucketFromWire(o: WireObject): VegaLadderBucket {
+  return { pillar: vegaPillarFromWire(child(o, "pillar")), vega: num(o, "vega") };
+}
+
+function additiveRiskFromWire(o: WireObject): AdditiveRisk {
+  return {
+    deltaNumeraire: num(o, "delta_numeraire"),
+    deltaVector: array(o, "delta_vector").map(ccyExposureLegFromWire),
+    gamma: num(o, "gamma"),
+    vegaNumeraire: num(o, "vega_numeraire"),
+    theta: num(o, "theta"),
+    vanna: num(o, "vanna"),
+    volga: num(o, "volga"),
+    charm: num(o, "charm"),
+    speed: num(o, "speed"),
+    zomma: num(o, "zomma"),
+    color: num(o, "color"),
+    premiumNumeraire: num(o, "premium_numeraire"),
+    vegaLadder: array(o, "vega_ladder").map(vegaLadderBucketFromWire),
+  };
+}
+
+function nonAdditiveRiskFromWire(o: WireObject): NonAdditiveRisk {
+  // Each field is presence-tracked: absent/`null` ⇒ undefined (never a spurious 0).
+  const r: NonAdditiveRisk = {};
+  const v = optNum(o, "var");
+  if (v !== undefined) r.var = v;
+  const es = optNum(o, "es");
+  if (es !== undefined) r.es = es;
+  const alpha = optNum(o, "var_alpha");
+  if (alpha !== undefined) r.varAlpha = alpha;
+  const curv = optNum(o, "curvature_spot");
+  if (curv !== undefined) r.curvatureSpot = curv;
+  return r;
+}
+
+function riskNodeFromWire(o: WireObject): RiskNode {
+  return {
+    dimension: e.riskDimension.fromWire(enumNum(o, "dimension")),
+    group: numToBigInt(o, "group"),
+    additive: additiveRiskFromWire(child(o, "additive")),
+    nonadditive: nonAdditiveRiskFromWire(child(o, "nonadditive")),
+    positionCount: num(o, "position_count"),
+  };
+}
+
+export function riskPositionFromWire(o: WireObject): RiskPosition {
+  const p: RiskPosition = {
+    positionId: numToBigInt(o, "position_id"),
+    org: orgKeyFromWire(child(o, "org")),
+    optionType: e.optionType.fromWire(enumNum(o, "option_type")),
+    notionalBase: num(o, "notional_base"),
+    inputs: vanillaInputsFromWire(child(o, "inputs")),
+    quotedDelta: e.deltaConvention.fromWire(enumNum(o, "quoted_delta")),
+    premiumStyle: e.premiumStyle.fromWire(enumNum(o, "premium_style")),
+    surfaceVersion: numToBigInt(o, "surface_version"),
+  };
+  const attribution = attributionFromWire(o);
+  if (attribution !== undefined) p.attribution = attribution;
+  return p;
+}
+
+function limitUtilizationFromWire(o: WireObject): LimitUtilization {
+  return {
+    metric: e.limitMetricKind.fromWire(enumNum(o, "metric")),
+    vegaPillar: vegaPillarFromWire(child(o, "vega_pillar")),
+    tenorDays: num(o, "tenor_days"),
+    cap: num(o, "cap"),
+    exposure: num(o, "exposure"),
+    ratio: num(o, "ratio"),
+    status: e.ragStatus.fromWire(enumNum(o, "status")),
+    enforcement: e.enforcement.fromWire(enumNum(o, "enforcement")),
+    headroom: num(o, "headroom"),
+  };
+}
+
+// --- request encoders (GUI → wire body) ------------------------------------
+
+export function listPositionsRequestToWire(r: ListPositionsRequest): WireObject {
+  const w: WireObject = {};
+  if (r.scope) w["scope"] = riskScopeToWire(r.scope);
+  if (r.principal) w["principal"] = principalToWire(r.principal);
+  return w;
+}
+
+export function aggregateRiskRequestToWire(r: AggregateRiskRequest): WireObject {
+  const w: WireObject = {
+    dimension: e.riskDimension.toWire(r.dimension),
+    numeraire: numeraireToWire(r.numeraire),
+    vega_pillars: r.vegaPillars.map(vegaPillarToWire),
+    var_spot_shocks: r.varSpotShocks,
+    var_alpha: r.varAlpha,
+    curvature_risk_weight: r.curvatureRiskWeight,
+  };
+  if (r.principal) w["principal"] = principalToWire(r.principal);
+  if (r.scope) w["scope"] = riskScopeToWire(r.scope);
+  return w;
+}
+
+export function drillRiskRequestToWire(r: DrillRiskRequest): WireObject {
+  const w: WireObject = {
+    node: riskScopeToWire(r.node),
+    child_dimension: e.riskDimension.toWire(r.childDimension),
+    numeraire: numeraireToWire(r.numeraire),
+    vega_pillars: r.vegaPillars.map(vegaPillarToWire),
+    include_children: r.includeChildren,
+    include_positions: r.includePositions,
+  };
+  if (r.principal) w["principal"] = principalToWire(r.principal);
+  return w;
+}
+
+export function limitStatusRequestToWire(r: LimitStatusRequest): WireObject {
+  const w: WireObject = {
+    scope: riskScopeToWire(r.scope),
+    numeraire: numeraireToWire(r.numeraire),
+    vega_pillars: r.vegaPillars.map(vegaPillarToWire),
+    var_spot_shocks: r.varSpotShocks,
+    var_alpha: r.varAlpha,
+  };
+  if (r.principal) w["principal"] = principalToWire(r.principal);
+  return w;
+}
+
+// --- response decoders (wire → GUI) ----------------------------------------
+
+export function listPositionsResponseFromWire(o: WireObject): ListPositionsResponse {
+  const res: ListPositionsResponse = {
+    positions: array(o, "positions").map(riskPositionFromWire),
+  };
+  const corr = optBigInt(o, "correlation_id");
+  if (corr !== undefined) res.correlationId = corr;
+  return res;
+}
+
+export function aggregateRiskResponseFromWire(o: WireObject): AggregateRiskResponse {
+  const res: AggregateRiskResponse = {
+    dimension: e.riskDimension.fromWire(enumNum(o, "dimension")),
+    numeraire: str(o, "numeraire"),
+    nodes: array(o, "nodes").map(riskNodeFromWire),
+  };
+  const corr = optBigInt(o, "correlation_id");
+  if (corr !== undefined) res.correlationId = corr;
+  return res;
+}
+
+export function drillRiskResponseFromWire(o: WireObject): DrillRiskResponse {
+  const res: DrillRiskResponse = {
+    node: riskScopeFromWire(child(o, "node")),
+    children: array(o, "children").map(riskNodeFromWire),
+    positions: array(o, "positions").map(riskPositionFromWire),
+  };
+  const corr = optBigInt(o, "correlation_id");
+  if (corr !== undefined) res.correlationId = corr;
+  return res;
+}
+
+export function limitStatusResponseFromWire(o: WireObject): LimitStatusResponse {
+  const res: LimitStatusResponse = {
+    scope: riskScopeFromWire(child(o, "scope")),
+    limits: array(o, "limits").map(limitUtilizationFromWire),
+    worst: e.ragStatus.fromWire(enumNum(o, "worst")),
+    hardBreach: Boolean(o["hard_breach"]),
+  };
+  const corr = optBigInt(o, "correlation_id");
+  if (corr !== undefined) res.correlationId = corr;
+  return res;
 }
 
 /** Re-export the `StrategyKind` type guard surface for callers that need it. */

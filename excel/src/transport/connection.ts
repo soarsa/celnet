@@ -691,6 +691,35 @@ export class Connection {
   async markSurface(body: WireObject): Promise<WireObject> {
     return this.request("mark_surface", body, "mark_surface_response");
   }
+
+  // --- RiskService (server-side hierarchical risk) --------------------------
+  //
+  // The four `RiskService` RPCs over the same single multiplexed connection. The
+  // body is the snake_case proto request (built by `src/contract/riskCodec.ts`);
+  // the reply is matched by the echoed `correlation_id` the server stamps (and,
+  // defensively, by reply `type` as a fallback). Aggregation is SERVER-OWNED — the
+  // client sends scope/principal/numeraire and receives the rolled-up node tree;
+  // it never loops positions and sums (the API-first parity rule).
+
+  /** `RiskService.ListPositions` — the entitled open book (each with attribution). */
+  async listPositions(body: WireObject): Promise<WireObject> {
+    return this.request("list_positions", body, "list_positions_response");
+  }
+
+  /** `RiskService.AggregateRisk` — the SERVER's rolled-up node tree for a dimension. */
+  async aggregateRisk(body: WireObject): Promise<WireObject> {
+    return this.request("aggregate_risk", body, "aggregate_risk_response");
+  }
+
+  /** `RiskService.DrillRisk` — drill a node into child sub-nodes and/or positions. */
+  async drillRisk(body: WireObject): Promise<WireObject> {
+    return this.request("drill_risk", body, "drill_risk_response");
+  }
+
+  /** `RiskService.LimitStatus` — per-limit utilization/RAG for a scope node. */
+  async limitStatus(body: WireObject): Promise<WireObject> {
+    return this.request("limit_status", body, "limit_status_response");
+  }
 }
 
 // ---------------------------------------------------------------------------

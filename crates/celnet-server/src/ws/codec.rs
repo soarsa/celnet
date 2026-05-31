@@ -15,14 +15,18 @@
 use serde_json::{Map, Value, json};
 
 use celnet_proto::{
-    ArbReport, BrokerQuoteSet, BucketedRisk, CcyPair, Conventions, CrossGamma, Digital,
-    DoubleBarrier, Execute, Executed, Execution, GetSmileRequest, Greeks, Instrument, Leg,
-    MarkSurfaceRequest, MarkSurfaceResponse, MarketContext, Modify, PriceRequest, PriceResponse,
-    Quantity, Quote, QuoteAccept, QuoteReject, QuoteRequest, RejectAck, Resync, RiskBucketRequest,
+    AdditiveRisk, AggregateRiskRequest, AggregateRiskResponse, ArbReport, BrokerQuoteSet,
+    BucketedRisk, CcyExposureLeg, CcyPair, Conventions, CrossGamma, Digital, DoubleBarrier,
+    DrillRiskRequest, DrillRiskResponse, EntitlementPrincipal, EntitlementRule, Execute, Executed,
+    Execution, GetSmileRequest, Greeks, Instrument, Leg, LimitStatusRequest, LimitStatusResponse,
+    LimitUtilization, ListPositionsRequest, ListPositionsResponse, MarkSurfaceRequest,
+    MarkSurfaceResponse, MarketContext, Modify, NonAdditiveRisk, NumeraireRate, OrgKey,
+    PriceRequest, PriceResponse, Quantity, Quote, QuoteAccept, QuoteReject, QuoteRequest,
+    RejectAck, ReportingNumeraire, Resync, RiskBucketRequest, RiskNode, RiskPosition, RiskScope,
     ScenarioPoint, ScenarioRequest, ScenarioResponse, ShockAxis, SingleBarrier, Smile, SmilePoint,
     Snapshot, Solve, Strategy, StrategyKind, StreamEnd, StreamReject, StrikeOrDelta, Subscribe,
     SubscriptionId, Tenor, Touch, TradableToken, TwoWayPrice, Unsubscribe, Update, Vanilla,
-    instrument, shock_axis, strike_or_delta, tenor,
+    VanillaInputs, VegaLadderBucket, VegaPillar, instrument, shock_axis, strike_or_delta, tenor,
 };
 
 /// A codec error: a malformed or out-of-contract JSON message. Carries a
@@ -1002,6 +1006,294 @@ pub(super) fn scenario_response_to_json(r: &ScenarioResponse) -> Value {
 }
 
 // ---------------------------------------------------------------------------
+// risk: server-side hierarchical risk (RiskService)
+//
+// The SAME contract, second encoding (rule 9): every key is the proto snake_case
+// field name; every enum rides by its proto enum NUMBER; optional fields are
+// `null`/absent when `None`. `attribution` reuses the existing camelCase chain.
+// ---------------------------------------------------------------------------
+
+fn vanilla_inputs_to_json(i: &VanillaInputs) -> Value {
+    json!({
+        "spot": i.spot, "strike": i.strike, "vol": i.vol,
+        "t": i.t, "r_dom": i.r_dom, "r_for": i.r_for,
+    })
+}
+
+fn org_key_to_json(k: &OrgKey) -> Value {
+    json!({
+        "trader": k.trader, "book": k.book, "desk": k.desk,
+        "ccy_pair": k.ccy_pair.as_ref().map(ccy_pair_to_json),
+        "location": k.location, "entity": k.entity,
+    })
+}
+
+// `RiskPosition` is only ever ENCODED outbound by the server (built from the live
+// book); the server never decodes a wire `RiskPosition` inbound (clients send
+// scope/principal/numeraire requests, not positions), so there is no
+// `risk_position_from_json` — adding an unused decoder would be dead code.
+fn risk_position_to_json(p: &RiskPosition) -> Value {
+    json!({
+        "position_id": p.position_id,
+        "org": p.org.as_ref().map(org_key_to_json),
+        "option_type": p.option_type,
+        "notional_base": p.notional_base,
+        "inputs": p.inputs.as_ref().map(vanilla_inputs_to_json),
+        "quoted_delta": p.quoted_delta,
+        "premium_style": p.premium_style,
+        "surface_version": p.surface_version,
+        "attribution": p.attribution.as_ref().map(attribution_to_json),
+    })
+}
+
+fn risk_scope_from_json(v: &Value) -> Result<RiskScope> {
+    let o = obj(v, "scope")?;
+    Ok(RiskScope {
+        dimension: enum_or_zero(o, "dimension"),
+        value: u64_or_zero(o, "value"),
+    })
+}
+
+fn risk_scope_to_json(s: &RiskScope) -> Value {
+    json!({ "dimension": s.dimension, "value": s.value })
+}
+
+fn entitlement_rule_from_json(v: &Value) -> Result<EntitlementRule> {
+    let o = obj(v, "rule")?;
+    let scopes = o
+        .get("scopes")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .map(risk_scope_from_json)
+                .collect::<Result<Vec<_>>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    Ok(EntitlementRule { scopes })
+}
+
+fn principal_from_json(v: &Value) -> Result<EntitlementPrincipal> {
+    let o = obj(v, "principal")?;
+    let rules = |key: &str| -> Result<Vec<EntitlementRule>> {
+        o.get(key)
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .map(entitlement_rule_from_json)
+                    .collect::<Result<Vec<_>>>()
+            })
+            .transpose()
+            .map(Option::unwrap_or_default)
+    };
+    Ok(EntitlementPrincipal {
+        grant_all: bool_or_false(o, "grant_all"),
+        grants: rules("grants")?,
+        denies: rules("denies")?,
+    })
+}
+
+fn numeraire_from_json(v: &Value) -> Result<ReportingNumeraire> {
+    let o = obj(v, "numeraire")?;
+    let rates = o
+        .get("rates")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .map(|r| {
+                    let ro = obj(r, "rate")?;
+                    Ok(NumeraireRate {
+                        ccy: string_field(ro, "ccy")?,
+                        rate: f64_or_zero(ro, "rate"),
+                    })
+                })
+                .collect::<Result<Vec<_>>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    Ok(ReportingNumeraire {
+        numeraire: string_field(o, "numeraire")?,
+        rates,
+    })
+}
+
+fn vega_pillar_from_json(v: &Value) -> Result<VegaPillar> {
+    let o = obj(v, "pillar")?;
+    Ok(VegaPillar {
+        tenor_days: u32::try_from(u64_or_zero(o, "tenor_days")).unwrap_or(0),
+        delta_bp: o
+            .get("delta_bp")
+            .and_then(Value::as_i64)
+            .and_then(|n| i32::try_from(n).ok())
+            .unwrap_or(0),
+    })
+}
+
+fn vega_pillar_to_json(p: &VegaPillar) -> Value {
+    json!({ "tenor_days": p.tenor_days, "delta_bp": p.delta_bp })
+}
+
+fn vega_pillars_from_json(o: &Map<String, Value>) -> Result<Vec<VegaPillar>> {
+    o.get("vega_pillars")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .map(vega_pillar_from_json)
+                .collect::<Result<Vec<_>>>()
+        })
+        .transpose()
+        .map(Option::unwrap_or_default)
+}
+
+fn ccy_exposure_leg_to_json(l: &CcyExposureLeg) -> Value {
+    json!({ "ccy": l.ccy, "amount": l.amount })
+}
+
+fn vega_ladder_bucket_to_json(b: &VegaLadderBucket) -> Value {
+    json!({
+        "pillar": b.pillar.as_ref().map(vega_pillar_to_json),
+        "vega": b.vega,
+    })
+}
+
+fn additive_risk_to_json(a: &AdditiveRisk) -> Value {
+    json!({
+        "delta_numeraire": a.delta_numeraire,
+        "delta_vector": Value::Array(a.delta_vector.iter().map(ccy_exposure_leg_to_json).collect()),
+        "gamma": a.gamma,
+        "vega_numeraire": a.vega_numeraire,
+        "theta": a.theta,
+        "vanna": a.vanna,
+        "volga": a.volga,
+        "charm": a.charm,
+        "speed": a.speed,
+        "zomma": a.zomma,
+        "color": a.color,
+        "premium_numeraire": a.premium_numeraire,
+        "vega_ladder": Value::Array(a.vega_ladder.iter().map(vega_ladder_bucket_to_json).collect()),
+    })
+}
+
+fn nonadditive_risk_to_json(n: &NonAdditiveRisk) -> Value {
+    json!({
+        "var": n.var,
+        "es": n.es,
+        "var_alpha": n.var_alpha,
+        "curvature_spot": n.curvature_spot,
+    })
+}
+
+fn risk_node_to_json(n: &RiskNode) -> Value {
+    json!({
+        "dimension": n.dimension,
+        "group": n.group,
+        "additive": n.additive.as_ref().map(additive_risk_to_json),
+        "nonadditive": n.nonadditive.as_ref().map(nonadditive_risk_to_json),
+        "position_count": n.position_count,
+    })
+}
+
+fn limit_utilization_to_json(u: &LimitUtilization) -> Value {
+    json!({
+        "metric": u.metric,
+        "vega_pillar": u.vega_pillar.as_ref().map(vega_pillar_to_json),
+        "tenor_days": u.tenor_days,
+        "cap": u.cap,
+        "exposure": u.exposure,
+        "ratio": u.ratio,
+        "status": u.status,
+        "enforcement": u.enforcement,
+        "headroom": u.headroom,
+    })
+}
+
+pub(super) fn list_positions_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<ListPositionsRequest> {
+    Ok(ListPositionsRequest {
+        scope: opt_nested(o, "scope", risk_scope_from_json)?,
+        principal: opt_nested(o, "principal", principal_from_json)?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn list_positions_response_to_json(r: &ListPositionsResponse) -> Value {
+    json!({
+        "positions": Value::Array(r.positions.iter().map(risk_position_to_json).collect()),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn aggregate_risk_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<AggregateRiskRequest> {
+    Ok(AggregateRiskRequest {
+        dimension: enum_or_zero(o, "dimension"),
+        numeraire: opt_nested(o, "numeraire", numeraire_from_json)?,
+        principal: opt_nested(o, "principal", principal_from_json)?,
+        scope: opt_nested(o, "scope", risk_scope_from_json)?,
+        vega_pillars: vega_pillars_from_json(o)?,
+        var_spot_shocks: f64_vec(o, "var_spot_shocks"),
+        var_alpha: f64_or_zero(o, "var_alpha"),
+        curvature_risk_weight: f64_or_zero(o, "curvature_risk_weight"),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn aggregate_risk_response_to_json(r: &AggregateRiskResponse) -> Value {
+    json!({
+        "dimension": r.dimension,
+        "numeraire": r.numeraire,
+        "nodes": Value::Array(r.nodes.iter().map(risk_node_to_json).collect()),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn drill_risk_request_from_json(o: &Map<String, Value>) -> Result<DrillRiskRequest> {
+    Ok(DrillRiskRequest {
+        node: opt_nested(o, "node", risk_scope_from_json)?,
+        child_dimension: enum_or_zero(o, "child_dimension"),
+        numeraire: opt_nested(o, "numeraire", numeraire_from_json)?,
+        principal: opt_nested(o, "principal", principal_from_json)?,
+        vega_pillars: vega_pillars_from_json(o)?,
+        include_children: bool_or_false(o, "include_children"),
+        include_positions: bool_or_false(o, "include_positions"),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn drill_risk_response_to_json(r: &DrillRiskResponse) -> Value {
+    json!({
+        "node": r.node.as_ref().map(risk_scope_to_json),
+        "children": Value::Array(r.children.iter().map(risk_node_to_json).collect()),
+        "positions": Value::Array(r.positions.iter().map(risk_position_to_json).collect()),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn limit_status_request_from_json(o: &Map<String, Value>) -> Result<LimitStatusRequest> {
+    Ok(LimitStatusRequest {
+        scope: opt_nested(o, "scope", risk_scope_from_json)?,
+        numeraire: opt_nested(o, "numeraire", numeraire_from_json)?,
+        principal: opt_nested(o, "principal", principal_from_json)?,
+        vega_pillars: vega_pillars_from_json(o)?,
+        var_spot_shocks: f64_vec(o, "var_spot_shocks"),
+        var_alpha: f64_or_zero(o, "var_alpha"),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn limit_status_response_to_json(r: &LimitStatusResponse) -> Value {
+    json!({
+        "scope": r.scope.as_ref().map(risk_scope_to_json),
+        "limits": Value::Array(r.limits.iter().map(limit_utilization_to_json).collect()),
+        "worst": r.worst,
+        "hard_breach": r.hard_breach,
+        "correlation_id": r.correlation_id,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // frame helpers
 // ---------------------------------------------------------------------------
 
@@ -1094,5 +1386,103 @@ mod tests {
         let f = tagged("quote", json!({ "quote_id": 7 }));
         assert_eq!(f["type"], json!("quote"));
         assert_eq!(f["quote_id"], json!(7));
+    }
+
+    /// An `aggregate_risk` WS frame decodes field-for-field by proto snake_case name,
+    /// enums by number, and the optional principal/scope/correlation_id present.
+    #[test]
+    fn aggregate_risk_request_decodes_from_ws_json() {
+        let frame = json!({
+            "type": "aggregate_risk",
+            "dimension": 3, // RiskDimension::DESK
+            "numeraire": { "numeraire": "USD", "rates": [{ "ccy": "EUR", "rate": 1.10 }] },
+            "principal": {
+                "grant_all": false,
+                "grants": [{ "scopes": [{ "dimension": 3, "value": 99 }] }],
+                "denies": []
+            },
+            "scope": { "dimension": 3, "value": 99 },
+            "vega_pillars": [{ "tenor_days": 365, "delta_bp": 2500 }],
+            "var_spot_shocks": [-0.01, 0.0, 0.01],
+            "var_alpha": 0.99,
+            "curvature_risk_weight": 0.2,
+            "correlation_id": 7
+        });
+        let o = frame.as_object().unwrap();
+        let req = aggregate_risk_request_from_json(o).unwrap();
+        assert_eq!(req.dimension, 3);
+        assert_eq!(req.numeraire.as_ref().unwrap().numeraire, "USD");
+        assert_eq!(req.numeraire.as_ref().unwrap().rates[0].rate, 1.10);
+        let p = req.principal.as_ref().unwrap();
+        assert!(!p.grant_all);
+        assert_eq!(p.grants[0].scopes[0].value, 99);
+        assert_eq!(req.scope.as_ref().unwrap().value, 99);
+        assert_eq!(req.vega_pillars[0].tenor_days, 365);
+        assert_eq!(req.vega_pillars[0].delta_bp, 2500);
+        assert_eq!(req.var_spot_shocks, vec![-0.01, 0.0, 0.01]);
+        assert_eq!(req.var_alpha, 0.99);
+        assert_eq!(req.curvature_risk_weight, 0.2);
+        assert_eq!(req.correlation_id, Some(7));
+    }
+
+    /// An `aggregate_risk_response` encodes the node tree by proto field name, enums
+    /// by number, and the presence-tracked nonadditive measures (absent ⇒ `null`).
+    #[test]
+    fn aggregate_risk_response_encodes_to_ws_json() {
+        let resp = AggregateRiskResponse {
+            dimension: 0, // FIRM
+            numeraire: "USD".to_owned(),
+            nodes: vec![RiskNode {
+                dimension: 0,
+                group: 0,
+                additive: Some(AdditiveRisk {
+                    delta_numeraire: 1.5,
+                    delta_vector: vec![CcyExposureLeg {
+                        ccy: "EUR".to_owned(),
+                        amount: 10.0,
+                    }],
+                    gamma: 2.0,
+                    vega_numeraire: 3.0,
+                    theta: 0.0,
+                    vanna: 0.0,
+                    volga: 0.0,
+                    charm: 0.0,
+                    speed: 0.0,
+                    zomma: 0.0,
+                    color: 0.0,
+                    premium_numeraire: 4.0,
+                    vega_ladder: vec![VegaLadderBucket {
+                        pillar: Some(VegaPillar {
+                            tenor_days: 365,
+                            delta_bp: 5000,
+                        }),
+                        vega: 3.0,
+                    }],
+                }),
+                nonadditive: Some(NonAdditiveRisk {
+                    var: Some(5.0),
+                    es: Some(6.0),
+                    var_alpha: Some(0.99),
+                    curvature_spot: None, // not evaluated ⇒ null, never spurious 0
+                }),
+                position_count: 2,
+            }],
+            correlation_id: Some(7),
+        };
+        let v = aggregate_risk_response_to_json(&resp);
+        assert_eq!(v["dimension"], json!(0));
+        assert_eq!(v["numeraire"], json!("USD"));
+        let node = &v["nodes"][0];
+        assert_eq!(node["position_count"], json!(2));
+        assert_eq!(node["additive"]["delta_numeraire"], json!(1.5));
+        assert_eq!(node["additive"]["delta_vector"][0]["ccy"], json!("EUR"));
+        assert_eq!(
+            node["additive"]["vega_ladder"][0]["pillar"]["tenor_days"],
+            json!(365)
+        );
+        assert_eq!(node["nonadditive"]["var"], json!(5.0));
+        // An unevaluated curvature is `null`, not a spurious zero.
+        assert_eq!(node["nonadditive"]["curvature_spot"], Value::Null);
+        assert_eq!(v["correlation_id"], json!(7));
     }
 }

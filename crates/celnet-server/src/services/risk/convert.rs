@@ -1,0 +1,414 @@
+//! Wire ↔ domain mapping for [`RiskService`](super::RiskEdge).
+//!
+//! The single place the `celnet-proto` risk messages cross into the
+//! `celnet-risk-*` domain types and back. Keeping it here means the gRPC edge and
+//! the WS mirror dispatch onto the **same** mapping — one contract, two encodings
+//! (guardrail #9). Every mapping is total or fails with a typed `tonic::Status`
+//! `invalid_argument` (a malformed request is rejected loudly, never silently
+//! coerced).
+
+use std::collections::HashMap;
+
+use celnet_entitlements::{Principal, Rule};
+use celnet_limits::{Enforcement, LimitMetric, RagStatus};
+use celnet_proto::{AdditiveRisk as WireAdditive, convert::WireError};
+use celnet_proto::{
+    AttributionRecord, CcyExposureLeg, EntitlementPrincipal, NonAdditiveRisk as WireNonAdditive,
+    OrgKey, ReportingNumeraire, RiskDimension, RiskNode as WireRiskNode, RiskPosition, RiskScope,
+    VegaLadderBucket, VegaPillar as WireVegaPillar,
+};
+use celnet_proto::{Enforcement as WireEnforcement, LimitMetricKind, RagStatus as WireRag};
+use celnet_risk_cube::{
+    BookId, DeskId, DimensionId, EntityId, FactKey, FactMeasure, LocationId, NodeAggregate,
+    PositionId, RiskFact, TraderId, VegaPillar,
+};
+use celnet_risk_normalize::{NumeraireError, PositionRisk, SpotResolver, canonicalize};
+use celnet_types::{Ccy, CcyPair, DeltaConvention, OptionType, PremiumStyle, VanillaInputs};
+use tonic::Status;
+
+/// Map a wire [`RiskDimension`] enum value (the proto `i32`) onto an optional cube
+/// [`DimensionId`]. `FIRM` has no `DimensionId` — it is the implicit apex, handled
+/// by `firm_aggregate` — so it maps to `None`. An unknown value is an error.
+///
+/// # Errors
+/// `invalid_argument` if the `i32` is not a known `RiskDimension`.
+pub fn dimension_of(dim: i32) -> Result<Option<DimensionId>, Status> {
+    let d = RiskDimension::try_from(dim)
+        .map_err(|_| Status::invalid_argument(format!("unknown RiskDimension {dim}")))?;
+    Ok(match d {
+        RiskDimension::Firm => None,
+        RiskDimension::Trader => Some(DimensionId::Trader),
+        RiskDimension::Book => Some(DimensionId::Book),
+        RiskDimension::Desk => Some(DimensionId::Desk),
+        RiskDimension::CcyPair => Some(DimensionId::CcyPair),
+        RiskDimension::Location => Some(DimensionId::Location),
+        RiskDimension::Entity => Some(DimensionId::Entity),
+    })
+}
+
+/// The wire enum value for a cube [`DimensionId`] (the inverse of [`dimension_of`]
+/// for the non-apex axes).
+#[must_use]
+pub fn dimension_to_wire(dim: DimensionId) -> i32 {
+    let d = match dim {
+        DimensionId::Trader => RiskDimension::Trader,
+        DimensionId::Book => RiskDimension::Book,
+        DimensionId::Desk => RiskDimension::Desk,
+        DimensionId::CcyPair => RiskDimension::CcyPair,
+        DimensionId::Location => RiskDimension::Location,
+        DimensionId::Entity => RiskDimension::Entity,
+    };
+    d as i32
+}
+
+/// Map a wire [`RiskScope`] onto an entitlement [`Rule`] pinning that one axis. A
+/// `FIRM`-dimension scope (or a scope with no axis) covers everything — the firm
+/// root rule.
+///
+/// # Errors
+/// `invalid_argument` if the scope's dimension is an unknown enum value.
+pub fn scope_to_rule(scope: &RiskScope) -> Result<Rule, Status> {
+    match dimension_of(scope.dimension)? {
+        None => Ok(Rule::firm()),
+        Some(dim) => Ok(Rule::on(dim, scope.value)),
+    }
+}
+
+/// Resolve the request's optional [`EntitlementPrincipal`] into a
+/// [`Principal`], applying the **grant-all default**: a request that *omits* the
+/// principal (or whose `grant_all` is true) is grant-all (the show-all-now posture).
+/// A present principal with `grant_all=false` and no grants is deny-by-default.
+///
+/// # Errors
+/// `invalid_argument` if any rule's scope carries an unknown dimension.
+pub fn principal_of(principal: Option<&EntitlementPrincipal>) -> Result<Principal, Status> {
+    let Some(p) = principal else {
+        // Omitted ⇒ grant-all (the GUI `ScopeContext.principal = "grant-all"`).
+        return Ok(Principal::grant_all());
+    };
+    if p.grant_all {
+        // Grant-all, but denies still apply (deny wins) — layer in any barriers.
+        let mut principal = Principal::grant_all();
+        for d in &p.denies {
+            principal = principal.deny(rule_of(d)?);
+        }
+        return Ok(principal);
+    }
+    // Scoped (deny-by-default): start from no grants, add each grant, then denies.
+    let mut principal = Principal::scoped();
+    for g in &p.grants {
+        principal = principal.grant(rule_of(g)?);
+    }
+    for d in &p.denies {
+        principal = principal.deny(rule_of(d)?);
+    }
+    Ok(principal)
+}
+
+/// Map a wire [`EntitlementRule`](celnet_proto::EntitlementRule) (a conjunction of
+/// scopes) onto a domain [`Rule`]. An empty rule covers everything (the firm root).
+fn rule_of(rule: &celnet_proto::EntitlementRule) -> Result<Rule, Status> {
+    let mut out = Rule::firm();
+    for scope in &rule.scopes {
+        match dimension_of(scope.dimension)? {
+            None => { /* a FIRM-pinned scope inside a rule covers everything; no-op */ }
+            Some(dim) => out = out.and(dim, scope.value),
+        }
+    }
+    Ok(out)
+}
+
+/// A [`SpotResolver`] over a wire [`ReportingNumeraire`]: the numeraire currency
+/// plus a `ccy → rate` table. The numeraire's own rate is implicitly `1.0`. Built
+/// once per request and handed to the cube's numeraire collapse.
+pub struct WireResolver {
+    numeraire: Ccy,
+    rates: HashMap<Ccy, f64>,
+}
+
+impl WireResolver {
+    /// Build a resolver from a wire reporting-numeraire table.
+    ///
+    /// # Errors
+    /// `invalid_argument` if the numeraire code or any rate currency is not a valid
+    /// 3-letter code.
+    pub fn new(numeraire: &ReportingNumeraire) -> Result<Self, Status> {
+        let n = Ccy::parse(&numeraire.numeraire).ok_or_else(|| {
+            Status::invalid_argument(format!("invalid numeraire `{}`", numeraire.numeraire))
+        })?;
+        let mut rates = HashMap::new();
+        for r in &numeraire.rates {
+            let c = Ccy::parse(&r.ccy)
+                .ok_or_else(|| Status::invalid_argument(format!("invalid rate ccy `{}`", r.ccy)))?;
+            rates.insert(c, r.rate);
+        }
+        Ok(Self {
+            numeraire: n,
+            rates,
+        })
+    }
+
+    /// The reporting numeraire code (for echoing on the response).
+    #[must_use]
+    pub fn numeraire_code(&self) -> &str {
+        self.numeraire.as_str()
+    }
+
+    /// The reporting numeraire currency.
+    #[must_use]
+    pub fn numeraire_ccy(&self) -> Ccy {
+        self.numeraire
+    }
+}
+
+impl SpotResolver for WireResolver {
+    fn numeraire(&self) -> Ccy {
+        self.numeraire
+    }
+
+    fn rate_into_numeraire(&self, ccy: Ccy) -> Option<f64> {
+        if ccy == self.numeraire {
+            return Some(1.0);
+        }
+        self.rates.get(&ccy).copied()
+    }
+}
+
+/// Map a numeraire-conversion error into a `failed_precondition` status: a missing
+/// or invalid rate fails the request loudly (no silent leg drop), the §2.3 contract.
+#[must_use]
+pub fn numeraire_status(e: NumeraireError) -> Status {
+    Status::failed_precondition(format!("reporting numeraire conversion failed: {e}"))
+}
+
+/// Map a wire [`VegaPillar`](WireVegaPillar) onto the cube's [`VegaPillar`].
+#[must_use]
+pub fn pillar_of(p: &WireVegaPillar) -> VegaPillar {
+    VegaPillar::new(p.tenor_days, p.delta_bp)
+}
+
+/// Map a cube [`VegaPillar`] back to the wire form.
+#[must_use]
+pub fn pillar_to_wire(p: VegaPillar) -> WireVegaPillar {
+    WireVegaPillar {
+        tenor_days: p.tenor_days,
+        delta_bp: p.delta_bp,
+    }
+}
+
+/// Map a wire [`RiskPosition`] into a [`RiskFact`] (re-deriving the canonical leaf
+/// via `celnet-risk-normalize::canonicalize`). Used when a client supplies positions
+/// directly (the explicit-fact path); the live book path interns from attribution.
+///
+/// # Errors
+/// `invalid_argument` if the org key / pair / inputs / enums are malformed.
+pub fn position_to_fact(p: &RiskPosition) -> Result<RiskFact, Status> {
+    let org = p
+        .org
+        .as_ref()
+        .ok_or_else(|| Status::invalid_argument("RiskPosition missing `org`"))?;
+    let wire_pair = org
+        .ccy_pair
+        .clone()
+        .ok_or_else(|| Status::invalid_argument("OrgKey missing `ccy_pair`"))?;
+    let pair: CcyPair = wire_pair
+        .try_into()
+        .map_err(|e: WireError| Status::invalid_argument(e.to_string()))?;
+    let inputs: VanillaInputs = p
+        .inputs
+        .ok_or_else(|| Status::invalid_argument("RiskPosition missing `inputs`"))?
+        .into();
+    let option = OptionType::from(
+        celnet_proto::OptionType::try_from(p.option_type)
+            .map_err(|_| Status::invalid_argument("unknown OptionType"))?,
+    );
+    let quoted_delta = DeltaConvention::from(
+        celnet_proto::DeltaConvention::try_from(p.quoted_delta)
+            .map_err(|_| Status::invalid_argument("unknown DeltaConvention"))?,
+    );
+    let premium_style = PremiumStyle::from(
+        celnet_proto::PremiumStyle::try_from(p.premium_style)
+            .map_err(|_| Status::invalid_argument("unknown PremiumStyle"))?,
+    );
+    let position = PositionRisk::new(
+        pair,
+        option,
+        p.notional_base,
+        inputs,
+        quoted_delta,
+        premium_style,
+    );
+    let handle = u32::try_from(p.position_id).map_err(|_| {
+        Status::invalid_argument(format!(
+            "position_id {} exceeds the u32 cube handle space",
+            p.position_id
+        ))
+    })?;
+    Ok(RiskFact {
+        position_id: PositionId(handle),
+        key: FactKey {
+            trader: TraderId(org.trader),
+            book: BookId(org.book),
+            desk: DeskId(org.desk),
+            ccy_pair: pair,
+            location: LocationId(org.location),
+            entity: EntityId(org.entity),
+        },
+        measure: FactMeasure {
+            leaf: canonicalize(&position),
+            position,
+        },
+        surface_version: p.surface_version,
+    })
+}
+
+/// Map a [`RiskFact`] back to a wire [`RiskPosition`] (for `ListPositions` /
+/// `DrillRisk` leaf reporting), re-attaching the recorded attribution chain and the
+/// wire (business) `u64` id (the cube handle is a `u32` internal key).
+#[must_use]
+pub fn fact_to_position(
+    fact: &RiskFact,
+    wire_id: u64,
+    attribution: Option<AttributionRecord>,
+) -> RiskPosition {
+    let p = &fact.measure.position;
+    let wire_pair: celnet_proto::CcyPair = p.pair.into();
+    RiskPosition {
+        position_id: wire_id,
+        org: Some(OrgKey {
+            trader: fact.key.trader.0,
+            book: fact.key.book.0,
+            desk: fact.key.desk.0,
+            ccy_pair: Some(wire_pair),
+            location: fact.key.location.0,
+            entity: fact.key.entity.0,
+        }),
+        option_type: celnet_proto::OptionType::from(p.option) as i32,
+        notional_base: p.notional_base,
+        inputs: Some(p.inputs.into()),
+        quoted_delta: celnet_proto::DeltaConvention::from(p.quoted_delta) as i32,
+        premium_style: celnet_proto::PremiumStyle::from(p.premium_style) as i32,
+        surface_version: fact.surface_version,
+        attribution,
+    }
+}
+
+/// Map a domain [`LimitMetric`] onto its wire `(kind, vega_pillar, tenor_days)`
+/// triple. The pillar/tenor payloads ride on dedicated fields, selected by `kind`
+/// (mirroring the proto contract).
+#[must_use]
+pub fn limit_metric_to_wire(metric: LimitMetric) -> (LimitMetricKind, Option<WireVegaPillar>, u32) {
+    use celnet_limits::ConcentrationMetric;
+    match metric {
+        LimitMetric::Delta => (LimitMetricKind::Delta, None, 0),
+        LimitMetric::Gamma => (LimitMetricKind::Gamma, None, 0),
+        LimitMetric::Vega => (LimitMetricKind::Vega, None, 0),
+        LimitMetric::Vanna => (LimitMetricKind::Vanna, None, 0),
+        LimitMetric::Volga => (LimitMetricKind::Volga, None, 0),
+        LimitMetric::VegaBucket(p) => (LimitMetricKind::VegaBucket, Some(pillar_to_wire(p)), 0),
+        LimitMetric::TenorVega { tenor_days } => (LimitMetricKind::TenorVega, None, tenor_days),
+        LimitMetric::Concentration(ConcentrationMetric::Delta) => {
+            (LimitMetricKind::ConcentrationDelta, None, 0)
+        }
+        LimitMetric::Concentration(ConcentrationMetric::Vega) => {
+            (LimitMetricKind::ConcentrationVega, None, 0)
+        }
+        LimitMetric::Var => (LimitMetricKind::Var, None, 0),
+        LimitMetric::ExpectedShortfall => (LimitMetricKind::ExpectedShortfall, None, 0),
+        LimitMetric::StopLoss => (LimitMetricKind::StopLoss, None, 0),
+    }
+}
+
+/// The wire enum value for a domain [`RagStatus`].
+#[must_use]
+pub fn rag_to_wire(status: RagStatus) -> i32 {
+    let w = match status {
+        RagStatus::Green => WireRag::Green,
+        RagStatus::Amber => WireRag::Amber,
+        RagStatus::Red => WireRag::Red,
+        RagStatus::Breach => WireRag::Breach,
+    };
+    w as i32
+}
+
+/// The wire enum value for a domain [`Enforcement`].
+#[must_use]
+pub fn enforcement_to_wire(e: Enforcement) -> i32 {
+    let w = match e {
+        Enforcement::Soft => WireEnforcement::Soft,
+        Enforcement::Hard => WireEnforcement::Hard,
+    };
+    w as i32
+}
+
+/// Assemble a wire [`AdditiveRisk`](WireAdditive) from a node's numeraire view and
+/// its (numeraire-converted) vega ladder. The delta vector legs are reported in
+/// their own currencies; gamma and the higher Greeks are the raw summed canonical
+/// sensitivities (`NetGreeks`); premium and vega are in the reporting numeraire.
+#[must_use]
+pub fn additive_to_wire(
+    numeraire: &celnet_risk_normalize::Numeraire,
+    net: &celnet_risk_cube::NetGreeks,
+    vega_ladder: Vec<VegaLadderBucket>,
+) -> WireAdditive {
+    let delta_vector = numeraire
+        .delta_vector
+        .legs()
+        .map(|leg| CcyExposureLeg {
+            ccy: leg.ccy.as_str().to_owned(),
+            amount: leg.amount,
+        })
+        .collect();
+    WireAdditive {
+        delta_numeraire: numeraire.delta_numeraire,
+        delta_vector,
+        gamma: net.gamma,
+        vega_numeraire: numeraire.vega_numeraire,
+        theta: net.theta,
+        vanna: net.vanna,
+        volga: net.volga,
+        charm: net.charm,
+        speed: net.speed,
+        zomma: net.zomma,
+        color: net.color,
+        premium_numeraire: numeraire.premium_numeraire,
+        vega_ladder,
+    }
+}
+
+/// Assemble a wire [`NonAdditiveRisk`](WireNonAdditive) from optional re-derived
+/// measures. Each is presence-tracked: an unevaluated measure is absent (never a
+/// spurious zero), the §2.5 contract.
+#[must_use]
+pub fn nonadditive_to_wire(
+    var: Option<f64>,
+    es: Option<f64>,
+    var_alpha: Option<f64>,
+    curvature_spot: Option<f64>,
+) -> WireNonAdditive {
+    WireNonAdditive {
+        var,
+        es,
+        var_alpha,
+        curvature_spot,
+    }
+}
+
+/// The `position_count` of a node aggregate (its constituent leaf count).
+#[must_use]
+pub fn node_position_count(node: &NodeAggregate) -> u32 {
+    u32::try_from(node.positions.len()).unwrap_or(u32::MAX)
+}
+
+/// Build a wire [`RiskNode`](WireRiskNode) shell (dimension + group + counts);
+/// the additive / nonadditive measures are filled by the aggregator.
+#[must_use]
+pub fn risk_node_shell(dimension: i32, group: u64, position_count: u32) -> WireRiskNode {
+    WireRiskNode {
+        dimension,
+        group,
+        additive: None,
+        nonadditive: None,
+        position_count,
+    }
+}

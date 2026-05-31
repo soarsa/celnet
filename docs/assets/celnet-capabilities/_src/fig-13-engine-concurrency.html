@@ -1,0 +1,137 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Anaheim:wght@400..800&display=swap" rel="stylesheet"><style>
+:root{--brand:#ff7357;--brand-deep:#e85d42;--accent:#6b6bf5;--navy:#1B1F2A;--raised:#282C3E;--muted:#979CB7;--ink:#1d2230;--line:#d9deec;--bg:#f4f6fb;--green:#1c8c5a;}
+*{box-sizing:border-box;margin:0;padding:0;font-family:Anaheim,system-ui,"Segoe UI",sans-serif}
+body{background:#fff}
+.canvas{position:relative;background:linear-gradient(180deg,#ffffff,#f4f6fb);overflow:hidden}
+.rail{position:absolute;left:0;top:0;bottom:0;width:8px;background:linear-gradient(180deg,var(--brand),var(--accent))}
+.hd{display:flex;align-items:center;gap:12px;padding:22px 34px 10px}
+.hd .mk{width:26px;height:26px}.hd h1{font-size:24px;font-weight:800;color:var(--navy);letter-spacing:.2px}
+.hd .sub{margin-left:auto;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:1.5px}
+.wrap{padding:8px 34px 30px}
+.box{border-radius:12px;border:1.5px solid var(--line);background:#fff;padding:12px 15px;box-shadow:0 1px 2px rgba(20,30,60,.05)}
+.box .t{font-weight:800;color:var(--navy);font-size:14.5px;display:flex;align-items:center;gap:8px}
+.box .d{color:#5b6376;font-size:12px;margin-top:5px;line-height:1.45}
+.box.brand{border-color:var(--brand);box-shadow:0 4px 18px rgba(255,115,87,.18)}
+.box.brandfill{background:var(--navy);border-color:var(--navy)}.box.brandfill .t{color:#fff}.box.brandfill .d{color:#c4c9dc}
+.box.accent{border-color:var(--accent)}.box.tint{background:#fbfcff}
+.row{display:flex;gap:15px}.col{display:flex;flex-direction:column;gap:15px}.grid{display:grid;gap:15px}
+.arrow{align-self:center;color:var(--brand);font-size:24px;font-weight:800;padding:0 2px}
+.tag{display:inline-block;font-size:11px;font-weight:700;color:var(--accent);background:rgba(107,107,245,.1);border-radius:6px;padding:2px 8px;margin:3px 4px 0 0}
+.chip{display:inline-block;font-size:11.5px;color:var(--ink);background:#eef1f8;border:1px solid var(--line);border-radius:6px;padding:3px 9px;margin:3px 4px 0 0}
+.chip.k{background:rgba(255,115,87,.1);border-color:rgba(255,115,87,.35);color:var(--brand-deep);font-weight:700}
+.section-label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);margin:2px 0 7px}
+.note{font-size:11.5px;color:var(--muted);font-style:italic;margin-top:9px}
+.foot{position:absolute;left:34px;bottom:13px;font-size:11px;color:var(--muted)}.foot b{color:var(--brand-deep)}
+</style></head><body>
+<div class="canvas" style="width:1560px;height:880px">
+<div class="rail"></div>
+<div class="hd">
+<svg class="mk" viewBox="0 0 501 500"><path fill="#ff7357" d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg>
+<h1>Engine — Two-Tier Hot-Core / Async-Edge Concurrency</h1>
+<span class="sub">Celnet · Celer Technologies</span>
+</div>
+<div class="wrap">
+
+<div class="row" style="align-items:stretch">
+
+<!-- ASYNC EDGE -->
+<div class="col" style="flex:0 0 300px">
+<div class="section-label">Async edge · many connections</div>
+<div class="box accent">
+<div class="t">gRPC service families</div>
+<div class="d">Pricing · Quote · multiplex StreamSession · Surface, over one clean unversioned contract.</div>
+</div>
+<div class="box accent">
+<div class="t">WebSocket JSON mirror</div>
+<div class="d">A byte-identical mirror of the wire — every value the same as the binary edge and the GUI.</div>
+</div>
+<div class="box accent">
+<div class="t">FIX 4.4 engine</div>
+<div class="d">Acceptor and initiator with an FX-options dialect; vendor-feed normalization on the same seam.</div>
+</div>
+<div class="box tint">
+<div class="t" style="font-size:13px">Concurrency-rich, never blocking</div>
+<div class="d">Thousands of async connections fan in here without ever touching a lock the pricer holds.</div>
+</div>
+</div>
+
+<div class="arrow">→</div>
+
+<!-- RING BRIDGE -->
+<div class="col" style="flex:0 0 300px">
+<div class="section-label">Wait-free SPSC ring bridge</div>
+<div class="box brand">
+<div class="t">Request ring · edge → core</div>
+<div class="d">Single-producer / single-consumer, wait-free. The edge hands work to a pinned core without contention or allocation.</div>
+</div>
+<div class="box brand">
+<div class="t">Response ring · core → edge</div>
+<div class="d">Priced results flow back the same way — a one-way dependency, edge and core never share mutable state.</div>
+</div>
+<div class="box tint">
+<div class="t" style="font-size:13px">Readiness / drain gate</div>
+<div class="d">A clean handoff boundary: the core publishes when ready and drains in order, so back-pressure is graceful, not a stall.</div>
+<div style="margin-top:6px"><span class="chip k">one-way dependency</span><span class="chip">no shared mutexes</span></div>
+</div>
+<div class="note">In-core pricing is so fast that network framing — not the maths — is the only meaningful latency.</div>
+</div>
+
+<div class="arrow">→</div>
+
+<!-- PINNED HOT CORES -->
+<div class="col" style="flex:1">
+<div class="section-label">Pinned zero-allocation hot cores</div>
+<div class="grid" style="grid-template-columns:1fr 1fr">
+<div class="box brandfill">
+<div class="t">MD-ingest + surface</div>
+<div class="d">Resilient market-data subscriber feeds the smile/surface engine — VV/SABR/SVI/SSVI with arbitrage gates and an arb-free term structure.</div>
+</div>
+<div class="box brandfill">
+<div class="t">Pricer + Greek set</div>
+<div class="d">Garman-Kohlhagen vanilla and the first-generation exotics catalogue; the full FX desk Greek set in one pass.</div>
+</div>
+<div class="box brandfill">
+<div class="t">Book-shaped risk</div>
+<div class="d">Scenario grid, bucketed vega per tenor × delta, cross-gamma stencil, theta-roll, versioned marked surfaces.</div>
+</div>
+<div class="box brandfill">
+<div class="t">GPU + telemetry</div>
+<div class="d">Cross-platform GPU backend reconciled to a high-precision CPU oracle; latency histograms offloaded off the hot path.</div>
+</div>
+</div>
+<div class="box brand" style="margin-top:0">
+<div class="t" style="color:var(--brand-deep)">Lock-free read-mostly publication</div>
+<div class="d">How the cores share state without ever blocking a reader:</div>
+<div style="margin-top:5px">
+<span class="chip k">atomically-swapped market-state snapshot</span>
+<span class="chip k">single-writer seqlock top-of-book</span>
+<span class="chip k">cache-padded counters</span>
+</div>
+</div>
+<div class="note">Each core is pinned and stays log / lock / allocation-free; telemetry offloads over a bounded, drop-on-full queue so observability is zero-cost on the price path.</div>
+</div>
+
+</div>
+
+<!-- BOTTOM BAND -->
+<div class="row" style="margin-top:16px;align-items:stretch">
+<div class="box" style="flex:1;border-color:var(--accent)">
+<div class="t"><span style="color:var(--accent)">◆</span> Blue-green zero-downtime state handoff</div>
+<div class="d">Hot upgrades cut over a fully warmed core in place — the marked book and live market state migrate without dropping a connection or a quote.</div>
+</div>
+<div class="arrow">→</div>
+<div class="box" style="flex:1;border-color:var(--green)">
+<div class="t"><span style="color:var(--green)">●</span> Durable checksummed journal</div>
+<div class="d">An append-only, per-record CRC journal with clean crash recovery: torn tails heal to the last good record, the book replays bit-identically on restart, and the pinned core never touches it on the hot path.</div>
+</div>
+<div class="arrow">→</div>
+<div class="box" style="flex:1;border-color:var(--brand)">
+<div class="t"><span style="color:var(--brand-deep)">⬡</span> Horizontal scale-out</div>
+<div class="d">A node-local hot substrate fans out across a fleet via a highest-random-weight partition map — many cores, many counterparties, one contract.</div>
+</div>
+</div>
+
+</div>
+<div class="foot">Celnet — a <b>Celer Technologies</b> product</div>
+</div>
+</body></html>

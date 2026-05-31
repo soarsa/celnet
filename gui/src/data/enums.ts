@@ -19,9 +19,13 @@ import type {
   Cut,
   DayCount,
   DeltaConvention,
+  Enforcement,
+  LimitMetricKind,
   MarketObservable,
   OptionType,
   PremiumStyle,
+  RagStatus,
+  RiskDimension,
   Settlement,
   ShockFactor,
   Side,
@@ -153,3 +157,37 @@ export const streamRejectReason = enumCodec<StreamRejectReason>([
   "UNKNOWN_TOKEN",
   "ALREADY_CONSUMED",
 ]);
+
+/** `RiskDimension` ↔ proto `RiskDimension` (FIRM=0, TRADER=1, BOOK=2, DESK=3,
+ * CCY_PAIR=4, LOCATION=5, ENTITY=6). */
+export const riskDimension = enumCodec<RiskDimension>([
+  "FIRM",
+  "TRADER",
+  "BOOK",
+  "DESK",
+  "CCY_PAIR",
+  "LOCATION",
+  "ENTITY",
+]);
+
+/** `LimitMetricKind` ↔ proto `LimitMetricKind` (DELTA=0,…,STOP_LOSS). */
+export const limitMetricKind = enumCodec<LimitMetricKind>([
+  "DELTA",
+  "GAMMA",
+  "VEGA",
+  "VANNA",
+  "VOLGA",
+  "VEGA_BUCKET",
+  "TENOR_VEGA",
+  "CONCENTRATION_DELTA",
+  "CONCENTRATION_VEGA",
+  "VAR",
+  "EXPECTED_SHORTFALL",
+  "STOP_LOSS",
+]);
+
+/** `RagStatus` ↔ proto `RagStatus` (GREEN=0, AMBER=1, RED=2, BREACH=3). */
+export const ragStatus = enumCodec<RagStatus>(["GREEN", "AMBER", "RED", "BREACH"]);
+
+/** `Enforcement` ↔ proto `Enforcement` (SOFT=0, HARD=1). */
+export const enforcement = enumCodec<Enforcement>(["SOFT", "HARD"]);

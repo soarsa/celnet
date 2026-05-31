@@ -20,11 +20,19 @@
  */
 
 import type {
+  AggregateRiskRequest,
+  AggregateRiskResponse,
   BrokerQuoteSet,
   CcyPair,
   Conventions,
+  DrillRiskRequest,
+  DrillRiskResponse,
   Execution,
   Instrument,
+  LimitStatusRequest,
+  LimitStatusResponse,
+  ListPositionsRequest,
+  ListPositionsResponse,
   MarkedSurface,
   MarketContext,
   Quote,
@@ -35,13 +43,21 @@ import type {
   SmileModel,
 } from "./contract";
 import {
+  aggregateRiskRequestToWire,
+  aggregateRiskResponseFromWire,
   ccyPairToWire,
   conventionsToWire,
   brokerQuoteSetToWire,
+  drillRiskRequestToWire,
+  drillRiskResponseFromWire,
   executedFromWire,
   executionFromWire,
   greeksFromWire,
   instrumentToWire,
+  limitStatusRequestToWire,
+  limitStatusResponseFromWire,
+  listPositionsRequestToWire,
+  listPositionsResponseFromWire,
   markedSurfaceFromWire,
   marketSeriesPointFromWire,
   marketSeriesSnapshotFromWire,
@@ -748,6 +764,42 @@ export class WsTransport implements CelnetTransport {
     if (riskBuckets) body["risk_buckets"] = riskBucketRequestToWire(riskBuckets);
     const reply = await this.conn.request("scenario", body, "scenario_response");
     return scenarioResultFromWire(reply);
+  }
+
+  async listPositions(request: ListPositionsRequest): Promise<ListPositionsResponse> {
+    const reply = await this.conn.request(
+      "list_positions",
+      listPositionsRequestToWire(request),
+      "list_positions_response",
+    );
+    return listPositionsResponseFromWire(reply);
+  }
+
+  async aggregateRisk(request: AggregateRiskRequest): Promise<AggregateRiskResponse> {
+    const reply = await this.conn.request(
+      "aggregate_risk",
+      aggregateRiskRequestToWire(request),
+      "aggregate_risk_response",
+    );
+    return aggregateRiskResponseFromWire(reply);
+  }
+
+  async drillRisk(request: DrillRiskRequest): Promise<DrillRiskResponse> {
+    const reply = await this.conn.request(
+      "drill_risk",
+      drillRiskRequestToWire(request),
+      "drill_risk_response",
+    );
+    return drillRiskResponseFromWire(reply);
+  }
+
+  async limitStatus(request: LimitStatusRequest): Promise<LimitStatusResponse> {
+    const reply = await this.conn.request(
+      "limit_status",
+      limitStatusRequestToWire(request),
+      "limit_status_response",
+    );
+    return limitStatusResponseFromWire(reply);
   }
 
   /** Permanently close the underlying connection (call on app teardown). */

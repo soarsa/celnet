@@ -21,6 +21,7 @@
 
 pub mod pricing;
 pub mod quote;
+pub mod risk;
 pub mod stream;
 pub mod surface;
 

@@ -59,7 +59,7 @@ celnet-golden, celnet-testkit, celnet-bench  →  test/validation/bench only
 |-------|---------|---------|---------|
 | `celnet-types` | 0.0.0 | **freeze-candidate** | `OptionType`, `Ccy`, `CcyPair`, `Tenor` (now `Overnight`/`TomNext`/`SpotNext`/`Weeks`/`Months`/`Years`/`Imm(u8)`/`BrokenDate(BrokenDate)`), `BrokenDate{year:i32,month:u8,day:u8}`, `SmileModel` (`MarketHedge`/`StochasticVol`/`Parametric`/`ParametricSurface`, `Default=MarketHedge`); newtypes `Vol`/`Strike`/`Rate`/`Delta`/`Df`/`Time`; convention enums `DeltaConvention`/`AtmConvention`/`PremiumStyle`/`Cut`/`DayCount`/`Settlement`; DTOs `VanillaInputs`, `Greeks`. POD/`Copy`, `serde`. (No `time` dep — a broken date is the POD triple.) |
 | `celnet-core` | 0.0.0 | **freeze-candidate** | `math` (`norm_cdf`, `norm_pdf`, `exp`/`ln`/`sqrt` via `libm`); `is_close` + `assert_close!` (ULP/rel/abs); trait `Smile` + `FlatSmile`. Zero IO. |
-| `celnet-proto` | 0.0.0 | **freeze-candidate** | single current wire contract (`prost 0.13` / `tonic 0.12`); `celnet.proto` services `PricingService`/`QuoteService`/`StreamService`/`SurfaceService`; `Instrument` oneof; **no** version field / negotiation. Phase-1 additions: `Tenor` short-end/IMM/`BrokenDate` units; `SmileModel` enum on `MarkSurfaceRequest`/`ScenarioRequest`; market-series feed (`MarketObservable`, `MarketSeriesSubscribe`/`Unsubscribe`/`Point`/`Snapshot`) multiplexed on `StreamSession`; attribution identity (`BookId`/`Owner`/`AttributionRecord`) on the quote/trade lifecycle. See §"Phase-1 contract extensions". |
+| `celnet-proto` | 0.0.0 | **freeze-candidate** | single current wire contract (`prost 0.13` / `tonic 0.12`); `celnet.proto` services `PricingService`/`QuoteService`/`StreamService`/`SurfaceService`; `Instrument` oneof; **no** version field / negotiation. Phase-1 additions: `Tenor` short-end/IMM/`BrokenDate` units; `SmileModel` enum on `MarkSurfaceRequest`/`ScenarioRequest`; market-series feed (`MarketObservable`, `MarketSeriesSubscribe`/`Unsubscribe`/`Point`/`Snapshot`) multiplexed on `StreamSession`; attribution identity (`BookId`/`Owner`/`AttributionRecord`) on the quote/trade lifecycle. Phase-2 addition: `RiskService` (`ListPositions`/`AggregateRisk`/`DrillRisk`/`LimitStatus`) — server-side hierarchical risk over the org cube. See §"Phase-1 contract extensions" and §"Phase-2 contract: `RiskService`". |
 | `celnet-plugin-api` | 0.0.0 | **freeze-candidate** | SDK traits (`PricingModel`/`PricingBackend`) + WIT world. |
 
 > `celnet-proto` and `celnet-plugin-api` are built — **Gate G0 is reached** (consistent with
@@ -415,3 +415,187 @@ excluded from the total); scoped-with-no-grants admits nothing; single-fact `adm
 8 tests; `just check-crate celnet-entitlements` green (fmt, clippy `-D warnings`, nextest). Adds **no**
 external dependencies (only internal path crates), so it introduces no license/advisory surface for
 cargo-deny.
+
+## Phase-2 contract: `RiskService` — server-side hierarchical risk (RH §2.1/§2.3/§2.5/§5, EA P2-5..8)
+
+The wire face of the single-node risk estate (`celnet-risk-cube` aggregation, `celnet-risk-normalize`
+common-numeraire conversion, `celnet-limits` utilization/RAG, `celnet-entitlements` pre-aggregation
+pruning). **Aggregation is owned by the server**: a client (GUI/SDK/Excel) never loops positions and
+sums — it lists positions, asks for a rolled-up node tree over an org dimension, drills a node to its
+constituents, and reads limit utilization, all behind the one `celnet-proto` contract. This closes the
+**client-side aggregation parity violation** (the GUI Book view looping `transport.scenario` per
+position). Added to `crates/celnet-proto/proto/celnet.proto`; **no** `celnet-types` change was needed
+(the cube's org-dimension identifiers are interned `u32` handles, deliberately not in `celnet-types`,
+RH §2.1 — the server maps a trade's wire `AttributionRecord` book/owner onto them).
+
+### `RiskService` RPCs (one current contract, no versioning)
+
+- **`ListPositions(ListPositionsRequest) → ListPositionsResponse`** — list the open positions the cube
+  aggregates (the desk's book), each carrying its `AttributionRecord` so the hierarchy keys on real
+  attribution. Optionally scoped + entitlement-pruned.
+- **`AggregateRisk(AggregateRiskRequest) → AggregateRiskResponse`** — prune the fact stream by the
+  `principal` **before** roll-up (no aggregate leakage), group by `dimension`, sum the additive
+  measures + re-derive the non-additive ones per node, and convert everything into the reporting
+  `numeraire`. Response = the rolled-up node tree.
+- **`DrillRisk(DrillRiskRequest) → DrillRiskResponse`** — drill one node into child sub-nodes at a finer
+  dimension and/or its contributing positions (the Book→Risk drill), entitlement-pruned.
+- **`LimitStatus(LimitStatusRequest) → LimitStatusResponse`** — the limit tree + per-limit
+  utilization/RAG for a scope node, with the `hard_breach` escalation flag.
+
+### Messages, fields, types, defaults
+
+**`RiskDimension`** (enum, mirrors `celnet_risk_cube::DimensionId` + the firm apex; ORTHOGONAL axes):
+`FIRM=0` (apex; the cube `firm_aggregate`, default), `TRADER=1`, `BOOK=2`, `DESK=3`, `CCY_PAIR=4`,
+`LOCATION=5`, `ENTITY=6`.
+
+**`OrgKey`** (mirrors `celnet_risk_cube::FactKey`): `trader:u32`, `book:u32`, `desk:u32` (0 ⇒ resolve
+from the book's `Book→Desk` parent pointer), `ccy_pair:CcyPair`, `location:u32`, `entity:u32` (0 ⇒
+resolve from `Location→Entity`). Identifiers are the cube's interned dimension handles.
+
+**`RiskPosition`** (mirrors a `RiskFact` + the originating `PositionRisk`): `position_id:u64`,
+`org:OrgKey`, `option_type:OptionType`, `notional_base:double` (signed; + = long), `inputs:VanillaInputs`
+(the canonical convention-free leaf is re-derived server-side via `canonicalize`, never sent),
+`quoted_delta:DeltaConvention` + `premium_style:PremiumStyle` (provenance), `surface_version:u64`,
+`attribution:AttributionRecord` (optional).
+
+**`RiskScope`** (the `(dimension,value)` key space the cube groups by and an entitlement scope covers):
+`dimension:RiskDimension`, `value:u64` (`FactKey::group_value`; for Desk/Entity the resolved ancestor
+handle; ignored for `FIRM`).
+
+**Entitlement principal** (mirrors `celnet_entitlements`): `EntitlementRule { scopes:repeated RiskScope }`
+(conjunction; empty ⇒ covers everything = firm root); `EntitlementPrincipal { grant_all:bool,
+grants:repeated EntitlementRule, denies:repeated EntitlementRule }`. **Default = grant-all**: a request
+that **omits** the `optional EntitlementPrincipal` is treated by the server as grant-all (the GUI
+`ScopeContext.principal = "grant-all"` show-all-now posture). A present principal with `grant_all=false`
+and no grants is deny-by-default (sees nothing). `denies` apply to any principal (deny wins).
+
+**Reporting numeraire** (mirrors a `SpotResolver`): `NumeraireRate { ccy:string, rate:double }` (units
+of numeraire per 1 unit of `ccy` at spot; finite, >0); `ReportingNumeraire { numeraire:string,
+rates:repeated NumeraireRate }` (the numeraire's own rate is implicitly 1.0; a missing rate fails the
+request loudly — no silent leg drop).
+
+**Vega pillar** (mirrors `celnet_risk_cube::VegaPillar`): `VegaPillar { tenor_days:u32, delta_bp:i32 }`
+(0.25Δ → 2500). The pillar grid is **external data** (the `VegaPillarMap` contract) — supplied on the
+request, never compiled in. `VegaLadderBucket { pillar:VegaPillar, vega:double }` (reporting numeraire).
+
+**Node measures.** `CcyExposureLeg { ccy:string, amount:double }` (one signed leg of the netted delta
+vector). `AdditiveRisk` (mirrors `NetGreeks` summed + the `Numeraire` collapse): `delta_numeraire`,
+`delta_vector:repeated CcyExposureLeg`, `gamma`, `vega_numeraire` (converted through each leaf's PREMIUM
+currency — the §2.2/§2.3 coupling), `theta`, `vanna`, `volga`, `charm`, `speed`, `zomma`, `color`,
+`premium_numeraire`, `vega_ladder:repeated VegaLadderBucket`. `NonAdditiveRisk` (RE-DERIVED per node,
+never summed): `var`, `es`, `var_alpha`, `curvature_spot` — all `optional double` (absent ⇒ not
+evaluated this cycle, never a spurious zero). `RiskNode { dimension, group:u64, additive:AdditiveRisk,
+nonadditive:NonAdditiveRisk, position_count:u32 }`.
+
+**Requests/responses.**
+`ListPositionsRequest { scope?:RiskScope, principal?:EntitlementPrincipal, correlation_id?:u64 }` →
+`ListPositionsResponse { positions:repeated RiskPosition, correlation_id?:u64 }`.
+`AggregateRiskRequest { dimension:RiskDimension, numeraire:ReportingNumeraire,
+principal?:EntitlementPrincipal, scope?:RiskScope, vega_pillars:repeated VegaPillar (empty ⇒ server
+default grid), var_spot_shocks:repeated double (empty ⇒ no VaR/ES), var_alpha:double (0 ⇒ 0.99 when
+shocks present), curvature_risk_weight:double (0 ⇒ no curvature), correlation_id?:u64 }` →
+`AggregateRiskResponse { dimension, numeraire:string, nodes:repeated RiskNode, correlation_id?:u64 }`.
+`DrillRiskRequest { node:RiskScope, child_dimension:RiskDimension, numeraire:ReportingNumeraire,
+principal?:EntitlementPrincipal, vega_pillars:repeated VegaPillar, include_children:bool,
+include_positions:bool, correlation_id?:u64 }` → `DrillRiskResponse { node:RiskScope,
+children:repeated RiskNode, positions:repeated RiskPosition, correlation_id?:u64 }`.
+`LimitStatusRequest { scope:RiskScope, numeraire:ReportingNumeraire, principal?:EntitlementPrincipal,
+vega_pillars:repeated VegaPillar, var_spot_shocks:repeated double, var_alpha:double, correlation_id?:u64
+}` → `LimitStatusResponse { scope:RiskScope, limits:repeated LimitUtilization, worst:RagStatus,
+hard_breach:bool, correlation_id?:u64 }`.
+
+**Limits** (mirror `celnet_limits`): `LimitMetricKind` (DELTA=0, GAMMA, VEGA, VANNA, VOLGA, VEGA_BUCKET
+(payload `vega_pillar`), TENOR_VEGA (payload `tenor_days`), CONCENTRATION_DELTA, CONCENTRATION_VEGA, VAR,
+EXPECTED_SHORTFALL, STOP_LOSS); `RagStatus` (GREEN=0, AMBER, RED, BREACH — ordered by severity);
+`Enforcement` (SOFT=0, HARD); `LimitUtilization { metric:LimitMetricKind, vega_pillar:VegaPillar,
+tenor_days:u32, cap:double, exposure:double, ratio:double, status:RagStatus, enforcement:Enforcement,
+headroom:double }`.
+
+### WS JSON codec keys (gui/excel are WS clients)
+
+The WS mirror is the **same contract, second encoding** (rule 9): every JSON object maps the proto
+message field-for-field by the proto **snake_case** field name; every enum rides by its canonical proto
+**enum number**; `optional` (presence-tracked) fields are `null`/absent when `None`. The request `type`
+discriminator tags (the `{"type": "...", ...}` frame) and their reply tags are:
+
+| Request `type` | maps to RPC | reply `type` |
+|---|---|---|
+| `list_positions` | `RiskService.ListPositions` | `list_positions_response` |
+| `aggregate_risk` | `RiskService.AggregateRisk` | `aggregate_risk_response` |
+| `drill_risk` | `RiskService.DrillRisk` | `drill_risk_response` |
+| `limit_status` | `RiskService.LimitStatus` | `limit_status_response` |
+
+JSON object keys (symmetric in/out, by proto field name): `dimension`, `group`, `value`, `scope`,
+`node`, `child_dimension`, `principal` (`{grant_all, grants:[{scopes:[{dimension,value}]}], denies:[…]}`),
+`numeraire` (`{numeraire, rates:[{ccy, rate}]}`), `vega_pillars`/`vega_pillar`/`pillar`
+(`{tenor_days, delta_bp}`), `var_spot_shocks`, `var_alpha`, `curvature_risk_weight`, `positions`/
+`position` (`{position_id, org:{trader,book,desk,ccy_pair,location,entity}, option_type, notional_base,
+inputs:{spot,strike,vol,t,r_dom,r_for}, quoted_delta, premium_style, surface_version, attribution}`),
+`org`, `inputs`, `additive` (`{delta_numeraire, delta_vector:[{ccy,amount}], gamma, vega_numeraire,
+theta, vanna, volga, charm, speed, zomma, color, premium_numeraire, vega_ladder:[{pillar,vega}]}`),
+`nonadditive` (`{var, es, var_alpha, curvature_spot}` — `null` when absent), `position_count`,
+`include_children`, `include_positions`, `limits` (`{metric, vega_pillar, tenor_days, cap, exposure,
+ratio, status, enforcement, headroom}`), `worst`, `hard_breach`, `correlation_id`. `attribution` uses
+the existing camelCase chain (`quotedBy`/`heldBy`/`won`/`lpCount`, `book`/`owner`/`trader`/`autoPricer`)
+already in the WS codec. **The WS codec functions + dispatch arms are wired** (Server phase, DONE): the
+codec lives in `celnet-server/src/ws/codec.rs` (the four `*_request_from_json` / `*_response_to_json`
+fns) and the four dispatch arms in `celnet-server/src/ws/mod.rs`, both dispatching onto the same
+`RiskEdge` impl the gRPC server hosts. `RiskPosition` is encoded outbound only (the server builds it from
+the live book); there is no inbound `risk_position_from_json` (a client sends scope/principal/numeraire,
+not positions) — no dead decoder.
+
+### How the Server + Clients call it
+
+- **Server** (`celnet-server`, Server phase — **DONE**): `services::risk` implements
+  `risk_service_server::RiskService` (`RiskEdge`) over a shared `services::risk::store::PositionStore` —
+  the live book the RFS click-to-trade path records each booked **vanilla** fill into
+  (`StreamEdge::with_store` → `record_booked_position` → `store.book_from_attribution`, mapping the fill's
+  `AttributionRecord` book/seat onto interned `OrgKey` `u32` handles). Each RPC takes a lock-free store
+  snapshot (off the hot path), applies `EntitlementFilter::entitled_cube(principal, hierarchy, facts)`
+  **before** any roll-up, `group_by(dimension)` / `firm_aggregate` for additive, `node_var_es` /
+  `node_curvature_spot` over numeraire-scaled positions for non-additive, collapses to the reporting
+  numeraire via `NodeAggregate::numeraire_view(SpotResolver)` (per-pillar for the vega ladder), and
+  `check_scope` for `LimitStatus`. Wired into both the gRPC server (`RiskServiceServer`, added in
+  `Edge::start_on`) and the WS mirror (four dispatch arms in `ws::handle_unary` over one `RiskEdge`), so
+  GUI/Excel reach the identical path. Honest scope: only **vanilla** fills become risk facts (an exotic
+  has no canonical-vanilla leaf — not recorded, never faked); a `LimitStatus` request scoped on
+  `CCY_PAIR` is **rejected loudly** (a bare `u64` `RiskScope.value` cannot reconstruct the
+  `base`/`quote` pair the limit tree keys on — `invalid_argument`, never a silent mis-scope); and the
+  cross-pair / firm non-additive VaR/ES uses notional-scaled positions to express P&L in the common
+  numeraire (the `historical_var_es` documented contract).
+- **GUI** (Book view, client lane — **DONE**): the client-side
+  `transport.scenario`-per-position loop is **deleted** (`gui/src/data/portfolioRisk.ts` removed).
+  `gui/src/workspaces/BookWorkspace.tsx` now issues a single `aggregate_risk` call (group-by the
+  dimension `gui/src/data/riskView.ts::dimensionForScope` derives from the toolbar Scope), a
+  `limit_status` call for the scope's limit tree (a real Limits RAG panel with an honest empty-state),
+  and a `drill_risk` (`include_positions`) for the Book→Risk drill. The reporting numeraire (USD) is
+  assembled from the live watched-pair spots (`reportingNumeraire`), so the aggregate is in **real common
+  units** via `celnet-risk-normalize` server-side — the "native premium units" caveat is **resolved**
+  (the Book copy now names the reporting numeraire + shows a per-currency delta-vector breakdown; no
+  stale disclaimer). Scope drives group-by + entitlement principal (grant-all today ⇒ principal omitted,
+  server applies grant-all). The offline mock transport implements the same four RPCs by genuinely
+  aggregating its deterministic seed book into a single firm node (no fabricated org hierarchy / limits).
+  Typed messages + WS codec + transport methods live in `gui/src/data/{contract,enums,wsCodec,transport,
+  wsTransport,mockSource}.ts` — no `celnet-types`/proto change (the Contract phase froze those).
+- **SDK** (`celnet-client`, client lane — **DONE**): the four `risk_service_client` calls are exposed as
+  ergonomic typed `Client` methods (`list_positions` / `aggregate_risk` / `drill_risk` / `limit_status`)
+  with a proto-free risk vocab in `crates/celnet-client/src/risk.rs`; the omit-principal-is-grant-all
+  convention is honoured. Validated by `tests/risk_workflow.rs` (7 tests) driving an in-process edge over
+  gRPC — additive roll-up oracle (`firm == Σ book`), VaR diversification + presence-tracking, entitlement
+  pruning before aggregation, drill reconciliation, limit breach/headroom.
+- **Excel** (`CELNET.*`, client lane — **DONE**): `=CELNET.RISK(dimension, numeraire, [rates], [scope])`
+  / `=CELNET.POSITIONS([scope])` / `=CELNET.LIMITS(scope, numeraire, [rates])` over the WS
+  `aggregate_risk` / `list_positions` / `limit_status` frames; the WS codec lives in
+  `excel/src/contract/riskCodec.ts`. Validated by 16 unit tests + e2e Check H (books a real
+  click-to-trade position, then asserts the FIRM apex roll-up equals the Σ over BOOK nodes in USD,
+  server-aggregated).
+
+**Build status (this contract).** The `celnet-proto` contract is **frozen and complete**; the
+`celnet-server` `RiskService` impl (gRPC + WS mirror, wired to the shared live `PositionStore`) is
+**DONE and gated green**, and **all three client lanes (GUI / SDK / Excel) are now DONE** — full
+API-first parity reached: the GUI Book, the `celnet-client` SDK, and the Excel `CELNET.*` functions all
+consume the identical server-owned aggregation, with no client-side position-loop-and-sum anywhere and
+no contract change. Default principal = **grant-all** everywhere (entitlement-ready, show-all-now; a
+request omitting a principal is grant-all). Validated by the proto round-trip, the server suite (62 lib
++ 92 integration tests), the SDK risk-workflow suite (7 tests), the Excel suite (75 tests) + e2e Check H,
+the GUI `npm run build`, and full `just check` green (791 tests).

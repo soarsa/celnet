@@ -87,14 +87,6 @@ interface AppState {
   pairCtx: PairContext;
   setPair: (pair: CcyPair) => void;
   pairs: PairContext[];
-  /**
-   * The desk's OPEN POSITIONS for book-wide risk aggregation. These are the real
-   * instruments behind the seeded streaming book (the same `seedSubscriptions()`
-   * structures that populate the RFS blotter, spanning all pairs) — not invented
-   * notionals. The BookWorkspace reprices each one via `transport.scenario` and
-   * sums the result to a desk-wide view.
-   */
-  positions: Instrument[];
   stream: StreamApi;
   surface: MarkedSurface | null;
   /**
@@ -172,11 +164,6 @@ export function AppProvider({ children }: { children: React.ReactNode }): React.
     [conventions],
   );
   const stream = useStreamSession(transport, seed);
-
-  // The desk's open positions for book-wide risk: the exact instruments behind
-  // the seeded streaming book (one per seed subscription), so the BookWorkspace
-  // aggregates real exposures across all pairs rather than fabricated notionals.
-  const positions = useMemo(() => seed.map((s) => s.instrument), [seed]);
 
   const remarkSurface = useMemo(
     () => async (ladder?: BrokerQuoteSet[], model?: SmileModel) => {
@@ -270,7 +257,6 @@ export function AppProvider({ children }: { children: React.ReactNode }): React.
     pairCtx,
     setPair,
     pairs: PAIRS,
-    positions,
     stream,
     surface,
     remarkSurface,

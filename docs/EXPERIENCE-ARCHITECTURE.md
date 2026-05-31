@@ -152,12 +152,17 @@ invisible subtree. The GUI is unchanged: it still sends `(path, groupBy)` and re
 comes back; only *which facts the predicate admits* changes. Every entitlement decision is
 audited via `celnet-observability`.
 
-> **[proposal/gap]** The aggregation layer is **unbuilt**: `celnet-risk-cube`,
-> `celnet-risk-normalize`, `celnet-limits`, `celnet-entitlements` are proposed-only
-> (RISK-HIERARCHY §3.2). Today only single-instrument risk + `celnet-engine`
-> `BucketedRisk` exist **[built]**. The drill UX below is a contract against that
-> not-yet-built backend; the GUI seam (`ScopeContext`) is buildable now and degrades
-> honestly to "show all over current positions."
+> **[built & served end-to-end — GUI / SDK / Excel lanes all done]** The aggregation layer is
+> **built and served end-to-end**: `celnet-risk-cube`, `celnet-risk-normalize`, `celnet-limits`,
+> `celnet-entitlements` are gated green (RISK-HIERARCHY §3.2) and exposed over the one
+> `celnet-proto` contract as `RiskService` (`ListPositions`/`AggregateRisk`/`DrillRisk`/
+> `LimitStatus`), served by `celnet-server` over gRPC + the WS mirror off a shared live
+> `PositionStore`. The entitlement predicate prunes **server-side, pre-reduction**, exactly as
+> the drill UX below requires. The GUI Book/drill, the `celnet-client` SDK, and the Excel
+> `CELNET.*` functions now **all** consume these RPCs — the client-side `aggregateBookRisk`
+> loop is **deleted** (`gui/src/data/portfolioRisk.ts` removed) and the GUI seam (`ScopeContext`)
+> drives `AggregateRisk`/`LimitStatus`/`DrillRisk` server-side. Deferred at the backend (only):
+> AAD/GPU non-additive reval + cross-shard fleet (RH §3.3/§3.4).
 
 ---
 
@@ -290,20 +295,27 @@ cross-gamma stencil, theta-roll, honest empty-states, perceptual diverging ramp
   tabs, and the **vanna/volga ladder** alongside vega. **[GUI for axes; needs Rust for
   vanna/volga ladder + VaR/ES/FRTB]**
 - **Limits overlay** (utilization / RAG / soft-breach) sits on the same tenor×delta
-  pillars. **[gap]** `celnet-limits` unbuilt.
+  pillars. **[served]** `celnet-limits` is built and exposed via `RiskService.LimitStatus`
+  (per-limit `cap`/`exposure`/`ratio`/`status`/`headroom` + `hard_breach`); GUI lane renders it.
 
 ### Book — `workspaces/BookWorkspace.tsx` (aggregate + drill)
 Preserve the real per-position sum across `app.positions` with summary cards, per-pair
-breakdown, aggregate vega ladder, honest skipped-position disclosure **[built]**. Lift:
-- **Drill to Risk** from any aggregate row / vega bucket (§4). **[GUI-only]** over current
-  positions; **[needs Rust]** for true cube roll-up.
-- **Per-pair / desk / trader / owner breakdown** — add the identity dimension so the
-  aggregate stops being anonymous (audit §1 Book). **[needs Rust]** (`book_id`/owner /
-  `AttributionRecord` — SCALE #12).
-- **Numeraire caveat → fix.** Today's cross-pair totals are summed in **native premium
-  units** (USD/JPY at spot 156 dominates a raw sum) — the GUI honestly discloses this
-  (`:152-159`). Add reporting-numeraire normalization. **[needs Rust]**
-  (`celnet-risk-normalize` §2.2/§2.3); until then keep the honest caveat visible.
+breakdown, aggregate vega ladder, honest skipped-position disclosure **[built]**. Lift —
+the server backend for all three of these is now **served** by `RiskService`; the GUI lane
+wires the calls:
+- **Drill to Risk** from any aggregate row / vega bucket (§4). **[server: `DrillRisk` served]** —
+  the true cube roll-up exists; the GUI lane replaces the client-side loop with `aggregate_risk`
+  + `drill_risk`.
+- **Per-pair / desk / trader / owner breakdown** — the identity dimension so the aggregate stops
+  being anonymous (audit §1 Book). **[served]**: `AttributionRecord` is on the wire and the
+  server maps it onto the cube's `OrgKey` org dimensions (`RiskDimension` group-by); GUI lane
+  selects the dimension.
+- **Numeraire caveat → resolved server-side.** Cross-pair totals were summed in **native premium
+  units** (USD/JPY at spot 156 dominates a raw sum) and the GUI honestly disclosed this
+  (`:152-159`). `AggregateRisk` now collapses every node into a real reporting numeraire via
+  `celnet-risk-normalize` (`ReportingNumeraire` rates) **server-side** — the caveat is resolved at
+  the source. The GUI Book now consumes the served aggregate and the old disclaimer is **gone**:
+  the Book copy names the reporting numeraire and shows the per-ccy delta breakdown instead.
 
 ### Ticket — `workspaces/TicketWorkspace.tsx` (the pricer)
 Preserve the strongest workspace: analytics+executable card, structure selector, real
@@ -419,11 +431,16 @@ source. **(Does not edit ROADMAP — the orchestrator merges backlogs.)**
 
 ## 9. Honest gaps & cross-doc conflicts reconciled
 
-1. **The entire aggregation layer is unbuilt.** `celnet-risk-cube` / `-normalize` /
-   `-limits` / `-entitlements` are proposal-only (RH §3.2). Book/Risk/Limits roll-up UX
-   is a contract against a not-yet-built backend; the **GUI seam** (`ScopeContext`,
-   Book→Risk drill over current positions) is buildable now (P0) and degrades honestly to
-   "show-all over seeded positions, native units."
+1. **The aggregation layer is built and served, and every client lane consumes it.**
+   `celnet-risk-cube` / `-normalize` / `-limits` / `-entitlements` are built and gated green
+   (RH §3.2) and served over the one `celnet-proto` contract as `RiskService`
+   (`ListPositions`/`AggregateRisk`/`DrillRisk`/`LimitStatus`) by `celnet-server` (gRPC + WS
+   mirror, shared live `PositionStore`, entitlement pruning pre-reduction, reporting-numeraire
+   collapse). Book/Risk/Limits roll-up is a real server capability today, and **all three client
+   lanes now consume it**: the GUI Book/drill (the client-side `aggregateBookRisk` loop is
+   **deleted** — `gui/src/data/portfolioRisk.ts` removed), the `celnet-client` SDK, and the Excel
+   `CELNET.*` functions — full API-first parity, no client-side position-loop-and-sum anywhere.
+   Backend deferrals (only): AAD/GPU non-additive reval + cross-shard fleet (RH §3.3/§3.4).
 
 2. **Scale-out tier is designed-only.** `celnet-router` HRW partition map / cross-shard
    reducer is target architecture, not shipped (RH §3.4); blue-green handoff *is* built.
