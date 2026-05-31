@@ -92,8 +92,11 @@ pub struct WsServices {
 impl WsServices {
     /// Construct the WS service set from the same shared components the gRPC edge is
     /// built from, so both fronts speak one contract over one pricing path — now
-    /// including `RiskService` over the same shared live position book.
+    /// including `RiskService` over the same shared live position book and the shared
+    /// backend [`Fleet`](crate::services::risk::federate::Fleet) for owned-pair
+    /// forwarding.
     #[must_use]
+    #[allow(clippy::too_many_arguments)] // the shared component set the edge is built from.
     pub fn new(
         link: Arc<CoreLink>,
         gate: Arc<ReadinessGate>,
@@ -102,17 +105,26 @@ impl WsServices {
         surface_book: Arc<SurfaceBook>,
         store: Arc<PositionStore>,
         risk: Arc<RiskEdge>,
+        fleet: Option<Arc<crate::services::risk::federate::Fleet>>,
     ) -> Self {
-        let pricing = Arc::new(PricingEdge::new(
+        // The SAME shared backend fleet the gRPC edges use (or `None` in-process), so
+        // the WS unary mirror forwards owned-pair requests identically (API-first
+        // parity). The WS RFS path drives the local session loop (`session_driver`);
+        // the implemented distributed stream relay is the gRPC `StreamSession` path
+        // (`crate::services::stream::stream_session`) — the WS stream relay is a
+        // parallel refinement, not faked here.
+        let pricing = Arc::new(PricingEdge::with_fleet(
             Arc::clone(&gate),
             Arc::clone(&surface_book),
+            fleet.clone(),
         ));
-        let quote = Arc::new(QuoteEdge::new(
+        let quote = Arc::new(QuoteEdge::with_fleet(
             Arc::clone(&link),
             Arc::clone(&gate),
             spread,
             clock.clone(),
             Arc::clone(&surface_book),
+            fleet.clone(),
         ));
         let stream = Arc::new(StreamEdge::with_store(
             Arc::clone(&link),
@@ -122,11 +134,12 @@ impl WsServices {
             Arc::clone(&surface_book),
             Arc::clone(&store),
         ));
-        let surface = Arc::new(SurfaceEdge::new(
+        let surface = Arc::new(SurfaceEdge::with_fleet(
             Arc::clone(&link),
             Arc::clone(&gate),
             clock,
             surface_book,
+            fleet,
         ));
         // `risk` is the SAME connected edge the gRPC server uses (a distributed edge's
         // backend fleet is connected once at boot and shared behind an `Arc`).

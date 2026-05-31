@@ -73,9 +73,13 @@ use crate::clock::Clock;
 use crate::core_link::CoreLink;
 use crate::pricer::{ConventionSet, price_instrument};
 use crate::readiness::ReadinessGate;
+use crate::services::forward::{Serve, route_pair, serve_mode};
 use crate::services::pin::{PinnedVol, resolve_pinned_vol};
+use crate::services::risk::federate::Fleet;
 use crate::spread::SpreadModel;
 use crate::surface_book::SurfaceBook;
+
+use celnet_router::ReplicaId;
 
 /// How long an issued quote stays valid for a last-look accept, in nanoseconds
 /// (5 seconds — the typical OTC last-look window).
@@ -128,10 +132,20 @@ pub struct QuoteEdge {
     /// The shared versioned marked-surface registry: a `QuoteRequest` carrying a
     /// pinned `surface_version` prices against the marked surface (and echoes it).
     surface_book: Arc<SurfaceBook>,
+    /// The connected backend fleet for owned-pair forwarding; `None` ⇒ in-process
+    /// (quote locally). Reuses the SAME `Fleet` the risk federation connects.
+    fleet: Option<Arc<Fleet>>,
+    /// Distributed mode only: `quote_id → issuing backend replica`, recorded when a
+    /// `RequestQuote` is forwarded, so a later `AcceptQuote` / `RejectQuote` (which
+    /// carry only `quote_id`, no pair, on the wire) routes back to the **same**
+    /// backend that minted the id (a `quote_id` is minted per-backend under that
+    /// backend's secret). Bounded by the live-quote rate over a session, like the
+    /// backend's own `QuoteStore`.
+    quote_owners: Mutex<HashMap<u64, ReplicaId>>,
 }
 
 impl QuoteEdge {
-    /// Construct the RFQ service.
+    /// Construct the RFQ service in the in-process topology (quotes locally).
     #[must_use]
     pub fn new(
         link: Arc<CoreLink>,
@@ -139,6 +153,23 @@ impl QuoteEdge {
         spread: SpreadModel,
         clock: Clock,
         surface_book: Arc<SurfaceBook>,
+    ) -> Self {
+        Self::with_fleet(link, gate, spread, clock, surface_book, None)
+    }
+
+    /// Construct the RFQ service with an optional connected backend [`Fleet`]:
+    /// `Some(fleet)` ⇒ distributed (forward `RequestQuote` by the instrument's pair,
+    /// and route the matching `AcceptQuote` / `RejectQuote` back to the issuing
+    /// backend); `None` ⇒ in-process (quote locally), exactly [`QuoteEdge::new`]'s
+    /// prior behaviour.
+    #[must_use]
+    pub fn with_fleet(
+        link: Arc<CoreLink>,
+        gate: Arc<ReadinessGate>,
+        spread: SpreadModel,
+        clock: Clock,
+        surface_book: Arc<SurfaceBook>,
+        fleet: Option<Arc<Fleet>>,
     ) -> Self {
         // Mint a process-unique unguessable secret from the OS-seeded hasher. This
         // is a control-plane identity concern, *not* a pricing path, so OS entropy
@@ -155,6 +186,8 @@ impl QuoteEdge {
             quote_id_secret,
             store: Mutex::new(QuoteStore::default()),
             surface_book,
+            fleet,
+            quote_owners: Mutex::new(HashMap::new()),
         }
     }
 
@@ -244,6 +277,28 @@ impl QuoteService for QuoteEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
+
+        // Distributed: forward RequestQuote to the backend that owns the instrument's
+        // pair, record `quote_id → issuing backend` so the matching accept/reject
+        // (which carry no pair) route back to the same backend, and return the
+        // backend's `Quote` verbatim.
+        if let Serve::Forward(fleet) = serve_mode(self.fleet.as_ref()) {
+            let instrument = req
+                .instrument
+                .as_ref()
+                .ok_or_else(|| Status::invalid_argument("missing `instrument`"))?;
+            let pair = route_pair(instrument.pair.as_ref())?;
+            let (replica, client) = fleet.owner_of_pair(pair)?;
+            let mut svc =
+                celnet_proto::quote_service_client::QuoteServiceClient::new(client.channel());
+            let quote = svc.request_quote(req).await?.into_inner();
+            // Remember which backend issued this quote_id so accept/reject route home.
+            self.quote_owners
+                .lock()
+                .await
+                .insert(quote.quote_id, replica);
+            return Ok(Response::new(quote));
+        }
 
         // Idempotency: a key already seen returns the stored quote verbatim — but
         // only when the request payload (instrument + conventions) matches the one
@@ -353,6 +408,30 @@ impl QuoteService for QuoteEdge {
         self.require_ready()?;
         let acc = request.into_inner();
 
+        // Distributed: route the accept to the SAME backend that issued the quote
+        // (recorded on the forwarded RequestQuote). The accept/reject wire carries
+        // only `quote_id` (no pair), and a `quote_id` is minted under the issuing
+        // backend's own secret, so it must go home. An unknown id ⇒ not_found
+        // (this edge never saw the originating RequestQuote).
+        if let Serve::Forward(fleet) = serve_mode(self.fleet.as_ref()) {
+            let replica = self
+                .quote_owners
+                .lock()
+                .await
+                .get(&acc.quote_id)
+                .copied()
+                .ok_or_else(|| {
+                    Status::not_found(format!(
+                        "unknown quote_id {} (not issued through this edge)",
+                        acc.quote_id
+                    ))
+                })?;
+            let client = fleet.client_for(replica)?;
+            let mut svc =
+                celnet_proto::quote_service_client::QuoteServiceClient::new(client.channel());
+            return Ok(Response::new(svc.accept_quote(acc).await?.into_inner()));
+        }
+
         let mut store = self.store.lock().await;
         let rec = store
             .by_id
@@ -449,6 +528,27 @@ impl QuoteService for QuoteEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let rej = request.into_inner();
+
+        // Distributed: route the reject to the SAME backend that issued the quote
+        // (recorded on the forwarded RequestQuote), for the same reason as accept.
+        if let Serve::Forward(fleet) = serve_mode(self.fleet.as_ref()) {
+            let replica = self
+                .quote_owners
+                .lock()
+                .await
+                .get(&rej.quote_id)
+                .copied()
+                .ok_or_else(|| {
+                    Status::not_found(format!(
+                        "unknown quote_id {} (not issued through this edge)",
+                        rej.quote_id
+                    ))
+                })?;
+            let client = fleet.client_for(replica)?;
+            let mut svc =
+                celnet_proto::quote_service_client::QuoteServiceClient::new(client.channel());
+            return Ok(Response::new(svc.reject_quote(rej).await?.into_inner()));
+        }
 
         let mut store = self.store.lock().await;
         // The reject is authorised by possession of the (unguessable) quote_id —

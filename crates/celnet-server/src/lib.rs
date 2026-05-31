@@ -196,6 +196,35 @@ impl Edge {
         spread: SpreadModel,
         clock: Clock,
     ) -> std::io::Result<Self> {
+        // Resolve the fleet-risk deploy-time topology from the environment, then
+        // delegate. Reading the env (the only I/O) happens here, once, at boot.
+        let topology = fleet_topology_from_env();
+        Self::start_on_with_topology(grpc_addr, ws_addr, link, spread, clock, topology).await
+    }
+
+    /// Like [`Edge::start_on`], but binds the edge under an **explicit**
+    /// [`FleetTopology`] instead of reading `CELNET_FLEET_MODE` / `CELNET_FLEET_BACKENDS`
+    /// from the environment.
+    ///
+    /// This is the race-free entry point for a federation test that boots backend
+    /// edges on ephemeral ports and then a [`FleetTopology::Distributed`] front edge
+    /// over their URLs, without mutating process-global env (the env path is
+    /// [`Edge::start_on`]). The semantics are otherwise identical: a distributed
+    /// topology connects the shared backend [`Fleet`] once at boot (so the unary
+    /// pricing/quote/surface services forward by owned pair and the risk edge
+    /// federates), and a dial failure surfaces here as an `io::Error`.
+    ///
+    /// # Errors
+    /// Returns an [`std::io::Error`] if either listener cannot bind, or if a
+    /// distributed backend endpoint cannot be dialled.
+    pub async fn start_on_with_topology(
+        grpc_addr: SocketAddr,
+        ws_addr: SocketAddr,
+        link: Arc<CoreLink>,
+        spread: SpreadModel,
+        clock: Clock,
+        topology: FleetTopology,
+    ) -> std::io::Result<Self> {
         let gate = Arc::new(ReadinessGate::new());
         // The single versioned marked-surface registry every service shares: the
         // surface edge deposits marks; the pricing / RFQ / RFS paths resolve a
@@ -207,61 +236,68 @@ impl Edge {
         // looping positions client-side).
         let store = Arc::new(PositionStore::new());
 
-        // Resolve the fleet-risk deploy-time topology from the environment (the
-        // deploy-time-binding precedent of `celnet-integration`'s `DeploymentMode`):
-        // `CELNET_FLEET_MODE` + `CELNET_FLEET_BACKENDS` select whether firm risk
-        // aggregates in-process or would fan out across physical shards. Absent ⇒
-        // `InProcess` (the byte-identical single-node default). Parsing is the pure
-        // `FleetTopology::parse`; reading the env (the only I/O) happens here, once,
-        // at boot — never on any request path (`CLAUDE.md` rules 6/9; no proto
-        // change, no `schema_version`).
-        let topology = fleet_topology_from_env();
+        // Connect the backend fleet ONCE for a distributed topology (one
+        // `celnet_client::Client` per endpoint, sharing its HTTP/2 channel) and share
+        // the SAME `Fleet` across every edge — the unary pricing/quote/surface services
+        // (owned-pair forwarding, `docs/SCALE-OUT.md` §3), the stream relay, AND the
+        // risk federation (`docs/RISK-HIERARCHY.md` §3.4). In-process ⇒ `None` (every
+        // edge serves locally, byte-identical to the single-node default). A dial
+        // failure surfaces here, at boot, as an `io::Error` rather than on first
+        // request (the channels are established eagerly).
+        let fleet: Option<Arc<services::risk::federate::Fleet>> = match &topology {
+            FleetTopology::InProcess => None,
+            FleetTopology::Distributed { endpoints } => Some(Arc::new(
+                services::risk::federate::Fleet::connect(endpoints)
+                    .await
+                    .map_err(|s| std::io::Error::other(s.to_string()))?,
+            )),
+        };
 
         let listener = TcpListener::bind(grpc_addr).await?;
         let bound = listener.local_addr()?;
         let (grpc_shutdown, grpc_rx) = oneshot::channel::<()>();
 
-        let pricing = PricingServiceServer::new(PricingEdge::new(
+        let pricing = PricingServiceServer::new(PricingEdge::with_fleet(
             Arc::clone(&gate),
             Arc::clone(&surface_book),
+            fleet.clone(),
         ));
-        let quote = QuoteServiceServer::new(QuoteEdge::new(
+        let quote = QuoteServiceServer::new(QuoteEdge::with_fleet(
             Arc::clone(&link),
             Arc::clone(&gate),
             spread,
             clock.clone(),
             Arc::clone(&surface_book),
+            fleet.clone(),
         ));
-        let stream = StreamServiceServer::new(StreamEdge::with_store(
+        let stream = StreamServiceServer::new(StreamEdge::with_store_and_fleet(
             Arc::clone(&link),
             Arc::clone(&gate),
             spread,
             clock.clone(),
             Arc::clone(&surface_book),
             Arc::clone(&store),
+            fleet.clone(),
         ));
-        let surface = SurfaceServiceServer::new(SurfaceEdge::new(
+        let surface = SurfaceServiceServer::new(SurfaceEdge::with_fleet(
             Arc::clone(&link),
             Arc::clone(&gate),
             clock.clone(),
             Arc::clone(&surface_book),
+            fleet.clone(),
         ));
-        // The risk edge: for a distributed topology this connects the backend fleet
-        // (one `celnet_client::Client` per endpoint) so every RiskService RPC fans
-        // out across the fleet and reconciles to the single-node answer over the union
-        // book (Phase 3, `docs/RISK-HIERARCHY.md` §3.4). A dial failure surfaces here,
-        // at boot, as an `io::Error` rather than on the first request. The SAME
-        // connected edge backs both the gRPC server and the WS mirror (one fleet of
-        // backend channels, not two), shared behind an `Arc`.
-        let risk_edge = Arc::new(
-            RiskEdge::with_topology_connected(
-                Arc::clone(&store),
-                Arc::clone(&gate),
-                topology.clone(),
-            )
-            .await
-            .map_err(|s| std::io::Error::other(s.to_string()))?,
-        );
+        // The risk edge: a distributed topology federates every RiskService RPC across
+        // the SAME shared backend fleet (one pool of channels for the whole edge), so
+        // it reconciles to the single-node answer over the union book (Phase 3,
+        // `docs/RISK-HIERARCHY.md` §3.4). In-process ⇒ the direct single-node path. The
+        // SAME connected edge backs both the gRPC server and the WS mirror, shared
+        // behind an `Arc`.
+        let risk_edge = Arc::new(match &fleet {
+            Some(fleet) => {
+                RiskEdge::with_fleet(Arc::clone(&store), Arc::clone(&gate), Arc::clone(fleet))
+            }
+            None => RiskEdge::new(Arc::clone(&store), Arc::clone(&gate)),
+        });
         let risk = RiskServiceServer::from_arc(Arc::clone(&risk_edge));
 
         let incoming = tonic::transport::server::TcpIncoming::from_listener(listener, true, None)
@@ -292,6 +328,7 @@ impl Edge {
             Arc::clone(&surface_book),
             Arc::clone(&store),
             Arc::clone(&risk_edge),
+            fleet.clone(),
         );
         let ws_mirror = ws::WsMirror::start(ws_addr, ws_services).await?;
 
