@@ -9,8 +9,68 @@
 .loading {
   display: grid;
   place-items: center;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   color: var(--text-tertiary);
+}
+
+/* Surface ⇄ Cube internal view toggle (Surface workspace owns its sub-view; no
+   Shell/AppContext edit). The cube is the read/scan pivot of the same surfaces. */
+.viewToggle {
+  display: inline-flex;
+  gap: var(--space-1);
+  padding: 2px;
+  background: var(--bg-inset);
+  border-radius: var(--r-md);
+}
+
+.viewChip {
+  font-family: var(--font-brand);
+  font-size: var(--type-caption);
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+  padding: var(--space-1) var(--space-3);
+  border: none;
+  background: transparent;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: background var(--workspace-switch) var(--ease-out),
+    color var(--workspace-switch) var(--ease-out);
+}
+
+.viewChip:hover {
+  color: var(--text-primary);
+}
+
+.viewActive,
+.viewActive:hover {
+  background: var(--brand);
+  color: var(--bg-base);
+}
+
+/* Cube sub-view layout: a thin bar carrying the toggle over the cube canvas. */
+.cubeShell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  gap: var(--space-4);
+}
+
+.cubeBar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.cubeCanvas {
+  flex: 1;
+  min-height: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .viewChip {
+    transition: none;
+  }
 }
 
 .surfacePanel {

@@ -8,23 +8,26 @@
  * the same Instrument object, no re-keying.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useApp } from "../app/AppContext";
 import type {
+  BrokenDate,
   Instrument,
   Leg,
   MarketContext,
   Quote,
   StrategyKind,
+  Tenor,
 } from "../data/contract";
 import { Panel } from "../components/Panel";
 import { Button } from "../components/Button";
+import { DatePicker } from "../components/DatePicker";
 import { TwoWayQuote } from "../components/TwoWayQuote";
 import { GreeksStrip } from "../components/GreeksStrip";
 import { ConventionRow } from "../components/ConventionChip";
 import { strategyInstrument, vanillaInstrument, tenorYearsToTenor } from "../data/seed";
 import { strikeFromDelta } from "../data/pricing";
-import { impliedVolForInstrument } from "../data/surface";
+import { impliedVolForInstrument, sampleSurface } from "../data/surface";
 import {
   fmtPremiumPct,
   fmtRate,
@@ -32,10 +35,42 @@ import {
   sideVerb,
 } from "../lib/format";
 import { nowNanos } from "../hooks/useClock";
-import { tenorLabel } from "../lib/trend";
+import { samePair } from "../lib/universe";
 import styles from "./TicketWorkspace.module.css";
 
 type Structure = "VANILLA" | StrategyKind;
+
+/** Which expiry input the trader is using: a standard tenor or an arbitrary date. */
+type ExpiryMode = "TENOR" | "DATE";
+
+/**
+ * A standard-tenor choice — the trader-facing `Tenor` plus its year fraction on
+ * ACT/365 (the pricing horizon; the server resolves the true settlement date). The
+ * Phase-1 short-end units (ON/TN/SN) and IMM are first-class alongside W/M/Y.
+ */
+interface TenorChoice {
+  label: string;
+  tenor: Tenor;
+  years: number;
+}
+
+const ONE_BIZ_DAY_YEARS = 1 / 365;
+const TN_YEARS = 2 / 365;
+const SN_YEARS = 3 / 365;
+
+const TENOR_CHOICES: readonly TenorChoice[] = [
+  { label: "ON", tenor: { unit: "OVERNIGHT", count: 1 }, years: ONE_BIZ_DAY_YEARS },
+  { label: "TN", tenor: { unit: "TOM_NEXT", count: 1 }, years: TN_YEARS },
+  { label: "SN", tenor: { unit: "SPOT_NEXT", count: 1 }, years: SN_YEARS },
+  { label: "1W", tenor: { unit: "WEEKS", count: 1 }, years: 7 / 365 },
+  { label: "2W", tenor: { unit: "WEEKS", count: 2 }, years: 14 / 365 },
+  { label: "1M", tenor: { unit: "MONTHS", count: 1 }, years: 30 / 365 },
+  { label: "2M", tenor: { unit: "MONTHS", count: 2 }, years: 60 / 365 },
+  { label: "3M", tenor: { unit: "MONTHS", count: 3 }, years: 91 / 365 },
+  { label: "6M", tenor: { unit: "MONTHS", count: 6 }, years: 182 / 365 },
+  { label: "1Y", tenor: { unit: "YEARS", count: 1 }, years: 1 },
+  { label: "IMM1", tenor: { unit: "IMM", count: 1 }, years: 0.25 },
+];
 
 const STRUCTURES: { id: Structure; label: string }[] = [
   { id: "VANILLA", label: "Vanilla" },
@@ -45,40 +80,141 @@ const STRUCTURES: { id: Structure; label: string }[] = [
   { id: "SEAGULL", label: "Seagull" },
 ];
 
-// Year fractions only; the LABEL is derived from the shared `tenorLabel` seam so
-// the ticket names a tenor identically to the Stream lane (single source of truth).
-const TENOR_YEARS: readonly number[] = [
-  1 / 365,
-  7 / 365,
-  30 / 365,
-  60 / 365,
-  91 / 365,
-  182 / 365,
-  1,
-];
+/** Today (UTC, calendar-only) as a `BrokenDate` — the trade date for date math. */
+function todayUtc(): BrokenDate {
+  const d = new Date();
+  return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() };
+}
+function brokenToUtcMs(d: BrokenDate): number {
+  return Date.UTC(d.year, d.month - 1, d.day);
+}
+function addDays(d: BrokenDate, days: number): BrokenDate {
+  const dt = new Date(brokenToUtcMs(d) + days * 86_400_000);
+  return { year: dt.getUTCFullYear(), month: dt.getUTCMonth() + 1, day: dt.getUTCDate() };
+}
+/** Whole calendar days from `from` to `to` (UTC midnights). */
+function daysBetween(from: BrokenDate, to: BrokenDate): number {
+  return Math.round((brokenToUtcMs(to) - brokenToUtcMs(from)) / 86_400_000);
+}
+function fmtBrokenDate(d: BrokenDate): string {
+  return `${d.year}-${String(d.month).padStart(2, "0")}-${String(d.day).padStart(2, "0")}`;
+}
+
+/**
+ * The expiry year fraction for an arbitrary date under the conventions' day-count.
+ * Calendar-day count / day-count basis — a faithful day-count read of the horizon.
+ * It is NOT a business-day/holiday-adjusted figure: the server's celnet-calendar
+ * owns the exact good-business-day expiry and spot-lagged delivery; we label that
+ * honestly rather than reproduce calendar tables client-side.
+ */
+function expiryYearsForDate(today: BrokenDate, expiry: BrokenDate, basis: number): number {
+  return Math.max(ONE_BIZ_DAY_YEARS, daysBetween(today, expiry) / basis);
+}
 
 function buildInstrument(
   structure: Structure,
   pair: { base: string; quote: string },
+  tenor: Tenor,
   tenorYears: number,
   notionalMm: number,
 ): Instrument {
-  if (structure === "VANILLA") {
-    return vanillaInstrument(pair, tenorYears, "CALL", 0.25, notionalMm);
-  }
-  return strategyInstrument(pair, tenorYears, structure, notionalMm);
+  const base =
+    structure === "VANILLA"
+      ? vanillaInstrument(pair, tenorYears, "CALL", 0.25, notionalMm)
+      : strategyInstrument(pair, tenorYears, structure, notionalMm);
+  // Stamp the trader-facing tenor (ON/TN/SN/IMM/BROKEN_DATE) onto the instrument;
+  // `expiryYears` stays authoritative for pricing (see celnet.proto Instrument).
+  return { ...base, tenor };
 }
 
 export function TicketWorkspace(): React.ReactElement {
   const app = useApp();
   const [structure, setStructure] = useState<Structure>("RISK_REVERSAL");
-  const [tenorYears, setTenorYears] = useState(30 / 365);
+  const [expiryMode, setExpiryMode] = useState<ExpiryMode>("TENOR");
+  // Standard-tenor selection (index into TENOR_CHOICES); default 1M.
+  const [tenorIdx, setTenorIdx] = useState(5);
+  const [brokenDate, setBrokenDate] = useState<BrokenDate | null>(null);
   const [notionalMm, setNotionalMm] = useState(10);
   const [quote, setQuote] = useState<Quote | null>(null);
   const [busy, setBusy] = useState(false);
   const [fill, setFill] = useState<string | null>(null);
 
-  const instrument = buildInstrument(structure, app.pairCtx.pair, tenorYears, notionalMm);
+  const today = useMemo(() => todayUtc(), []);
+  // Selectable broken-date window: from spot (~2 calendar days) out to ~3 years.
+  const dateMin = useMemo(() => addDays(today, 3), [today]);
+  const dateMax = useMemo(() => addDays(today, 365 * 3), [today]);
+  const dayCountBasis = app.conventions.dayCount === "ACT_360" ? 360 : 365;
+
+  const tenorChoice = TENOR_CHOICES[tenorIdx] ?? TENOR_CHOICES[5]!;
+
+  // Resolve the active expiry to a (Tenor, year-fraction) pair. In DATE mode a
+  // chosen calendar date becomes a BROKEN_DATE tenor carrying the explicit date,
+  // with `expiryYears` derived under the conventions' day-count — and prices
+  // through the SAME real transport (the contract carries broken_date end-to-end).
+  const resolved = useMemo((): { tenor: Tenor; years: number } => {
+    if (expiryMode === "DATE" && brokenDate) {
+      return {
+        tenor: { unit: "BROKEN_DATE", count: 0, brokenDate },
+        years: expiryYearsForDate(today, brokenDate, dayCountBasis),
+      };
+    }
+    return { tenor: tenorChoice.tenor, years: tenorChoice.years };
+  }, [expiryMode, brokenDate, today, dayCountBasis, tenorChoice]);
+
+  const tenorYears = resolved.years;
+
+  // A trader-facing expiry label that is honest for BOTH modes: a broken date
+  // reads as its calendar date, never coerced into a tenor band.
+  const expiryLabel =
+    expiryMode === "DATE" && brokenDate ? fmtBrokenDate(brokenDate) : tenorChoice.label;
+
+  // In DATE mode the trader must pick a date before there is a horizon to price.
+  const expiryReady = expiryMode === "TENOR" || brokenDate !== null;
+
+  const instrument = buildInstrument(
+    structure,
+    app.pairCtx.pair,
+    resolved.tenor,
+    tenorYears,
+    notionalMm,
+  );
+
+  // Total-variance interpolation in time of the marked surface's ATM term
+  // structure at the (broken) expiry — σ²(t)·t linear in t, the standard
+  // arbitrage-consistent time interpolation. DISPLAY-ONLY (the structure's own
+  // face vol is the |vega|-weighted smile read below); shown so the trader sees
+  // the surface vol the broken date lands on. HONEST GAP: event-clock kinks
+  // (central-bank / NFP jump vol) are NOT modelled — this is a smooth-clock read.
+  const interpolatedAtmVol = useMemo((): number | null => {
+    const surface = app.surface;
+    if (!surface || surface.smiles.length === 0) return null;
+    if (!samePair(surface.pair, app.pairCtx.pair)) return null;
+    const smiles = [...surface.smiles].sort((a, b) => a.tenorYears - b.tenorYears);
+    const lo = smiles[0]!;
+    const hi = smiles[smiles.length - 1]!;
+    const t = tenorYears;
+    // ATM is the |Δ|=0.5 node; sampleSurface reads the calibrated points.
+    const atmAt = (tt: number): number => sampleSurface(surface, tt, 0.5);
+    if (t <= lo.tenorYears) return atmAt(lo.tenorYears);
+    if (t >= hi.tenorYears) return atmAt(hi.tenorYears);
+    let a = lo;
+    let b = hi;
+    for (let i = 0; i < smiles.length - 1; i += 1) {
+      if (smiles[i]!.tenorYears <= t && smiles[i + 1]!.tenorYears >= t) {
+        a = smiles[i]!;
+        b = smiles[i + 1]!;
+        break;
+      }
+    }
+    const vA = atmAt(a.tenorYears);
+    const vB = atmAt(b.tenorYears);
+    const wA = vA * vA * a.tenorYears; // total variance at the lower pillar
+    const wB = vB * vB * b.tenorYears; // total variance at the upper pillar
+    const span = b.tenorYears - a.tenorYears;
+    const frac = span <= 0 ? 0 : (t - a.tenorYears) / span;
+    const totalVar = wA + (wB - wA) * frac;
+    return t > 0 ? Math.sqrt(Math.max(0, totalVar / t)) : vA;
+  }, [app.surface, app.pairCtx.pair, tenorYears]);
 
   // The quote-face vol: the REAL smile vol the structure trades on at its
   // strike(s)/delta(s), read off the marked surface and |vega|-weighted across
@@ -92,7 +228,13 @@ export function TicketWorkspace(): React.ReactElement {
   const requestQuote = useCallback(async () => {
     setBusy(true);
     setFill(null);
-    const inst = buildInstrument(structure, app.pairCtx.pair, tenorYears, notionalMm);
+    const inst = buildInstrument(
+      structure,
+      app.pairCtx.pair,
+      resolved.tenor,
+      tenorYears,
+      notionalMm,
+    );
     const q = await app.transport.requestQuote(
       inst,
       app.conventions,
@@ -100,7 +242,7 @@ export function TicketWorkspace(): React.ReactElement {
     );
     setQuote(q);
     setBusy(false);
-  }, [app, structure, tenorYears, notionalMm]);
+  }, [app, structure, resolved.tenor, tenorYears, notionalMm]);
 
   const accept = useCallback(
     async (side: "BUY" | "SELL") => {
@@ -127,13 +269,14 @@ export function TicketWorkspace(): React.ReactElement {
       } else if (e.key === "Enter" && !e.metaKey && !e.ctrlKey) {
         const tag = (e.target as HTMLElement)?.tagName;
         if (tag === "INPUT" || tag === "BUTTON") return;
+        if (!expiryReady) return;
         e.preventDefault();
         void requestQuote();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [accept, requestQuote, app.paletteOpen]);
+  }, [accept, requestQuote, app.paletteOpen, expiryReady]);
 
   // P0-10: strikes (and any delta→strike resolution) are computed off the
   // ACTIVE pair's real market (spot/vol/rDom/rFor) — never the old hardcoded
@@ -179,19 +322,100 @@ export function TicketWorkspace(): React.ReactElement {
           </div>
         </div>
 
-        <div className={styles.tenorRow}>
-          {TENOR_YEARS.map((years) => (
-            <button
-              key={years}
-              className={`${styles.tenorPill} ${Math.abs(years - tenorYears) < 1e-9 ? styles.tenorActive : ""}`}
-              onClick={() => {
-                setTenorYears(years);
-                setQuote(null);
-              }}
-            >
-              {tenorLabel(years)}
-            </button>
-          ))}
+        <div className={styles.expiryBlock}>
+          <div className={styles.expiryModeRow}>
+            <span className={styles.expiryModeLabel}>Expiry</span>
+            <div className={styles.modeToggle} role="tablist" aria-label="expiry mode">
+              <button
+                role="tab"
+                aria-selected={expiryMode === "TENOR"}
+                className={`${styles.modeTab} ${expiryMode === "TENOR" ? styles.modeActive : ""}`}
+                onClick={() => {
+                  setExpiryMode("TENOR");
+                  setQuote(null);
+                }}
+              >
+                Tenor
+              </button>
+              <button
+                role="tab"
+                aria-selected={expiryMode === "DATE"}
+                className={`${styles.modeTab} ${expiryMode === "DATE" ? styles.modeActive : ""}`}
+                onClick={() => {
+                  setExpiryMode("DATE");
+                  setQuote(null);
+                }}
+              >
+                Broken date
+              </button>
+            </div>
+          </div>
+
+          {expiryMode === "TENOR" ? (
+            <div className={styles.tenorRow}>
+              {TENOR_CHOICES.map((c, i) => (
+                <button
+                  key={c.label}
+                  className={`${styles.tenorPill} ${i === tenorIdx ? styles.tenorActive : ""}`}
+                  onClick={() => {
+                    setTenorIdx(i);
+                    setQuote(null);
+                  }}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className={styles.dateRow}>
+              <DatePicker
+                value={brokenDate}
+                min={dateMin}
+                max={dateMax}
+                onChange={(d) => {
+                  setBrokenDate(d);
+                  setQuote(null);
+                }}
+              />
+              <div className={styles.dateResolve}>
+                {brokenDate ? (
+                  <>
+                    <div className={styles.resolveRow}>
+                      <span className={styles.resolveLabel}>Expiry</span>
+                      <span className={`num ${styles.resolveVal}`}>
+                        {fmtBrokenDate(brokenDate)}
+                      </span>
+                    </div>
+                    <div className={styles.resolveRow}>
+                      <span className={styles.resolveLabel}>Horizon</span>
+                      <span className={`num ${styles.resolveVal}`}>
+                        {daysBetween(today, brokenDate)}d · {tenorYears.toFixed(3)}y
+                      </span>
+                    </div>
+                    <div className={styles.resolveRow}>
+                      <span className={styles.resolveLabel}>Interp vol</span>
+                      <span className={`num ${styles.resolveVal}`}>
+                        {interpolatedAtmVol !== null ? fmtVol(interpolatedAtmVol) : "—"}
+                      </span>
+                    </div>
+                    <p className={styles.resolveNote}>
+                      ATM vol total-variance interpolated in time. Exact good-business-day
+                      expiry &amp; spot-lagged delivery resolve server-side (celnet-calendar).
+                    </p>
+                    <p className={styles.eventNote}>
+                      Event-aware pricing (central-bank / NFP jump vol): not yet — smooth-clock
+                      read only.
+                    </p>
+                  </>
+                ) : (
+                  <p className={styles.resolveEmpty}>
+                    Pick a date to price an arbitrary broken-date expiry through the live
+                    pricing path.
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className={styles.legs}>
@@ -208,7 +432,12 @@ export function TicketWorkspace(): React.ReactElement {
             </div>
           ))}
           {structure !== "VANILLA" && (
-            <button className={styles.solveChip} onClick={requestQuote} title="Solve zero-cost strike inline">
+            <button
+              className={styles.solveChip}
+              onClick={requestQuote}
+              disabled={!expiryReady}
+              title="Solve zero-cost strike inline"
+            >
               Solve: zero-cost
             </button>
           )}
@@ -263,8 +492,20 @@ export function TicketWorkspace(): React.ReactElement {
         {fill && <div className={styles.fill}>{fill}</div>}
 
         <div className={styles.actions}>
-          <Button variant="primary" size="lg" onClick={requestQuote} kbd="⏎" disabled={busy}>
-            {busy ? "Pricing…" : quote ? "Re-request" : "Request quote"}
+          <Button
+            variant="primary"
+            size="lg"
+            onClick={requestQuote}
+            kbd="⏎"
+            disabled={busy || !expiryReady}
+          >
+            {busy
+              ? "Pricing…"
+              : !expiryReady
+                ? "Pick a date"
+                : quote
+                  ? "Re-request"
+                  : "Request quote"}
           </Button>
           {quote && (
             <>
@@ -291,7 +532,7 @@ export function TicketWorkspace(): React.ReactElement {
               onClick={() =>
                 app.drillToRisk(
                   instrument,
-                  `${app.pairCtx.pair.base}/${app.pairCtx.pair.quote} ${tenorLabel(tenorYears)} ${structureLabel(structure)}`,
+                  `${app.pairCtx.pair.base}/${app.pairCtx.pair.quote} ${expiryLabel} ${structureLabel(structure)}`,
                 )
               }
             >

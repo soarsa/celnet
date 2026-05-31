@@ -1,0 +1,240 @@
+.panel {
+  height: 100%;
+  min-height: 0;
+}
+
+.body {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Pivot toggle (panel header actions). */
+.pivotToggle {
+  display: inline-flex;
+  gap: var(--space-1);
+  padding: 2px;
+  background: var(--bg-inset);
+  border-radius: var(--r-md);
+}
+
+.pivotChip {
+  font-family: var(--font-brand);
+  font-size: var(--type-caption);
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+  padding: var(--space-1) var(--space-3);
+  border: none;
+  background: transparent;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: background var(--workspace-switch) var(--ease-out),
+    color var(--workspace-switch) var(--ease-out);
+}
+
+.pivotChip:hover {
+  color: var(--text-primary);
+}
+
+.pivotActive,
+.pivotActive:hover {
+  background: var(--accent);
+  color: var(--bg-base);
+}
+
+/* Scan wrapper — scrolls the cube when the universe outgrows the canvas. */
+.scanWrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-4) var(--space-5);
+}
+
+/* Metric chooser bar (universe pivot). */
+.metricBar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  position: sticky;
+  left: 0;
+}
+
+.metricChip {
+  font-family: var(--font-brand);
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+  padding: var(--space-1) var(--space-3);
+  border: var(--hairline);
+  background: var(--bg-raised);
+  border-radius: var(--r-full);
+  cursor: pointer;
+  transition: border-color var(--workspace-switch) var(--ease-out),
+    color var(--workspace-switch) var(--ease-out);
+}
+
+.metricChip:hover {
+  color: var(--text-primary);
+}
+
+.metricActive,
+.metricActive:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+.scopeNote {
+  margin-left: auto;
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+}
+
+/* The cube table itself. */
+.cube {
+  border-collapse: separate;
+  border-spacing: 2px;
+  font-size: var(--type-caption);
+}
+
+.corner {
+  font-family: var(--font-mono);
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+  text-align: left;
+  font-weight: var(--weight-regular);
+  padding: 0 var(--space-2);
+  position: sticky;
+  left: 0;
+  top: 0;
+  z-index: 3;
+  background: var(--bg-raised);
+}
+
+.colHead {
+  font-family: var(--font-brand);
+  font-size: var(--type-micro);
+  letter-spacing: 0.03em;
+  color: var(--text-secondary);
+  font-weight: var(--weight-header);
+  text-align: center;
+  padding: var(--space-1) var(--space-2);
+  min-width: 56px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-raised);
+}
+
+.rowHead {
+  font-family: var(--font-brand);
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+  font-weight: var(--weight-header);
+  text-align: right;
+  white-space: nowrap;
+  padding: 0 var(--space-3) 0 var(--space-1);
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--bg-raised);
+}
+
+.cellWrap {
+  padding: 0;
+}
+
+/* Each heat cell is a button (drillable). The ramp colour is the BACKGROUND;
+   text sits on a subtle scrim shadow so it stays legible across the ramp. */
+.cell {
+  display: block;
+  width: 100%;
+  min-width: 56px;
+  padding: var(--space-2) var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  color: var(--bg-base);
+  font-size: var(--type-caption);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  cursor: pointer;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.35);
+  transition: transform var(--workspace-switch) var(--ease-out),
+    border-color var(--workspace-switch) var(--ease-out);
+}
+
+.cell:hover:not(:disabled) {
+  border-color: var(--brand);
+  transform: scale(1.04);
+  z-index: 4;
+  position: relative;
+}
+
+.cell:disabled {
+  cursor: default;
+}
+
+/* Honest empty cell: neutral inset, dimmed em-dash, NOT drillable. */
+.cellEmpty,
+.cellEmpty:hover {
+  background: var(--bg-inset);
+  color: var(--text-tertiary);
+  text-shadow: none;
+  border-color: transparent;
+  transform: none;
+}
+
+/* Legend mirrors the diverging ramp. */
+.legend {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  max-width: 320px;
+}
+
+.legendLabel {
+  font-family: var(--font-mono);
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+}
+
+.legendBar {
+  flex: 1;
+  height: 8px;
+  border-radius: var(--r-full);
+}
+
+/* Empty / loading / error states. */
+.empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  color: var(--text-tertiary);
+  font-size: var(--type-callout);
+}
+
+.errorMark {
+  font-family: var(--font-brand);
+  color: var(--warn);
+}
+
+.emptyHint {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+  margin-top: var(--space-3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cell,
+  .pivotChip,
+  .metricChip {
+    transition: none;
+  }
+  .cell:hover:not(:disabled) {
+    transform: none;
+  }
+}

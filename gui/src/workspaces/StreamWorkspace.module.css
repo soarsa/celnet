@@ -11,20 +11,76 @@
   position: relative;
 }
 
-/* shared column template so header + rows align perfectly */
+/* Scale toolbar: grouping + column toggles. Sort lives on the header cells. */
+.controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  height: 36px;
+  padding: 0 var(--space-5);
+  border-bottom: var(--hairline);
+  background: oklch(from var(--bg-raised) calc(l - 0.01) c h);
+}
+.controlGroup {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.controlLabel {
+  font-family: var(--font-brand);
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  margin-right: var(--space-1);
+}
+.segBtn {
+  font-family: var(--font-brand);
+  font-size: var(--type-micro);
+  letter-spacing: 0.03em;
+  padding: 2px var(--space-3);
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  background: var(--bg-inset);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  user-select: none;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+.segBtn:hover:not(.segBtnActive) {
+  border-color: var(--text-tertiary);
+  color: var(--text-primary);
+}
+.segBtnActive {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: var(--weight-emphasis);
+}
+.controlMeta {
+  margin-left: auto;
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+}
+
+/* shared column template so header + group + data rows align perfectly. The
+   `grid-template-columns` value is supplied inline (it follows the visible column
+   set), so only the non-track properties live here. */
 .headerRow,
-.row {
+.row,
+.groupRow {
   display: grid;
-  grid-template-columns:
-    72px minmax(120px, 1.4fr) 56px
-    minmax(72px, 1fr) minmax(72px, 1fr) minmax(72px, 1fr)
-    104px 64px 64px 32px;
   align-items: center;
   column-gap: var(--space-3);
   padding: 0 var(--space-5);
 }
 
+/* Sticky header — stays pinned while the virtualised body scrolls beneath it. */
 .headerRow {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   height: 34px;
   border-bottom: var(--hairline);
   font-family: var(--font-brand);
@@ -34,30 +90,53 @@
   color: var(--text-tertiary);
   background: oklch(from var(--bg-raised) calc(l - 0.015) c h);
 }
-.headerRow span {
-  text-align: right;
-}
-.colPair,
-.colStructure {
-  text-align: left !important;
-}
-.colHealth {
-  text-align: center !important;
-}
 
-/* A small, lower-contrast unit subtitle under a column name so "Premium mid",
-   "Trend", "Δ" and "σ" all read with their honest unit (P0-8). */
-.colMid,
-.colSpark,
-.colGreek {
+/* A header cell: right-aligned by default (numerics); left/center modifiers. The
+   unit subtitle stacks under the label so "Premium mid", "Δ", "σ" read honestly. */
+.colCell {
   display: inline-flex;
   flex-direction: column;
   align-items: flex-end;
+  justify-content: center;
   line-height: 1.1;
+  text-align: right;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  height: 100%;
 }
-.colSpark {
-  align-items: flex-end;
+.colLeft {
+  align-items: flex-start;
+  text-align: left;
 }
+.colCenter {
+  align-items: center;
+  text-align: center;
+}
+/* Sortable header cells are interactive. */
+.colSortable {
+  cursor: pointer;
+  border-radius: var(--r-sm);
+  flex-direction: row;
+  align-items: baseline;
+  gap: 2px;
+  transition: color 0.12s ease;
+}
+.colSortable:hover {
+  color: var(--text-secondary);
+}
+.colSorted {
+  color: var(--accent);
+}
+.sortGlyph {
+  font-size: 9px;
+  line-height: 1;
+}
+
 .colUnit {
   font-size: 9px;
   font-weight: var(--weight-regular);
@@ -71,6 +150,92 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
+}
+
+/* Honest empty-state for an unpopulated blotter. */
+.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: var(--space-7);
+  color: var(--text-tertiary);
+  font-size: var(--type-callout);
+  text-align: center;
+}
+.empty kbd {
+  font-family: var(--font-mono);
+  font-size: var(--type-micro);
+  padding: 1px 5px;
+  margin: 0 3px;
+  border: var(--hairline);
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+}
+
+/* Aggregation header row for a group (pair or tenor). Same track layout + height
+   as data rows so the single virtualiser windows the whole list uniformly. */
+.groupRow {
+  height: 38px;
+  border-bottom: var(--hairline);
+  background: oklch(from var(--bg-raised) calc(l - 0.02) c h);
+}
+.groupToggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.groupCaret {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  transition: transform 0.12s var(--ease-out);
+  display: inline-block;
+}
+.groupCaretClosed {
+  transform: rotate(-90deg);
+}
+.groupLabel {
+  font-family: var(--font-brand);
+  font-weight: var(--weight-emphasis);
+  letter-spacing: 0.02em;
+  color: var(--brand);
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+.groupCount {
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+  background: var(--bg-inset);
+  border-radius: var(--r-full);
+  padding: 0 var(--space-2);
+  min-width: 18px;
+  text-align: center;
+}
+.groupMeta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-4);
+  overflow: hidden;
+}
+.groupStat {
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+.groupStatVal {
+  color: var(--text-secondary);
+  font-weight: var(--weight-emphasis);
+  margin-left: 3px;
 }
 
 .row {

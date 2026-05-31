@@ -25,7 +25,12 @@ import { rampGradient } from "../viz/ramp";
 import { fmtVol, fmtVolPoint, fmtClock } from "../lib/format";
 import { tenorLabel } from "../lib/trend";
 import { nowNanos } from "../hooks/useClock";
+import { samePair } from "../lib/universe";
+import { CubeWorkspace, type CubeDrill } from "./CubeWorkspace";
 import styles from "./SurfaceWorkspace.module.css";
+
+/** The Surface workspace's internal view: mark one surface, or scan the cube. */
+type SurfaceView = "mark" | "cube";
 
 /** The five editable broker handles, in display order. */
 type Handle = "atmVol" | "rr25" | "bf25" | "rr10" | "bf10";
@@ -57,8 +62,45 @@ const deltaKey = (d: number): number => Math.round(d * 1e4);
 
 export function SurfaceWorkspace(): React.ReactElement {
   const app = useApp();
+  // Internal view: the editable marking surface, or the read/scan vol cube. The
+  // cube is a sibling pivot of the same marked surfaces (TRADING-UNIVERSE-SCALE
+  // §5) — exposed here without touching Shell/AppContext (no new WorkspaceId).
+  const [view, setView] = useState<SurfaceView>("mark");
   const [selTenorYears, setSelTenorYears] = useState(30 / 365);
   const [selDelta, setSelDelta] = useState<number | null>(-0.25);
+
+  // Drill from a cube cell into the marking/smile view: re-target the pair if
+  // needed, select that (tenor, delta), and flip back to the editable surface.
+  const drillFromCube = (d: CubeDrill): void => {
+    if (!samePair(d.pair, app.pairCtx.pair)) app.setPair(d.pair);
+    setSelTenorYears(d.tenorYears);
+    setSelDelta(d.delta);
+    setView("mark");
+  };
+
+  const viewToggle = (
+    <div className={styles.viewToggle} role="group" aria-label="surface view">
+      <button
+        type="button"
+        className={`${styles.viewChip} ${view === "mark" ? styles.viewActive : ""}`}
+        aria-pressed={view === "mark"}
+        onClick={() => setView("mark")}
+        title="Mark and inspect one pair's surface"
+      >
+        Surface
+      </button>
+      <button
+        type="button"
+        className={`${styles.viewChip} ${view === "cube" ? styles.viewActive : ""}`}
+        aria-pressed={view === "cube"}
+        onClick={() => setView("cube")}
+        title="Scan the vol cube (pair × tenor × delta heatmap)"
+      >
+        Cube
+      </button>
+    </div>
+  );
+
   // Per-tenor working edits to the broker handles (ATM/RR/BF), keyed by tenor.
   // These are the trader's *unpublished* marks; Publish transmits them through the
   // same MarkSurface API the SDK/Excel use, and Reset discards them.
@@ -123,8 +165,27 @@ export function SurfaceWorkspace(): React.ReactElement {
     return Number.isFinite(min) && Number.isFinite(max) && max > min ? { min, max } : undefined;
   }, [preview]);
 
+  // The cube pivot is reachable regardless of the marking-surface state (it loads
+  // its own per-pair surfaces through `useCube`), so this branch sits AFTER all
+  // hooks but BEFORE the mark-view's loading gate.
+  if (view === "cube") {
+    return (
+      <div className={styles.cubeShell}>
+        <div className={styles.cubeBar}>{viewToggle}</div>
+        <div className={styles.cubeCanvas}>
+          <CubeWorkspace onDrill={drillFromCube} />
+        </div>
+      </div>
+    );
+  }
+
   if (!surface || !preview || !selectedSmile) {
-    return <div className={styles.loading}>Marking surface…</div>;
+    return (
+      <div className={styles.cubeShell}>
+        <div className={styles.cubeBar}>{viewToggle}</div>
+        <div className={styles.loading}>Marking surface…</div>
+      </div>
+    );
   }
 
   // The selected tenor's stable key — the marking grid marks a row active by
@@ -150,7 +211,7 @@ export function SurfaceWorkspace(): React.ReactElement {
 
   return (
     <div className={styles.grid}>
-      <Panel glyph="◷" title={`Surface · ${surface.pair.base}/${surface.pair.quote}`} className={styles.surfacePanel} noPadding>
+      <Panel glyph="◷" title={`Surface · ${surface.pair.base}/${surface.pair.quote}`} className={styles.surfacePanel} noPadding actions={viewToggle}>
         <div className={styles.meshHolder}>
           <SurfaceMesh surface={previewSurface} selected={{ tenorYears: selTenorYears, delta: selDelta ?? 0.5 }} />
         </div>
