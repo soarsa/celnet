@@ -34,7 +34,24 @@
       "result": { "dimensionality": "matrix", "type": "any" },
       "parameters": [
         { "name": "pair", "description": "Currency pair, e.g. EURUSD.", "type": "string" },
-        { "name": "tenor", "description": "Tenor, e.g. 1Y.", "type": "string" }
+        { "name": "tenor", "description": "Tenor, e.g. 1Y.", "type": "string" },
+        { "name": "model", "description": "Optional smile model to surface: VV, SABR, SVI, SSVI.", "type": "string", "optional": true }
+      ]
+    },
+    {
+      "id": "MARKSURFACE",
+      "name": "MARKSURFACE",
+      "description": "Calibrate & mark a surface under a chosen model (VV/SABR/SVI/SSVI); spills the calibrated smile + version footer.",
+      "result": { "dimensionality": "matrix", "type": "any" },
+      "parameters": [
+        { "name": "pair", "description": "Currency pair, e.g. EURUSD.", "type": "string" },
+        { "name": "tenor", "description": "Tenor, e.g. 1Y.", "type": "string" },
+        { "name": "model", "description": "Smile model: VV (market hedge), SABR, SVI or SSVI.", "type": "string" },
+        { "name": "atmVol", "description": "At-the-money volatility (absolute, e.g. 0.102).", "type": "number" },
+        { "name": "rr25", "description": "25-delta risk reversal (call vol - put vol).", "type": "number" },
+        { "name": "bf25", "description": "25-delta butterfly (broker fly).", "type": "number" },
+        { "name": "rr10", "description": "Optional 10-delta risk reversal (with bf10 for a 5-point smile).", "type": "number", "optional": true },
+        { "name": "bf10", "description": "Optional 10-delta butterfly.", "type": "number", "optional": true }
       ]
     },
     {
@@ -65,6 +82,19 @@
       ]
     },
     {
+      "id": "SERIES",
+      "name": "SERIES",
+      "description": "Stream a live market observable trend (ATM/SPOT/RR/BF/FWD), multiplexed, coalesced, stale-aware.",
+      "options": { "stream": true, "cancelable": true },
+      "result": { "dimensionality": "scalar", "type": "string" },
+      "parameters": [
+        { "name": "pair", "description": "Currency pair, e.g. EURUSD.", "type": "string" },
+        { "name": "observable", "description": "Observable: ATM, SPOT, RR, BF or FWD.", "type": "string" },
+        { "name": "tenor", "description": "Pillar tenor for ATM/RR/BF/FWD, e.g. 1Y (omit for SPOT).", "type": "string", "optional": true },
+        { "name": "delta", "description": "Delta wing for RR/BF, e.g. 0.25 (omit otherwise).", "type": "number", "optional": true }
+      ]
+    },
+    {
       "id": "MARK",
       "name": "MARK",
       "description": "Stage a manual vol/mark contribution (two-phase, idempotent; commits via the task pane).",
@@ -74,6 +104,7 @@
         { "name": "tenor", "description": "Tenor, e.g. 1Y.", "type": "string" },
         { "name": "pillar", "description": "Delta pillar (ATM, 25dP, 10dC).", "type": "string" },
         { "name": "vol", "description": "Absolute volatility, e.g. 0.102.", "type": "number" },
+        { "name": "model", "description": "Optional smile model the commit calibrates under: VV, SABR, SVI, SSVI.", "type": "string", "optional": true },
         { "name": "comment", "description": "Optional contribution comment.", "type": "string", "optional": true }
       ]
     }

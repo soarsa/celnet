@@ -148,7 +148,9 @@ mod tests {
     #[test]
     fn pinned_version_without_this_pair_keeps_live_vol_but_echoes_version() {
         use celnet_conventions::ConventionRecord;
-        use celnet_surface::{MarketContext as SurfCtx, MarketQuotes, build_smile};
+        use celnet_surface::{
+            MarketContext as SurfCtx, MarketQuotes, SmileModel, build_model_smile,
+        };
         use celnet_types::{
             AtmConvention, Cut, DayCount, DeltaConvention, PremiumStyle, Settlement,
         };
@@ -167,7 +169,12 @@ mod tests {
             Settlement::Deliverable,
         );
         let ctx = SurfCtx::new(1.25, 0.02, 0.01, 1.0, record);
-        let smile = build_smile(&ctx, &MarketQuotes::three_point(0.10, -0.004, 0.002)).unwrap();
+        let smile = build_model_smile(
+            SmileModel::MarketHedge,
+            &ctx,
+            &MarketQuotes::three_point(0.10, -0.004, 0.002),
+        )
+        .unwrap();
         let fwd = smile.forward();
         book.deposit(v, "GBP", "USD", 1.0, fwd, smile);
 

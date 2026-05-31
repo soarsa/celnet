@@ -5,7 +5,7 @@
 //! place that lexes that shorthand so every subcommand accepts the same syntax.
 //! Pure and total: an unrecognised string is a typed error, never a panic.
 
-use celnet_types::Tenor;
+use celnet_types::{BrokenDate, Tenor};
 
 /// A failure parsing a tenor shorthand.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,19 +34,39 @@ impl std::error::Error for TenorParseError {}
 
 /// Parse the FX tenor shorthand into a [`Tenor`].
 ///
-/// Accepts (case-insensitive): `ON` → [`Tenor::Overnight`]; `<n>W` →
-/// [`Tenor::Weeks`]; `<n>M` → [`Tenor::Months`]; `<n>Y` → [`Tenor::Years`], with
-/// `n` a positive integer. Surrounding whitespace is ignored.
+/// Accepts (case-insensitive): the short-end words `ON` → [`Tenor::Overnight`],
+/// `TN` → [`Tenor::TomNext`], `SN` → [`Tenor::SpotNext`]; the ladder `<n>W` →
+/// [`Tenor::Weeks`], `<n>M` → [`Tenor::Months`], `<n>Y` → [`Tenor::Years`]; the
+/// IMM ordinal `<n>IMM` → [`Tenor::Imm`]; and an explicit broken date
+/// `YYYY-MM-DD` → [`Tenor::BrokenDate`]. `n` is a positive integer. Surrounding
+/// whitespace is ignored.
 ///
 /// # Errors
 ///
-/// [`TenorParseError`] if the string is empty, has an unknown unit, or carries a
-/// non-positive / non-integer count.
+/// [`TenorParseError`] if the string is empty, has an unknown unit, carries a
+/// non-positive / non-integer count, or is a malformed date.
 pub(crate) fn parse_tenor(s: &str) -> Result<Tenor, TenorParseError> {
     let trimmed = s.trim();
     let upper = trimmed.to_ascii_uppercase();
-    if upper == "ON" {
-        return Ok(Tenor::Overnight);
+    match upper.as_str() {
+        "ON" => return Ok(Tenor::Overnight),
+        "TN" => return Ok(Tenor::TomNext),
+        "SN" => return Ok(Tenor::SpotNext),
+        _ => {}
+    }
+    // Explicit broken date: YYYY-MM-DD.
+    if let Some(bd) = parse_broken_date(trimmed) {
+        return Ok(Tenor::BrokenDate(bd));
+    }
+    // IMM ordinal: `<n>IMM`.
+    if let Some(digits) = upper.strip_suffix("IMM") {
+        let n: u8 = digits
+            .parse()
+            .map_err(|_| TenorParseError::BadCount(s.to_owned()))?;
+        if n == 0 {
+            return Err(TenorParseError::BadCount(s.to_owned()));
+        }
+        return Ok(Tenor::Imm(n));
     }
     let mut chars = upper.chars();
     let unit = chars
@@ -67,15 +87,33 @@ pub(crate) fn parse_tenor(s: &str) -> Result<Tenor, TenorParseError> {
     }
 }
 
+/// Parse a `YYYY-MM-DD` broken-date shorthand into a [`BrokenDate`], or `None`
+/// if the string is not in that form. The civil triple's range is validated by
+/// the calendar layer on resolution, not here.
+fn parse_broken_date(s: &str) -> Option<BrokenDate> {
+    let mut parts = s.split('-');
+    let year: i32 = parts.next()?.parse().ok()?;
+    let month: u8 = parts.next()?.parse().ok()?;
+    let day: u8 = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(BrokenDate::new(year, month, day))
+}
+
 /// Render a [`Tenor`] back to its shorthand (the inverse of [`parse_tenor`] for
 /// every value [`parse_tenor`] produces).
 #[must_use]
 pub(crate) fn format_tenor(tenor: Tenor) -> String {
     match tenor {
         Tenor::Overnight => "ON".to_owned(),
+        Tenor::TomNext => "TN".to_owned(),
+        Tenor::SpotNext => "SN".to_owned(),
         Tenor::Weeks(n) => format!("{n}W"),
         Tenor::Months(n) => format!("{n}M"),
         Tenor::Years(n) => format!("{n}Y"),
+        Tenor::Imm(n) => format!("{n}IMM"),
+        Tenor::BrokenDate(b) => format!("{:04}-{:02}-{:02}", b.year, b.month, b.day),
     }
 }
 

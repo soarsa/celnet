@@ -442,6 +442,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "celnet-entitlements"
+version = "0.0.0"
+dependencies = [
+ "celnet-risk-cube",
+ "celnet-risk-normalize",
+ "celnet-types",
+]
+
+[[package]]
 name = "celnet-exotics"
 version = "0.0.0"
 dependencies = [
@@ -512,6 +521,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "celnet-limits"
+version = "0.0.0"
+dependencies = [
+ "celnet-risk-cube",
+ "celnet-risk-normalize",
+ "celnet-types",
+]
+
+[[package]]
 name = "celnet-observability"
 version = "0.0.0"
 dependencies = [
@@ -572,6 +590,26 @@ dependencies = [
  "protox",
  "tonic",
  "tonic-build",
+]
+
+[[package]]
+name = "celnet-risk-cube"
+version = "0.0.0"
+dependencies = [
+ "celnet-core",
+ "celnet-risk-normalize",
+ "celnet-types",
+ "celnet-vanilla",
+]
+
+[[package]]
+name = "celnet-risk-normalize"
+version = "0.0.0"
+dependencies = [
+ "celnet-core",
+ "celnet-types",
+ "celnet-vanilla",
+ "proptest",
 ]
 
 [[package]]

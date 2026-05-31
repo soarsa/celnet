@@ -12,8 +12,9 @@
 import { Connection } from "../transport/connection";
 import { browserWebSocketFactory } from "../transport/socket";
 import { DEFAULT_CONVENTIONS, shapeVanillaInstrument } from "../functions/shaping";
-import { stageMark, markCommitted, markRejected } from "../functions/markStaging";
+import { getStaged, stageMark, markCommitted, markRejected } from "../functions/markStaging";
 import { brokerQuoteSetToWire, ccyPairToWire, conventionsToWire } from "../contract/wsCodec";
+import { smileModel } from "../contract/enums";
 import {
   IDLE_MARK,
   IDLE_RFQ,
@@ -134,6 +135,7 @@ function boot(): void {
           pillar: val("mk-pillar"),
           vol: Number(val("mk-vol")),
           comment: val("mk-comment"),
+          model: val("mk-model"),
         });
         mark = markStaged(status.stagingId);
         (el("mk-commit") as HTMLButtonElement).disabled = !canCommitMark(mark);
@@ -153,6 +155,10 @@ function boot(): void {
         // The commit: a single broker-quote-set mark for the (pair, tenor), with
         // the declared convention checked server-side (normalize cross-check). A
         // material mismatch is rejected, never silently corrupting the surface.
+        // Carry the model the trader selected at stage time into the commit, so
+        // the surface is calibrated with the chosen family (VV/SABR/SVI/SSVI) on
+        // the ONE `mark_surface` contract path (its `smile_model` selector).
+        const stagedModel = getStaged(mark.stagingId)?.model ?? "MARKET_HEDGE";
         const reply = await conn.markSurface({
           pair: ccyPairToWire(parsePairLoose(val("mk-pair"))),
           broker_quotes: [
@@ -167,6 +173,7 @@ function boot(): void {
             }),
           ],
           conventions: conventionsToWire(DEFAULT_CONVENTIONS),
+          smile_model: smileModel.toWire(stagedModel),
         });
         const surfaceVersion = typeof reply["surface_version"] === "number"
           ? BigInt(Math.trunc(reply["surface_version"] as number))

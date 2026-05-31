@@ -179,24 +179,75 @@ message CcyPair {
   string quote = 2;
 }
 
-// A standard FX-options tenor measured from the spot date — mirrors
-// `celnet_types::Tenor`. Exactly one unit field is meaningful per `unit`.
+// An FX-options tenor — mirrors `celnet_types::Tenor`. Most units are measured
+// from the spot date; the short end (ON/TN/SN) is anchored on the trade date,
+// and the off-the-ladder cases carry an exchange-defined or explicit date. The
+// meaningful payload per unit is documented below: `count` for WEEKS/MONTHS/
+// YEARS and the IMM ordinal; `broken_date` for BROKEN_DATE; nothing for the
+// short-end units.
 message Tenor {
-  // The calendar unit the count is measured in.
+  // The calendar unit the tenor is expressed in.
   enum Unit {
-    // Overnight (next business day). `count` is ignored (implicitly 1).
+    // Overnight (ON): next good business day after the trade date (~T+1).
+    // `count`/`broken_date` ignored.
     UNIT_OVERNIGHT = 0;
-    // `count` calendar weeks.
+    // `count` calendar weeks from spot.
     UNIT_WEEKS = 1;
-    // `count` calendar months.
+    // `count` calendar months from spot.
     UNIT_MONTHS = 2;
-    // `count` calendar years.
+    // `count` calendar years from spot.
     UNIT_YEARS = 3;
+    // Tomorrow-next (TN): the good business day after the ON date. `count`/
+    // `broken_date` ignored.
+    UNIT_TOM_NEXT = 4;
+    // Spot-next (SN): next good business day after spot. `count`/`broken_date`
+    // ignored.
+    UNIT_SPOT_NEXT = 5;
+    // The `count`-th IMM expiry strictly after the trade date (3rd Wednesday of
+    // the Mar/Jun/Sep/Dec cycle). `count` is the 1-based ordinal (>= 1);
+    // `broken_date` ignored.
+    UNIT_IMM = 6;
+    // An explicit broken (odd) expiry date carried in `broken_date`. `count`
+    // ignored.
+    UNIT_BROKEN_DATE = 7;
   }
   // The tenor unit.
   Unit unit = 1;
-  // The number of units (weeks/months/years). Ignored for OVERNIGHT.
+  // The unit count: the number of WEEKS/MONTHS/YEARS, or the 1-based IMM
+  // ordinal. Ignored for the short-end (ON/TN/SN) and BROKEN_DATE units.
   uint32 count = 2;
+  // The explicit expiry date for UNIT_BROKEN_DATE (presence-tracked; required
+  // for and only meaningful with that unit). A date-valued tenor.
+  optional BrokenDate broken_date = 3;
+}
+
+// An explicit civil (Gregorian) expiry date for a broken/odd-dated tenor —
+// mirrors `celnet_types::BrokenDate`. Validated to a real calendar date on
+// resolution; an impossible triple is rejected, never silently clamped.
+message BrokenDate {
+  // Gregorian year (e.g. 2026).
+  int32 year = 1;
+  // Month of year, 1 (January) .. 12 (December).
+  uint32 month = 2;
+  // Day of month, 1 .. 31 (validated against the month on resolution).
+  uint32 day = 3;
+}
+
+// The smile/surface calibration model a mark or scenario is computed under —
+// mirrors `celnet_types::SmileModel`. Vendor- and method-neutral by name
+// (guardrail #8); the mathematical provenance of each model lives in the schema
+// docs only. The default (`SMILE_MODEL_MARKET_HEDGE`, value 0) preserves the
+// current calibration behaviour when a request does not select a model.
+enum SmileModel {
+  // Market-hedge interpolation off the broker pillars (the FX broker baseline;
+  // vanna-volga method). The default.
+  SMILE_MODEL_MARKET_HEDGE = 0;
+  // Stochastic-volatility smile with arbitrage-free wing density (SABR method).
+  SMILE_MODEL_STOCHASTIC_VOL = 1;
+  // Single parametric total-variance slice (SVI method).
+  SMILE_MODEL_PARAMETRIC = 2;
+  // Surface-level parametric family, closed-form arbitrage-free (SSVI method).
+  SMILE_MODEL_PARAMETRIC_SURFACE = 3;
 }
 
 // The trade conventions a quote / surface is expressed under. Carrying these
@@ -493,6 +544,56 @@ message Instrument {
 }
 
 // ===========================================================================
+// attribution — who's-trading identity keyed onto the quote/trade lifecycle
+// ===========================================================================
+
+// The book a quote/trade belongs to and the seat responsible for it. This is
+// the identity dimension the risk roll-up keys on (RISK-HIERARCHY: book is a
+// cube dimension; SCALE #12: the blotter/Book stop being anonymous). A book is
+// owned either by a human trading seat or by an automated pricer; both are
+// represented uniformly so attribution and governance treat them the same.
+message BookId {
+  // The stable book identifier (desk/book key, e.g. "EM-VOL-1").
+  string book = 1;
+  // The seat that owns the book — a human trader id or an auto-pricer id.
+  Owner owner = 2;
+}
+
+// The seat responsible for a quote/trade: a human trading seat or an automated
+// pricer. Modelled as a oneof so the who's-trading roll-up treats human and
+// machine flow uniformly while still distinguishing them for governance.
+message Owner {
+  // Exactly one is set.
+  oneof seat {
+    // A human trading seat (a trader/desk-member identifier).
+    string trader = 1;
+    // An automated pricer (a pricer/strategy identifier) — auto-quoted flow.
+    string auto_pricer = 2;
+  }
+}
+
+// The lifecycle role a quote played: who quoted it, whether it won the trade,
+// and who holds the resulting position. Carried on the quote/trade messages so
+// the who's-trading dimension is keyable end-to-end (LP-in-competition,
+// won/lost, holder) and feeds the risk roll-up. Minimal and presence-tracked:
+// a message that does not assert attribution simply omits the record.
+message AttributionRecord {
+  // The book/seat that quoted this line (priced and showed the market).
+  BookId quoted_by = 1;
+  // The book/seat that holds the position once the trade books
+  // (presence-tracked): absent until a trade is booked, or when it equals
+  // `quoted_by`.
+  optional BookId held_by = 2;
+  // Whether this quote won the trade in competition (presence-tracked): absent
+  // ⇒ outcome not yet known / not in competition; true ⇒ this seat won the
+  // line; false ⇒ it lost (another LP won).
+  optional bool won = 3;
+  // The number of liquidity providers in competition for this line
+  // (presence-tracked), 1 ⇒ sole quote. Lets the blotter show LP-in-competition.
+  optional uint32 lp_count = 4;
+}
+
+// ===========================================================================
 // quote — the RFQ lifecycle (RequestQuote / AcceptQuote / RejectQuote)
 // ===========================================================================
 
@@ -520,6 +621,10 @@ message QuoteRequest {
   // prices against its current live mark. This is a *data* field selecting a
   // surface, NOT an API version (the contract itself is unversioned, rule 9).
   optional uint64 surface_version = 5;
+  // The requesting book/seat (presence-tracked): the human or auto-pricer
+  // seat the quote is requested on behalf of, so the resulting `Quote` and any
+  // booking carry a complete attribution chain. Absent ⇒ unattributed.
+  optional AttributionRecord attribution = 6;
 }
 
 // A tradable two-way quote returned for a `QuoteRequest`.
@@ -548,6 +653,10 @@ message Quote {
   // the requested `QuoteRequest.surface_version` if one was supplied, else the
   // live mark the engine resolved. A *data* field, not an API version.
   optional uint64 surface_version = 10;
+  // Who quoted this line and (once known) who holds/won it (presence-tracked):
+  // the attribution chain keying the who's-trading risk roll-up. Absent ⇒
+  // unattributed.
+  optional AttributionRecord attribution = 11;
 }
 
 // A client acceptance of a previously issued `Quote`.
@@ -594,6 +703,10 @@ message Execution {
   Instrument instrument = 5;
   // Booking time, nanoseconds since the Unix epoch (UTC).
   int64 epoch_nanos = 6;
+  // The attribution chain for the booked trade (presence-tracked): who quoted
+  // and who holds the position, so the booking feeds the who's-trading risk
+  // roll-up. Absent ⇒ unattributed.
+  optional AttributionRecord attribution = 7;
 }
 
 // ===========================================================================
@@ -633,6 +746,11 @@ message Subscribe {
   // ⇒ the engine streams against its current live mark and re-marks roll the
   // stream forward. A *data* field selecting a surface, NOT an API version.
   optional uint64 surface_version = 6;
+  // The requesting book/seat for this stream (presence-tracked): the human or
+  // auto-pricer seat the subscription is opened on behalf of, echoed on the
+  // line's `Snapshot`/`Executed` so click-to-trade fills are attributable.
+  // Absent ⇒ unattributed.
+  optional AttributionRecord attribution = 7;
 }
 
 // Modify a live subscription *in place* within the multiplexed session: change
@@ -717,6 +835,10 @@ message Snapshot {
   optional uint64 correlation_id = 10;
   // Snapshot time, nanoseconds since the Unix epoch (UTC).
   int64 epoch_nanos = 11;
+  // Echo of the opening `Subscribe.attribution`, if one was supplied
+  // (presence-tracked): the book/seat this streamed line is shown to, so the
+  // blotter's attribution column has its identity. Absent ⇒ unattributed.
+  optional AttributionRecord attribution = 12;
 }
 
 // A sequenced delta update on a streamed instrument. Carries the changed
@@ -802,6 +924,11 @@ message Executed {
   optional uint64 correlation_id = 6;
   // Booking time, nanoseconds since the Unix epoch (UTC).
   int64 epoch_nanos = 7;
+  // The attribution chain for the click-to-trade fill (presence-tracked):
+  // resolved from the subscription's `attribution`, so a streamed fill feeds
+  // the who's-trading roll-up identically to an RFQ booking. Absent ⇒
+  // unattributed.
+  optional AttributionRecord attribution = 8;
 }
 
 // The server declines a click-to-trade `Execute` (the token expired, was
@@ -846,6 +973,10 @@ message ClientStreamMessage {
     Execute execute = 5;
     // Client liveness heartbeat.
     Heartbeat heartbeat = 6;
+    // Open a market-series (time-series of market observables) subscription.
+    MarketSeriesSubscribe market_series_subscribe = 7;
+    // Close a market-series subscription.
+    MarketSeriesUnsubscribe market_series_unsubscribe = 8;
   }
 }
 
@@ -866,7 +997,96 @@ message ServerStreamMessage {
     Executed executed = 5;
     // A click-to-trade `Execute` was declined (expired/unknown/consumed token).
     StreamReject stream_reject = 6;
+    // A market-series snapshot (the recent history) for an opened series.
+    MarketSeriesSnapshot market_series_snapshot = 7;
+    // A new market-series point appended to an opened series.
+    MarketSeriesPoint market_series_point = 8;
   }
+}
+
+// ===========================================================================
+// market-series — streamed time-series of market observables (the TrendMode
+// feed). Multiplexed onto the same `StreamSession`: a client opens a series for
+// a (pair, observable[, tenor]) and receives a recent-history `Snapshot` then a
+// sequence of appended `Point`s. This is the contract the GUI TrendModes
+// (ATM_VOL / RR / BF / SPOT / FORWARD) consume; the server implements the feed
+// in a later phase.
+// ===========================================================================
+
+// Which market observable a series streams. Each is a *labelled, unit-bearing*
+// quantity (no abstract index), matching the GUI's TrendMode contract.
+enum MarketObservable {
+  // At-the-money volatility for the (pair, tenor) — absolute vol (0.10 = 10v).
+  MARKET_OBSERVABLE_ATM_VOL = 0;
+  // Spot FX rate (quote per 1 base). Requires a tenor-independent series.
+  MARKET_OBSERVABLE_SPOT = 1;
+  // Risk reversal (call vol minus put vol) at the series' delta wing — vol.
+  MARKET_OBSERVABLE_RISK_REVERSAL = 2;
+  // Butterfly (broker fly) at the series' delta wing — vol.
+  MARKET_OBSERVABLE_BUTTERFLY = 3;
+  // Outright forward FX rate for the (pair, tenor) — quote per 1 base.
+  MARKET_OBSERVABLE_FORWARD = 4;
+}
+
+// Open a market-series subscription within the multiplexed session, keyed by a
+// client-assigned `SubscriptionId` (in the same id space as price streams).
+message MarketSeriesSubscribe {
+  // The client-assigned subscription id this series is keyed on.
+  SubscriptionId subscription = 1;
+  // The pair the observable is measured for.
+  CcyPair pair = 2;
+  // Which observable to stream.
+  MarketObservable observable = 3;
+  // The pillar tenor for tenor-dependent observables (ATM_VOL/RR/BF/FORWARD).
+  // Presence-tracked: required for those; ignored (and should be absent) for
+  // the tenor-independent SPOT observable.
+  optional Tenor tenor = 4;
+  // The signed delta wing for the wing observables (RR/BF), e.g. 0.25 or 0.10.
+  // Presence-tracked: required for RR/BF; absent for ATM_VOL/SPOT/FORWARD.
+  optional double delta = 5;
+  // A client throttle hint: minimum nanoseconds between appended points the
+  // client wants (the server conflates to honour it). 0 = no throttling.
+  uint64 throttle_nanos = 6;
+  // The maximum number of historical points to return in the opening
+  // `MarketSeriesSnapshot` (0 ⇒ server default window). Bounds the snapshot.
+  uint32 history_limit = 7;
+}
+
+// Close a market-series subscription (the rest of the session is unaffected).
+message MarketSeriesUnsubscribe {
+  // The series subscription to tear down.
+  SubscriptionId subscription = 1;
+}
+
+// One observed point in a market series: a timestamped value of the observable.
+message MarketSeriesPoint {
+  // The series subscription this point belongs to.
+  SubscriptionId subscription = 1;
+  // The monotonic per-subscription sequence number (snapshot seq + n).
+  uint64 sequence = 2;
+  // The observed value, in the observable's natural unit (vol for ATM_VOL/RR/BF;
+  // a rate for SPOT/FORWARD).
+  double value = 3;
+  // Observation time, nanoseconds since the Unix epoch (UTC).
+  int64 epoch_nanos = 4;
+}
+
+// The opening baseline for a market series: the recent history (oldest →
+// newest) plus the observable's identity, so the GUI can label the trend tile
+// (unit + observable) and seed the sparkline before live points arrive.
+message MarketSeriesSnapshot {
+  // The series subscription this snapshot baselines.
+  SubscriptionId subscription = 1;
+  // The starting sequence number; subsequent `MarketSeriesPoint`s advance it.
+  uint64 sequence = 2;
+  // The pair the observable is measured for (echoed for labelling).
+  CcyPair pair = 3;
+  // Which observable this series streams (echoed for labelling).
+  MarketObservable observable = 4;
+  // The recent history (oldest → newest), at most `history_limit` points.
+  repeated MarketSeriesPoint points = 5;
+  // Snapshot time, nanoseconds since the Unix epoch (UTC).
+  int64 epoch_nanos = 6;
 }
 
 // ===========================================================================
@@ -962,6 +1182,11 @@ message MarkSurfaceRequest {
   repeated BrokerQuoteSet broker_quotes = 2;
   // The conventions the broker quotes are expressed under.
   Conventions conventions = 3;
+  // The calibration model to mark the surface under (presence-tracked): absent
+  // ⇒ the server's default calibration (`SMILE_MODEL_MARKET_HEDGE`). Lets a
+  // trader pick the smile family (market-hedge / stochastic-vol / parametric /
+  // parametric-surface) per mark without changing the contract.
+  optional SmileModel smile_model = 4;
 }
 
 // The result of a surface mark: a server-assigned surface version id and the
@@ -1038,6 +1263,11 @@ message ScenarioRequest {
   // Optional book-shaped risk decomposition to compute at the base market
   // (presence-tracked): absent ⇒ only the shock grid is returned.
   optional RiskBucketRequest risk_buckets = 6;
+  // The calibration model the scenario reprices the surface under
+  // (presence-tracked): absent ⇒ the server's default calibration
+  // (`SMILE_MODEL_MARKET_HEDGE`). Mirrors `MarkSurfaceRequest.smile_model` so a
+  // what-if can be run on any smile family.
+  optional SmileModel smile_model = 7;
 }
 
 // One repriced node of a scenario grid.

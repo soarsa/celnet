@@ -348,7 +348,14 @@ async fn dispatch(
 
     match kind {
         // ---- RFS stream control: forward to the shared session driver --------
-        "subscribe" | "modify" | "unsubscribe" | "resync" | "execute" | "heartbeat" => {
+        "subscribe"
+        | "modify"
+        | "unsubscribe"
+        | "resync"
+        | "execute"
+        | "heartbeat"
+        | "market_series_subscribe"
+        | "market_series_unsubscribe" => {
             match decode_stream_control(kind, o) {
                 Ok(msg) => {
                     // If the RFS driver has gone, the connection is being torn down.
@@ -382,6 +389,12 @@ fn decode_stream_control(
         }
         "resync" => client_stream_message::Message::Resync(codec::resync_from_json(o)?),
         "execute" => client_stream_message::Message::Execute(codec::execute_from_json(o)?),
+        "market_series_subscribe" => client_stream_message::Message::MarketSeriesSubscribe(
+            codec::market_series_subscribe_from_json(o)?,
+        ),
+        "market_series_unsubscribe" => client_stream_message::Message::MarketSeriesUnsubscribe(
+            codec::market_series_unsubscribe_from_json(o)?,
+        ),
         "heartbeat" => client_stream_message::Message::Heartbeat(celnet_proto::Heartbeat {
             subscription: None,
             sequence: 0,

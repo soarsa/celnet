@@ -19,11 +19,13 @@ import type {
   Cut,
   DayCount,
   DeltaConvention,
+  MarketObservable,
   OptionType,
   PremiumStyle,
   Settlement,
   ShockFactor,
   Side,
+  SmileModel,
   StrategyKind,
   StreamRejectReason,
   TenorUnit,
@@ -98,12 +100,42 @@ export const strategyKind = enumCodec<StrategyKind>([
   "SEAGULL",
 ]);
 
-/** `TenorUnit` ↔ proto `Tenor.Unit` (OVERNIGHT=0, WEEKS=1, MONTHS=2, YEARS=3). */
+/**
+ * `TenorUnit` ↔ proto `Tenor.Unit` (OVERNIGHT=0, WEEKS=1, MONTHS=2, YEARS=3,
+ * TOM_NEXT=4, SPOT_NEXT=5, IMM=6, BROKEN_DATE=7).
+ */
 export const tenorUnit = enumCodec<TenorUnit>([
   "OVERNIGHT",
   "WEEKS",
   "MONTHS",
   "YEARS",
+  "TOM_NEXT",
+  "SPOT_NEXT",
+  "IMM",
+  "BROKEN_DATE",
+]);
+
+/**
+ * `SmileModel` ↔ proto `SmileModel` (MARKET_HEDGE=0, STOCHASTIC_VOL=1,
+ * PARAMETRIC=2, PARAMETRIC_SURFACE=3). Default (decode-zero) = MARKET_HEDGE.
+ */
+export const smileModel = enumCodec<SmileModel>([
+  "MARKET_HEDGE",
+  "STOCHASTIC_VOL",
+  "PARAMETRIC",
+  "PARAMETRIC_SURFACE",
+]);
+
+/**
+ * `MarketObservable` ↔ proto `MarketObservable` (ATM_VOL=0, SPOT=1,
+ * RISK_REVERSAL=2, BUTTERFLY=3, FORWARD=4).
+ */
+export const marketObservable = enumCodec<MarketObservable>([
+  "ATM_VOL",
+  "SPOT",
+  "RISK_REVERSAL",
+  "BUTTERFLY",
+  "FORWARD",
 ]);
 
 /** `ShockFactor` ↔ proto `ShockAxis.Factor` (SPOT=0,…,TIME=4). */

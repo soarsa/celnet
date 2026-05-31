@@ -67,7 +67,9 @@ Per-tenor smile quotes: ATM vol, plus 25-delta (and 10-delta for liquid pairs) R
 Driven by a calendar engine intersecting **both** currency calendars (plus USD for cross-via-USD pairs):
 - **Horizon (trade/today) -> Spot date:** T+2 for most pairs; **T+1 for USDCAD/USDTRY/USDRUB/USDPHP** and same-region pairs.
 - **Expiry date -> Delivery/settlement date:** computed from expiry by the **same** spot-lag rule (delivery = spot date relative to expiry).
-- Tenors (1W, 1M, ...) added to spot, then adjusted by **modified-following** business-day rule and **end-of-month** rule.
+- **Standard ladder (1W, 1M, ...)** added to spot, then adjusted by **modified-following** business-day rule and **end-of-month** rule.
+- **Pre-spot short end:** **ON** (overnight) = next good business day after **today/horizon** (~T+1); **TN** (tom-next) = the good day after ON; **SN** (spot-next) = next good day after **spot**. ON/TN are anchored on horizon (not spot) — vol-time accrues from a `vol_anchor` of `horizon` for ON/TN (else `spot`) so the short end is never non-positive. (`celnet-calendar::fx`: `expiry_for_tenor(pair, horizon, spot, tenor)` carries both dates; see `docs/CONVENTIONS.md`.)
+- **IMM dates:** the `n`-th 3rd-Wednesday of the Mar/Jun/Sep/Dec cycle strictly after horizon (CME-style, modified-following). **Broken dates:** an explicit civil expiry date, modified-following onto a good day.
 - **Cut (expiry/fixing time):** **NY cut = 10:00 AM New York** (the standard interbank OTC cut; CME FX option fix is a 60s VWAP ending 10:00:00 ET). **Tokyo cut = 15:00 Tokyo (3pm JST)** for JPY-region/Asian business. Parameterize per pair.
 - **Day count:** vol/time-to-expiry uses **ACT/365** (calendar days / 365). Interest accrual uses each currency's money-market basis (**ACT/360** for USD/EUR, **ACT/365** for GBP/AUD). Keep **vol time** and **settlement-discounting time** distinct.
 
@@ -139,6 +141,25 @@ Stochastic-vol smile: `dF = alpha F^beta dW1`, `d(alpha) = nu alpha dW2`, `corr 
 3. **Vertical:** call-spread monotonicity in strike.
 
 VV is **not** arbitrage-free and can produce negative densities/crossing in the wings (especially high RR/BF, short tenors); when VV violates these, **fall back to / cross-check against SSVI or arbitrage-free PDE SABR**, and do not use raw VV for exotics or local-vol stripping without correction.
+
+### 3.4a Smile-model selection (per-mark, callable)
+
+The smile family used to calibrate a mark is **selectable on the wire** via `SmileModel` (the
+vendor/method-neutral enum; the §3.1–3.3 provenance is documentation only):
+
+| `SmileModel` | Calibration family (§) | Notes |
+|---|---|---|
+| `MarketHedge` (default) | Vanna-Volga (§3.1) | The byte-for-byte baseline; reprices the 3 broker quotes exactly. |
+| `StochasticVol` | SABR (§3.2) | β=1 lognormal-FX; fits (α, ρ, ν) to ATM + 25Δ (+10Δ) anchors. |
+| `Parametric` | SVI (§3.3) | fits (b, ρ, m, σ) with `a` ATM-pinned; step projected into the no-butterfly box. |
+| `ParametricSurface` | SSVI (§3.3) | θ pinned to ATM total variance; (ρ, φ) under the closed-form butterfly conditions. |
+
+All four are deterministic (libm-only damped Gauss-Newton in `(log-moneyness, total-variance)`
+space) and calibrate to the **same** VV-anchored ATM/25Δ(/10Δ) points, so model selection changes
+the **wings**, never the ATM reprice. `SurfaceService.MarkSurface` routes the choice through
+`celnet_surface::build_model_smile`, deposits the model-tagged `CalibratedSmile` under the returned
+`surface_version` (so a pinned RFQ/RFS re-prices against the exact marked model), and echoes the
+model used in `Smile.arbitrage.note` as `model=<family>` provenance. Absent ⇒ market-hedge default.
 
 ### 3.5 Delta-space interpolation and strike<->delta conversion
 

@@ -11,6 +11,7 @@
 
 import { Connection } from "../transport/connection";
 import { browserWebSocketFactory } from "../transport/socket";
+import { SeriesRegistry } from "./seriesRegistry";
 import { StreamRegistry } from "./streamRegistry";
 
 /** The default local dev endpoint (the celnet-server WS mirror prints its ws://). */
@@ -26,6 +27,7 @@ function resolveEndpoint(): string {
 
 let connection: Connection | null = null;
 let registry: StreamRegistry | null = null;
+let seriesRegistry: SeriesRegistry | null = null;
 
 /** The shared connection (lazily opened on first use). */
 export function getConnection(): Connection {
@@ -44,4 +46,12 @@ export function getRegistry(): StreamRegistry {
     registry = new StreamRegistry(getConnection());
   }
   return registry;
+}
+
+/** The shared market-series (trend) registry over the shared connection. */
+export function getSeriesRegistry(): SeriesRegistry {
+  if (!seriesRegistry) {
+    seriesRegistry = new SeriesRegistry(getConnection());
+  }
+  return seriesRegistry;
 }

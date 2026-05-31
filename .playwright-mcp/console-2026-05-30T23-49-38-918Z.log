@@ -1,0 +1,17 @@
+[     238ms] [ERROR] Refused to apply style from 'https://soars-uat-lon-webtrader-fx.celer-tech.com/client-theme/build/client.css' because its MIME type ('text/html') is not a supported stylesheet MIME type, and strict MIME checking is enabled. @ https://soars-uat-lon-webtrader-fx.celer-tech.com/:0
+[     279ms] [ERROR] Refused to apply style from 'https://soars-uat-lon-webtrader-fx.celer-tech.com/client-theme/build/client.css' because its MIME type ('text/html') is not a supported stylesheet MIME type, and strict MIME checking is enabled. @ https://soars-uat-lon-webtrader-fx.celer-tech.com/:0
+[     395ms] [LOG] href:https://soars-uat-lon-webtrader-fx.celer-tech.com/ @ https://soars-uat-lon-webtrader-fx.celer-tech.com/assets/index-o_Axit1x.js:19
+[     395ms] [LOG] user: @ https://soars-uat-lon-webtrader-fx.celer-tech.com/assets/index-o_Axit1x.js:19
+[     395ms] [LOG] {} @ https://soars-uat-lon-webtrader-fx.celer-tech.com/assets/index-o_Axit1x.js:19
+[     395ms] [LOG] href:https://soars-uat-lon-webtrader-fx.celer-tech.com/ @ https://soars-uat-lon-webtrader-fx.celer-tech.com/assets/index-o_Axit1x.js:19
+[     395ms] [LOG] user: @ https://soars-uat-lon-webtrader-fx.celer-tech.com/assets/index-o_Axit1x.js:19
+[     450ms] [LOG] {serverConfig: Array(247)} @ https://soars-uat-lon-webtrader-fx.celer-tech.com/assets/index-o_Axit1x.js:19
+[     450ms] [LOG] href:https://soars-uat-lon-webtrader-fx.celer-tech.com/ @ https://soars-uat-lon-webtrader-fx.celer-tech.com/assets/index-o_Axit1x.js:19
+[     450ms] [LOG] user: @ https://soars-uat-lon-webtrader-fx.celer-tech.com/assets/index-o_Axit1x.js:19
+[     454ms] [LOG] %c prev state color: #9E9E9E; font-weight: bold {alertModal: Object, alerts: Object, appSettings: Object, auth: Object, autoSpreader: Object} @ https://soars-uat-lon-webtrader-fx.celer-tech.com/assets/index-o_Axit1x.js:5454
+[     454ms] [LOG] %c action     color: #03A9F4; font-weight: bold {type: @@serverConfig/SET_SERVER_CONFIGURATION, payload: Object, @@redux-saga/SAGA_ACTION: true} @ https://soars-uat-lon-webtrader-fx.celer-tech.com/assets/index-o_Axit1x.js:5454
+[     454ms] [LOG] %c next state color: #4CAF50; font-weight: bold {alertModal: Object, alerts: Object, appSettings: Object, auth: Object, autoSpreader: Object} @ https://soars-uat-lon-webtrader-fx.celer-tech.com/assets/index-o_Axit1x.js:5454
+[     455ms] [LOG] %c prev state color: #9E9E9E; font-weight: bold {alertModal: Object, alerts: Object, appSettings: Object, auth: Object, autoSpreader: Object} @ https://soars-uat-lon-webtrader-fx.celer-tech.com/assets/index-o_Axit1x.js:5454
+[     455ms] [LOG] %c action     color: #03A9F4; font-weight: bold {type: @@appSettings/SET_APP_MODE, payload: fx, @@redux-saga/SAGA_ACTION: true} @ https://soars-uat-lon-webtrader-fx.celer-tech.com/assets/index-o_Axit1x.js:5454
+[     455ms] [LOG] %c next state color: #4CAF50; font-weight: bold {alertModal: Object, alerts: Object, appSettings: Object, auth: Object, autoSpreader: Object} @ https://soars-uat-lon-webtrader-fx.celer-tech.com/assets/index-o_Axit1x.js:5454
+[     474ms] [ERROR] Failed to load client theme overrides @ https://soars-uat-lon-webtrader-fx.celer-tech.com/assets/index-o_Axit1x.js:19

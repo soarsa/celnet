@@ -15,8 +15,8 @@ use std::time::Duration;
 use celnet_core::is_close;
 use celnet_proto::stream_service_client::StreamServiceClient;
 use celnet_proto::{
-    ClientStreamMessage, Resync, ServerStreamMessage, Subscribe, SubscriptionId,
-    client_stream_message, server_stream_message,
+    ClientStreamMessage, MarketObservable, MarketSeriesSubscribe, Resync, ServerStreamMessage,
+    Subscribe, SubscriptionId, client_stream_message, owner, server_stream_message,
 };
 use celnet_types::{OptionType, VanillaInputs};
 use futures_util::{Stream, StreamExt};
@@ -76,6 +76,7 @@ async fn rfs_snapshot_then_sequenced_deltas() {
                 throttle_nanos: 0,
                 correlation_id: None,
                 surface_version: None,
+                attribution: None,
             })),
         })
         .await
@@ -176,6 +177,7 @@ async fn rfs_resync_replays_missing_sequence() {
                 throttle_nanos: 0,
                 correlation_id: None,
                 surface_version: None,
+                attribution: None,
             })),
         })
         .await
@@ -239,6 +241,148 @@ async fn rfs_resync_replays_missing_sequence() {
         assert!(
             found_replayed_two,
             "resync must replay the missing sequence 2 (or a fresh baseline)"
+        );
+
+        drop(tx);
+        edge.shutdown(Duration::from_secs(5)).await;
+    })
+    .await
+    .expect("test must not hang");
+}
+
+/// The market-series (TrendMode) feed serves a real subscription: opening an
+/// ATM-vol series returns a `MarketSeriesSnapshot` seeded with one freshly observed
+/// point, then a sequence of `MarketSeriesPoint`s derived from the live market
+/// state as it ticks — genuine observations (a sane positive ATM vol), not
+/// fabricated data, monotonically sequenced.
+#[tokio::test]
+async fn rfs_market_series_emits_real_observed_points() {
+    tokio::time::timeout(TEST_DEADLINE, async {
+        let (edge, addr) = start_ready_edge().await;
+        let mut client = tokio::time::timeout(
+            STEP_DEADLINE,
+            StreamServiceClient::connect(format!("http://{addr}")),
+        )
+        .await
+        .expect("client connects in time")
+        .expect("client connects");
+
+        let (tx, rx) = mpsc::channel::<ClientStreamMessage>(16);
+        let sub_id = SubscriptionId { value: 4242 };
+        // Open an ATM-vol series for the live EURUSD slice (no wing ⇒ no delta).
+        tx.send(ClientStreamMessage {
+            message: Some(client_stream_message::Message::MarketSeriesSubscribe(
+                MarketSeriesSubscribe {
+                    subscription: Some(sub_id),
+                    pair: Some(common::eurusd_pair()),
+                    observable: MarketObservable::AtmVol as i32,
+                    tenor: None,
+                    delta: None,
+                    throttle_nanos: 0,
+                    history_limit: 0,
+                },
+            )),
+        })
+        .await
+        .unwrap();
+
+        let mut inbound =
+            tokio::time::timeout(STEP_DEADLINE, client.stream_session(ClientOutbound { rx }))
+                .await
+                .expect("stream opens in time")
+                .expect("stream opens")
+                .into_inner();
+
+        // First: the opening market-series snapshot (sequence 1) with one observed
+        // point labelled with the pair + observable.
+        let snap = match next_msg(&mut inbound).await {
+            server_stream_message::Message::MarketSeriesSnapshot(s) => s,
+            other => panic!("expected a MarketSeriesSnapshot first, got {other:?}"),
+        };
+        assert_eq!(snap.subscription, Some(sub_id));
+        assert_eq!(snap.observable, MarketObservable::AtmVol as i32);
+        assert_eq!(snap.points.len(), 1, "seeded with one observed point");
+        let first = snap.points[0].value;
+        assert!(
+            first > 0.0 && first < 1.0,
+            "a genuine ATM vol observation, in range: {first}"
+        );
+
+        // Then ≥2 appended live points, strictly sequenced, each a real observation.
+        let mut last_seq = snap.sequence;
+        let mut points = 0;
+        while points < 2 {
+            match next_msg(&mut inbound).await {
+                server_stream_message::Message::MarketSeriesPoint(p) => {
+                    assert_eq!(p.subscription, Some(sub_id));
+                    assert_eq!(p.sequence, last_seq + 1, "series points are sequenced");
+                    assert!(
+                        p.value > 0.0 && p.value < 1.0,
+                        "appended point is a real ATM vol observation: {}",
+                        p.value
+                    );
+                    last_seq = p.sequence;
+                    points += 1;
+                }
+                other => panic!("unexpected market-series message: {other:?}"),
+            }
+        }
+        assert!(last_seq >= 3, "saw snapshot + ≥2 appended points");
+
+        drop(tx);
+        edge.shutdown(Duration::from_secs(5)).await;
+    })
+    .await
+    .expect("test must not hang");
+}
+
+/// A streamed line carries the who's-trading attribution: the maker auto-pricer is
+/// stamped as `quoted_by` even when the client supplies no attribution, so the
+/// flow is never anonymous (the risk roll-up / blotter can attribute it).
+#[tokio::test]
+async fn rfs_snapshot_carries_maker_auto_pricer_attribution() {
+    tokio::time::timeout(TEST_DEADLINE, async {
+        let (edge, addr) = start_ready_edge().await;
+        let mut client = tokio::time::timeout(
+            STEP_DEADLINE,
+            StreamServiceClient::connect(format!("http://{addr}")),
+        )
+        .await
+        .expect("client connects in time")
+        .expect("client connects");
+
+        let (tx, rx) = mpsc::channel::<ClientStreamMessage>(16);
+        let sub_id = SubscriptionId { value: 808 };
+        tx.send(ClientStreamMessage {
+            message: Some(client_stream_message::Message::Subscribe(Subscribe {
+                subscription: Some(sub_id),
+                instrument: Some(vanilla_call(1.12)),
+                conventions: Some(wire_conventions()),
+                throttle_nanos: 0,
+                correlation_id: None,
+                surface_version: None,
+                attribution: None, // no client attribution → maker stamps its own.
+            })),
+        })
+        .await
+        .unwrap();
+
+        let mut inbound =
+            tokio::time::timeout(STEP_DEADLINE, client.stream_session(ClientOutbound { rx }))
+                .await
+                .expect("stream opens in time")
+                .expect("stream opens")
+                .into_inner();
+
+        let snap = match next_msg(&mut inbound).await {
+            server_stream_message::Message::Snapshot(s) => s,
+            other => panic!("expected a Snapshot first, got {other:?}"),
+        };
+        let attr = snap.attribution.expect("snapshot carries attribution");
+        let quoted = attr.quoted_by.expect("quoted_by is stamped");
+        assert!(
+            matches!(quoted.owner.unwrap().seat, Some(owner::Seat::AutoPricer(_))),
+            "an unattributed line is quoted_by the maker auto-pricer"
         );
 
         drop(tx);

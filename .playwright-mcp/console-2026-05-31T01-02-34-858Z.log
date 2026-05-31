@@ -1,0 +1,788 @@
+[      48ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:20100
+[ 2518138ms] [ERROR] Received an empty string for a boolean attribute `%s`. This will treat the attribute as if it were false. Either pass `false` to silence this warning, or pass `true` if you used an empty string in earlier versions of React to indicate this attribute is true. inert @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:14358
+[ 2642860ms] ReferenceError: structureLabel is not defined
+    at http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780191997685:57:18
+    at mountMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6525:25)
+    at Object.useMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18707:20)
+    at exports.useMemo (http://localhost:5174/node_modules/.vite/deps/chunk-2ENYTC5W.js?v=6a4e8fdd:948:36)
+    at BookWorkspace (http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780191997685:49:23)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+[ 2642860ms] [WARNING] %s
+
+%s
+ An error occurred in the <BookWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2643065ms] ReferenceError: structureLabel is not defined
+    at http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780191997685:57:18
+    at mountMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6525:25)
+    at Object.useMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18707:20)
+    at exports.useMemo (http://localhost:5174/node_modules/.vite/deps/chunk-2ENYTC5W.js?v=6a4e8fdd:948:36)
+    at BookWorkspace (http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780191997685:49:23)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+[ 2643065ms] [WARNING] %s
+
+%s
+ An error occurred in the <BookWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2646305ms] ReferenceError: structureLabel is not defined
+    at http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780191997685:57:18
+    at mountMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6525:25)
+    at Object.useMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18707:20)
+    at exports.useMemo (http://localhost:5174/node_modules/.vite/deps/chunk-2ENYTC5W.js?v=6a4e8fdd:948:36)
+    at BookWorkspace (http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780191997685:49:23)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+[ 2646305ms] [WARNING] %s
+
+%s
+ An error occurred in the <BookWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2647006ms] ReferenceError: TENORS is not defined
+    at TicketWorkspace (http://localhost:5174/src/workspaces/TicketWorkspace.tsx?t=1780192001827:203:77)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+    at performUnitOfWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12559:98)
+    at workLoopSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12422:43)
+    at renderRootSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12406:13)
+    at performWorkOnRoot (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:11825:37)
+[ 2647006ms] [WARNING] %s
+
+%s
+ An error occurred in the <TicketWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2648112ms] ReferenceError: TENORS is not defined
+    at TicketWorkspace (http://localhost:5174/src/workspaces/TicketWorkspace.tsx?t=1780192001827:203:77)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+    at performUnitOfWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12559:98)
+    at workLoopSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12422:43)
+    at renderRootSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12406:13)
+    at performWorkOnRoot (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:11825:37)
+[ 2648112ms] [WARNING] %s
+
+%s
+ An error occurred in the <TicketWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2650839ms] ReferenceError: TENORS is not defined
+    at TicketWorkspace (http://localhost:5174/src/workspaces/TicketWorkspace.tsx?t=1780192001827:203:77)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+    at performUnitOfWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12559:98)
+    at workLoopSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12422:43)
+    at renderRootSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12406:13)
+    at performWorkOnRoot (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:11825:37)
+[ 2650839ms] [WARNING] %s
+
+%s
+ An error occurred in the <TicketWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2652155ms] ReferenceError: structureLabel is not defined
+    at http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780191997685:57:18
+    at mountMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6525:25)
+    at Object.useMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18707:20)
+    at exports.useMemo (http://localhost:5174/node_modules/.vite/deps/chunk-2ENYTC5W.js?v=6a4e8fdd:948:36)
+    at BookWorkspace (http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780191997685:49:23)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+[ 2652155ms] [WARNING] %s
+
+%s
+ An error occurred in the <BookWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2652416ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780192007269:0
+[ 2652417ms] [ERROR] [vite] Failed to reload /src/workspaces/BookWorkspace.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:5174/@vite/client:881
+[ 2657176ms] ReferenceError: structureLabel is not defined
+    at http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780192011994:57:18
+    at mountMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6525:25)
+    at Object.useMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18707:20)
+    at exports.useMemo (http://localhost:5174/node_modules/.vite/deps/chunk-2ENYTC5W.js?v=6a4e8fdd:948:36)
+    at BookWorkspace (http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780192011994:49:23)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+[ 2657177ms] [WARNING] %s
+
+%s
+ An error occurred in the <BookWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2657576ms] ReferenceError: structureLabel is not defined
+    at http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780192011994:57:18
+    at mountMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6525:25)
+    at Object.useMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18707:20)
+    at exports.useMemo (http://localhost:5174/node_modules/.vite/deps/chunk-2ENYTC5W.js?v=6a4e8fdd:948:36)
+    at BookWorkspace (http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780192011994:49:23)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+[ 2657576ms] [WARNING] %s
+
+%s
+ An error occurred in the <BookWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2662919ms] ReferenceError: structureLabel is not defined
+    at http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780192011994:57:18
+    at mountMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6525:25)
+    at Object.useMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18707:20)
+    at exports.useMemo (http://localhost:5174/node_modules/.vite/deps/chunk-2ENYTC5W.js?v=6a4e8fdd:948:36)
+    at BookWorkspace (http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780192011994:49:23)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+[ 2662919ms] [WARNING] %s
+
+%s
+ An error occurred in the <BookWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2663226ms] ReferenceError: structureLabel is not defined
+    at http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780192018046:56:18
+    at mountMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6525:25)
+    at Object.useMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18707:20)
+    at exports.useMemo (http://localhost:5174/node_modules/.vite/deps/chunk-2ENYTC5W.js?v=6a4e8fdd:948:36)
+    at BookWorkspace (http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780192018046:48:23)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+[ 2663226ms] [WARNING] %s
+
+%s
+ An error occurred in the <BookWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2668863ms] ReferenceError: structureLabel is not defined
+    at http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780192018046:56:18
+    at mountMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6525:25)
+    at Object.useMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18707:20)
+    at exports.useMemo (http://localhost:5174/node_modules/.vite/deps/chunk-2ENYTC5W.js?v=6a4e8fdd:948:36)
+    at BookWorkspace (http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780192018046:48:23)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+[ 2668864ms] [WARNING] %s
+
+%s
+ An error occurred in the <BookWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2674202ms] ReferenceError: structureLabel is not defined
+    at http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780192029021:56:18
+    at mountMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6525:25)
+    at Object.useMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18707:20)
+    at exports.useMemo (http://localhost:5174/node_modules/.vite/deps/chunk-2ENYTC5W.js?v=6a4e8fdd:948:36)
+    at BookWorkspace (http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780192029021:48:23)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+[ 2674203ms] [WARNING] %s
+
+%s
+ An error occurred in the <BookWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2679031ms] ReferenceError: structureLabel is not defined
+    at http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780192033851:56:18
+    at mountMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6525:25)
+    at Object.useMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18707:20)
+    at exports.useMemo (http://localhost:5174/node_modules/.vite/deps/chunk-2ENYTC5W.js?v=6a4e8fdd:948:36)
+    at BookWorkspace (http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780192033851:48:23)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+[ 2679031ms] [WARNING] %s
+
+%s
+ An error occurred in the <BookWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2679330ms] ReferenceError: structureLabel is not defined
+    at http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780192033851:56:18
+    at mountMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6525:25)
+    at Object.useMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18707:20)
+    at exports.useMemo (http://localhost:5174/node_modules/.vite/deps/chunk-2ENYTC5W.js?v=6a4e8fdd:948:36)
+    at BookWorkspace (http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780192033851:48:23)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+[ 2679331ms] [WARNING] %s
+
+%s
+ An error occurred in the <BookWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2682645ms] ReferenceError: structureLabel is not defined
+    at http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780192033851:56:18
+    at mountMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6525:25)
+    at Object.useMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18707:20)
+    at exports.useMemo (http://localhost:5174/node_modules/.vite/deps/chunk-2ENYTC5W.js?v=6a4e8fdd:948:36)
+    at BookWorkspace (http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780192033851:48:23)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+[ 2682645ms] [WARNING] %s
+
+%s
+ An error occurred in the <BookWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2688491ms] ReferenceError: structureLabel is not defined
+    at http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780192043311:56:18
+    at mountMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6525:25)
+    at Object.useMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18707:20)
+    at exports.useMemo (http://localhost:5174/node_modules/.vite/deps/chunk-2ENYTC5W.js?v=6a4e8fdd:948:36)
+    at BookWorkspace (http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780192043311:48:23)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+[ 2688491ms] [WARNING] %s
+
+%s
+ An error occurred in the <BookWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2691009ms] ReferenceError: structureLabel is not defined
+    at http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780192043311:56:18
+    at mountMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6525:25)
+    at Object.useMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18707:20)
+    at exports.useMemo (http://localhost:5174/node_modules/.vite/deps/chunk-2ENYTC5W.js?v=6a4e8fdd:948:36)
+    at BookWorkspace (http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780192043311:48:23)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+[ 2691007ms] [WARNING] %s
+
+%s
+ An error occurred in the <BookWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2696863ms] ReferenceError: structureLabel is not defined
+    at http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780192051683:56:18
+    at mountMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6525:25)
+    at Object.useMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18707:20)
+    at exports.useMemo (http://localhost:5174/node_modules/.vite/deps/chunk-2ENYTC5W.js?v=6a4e8fdd:948:36)
+    at BookWorkspace (http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780192051683:48:23)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+[ 2696863ms] [WARNING] %s
+
+%s
+ An error occurred in the <BookWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2703406ms] ReferenceError: structureLabel is not defined
+    at http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780192051683:56:18
+    at mountMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6525:25)
+    at Object.useMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18707:20)
+    at exports.useMemo (http://localhost:5174/node_modules/.vite/deps/chunk-2ENYTC5W.js?v=6a4e8fdd:948:36)
+    at BookWorkspace (http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780192051683:48:23)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+[ 2703406ms] [WARNING] %s
+
+%s
+ An error occurred in the <BookWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2704715ms] ReferenceError: structureLabel is not defined
+    at http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780192051683:56:18
+    at mountMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6525:25)
+    at Object.useMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18707:20)
+    at exports.useMemo (http://localhost:5174/node_modules/.vite/deps/chunk-2ENYTC5W.js?v=6a4e8fdd:948:36)
+    at BookWorkspace (http://localhost:5174/src/workspaces/BookWorkspace.tsx?t=1780192051683:48:23)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+[ 2704715ms] [WARNING] %s
+
+%s
+ An error occurred in the <BookWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2707375ms] ReferenceError: tenorName is not defined
+    at http://localhost:5174/src/workspaces/SurfaceWorkspace.tsx?t=1780192059533:190:89
+    at Array.map (<anonymous>)
+    at SurfaceWorkspace (http://localhost:5174/src/workspaces/SurfaceWorkspace.tsx?t=1780192059533:180:24)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+    at performUnitOfWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12559:98)
+    at workLoopSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12422:43)
+[ 2707375ms] [WARNING] %s
+
+%s
+ An error occurred in the <SurfaceWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2714036ms] ReferenceError: tenorName is not defined
+    at http://localhost:5174/src/workspaces/SurfaceWorkspace.tsx?t=1780192059533:190:89
+    at Array.map (<anonymous>)
+    at SurfaceWorkspace (http://localhost:5174/src/workspaces/SurfaceWorkspace.tsx?t=1780192059533:180:24)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+    at performUnitOfWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12559:98)
+    at workLoopSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12422:43)
+[ 2714036ms] [WARNING] %s
+
+%s
+ An error occurred in the <SurfaceWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2715440ms] ReferenceError: tenorName is not defined
+    at http://localhost:5174/src/workspaces/SurfaceWorkspace.tsx?t=1780192070229:202:89
+    at Array.map (<anonymous>)
+    at SurfaceWorkspace (http://localhost:5174/src/workspaces/SurfaceWorkspace.tsx?t=1780192070229:192:24)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+    at performUnitOfWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12559:98)
+    at workLoopSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12422:43)
+[ 2715440ms] [WARNING] %s
+
+%s
+ An error occurred in the <SurfaceWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2716048ms] ReferenceError: tenorName is not defined
+    at http://localhost:5174/src/workspaces/SurfaceWorkspace.tsx?t=1780192070229:202:89
+    at Array.map (<anonymous>)
+    at SurfaceWorkspace (http://localhost:5174/src/workspaces/SurfaceWorkspace.tsx?t=1780192070229:192:24)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+    at performUnitOfWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12559:98)
+    at workLoopSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12422:43)
+[ 2716048ms] [WARNING] %s
+
+%s
+ An error occurred in the <SurfaceWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2718558ms] ReferenceError: tenorName is not defined
+    at http://localhost:5174/src/workspaces/SurfaceWorkspace.tsx?t=1780192070229:202:89
+    at Array.map (<anonymous>)
+    at SurfaceWorkspace (http://localhost:5174/src/workspaces/SurfaceWorkspace.tsx?t=1780192070229:192:24)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+    at performUnitOfWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12559:98)
+    at workLoopSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12422:43)
+[ 2718558ms] [WARNING] %s
+
+%s
+ An error occurred in the <SurfaceWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2721880ms] ReferenceError: tenorName is not defined
+    at http://localhost:5174/src/workspaces/SurfaceWorkspace.tsx?t=1780192076666:203:89
+    at Array.map (<anonymous>)
+    at SurfaceWorkspace (http://localhost:5174/src/workspaces/SurfaceWorkspace.tsx?t=1780192076666:193:24)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+    at performUnitOfWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12559:98)
+    at workLoopSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12422:43)
+[ 2721880ms] [WARNING] %s
+
+%s
+ An error occurred in the <SurfaceWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2722284ms] ReferenceError: tenorName is not defined
+    at http://localhost:5174/src/workspaces/SurfaceWorkspace.tsx?t=1780192076666:203:89
+    at Array.map (<anonymous>)
+    at SurfaceWorkspace (http://localhost:5174/src/workspaces/SurfaceWorkspace.tsx?t=1780192076666:193:24)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+    at performUnitOfWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12559:98)
+    at workLoopSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12422:43)
+[ 2722284ms] [WARNING] %s
+
+%s
+ An error occurred in the <SurfaceWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2725617ms] ReferenceError: tenorName is not defined
+    at http://localhost:5174/src/workspaces/SurfaceWorkspace.tsx?t=1780192080393:204:89
+    at Array.map (<anonymous>)
+    at SurfaceWorkspace (http://localhost:5174/src/workspaces/SurfaceWorkspace.tsx?t=1780192080393:194:24)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+    at performUnitOfWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12559:98)
+    at workLoopSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12422:43)
+[ 2725617ms] [WARNING] %s
+
+%s
+ An error occurred in the <SurfaceWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2727733ms] ReferenceError: tenorName is not defined
+    at http://localhost:5174/src/workspaces/SurfaceWorkspace.tsx?t=1780192080393:204:89
+    at Array.map (<anonymous>)
+    at SurfaceWorkspace (http://localhost:5174/src/workspaces/SurfaceWorkspace.tsx?t=1780192080393:194:24)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+    at performUnitOfWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12559:98)
+    at workLoopSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12422:43)
+[ 2727733ms] [WARNING] %s
+
+%s
+ An error occurred in the <SurfaceWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2729341ms] ReferenceError: tenorName is not defined
+    at http://localhost:5174/src/workspaces/SurfaceWorkspace.tsx?t=1780192084123:204:89
+    at Array.map (<anonymous>)
+    at SurfaceWorkspace (http://localhost:5174/src/workspaces/SurfaceWorkspace.tsx?t=1780192084123:194:24)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+    at performUnitOfWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12559:98)
+    at workLoopSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12422:43)
+[ 2729342ms] [WARNING] %s
+
+%s
+ An error occurred in the <SurfaceWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2733467ms] ReferenceError: tenorName is not defined
+    at http://localhost:5174/src/workspaces/SurfaceWorkspace.tsx?t=1780192088253:222:39
+    at Array.map (<anonymous>)
+    at http://localhost:5174/src/workspaces/SurfaceWorkspace.tsx?t=1780192088253:209:25
+    at Array.map (<anonymous>)
+    at SurfaceWorkspace (http://localhost:5174/src/workspaces/SurfaceWorkspace.tsx?t=1780192088253:194:24)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+[ 2733468ms] [WARNING] %s
+
+%s
+ An error occurred in the <SurfaceWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2736792ms] ReferenceError: tenorName is not defined
+    at http://localhost:5174/src/workspaces/SurfaceWorkspace.tsx?t=1780192088253:222:39
+    at Array.map (<anonymous>)
+    at http://localhost:5174/src/workspaces/SurfaceWorkspace.tsx?t=1780192088253:209:25
+    at Array.map (<anonymous>)
+    at SurfaceWorkspace (http://localhost:5174/src/workspaces/SurfaceWorkspace.tsx?t=1780192088253:194:24)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+[ 2736792ms] [WARNING] %s
+
+%s
+ An error occurred in the <SurfaceWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2744937ms] ReferenceError: SPOT_STEPS is not defined
+    at http://localhost:5174/src/workspaces/RiskWorkspace.tsx?t=1780192099756:62:48
+    at updateMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6543:21)
+    at Object.useMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18967:20)
+    at exports.useMemo (http://localhost:5174/node_modules/.vite/deps/chunk-2ENYTC5W.js?v=6a4e8fdd:948:36)
+    at RiskWorkspace (http://localhost:5174/src/workspaces/RiskWorkspace.tsx?t=1780192099756:60:16)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+[ 2744937ms] [WARNING] %s
+
+%s
+ An error occurred in the <RiskWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2750780ms] ReferenceError: SPOT_STEPS is not defined
+    at http://localhost:5174/src/workspaces/RiskWorkspace.tsx?t=1780192099756:62:48
+    at mountMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6525:25)
+    at Object.useMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18707:20)
+    at exports.useMemo (http://localhost:5174/node_modules/.vite/deps/chunk-2ENYTC5W.js?v=6a4e8fdd:948:36)
+    at RiskWorkspace (http://localhost:5174/src/workspaces/RiskWorkspace.tsx?t=1780192099756:60:16)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+[ 2750780ms] [WARNING] %s
+
+%s
+ An error occurred in the <RiskWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2754605ms] ReferenceError: SPOT_STEPS is not defined
+    at http://localhost:5174/src/workspaces/RiskWorkspace.tsx?t=1780192099756:62:48
+    at mountMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6525:25)
+    at Object.useMemo (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18707:20)
+    at exports.useMemo (http://localhost:5174/node_modules/.vite/deps/chunk-2ENYTC5W.js?v=6a4e8fdd:948:36)
+    at RiskWorkspace (http://localhost:5174/src/workspaces/RiskWorkspace.tsx?t=1780192099756:60:16)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+[ 2754605ms] [WARNING] %s
+
+%s
+ An error occurred in the <RiskWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2760092ms] ReferenceError: SPOT_STEPS is not defined
+    at RiskWorkspace (http://localhost:5174/src/workspaces/RiskWorkspace.tsx?t=1780192114863:125:19)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+    at performUnitOfWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12559:98)
+    at workLoopSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12422:43)
+    at renderRootSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12406:13)
+    at performWorkOnRoot (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:11825:37)
+[ 2760092ms] [WARNING] %s
+
+%s
+ An error occurred in the <RiskWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2765539ms] ReferenceError: SPOT_STEPS is not defined
+    at RiskWorkspace (http://localhost:5174/src/workspaces/RiskWorkspace.tsx?t=1780192120299:125:19)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+    at performUnitOfWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12559:98)
+    at workLoopSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12422:43)
+    at renderRootSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12406:13)
+    at performWorkOnRoot (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:11825:37)
+[ 2765539ms] [WARNING] %s
+
+%s
+ An error occurred in the <RiskWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2767727ms] ReferenceError: SPOT_STEPS is not defined
+    at RiskWorkspace (http://localhost:5174/src/workspaces/RiskWorkspace.tsx?t=1780192120299:125:19)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+    at performUnitOfWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12559:98)
+    at workLoopSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12422:43)
+    at renderRootSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12406:13)
+    at performWorkOnRoot (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:11825:37)
+[ 2767726ms] [WARNING] %s
+
+%s
+ An error occurred in the <RiskWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2777505ms] ReferenceError: VOL_STEPS is not defined
+    at RiskWorkspace (http://localhost:5174/src/workspaces/RiskWorkspace.tsx?t=1780192132268:175:17)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+    at performUnitOfWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12559:98)
+    at workLoopSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12422:43)
+    at renderRootSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12406:13)
+    at performWorkOnRoot (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:11825:37)
+[ 2777505ms] [WARNING] %s
+
+%s
+ An error occurred in the <RiskWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2802535ms] ReferenceError: VOL_STEPS is not defined
+    at RiskWorkspace (http://localhost:5174/src/workspaces/RiskWorkspace.tsx?t=1780192132268:175:17)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+    at performUnitOfWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12559:98)
+    at workLoopSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12422:43)
+    at renderRootSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12406:13)
+    at performWorkOnRoot (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:11825:37)
+[ 2802535ms] [WARNING] %s
+
+%s
+ An error occurred in the <RiskWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2806665ms] ReferenceError: AxisPicker is not defined
+    at RiskWorkspace (http://localhost:5174/src/workspaces/RiskWorkspace.tsx?t=1780192161428:213:15)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+    at performUnitOfWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12559:98)
+    at workLoopSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12422:43)
+    at renderRootSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12406:13)
+    at performWorkOnRoot (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:11825:37)
+[ 2806665ms] [WARNING] %s
+
+%s
+ An error occurred in the <RiskWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2808258ms] ReferenceError: AxisPicker is not defined
+    at RiskWorkspace (http://localhost:5174/src/workspaces/RiskWorkspace.tsx?t=1780192161428:213:15)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+    at performUnitOfWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12559:98)
+    at workLoopSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12422:43)
+    at renderRootSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12406:13)
+    at performWorkOnRoot (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:11825:37)
+[ 2808259ms] [WARNING] %s
+
+%s
+ An error occurred in the <RiskWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2813095ms] ReferenceError: AxisPicker is not defined
+    at RiskWorkspace (http://localhost:5174/src/workspaces/RiskWorkspace.tsx?t=1780192161428:213:15)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+    at performUnitOfWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12559:98)
+    at workLoopSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12422:43)
+    at renderRootSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12406:13)
+    at performWorkOnRoot (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:11825:37)
+[ 2813095ms] [WARNING] %s
+
+%s
+ An error occurred in the <RiskWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2817127ms] ReferenceError: AxisPicker is not defined
+    at RiskWorkspace (http://localhost:5174/src/workspaces/RiskWorkspace.tsx?t=1780192171886:213:15)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+    at performUnitOfWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12559:98)
+    at workLoopSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12422:43)
+    at renderRootSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12406:13)
+    at performWorkOnRoot (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:11825:37)
+[ 2817127ms] [WARNING] %s
+
+%s
+ An error occurred in the <RiskWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2824272ms] ReferenceError: AxisPicker is not defined
+    at RiskWorkspace (http://localhost:5174/src/workspaces/RiskWorkspace.tsx?t=1780192179034:213:15)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+    at performUnitOfWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12559:98)
+    at workLoopSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12422:43)
+    at renderRootSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12406:13)
+    at performWorkOnRoot (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:11825:37)
+[ 2824273ms] [WARNING] %s
+
+%s
+ An error occurred in the <RiskWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2824758ms] ReferenceError: AxisPicker is not defined
+    at RiskWorkspace (http://localhost:5174/src/workspaces/RiskWorkspace.tsx?t=1780192179034:213:15)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+    at performUnitOfWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12559:98)
+    at workLoopSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12422:43)
+    at renderRootSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12406:13)
+    at performWorkOnRoot (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:11825:37)
+[ 2824758ms] [WARNING] %s
+
+%s
+ An error occurred in the <RiskWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2827288ms] ReferenceError: AxisPicker is not defined
+    at RiskWorkspace (http://localhost:5174/src/workspaces/RiskWorkspace.tsx?t=1780192182055:213:15)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+    at performUnitOfWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12559:98)
+    at workLoopSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12422:43)
+    at renderRootSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12406:13)
+    at performWorkOnRoot (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:11825:37)
+[ 2827288ms] [WARNING] %s
+
+%s
+ An error occurred in the <RiskWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[ 2830823ms] ReferenceError: AxisPicker is not defined
+    at RiskWorkspace (http://localhost:5174/src/workspaces/RiskWorkspace.tsx?t=1780192182055:213:15)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+    at performUnitOfWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12559:98)
+    at workLoopSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12422:43)
+    at renderRootSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12406:13)
+    at performWorkOnRoot (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:11825:37)
+[ 2830822ms] [WARNING] %s
+
+%s
+ An error occurred in the <RiskWorkspace> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963

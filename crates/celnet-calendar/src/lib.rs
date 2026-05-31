@@ -48,8 +48,8 @@ mod weekday;
 pub use calendar::{BusinessCalendar, MAX_CENTRES};
 pub use daycount::{actual_days, year_fraction};
 pub use fx::{
-    FxSchedule, calendar_for, centre_for, delivery_date, expiry_for_tenor, is_t_plus_one_pair,
-    schedule, spot_date, spot_lag_days,
+    FxSchedule, TenorError, calendar_for, centre_for, delivery_date, expiry_for_tenor, imm_date,
+    is_t_plus_one_pair, schedule, spot_date, spot_lag_days,
 };
 pub use holiday::{CentreId, SettlementCentre, WeekendRule};
 pub use roll::{
@@ -63,13 +63,35 @@ mod proptests {
     //! Cross-module property tests over the public surface: the financial and
     //! calendrical invariants that must hold for *every* date and tenor.
 
-    use celnet_types::{CcyPair, Tenor};
+    use celnet_types::{BrokenDate, CcyPair, Tenor};
     use proptest::prelude::*;
     use time::{Date, Duration};
 
     use crate::{
         calendar_for, delivery_date, expiry_for_tenor, schedule, spot_date, spot_lag_days,
     };
+
+    /// True for the pre-spot short end (ON/TN), whose expiry is anchored on the
+    /// horizon and may precede spot — the monotone "expiry >= spot" invariant
+    /// deliberately does not hold for these.
+    fn is_pre_spot(t: Tenor) -> bool {
+        matches!(t, Tenor::Overnight | Tenor::TomNext)
+    }
+
+    /// True for a tenor that carries *no* guaranteed ordering relative to spot, so
+    /// the "expiry >= spot" invariant deliberately does not hold for it:
+    ///
+    /// * an explicit **broken date** — a user may quote any odd expiry, before or
+    ///   after spot; and
+    /// * a near **IMM** — the n-th quarterly 3rd-Wednesday strictly after the
+    ///   horizon can fall in the window between the horizon and the T+2 spot (e.g.
+    ///   a horizon two business days before that month's IMM Wednesday), so the
+    ///   resolved IMM expiry legitimately precedes spot. IMM is anchored on the
+    ///   calendar (the standardized future date), not on spot, so this is correct,
+    ///   not a defect.
+    fn is_unordered_vs_spot(t: Tenor) -> bool {
+        matches!(t, Tenor::BrokenDate(_) | Tenor::Imm(_))
+    }
 
     /// Covered pairs whose every leg resolves to a settlement centre.
     fn covered_pairs() -> Vec<CcyPair> {
@@ -92,9 +114,18 @@ mod proptests {
     fn arb_tenor() -> impl Strategy<Value = Tenor> {
         prop_oneof![
             Just(Tenor::Overnight),
+            Just(Tenor::TomNext),
+            Just(Tenor::SpotNext),
             (1u16..8).prop_map(Tenor::Weeks),
             (1u16..25).prop_map(Tenor::Months),
             (1u16..6).prop_map(Tenor::Years),
+            (1u8..9).prop_map(Tenor::Imm),
+            // A broken date drawn forward of the 2024 epoch (always a real date).
+            (0i64..3000i64).prop_map(|days| {
+                let date = Date::from_calendar_date(2024, time::Month::January, 1).unwrap()
+                    + Duration::days(days);
+                Tenor::BrokenDate(BrokenDate::new(date.year(), date.month() as u8, date.day()))
+            }),
         ]
     }
 
@@ -118,22 +149,38 @@ mod proptests {
         /// on or after spot. Hence delivery never precedes spot.
         #[test]
         fn date_chain_is_monotone_and_good(p in arb_pair(), h in arb_date(), t in arb_tenor()) {
-            let sch = schedule(p, h, t);
+            let sch = schedule(p, h, t).expect("arb_tenor only yields resolvable tenors");
             let cal = calendar_for(p);
             prop_assert!(sch.spot >= sch.horizon);
-            prop_assert!(sch.expiry >= sch.spot);
+            // The pre-spot short end (ON/TN) is anchored on the horizon, so its
+            // expiry is strictly after the horizon (it can equal/exceed spot for
+            // T+1 pairs whose spot is itself one good day out). The standard
+            // ladder and SN/IMM/broken always expire on or after spot.
+            if is_pre_spot(t) {
+                prop_assert!(sch.expiry > sch.horizon);
+            } else if !is_unordered_vs_spot(t) {
+                // SpotNext / Weeks / Months / Years are all on-or-after spot. (A near
+                // IMM and a broken date carry no spot ordering — see
+                // `is_unordered_vs_spot`.)
+                prop_assert!(sch.expiry >= sch.spot);
+            }
             prop_assert!(sch.delivery >= sch.expiry);
-            prop_assert!(sch.delivery >= sch.spot);
             prop_assert!(cal.is_business_day(sch.spot));
             prop_assert!(cal.is_business_day(sch.expiry));
             prop_assert!(cal.is_business_day(sch.delivery));
+            // Vol-anchor is the horizon iff pre-spot, else spot. (For a broken
+            // date that resolves before spot the spot-anchored vol-time can be
+            // non-positive; that is the explicit-date caller's responsibility,
+            // and the standard ladder/short-end never produce it — see the
+            // dedicated short-end vol-time test.)
+            prop_assert_eq!(sch.vol_anchor == sch.horizon, is_pre_spot(t));
         }
 
         /// Delivery is exactly `spot_lag` business days after expiry — the same
         /// rule that maps horizon→spot.
         #[test]
         fn delivery_uses_same_lag_as_spot(p in arb_pair(), h in arb_date(), t in arb_tenor()) {
-            let sch = schedule(p, h, t);
+            let sch = schedule(p, h, t).expect("arb_tenor only yields resolvable tenors");
             let cal = calendar_for(p);
             let recomputed = cal.add_business_days(sch.expiry, spot_lag_days(p));
             prop_assert_eq!(delivery_date(p, sch.expiry), recomputed);
@@ -147,13 +194,19 @@ mod proptests {
             prop_assert_eq!(spot_lag_days(p), spot_lag_days(flipped));
         }
 
-        /// Expiry for any tenor lands on a good business day.
+        /// Expiry for any tenor lands on a good business day, and respects the
+        /// pre-spot vs on/after-spot ordering of its tenor class.
         #[test]
         fn expiry_is_business_day(p in arb_pair(), h in arb_date(), t in arb_tenor()) {
             let spot = spot_date(p, h);
-            let exp = expiry_for_tenor(p, spot, t);
+            let exp = expiry_for_tenor(p, h, spot, t)
+                .expect("arb_tenor only yields resolvable tenors");
             prop_assert!(calendar_for(p).is_business_day(exp));
-            prop_assert!(exp >= spot);
+            if is_pre_spot(t) {
+                prop_assert!(exp > h);
+            } else if !is_unordered_vs_spot(t) {
+                prop_assert!(exp >= spot);
+            }
         }
     }
 }

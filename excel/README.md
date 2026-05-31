@@ -20,16 +20,25 @@ commercial add-in SDK).
 |---|---|---|
 | `=CELNET.PRICE(pair, tenor, strikeOrDelta, callPut, notional)` | scalar premium (two-way mid) | `request_quote` |
 | `=CELNET.GREEKS(pair, tenor, strikeOrDelta, callPut, notional)` | 13×2 spill `[name, value]` + convention footer | `request_quote` (Greeks) |
-| `=CELNET.SURFACE(pair, tenor)` | smile spill (delta pillars × vol) + arb/convention footer | `get_smile` |
+| `=CELNET.SURFACE(pair, tenor, [model])` | smile spill (delta pillars × vol) + arb/model/convention footer | `get_smile` |
+| `=CELNET.MARKSURFACE(pair, tenor, model, atmVol, rr25, bf25, [rr10], [bf10])` | calibrate a surface under a model (VV/SABR/SVI/SSVI); spill the calibrated smile + `surface_version`/model footer | `mark_surface` (`smile_model`) |
 | `=CELNET.RFQ(pair, tenor, strikeOrDelta, callPut, notional)` | 1×4 spill `[bid, offer, quoteId, validUntil]` + footer | `request_quote` |
 | `=CELNET.SUBSCRIBE(pair, tenor, strikeOrDelta, callPut, notional)` | **streaming** live two-way; re-ticks; stale-aware | `subscribe`/`update` (multiplexed) |
-| `=CELNET.MARK(pair, tenor, pillar, vol, [comment])` | status spill `[status, version, detail]` — **two-phase, idempotent**; commits via the task pane | `mark_surface` (on confirm) |
+| `=CELNET.SERIES(pair, observable, [tenor], [delta])` | **streaming** live market-observable trend (ATM/SPOT/RR/BF/FWD); re-ticks | `market_series_subscribe`/`…_point` (multiplexed) |
+| `=CELNET.MARK(pair, tenor, pillar, vol, [model], [comment])` | status spill `[status, version, detail]` — **two-phase, idempotent**; commits via the task pane | `mark_surface` (`smile_model`, on confirm) |
 
 `strikeOrDelta` accepts an absolute strike (`1.12`), a delta string (`25dP`,
-`10dC`), or `ATM`/`DNS`. `callPut` is `C`/`P`. `CELNET.MARK` never writes on a
-recalc: it **stages** under a deterministic idempotency key and the trader
-confirms in the task pane (or the server four-eyes it) — so a thousand recalcs
-produce at most one mark.
+`10dC`), or `ATM`/`DNS`. `callPut` is `C`/`P`. `model` accepts `VV` (market
+hedge / Vanna-Volga, the default), `SABR`, `SVI` or `SSVI` (the contract
+`smile_model` selector). `observable` accepts `ATM`, `SPOT`, `RR`, `BF`, `FWD`.
+`CELNET.MARK` never writes on a recalc: it **stages** under a deterministic
+idempotency key and the trader confirms in the task pane (or the server four-eyes
+it) — so a thousand recalcs produce at most one mark. `CELNET.MARKSURFACE` is the
+direct (non-staged) "re-mark under model X" action cell — it issues `mark_surface`
+on evaluation; the model the surface was calibrated under is echoed in the footer
+from the server's `model=<family>` provenance note (the frozen contract has no
+echo field). The model a surface was last marked under is read back by
+`CELNET.SURFACE(pair, tenor, model)` so a model mismatch is visible, never assumed.
 
 ### Streaming, staleness, and click-to-trade
 

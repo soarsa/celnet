@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Celnet for Excel — branded brochure render</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Anaheim:wght@400..800&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --brand:#ff7357;        /* Celer coral */
+    --brand-deep:#e85d42;
+    --accent:#6b6bf5;       /* indigo */
+    --navy:#1B1F2A;
+    --raised:#282C3E;
+    --muted:#979CB7;
+    --grid-line:#e3e6ef;
+    --grid-head:#f4f6fb;
+    --sel:#1f7a52;          /* Excel-ish selection green, tinted */
+    --spill:#3a6df0;
+    --pos:#1c8c5a;
+    --neg:#d2492f;
+    --ink:#1d2230;
+    --ink-soft:#5b6376;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{font-family:Anaheim, "Segoe UI", system-ui, sans-serif; color:var(--ink); background:#dfe3ee;}
+  .app{width:1680px; height:1000px; display:flex; flex-direction:column; overflow:hidden; background:#fff;}
+
+  /* ---- Title bar (Celer brand) ---- */
+  .titlebar{height:48px; background:var(--navy); display:flex; align-items:center; gap:14px; padding:0 18px; color:#fff;}
+  .mark{width:24px;height:24px;flex:0 0 auto}
+  .wordmark{font-weight:800; letter-spacing:.2px; font-size:18px}
+  .wordmark .light{font-weight:400; color:var(--muted); margin-left:8px; font-size:13px; letter-spacing:1.2px; text-transform:uppercase}
+  .filename{margin-left:6px; color:var(--muted); font-size:13px}
+  .titlebar .right{margin-left:auto; display:flex; align-items:center; gap:14px; color:var(--muted); font-size:12.5px}
+  .pill{display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:999px; background:rgba(28,140,90,.18); color:#5fe0a0; font-size:12px; font-weight:600}
+  .dot{width:7px;height:7px;border-radius:50%;background:#5fe0a0; box-shadow:0 0 0 3px rgba(95,224,160,.18)}
+
+  /* ---- Ribbon ---- */
+  .ribbon{height:40px; background:#fff; border-bottom:1px solid var(--grid-line); display:flex; align-items:stretch; gap:0; padding:0 6px; font-size:13px; color:var(--ink-soft)}
+  .rtab{display:flex; align-items:center; padding:0 16px; height:100%; position:relative}
+  .rtab.active{color:var(--brand); font-weight:700}
+  .rtab.active:after{content:""; position:absolute; left:8px; right:8px; bottom:0; height:3px; background:var(--brand); border-radius:3px 3px 0 0}
+  .rtab .cn{display:inline-flex; align-items:center; gap:7px}
+  .rtab .cn svg{width:15px;height:15px}
+
+  /* ---- Formula bar ---- */
+  .fbar{height:34px; display:flex; align-items:center; gap:0; border-bottom:1px solid var(--grid-line); font-size:13.5px}
+  .namebox{width:104px; height:100%; display:flex; align-items:center; padding:0 12px; border-right:1px solid var(--grid-line); color:var(--ink); font-weight:600; background:var(--grid-head)}
+  .fx{width:34px; text-align:center; color:var(--ink-soft); font-style:italic; border-right:1px solid var(--grid-line)}
+  .formula{flex:1; padding:0 14px; font-family:"SF Mono", ui-monospace, Menlo, monospace; font-size:13px; color:var(--ink)}
+  .formula .fn{color:var(--brand-deep); font-weight:700}
+  .formula .str{color:#1c8c5a}
+  .formula .num{color:#2f6df0}
+
+  /* ---- Body: grid + task pane ---- */
+  .body{flex:1; display:flex; min-height:0}
+  .sheetwrap{flex:1; overflow:hidden; position:relative; background:#fff}
+  table.grid{border-collapse:collapse; table-layout:fixed; width:100%; font-size:13px}
+  table.grid th, table.grid td{border:1px solid var(--grid-line); height:25px; padding:0 8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .colh, .rowh{background:var(--grid-head); color:var(--ink-soft); text-align:center; font-weight:600; font-size:11.5px}
+  .rowh{width:38px}
+  td.num{text-align:right; font-variant-numeric:tabular-nums; font-family:"SF Mono", ui-monospace, Menlo, monospace}
+  td.lbl{color:var(--ink-soft)}
+  .pos{color:var(--pos)} .neg{color:var(--neg)}
+  .section{font-weight:800; color:var(--brand-deep); letter-spacing:.3px}
+  .subhead{background:#fbfcff; color:var(--ink-soft); font-weight:700; font-size:11.5px; text-transform:uppercase; letter-spacing:.6px}
+  .spill{box-shadow:inset 0 0 0 1px rgba(58,109,240,.5)}
+  .spillcorner{position:relative}
+  .selected{box-shadow:inset 0 0 0 2px var(--sel)}
+  .convfoot{color:var(--muted); font-style:italic; font-size:11.5px}
+  .badge{display:inline-block; padding:1px 7px; border-radius:5px; font-size:11px; font-weight:700}
+  .badge.vv{background:rgba(107,107,245,.14); color:#5350c8}
+  .badge.arb{background:rgba(28,140,90,.14); color:#1c8c5a}
+  .live{color:var(--brand); font-weight:700}
+
+  /* ---- Task pane ---- */
+  .pane{width:360px; flex:0 0 360px; border-left:1px solid var(--grid-line); background:var(--navy); color:#eef0f6; padding:18px 18px 22px; overflow:hidden}
+  .pane h1{font-size:17px; font-weight:800; display:flex; align-items:center; gap:9px}
+  .pane h1 .tp-pill{margin-left:auto}
+  .card{background:var(--raised); border:1px solid rgba(255,255,255,.06); border-radius:12px; padding:14px 14px 16px; margin-top:14px}
+  .card h2{font-size:12px; letter-spacing:1.4px; text-transform:uppercase; color:var(--muted); font-weight:700; margin-bottom:10px}
+  .frow{display:grid; grid-template-columns:1fr 1fr; gap:9px 12px; margin-bottom:10px}
+  .field label{display:block; font-size:11px; color:var(--muted); margin-bottom:3px; letter-spacing:.4px}
+  .field .inp{background:#11141d; border:1px solid rgba(255,255,255,.08); border-radius:7px; height:30px; display:flex; align-items:center; padding:0 10px; font-size:13px; color:#fff; font-variant-numeric:tabular-nums}
+  .field .inp.sel{appearance:none; position:relative}
+  .field .inp.sel:after{content:"▾"; position:absolute; right:10px; color:var(--muted)}
+  .btn{height:34px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; font-weight:700; font-size:13px; border:none; cursor:default}
+  .btn.primary{background:var(--brand); color:#1b1f2a}
+  .btn.ghost{background:transparent; border:1px solid rgba(255,255,255,.16); color:var(--muted)}
+  .btnrow{display:flex; gap:9px; margin-top:4px}
+  .btnrow .btn{flex:1}
+  .two-way{display:flex; gap:9px; margin:10px 0 2px}
+  .qbox{flex:1; background:#11141d; border:1px solid rgba(255,255,255,.08); border-radius:8px; padding:8px 10px}
+  .qbox .k{font-size:10.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.6px}
+  .qbox .v{font-size:18px; font-weight:800; font-variant-numeric:tabular-nums; margin-top:2px}
+  .qbox.bid .v{color:#ff8d76} .qbox.offer .v{color:#7ce6ad}
+  .lastlook{margin-top:8px; font-size:11px; color:var(--muted)}
+  .lastlook b{color:#eef0f6}
+  .footnote{margin-top:13px; font-size:11px; color:var(--muted); line-height:1.5}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- title bar -->
+  <div class="titlebar">
+    <svg class="mark" viewBox="0 0 501 500" aria-hidden="true"><path fill="#ff7357" d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg>
+    <span class="wordmark">Celnet <span class="light">for Excel</span></span>
+    <span class="filename">EURUSD-vol-desk.xlsx — Celer Technologies</span>
+    <div class="right">
+      <span class="pill"><span class="dot"></span> add-in connected · ws mirror</span>
+      <span>surf v319 · libm core</span>
+    </div>
+  </div>
+
+  <!-- ribbon -->
+  <div class="ribbon">
+    <div class="rtab">File</div>
+    <div class="rtab">Home</div>
+    <div class="rtab">Insert</div>
+    <div class="rtab">Formulas</div>
+    <div class="rtab">Data</div>
+    <div class="rtab active"><span class="cn"><svg viewBox="0 0 501 500"><path fill="#ff7357" d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg>Celnet</span></div>
+    <div class="rtab">View</div>
+  </div>
+
+  <!-- formula bar: selected cell F8 -->
+  <div class="fbar">
+    <div class="namebox">F8</div>
+    <div class="fx">fx</div>
+    <div class="formula"><span class="fn">=CELNET.RFQ</span>(<span class="str">"EURUSD"</span>,<span class="str">"1M"</span>,<span class="str">"25dP"</span>,<span class="str">"P"</span>,<span class="num">10000000</span>)</div>
+  </div>
+
+  <!-- body -->
+  <div class="body">
+    <div class="sheetwrap">
+      <table class="grid">
+        <colgroup>
+          <col style="width:38px"><col style="width:150px"><col style="width:96px"><col style="width:96px"><col style="width:96px"><col style="width:120px"><col style="width:120px"><col style="width:120px"><col style="width:120px"><col style="width:150px"><col style="width:140px">
+        </colgroup>
+        <tr>
+          <th class="colh"></th><th class="colh">A</th><th class="colh">B</th><th class="colh">C</th><th class="colh">D</th><th class="colh">E</th><th class="colh">F</th><th class="colh">G</th><th class="colh">H</th><th class="colh">I</th><th class="colh">J</th>
+        </tr>
+        <!-- 1 -->
+        <tr><td class="rowh">1</td><td class="section" colspan="3">EUR/USD volatility desk</td><td></td><td></td><td class="convfoot" colspan="5">live · premium-adjusted spot Δ · NY 10:00 cut · prices = server libm core</td></tr>
+        <tr><td class="rowh">2</td><td colspan="10"></td></tr>
+        <!-- pricing block header -->
+        <tr><td class="rowh">3</td><td class="subhead">PRICING / RFQ</td><td class="subhead">Tenor</td><td class="subhead">Strike/Δ</td><td class="subhead">C/P</td><td class="subhead">Notional</td><td class="subhead">Premium</td><td class="subhead">Bid</td><td class="subhead">Offer</td><td class="subhead">Quote id</td><td class="subhead">Valid (ms)</td></tr>
+        <!-- 4: PRICE row -->
+        <tr><td class="rowh">4</td><td class="lbl">EUR/USD ATM straddle</td><td class="num">1M</td><td class="num">ATM</td><td class="num">—</td><td class="num">10,000,000</td><td class="num">0.026584</td><td class="num">0.023930</td><td class="num">0.029240</td><td class="num lbl">q-7af3</td><td class="num">142</td></tr>
+        <!-- 5 -->
+        <tr><td class="rowh">5</td><td class="lbl">EUR/USD 25Δ risk reversal</td><td class="num">1M</td><td class="num">25Δ</td><td class="num">RR</td><td class="num">10,000,000</td><td class="num neg">−0.000094</td><td class="num">0.000000</td><td class="num">0.000188</td><td class="num lbl">q-7af4</td><td class="num">138</td></tr>
+        <!-- 6 -->
+        <tr><td class="rowh">6</td><td class="lbl">GBP/USD 10Δ strangle</td><td class="num">2M</td><td class="num">10Δ</td><td class="num">STG</td><td class="num">10,000,000</td><td class="num">0.004460</td><td class="num">0.003560</td><td class="num">0.005360</td><td class="num lbl">q-7af5</td><td class="num">151</td></tr>
+        <tr><td class="rowh">7</td><td colspan="10"></td></tr>
+        <!-- 8: selected RFQ spill -->
+        <tr><td class="rowh">8</td><td class="lbl">EUR/USD 25Δ put <span class="convfoot">=CELNET.RFQ ↓ spill</span></td><td class="num">1M</td><td class="num">25dP</td><td class="num">P</td><td class="num">10,000,000</td><td class="num selected spill">0.008560</td><td class="num spill">0.008100</td><td class="num spill">0.009020</td><td class="num spill lbl">q-7af6</td><td class="num spill">250</td></tr>
+        <tr><td class="rowh">9</td><td class="convfoot" colspan="6">conv: premium-adj spot Δ · prem ccy USD · cut NY1000 · surf v319</td><td class="num convfoot" colspan="4">two-way · last-look token bound to line</td></tr>
+        <tr><td class="rowh">10</td><td colspan="10"></td></tr>
+
+        <!-- GREEKS spill -->
+        <tr><td class="rowh">11</td><td class="subhead">GREEKS — <span style="text-transform:none;color:var(--brand-deep)">=CELNET.GREEKS("EURUSD","1M","25dP","P",10000000)</span></td><td class="subhead">Value</td><td colspan="3" class="subhead">SURFACE — <span style="text-transform:none;color:var(--brand-deep)">=CELNET.SURFACE("EURUSD","1M")</span></td><td class="subhead" colspan="5"></td></tr>
+        <tr><td class="rowh">12</td><td class="lbl spill">Delta (spot, %adj)</td><td class="num spill neg">−0.2500</td><td class="lbl spill" colspan="0"></td>
+            <td class="subhead">Δ pillar</td><td class="subhead">10Δ P</td><td class="subhead">25Δ P</td><td class="subhead">ATM</td><td class="subhead">25Δ C</td><td class="subhead">10Δ C</td><td></td></tr>
+        <tr><td class="rowh">13</td><td class="lbl spill">Delta (fwd)</td><td class="num spill neg">−0.2517</td><td></td>
+            <td class="lbl spill">vol %</td><td class="num spill">9.25</td><td class="num spill">8.56</td><td class="num spill live">7.94</td><td class="num spill">7.99</td><td class="num spill">8.20</td><td></td></tr>
+        <tr><td class="rowh">14</td><td class="lbl spill">Gamma</td><td class="num spill pos">0.0412</td><td></td>
+            <td class="convfoot spill" colspan="6">VV broker-calibrated · <span class="badge arb">arb-free ✓</span> butterfly ≥ 0 · calendar ✓ · ATM 7.94 rr25 −0.57 bf25 0.34</td><td></td></tr>
+        <tr><td class="rowh">15</td><td class="lbl spill">Vega / vol-pt</td><td class="num spill pos">+11,402</td><td colspan="8"></td></tr>
+        <tr><td class="rowh">16</td><td class="lbl spill">Theta / day</td><td class="num spill neg">−431</td>
+            <td colspan="2"></td><td class="subhead" colspan="2">SERIES (live)</td><td class="subhead" colspan="2"></td><td colspan="2"></td></tr>
+        <tr><td class="rowh">17</td><td class="lbl spill">Vanna</td><td class="num spill pos">+0.0011</td>
+            <td colspan="2"></td><td class="lbl">ATM 1M <span class="convfoot">=CELNET.SERIES</span></td><td class="num live">7.94 ▲</td><td class="lbl">Spot</td><td class="num live">1.0768 ▲</td><td colspan="2"></td></tr>
+        <tr><td class="rowh">18</td><td class="lbl spill">Volga</td><td class="num spill pos">+0.0204</td>
+            <td colspan="2"></td><td class="lbl">RR 25Δ</td><td class="num live">−0.57 ▼</td><td class="lbl">BF 25Δ</td><td class="num live">+0.34 ▲</td><td colspan="2"></td></tr>
+        <tr><td class="rowh">19</td><td class="lbl spill">Charm</td><td class="num spill neg">−0.0163</td><td colspan="8"></td></tr>
+        <tr><td class="rowh">20</td><td class="lbl spill">Speed</td><td class="num spill">+0.0007</td><td colspan="8"></td></tr>
+        <tr><td class="rowh">21</td><td class="lbl spill">Zomma</td><td class="num spill">−0.0029</td><td colspan="8"></td></tr>
+        <tr><td class="rowh">22</td><td class="lbl spill">Color</td><td class="num spill">−0.0011</td><td colspan="8"></td></tr>
+        <tr><td class="rowh">23</td><td class="lbl spill">Rho dom</td><td class="num spill">+0.0186</td><td colspan="8"></td></tr>
+        <tr><td class="rowh">24</td><td class="lbl spill">Rho for</td><td class="num spill">−0.0205</td><td colspan="8"></td></tr>
+        <tr><td class="rowh">25</td><td class="convfoot spill">conv footer · premium-adj spot Δ · surf v319 · t=04:44Z</td><td class="spill"></td><td colspan="8"></td></tr>
+        <tr><td class="rowh">26</td><td colspan="10"></td></tr>
+      </table>
+    </div>
+
+    <!-- task pane -->
+    <aside class="pane">
+      <h1>
+        <svg class="mark" viewBox="0 0 501 500"><path fill="#ff7357" d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg>
+        Celnet Ticket <span class="tp-pill pill"><span class="dot"></span> connected</span>
+      </h1>
+
+      <div class="card">
+        <h2>RFQ</h2>
+        <div class="frow">
+          <div class="field"><label>Pair</label><div class="inp">EUR/USD</div></div>
+          <div class="field"><label>Tenor</label><div class="inp">1M</div></div>
+          <div class="field"><label>Strike / Δ</label><div class="inp">25dP</div></div>
+          <div class="field"><label>C / P</label><div class="inp">P</div></div>
+          <div class="field" style="grid-column:1 / span 2"><label>Notional (EUR)</label><div class="inp">10,000,000</div></div>
+        </div>
+        <div class="two-way">
+          <div class="qbox bid"><div class="k">Bid · hit (sell)</div><div class="v">0.00810</div></div>
+          <div class="qbox offer"><div class="k">Offer · lift (buy)</div><div class="v">0.00902</div></div>
+        </div>
+        <div class="lastlook">quote <b>q-7af6</b> · valid <b>250 ms</b> · token bound to line (keyed-MAC)</div>
+        <div class="btnrow">
+          <button class="btn primary">Trade BUY — lift offer</button>
+          <button class="btn ghost">Trade SELL — hit bid</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Contribute mark</h2>
+        <div class="frow">
+          <div class="field"><label>Pair</label><div class="inp">EUR/USD</div></div>
+          <div class="field"><label>Tenor</label><div class="inp">1M</div></div>
+          <div class="field"><label>Pillar</label><div class="inp">ATM</div></div>
+          <div class="field"><label>Vol %</label><div class="inp">7.94</div></div>
+          <div class="field" style="grid-column:1 / span 2"><label>Smile model</label><div class="inp sel">VV (market hedge)</div></div>
+        </div>
+        <div class="btnrow">
+          <button class="btn ghost">Stage</button>
+          <button class="btn primary">Confirm &amp; contribute</button>
+        </div>
+        <div class="footnote">Two-phase mark: Stage previews the calibrated, arb-checked smile; Confirm deposits a new <b>surface_version</b> the whole firm pins. Re-mark under SABR / SVI / SSVI from the same panel.</div>
+      </div>
+
+      <div class="footnote">Every cell and button shapes the one <b>celnet-proto</b> contract over the shared WS mirror — identical to the GUI, the SDK and the CLI. No pricing runs in Excel.</div>
+    </aside>
+  </div>
+</div>
+</body>
+</html>

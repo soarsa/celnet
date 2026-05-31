@@ -35,7 +35,9 @@ use std::time::Duration;
 use celnet_conventions::ConventionRecord;
 use celnet_engine::testing::make_state;
 use celnet_server::{Clock, CoreLink, Edge, SpreadModel};
-use celnet_surface::{MarketContext as SurfaceContext, MarketQuotes, build_smile};
+use celnet_surface::{
+    MarketContext as SurfaceContext, MarketQuotes, SmileModel, build_model_smile,
+};
 use celnet_types::{
     AtmConvention, CcyPair, Cut, DayCount, DeltaConvention, PremiumStyle, Settlement, Tenor,
 };
@@ -117,7 +119,8 @@ fn pre_mark_eurusd_1y(edge: &Edge) -> u64 {
     // Mild EURUSD-like skew (ATM 10.5%, 25Δ RR +1.5%, 25Δ BF 0.35%) — the same
     // quotes the engine fixture uses, so the marked smile is representative.
     let quotes = MarketQuotes::three_point(0.105, 0.015, 0.0035);
-    let smile = build_smile(&ctx, &quotes).expect("EURUSD 1Y smile calibrates");
+    let smile = build_model_smile(SmileModel::MarketHedge, &ctx, &quotes)
+        .expect("EURUSD 1Y smile calibrates");
     let forward = smile.forward();
 
     let book = edge.surface_book();

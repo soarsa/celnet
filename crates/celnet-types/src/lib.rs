@@ -152,17 +152,108 @@ impl fmt::Display for CcyPair {
     }
 }
 
-/// A standard FX-options tenor measured from the spot date.
+/// A civil (Gregorian) calendar date, as a self-contained POD triple.
+///
+/// `celnet-types` is the dependency-graph root and stays free of the `time`
+/// crate, so a *date-valued* tenor ([`Tenor::BrokenDate`]) carries its date as
+/// this small `Copy`/`Hash`/serializable triple. `celnet-calendar` converts it
+/// to a `time::Date` (validating it) when resolving the date chain; the wire
+/// (`celnet-proto`) mirrors it as three scalar fields. A broken date is an
+/// **explicit expiry date** — the odd/off-the-ladder expiry that, per
+/// `docs/TRADING-UNIVERSE-SCALE.md` §2.2, carries the *majority* of real FX
+/// flow — not a count of standard units.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct BrokenDate {
+    /// Gregorian year (e.g. 2026).
+    pub year: i32,
+    /// Month of year, 1 (January) .. 12 (December).
+    pub month: u8,
+    /// Day of month, 1 .. 31 (validated against the month on resolution).
+    pub day: u8,
+}
+
+impl BrokenDate {
+    /// Construct a broken date from its civil components. The range of `month`
+    /// and `day` is *not* validated here (no calendar knowledge at this layer);
+    /// `celnet-calendar` validates the triple against the Gregorian calendar
+    /// when it resolves the expiry, rejecting an impossible date rather than
+    /// silently clamping it.
+    #[must_use]
+    pub const fn new(year: i32, month: u8, day: u8) -> Self {
+        Self { year, month, day }
+    }
+}
+
+/// A standard FX-options tenor.
+///
+/// Most tenors are measured from the **spot** date (`Weeks`/`Months`/`Years`),
+/// but the short end is anchored on *today* (the trade/horizon date) and the
+/// off-the-ladder cases carry an explicit date or an exchange-defined date:
+///
+/// - [`Tenor::Overnight`] (ON), [`Tenor::TomNext`] (TN) and [`Tenor::SpotNext`]
+///   (SN) are the **pre-spot short end**, each anchored distinctly on the
+///   horizon→spot chain (see `celnet-calendar`'s `expiry_for_tenor`). ON is the
+///   next good business day after *today*; TN the one after that; SN the next
+///   good day after *spot*.
+/// - [`Tenor::Imm`] selects an **IMM expiry** (3rd Wednesday of Mar/Jun/Sep/Dec),
+///   the `n`-th such date strictly after today (`n = 1` ⇒ the next one).
+/// - [`Tenor::BrokenDate`] is an **explicit expiry date** (a broken/odd date) —
+///   the dominant real-flow case for FX (TRADING-UNIVERSE-SCALE §2.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Tenor {
-    /// Overnight (next business day).
+    /// Overnight (ON): the next good business day after **today** (the horizon),
+    /// i.e. a ~T+1 expiry. (This is the short end anchored on the horizon, *not*
+    /// on spot — resolving it relative to spot would wrongly push ON out to the
+    /// spot-next region.)
     Overnight,
-    /// `n` calendar weeks.
+    /// Tomorrow-next (TN): the good business day **after** the overnight date,
+    /// i.e. the day between the overnight and the spot leg.
+    TomNext,
+    /// Spot-next (SN): the next good business day **after the spot date**.
+    SpotNext,
+    /// `n` calendar weeks from spot.
     Weeks(u16),
-    /// `n` calendar months.
+    /// `n` calendar months from spot (end-of-month-aware).
     Months(u16),
-    /// `n` calendar years.
+    /// `n` calendar years from spot (end-of-month-aware).
     Years(u16),
+    /// The `n`-th IMM expiry strictly after today: the 3rd Wednesday of the next
+    /// March / June / September / December cycle (`n = 1` ⇒ the next IMM date;
+    /// `n = 2` ⇒ the one after, etc.). `n = 0` is invalid.
+    Imm(u8),
+    /// An explicit broken (odd) expiry **date**, resolved directly to that date
+    /// (validated, then roll-adjusted only if it falls on a non-business day).
+    BrokenDate(BrokenDate),
+}
+
+/// The smile/surface calibration model a mark or scenario is computed under.
+///
+/// This is the canonical, **vendor- and method-neutral** selector mirrored by
+/// `celnet-proto` (wire) and consumed by `celnet-surface`'s calibration. The
+/// names describe the *purpose* of each model (guardrail #8); the mathematical
+/// provenance of each (the vanna-volga market-hedge interpolation, the SABR
+/// stochastic-vol expansion, and the SVI / SSVI parametric families) lives in
+/// doc comments only, never in identifiers. The default selection (absent on the
+/// wire) preserves the current calibration behaviour ([`SmileModel::MarketHedge`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SmileModel {
+    /// Market-hedge interpolation off the broker pillars (the FX broker
+    /// baseline; vanna-volga method). The default.
+    MarketHedge,
+    /// Stochastic-volatility smile with arbitrage-free wing density (SABR method).
+    StochasticVol,
+    /// Single parametric total-variance slice (SVI method).
+    Parametric,
+    /// Surface-level parametric family, closed-form arbitrage-free (SSVI method).
+    ParametricSurface,
+}
+
+impl Default for SmileModel {
+    /// The default calibration is the market-hedge interpolation, preserving the
+    /// behaviour of a mark/scenario request that does not select a model.
+    fn default() -> Self {
+        Self::MarketHedge
+    }
 }
 
 /// Quoted delta convention for a `(pair, tenor)`.

@@ -21,11 +21,13 @@ import type {
   Cut,
   DayCount,
   DeltaConvention,
+  MarketObservable,
   OptionType,
   PremiumStyle,
   Settlement,
   ShockFactor,
   Side,
+  SmileModel,
   StrategyKind,
   StreamRejectReason,
   TenorUnit,
@@ -122,4 +124,26 @@ export const streamRejectReason = enumCodec<StreamRejectReason>([
   "EXPIRED",
   "UNKNOWN_TOKEN",
   "ALREADY_CONSUMED",
+]);
+
+/**
+ * `SmileModel` ↔ proto `SmileModel` (SMILE_MODEL_MARKET_HEDGE=0, …). The wire
+ * carries the proto enum number; the server's WS `mark_surface` decoder also
+ * accepts the `SMILE_MODEL_*` string name, but we always emit the canonical
+ * number so the projection is exact and reversible.
+ */
+export const smileModel = enumCodec<SmileModel>([
+  "MARKET_HEDGE",
+  "STOCHASTIC_VOL",
+  "PARAMETRIC",
+  "PARAMETRIC_SURFACE",
+]);
+
+/** `MarketObservable` ↔ proto `MarketObservable` (ATM_VOL=0, SPOT=1, RR=2, BF=3, FORWARD=4). */
+export const marketObservable = enumCodec<MarketObservable>([
+  "ATM_VOL",
+  "SPOT",
+  "RISK_REVERSAL",
+  "BUTTERFLY",
+  "FORWARD",
 ]);

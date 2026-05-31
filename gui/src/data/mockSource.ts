@@ -20,6 +20,7 @@ import type {
   Instrument,
   MarkedSurface,
   MarketContext,
+  MarketSeriesPoint,
   Quote,
   RiskBucketRequest,
   ScenarioPoint,
@@ -27,6 +28,7 @@ import type {
   ShockAxis,
   ShockFactor,
   Smile,
+  SmileModel,
   Snapshot,
   TradableToken,
   TwoWayPrice,
@@ -37,8 +39,10 @@ import { forward, priceInstrument, strikeFromDelta } from "./pricing";
 import { Rng } from "./rng";
 import { brokerLadder, DEFAULT_CONVENTIONS, PAIRS, type PairContext } from "./seed";
 import { calibrateSmile, markSurface } from "./surface";
+import { tenorYearsOf } from "../lib/trend";
 import type {
   CelnetTransport,
+  MarketSeriesParams,
   PriceResult,
   StreamEvent,
   StreamSession,
@@ -77,6 +81,24 @@ interface LiveSubscription {
   tokens: TradableToken[];
 }
 
+/** A live market-series subscription: a deterministic walk of one observable. */
+interface LiveSeries {
+  id: bigint;
+  params: MarketSeriesParams;
+  ctx: PairContext;
+  sequence: bigint;
+  /** Current value of the observable (its natural unit). */
+  value: number;
+  /** The mean-reversion anchor (the observable's central level). */
+  anchor: number;
+  /** Per-series volatility of the walk step (scaled to the observable). */
+  stepScale: number;
+  rng: Rng;
+  /** Frames until the next appended point (honours the throttle hint, coarsely). */
+  cadence: number;
+  countdown: number;
+}
+
 /**
  * The mock multiplexed stream session. One instance multiplexes many
  * subscriptions over a single ticking loop, exactly as the contract's single
@@ -84,6 +106,8 @@ interface LiveSubscription {
  */
 class MockStreamSession implements StreamSession {
   private readonly subs = new Map<bigint, LiveSubscription>();
+  /** Live market-series subscriptions (same id space as price streams). */
+  private readonly series = new Map<bigint, LiveSeries>();
   private readonly listeners = new Set<(e: StreamEvent) => void>();
   private nextSubId = 1n;
   private nextToken = 1n;
@@ -183,12 +207,111 @@ class MockStreamSession implements StreamSession {
     this.emit({ kind: "executed", executed });
   }
 
+  subscribeMarketSeries(params: MarketSeriesParams): bigint {
+    const id = this.nextSubId;
+    this.nextSubId += 1n;
+    const ctx = findPair(params.pair);
+    const { anchor, stepScale } = this.observableAnchor(ctx, params);
+    // A short deterministic history (oldest → newest) seeds the snapshot so the
+    // trend tile draws a line immediately rather than waiting for live points.
+    const rng = new Rng(this.seed ^ (id * 0x51ed_0b5en));
+    const HISTORY = Math.min(48, params.historyLimit && params.historyLimit > 0 ? params.historyLimit : 24);
+    let value = anchor;
+    const now = nowNanos();
+    const stepNanos = 1_000_000_000n; // 1s spacing for the seeded history
+    const points: MarketSeriesPoint[] = [];
+    let seq = 0n;
+    for (let i = HISTORY; i >= 1; i -= 1) {
+      seq += 1n;
+      value += 0.04 * (anchor - value) + stepScale * rng.normal();
+      points.push({
+        subscriptionId: id,
+        sequence: seq,
+        value,
+        epochNanos: now - BigInt(i) * stepNanos,
+      });
+    }
+    // The throttle hint coarsely maps to a frame cadence (>= 1 frame); a 0 hint
+    // appends every few frames so the line breathes without flooding.
+    const throttleMs = Number(params.throttleNanos ?? 0n) / 1_000_000;
+    const cadence = Math.max(1, Math.round(throttleMs / this.tickMs) || 3);
+    const live: LiveSeries = {
+      id,
+      params,
+      ctx,
+      sequence: seq,
+      value,
+      anchor,
+      stepScale,
+      rng,
+      cadence,
+      countdown: cadence,
+    };
+    this.series.set(id, live);
+    this.emit({
+      kind: "marketSeriesSnapshot",
+      snapshot: {
+        subscriptionId: id,
+        sequence: seq,
+        pair: params.pair,
+        observable: params.observable,
+        points,
+        epochNanos: now,
+      },
+    });
+    this.ensureRunning();
+    return id;
+  }
+
+  unsubscribeMarketSeries(subscriptionId: bigint): void {
+    this.series.delete(subscriptionId);
+    if (this.subs.size === 0 && this.series.size === 0 && this.timer !== undefined) {
+      clearInterval(this.timer);
+      this.timer = undefined;
+    }
+  }
+
+  /**
+   * The central level + step scale for an observable, derived from the pair's
+   * market state and broker ladder — NOT invented. ATM_VOL/RR/BF read the nearest
+   * broker tenor; SPOT reads the pair spot; FORWARD reads the outright forward at
+   * the tenor. The step scale is sized to the observable's natural unit so the
+   * walk moves realistically (a few vol-bps for vols, a few pips for rates).
+   */
+  private observableAnchor(
+    ctx: PairContext,
+    params: MarketSeriesParams,
+  ): { anchor: number; stepScale: number } {
+    const tenorYears = params.tenor ? tenorYearsOf(params.tenor) : 1 / 12;
+    const ladder = brokerLadder(ctx);
+    const nearest = ladder.reduce((best, q) =>
+      Math.abs(q.tenorYears - tenorYears) < Math.abs(best.tenorYears - tenorYears) ? q : best,
+    );
+    const wing10 = nearest.hasTenDelta && Math.abs(params.delta ?? 0.25) <= 0.18;
+    switch (params.observable) {
+      case "ATM_VOL":
+        return { anchor: nearest.atmVol, stepScale: 0.0006 };
+      case "RISK_REVERSAL":
+        return { anchor: wing10 ? nearest.rr10 : nearest.rr25, stepScale: 0.0004 };
+      case "BUTTERFLY":
+        return { anchor: wing10 ? nearest.bf10 : nearest.bf25, stepScale: 0.0003 };
+      case "SPOT":
+        return { anchor: ctx.market.spot, stepScale: ctx.market.spot * 0.0004 };
+      case "FORWARD":
+        return {
+          anchor: forward(ctx.market, tenorYears),
+          stepScale: ctx.market.spot * 0.0004,
+        };
+    }
+  }
+
   close(): void {
     if (this.timer !== undefined) {
       clearInterval(this.timer);
       this.timer = undefined;
     }
     this.subs.clear();
+    this.series.clear();
     this.listeners.clear();
   }
 
@@ -245,6 +368,27 @@ class MockStreamSession implements StreamSession {
 
   private tick(): void {
     this.frame += 1;
+    // Advance every live market series: a deterministic mean-reverting walk around
+    // the observable's anchor, appended at the series' cadence (throttle hint).
+    for (const s of this.series.values()) {
+      s.countdown -= 1;
+      if (s.countdown > 0) continue;
+      s.countdown = s.cadence;
+      s.value += 0.05 * (s.anchor - s.value) + s.stepScale * s.rng.normal();
+      if (s.params.observable === "ATM_VOL" || s.params.observable === "BUTTERFLY") {
+        s.value = Math.max(0.0001, s.value); // vols/flies stay positive
+      }
+      s.sequence += 1n;
+      this.emit({
+        kind: "marketSeriesPoint",
+        point: {
+          subscriptionId: s.id,
+          sequence: s.sequence,
+          value: s.value,
+          epochNanos: nowNanos(),
+        },
+      });
+    }
     for (const sub of this.subs.values()) {
       // Deterministic health cycling so the blotter shows honest seq/resync state.
       sub.healthTimer -= 1;
@@ -389,9 +533,17 @@ export class MockTransport implements CelnetTransport {
     pair: CcyPair,
     brokerQuotes: BrokerQuoteSet[],
     conventions: Conventions,
+    smileModel?: SmileModel,
   ): Promise<MarkedSurface> {
     this.surfaceVersion += 1n;
-    return markSurface(pair, brokerQuotes, conventions, this.surfaceVersion, nowNanos());
+    return markSurface(
+      pair,
+      brokerQuotes,
+      conventions,
+      this.surfaceVersion,
+      nowNanos(),
+      smileModel,
+    );
   }
 
   async scenario(

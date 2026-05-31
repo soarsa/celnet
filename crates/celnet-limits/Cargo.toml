@@ -1,0 +1,17 @@
+[package]
+name = "celnet-limits"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet limits / entitlements layer: a hierarchical limit tree (trader/book/desk/ccy-pair/entity) of greek, bucketed-vega, VaR, concentration, tenor-bucket and stop-loss limits, with first-class utilization, RAG escalation status, and pre/post-trade breach checks against a celnet-risk-cube node aggregate. Deterministic and pure: no IO, no market data."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+celnet-types.workspace = true
+celnet-risk-cube.workspace = true
+celnet-risk-normalize.workspace = true

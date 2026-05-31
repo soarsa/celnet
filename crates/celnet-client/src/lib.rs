@@ -38,11 +38,32 @@
 //! ## Surface & risk
 //!
 //! [`Client::get_smile`] / [`Client::mark_surface`] read and (re)mark the vol
-//! surface from broker ATM/RR/BF quotes with an arbitrage report; [`Client::price`]
-//! one-shot-prices an instrument; [`Client::scenario`] runs a spot/vol/rate shock
-//! grid; [`Client::scenario_with_risk`] additionally returns the book-shaped risk
-//! decomposition ([`BucketedRisk`]: bucketed vega + cross-gamma + theta roll) in one
-//! round-trip — each returning typed results a quant branches on directly.
+//! surface from broker ATM/RR/BF quotes with an arbitrage report;
+//! [`Client::mark_surface_with`] selects the calibration model ([`Calibration`] —
+//! market-hedge, stochastic-vol, or a parametric family), pinned by the returned
+//! `surface_version`, with the model used echoed in the smile's
+//! [`ArbReport::note`](crate::ArbReport). [`Client::price`] one-shot-prices an
+//! instrument; [`Client::scenario`] runs a spot/vol/rate shock grid (under a chosen
+//! model via [`Client::scenario_with_model`]); [`Client::scenario_with_risk`]
+//! additionally returns the book-shaped risk decomposition ([`BucketedRisk`]:
+//! bucketed vega + cross-gamma + theta roll) in one round-trip — each returning
+//! typed results a quant branches on directly.
+//!
+//! ## Market-series (TrendMode) feed
+//!
+//! [`StreamSession::subscribe_series`] opens a [`MarketSeries`] over the *same*
+//! multiplexed session: a typed stream of one labelled [`Observable`] (ATM vol,
+//! spot, a delta-wing risk reversal / butterfly, or the forward) seeded with an
+//! opening [`SeriesEvent::Snapshot`] then live [`SeriesEvent::Point`]s — the trend
+//! tile and its blotter share one connection.
+//!
+//! ## Who's-trading attribution
+//!
+//! A caller declares the requesting [`Seat`] / [`BookId`] via
+//! [`Rfq::with_attribution`] (RFQ) or [`StreamSession::subscribe_attributed`] (RFS);
+//! the server resolves the [`Attribution`] chain (the maker that quoted, the holder,
+//! the won/LP-count) and echoes it on the [`Quote`] / [`Execution`] / streamed
+//! snapshot so the blotter/Book stop being anonymous.
 //!
 //! # Transports
 //!
@@ -65,6 +86,7 @@
 mod error;
 mod idempotency;
 pub mod rfs;
+pub mod series;
 pub mod surface_vocab;
 pub mod vocab;
 
@@ -73,15 +95,16 @@ pub use rfs::{
     ClickExecution, ExecuteOutcome, RejectReason, StreamEvent, StreamLine, StreamSession,
     Subscription, TradableLine,
 };
+pub use series::{MarketSeries, Observable, SeriesEvent, SeriesPoint};
 pub use surface_vocab::{
     ArbReport, BrokerQuoteSet, BucketedRisk, CrossGammaTerm, MarkedSurface, MarketContext,
     RiskRequest, ScenarioGrid, ScenarioNode, ScenarioRisk, ShockAxis, ShockFactor, Smile,
     SmilePoint, VegaPillar,
 };
 pub use vocab::{
-    BarrierKind, BarrierSide, Conventions, DigitalStyle, Execution, InstrumentSpec, Leg,
-    PricedLine, Product, Quantity, Quote, RejectAck, Side, StrategyKind, StrikeSpec, TouchKind,
-    TwoWay,
+    Attribution, BarrierKind, BarrierSide, BookId, Calibration, Conventions, DigitalStyle,
+    Execution, InstrumentSpec, Leg, PricedLine, Product, Quantity, Quote, RejectAck, Seat, Side,
+    StrategyKind, StrikeSpec, TouchKind, TwoWay,
 };
 
 use celnet_proto::pricing_service_client::PricingServiceClient;
@@ -149,6 +172,7 @@ impl Client {
             idempotency_key: self.keys.next_key(),
             instrument,
             conventions,
+            attribution: None,
         }
     }
 
@@ -218,7 +242,9 @@ impl Client {
 
     /// Mark / recalibrate the surface for a pair from a set of per-tenor broker
     /// quote sets (ATM + 25Δ/10Δ RR/BF), returning the calibrated smiles + an
-    /// arbitrage report and a surface version.
+    /// arbitrage report and a surface version. Calibrates under the server's default
+    /// model ([`Calibration::MarketHedge`]); use [`Client::mark_surface_with`] to
+    /// select a different calibration.
     ///
     /// # Errors
     ///
@@ -229,11 +255,47 @@ impl Client {
         broker_quotes: &[BrokerQuoteSet],
         conventions: Conventions,
     ) -> ClientResult<MarkedSurface> {
+        self.mark_surface_impl(pair, broker_quotes, conventions, None)
+            .await
+    }
+
+    /// Mark / recalibrate the surface for a pair (as [`Client::mark_surface`]) under
+    /// an explicit calibration `model` — the market-hedge baseline, a
+    /// stochastic-vol fit, or a single/surface parametric family. The returned
+    /// [`MarkedSurface`] carries a fresh `surface_version` pinning the model-tagged
+    /// calibration; pin a later [`Client::price`] / [`Rfq`] / stream subscription to
+    /// that version to price reproducibly against this exact marked model, and read
+    /// the model the server used from each smile's [`crate::ArbReport::note`] (the
+    /// frozen contract has no echo field, so the note is the provenance channel).
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure or a malformed response.
+    pub async fn mark_surface_with(
+        &self,
+        pair: CcyPair,
+        broker_quotes: &[BrokerQuoteSet],
+        conventions: Conventions,
+        model: Calibration,
+    ) -> ClientResult<MarkedSurface> {
+        self.mark_surface_impl(pair, broker_quotes, conventions, Some(model))
+            .await
+    }
+
+    async fn mark_surface_impl(
+        &self,
+        pair: CcyPair,
+        broker_quotes: &[BrokerQuoteSet],
+        conventions: Conventions,
+        model: Option<Calibration>,
+    ) -> ClientResult<MarkedSurface> {
         let mut svc = SurfaceServiceClient::new(self.channel.clone());
         let request = MarkSurfaceRequest {
             pair: Some(celnet_proto::CcyPair::from(pair)),
             broker_quotes: broker_quotes.iter().map(|b| b.to_wire()).collect(),
             conventions: Some(conventions.to_wire()),
+            // Absent ⇒ the server default (market-hedge), preserving prior behaviour.
+            smile_model: model.map(vocab::calibration_to_wire),
         };
         let resp = svc.mark_surface(request).await?.into_inner();
         MarkedSurface::from_wire(resp)
@@ -252,6 +314,37 @@ impl Client {
         axes: &[ShockAxis],
         conventions: Conventions,
     ) -> ClientResult<ScenarioGrid> {
+        self.scenario_model(instrument, base_market, axes, conventions, None)
+            .await
+    }
+
+    /// Run a scenario / what-if grid (see [`Client::scenario`]) under an explicit
+    /// calibration `model`. The model is validated by the server; the grid is
+    /// repriced consistently under it.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure or a malformed response.
+    pub async fn scenario_with_model(
+        &self,
+        instrument: &InstrumentSpec,
+        base_market: MarketContext,
+        axes: &[ShockAxis],
+        conventions: Conventions,
+        model: Calibration,
+    ) -> ClientResult<ScenarioGrid> {
+        self.scenario_model(instrument, base_market, axes, conventions, Some(model))
+            .await
+    }
+
+    async fn scenario_model(
+        &self,
+        instrument: &InstrumentSpec,
+        base_market: MarketContext,
+        axes: &[ShockAxis],
+        conventions: Conventions,
+        model: Option<Calibration>,
+    ) -> ClientResult<ScenarioGrid> {
         let mut svc = SurfaceServiceClient::new(self.channel.clone());
         let request = ScenarioRequest {
             instrument: Some(instrument.to_wire()),
@@ -260,6 +353,7 @@ impl Client {
             axes: axes.iter().map(|a| a.to_wire()).collect(),
             expiry_years: instrument.expiry_years,
             risk_buckets: None,
+            smile_model: model.map(vocab::calibration_to_wire),
         };
         let resp = svc.scenario(request).await?.into_inner();
         ScenarioGrid::from_wire(resp)
@@ -297,6 +391,45 @@ impl Client {
         risk: &RiskRequest,
         conventions: Conventions,
     ) -> ClientResult<ScenarioRisk> {
+        self.scenario_with_risk_model(instrument, base_market, axes, risk, conventions, None)
+            .await
+    }
+
+    /// Run a scenario grid + book-shaped risk (see [`Client::scenario_with_risk`])
+    /// under an explicit calibration `model`.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure or a malformed response.
+    pub async fn scenario_with_risk_and_model(
+        &self,
+        instrument: &InstrumentSpec,
+        base_market: MarketContext,
+        axes: &[ShockAxis],
+        risk: &RiskRequest,
+        conventions: Conventions,
+        model: Calibration,
+    ) -> ClientResult<ScenarioRisk> {
+        self.scenario_with_risk_model(
+            instrument,
+            base_market,
+            axes,
+            risk,
+            conventions,
+            Some(model),
+        )
+        .await
+    }
+
+    async fn scenario_with_risk_model(
+        &self,
+        instrument: &InstrumentSpec,
+        base_market: MarketContext,
+        axes: &[ShockAxis],
+        risk: &RiskRequest,
+        conventions: Conventions,
+        model: Option<Calibration>,
+    ) -> ClientResult<ScenarioRisk> {
         let mut svc = SurfaceServiceClient::new(self.channel.clone());
         let request = ScenarioRequest {
             instrument: Some(instrument.to_wire()),
@@ -305,6 +438,7 @@ impl Client {
             axes: axes.iter().map(|a| a.to_wire()).collect(),
             expiry_years: instrument.expiry_years,
             risk_buckets: Some(risk.to_wire()),
+            smile_model: model.map(vocab::calibration_to_wire),
         };
         let resp = svc.scenario(request).await?.into_inner();
         ScenarioRisk::from_wire(resp)
@@ -323,6 +457,7 @@ pub struct Rfq {
     idempotency_key: String,
     instrument: InstrumentSpec,
     conventions: Conventions,
+    attribution: Option<Attribution>,
 }
 
 impl Rfq {
@@ -330,6 +465,17 @@ impl Rfq {
     #[must_use]
     pub fn idempotency_key(&self) -> &str {
         &self.idempotency_key
+    }
+
+    /// Declare the requesting book/seat this RFQ is sent on behalf of. The server
+    /// resolves the full who's-trading chain (the maker that prices the line, the
+    /// `held_by` once a trade books, the `won` flag, LP count) and echoes it on the
+    /// resulting [`Quote`] and [`Execution`]. Without this, the line is sent
+    /// unattributed and the server may still resolve the maker side.
+    #[must_use]
+    pub fn with_attribution(mut self, attribution: Attribution) -> Self {
+        self.attribution = Some(attribution);
+        self
     }
 
     /// Request the tradable two-way quote. Idempotent: a retry under this handle
@@ -346,6 +492,9 @@ impl Rfq {
             conventions: Some(self.conventions.to_wire()),
             correlation_id: None,
             surface_version: None,
+            // The requesting book/seat declared via `Rfq::with_attribution`; absent
+            // ⇒ unattributed. The server resolves the full chain it echoes back.
+            attribution: self.attribution.as_ref().map(Attribution::to_wire),
         };
         let resp = svc.request_quote(request).await?.into_inner();
         Quote::from_wire(resp)

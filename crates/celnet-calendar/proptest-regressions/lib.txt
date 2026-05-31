@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc bc85c3780ae5fade29725e50ea0b88042645852e65a925917f506ae53f8b0b4d # shrinks to p = CcyPair { base: Ccy([69, 85, 82]), quote: Ccy([85, 83, 68]) }, h = 2027-12-10, t = BrokenDate(BrokenDate { year: 2024, month: 1, day: 1 })
+cc 03b3ee8cb9a738c37c7b5fa6eab5635af75c922c27207a3c8666e7bff3ae47ad # shrinks to p = CcyPair { base: Ccy([69, 85, 82]), quote: Ccy([85, 83, 68]) }, h = 2024-01-01, t = TomNext
+cc 55b9bd2832a167d86ad48c4475610afc4798a04467f6d1c6d975651bed36af5c # shrinks to p = CcyPair { base: Ccy([69, 85, 82]), quote: Ccy([85, 83, 68]) }, h = 2033-12-20, t = Imm(1)

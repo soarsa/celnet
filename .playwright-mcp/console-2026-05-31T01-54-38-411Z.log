@@ -1,0 +1,9 @@
+[    4527ms] [INFO] [O11Y] [DatadogRUM] Initialized {service: claude-ai, env: production, version: 83c1aec1cb} @ https://assets-proxy.anthropic.com/claude-ai/v2/assets/v1/c2591c98b-DGnsSG91.js:0
+[    5950ms] [ERROR] Not signed in with the identity provider. @ https://claude.ai/login:0
+[    9297ms] [INFO] [O11Y] [DatadogRUM] Initialized {service: claude-ai, env: production, version: 83c1aec1cb} @ https://assets-proxy.anthropic.com/claude-ai/v2/assets/v1/c2591c98b-DGnsSG91.js:0
+[    9809ms] [ERROR] Not signed in with the identity provider. @ https://claude.ai/login:0
+[   12428ms] [ERROR] Cross-Origin-Opener-Policy policy would block the window.closed call. @ https://accounts.google.com/gsi/client:135
+[   12428ms] [ERROR] Cross-Origin-Opener-Policy policy would block the window.closed call. @ https://accounts.google.com/gsi/client:135
+[   29580ms] [ERROR] [GSI_LOGGER]: FedCM get() rejects with NetworkError: Error retrieving a token. @ https://assets-proxy.anthropic.com/claude-ai/v2/assets/v1/c2591c98b-DGnsSG91.js:0
+[   45652ms] [ERROR] Cross-Origin-Opener-Policy policy would block the window.closed call. @ https://accounts.google.com/gsi/client:135
+[   45652ms] [ERROR] Cross-Origin-Opener-Policy policy would block the window.closed call. @ https://accounts.google.com/gsi/client:135

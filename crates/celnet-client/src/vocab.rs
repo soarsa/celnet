@@ -17,10 +17,10 @@
 //! is assembled from the [`celnet_types`] convention enums with sensible
 //! market-standard defaults.
 
-use celnet_proto::{instrument, strike_or_delta};
+use celnet_proto::{instrument, owner, strike_or_delta};
 use celnet_types::{
     AtmConvention, CcyPair, Cut, DayCount, DeltaConvention, Greeks, OptionType, PremiumStyle,
-    Settlement, Tenor,
+    Settlement, SmileModel, Tenor,
 };
 
 use crate::error::{ClientError, ClientResult};
@@ -197,6 +197,164 @@ impl Side {
             celnet_proto::Side::TwoWay => Side::TwoWay,
         }
     }
+}
+
+/// The seat responsible for a quoted/traded line — a human trading seat or an
+/// automated pricer — the typed form of the wire [`celnet_proto::Owner`]. Modelled
+/// as a sum type so a who's-trading roll-up treats human and machine flow uniformly
+/// while still distinguishing them for governance.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Seat {
+    /// A human trading seat (a trader / desk-member identifier).
+    Trader(String),
+    /// An automated pricer (a pricer / strategy identifier) — auto-quoted flow.
+    AutoPricer(String),
+}
+
+impl Seat {
+    /// A human trading seat keyed by `id`.
+    pub fn trader(id: impl Into<String>) -> Self {
+        Seat::Trader(id.into())
+    }
+
+    /// An automated pricer keyed by `id`.
+    pub fn auto_pricer(id: impl Into<String>) -> Self {
+        Seat::AutoPricer(id.into())
+    }
+
+    fn to_wire(&self) -> celnet_proto::Owner {
+        let seat = match self {
+            Seat::Trader(id) => owner::Seat::Trader(id.clone()),
+            Seat::AutoPricer(id) => owner::Seat::AutoPricer(id.clone()),
+        };
+        celnet_proto::Owner { seat: Some(seat) }
+    }
+
+    fn from_wire(w: &celnet_proto::Owner) -> ClientResult<Self> {
+        match w.seat.as_ref() {
+            Some(owner::Seat::Trader(id)) => Ok(Seat::Trader(id.clone())),
+            Some(owner::Seat::AutoPricer(id)) => Ok(Seat::AutoPricer(id.clone())),
+            None => Err(ClientError::MissingField("Owner.seat")),
+        }
+    }
+}
+
+/// The book a quoted/traded line belongs to and the [`Seat`] that owns it — the
+/// typed form of the wire [`celnet_proto::BookId`]. This is the identity dimension
+/// the who's-trading risk roll-up keys on (a book is a cube dimension).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BookId {
+    /// The stable book identifier (desk/book key, e.g. `"EM-VOL-1"`).
+    pub book: String,
+    /// The seat that owns the book — a human trader or an auto-pricer.
+    pub owner: Seat,
+}
+
+impl BookId {
+    /// A book `book` owned by `owner`.
+    pub fn new(book: impl Into<String>, owner: Seat) -> Self {
+        Self {
+            book: book.into(),
+            owner,
+        }
+    }
+
+    fn to_wire(&self) -> celnet_proto::BookId {
+        celnet_proto::BookId {
+            book: self.book.clone(),
+            owner: Some(self.owner.to_wire()),
+        }
+    }
+
+    fn from_wire(w: &celnet_proto::BookId) -> ClientResult<Self> {
+        let owner = w
+            .owner
+            .as_ref()
+            .ok_or(ClientError::MissingField("BookId.owner"))
+            .and_then(Seat::from_wire)?;
+        Ok(Self {
+            book: w.book.clone(),
+            owner,
+        })
+    }
+}
+
+/// The who's-trading attribution chain carried alongside a quote/trade — the typed
+/// form of the wire [`celnet_proto::AttributionRecord`].
+///
+/// A caller sets `quoted_by` on an [`crate::Rfq`] request or a stream
+/// [`crate::StreamSession::subscribe`] to declare the requesting seat; the server
+/// resolves the full chain (the maker that priced the line in `quoted_by`, the
+/// requesting seat in `held_by` once a trade books, the `won` flag, and the
+/// LP-in-competition `lp_count`) and echoes it on the [`Quote`] / [`Execution`] /
+/// stream snapshot / fill so a blotter's attribution column has its identity. Every
+/// part beyond `quoted_by` is presence-tracked — absent until the server knows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Attribution {
+    /// The book/seat that quoted this line (priced and showed the market).
+    pub quoted_by: BookId,
+    /// The book/seat that holds the position once the trade books, if known.
+    pub held_by: Option<BookId>,
+    /// Whether this quote won the trade in competition, if the outcome is known
+    /// (`Some(true)` ⇒ this seat won; `Some(false)` ⇒ another LP won).
+    pub won: Option<bool>,
+    /// The number of liquidity providers in competition for this line, if reported
+    /// (`Some(1)` ⇒ sole quote).
+    pub lp_count: Option<u32>,
+}
+
+impl Attribution {
+    /// An attribution chain asserting only the requesting/quoting `seat` — the
+    /// minimal form a client supplies on a request to declare who it is trading on
+    /// behalf of. The server resolves the rest of the chain.
+    #[must_use]
+    pub fn quoted_by(quoted_by: BookId) -> Self {
+        Self {
+            quoted_by,
+            held_by: None,
+            won: None,
+            lp_count: None,
+        }
+    }
+
+    pub(crate) fn to_wire(&self) -> celnet_proto::AttributionRecord {
+        celnet_proto::AttributionRecord {
+            quoted_by: Some(self.quoted_by.to_wire()),
+            held_by: self.held_by.as_ref().map(BookId::to_wire),
+            won: self.won,
+            lp_count: self.lp_count,
+        }
+    }
+
+    pub(crate) fn from_wire(w: &celnet_proto::AttributionRecord) -> ClientResult<Self> {
+        let quoted_by = w
+            .quoted_by
+            .as_ref()
+            .ok_or(ClientError::MissingField("AttributionRecord.quoted_by"))
+            .and_then(BookId::from_wire)?;
+        let held_by = w.held_by.as_ref().map(BookId::from_wire).transpose()?;
+        Ok(Self {
+            quoted_by,
+            held_by,
+            won: w.won,
+            lp_count: w.lp_count,
+        })
+    }
+}
+
+/// The smile/surface calibration model a mark or scenario is computed under — the
+/// typed form of the wire [`celnet_proto::SmileModel`] (re-exporting
+/// [`celnet_types::SmileModel`]).
+///
+/// The names describe the *purpose* of each model, never a vendor or method
+/// (guardrail #8); the mathematical provenance lives in the doc comments. The
+/// default ([`Calibration::MarketHedge`]) preserves the server's current
+/// calibration behaviour when a request does not select a model.
+pub type Calibration = SmileModel;
+
+/// Encode a [`Calibration`] selector to its wire tag.
+pub(crate) fn calibration_to_wire(c: Calibration) -> i32 {
+    celnet_proto::SmileModel::from(c) as i32
 }
 
 /// One leg of a multi-leg strategy: a call/put at a strike spec, a side, and a
@@ -628,6 +786,13 @@ pub struct Quote {
     /// Last-look validity deadline, nanoseconds since the Unix epoch (UTC). An
     /// accept after this instant is rejected as expired.
     pub valid_until_nanos: i64,
+    /// The marked-surface version this quote was priced against, if the server
+    /// reported one (the requested pin, or the live mark it resolved).
+    pub surface_version: Option<u64>,
+    /// The who's-trading attribution chain the server resolved for this quote, if
+    /// any: who quoted it (the maker), and — once known — who holds/won it. Present
+    /// iff the server attributed the line.
+    pub attribution: Option<Attribution>,
 }
 
 impl Quote {
@@ -647,6 +812,11 @@ impl Quote {
             .as_ref()
             .ok_or(ClientError::MissingField("Quote.conventions"))
             .and_then(Conventions::from_wire)?;
+        let attribution = w
+            .attribution
+            .as_ref()
+            .map(Attribution::from_wire)
+            .transpose()?;
         Ok(Self {
             quote_id: w.quote_id,
             idempotency_key: w.idempotency_key,
@@ -656,13 +826,15 @@ impl Quote {
             resolved_strike: w.resolved_strike,
             epoch_nanos: w.epoch_nanos,
             valid_until_nanos: w.valid_until_nanos,
+            surface_version: w.surface_version,
+            attribution,
         })
     }
 }
 
 /// A booking confirmation produced by accepting a quote — the typed form of the
 /// wire `Execution`.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Execution {
     /// The server-assigned booking id.
     pub execution_id: u64,
@@ -674,6 +846,10 @@ pub struct Execution {
     pub traded_premium: f64,
     /// Booking time, nanoseconds since the Unix epoch (UTC).
     pub epoch_nanos: i64,
+    /// The who's-trading attribution chain the server resolved for this booked
+    /// trade, if any: who quoted it and who now holds it. Present iff the server
+    /// attributed the trade.
+    pub attribution: Option<Attribution>,
 }
 
 impl Execution {
@@ -686,12 +862,18 @@ impl Execution {
                     tag: w.side,
                 })
             })?;
+        let attribution = w
+            .attribution
+            .as_ref()
+            .map(Attribution::from_wire)
+            .transpose()?;
         Ok(Self {
             execution_id: w.execution_id,
             quote_id: w.quote_id,
             side,
             traded_premium: w.traded_premium,
             epoch_nanos: w.epoch_nanos,
+            attribution,
         })
     }
 }

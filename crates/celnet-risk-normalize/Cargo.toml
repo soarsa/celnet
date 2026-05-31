@@ -1,0 +1,20 @@
+[package]
+name = "celnet-risk-normalize"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet convention canonicalization + common-numeraire conversion: turns per-book FX-options risk in heterogeneous conventions into a convention-free canonical risk leaf, then expresses delta-by-ccy-leg and vega in a chosen reporting numeraire."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+celnet-types.workspace = true
+celnet-core.workspace = true
+celnet-vanilla.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

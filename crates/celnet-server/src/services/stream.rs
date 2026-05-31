@@ -68,6 +68,7 @@ use std::time::Duration;
 use celnet_proto::stream_service_server::StreamService;
 use celnet_proto::{
     ClientStreamMessage, Conventions, Execute, Executed, Heartbeat, Instrument, MarketContext,
+    MarketObservable, MarketSeriesPoint, MarketSeriesSnapshot, MarketSeriesSubscribe,
     ServerStreamMessage, Side, Snapshot, StreamEnd, StreamReject, SubscriptionId, TradableToken,
     TwoWayPrice, Update, client_stream_message, server_stream_message, stream_end, stream_reject,
 };
@@ -76,7 +77,7 @@ use tokio::sync::mpsc;
 use tonic::{Request, Response, Status, Streaming};
 
 use crate::clock::Clock;
-use crate::core_link::CoreLink;
+use crate::core_link::{CoreLink, Observable, ObservableQuery};
 use crate::pricer::{ConventionSet, Priced, price_instrument};
 use crate::readiness::ReadinessGate;
 use crate::services::pin::{PinnedVol, resolve_pinned_vol};
@@ -113,6 +114,31 @@ const STREAM_BUMP: f64 = 0.0005;
 /// nanoseconds (1 second — a tight last-look window appropriate for a live stream
 /// where a new sequence mints fresh tokens every few milliseconds).
 const TOKEN_VALIDITY_NANOS: i64 = 1_000_000_000;
+
+/// One live market-series (TrendMode) subscription: the observable it streams off
+/// the live market state, its conflation throttle, and the monotonic per-series
+/// sequence. The series shares the price-stream [`SubscriptionId`] space but is
+/// otherwise independent (it carries no tradable tokens — a market observable is
+/// information, not a dealable line).
+///
+/// The opening [`MarketSeriesSnapshot`] seeds a series from a single, freshly
+/// **observed** point off the live state; the platform retains no historical
+/// time-series store, so the feed does not (and must not) backfill fabricated
+/// history — every subsequent point is a genuine live observation appended by the
+/// tick loop. (A durable observation store that lets the snapshot replay a real
+/// recent window is a future enhancement, deliberately not faked here.)
+struct MarketSeries {
+    id: SubscriptionId,
+    /// The observable derived from the live state on each sample.
+    observable: Observable,
+    /// The minimum nanoseconds between appended points (client conflation hint);
+    /// `0` ⇒ a point every session tick.
+    throttle_nanos: i64,
+    /// The monotonic per-series sequence number last emitted.
+    sequence: u64,
+    /// The epoch-nanos timestamp of the last appended point (for throttling).
+    last_emit_nanos: i64,
+}
 
 /// The RFS streaming service over the [`CoreLink`], readiness gate, and the shared
 /// versioned marked-surface registry.
@@ -174,6 +200,10 @@ struct Subscription {
     surface_version: Option<u64>,
     /// The opening `Subscribe.correlation_id`, echoed on the first snapshot.
     correlation_id: Option<u64>,
+    /// The opening `Subscribe.attribution` (book/seat the line is shown to),
+    /// echoed on snapshots and resolved onto click-to-trade fills so the
+    /// who's-trading dimension is preserved. `None` ⇒ unattributed.
+    attribution: Option<celnet_proto::AttributionRecord>,
     /// The monotonic per-subscription sequence number last emitted.
     sequence: u64,
     /// The highest sequence actually handed to the client's channel (delivered,
@@ -407,6 +437,35 @@ fn decode_conv(w: &Conventions) -> Result<ConventionSet, Status> {
     ConventionSet::decode(w).map_err(|e| Status::invalid_argument(e.to_string()))
 }
 
+/// Decode a wire [`MarketObservable`] tag plus its optional delta into the
+/// core-link [`Observable`], enforcing the contract's presence rules: the wing
+/// observables (RR / BF) require a delta; the others (ATM vol / spot / forward) do
+/// not take one. A degenerate (non-positive, ≥ 1) delta wing is rejected.
+fn decode_observable(tag: i32, delta: Option<f64>) -> Result<Observable, Status> {
+    let wire = MarketObservable::try_from(tag)
+        .map_err(|_| Status::invalid_argument(format!("unknown MarketObservable tag {tag}")))?;
+    match wire {
+        MarketObservable::AtmVol => Ok(Observable::AtmVol),
+        MarketObservable::Spot => Ok(Observable::Spot),
+        MarketObservable::Forward => Ok(Observable::Forward),
+        MarketObservable::RiskReversal | MarketObservable::Butterfly => {
+            let d = delta.ok_or_else(|| {
+                Status::invalid_argument("a wing observable (RR/BF) requires a `delta`")
+            })?;
+            if !(d.abs() > 0.0 && d.abs() < 1.0) {
+                return Err(Status::invalid_argument(
+                    "wing `delta` must be a magnitude in (0, 1)",
+                ));
+            }
+            Ok(if wire == MarketObservable::RiskReversal {
+                Observable::RiskReversal { delta: d }
+            } else {
+                Observable::Butterfly { delta: d }
+            })
+        }
+    }
+}
+
 /// Mint the two click-to-trade tokens for a two-way line (SELL@bid, BUY@offer),
 /// register them as the subscription's live tokens (retiring any prior ones), and
 /// return the wire [`TradableToken`]s to stamp on the message. A bid floored at
@@ -501,6 +560,7 @@ fn make_snapshot(
             surface_version: sub.surface_version,
             correlation_id: sub.correlation_id,
             epoch_nanos: now,
+            attribution: sub.attribution.clone(),
         })),
     })
 }
@@ -594,6 +654,7 @@ impl StreamEdge {
     pub(crate) fn session_driver(&self) -> Session {
         Session {
             subs: HashMap::new(),
+            series: HashMap::new(),
             link: Arc::clone(&self.link),
             spread: self.spread,
             clock: self.clock.clone(),
@@ -640,10 +701,14 @@ pub(crate) async fn run_session<S>(
             }
             // ---- deterministic market tick → updates ---------------
             _ = ticker.tick() => {
-                if session.subs.is_empty() {
-                    continue;
+                // Price-stream updates (deterministic, sync, off the live read path).
+                if !session.subs.is_empty() && !session.drive_tick(&out_tx) {
+                    break; // channel closed: client gone.
                 }
-                if !session.drive_tick(&out_tx) {
+                // Market-series (TrendMode) points sampled off the *live* market
+                // state — an async read per due series, conflated by the client
+                // throttle, off the pinned hot core.
+                if !session.series.is_empty() && !session.drive_market_series(&out_tx).await {
                     break; // channel closed: client gone.
                 }
             }
@@ -654,6 +719,11 @@ pub(crate) async fn run_session<S>(
 /// The single-owner per-session state and the operations over it.
 pub(crate) struct Session {
     subs: HashMap<u64, Subscription>,
+    /// The live market-series (TrendMode) subscriptions multiplexed on this
+    /// session, keyed by their `SubscriptionId` (in the same id space as price
+    /// streams). Sampled off the live market state on each tick, conflated per the
+    /// client throttle.
+    series: HashMap<u64, MarketSeries>,
     link: Arc<CoreLink>,
     spread: SpreadModel,
     clock: Clock,
@@ -726,6 +796,15 @@ impl Session {
                 // are emitted by the tick loop. Nothing to do.
                 true
             }
+            client_stream_message::Message::MarketSeriesSubscribe(s) => {
+                self.handle_series_subscribe(s, out_tx).await
+            }
+            client_stream_message::Message::MarketSeriesUnsubscribe(u) => {
+                if let Some(id) = u.subscription {
+                    self.series.remove(&id.value);
+                }
+                true
+            }
         }
     }
 
@@ -768,6 +847,10 @@ impl Session {
             base_market: market,
             surface_version: pinned.echo_version,
             correlation_id: s.correlation_id,
+            // Stamp the who's-trading chain: the maker auto-pricer quotes the
+            // streamed line; the client's requesting seat (when supplied) holds a
+            // click-to-trade fill. So a streamed line and its fill are attributable.
+            attribution: Some(super::attribution::resolve(s.attribution.as_ref())),
             sequence: 1,
             delivered: 0,
             lagged: false,
@@ -910,7 +993,7 @@ impl Session {
             && let Some(prev) = sub.execute_idempotency.get(&e.idempotency_key)
         {
             let msg = ServerStreamMessage {
-                message: Some(server_stream_message::Message::Executed(*prev)),
+                message: Some(server_stream_message::Message::Executed(prev.clone())),
             };
             return out_tx.send(Ok(msg)).await.is_ok();
         }
@@ -963,10 +1046,13 @@ impl Session {
             traded_premium: live.premium,
             correlation_id: e.correlation_id,
             epoch_nanos: now,
+            // Resolve the fill's attribution from the subscription's chain so a
+            // click-to-trade fill feeds the who's-trading roll-up.
+            attribution: sub.attribution.clone(),
         };
         if !e.idempotency_key.is_empty() {
             sub.execute_idempotency
-                .insert(e.idempotency_key.clone(), executed);
+                .insert(e.idempotency_key.clone(), executed.clone());
         }
         let msg = ServerStreamMessage {
             message: Some(server_stream_message::Message::Executed(executed)),
@@ -1030,6 +1116,145 @@ impl Session {
                 return false;
             }
             sub.delivered = seq;
+        }
+        true
+    }
+
+    /// Open a market-series (TrendMode) subscription: validate the observable +
+    /// wing/tenor presence rules, read the opening value off the *live* market
+    /// state, and send a [`MarketSeriesSnapshot`] seeding the series (sequence 1)
+    /// with a single freshly-observed point. Subsequent points are appended by the
+    /// tick loop ([`Session::drive_market_series`]) as the live state moves.
+    async fn handle_series_subscribe(
+        &mut self,
+        s: MarketSeriesSubscribe,
+        out_tx: &mpsc::Sender<Result<ServerStreamMessage, Status>>,
+    ) -> bool {
+        let Some(id) = s.subscription else {
+            return true;
+        };
+        let Some(pair) = s.pair.clone() else {
+            let _ = out_tx
+                .send(Err(Status::invalid_argument(
+                    "market-series subscribe requires a `pair`",
+                )))
+                .await;
+            return true;
+        };
+        let observable = match decode_observable(s.observable, s.delta) {
+            Ok(o) => o,
+            Err(status) => {
+                let _ = out_tx.send(Err(status)).await;
+                return true;
+            }
+        };
+        // Read the opening value off the live state. A `None` (degenerate wing) is a
+        // hard subscribe error — better than opening a series that can never emit.
+        let value = match self.link.observe(ObservableQuery { observable }).await {
+            Ok(Some(v)) => v,
+            Ok(None) => {
+                let _ = out_tx
+                    .send(Err(Status::failed_precondition(
+                        "market observable not derivable from the live state (degenerate wing)",
+                    )))
+                    .await;
+                return true;
+            }
+            Err(e) => {
+                let _ = out_tx.send(Err(Status::unavailable(e.to_string()))).await;
+                return true;
+            }
+        };
+        let now = self.clock.now_nanos();
+        let first = MarketSeriesPoint {
+            subscription: Some(id),
+            sequence: 1,
+            value,
+            epoch_nanos: now,
+        };
+        let series = MarketSeries {
+            id,
+            observable,
+            throttle_nanos: s.throttle_nanos as i64,
+            sequence: 1,
+            last_emit_nanos: now,
+        };
+        let snapshot = ServerStreamMessage {
+            message: Some(server_stream_message::Message::MarketSeriesSnapshot(
+                MarketSeriesSnapshot {
+                    subscription: Some(id),
+                    sequence: 1,
+                    pair: Some(pair),
+                    observable: s.observable,
+                    points: vec![first],
+                    epoch_nanos: now,
+                },
+            )),
+        };
+        // Blocking send so the baseline snapshot is never dropped.
+        if out_tx.send(Ok(snapshot)).await.is_err() {
+            return false;
+        }
+        self.series.insert(id.value, series);
+        true
+    }
+
+    /// Sample every live market series off the current live market state and append
+    /// a fresh [`MarketSeriesPoint`] to each that is due (its conflation throttle has
+    /// elapsed). Returns `false` only when the channel has closed (client gone).
+    ///
+    /// The value is derived on the core thread from the same live state the hot
+    /// path prices against (never fabricated): one `observe` read per due series.
+    /// A lagging consumer drops a point via `try_send` (the next due sample carries
+    /// the then-current value), so a slow series never back-pressures the driver.
+    async fn drive_market_series(
+        &mut self,
+        out_tx: &mpsc::Sender<Result<ServerStreamMessage, Status>>,
+    ) -> bool {
+        if self.series.is_empty() {
+            return true;
+        }
+        let now = self.clock.now_nanos();
+        for series in self.series.values_mut() {
+            // Conflate: only sample when the throttle window has elapsed.
+            if series.throttle_nanos > 0 && now - series.last_emit_nanos < series.throttle_nanos {
+                continue;
+            }
+            let value = match self
+                .link
+                .observe(ObservableQuery {
+                    observable: series.observable,
+                })
+                .await
+            {
+                Ok(Some(v)) => v,
+                // A momentarily-underivable observable simply skips this sample
+                // rather than emitting a fabricated or stale point.
+                Ok(None) => continue,
+                Err(_) => return false, // core gone.
+            };
+            let seq = series.sequence + 1;
+            let point = MarketSeriesPoint {
+                subscription: Some(series.id),
+                sequence: seq,
+                value,
+                epoch_nanos: now,
+            };
+            let msg = ServerStreamMessage {
+                message: Some(server_stream_message::Message::MarketSeriesPoint(point)),
+            };
+            match out_tx.try_send(Ok(msg)) {
+                Ok(()) => {
+                    series.sequence = seq;
+                    series.last_emit_nanos = now;
+                }
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    // Lagged: drop this point (a market observable is conflatable;
+                    // the next due sample carries the then-current value). Never
+                    // back-pressure the driver.
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => return false,
+            }
         }
         true
     }
@@ -1152,6 +1377,7 @@ mod tests {
             tenor: Some(celnet_proto::Tenor {
                 unit: celnet_proto::tenor::Unit::Years as i32,
                 count: 1,
+                broken_date: None,
             }),
             expiry_years: 1.0,
             quantity: Some(celnet_proto::Quantity {
@@ -1195,6 +1421,7 @@ mod tests {
         );
         let mut session = Session {
             subs: HashMap::new(),
+            series: HashMap::new(),
             link,
             spread: SpreadModel::default(),
             clock: clock.clone(),
@@ -1209,6 +1436,7 @@ mod tests {
             base_market: market,
             surface_version: None,
             correlation_id: None,
+            attribution: None,
             sequence: 1,
             delivered: 1,
             lagged: false,

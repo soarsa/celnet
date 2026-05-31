@@ -35,18 +35,24 @@
 //! map clone of the resolved smile, so reads never serialize behind a mark.
 
 use std::collections::HashMap;
-use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
 
-use celnet_core::Smile as _;
-use celnet_surface::MarketHedgeSmile;
+use celnet_core::Smile;
+use celnet_surface::CalibratedSmile;
 
 /// One calibrated tenor slice deposited under a surface version: the smile plus
 /// the forward and vol-time it was calibrated at (needed to read its vol).
+///
+/// The smile is held as a model-tagged [`CalibratedSmile`] (behind an `Arc` so a
+/// pinned read clones a cheap handle, never the whole calibrated model), so a
+/// surface marked under *any* smile model — market-hedge / stochastic-vol /
+/// parametric / parametric-surface — resolves a pinned vol through the same trait
+/// call against the exact model the desk marked.
 #[derive(Debug, Clone)]
 struct MarkedSlice {
-    /// The calibrated market-hedge (Vanna-Volga) smile for this tenor.
-    smile: MarketHedgeSmile,
+    /// The calibrated smile (of the selected model) for this tenor.
+    smile: Arc<CalibratedSmile>,
     /// The outright forward the smile was calibrated against.
     forward: f64,
     /// The vol-time (year fraction) the slice was calibrated at.
@@ -71,10 +77,13 @@ impl MarkedPair {
             da.partial_cmp(&db).unwrap_or(core::cmp::Ordering::Equal)
         })?;
         Some(
-            slice
-                .smile
-                .implied_vol(strike, slice.forward, slice.tenor_years)
-                .0,
+            Smile::implied_vol(
+                slice.smile.as_ref(),
+                strike,
+                slice.forward,
+                slice.tenor_years,
+            )
+            .0,
         )
     }
 }
@@ -144,14 +153,14 @@ impl SurfaceBook {
         quote: &str,
         tenor_years: f64,
         forward: f64,
-        smile: MarketHedgeSmile,
+        smile: CalibratedSmile,
     ) {
         let key = pair_key(base, quote);
         let mut versions = self.versions.write().expect("surface book not poisoned");
         let v = versions.entry(version).or_default();
         let pair = v.pairs.entry(key).or_default();
         pair.slices.push(MarkedSlice {
-            smile,
+            smile: Arc::new(smile),
             forward,
             tenor_years,
         });
@@ -222,7 +231,7 @@ impl std::error::Error for PinError {}
 mod tests {
     use super::*;
     use celnet_conventions::ConventionRecord;
-    use celnet_surface::{MarketContext, MarketQuotes, build_smile};
+    use celnet_surface::{MarketContext, MarketQuotes, SmileModel, build_model_smile};
     use celnet_types::{AtmConvention, Cut, DayCount, DeltaConvention, PremiumStyle, Settlement};
 
     fn record() -> ConventionRecord {
@@ -238,10 +247,11 @@ mod tests {
         )
     }
 
-    fn marked_smile(tenor: f64) -> (MarketHedgeSmile, f64) {
+    fn marked_smile(tenor: f64) -> (CalibratedSmile, f64) {
         let ctx = MarketContext::new(1.10, 0.02, 0.01, tenor, record());
         let quotes = MarketQuotes::three_point(0.10, -0.004, 0.002);
-        let smile = build_smile(&ctx, &quotes).expect("smile calibrates");
+        let smile =
+            build_model_smile(SmileModel::MarketHedge, &ctx, &quotes).expect("smile calibrates");
         let forward = smile.forward();
         (smile, forward)
     }

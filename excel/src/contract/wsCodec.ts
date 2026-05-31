@@ -33,6 +33,8 @@ import type {
   Leg,
   MarkedSurface,
   MarketContext,
+  MarketSeriesPoint,
+  MarketSeriesSnapshot,
   Quote,
   ScenarioPoint,
   ScenarioResult,
@@ -331,6 +333,32 @@ export function streamRejectFromWire(o: WireObject): StreamReject {
   const corr = optBigInt(o, "correlation_id");
   if (corr !== undefined) r.correlationId = corr;
   return r;
+}
+
+// ---------------------------------------------------------------------------
+// market series (trend feed) — decode server frames
+// ---------------------------------------------------------------------------
+
+/** Decode one `market_series_point` body (also reused inside a snapshot). */
+export function marketSeriesPointFromWire(o: WireObject): MarketSeriesPoint {
+  return {
+    subscriptionId: subscriptionIdFromWire(o),
+    sequence: numToBigInt(o, "sequence"),
+    value: num(o, "value"),
+    epochNanos: numToBigInt(o, "epoch_nanos"),
+  };
+}
+
+/** Decode a `market_series_snapshot` body (baseline history + observable id). */
+export function marketSeriesSnapshotFromWire(o: WireObject): MarketSeriesSnapshot {
+  return {
+    subscriptionId: subscriptionIdFromWire(o),
+    sequence: numToBigInt(o, "sequence"),
+    pair: ccyPairFromWire(child(o, "pair")),
+    observable: e.marketObservable.fromWire(enumNum(o, "observable")),
+    points: array(o, "points").map(marketSeriesPointFromWire),
+    epochNanos: numToBigInt(o, "epoch_nanos"),
+  };
 }
 
 // ---------------------------------------------------------------------------

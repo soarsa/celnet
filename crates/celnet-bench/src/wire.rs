@@ -209,6 +209,7 @@ fn vanilla_call(strike: f64) -> Instrument {
         tenor: Some(Tenor {
             unit: tenor_mod::Unit::Years as i32,
             count: 1,
+            broken_date: None,
         }),
         expiry_years: 1.0,
         quantity: Some(Quantity {
@@ -313,6 +314,7 @@ pub async fn run_load(addr: SocketAddr, config: LoadConfig) -> Result<WireReport
                 throttle_nanos: 0,
                 correlation_id: None,
                 surface_version: None,
+                attribution: None,
             })),
         })
         .await
@@ -376,6 +378,7 @@ pub async fn run_load(addr: SocketAddr, config: LoadConfig) -> Result<WireReport
                     conventions: Some(wire_conventions()),
                     correlation_id: None,
                     surface_version: None,
+                    attribution: None,
                 };
                 let t0 = Instant::now();
                 let res =

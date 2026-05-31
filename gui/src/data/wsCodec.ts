@@ -18,6 +18,8 @@
 
 import type {
   ArbReport,
+  AttributionRecord,
+  BookId,
   BrokerQuoteSet,
   BucketedRisk,
   CcyPair,
@@ -30,6 +32,10 @@ import type {
   Leg,
   MarkedSurface,
   MarketContext,
+  MarketObservable,
+  MarketSeriesPoint,
+  MarketSeriesSnapshot,
+  Owner,
   Quote,
   RiskBucketRequest,
   ScenarioPoint,
@@ -37,11 +43,13 @@ import type {
   ShockAxis,
   Smile,
   SmilePoint,
+  SmileModel,
   Snapshot,
   Solve,
   StrategyKind,
   StreamReject,
   StrikeOrDelta,
+  Tenor,
   TradableToken,
   TwoWayPrice,
   Update,
@@ -273,10 +281,23 @@ function legToWire(leg: Leg): WireObject {
   };
 }
 
+/** Encode a `Tenor`, including the `broken_date` body for `BROKEN_DATE`. */
+export function tenorToWire(t: Tenor): WireObject {
+  const w: WireObject = { unit: e.tenorUnit.toWire(t.unit), count: t.count };
+  if (t.brokenDate) {
+    w["broken_date"] = {
+      year: t.brokenDate.year,
+      month: t.brokenDate.month,
+      day: t.brokenDate.day,
+    };
+  }
+  return w;
+}
+
 export function instrumentToWire(i: Instrument): WireObject {
   const base: WireObject = {
     pair: ccyPairToWire(i.pair),
-    tenor: { unit: e.tenorUnit.toWire(i.tenor.unit), count: i.tenor.count },
+    tenor: tenorToWire(i.tenor),
     expiry_years: i.expiryYears,
     quantity: { notional: i.quantity.notional, base_ccy: i.quantity.baseCcy },
     side: e.side.toWire(i.side),
@@ -357,6 +378,73 @@ function tradableVec(o: WireObject): TradableToken[] {
 }
 
 // ---------------------------------------------------------------------------
+// attribution (book / seat identity) — decode + encode
+// ---------------------------------------------------------------------------
+//
+// The contract's `AttributionRecord` uses camelCase keys on the wire mirror
+// (`quotedBy`/`heldBy`/`bookId`/`owner`/`trader`/`autoPricer`/`won`/`lpCount`) —
+// matching the server codec's `attribution_from_json`. Exactly one owner-seat arm
+// is set. Absent ⇒ `undefined`, so a consumer renders an honest "—" rather than a
+// fabricated seat.
+
+function ownerFromWire(o: WireObject): Owner | undefined {
+  const v = o["owner"];
+  if (!v || typeof v !== "object") return undefined;
+  const ow = v as WireObject;
+  if (typeof ow["trader"] === "string") return { kind: "trader", trader: ow["trader"] };
+  if (typeof ow["autoPricer"] === "string") {
+    return { kind: "autoPricer", autoPricer: ow["autoPricer"] };
+  }
+  return undefined;
+}
+
+function bookIdFromWire(o: WireObject, key: string): BookId | undefined {
+  const v = o[key];
+  if (!v || typeof v !== "object") return undefined;
+  const b = v as WireObject;
+  const id: BookId = { book: str(b, "book") };
+  const owner = ownerFromWire(b);
+  if (owner !== undefined) id.owner = owner;
+  return id;
+}
+
+/** Decode an optional `AttributionRecord` (`null`/absent ⇒ undefined). */
+export function attributionFromWire(o: WireObject): AttributionRecord | undefined {
+  const v = o["attribution"];
+  if (!v || typeof v !== "object") return undefined;
+  const a = v as WireObject;
+  const rec: AttributionRecord = {};
+  const quotedBy = bookIdFromWire(a, "quotedBy");
+  if (quotedBy !== undefined) rec.quotedBy = quotedBy;
+  const heldBy = bookIdFromWire(a, "heldBy");
+  if (heldBy !== undefined) rec.heldBy = heldBy;
+  if (typeof a["won"] === "boolean") rec.won = a["won"];
+  if (typeof a["lpCount"] === "number") rec.lpCount = a["lpCount"];
+  // Nothing decoded at all ⇒ treat as absent (honest empty-state, not `{}`).
+  return Object.keys(rec).length > 0 ? rec : undefined;
+}
+
+function ownerToWire(o: Owner): WireObject {
+  return o.kind === "trader" ? { trader: o.trader } : { autoPricer: o.autoPricer };
+}
+
+function bookIdToWire(b: BookId): WireObject {
+  const w: WireObject = { book: b.book };
+  if (b.owner) w["owner"] = ownerToWire(b.owner);
+  return w;
+}
+
+/** Encode an `AttributionRecord` (the requesting seat a client may stamp on a request). */
+export function attributionToWire(a: AttributionRecord): WireObject {
+  const w: WireObject = {};
+  if (a.quotedBy) w["quotedBy"] = bookIdToWire(a.quotedBy);
+  if (a.heldBy) w["heldBy"] = bookIdToWire(a.heldBy);
+  if (a.won !== undefined) w["won"] = a.won;
+  if (a.lpCount !== undefined) w["lpCount"] = a.lpCount;
+  return w;
+}
+
+// ---------------------------------------------------------------------------
 // RFQ / pricing — encode requests, decode replies
 // ---------------------------------------------------------------------------
 
@@ -375,19 +463,24 @@ export function quoteFromWire(o: WireObject): Quote {
   if (corr !== undefined) q.correlationId = corr;
   const surf = optBigInt(o, "surface_version");
   if (surf !== undefined) q.surfaceVersion = surf;
+  const attribution = attributionFromWire(o);
+  if (attribution !== undefined) q.attribution = attribution;
   return q;
 }
 
 export function executionFromWire(o: WireObject): Omit<Execution, "instrument"> {
   // The wire Execution carries no instrument echo; the caller pairs it with the
   // instrument it accepted from its own quote cache (mirrors the SDK).
-  return {
+  const ex: Omit<Execution, "instrument"> = {
     executionId: numToBigInt(o, "execution_id"),
     quoteId: numToBigInt(o, "quote_id"),
     side: e.side.fromWire(enumNum(o, "side")),
     tradedPremium: num(o, "traded_premium"),
     epochNanos: numToBigInt(o, "epoch_nanos"),
   };
+  const attribution = attributionFromWire(o);
+  if (attribution !== undefined) ex.attribution = attribution;
+  return ex;
 }
 
 // ---------------------------------------------------------------------------
@@ -415,6 +508,8 @@ export function snapshotFromWire(o: WireObject): Snapshot {
   if (surf !== undefined) s.surfaceVersion = surf;
   const corr = optBigInt(o, "correlation_id");
   if (corr !== undefined) s.correlationId = corr;
+  const attribution = attributionFromWire(o);
+  if (attribution !== undefined) s.attribution = attribution;
   return s;
 }
 
@@ -444,6 +539,8 @@ export function executedFromWire(o: WireObject): Executed {
   };
   const corr = optBigInt(o, "correlation_id");
   if (corr !== undefined) ex.correlationId = corr;
+  const attribution = attributionFromWire(o);
+  if (attribution !== undefined) ex.attribution = attribution;
   return ex;
 }
 
@@ -457,6 +554,62 @@ export function streamRejectFromWire(o: WireObject): StreamReject {
   const corr = optBigInt(o, "correlation_id");
   if (corr !== undefined) r.correlationId = corr;
   return r;
+}
+
+// ---------------------------------------------------------------------------
+// market-series feed — encode subscribe/unsubscribe, decode snapshot/point
+// ---------------------------------------------------------------------------
+//
+// The client→server frames mirror the server codec's `market_series_subscribe_from_json`
+// / `market_series_unsubscribe_from_json` (snake_case fields, numeric `observable`
+// tag, presence-tracked `tenor`/`delta`). The server→client frames are decoded from
+// the server codec's `market_series_snapshot_to_json` / `market_series_point_to_json`.
+
+/** Encode a `MarketSeriesSubscribe` control frame body (the `type`/`correlation` are added by the caller). */
+export function marketSeriesSubscribeToWire(args: {
+  subscriptionId: bigint;
+  pair: CcyPair;
+  observable: MarketObservable;
+  tenor?: Tenor;
+  delta?: number;
+  throttleNanos: bigint;
+  historyLimit: number;
+}): WireObject {
+  const w: WireObject = {
+    subscription: { value: Number(args.subscriptionId) },
+    pair: ccyPairToWire(args.pair),
+    observable: e.marketObservable.toWire(args.observable),
+    throttle_nanos: Number(args.throttleNanos),
+    history_limit: args.historyLimit,
+  };
+  if (args.tenor) w["tenor"] = tenorToWire(args.tenor);
+  if (args.delta !== undefined) w["delta"] = args.delta;
+  return w;
+}
+
+/** Encode a `MarketSeriesUnsubscribe` control frame body. */
+export function marketSeriesUnsubscribeToWire(subscriptionId: bigint): WireObject {
+  return { subscription: { value: Number(subscriptionId) } };
+}
+
+export function marketSeriesPointFromWire(o: WireObject): MarketSeriesPoint {
+  return {
+    subscriptionId: subscriptionIdFromWire(o),
+    sequence: numToBigInt(o, "sequence"),
+    value: num(o, "value"),
+    epochNanos: numToBigInt(o, "epoch_nanos"),
+  };
+}
+
+export function marketSeriesSnapshotFromWire(o: WireObject): MarketSeriesSnapshot {
+  return {
+    subscriptionId: subscriptionIdFromWire(o),
+    sequence: numToBigInt(o, "sequence"),
+    pair: ccyPairFromWire(child(o, "pair")),
+    observable: e.marketObservable.fromWire(enumNum(o, "observable")),
+    points: array(o, "points").map(marketSeriesPointFromWire),
+    epochNanos: numToBigInt(o, "epoch_nanos"),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -507,6 +660,15 @@ export function markedSurfaceFromWire(o: WireObject): MarkedSurface {
     smiles: array(o, "smiles").map(smileFromWire),
     epochNanos: numToBigInt(o, "epoch_nanos"),
   };
+}
+
+/**
+ * The proto enum tag for a `SmileModel`, for the optional `smile_model` field on
+ * `MarkSurfaceRequest`/`ScenarioRequest`. The server's `opt_smile_model` accepts
+ * the numeric tag (or the `SMILE_MODEL_*` name); we emit the numeric tag.
+ */
+export function smileModelToWire(m: SmileModel): number {
+  return e.smileModel.toWire(m);
 }
 
 export function brokerQuoteSetToWire(b: BrokerQuoteSet): WireObject {

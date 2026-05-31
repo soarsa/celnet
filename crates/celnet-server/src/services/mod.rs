@@ -24,5 +24,6 @@ pub mod quote;
 pub mod stream;
 pub mod surface;
 
+mod attribution;
 mod pin;
 mod stream_rx;

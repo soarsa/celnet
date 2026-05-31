@@ -30,10 +30,14 @@ import type {
   Conventions,
   Executed,
   Instrument,
+  MarketObservable,
+  MarketSeriesPoint,
+  MarketSeriesSnapshot,
   Quote,
   Snapshot,
   StreamHealth,
   StreamReject,
+  Tenor,
   Update,
 } from "../contract/contract";
 import {
@@ -42,6 +46,8 @@ import {
   executedFromWire,
   greeksFromWire,
   instrumentToWire,
+  marketSeriesPointFromWire,
+  marketSeriesSnapshotFromWire,
   marketToWire,
   quoteFromWire,
   snapshotFromWire,
@@ -49,6 +55,7 @@ import {
   updateFromWire,
   type WireObject,
 } from "../contract/wsCodec";
+import * as enums from "../contract/enums";
 import type { MarketContext } from "../contract/contract";
 import { WS_OPEN, type WebSocketFactory, type WebSocketLike } from "./socket";
 
@@ -104,7 +111,23 @@ export type StreamEvent =
       readonly kind: "health";
       readonly subscriptionId: bigint;
       readonly health: StreamHealth;
-    };
+    }
+  | { readonly kind: "series_snapshot"; readonly snapshot: MarketSeriesSnapshot }
+  | { readonly kind: "series_point"; readonly point: MarketSeriesPoint };
+
+/** The shape of a market-series subscription request (one observable time series). */
+export interface MarketSeriesRequest {
+  readonly pair: CcyPair;
+  readonly observable: MarketObservable;
+  /** The pillar tenor for tenor-dependent observables (ATM_VOL/RR/BF/FORWARD). */
+  readonly tenor?: Tenor;
+  /** The signed delta wing for the wing observables (RR/BF), e.g. 0.25. */
+  readonly delta?: number;
+  /** Minimum nanoseconds between appended points the client wants (0 = none). */
+  readonly throttleNanos?: bigint;
+  /** Max history points in the opening snapshot (0 ⇒ server default window). */
+  readonly historyLimit?: number;
+}
 
 /** A pending request/response waiter, keyed by its correlation id. */
 interface Waiter {
@@ -159,6 +182,8 @@ export class Connection {
   private readonly outbox: string[] = [];
 
   private readonly subs = new Map<bigint, Sub>();
+  /** Live market-series subscriptions (kept so a reconnect re-issues them). */
+  private readonly seriesSubs = new Map<bigint, MarketSeriesRequest>();
   private readonly listeners = new Set<(e: StreamEvent) => void>();
   private nextSubId = 1n;
   private readonly stateListeners = new Set<(open: boolean) => void>();
@@ -366,6 +391,44 @@ export class Connection {
   }
 
   /**
+   * Open a market-series subscription (one observable time series) on the single
+   * multiplexed session, in the same subscription-id space as price streams.
+   * Returns the client `SubscriptionId`; `series_snapshot` then `series_point`
+   * events arrive on the event listeners keyed by this id. Survives reconnect:
+   * the request is re-issued on a fresh socket like a price subscription.
+   */
+  subscribeSeries(req: MarketSeriesRequest): bigint {
+    const id = this.nextSubId++;
+    this.seriesSubs.set(id, req);
+    this.sendSeriesSubscribe(id, req);
+    return id;
+  }
+
+  private sendSeriesSubscribe(id: bigint, req: MarketSeriesRequest): void {
+    const frame: WireObject = {
+      type: "market_series_subscribe",
+      subscription: { value: Number(id) },
+      pair: ccyPairToWire(req.pair),
+      observable: enums.marketObservable.toWire(req.observable),
+      throttle_nanos: Number(req.throttleNanos ?? 0n),
+      history_limit: req.historyLimit ?? 0,
+    };
+    if (req.tenor) {
+      frame["tenor"] = { unit: enums.tenorUnit.toWire(req.tenor.unit), count: req.tenor.count };
+    }
+    if (req.delta !== undefined) frame["delta"] = req.delta;
+    this.send(frame);
+  }
+
+  unsubscribeSeries(subscriptionId: bigint): void {
+    if (!this.seriesSubs.delete(subscriptionId)) return;
+    this.send({
+      type: "market_series_unsubscribe",
+      subscription: { value: Number(subscriptionId) },
+    });
+  }
+
+  /**
    * On a fresh connection (initial open or post-drop), re-issue every live
    * subscription, then resync each from its last good sequence so the server
    * replays anything missed (or re-baselines with a fresh snapshot).
@@ -386,6 +449,10 @@ export class Connection {
       }
       this.setHealth(sub, "RESYNCING");
     }
+    // Re-open every live market-series subscription (the server re-baselines each
+    // with a fresh `series_snapshot`); no per-series sequence resync is needed —
+    // a series is a conflatable trend, so a fresh baseline is the recovery.
+    for (const [id, req] of this.seriesSubs) this.sendSeriesSubscribe(id, req);
   }
 
   /** Route an inbound RFS server frame (already typed by `dispatch`). */
@@ -469,6 +536,18 @@ export class Connection {
         }
         break;
       }
+      case "market_series_snapshot": {
+        const snapshot = marketSeriesSnapshotFromWire(frame);
+        if (!this.seriesSubs.has(snapshot.subscriptionId)) break;
+        this.emit({ kind: "series_snapshot", snapshot });
+        break;
+      }
+      case "market_series_point": {
+        const point = marketSeriesPointFromWire(frame);
+        if (!this.seriesSubs.has(point.subscriptionId)) break;
+        this.emit({ kind: "series_point", point });
+        break;
+      }
       default:
         break;
     }
@@ -532,6 +611,7 @@ export class Connection {
     }
     this.failAllWaiters(new TransportError("transport closed"));
     this.subs.clear();
+    this.seriesSubs.clear();
     this.listeners.clear();
     const ws = this.ws;
     this.ws = null;

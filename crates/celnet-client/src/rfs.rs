@@ -68,18 +68,19 @@ use std::task::{Context, Poll};
 
 use celnet_proto::stream_service_client::StreamServiceClient;
 use celnet_proto::{
-    ClientStreamMessage, Conventions as WireConventions, Execute, Instrument, Resync,
-    ServerStreamMessage, Subscribe, SubscriptionId, TradableToken, client_stream_message,
-    server_stream_message, stream_end, stream_reject,
+    ClientStreamMessage, Conventions as WireConventions, Execute, Instrument,
+    MarketSeriesSubscribe, Resync, ServerStreamMessage, Subscribe, SubscriptionId, TradableToken,
+    client_stream_message, server_stream_message, stream_end, stream_reject,
 };
-use celnet_types::Greeks;
+use celnet_types::{CcyPair, Greeks, Tenor};
 use futures_util::{Stream, StreamExt};
 use tokio::sync::{mpsc, oneshot};
 use tonic::transport::Channel;
 
 use crate::error::{ClientError, ClientResult};
 use crate::idempotency::KeyMinter;
-use crate::vocab::{Conventions, InstrumentSpec, Side, TwoWay};
+use crate::series::{MarketSeries, Observable, SeriesEvent, SeriesState, decode_snapshot};
+use crate::vocab::{Attribution, Conventions, InstrumentSpec, Side, TwoWay};
 
 /// The depth of each per-subscription SDK→caller event channel. A caller
 /// momentarily slower than its subscription buffers up to this many events before
@@ -166,6 +167,11 @@ pub enum StreamEvent {
         /// Echo of the opening correlation id, if one was supplied — a blotter joins
         /// this line to the subscribe request that opened it.
         correlation_id: Option<u64>,
+        /// The who's-trading attribution chain the server resolved for this streamed
+        /// line, if any: who quoted it (the maker) and the requesting seat. Echoed
+        /// from the opening `subscribe_attributed`, so a blotter's attribution
+        /// column has its identity. Present iff the server attributed the line.
+        attribution: Option<Attribution>,
     },
     /// An in-order sequenced delta advancing the subscription.
     Tick(StreamLine),
@@ -263,6 +269,12 @@ type ExecuteWaiters = Arc<Mutex<HashMap<u64, oneshot::Sender<ClientResult<Execut
 /// the demultiplexing driver.
 type Registry = Arc<Mutex<HashMap<u64, SubState>>>;
 
+/// The driver's market-series registry, shared with
+/// [`StreamSession::subscribe_series`] and the demultiplexing driver. Keyed by the
+/// series' subscription id (same id space as price subscriptions, never colliding —
+/// both mint from the session's one `next_sub_id`).
+type SeriesRegistry = Arc<Mutex<HashMap<u64, SeriesState>>>;
+
 /// A multiplexed RFS session: one bidirectional gRPC connection over which any
 /// number of typed [`Subscription`]s and their click-to-trade executes are carried.
 ///
@@ -283,6 +295,7 @@ pub struct StreamSession {
 struct SessionInner {
     control: mpsc::Sender<ClientStreamMessage>,
     registry: Registry,
+    series: SeriesRegistry,
     waiters: ExecuteWaiters,
     keys: KeyMinter,
     next_sub_id: AtomicU64,
@@ -305,6 +318,7 @@ impl StreamSession {
         let (relay_tx, relay_rx) = mpsc::channel::<ClientStreamMessage>(CONTROL_CHANNEL_DEPTH);
 
         let registry: Registry = Arc::new(Mutex::new(HashMap::new()));
+        let series: SeriesRegistry = Arc::new(Mutex::new(HashMap::new()));
         let waiters: ExecuteWaiters = Arc::new(Mutex::new(HashMap::new()));
 
         // Dial the first stream eagerly so a connection failure surfaces here, not on
@@ -317,12 +331,14 @@ impl StreamSession {
             relay_tx,
             inbound,
             registry: Arc::clone(&registry),
+            series: Arc::clone(&series),
             waiters: Arc::clone(&waiters),
         }));
 
         let inner = Arc::new(SessionInner {
             control: control_tx,
             registry,
+            series,
             waiters,
             keys,
             next_sub_id: AtomicU64::new(1),
@@ -344,6 +360,9 @@ impl StreamSession {
     /// pins the stream to a specific marked surface (the version a `mark_surface`
     /// returned) for reproducible streamed prices.
     ///
+    /// This is the unattributed form; use [`StreamSession::subscribe_attributed`] to
+    /// declare the requesting book/seat so click-to-trade fills are attributable.
+    ///
     /// # Errors
     ///
     /// [`ClientError::StreamClosed`] if the session's control channel has closed
@@ -355,9 +374,56 @@ impl StreamSession {
         correlation_id: Option<u64>,
         surface_version: Option<u64>,
     ) -> ClientResult<Subscription> {
+        self.subscribe_inner(
+            instrument,
+            conventions,
+            correlation_id,
+            surface_version,
+            None,
+        )
+        .await
+    }
+
+    /// Open a subscription (as [`StreamSession::subscribe`]) declaring the requesting
+    /// book/seat in `attribution`. The server resolves the who's-trading chain
+    /// (the maker that prices the line, the requesting seat once it trades) and
+    /// echoes it on the subscription's snapshot and any click-to-trade fill, so a
+    /// blotter's attribution column has its identity (API-first parity with the
+    /// RFQ [`crate::Rfq::with_attribution`]).
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::StreamClosed`] if the session's control channel has closed.
+    pub async fn subscribe_attributed(
+        &self,
+        instrument: InstrumentSpec,
+        conventions: Conventions,
+        correlation_id: Option<u64>,
+        surface_version: Option<u64>,
+        attribution: Attribution,
+    ) -> ClientResult<Subscription> {
+        self.subscribe_inner(
+            instrument,
+            conventions,
+            correlation_id,
+            surface_version,
+            Some(attribution),
+        )
+        .await
+    }
+
+    async fn subscribe_inner(
+        &self,
+        instrument: InstrumentSpec,
+        conventions: Conventions,
+        correlation_id: Option<u64>,
+        surface_version: Option<u64>,
+        attribution: Option<Attribution>,
+    ) -> ClientResult<Subscription> {
         let sub_id = self.inner.next_sub_id.fetch_add(1, Ordering::Relaxed);
         let wire_instrument = instrument.to_wire();
         let wire_conv = conventions.to_wire();
+        let wire_attribution = attribution.as_ref().map(Attribution::to_wire);
 
         // The per-subscription SDK→caller event channel.
         let (event_tx, event_rx) = mpsc::channel::<ClientResult<StreamEvent>>(EVENT_CHANNEL_DEPTH);
@@ -377,6 +443,7 @@ impl StreamSession {
                     wire_conv,
                     correlation_id,
                     surface_version,
+                    wire_attribution.clone(),
                 ),
             );
 
@@ -388,6 +455,9 @@ impl StreamSession {
                 throttle_nanos: 0,
                 correlation_id,
                 surface_version,
+                // The requesting book/seat declared via `subscribe_attributed`;
+                // absent ⇒ unattributed. The server resolves + echoes the chain.
+                attribution: wire_attribution,
             })),
         };
         if self.inner.control.send(subscribe).await.is_err() {
@@ -404,6 +474,76 @@ impl StreamSession {
             rx: event_rx,
             inner: Arc::clone(&self.inner),
             conventions,
+        })
+    }
+
+    /// Open a market-series subscription on this session: a typed async
+    /// [`MarketSeries`] stream of one labelled observable (the TrendMode contract)
+    /// over the session's *same* connection, in the same subscription-id space as a
+    /// price subscription. The server seeds the series with an opening
+    /// [`SeriesEvent::Snapshot`] (recent history + the observable's identity) then
+    /// appends live [`SeriesEvent::Point`]s as its state ticks, conflated to
+    /// `throttle_nanos` (a client hint; `0` = no throttling). `history_limit` bounds
+    /// the opening snapshot's history (`0` ⇒ the server default window).
+    ///
+    /// `pair` names the currency pair; for a tenor-dependent observable (ATM vol /
+    /// RR / BF / forward) pass the pillar `tenor`, and for a wing observable
+    /// ([`Observable::RiskReversal`] / [`Observable::Butterfly`]) the wing delta
+    /// rides on the [`Observable`] itself.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::StreamClosed`] if the session's control channel has closed; a
+    /// server-side validation failure (e.g. a degenerate wing) surfaces as a
+    /// [`ClientError::Status`] event on the returned stream.
+    pub async fn subscribe_series(
+        &self,
+        pair: CcyPair,
+        observable: Observable,
+        tenor: Option<Tenor>,
+        throttle_nanos: u64,
+        history_limit: u32,
+    ) -> ClientResult<MarketSeries> {
+        let sub_id = self.inner.next_sub_id.fetch_add(1, Ordering::Relaxed);
+
+        // The per-series SDK→caller event channel.
+        let (event_tx, event_rx) = mpsc::channel::<ClientResult<SeriesEvent>>(EVENT_CHANNEL_DEPTH);
+
+        // Register before sending, so a snapshot/point can never race the
+        // registration.
+        self.inner
+            .series
+            .lock()
+            .expect("series registry poisoned")
+            .insert(sub_id, SeriesState { event_tx });
+
+        let subscribe = ClientStreamMessage {
+            message: Some(client_stream_message::Message::MarketSeriesSubscribe(
+                MarketSeriesSubscribe {
+                    subscription: Some(SubscriptionId { value: sub_id }),
+                    pair: Some(celnet_proto::CcyPair::from(pair)),
+                    observable: observable.wire_tag(),
+                    tenor: tenor.map(celnet_proto::Tenor::from),
+                    delta: observable.wing_delta(),
+                    throttle_nanos,
+                    history_limit,
+                },
+            )),
+        };
+        if self.inner.control.send(subscribe).await.is_err() {
+            self.inner
+                .series
+                .lock()
+                .expect("series registry poisoned")
+                .remove(&sub_id);
+            return Err(ClientError::StreamClosed);
+        }
+
+        Ok(MarketSeries {
+            sub_id,
+            rx: event_rx,
+            control: self.inner.control.clone(),
+            observable,
         })
     }
 }
@@ -531,6 +671,9 @@ struct SubState {
     conv: WireConventions,
     correlation_id: Option<u64>,
     surface_version: Option<u64>,
+    /// The requesting attribution to re-send verbatim on a drain-cutover
+    /// re-subscribe, so the reconnected line keeps its who's-trading identity.
+    attribution: Option<celnet_proto::AttributionRecord>,
     /// The last in-order sequence applied. 0 = no baseline yet.
     last_seq: u64,
 }
@@ -542,6 +685,7 @@ impl SubState {
         conv: WireConventions,
         correlation_id: Option<u64>,
         surface_version: Option<u64>,
+        attribution: Option<celnet_proto::AttributionRecord>,
     ) -> Self {
         Self {
             event_tx,
@@ -549,6 +693,7 @@ impl SubState {
             conv,
             correlation_id,
             surface_version,
+            attribution,
             last_seq: 0,
         }
     }
@@ -563,6 +708,7 @@ struct DriverCtx {
     relay_tx: mpsc::Sender<ClientStreamMessage>,
     inbound: tonic::Streaming<ServerStreamMessage>,
     registry: Registry,
+    series: SeriesRegistry,
     waiters: ExecuteWaiters,
 }
 
@@ -618,6 +764,7 @@ async fn drive_session(mut ctx: DriverCtx) {
                         if let SessionFlow::Reconnect = handle_frame(
                             payload,
                             &ctx.registry,
+                            &ctx.series,
                             &ctx.relay_tx,
                             &ctx.waiters,
                         )
@@ -629,6 +776,7 @@ async fn drive_session(mut ctx: DriverCtx) {
                     }
                     Some(Err(status)) => {
                         broadcast_error(&ctx.registry, &status);
+                        broadcast_series_error(&ctx.series, &status);
                         // Fail any in-flight click-to-trade so its `execute` future
                         // resolves with the transport status instead of hanging.
                         fail_all_waiters(&ctx.waiters, &ClientError::from(status));
@@ -660,6 +808,7 @@ enum SessionFlow {
 async fn handle_frame(
     payload: server_stream_message::Message,
     registry: &Registry,
+    series: &SeriesRegistry,
     relay: &mpsc::Sender<ClientStreamMessage>,
     waiters: &ExecuteWaiters,
 ) -> SessionFlow {
@@ -721,6 +870,56 @@ async fn handle_frame(
             );
             SessionFlow::Continue
         }
+        // Market-series feed frames (the TrendMode time-series): route by the
+        // series' SubscriptionId to the owning `MarketSeries` (a separate registry
+        // from price subscriptions; ids never collide). An unsolicited frame (no
+        // matching series) is dropped, not mis-routed.
+        server_stream_message::Message::MarketSeriesSnapshot(s) => {
+            let Some(sub_id) = s.subscription.map(|i| i.value) else {
+                return SessionFlow::Continue;
+            };
+            deliver_series(series, sub_id, decode_snapshot(&s)).await;
+            SessionFlow::Continue
+        }
+        server_stream_message::Message::MarketSeriesPoint(p) => {
+            let Some(sub_id) = p.subscription.map(|i| i.value) else {
+                return SessionFlow::Continue;
+            };
+            deliver_series(
+                series,
+                sub_id,
+                Ok(SeriesEvent::Point(crate::series::SeriesPoint::from_wire(
+                    &p,
+                ))),
+            )
+            .await;
+            SessionFlow::Continue
+        }
+    }
+}
+
+/// Send one event to a market series' caller channel. If the caller dropped the
+/// series (channel closed), forget it so the driver stops routing to it.
+async fn deliver_series(series: &SeriesRegistry, sub_id: u64, event: ClientResult<SeriesEvent>) {
+    let tx = {
+        let reg = series.lock().expect("series registry poisoned");
+        reg.get(&sub_id).map(|s| s.event_tx.clone())
+    };
+    if let Some(tx) = tx
+        && tx.send(event).await.is_err()
+    {
+        series
+            .lock()
+            .expect("series registry poisoned")
+            .remove(&sub_id);
+    }
+}
+
+/// Surface a session-level transport error to every live market series.
+fn broadcast_series_error(series: &SeriesRegistry, status: &tonic::Status) {
+    let reg = series.lock().expect("series registry poisoned");
+    for s in reg.values() {
+        let _ = s.event_tx.try_send(Err(ClientError::from(status.clone())));
     }
 }
 
@@ -740,12 +939,18 @@ fn snapshot_emit(sub: &mut SubState, s: celnet_proto::Snapshot) -> ClientResult<
         .as_ref()
         .ok_or(ClientError::MissingField("Snapshot.conventions"))
         .and_then(Conventions::from_wire)?;
+    let attribution = s
+        .attribution
+        .as_ref()
+        .map(Attribution::from_wire)
+        .transpose()?;
     sub.last_seq = s.sequence;
     Ok(StreamEvent::Snapshot {
         line,
         resolved_strike: s.resolved_strike,
         conventions,
         correlation_id: s.correlation_id,
+        attribution,
     })
 }
 
@@ -1013,6 +1218,7 @@ async fn reconnect_session(ctx: &mut DriverCtx) -> bool {
                         throttle_nanos: 0,
                         correlation_id: sub.correlation_id,
                         surface_version: sub.surface_version,
+                        attribution: sub.attribution.clone(),
                     })),
                 };
                 (id, msg)
@@ -1105,6 +1311,7 @@ mod tests {
             tx,
             Instrument::default(),
             WireConventions::default(),
+            None,
             None,
             None,
         );

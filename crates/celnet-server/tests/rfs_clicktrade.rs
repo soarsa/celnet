@@ -58,6 +58,7 @@ fn subscribe(sub_id: SubscriptionId, strike: f64) -> ClientStreamMessage {
             throttle_nanos: 0,
             correlation_id: Some(0x1234),
             surface_version: None,
+            attribution: None,
         })),
     }
 }
