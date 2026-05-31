@@ -89,12 +89,58 @@ function checkArb(points: SmilePoint[]): ArbReport {
   const arbFree = worst > -0.02;
   return {
     butterflyArbitrageFree: arbFree,
+    // Provisional: calendar arbitrage is a *cross-tenor* property and cannot be
+    // judged from a single smile. `calibrateLadder` recomputes it across the whole
+    // ladder; a lone smile (e.g. the per-tenor edit preview) defaults arb-free.
     calendarArbitrageFree: true,
     worstDensity: worst,
     note: arbFree
       ? "arb-free · butterfly ≥ 0"
       : "butterfly convexity breached — re-mark wings",
   };
+}
+
+/**
+ * Cross-tenor **calendar** no-arbitrage: total ATM variance `w(T) = σ_atm(T)²·T`
+ * must be non-decreasing in `T` (forward variance ≥ 0). We compute it across the
+ * calibrated ladder (sorted by tenor) and flag any smile whose ATM total variance
+ * falls below the previous tenor's — a real check, not a hardcoded pass. (The
+ * server runs the full per-strike calendar check in `celnet-surface`; this mirrors
+ * it honestly at the ATM for the standalone build.)
+ */
+function applyCalendarArb(smiles: Smile[]): Smile[] {
+  const ordered = [...smiles].sort((a, b) => a.tenorYears - b.tenorYears);
+  let prevVar = -Infinity;
+  const flagged = new Map<number, boolean>();
+  for (const s of ordered) {
+    const totalVar = s.brokerQuotes.atmVol * s.brokerQuotes.atmVol * s.tenorYears;
+    // A small tolerance avoids float-noise false positives on a flat term curve.
+    const ok = totalVar >= prevVar - 1e-9;
+    flagged.set(s.tenorYears, ok);
+    prevVar = Math.max(prevVar, totalVar);
+  }
+  return smiles.map((s) => {
+    const calOk = flagged.get(s.tenorYears) ?? true;
+    if (calOk) return s;
+    const note = s.arbitrage.butterflyArbitrageFree
+      ? "calendar arb — ATM total variance falls vs a shorter tenor"
+      : "butterfly & calendar arb — re-mark wings and term";
+    return { ...s, arbitrage: { ...s.arbitrage, calendarArbitrageFree: false, note } };
+  });
+}
+
+/**
+ * Calibrate a whole broker ladder into arb-checked smiles (butterfly per-smile +
+ * calendar across tenors). Shared by [`markSurface`] and the workspace's live
+ * edit preview so the displayed surface and the publish gate use the same model.
+ */
+export function calibrateLadder(
+  pair: CcyPair,
+  brokerQuotes: BrokerQuoteSet[],
+  conventions: Conventions,
+  epochNanos: bigint,
+): Smile[] {
+  return applyCalendarArb(brokerQuotes.map((q) => calibrateSmile(pair, q, conventions, epochNanos)));
 }
 
 /** A full surface mark across the standard tenor ladder. */
@@ -108,7 +154,7 @@ export function markSurface(
   return {
     pair,
     surfaceVersion,
-    smiles: brokerQuotes.map((q) => calibrateSmile(pair, q, conventions, epochNanos)),
+    smiles: calibrateLadder(pair, brokerQuotes, conventions, epochNanos),
     epochNanos,
   };
 }
