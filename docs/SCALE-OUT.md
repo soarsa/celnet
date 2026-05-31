@@ -13,19 +13,38 @@
 
 ## 0. Built today vs. designed (no overclaim)
 
-This doc describes the **target** distributed topology. The **single-shard substrate** that
-the fleet layer composes already exists and is validated; the **HRW partition map + stateless
-router primitives** (`celnet-router`) and the **cross-shard risk-aggregation algebra**
-(`celnet-risk-fleet`: partition by `(legal-entity, ccy-pair)` → shard-local roll-up →
-cross-shard additive merge + firm-level re-gather of non-additive measures, reconciled
-**fan-out == single-node**) are now **built and validated in-process**. What remains
-**designed, not yet built** is the **physical cross-node fleet plumbing**: the inter-DC
-transport that ships partial aggregates between machines, the Raft/Aeron-style replicated
-event log, and process-level hot-standby/failover/replay. No code performs *cross-node*
-routing, consensus, or live partition assignment over a network — `celnet-risk-fleet`'s
-shards are in-process logical shards (a local `Cube` standing in for a separate
-`celnet-engine` node) that exercise the reduction algebra exactly, with no sockets/RPC
-faking a live cluster. The honest split:
+This doc describes the **target** distributed topology. Most of it is now **built and
+validated**; what remains is cross-DC *hardening* and the durability tier. The split:
+
+- **Built — in-process algebra:** the HRW partition map + stateless router primitives
+  (`celnet-router`) and the cross-shard risk-aggregation algebra (`celnet-risk-fleet`:
+  partition by `(legal-entity, ccy-pair)` → shard-local roll-up → cross-shard additive
+  merge + firm-level re-gather of non-additive measures, reconciled **fan-out ==
+  single-node**).
+- **Built — configurable distributed serving (real gRPC, multi-process):** a single
+  **`FleetTopology`** knob (`celnet-risk-fleet`), bound at deploy time (`CELNET_FLEET_MODE`
+  / `CELNET_FLEET_BACKENDS`), selects **`InProcess` (the default — one process, byte-identical
+  to single-node)** or **`Distributed { endpoints }`**. In Distributed mode the
+  `celnet-server` edge is a **client of the same `RiskService` it serves** and federates
+  across **N backend `celnet-server` processes** over real gRPC: it **federates** RiskService
+  (additive summed in wire space — linear, exact, cheap; non-additive re-gathered over the
+  union of constituents and re-derived once) and **forwards** owned-pair Pricing/Quote/Surface
+  (and relays Stream) by health-aware HRW `route` to the owning backend. An unreachable
+  partition slice ⇒ `Status::unavailable` (never a silently-smaller firm number). Proven by an
+  integration test (multiple gRPC backends on ephemeral ports) **and a runnable OS-process
+  harness** (`cargo run -p celnet-server --example scale_harness`) that spawns real backend +
+  edge processes, drives every API capability through the edge, and holds the firm aggregate +
+  prices **invariant across node scale-up/scale-down** (3→4→2) — the stateless edge scales by
+  being repointed at the new fleet. No `celnet.proto` change (single current contract).
+- **Designed only / deferred (the cross-DC + durability tier, §12):** the inter-**datacenter**
+  transport *hardening* (TLS, the `io_uring`/DPDK datapath, the §11 latency **SLOs** — the
+  built federation proves *correctness + routing + churn + failover*, not the wire-latency
+  budgets, which need the real datapath + bench gates), the thin Raft/Aeron-style **replicated
+  event log** (fleet durability/replay — `celnet-journal` is a per-node WAL, not a replicated
+  log), **hot-standby pre-warm** with bounded failover, and the LMAX-disruptor SPMC fan-out
+  ring. These are drop-ins behind the now-built seam — no engine or contract change.
+
+The honest split, mechanism by mechanism:
 
 | Mechanism | Status in tree | Where |
 |---|---|---|
@@ -36,15 +55,21 @@ faking a live cluster. The honest split:
 | Blue-green **live-state handoff** over a hand-rolled little-endian codec | **Built** (not `rkyv`) | `celnet-engine` `handoff` |
 | Multi-source MD aggregation + divergence detection | **Built** | `celnet-integration` |
 | HRW/rendezvous **partition map** + stateless **router tier** primitives | **Built** | `celnet-router` (`map`/`key`/`hash`/`replica`/`backpressure`) |
-| **Cross-shard risk-aggregation algebra** (partition → shard-local roll-up → additive merge + firm re-gather; reconciled fan-out == single-node) | **Built** (in-process logical shards) | `celnet-risk-fleet` |
-| Physical **cross-node transport** (ship partial aggregates between machines) | **Designed only** | — (build-now, §12) |
-| Thin **Raft/Aeron-style replicated log** + hot-standby + replay | **Designed only** | — (build-now, §12) |
+| **Cross-shard risk-aggregation algebra** (partition → shard-local roll-up → additive merge + firm re-gather; reconciled fan-out == single-node) | **Built** | `celnet-risk-fleet` |
+| **Configurable fleet topology** (`InProcess` default / `Distributed{endpoints}`), deploy-time bound | **Built** | `celnet-risk-fleet` `FleetTopology`; `celnet-server` `Edge::start_on_with_topology` (`CELNET_FLEET_MODE`/`CELNET_FLEET_BACKENDS`) |
+| **Cross-node serving over real gRPC** — edge federates RiskService + forwards owned-pair Pricing/Quote/Surface across N backend processes; reconciled fan-out == single-node; `unavailable` on unreachable slice | **Built** (localhost multi-process; cross-DC hardening + latency SLOs deferred) | `celnet-server` `services/forward.rs`, `services/risk/federate.rs`; OS-process proof `examples/scale_harness.rs` |
+| Cross-**datacenter** transport **hardening** (TLS, `io_uring`/DPDK datapath, §11 latency SLOs) | **Designed only** | — (§12) |
+| Thin **Raft/Aeron-style replicated log** + hot-standby pre-warm + replay | **Designed only** | — (build-now, §12) |
 | In-proc **LMAX-disruptor SPMC** fan-out ring | **Designed only** (today: tokio broadcast) | — (build-now, §12) |
 | `SO_REUSEPORT` sharded accept + eBPF steering; `io_uring`/XDP tier | **Designed only** (readiness probe references the handoff intent) | — (build-now, §12) |
 | DPDK/RDMA multicast tier | **Deferred** (ADR-gated on measured bottleneck) | — (§12) |
 
-Everything below the §0 line is the **design**; treat "shard", "router", and "log" as the
-target topology, not deployed components.
+The **partition map, the cross-shard aggregation algebra, the configurable topology, and the
+cross-node gRPC serving/federation are now built** (see the rows above). What is still
+**design** below the §0 line is the **cross-DC hardening + durability tier**: the replicated
+log, hot-standby pre-warm, the kernel-bypass datapath, and the §11 latency SLOs. Treat "the
+replicated log" and the §11 latency numbers as target, not deployed; treat "shard / router /
+federation" as built (validated multi-process on localhost over real gRPC).
 
 ---
 

@@ -84,6 +84,24 @@ These three traits are the **only** things that vary by mode. The `DistributorEg
 concrete `PriceSink` adapter used whenever the sink is the Celer distributor — in Hybrid and
 Integrated, never in Standalone.
 
+### 1.1 Fleet topology — an orthogonal deploy-time knob (same bind-at-deploy pattern)
+
+Independent of which Celer mode is selected, Celnet's **horizontal-scale topology** is the same
+kind of deploy-time-bound seam (`docs/SCALE-OUT.md` §0). A single config knob —
+`celnet_risk_fleet::FleetTopology`, resolved at `Edge` boot from `CELNET_FLEET_MODE`
+(`in-process` | `distributed`) + `CELNET_FLEET_BACKENDS` — selects:
+
+| Topology | When | Behavior |
+|---|---|---|
+| **`InProcess`** (**default**) | single node holds the book (laptop, single-tenant, tests, and the common production case) | one process; the RiskService aggregates locally; **byte-identical to the single-node edge** — zero overhead, zero config. |
+| **`Distributed { endpoints }`** | the book exceeds one process / horizontal scale-out is wanted | the **stateless edge** is a *client of the same `RiskService` it serves*, federating across N backend `celnet-server` processes over real gRPC: **federates** risk (additive wire-merge + non-additive constituent re-gather, reconciled `fan-out == single-node`) and **forwards** owned-pair Pricing/Quote/Surface by health-aware HRW route; `unavailable` on an unreachable slice. |
+
+The engine, the wire contract, and every client are **mode-agnostic** (a client cannot tell which
+topology served it) — exactly the §1 invariant, one layer up. In-process is the safe default;
+out-of-process is opt-in for deployments where a single process is not enough. Cross-**DC**
+transport hardening, the replicated log, and hot-standby pre-warm remain the deferred tier
+(`docs/SCALE-OUT.md` §12).
+
 ---
 
 ## 2. Mode A — STANDALONE
