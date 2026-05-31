@@ -15,8 +15,9 @@ import { SurfaceWorkspace } from "../workspaces/SurfaceWorkspace";
 import { RiskWorkspace } from "../workspaces/RiskWorkspace";
 import { BookWorkspace } from "../workspaces/BookWorkspace";
 import { StatusRibbon } from "./StatusRibbon";
-import { CelerMark, CelerLockup } from "../components/CelerMark";
+import { CelerMark, CelnetWordmark } from "../components/CelerMark";
 import { PairStrip } from "../components/PairStrip";
+import { PairMenu } from "../components/PairMenu";
 import { PAIRS, strategyInstrument } from "../data/seed";
 import styles from "./Shell.module.css";
 
@@ -130,8 +131,8 @@ export function Shell(): React.ReactElement {
   return (
     <div className={styles.shell}>
       <aside className={styles.rail} aria-label="workspaces">
-        <div className={styles.brand} title="Celnet · a Celer product">
-          <CelerMark size={30} className={styles.mark} title="Celer" />
+        <div className={styles.brand} title="Celnet — a Celer Technologies product">
+          <CelerMark size={30} className={styles.mark} title="Celnet — a Celer Technologies product" />
         </div>
         <nav className={styles.nav}>
           {RAIL.map((r) => (
@@ -184,25 +185,11 @@ function TitleBar(): React.ReactElement {
   const app = useApp();
   return (
     <header className={styles.titleBar}>
-      <div className={styles.trafficLights} aria-hidden>
-        <span />
-        <span />
-        <span />
-      </div>
-      <CelerLockup size={22} className={styles.lockup} />
+      <CelnetWordmark className={styles.wordmark} />
       <span className={styles.divider} aria-hidden>
         ·
       </span>
-      <button
-        className={styles.pairSwitch}
-        onClick={() => app.setPaletteOpen(true)}
-        title="Switch pair (⌘P)"
-      >
-        <span className={`num ${styles.pair}`}>
-          {app.pairCtx.pair.base}/{app.pairCtx.pair.quote}
-        </span>
-        <span className={styles.caret}>▾</span>
-      </button>
+      <PairMenu />
       <button
         className={styles.search}
         onClick={() => app.setPaletteOpen(true)}
