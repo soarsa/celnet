@@ -120,6 +120,23 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-05-31 — **Firm-scale hierarchical risk REAL end-to-end (commit `4c42762`) — closes the
+  client-side-aggregation parity gap.** New **`RiskService`** in the one `celnet-proto` contract
+  (ListPositions/AggregateRisk/DrillRisk/LimitStatus): `RiskDimension`
+  firm→trader→book→desk→ccy-pair→location→entity, entitlement principal (**grant-all default** =
+  show-all-now, deny-wins), reporting numeraire, additive (per-ccy delta vector + vega ladder) +
+  non-additive (VaR/ES/FRTB-curvature, absent⇒not-evaluated) node tree, limits RAG. `celnet-server`
+  `services/risk` (live PositionStore over `celnet-risk-cube` + `-limits`, attribution interner;
+  entitlement-prune **before** roll-up → group_by/firm_aggregate → numeraire collapse → bump-and-revalue
+  non-additive) served over **gRPC + WS**. Clients in lockstep: **GUI Book/Risk consume the SERVER
+  aggregate — `portfolioRisk.ts` client-side loop DELETED**, scope drives group-by, Book→Risk drill,
+  Limits RAG panel, native-units caveat resolved; `celnet-client` 4 methods; Excel
+  `CELNET.POSITIONS/RISK/LIMITS`; docs reconciled. Proto reviewed via the new `protobuf` skill (enum
+  prefixes/field-numbering clean). Verified by hand: **`just check` 791** + `npm run build` + **Excel
+  e2e A–H** (H: FIRM roll-up == Σ book, USD, server-aggregated). **Still deferred (honest):** AAD/GPU
+  non-additive reval, cross-shard/HRW fleet tier. **Next frontier:** GUI scale views (virtualised
+  blotter, universe navigator, vol-cube pivot, broken-date/event ticket), then AAD/GPU, then cross-fleet.
+
 - 2026-05-31 — **Phase 1+2 DONE — contract capabilities + risk crates, full client parity (commit `c5985af`).**
   One canonical `celnet-proto` contract extended (no versioning): **SmileModel** selector (real fitted
   SABR/SVI/SSVI in `celnet-surface` via deterministic damped Gauss-Newton, no-arb-projected, alongside

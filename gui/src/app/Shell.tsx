@@ -18,6 +18,7 @@ import { StatusRibbon } from "./StatusRibbon";
 import { CelerMark, CelnetWordmark } from "../components/CelerMark";
 import { PairStrip } from "../components/PairStrip";
 import { PairMenu } from "../components/PairMenu";
+import { UniverseNavigator } from "../components/UniverseNavigator";
 import { ScopeBreadcrumb } from "../components/ScopeBreadcrumb";
 import { PAIRS, strategyInstrument } from "../data/seed";
 import styles from "./Shell.module.css";
@@ -56,6 +57,10 @@ export function Shell(): React.ReactElement {
       } else if (meta && e.key.toLowerCase() === "p") {
         e.preventDefault();
         app.setPaletteOpen(true);
+      } else if (meta && e.key.toLowerCase() === "b") {
+        // ⌘B — open the pair-universe navigator (browse the universe).
+        e.preventDefault();
+        app.setNavigatorOpen(true);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -77,6 +82,13 @@ export function Shell(): React.ReactElement {
       group: "Pair",
       run: () => app.setPair(p.pair),
     })),
+    {
+      id: "browse-pairs",
+      title: "Browse pair universe",
+      hint: "⌘B",
+      group: "Action",
+      run: () => app.setNavigatorOpen(true),
+    },
     {
       id: "mark-surface",
       title: "Mark surface",
@@ -202,6 +214,7 @@ export function Shell(): React.ReactElement {
         commands={commands}
         onClose={() => app.setPaletteOpen(false)}
       />
+      <UniverseNavigator />
     </div>
   );
 }
@@ -220,6 +233,17 @@ function TitleBar(): React.ReactElement {
         ·
       </span>
       <PairMenu />
+      <button
+        className={styles.navigatorBtn}
+        onClick={() => app.setNavigatorOpen(true)}
+        title="Browse the pair universe (⌘B)"
+        aria-label="browse the pair universe"
+      >
+        <span className={styles.navigatorGlyph} aria-hidden>
+          ⊞
+        </span>
+        <span className={styles.navigatorLabel}>Pairs</span>
+      </button>
       <button
         className={styles.search}
         onClick={() => app.setPaletteOpen(true)}

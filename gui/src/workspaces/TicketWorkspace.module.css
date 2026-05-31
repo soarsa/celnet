@@ -59,10 +59,102 @@
   font-family: var(--font-mono);
 }
 
+.expiryBlock {
+  padding: var(--space-4) var(--space-6) 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.expiryModeRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.expiryModeLabel {
+  font-family: var(--font-brand);
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+}
+.modeToggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg-inset);
+  border: var(--hairline);
+  border-radius: var(--r-full);
+}
+.modeTab {
+  height: 22px;
+  padding: 0 var(--space-3);
+  border-radius: var(--r-full);
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+  background: transparent;
+}
+.modeActive {
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-weight: var(--weight-emphasis);
+}
+
+.dateRow {
+  display: flex;
+  gap: var(--space-5);
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.dateResolve {
+  flex: 1 1 200px;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.resolveRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.resolveLabel {
+  font-family: var(--font-brand);
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+}
+.resolveVal {
+  font-size: var(--type-callout);
+  color: var(--text-primary);
+}
+.resolveNote {
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+  line-height: var(--type-body-lh);
+  margin: var(--space-1) 0 0;
+}
+.eventNote {
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+  line-height: var(--type-body-lh);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+  border-left: 2px solid var(--accent);
+  margin: 0;
+}
+.resolveEmpty {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+  line-height: var(--type-body-lh);
+  margin: 0;
+}
+
 .tenorRow {
   display: flex;
   gap: var(--space-2);
-  padding: var(--space-4) var(--space-6) 0;
   flex-wrap: wrap;
 }
 .tenorPill {

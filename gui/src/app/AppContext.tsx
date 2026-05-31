@@ -29,6 +29,7 @@ import {
   seedSubscriptions,
   type PairContext,
 } from "../data/seed";
+import { buildUniverse, pairId, type Universe } from "../lib/universe";
 import { useStreamSession, type StreamApi } from "../hooks/useStreamSession";
 
 export type WorkspaceId = "ticket" | "stream" | "surface" | "risk" | "book";
@@ -87,6 +88,26 @@ interface AppState {
   pairCtx: PairContext;
   setPair: (pair: CcyPair) => void;
   pairs: PairContext[];
+  /**
+   * The pair-universe model (registry-ready) over the CURRENT seeded pairs:
+   * classified into majors/crosses/EM buckets, grouped, and indexed for fuzzy
+   * search. Honest scope: today's pairs only — a future pair-universe registry
+   * (P1-10) feeds a larger list here with zero downstream rework.
+   */
+  universe: Universe;
+  /** The user's favourite pair ids (persisted in-memory for the session). */
+  favourites: ReadonlySet<string>;
+  /** Toggle a pair's favourite status (keyed by `pairId`). */
+  toggleFavourite: (pair: CcyPair) => void;
+  /**
+   * Recently-activated pair ids, most-recent first (driven by `setPair`).
+   * Bounded; the active pair is excluded from the head so "recents" means
+   * "where I was", not "where I am".
+   */
+  recents: readonly string[];
+  /** The pair-universe navigator overlay open state (toolbar-launched). */
+  navigatorOpen: boolean;
+  setNavigatorOpen: (open: boolean) => void;
   stream: StreamApi;
   surface: MarkedSurface | null;
   /**
@@ -142,6 +163,12 @@ export function AppProvider({ children }: { children: React.ReactNode }): React.
   const [workspace, setWorkspace] = useState<WorkspaceId>("stream");
   const [pairIndex, setPairIndex] = useState(0);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [navigatorOpen, setNavigatorOpen] = useState(false);
+  // Favourites + recents are persisted in-memory for the session (no fake
+  // backend store — an honest client-side preference until a server prefs
+  // service exists). `recents` is most-recent-first, excluding the active pair.
+  const [favourites, setFavourites] = useState<ReadonlySet<string>>(() => new Set());
+  const [recents, setRecents] = useState<readonly string[]>([]);
   const [surface, setSurface] = useState<MarkedSurface | null>(null);
   // The smile-calibration model the surface is marked under (default = the desk's
   // market-hedge construction; the server's default when the field is absent).
@@ -153,6 +180,9 @@ export function AppProvider({ children }: { children: React.ReactNode }): React.
   const [selected, setSelected] = useState<Selection | null>(null);
 
   const pairCtx = PAIRS[pairIndex]!;
+
+  // The registry-ready universe over the current seeded pairs (pure; memoized).
+  const universe = useMemo(() => buildUniverse(PAIRS), []);
 
   const seed = useMemo(
     () =>
@@ -236,7 +266,23 @@ export function AppProvider({ children }: { children: React.ReactNode }): React.
 
   const setPair = (pair: CcyPair) => {
     const idx = PAIRS.findIndex((p) => p.pair.base === pair.base && p.pair.quote === pair.quote);
-    if (idx >= 0) setPairIndex(idx);
+    if (idx < 0) return;
+    if (idx === pairIndex) return;
+    // Push the pair we are LEAVING onto recents (most-recent first, deduped,
+    // bounded to 6) so "recents" reflects navigation history.
+    const leaving = pairId(pairCtx.pair);
+    setRecents((prev) => [leaving, ...prev.filter((id) => id !== leaving)].slice(0, 6));
+    setPairIndex(idx);
+  };
+
+  const toggleFavourite = (pair: CcyPair) => {
+    const id = pairId(pair);
+    setFavourites((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
   const scope: ScopeContext = useMemo(
@@ -257,6 +303,12 @@ export function AppProvider({ children }: { children: React.ReactNode }): React.
     pairCtx,
     setPair,
     pairs: PAIRS,
+    universe,
+    favourites,
+    toggleFavourite,
+    recents,
+    navigatorOpen,
+    setNavigatorOpen,
     stream,
     surface,
     remarkSurface,

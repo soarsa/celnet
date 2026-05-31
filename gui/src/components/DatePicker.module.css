@@ -1,0 +1,86 @@
+.cal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 252px;
+  padding: var(--space-3);
+  background: var(--bg-inset);
+  border: var(--hairline);
+  border-radius: var(--r-md);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.monthLabel {
+  font-family: var(--font-brand);
+  font-size: var(--type-callout);
+  font-weight: var(--weight-emphasis);
+  color: var(--text-primary);
+}
+.nav {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-sm);
+  font-size: var(--type-headline);
+  color: var(--text-secondary);
+  background: var(--bg-base);
+  border: var(--hairline);
+}
+.nav:disabled {
+  opacity: 0.3;
+}
+
+.weekdays,
+.grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+.weekday {
+  text-align: center;
+  font-family: var(--font-brand);
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+}
+.pad {
+  height: 28px;
+}
+.day {
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-sm);
+  font-size: var(--type-caption);
+  color: var(--text-primary);
+  background: transparent;
+  transition: background 120ms ease, color 120ms ease;
+}
+.day:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+.day:disabled {
+  color: var(--text-tertiary);
+  opacity: 0.4;
+}
+.daySelected,
+.daySelected:hover {
+  background: var(--accent);
+  color: var(--bg-base);
+  font-weight: var(--weight-emphasis);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .day {
+    transition: none;
+  }
+}
