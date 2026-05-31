@@ -20,11 +20,16 @@ import { Button } from "../components/Button";
 import { ArbBanner } from "../components/ArbBanner";
 import { SurfaceMesh } from "../viz/SurfaceMesh";
 import { SmileChart } from "../viz/SmileChart";
-import { calibrateSmile } from "../data/surface";
+import { calibrateLadder } from "../data/surface";
 import { rampGradient } from "../viz/ramp";
 import { fmtVol, fmtVolPoint, fmtClock } from "../lib/format";
 import { nowNanos } from "../hooks/useClock";
 import styles from "./SurfaceWorkspace.module.css";
+
+/** The five editable broker handles, in display order. */
+type Handle = "atmVol" | "rr25" | "bf25" | "rr10" | "bf10";
+const HANDLES: Handle[] = ["atmVol", "rr25", "bf25", "rr10", "bf10"];
+const tkey = (t: number): string => t.toFixed(8);
 
 function tenorName(years: number): string {
   const days = Math.round(years * 365);
@@ -38,41 +43,67 @@ export function SurfaceWorkspace(): React.ReactElement {
   const app = useApp();
   const [selTenorYears, setSelTenorYears] = useState(30 / 365);
   const [selDelta, setSelDelta] = useState<number | null>(-0.25);
-  const [editAtm, setEditAtm] = useState<number | null>(null);
+  // Per-tenor working edits to the broker handles (ATM/RR/BF), keyed by tenor.
+  // These are the trader's *unpublished* marks; Publish transmits them through the
+  // same MarkSurface API the SDK/Excel use, and Reset discards them.
+  const [edits, setEdits] = useState<Record<string, Partial<BrokerQuoteSet>>>({});
 
   const surface = app.surface;
 
-  const selectedSmile = useMemo(() => {
+  // The working ladder = the published broker quotes with the trader's edits laid
+  // on top, per tenor. Recalibrated through the SAME model as a real mark
+  // (`calibrateLadder` = butterfly per-smile + calendar across tenors) so the live
+  // preview AND the publish gate agree with what the server will compute.
+  const preview = useMemo(() => {
     if (!surface) return null;
-    let best = surface.smiles[0];
+    const ladder: BrokerQuoteSet[] = surface.smiles.map((s) => ({
+      ...s.brokerQuotes,
+      ...edits[tkey(s.tenorYears)],
+    }));
+    const smiles = calibrateLadder(surface.pair, ladder, app.conventions, nowNanos());
+    return { ladder, smiles };
+  }, [surface, edits, app.conventions]);
+
+  const selectedSmile = useMemo(() => {
+    if (!preview) return null;
+    let best = preview.smiles[0];
     let bestD = Infinity;
-    for (const s of surface.smiles) {
+    for (const s of preview.smiles) {
       const d = Math.abs(s.tenorYears - selTenorYears);
       if (d < bestD) {
         bestD = d;
         best = s;
       }
     }
-    if (!best) return null;
-    // Apply a live ATM edit (re-calibrate that tenor) without mutating the mark.
-    if (editAtm !== null && Math.abs(best.tenorYears - selTenorYears) < 1e-9) {
-      const edited: BrokerQuoteSet = { ...best.brokerQuotes, atmVol: editAtm };
-      return calibrateSmile(best.pair, edited, best.conventions, nowNanos());
-    }
-    return best;
-  }, [surface, selTenorYears, editAtm]);
+    return best ?? null;
+  }, [preview, selTenorYears]);
 
-  if (!surface || !selectedSmile) {
+  if (!surface || !preview || !selectedSmile) {
     return <div className={styles.loading}>Marking surface…</div>;
   }
 
+  const dirty = Object.values(edits).some((e) => Object.keys(e).length > 0);
+  // Publish gate: the WHOLE surface must be arb-free (every tenor's butterfly AND
+  // the cross-tenor calendar check) — not just the selected smile's butterfly.
+  const surfaceArbFree = preview.smiles.every(
+    (s) => s.arbitrage.butterflyArbitrageFree && s.arbitrage.calendarArbitrageFree,
+  );
+  const previewSurface = { ...surface, smiles: preview.smiles };
   const arb = selectedSmile.arbitrage;
+  const nextVersion = (surface.surfaceVersion + 1n).toString();
+
+  const setHandle = (tenorYears: number, field: Handle, raw: string): void => {
+    const v = Number(raw);
+    if (!Number.isFinite(v)) return;
+    const k = tkey(tenorYears);
+    setEdits((prev) => ({ ...prev, [k]: { ...prev[k], [field]: v / 100 } }));
+  };
 
   return (
     <div className={styles.grid}>
       <Panel glyph="◷" title={`Surface · ${surface.pair.base}/${surface.pair.quote}`} className={styles.surfacePanel} noPadding>
         <div className={styles.meshHolder}>
-          <SurfaceMesh surface={surface} selected={{ tenorYears: selTenorYears, delta: selDelta ?? 0.5 }} />
+          <SurfaceMesh surface={previewSurface} selected={{ tenorYears: selTenorYears, delta: selDelta ?? 0.5 }} />
         </div>
         <div className={styles.smileHolder}>
           <SmileChart
@@ -98,34 +129,40 @@ export function SurfaceWorkspace(): React.ReactElement {
             <span>10RR</span>
             <span>10BF</span>
           </div>
-          {surface.smiles.map((s) => {
+          {preview.smiles.map((s) => {
             const active = Math.abs(s.tenorYears - selTenorYears) < 1e-9;
+            const q = s.brokerQuotes;
+            const edited = edits[tkey(s.tenorYears)] ?? {};
             return (
               <button
-                key={s.tenorYears}
+                key={tkey(s.tenorYears)}
                 className={`${styles.markRow} ${active ? styles.markActive : ""}`}
-                onClick={() => {
-                  setSelTenorYears(s.tenorYears);
-                  setEditAtm(null);
-                }}
+                onClick={() => setSelTenorYears(s.tenorYears)}
               >
                 <span className={styles.tenorCell}>{tenorName(s.tenorYears)}</span>
-                {active ? (
-                  <input
-                    className={`num ${styles.editCell}`}
-                    type="number"
-                    step={0.05}
-                    value={((editAtm ?? s.brokerQuotes.atmVol) * 100).toFixed(2)}
-                    onChange={(e) => setEditAtm(Number(e.target.value) / 100)}
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                ) : (
-                  <span className="num">{fmtVol(s.brokerQuotes.atmVol)}</span>
-                )}
-                <span className="num">{fmtVolPoint(s.brokerQuotes.rr25)}</span>
-                <span className="num">{fmtVolPoint(s.brokerQuotes.bf25)}</span>
-                <span className="num">{fmtVolPoint(s.brokerQuotes.rr10)}</span>
-                <span className="num">{fmtVolPoint(s.brokerQuotes.bf10)}</span>
+                {HANDLES.map((h) => {
+                  const val = q[h];
+                  const isEdited = edited[h] !== undefined;
+                  if (active) {
+                    return (
+                      <input
+                        key={h}
+                        className={`num ${styles.editCell} ${isEdited ? styles.editDirty : ""}`}
+                        type="number"
+                        step={h === "atmVol" ? 0.05 : 0.01}
+                        value={(val * 100).toFixed(2)}
+                        onChange={(e) => setHandle(s.tenorYears, h, e.target.value)}
+                        onClick={(e) => e.stopPropagation()}
+                        aria-label={`${tenorName(s.tenorYears)} ${h}`}
+                      />
+                    );
+                  }
+                  return (
+                    <span key={h} className={`num ${isEdited ? styles.cellDirty : ""}`}>
+                      {h === "atmVol" ? fmtVol(val) : fmtVolPoint(val)}
+                    </span>
+                  );
+                })}
               </button>
             );
           })}
@@ -140,14 +177,29 @@ export function SurfaceWorkspace(): React.ReactElement {
           <span className="num">{fmtClock(selectedSmile.epochNanos)}</span>
           <span className={styles.provDot}>·</span>
           <span className="num">surf v{surface.surfaceVersion.toString()}</span>
+          {dirty && <span className={styles.dirtyBadge}>● unpublished edits</span>}
         </div>
 
         <div className={styles.markActions}>
-          <Button variant="secondary" onClick={() => { setEditAtm(null); void app.remarkSurface(); }}>
-            Re-mark
+          <Button variant="secondary" onClick={() => setEdits({})} disabled={!dirty}>
+            Reset to live
           </Button>
-          <Button variant="primary" onClick={() => void app.remarkSurface()} disabled={!arb.butterflyArbitrageFree}>
-            Publish
+          <Button
+            variant="primary"
+            onClick={() => {
+              void app.remarkSurface(preview.ladder);
+              setEdits({});
+            }}
+            disabled={!dirty || !surfaceArbFree}
+            title={
+              !surfaceArbFree
+                ? "Resolve the arbitrage violation before publishing"
+                : !dirty
+                  ? "No unpublished edits"
+                  : `Publish the edited marks as surface v${nextVersion}`
+            }
+          >
+            {dirty ? `Publish v${nextVersion}` : "Published"}
           </Button>
         </div>
 

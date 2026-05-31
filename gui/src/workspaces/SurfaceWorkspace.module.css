@@ -107,14 +107,41 @@
 }
 
 .editCell {
+  box-sizing: border-box;
   width: 100%;
+  min-width: 0;
   text-align: right;
   background: var(--bg-base);
   border: 1px solid var(--accent);
   border-radius: var(--r-sm);
   color: var(--text-primary);
-  padding: 1px 4px;
+  padding: 1px 2px;
   font-family: var(--font-mono);
+  font-size: var(--type-caption);
+}
+/* Hide the native number spinners — they steal width and clip the value. */
+.editCell::-webkit-outer-spin-button,
+.editCell::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.editCell[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+/* An edited (unpublished) handle: coral brand accent marks the trader's change. */
+.editDirty {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 1px var(--brand-soft);
+}
+.cellDirty {
+  color: var(--brand);
+}
+.dirtyBadge {
+  margin-left: auto;
+  color: var(--brand);
+  font-size: var(--type-micro);
+  letter-spacing: 0.04em;
 }
 
 .provenance,

@@ -12,7 +12,13 @@ import {
   useMemo,
   useState,
 } from "react";
-import type { CcyPair, Conventions, Instrument, MarkedSurface } from "../data/contract";
+import type {
+  BrokerQuoteSet,
+  CcyPair,
+  Conventions,
+  Instrument,
+  MarkedSurface,
+} from "../data/contract";
 import type { CelnetTransport } from "../data/transport";
 import { resolveTransport } from "../data/transportConfig";
 import {
@@ -51,7 +57,13 @@ interface AppState {
   positions: Instrument[];
   stream: StreamApi;
   surface: MarkedSurface | null;
-  remarkSurface: () => Promise<void>;
+  /**
+   * Mark/publish the surface. With no argument it (re-)marks from the pair's live
+   * broker ladder; given an explicit `ladder` it publishes the trader's EDITED
+   * marks. Either way the edited quotes flow through the same `MarkSurface` API the
+   * SDK and Excel use — the GUI never side-channels a mark. Bumps `surfaceVersion`.
+   */
+  remarkSurface: (ladder?: BrokerQuoteSet[]) => Promise<void>;
   paletteOpen: boolean;
   setPaletteOpen: (open: boolean) => void;
 }
@@ -96,10 +108,10 @@ export function AppProvider({ children }: { children: React.ReactNode }): React.
   const positions = useMemo(() => seed.map((s) => s.instrument), [seed]);
 
   const remarkSurface = useMemo(
-    () => async () => {
+    () => async (ladder?: BrokerQuoteSet[]) => {
       const marked = await transport.markSurface(
         pairCtx.pair,
-        brokerLadder(pairCtx),
+        ladder ?? brokerLadder(pairCtx),
         conventions,
       );
       setSurface(marked);
