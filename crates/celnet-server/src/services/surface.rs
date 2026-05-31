@@ -40,6 +40,8 @@ use crate::clock::Clock;
 use crate::core_link::CoreLink;
 use crate::pricer::{ConventionSet, price_instrument};
 use crate::readiness::ReadinessGate;
+use crate::services::forward::{Serve, route_pair, serve_mode};
+use crate::services::risk::federate::Fleet;
 use crate::surface_book::SurfaceBook;
 
 /// The delta pillars (signed convention deltas) the smile is reported on: the
@@ -58,6 +60,15 @@ const CROSS_VOL_ABS: f64 = 1e-4;
 const CROSS_RATE_ABS: f64 = 1e-4;
 
 /// The surface service over the [`CoreLink`] and readiness gate.
+///
+/// In [`FleetTopology::InProcess`](celnet_risk_fleet::FleetTopology) mode (`fleet ==
+/// None`) the edge calibrates / reads / reprices locally — unchanged. In
+/// [`FleetTopology::Distributed`](celnet_risk_fleet::FleetTopology) mode it holds the
+/// connected backend [`Fleet`] and **forwards** `GetSmile` / `MarkSurface` /
+/// `Scenario` to the backend that owns the request's pair, returning that backend's
+/// reply verbatim. A `MarkSurface` therefore deposits on the *owner's* `surface_book`,
+/// and a later `Price` for the same pair (forwarded by [`super::pricing`]) routes to
+/// the same owner and sees the marked surface (`docs/SCALE-OUT.md` §3).
 #[derive(Debug)]
 pub struct SurfaceEdge {
     link: Arc<CoreLink>,
@@ -68,10 +79,13 @@ pub struct SurfaceEdge {
     /// version authority) so the pricing / RFQ / RFS paths can pin a
     /// `surface_version` against the exact marked surface.
     surface_book: Arc<SurfaceBook>,
+    /// The connected backend fleet for owned-pair forwarding; `None` ⇒ in-process.
+    /// Reuses the SAME `Fleet` the risk federation connects.
+    fleet: Option<Arc<Fleet>>,
 }
 
 impl SurfaceEdge {
-    /// Construct the surface service.
+    /// Construct the surface service in the in-process topology (serves locally).
     #[must_use]
     pub fn new(
         link: Arc<CoreLink>,
@@ -84,6 +98,27 @@ impl SurfaceEdge {
             gate,
             clock,
             surface_book,
+            fleet: None,
+        }
+    }
+
+    /// Construct the surface service with an optional connected backend [`Fleet`]:
+    /// `Some(fleet)` ⇒ distributed (forward by the request's pair); `None` ⇒ in-process,
+    /// exactly [`SurfaceEdge::new`].
+    #[must_use]
+    pub fn with_fleet(
+        link: Arc<CoreLink>,
+        gate: Arc<ReadinessGate>,
+        clock: Clock,
+        surface_book: Arc<SurfaceBook>,
+        fleet: Option<Arc<Fleet>>,
+    ) -> Self {
+        Self {
+            link,
+            gate,
+            clock,
+            surface_book,
+            fleet,
         }
     }
 
@@ -377,6 +412,16 @@ impl SurfaceService for SurfaceEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
+
+        // Distributed: forward GetSmile to the pair's owning backend, verbatim.
+        if let Serve::Forward(fleet) = serve_mode(self.fleet.as_ref()) {
+            let pair = route_pair(req.pair.as_ref())?;
+            let (_replica, client) = fleet.owner_of_pair(pair)?;
+            let mut svc =
+                celnet_proto::surface_service_client::SurfaceServiceClient::new(client.channel());
+            return Ok(Response::new(svc.get_smile(req).await?.into_inner()));
+        }
+
         let wire_conv = req
             .conventions
             .ok_or_else(|| Status::invalid_argument("missing `conventions`"))?;
@@ -427,6 +472,18 @@ impl SurfaceService for SurfaceEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
+
+        // Distributed: forward MarkSurface to the pair's owning backend so the
+        // calibrated surface is deposited on the OWNER's surface_book (a later Price
+        // for that pair routes to the same owner and sees it). Returns verbatim.
+        if let Serve::Forward(fleet) = serve_mode(self.fleet.as_ref()) {
+            let pair = route_pair(req.pair.as_ref())?;
+            let (_replica, client) = fleet.owner_of_pair(pair)?;
+            let mut svc =
+                celnet_proto::surface_service_client::SurfaceServiceClient::new(client.channel());
+            return Ok(Response::new(svc.mark_surface(req).await?.into_inner()));
+        }
+
         let wire_conv = req
             .conventions
             .ok_or_else(|| Status::invalid_argument("missing `conventions`"))?;
@@ -499,6 +556,21 @@ impl SurfaceService for SurfaceEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
+
+        // Distributed: forward Scenario to the instrument's pair's owning backend,
+        // verbatim (it reprices against the owner's marked surface / market).
+        if let Serve::Forward(fleet) = serve_mode(self.fleet.as_ref()) {
+            let instrument = req
+                .instrument
+                .as_ref()
+                .ok_or_else(|| Status::invalid_argument("missing `instrument`"))?;
+            let pair = route_pair(instrument.pair.as_ref())?;
+            let (_replica, client) = fleet.owner_of_pair(pair)?;
+            let mut svc =
+                celnet_proto::surface_service_client::SurfaceServiceClient::new(client.channel());
+            return Ok(Response::new(svc.scenario(req).await?.into_inner()));
+        }
+
         let instrument = req
             .instrument
             .ok_or_else(|| Status::invalid_argument("missing `instrument`"))?;

@@ -19,21 +19,53 @@ use tonic::{Request, Response, Status};
 
 use crate::pricer::{ConventionSet, price_instrument};
 use crate::readiness::ReadinessGate;
+use crate::services::forward::{Serve, route_pair, serve_mode};
 use crate::services::pin::{PinnedVol, resolve_pinned_vol};
+use crate::services::risk::federate::Fleet;
 use crate::surface_book::SurfaceBook;
 
 /// The one-shot pricing service over the readiness gate.
+///
+/// In [`FleetTopology::InProcess`](celnet_risk_fleet::FleetTopology) mode (`fleet ==
+/// None`) the edge prices locally over its own [`SurfaceBook`] — unchanged. In
+/// [`FleetTopology::Distributed`](celnet_risk_fleet::FleetTopology) mode the edge
+/// holds the connected backend [`Fleet`] and **forwards** each `Price` to the backend
+/// that owns the instrument's pair, returning that backend's reply verbatim
+/// (`docs/SCALE-OUT.md` §3 owned-pair forwarding).
 #[derive(Debug)]
 pub struct PricingEdge {
     gate: Arc<ReadinessGate>,
     surface_book: Arc<SurfaceBook>,
+    /// The connected backend fleet for owned-pair forwarding; `None` ⇒ in-process
+    /// (price locally). Reuses the SAME `Fleet` the risk federation connects.
+    fleet: Option<Arc<Fleet>>,
 }
 
 impl PricingEdge {
-    /// Construct the pricing service.
+    /// Construct the pricing service in the in-process topology (prices locally).
     #[must_use]
     pub fn new(gate: Arc<ReadinessGate>, surface_book: Arc<SurfaceBook>) -> Self {
-        Self { gate, surface_book }
+        Self {
+            gate,
+            surface_book,
+            fleet: None,
+        }
+    }
+
+    /// Construct the pricing service with an optional connected backend [`Fleet`]:
+    /// `Some(fleet)` ⇒ distributed (forward `Price` by the instrument's pair to its
+    /// owning backend); `None` ⇒ in-process (price locally), exactly [`PricingEdge::new`].
+    #[must_use]
+    pub fn with_fleet(
+        gate: Arc<ReadinessGate>,
+        surface_book: Arc<SurfaceBook>,
+        fleet: Option<Arc<Fleet>>,
+    ) -> Self {
+        Self {
+            gate,
+            surface_book,
+            fleet,
+        }
     }
 
     fn require_ready(&self) -> Result<(), Status> {
@@ -56,6 +88,20 @@ impl PricingService for PricingEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
+
+        // Distributed: forward to the backend that owns the instrument's pair and
+        // return its reply verbatim. In-process: fall through to local pricing.
+        if let Serve::Forward(fleet) = serve_mode(self.fleet.as_ref()) {
+            let instrument = req
+                .instrument
+                .as_ref()
+                .ok_or_else(|| Status::invalid_argument("missing `instrument`"))?;
+            let pair = route_pair(instrument.pair.as_ref())?;
+            let (_replica, client) = fleet.owner_of_pair(pair)?;
+            let mut svc =
+                celnet_proto::pricing_service_client::PricingServiceClient::new(client.channel());
+            return Ok(Response::new(svc.price(req).await?.into_inner()));
+        }
 
         let instrument = req
             .instrument

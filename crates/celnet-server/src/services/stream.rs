@@ -80,7 +80,9 @@ use crate::clock::Clock;
 use crate::core_link::{CoreLink, Observable, ObservableQuery};
 use crate::pricer::{ConventionSet, Priced, price_instrument};
 use crate::readiness::ReadinessGate;
+use crate::services::forward::route_pair;
 use crate::services::pin::{PinnedVol, resolve_pinned_vol};
+use crate::services::risk::federate::Fleet;
 use crate::spread::SpreadModel;
 use crate::surface_book::SurfaceBook;
 use crate::tick::TickSource;
@@ -157,6 +159,12 @@ pub struct StreamEdge {
     /// `None` when the edge is run without a risk store (e.g. an isolated stream
     /// test); booking is then a no-op, never a fake.
     store: Option<Arc<crate::services::risk::store::PositionStore>>,
+    /// The connected backend fleet for owned-pair forwarding; `None` ⇒ in-process
+    /// (stream locally). Reuses the SAME `Fleet` the risk federation connects. In
+    /// distributed mode a `StreamSession` is **pinned to the owner of its first
+    /// subscription** and the bidi stream is relayed to that backend (see
+    /// [`StreamEdge::stream_session`]).
+    fleet: Option<Arc<Fleet>>,
 }
 
 impl StreamEdge {
@@ -178,6 +186,7 @@ impl StreamEdge {
             surface_book,
             next_execution_id: Arc::new(AtomicU64::new(1)),
             store: None,
+            fleet: None,
         }
     }
 
@@ -201,6 +210,33 @@ impl StreamEdge {
             surface_book,
             next_execution_id: Arc::new(AtomicU64::new(1)),
             store: Some(store),
+            fleet: None,
+        }
+    }
+
+    /// Construct the RFS service wired to the shared live position book **and** an
+    /// optional connected backend [`Fleet`]: `Some(fleet)` ⇒ distributed (pin a
+    /// session to the owner of its first subscription and relay the bidi stream to
+    /// that backend); `None` ⇒ in-process, exactly [`StreamEdge::with_store`].
+    #[must_use]
+    pub fn with_store_and_fleet(
+        link: Arc<CoreLink>,
+        gate: Arc<ReadinessGate>,
+        spread: SpreadModel,
+        clock: Clock,
+        surface_book: Arc<SurfaceBook>,
+        store: Arc<crate::services::risk::store::PositionStore>,
+        fleet: Option<Arc<Fleet>>,
+    ) -> Self {
+        Self {
+            link,
+            gate,
+            spread,
+            clock,
+            surface_book,
+            next_execution_id: Arc::new(AtomicU64::new(1)),
+            store: Some(store),
+            fleet,
         }
     }
 }
@@ -652,6 +688,24 @@ impl StreamService for StreamEdge {
         let inbound = request.into_inner();
         let (out_tx, out_rx) = mpsc::channel::<Result<ServerStreamMessage, Status>>(CHANNEL_DEPTH);
 
+        // Distributed: this session is RELAYED to the backend that owns the pair of
+        // its FIRST subscription (the §3 owned-pair forwarding tier). We pin the
+        // whole session to that one owner and relay both directions verbatim. A
+        // single multiplexed session subscribing to pairs owned by DIFFERENT backends
+        // is honestly **deferred**: the cross-owner case would need one upstream
+        // session per owner fanned back over the single client session, which is a
+        // genuine refinement — here we pin to the first owner and the backend itself
+        // answers a foreign-pair subscribe (it serves whatever it is asked; the
+        // partition is a routing convenience, not a hard backend filter), so nothing
+        // is faked. See module docs / `docs/SCALE-OUT.md` §3.
+        if let Some(fleet) = self.fleet.clone() {
+            tokio::spawn(async move {
+                let _guard = guard; // held for the session lifetime (drain barrier).
+                relay_session(fleet, inbound, out_tx).await;
+            });
+            return Ok(Response::new(ReceiverStream::new(out_rx)));
+        }
+
         // The session driver: owns every subscription multiplexed on this session,
         // reads client control + click-to-trade messages, and emits server
         // messages. One task per session keeps the per-subscription state
@@ -695,6 +749,121 @@ impl StreamEdge {
             store: self.store.clone(),
         }
     }
+}
+
+/// The routing pair of one client→server stream message, if it carries one. Only an
+/// opening [`celnet_proto::Subscribe`] (its instrument's pair) or a
+/// [`MarketSeriesSubscribe`] (its pair) names a pair; control frames (modify /
+/// unsubscribe / resync / execute / heartbeat) do not, so a session is routed off the
+/// FIRST pair-bearing message.
+fn pair_of_client_message(msg: &ClientStreamMessage) -> Option<&celnet_proto::CcyPair> {
+    match msg.message.as_ref()? {
+        client_stream_message::Message::Subscribe(s) => s.instrument.as_ref()?.pair.as_ref(),
+        client_stream_message::Message::MarketSeriesSubscribe(s) => s.pair.as_ref(),
+        _ => None,
+    }
+}
+
+/// **Relay one client `StreamSession` to its owning backend** (the distributed
+/// owned-pair forwarding path). The session is **pinned to the owner of its first
+/// subscription**: this reads inbound client messages until the first carries a pair,
+/// routes that pair through the fleet's HRW [`PartitionMap`](celnet_router::PartitionMap)
+/// to the owning backend, opens ONE upstream `StreamSession` to that backend, replays
+/// the buffered messages, and relays both directions verbatim until either side ends.
+///
+/// An unreachable owner ⇒ the client receives a single [`Status::unavailable`] error
+/// and the session ends (never a silent mis-route, never a faked local stream).
+///
+/// Cross-owner multiplexing within one session is the **honestly-deferred refinement**
+/// (see [`StreamService::stream_session`]): every subscription on this session is
+/// relayed to the first subscription's owner. The backend serves whatever pair it is
+/// asked (the partition is a routing convenience), so a foreign-pair subscription on a
+/// pinned session is answered correctly by that backend — it is just not load-balanced
+/// to its own natural owner. No behaviour is faked.
+async fn relay_session<S>(
+    fleet: Arc<Fleet>,
+    mut inbound: S,
+    out_tx: mpsc::Sender<Result<ServerStreamMessage, Status>>,
+) where
+    S: futures_util::Stream<Item = Result<ClientStreamMessage, Status>> + Send + Unpin + 'static,
+{
+    // 1. Read inbound messages, buffering until the first pair-bearing one, so we can
+    //    learn which backend owns this session before connecting upstream.
+    let mut buffered: Vec<ClientStreamMessage> = Vec::new();
+    let mut owner_channel = None;
+    while let Some(item) = inbound.next().await {
+        let msg = match item {
+            Ok(m) => m,
+            Err(_) => return, // client/transport closed before any subscription.
+        };
+        if let Some(wire_pair) = pair_of_client_message(&msg) {
+            let routed = route_pair(Some(wire_pair))
+                .and_then(|pair| fleet.owner_of_pair(pair).map(|(_r, c)| c.channel()));
+            match routed {
+                Ok(channel) => owner_channel = Some(channel),
+                Err(status) => {
+                    let _ = out_tx.send(Err(status)).await;
+                    return;
+                }
+            }
+            buffered.push(msg);
+            break;
+        }
+        buffered.push(msg);
+    }
+    let Some(channel) = owner_channel else {
+        // The inbound stream ended before any pair-bearing subscription: nothing to
+        // route. End cleanly (the client opened a session and never subscribed).
+        return;
+    };
+
+    // 2. Open ONE upstream StreamSession to the owning backend. The upstream client
+    //    side is a channel we push the buffered + remaining client messages onto.
+    let (up_tx, up_rx) = mpsc::channel::<ClientStreamMessage>(CHANNEL_DEPTH);
+    let mut svc = celnet_proto::stream_service_client::StreamServiceClient::new(channel);
+    let up_stream = ReceiverStream::new(up_rx);
+    let mut upstream = match svc.stream_session(up_stream).await {
+        Ok(resp) => resp.into_inner(),
+        Err(status) => {
+            let _ = out_tx.send(Err(status)).await;
+            return;
+        }
+    };
+
+    // Replay the buffered client messages to the backend (the first subscription that
+    // pinned the owner, plus any pair-less control frames seen before it).
+    for msg in buffered {
+        if up_tx.send(msg).await.is_err() {
+            return; // upstream closed.
+        }
+    }
+
+    // 3. Relay both directions: client→backend and backend→client, until either ends.
+    //    Two cooperating tasks share the upstream halves; this task drives the
+    //    server→client leg and joins the client→server pump.
+    let pump = tokio::spawn(async move {
+        while let Some(item) = inbound.next().await {
+            match item {
+                Ok(m) => {
+                    if up_tx.send(m).await.is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break, // client/transport closed.
+            }
+        }
+        // Dropping `up_tx` closes the upstream client side, ending the backend session.
+    });
+
+    while let Some(item) = upstream.next().await {
+        // Forward the backend's server messages (and any status error) verbatim. A
+        // closed client channel (consumer gone) ends the relay.
+        if out_tx.send(item).await.is_err() {
+            break;
+        }
+    }
+    // The backend stream ended (or the client went away): tear down the pump.
+    pump.abort();
 }
 
 /// Drive one multiplexed RFS session to completion over a transport-agnostic

@@ -26,5 +26,6 @@ pub mod stream;
 pub mod surface;
 
 mod attribution;
+pub(crate) mod forward;
 mod pin;
 mod stream_rx;

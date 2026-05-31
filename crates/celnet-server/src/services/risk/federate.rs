@@ -68,7 +68,8 @@ use celnet_proto::{
     DrillRiskResponse, LimitStatusRequest, LimitStatusResponse, ListPositionsRequest,
     ListPositionsResponse, RiskNode, RiskPosition, VegaLadderBucket,
 };
-use celnet_router::{Replica, ReplicaId, ReplicaSet};
+use celnet_router::{PartitionKey, PartitionMap, Replica, ReplicaId, ReplicaSet};
+use celnet_types::CcyPair;
 use tonic::Status;
 
 use super::store::{BookedPosition, PositionStore};
@@ -177,6 +178,65 @@ impl Fleet {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.backends.is_empty()
+    }
+
+    /// The **owning backend** of a currency-pair under the health-aware HRW
+    /// partition map — the single backend the *owned-pair forwarding* stateless
+    /// router tier (`docs/SCALE-OUT.md` §3) sends a unary `Price` / `RequestQuote` /
+    /// `GetSmile` / `MarkSurface` / `Scenario` for that pair to.
+    ///
+    /// The pair routes by [`PartitionKey::pair`] alone (the §2 primary partition key:
+    /// every tenor/strike of a pair is co-resident on one shard), through the same
+    /// HRW [`PartitionMap`] the risk fan-out uses, applying hot-standby / HRW
+    /// failover. So a `MarkSurface` for a pair deposits on the owner's `surface_book`
+    /// and a later `Price` for the same pair routes to the *same* owner and sees it.
+    ///
+    /// Returns the owning [`ReplicaId`] and its connected [`Client`] (a cheap channel
+    /// clone). An owner that is not a connected `Up` backend (e.g. routed to a
+    /// down replica with no reachable standby) ⇒ [`Status::unavailable`] — never a
+    /// silent mis-route.
+    ///
+    /// # Errors
+    /// [`Status::unavailable`] if the pair cannot be routed to a reachable backend.
+    pub fn owner_of_pair(&self, pair: CcyPair) -> Result<(ReplicaId, &Client), Status> {
+        let map = PartitionMap::new(&self.replicas);
+        let route = map.route(PartitionKey::pair(pair)).map_err(|e| {
+            Status::unavailable(format!(
+                "cannot route pair {pair:?} to a fleet backend: {e}"
+            ))
+        })?;
+        let client = self
+            .backends
+            .iter()
+            .find(|b| b.replica == route.replica)
+            .map(|b| &b.client)
+            .ok_or_else(|| {
+                Status::unavailable(format!(
+                    "pair {pair:?} owner (replica {}) is not a connected, reachable backend",
+                    route.replica.0
+                ))
+            })?;
+        Ok((route.replica, client))
+    }
+
+    /// The connected [`Client`] of an explicit owning [`ReplicaId`] — used to route a
+    /// `QuoteService` accept/reject to the *same* backend that issued the quote
+    /// (recorded when its `RequestQuote` was forwarded), since `quote_id`s are minted
+    /// per-backend and the accept/reject carry no pair on the wire.
+    ///
+    /// # Errors
+    /// [`Status::unavailable`] if that replica is no longer a connected backend.
+    pub fn client_for(&self, replica: ReplicaId) -> Result<&Client, Status> {
+        self.backends
+            .iter()
+            .find(|b| b.replica == replica)
+            .map(|b| &b.client)
+            .ok_or_else(|| {
+                Status::unavailable(format!(
+                    "quote-issuing backend (replica {}) is no longer connected",
+                    replica.0
+                ))
+            })
     }
 
     /// The set of backends to **actually fan a request to**, with a completeness guard
