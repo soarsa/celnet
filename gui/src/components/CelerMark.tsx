@@ -42,15 +42,17 @@ export function CelerMark({ size = 24, className, title }: CelerMarkProps): Reac
 export interface CelerLockupProps {
   /** Mark edge length in px (default 22). The wordmark scales with it. */
   size?: number | undefined;
-  /** Show the "a Celer product" caption beneath the wordmark (default true). */
+  /** Show the "a Celer Technologies product" caption (default true). */
   caption?: boolean | undefined;
   className?: string | undefined;
 }
 
 /**
  * CelerLockup — the co-brand lockup: the coral pinwheel mark + the "Celnet"
- * wordmark (Anaheim 600) + a small uppercase, letter-spaced "a Celer product"
- * caption in the tertiary text colour. Used in the TitleBar.
+ * wordmark (Anaheim 600) + a small uppercase, letter-spaced "a Celer Technologies
+ * product" caption. The mark instance lives in the left rail; this full lockup is
+ * for splash/about/login surfaces — NOT the toolbar (the toolbar uses
+ * [`CelnetWordmark`] to avoid showing the pinwheel twice).
  */
 export function CelerLockup({
   size = 22,
@@ -59,11 +61,30 @@ export function CelerLockup({
 }: CelerLockupProps): React.ReactElement {
   return (
     <span className={[styles.lockup, className ?? ""].filter(Boolean).join(" ")}>
-      <CelerMark size={size} className={styles.lockupMark} title="Celer" />
+      <CelerMark size={size} className={styles.lockupMark} title="Celer Technologies" />
       <span className={styles.lockupText}>
         <span className={styles.wordmark}>Celnet</span>
-        {caption && <span className={styles.caption}>a Celer product</span>}
+        {caption && <span className={styles.caption}>a Celer Technologies product</span>}
       </span>
+    </span>
+  );
+}
+
+/**
+ * CelnetWordmark — the product wordmark WITHOUT the pinwheel mark: "Celnet"
+ * (Anaheim 600) over a small "Celer Technologies" parent tag. Used in the toolbar,
+ * where the single brand mark already lives in the left rail — this leverages the
+ * parent-company name without duplicating the logo.
+ */
+export function CelnetWordmark({
+  className,
+}: {
+  className?: string | undefined;
+}): React.ReactElement {
+  return (
+    <span className={[styles.lockupText, className ?? ""].filter(Boolean).join(" ")}>
+      <span className={styles.wordmark}>Celnet</span>
+      <span className={styles.caption}>Celer Technologies</span>
     </span>
   );
 }
