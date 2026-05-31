@@ -101,6 +101,7 @@ impl WsServices {
         clock: Clock,
         surface_book: Arc<SurfaceBook>,
         store: Arc<PositionStore>,
+        topology: celnet_risk_fleet::FleetTopology,
     ) -> Self {
         let pricing = Arc::new(PricingEdge::new(
             Arc::clone(&gate),
@@ -127,7 +128,7 @@ impl WsServices {
             clock,
             surface_book,
         ));
-        let risk = Arc::new(RiskEdge::new(store, Arc::clone(&gate)));
+        let risk = Arc::new(RiskEdge::with_topology(store, Arc::clone(&gate), topology));
         Self {
             pricing,
             quote,

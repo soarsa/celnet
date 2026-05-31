@@ -110,6 +110,22 @@ use services::risk::store::PositionStore;
 use services::stream::StreamEdge;
 use services::surface::SurfaceEdge;
 
+use celnet_risk_fleet::FleetTopology;
+
+/// Read the fleet-risk deploy-time topology from the environment and resolve it via
+/// the pure [`FleetTopology::parse`]. `CELNET_FLEET_MODE` selects the mode
+/// (`"distributed"` to fan out across shards; anything else is in-process) and
+/// `CELNET_FLEET_BACKENDS` carries the comma-separated backend endpoints a
+/// distributed transport would dial. Both absent (or `CELNET_FLEET_MODE` anything but
+/// the exact `"distributed"`) ⇒ [`FleetTopology::InProcess`], the byte-identical
+/// single-node default. This is the one place the env is read; the resolved topology
+/// is then threaded into every [`RiskEdge`] (gRPC + WS) at boot.
+fn fleet_topology_from_env() -> FleetTopology {
+    let mode = std::env::var("CELNET_FLEET_MODE").unwrap_or_default();
+    let backends = std::env::var("CELNET_FLEET_BACKENDS").unwrap_or_default();
+    FleetTopology::parse(&mode, &backends)
+}
+
 /// A fully-wired, running service edge: the gRPC server (all four services), the
 /// pricing-core bridge, the maker spread model, the edge clock, and the readiness
 /// gate.
@@ -191,6 +207,16 @@ impl Edge {
         // looping positions client-side).
         let store = Arc::new(PositionStore::new());
 
+        // Resolve the fleet-risk deploy-time topology from the environment (the
+        // deploy-time-binding precedent of `celnet-integration`'s `DeploymentMode`):
+        // `CELNET_FLEET_MODE` + `CELNET_FLEET_BACKENDS` select whether firm risk
+        // aggregates in-process or would fan out across physical shards. Absent ⇒
+        // `InProcess` (the byte-identical single-node default). Parsing is the pure
+        // `FleetTopology::parse`; reading the env (the only I/O) happens here, once,
+        // at boot — never on any request path (`CLAUDE.md` rules 6/9; no proto
+        // change, no `schema_version`).
+        let topology = fleet_topology_from_env();
+
         let listener = TcpListener::bind(grpc_addr).await?;
         let bound = listener.local_addr()?;
         let (grpc_shutdown, grpc_rx) = oneshot::channel::<()>();
@@ -220,7 +246,11 @@ impl Edge {
             clock.clone(),
             Arc::clone(&surface_book),
         ));
-        let risk = RiskServiceServer::new(RiskEdge::new(Arc::clone(&store), Arc::clone(&gate)));
+        let risk = RiskServiceServer::new(RiskEdge::with_topology(
+            Arc::clone(&store),
+            Arc::clone(&gate),
+            topology.clone(),
+        ));
 
         let incoming = tonic::transport::server::TcpIncoming::from_listener(listener, true, None)
             .map_err(std::io::Error::other)?;
@@ -249,6 +279,7 @@ impl Edge {
             clock,
             Arc::clone(&surface_book),
             Arc::clone(&store),
+            topology,
         );
         let ws_mirror = ws::WsMirror::start(ws_addr, ws_services).await?;
 

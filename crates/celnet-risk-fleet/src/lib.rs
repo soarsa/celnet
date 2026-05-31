@@ -456,6 +456,290 @@ pub fn fan_out_aggregate<P: VegaPillarMap>(
     })
 }
 
+/// The **deployment topology** of the fleet risk tier — whether the fan-out runs
+/// entirely **in-process** (every logical shard is a local [`Cube`], the algebra
+/// validated here) or would be **distributed** across physical nodes reached via a
+/// set of endpoints (the cross-node transport itself is designed-only — see the
+/// crate-level honest-scope note and `docs/SCALE-OUT.md` §0).
+///
+/// This enum names *what* the topology is, not *how* the transport works; the
+/// distributed variant carries only the opaque backend endpoints a transport would
+/// dial. Parsing here is a **pure** function of its arguments — the server reads any
+/// environment/config and passes the resolved strings in (so this stays testable and
+/// side-effect-free).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum FleetTopology {
+    /// All logical shards are co-resident in this process (the validated algebra).
+    #[default]
+    InProcess,
+    /// The shards would live on separate nodes reached via these backend endpoints.
+    /// The physical transport is designed-only (`docs/SCALE-OUT.md` §0); the variant
+    /// records the membership a transport would dial.
+    Distributed {
+        /// Opaque backend endpoints (one per node), in the order supplied.
+        endpoints: Vec<String>,
+    },
+}
+
+impl FleetTopology {
+    /// Resolve a topology from a mode string and a comma-separated backend list —
+    /// a **pure** function (no environment or I/O; the server reads config and passes
+    /// the resolved strings in).
+    ///
+    /// `mode == "distributed"` **and** at least one non-empty comma-split backend ⇒
+    /// [`FleetTopology::Distributed`] over those backends (each trimmed; empty
+    /// segments dropped). Every other input — any other mode, or `"distributed"` with
+    /// no usable backend — resolves to [`FleetTopology::InProcess`], the safe default.
+    #[must_use]
+    pub fn parse(mode: &str, backends: &str) -> FleetTopology {
+        if mode == "distributed" {
+            let endpoints: Vec<String> = backends
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect();
+            if !endpoints.is_empty() {
+                return FleetTopology::Distributed { endpoints };
+            }
+        }
+        FleetTopology::InProcess
+    }
+}
+
+/// An error from pulling a shard's risk through the [`ShardRiskSource`] seam.
+///
+/// [`FleetError::ShardUnavailable`] exists for the future **distributed** source (a
+/// node that fails to answer); the in-process source never returns it (every shard
+/// it knows about is locally present). [`FleetError::Route`] wraps the router's
+/// partitioning error.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FleetError {
+    /// The membership could not route a fact (e.g. empty replica set).
+    Route(RouteError),
+    /// A shard could not be reached / did not answer (distributed transport only).
+    ShardUnavailable(ReplicaId),
+}
+
+impl From<RouteError> for FleetError {
+    fn from(e: RouteError) -> Self {
+        FleetError::Route(e)
+    }
+}
+
+impl core::fmt::Display for FleetError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            FleetError::Route(e) => write!(f, "fleet routing error: {e}"),
+            FleetError::ShardUnavailable(r) => {
+                write!(f, "fleet shard {} unavailable", r.0)
+            }
+        }
+    }
+}
+
+impl core::error::Error for FleetError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            FleetError::Route(e) => Some(e),
+            FleetError::ShardUnavailable(_) => None,
+        }
+    }
+}
+
+/// A **transport-agnostic source of per-shard risk** — the seam the firm reducer
+/// pulls partial aggregates through, identical whether the shards are in-process
+/// [`Cube`]s (here) or remote nodes behind a transport (`docs/SCALE-OUT.md` §0).
+///
+/// The trait is **object-safe** (no generic methods, no `Self`-typed returns), so a
+/// reducer can hold a `&dyn ShardRiskSource` and the in-process and (future)
+/// distributed sources are interchangeable behind one `dyn`.
+///
+/// # The additive-vs-constituent data-movement split (`docs/SCALE-OUT.md` §2)
+///
+/// The two roll-up methods exist to keep the **common path cheap** in a distributed
+/// deployment:
+///
+/// - [`ShardRiskSource::shard_additive`] returns only the **additive** roll-up — net
+///   Greeks + the vega ladder — which is `O(shards × small)` to ship and combine. A
+///   distributed implementation **omits the constituent positions** from this node
+///   (so the book never crosses the wire); callers must therefore **not** rely on
+///   `.positions` / `.leaves` being populated on its result.
+/// - [`ShardRiskSource::shard_constituents`] returns the roll-up **with every
+///   constituent position retained** — `O(positions)` to ship — for the firm
+///   **non-additive** re-gather (VaR/ES, FRTB-SbM curvature). This runs **off the hot
+///   path** at the firm tier and is called **only** when a non-additive measure is
+///   actually needed.
+///
+/// In-process both methods return the full node (there is nothing to ship); the
+/// split is observable only for a distributed source.
+pub trait ShardRiskSource {
+    /// The shard ids this source exposes, in **deterministic ascending order** (so
+    /// the fan-in summation order is reproducible).
+    fn shard_ids(&self) -> Vec<ReplicaId>;
+
+    /// A shard's **additive** roll-up — net Greeks + vega ladder, the cheap/common
+    /// path. Callers must **not** rely on `.positions`/`.leaves` being populated (a
+    /// distributed source omits them to avoid shipping the book).
+    ///
+    /// # Errors
+    /// [`FleetError::ShardUnavailable`] if `shard` is unknown to this source (or, for
+    /// a distributed source, unreachable).
+    fn shard_additive(&self, shard: ReplicaId) -> Result<NodeAggregate, FleetError>;
+
+    /// A shard's roll-up **with constituent positions retained**, for the firm
+    /// non-additive re-gather. Heavier (`O(positions)`); call only when a
+    /// non-additive measure is needed.
+    ///
+    /// # Errors
+    /// [`FleetError::ShardUnavailable`] if `shard` is unknown to this source (or, for
+    /// a distributed source, unreachable).
+    fn shard_constituents(&self, shard: ReplicaId) -> Result<NodeAggregate, FleetError>;
+
+    /// A **zero firm node** (an empty [`NodeAggregate`]) — so the generic reducer can
+    /// handle an empty fleet without needing a [`VegaPillarMap`] in hand.
+    fn empty_node(&self) -> NodeAggregate;
+}
+
+/// The **in-process** [`ShardRiskSource`]: pulls each shard's roll-up straight from
+/// the matching [`LogicalShard`]'s local [`Cube`] in a [`FleetReducer`].
+///
+/// Because everything is local, both [`ShardRiskSource::shard_additive`] and
+/// [`ShardRiskSource::shard_constituents`] return the **full** node (positions
+/// retained) — there is no wire to keep them off; the additive/constituent split is
+/// observable only for a distributed source. The reducer's fixed ascending-replica
+/// order is preserved via [`ShardRiskSource::shard_ids`].
+#[derive(Debug, Clone, Copy)]
+pub struct InProcessShards<'a, P: VegaPillarMap> {
+    reducer: &'a FleetReducer,
+    pillars: &'a P,
+}
+
+impl<'a, P: VegaPillarMap> InProcessShards<'a, P> {
+    /// Wrap a [`FleetReducer`] and its pillar map as an in-process risk source.
+    #[must_use]
+    pub fn new(reducer: &'a FleetReducer, pillars: &'a P) -> Self {
+        Self { reducer, pillars }
+    }
+
+    /// The matching shard for a replica id, if this source owns it.
+    fn shard(&self, shard: ReplicaId) -> Result<&LogicalShard, FleetError> {
+        self.reducer
+            .shards()
+            .iter()
+            .find(|s| s.replica() == shard)
+            .ok_or(FleetError::ShardUnavailable(shard))
+    }
+}
+
+impl<P: VegaPillarMap> ShardRiskSource for InProcessShards<'_, P> {
+    fn shard_ids(&self) -> Vec<ReplicaId> {
+        // The reducer already holds shards in ascending replica order.
+        self.reducer
+            .shards()
+            .iter()
+            .map(LogicalShard::replica)
+            .collect()
+    }
+
+    fn shard_additive(&self, shard: ReplicaId) -> Result<NodeAggregate, FleetError> {
+        Ok(self.shard(shard)?.local_aggregate(self.pillars))
+    }
+
+    fn shard_constituents(&self, shard: ReplicaId) -> Result<NodeAggregate, FleetError> {
+        Ok(self.shard(shard)?.local_aggregate(self.pillars))
+    }
+
+    fn empty_node(&self) -> NodeAggregate {
+        Cube::new().firm_aggregate(self.pillars)
+    }
+}
+
+/// **Additive fan-in over the [`ShardRiskSource`] seam.** Pulls each shard's
+/// additive roll-up ([`ShardRiskSource::shard_additive`]) in the source's
+/// deterministic order and combines them via [`NodeAggregate::merge_additive`].
+///
+/// Uses only the additive fields (net Greeks + vega ladder) — the cheap/common path;
+/// it does **not** depend on `.positions` being populated, so it is correct over a
+/// distributed source that omits the book. The result reconciles to the single-node
+/// firm additive roll-up exactly (up to summation order).
+///
+/// # Errors
+/// [`FleetError`] if a shard is unavailable or routing failed upstream.
+pub fn fan_in_additive_over(src: &dyn ShardRiskSource) -> Result<NodeAggregate, FleetError> {
+    let ids = src.shard_ids();
+    let mut iter = ids.into_iter();
+    let Some(first) = iter.next() else {
+        return Ok(src.empty_node());
+    };
+    let mut acc = src.shard_additive(first)?;
+    for id in iter {
+        acc.merge_additive(&src.shard_additive(id)?);
+    }
+    Ok(acc)
+}
+
+/// **Firm constituent re-gather over the [`ShardRiskSource`] seam.** Pulls each
+/// shard's roll-up **with constituents retained**
+/// ([`ShardRiskSource::shard_constituents`]) and merges them, so the result carries
+/// the union of every shard's positions — the off-hot-path firm node a non-additive
+/// measure (VaR/ES, FRTB-SbM curvature) is re-derived **once** over.
+///
+/// # Errors
+/// [`FleetError`] if a shard is unavailable or routing failed upstream.
+pub fn gather_firm_node_over(src: &dyn ShardRiskSource) -> Result<NodeAggregate, FleetError> {
+    let ids = src.shard_ids();
+    let mut iter = ids.into_iter();
+    let Some(first) = iter.next() else {
+        return Ok(src.empty_node());
+    };
+    let mut acc = src.shard_constituents(first)?;
+    for id in iter {
+        acc.merge_additive(&src.shard_constituents(id)?);
+    }
+    Ok(acc)
+}
+
+/// The headline cross-fleet entry point **over the [`ShardRiskSource`] seam** —
+/// mirrors [`fan_out_aggregate`] but pulls partial results through the trait, so it
+/// is identical for an in-process or (future) distributed source.
+///
+/// The additive firm node uses only `net_greeks` + `vega_ladder` from
+/// [`ShardRiskSource::shard_additive`]; the non-additive VaR/ES + curvature are
+/// re-derived once over the constituent re-gather
+/// ([`ShardRiskSource::shard_constituents`]) — the §3.4 firm tier. Reconciles to
+/// [`fan_out_aggregate`] (and thus to the single-node cube) for the in-process
+/// source.
+///
+/// # Errors
+/// [`FleetError`] if a shard is unavailable or routing failed upstream.
+pub fn fan_out_aggregate_over(
+    src: &dyn ShardRiskSource,
+    scenarios: &[Scenario],
+    alpha: f64,
+    curvature_rw: f64,
+) -> Result<FleetAggregate, FleetError> {
+    let additive = fan_in_additive_over(src)?;
+    let firm = gather_firm_node_over(src)?;
+    let var_es = Cube::node_var_es(&firm, scenarios, alpha);
+    let curvature_spot = Cube::node_curvature_spot(&firm, curvature_rw);
+    let shard_count = src.shard_ids().len();
+    Ok(FleetAggregate {
+        firm: NodeAggregate {
+            // Additive fields from the cheap path; constituents from the re-gather —
+            // matching what fan_out_aggregate's `firm` carries in-process.
+            group: firm.group,
+            net_greeks: additive.net_greeks,
+            vega_ladder: additive.vega_ladder,
+            positions: firm.positions,
+            leaves: firm.leaves,
+        },
+        var_es,
+        curvature_spot,
+        shard_count,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1171,5 +1455,200 @@ mod tests {
         let agg = reducer.fan_in_additive(&DaysPillar);
         assert_eq!(agg.net_greeks.delta_base, 0.0);
         assert!(agg.positions.is_empty());
+    }
+
+    // ------------------------------------------------------------------------
+    // Transport-seam tests (additive `ShardRiskSource` layer). These prove the
+    // generic seam path EQUALS the existing free-fn path; the 13 tests above are
+    // unchanged.
+    // ------------------------------------------------------------------------
+
+    /// **The generic seam reconciles to the existing free-fn path.** Build a
+    /// `FleetReducer` over `firm_book()`, wrap it in `InProcessShards`, and assert
+    /// `fan_out_aggregate_over(&src, …)` matches `fan_out_aggregate(facts, …)` —
+    /// additive to 1e-12, non-additive bit-identical (same source, same order).
+    #[test]
+    fn seam_fan_out_equals_free_fn() {
+        let facts = firm_book();
+        let set = replicas(&[1, 2, 3, 4, 5]);
+        let scen = ladder();
+        let rw = 0.18;
+
+        let free = fan_out_aggregate(&facts, &set, &DaysPillar, &scen, 0.99, rw).unwrap();
+
+        let reducer = partition_facts(&facts, &set).unwrap();
+        let src = InProcessShards::new(&reducer, &DaysPillar);
+        let seam = fan_out_aggregate_over(&src, &scen, 0.99, rw).unwrap();
+
+        assert_eq!(seam.shard_count, free.shard_count);
+        assert!(seam.shard_count >= 3);
+
+        // Additive firm node: every Greek reconciles to 1e-12.
+        let a = &seam.firm.net_greeks;
+        let b = &free.firm.net_greeks;
+        for (x, y, name) in [
+            (a.delta_base, b.delta_base, "delta_base"),
+            (a.gamma, b.gamma, "gamma"),
+            (a.vega, b.vega, "vega"),
+            (a.theta, b.theta, "theta"),
+            (a.vanna, b.vanna, "vanna"),
+            (a.volga, b.volga, "volga"),
+            (a.charm, b.charm, "charm"),
+            (a.premium_quote, b.premium_quote, "premium_quote"),
+        ] {
+            assert!(is_close(x, y, 1e-12, 1e-6), "seam {name}: {x} vs {y}");
+        }
+        for (p, v) in free.firm.vega_ladder.pillars() {
+            assert!(
+                is_close(seam.firm.vega_ladder.vega_in(p), v, 1e-12, 1e-6),
+                "seam vega pillar {p:?}"
+            );
+        }
+        assert_eq!(seam.firm.positions.len(), free.firm.positions.len());
+
+        // Non-additive: same constituent source and same (ascending-replica) order
+        // as the free fn ⇒ bit-identical VaR/ES/curvature.
+        assert_eq!(seam.var_es.var.to_bits(), free.var_es.var.to_bits());
+        assert_eq!(seam.var_es.es.to_bits(), free.var_es.es.to_bits());
+        assert_eq!(seam.curvature_spot.to_bits(), free.curvature_spot.to_bits());
+    }
+
+    /// **Additive seam fan-in == single-node**, to 1e-12 — independent of the
+    /// non-additive path.
+    #[test]
+    fn seam_additive_equals_single_node() {
+        let facts = firm_book();
+        let set = replicas(&[1, 2, 3, 4, 5]);
+
+        let single = single_node(&facts).firm_aggregate(&DaysPillar);
+        let reducer = partition_facts(&facts, &set).unwrap();
+        let src = InProcessShards::new(&reducer, &DaysPillar);
+        let seam = fan_in_additive_over(&src).unwrap();
+
+        assert!(is_close(
+            seam.net_greeks.delta_base,
+            single.net_greeks.delta_base,
+            1e-12,
+            1e-6
+        ));
+        assert!(is_close(
+            seam.net_greeks.vega,
+            single.net_greeks.vega,
+            1e-12,
+            1e-6
+        ));
+        // Constituent re-gather carries the full union (matches single-node count).
+        let gathered = gather_firm_node_over(&src).unwrap();
+        assert_eq!(gathered.positions.len(), single.positions.len());
+        assert_eq!(gathered.positions.len(), facts.len());
+    }
+
+    /// **`ShardRiskSource` is object-safe.** Bind through `&dyn ShardRiskSource` and
+    /// drive the generic reducers — this would not compile if the trait were not
+    /// object-safe, and proves the in-process source is `dyn`-usable.
+    #[test]
+    fn shard_risk_source_is_object_safe() {
+        let facts = firm_book();
+        let set = replicas(&[1, 2, 3, 4, 5]);
+        let scen = ladder();
+        let reducer = partition_facts(&facts, &set).unwrap();
+        let src = InProcessShards::new(&reducer, &DaysPillar);
+
+        let s: &dyn ShardRiskSource = &src;
+        let ids = s.shard_ids();
+        // Deterministic ascending order.
+        let mut sorted = ids.clone();
+        sorted.sort_unstable();
+        assert_eq!(ids, sorted);
+        assert!(ids.len() >= 3);
+        // Drive the generic reducers through the `dyn` reference.
+        let add = fan_in_additive_over(s).unwrap();
+        let gathered = gather_firm_node_over(s).unwrap();
+        let agg = fan_out_aggregate_over(s, &scen, 0.99, 0.18).unwrap();
+        assert_eq!(gathered.positions.len(), facts.len());
+        assert!(is_close(
+            agg.firm.net_greeks.vega,
+            add.net_greeks.vega,
+            1e-12,
+            1e-6
+        ));
+        // An unknown shard id is a typed ShardUnavailable, never a panic.
+        let bogus = ReplicaId(9_999);
+        assert_eq!(
+            s.shard_additive(bogus),
+            Err(FleetError::ShardUnavailable(bogus))
+        );
+    }
+
+    /// **Empty fleet through the seam.** An empty book partitions to zero shards;
+    /// the generic reducer returns an empty firm node without needing pillars at the
+    /// call site (the source supplies `empty_node`).
+    #[test]
+    fn seam_empty_fleet() {
+        let set = replicas(&[1, 2, 3]);
+        let scen = ladder();
+        let reducer = partition_facts(&[], &set).unwrap();
+        let src = InProcessShards::new(&reducer, &DaysPillar);
+        let s: &dyn ShardRiskSource = &src;
+
+        assert!(s.shard_ids().is_empty());
+        let add = fan_in_additive_over(s).unwrap();
+        assert_eq!(add.net_greeks.delta_base, 0.0);
+        assert!(add.positions.is_empty());
+        let agg = fan_out_aggregate_over(s, &scen, 0.99, 0.18).unwrap();
+        assert_eq!(agg.shard_count, 0);
+        assert!(agg.firm.positions.is_empty());
+    }
+
+    /// **`FleetTopology::parse` is a pure resolver.** Distributed only when mode is
+    /// exactly "distributed" with at least one non-empty backend; everything else is
+    /// the in-process default.
+    #[test]
+    fn topology_parse_cases() {
+        assert_eq!(FleetTopology::default(), FleetTopology::InProcess);
+        assert_eq!(
+            FleetTopology::parse("in-process", "a,b"),
+            FleetTopology::InProcess
+        );
+        assert_eq!(
+            FleetTopology::parse("distributed", ""),
+            FleetTopology::InProcess
+        );
+        assert_eq!(
+            FleetTopology::parse("distributed", " , , "),
+            FleetTopology::InProcess
+        );
+        assert_eq!(
+            FleetTopology::parse("DISTRIBUTED", "a"),
+            FleetTopology::InProcess,
+            "mode match is exact"
+        );
+        assert_eq!(
+            FleetTopology::parse("distributed", "node-a:7000, node-b:7000 , ,node-c:7000"),
+            FleetTopology::Distributed {
+                endpoints: vec![
+                    "node-a:7000".to_string(),
+                    "node-b:7000".to_string(),
+                    "node-c:7000".to_string(),
+                ]
+            }
+        );
+    }
+
+    /// **`FleetError` Display + Error source.** Routing errors wrap and forward; an
+    /// unavailable shard names its replica.
+    #[test]
+    fn fleet_error_display() {
+        let route = FleetError::from(RouteError::EmptySet);
+        assert_eq!(
+            route.to_string(),
+            "fleet routing error: replica set is empty"
+        );
+        let unavail = FleetError::ShardUnavailable(ReplicaId(7));
+        assert_eq!(unavail.to_string(), "fleet shard 7 unavailable");
+        // Error source: Route forwards, ShardUnavailable is a leaf.
+        use core::error::Error;
+        assert!(route.source().is_some());
+        assert!(unavail.source().is_none());
     }
 }
