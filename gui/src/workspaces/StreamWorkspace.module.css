@@ -45,6 +45,28 @@
   text-align: center !important;
 }
 
+/* A small, lower-contrast unit subtitle under a column name so "Premium mid",
+   "Trend", "Δ" and "σ" all read with their honest unit (P0-8). */
+.colMid,
+.colSpark,
+.colGreek {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.1;
+}
+.colSpark {
+  align-items: flex-end;
+}
+.colUnit {
+  font-size: 9px;
+  font-weight: var(--weight-regular);
+  letter-spacing: 0.04em;
+  text-transform: none;
+  color: oklch(from var(--text-tertiary) calc(l - 0.04) c h);
+  opacity: 0.85;
+}
+
 .body {
   flex: 1;
   min-height: 0;
@@ -109,7 +131,31 @@
 
 .spark {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: var(--space-2);
+}
+/* Trend direction glyph — the SAME up/down rule as the sparkline tint (P0-4),
+   coloured with the semantic bid/offer set (never the coral identity colour). */
+.trendGlyph {
+  font-size: var(--type-micro);
+  line-height: 1;
+  color: var(--text-tertiary);
+}
+.trend_up {
+  color: var(--bid);
+}
+.trend_down {
+  color: var(--offer);
+}
+.trend_flat {
+  color: var(--text-secondary);
+}
+.noTrend {
+  color: var(--text-tertiary);
+  font-size: var(--type-caption);
+  width: 96px;
+  text-align: right;
 }
 
 .greek {
@@ -135,6 +181,45 @@
   margin-left: auto;
   font-size: var(--type-micro);
   color: var(--text-tertiary);
+}
+
+/* Honest trend-mode affordance: "Premium" is live (accent); the rest are shown
+   disabled with a "needs market-series feed" tooltip — never a fabricated line. */
+.trendModes {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.trendModesLabel {
+  font-family: var(--font-brand);
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  margin-right: var(--space-1);
+}
+.trendChip {
+  font-family: var(--font-brand);
+  font-size: var(--type-micro);
+  letter-spacing: 0.03em;
+  padding: 2px var(--space-3);
+  border-radius: var(--r-full);
+  border: var(--hairline);
+  background: var(--bg-inset);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  user-select: none;
+}
+.trendChipActive {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: var(--weight-emphasis);
+}
+.trendChipDisabled {
+  opacity: 0.42;
+  color: var(--text-tertiary);
+  cursor: not-allowed;
 }
 
 .toasts {

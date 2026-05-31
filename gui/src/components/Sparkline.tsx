@@ -3,21 +3,53 @@
  * §6.2). Hand-rolled (no chart lib, rule 7). Device-pixel-ratio aware for crisp
  * lines; draws an area gradient tinted by net direction. Recomputes only on data
  * change, never per animation frame, to respect the render budget.
+ *
+ * Direction is ONE shared definition: net change over the visible window (first
+ * → last real point). The caller can read that same definition via
+ * `sparklineDirection(values)` so any accompanying glyph/chip agrees with the
+ * line tint (P0-4: a single up/down truth). Pass `direction` explicitly to force
+ * the tint when the caller has already computed it from the identical series.
  */
 
 import { useEffect, useRef } from "react";
 import styles from "./Sparkline.module.css";
 
+/** Direction of a series over its visible window: net first → last. */
+export type SparklineDir = "up" | "down" | "flat";
+
+/**
+ * The ONE direction definition the sparkline tints by — net change across the
+ * window (first vs last real point). Exported so a caller can drive a glyph/chip
+ * from the SAME rule and never disagree with the line. `"flat"` for <2 points or
+ * an exactly unchanged window.
+ */
+export function sparklineDirection(values: number[]): SparklineDir {
+  if (values.length < 2) return "flat";
+  const first = values[0] ?? 0;
+  const last = values[values.length - 1] ?? 0;
+  return last > first ? "up" : last < first ? "down" : "flat";
+}
+
 export interface SparklineProps {
   values: number[];
   width?: number;
   height?: number;
+  /**
+   * Force the tint direction (must be derived from the SAME `values` via
+   * `sparklineDirection` so the glyph and the line agree). Defaults to the
+   * internally-computed net direction.
+   */
+  direction?: SparklineDir | undefined;
+  /** Accessible label (the canvas is otherwise opaque to a screen reader). */
+  ariaLabel?: string | undefined;
 }
 
 export function Sparkline({
   values,
   width = 96,
   height = 22,
+  direction,
+  ariaLabel,
 }: SparklineProps): React.ReactElement {
   const ref = useRef<HTMLCanvasElement>(null);
 
@@ -46,9 +78,13 @@ export function Sparkline({
     const x = (i: number) => i * stepX;
     const y = (v: number) => pad + innerH - ((v - min) / span) * innerH;
 
-    const up = (values[values.length - 1] ?? 0) >= (values[0] ?? 0);
+    // ONE direction truth: the caller's forced direction (computed from these
+    // same values) when given, else the internal net first→last rule. A flat
+    // window tints neutral via --bid at low alpha — never a fabricated trend.
+    const dir = direction ?? sparklineDirection(values);
     const root = getComputedStyle(document.documentElement);
-    const stroke = root.getPropertyValue(up ? "--bid" : "--offer").trim() || "#5ad1a0";
+    const token = dir === "down" ? "--offer" : "--bid";
+    const stroke = root.getPropertyValue(token).trim() || "#5ad1a0";
 
     // Area fill (subtle, gradient to transparent).
     ctx.beginPath();
@@ -77,9 +113,17 @@ export function Sparkline({
     ctx.arc(x(values.length - 1), y(values[values.length - 1]!), 1.6, 0, Math.PI * 2);
     ctx.fillStyle = stroke;
     ctx.fill();
-  }, [values, width, height]);
+  }, [values, width, height, direction]);
 
-  return <canvas ref={ref} className={styles.canvas} style={{ width, height }} />;
+  return (
+    <canvas
+      ref={ref}
+      className={styles.canvas}
+      style={{ width, height }}
+      role="img"
+      aria-label={ariaLabel}
+    />
+  );
 }
 
 /** Apply an alpha to an oklch()/hex color string for the area gradient. */

@@ -14,13 +14,14 @@
  *
  * HONESTY (CLAUDE.md rule 2 — no fake data): the spot is the real seeded market
  * mark; there is no synthetic live spot feed in this transport, so it is shown
- * statically and truthfully at its pip precision. The movement cues — sparkline
- * and tick direction — are derived ONLY from real data: the live RFS stream rows
- * carry genuine streamed premium-mid histories (`midHistory`), each tagged with
- * its pair. We aggregate the histories of the rows belonging to a pair into a
- * per-pair activity trace and read its direction from the last two real points.
- * A pair with no streamed line shows an honest empty trend ("—"), never a
- * fabricated tick.
+ * statically and truthfully at its pip precision. The movement cue is ONE honest,
+ * REPRESENTATIVE series per pair (P0-4): we pick that pair's single most-active
+ * streamed line — the row with the longest real premium-mid history, preferring
+ * an ATM/representative structure on ties — and plot its untransformed
+ * `midHistory` directly (no rebasing, no cross-structure averaging, no synthetic
+ * "activity index"). The tick glyph uses the SAME direction rule as the sparkline
+ * (net first→last over the window), so the two never disagree. A pair with no
+ * live line shows an honest empty trend ("—"), never a fabricated tick.
  */
 
 import { useCallback, useMemo, useRef } from "react";
@@ -28,22 +29,29 @@ import { useApp } from "../app/AppContext";
 import type { StreamRow } from "../hooks/useStreamSession";
 import type { CcyPair } from "../data/contract";
 import type { PairContext } from "../data/seed";
-import { Sparkline } from "./Sparkline";
+import { Sparkline, sparklineDirection, type SparklineDir } from "./Sparkline";
 import styles from "./PairStrip.module.css";
 
-type Direction = "up" | "down" | "flat" | "none";
+type Direction = SparklineDir | "none";
 
-/** A pair's real, live activity trace assembled from the streamed RFS rows. */
+/** A pair's real, live activity trace — its single most-active streamed line. */
 interface PairActivity {
-  /** Recent activity mids for the sparkline (empty ⇒ no live stream for the pair). */
+  /** The representative line's real premium-mid history (empty ⇒ no live stream). */
   trace: number[];
-  /** Tick direction from the last two real points (`none` ⇒ no live data). */
+  /** Net direction over the window (same rule as the sparkline; `none` ⇒ no data). */
   direction: Direction;
   /** How many streamed lines back this pair (for an honest tooltip / a11y). */
   liveLines: number;
+  /** The chosen line's structure label, for the tooltip (honest provenance). */
+  lineLabel: string;
 }
 
-const EMPTY_ACTIVITY: PairActivity = { trace: [], direction: "none", liveLines: 0 };
+const EMPTY_ACTIVITY: PairActivity = {
+  trace: [],
+  direction: "none",
+  liveLines: 0,
+  lineLabel: "",
+};
 
 function samePair(a: CcyPair, b: CcyPair): boolean {
   return a.base === b.base && a.quote === b.quote;
@@ -53,12 +61,20 @@ function pairKey(p: CcyPair): string {
   return `${p.base}${p.quote}`;
 }
 
+/** Prefer an ATM / vanilla representative line when several are equally active. */
+function representativeScore(label: string): number {
+  const l = label.toUpperCase();
+  if (l.includes("ATM")) return 2;
+  if (l.includes("CALL") || l.includes("PUT")) return 1;
+  return 0;
+}
+
 /**
- * Aggregate the live stream rows into a per-pair activity trace. For each pair we
- * rebase every contributing row's real `midHistory` to its own first point (so
- * differently-scaled premiums combine into one comparable activity series) and
- * average across rows tick-for-tick over their common length. Direction is read
- * from the last two points of the resulting REAL series — no synthesis.
+ * Reduce the live stream rows to ONE representative series per pair: the most-
+ * active streamed line (longest real `midHistory`), preferring an ATM/vanilla
+ * structure on ties. We plot that line's history verbatim — no rebasing, no
+ * averaging across structures — so the strip shows a real, honest series and its
+ * direction follows the SAME net-over-window rule as the sparkline tint.
  */
 function aggregateActivity(rows: StreamRow[]): Map<string, PairActivity> {
   const byPair = new Map<string, StreamRow[]>();
@@ -71,32 +87,31 @@ function aggregateActivity(rows: StreamRow[]): Map<string, PairActivity> {
 
   const out = new Map<string, PairActivity>();
   for (const [key, group] of byPair) {
-    // Only rows with a usable (≥2-point) real history contribute movement.
-    const usable = group.filter((r) => r.midHistory.length >= 2);
-    if (usable.length === 0) {
-      out.set(key, { trace: [], direction: "none", liveLines: group.length });
-      continue;
-    }
-    // Align the rebased series on the most recent `len` ticks they all share, so
-    // the latest tick of every contributing row lines up (right-aligned).
-    const len = Math.min(...usable.map((r) => r.midHistory.length));
-    const trace: number[] = new Array(len).fill(0) as number[];
-    for (const r of usable) {
-      const h = r.midHistory;
-      const base = h[h.length - len] ?? h[0] ?? 0;
-      const denom = base !== 0 ? base : 1;
-      const start = h.length - len;
-      for (let i = 0; i < len; i += 1) {
-        // Rebased to a 1.0 baseline: a unitless, comparable activity index.
-        trace[i]! += (h[start + i] ?? base) / denom;
+    // The representative line is the one with the most real ticks; ties break to
+    // an ATM/vanilla structure, then to the first seen (stable order).
+    let best: StreamRow | null = null;
+    for (const r of group) {
+      if (r.midHistory.length < 2) continue;
+      if (
+        !best ||
+        r.midHistory.length > best.midHistory.length ||
+        (r.midHistory.length === best.midHistory.length &&
+          representativeScore(r.label) > representativeScore(best.label))
+      ) {
+        best = r;
       }
     }
-    for (let i = 0; i < len; i += 1) trace[i]! /= usable.length;
-
-    const last = trace[len - 1] ?? 0;
-    const prev = trace[len - 2] ?? last;
-    const direction: Direction = last > prev ? "up" : last < prev ? "down" : "flat";
-    out.set(key, { trace, direction, liveLines: group.length });
+    if (!best) {
+      out.set(key, { trace: [], direction: "none", liveLines: group.length, lineLabel: "" });
+      continue;
+    }
+    const trace = best.midHistory.slice();
+    out.set(key, {
+      trace,
+      direction: sparklineDirection(trace),
+      liveLines: group.length,
+      lineLabel: best.label,
+    });
   }
   return out;
 }
@@ -128,6 +143,9 @@ function PairTile({
   const label = `${ctx.pair.base}/${ctx.pair.quote}`;
   const live = activity.trace.length >= 2;
   const dir = activity.direction;
+  // Tint direction for the sparkline must match the glyph: both follow the
+  // net-over-window rule. `none` (no live data) renders no line at all.
+  const sparkDir: SparklineDir = dir === "none" ? "flat" : dir;
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>): void => {
     if (e.key === "ArrowRight" || e.key === "ArrowDown") {
@@ -143,7 +161,8 @@ function PairTile({
   };
 
   const tip = live
-    ? `${label} — set active pair · ${activity.liveLines} live line${activity.liveLines === 1 ? "" : "s"}`
+    ? `${label} — set active pair · trend: premium mid of ${activity.lineLabel || "primary line"}` +
+      ` · ${activity.liveLines} live line${activity.liveLines === 1 ? "" : "s"}`
     : `${label} — set active pair · no live stream`;
 
   return (
@@ -174,7 +193,18 @@ function PairTile({
       </span>
       <span className={styles.spark}>
         {live ? (
-          <Sparkline values={activity.trace} width={84} height={18} />
+          <>
+            <span className={styles.sparkTag} aria-hidden="true">
+              premium
+            </span>
+            <Sparkline
+              values={activity.trace}
+              direction={sparkDir}
+              width={68}
+              height={18}
+              ariaLabel={`premium-mid trend, ${dir}`}
+            />
+          </>
         ) : (
           <span className={styles.noSpark} aria-hidden="true">
             no live stream

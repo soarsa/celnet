@@ -15,16 +15,46 @@ import type {
   RiskBucketRequest,
   ScenarioResult,
   ShockAxis,
+  ShockFactor,
 } from "../data/contract";
 import { Panel } from "../components/Panel";
 import { Button } from "../components/Button";
 import { strategyInstrument } from "../data/seed";
 import { rampColor } from "../viz/ramp";
 import { fmtPnlAdaptive, fmtSigned } from "../lib/format";
+import { tenorLabel } from "../lib/trend";
 import styles from "./RiskWorkspace.module.css";
 
-const SPOT_STEPS = [-0.015, -0.005, 0, 0.005, 0.015];
-const VOL_STEPS = [-0.02, -0.01, 0, 0.01, 0.02];
+/**
+ * The scenario-axis catalogue (P0-7). The contract's `ShockAxis.factor` already
+ * lets a scenario sweep any of these factors on either grid axis; this is the
+ * GUI surface for choosing them (the contract is unchanged — purely a request
+ * shape). Each factor carries a sensible 5-step preset and its abs/rel mode and a
+ * formatter so the headers read honestly for that factor's units.
+ */
+interface AxisSpec {
+  factor: ShockFactor;
+  label: string;
+  relative: boolean;
+  steps: number[];
+  /** Render one step's column/row header for this factor. */
+  fmtStep: (step: number) => string;
+}
+
+const PCT = (s: number): string => (s === 0 ? "0.0%" : `${s > 0 ? "+" : "−"}${Math.abs(s * 100).toFixed(1)}%`);
+const VOLPT = (s: number): string => (s === 0 ? "ATM" : `${s > 0 ? "+" : "−"}${Math.abs(s * 100).toFixed(0)}%`);
+const BPS = (s: number): string => (s === 0 ? "0bp" : `${s > 0 ? "+" : "−"}${Math.abs(s * 1e4).toFixed(0)}bp`);
+const DAYS = (s: number): string => (s === 0 ? "0d" : `+${Math.round(s * 365)}d`);
+
+const AXIS_SPECS: Record<ShockFactor, AxisSpec> = {
+  SPOT: { factor: "SPOT", label: "Spot", relative: true, steps: [-0.015, -0.005, 0, 0.005, 0.015], fmtStep: PCT },
+  VOL: { factor: "VOL", label: "Vol", relative: false, steps: [-0.02, -0.01, 0, 0.01, 0.02], fmtStep: VOLPT },
+  RATE_DOM: { factor: "RATE_DOM", label: "Rate dom", relative: false, steps: [-0.005, -0.0025, 0, 0.0025, 0.005], fmtStep: BPS },
+  RATE_FOR: { factor: "RATE_FOR", label: "Rate for", relative: false, steps: [-0.005, -0.0025, 0, 0.0025, 0.005], fmtStep: BPS },
+  TIME: { factor: "TIME", label: "Time", relative: false, steps: [0, 1 / 365, 7 / 365, 14 / 365, 30 / 365], fmtStep: DAYS },
+};
+
+const FACTOR_ORDER: ShockFactor[] = ["SPOT", "VOL", "RATE_DOM", "RATE_FOR", "TIME"];
 
 /** The delta pillars the vega ladder buckets on (signed convention deltas). */
 const VEGA_DELTA_PILLARS = [0.5, 0.25, -0.25, 0.1, -0.1];
@@ -43,20 +73,43 @@ export function RiskWorkspace(): React.ReactElement {
   const [metric, setMetric] = useState<Metric>("pnl");
   const [result, setResult] = useState<ScenarioResult | null>(null);
   const [pinned, setPinned] = useState<{ label: string; result: ScenarioResult }[]>([]);
+  // Scenario-axis selection (P0-7): which factor sweeps on each grid axis. The
+  // contract already supports any ShockAxis.factor; this is GUI-only. Default
+  // SPOT (rows) × VOL (cols). The two axes must be distinct factors.
+  const [rowFactor, setRowFactor] = useState<ShockFactor>("SPOT");
+  const [colFactor, setColFactor] = useState<ShockFactor>("VOL");
 
-  // The structure under analysis: a 25Δ RR on the active pair (promoted from the
-  // ticket/blotter in the real flow — same Instrument object).
-  const instrument: Instrument = useMemo(
+  // The structure under analysis (P0-5): the shared selection driven by the
+  // Book/Ticket lanes. Falls back to the seeded 25Δ RR on the active pair so the
+  // first load (nothing selected yet) still renders a real structure.
+  const selected = app.selected;
+  const fallbackInstrument: Instrument = useMemo(
     () => strategyInstrument(app.pairCtx.pair, 30 / 365, "RISK_REVERSAL", 10),
     [app.pairCtx.pair],
   );
+  const instrument: Instrument = selected?.instrument ?? fallbackInstrument;
+  const subjectLabel =
+    selected?.label ??
+    `${app.pairCtx.pair.base}/${app.pairCtx.pair.quote} 25Δ RR`;
+
+  // The instrument is priced against its OWN pair's base market (a drilled
+  // position may be a different pair than the active watch pair), falling back to
+  // the active pair's market when the instrument's pair has no marked context.
+  const market = useMemo(() => {
+    const key = `${instrument.pair.base}/${instrument.pair.quote}`;
+    const ctx = app.pairs.find((p) => `${p.pair.base}/${p.pair.quote}` === key);
+    return ctx?.market ?? app.pairCtx.market;
+  }, [instrument.pair, app.pairs, app.pairCtx.market]);
+
+  const rowSpec = AXIS_SPECS[rowFactor];
+  const colSpec = AXIS_SPECS[colFactor];
 
   const axes: ShockAxis[] = useMemo(
     () => [
-      { factor: "SPOT", relative: true, steps: SPOT_STEPS },
-      { factor: "VOL", relative: false, steps: VOL_STEPS },
+      { factor: rowSpec.factor, relative: rowSpec.relative, steps: rowSpec.steps },
+      { factor: colSpec.factor, relative: colSpec.relative, steps: colSpec.steps },
     ],
-    [],
+    [rowSpec, colSpec],
   );
 
   // The book-shaped risk decomposition the server computes alongside the grid —
@@ -84,24 +137,28 @@ export function RiskWorkspace(): React.ReactElement {
   useEffect(() => {
     let live = true;
     void app.transport
-      .scenario(instrument, app.pairCtx.market, app.conventions, axes, riskBuckets)
+      .scenario(instrument, market, app.conventions, axes, riskBuckets)
       .then((r) => {
         if (live) setResult(r);
       });
     return () => {
       live = false;
     };
-  }, [app.transport, instrument, app.pairCtx.market, app.conventions, axes, riskBuckets]);
+  }, [app.transport, instrument, market, app.conventions, axes, riskBuckets]);
 
   if (!result) return <div className={styles.loading}>Repricing scenario…</div>;
 
   const notional = instrument.quantity.notional;
   const basePrice = result.points.find((p) => p.appliedShocks.every((s) => s === 0))?.greeks.price ?? 0;
 
-  // Build the spot×vol matrix. appliedShocks order = [spot, vol].
-  const cellValue = (spotStep: number, volStep: number): number => {
+  // Build the row×col matrix. axes order = [row, col] ⇒ appliedShocks[0] is the
+  // row-factor shock, appliedShocks[1] the col-factor shock (P0-7: either axis is
+  // user-chosen, the lookup is factor-agnostic).
+  const rowSteps = rowSpec.steps;
+  const colSteps = colSpec.steps;
+  const cellValue = (rowStep: number, colStep: number): number => {
     const pt = result.points.find(
-      (p) => Math.abs((p.appliedShocks[0] ?? 0) - spotStep) < 1e-9 && Math.abs((p.appliedShocks[1] ?? 0) - volStep) < 1e-9,
+      (p) => Math.abs((p.appliedShocks[0] ?? 0) - rowStep) < 1e-9 && Math.abs((p.appliedShocks[1] ?? 0) - colStep) < 1e-9,
     );
     if (!pt) return 0;
     switch (metric) {
@@ -116,7 +173,7 @@ export function RiskWorkspace(): React.ReactElement {
 
   // Magnitude normalization for the diverging tint.
   let maxAbs = 1e-9;
-  for (const s of SPOT_STEPS) for (const v of VOL_STEPS) maxAbs = Math.max(maxAbs, Math.abs(cellValue(s, v)));
+  for (const s of rowSteps) for (const v of colSteps) maxAbs = Math.max(maxAbs, Math.abs(cellValue(s, v)));
 
   const fmtCell = (v: number): string => {
     if (metric === "pnl") return fmtPnlAdaptive(v);
@@ -124,11 +181,35 @@ export function RiskWorkspace(): React.ReactElement {
     return fmtSigned(v, 4);
   };
 
+  const notionalMm = notional / 1e6;
+
   return (
     <div className={styles.grid}>
       <Panel
         glyph="⊞"
-        title={`Risk · ${app.pairCtx.pair.base}/${app.pairCtx.pair.quote} 25Δ RR (${notional / 1e6}mm)`}
+        title={
+          <span className={styles.subject}>
+            {/* P0-5 back affordance: a selection means we drilled in from Book —
+                one click returns to the desk-wide cube. Hidden on the seeded
+                default (nothing was drilled). */}
+            {selected && (
+              <button
+                className={styles.back}
+                onClick={() => {
+                  app.setSelected(null);
+                  app.setWorkspace("book");
+                }}
+                title="Back to Book (desk-wide risk)"
+              >
+                ‹ Book
+              </button>
+            )}
+            <span>Risk · {subjectLabel}</span>
+            <span className={styles.subjectMeta}>
+              {tenorLabel(instrument.expiryYears)} · {notionalMm % 1 === 0 ? notionalMm : notionalMm.toFixed(1)}mm
+            </span>
+          </span>
+        }
         actions={
           <div className={styles.metricTabs}>
             {METRICS.map((m) => (
@@ -143,26 +224,49 @@ export function RiskWorkspace(): React.ReactElement {
           </div>
         }
       >
+        {/* P0-7 scenario-axis selector — choose which factors the grid sweeps. The
+            contract already honours any ShockAxis.factor; this is GUI-only. The two
+            axes must be distinct, so picking a factor already on the other axis
+            swaps them. */}
+        <div className={styles.axisBar}>
+          <span className={styles.axisCue}>rows ↓</span>
+          <AxisPicker
+            value={rowFactor}
+            other={colFactor}
+            onPick={(f) => {
+              if (f === colFactor) setColFactor(rowFactor);
+              setRowFactor(f);
+            }}
+          />
+          <span className={styles.axisCueX}>× cols →</span>
+          <AxisPicker
+            value={colFactor}
+            other={rowFactor}
+            onPick={(f) => {
+              if (f === rowFactor) setRowFactor(colFactor);
+              setColFactor(f);
+            }}
+          />
+        </div>
+
         <div className={styles.gridArea}>
-          <div className={styles.axisLabel}>vol →</div>
+          <div className={styles.axisLabel}>{colSpec.label.toLowerCase()} →</div>
           <table className={styles.matrix}>
             <thead>
               <tr>
-                <th className={styles.corner}>spot ↓</th>
-                {VOL_STEPS.map((v) => (
+                <th className={styles.corner}>{rowSpec.label.toLowerCase()} ↓</th>
+                {colSteps.map((v) => (
                   <th key={v} className="num">
-                    {v === 0 ? "ATM" : `${v > 0 ? "+" : "−"}${Math.abs(v * 100).toFixed(0)}%`}
+                    {colSpec.fmtStep(v)}
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {SPOT_STEPS.map((s) => (
+              {rowSteps.map((s) => (
                 <tr key={s}>
-                  <th className={`num ${styles.rowHead}`}>
-                    {s === 0 ? "0.0%" : `${s > 0 ? "+" : "−"}${Math.abs(s * 100).toFixed(1)}%`}
-                  </th>
-                  {VOL_STEPS.map((v) => {
+                  <th className={`num ${styles.rowHead}`}>{rowSpec.fmtStep(s)}</th>
+                  {colSteps.map((v) => {
                     const val = cellValue(s, v);
                     const anchored = s === 0 && v === 0;
                     const t = 0.5 + (val / maxAbs) * 0.5;
@@ -181,6 +285,10 @@ export function RiskWorkspace(): React.ReactElement {
               ))}
             </tbody>
           </table>
+          <div className={styles.provLine}>
+            sweeping <strong>{rowSpec.label}</strong> × <strong>{colSpec.label}</strong> ·
+            real reprice via SurfaceService.Scenario at this structure&apos;s pair market
+          </div>
         </div>
 
         <div className={styles.gridFoot}>
@@ -189,7 +297,7 @@ export function RiskWorkspace(): React.ReactElement {
             onClick={() =>
               setPinned((p) => [
                 ...p.slice(-2),
-                { label: pinLabel(metric, app.pairCtx.pair.base), result },
+                { label: pinLabel(metric, instrument.pair.base), result },
               ])
             }
           >
@@ -271,7 +379,7 @@ function renderLadder(
         {anyVega ? (
           br.vegaBuckets.slice(0, 25).map((b, i) => (
             <div key={i} className={styles.ladderRow}>
-              <span className="num">{tenorName(b.tenorYears)}</span>
+              <span className="num">{tenorLabel(b.tenorYears)}</span>
               <span className="num">{pillarName(b.delta)}</span>
               <span className={styles.bar}>
                 <span
@@ -308,7 +416,7 @@ function renderLadder(
         {br.thetaRoll.length > 0 ? (
           br.thetaRoll.map((pv, i) => (
             <span key={i} className="num">
-              {tenorName(br.rollHorizonsYears[i] ?? 0)}{" "}
+              {tenorLabel(br.rollHorizonsYears[i] ?? 0)}{" "}
               {fmtPnlAdaptive((pv - basePrice) * notional)}
             </span>
           ))
@@ -324,11 +432,39 @@ function pinLabel(metric: Metric, base: string): string {
   return `${base} ${metric}`;
 }
 
-function tenorName(years: number): string {
-  const days = Math.round(years * 365);
-  if (days <= 1) return "ON";
-  if (days < 28) return `${Math.round(days / 7)}W`;
-  return `${Math.round(days / 30)}M`;
+/**
+ * The scenario-axis factor picker (P0-7): a compact segmented control over the
+ * five contract `ShockFactor`s. The factor already on the OTHER axis is marked so
+ * the user sees it will swap (the two axes must be distinct). Accent (indigo)
+ * marks the active factor — selection, never coral.
+ */
+function AxisPicker({
+  value,
+  other,
+  onPick,
+}: {
+  value: ShockFactor;
+  other: ShockFactor;
+  onPick: (f: ShockFactor) => void;
+}): React.ReactElement {
+  return (
+    <div className={styles.axisPick}>
+      {FACTOR_ORDER.map((f) => {
+        const active = f === value;
+        const onOther = f === other;
+        return (
+          <button
+            key={f}
+            className={`${styles.axisOpt} ${active ? styles.axisOptActive : ""} ${onOther ? styles.axisOptOther : ""}`}
+            onClick={() => onPick(f)}
+            title={onOther ? `${AXIS_SPECS[f].label} — picking swaps the axes` : AXIS_SPECS[f].label}
+          >
+            {AXIS_SPECS[f].label}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 function pillarName(delta: number): string {

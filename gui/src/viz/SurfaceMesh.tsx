@@ -38,6 +38,12 @@ export function SurfaceMesh({ surface, selected }: SurfaceMeshProps): React.Reac
   const [hasWebGPU] = useState(() => typeof navigator !== "undefined" && "gpu" in navigator);
   const [size, setSize] = useState({ w: 480, h: 320 });
 
+  // Honest handle count: a 5-pt broker mark (ATM + 25Δ RR/BF + 10Δ RR/BF) vs a
+  // 3-pt mark (ATM + 25Δ RR/BF only). The mesh INTERPOLATES the calibrated smile
+  // between these handles — it is a QC/visual aid, not the marking surface (the
+  // editable grid is the source of truth). Read from the surface, never fabricated.
+  const handleCount = surface.smiles[0]?.brokerQuotes.hasTenDelta ? 5 : 3;
+
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
@@ -200,6 +206,12 @@ export function SurfaceMesh({ surface, selected }: SurfaceMeshProps): React.Reac
       </div>
       <span className={styles.renderer} title="renderer backend">
         {hasWebGPU ? "WebGPU-ready · Canvas mesh" : "Canvas mesh"}
+      </span>
+      <span
+        className={styles.provenance}
+        title="The mesh interpolates the calibrated smile between the broker marks; it is a QC / visual aid. Mark on the grid."
+      >
+        marks @ {handleCount} handles · interpolated · QC view
       </span>
     </div>
   );

@@ -19,7 +19,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useApp } from "../app/AppContext";
-import type { MarketContext } from "../data/contract";
+import type { Instrument, MarketContext } from "../data/contract";
 import {
   aggregateBookRisk,
   resolveBookPositions,
@@ -27,7 +27,18 @@ import {
 } from "../data/portfolioRisk";
 import { Panel } from "../components/Panel";
 import { fmtPnlAdaptive, fmtSigned } from "../lib/format";
+import { tenorLabel } from "../lib/trend";
 import styles from "./BookWorkspace.module.css";
+
+/** A pair's drill target: a representative open position and how it is labelled. */
+interface PairDrill {
+  /** The largest |notional| contributing position for the pair. */
+  instrument: Instrument;
+  /** Honest label: the contributor's structure + how many positions it stands for. */
+  label: string;
+  /** Count of open positions in this pair (so the label can disclose the cohort). */
+  count: number;
+}
 
 export function BookWorkspace(): React.ReactElement {
   const app = useApp();
@@ -53,6 +64,40 @@ export function BookWorkspace(): React.ReactElement {
       live = false;
     };
   }, [resolved, skipped, app.conventions, app.transport]);
+
+  // Per-pair drill target: Book and Risk are the same cube at two zooms — clicking
+  // a breakdown row opens the largest contributing position of that pair in the
+  // Risk workspace. A single pair can hold several positions, so we drill into the
+  // largest |notional| contributor and label it honestly ("of N") rather than
+  // fabricating one synthetic "net" instrument that the contract cannot price.
+  const drillByPair = useMemo(() => {
+    const byPair = new Map<string, PairDrill>();
+    for (const { instrument } of resolved) {
+      const key = `${instrument.pair.base}/${instrument.pair.quote}`;
+      const cur = byPair.get(key);
+      if (!cur) {
+        byPair.set(key, {
+          instrument,
+          label: structureLabel(instrument),
+          count: 1,
+        });
+      } else {
+        cur.count += 1;
+        if (instrument.quantity.notional > cur.instrument.quantity.notional) {
+          cur.instrument = instrument;
+          cur.label = structureLabel(instrument);
+        }
+      }
+    }
+    return byPair;
+  }, [resolved]);
+
+  const drillPair = (pairKey: string): void => {
+    const d = drillByPair.get(pairKey);
+    if (!d) return;
+    const cohort = d.count > 1 ? ` (largest of ${d.count})` : "";
+    app.drillToRisk(d.instrument, `${pairKey} ${d.label}${cohort}`);
+  };
 
   if (book === null) {
     return <div className={styles.loading}>Aggregating book risk…</div>;
@@ -123,9 +168,33 @@ export function BookWorkspace(): React.ReactElement {
               </tr>
             </thead>
             <tbody>
-              {book.byPair.map((p) => (
-                <tr key={p.pairKey}>
+              {book.byPair.map((p) => {
+                const drill = drillByPair.get(p.pairKey);
+                return (
+                <tr
+                  key={p.pairKey}
+                  className={drill ? styles.drillRow : ""}
+                  onClick={drill ? () => drillPair(p.pairKey) : undefined}
+                  role={drill ? "button" : undefined}
+                  tabIndex={drill ? 0 : undefined}
+                  title={
+                    drill
+                      ? `Drill to Risk · ${drill.label}${drill.count > 1 ? ` (largest of ${drill.count})` : ""}`
+                      : undefined
+                  }
+                  onKeyDown={
+                    drill
+                      ? (e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            drillPair(p.pairKey);
+                          }
+                        }
+                      : undefined
+                  }
+                >
                   <td className={styles.pairCell}>
+                    {drill && <span className={styles.drillCue} aria-hidden>›</span>}
                     {p.base}/{p.quote}
                   </td>
                   <td className="num">{p.count}</td>
@@ -135,7 +204,8 @@ export function BookWorkspace(): React.ReactElement {
                   <td className={`num ${signClass(p.netGamma)}`}>{fmtPnlAdaptive(p.netGamma)}</td>
                   <td className={`num ${signClass(p.netTheta)}`}>{fmtPnlAdaptive(p.netTheta)}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
             <tfoot>
               <tr>
@@ -150,6 +220,8 @@ export function BookWorkspace(): React.ReactElement {
             </tfoot>
           </table>
           <p className={styles.note}>
+            Click a pair row to drill into its largest position in Risk — Book and
+            Risk are the same cube at two zooms.{" "}
             Net Greeks are summed from each position repriced via SurfaceService.Scenario
             at its pair&apos;s base market, scaled by signed notional (long +, short −).
             Cross-pair totals are summed in each pair&apos;s <em>native premium units</em> —
@@ -171,14 +243,17 @@ export function BookWorkspace(): React.ReactElement {
         <Panel glyph="ν" title="Aggregate vega ladder" className={styles.ladderPanel}>
           {book.vegaLadder.length > 0 && book.vegaLadder.some((b) => Math.abs(b.vegaPerPoint) > 0) ? (
             <div className={styles.ladder}>
+              {/* "Σ Vega" disambiguates this as the book SUM across positions (the
+                  Σ glyph means summed-across-the-book here, never a single line); the
+                  caveat below keeps the honest native-premium-units numeraire note. */}
               <div className={styles.ladderHead}>
                 <span>Tenor</span>
                 <span>Pillar</span>
-                <span>Vega / vol-pt</span>
+                <span>Σ Vega / vol-pt</span>
               </div>
               {book.vegaLadder.map((b) => (
                 <div key={`${b.tenorYears}|${b.delta}`} className={styles.ladderRow}>
-                  <span className="num">{tenorName(b.tenorYears)}</span>
+                  <span className="num">{tenorLabel(b.tenorYears)}</span>
                   <span className="num">{pillarName(b.delta)}</span>
                   <span className={styles.bar}>
                     <span
@@ -204,6 +279,11 @@ export function BookWorkspace(): React.ReactElement {
             </div>
           )}
 
+          <p className={styles.ladderNote}>
+            Σ = summed across the book&apos;s positions, in each pair&apos;s{" "}
+            <em>native premium units</em> — not yet a common reporting numeraire.
+          </p>
+
           <div className={styles.disclosure}>
             <span className={`brand-label ${styles.discLabel}`}>cross-gamma</span>
             {book.crossGammas.length > 0 ? (
@@ -228,7 +308,7 @@ export function BookWorkspace(): React.ReactElement {
               <div className={styles.chips}>
                 {book.thetaRoll.map((t) => (
                   <span key={t.horizonYears} className={styles.chip}>
-                    <span className={styles.chipKey}>{tenorName(t.horizonYears)}</span>
+                    <span className={styles.chipKey}>{tenorLabel(t.horizonYears)}</span>
                     <span className={`num ${signClass(t.pnl)}`}>{fmtPnlAdaptive(t.pnl)}</span>
                   </span>
                 ))}
@@ -250,12 +330,32 @@ function signClass(v: number): string {
   return "";
 }
 
-function tenorName(years: number): string {
-  const days = Math.round(years * 365);
-  if (days <= 1) return "ON";
-  if (days < 28) return `${Math.round(days / 7)}W`;
-  if (days < 360) return `${Math.round(days / 30)}M`;
-  return `${Math.round(days / 365)}Y`;
+/**
+ * An honest short label for an instrument's structure, used when drilling a pair
+ * row into Risk: the tenor (via the shared `tenorLabel`) + the product shape
+ * (strategy kind or vanilla call/put). Notional is implied by the position itself.
+ */
+function structureLabel(instrument: Instrument): string {
+  const t = tenorLabel(instrument.expiryYears);
+  if (instrument.product.kind === "strategy") {
+    return `${t} ${strategyShort(instrument.product.strategy.kind)}`;
+  }
+  return `${t} ${instrument.product.vanilla.optionType === "CALL" ? "call" : "put"}`;
+}
+
+function strategyShort(kind: string): string {
+  switch (kind) {
+    case "RISK_REVERSAL":
+      return "RR";
+    case "STRANGLE":
+      return "strangle";
+    case "STRADDLE":
+      return "straddle";
+    case "SEAGULL":
+      return "seagull";
+    default:
+      return kind;
+  }
 }
 
 function pillarName(delta: number): string {

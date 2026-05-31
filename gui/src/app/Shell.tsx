@@ -18,8 +18,18 @@ import { StatusRibbon } from "./StatusRibbon";
 import { CelerMark, CelnetWordmark } from "../components/CelerMark";
 import { PairStrip } from "../components/PairStrip";
 import { PairMenu } from "../components/PairMenu";
+import { ScopeBreadcrumb } from "../components/ScopeBreadcrumb";
 import { PAIRS, strategyInstrument } from "../data/seed";
 import styles from "./Shell.module.css";
+
+/** The workspace components, in rail order, for the persistent-mount canvas. */
+const WORKSPACE_VIEWS: { id: WorkspaceId; View: () => React.ReactElement }[] = [
+  { id: "ticket", View: TicketWorkspace },
+  { id: "stream", View: StreamWorkspace },
+  { id: "surface", View: SurfaceWorkspace },
+  { id: "risk", View: RiskWorkspace },
+  { id: "book", View: BookWorkspace },
+];
 
 const RAIL: { id: WorkspaceId; glyph: string; label: string; kbd: string }[] = [
   { id: "ticket", glyph: "⌁", label: "Ticket", kbd: "⌘1" },
@@ -162,12 +172,27 @@ export function Shell(): React.ReactElement {
       <div className={styles.main}>
         <TitleBar />
         <PairStrip />
-        <div className={styles.canvas} key={app.workspace}>
-          {app.workspace === "ticket" && <TicketWorkspace />}
-          {app.workspace === "stream" && <StreamWorkspace />}
-          {app.workspace === "surface" && <SurfaceWorkspace />}
-          {app.workspace === "risk" && <RiskWorkspace />}
-          {app.workspace === "book" && <BookWorkspace />}
+        {/*
+         * P0-11: every workspace stays MOUNTED; we toggle visibility rather than
+         * conditionally rendering. Switching no longer remounts (no lost Risk/Book
+         * in-progress state, no re-fired heavy effects). The active pane animates
+         * in via a key on the visible layer only, preserving the cross-fade feel
+         * without a destructive remount of the workspace subtree.
+         */}
+        <div className={styles.canvas}>
+          {WORKSPACE_VIEWS.map(({ id, View }) => {
+            const active = app.workspace === id;
+            return (
+              <div
+                key={id}
+                className={`${styles.pane} ${active ? styles.paneActive : styles.paneHidden}`}
+                aria-hidden={!active}
+                inert={!active}
+              >
+                <View />
+              </div>
+            );
+          })}
         </div>
         <StatusRibbon />
       </div>
@@ -186,6 +211,11 @@ function TitleBar(): React.ReactElement {
   return (
     <header className={styles.titleBar}>
       <CelnetWordmark className={styles.wordmark} />
+      <span className={styles.divider} aria-hidden>
+        ·
+      </span>
+      {/* P0-6: "what slice of the firm" sits between identity and the pair. */}
+      <ScopeBreadcrumb />
       <span className={styles.divider} aria-hidden>
         ·
       </span>

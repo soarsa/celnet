@@ -17,6 +17,12 @@
   color: var(--text-tertiary);
 }
 
+.axisUnit {
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+  letter-spacing: 0.04em;
+}
+
 .atm {
   margin-left: auto;
   font-size: var(--type-caption);

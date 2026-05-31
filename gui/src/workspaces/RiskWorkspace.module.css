@@ -32,6 +32,74 @@
   color: var(--accent);
 }
 
+/* --- subject heading + Book back affordance (P0-5) --- */
+.subject {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+.back {
+  align-self: center;
+  padding: 1px 8px;
+  border-radius: var(--r-full);
+  font-size: var(--type-caption);
+  font-family: var(--font-mono);
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 0.5px solid transparent;
+}
+.back:hover {
+  border-color: var(--accent);
+}
+.subjectMeta {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+}
+
+/* --- scenario-axis selector (P0-7) --- */
+.axisBar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+  flex-wrap: wrap;
+}
+.axisCue,
+.axisCueX {
+  font-family: var(--font-brand);
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+}
+.axisPick {
+  display: flex;
+  gap: 2px;
+  background: var(--bg-inset);
+  border-radius: var(--r-sm);
+  padding: 2px;
+}
+.axisOpt {
+  padding: var(--space-1) var(--space-3);
+  border-radius: 4px;
+  font-size: var(--type-caption);
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.axisOpt:hover {
+  color: var(--text-primary);
+}
+.axisOptActive {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+/* the factor already on the other axis — picking it swaps the two axes */
+.axisOptOther {
+  opacity: 0.4;
+}
+
 .gridArea {
   position: relative;
 }
@@ -39,6 +107,16 @@
   font-size: var(--type-micro);
   color: var(--text-tertiary);
   margin-bottom: var(--space-3);
+}
+.provLine {
+  margin-top: var(--space-4);
+  font-size: var(--type-micro);
+  line-height: 1.5;
+  color: var(--text-tertiary);
+}
+.provLine strong {
+  color: var(--text-secondary);
+  font-weight: var(--weight-emphasis);
 }
 
 .matrix {

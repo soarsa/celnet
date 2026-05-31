@@ -51,3 +51,20 @@
   background: var(--bg-inset);
   border: var(--hairline);
 }
+
+/* Honest QC descriptor: the mesh interpolates from the broker handles and is a
+   visual aid, never the marking tool. Bottom-left so it never collides with the
+   renderer-backend badge (top-right) or the axis ticks. */
+.provenance {
+  position: absolute;
+  bottom: var(--space-3);
+  left: var(--space-3);
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+  letter-spacing: 0.03em;
+  padding: 2px 6px;
+  border-radius: var(--r-full);
+  background: var(--bg-inset);
+  border: var(--hairline);
+  pointer-events: auto;
+}
