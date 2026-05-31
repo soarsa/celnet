@@ -18,6 +18,7 @@ import type {
   MarkedSurface,
   MarketContext,
   Smile,
+  SmileModel,
   SmilePoint,
   StrikeOrDelta,
 } from "./contract";
@@ -27,11 +28,65 @@ import { forwardDelta, strikeFromDelta, vanillaLegGreeks } from "./pricing";
 export const DELTA_PILLARS: number[] = [-0.1, -0.25, 0.5, 0.25, 0.1];
 
 /**
- * Build the smile vol at a signed convention delta from a broker quote set. ATM
- * is at |Δ|≈0.5; wings interpolate the RR (asymmetry) and BF (convexity) so the
- * 25Δ and 10Δ call/put vols reproduce the marks. RR and BF are in absolute vol.
+ * The smile-model the standalone (mock) calibrator marks under. The REAL fitted
+ * VV/SABR/SVI/SSVI calibration lives server-side in `celnet-surface`; the live WS
+ * transport routes the model selector to that engine. Here, for the offline mock
+ * only, the model selects the WING-CURVATURE construction: every model reprices
+ * ATM and preserves skew direction, but materially reshapes the wings (matching
+ * the server's "model selection materially changes the wings" property). The
+ * model used is stamped into the arb note's `model=<family>` provenance channel —
+ * the same channel the server uses — never faked as a server-grade fit.
  */
-function smileVol(delta: number, q: BrokerQuoteSet): number {
+const DEFAULT_SMILE_MODEL: SmileModel = "MARKET_HEDGE";
+
+/** The provenance family tag for a model (mirrors the server's `model=<family>` note). */
+function modelTag(model: SmileModel): string {
+  switch (model) {
+    case "MARKET_HEDGE":
+      return "market-hedge";
+    case "STOCHASTIC_VOL":
+      return "stochastic-vol";
+    case "PARAMETRIC":
+      return "parametric";
+    case "PARAMETRIC_SURFACE":
+      return "parametric-surface";
+  }
+}
+
+/**
+ * Wing-shape coefficients per model: `(convexity, asymmetry)` multipliers on the
+ * BF/RR contribution, plus a wing-power that bends the far-wing growth. All keep
+ * ATM exact (weight 0 at ATM) and the RR sign (skew direction), but reshape the
+ * 10Δ/25Δ relationship the way each family does — a real, deterministic difference
+ * the trader sees when switching models, not a fabricated curve.
+ */
+function modelWingShape(model: SmileModel): {
+  convexity: number;
+  asymmetry: number;
+  wingPower: number;
+} {
+  switch (model) {
+    case "MARKET_HEDGE":
+      return { convexity: 1.0, asymmetry: 1.0, wingPower: 2.0 };
+    case "STOCHASTIC_VOL":
+      // Fatter, smoother far wings (stoch-vol lifts deep-OTM convexity).
+      return { convexity: 1.12, asymmetry: 0.96, wingPower: 2.2 };
+    case "PARAMETRIC":
+      // Tighter near-ATM, flatter far wing (a parametric slice fit).
+      return { convexity: 0.9, asymmetry: 1.04, wingPower: 1.8 };
+    case "PARAMETRIC_SURFACE":
+      // Whole-surface fit: balanced convexity, slightly damped asymmetry.
+      return { convexity: 1.04, asymmetry: 0.92, wingPower: 2.1 };
+  }
+}
+
+/**
+ * Build the smile vol at a signed convention delta from a broker quote set under
+ * a smile model. ATM is at |Δ|≈0.5; wings interpolate the RR (asymmetry) and BF
+ * (convexity) so the 25Δ and 10Δ call/put vols reproduce the marks. RR and BF are
+ * in absolute vol. The model reshapes the wing growth (see `modelWingShape`).
+ */
+function smileVol(delta: number, q: BrokerQuoteSet, model: SmileModel): number {
   const atm = q.atmVol;
   // Distance from ATM in delta-pillar space, normalized so 0.25→1, 0.10→~1.8.
   const ad = Math.abs(delta);
@@ -43,21 +98,23 @@ function smileVol(delta: number, q: BrokerQuoteSet): number {
   const near10 = ad <= 0.18;
   const rr = near10 && q.hasTenDelta ? q.rr10 : q.rr25;
   const bf = near10 && q.hasTenDelta ? q.bf10 : q.bf25;
-  const skew = (callSide ? 0.5 : -0.5) * rr;
-  return atm + bf * w * w + skew * w;
+  const shape = modelWingShape(model);
+  const skew = (callSide ? 0.5 : -0.5) * rr * shape.asymmetry;
+  return atm + bf * shape.convexity * Math.pow(w, shape.wingPower) + skew * w;
 }
 
-/** Calibrate the delta-axis smile points for one tenor. */
+/** Calibrate the delta-axis smile points for one tenor under a smile model. */
 export function calibrateSmile(
   pair: CcyPair,
   q: BrokerQuoteSet,
   conventions: Conventions,
   epochNanos: bigint,
+  model: SmileModel = DEFAULT_SMILE_MODEL,
 ): Smile {
   const points: SmilePoint[] = DELTA_PILLARS.map((delta) => ({
     delta,
     tenorYears: q.tenorYears,
-    vol: smileVol(delta, q),
+    vol: smileVol(delta, q, model),
   }));
   return {
     pair,
@@ -65,7 +122,7 @@ export function calibrateSmile(
     brokerQuotes: q,
     points,
     conventions,
-    arbitrage: checkArb(points),
+    arbitrage: checkArb(points, model),
     epochNanos,
   };
 }
@@ -77,7 +134,7 @@ export function calibrateSmile(
  * negative curvature flags a butterfly arb. (The server runs the rigorous
  * density check; this gives the GUI an honest, non-faked arb banner.)
  */
-function checkArb(points: SmilePoint[]): ArbReport {
+function checkArb(points: SmilePoint[], model: SmileModel): ArbReport {
   let worst = 0;
   for (let i = 1; i < points.length - 1; i += 1) {
     const a = points[i - 1]!.vol;
@@ -87,6 +144,9 @@ function checkArb(points: SmilePoint[]): ArbReport {
     if (curv < worst) worst = curv;
   }
   const arbFree = worst > -0.02;
+  // The model is stamped into the note as `model=<family>` — the same provenance
+  // channel the server uses (the contract carries no model echo field).
+  const tag = `model=${modelTag(model)}`;
   return {
     butterflyArbitrageFree: arbFree,
     // Provisional: calendar arbitrage is a *cross-tenor* property and cannot be
@@ -95,8 +155,8 @@ function checkArb(points: SmilePoint[]): ArbReport {
     calendarArbitrageFree: true,
     worstDensity: worst,
     note: arbFree
-      ? "arb-free · butterfly ≥ 0"
-      : "butterfly convexity breached — re-mark wings",
+      ? `arb-free · butterfly ≥ 0 · ${tag}`
+      : `butterfly convexity breached — re-mark wings · ${tag}`,
   };
 }
 
@@ -122,9 +182,12 @@ function applyCalendarArb(smiles: Smile[]): Smile[] {
   return smiles.map((s) => {
     const calOk = flagged.get(s.tenorYears) ?? true;
     if (calOk) return s;
+    // Preserve the `model=<family>` provenance tag (suffix on the smile's note).
+    const tagMatch = s.arbitrage.note.match(/model=[\w-]+/);
+    const tag = tagMatch ? ` · ${tagMatch[0]}` : "";
     const note = s.arbitrage.butterflyArbitrageFree
-      ? "calendar arb — ATM total variance falls vs a shorter tenor"
-      : "butterfly & calendar arb — re-mark wings and term";
+      ? `calendar arb — ATM total variance falls vs a shorter tenor${tag}`
+      : `butterfly & calendar arb — re-mark wings and term${tag}`;
     return { ...s, arbitrage: { ...s.arbitrage, calendarArbitrageFree: false, note } };
   });
 }
@@ -139,22 +202,26 @@ export function calibrateLadder(
   brokerQuotes: BrokerQuoteSet[],
   conventions: Conventions,
   epochNanos: bigint,
+  model: SmileModel = DEFAULT_SMILE_MODEL,
 ): Smile[] {
-  return applyCalendarArb(brokerQuotes.map((q) => calibrateSmile(pair, q, conventions, epochNanos)));
+  return applyCalendarArb(
+    brokerQuotes.map((q) => calibrateSmile(pair, q, conventions, epochNanos, model)),
+  );
 }
 
-/** A full surface mark across the standard tenor ladder. */
+/** A full surface mark across the standard tenor ladder under a smile model. */
 export function markSurface(
   pair: CcyPair,
   brokerQuotes: BrokerQuoteSet[],
   conventions: Conventions,
   surfaceVersion: bigint,
   epochNanos: bigint,
+  model: SmileModel = DEFAULT_SMILE_MODEL,
 ): MarkedSurface {
   return {
     pair,
     surfaceVersion,
-    smiles: calibrateLadder(pair, brokerQuotes, conventions, epochNanos),
+    smiles: calibrateLadder(pair, brokerQuotes, conventions, epochNanos, model),
     epochNanos,
   };
 }
@@ -226,7 +293,13 @@ export function impliedVolForInstrument(
   return volWeighted / weightSum;
 }
 
-/** Bilinear sample of the surface at (tenorYears, signed delta) for the 3D viz. */
+/**
+ * Bilinear sample of the surface at (tenorYears, signed delta) for the 3D viz.
+ * Samples each bracketing smile's CALIBRATED points (which already embody the
+ * marked smile model) on the delta axis, then interpolates across tenor — so the
+ * mesh reflects the exact model the surface was marked under, never a re-derived
+ * default-model curve.
+ */
 export function sampleSurface(surface: MarkedSurface, tenorYears: number, delta: number): number {
   const smiles = surface.smiles;
   if (smiles.length === 0) return 0;
@@ -242,7 +315,29 @@ export function sampleSurface(surface: MarkedSurface, tenorYears: number, delta:
   }
   const span = hi.tenorYears - lo.tenorYears;
   const w = span <= 0 ? 0 : (tenorYears - lo.tenorYears) / span;
-  const vLo = smileVol(delta, lo.brokerQuotes);
-  const vHi = smileVol(delta, hi.brokerQuotes);
+  const vLo = sampleSmilePoints(lo, delta);
+  const vHi = sampleSmilePoints(hi, delta);
   return vLo + (vHi - vLo) * w;
+}
+
+/**
+ * Sample one calibrated smile's points on the signed-delta axis (linear between
+ * the nearest pillars, clamped at the wings). The points already reflect the
+ * marked model, so this is the model-faithful read.
+ */
+function sampleSmilePoints(smile: Smile, delta: number): number {
+  const pts = [...smile.points].sort((a, b) => a.delta - b.delta);
+  if (pts.length === 0) return smile.brokerQuotes.atmVol;
+  if (delta <= pts[0]!.delta) return pts[0]!.vol;
+  if (delta >= pts[pts.length - 1]!.delta) return pts[pts.length - 1]!.vol;
+  for (let i = 0; i < pts.length - 1; i += 1) {
+    const a = pts[i]!;
+    const b = pts[i + 1]!;
+    if (delta >= a.delta && delta <= b.delta) {
+      const span = b.delta - a.delta;
+      const t = span <= 0 ? 0 : (delta - a.delta) / span;
+      return a.vol + (b.vol - a.vol) * t;
+    }
+  }
+  return smile.brokerQuotes.atmVol;
 }

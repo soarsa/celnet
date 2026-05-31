@@ -86,6 +86,7 @@ pub fn vanilla_call(strike: f64) -> celnet_proto::Instrument {
         tenor: Some(celnet_proto::Tenor {
             unit: celnet_proto::tenor::Unit::Years as i32,
             count: 1,
+            broken_date: None,
         }),
         expiry_years: 1.0,
         quantity: Some(celnet_proto::Quantity {

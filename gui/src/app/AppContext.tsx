@@ -18,6 +18,7 @@ import type {
   Conventions,
   Instrument,
   MarkedSurface,
+  SmileModel,
 } from "../data/contract";
 import type { CelnetTransport } from "../data/transport";
 import { resolveTransport } from "../data/transportConfig";
@@ -99,10 +100,16 @@ interface AppState {
   /**
    * Mark/publish the surface. With no argument it (re-)marks from the pair's live
    * broker ladder; given an explicit `ladder` it publishes the trader's EDITED
-   * marks. Either way the edited quotes flow through the same `MarkSurface` API the
-   * SDK and Excel use — the GUI never side-channels a mark. Bumps `surfaceVersion`.
+   * marks. `model` selects the calibration family the server marks under (defaults
+   * to the active `surfaceModel`). Either way the edited quotes flow through the
+   * same `MarkSurface` API the SDK and Excel use — the GUI never side-channels a
+   * mark. Bumps `surfaceVersion`.
    */
-  remarkSurface: (ladder?: BrokerQuoteSet[]) => Promise<void>;
+  remarkSurface: (ladder?: BrokerQuoteSet[], model?: SmileModel) => Promise<void>;
+  /** The smile-calibration model the surface is currently marked under. */
+  surfaceModel: SmileModel;
+  /** Select the smile model AND re-mark the live surface under it. */
+  setSurfaceModel: (model: SmileModel) => void;
   paletteOpen: boolean;
   setPaletteOpen: (open: boolean) => void;
   /**
@@ -144,6 +151,9 @@ export function AppProvider({ children }: { children: React.ReactNode }): React.
   const [pairIndex, setPairIndex] = useState(0);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [surface, setSurface] = useState<MarkedSurface | null>(null);
+  // The smile-calibration model the surface is marked under (default = the desk's
+  // market-hedge construction; the server's default when the field is absent).
+  const [surfaceModel, setSurfaceModelState] = useState<SmileModel>("MARKET_HEDGE");
   // Scope (P0-6): default to the firm root — "all desks · all books · all pairs".
   const [scopePath, setScopePath] = useState<ScopeNode[]>([FIRM_SCOPE_ROOT]);
   // Shared selection (P0-5): null until a lane selects/drills; Risk falls back to
@@ -169,13 +179,31 @@ export function AppProvider({ children }: { children: React.ReactNode }): React.
   const positions = useMemo(() => seed.map((s) => s.instrument), [seed]);
 
   const remarkSurface = useMemo(
-    () => async (ladder?: BrokerQuoteSet[]) => {
+    () => async (ladder?: BrokerQuoteSet[], model?: SmileModel) => {
       const marked = await transport.markSurface(
         pairCtx.pair,
         ladder ?? brokerLadder(pairCtx),
         conventions,
+        model ?? surfaceModel,
       );
       setSurface(marked);
+    },
+    [transport, pairCtx, conventions, surfaceModel],
+  );
+
+  // Select a smile model AND immediately re-mark the live broker ladder under it,
+  // so the displayed surface + its provenance reflect the chosen model. Routes
+  // through the SAME MarkSurface API the SDK/Excel use (no GUI side-channel).
+  const setSurfaceModel = useMemo(
+    () => (model: SmileModel) => {
+      setSurfaceModelState(model);
+      void transport
+        .markSurface(pairCtx.pair, brokerLadder(pairCtx), conventions, model)
+        .then(setSurface)
+        .catch(() => {
+          // A transient mark failure leaves the prior surface in place (honest);
+          // the cold-start retry / a manual re-mark recovers it.
+        });
     },
     [transport, pairCtx, conventions],
   );
@@ -246,6 +274,8 @@ export function AppProvider({ children }: { children: React.ReactNode }): React.
     stream,
     surface,
     remarkSurface,
+    surfaceModel,
+    setSurfaceModel,
     paletteOpen,
     setPaletteOpen,
     scope,

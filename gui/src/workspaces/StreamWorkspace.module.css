@@ -91,10 +91,21 @@
   text-align: left;
 }
 .structure {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
   color: var(--text-secondary);
   font-size: var(--type-callout);
   text-align: left;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Quoting maker / owner seat — shown only when the wire carries attribution. */
+.owner {
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+  letter-spacing: 0.02em;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -157,6 +168,14 @@
   width: 96px;
   text-align: right;
 }
+/* The latest value of the active trend series, in its natural unit — labelled so
+   the tile is never an unlabelled abstract index (US §5.5 / P0-4). */
+.trendValue {
+  font-size: var(--type-micro);
+  color: var(--text-secondary);
+  min-width: 40px;
+  text-align: right;
+}
 
 .greek {
   text-align: right;
@@ -183,8 +202,8 @@
   color: var(--text-tertiary);
 }
 
-/* Honest trend-mode affordance: "Premium" is live (accent); the rest are shown
-   disabled with a "needs market-series feed" tooltip — never a fabricated line. */
+/* Trend-mode selector: PREMIUM + the market-observable modes are selectable
+   (the active one is accented); VEGA/PNL are disabled (later phase). */
 .trendModes {
   display: flex;
   align-items: center;
@@ -209,6 +228,12 @@
   color: var(--text-secondary);
   white-space: nowrap;
   user-select: none;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+.trendChip:hover:not(:disabled):not(.trendChipActive) {
+  border-color: var(--text-tertiary);
+  color: var(--text-primary);
 }
 .trendChipActive {
   border-color: var(--accent);
@@ -216,7 +241,8 @@
   color: var(--accent);
   font-weight: var(--weight-emphasis);
 }
-.trendChipDisabled {
+.trendChipDisabled,
+.trendChip:disabled {
   opacity: 0.42;
   color: var(--text-tertiary);
   cursor: not-allowed;

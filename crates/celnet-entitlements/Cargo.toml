@@ -1,0 +1,20 @@
+[package]
+name = "celnet-entitlements"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet entitlement model + server-side pre-aggregation pruning predicate: a principal carries role grants scoped to dimension subtrees plus deny rules (information barriers); the filter admits only the facts the principal may see, applied BEFORE any roll-up so a node total can never leak the magnitude of an invisible subtree. Default principal is grant-all (the GUI's show-all-now behaviour), so swapping in real principals later is zero-rework."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+celnet-types.workspace = true
+celnet-risk-cube.workspace = true
+
+[dev-dependencies]
+# Tests build real RiskFacts via the canonical leaf transform (no fabricated greeks).
+celnet-risk-normalize.workspace = true

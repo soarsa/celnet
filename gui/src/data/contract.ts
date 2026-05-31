@@ -43,7 +43,43 @@ export type Settlement = "DELIVERABLE" | "NON_DELIVERABLE";
 
 export type StrategyKind = "RISK_REVERSAL" | "STRANGLE" | "STRADDLE" | "SEAGULL";
 
-export type TenorUnit = "OVERNIGHT" | "WEEKS" | "MONTHS" | "YEARS";
+export type TenorUnit =
+  | "OVERNIGHT"
+  | "WEEKS"
+  | "MONTHS"
+  | "YEARS"
+  | "TOM_NEXT"
+  | "SPOT_NEXT"
+  | "IMM"
+  | "BROKEN_DATE";
+
+/**
+ * The smile-calibration model the surface is marked under (`celnet.wire.SmileModel`).
+ * Vendor/method-neutral, purpose-named (CLAUDE.md rule 8) — the mathematical family
+ * each maps to lives in the server's doc comments, never in this identifier:
+ *  - `MARKET_HEDGE`        — the desk's market-hedge (vanna-volga) construction (default)
+ *  - `STOCHASTIC_VOL`      — a stochastic-vol parameterisation fitted to the same anchors
+ *  - `PARAMETRIC`          — a parametric per-slice fit
+ *  - `PARAMETRIC_SURFACE`  — a parametric whole-surface fit
+ */
+export type SmileModel =
+  | "MARKET_HEDGE"
+  | "STOCHASTIC_VOL"
+  | "PARAMETRIC"
+  | "PARAMETRIC_SURFACE";
+
+/**
+ * A market observable a time-series feed can stream (`celnet.wire.MarketObservable`).
+ * The value's natural unit is vol for ATM_VOL/RISK_REVERSAL/BUTTERFLY and a rate for
+ * SPOT/FORWARD. RISK_REVERSAL/BUTTERFLY additionally need a signed delta wing; all of
+ * ATM_VOL/RISK_REVERSAL/BUTTERFLY/FORWARD need a tenor; SPOT is tenor-independent.
+ */
+export type MarketObservable =
+  | "ATM_VOL"
+  | "SPOT"
+  | "RISK_REVERSAL"
+  | "BUTTERFLY"
+  | "FORWARD";
 
 // --- value messages ---------------------------------------------------------
 
@@ -55,11 +91,24 @@ export interface CcyPair {
   quote: string;
 }
 
-/** A standard FX-options tenor measured from the spot date. */
+/** An explicit calendar date for a `BROKEN_DATE` tenor (`celnet.wire.BrokenDate`). */
+export interface BrokenDate {
+  year: number;
+  month: number;
+  day: number;
+}
+
+/**
+ * A standard FX-options tenor. `unit` selects the family; `count` is the
+ * weeks/months/years count (or the 1-based IMM ordinal for `IMM`), ignored for
+ * OVERNIGHT/TOM_NEXT/SPOT_NEXT; `brokenDate` is the explicit date for `BROKEN_DATE`.
+ */
 export interface Tenor {
   unit: TenorUnit;
-  /** Number of units (weeks/months/years); ignored for OVERNIGHT. */
+  /** Units count (weeks/months/years) or IMM ordinal; ignored for the short-end units. */
   count: number;
+  /** The explicit expiry date for `BROKEN_DATE` (presence-tracked; absent otherwise). */
+  brokenDate?: BrokenDate;
 }
 
 /** The trade conventions a quote / surface is expressed under. */
@@ -192,6 +241,8 @@ export interface Quote {
   validUntilNanos: bigint;
   correlationId?: bigint;
   surfaceVersion?: bigint;
+  /** Who quoted/holds this line (maker auto-pricer / requesting seat), if emitted. */
+  attribution?: AttributionRecord;
 }
 
 export interface Execution {
@@ -201,6 +252,8 @@ export interface Execution {
   tradedPremium: number;
   instrument: Instrument;
   epochNanos: bigint;
+  /** Attribution chain on the booked trade, if emitted. */
+  attribution?: AttributionRecord;
 }
 
 // --- stream (RFS) -----------------------------------------------------------
@@ -222,6 +275,8 @@ export interface Snapshot {
   surfaceVersion?: bigint;
   correlationId?: bigint;
   epochNanos: bigint;
+  /** Who quoted/holds this streamed line (maker auto-pricer / requesting seat), if emitted. */
+  attribution?: AttributionRecord;
 }
 
 /** A sequenced delta update on a streamed instrument. */
@@ -250,6 +305,8 @@ export interface Executed {
   tradedPremium: number;
   correlationId?: bigint;
   epochNanos: bigint;
+  /** Attribution chain on the click-to-trade fill, if emitted. */
+  attribution?: AttributionRecord;
 }
 
 export type StreamRejectReason = "EXPIRED" | "UNKNOWN_TOKEN" | "ALREADY_CONSUMED";
@@ -259,6 +316,61 @@ export interface StreamReject {
   token: bigint;
   reason: StreamRejectReason;
   correlationId?: bigint;
+  epochNanos: bigint;
+}
+
+// --- attribution (book / seat identity) -------------------------------------
+
+/**
+ * Who owns a quoted/held line — a human trader seat OR an automated pricer
+ * (`celnet.wire.Owner`). Exactly one arm is set; engine-quoted edge flow is the
+ * `autoPricer` seat (never anonymous).
+ */
+export type Owner =
+  | { kind: "trader"; trader: string }
+  | { kind: "autoPricer"; autoPricer: string };
+
+/** A book/owner identity (`celnet.wire.BookId`): a named book plus its owner seat. */
+export interface BookId {
+  book: string;
+  owner?: Owner;
+}
+
+/**
+ * The attribution chain on a quoted line (`celnet.wire.AttributionRecord`):
+ * `quotedBy` is the maker that priced it (the auto-pricer for engine-quoted flow);
+ * `heldBy` is the requesting seat that holds the resulting position; `won`/`lpCount`
+ * record the LP competition outcome when known.
+ */
+export interface AttributionRecord {
+  quotedBy?: BookId;
+  heldBy?: BookId;
+  won?: boolean;
+  lpCount?: number;
+}
+
+// --- market-series feed (multiplexed on the stream session) -----------------
+
+/** One observed point of a market series: a timestamped value of the observable. */
+export interface MarketSeriesPoint {
+  subscriptionId: bigint;
+  sequence: bigint;
+  /** The observed value in the observable's natural unit (vol or a rate). */
+  value: number;
+  epochNanos: bigint;
+}
+
+/**
+ * The opening baseline of a market series: recent history (oldest → newest) plus
+ * the observable's identity, so a trend tile can label its unit and seed its line
+ * before live points arrive.
+ */
+export interface MarketSeriesSnapshot {
+  subscriptionId: bigint;
+  sequence: bigint;
+  pair: CcyPair;
+  observable: MarketObservable;
+  points: MarketSeriesPoint[];
   epochNanos: bigint;
 }
 

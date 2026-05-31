@@ -9,6 +9,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type {
+  AttributionRecord,
   Conventions,
   Greeks,
   Instrument,
@@ -35,6 +36,12 @@ export interface StreamRow {
   /** Recent mids for the sparkline (bounded ring). */
   midHistory: number[];
   gaps: number;
+  /**
+   * Who quoted/holds this streamed line, when the server emits it. Engine-quoted
+   * edge flow is the maker auto-pricer; `undefined` until/unless the contract
+   * carries it on the wire (honest empty-state, never a fabricated seat).
+   */
+  attribution?: AttributionRecord;
 }
 
 /** A toast surfaced from click-to-trade Executed / StreamReject. */
@@ -131,7 +138,7 @@ export function useStreamSession(
     // Build (or refresh) a blotter row from a snapshot + resolved metadata.
     const applySnapshot = (s: Snapshot, m: { label: string; instrument: Instrument }) => {
       const existing = rowMap.current.get(s.subscriptionId);
-      rowMap.current.set(s.subscriptionId, {
+      const row: StreamRow = {
         subscriptionId: s.subscriptionId,
         instrument: m.instrument,
         label: m.label,
@@ -145,7 +152,11 @@ export function useStreamSession(
         health: "HEALTHY",
         midHistory: appendHistory(existing?.midHistory, mid(s.price)),
         gaps: existing?.gaps ?? 0,
-      });
+      };
+      // Carry attribution when the wire emits it (else keep any prior, else absent).
+      const attribution = s.attribution ?? existing?.attribution;
+      if (attribution !== undefined) row.attribution = attribution;
+      rowMap.current.set(s.subscriptionId, row);
     };
     // Materialize any orphaned snapshot now that metadata for `id` is known.
     // Called from the subscribe path (the metadata-arrives-after-snapshot case).
@@ -206,10 +217,14 @@ export function useStreamSession(
         }
         case "executed": {
           const e = event.executed;
+          // Append the maker attribution when the wire carries it (honest: omit
+          // entirely when absent rather than inventing a counterparty).
+          const maker = ownerLabel(e.attribution?.quotedBy);
+          const makerSuffix = maker ? ` · vs ${maker}` : "";
           pushToast({
             kind: "executed",
             subscriptionId: e.subscriptionId,
-            text: `Filled ${e.side === "BUY" ? "BUY" : "SELL"} @ ${e.tradedPremium.toFixed(3)} · exec #${e.executionId}`,
+            text: `Filled ${e.side === "BUY" ? "BUY" : "SELL"} @ ${e.tradedPremium.toFixed(3)} · exec #${e.executionId}${makerSuffix}`,
             epochNanos: e.epochNanos,
           });
           break;
@@ -308,6 +323,16 @@ function appendHistory(prev: number[] | undefined, v: number): number[] {
   const next = prev ? prev.slice(-(HISTORY_LEN - 1)) : [];
   next.push(v);
   return next;
+}
+
+/**
+ * A human label for a `BookId`'s owner seat, or undefined when absent. Used to
+ * attribute a fill/line honestly — never invents a seat when the wire omits it.
+ */
+export function ownerLabel(book: AttributionRecord["quotedBy"]): string | undefined {
+  const owner = book?.owner;
+  if (!owner) return book?.book || undefined;
+  return owner.kind === "trader" ? owner.trader : owner.autoPricer;
 }
 
 function rejectText(reason: "EXPIRED" | "UNKNOWN_TOKEN" | "ALREADY_CONSUMED"): string {

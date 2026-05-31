@@ -16,7 +16,15 @@
  */
 
 import type { Connection } from "../transport/connection";
-import { parsePair, parseStrikeOrDelta, parseTenor, ShapingError, type MarkStatus } from "./shaping";
+import {
+  parsePair,
+  parseSmileModel,
+  parseStrikeOrDelta,
+  parseTenor,
+  ShapingError,
+  type MarkStatus,
+} from "./shaping";
+import type { SmileModel } from "../contract/contract";
 
 /** A staged (not-yet-committed) contribution awaiting task-pane confirmation. */
 export interface StagedMark {
@@ -25,6 +33,8 @@ export interface StagedMark {
   readonly tenor: string;
   readonly pillar: string;
   readonly vol: number;
+  /** The smile-calibration model the eventual commit selects (default VV). */
+  readonly model: SmileModel;
   readonly comment: string;
   status: "PENDING" | "COMMITTED" | "REJECTED";
   surfaceVersionAfter?: bigint;
@@ -38,6 +48,8 @@ export interface MarkArgs {
   readonly pillar: string;
   readonly vol: number;
   readonly comment: string;
+  /** Optional smile-calibration model selector (VV/SABR/SVI/SSVI); default VV. */
+  readonly model?: string | undefined;
 }
 
 /** This workbook session's epoch, mixed into every idempotency key. */
@@ -57,6 +69,7 @@ export function idempotencyKey(args: MarkArgs): string {
     args.tenor.trim().toUpperCase(),
     args.pillar.trim().toUpperCase(),
     args.vol,
+    parseSmileModel(args.model),
     SESSION_EPOCH,
   ].join("|");
   let h = 0xcbf29ce484222325n;
@@ -80,6 +93,7 @@ export async function stageMark(_conn: Connection, args: MarkArgs): Promise<Mark
   parsePair(args.pair);
   parseTenor(args.tenor);
   parseStrikeOrDelta(args.pillar);
+  const model = parseSmileModel(args.model);
   if (!Number.isFinite(args.vol) || args.vol <= 0 || args.vol >= 5) {
     throw new ShapingError(`invalid vol \`${args.vol}\` (absolute, e.g. 0.102)`);
   }
@@ -99,6 +113,7 @@ export async function stageMark(_conn: Connection, args: MarkArgs): Promise<Mark
     tenor: args.tenor,
     pillar: args.pillar,
     vol: args.vol,
+    model,
     comment: args.comment,
     status: "PENDING",
     detail: "staged — confirm in the task pane to contribute",

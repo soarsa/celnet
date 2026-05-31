@@ -52,6 +52,33 @@ export type StrategyKind = "RISK_REVERSAL" | "STRANGLE" | "STRADDLE" | "SEAGULL"
 
 export type TenorUnit = "OVERNIGHT" | "WEEKS" | "MONTHS" | "YEARS";
 
+/**
+ * The smile-calibration family a surface is marked with (proto `SmileModel`).
+ * Vendor/method-neutral names mirroring `celnet_proto::SmileModel`: MARKET_HEDGE
+ * (the default Vanna-Volga market-hedge construction), and the three fitted
+ * parametric families. Provenance of the model a surface was marked under is
+ * echoed by the server on `Smile.arbitrage.note` as `model=<family>` (the frozen
+ * contract carries no echo field — the note is the honest provenance channel).
+ */
+export type SmileModel =
+  | "MARKET_HEDGE"
+  | "STOCHASTIC_VOL"
+  | "PARAMETRIC"
+  | "PARAMETRIC_SURFACE";
+
+/**
+ * A streamable market observable (proto `MarketObservable`). The market-series
+ * feed (`market_series_subscribe`) streams one of these as a scalar time series:
+ * ATM_VOL/RISK_REVERSAL/BUTTERFLY are vols, SPOT/FORWARD are rates. RR/BF require
+ * a delta wing; ATM_VOL/RR/BF/FORWARD require a tenor; SPOT is tenor-independent.
+ */
+export type MarketObservable =
+  | "ATM_VOL"
+  | "SPOT"
+  | "RISK_REVERSAL"
+  | "BUTTERFLY"
+  | "FORWARD";
+
 // --- value messages ---------------------------------------------------------
 
 /** An FX currency pair BASE/QUOTE (market form CCY1CCY2), e.g. EUR/USD. */
@@ -318,6 +345,29 @@ export interface MarkedSurface {
   pair: CcyPair;
   surfaceVersion: bigint;
   smiles: Smile[];
+  epochNanos: bigint;
+}
+
+// --- market series (trend feed) ---------------------------------------------
+
+/** One observed point in a market series: a timestamped scalar value. */
+export interface MarketSeriesPoint {
+  subscriptionId: bigint;
+  /** Monotonic per-subscription sequence (snapshot seq + n). */
+  sequence: bigint;
+  /** Observed value in the observable's natural unit (vol or rate). */
+  value: number;
+  epochNanos: bigint;
+}
+
+/** The opening baseline for a market series (history + observable identity). */
+export interface MarketSeriesSnapshot {
+  subscriptionId: bigint;
+  sequence: bigint;
+  pair: CcyPair;
+  observable: MarketObservable;
+  /** Recent history, oldest → newest (at most the requested history limit). */
+  points: MarketSeriesPoint[];
   epochNanos: bigint;
 }
 

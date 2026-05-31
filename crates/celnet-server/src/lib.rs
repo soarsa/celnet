@@ -81,7 +81,8 @@ pub mod ws;
 
 pub use clock::Clock;
 pub use core_link::{
-    BarrierTopology, CoreLink, CoreLinkError, ExoticQuery, MarketSnapshot, SurfaceQuery, SurfaceVol,
+    BarrierTopology, CoreLink, CoreLinkError, ExoticQuery, MarketSnapshot, Observable,
+    ObservableQuery, SurfaceQuery, SurfaceVol,
 };
 pub use pricer::{ConventionSet, PriceError, Priced, price_instrument};
 pub use readiness::{ReadinessGate, ServiceState};

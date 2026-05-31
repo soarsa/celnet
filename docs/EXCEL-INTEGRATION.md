@@ -41,8 +41,10 @@ a bolted-on terminal.
 | W5 | Watch many structures (a book) ticking live | `=CELNET.SUBSCRIBE(...)` streaming, one session multiplexed across all cells | `StreamService.StreamSession` (multiplex) |
 | W6 | Click-to-trade off a live streamed price | **Task-pane** "Trade" button bound to the cell's live `TradableToken` | `StreamService` `Execute`/`Executed` |
 | W7 | Risk scenario / bucketed vega ladder | Dynamic-array spill `=CELNET.SCENARIO(...)` / `=CELNET.RISK(...)` | `SurfaceService.Scenario`, `RiskBucketRequest` |
-| W8 | **Contribute a mark / manual vol** back to the marked surface | `=CELNET.MARK(...)` write-function + task-pane "Contribute" confirm | `SurfaceService.MarkSurface` |
-| W9 | Convention/audit transparency for any cell | per-cell **convention annotation** + task-pane provenance panel | echoed `Conventions` + `surface_version` on every response |
+| W8 | **Contribute a mark / manual vol** back to the marked surface, choosing the calibration model | `=CELNET.MARK(...)` write-function (optional `smileModel`) + task-pane "Contribute" confirm | `SurfaceService.MarkSurface` (optional `SmileModel`) |
+| W9 | Convention/audit transparency for any cell | per-cell **convention annotation** + task-pane provenance panel | echoed `Conventions` + `surface_version` (+ `model=` note) on every response |
+| W10 | Live market-series spark/history for a pair (ATM-vol/spot/RR/BF/forward) | **Streaming** `=CELNET.TREND(...)` (one cell or a spill of recent points) | `StreamService.StreamSession` (`MarketSeriesSubscribe`/`…Point`) |
+| W11 | Who quoted / holds / won a streamed or RFQ line | attribution columns on the `CELNET.RFS`/`CELNET.RFQ` spill + `=CELNET.WHO(cellRef)` | `AttributionRecord` echoed on `Snapshot`/`Quote`/`Executed`/`Execution` |
 
 The deliberate split: **read** is dominated by streaming/spill functions (zero clicks, the
 sheet stays alive); **write** always goes through a task-pane confirmation step (W4/W6/W8)
@@ -160,6 +162,11 @@ strike↔delta solver the GUI uses. `callPut` is `"C"`/`"P"`. `conv` is an optio
 object/range; omitted ⇒ the canonical convention for the `(pair, tenor)` is resolved
 server-side (the desk almost never overrides it).
 
+`tenor` uses the same shorthand the CLI/GUI/SDK speak (one `Tenor` contract message): `ON`,
+`TN`, `SN`, `<n>W`/`<n>M`/`<n>Y`, `<n>IMM` (the `n`-th 3rd-Wednesday IMM date), or a
+`YYYY-MM-DD` broken date. The pre-spot short end (ON/TN/SN) is anchored on **today**, not spot
+(the ON-resolves-as-SN bug is fixed; see `docs/CONVENTIONS.md` / `ANALYTICS-SPEC.md` §1.5).
+
 ### 3.2 Read — streaming (`@streaming`, RTD-equivalent)
 
 ```
@@ -167,11 +174,21 @@ server-side (the desk almost never overrides it).
     → streaming scalar; re-emits on every Update for that instrument
 
 =CELNET.RFS(pair, tenor, struct…, [conv])
-    → streaming 1×4 spill: [bid, offer, tradableTokenHandle, validUntil]
+    → streaming 1×6 spill: [bid, offer, tradableTokenHandle, validUntil, quotedBy, heldBy]
       tradableTokenHandle is an opaque handle (NOT the raw token) the task-pane Trade
-      button resolves for click-to-trade (W6)
+      button resolves for click-to-trade (W6); quotedBy/heldBy are the AttributionRecord
+      seats echoed on the Snapshot (W11) — quotedBy is the maker auto-pricer by default
 
 =CELNET.SUBSCRIBE(pair, tenor, struct…, [conv])  ≡ alias of CELNET.RFS for blotters
+
+=CELNET.TREND(pair, observable, [tenor], [delta], [throttleMs], [historyLimit])
+    → streaming market-series for the GUI's TrendMode (W10), over one StreamSession:
+      observable ∈ {ATM_VOL, SPOT, RR, BF, FORWARD}; tenor required for
+      ATM_VOL/RR/BF/FORWARD, delta required for RR/BF. A scalar cell streams the latest
+      value; a spill returns the recent [epoch, value] points (snapshot + appended points).
+      Every value is derived server-side on the core thread from the live MarketState
+      (never a fabricated proxy); an underivable point is skipped, a lagging cell drops a
+      conflatable point — the contract matches the GUI/SDK exactly (API-first parity).
 ```
 
 **Streaming behaviour.** Office.js streaming functions use `@streaming` /
@@ -187,9 +204,12 @@ refresh; Resync → silent re-snapshot (no flicker); StreamEnd → see §5.
 ### 3.3 Write — contribution / trade
 
 ```
-=CELNET.MARK(pair, tenor, pillar, vol, [conv], [comment])
+=CELNET.MARK(pair, tenor, pillar, vol, [conv], [comment], [smileModel])
     → contributes a manual vol/mark; returns a status spill
-      [status, surfaceVersionAfter, auditId]  — NEVER auto-fires on recalc (see below)
+      [status, surfaceVersionAfter, auditId, model]  — NEVER auto-fires on recalc (see below)
+      smileModel ∈ {MarketHedge (default), StochasticVol, Parametric, ParametricSurface};
+      selects the calibration family (ANALYTICS-SPEC §3.4a), tagged on the deposited surface
+      version and echoed back as `model` (provenance from Smile.arbitrage.note `model=<family>`)
 
 (task-pane only) Trade        → Execute against a live RFS TradableToken (W6)
 (task-pane only) Contribute   → confirm/stage a CELNET.MARK batch (W8)
@@ -216,7 +236,11 @@ produced the number. Surfaces:
   row `[conv: 25Δ premium-adj, ATM=DNS, ACT/365F | surface v#1284 | t=12:04:07.114Z]`.
 - **Companion functions.** `=CELNET.CONV(cellRef)` and `=CELNET.PROVENANCE(cellRef)` return
   the convention record and the surface_version/timestamp/source for any Celnet cell, so a
-  trader can audit *why* a number is what it is without leaving the grid.
+  trader can audit *why* a number is what it is without leaving the grid. `=CELNET.PROVENANCE`
+  also surfaces the **smile model** the pinned surface was marked with (read from the
+  `Smile.arbitrage.note` `model=<family>` provenance, ANALYTICS-SPEC §3.4a). `=CELNET.WHO(cellRef)`
+  returns the `AttributionRecord` for a streamed/RFQ line (`quotedBy` / `heldBy` / `won` /
+  `lp_count`, W11) — the same who's-trading chain the GUI shows.
 - **Task-pane provenance panel.** Selecting a Celnet cell shows the full
   convention + surface_version + upstream source lineage (W9).
 

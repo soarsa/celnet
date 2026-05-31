@@ -29,8 +29,8 @@ use tonic::{Request, Response, Status};
 
 use celnet_conventions::ConventionRecord;
 use celnet_surface::{
-    ArbitrageReport, MarketContext as SurfaceContext, MarketHedgeSmile, MarketQuotes, build_smile,
-    check_slice,
+    ArbitrageReport, CalibratedSmile, MarketContext as SurfaceContext, MarketQuotes, SmileModel,
+    build_model_smile, check_slice,
 };
 use celnet_types::{
     AtmConvention, Cut, DayCount, DeltaConvention, OptionType, PremiumStyle, Settlement,
@@ -115,13 +115,16 @@ fn convention_record(conv: &ConventionSet) -> ConventionRecord {
     )
 }
 
-/// Calibrate a Vanna-Volga smile for one tenor from a broker quote set against a
-/// market context.
+/// Calibrate a smile of the selected `model` for one tenor from a broker quote set
+/// against a market context. The model routes to the corresponding calibrator
+/// (market-hedge / stochastic-vol / parametric / parametric-surface); the
+/// market-hedge default preserves the prior behaviour.
 fn calibrate(
     broker: &BrokerQuoteSet,
     market: &WireMarketContext,
     conv: &ConventionSet,
-) -> Result<MarketHedgeSmile, Status> {
+    model: SmileModel,
+) -> Result<CalibratedSmile, Status> {
     let record = convention_record(conv);
     let ctx = SurfaceContext::new(
         market.spot,
@@ -131,8 +134,38 @@ fn calibrate(
         record,
     );
     let quotes = quotes_from_broker(broker);
-    build_smile(&ctx, &quotes)
+    build_model_smile(model, &ctx, &quotes)
         .map_err(|e| Status::invalid_argument(format!("calibration failed: {e:?}")))
+}
+
+/// Decode the optional wire `smile_model` selector (a generated-enum tag) into the
+/// surface-crate [`SmileModel`], defaulting to the market-hedge baseline when the
+/// field is absent (the prior behaviour). An out-of-range tag is rejected.
+fn decode_smile_model(wire: Option<i32>) -> Result<SmileModel, Status> {
+    let Some(tag) = wire else {
+        return Ok(SmileModel::MarketHedge);
+    };
+    let proto = celnet_proto::SmileModel::try_from(tag)
+        .map_err(|_| Status::invalid_argument(format!("unknown SmileModel tag {tag}")))?;
+    Ok(match proto {
+        celnet_proto::SmileModel::MarketHedge => SmileModel::MarketHedge,
+        celnet_proto::SmileModel::StochasticVol => SmileModel::StochasticVol,
+        celnet_proto::SmileModel::Parametric => SmileModel::Parametric,
+        celnet_proto::SmileModel::ParametricSurface => SmileModel::ParametricSurface,
+    })
+}
+
+/// A short, human-readable provenance label for the smile model actually used,
+/// emitted in the [`ArbReport.note`] so a consumer always learns which family
+/// produced the mark (the contract carries no dedicated echo field; the note is
+/// the honest provenance channel).
+fn model_label(model: SmileModel) -> &'static str {
+    match model {
+        SmileModel::MarketHedge => "market-hedge",
+        SmileModel::StochasticVol => "stochastic-vol",
+        SmileModel::Parametric => "parametric",
+        SmileModel::ParametricSurface => "parametric-surface",
+    }
 }
 
 /// Build the calibration quote set from a broker set, choosing five-point vs
@@ -160,7 +193,7 @@ fn quotes_from_broker(broker: &BrokerQuoteSet) -> MarketQuotes {
 fn smile_to_wire(
     pair: Option<celnet_proto::CcyPair>,
     broker: &BrokerQuoteSet,
-    smile: &MarketHedgeSmile,
+    smile: &CalibratedSmile,
     conv: &ConventionSet,
     market: &WireMarketContext,
     clock: &Clock,
@@ -205,8 +238,9 @@ fn smile_to_wire(
         });
     }
 
-    // Arbitrage check across the calibrated benchmark strikes (widened grid).
-    let arb = arb_report(smile, forward, t);
+    // Arbitrage check across the calibrated benchmark strikes (widened grid),
+    // annotated with the smile model actually used (provenance via the note).
+    let arb = arb_report(smile, forward, t, smile.model());
 
     Smile {
         pair,
@@ -220,8 +254,9 @@ fn smile_to_wire(
 }
 
 /// Run the static no-arbitrage checks on a calibrated smile and project them onto
-/// the wire [`ArbReport`].
-fn arb_report(smile: &MarketHedgeSmile, forward: f64, t: f64) -> ArbReport {
+/// the wire [`ArbReport`]. The `model` is echoed in the note as provenance so a
+/// consumer always learns which smile family produced this mark.
+fn arb_report(smile: &CalibratedSmile, forward: f64, t: f64, model: SmileModel) -> ArbReport {
     // A symmetric strike grid around the forward for the density / vertical checks.
     let grid: Vec<f64> = (1..=9)
         .map(|i| forward * (0.80 + 0.05 * f64::from(i - 1)))
@@ -230,14 +265,15 @@ fn arb_report(smile: &MarketHedgeSmile, forward: f64, t: f64) -> ArbReport {
     let report: ArbitrageReport = check_slice(smile, &grid, forward, t, h);
     let bf_free = report.min_density >= -1e-6 && report.min_butterfly >= -1e-6;
     let cal_free = report.max_vertical_increase <= 1e-6;
+    let label = model_label(model);
     ArbReport {
         butterfly_arbitrage_free: bf_free,
         calendar_arbitrage_free: cal_free,
         worst_density: report.min_density.min(0.0),
         note: if report.is_arbitrage_free(1e-6) {
-            "no repair applied".to_owned()
+            format!("model={label}; no repair applied")
         } else {
-            "static checks flagged; smile reported as calibrated".to_owned()
+            format!("model={label}; static checks flagged; smile reported as calibrated")
         },
     }
 }
@@ -370,7 +406,10 @@ impl SurfaceService for SurfaceEdge {
             // A neutral on-the-fly mark from live ATM only: three-point.
             has_ten_delta: false,
         };
-        let smile = calibrate(&broker, &market, &conv)?;
+        // GetSmile marks an on-the-fly neutral smile from live ATM under the
+        // market-hedge baseline (the read axis is a delta grid; there is no model
+        // selector on a read).
+        let smile = calibrate(&broker, &market, &conv, SmileModel::MarketHedge)?;
         Ok(Response::new(smile_to_wire(
             req.pair,
             &broker,
@@ -392,6 +431,7 @@ impl SurfaceService for SurfaceEdge {
             .conventions
             .ok_or_else(|| Status::invalid_argument("missing `conventions`"))?;
         let conv = decode_conv(&wire_conv)?;
+        let model = decode_smile_model(req.smile_model)?;
         if req.broker_quotes.is_empty() {
             return Err(Status::invalid_argument(
                 "mark_surface requires at least one broker quote set",
@@ -420,9 +460,19 @@ impl SurfaceService for SurfaceEdge {
 
         let mut smiles = Vec::with_capacity(req.broker_quotes.len());
         for broker in &req.broker_quotes {
-            let smile = calibrate(broker, &market, &conv)?;
+            let smile = calibrate(broker, &market, &conv, model)?;
+            // Project the wire smile before depositing (deposit consumes the model).
+            let wire = smile_to_wire(
+                req.pair.clone(),
+                broker,
+                &smile,
+                &conv,
+                &market,
+                &self.clock,
+            );
             // Deposit the calibrated slice into the versioned registry so a pinned
-            // price against `version` resolves this exact marked smile.
+            // price against `version` resolves this exact marked smile (of the
+            // selected model).
             self.surface_book.deposit(
                 version,
                 &pair.base,
@@ -431,14 +481,7 @@ impl SurfaceService for SurfaceEdge {
                 smile.forward(),
                 smile,
             );
-            smiles.push(smile_to_wire(
-                req.pair.clone(),
-                broker,
-                &smile,
-                &conv,
-                &market,
-                &self.clock,
-            ));
+            smiles.push(wire);
         }
 
         Ok(Response::new(MarkSurfaceResponse {
@@ -466,6 +509,16 @@ impl SurfaceService for SurfaceEdge {
             .conventions
             .ok_or_else(|| Status::invalid_argument("missing `conventions`"))?;
         let conv = decode_conv(&wire_conv)?;
+        // Decode and validate the selected model (an out-of-range tag is rejected,
+        // identically to `MarkSurface`). The scenario reprices each node off the
+        // supplied flat `base_market.vol` with no broker skew, so a neutral smile
+        // under any model collapses to the same flat slice at the node strike — the
+        // shock-grid repricing is therefore model-invariant by construction. We
+        // still decode the selector so the contract is honoured (and a bad tag
+        // surfaced) rather than silently ignored; an honest model-dependent scenario
+        // requires marking a skewed surface first (`MarkSurface` + a pinned
+        // `surface_version`), which the pinned RFQ/RFS paths already serve.
+        let _model = decode_smile_model(req.smile_model)?;
 
         // Decode every axis up front (factor + relative + steps).
         struct Axis {

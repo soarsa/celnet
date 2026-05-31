@@ -266,6 +266,54 @@ async fn ws_rfs_snapshot_deltas_and_resync() {
     .expect("test must not hang");
 }
 
+/// An RFS subscriber over WS observes the who's-trading attribution chain on the
+/// baseline snapshot. The server unconditionally stamps the maker auto-pricer seat
+/// (see `services::attribution::resolve`), and the WS JSON encoder must surface it
+/// with the same camelCase keys the GUI/Excel decoders read — proving the WS path
+/// carries attribution end-to-end, not just the gRPC path.
+#[tokio::test]
+async fn ws_snapshot_carries_maker_attribution() {
+    tokio::time::timeout(TEST_DEADLINE, async {
+        let (edge, _grpc) = start_ready_edge().await;
+        let url = format!("ws://{}", edge.ws_addr());
+        let (mut ws, _resp) = tokio::time::timeout(STEP, connect_async(url))
+            .await
+            .expect("WS connects in time")
+            .expect("WS connects");
+
+        send_json(
+            &mut ws,
+            json!({
+                "type": "subscribe",
+                "subscription": { "value": 11 },
+                "instrument": vanilla_call_json(1.12),
+                "conventions": conventions_json()
+            }),
+        )
+        .await;
+
+        let snap = next_json(&mut ws).await;
+        assert_eq!(snap["type"], json!("snapshot"));
+        let attr = &snap["attribution"];
+        assert!(
+            attr.is_object(),
+            "the WS snapshot must carry the attribution chain, got: {snap}"
+        );
+        // The maker seat is an auto-pricer (the demo edge auto-quotes). The chain's
+        // `quotedBy.owner.autoPricer` identifies the seat that showed the market.
+        let seat = &attr["quotedBy"]["owner"]["autoPricer"];
+        assert!(
+            seat.is_string() && !seat.as_str().unwrap().is_empty(),
+            "snapshot attribution names the quoting auto-pricer seat, got: {attr}"
+        );
+
+        close_ws(ws).await;
+        edge.shutdown(Duration::from_secs(5)).await;
+    })
+    .await
+    .expect("test must not hang");
+}
+
 /// Click-to-trade over WS books an `executed` on a live token, then rejects a
 /// replay of the same (now consumed) token with a `stream_reject`.
 #[tokio::test]
@@ -354,6 +402,62 @@ async fn ws_click_to_trade_books_then_rejects_stale_token() {
             }
         }
         assert!(rejected, "a stale token must be rejected, never re-booked");
+
+        close_ws(ws).await;
+        edge.shutdown(Duration::from_secs(5)).await;
+    })
+    .await
+    .expect("test must not hang");
+}
+
+/// A browser-style client opens a market-series (TrendMode) feed over the WS
+/// mirror and receives the same real observed series the gRPC client gets — proving
+/// API-first parity: the GUI/WS, SDK/gRPC, and Excel all consume the one contract.
+#[tokio::test]
+async fn ws_market_series_emits_real_observed_points() {
+    tokio::time::timeout(TEST_DEADLINE, async {
+        let (edge, _grpc) = start_ready_edge().await;
+        let url = format!("ws://{}", edge.ws_addr());
+        let (mut ws, _resp) = tokio::time::timeout(STEP, connect_async(url))
+            .await
+            .expect("WS connects in time")
+            .expect("WS connects");
+
+        // Open an ATM-vol series (MarketObservable::AtmVol == 0) for EURUSD.
+        send_json(
+            &mut ws,
+            json!({
+                "type": "market_series_subscribe",
+                "subscription": { "value": 31 },
+                "pair": { "base": "EUR", "quote": "USD" },
+                "observable": 0,
+                "throttle_nanos": 0,
+                "history_limit": 0
+            }),
+        )
+        .await;
+
+        // First: the opening market-series snapshot with one observed point.
+        let snap = next_json(&mut ws).await;
+        assert_eq!(snap["type"], json!("market_series_snapshot"));
+        let pts = snap["points"].as_array().expect("snapshot points");
+        assert_eq!(pts.len(), 1, "seeded with one observed point");
+        let v0 = pts[0]["value"].as_f64().expect("a numeric value");
+        assert!(v0 > 0.0 && v0 < 1.0, "a genuine ATM vol observation: {v0}");
+
+        // Then ≥2 appended live points, each a real observation.
+        let mut points = 0;
+        while points < 2 {
+            let f = next_json(&mut ws).await;
+            if f["type"] == json!("market_series_point") {
+                let v = f["value"].as_f64().expect("numeric value");
+                assert!(
+                    v > 0.0 && v < 1.0,
+                    "appended point is a real observation: {v}"
+                );
+                points += 1;
+            }
+        }
 
         close_ws(ws).await;
         edge.shutdown(Duration::from_secs(5)).await;

@@ -10,39 +10,95 @@
  * (RFS) blotter as the resting state, the structural inversion of the
  * request-quote-per-click (RFQ) cadence common to incumbent options front-ends.
  *
- * HONESTY (CLAUDE.md rule 2): every plotted series is the row's OWN streamed
- * premium-mid history — the one trend the contract actually carries. The trend
- * mode is labelled "Premium"; the other modes (ATM vol, RR, BF, spot, …) are
- * shown DISABLED because they gate on a market-history feed the contract does
- * not expose — never a fabricated line (P0-4). The blotter's columns name their
- * units honestly: "Premium mid" in the conventions' premium units, an "impl σ"
- * implied-vol column, and a "Δ spot" delta column (P0-8).
+ * HONESTY (CLAUDE.md rule 2): PREMIUM plots the row's OWN streamed premium-mid
+ * history; the market-observable modes (ATM vol, RR, BF, spot, forward) plot a
+ * REAL series streamed from the contract's market-series feed
+ * (`MarketSeriesSubscribe`, served by celnet-server) — never a fabricated line.
+ * VEGA/PNL stay DISABLED (they need the position-fact store, a later phase). The
+ * active mode's label + unit are always shown on the trend column header and the
+ * tile. The blotter's columns name their units honestly: "Premium mid" in the
+ * conventions' premium units, an "impl σ" implied-vol column, and a "Δ spot"
+ * delta column (P0-8).
  */
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useApp } from "../app/AppContext";
 import type { ScopeContext } from "../app/AppContext";
 import { PriceTile } from "../components/PriceTile";
 import { Sparkline, sparklineDirection, type SparklineDir } from "../components/Sparkline";
 import { StatusBadge } from "../components/StatusBadge";
 import { Button } from "../components/Button";
-import type { StreamRow } from "../hooks/useStreamSession";
-import { fmtPremiumPct, fmtSigned, fmtVol, premiumUnit } from "../lib/format";
-import { TREND_MODES, DEFAULT_TREND_MODE } from "../lib/trend";
+import { ownerLabel, type StreamRow } from "../hooks/useStreamSession";
+import { useTrendSeries, type TrendRowKey, type TrendSeries } from "../hooks/useTrendSeries";
+import { fmtPremiumPct, fmtRate, fmtSigned, fmtVol, fmtVolPoint, premiumUnit } from "../lib/format";
+import {
+  TREND_MODES,
+  DEFAULT_TREND_MODE,
+  trendModeSpec,
+  type TrendMode,
+  type TrendUnit,
+} from "../lib/trend";
 import { nowNanos } from "../hooks/useClock";
 import styles from "./StreamWorkspace.module.css";
+
+/** Format a trend value in its natural unit (for the tile's numeric readout). */
+function fmtTrendValue(unit: TrendUnit, value: number): string {
+  switch (unit) {
+    case "premium":
+      return fmtPremiumPct(value);
+    case "vol":
+      return fmtVolPoint(value);
+    case "rate":
+      return fmtRate(value);
+    case "vega":
+    case "pnl":
+      return value.toFixed(2);
+  }
+}
+
+/** The short unit caption shown under the trend column header for a mode. */
+function trendUnitCaption(mode: TrendMode): string {
+  switch (mode) {
+    case "PREMIUM":
+      return "premium";
+    case "ATM_VOL":
+      return "ATM vol";
+    case "RR":
+      return "25Δ RR";
+    case "BF":
+      return "25Δ BF";
+    case "SPOT":
+      return "spot";
+    case "FORWARD":
+      return "fwd";
+    case "VEGA":
+      return "vega";
+    case "PNL":
+      return "P&L";
+  }
+}
 
 function tenorLabel(row: StreamRow): string {
   const t = row.instrument.tenor;
   switch (t.unit) {
     case "OVERNIGHT":
       return "ON";
+    case "TOM_NEXT":
+      return "TN";
+    case "SPOT_NEXT":
+      return "SN";
     case "WEEKS":
       return `${t.count}W`;
     case "MONTHS":
       return `${t.count}M`;
     case "YEARS":
       return `${t.count}Y`;
+    case "IMM":
+      return `${t.count}IMM`;
+    case "BROKEN_DATE":
+      return t.brokenDate
+        ? `${t.brokenDate.year}-${String(t.brokenDate.month).padStart(2, "0")}-${String(t.brokenDate.day).padStart(2, "0")}`
+        : "broken";
   }
 }
 
@@ -62,17 +118,37 @@ function inScope(row: StreamRow, scope: ScopeContext): boolean {
 /** The shared up/down glyph for the trend column (same rule as the sparkline). */
 const TREND_GLYPH: Record<SparklineDir, string> = { up: "▲", down: "▼", flat: "▪" };
 
-function BlotterRow({ row }: { row: StreamRow }): React.ReactElement {
+function BlotterRow({
+  row,
+  mode,
+  trend,
+}: {
+  row: StreamRow;
+  mode: TrendMode;
+  /** The row's streamed market-series (non-PREMIUM modes), or undefined. */
+  trend: TrendSeries | undefined;
+}): React.ReactElement {
   const app = useApp();
   const now = nowNanos();
   const sell = row.tradable.find((t) => t.side === "SELL");
   const buy = row.tradable.find((t) => t.side === "BUY");
   const tradable = row.health === "HEALTHY" && (sell?.validUntilNanos ?? 0n) > now;
 
+  const spec = trendModeSpec(mode);
+  // PREMIUM plots the row's OWN streamed premium mid (always live); a market-
+  // observable mode plots the REAL streamed market-series for this row; VEGA/PNL
+  // are gated (no series). Each path is honest — no fabricated values.
+  const trendValues = mode === "PREMIUM" ? row.midHistory : (trend?.values ?? []);
   // ONE direction truth shared by the sparkline tint AND the trend glyph: the
-  // net move across the visible premium-mid window (Sparkline.sparklineDirection).
-  const trendDir = sparklineDirection(row.midHistory);
-  const hasTrend = row.midHistory.length >= 2;
+  // net move across the visible window (Sparkline.sparklineDirection).
+  const trendDir = sparklineDirection(trendValues);
+  const hasTrend = trendValues.length >= 2;
+  const trendLatest =
+    mode === "PREMIUM"
+      ? trendValues.length > 0
+        ? trendValues[trendValues.length - 1]
+        : undefined
+      : trend?.latest;
 
   // Premium-mid in this row's OWN premium units (each row carries its conventions).
   const unit = premiumUnit(row.conventions);
@@ -83,7 +159,16 @@ function BlotterRow({ row }: { row: StreamRow }): React.ReactElement {
       <span className={`num ${styles.pair}`}>
         {row.instrument.pair.base}/{row.instrument.pair.quote}
       </span>
-      <span className={styles.structure}>{row.label}</span>
+      <span className={styles.structure}>
+        {row.label}
+        {/* Honest attribution: show the maker/owner only when the wire carries it
+            (engine-quoted edge flow is the auto-pricer); nothing when absent. */}
+        {ownerLabel(row.attribution?.quotedBy) && (
+          <span className={styles.owner} title="Quoted by">
+            {ownerLabel(row.attribution?.quotedBy)}
+          </span>
+        )}
+      </span>
       <span className={`num ${styles.tenor}`}>{tenorLabel(row)}</span>
 
       <button
@@ -107,7 +192,11 @@ function BlotterRow({ row }: { row: StreamRow }): React.ReactElement {
       </button>
 
       <span className={styles.spark}>
-        {hasTrend ? (
+        {!spec.available ? (
+          <span className={styles.noTrend} aria-label={`${spec.label} not available`}>
+            —
+          </span>
+        ) : hasTrend ? (
           <>
             <span
               className={`num ${styles.trendGlyph} ${styles[`trend_${trendDir}`] ?? ""}`}
@@ -116,14 +205,19 @@ function BlotterRow({ row }: { row: StreamRow }): React.ReactElement {
               {TREND_GLYPH[trendDir]}
             </span>
             <Sparkline
-              values={row.midHistory}
+              values={trendValues}
               direction={trendDir}
-              ariaLabel={`premium-mid trend, ${trendDir}`}
+              ariaLabel={`${spec.label} trend, ${trendDir}`}
             />
+            {trendLatest !== undefined && (
+              <span className={`num ${styles.trendValue}`} title={`${spec.label} (${trendUnitCaption(mode)})`}>
+                {fmtTrendValue(spec.unit, trendLatest)}
+              </span>
+            )}
           </>
         ) : (
-          <span className={styles.noTrend} aria-label="no trend yet">
-            —
+          <span className={styles.noTrend} aria-label="awaiting series">
+            …
           </span>
         )}
       </span>
@@ -141,19 +235,27 @@ function BlotterRow({ row }: { row: StreamRow }): React.ReactElement {
 }
 
 /**
- * The honest trend-mode affordance: "Premium" is the one live series; every
- * other mode is shown DISABLED with a tooltip explaining it needs a market-
- * series feed the contract does not expose (P0-4). No fabricated trends.
+ * The trend-mode selector. PREMIUM and the market-observable modes (ATM vol / RR /
+ * BF / spot / forward) are SELECTABLE — clicking one re-plots every row's trend
+ * column from the real streamed series for that observable. VEGA/PNL are shown
+ * DISABLED (they need the position-fact store, a later phase). No fabricated trends.
  */
-function TrendModeChips(): React.ReactElement {
+function TrendModeChips({
+  mode,
+  onSelect,
+}: {
+  mode: TrendMode;
+  onSelect: (m: TrendMode) => void;
+}): React.ReactElement {
   return (
-    <div className={styles.trendModes} role="group" aria-label="trend series (premium is live)">
+    <div className={styles.trendModes} role="group" aria-label="trend series mode">
       <span className={styles.trendModesLabel}>Trend</span>
       {TREND_MODES.map((m) => {
-        const active = m.id === DEFAULT_TREND_MODE;
+        const active = m.id === mode;
         return (
-          <span
+          <button
             key={m.id}
+            type="button"
             className={[
               styles.trendChip,
               active ? styles.trendChipActive : "",
@@ -161,16 +263,17 @@ function TrendModeChips(): React.ReactElement {
             ]
               .filter(Boolean)
               .join(" ")}
-            aria-disabled={m.available ? undefined : "true"}
-            aria-current={active ? "true" : undefined}
+            disabled={!m.available}
+            aria-pressed={active}
+            onClick={() => m.available && onSelect(m.id)}
             title={
               m.available
                 ? `${m.label} — live streamed series`
-                : `${m.label} — needs market-series feed`
+                : `${m.label} — needs the position-fact store (later phase)`
             }
           >
             {m.label}
-          </span>
+          </button>
         );
       })}
     </div>
@@ -189,6 +292,25 @@ export function StreamWorkspace(): React.ReactElement {
     [app.stream.rows, scope],
   );
 
+  // The active trend-column mode. PREMIUM uses the row's own streamed mid; the
+  // market-observable modes stream the contract's market-series feed (below).
+  const [trendMode, setTrendMode] = useState<TrendMode>(DEFAULT_TREND_MODE);
+
+  // The per-row keys for the market-series subscriptions (pair + pillar tenor).
+  const trendKeys = useMemo<TrendRowKey[]>(
+    () =>
+      rows.map((r) => ({
+        subscriptionId: r.subscriptionId,
+        pair: r.instrument.pair,
+        tenorYears: r.instrument.expiryYears,
+      })),
+    [rows],
+  );
+  // The live streamed series per row for the active observable (empty for PREMIUM
+  // and the gated modes — the row falls back to its own premium history).
+  const trendSeries = useTrendSeries(app.transport, trendMode, trendKeys);
+  const trendUnitLabel = trendUnitCaption(trendMode);
+
   return (
     <div className={styles.wrap}>
       <div className={styles.headerRow}>
@@ -203,7 +325,7 @@ export function StreamWorkspace(): React.ReactElement {
         <span className={styles.colOffer}>Offer</span>
         <span className={styles.colSpark}>
           Trend
-          <span className={styles.colUnit}>premium</span>
+          <span className={styles.colUnit}>{trendUnitLabel}</span>
         </span>
         <span className={styles.colGreek}>
           Δ
@@ -220,7 +342,12 @@ export function StreamWorkspace(): React.ReactElement {
 
       <div className={styles.body} role="grid" aria-label="streaming two-way markets">
         {rows.map((row) => (
-          <BlotterRow key={row.subscriptionId.toString()} row={row} />
+          <BlotterRow
+            key={row.subscriptionId.toString()}
+            row={row}
+            mode={trendMode}
+            trend={trendSeries.get(row.subscriptionId)}
+          />
         ))}
       </div>
 
@@ -228,7 +355,7 @@ export function StreamWorkspace(): React.ReactElement {
         <Button variant="ghost" onClick={() => app.setPaletteOpen(true)}>
           + Subscribe (⌘K)
         </Button>
-        <TrendModeChips />
+        <TrendModeChips mode={trendMode} onSelect={setTrendMode} />
         <span className={`num ${styles.footMeta}`}>
           Conflated 60Hz · click a side to trade · {app.stream.lpCount} LPs in competition
         </span>

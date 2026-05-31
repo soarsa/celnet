@@ -143,6 +143,7 @@ mod tests {
         Tenor {
             unit: tenor::Unit::Months as i32,
             count: 3,
+            broken_date: None,
         }
     }
 
@@ -341,6 +342,7 @@ mod tests {
             conventions: Some(sample_conventions()),
             correlation_id: Some(0xCAFE_F00D),
             surface_version: Some(42),
+            attribution: Some(sample_attribution()),
         };
         round_trip(&request);
 
@@ -352,6 +354,7 @@ mod tests {
             conventions: Some(sample_conventions()),
             correlation_id: None,
             surface_version: None,
+            attribution: None,
         };
         round_trip(&request_no_optionals);
 
@@ -369,6 +372,7 @@ mod tests {
             valid_until_nanos: 1_717_000_300_000_000_000,
             correlation_id: Some(0xCAFE_F00D),
             surface_version: Some(42),
+            attribution: Some(sample_attribution()),
         };
         round_trip(&quote);
 
@@ -392,8 +396,30 @@ mod tests {
             traded_premium: 0.0089,
             instrument: Some(vanilla_instrument()),
             epoch_nanos: 1_717_000_001_000_000_000,
+            attribution: Some(sample_attribution()),
         };
         round_trip(&execution);
+    }
+
+    /// A sample attribution chain (human-quoted, machine-held, in competition)
+    /// exercising every presence-tracked attribution field.
+    fn sample_attribution() -> AttributionRecord {
+        AttributionRecord {
+            quoted_by: Some(BookId {
+                book: "EM-VOL-1".to_owned(),
+                owner: Some(Owner {
+                    seat: Some(owner::Seat::Trader("jdoe".to_owned())),
+                }),
+            }),
+            held_by: Some(BookId {
+                book: "WAREHOUSE".to_owned(),
+                owner: Some(Owner {
+                    seat: Some(owner::Seat::AutoPricer("auto-mm-7".to_owned())),
+                }),
+            }),
+            won: Some(true),
+            lp_count: Some(3),
+        }
     }
 
     #[test]
@@ -428,6 +454,7 @@ mod tests {
                 throttle_nanos: 1_000_000,
                 correlation_id: Some(0xBEEF),
                 surface_version: Some(13),
+                attribution: Some(sample_attribution()),
             })),
         };
         round_trip(&subscribe);
@@ -441,6 +468,7 @@ mod tests {
                 throttle_nanos: 0,
                 correlation_id: None,
                 surface_version: None,
+                attribution: None,
             })),
         };
         round_trip(&subscribe_bare);
@@ -506,6 +534,7 @@ mod tests {
                 surface_version: Some(13),
                 correlation_id: Some(0xBEEF),
                 epoch_nanos: 1,
+                attribution: Some(sample_attribution()),
             })),
         };
         round_trip(&snapshot);
@@ -545,6 +574,7 @@ mod tests {
                 traded_premium: 0.0089,
                 correlation_id: Some(0xBEEF),
                 epoch_nanos: 4,
+                attribution: Some(sample_attribution()),
             })),
         };
         round_trip(&executed);
@@ -624,6 +654,7 @@ mod tests {
             pair: Some(sample_pair()),
             broker_quotes: vec![broker],
             conventions: Some(sample_conventions()),
+            smile_model: Some(SmileModel::StochasticVol as i32),
         };
         round_trip(&mark_req);
 
@@ -691,6 +722,7 @@ mod tests {
                 }],
                 roll_horizons_years: vec![1.0 / 365.0, 3.0 / 365.0],
             }),
+            smile_model: Some(SmileModel::Parametric as i32),
         };
         round_trip(&req);
 
@@ -711,6 +743,7 @@ mod tests {
             }],
             expiry_years: 0.25,
             risk_buckets: None,
+            smile_model: None,
         };
         round_trip(&req_grid_only);
 
@@ -828,6 +861,7 @@ mod tests {
             traded_premium: 0.0081,
             correlation_id: Some(77),
             epoch_nanos: 9,
+            attribution: Some(sample_attribution()),
         });
         round_trip(&Executed {
             subscription: Some(sub),
@@ -837,6 +871,75 @@ mod tests {
             traded_premium: 0.0081,
             correlation_id: None,
             epoch_nanos: 9,
+            attribution: None,
+        });
+    }
+
+    #[test]
+    fn round_trip_market_series_messages() {
+        let sub = SubscriptionId { value: 88 };
+        // Open a market series (ATM-vol history for a 3M EURUSD pillar).
+        let open = ClientStreamMessage {
+            message: Some(client_stream_message::Message::MarketSeriesSubscribe(
+                MarketSeriesSubscribe {
+                    subscription: Some(sub),
+                    pair: Some(sample_pair()),
+                    observable: MarketObservable::AtmVol as i32,
+                    tenor: Some(sample_tenor()),
+                    delta: None,
+                    throttle_nanos: 1_000_000,
+                    history_limit: 64,
+                },
+            )),
+        };
+        round_trip(&open);
+
+        // A wing observable carries its delta; a SPOT series carries no tenor.
+        let rr = ClientStreamMessage {
+            message: Some(client_stream_message::Message::MarketSeriesSubscribe(
+                MarketSeriesSubscribe {
+                    subscription: Some(sub),
+                    pair: Some(sample_pair()),
+                    observable: MarketObservable::RiskReversal as i32,
+                    tenor: Some(sample_tenor()),
+                    delta: Some(0.25),
+                    throttle_nanos: 0,
+                    history_limit: 0,
+                },
+            )),
+        };
+        round_trip(&rr);
+
+        let close = ClientStreamMessage {
+            message: Some(client_stream_message::Message::MarketSeriesUnsubscribe(
+                MarketSeriesUnsubscribe {
+                    subscription: Some(sub),
+                },
+            )),
+        };
+        round_trip(&close);
+
+        let point = MarketSeriesPoint {
+            subscription: Some(sub),
+            sequence: 5,
+            value: 0.0832,
+            epoch_nanos: 1_717_000_000_000_000_000,
+        };
+        let snap = ServerStreamMessage {
+            message: Some(server_stream_message::Message::MarketSeriesSnapshot(
+                MarketSeriesSnapshot {
+                    subscription: Some(sub),
+                    sequence: 1,
+                    pair: Some(sample_pair()),
+                    observable: MarketObservable::AtmVol as i32,
+                    points: vec![point],
+                    epoch_nanos: 1_717_000_000_000_000_000,
+                },
+            )),
+        };
+        round_trip(&snap);
+        round_trip(&ServerStreamMessage {
+            message: Some(server_stream_message::Message::MarketSeriesPoint(point)),
         });
     }
 }

@@ -153,6 +153,38 @@
   color: var(--text-secondary);
   padding: var(--space-2) 0;
 }
+
+/* The smile-model selector — a real control that re-marks via MarkSurface. */
+.modelSelect {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+}
+.modelChip {
+  font-family: var(--font-brand);
+  font-size: var(--type-micro);
+  letter-spacing: 0.03em;
+  padding: 2px var(--space-3);
+  border-radius: var(--r-full);
+  border: var(--hairline);
+  background: var(--bg-inset);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+.modelChip:hover:not(.modelChipActive) {
+  border-color: var(--text-tertiary);
+  color: var(--text-primary);
+}
+.modelChipActive {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: var(--weight-emphasis);
+}
 .provLabel {
   font-family: var(--font-brand);
   font-size: var(--type-micro);

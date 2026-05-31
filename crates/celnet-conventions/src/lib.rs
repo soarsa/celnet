@@ -45,30 +45,38 @@ mod registry;
 pub use record::{ConventionRecord, ResolutionSource, ResolvedConvention};
 pub use registry::{has_calendar_support, has_pair_profile, resolve};
 
-use celnet_calendar::{FxSchedule, schedule as calendar_schedule, year_fraction};
+use celnet_calendar::{FxSchedule, TenorError, schedule as calendar_schedule, year_fraction};
 use celnet_types::{CcyPair, Tenor};
 use time::Date;
 
-/// The FX date chain (horizon→spot→expiry→delivery) for a `(pair, tenor)`,
-/// delegated to `celnet-calendar`. Re-exported here so the convention layer is
-/// the one-stop resolver for both conventions and dates.
-#[must_use]
-pub fn schedule(pair: CcyPair, horizon: Date, tenor: Tenor) -> FxSchedule {
+/// The FX date chain (horizon→spot→expiry→delivery + vol-time anchor) for a
+/// `(pair, tenor)`, delegated to `celnet-calendar`. Re-exported here so the
+/// convention layer is the one-stop resolver for both conventions and dates.
+///
+/// # Errors
+/// Propagates [`TenorError`] for the input-bearing tenor cases (a zero IMM
+/// ordinal, an invalid broken date).
+pub fn schedule(pair: CcyPair, horizon: Date, tenor: Tenor) -> Result<FxSchedule, TenorError> {
     calendar_schedule(pair, horizon, tenor)
 }
 
-/// Vol-time year fraction (spot→expiry) for a `(pair, tenor)` on the resolved
-/// convention's vol day-count.
+/// Vol-time year fraction for a `(pair, tenor)` on the resolved convention's vol
+/// day-count.
 ///
 /// Combines [`resolve`] (to read `day_count_vol`, always ACT/365-fixed for FX
-/// vol-time) with [`schedule`] (for the spot and expiry dates) and
-/// `celnet-calendar`'s exact day-count. This is the `T` fed to the
-/// Garman-Kohlhagen model for this `(pair, tenor)`.
-#[must_use]
-pub fn vol_year_fraction(pair: CcyPair, horizon: Date, tenor: Tenor) -> f64 {
+/// vol-time) with [`schedule`] (for the dates) and `celnet-calendar`'s exact
+/// day-count. Vol-time accrues from the schedule's `vol_anchor` (spot for the
+/// standard ladder, the horizon for the pre-spot `Overnight`/`TomNext` short
+/// end) to expiry, so the short end never yields a negative year fraction. This
+/// is the `T` fed to the Garman-Kohlhagen model for this `(pair, tenor)`.
+///
+/// # Errors
+/// Propagates [`TenorError`] for the input-bearing tenor cases (a zero IMM
+/// ordinal, an invalid broken date).
+pub fn vol_year_fraction(pair: CcyPair, horizon: Date, tenor: Tenor) -> Result<f64, TenorError> {
     let resolved = resolve(pair, tenor);
-    let sch = schedule(pair, horizon, tenor);
-    year_fraction(resolved.record.day_count_vol, sch.spot, sch.expiry).0
+    let sch = schedule(pair, horizon, tenor)?;
+    Ok(year_fraction(resolved.record.day_count_vol, sch.vol_anchor, sch.expiry).0)
 }
 
 #[cfg(test)]
@@ -84,10 +92,12 @@ mod tests {
     /// the resolved spot/forward axis without reaching into registry internals.
     fn expect_forward(t: Tenor) -> bool {
         let months = match t {
-            Tenor::Overnight => 0,
+            Tenor::Overnight | Tenor::TomNext | Tenor::SpotNext => 0,
             Tenor::Weeks(w) => u32::from(w) / 5,
             Tenor::Months(m) => u32::from(m),
             Tenor::Years(y) => u32::from(y) * 12,
+            Tenor::Imm(n) => u32::from(n) * 3,
+            Tenor::BrokenDate(_) => 0,
         };
         months > 12
     }
@@ -233,10 +243,32 @@ mod tests {
     fn vol_year_fraction_uses_act365_and_matches_calendar() {
         let horizon = Date::from_calendar_date(2024, time::Month::March, 1).unwrap();
         let cp = pair("EURUSD");
-        let t = vol_year_fraction(cp, horizon, Tenor::Months(3));
-        let sch = schedule(cp, horizon, Tenor::Months(3));
-        let expected = year_fraction(DayCount::Act365Fixed, sch.spot, sch.expiry).0;
+        let t = vol_year_fraction(cp, horizon, Tenor::Months(3)).unwrap();
+        let sch = schedule(cp, horizon, Tenor::Months(3)).unwrap();
+        let expected = year_fraction(DayCount::Act365Fixed, sch.vol_anchor, sch.expiry).0;
         celnet_core::assert_close!(t, expected);
         assert!(t > 0.2 && t < 0.3, "3M vol-time ~0.25, got {t}");
+    }
+
+    #[test]
+    fn short_end_vol_time_is_positive_from_horizon() {
+        // ON/TN accrue vol-time from the horizon (today), so the short-dated
+        // year fraction is small but strictly positive (the prior ON-as-SN bug
+        // and a naive spot→expiry would have produced a non-positive value).
+        let horizon = Date::from_calendar_date(2024, time::Month::June, 5).unwrap();
+        let cp = pair("EURUSD");
+        let on = vol_year_fraction(cp, horizon, Tenor::Overnight).unwrap();
+        let tn = vol_year_fraction(cp, horizon, Tenor::TomNext).unwrap();
+        assert!(on > 0.0, "ON vol-time must be positive, got {on}");
+        assert!(tn > on, "TN expires after ON, so its vol-time is larger");
+    }
+
+    #[test]
+    fn input_bearing_tenors_surface_errors() {
+        let horizon = Date::from_calendar_date(2024, time::Month::June, 5).unwrap();
+        let cp = pair("EURUSD");
+        assert!(vol_year_fraction(cp, horizon, Tenor::Imm(0)).is_err());
+        let bad = celnet_types::BrokenDate::new(2024, 2, 31);
+        assert!(schedule(cp, horizon, Tenor::BrokenDate(bad)).is_err());
     }
 }

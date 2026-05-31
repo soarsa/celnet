@@ -20,8 +20,10 @@ import type {
   Conventions,
   Greeks,
   Instrument,
+  MarketObservable,
   OptionType,
   Side,
+  SmileModel,
   StrikeOrDelta,
   Tenor,
   TenorUnit,
@@ -130,6 +132,94 @@ export function parseStrikeOrDelta(raw: string | number): StrikeOrDelta {
   return { kind: "delta", delta: signed };
 }
 
+/**
+ * Parse a smile-model selector string into the contract `SmileModel`. Accepts the
+ * trader-facing short names (`VV`, `SABR`, `SVI`, `SSVI`) and the canonical
+ * contract names (`MARKET_HEDGE`, `STOCHASTIC_VOL`, `PARAMETRIC`,
+ * `PARAMETRIC_SURFACE`), case-insensitive. Empty/absent ⇒ `MARKET_HEDGE` (the
+ * server default Vanna-Volga construction), so an omitted argument is the
+ * unchanged current behaviour.
+ */
+export function parseSmileModel(raw: string | undefined): SmileModel {
+  const s = (raw ?? "").trim().toUpperCase();
+  switch (s) {
+    case "":
+    case "VV":
+    case "VANNA_VOLGA":
+    case "VANNA-VOLGA":
+    case "MARKET_HEDGE":
+    case "MARKET-HEDGE":
+      return "MARKET_HEDGE";
+    case "SABR":
+    case "STOCHASTIC_VOL":
+    case "STOCHASTIC-VOL":
+    case "STOCHVOL":
+      return "STOCHASTIC_VOL";
+    case "SVI":
+    case "PARAMETRIC":
+      return "PARAMETRIC";
+    case "SSVI":
+    case "PARAMETRIC_SURFACE":
+    case "PARAMETRIC-SURFACE":
+      return "PARAMETRIC_SURFACE";
+    default:
+      throw new ShapingError(
+        `invalid smile model \`${raw}\` (expected VV, SABR, SVI or SSVI)`,
+      );
+  }
+}
+
+/**
+ * Parse a market-observable selector string into the contract `MarketObservable`.
+ * Accepts the trader-facing names (`ATM`/`ATMVOL`, `SPOT`, `RR`/`RISK_REVERSAL`,
+ * `BF`/`FLY`/`BUTTERFLY`, `FWD`/`FORWARD`), case-insensitive.
+ */
+export function parseObservable(raw: string): MarketObservable {
+  const s = raw.trim().toUpperCase();
+  switch (s) {
+    case "ATM":
+    case "ATMVOL":
+    case "ATM_VOL":
+    case "VOL":
+      return "ATM_VOL";
+    case "SPOT":
+      return "SPOT";
+    case "RR":
+    case "RISK_REVERSAL":
+    case "RISKREVERSAL":
+      return "RISK_REVERSAL";
+    case "BF":
+    case "FLY":
+    case "BUTTERFLY":
+      return "BUTTERFLY";
+    case "FWD":
+    case "FORWARD":
+      return "FORWARD";
+    default:
+      throw new ShapingError(
+        `invalid observable \`${raw}\` (expected ATM, SPOT, RR, BF or FWD)`,
+      );
+  }
+}
+
+/**
+ * Parse a delta-wing argument for the wing observables (RR/BF) and surface marks.
+ * Accepts a signed/unsigned fraction (`0.25`, `0.10`) or a percent-delta string
+ * (`25`, `25d`, `10`). Always returns the positive wing magnitude (the server
+ * reads both signed wings for RR/BF). Throws on a wing outside (0, 0.5).
+ */
+export function parseDeltaWing(raw: string | number): number {
+  const numeric = typeof raw === "number" ? raw : Number(String(raw).trim().replace(/D$/i, ""));
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    throw new ShapingError(`invalid delta wing \`${raw}\` (expected 0.25 or 25)`);
+  }
+  const wing = numeric >= 1 ? numeric / 100 : numeric;
+  if (wing <= 0 || wing >= 0.5) {
+    throw new ShapingError(`delta wing \`${raw}\` out of range (expected 0 < δ < 0.5)`);
+  }
+  return wing;
+}
+
 // ---------------------------------------------------------------------------
 // instrument shaping (one current contract)
 // ---------------------------------------------------------------------------
@@ -166,6 +256,64 @@ export function shapeVanillaInstrument(args: VanillaArgs): Instrument {
         strike: parseStrikeOrDelta(args.strikeOrDelta),
       },
     },
+  };
+}
+
+/** The fully-parsed inputs a model-selected surface calibration shapes. */
+export interface CalibrateArgs {
+  readonly pair: string;
+  readonly tenor: string;
+  readonly model: string | undefined;
+  readonly atmVol: number;
+  readonly rr25: number;
+  readonly bf25: number;
+  /** Optional 10Δ wings; both present ⇒ a five-point smile is calibrated. */
+  readonly rr10?: number | undefined;
+  readonly bf10?: number | undefined;
+}
+
+/** The validated, contract-shaped pieces of a calibration request. */
+export interface ShapedCalibration {
+  readonly pair: CcyPair;
+  readonly tenorYears: number;
+  readonly model: SmileModel;
+  readonly atmVol: number;
+  readonly rr25: number;
+  readonly bf25: number;
+  readonly rr10: number;
+  readonly bf10: number;
+  readonly hasTenDelta: boolean;
+}
+
+/**
+ * Shape a model-selected surface calibration from cell arguments: parse the pair,
+ * tenor and model, and validate the broker marks. No transport — the function
+ * layer turns this into the `mark_surface` body (broker_quotes + smile_model).
+ */
+export function shapeCalibration(args: CalibrateArgs): ShapedCalibration {
+  const pair = parsePair(args.pair);
+  const { expiryYears } = parseTenor(args.tenor);
+  const model = parseSmileModel(args.model);
+  if (!Number.isFinite(args.atmVol) || args.atmVol <= 0 || args.atmVol >= 5) {
+    throw new ShapingError(`invalid ATM vol \`${args.atmVol}\` (absolute, e.g. 0.102)`);
+  }
+  if (!Number.isFinite(args.rr25) || !Number.isFinite(args.bf25)) {
+    throw new ShapingError("rr25/bf25 must be finite vols (e.g. 0.01, 0.003)");
+  }
+  const hasTenDelta = args.rr10 !== undefined && args.bf10 !== undefined;
+  if (hasTenDelta && (!Number.isFinite(args.rr10) || !Number.isFinite(args.bf10))) {
+    throw new ShapingError("rr10/bf10 must be finite vols when supplied");
+  }
+  return {
+    pair,
+    tenorYears: expiryYears,
+    model,
+    atmVol: args.atmVol,
+    rr25: args.rr25,
+    bf25: args.bf25,
+    rr10: hasTenDelta ? (args.rr10 as number) : 0,
+    bf10: hasTenDelta ? (args.bf10 as number) : 0,
+    hasTenDelta,
   };
 }
 
@@ -313,6 +461,60 @@ export function formatRfqSpill(r: RfqResult): SpillMatrix {
     [r.bid, r.offer, r.quoteId.toString(), validIso],
     [conventionFooter(r.conventions, r.surfaceVersion, r.epochNanos)],
   ];
+}
+
+/**
+ * Format a calibrated smile (the result of a model-selected `mark_surface`) as a
+ * spill: a delta-pillar header row, a vol row, then a footer carrying the marked
+ * `surface_version`, the model provenance (read from the server's
+ * `arbitrage.note`, which the server stamps as `model=<family>`), the arb status,
+ * and the convention transparency. The `model` argument is the model the cell
+ * REQUESTED; the footer prefers the server-reported provenance when present so a
+ * silent server default is visible, never assumed.
+ */
+export function formatCalibratedSmileSpill(args: {
+  readonly points: readonly SurfacePoint[];
+  readonly requestedModel: SmileModel;
+  readonly providerNote: string;
+  readonly arbFree: boolean;
+  readonly conv: Conventions;
+  readonly surfaceVersion: bigint | undefined;
+  readonly epochNanos: bigint;
+}): SpillMatrix {
+  const sorted = [...args.points].sort((a, b) => a.delta - b.delta);
+  const header: (string | number)[] = ["delta", ...sorted.map((p) => p.delta)];
+  const vols: (string | number)[] = ["vol", ...sorted.map((p) => p.vol)];
+  // The server stamps the model used as `model=<family>` inside the arbitrage
+  // note (the frozen contract has no echo field). Surface it verbatim when present
+  // so the trader sees exactly what was calibrated, falling back to the requested
+  // model name when the note carries no provenance token.
+  const noteModel = /model=([A-Za-z0-9_-]+)/.exec(args.providerNote)?.[1];
+  const modelLabel = noteModel ?? args.requestedModel;
+  const footer: (string | number)[] = [
+    `model ${modelLabel} | ${args.arbFree ? "arb-free" : "ARB!"} | ` +
+      conventionFooter(args.conv, args.surfaceVersion, args.epochNanos),
+  ];
+  return [header, vols, footer];
+}
+
+/** A decoded market-series tick for a single trend cell render. */
+export interface SeriesCellInput {
+  readonly value: number;
+  readonly observable: MarketObservable;
+  readonly baselined: boolean;
+  readonly epochNanos: bigint;
+}
+
+/**
+ * Render a streamed market-series tick to a single cell string. Vols are shown in
+ * vol points (×100, two-decimal); rates (SPOT/FORWARD) in full precision. An
+ * un-baselined / non-finite value renders an explicit waiting marker rather than a
+ * frozen number (docs §5: never show stale-as-live).
+ */
+export function formatSeriesCell(t: SeriesCellInput): string {
+  if (!t.baselined || !Number.isFinite(t.value)) return "… (awaiting)";
+  const isVol = t.observable === "ATM_VOL" || t.observable === "RISK_REVERSAL" || t.observable === "BUTTERFLY";
+  return isVol ? `${(t.value * 100).toFixed(2)}v` : t.value.toFixed(5);
 }
 
 /** The decoded fields a CELNET.MARK status spill renders (two-phase staging). */

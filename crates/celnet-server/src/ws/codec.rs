@@ -165,6 +165,21 @@ fn tenor_from_json(v: &Value) -> Result<Tenor> {
     Ok(Tenor {
         unit: enum_or_zero(o, "unit"),
         count: u32::try_from(u64_or_zero(o, "count")).unwrap_or(0),
+        broken_date: opt_nested(o, "brokenDate", broken_date_from_json)?,
+    })
+}
+
+fn broken_date_from_json(v: &Value) -> Result<celnet_proto::BrokenDate> {
+    let o = obj(v, "brokenDate")?;
+    let year = o
+        .get("year")
+        .and_then(Value::as_i64)
+        .and_then(|y| i32::try_from(y).ok())
+        .unwrap_or(0);
+    Ok(celnet_proto::BrokenDate {
+        year,
+        month: u32::try_from(u64_or_zero(o, "month")).unwrap_or(0),
+        day: u32::try_from(u64_or_zero(o, "day")).unwrap_or(0),
     })
 }
 
@@ -402,7 +417,93 @@ pub(super) fn quote_request_from_json(o: &Map<String, Value>) -> Result<QuoteReq
         conventions: Some(nested(o, "conventions", conventions_from_json)?),
         correlation_id: opt_u64(o, "correlation_id"),
         surface_version: opt_u64(o, "surface_version"),
+        attribution: opt_nested(o, "attribution", attribution_from_json)?,
     })
+}
+
+/// Decode an optional attribution record (book/seat identity) from JSON.
+fn attribution_from_json(v: &Value) -> Result<celnet_proto::AttributionRecord> {
+    let o = obj(v, "attribution")?;
+    Ok(celnet_proto::AttributionRecord {
+        quoted_by: opt_nested(o, "quotedBy", book_id_from_json)?,
+        held_by: opt_nested(o, "heldBy", book_id_from_json)?,
+        won: o.get("won").and_then(Value::as_bool),
+        lp_count: o
+            .get("lpCount")
+            .and_then(Value::as_u64)
+            .and_then(|n| u32::try_from(n).ok()),
+    })
+}
+
+/// Decode a book/owner identity from JSON.
+fn book_id_from_json(v: &Value) -> Result<celnet_proto::BookId> {
+    let o = obj(v, "bookId")?;
+    let owner = o.get("owner").map(owner_from_json).transpose()?;
+    Ok(celnet_proto::BookId {
+        book: string_field(o, "book")?,
+        owner,
+    })
+}
+
+/// Decode an owner seat (human trader OR auto-pricer) from JSON.
+fn owner_from_json(v: &Value) -> Result<celnet_proto::Owner> {
+    let o = obj(v, "owner")?;
+    let seat = if let Some(t) = o.get("trader").and_then(Value::as_str) {
+        Some(celnet_proto::owner::Seat::Trader(t.to_owned()))
+    } else {
+        o.get("autoPricer")
+            .and_then(Value::as_str)
+            .map(|p| celnet_proto::owner::Seat::AutoPricer(p.to_owned()))
+    };
+    Ok(celnet_proto::Owner { seat })
+}
+
+/// Encode the who's-trading attribution chain to JSON, symmetric with
+/// `attribution_from_json` (same camelCase keys the GUI/Excel decoders read).
+/// Presence-tracked fields (`held_by`/`won`/`lp_count`) are omitted when absent so
+/// the wire shape matches the proto `optional` semantics exactly — an unattributed
+/// line carries no `attribution` key (see the call sites' `.map(...)`).
+fn attribution_to_json(a: &celnet_proto::AttributionRecord) -> Value {
+    let mut m = Map::new();
+    if let Some(qb) = a.quoted_by.as_ref() {
+        m.insert("quotedBy".to_owned(), book_id_to_json(qb));
+    }
+    if let Some(hb) = a.held_by.as_ref() {
+        m.insert("heldBy".to_owned(), book_id_to_json(hb));
+    }
+    if let Some(won) = a.won {
+        m.insert("won".to_owned(), Value::Bool(won));
+    }
+    if let Some(lp) = a.lp_count {
+        m.insert("lpCount".to_owned(), Value::from(lp));
+    }
+    Value::Object(m)
+}
+
+/// Encode a book/owner identity to JSON, symmetric with `book_id_from_json`.
+fn book_id_to_json(b: &celnet_proto::BookId) -> Value {
+    let mut m = Map::new();
+    m.insert("book".to_owned(), Value::String(b.book.clone()));
+    if let Some(o) = b.owner.as_ref() {
+        m.insert("owner".to_owned(), owner_to_json(o));
+    }
+    Value::Object(m)
+}
+
+/// Encode an owner seat (human trader OR auto-pricer) to JSON, symmetric with
+/// `owner_from_json` (the `trader`/`autoPricer` oneof tag).
+fn owner_to_json(o: &celnet_proto::Owner) -> Value {
+    let mut m = Map::new();
+    match o.seat.as_ref() {
+        Some(celnet_proto::owner::Seat::Trader(t)) => {
+            m.insert("trader".to_owned(), Value::String(t.clone()));
+        }
+        Some(celnet_proto::owner::Seat::AutoPricer(p)) => {
+            m.insert("autoPricer".to_owned(), Value::String(p.clone()));
+        }
+        None => {}
+    }
+    Value::Object(m)
 }
 
 pub(super) fn quote_accept_from_json(o: &Map<String, Value>) -> Result<QuoteAccept> {
@@ -432,6 +533,7 @@ pub(super) fn quote_to_json(q: &Quote) -> Value {
         "valid_until_nanos": q.valid_until_nanos,
         "correlation_id": q.correlation_id,
         "surface_version": q.surface_version,
+        "attribution": q.attribution.as_ref().map(attribution_to_json),
     })
 }
 
@@ -442,6 +544,7 @@ pub(super) fn execution_to_json(e: &Execution) -> Value {
         "side": e.side,
         "traded_premium": e.traded_premium,
         "epoch_nanos": e.epoch_nanos,
+        "attribution": e.attribution.as_ref().map(attribution_to_json),
     })
 }
 
@@ -498,6 +601,7 @@ pub(super) fn subscribe_from_json(o: &Map<String, Value>) -> Result<Subscribe> {
         throttle_nanos: u64_or_zero(o, "throttle_nanos"),
         correlation_id: opt_u64(o, "correlation_id"),
         surface_version: opt_u64(o, "surface_version"),
+        attribution: opt_nested(o, "attribution", attribution_from_json)?,
     })
 }
 
@@ -533,6 +637,37 @@ pub(super) fn execute_from_json(o: &Map<String, Value>) -> Result<Execute> {
     })
 }
 
+pub(super) fn market_series_subscribe_from_json(
+    o: &Map<String, Value>,
+) -> Result<celnet_proto::MarketSeriesSubscribe> {
+    let observable = o
+        .get("observable")
+        .and_then(Value::as_i64)
+        .and_then(|v| i32::try_from(v).ok())
+        .ok_or_else(|| CodecError("market_series_subscribe missing `observable`".to_owned()))?;
+    Ok(celnet_proto::MarketSeriesSubscribe {
+        subscription: Some(nested(o, "subscription", subscription_id_from_json)?),
+        pair: Some(nested(o, "pair", ccy_pair_from_json)?),
+        observable,
+        tenor: opt_nested(o, "tenor", tenor_from_json)?,
+        delta: o.get("delta").and_then(Value::as_f64),
+        throttle_nanos: u64_or_zero(o, "throttle_nanos"),
+        history_limit: o
+            .get("history_limit")
+            .and_then(Value::as_u64)
+            .and_then(|v| u32::try_from(v).ok())
+            .unwrap_or(0),
+    })
+}
+
+pub(super) fn market_series_unsubscribe_from_json(
+    o: &Map<String, Value>,
+) -> Result<celnet_proto::MarketSeriesUnsubscribe> {
+    Ok(celnet_proto::MarketSeriesUnsubscribe {
+        subscription: Some(nested(o, "subscription", subscription_id_from_json)?),
+    })
+}
+
 fn tradable_vec(v: &[TradableToken]) -> Value {
     Value::Array(v.iter().map(tradable_to_json).collect())
 }
@@ -550,6 +685,7 @@ fn snapshot_to_json(s: &Snapshot) -> Value {
         "surface_version": s.surface_version,
         "correlation_id": s.correlation_id,
         "epoch_nanos": s.epoch_nanos,
+        "attribution": s.attribution.as_ref().map(attribution_to_json),
     })
 }
 
@@ -575,6 +711,7 @@ fn executed_to_json(e: &Executed) -> Value {
         "traded_premium": e.traded_premium,
         "correlation_id": e.correlation_id,
         "epoch_nanos": e.epoch_nanos,
+        "attribution": e.attribution.as_ref().map(attribution_to_json),
     })
 }
 
@@ -617,8 +754,32 @@ pub(super) fn server_stream_message_to_json(
         Message::StreamEnd(e) => ("stream_end", stream_end_to_json(e)),
         Message::Executed(e) => ("executed", executed_to_json(e)),
         Message::StreamReject(r) => ("stream_reject", stream_reject_to_json(r)),
+        Message::MarketSeriesSnapshot(s) => {
+            ("market_series_snapshot", market_series_snapshot_to_json(s))
+        }
+        Message::MarketSeriesPoint(p) => ("market_series_point", market_series_point_to_json(p)),
     };
     Some(tagged(tag, body))
+}
+
+fn market_series_point_to_json(p: &celnet_proto::MarketSeriesPoint) -> Value {
+    json!({
+        "subscription": p.subscription.as_ref().map(subscription_id_to_json),
+        "sequence": p.sequence,
+        "value": p.value,
+        "epoch_nanos": p.epoch_nanos,
+    })
+}
+
+fn market_series_snapshot_to_json(s: &celnet_proto::MarketSeriesSnapshot) -> Value {
+    json!({
+        "subscription": s.subscription.as_ref().map(subscription_id_to_json),
+        "sequence": s.sequence,
+        "pair": s.pair.as_ref().map(ccy_pair_to_json),
+        "observable": s.observable,
+        "points": s.points.iter().map(market_series_point_to_json).collect::<Vec<_>>(),
+        "epoch_nanos": s.epoch_nanos,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -670,7 +831,28 @@ pub(super) fn mark_surface_request_from_json(o: &Map<String, Value>) -> Result<M
         pair: opt_nested(o, "pair", ccy_pair_from_json)?,
         broker_quotes,
         conventions: Some(nested(o, "conventions", conventions_from_json)?),
+        smile_model: opt_smile_model(o, "smile_model"),
     })
+}
+
+/// Decode an optional smile-model selector from JSON. Accepts either the proto3
+/// enum integer or its `SMILE_MODEL_*` string name; absent ⇒ `None` (server
+/// default calibration).
+fn opt_smile_model(o: &Map<String, Value>, key: &str) -> Option<i32> {
+    match o.get(key) {
+        None | Some(Value::Null) => None,
+        Some(Value::Number(n)) => n.as_i64().and_then(|v| i32::try_from(v).ok()),
+        Some(Value::String(s)) => match s.as_str() {
+            "SMILE_MODEL_MARKET_HEDGE" => Some(celnet_proto::SmileModel::MarketHedge as i32),
+            "SMILE_MODEL_STOCHASTIC_VOL" => Some(celnet_proto::SmileModel::StochasticVol as i32),
+            "SMILE_MODEL_PARAMETRIC" => Some(celnet_proto::SmileModel::Parametric as i32),
+            "SMILE_MODEL_PARAMETRIC_SURFACE" => {
+                Some(celnet_proto::SmileModel::ParametricSurface as i32)
+            }
+            _ => None,
+        },
+        Some(_) => None,
+    }
 }
 
 fn smile_point_to_json(p: &SmilePoint) -> Value {
@@ -782,6 +964,7 @@ pub(super) fn scenario_request_from_json(o: &Map<String, Value>) -> Result<Scena
         axes,
         expiry_years: f64_or_zero(o, "expiry_years"),
         risk_buckets: opt_nested(o, "risk_buckets", risk_bucket_request_from_json)?,
+        smile_model: opt_smile_model(o, "smile_model"),
     })
 }
 

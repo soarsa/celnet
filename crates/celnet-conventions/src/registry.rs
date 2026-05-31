@@ -40,11 +40,23 @@ use crate::record::{ConventionRecord, ResolutionSource, ResolvedConvention};
 #[must_use]
 fn tenor_days(tenor: Tenor) -> u32 {
     match tenor {
-        Tenor::Overnight => 1,
+        // The pre-spot short end and spot-next are all ~1 day for the
+        // short/long delta classification (well inside the "short" bucket).
+        Tenor::Overnight | Tenor::TomNext | Tenor::SpotNext => 1,
         Tenor::Weeks(w) => u32::from(w) * 7,
         // 365/12 ≈ 30.4167 days/month, rounded to nearest day.
         Tenor::Months(m) => (u32::from(m) * 365 + 6) / 12,
         Tenor::Years(y) => u32::from(y) * 365,
+        // The next IMM quarter is ≤ ~3 months out; the n-th is ~3n months. This
+        // coarse axis only drives the short/long delta split, so an IMM ≥ ~5
+        // quarters is "long". Use 3 months per IMM step as the nominal horizon.
+        Tenor::Imm(n) => (u32::from(n) * 3 * 365 + 6) / 12,
+        // A broken date carries no standard-unit horizon at this layer; classify
+        // it as "short" (≤ 1Y delta convention) — the conservative default that
+        // matches the dominant near-dated broken-date flow. The exact axis a
+        // broken date prices on is set by the pricer from its resolved expiry,
+        // not by this coarse delta-classification heuristic.
+        Tenor::BrokenDate(_) => 1,
     }
 }
 

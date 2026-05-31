@@ -35,11 +35,14 @@ designed but not yet on the wire (§7).
 - **gRPC (primary, implemented):** `tonic` over the `celnet-proto` types — the low-latency
   programmatic path the modern market-maker wants. This is what `celnet-server` serves and
   what `celnet-client` consumes; it is exercised by the real-like trader-workflow tests.
-- **WebSocket mirror (designed):** a firewall-friendly transport that serializes the *same*
+- **WebSocket mirror:** a firewall-friendly transport that serializes the *same*
   stream messages as a tagged-JSON enum (`Snapshot`/`Update`/`Heartbeat`/`StreamEnd`), so a
-  browser/light client gets identical snapshot+delta+resync semantics. To avoid drift, the
-  WS payloads must be generated from the same Rust types as gRPC — *one contract, two
-  transports*. The JSON-over-WS transport is **not yet wired**; gRPC is the shipped path.
+  browser/light client gets identical snapshot+delta+resync semantics. The WS payloads are
+  encoded/decoded from the same Rust types as gRPC — *one contract, two transports*. The JSON
+  codec covers the Phase-1 additions too (broken-date/attribution/smile-model and the inbound
+  `market_series_subscribe`/`market_series_unsubscribe` + outbound snapshot/point frames), so
+  the GUI streams the market-series feed over the identical contract. gRPC remains the
+  low-latency programmatic path; the browser GUI uses the WS mirror.
 
 Message bodies mirror `celnet-types` one-to-one, and every identifier is purpose-named and
 vendor-neutral (`VanillaInputs`, not `GkInputs`).
@@ -82,8 +85,62 @@ under-specified message here would be a placeholder, banned by rule 2).
 | `QuoteService.RejectQuote(QuoteReject) → RejectAck` | Decline a live quote. |
 | `StreamService.Stream(stream ClientStreamMessage) → stream ServerStreamMessage` | RFS bidi keyed on a client `SubscriptionId`. |
 | `SurfaceService.GetSmile(GetSmileRequest) → Smile` | Smile on a delta axis with ATM/25Δ&10Δ RR/BF and an `ArbReport`. |
-| `SurfaceService.MarkSurface(MarkSurfaceRequest) → MarkSurfaceResponse` | Calibrate from a `BrokerQuoteSet` + `Conventions` → a marked surface version. |
+| `SurfaceService.MarkSurface(MarkSurfaceRequest) → MarkSurfaceResponse` | Calibrate from a `BrokerQuoteSet` + `Conventions`, with an optional `SmileModel` selector → a marked surface version. |
 | `SurfaceService.Scenario(ScenarioRequest) → ScenarioResponse` | `ShockAxis` grid (spot/vol/rate, absolute or relative) → `ScenarioPoint`s. |
+
+### Smile-model selection on `MarkSurface` (implemented)
+
+`MarkSurfaceRequest.smile_model` is an `optional SmileModel`
+(`MARKET_HEDGE`/`STOCHASTIC_VOL`/`PARAMETRIC`/`PARAMETRIC_SURFACE`); absent ⇒ the market-hedge
+(vanna-volga) default, reproduced byte-for-byte. The server routes the choice to the matching
+`celnet-surface` calibrator (VV baseline / fitted SABR / SVI / SSVI — provenance in
+`docs/ANALYTICS-SPEC.md` §3.4a; identifiers stay vendor/method-neutral), deposits the
+**model-tagged** calibrated smile under the returned `surface_version` so a pinned RFQ/RFS
+re-prices against the exact marked model, and **echoes the model used in `Smile.arbitrage.note`**
+(`model=<family>`) as the honest provenance channel (the frozen contract has no dedicated echo
+field). `ScenarioRequest.smile_model` (field 7) is validated identically; with no broker skew the
+neutral smile collapses to the supplied flat `base_market.vol`, so the shock grid is
+model-invariant unless a skewed surface is marked first and pinned via `surface_version`.
+
+### Market-series feed — the TrendMode feed (implemented, multiplexed on `StreamSession`)
+
+A labelled, unit-bearing time-series multiplexed on the same `StreamService.StreamSession` as RFS,
+so a GUI/SDK/Excel client streams ATM-vol/spot/RR/BF/forward history over **one** session. Client
+arms: `ClientStreamMessage.market_series_subscribe=7` / `market_series_unsubscribe=8`; server arms:
+`ServerStreamMessage.market_series_snapshot=7` / `market_series_point=8`.
+
+- `MarketSeriesSubscribe { SubscriptionId subscription; CcyPair pair; MarketObservable observable;
+  optional Tenor tenor; optional double delta; uint64 throttle_nanos; uint32 history_limit }` —
+  `MarketObservable ∈ { ATM_VOL, SPOT, RISK_REVERSAL, BUTTERFLY, FORWARD }`; `tenor` required for
+  ATM_VOL/RR/BF/FORWARD, `delta` required for RR/BF.
+- `MarketSeriesSnapshot { subscription; sequence; pair; observable; repeated MarketSeriesPoint;
+  epoch_nanos }` then strictly-sequenced `MarketSeriesPoint { subscription; sequence; double value;
+  int64 epoch_nanos }`s conflated to `throttle_nanos`.
+
+**Server behaviour:** every value is derived **on the core thread from the live `MarketState`** the
+hot path prices against (`CoreLink::observe`) — SPOT/FORWARD/ATM_VOL read directly; RR/BF invert the
+live convention to the signed delta-wing strikes and read the **live smile** there. Never a
+fabricated or recomputed proxy. A momentarily-underivable observable **skips** a point; a lagging
+consumer **drops** a (conflatable) point rather than back-pressuring. The opening snapshot carries a
+single live observation — there is **no durable observation store**, so the server does not backfill
+fabricated history (a durable store that lets the snapshot replay a real recent window is a
+documented future enhancement, not faked). This is the feed that unlocks every non-Premium GUI
+`TrendMode` (`docs/EXPERIENCE-ARCHITECTURE.md` §7).
+
+### Attribution identity — who's-trading (implemented, RFQ + RFS)
+
+`optional AttributionRecord attribution` rides the whole quote/trade lifecycle:
+`QuoteRequest`(6)→`Quote`(11)→`Execution`(7) and `Subscribe`(7)→`Snapshot`(12)→`Executed`(8).
+`AttributionRecord { BookId quoted_by; optional BookId held_by; optional bool won; optional uint32
+lp_count }`, `BookId { string book; Owner owner }`, `Owner { oneof seat { string trader; string
+auto_pricer } }` — a human seat OR an automated pricer, uniformly.
+
+**Server behaviour:** the shared resolver (`services::attribution`) makes every edge-quoted line
+`quoted_by` the **maker auto-pricer** (`Owner::auto_pricer "celnet-auto-pricer"`, book `AUTO-MM`) —
+engine-quoted flow is never anonymous — and a client-supplied requesting seat (its request
+`quoted_by`) becomes `held_by`, carrying `won`/`lp_count` through verbatim. RFQ and RFS attribute
+identically (API-first parity). The risk roll-up that *keys* on `AttributionRecord` (mapping it onto
+the `celnet-risk-cube` `BookId`/`Owner` dimensions) is the Phase-2 risk lane.
 
 ### RFQ idempotency (implemented)
 
@@ -102,8 +159,9 @@ Snapshot(SubscriptionId, seq, two-way price+Greeks+vol) | Update(seq, changed fi
 Heartbeat(seq) | StreamEnd(reason) }`. Per-subscription monotonic sequence + snapshot +
 incremental `Update` + server-assisted `Resync` from `last_seq` fixes the gap-detection and
 resync semantics the broadcast design lacked, and the draining/readiness behaviour refuses
-new subscriptions while blue-green-draining. *(A `Modify` message is designed but not yet in
-the contract; clients re-`Subscribe` to change a structure.)*
+new subscriptions while blue-green-draining. The multiplexed `StreamSession` driver carries
+many subscriptions on one session (RFS, click-to-trade, and the market-series feed above) with
+in-place `Modify` to change a live structure without re-subscribing.
 
 ---
 
@@ -119,7 +177,12 @@ touch raw tonic. Implemented surface:
 - `subscribe(...) → RFS stream` with `next_event() → StreamEvent`, internally managing the
   `SubscriptionId`, applying snapshot+updates into a current two-way state, auto-heartbeat,
   and reconnect + `Resync` from `last_seq` on disconnect.
-- `get_smile(...)`, `mark_surface(...)`, `scenario(...)`.
+- `get_smile(...)`, `mark_surface(...)` (optional `SmileModel` selector → `surface_version`),
+  `scenario(...)`.
+- New request fields (`smile_model`, `attribution`) default to `None` when unset, preserving the
+  pre-Phase-1 call sites unchanged. Market-series server frames are part of the wire contract; the
+  ergonomic SDK helper that surfaces them as a typed `MarketSeries` stream is the next SDK-surface
+  increment — the frames are honoured by the server today over both gRPC and the WS mirror.
 - Ergonomic builders: `InstrumentSpec::vanilla/strategy/unit`, `Conventions::major_default()
   .with_delta/.with_atm/.with_premium`, `Quantity::base`, `StrikeSpec`, `BrokerQuoteSet::
   three_point/five_point`, `Smile::vol_at_delta/atm_vol/is_arbitrage_free`,
@@ -150,13 +213,26 @@ per-subscription RFS with resync, and a callable arb-free surface object.
 
 - **Position / P&L** — `GetPosition(book)` and `AttributePnl(book, from_mark, to_mark)`
   (delta/gamma/vega/theta/vanna/volga decomposition). The Greeks and engine exist; the
-  service is not yet in `celnet-proto`.
+  service is not yet in `celnet-proto`. The Phase-2 risk lane (`celnet-risk-cube` /
+  `celnet-risk-normalize` / `celnet-limits` / `celnet-entitlements`, see `docs/INTERFACES.md`)
+  builds the canonical-leaf → cube → limits/entitlements pipeline this service will expose;
+  the **attribution identity** that keys the roll-up is already on the wire (§4).
 - **`Tarf` / `Accumulator`** instrument variants (§3).
-- **WebSocket JSON-mirror transport** (§2).
-- **`Modify`** RFS message (§4).
+- **`SmileModel`-dependent `Scenario`** — `Scenario` validates the selector but reprices off
+  the supplied flat `base_market.vol`; a model-dependent shock grid needs a skewed surface
+  marked first via `MarkSurface` + a pinned `surface_version` (the flat-base limitation is
+  documented honestly, not stubbed).
+- **Durable market-series history** — the market-series snapshot (§4) carries one live
+  observation; a durable observation store that replays a real recent window is a future
+  enhancement (the server does not fabricate backfill).
+- **Typed `MarketSeries` SDK helper** — the frames are on the wire and server-honoured; the
+  ergonomic `celnet-client` stream wrapper is the next SDK increment (§5).
 
-These are tracked as the API-evolution-v2 wave; they are listed here so the contract's scope
-is not over-read.
+These are tracked as the continuing API-evolution wave; they are listed here so the contract's
+scope is not over-read. **Now shipped (previously listed here):** the **market-series feed**
+(§4), **smile-model selection** on `MarkSurface` (§4), **attribution identity** across the
+RFQ/RFS lifecycle (§4), in-place RFS **`Modify`** (§4), and the **WebSocket JSON-mirror** for
+these frames (§2).
 
 ---
 

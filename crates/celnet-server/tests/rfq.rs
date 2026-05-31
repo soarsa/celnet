@@ -12,7 +12,9 @@ use std::time::Duration;
 
 use celnet_core::is_close;
 use celnet_proto::quote_service_client::QuoteServiceClient;
-use celnet_proto::{QuoteAccept, QuoteReject, QuoteRequest, Side};
+use celnet_proto::{
+    AttributionRecord, BookId, Owner, QuoteAccept, QuoteReject, QuoteRequest, Side, owner,
+};
 use celnet_server::Clock;
 use celnet_types::{OptionType, VanillaInputs};
 
@@ -42,6 +44,7 @@ async fn rfq_quote_accept_matches_direct_price() {
             conventions: Some(wire_conventions()),
             correlation_id: None,
             surface_version: None,
+            attribution: None,
         };
         let quote = tokio::time::timeout(STEP_DEADLINE, client.request_quote(req))
             .await
@@ -129,6 +132,7 @@ async fn rfq_idempotent_retry_returns_same_quote_and_execution() {
             conventions: Some(wire_conventions()),
             correlation_id: None,
             surface_version: None,
+            attribution: None,
         };
 
         let first = tokio::time::timeout(STEP_DEADLINE, client.request_quote(req()))
@@ -203,6 +207,7 @@ async fn rfq_accept_after_validity_is_rejected() {
                 conventions: Some(wire_conventions()),
                 correlation_id: None,
                 surface_version: None,
+                attribution: None,
             }),
         )
         .await
@@ -257,6 +262,7 @@ async fn rfq_idempotency_key_collision_is_rejected() {
                 conventions: Some(wire_conventions()),
                 correlation_id: None,
                 surface_version: None,
+                attribution: None,
             }),
         )
         .await
@@ -273,6 +279,7 @@ async fn rfq_idempotency_key_collision_is_rejected() {
                 conventions: Some(wire_conventions()),
                 correlation_id: None,
                 surface_version: None,
+                attribution: None,
             }),
         )
         .await
@@ -295,6 +302,7 @@ async fn rfq_idempotency_key_collision_is_rejected() {
                 conventions: Some(wire_conventions()),
                 correlation_id: None,
                 surface_version: None,
+                attribution: None,
             }),
         )
         .await
@@ -336,6 +344,7 @@ async fn rfq_accept_requires_originating_idempotency_key() {
                 conventions: Some(wire_conventions()),
                 correlation_id: None,
                 surface_version: None,
+                attribution: None,
             }),
         )
         .await
@@ -416,6 +425,7 @@ async fn rfq_accept_retry_side_flip_is_refused() {
                 conventions: Some(wire_conventions()),
                 correlation_id: None,
                 surface_version: None,
+                attribution: None,
             }),
         )
         .await
@@ -494,6 +504,7 @@ async fn rfq_quote_ids_are_unguessable() {
             conventions: Some(wire_conventions()),
             correlation_id: None,
             surface_version: None,
+            attribution: None,
         };
         let a = tokio::time::timeout(STEP_DEADLINE, client.request_quote(mk("a", 1.10)))
             .await
@@ -545,6 +556,7 @@ async fn rfq_reject_returns_typed_ack_and_blocks_accept() {
                 conventions: Some(wire_conventions()),
                 correlation_id: None,
                 surface_version: None,
+                attribution: None,
             }),
         )
         .await
@@ -597,6 +609,92 @@ async fn rfq_reject_returns_typed_ack_and_blocks_accept() {
         .expect("accept-after-reject returns in time")
         .expect_err("a rejected quote can no longer be accepted");
         assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+
+        edge.shutdown(Duration::from_secs(5)).await;
+    })
+    .await
+    .expect("test must not hang");
+}
+
+/// The RFQ lifecycle carries the who's-trading attribution: a quote is always
+/// `quoted_by` the maker auto-pricer (so engine-quoted flow is never anonymous),
+/// a client-supplied requesting seat becomes the `held_by`, and the booked
+/// `Execution` carries the same chain — so the risk roll-up / blotter can attribute
+/// the flow request → quote → booking.
+#[tokio::test]
+async fn rfq_lifecycle_carries_maker_and_holder_attribution() {
+    tokio::time::timeout(TEST_DEADLINE, async {
+        let (edge, addr) = start_ready_edge().await;
+        let mut client = tokio::time::timeout(
+            STEP_DEADLINE,
+            QuoteServiceClient::connect(format!("http://{addr}")),
+        )
+        .await
+        .expect("client connects in time")
+        .expect("client connects");
+
+        // The client requests on behalf of a human trading seat.
+        let requesting_seat = BookId {
+            book: "EM-VOL-1".to_owned(),
+            owner: Some(Owner {
+                seat: Some(owner::Seat::Trader("jdoe".to_owned())),
+            }),
+        };
+        let req = QuoteRequest {
+            idempotency_key: "attr-key-1".to_owned(),
+            instrument: Some(vanilla_call(1.12)),
+            conventions: Some(wire_conventions()),
+            correlation_id: None,
+            surface_version: None,
+            attribution: Some(AttributionRecord {
+                quoted_by: Some(requesting_seat.clone()),
+                held_by: None,
+                won: Some(true),
+                lp_count: Some(3),
+            }),
+        };
+        let quote = tokio::time::timeout(STEP_DEADLINE, client.request_quote(req))
+            .await
+            .expect("request_quote returns in time")
+            .expect("request_quote succeeds")
+            .into_inner();
+
+        let attr = quote
+            .attribution
+            .clone()
+            .expect("quote carries attribution");
+        // The maker auto-pricer is the quoter (the engine priced the line).
+        let quoted = attr.quoted_by.expect("quoted_by stamped");
+        assert!(
+            matches!(quoted.owner.unwrap().seat, Some(owner::Seat::AutoPricer(_))),
+            "the maker auto-pricer quotes the line"
+        );
+        // The client's requesting seat holds the position; competition context kept.
+        assert_eq!(
+            attr.held_by,
+            Some(requesting_seat),
+            "the client seat becomes the holder"
+        );
+        assert_eq!(attr.won, Some(true));
+        assert_eq!(attr.lp_count, Some(3));
+
+        // Accept it; the booking carries the same attribution chain.
+        let exec = tokio::time::timeout(
+            STEP_DEADLINE,
+            client.accept_quote(QuoteAccept {
+                quote_id: quote.quote_id,
+                idempotency_key: "attr-key-1".to_owned(),
+                side: Side::Buy as i32,
+            }),
+        )
+        .await
+        .expect("accept returns in time")
+        .expect("accept succeeds")
+        .into_inner();
+        assert_eq!(
+            exec.attribution, quote.attribution,
+            "the execution carries the quote's attribution chain"
+        );
 
         edge.shutdown(Duration::from_secs(5)).await;
     })

@@ -1,0 +1,18 @@
+[package]
+name = "celnet-risk-cube"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet single-node hierarchical risk cube: an OLAP-style fact store + group-by/reduce roll-up over convention-free canonical risk leaves. Additive measures (net greeks, bucketed vega) roll up by summation; non-additive measures (VaR/ES, FRTB curvature, correlation-weighted vega) are re-derived per node by bump-and-revalue over the node's constituent positions."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+celnet-types.workspace = true
+celnet-core.workspace = true
+celnet-vanilla.workspace = true
+celnet-risk-normalize.workspace = true

@@ -9,15 +9,16 @@
 //! ever drifting apart.
 
 use celnet_types::{
-    AtmConvention, Ccy, CcyPair, Cut, DayCount, DeltaConvention, Greeks, OptionType, PremiumStyle,
-    Settlement, Tenor, VanillaInputs,
+    AtmConvention, BrokenDate, Ccy, CcyPair, Cut, DayCount, DeltaConvention, Greeks, OptionType,
+    PremiumStyle, Settlement, SmileModel, Tenor, VanillaInputs,
 };
 
 use crate::{
-    AtmConvention as WireAtmConvention, CcyPair as WireCcyPair, Cut as WireCut,
-    DayCount as WireDayCount, DeltaConvention as WireDeltaConvention, Greeks as WireGreeks,
-    OptionType as WireOptionType, PremiumStyle as WirePremiumStyle, Settlement as WireSettlement,
-    Tenor as WireTenor, VanillaInputs as WireVanillaInputs, tenor,
+    AtmConvention as WireAtmConvention, BrokenDate as WireBrokenDate, CcyPair as WireCcyPair,
+    Cut as WireCut, DayCount as WireDayCount, DeltaConvention as WireDeltaConvention,
+    Greeks as WireGreeks, OptionType as WireOptionType, PremiumStyle as WirePremiumStyle,
+    Settlement as WireSettlement, SmileModel as WireSmileModel, Tenor as WireTenor,
+    VanillaInputs as WireVanillaInputs, tenor,
 };
 
 /// A decode-side mapping failure: the wire carried a value the domain type
@@ -224,17 +225,56 @@ impl From<WireSettlement> for Settlement {
 
 // ---- Tenor -----------------------------------------------------------------
 
+impl From<BrokenDate> for WireBrokenDate {
+    fn from(value: BrokenDate) -> Self {
+        WireBrokenDate {
+            year: value.year,
+            month: u32::from(value.month),
+            day: u32::from(value.day),
+        }
+    }
+}
+
+impl TryFrom<WireBrokenDate> for BrokenDate {
+    type Error = WireError;
+
+    fn try_from(value: WireBrokenDate) -> Result<Self, Self::Error> {
+        let month = u8::try_from(value.month).map_err(|_| WireError::OutOfRange {
+            field: "BrokenDate.month",
+            value: i64::from(value.month),
+        })?;
+        let day = u8::try_from(value.day).map_err(|_| WireError::OutOfRange {
+            field: "BrokenDate.day",
+            value: i64::from(value.day),
+        })?;
+        Ok(BrokenDate {
+            year: value.year,
+            month,
+            day,
+        })
+    }
+}
+
 impl From<Tenor> for WireTenor {
     fn from(value: Tenor) -> Self {
-        let (unit, count) = match value {
-            Tenor::Overnight => (tenor::Unit::Overnight, 0_u32),
-            Tenor::Weeks(n) => (tenor::Unit::Weeks, u32::from(n)),
-            Tenor::Months(n) => (tenor::Unit::Months, u32::from(n)),
-            Tenor::Years(n) => (tenor::Unit::Years, u32::from(n)),
+        let (unit, count, broken_date) = match value {
+            Tenor::Overnight => (tenor::Unit::Overnight, 0_u32, None),
+            Tenor::TomNext => (tenor::Unit::TomNext, 0_u32, None),
+            Tenor::SpotNext => (tenor::Unit::SpotNext, 0_u32, None),
+            Tenor::Weeks(n) => (tenor::Unit::Weeks, u32::from(n), None),
+            Tenor::Months(n) => (tenor::Unit::Months, u32::from(n), None),
+            Tenor::Years(n) => (tenor::Unit::Years, u32::from(n), None),
+            Tenor::Imm(n) => (tenor::Unit::Imm, u32::from(n), None),
+            Tenor::BrokenDate(b) => (
+                tenor::Unit::BrokenDate,
+                0_u32,
+                Some(WireBrokenDate::from(b)),
+            ),
         };
         WireTenor {
             unit: unit as i32,
             count,
+            broken_date,
         }
     }
 }
@@ -254,11 +294,51 @@ impl TryFrom<WireTenor> for Tenor {
                 value: i64::from(value.count),
             })
         };
+        // The IMM ordinal is a small 1-based count fitting a `u8`.
+        let count_u8 = || {
+            u8::try_from(value.count).map_err(|_| WireError::OutOfRange {
+                field: "Tenor.count",
+                value: i64::from(value.count),
+            })
+        };
         Ok(match unit {
             tenor::Unit::Overnight => Tenor::Overnight,
+            tenor::Unit::TomNext => Tenor::TomNext,
+            tenor::Unit::SpotNext => Tenor::SpotNext,
             tenor::Unit::Weeks => Tenor::Weeks(count_u16()?),
             tenor::Unit::Months => Tenor::Months(count_u16()?),
             tenor::Unit::Years => Tenor::Years(count_u16()?),
+            tenor::Unit::Imm => Tenor::Imm(count_u8()?),
+            tenor::Unit::BrokenDate => {
+                let wire = value.broken_date.ok_or(WireError::MissingField {
+                    field: "Tenor.broken_date",
+                })?;
+                Tenor::BrokenDate(BrokenDate::try_from(wire)?)
+            }
+        })
+    }
+}
+
+impl From<SmileModel> for WireSmileModel {
+    fn from(value: SmileModel) -> Self {
+        match value {
+            SmileModel::MarketHedge => WireSmileModel::MarketHedge,
+            SmileModel::StochasticVol => WireSmileModel::StochasticVol,
+            SmileModel::Parametric => WireSmileModel::Parametric,
+            SmileModel::ParametricSurface => WireSmileModel::ParametricSurface,
+        }
+    }
+}
+
+impl TryFrom<WireSmileModel> for SmileModel {
+    type Error = WireError;
+
+    fn try_from(value: WireSmileModel) -> Result<Self, Self::Error> {
+        Ok(match value {
+            WireSmileModel::MarketHedge => SmileModel::MarketHedge,
+            WireSmileModel::StochasticVol => SmileModel::StochasticVol,
+            WireSmileModel::Parametric => SmileModel::Parametric,
+            WireSmileModel::ParametricSurface => SmileModel::ParametricSurface,
         })
     }
 }
@@ -433,9 +513,14 @@ mod tests {
     fn tenor_round_trips() {
         for t in [
             Tenor::Overnight,
+            Tenor::TomNext,
+            Tenor::SpotNext,
             Tenor::Weeks(2),
             Tenor::Months(3),
             Tenor::Years(1),
+            Tenor::Imm(1),
+            Tenor::Imm(4),
+            Tenor::BrokenDate(BrokenDate::new(2026, 7, 17)),
         ] {
             let back = Tenor::try_from(WireTenor::from(t)).expect("tenor must round-trip");
             assert_eq!(back, t);
@@ -443,10 +528,42 @@ mod tests {
     }
 
     #[test]
+    fn smile_model_round_trips() {
+        for m in [
+            SmileModel::MarketHedge,
+            SmileModel::StochasticVol,
+            SmileModel::Parametric,
+            SmileModel::ParametricSurface,
+        ] {
+            let back =
+                SmileModel::try_from(WireSmileModel::from(m)).expect("smile model round-trips");
+            assert_eq!(back, m);
+        }
+    }
+
+    #[test]
+    fn broken_date_tenor_requires_the_date() {
+        // A BROKEN_DATE wire tenor with no `broken_date` is a decode error, not a
+        // silent fallback.
+        let wire = WireTenor {
+            unit: tenor::Unit::BrokenDate as i32,
+            count: 0,
+            broken_date: None,
+        };
+        assert_eq!(
+            Tenor::try_from(wire),
+            Err(WireError::MissingField {
+                field: "Tenor.broken_date",
+            })
+        );
+    }
+
+    #[test]
     fn tenor_rejects_out_of_range_count() {
         let wire = WireTenor {
             unit: tenor::Unit::Months as i32,
             count: u32::from(u16::MAX) + 1,
+            broken_date: None,
         };
         assert_eq!(
             Tenor::try_from(wire),
@@ -459,7 +576,11 @@ mod tests {
 
     #[test]
     fn tenor_rejects_unknown_unit() {
-        let wire = WireTenor { unit: 99, count: 1 };
+        let wire = WireTenor {
+            unit: 99,
+            count: 1,
+            broken_date: None,
+        };
         assert_eq!(
             Tenor::try_from(wire),
             Err(WireError::UnknownEnum {

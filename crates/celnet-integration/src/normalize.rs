@@ -249,10 +249,14 @@ fn horizon_date(observed_at_nanos: i64) -> Option<Date> {
 /// honoured exactly. The nominal fallback below is used only when the feed's
 /// timestamp is out of the representable calendar range (never for a real feed),
 /// so the canonical surface input is always built on a well-defined vol-time.
-fn vol_time(pair: CcyPair, tenor: Tenor, observed_at_nanos: i64) -> f64 {
+fn vol_time(pair: CcyPair, tenor: Tenor, observed_at_nanos: i64) -> Result<f64, NormalizeError> {
     match horizon_date(observed_at_nanos) {
-        Some(horizon) => vol_year_fraction(pair, horizon, tenor),
-        None => nominal_year_fraction(tenor),
+        // A `TenorError` (zero IMM ordinal / invalid broken date) is a malformed
+        // tenor on the feed, surfaced as `BadMaturity` rather than hidden.
+        Some(horizon) => {
+            vol_year_fraction(pair, horizon, tenor).map_err(|_| NormalizeError::BadMaturity)
+        }
+        None => Ok(nominal_year_fraction(tenor)),
     }
 }
 
@@ -262,9 +266,19 @@ fn vol_time(pair: CcyPair, tenor: Tenor, observed_at_nanos: i64) -> f64 {
 fn nominal_year_fraction(tenor: Tenor) -> f64 {
     match tenor {
         Tenor::Overnight => 1.0 / 365.0,
+        // TN ≈ 2 days, SN ≈ 3 days out (nominal short-end horizons).
+        Tenor::TomNext => 2.0 / 365.0,
+        Tenor::SpotNext => 3.0 / 365.0,
         Tenor::Weeks(w) => f64::from(w) * 7.0 / 365.0,
         Tenor::Months(m) => f64::from(m) * 30.0 / 365.0,
         Tenor::Years(y) => f64::from(y) * 365.0 / 365.0,
+        // The n-th IMM is ~3n months out (nominal quarter spacing).
+        Tenor::Imm(n) => f64::from(n) * 3.0 * 30.0 / 365.0,
+        // A broken date has no nominal-unit horizon; this fallback is only ever
+        // reached for an out-of-range feed timestamp, which a feed-supplied
+        // broken date cannot produce in practice. Use a one-day floor so the
+        // downstream positivity check passes rather than dividing by zero.
+        Tenor::BrokenDate(_) => 1.0 / 365.0,
     }
 }
 
@@ -317,7 +331,7 @@ pub fn normalize(msg: &VendorSmileMessage, r_dom: f64) -> Result<NormalizedSlice
 
     // Calendar-exact vol-time: ACT/365-fixed over the real spot→expiry schedule
     // anchored at the feed's observation date (not a nominal months×30 map).
-    let t = vol_time(pair, tenor, msg.observed_at_nanos);
+    let t = vol_time(pair, tenor, msg.observed_at_nanos)?;
     if !(t.is_finite() && t > 0.0) {
         return Err(NormalizeError::BadMaturity);
     }
@@ -529,7 +543,8 @@ mod tests {
         let slice = normalize(&msg, 0.02).unwrap();
 
         let horizon = super::horizon_date(msg.observed_at_nanos).expect("representable horizon");
-        let expected = celnet_conventions::vol_year_fraction(slice.pair, horizon, Tenor::Months(3));
+        let expected = celnet_conventions::vol_year_fraction(slice.pair, horizon, Tenor::Months(3))
+            .expect("3M resolves");
         assert!(
             is_close(slice.context.t, expected, 1e-12, 1e-12),
             "vol-time {} must equal calendar-exact {expected}",

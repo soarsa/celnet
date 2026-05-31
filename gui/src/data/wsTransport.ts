@@ -32,6 +32,7 @@ import type {
   ScenarioResult,
   ShockAxis,
   Smile,
+  SmileModel,
 } from "./contract";
 import {
   ccyPairToWire,
@@ -42,6 +43,10 @@ import {
   greeksFromWire,
   instrumentToWire,
   markedSurfaceFromWire,
+  marketSeriesPointFromWire,
+  marketSeriesSnapshotFromWire,
+  marketSeriesSubscribeToWire,
+  marketSeriesUnsubscribeToWire,
   marketToWire,
   parseFrame,
   quoteFromWire,
@@ -50,6 +55,7 @@ import {
   serializeFrame,
   shockAxisToWire,
   smileFromWire,
+  smileModelToWire,
   snapshotFromWire,
   streamRejectFromWire,
   updateFromWire,
@@ -57,6 +63,7 @@ import {
 } from "./wsCodec";
 import type {
   CelnetTransport,
+  MarketSeriesParams,
   PriceResult,
   StreamEvent,
   StreamSession,
@@ -330,6 +337,12 @@ interface WsSub {
  */
 class WsStreamSession implements StreamSession {
   private readonly subs = new Map<bigint, WsSub>();
+  /**
+   * Live market-series subscriptions, keyed by the SAME id space as price streams
+   * (the contract multiplexes both on one `SubscriptionId` space). Held so a
+   * reconnect re-opens each series and the snapshot/point frames route by id.
+   */
+  private readonly series = new Map<bigint, MarketSeriesParams>();
   private readonly listeners = new Set<(e: StreamEvent) => void>();
   private nextSubId = 1n;
   private closed = false;
@@ -399,13 +412,50 @@ class WsStreamSession implements StreamSession {
     });
   }
 
+  subscribeMarketSeries(params: MarketSeriesParams): bigint {
+    const id = this.nextSubId++;
+    this.series.set(id, params);
+    this.sendMarketSeriesSubscribe(id, params);
+    return id;
+  }
+
+  private sendMarketSeriesSubscribe(id: bigint, params: MarketSeriesParams): void {
+    this.conn.send({
+      type: "market_series_subscribe",
+      ...marketSeriesSubscribeToWire({
+        subscriptionId: id,
+        pair: params.pair,
+        observable: params.observable,
+        ...(params.tenor ? { tenor: params.tenor } : {}),
+        ...(params.delta !== undefined ? { delta: params.delta } : {}),
+        throttleNanos: params.throttleNanos ?? 0n,
+        historyLimit: params.historyLimit ?? 0,
+      }),
+    });
+  }
+
+  unsubscribeMarketSeries(subscriptionId: bigint): void {
+    if (!this.series.delete(subscriptionId)) return;
+    this.conn.send({
+      type: "market_series_unsubscribe",
+      ...marketSeriesUnsubscribeToWire(subscriptionId),
+    });
+  }
+
   close(): void {
     if (this.closed) return;
     this.closed = true;
     for (const id of this.subs.keys()) {
       this.conn.send({ type: "unsubscribe", subscription: { value: Number(id) } });
     }
+    for (const id of this.series.keys()) {
+      this.conn.send({
+        type: "market_series_unsubscribe",
+        ...marketSeriesUnsubscribeToWire(id),
+      });
+    }
     this.subs.clear();
+    this.series.clear();
     this.listeners.clear();
     this.conn.bindSession(null);
   }
@@ -428,6 +478,11 @@ class WsStreamSession implements StreamSession {
         });
       }
       this.setHealth(sub, "RESYNCING");
+    }
+    // Re-open every live market series — the server re-baselines each with a fresh
+    // snapshot (the series has no client-side sequence resync; it is conflatable).
+    for (const [id, params] of this.series) {
+      this.sendMarketSeriesSubscribe(id, params);
     }
   }
 
@@ -506,6 +561,18 @@ class WsStreamSession implements StreamSession {
             this.setHealth(sub, "STALE");
           }
         }
+        break;
+      }
+      case "market_series_snapshot": {
+        const snapshot = marketSeriesSnapshotFromWire(frame);
+        if (!this.series.has(snapshot.subscriptionId)) break;
+        this.emit({ kind: "marketSeriesSnapshot", snapshot });
+        break;
+      }
+      case "market_series_point": {
+        const point = marketSeriesPointFromWire(frame);
+        if (!this.series.has(point.subscriptionId)) break;
+        this.emit({ kind: "marketSeriesPoint", point });
         break;
       }
       default:
@@ -649,16 +716,16 @@ export class WsTransport implements CelnetTransport {
     pair: CcyPair,
     brokerQuotes: BrokerQuoteSet[],
     conventions: Conventions,
+    smileModel?: SmileModel,
   ): Promise<MarkedSurface> {
-    const reply = await this.conn.request(
-      "mark_surface",
-      {
-        pair: ccyPairToWire(pair),
-        broker_quotes: brokerQuotes.map(brokerQuoteSetToWire),
-        conventions: conventionsToWire(conventions),
-      },
-      "mark_surface_response",
-    );
+    const body: Record<string, unknown> = {
+      pair: ccyPairToWire(pair),
+      broker_quotes: brokerQuotes.map(brokerQuoteSetToWire),
+      conventions: conventionsToWire(conventions),
+    };
+    // Presence-tracked: omit ⇒ the server's default calibration (MARKET_HEDGE).
+    if (smileModel) body["smile_model"] = smileModelToWire(smileModel);
+    const reply = await this.conn.request("mark_surface", body, "mark_surface_response");
     return markedSurfaceFromWire(reply);
   }
 

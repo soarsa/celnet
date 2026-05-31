@@ -67,6 +67,7 @@
 #![forbid(unsafe_code)]
 
 pub mod arbitrage;
+pub mod calibrate;
 pub mod market_hedge;
 pub mod parametric;
 pub mod parametric_surface;
@@ -79,6 +80,7 @@ pub mod termstructure;
 mod mathx;
 
 pub use arbitrage::{ArbitrageReport, check_slice, implied_density};
+pub use calibrate::{CalibratedSmile, build_model_smile};
 pub use market_hedge::MarketHedgeSmile;
 pub use parametric::ParametricSlice;
 pub use parametric_surface::ParametricSurface;

@@ -14,7 +14,7 @@
 
 import { useMemo, useState } from "react";
 import { useApp } from "../app/AppContext";
-import type { BrokerQuoteSet } from "../data/contract";
+import type { BrokerQuoteSet, SmileModel } from "../data/contract";
 import { Panel } from "../components/Panel";
 import { Button } from "../components/Button";
 import { ArbBanner } from "../components/ArbBanner";
@@ -30,6 +30,26 @@ import styles from "./SurfaceWorkspace.module.css";
 /** The five editable broker handles, in display order. */
 type Handle = "atmVol" | "rr25" | "bf25" | "rr10" | "bf10";
 const HANDLES: Handle[] = ["atmVol", "rr25", "bf25", "rr10", "bf10"];
+
+/**
+ * The selectable smile-calibration models. These are a REAL control now: the
+ * contract's `MarkSurfaceRequest.smile_model` field routes the selection to the
+ * server's calibration engine (VV/SABR/SVI/SSVI), which marks under the chosen
+ * family and echoes it in each smile's `arbitrage.note` as `model=<family>`. The
+ * labels are purpose-named (vendor/method-neutral, CLAUDE.md rule 8).
+ */
+const SMILE_MODELS: { id: SmileModel; label: string; hint: string }[] = [
+  { id: "MARKET_HEDGE", label: "Market hedge", hint: "Desk market-hedge construction (default)" },
+  { id: "STOCHASTIC_VOL", label: "Stochastic vol", hint: "Stochastic-vol fit to the broker anchors" },
+  { id: "PARAMETRIC", label: "Parametric", hint: "Parametric per-slice fit" },
+  { id: "PARAMETRIC_SURFACE", label: "Parametric surface", hint: "Parametric whole-surface fit" },
+];
+
+/** Read the `model=<family>` provenance the server stamps into a smile's arb note. */
+function modelProvenance(note: string): string | null {
+  const m = note.match(/model=([\w-]+)/);
+  return m ? m[1]! : null;
+}
 /** Stable per-tenor key — selection compares on this, never an absolute-float window. */
 const tkey = (t: number): string => t.toFixed(8);
 /** Snap a signed delta to a stable integer key (pillars are coarse: 0.10/0.25/0.50…). */
@@ -56,9 +76,19 @@ export function SurfaceWorkspace(): React.ReactElement {
       ...s.brokerQuotes,
       ...edits[tkey(s.tenorYears)],
     }));
-    const smiles = calibrateLadder(surface.pair, ladder, app.conventions, nowNanos());
+    // Preview under the SAME model the server will mark with (app.surfaceModel),
+    // so the live edit preview and the publish-gate arb check agree with the
+    // server's calibration. (The live WS transport recalibrates server-side; the
+    // mock recalibrates with the identical model locally.)
+    const smiles = calibrateLadder(
+      surface.pair,
+      ladder,
+      app.conventions,
+      nowNanos(),
+      app.surfaceModel,
+    );
     return { ladder, smiles };
-  }, [surface, edits, app.conventions]);
+  }, [surface, edits, app.conventions, app.surfaceModel]);
 
   const selectedSmile = useMemo(() => {
     if (!preview) return null;
@@ -190,15 +220,44 @@ export function SurfaceWorkspace(): React.ReactElement {
 
         <ArbBanner arb={arb} />
 
-        {/* P0-7 model PROVENANCE (display only). The current contract carries no
-            smile-model field on MarkSurface/Smile, so we surface the HONEST known
-            provenance — a broker-calibrated mark from the ATM/RR/BF handle set —
-            never a fabricated VV/SABR/SVI/SSVI selector (that selector is Phase-1
-            contract work; an API the server can't honor would be a placeholder). */}
-        <div className={styles.provenance}>
+        {/* P0-7 / Phase-1 model SELECTOR — a REAL control. The contract's
+            `MarkSurfaceRequest.smile_model` routes the choice to the server's
+            calibration engine; selecting a model re-marks the live surface under it
+            and bumps `surface_version`. The model used is read back from the marked
+            smile's `arbitrage.note` provenance channel (`model=<family>`). */}
+        <div className={styles.modelSelect} role="group" aria-label="smile calibration model">
           <span className={styles.provLabel}>model</span>
-          <span title="Calibrated from the broker ATM / RR / BF handles; no smile-model selector exists in the current contract.">
-            broker-calibrated
+          {SMILE_MODELS.map((m) => {
+            const active = m.id === app.surfaceModel;
+            return (
+              <button
+                key={m.id}
+                type="button"
+                className={`${styles.modelChip} ${active ? styles.modelChipActive : ""}`}
+                aria-pressed={active}
+                onClick={() => {
+                  // Selecting a model re-marks the LIVE published surface under it;
+                  // any unpublished handle edits are discarded (a model change marks
+                  // a fresh version off the live ladder).
+                  setEdits({});
+                  app.setSurfaceModel(m.id);
+                }}
+                title={m.hint}
+              >
+                {m.label}
+              </button>
+            );
+          })}
+        </div>
+        <div className={styles.provenance}>
+          <span className={styles.provLabel}>marked as</span>
+          {/* The honest provenance the server reports — the model family it actually
+              calibrated under, parsed from the marked smile's arb note. Falls back to
+              the selected model's label if the note carries no tag. */}
+          <span title="The calibration family the server marked this surface under (from the smile arb-report provenance).">
+            {modelProvenance(selectedSmile.arbitrage.note) ??
+              SMILE_MODELS.find((m) => m.id === app.surfaceModel)?.label.toLowerCase() ??
+              "market-hedge"}
           </span>
           <span className={styles.provDot}>·</span>
           <span>{selectedSmile.brokerQuotes.hasTenDelta ? "5-pt handles" : "3-pt handles"}</span>

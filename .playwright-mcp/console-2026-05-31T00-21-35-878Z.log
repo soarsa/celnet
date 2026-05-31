@@ -1,0 +1,34 @@
+[      55ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:20100
+[  418550ms] ReferenceError: CelerLockup is not defined
+    at TitleBar (http://localhost:5174/src/app/Shell.tsx?t=1780187314382:313:28)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+    at performUnitOfWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12559:98)
+    at workLoopSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12422:43)
+    at renderRootSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12406:13)
+    at performWorkOnRoot (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:11825:37)
+[  418550ms] [WARNING] %s
+
+%s
+ An error occurred in the <TitleBar> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[  423650ms] ReferenceError: CelerLockup is not defined
+    at TitleBar (http://localhost:5174/src/app/Shell.tsx?t=1780187319498:313:28)
+    at Object.react_stack_bottom_frame (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:18507:20)
+    at renderWithHooks (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:5652:24)
+    at updateFunctionComponent (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:7473:21)
+    at beginWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:8523:20)
+    at runWithFiberInDEV (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:995:72)
+    at performUnitOfWork (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12559:98)
+    at workLoopSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12422:43)
+    at renderRootSync (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:12406:13)
+    at performWorkOnRoot (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:11825:37)
+[  423650ms] [WARNING] %s
+
+%s
+ An error occurred in the <TitleBar> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:6963
+[  468067ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:20100

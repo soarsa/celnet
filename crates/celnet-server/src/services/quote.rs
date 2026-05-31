@@ -306,6 +306,11 @@ impl QuoteService for QuoteEdge {
             valid_until_nanos: now + QUOTE_VALIDITY_NANOS,
             correlation_id: req.correlation_id,
             surface_version: echo_version,
+            // Stamp the who's-trading chain: the maker auto-pricer is the
+            // `quoted_by` (the engine priced and showed this line); the client's
+            // requesting seat, when supplied, becomes the `held_by`. So the flow is
+            // attributable request→quote→booking and never anonymous.
+            attribution: Some(super::attribution::resolve(req.attribution.as_ref())),
         };
 
         // Store under both keys (id always; idempotency key when present).
@@ -425,6 +430,8 @@ impl QuoteService for QuoteEdge {
             traded_premium,
             instrument: Some(rec.instrument.clone()),
             epoch_nanos: now,
+            // Carry the quote's attribution chain onto the booking.
+            attribution: rec.quote.attribution.clone(),
         };
 
         // Book it back into the record so a retry is idempotent.

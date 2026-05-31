@@ -151,6 +151,42 @@ impl BarrierTopology {
     }
 }
 
+/// A market observable a time-series feed streams, evaluated against the live
+/// [`MarketState`] on the core thread. Purpose-named and vendor-neutral; maps both
+/// to the wire `MarketObservable` and to the derivation off the live smile/state.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Observable {
+    /// At-the-money-forward Black vol for the live slice (absolute, 0.10 = 10v).
+    AtmVol,
+    /// Spot FX rate (quote per 1 base).
+    Spot,
+    /// Risk reversal (call vol − put vol) at the given signed delta wing — vol.
+    RiskReversal {
+        /// The delta wing magnitude (e.g. 0.25 or 0.10) the RR is measured at.
+        delta: f64,
+    },
+    /// Butterfly (½(call+put) − ATM) at the given signed delta wing — vol.
+    Butterfly {
+        /// The delta wing magnitude (e.g. 0.25 or 0.10) the BF is measured at.
+        delta: f64,
+    },
+    /// Outright forward for the live slice (quote per 1 base).
+    Forward,
+}
+
+/// A read-only market-observable query against the live [`MarketState`].
+///
+/// Evaluated on the core thread so the value is derived from exactly the state the
+/// hot path prices against — never a fabricated or independently-recomputed
+/// number. The result is the observable's value in its natural unit, or `None` when
+/// it cannot be derived from the live state (e.g. a wing strike inversion fails for
+/// a degenerate delta).
+#[derive(Debug, Clone, Copy)]
+pub struct ObservableQuery {
+    /// The observable to evaluate.
+    pub observable: Observable,
+}
+
 /// A read-only single-barrier exotic pricing query.
 ///
 /// The vanilla inputs and barrier topology come from the request; the closed-form
@@ -202,6 +238,9 @@ enum Control {
     Snapshot(oneshot::Sender<MarketSnapshot>),
     /// Price a single-barrier exotic, replying on the `oneshot`.
     Exotic(ExoticQuery, oneshot::Sender<f64>),
+    /// Evaluate a market observable against the live state, replying on the
+    /// `oneshot` (`None` when the observable cannot be derived).
+    Observe(ObservableQuery, oneshot::Sender<Option<f64>>),
     /// Stop the busy-poll loop and join the thread.
     Stop,
 }
@@ -509,6 +548,24 @@ impl CoreLink {
         rx.await.map_err(|_| CoreLinkError::CoreUnavailable)
     }
 
+    /// Evaluate a market observable (ATM vol / spot / RR / BF / forward) against
+    /// the live market state, on the core thread, so the value reflects exactly the
+    /// smile/state the hot path prices against.
+    ///
+    /// Returns `Ok(None)` when the observable cannot be derived from the live state
+    /// (e.g. a degenerate delta wing whose strike inversion fails).
+    ///
+    /// # Errors
+    ///
+    /// [`CoreLinkError::CoreUnavailable`] if the core has shut down.
+    pub async fn observe(&self, query: ObservableQuery) -> Result<Option<f64>, CoreLinkError> {
+        let (tx, rx) = oneshot::channel();
+        self.control_tx
+            .send(Control::Observe(query, tx))
+            .map_err(|_| CoreLinkError::CoreUnavailable)?;
+        rx.await.map_err(|_| CoreLinkError::CoreUnavailable)
+    }
+
     /// Price a single-barrier exotic against the live market state.
     ///
     /// # Errors
@@ -547,6 +604,43 @@ impl CoreLink {
 impl Drop for CoreLink {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+/// Derive a [`Observable`] from the live [`MarketState`].
+///
+/// `AtmVol`/`Spot`/`Forward` are read directly off the state and its smile;
+/// `RiskReversal`/`Butterfly` invert the live convention to the signed delta wing
+/// strikes (call at `+|delta|`, put at `−|delta|`, both struck at the live ATM vol
+/// as the inversion template) and read the *live* smile vol there — so the wing
+/// observables reflect the exact marked smile, never a recomputed proxy. Returns
+/// `None` if a wing strike inversion fails (a degenerate delta), so the feed skips
+/// a point rather than fabricating one.
+fn observe_live(st: &MarketState, observable: Observable) -> Option<f64> {
+    use celnet_core::Smile;
+    let forward = st.forward();
+    let atm_vol = Smile::implied_vol(&st.smile, forward, forward, st.t).0;
+    match observable {
+        Observable::AtmVol => Some(atm_vol),
+        Observable::Spot => Some(st.spot),
+        Observable::Forward => Some(forward),
+        Observable::RiskReversal { delta } | Observable::Butterfly { delta } => {
+            let mag = delta.abs();
+            // Template at the ATM vol for the delta→strike inversion.
+            let template = VanillaInputs::new(st.spot, forward, atm_vol, st.t, st.r_dom, st.r_for);
+            let conv = st.conventions.delta;
+            let call_strike =
+                celnet_vanilla::strike_from_delta(conv, OptionType::Call, mag, &template).ok()?;
+            let put_strike =
+                celnet_vanilla::strike_from_delta(conv, OptionType::Put, -mag, &template).ok()?;
+            let call_vol = Smile::implied_vol(&st.smile, call_strike, forward, st.t).0;
+            let put_vol = Smile::implied_vol(&st.smile, put_strike, forward, st.t).0;
+            Some(match observable {
+                Observable::RiskReversal { .. } => call_vol - put_vol,
+                Observable::Butterfly { .. } => 0.5 * (call_vol + put_vol) - atm_vol,
+                _ => unreachable!(),
+            })
+        }
     }
 }
 
@@ -633,6 +727,11 @@ fn run_core(
                     };
                     let price = single_barrier_price(&q.inputs, spec);
                     let _ = reply.send(price);
+                    handled_control = true;
+                }
+                Ok(Control::Observe(q, reply)) => {
+                    let st = core.state().load();
+                    let _ = reply.send(observe_live(&st, q.observable));
                     handled_control = true;
                 }
                 Ok(Control::Stop) => return,

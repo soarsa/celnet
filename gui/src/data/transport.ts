@@ -24,13 +24,18 @@ import type {
   Instrument,
   MarkedSurface,
   MarketContext,
+  MarketObservable,
+  MarketSeriesPoint,
+  MarketSeriesSnapshot,
   Quote,
   RiskBucketRequest,
   ScenarioResult,
   ShockAxis,
   Smile,
+  SmileModel,
   Snapshot,
   StreamReject,
+  Tenor,
   TwoWayPrice,
   Update,
 } from "./contract";
@@ -50,7 +55,23 @@ export type StreamEvent =
   | { kind: "update"; update: Update }
   | { kind: "executed"; executed: Executed }
   | { kind: "reject"; reject: StreamReject }
-  | { kind: "health"; subscriptionId: bigint; health: "HEALTHY" | "RESYNCING" | "STALE" };
+  | { kind: "health"; subscriptionId: bigint; health: "HEALTHY" | "RESYNCING" | "STALE" }
+  | { kind: "marketSeriesSnapshot"; snapshot: MarketSeriesSnapshot }
+  | { kind: "marketSeriesPoint"; point: MarketSeriesPoint };
+
+/** Parameters for opening a market-series subscription on the stream session. */
+export interface MarketSeriesParams {
+  pair: CcyPair;
+  observable: MarketObservable;
+  /** Required for tenor-dependent observables (ATM_VOL/RR/BF/FORWARD); absent for SPOT. */
+  tenor?: Tenor;
+  /** Required for the wing observables (RR/BF); absent otherwise. */
+  delta?: number;
+  /** Client throttle hint in nanos (0 = none). */
+  throttleNanos?: bigint;
+  /** Max history points in the opening snapshot (0 = server default). */
+  historyLimit?: number;
+}
 
 /** A handle to a live multiplexed stream session (StreamService.StreamSession). */
 export interface StreamSession {
@@ -60,6 +81,14 @@ export interface StreamSession {
   unsubscribe(subscriptionId: bigint): void;
   /** Click-to-trade: present a stamped token to book exactly that streamed price. */
   execute(subscriptionId: bigint, token: bigint, idempotencyKey: string): void;
+  /**
+   * Open a market-series subscription (ATM-vol/spot/RR/BF/forward time-series),
+   * multiplexed on the same session; returns its client subscription id. The
+   * server replies with a `marketSeriesSnapshot` then `marketSeriesPoint`s.
+   */
+  subscribeMarketSeries(params: MarketSeriesParams): bigint;
+  /** Tear down a market-series subscription. */
+  unsubscribeMarketSeries(subscriptionId: bigint): void;
   /** Subscribe to server→client events; returns an unsubscribe disposer. */
   onEvent(listener: (event: StreamEvent) => void): () => void;
   /** Close the whole session. */
@@ -97,11 +126,17 @@ export interface CelnetTransport {
   /** SurfaceService.GetSmile */
   getSmile(pair: CcyPair, tenorYears: number, conventions: Conventions): Promise<Smile>;
 
-  /** SurfaceService.MarkSurface */
+  /**
+   * SurfaceService.MarkSurface — calibrate + publish a fresh `surface_version`.
+   * `smileModel` selects the calibration family the server marks under (absent ⇒
+   * the server default, `MARKET_HEDGE`); the model used is echoed in each smile's
+   * `arbitrage.note` as `model=<family>` (the contract's provenance channel).
+   */
   markSurface(
     pair: CcyPair,
     brokerQuotes: BrokerQuoteSet[],
     conventions: Conventions,
+    smileModel?: SmileModel,
   ): Promise<MarkedSurface>;
 
   /**

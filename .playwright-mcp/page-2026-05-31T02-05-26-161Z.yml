@@ -1,0 +1,228 @@
+- generic [ref=e3]:
+  - complementary "workspaces" [ref=e4]:
+    - generic "Celnet — a Celer Technologies product" [ref=e5]:
+      - img "Celnet — a Celer Technologies product" [ref=e6]
+    - navigation [ref=e8]:
+      - button "⌁ Ticket" [ref=e9] [cursor=pointer]:
+        - generic [ref=e10]: ⌁
+        - generic [ref=e11]: Ticket
+      - button "≋ Stream" [ref=e12] [cursor=pointer]:
+        - generic [ref=e13]: ≋
+        - generic [ref=e14]: Stream
+      - button "◷ Surface" [ref=e15] [cursor=pointer]:
+        - generic [ref=e16]: ◷
+        - generic [ref=e17]: Surface
+      - button "⊞ Risk" [ref=e18] [cursor=pointer]:
+        - generic [ref=e19]: ⊞
+        - generic [ref=e20]: Risk
+      - button "Σ Book" [ref=e21] [cursor=pointer]:
+        - generic [ref=e22]: Σ
+        - generic [ref=e23]: Book
+    - button "☾" [ref=e25] [cursor=pointer]:
+      - generic [ref=e26]: ☾
+  - generic [ref=e27]:
+    - banner [ref=e28]:
+      - generic [ref=e29]:
+        - generic [ref=e30]: Celnet
+        - generic [ref=e31]: Celer Technologies
+      - generic [ref=e32]: ·
+      - navigation "scope" [ref=e33]:
+        - generic [ref=e35]: Firm
+        - 'generic "Grant-all: every desk, book and pair" [ref=e36]': all desks · all books
+      - generic [ref=e37]: ·
+      - button "USD/JPY" [ref=e250] [cursor=pointer]:
+        - generic [ref=e40]: USD/JPY
+        - generic [ref=e41]: ▾
+      - button "⌘K Search / command…" [ref=e42] [cursor=pointer]:
+        - generic [ref=e43]: ⌘K
+        - generic [ref=e44]: Search / command…
+    - navigation "currency pair watchlist" [ref=e45]:
+      - generic [ref=e46]: Pairs
+      - tablist "currency pairs" [ref=e47]:
+        - 'tab "EUR/USD — set active pair · trend: premium mid of ATM straddle · 3 live lines" [ref=e140] [cursor=pointer]':
+          - generic [ref=e50]: EUR/USD
+          - generic [ref=e52]:
+            - generic [ref=e53]: "1.0768"
+            - generic [ref=e54]: ▲
+          - generic [ref=e55]:
+            - generic [ref=e56]: premium
+            - img "premium-mid trend, up" [ref=e492]
+        - 'tab "GBP/USD — set active pair · trend: premium mid of 10Δ strangle · 1 live line" [ref=e142] [cursor=pointer]':
+          - generic [ref=e59]: GBP/USD
+          - generic [ref=e60]:
+            - generic [ref=e61]: "1.2712"
+            - generic [ref=e62]: ▼
+          - generic [ref=e63]:
+            - generic [ref=e64]: premium
+            - img "premium-mid trend, down" [ref=e143]
+        - 'tab "USD/JPY — set active pair · trend: premium mid of ATM · 1 live line" [ref=e144] [cursor=pointer]':
+          - generic [ref=e67]: USD/JPY
+          - generic [ref=e68]:
+            - generic [ref=e69]: "156.42"
+            - generic [ref=e70]: ▼
+          - generic [ref=e71]:
+            - generic [ref=e72]: premium
+            - img "premium-mid trend, down" [ref=e493]
+        - 'tab "AUD/USD — set active pair · trend: premium mid of 10Δ strangle · 1 live line" [ref=e146] [cursor=pointer]':
+          - generic [ref=e75]: AUD/USD
+          - generic [ref=e76]:
+            - generic [ref=e77]: "0.6638"
+            - generic [ref=e78]: ▼
+          - generic [ref=e79]:
+            - generic [ref=e80]: premium
+            - img "premium-mid trend, down" [ref=e491]
+        - tab "USD/CHF — set active pair · no live stream" [ref=e81] [cursor=pointer]:
+          - generic [ref=e83]: USD/CHF
+          - generic [ref=e84]:
+            - generic [ref=e85]: "0.9018"
+            - generic [ref=e86]: –
+          - generic [ref=e88]: no live stream
+    - generic [ref=e495]:
+      - generic [ref=e496]:
+        - generic [ref=e497]:
+          - generic [ref=e498]: ⊞
+          - heading "‹ Book Risk · USD/JPY ON call ON · 25mm" [level=2] [ref=e499]:
+            - generic [ref=e500]:
+              - button "‹ Book" [ref=e501] [cursor=pointer]
+              - generic [ref=e502]: Risk · USD/JPY ON call
+              - generic [ref=e503]: ON · 25mm
+          - generic [ref=e505]:
+            - button "P&L" [ref=e506] [cursor=pointer]
+            - button "Δ" [ref=e507] [cursor=pointer]
+            - button "ν" [ref=e508] [cursor=pointer]
+        - generic [ref=e509]:
+          - generic [ref=e510]:
+            - generic [ref=e511]: rows ↓
+            - generic [ref=e512]:
+              - button "Spot" [ref=e513] [cursor=pointer]
+              - button "Vol" [ref=e514] [cursor=pointer]
+              - button "Rate dom" [ref=e515] [cursor=pointer]
+              - button "Rate for" [ref=e516] [cursor=pointer]
+              - button "Time" [ref=e517] [cursor=pointer]
+            - generic [ref=e518]: × cols →
+            - generic [ref=e519]:
+              - button "Spot" [ref=e520] [cursor=pointer]
+              - button "Vol" [ref=e521] [cursor=pointer]
+              - button "Rate dom" [ref=e522] [cursor=pointer]
+              - button "Rate for" [ref=e523] [cursor=pointer]
+              - button "Time" [ref=e524] [cursor=pointer]
+          - generic [ref=e525]:
+            - generic [ref=e526]: vol →
+            - table [ref=e527]:
+              - rowgroup [ref=e528]:
+                - row "spot ↓ −2% −1% ATM +1% +2%" [ref=e529]:
+                  - columnheader "spot ↓" [ref=e530]
+                  - columnheader "−2%" [ref=e531]
+                  - columnheader "−1%" [ref=e532]
+                  - columnheader "ATM" [ref=e533]
+                  - columnheader "+1%" [ref=e534]
+                  - columnheader "+2%" [ref=e535]
+              - rowgroup [ref=e536]:
+                - row "−1.5% −1.7m −938k −128k +682k +1.5m" [ref=e537]:
+                  - rowheader "−1.5%" [ref=e538]
+                  - cell "−1.7m" [ref=e539]
+                  - cell "−938k" [ref=e540]
+                  - cell "−128k" [ref=e541]
+                  - cell "+682k" [ref=e542]
+                  - cell "+1.5m" [ref=e543]
+                - row "−0.5% −1.7m −861k −43k +776k +1.6m" [ref=e544]:
+                  - rowheader "−0.5%" [ref=e545]
+                  - cell "−1.7m" [ref=e546]
+                  - cell "−861k" [ref=e547]
+                  - cell "−43k" [ref=e548]
+                  - cell "+776k" [ref=e549]
+                  - cell "+1.6m" [ref=e550]
+                - row "0.0% −1.6m −822k ▣ 0 +823k +1.6m" [ref=e551]:
+                  - rowheader "0.0%" [ref=e552]
+                  - cell "−1.6m" [ref=e553]
+                  - cell "−822k" [ref=e554]
+                  - cell "▣ 0" [ref=e555]:
+                    - generic [ref=e556]: ▣
+                    - text: "0"
+                  - cell "+823k" [ref=e557]
+                  - cell "+1.6m" [ref=e558]
+                - row "+0.5% −1.6m −783k +43k +869k +1.7m" [ref=e559]:
+                  - rowheader "+0.5%" [ref=e560]
+                  - cell "−1.6m" [ref=e561]
+                  - cell "−783k" [ref=e562]
+                  - cell "+43k" [ref=e563]
+                  - cell "+869k" [ref=e564]
+                  - cell "+1.7m" [ref=e565]
+                - row "+1.5% −1.5m −706k +128k +963k +1.8m" [ref=e566]:
+                  - rowheader "+1.5%" [ref=e567]
+                  - cell "−1.5m" [ref=e568]
+                  - cell "−706k" [ref=e569]
+                  - cell "+128k" [ref=e570]
+                  - cell "+963k" [ref=e571]
+                  - cell "+1.8m" [ref=e572]
+            - generic [ref=e573]:
+              - text: sweeping
+              - strong [ref=e574]: Spot
+              - text: ×
+              - strong [ref=e575]: Vol
+              - text: · real reprice via SurfaceService.Scenario at this structure's pair market
+          - generic [ref=e576]:
+            - button "▶ Pin scenario" [ref=e577] [cursor=pointer]:
+              - generic [ref=e578]: ▶ Pin scenario
+            - generic [ref=e579]:
+              - generic [ref=e580]: −
+              - generic [ref=e582]: +
+      - generic [ref=e583]:
+        - generic [ref=e584]:
+          - generic [ref=e585]: Σ
+          - heading "Vega ladder" [level=2] [ref=e586]
+        - generic [ref=e587]:
+          - generic [ref=e588]:
+            - generic [ref=e589]:
+              - generic [ref=e590]: Tenor
+              - generic [ref=e591]: Pillar
+              - generic [ref=e592]: Vega / vol-pt
+            - generic [ref=e593]:
+              - generic [ref=e594]: "ON"
+              - generic [ref=e595]: ATM
+              - generic [ref=e598]: +822k
+            - generic [ref=e599]:
+              - generic [ref=e600]: "ON"
+              - generic [ref=e601]: +25Δ
+              - generic [ref=e604]: +822k
+            - generic [ref=e605]:
+              - generic [ref=e606]: "ON"
+              - generic [ref=e607]: −25Δ
+              - generic [ref=e610]: +822k
+            - generic [ref=e611]:
+              - generic [ref=e612]: "ON"
+              - generic [ref=e613]: +10Δ
+              - generic [ref=e616]: +822k
+            - generic [ref=e617]:
+              - generic [ref=e618]: "ON"
+              - generic [ref=e619]: −10Δ
+              - generic [ref=e622]: +822k
+          - generic [ref=e623]:
+            - generic [ref=e624]: cross-gamma
+            - generic [ref=e625]: SPOT×VOL +0.0210
+            - generic [ref=e626]: RATE_DOM×SPOT −0.0000
+            - generic [ref=e627]: SPOT×TIME −0.4011
+          - generic [ref=e628]:
+            - generic [ref=e629]: theta roll
+            - generic [ref=e630]: ON −8.6m
+            - generic [ref=e631]: 1W −8.6m
+            - generic [ref=e632]: 1M −8.6m
+    - contentinfo [ref=e122]:
+      - generic [ref=e123]:
+        - generic [ref=e124]: ◉
+        - text: Stream healthy
+      - generic [ref=e125]: ·
+      - generic [ref=e126]: seq 153296
+      - generic [ref=e127]: ·
+      - generic [ref=e128]: 6/6 lines
+      - generic [ref=e129]: ·
+      - generic [ref=e130]: 3 LPs in competition
+      - generic [ref=e131]: ·
+      - generic [ref=e132]: 0 gaps
+      - generic "transport seam" [ref=e133]: live ws://127.0.0.1:8081
+      - generic [ref=e134]: ·
+      - generic "P99 inter-frame render time (target ≤8.3ms @120Hz, ceiling 16.6ms)" [ref=e135]: P99 render 15.3ms
+      - generic [ref=e136]: ·
+      - generic [ref=e137]: ◷ 03:05:26
+      - generic [ref=e138]: ·
+      - generic "build provenance — git short SHA · UTC build time" [ref=e139]: celnet v0.0.0 · 2026-05-31 00:10:42Z

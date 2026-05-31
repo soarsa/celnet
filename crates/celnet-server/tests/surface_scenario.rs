@@ -55,6 +55,7 @@ async fn scenario_shock_reprices_correctly() {
             ],
             expiry_years: 1.0,
             risk_buckets: None,
+            smile_model: None,
         };
         let resp = tokio::time::timeout(STEP_DEADLINE, client.scenario(req))
             .await
@@ -148,6 +149,7 @@ async fn mark_surface_calibrates_arbitrage_checked_smile() {
                 pair: Some(eurusd_pair()),
                 broker_quotes: vec![broker],
                 conventions: Some(wire_conventions()),
+                smile_model: None,
             }),
         )
         .await
@@ -262,6 +264,7 @@ async fn quote_pinned_to_marked_surface_version_is_honoured_and_echoed() {
                     has_ten_delta: false,
                 }],
                 conventions: Some(wire_conventions()),
+                smile_model: None,
             }),
         )
         .await
@@ -280,6 +283,7 @@ async fn quote_pinned_to_marked_surface_version_is_honoured_and_echoed() {
                 conventions: Some(wire_conventions()),
                 correlation_id: Some(0xABCD),
                 surface_version: Some(version),
+                attribution: None,
             }),
         )
         .await
@@ -306,6 +310,7 @@ async fn quote_pinned_to_marked_surface_version_is_honoured_and_echoed() {
                 conventions: Some(wire_conventions()),
                 correlation_id: None,
                 surface_version: Some(version + 9_999),
+                attribution: None,
             }),
         )
         .await
@@ -376,6 +381,7 @@ async fn scenario_book_shaped_risk_theta_roll_buckets_and_cross_gamma() {
                 }],
                 roll_horizons_years: vec![day, 3.0 * day],
             }),
+            smile_model: None,
         };
         let resp = tokio::time::timeout(STEP_DEADLINE, client.scenario(req))
             .await
@@ -444,6 +450,136 @@ async fn scenario_book_shaped_risk_theta_roll_buckets_and_cross_gamma() {
                 "a rolled (shorter-dated) value {rolled_value} decays below the base {base_value}"
             );
         }
+
+        edge.shutdown(Duration::from_secs(5)).await;
+    })
+    .await
+    .expect("test must not hang");
+}
+
+/// `MarkSurface` honours the selected `SmileModel`: marking the *same* skewed
+/// broker quote set under the market-hedge baseline versus the stochastic-vol
+/// (SABR) model yields measurably different wing pillars (a genuinely different
+/// calibrated smile, not the same numbers relabelled), each pillar repricing its
+/// ATM, and the arbitrage note carries the model provenance. The default (absent
+/// selector) reproduces the market-hedge mark exactly.
+#[tokio::test]
+async fn mark_surface_honours_smile_model_selection() {
+    tokio::time::timeout(TEST_DEADLINE, async {
+        let (edge, addr) = start_ready_edge().await;
+        let client = tokio::time::timeout(
+            STEP_DEADLINE,
+            SurfaceServiceClient::connect(format!("http://{addr}")),
+        )
+        .await
+        .expect("client connects in time")
+        .expect("client connects");
+
+        // A pronounced five-point skew so the models' wing fits diverge.
+        let broker = BrokerQuoteSet {
+            tenor_years: 1.0,
+            atm_vol: 0.11,
+            rr_25: -0.020,
+            bf_25: 0.006,
+            rr_10: -0.035,
+            bf_10: 0.012,
+            has_ten_delta: true,
+        };
+
+        let mark = |model: Option<i32>| {
+            let mut c = client.clone();
+            async move {
+                c.mark_surface(MarkSurfaceRequest {
+                    pair: Some(eurusd_pair()),
+                    broker_quotes: vec![broker],
+                    conventions: Some(wire_conventions()),
+                    smile_model: model,
+                })
+                .await
+                .expect("mark_surface succeeds")
+                .into_inner()
+            }
+        };
+
+        let baseline = tokio::time::timeout(STEP_DEADLINE, mark(None))
+            .await
+            .expect("baseline mark in time");
+        let hedge = tokio::time::timeout(
+            STEP_DEADLINE,
+            mark(Some(celnet_proto::SmileModel::MarketHedge as i32)),
+        )
+        .await
+        .expect("hedge mark in time");
+        let sabr = tokio::time::timeout(
+            STEP_DEADLINE,
+            mark(Some(celnet_proto::SmileModel::StochasticVol as i32)),
+        )
+        .await
+        .expect("sabr mark in time");
+
+        let pillar = |s: &celnet_proto::Smile, d: f64| {
+            s.points
+                .iter()
+                .find(|p| (p.delta - d).abs() < 1e-9)
+                .map(|p| p.vol)
+                .expect("pillar exists")
+        };
+
+        let hedge_smile = &hedge.smiles[0];
+        let sabr_smile = &sabr.smiles[0];
+        let base_smile = &baseline.smiles[0];
+
+        // The default selector reproduces the explicit market-hedge mark exactly
+        // (the 10Δ put wing, the most skew-sensitive pillar).
+        assert!(
+            is_close(
+                pillar(base_smile, -0.10),
+                pillar(hedge_smile, -0.10),
+                1e-9,
+                1e-9
+            ),
+            "absent selector == explicit market-hedge"
+        );
+
+        // SABR is a genuinely different fit: its 10Δ wings differ from market-hedge.
+        let dput = (pillar(sabr_smile, -0.10) - pillar(hedge_smile, -0.10)).abs();
+        let dcall = (pillar(sabr_smile, 0.10) - pillar(hedge_smile, 0.10)).abs();
+        assert!(
+            dput > 1e-4 || dcall > 1e-4,
+            "SABR wings ({}, {}) must differ from market-hedge ({}, {})",
+            pillar(sabr_smile, -0.10),
+            pillar(sabr_smile, 0.10),
+            pillar(hedge_smile, -0.10),
+            pillar(hedge_smile, 0.10),
+        );
+
+        // Each model still reprices its ATM mark.
+        for s in [hedge_smile, sabr_smile] {
+            assert!(
+                is_close(pillar(s, 0.50), broker.atm_vol, 5e-3, 5e-3),
+                "ATM pillar must reproduce the marked vol"
+            );
+        }
+
+        // The arbitrage note echoes the model provenance.
+        assert!(
+            sabr_smile
+                .arbitrage
+                .as_ref()
+                .expect("arb report")
+                .note
+                .contains("stochastic-vol"),
+            "SABR mark note must carry the model provenance"
+        );
+        assert!(
+            hedge_smile
+                .arbitrage
+                .as_ref()
+                .expect("arb report")
+                .note
+                .contains("market-hedge"),
+            "market-hedge mark note must carry the model provenance"
+        );
 
         edge.shutdown(Duration::from_secs(5)).await;
     })

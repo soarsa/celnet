@@ -32,6 +32,12 @@
  *   E. a forged/duplicate click-to-trade token is rejected; an unknown
  *      surface_version is rejected with `failed_precondition` (never a silent
  *      fallback to live).
+ *   F. CELNET.MARKSURFACE calibrates under a chosen smile model (SABR) over the
+ *      `mark_surface` `smile_model` path: it spills the calibrated smile with a
+ *      model/version footer, a SABR mark differs in wing shape from the default
+ *      market-hedge mark, and the returned surface_version pins a price.
+ *   G. CELNET.SERIES streams a live market observable: baseline + >= 2 sequenced
+ *      real points over the multiplexed session, clean unsubscribe (no orphan).
  */
 
 import { spawn } from "node:child_process";
@@ -418,6 +424,93 @@ async function main() {
     }
     if (!unknownRejected) fail("an unknown surface_version pin was NOT rejected");
     console.log("E2. unknown surface_version pin → rejected (failed_precondition)");
+
+    // ---- F. CELNET.MARKSURFACE — model-selected calibration over the contract -
+    const brokerMarks = [0.123, 0.02, 0.006, 0.04, 0.012]; // atm, rr25, bf25, rr10, bf10
+    const sabrSpill = await withTimeout(
+      functions.MARKSURFACE("EURUSD", "1Y", "SABR", ...brokerMarks),
+      STEP_MS,
+      "CELNET.MARKSURFACE(SABR)",
+    );
+    const vvSpill = await withTimeout(
+      functions.MARKSURFACE("EURUSD", "1Y", "VV", ...brokerMarks),
+      STEP_MS,
+      "CELNET.MARKSURFACE(VV)",
+    );
+    for (const [name, spill] of [["SABR", sabrSpill], ["VV", vvSpill]]) {
+      if (spill.length !== 3) fail(`MARKSURFACE(${name}) spill has ${spill.length} rows, expected 3`);
+      if (spill[0][0] !== "delta" || spill[1][0] !== "vol") {
+        fail(`MARKSURFACE(${name}) spill not [delta,…]/[vol,…]`);
+      }
+      const footer = String(spill[2][0]);
+      if (!/model /.test(footer) || !/surface v\d+/.test(footer)) {
+        fail(`MARKSURFACE(${name}) footer missing model/version: ${footer}`);
+      }
+    }
+    const sabrVols = sabrSpill[1].slice(1).map(Number);
+    const vvVols = vvSpill[1].slice(1).map(Number);
+    const wingsDiffer =
+      sabrVols.length === vvVols.length && sabrVols.some((v, i) => Math.abs(v - vvVols[i]) > 1e-6);
+    if (!wingsDiffer) fail("MARKSURFACE: SABR and VV produced identical wings — selector ineffective");
+    const sabrVersion = Number(/surface v(\d+)/.exec(String(sabrSpill[2][0]))?.[1] ?? "0");
+    if (!(sabrVersion >= 1)) fail("MARKSURFACE(SABR) footer had no surface_version");
+    const sabrPinned = await withTimeout(
+      conn.request(
+        "price",
+        {
+          instrument: instrumentToWire(instrument),
+          market: marketToWire({ spot: 1.1, vol: 0.1, rDom: 0.02, rFor: 0.01 }),
+          conventions: conventionsToWire(DEFAULT_CONVENTIONS),
+          surface_version: sabrVersion,
+        },
+        "price_response",
+      ),
+      STEP_MS,
+      "SABR-pinned price",
+    );
+    if (Number(sabrPinned["surface_version"]) !== sabrVersion) {
+      fail(`SABR-pinned price echoed version ${sabrPinned["surface_version"]}, expected ${sabrVersion}`);
+    }
+    console.log(`F. CELNET.MARKSURFACE → SABR wings differ from VV, SABR surface v${sabrVersion} pins a price`);
+
+    // ---- G. CELNET.SERIES — live market-observable trend (multiplexed) -------
+    const seriesRegistry = (
+      await import(`${repoRoot}excel/src/functions/runtime.ts`)
+    ).getSeriesRegistry();
+    let seriesCell = "";
+    let seriesTicks = 0;
+    const seriesValues = [];
+    const seriesInvocation = {
+      setResult: (v) => {
+        seriesCell = v;
+      },
+      onCanceled: null,
+    };
+    functions.SERIES("EURUSD", "ATM", "1Y", undefined, seriesInvocation);
+    const seriesReq = {
+      pair: { base: "EUR", quote: "USD" },
+      observable: "ATM_VOL",
+      tenor: { unit: "YEARS", count: 1 },
+    };
+    let seriesBaselined = false;
+    const { release: releaseSeries } = seriesRegistry.acquire(seriesReq, (tick) => {
+      if (tick.baselined) seriesBaselined = true;
+      if (Number.isFinite(tick.value)) seriesValues.push(tick.value);
+      seriesTicks = seriesValues.length;
+    });
+    const startSeries = Date.now();
+    while ((!seriesBaselined || seriesTicks < 2) && Date.now() - startSeries < STEP_MS) {
+      await delay(100);
+    }
+    if (!seriesBaselined) fail("CELNET.SERIES never received a baseline snapshot");
+    if (seriesTicks < 2) fail(`CELNET.SERIES received only ${seriesTicks} ticks (need >= 2)`);
+    releaseSeries();
+    seriesInvocation.onCanceled?.();
+    await delay(150);
+    if (seriesRegistry.liveSeriesCount() !== 0) {
+      fail(`CELNET.SERIES left ${seriesRegistry.liveSeriesCount()} orphan series after release`);
+    }
+    console.log(`G. CELNET.SERIES → baseline=${seriesBaselined} ticks=${seriesTicks} lastCell="${seriesCell}"`);
 
     conn.close();
     console.log(
