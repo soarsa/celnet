@@ -43,6 +43,7 @@ use celnet_risk_cube::{
     BookId, DeskId, DimensionId, EntityId, LocationId, NetGreeks, NodeAggregate, TraderId,
     VegaLadder,
 };
+use celnet_risk_fleet::FleetTopology;
 use celnet_risk_normalize::SpotResolver as _;
 use tonic::{Request, Response, Status};
 
@@ -54,17 +55,67 @@ use convert::WireResolver;
 use store::PositionStore;
 
 /// The `RiskService` edge over the shared live position book + readiness gate.
+///
+/// # Fleet topology (deploy-time seam)
+///
+/// The edge carries the resolved [`FleetTopology`] (`celnet-risk-fleet`) it was
+/// booted under — the deploy-time choice of whether firm risk aggregates **in this
+/// process** (every logical shard co-resident; the validated single-node algebra) or
+/// would be **fanned out across physical shards** reached via backend endpoints. This
+/// mirrors the [`crate::deployment`-style](celnet_integration) edge-adapter seam:
+/// the topology is a runtime tag chosen at boot, not a contract concern (no proto
+/// change, no `schema_version` — `CLAUDE.md` rule 9).
+///
+/// For [`FleetTopology::InProcess`] (the default, and the only path Phase 2 serves)
+/// the edge behaves **exactly** as the single-node aggregation always has: every RPC
+/// runs the direct prune → group-by → numeraire-collapse → non-additive-re-derive
+/// path over the live store snapshot, byte-for-byte unchanged. The seam's in-process
+/// reducer would re-sum the same constituents in HRW-shard order, which differs from
+/// the store's fact-insertion order in the last floating-point bit; rather than
+/// perturb a single byte of the established output, the in-process edge keeps the
+/// direct path and the fleet seam stays the validated reconciliation oracle
+/// (`celnet-risk-fleet` proves the two agree to summation-order tolerance).
+///
+/// [`FleetTopology::Distributed`] is **resolved and stored here** but not yet served:
+/// the cross-node fan-in transport is designed-only (`docs/SCALE-OUT.md` §0), so a
+/// distributed-topology RPC returns a typed `unimplemented` status until Phase 3
+/// wires the fan-out over `celnet-risk-fleet`'s `ShardRiskSource` seam. It is never a
+/// mock or a silent fallback — a distributed edge fails loudly rather than quietly
+/// serving a single-node answer it cannot vouch for.
 #[derive(Debug)]
 pub struct RiskEdge {
     store: Arc<PositionStore>,
     gate: Arc<ReadinessGate>,
+    topology: FleetTopology,
 }
 
 impl RiskEdge {
-    /// Construct the risk edge over the shared position book and readiness gate.
+    /// Construct the risk edge over the shared position book and readiness gate, in
+    /// the **in-process** fleet topology (the default single-node aggregation).
     #[must_use]
     pub fn new(store: Arc<PositionStore>, gate: Arc<ReadinessGate>) -> Self {
-        Self { store, gate }
+        Self::with_topology(store, gate, FleetTopology::InProcess)
+    }
+
+    /// Construct the risk edge under an explicit [`FleetTopology`] (the deploy-time
+    /// fleet seam). [`RiskEdge::new`] is the [`FleetTopology::InProcess`] case.
+    #[must_use]
+    pub fn with_topology(
+        store: Arc<PositionStore>,
+        gate: Arc<ReadinessGate>,
+        topology: FleetTopology,
+    ) -> Self {
+        Self {
+            store,
+            gate,
+            topology,
+        }
+    }
+
+    /// The fleet topology this edge was booted under (the resolved deploy-time seam).
+    #[must_use]
+    pub fn topology(&self) -> &FleetTopology {
+        &self.topology
     }
 
     fn require_ready(&self) -> Result<(), Status> {
@@ -74,6 +125,23 @@ impl RiskEdge {
             Err(Status::unavailable(
                 "edge not ready (starting or draining); steer to the active instance",
             ))
+        }
+    }
+
+    /// Guard the distributed topology: until the cross-node fan-in transport lands
+    /// (Phase 3, `docs/SCALE-OUT.md` §0), a [`FleetTopology::Distributed`] edge cannot
+    /// serve a firm aggregate, so it fails loudly with a typed `unimplemented` rather
+    /// than silently degrading to a single-node answer it cannot vouch for. The
+    /// in-process topology returns `Ok(())` and the RPC proceeds on the direct path.
+    fn require_servable_topology(&self) -> Result<(), Status> {
+        match &self.topology {
+            FleetTopology::InProcess => Ok(()),
+            FleetTopology::Distributed { endpoints } => Err(Status::unimplemented(format!(
+                "distributed fleet risk fan-out across {} backend(s) is not yet wired \
+                 (Phase 3); deploy this edge in the in-process topology, or omit \
+                 CELNET_FLEET_MODE/CELNET_FLEET_BACKENDS",
+                endpoints.len()
+            ))),
         }
     }
 
@@ -491,6 +559,7 @@ impl RiskService for RiskEdge {
     ) -> Result<Response<ListPositionsResponse>, Status> {
         let _guard = self.gate.enter();
         self.require_ready()?;
+        self.require_servable_topology()?;
         Ok(Response::new(
             self.list_positions_impl(&request.into_inner())?,
         ))
@@ -502,6 +571,7 @@ impl RiskService for RiskEdge {
     ) -> Result<Response<AggregateRiskResponse>, Status> {
         let _guard = self.gate.enter();
         self.require_ready()?;
+        self.require_servable_topology()?;
         Ok(Response::new(
             self.aggregate_risk_impl(&request.into_inner())?,
         ))
@@ -513,6 +583,7 @@ impl RiskService for RiskEdge {
     ) -> Result<Response<DrillRiskResponse>, Status> {
         let _guard = self.gate.enter();
         self.require_ready()?;
+        self.require_servable_topology()?;
         Ok(Response::new(self.drill_risk_impl(&request.into_inner())?))
     }
 
@@ -522,6 +593,7 @@ impl RiskService for RiskEdge {
     ) -> Result<Response<LimitStatusResponse>, Status> {
         let _guard = self.gate.enter();
         self.require_ready()?;
+        self.require_servable_topology()?;
         Ok(Response::new(
             self.limit_status_impl(&request.into_inner())?,
         ))
@@ -591,6 +663,13 @@ mod tests {
         let gate = Arc::new(ReadinessGate::new());
         gate.mark_ready();
         RiskEdge::new(Arc::new(PositionStore::new()), gate)
+    }
+
+    /// A ready test edge under an explicit fleet [`FleetTopology`].
+    fn edge_with(topology: FleetTopology) -> RiskEdge {
+        let gate = Arc::new(ReadinessGate::new());
+        gate.mark_ready();
+        RiskEdge::with_topology(Arc::new(PositionStore::new()), gate, topology)
     }
 
     /// Booking two lines on two desks, then listing positions, round-trips the
@@ -821,6 +900,169 @@ mod tests {
             resp.children
                 .iter()
                 .all(|c| c.dimension == RiskDimension::Book as i32)
+        );
+    }
+
+    /// **The default edge is the in-process topology.** A `RiskEdge::new` edge (and
+    /// thus the boot default when `CELNET_FLEET_MODE`/`CELNET_FLEET_BACKENDS` are
+    /// absent) carries [`FleetTopology::InProcess`], so `require_servable_topology`
+    /// admits every RPC and the direct single-node aggregation path runs unchanged.
+    #[test]
+    fn default_edge_is_in_process_and_servable() {
+        let edge = edge();
+        assert_eq!(*edge.topology(), FleetTopology::InProcess);
+        assert!(edge.require_servable_topology().is_ok());
+    }
+
+    /// **The in-process default path is byte-identical to the topology-free edge.**
+    /// The same booked book aggregated through a `RiskEdge::new` edge and through an
+    /// explicit `with_topology(InProcess)` edge yields a bit-for-bit identical
+    /// `AggregateRiskResponse` — proving threading the topology in changed nothing on
+    /// the served path (Phase-2 zero-behavior-change invariant).
+    #[test]
+    fn in_process_aggregate_is_byte_identical_to_default() {
+        let book = |edge: &RiskEdge| {
+            edge.store
+                .book_from_attribution(booked(1, 10_000_000.0), &attribution("EM-VOL-1", "a"))
+                .unwrap();
+            edge.store
+                .book_from_attribution(booked(2, 7_000_000.0), &attribution("G10-1", "b"))
+                .unwrap();
+        };
+        let req = AggregateRiskRequest {
+            dimension: RiskDimension::Firm as i32,
+            numeraire: Some(usd_numeraire()),
+            principal: None,
+            scope: None,
+            vega_pillars: vec![],
+            var_spot_shocks: vec![-0.02, -0.01, 0.0, 0.01, 0.02],
+            var_alpha: 0.99,
+            curvature_risk_weight: 0.18,
+            correlation_id: Some(123),
+        };
+
+        let default_edge = edge();
+        book(&default_edge);
+        let from_default = default_edge.aggregate_risk_impl(&req).unwrap();
+
+        let inproc_edge = edge_with(FleetTopology::InProcess);
+        book(&inproc_edge);
+        let from_inproc = inproc_edge.aggregate_risk_impl(&req).unwrap();
+
+        // Same dimension / numeraire / correlation, same node count.
+        assert_eq!(from_default.dimension, from_inproc.dimension);
+        assert_eq!(from_default.numeraire, from_inproc.numeraire);
+        assert_eq!(from_default.correlation_id, from_inproc.correlation_id);
+        assert_eq!(from_default.nodes.len(), from_inproc.nodes.len());
+        // Every additive measure bit-identical, and the re-derived non-additive
+        // VaR/ES/curvature bit-identical too (same direct path, same inputs).
+        for (d, i) in from_default.nodes.iter().zip(from_inproc.nodes.iter()) {
+            assert_eq!(d.position_count, i.position_count);
+            let da = d.additive.as_ref().unwrap();
+            let ia = i.additive.as_ref().unwrap();
+            assert_eq!(
+                da.delta_numeraire.to_bits(),
+                ia.delta_numeraire.to_bits(),
+                "delta_numeraire must be byte-identical"
+            );
+            assert_eq!(da.vega_numeraire.to_bits(), ia.vega_numeraire.to_bits());
+            assert_eq!(
+                da.premium_numeraire.to_bits(),
+                ia.premium_numeraire.to_bits()
+            );
+            // Non-additive measures are presence-tracked Option<f64>; compare both
+            // presence and (when present) the exact bits.
+            let bits = |x: Option<f64>| x.map(f64::to_bits);
+            let dn = d.nonadditive.as_ref().unwrap();
+            let in_ = i.nonadditive.as_ref().unwrap();
+            assert_eq!(bits(dn.var), bits(in_.var), "VaR byte-identical");
+            assert_eq!(bits(dn.es), bits(in_.es), "ES byte-identical");
+            assert_eq!(
+                bits(dn.curvature_spot),
+                bits(in_.curvature_spot),
+                "curvature byte-identical"
+            );
+        }
+    }
+
+    /// **A distributed-topology edge fails loudly, never silently degrades.** Until
+    /// Phase 3 wires the cross-node fan-in, every RPC on a `Distributed` edge returns
+    /// a typed `unimplemented` — it does NOT quietly serve a single-node answer. The
+    /// resolved topology is still stored and inspectable.
+    #[tokio::test]
+    async fn distributed_topology_rpcs_are_unimplemented() {
+        let edge = edge_with(FleetTopology::Distributed {
+            endpoints: vec!["shard-a:7000".to_owned(), "shard-b:7000".to_owned()],
+        });
+        edge.store
+            .book_from_attribution(booked(1, 10_000_000.0), &attribution("EM-VOL-1", "a"))
+            .unwrap();
+
+        // The topology is resolved and stored.
+        assert!(matches!(edge.topology(), FleetTopology::Distributed { .. }));
+        // The synchronous guard rejects loudly.
+        let guard = edge.require_servable_topology();
+        assert_eq!(
+            guard.unwrap_err().code(),
+            tonic::Code::Unimplemented,
+            "distributed topology must fail with unimplemented, not a stub answer"
+        );
+
+        // Every served RPC (gRPC trait surface — WS dispatches through the same
+        // methods) returns Unimplemented BEFORE any aggregation runs.
+        let agg = RiskService::aggregate_risk(
+            &edge,
+            Request::new(AggregateRiskRequest {
+                dimension: RiskDimension::Firm as i32,
+                numeraire: Some(usd_numeraire()),
+                principal: None,
+                scope: None,
+                vega_pillars: vec![],
+                var_spot_shocks: vec![],
+                var_alpha: 0.0,
+                curvature_risk_weight: 0.0,
+                correlation_id: None,
+            }),
+        )
+        .await;
+        assert_eq!(agg.unwrap_err().code(), tonic::Code::Unimplemented);
+
+        let list = RiskService::list_positions(
+            &edge,
+            Request::new(ListPositionsRequest {
+                scope: None,
+                principal: None,
+                correlation_id: None,
+            }),
+        )
+        .await;
+        assert_eq!(list.unwrap_err().code(), tonic::Code::Unimplemented);
+    }
+
+    /// **The env knob resolves the way the boot path expects.** `FleetTopology::parse`
+    /// (the exact call `fleet_topology_from_env` makes) maps the absent/empty case and
+    /// non-distributed modes to the in-process default, and the explicit distributed
+    /// mode with backends to a `Distributed` topology over the trimmed endpoints.
+    #[test]
+    fn env_knob_resolves_to_expected_topology() {
+        // Absent ⇒ in-process (the byte-identical default).
+        assert_eq!(FleetTopology::parse("", ""), FleetTopology::InProcess);
+        // Any non-distributed mode ⇒ in-process.
+        assert_eq!(
+            FleetTopology::parse("standalone", "shard-a:7000"),
+            FleetTopology::InProcess
+        );
+        // distributed mode but no usable backend ⇒ in-process (safe default).
+        assert_eq!(
+            FleetTopology::parse("distributed", "  , "),
+            FleetTopology::InProcess
+        );
+        // distributed + backends ⇒ Distributed over the trimmed, non-empty endpoints.
+        assert_eq!(
+            FleetTopology::parse("distributed", " shard-a:7000 , shard-b:7000 ,"),
+            FleetTopology::Distributed {
+                endpoints: vec!["shard-a:7000".to_owned(), "shard-b:7000".to_owned()],
+            }
         );
     }
 }

@@ -28,6 +28,7 @@ celnet-risk-normalize.workspace = true
 celnet-risk-cube.workspace = true
 celnet-limits.workspace = true
 celnet-entitlements.workspace = true
+celnet-risk-fleet.workspace = true
 rtrb.workspace = true
 tokio = { workspace = true, features = ["signal"] }
 tonic.workspace = true

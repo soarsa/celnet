@@ -651,6 +651,7 @@ dependencies = [
  "celnet-limits",
  "celnet-proto",
  "celnet-risk-cube",
+ "celnet-risk-fleet",
  "celnet-risk-normalize",
  "celnet-surface",
  "celnet-testkit",
