@@ -1,0 +1,28 @@
+[package]
+name = "celnet-risk-fleet"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet cross-shard risk fan-out: the distributed risk-aggregation ALGEBRA over the celnet-router HRW partition map. Partitions position-facts by (legal-entity, ccy-pair), rolls up shard-local additive aggregates, and reconciles fan-out to single-node exactly — additive measures by associative shard-merge, non-additive (VaR/ES, curvature) by gathering the union of shard constituents and re-deriving once at the firm reducer. In-process logical-shard simulation of the fan-out algebra; the physical cross-node transport / replicated log / hot-standby remain designed-only (docs/SCALE-OUT.md §0)."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# The single-node aggregation engine this crate fans out: shard-local Cube
+# roll-up + the additive merge seam (NodeAggregate::merge_additive) + the
+# non-additive re-derivation reducers. One-way edge: fleet -> risk-cube.
+celnet-risk-cube.workspace = true
+# The HRW partition map + replica membership the partitioner routes facts
+# through. One-way edge: fleet -> router. (router does NOT depend on fleet.)
+celnet-router.workspace = true
+# Domain vocabulary (CcyPair) shared by the fact key and the partition key.
+celnet-types.workspace = true
+
+[dev-dependencies]
+celnet-core.workspace = true
+celnet-risk-normalize.workspace = true
+proptest.workspace = true

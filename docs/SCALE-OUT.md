@@ -14,10 +14,18 @@
 ## 0. Built today vs. designed (no overclaim)
 
 This doc describes the **target** distributed topology. The **single-shard substrate** that
-the fleet layer composes already exists and is validated; the **cross-node fleet layer**
-(router tier, HRW map, replicated log, hot-standby) is **designed, not yet built** — there
-is no `celnet-cluster`/`celnet-router` crate, and no code performs cross-node routing,
-consensus, or partition assignment. The honest split:
+the fleet layer composes already exists and is validated; the **HRW partition map + stateless
+router primitives** (`celnet-router`) and the **cross-shard risk-aggregation algebra**
+(`celnet-risk-fleet`: partition by `(legal-entity, ccy-pair)` → shard-local roll-up →
+cross-shard additive merge + firm-level re-gather of non-additive measures, reconciled
+**fan-out == single-node**) are now **built and validated in-process**. What remains
+**designed, not yet built** is the **physical cross-node fleet plumbing**: the inter-DC
+transport that ships partial aggregates between machines, the Raft/Aeron-style replicated
+event log, and process-level hot-standby/failover/replay. No code performs *cross-node*
+routing, consensus, or live partition assignment over a network — `celnet-risk-fleet`'s
+shards are in-process logical shards (a local `Cube` standing in for a separate
+`celnet-engine` node) that exercise the reduction algebra exactly, with no sockets/RPC
+faking a live cluster. The honest split:
 
 | Mechanism | Status in tree | Where |
 |---|---|---|
@@ -27,7 +35,9 @@ consensus, or partition assignment. The honest split:
 | Edge async fan-in/fan-out + per-session stream | **Built** (tokio `mpsc` + bounded broadcast depth 256) | `celnet-server` `services/stream`, `core_link` |
 | Blue-green **live-state handoff** over a hand-rolled little-endian codec | **Built** (not `rkyv`) | `celnet-engine` `handoff` |
 | Multi-source MD aggregation + divergence detection | **Built** | `celnet-integration` |
-| HRW/rendezvous **partition map** + stateless **router tier** | **Designed only** | — (build-now, §12) |
+| HRW/rendezvous **partition map** + stateless **router tier** primitives | **Built** | `celnet-router` (`map`/`key`/`hash`/`replica`/`backpressure`) |
+| **Cross-shard risk-aggregation algebra** (partition → shard-local roll-up → additive merge + firm re-gather; reconciled fan-out == single-node) | **Built** (in-process logical shards) | `celnet-risk-fleet` |
+| Physical **cross-node transport** (ship partial aggregates between machines) | **Designed only** | — (build-now, §12) |
 | Thin **Raft/Aeron-style replicated log** + hot-standby + replay | **Designed only** | — (build-now, §12) |
 | In-proc **LMAX-disruptor SPMC** fan-out ring | **Designed only** (today: tokio broadcast) | — (build-now, §12) |
 | `SO_REUSEPORT` sharded accept + eBPF steering; `io_uring`/XDP tier | **Designed only** (readiness probe references the handoff intent) | — (build-now, §12) |
