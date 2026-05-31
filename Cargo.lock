@@ -643,6 +643,7 @@ name = "celnet-server"
 version = "0.0.0"
 dependencies = [
  "blake3",
+ "celnet-client",
  "celnet-conventions",
  "celnet-core",
  "celnet-engine",
@@ -653,6 +654,7 @@ dependencies = [
  "celnet-risk-cube",
  "celnet-risk-fleet",
  "celnet-risk-normalize",
+ "celnet-router",
  "celnet-surface",
  "celnet-testkit",
  "celnet-types",

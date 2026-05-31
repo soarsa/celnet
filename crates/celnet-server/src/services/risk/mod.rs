@@ -26,6 +26,7 @@
 
 pub mod aggregate;
 pub mod convert;
+pub mod federate;
 pub mod store;
 
 use std::sync::Arc;
@@ -76,17 +77,26 @@ use store::PositionStore;
 /// direct path and the fleet seam stays the validated reconciliation oracle
 /// (`celnet-risk-fleet` proves the two agree to summation-order tolerance).
 ///
-/// [`FleetTopology::Distributed`] is **resolved and stored here** but not yet served:
-/// the cross-node fan-in transport is designed-only (`docs/SCALE-OUT.md` §0), so a
-/// distributed-topology RPC returns a typed `unimplemented` status until Phase 3
-/// wires the fan-out over `celnet-risk-fleet`'s `ShardRiskSource` seam. It is never a
-/// mock or a silent fallback — a distributed edge fails loudly rather than quietly
-/// serving a single-node answer it cannot vouch for.
+/// [`FleetTopology::Distributed`] (Phase 3) makes the edge a **client of the same
+/// `RiskService` it serves**: at construction it connects a [`federate::Fleet`] of
+/// `celnet_client::Client`s (one per backend endpoint) and every RPC then **fans out**
+/// to the backends and **fans in** the partials into the identical answer the
+/// single-node edge would give over the union book — additive measures by linear
+/// wire-sum, non-additive by re-gathering constituents and re-deriving once
+/// (`docs/RISK-HIERARCHY.md` §3.4; see [`federate`]). A distributed edge constructed
+/// **without** a connected fleet (the sync [`RiskEdge::with_topology`], used where the
+/// topology is only inspected) fails loudly with `unavailable` rather than silently
+/// degrading — it never serves a single-node answer it cannot vouch for. No proto /
+/// `schema_version` change: the wire is the same on both sides (`CLAUDE.md` rule 9).
 #[derive(Debug)]
 pub struct RiskEdge {
     store: Arc<PositionStore>,
     gate: Arc<ReadinessGate>,
     topology: FleetTopology,
+    /// The connected backend fleet for a [`FleetTopology::Distributed`] edge (built at
+    /// construction via [`RiskEdge::with_topology_connected`]); `None` for in-process
+    /// or a not-yet-connected distributed edge.
+    fleet: Option<Arc<federate::Fleet>>,
 }
 
 impl RiskEdge {
@@ -98,7 +108,11 @@ impl RiskEdge {
     }
 
     /// Construct the risk edge under an explicit [`FleetTopology`] (the deploy-time
-    /// fleet seam). [`RiskEdge::new`] is the [`FleetTopology::InProcess`] case.
+    /// fleet seam), **without** connecting any backend fleet. [`RiskEdge::new`] is the
+    /// [`FleetTopology::InProcess`] case. A [`FleetTopology::Distributed`] edge built
+    /// this way has no fleet and will fail every RPC with `unavailable` until it is
+    /// connected; use [`RiskEdge::with_topology_connected`] at boot to dial the
+    /// backends.
     #[must_use]
     pub fn with_topology(
         store: Arc<PositionStore>,
@@ -109,6 +123,56 @@ impl RiskEdge {
             store,
             gate,
             topology,
+            fleet: None,
+        }
+    }
+
+    /// Construct the risk edge under an explicit [`FleetTopology`], connecting the
+    /// backend [`federate::Fleet`] for a [`FleetTopology::Distributed`] edge so the
+    /// federation can fan out. For [`FleetTopology::InProcess`] this is exactly
+    /// [`RiskEdge::with_topology`] (no fleet). The HTTP/2 channels are dialled eagerly,
+    /// so a misconfigured fleet fails at boot, not on the first RPC.
+    ///
+    /// # Errors
+    /// [`Status::unavailable`] if a backend endpoint cannot be dialled.
+    pub async fn with_topology_connected(
+        store: Arc<PositionStore>,
+        gate: Arc<ReadinessGate>,
+        topology: FleetTopology,
+    ) -> Result<Self, Status> {
+        let fleet = match &topology {
+            FleetTopology::InProcess => None,
+            FleetTopology::Distributed { endpoints } => {
+                Some(Arc::new(federate::Fleet::connect(endpoints).await?))
+            }
+        };
+        Ok(Self {
+            store,
+            gate,
+            topology,
+            fleet,
+        })
+    }
+
+    /// Construct a **distributed** risk edge over an already-connected
+    /// [`federate::Fleet`] (and the firm hierarchy/limit config carried by `store`).
+    /// This is the explicit-membership entry point the boot path's
+    /// [`RiskEdge::with_topology_connected`] funnels into, and the seam a failover
+    /// topology test uses (build the fleet with [`federate::Fleet::connect_with_membership`]
+    /// to express a down replica backed by a hot standby). The topology is recorded as
+    /// [`FleetTopology::Distributed`] over the fleet's backend count.
+    #[must_use]
+    pub fn with_fleet(
+        store: Arc<PositionStore>,
+        gate: Arc<ReadinessGate>,
+        fleet: Arc<federate::Fleet>,
+    ) -> Self {
+        let endpoints = (0..fleet.len()).map(|i| format!("backend-{i}")).collect();
+        Self {
+            store,
+            gate,
+            topology: FleetTopology::Distributed { endpoints },
+            fleet: Some(fleet),
         }
     }
 
@@ -128,20 +192,26 @@ impl RiskEdge {
         }
     }
 
-    /// Guard the distributed topology: until the cross-node fan-in transport lands
-    /// (Phase 3, `docs/SCALE-OUT.md` §0), a [`FleetTopology::Distributed`] edge cannot
-    /// serve a firm aggregate, so it fails loudly with a typed `unimplemented` rather
-    /// than silently degrading to a single-node answer it cannot vouch for. The
-    /// in-process topology returns `Ok(())` and the RPC proceeds on the direct path.
-    fn require_servable_topology(&self) -> Result<(), Status> {
+    /// Resolve how an RPC should be served under the edge's topology:
+    /// [`Serve::Direct`] for the in-process single-node path, or
+    /// [`Serve::Federate`] (carrying the connected backend [`federate::Fleet`]) for a
+    /// distributed edge. A distributed edge **without** a connected fleet (built via
+    /// the sync [`RiskEdge::with_topology`]) fails loudly with `unavailable` — it never
+    /// silently serves a single-node answer it cannot vouch for.
+    ///
+    /// # Errors
+    /// [`Status::unavailable`] for a distributed edge whose fleet was never connected.
+    fn serve_mode(&self) -> Result<Serve<'_>, Status> {
         match &self.topology {
-            FleetTopology::InProcess => Ok(()),
-            FleetTopology::Distributed { endpoints } => Err(Status::unimplemented(format!(
-                "distributed fleet risk fan-out across {} backend(s) is not yet wired \
-                 (Phase 3); deploy this edge in the in-process topology, or omit \
-                 CELNET_FLEET_MODE/CELNET_FLEET_BACKENDS",
-                endpoints.len()
-            ))),
+            FleetTopology::InProcess => Ok(Serve::Direct),
+            FleetTopology::Distributed { endpoints } => match &self.fleet {
+                Some(fleet) => Ok(Serve::Federate(fleet)),
+                None => Err(Status::unavailable(format!(
+                    "distributed fleet risk edge over {} backend(s) is not connected; \
+                     construct it with `RiskEdge::with_topology_connected`",
+                    endpoints.len()
+                ))),
+            },
         }
     }
 
@@ -150,6 +220,14 @@ impl RiskEdge {
     pub fn store(&self) -> &Arc<PositionStore> {
         &self.store
     }
+}
+
+/// How an RPC is served under the edge's resolved [`FleetTopology`].
+enum Serve<'a> {
+    /// In-process: run the single-node aggregation directly over the local store.
+    Direct,
+    /// Distributed: fan out across the connected backend [`federate::Fleet`].
+    Federate(&'a federate::Fleet),
 }
 
 /// Resolve a wire [`RiskScope`] (dimension + value) onto a cube `(dimension, value)`
@@ -559,10 +637,12 @@ impl RiskService for RiskEdge {
     ) -> Result<Response<ListPositionsResponse>, Status> {
         let _guard = self.gate.enter();
         self.require_ready()?;
-        self.require_servable_topology()?;
-        Ok(Response::new(
-            self.list_positions_impl(&request.into_inner())?,
-        ))
+        let req = request.into_inner();
+        let resp = match self.serve_mode()? {
+            Serve::Direct => self.list_positions_impl(&req)?,
+            Serve::Federate(fleet) => self.federated_list_positions(fleet, &req).await?,
+        };
+        Ok(Response::new(resp))
     }
 
     async fn aggregate_risk(
@@ -571,10 +651,12 @@ impl RiskService for RiskEdge {
     ) -> Result<Response<AggregateRiskResponse>, Status> {
         let _guard = self.gate.enter();
         self.require_ready()?;
-        self.require_servable_topology()?;
-        Ok(Response::new(
-            self.aggregate_risk_impl(&request.into_inner())?,
-        ))
+        let req = request.into_inner();
+        let resp = match self.serve_mode()? {
+            Serve::Direct => self.aggregate_risk_impl(&req)?,
+            Serve::Federate(fleet) => self.federated_aggregate_risk(fleet, &req).await?,
+        };
+        Ok(Response::new(resp))
     }
 
     async fn drill_risk(
@@ -583,8 +665,12 @@ impl RiskService for RiskEdge {
     ) -> Result<Response<DrillRiskResponse>, Status> {
         let _guard = self.gate.enter();
         self.require_ready()?;
-        self.require_servable_topology()?;
-        Ok(Response::new(self.drill_risk_impl(&request.into_inner())?))
+        let req = request.into_inner();
+        let resp = match self.serve_mode()? {
+            Serve::Direct => self.drill_risk_impl(&req)?,
+            Serve::Federate(fleet) => self.federated_drill_risk(fleet, &req).await?,
+        };
+        Ok(Response::new(resp))
     }
 
     async fn limit_status(
@@ -593,10 +679,12 @@ impl RiskService for RiskEdge {
     ) -> Result<Response<LimitStatusResponse>, Status> {
         let _guard = self.gate.enter();
         self.require_ready()?;
-        self.require_servable_topology()?;
-        Ok(Response::new(
-            self.limit_status_impl(&request.into_inner())?,
-        ))
+        let req = request.into_inner();
+        let resp = match self.serve_mode()? {
+            Serve::Direct => self.limit_status_impl(&req)?,
+            Serve::Federate(fleet) => self.federated_limit_status(fleet, &req).await?,
+        };
+        Ok(Response::new(resp))
     }
 }
 
@@ -905,13 +993,13 @@ mod tests {
 
     /// **The default edge is the in-process topology.** A `RiskEdge::new` edge (and
     /// thus the boot default when `CELNET_FLEET_MODE`/`CELNET_FLEET_BACKENDS` are
-    /// absent) carries [`FleetTopology::InProcess`], so `require_servable_topology`
-    /// admits every RPC and the direct single-node aggregation path runs unchanged.
+    /// absent) carries [`FleetTopology::InProcess`], so `serve_mode` resolves to the
+    /// direct single-node path and the aggregation runs unchanged.
     #[test]
     fn default_edge_is_in_process_and_servable() {
         let edge = edge();
         assert_eq!(*edge.topology(), FleetTopology::InProcess);
-        assert!(edge.require_servable_topology().is_ok());
+        assert!(matches!(edge.serve_mode(), Ok(Serve::Direct)));
     }
 
     /// **The in-process default path is byte-identical to the topology-free edge.**
@@ -985,12 +1073,15 @@ mod tests {
         }
     }
 
-    /// **A distributed-topology edge fails loudly, never silently degrades.** Until
-    /// Phase 3 wires the cross-node fan-in, every RPC on a `Distributed` edge returns
-    /// a typed `unimplemented` — it does NOT quietly serve a single-node answer. The
-    /// resolved topology is still stored and inspectable.
+    /// **A distributed edge with no connected fleet fails loudly, never silently
+    /// degrades.** A `Distributed` topology built via the *sync* `with_topology` (no
+    /// dialled backends) cannot vouch for a firm number, so every RPC returns a typed
+    /// `unavailable` — it does NOT quietly serve the local single-node book. The
+    /// resolved topology is still stored and inspectable. (The connected federation
+    /// path — `with_topology_connected` over real backends — is exercised end-to-end
+    /// in `tests/risk_federation.rs`.)
     #[tokio::test]
-    async fn distributed_topology_rpcs_are_unimplemented() {
+    async fn distributed_edge_without_fleet_is_unavailable() {
         let edge = edge_with(FleetTopology::Distributed {
             endpoints: vec!["shard-a:7000".to_owned(), "shard-b:7000".to_owned()],
         });
@@ -998,18 +1089,17 @@ mod tests {
             .book_from_attribution(booked(1, 10_000_000.0), &attribution("EM-VOL-1", "a"))
             .unwrap();
 
-        // The topology is resolved and stored.
+        // The topology is resolved and stored; no fleet was connected.
         assert!(matches!(edge.topology(), FleetTopology::Distributed { .. }));
-        // The synchronous guard rejects loudly.
-        let guard = edge.require_servable_topology();
+        // The serve-mode guard rejects loudly (unavailable, not a stub answer).
         assert_eq!(
-            guard.unwrap_err().code(),
-            tonic::Code::Unimplemented,
-            "distributed topology must fail with unimplemented, not a stub answer"
+            edge.serve_mode().err().map(|s| s.code()),
+            Some(tonic::Code::Unavailable),
+            "an unconnected distributed edge must fail with unavailable"
         );
 
         // Every served RPC (gRPC trait surface — WS dispatches through the same
-        // methods) returns Unimplemented BEFORE any aggregation runs.
+        // methods) returns Unavailable BEFORE serving the local book.
         let agg = RiskService::aggregate_risk(
             &edge,
             Request::new(AggregateRiskRequest {
@@ -1025,7 +1115,7 @@ mod tests {
             }),
         )
         .await;
-        assert_eq!(agg.unwrap_err().code(), tonic::Code::Unimplemented);
+        assert_eq!(agg.unwrap_err().code(), tonic::Code::Unavailable);
 
         let list = RiskService::list_positions(
             &edge,
@@ -1036,7 +1126,7 @@ mod tests {
             }),
         )
         .await;
-        assert_eq!(list.unwrap_err().code(), tonic::Code::Unimplemented);
+        assert_eq!(list.unwrap_err().code(), tonic::Code::Unavailable);
     }
 
     /// **The env knob resolves the way the boot path expects.** `FleetTopology::parse`

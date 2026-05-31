@@ -101,7 +101,7 @@ impl WsServices {
         clock: Clock,
         surface_book: Arc<SurfaceBook>,
         store: Arc<PositionStore>,
-        topology: celnet_risk_fleet::FleetTopology,
+        risk: Arc<RiskEdge>,
     ) -> Self {
         let pricing = Arc::new(PricingEdge::new(
             Arc::clone(&gate),
@@ -128,7 +128,8 @@ impl WsServices {
             clock,
             surface_book,
         ));
-        let risk = Arc::new(RiskEdge::with_topology(store, Arc::clone(&gate), topology));
+        // `risk` is the SAME connected edge the gRPC server uses (a distributed edge's
+        // backend fleet is connected once at boot and shared behind an `Arc`).
         Self {
             pricing,
             quote,
