@@ -120,6 +120,20 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-05-31 — **GUI → Celer-product rebrand + experience-architecture design corpus.** (1) GUI
+  rebranded to **Celer Technologies** (coral `--brand` + indigo `--accent`, Anaheim, pinwheel mark
+  once in the rail, mark-less toolbar wordmark, no traffic lights, real build-stamp); added a **pair
+  watchlist strip**, a real **pair dropdown** (`PairMenu`), and an **aggregated Book** view (commits
+  `1854ab4`, `f89e96e`). (2) Four multi-agent research/critique workflows → design corpus:
+  `docs/RISK-HIERARCHY.md` (+ROADMAP §9/WS-R), `docs/TRADING-UNIVERSE-SCALE.md`,
+  `docs/SURFACE-WORKFLOW.md`, and the capstone **`docs/EXPERIENCE-ARCHITECTURE.md`** — one coherent IX
+  (Scope×View×Analytics over a position-fact cube; entitlement drill-down show-all-now; Book↔Risk;
+  analytics selection; `TrendMode`) + a **reconciled phased backlog** (ROADMAP §10). (3) Governing rule
+  recorded: **API-first client parity** — every capability in the one `celnet-proto` contract; GUI/SDK
+  (`celnet-client`)/Excel (`CELNET.*`)/docs evolve in lockstep ([[api-first-client-parity]]). Real
+  defects found, queued Phase 0: surface **mismark** (Re-mark==Publish, edit never sent), hardcoded
+  `calendarArbitrageFree:true` (placeholder), and **`celnet-calendar` ON-resolves-as-SN** (`fx.rs:134`).
+  **Next:** Phase 0 (API-first), starting with the contract check for surface-edit/model-selection.
 - 2026-05-31 — **`celnet-journal` DONE — standalone durable crash-recovery (closes SCALE-OUT
   §8 "designed-only" gap, task #37).** Dependency-free `fsync`'d append-only sequence-ordered
   log: per-record CRC-32, clean torn-tail truncation on open (crash mid-append heals to last

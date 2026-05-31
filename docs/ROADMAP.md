@@ -279,4 +279,159 @@ A stream is **DONE** only when, on its owned crates:
 
 ---
 
+---
+
+## 9. Hierarchical Risk Aggregation (new backlog — 2026-05-31)
+
+> **New workstream added 2026-05-31.** Design spec: `docs/RISK-HIERARCHY.md`. Celnet today
+> prices and risks at the **single-instrument** level (`celnet-vanilla` 14-Greek set;
+> `celnet-engine` `BucketedRisk` = vega by `tenor×delta`, cross-gamma, theta-roll). The layer
+> **above** a single position — a firm-wide, convention-normalized, multi-dimensional risk cube
+> that rolls position risk up the org hierarchy (trader→book→desk→ccy-pair→booking-location→legal-
+> entity→firm), nets it correctly across conventions and numeraires, enforces limits at every node,
+> scopes by entitlements, and streams to the trader/risk UI at sub-second cadence — does **not yet
+> exist**. This section is the backlog for that layer. It **appends** to the roadmap and does not
+> renumber or alter §0–§8.
+>
+> **Honesty flags (carried from `docs/RISK-HIERARCHY.md`):** (a) the firm-hierarchical *scale*
+> claim depends on **AAD / batched-GPU**, not bump-and-revalue, for the non-additive measures
+> (VaR/ES, FRTB curvature, correlation-weighted vega) — this is the top technical risk; (b) the
+> `celnet-router` HRW/fleet scale-out tier is **designed only, not built** (`docs/SCALE-OUT.md`),
+> so the distributed-aggregation tasks below target a not-yet-shipped substrate; (c) the hot core
+> stays unchanged — aggregation runs **off-core** over the existing bounded SPSC offload seam.
+
+### WS-R · Hierarchical Risk Aggregation, Limits & Entitlements
+
+- **Owns (new crates):** `celnet-risk-cube`, `celnet-risk-normalize`, `celnet-limits`,
+  `celnet-entitlements`. Co-owns (interface PRs only): the risk dimension/hierarchy value types in
+  `celnet-types`; the streaming-risk messages in `celnet-proto`; the risk-explorer/limit-dashboard
+  views in `gui/` (coordinated with the GUI workstream — **do not edit `gui/` from this stream
+  without coordination**).
+- **Depends on:** G3 (needs `celnet-engine` `BucketedRisk` leaves + `celnet-surface` for scenario
+  re-pricing). Aggregation/limits/entitlements crates can scaffold against trait stubs after G1.
+- **Dependency direction:** new crates sit **above** `celnet-engine`, depend on `celnet-types` +
+  `celnet-core` (+ `celnet-surface` for scenario reval), and feed `celnet-server`'s streaming edge.
+  Never invert toward the hot core.
+
+#### Tasks
+
+1. **Risk dimension/hierarchy model in `celnet-types`** — POD value types `PositionId`, `TraderId`,
+   `BookId`, `DeskId`, `LocationId`, `EntityId`, `ValueDate`, `TradingSession`, a `DimensionId` enum,
+   and parent-pointer hierarchies (`Book→Desk`, `Location→Entity→Firm`); the immutable `RiskFact`
+   leaf (dimension keys + canonical measures + `surface_version`). *Crate: `celnet-types` (interface
+   PR). Dep: G0 (extends a frozen crate — coordinated change).*
+2. **Convention-normalized risk netting** — `celnet-risk-normalize`: re-derive every position's risk
+   into one canonical internal convention (proposed: spot-unadjusted, premium-excluded, premium as a
+   separate line) before aggregation; pure deterministic transform over `celnet-vanilla` outputs,
+   reusing the strike↔delta machinery. *Crate: `celnet-risk-normalize`. Dep: G1 (`celnet-vanilla`).*
+3. **Common-numeraire conversion** — resolve delta into a per-currency exposure vector + reporting-
+   ccy spot conversion; normalize vega P&L from per-position premium-ccy to reporting ccy (couples
+   to task 2 — vega needs the same premium-ccy normalization as delta). *Crate: `celnet-risk-
+   normalize`. Dep: task 2.*
+4. **Cross-pair delta triangulation + signed cross-pair correlation matrix** — net delta at the
+   currency-node level (USD legs of EURUSD/EURJPY cancel); store a **signed** cross-pair correlation
+   matrix with an explicit **quote-convention tag** so the vol-triangulation sign is resolved at
+   netting time (never a global minus). Roll up **vanna/volga** via the same matrix. *Crate:
+   `celnet-risk-normalize` + `celnet-risk-cube`. Dep: task 3.*
+5. **Risk-aggregation engine (the OLAP cube)** — `celnet-risk-cube`: immutable fact store; **incremental
+   additive roll-up** (a trade touches O(depth) ancestor sums); **per-node re-derivation** of
+   non-additive measures (VaR/ES, FRTB curvature, correlation-weighted vega); group-by/reduce along
+   any dimension subset at any level; drill-down reconciles to constituents. *Crate: `celnet-risk-
+   cube`. Dep: tasks 1, 4.*
+6. **Recompute-trigger + AAD/batched-GPU reval** — non-additive measures recompute on a delta-driven
+   + throttled trigger (not every tick); scenario/VaR/curvature reval via **adjoint AD and/or batched
+   GPU** (`celnet-gpu`, Philox, f32-GPU/f64-CPU reconciled) — the throughput requirement that makes
+   the firm-hierarchical claim real. *Crate: `celnet-risk-cube` + `celnet-gpu`. Dep: task 5; G3.*
+7. **FRTB-SA sensitivities export** — map cube nodes to FRTB SbM delta/vega/curvature per risk-class→
+   bucket→factor; run the inter-bucket reduction under the **three correlation scenarios** (×0.75/1.0/
+   1.25, take max); RRAO (1.0 % exotic / 0.1 % other); treat reg weights/pillars (SIMM v2.8, FRTB
+   vertices) as **versioned external data, never compiled-in**. DRC noted immaterial for vanilla FX.
+   *Crate: `celnet-risk-cube`. Dep: task 5.*
+8. **Entitlements service** — `celnet-entitlements`: role grants scoped to dimension subtrees;
+   **server-side pruning before aggregation** (no aggregate leakage); information barriers as deny
+   rules; separation-of-duties scopes; every decision audited via `celnet-observability`. *Crate:
+   `celnet-entitlements`. Dep: task 5.*
+9. **Limits & breach service** — `celnet-limits`: limit tree cascading board→entity→desk→book→trader;
+   types (Greek incl. vanna/volga, bucketed-vega/pin-risk, concentration, VaR/ES, scenario, stop-loss);
+   soft vs hard; utilization; **pre/at-trade multi-node check** on the µs additive-Greek path; breach/
+   escalation (suspend/hedge/block, four-eyes). *Crate: `celnet-limits`. Dep: task 5; G3.*
+10. **Streaming risk wire contract** — extend `celnet-proto` with the multiplexed streaming-risk
+    subscription (per-node Greeks/bucketed-vega/limit-utilization deltas + snapshots), entitlement-
+    scoped; `surface_version`-pinned (live vs IPV-official lens). *Crate: `celnet-proto` (interface
+    PR) + `celnet-server`. Dep: tasks 5, 8; WS-I.*
+11. **Real-time aggregation over scale-out** — partition facts by `(legal_entity, ccy_pair)` over the
+    `celnet-router` HRW map; shard-local roll-up + cross-shard reducer (combine additive measures;
+    re-derive/gather non-additive at firm level); IPV/joint-portfolio off the hot shard. *Crate:
+    `celnet-risk-cube` + `celnet-router`. Dep: task 5; **`celnet-router` is designed-only — blocked
+    until the fleet tier is built**.*
+12. **Point-in-time / official-vs-live lens** — `surface_version`-stamped facts aggregated under the
+    live, IPV-official, or any historical surface; deterministic-replay "what did the desk see at
+    14:32" reconstruction; PLA (Spearman > 0.80 & KS < 0.09 — **not** the removed 2016 ratio tests)
+    and RFET/NMRF hooks. *Crate: `celnet-risk-cube` + `celnet-observability`. Dep: task 5.*
+13. **GUI risk-explorer / limits-dashboard** — virtualized server-side-row-model tree grid (O(log n)
+    streaming sort), vega-by-tenor×delta + signed cross-pair correlation heatmaps (perceptual/colorblind-
+    safe ramps), Greeks blotter with vanna/volga ladder, RAG limit dashboard, scenario tornado/what-if,
+    P&L-explain waterfall (higher-order vanna/volga + residual), session-aware + point-in-time replay.
+    *Area: `gui/` (coordinate with the GUI workstream — do not edit `gui/` unilaterally). Dep: tasks
+    10, 12.*
+14. **Celnet-specific risk latency budget + CI gate** — publish and gate Celnet's **own** incremental
+    pre-trade Greek/utilization-check budget (low-single-digit µs additive path; scenario reval on the
+    trigger cadence) — do **not** borrow the B2BITS FIX-stack ~4 µs figure; aim to be first to publish
+    a portfolio-risk-roll-up latency/throughput number. *Crate: `celnet-bench` + WS-T. Dep: tasks 5, 9.*
+
+### Out of scope (explicitly, for honesty — future backlog, not silently dropped)
+
+- **XVA / SA-CVA** sensitivities (own delta/vega buckets distinct from market-risk SbM).
+- **FX settlement / Herstatt / CLS PvP** risk as a capital line (the `value_date` axis is carried;
+  the settlement-capital treatment is deferred).
+- **DRC** beyond noting it is immaterial for vanilla FX (no issuer-default leg).
+
+> Add a `WS-R` row to the **Work-Stream Ledger** in `CLAUDE.md` when this stream is claimed; keep
+> `docs/RISK-HIERARCHY.md` and `docs/INTERFACES.md` in sync as the dimension model and streaming-risk
+> contract land.
+
+---
+
+## 10. Experience Architecture & Trading-Universe Scale (new backlog — 2026-05-31)
+
+> **The product-experience design corpus.** A trader-grounded, IB-scale critique & redesign of the
+> whole front-end and the capabilities behind it, produced 2026-05-31:
+> - `docs/EXPERIENCE-ARCHITECTURE.md` — **the authoritative, reconciled phased backlog** (Phase 0/1/2)
+>   and the unified IX: navigation = **Scope (toolbar) × View (rail) × Analytics (inspector)** over one
+>   position-fact cube; entitlement-aware drill-down (show-all now, entitlement-ready); Book↔Risk =
+>   same cube at two zooms; analytics selection via the plugin `ModelRegistry`; the `TrendMode` spec.
+> - `docs/TRADING-UNIVERSE-SCALE.md` — pair universe & liquidity tiers, the continuous expiry axis
+>   (broken/IMM/event dates), the vol **cube**, who-is-trading/attribution, scale architecture, scale UX.
+> - `docs/SURFACE-WORKFLOW.md` — the optimal marking workflow; **editable delta×tenor grid is primary,
+>   3-D mesh demoted**; working-vs-official + publish/version; broken-date/event pricing.
+>
+> **API-first client parity (governing rule).** Every capability below lives in the **one canonical API**
+> (`celnet-proto` + `celnet-server`); the GUI uses the *same* API as any client, and a feature is "done"
+> only when **API + SDK (`celnet-client`) + Excel (`CELNET.*`) + GUI + `docs/INTERFACES.md`** are all
+> consistent. No GUI-only computation of a capability the API doesn't expose (e.g. the Book view's
+> current client-side aggregation must become a server-side aggregate-risk API). See the
+> `api-first-client-parity` auto-memory.
+>
+> **Phase 0 (implementable on today's data)** — surface mismark fix (transport the edit; Re-mark ≠
+> Publish), wire the real calendar-arb gate (kill hardcoded `calendarArbitrageFree:true`), editable
+> ATM/RR/BF handles, labelled "Premium" `TrendMode` (stop the cross-structure blend), Book→Risk drill,
+> `ScopeContext` showing-all breadcrumb, analytics/model selector where the engine already supports it,
+> Σ/Mid column clarity, surface-chart fixes, ticket-rate fix, stop workspace remount, ON/TN/SN labels.
+> **Phase 1** = new feeds/contracts (market-series for non-Premium trends; tenor/IMM/event/broken-date
+> model incl. the **ON-resolves-as-SN** fix in `celnet-calendar`; consensus surface; attribution
+> identity; surface contract evolutions; pair-universe registry). **Phase 2** = scale/infra
+> (virtualised blotter + server-side aggregation; vol-cube store + dirty recalibration; cross-fleet
+> fan-out; `celnet-risk-cube`/`-normalize`/`-limits`/`-entitlements`; AAD/GPU Greeks; reg-data feed).
+>
+> **Honest headline gaps** (full list in `docs/EXPERIENCE-ARCHITECTURE.md` §9): the firm-scale
+> aggregation backend and scale-out tier are **proposal/designed-only**; the hierarchical-scale claim
+> hinges on **AAD/batched-GPU** replacing bump-and-revalue; Celnet must publish its **own** roll-up
+> latency budget (the ~4µs figure is FIX-stack, not options-reval). The buildable-now seam (`ScopeContext`,
+> Book→Risk drill) degrades honestly to show-all over seeded positions in native units.
+>
+> Interface-crate changes (`celnet-types`/`celnet-proto`/`celnet-conventions`) in Phase 1 must follow the
+> parallel-session interface-crate coordination discipline (§4 / §7), not be changed unilaterally.
+
+---
+
 *End of roadmap. Source of truth for live status is `CLAUDE.md` (the ledger); source of truth for contracts is `docs/INTERFACES.md`; FX convention spec is `docs/CONVENTIONS.md`.*
