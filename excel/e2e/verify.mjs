@@ -41,6 +41,13 @@
  *   G. CELNET.SERIES streams a live market observable: the function receives a
  *      baseline then >= 2 sequenced real points over the multiplexed session, and
  *      a clean unsubscribe tears the shared series down (no orphan).
+ *   H. CELNET.RISK drives SERVER-SIDE hierarchical risk end-to-end: a real
+ *      click-to-trade booking lands in the shared position book, then the function
+ *      aggregates it on the server and the additive roll-up is consistent — the FIRM
+ *      apex node's delta + position count equal the sum over the BOOK-dimension
+ *      nodes, in the requested USD reporting numeraire (proving aggregation is
+ *      server-owned, not summed client-side, and there is no native-units caveat).
+ *      CELNET.POSITIONS lists the same booked leaf.
  */
 
 import { spawn } from "node:child_process";
@@ -555,6 +562,119 @@ async function main() {
     console.log(
       `G. CELNET.SERIES → baseline=${seriesBaselined} ticks=${seriesTicks} lastCell="${seriesCell}"\n` +
         `   clean unsubscribe (registry live series now ${seriesRegistry.liveSeriesCount()})`,
+    );
+
+    // ---- H. CELNET.RISK — server-side hierarchical risk (additive roll-up) ---
+    // Book a REAL position via the click-to-trade path (subscribe → take a live
+    // tradable token off the snapshot → execute), then aggregate the live book on
+    // the SERVER and assert the additive roll-up is consistent: the FIRM apex's
+    // delta (and position count) equals the sum over the BOOK-dimension nodes —
+    // proving aggregation is server-owned (the GUI/Excel never sum positions) and
+    // the measures are in the requested reporting numeraire (no native-units caveat).
+    // A live stream re-mints its tradable tokens every sequence and RETIRES the
+    // prior ones (server `live_tokens.clear()` on each new snapshot/update), so a
+    // token latched off the FIRST snapshot is stale within milliseconds — executing
+    // it draws an UNKNOWN_TOKEN StreamReject, not an Executed. Mirror the GUI: always
+    // keep the FRESHEST BUY token (refreshed on every snapshot AND update) and click
+    // the current one, re-clicking the newer token if a stale click is rejected.
+    let latestBuy = null; // { sub, token } — the freshest dealable BUY line.
+    let bookSub = null;
+    let bookExecuted = false;
+    let lastReject = null;
+    const captureBuy = (subscriptionId, tradable) => {
+      if (subscriptionId !== bookSub) return;
+      const buy = tradable.find((t) => t.side === "BUY") ?? tradable[0];
+      if (buy) latestBuy = { sub: subscriptionId, token: buy.token };
+    };
+    const offBook = conn.onEvent((ev) => {
+      if (ev.kind === "snapshot" && ev.snapshot.tradable.length > 0) {
+        captureBuy(ev.snapshot.subscriptionId, ev.snapshot.tradable);
+      }
+      if (ev.kind === "update" && ev.update.tradable.length > 0) {
+        captureBuy(ev.update.subscriptionId, ev.update.tradable);
+      }
+      if (ev.kind === "executed") bookExecuted = true;
+      if (ev.kind === "reject") lastReject = ev.reject;
+    });
+    bookSub = conn.subscribe(instrument, DEFAULT_CONVENTIONS, "verify-risk-book");
+    const startBook = Date.now();
+    while (!latestBuy && Date.now() - startBook < STEP_MS) await delay(50);
+    if (!latestBuy) fail("CELNET.RISK: no tradable token on the book subscription stream");
+    // Go long (BUY) so delta is unambiguously signed. Click the freshest token; if a
+    // stale click is rejected (a new sequence retired it mid-flight), re-click the
+    // token captured since. A fresh idempotency key per attempt avoids the prior
+    // booking's idempotent echo.
+    let clickedToken = null;
+    let attempt = 0;
+    const startExec = Date.now();
+    while (!bookExecuted && Date.now() - startExec < STEP_MS) {
+      if (latestBuy && latestBuy.token !== clickedToken && (lastReject || clickedToken === null)) {
+        clickedToken = latestBuy.token;
+        lastReject = null;
+        conn.execute(bookSub, clickedToken, `verify-risk-book-key-${attempt++}`);
+      }
+      await delay(50);
+    }
+    offBook();
+    conn.unsubscribe(bookSub);
+    if (!bookExecuted) {
+      fail(
+        "CELNET.RISK: the click-to-trade booking was not executed" +
+          (lastReject ? ` (last reject: ${lastReject.reason ?? JSON.stringify(lastReject)})` : ""),
+      );
+    }
+    await delay(200); // let the booking land in the shared PositionStore
+
+    // Reporting numeraire USD; the demo book trades EURUSD, so supply a EUR→USD rate
+    // (≈ the fixture spot 1.10) so any EUR leg collapses (a missing rate would fail
+    // loudly server-side — exactly the honest contract).
+    const usdRates = [["EUR", 1.1]];
+    const firmSpill = await withTimeout(
+      functions.RISK("FIRM", "USD", usdRates),
+      STEP_MS,
+      "CELNET.RISK(FIRM)",
+    );
+    const bookSpill = await withTimeout(
+      functions.RISK("BOOK", "USD", usdRates),
+      STEP_MS,
+      "CELNET.RISK(BOOK)",
+    );
+    // Each spill: header + node rows + footer. Locate the delta + count columns by
+    // the header so the check is robust to column order.
+    const colOf = (spill, name) => spill[0].indexOf(name);
+    const firmHeader = firmSpill[0];
+    const dCol = colOf(firmSpill, "delta");
+    const cCol = colOf(firmSpill, "count");
+    if (dCol < 0 || cCol < 0) fail(`CELNET.RISK header missing delta/count: ${firmHeader.join(",")}`);
+    // The FIRM aggregate is a single apex node (one data row + footer).
+    const firmRows = firmSpill.slice(1, -1);
+    if (firmRows.length !== 1) fail(`CELNET.RISK(FIRM) expected 1 apex node, got ${firmRows.length}`);
+    const firmDelta = Number(firmRows[0][dCol]);
+    const firmCount = Number(firmRows[0][cCol]);
+    const firmFooter = String(firmSpill[firmSpill.length - 1][0]);
+    if (!/reporting USD/.test(firmFooter) || !/server-aggregated/.test(firmFooter)) {
+      fail(`CELNET.RISK(FIRM) footer missing numeraire/provenance: ${firmFooter}`);
+    }
+    const bookRows = bookSpill.slice(1, -1);
+    if (bookRows.length < 1) fail("CELNET.RISK(BOOK) returned no book nodes after a booking");
+    const sumBookDelta = bookRows.reduce((acc, r) => acc + Number(r[dCol]), 0);
+    const sumBookCount = bookRows.reduce((acc, r) => acc + Number(r[cCol]), 0);
+    // Additive roll-up consistency: FIRM == Σ BOOK (the cube's defining invariant).
+    if (!(firmCount >= 1)) fail(`CELNET.RISK(FIRM) booked position not aggregated (count ${firmCount})`);
+    if (firmCount !== sumBookCount) {
+      fail(`CELNET.RISK roll-up count mismatch: FIRM ${firmCount} != Σ BOOK ${sumBookCount}`);
+    }
+    if (!isClose(firmDelta, sumBookDelta, 1e-9, 1e-9)) {
+      fail(`CELNET.RISK roll-up delta mismatch: FIRM ${firmDelta} != Σ BOOK ${sumBookDelta}`);
+    }
+    // The booked position is also listed by CELNET.POSITIONS (the drill leaf).
+    const positionsSpill = await withTimeout(functions.POSITIONS(), STEP_MS, "CELNET.POSITIONS");
+    const positionRows = positionsSpill.slice(1, -1);
+    if (positionRows.length < 1) fail("CELNET.POSITIONS listed no positions after a booking");
+    console.log(
+      `H. CELNET.RISK → FIRM delta=${firmDelta.toFixed(2)} count=${firmCount} ` +
+        `== Σ BOOK delta=${sumBookDelta.toFixed(2)} count=${sumBookCount} (USD, server-aggregated); ` +
+        `CELNET.POSITIONS listed ${positionRows.length} position(s)`,
     );
 
     conn.close();

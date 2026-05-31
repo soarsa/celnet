@@ -151,10 +151,17 @@ pub struct StreamEdge {
     surface_book: Arc<SurfaceBook>,
     /// Monotonic generator for server-assigned click-to-trade execution ids.
     next_execution_id: Arc<AtomicU64>,
+    /// The shared live position book a click-to-trade fill records its booked vanilla
+    /// position into, so `RiskService` aggregates the same lines this stream trades
+    /// (API-first: the Book/Risk views read the server's aggregate of this book).
+    /// `None` when the edge is run without a risk store (e.g. an isolated stream
+    /// test); booking is then a no-op, never a fake.
+    store: Option<Arc<crate::services::risk::store::PositionStore>>,
 }
 
 impl StreamEdge {
-    /// Construct the RFS service.
+    /// Construct the RFS service without a risk position store (click-to-trade fills
+    /// are not recorded for risk aggregation).
     #[must_use]
     pub fn new(
         link: Arc<CoreLink>,
@@ -170,6 +177,30 @@ impl StreamEdge {
             clock,
             surface_book,
             next_execution_id: Arc::new(AtomicU64::new(1)),
+            store: None,
+        }
+    }
+
+    /// Construct the RFS service wired to the shared live position book, so every
+    /// click-to-trade fill of a vanilla line records a booked position the
+    /// `RiskService` aggregates (the live book behind the Book/Risk views).
+    #[must_use]
+    pub fn with_store(
+        link: Arc<CoreLink>,
+        gate: Arc<ReadinessGate>,
+        spread: SpreadModel,
+        clock: Clock,
+        surface_book: Arc<SurfaceBook>,
+        store: Arc<crate::services::risk::store::PositionStore>,
+    ) -> Self {
+        Self {
+            link,
+            gate,
+            spread,
+            clock,
+            surface_book,
+            next_execution_id: Arc::new(AtomicU64::new(1)),
+            store: Some(store),
         }
     }
 }
@@ -661,6 +692,7 @@ impl StreamEdge {
             surface_book: Arc::clone(&self.surface_book),
             minter: TokenMinter::new(),
             next_execution_id: Arc::clone(&self.next_execution_id),
+            store: self.store.clone(),
         }
     }
 }
@@ -716,6 +748,89 @@ pub(crate) async fn run_session<S>(
     }
 }
 
+/// Record a click-to-trade fill of a **vanilla** line into the shared live position
+/// book, so `RiskService` aggregates the same lines this stream trades.
+///
+/// The booked fact is built from the subscription's instrument + the market it was
+/// shown against: pair, expiry, the resolved strike + vol (re-priced off the
+/// subscription's base market), the quoted conventions, the surface version, and the
+/// signed base notional (BUY = long, SELL = short). A non-vanilla product, a missing
+/// pair, or an unparseable convention is **not** recorded (honest scope — never a
+/// faked vanilla risk leaf). Best-effort: a failure to record never fails the trade.
+fn record_booked_position(
+    store: &crate::services::risk::store::PositionStore,
+    sub: &Subscription,
+    spread: &SpreadModel,
+    execution_id: u64,
+    side: Side,
+) {
+    use celnet_proto::instrument::Product;
+
+    // Only vanilla lines have a canonical-vanilla risk leaf.
+    let Some(Product::Vanilla(vanilla)) = sub.instrument.product.as_ref() else {
+        return;
+    };
+    let Ok(option) = celnet_proto::OptionType::try_from(vanilla.option_type) else {
+        return;
+    };
+    let option = celnet_types::OptionType::from(option);
+
+    // The pair the line trades.
+    let Some(wire_pair) = sub.instrument.pair.clone() else {
+        return;
+    };
+    let Ok(pair) = celnet_types::CcyPair::try_from(wire_pair) else {
+        return;
+    };
+
+    // Resolve the strike + vol the line is marked at by pricing off the base market
+    // (the same deterministic pricer the stream shows the line with).
+    let Ok((priced, _two_way)) = sub.price(&sub.base_market, spread) else {
+        return;
+    };
+    let inputs = celnet_types::VanillaInputs::new(
+        sub.base_market.spot,
+        priced.resolved_strike,
+        priced.vol,
+        sub.instrument.expiry_years,
+        sub.base_market.r_dom,
+        sub.base_market.r_for,
+    );
+
+    // The signed base-currency notional: BUY = long (+), SELL = short (−). A
+    // quote-ccy notional is converted to a base-equivalent at spot (the line's hedge
+    // is in base-ccy units; the cube's delta_base is a base amount).
+    let quantity = sub.instrument.quantity.as_ref();
+    let abs_base = quantity.map_or(0.0, |q| {
+        if q.base_ccy {
+            q.notional
+        } else if sub.base_market.spot != 0.0 {
+            q.notional / sub.base_market.spot
+        } else {
+            0.0
+        }
+    });
+    let signed = match side {
+        Side::Sell => -abs_base,
+        _ => abs_base,
+    };
+    if signed == 0.0 {
+        return; // nothing to book (no notional).
+    }
+
+    let booked = crate::services::risk::store::BookedPosition {
+        position_id: execution_id,
+        pair,
+        option,
+        notional_base: signed,
+        inputs,
+        quoted_delta: sub.conv.delta,
+        premium_style: sub.conv.premium,
+        surface_version: sub.surface_version.unwrap_or(0),
+    };
+    let _ = store.book_from_attribution(booked, &sub.attribution.clone().unwrap_or_default());
+}
+
 /// The single-owner per-session state and the operations over it.
 pub(crate) struct Session {
     subs: HashMap<u64, Subscription>,
@@ -730,6 +845,9 @@ pub(crate) struct Session {
     surface_book: Arc<SurfaceBook>,
     minter: TokenMinter,
     next_execution_id: Arc<AtomicU64>,
+    /// The shared live position book a click-to-trade fill records into (`None` ⇒
+    /// no risk store wired; booking is a no-op).
+    store: Option<Arc<crate::services::risk::store::PositionStore>>,
 }
 
 impl Session {
@@ -1054,6 +1172,17 @@ impl Session {
             sub.execute_idempotency
                 .insert(e.idempotency_key.clone(), executed.clone());
         }
+
+        // Record the booked vanilla position into the shared live book so
+        // `RiskService` aggregates exactly the lines this stream trades (API-first
+        // parity: the Book/Risk views read the server's aggregate of this book). A
+        // non-vanilla fill has no canonical-vanilla risk leaf, so it is not recorded
+        // (honest scope — never a faked vanilla risk). Booking is best-effort: a
+        // failure to record a risk fact must never fail the trade itself.
+        if let Some(store) = self.store.clone() {
+            record_booked_position(&store, sub, &self.spread, execution_id, live.side);
+        }
+
         let msg = ServerStreamMessage {
             message: Some(server_stream_message::Message::Executed(executed)),
         };
@@ -1428,6 +1557,7 @@ mod tests {
             surface_book: Arc::new(SurfaceBook::new()),
             minter: TokenMinter::new(),
             next_execution_id: Arc::new(AtomicU64::new(1)),
+            store: None,
         };
         let mut sub = Subscription {
             id: SubscriptionId { value: 1 },
@@ -1934,6 +2064,95 @@ mod tests {
                 Some(server_stream_message::Message::StreamReject(r))
                     if r.reason == stream_reject::Reason::AlreadyConsumed as i32
             ));
+        })
+        .await
+        .expect("no hang");
+    }
+
+    /// **The live book wiring**: a click-to-trade fill on a vanilla line records the
+    /// booked position into the shared `PositionStore` (the same book `RiskService`
+    /// aggregates), keyed on the subscription's attribution and signed by the fill
+    /// side. This is the end-to-end proof that the GUI Book/Risk views read the
+    /// server's aggregate of the *actual traded book* (API-first parity).
+    #[tokio::test]
+    async fn click_to_trade_records_position_into_the_risk_book() {
+        use crate::services::risk::store::PositionStore;
+
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let clock = Clock::manual(1_000_000_000);
+            let store = Arc::new(PositionStore::new());
+            let mut session = make_session(clock.clone());
+            session.store = Some(Arc::clone(&store));
+            // Attribute the subscription to a holder seat so the booked position
+            // keys on a real book/trader (the who's-trading roll-up).
+            session.subs.get_mut(&1).unwrap().attribution = Some(celnet_proto::AttributionRecord {
+                quoted_by: Some(celnet_proto::BookId {
+                    book: "AUTO-MM".to_owned(),
+                    owner: Some(celnet_proto::Owner {
+                        seat: Some(celnet_proto::owner::Seat::AutoPricer(
+                            "celnet-auto-pricer".to_owned(),
+                        )),
+                    }),
+                }),
+                held_by: Some(celnet_proto::BookId {
+                    book: "EM-VOL-1".to_owned(),
+                    owner: Some(celnet_proto::Owner {
+                        seat: Some(celnet_proto::owner::Seat::Trader("jdoe".to_owned())),
+                    }),
+                }),
+                won: Some(true),
+                lp_count: Some(2),
+            });
+
+            let (tx, mut _rx) = mpsc::channel::<Result<ServerStreamMessage, Status>>(64);
+            let snap = session
+                .subs
+                .get(&1)
+                .unwrap()
+                .replay
+                .front()
+                .unwrap()
+                .1
+                .clone();
+            let tokens = snapshot_tokens(&snap);
+            // A SELL token → short the line (negative notional).
+            let sell = tokens
+                .iter()
+                .find(|t| t.side == Side::Sell as i32)
+                .expect("a SELL token");
+
+            assert!(
+                session
+                    .handle_execute(
+                        Execute {
+                            subscription: Some(SubscriptionId { value: 1 }),
+                            token: sell.token,
+                            idempotency_key: "click-book".to_owned(),
+                            correlation_id: None,
+                        },
+                        &tx,
+                    )
+                    .await
+            );
+
+            // The store now holds exactly one booked position.
+            assert_eq!(store.len(), 1, "the fill recorded one risk position");
+            let snap = store.snapshot();
+            let fact = &snap.facts[0];
+            // Short fill → negative base notional (the 1mm base-ccy quantity, SELL).
+            assert!(
+                fact.measure.position.notional_base < 0.0,
+                "a SELL fill is a short position (negative notional)"
+            );
+            assert_eq!(
+                fact.measure.position.pair,
+                celnet_types::CcyPair::new(celnet_types::Ccy::EUR, celnet_types::Ccy::USD)
+            );
+            // The attribution chain (holder book) round-trips for the roll-up.
+            let attr = snap
+                .attribution_of(fact.position_id.0)
+                .expect("attribution recorded");
+            assert_eq!(attr.held_by.as_ref().unwrap().book, "EM-VOL-1");
         })
         .await
         .expect("no hang");

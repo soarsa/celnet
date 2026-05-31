@@ -1090,6 +1090,502 @@ message MarketSeriesSnapshot {
 }
 
 // ===========================================================================
+// risk — firm-scale hierarchical risk: positions, server-side aggregation over
+// the org hierarchy, limits/RAG, and node drill-down. This is the wire face of
+// the single-node risk estate (celnet-risk-cube aggregation, celnet-risk-normalize
+// common-numeraire conversion, celnet-limits utilization/RAG, celnet-entitlements
+// pre-aggregation pruning). Aggregation is OWNED BY THE SERVER — a client never
+// loops positions and sums; it asks `AggregateRisk` for the rolled-up node tree.
+// ===========================================================================
+
+// An organizational roll-up dimension — mirrors `celnet_risk_cube::DimensionId`
+// plus the implicit firm apex. These are ORTHOGONAL axes (a position is at once
+// a desk fact, a ccy-pair fact, an entity fact), not one nesting: a group-by
+// selects one axis to roll the facts up onto.
+enum RiskDimension {
+  // The whole firm (the implicit apex every dimension rolls into) — the cube's
+  // `firm_aggregate`, not a `group_by` axis. The proto3 zero default.
+  RISK_DIMENSION_FIRM = 0;
+  // The trader who owns the position.
+  RISK_DIMENSION_TRADER = 1;
+  // The book the position sits in.
+  RISK_DIMENSION_BOOK = 2;
+  // The desk the book belongs to (an FRTB regulatory unit).
+  RISK_DIMENSION_DESK = 3;
+  // The currency pair (the underlying axis — orthogonal to the org axes).
+  RISK_DIMENSION_CCY_PAIR = 4;
+  // The booking location (follow-the-sun / country).
+  RISK_DIMENSION_LOCATION = 5;
+  // The legal entity (the regulatory-capital unit).
+  RISK_DIMENSION_ENTITY = 6;
+}
+
+// A position's placement across the independent org dimensions — the foreign-key
+// tuple into the cube hierarchies (mirrors `celnet_risk_cube::FactKey`). The
+// identifiers are the cube's interned `u32` dimension handles; the server maps a
+// trade's wire-level `AttributionRecord` (book/owner strings) onto these handles.
+// `desk`/`entity` may be sent as 0 when the server resolves them from the cube's
+// `Book -> Desk` / `Location -> Entity` parent pointers.
+message OrgKey {
+  // Interned handle for the trader who owns the position.
+  uint32 trader = 1;
+  // Interned handle for the book the position sits in.
+  uint32 book = 2;
+  // Interned handle for the desk (0 ⇒ resolve from the book's parent pointer).
+  uint32 desk = 3;
+  // The currency pair underlying the position.
+  CcyPair ccy_pair = 4;
+  // Interned handle for the booking location.
+  uint32 location = 5;
+  // Interned handle for the legal entity (0 ⇒ resolve from the location's
+  // parent pointer).
+  uint32 entity = 6;
+}
+
+// One open position the cube aggregates: its identity, org placement, attribution
+// (who holds/quoted it), pricing inputs, and quoted conventions. Mirrors a
+// `celnet_risk_cube::RiskFact` (`position_id` + `OrgKey` + the originating
+// `celnet_risk_normalize::PositionRisk` + `surface_version`). The canonical
+// convention-free leaf the cube sums is re-derived server-side from these inputs
+// (`celnet_risk_normalize::canonicalize`), so the wire carries the raw position,
+// never a convention-baked Greek.
+message RiskPosition {
+  // The position identity (one current fact per id in the cube).
+  uint64 position_id = 1;
+  // The org placement across the independent dimensions.
+  OrgKey org = 2;
+  // Option type (call/put on the base currency).
+  OptionType option_type = 3;
+  // Signed base-currency notional (positive = long the option).
+  double notional_base = 4;
+  // The pricing inputs the position was marked under (the canonical risk is
+  // re-derived from these — exact and convention-free).
+  VanillaInputs inputs = 5;
+  // The delta convention the position was quoted under (provenance; does not
+  // change the canonical spot-unadjusted delta).
+  DeltaConvention quoted_delta = 6;
+  // The premium style the position was quoted under (provenance; decides whether
+  // the quoted delta was premium-adjusted).
+  PremiumStyle premium_style = 7;
+  // The marked-surface version that produced this fact (live / IPV / historical).
+  uint64 surface_version = 8;
+  // Who quoted/holds this position (presence-tracked): the attribution chain that
+  // keys the who's-trading roll-up. Absent ⇒ unattributed.
+  optional AttributionRecord attribution = 9;
+}
+
+// A scope filter pinning the position listing / drill to one dimension subtree
+// (e.g. desk 99) — the same `(dimension, value)` key space the cube groups by and
+// an entitlement scope covers. Absent on a request ⇒ the whole entitled book.
+message RiskScope {
+  // The dimension this scope pins.
+  RiskDimension dimension = 1;
+  // The group value on that dimension (`celnet_risk_cube::FactKey::group_value`;
+  // for Desk/Entity it is the hierarchy-resolved ancestor's handle). Ignored when
+  // `dimension` is FIRM (the firm scope covers everything).
+  uint64 value = 2;
+}
+
+// One read grant or deny rule for an entitlement principal — a conjunction of
+// pinned dimension scopes (mirrors `celnet_entitlements::Rule`). A fact is covered
+// iff EVERY scope in the rule covers it; an empty `scopes` covers everything (the
+// firm root). A grant admits; a deny is an information barrier (deny wins).
+message EntitlementRule {
+  // The conjunctive scopes; empty ⇒ covers everything (firm root).
+  repeated RiskScope scopes = 1;
+}
+
+// Who is looking — the entitlement principal applied as a pre-aggregation pruning
+// predicate (mirrors `celnet_entitlements::Principal`). The decision per fact is
+// `(grant_all OR some grant covers) AND no deny covers`, evaluated BEFORE roll-up
+// so a node total can never leak a subtree the principal cannot see.
+//
+// The DEFAULT principal is grant-all: `grant_all=true` (the proto3 zero default
+// for the bool) with empty rules admits everything, mirroring the GUI's
+// `ScopeContext { principal: "grant-all" }` show-all-now posture. A scoped
+// principal sets `grant_all=false` and lists `grants` (deny-by-default: no grant
+// ⇒ sees nothing). `denies` apply to any principal, grant-all included.
+message EntitlementPrincipal {
+  // True ⇒ admit every fact regardless of grants (the grant-all default). When
+  // false, a fact must match at least one grant. The proto3 zero default (false)
+  // is overridden by the client default-principal convention: a request omitting
+  // an `EntitlementPrincipal` entirely is treated as grant-all by the server.
+  bool grant_all = 1;
+  // Read grants — a (scoped) principal sees a fact if ANY grant covers it.
+  repeated EntitlementRule grants = 2;
+  // Information-barrier denies — a fact covered by ANY deny is cut, even if
+  // granted (deny wins). Layered onto a grant-all firm view for Chinese walls.
+  repeated EntitlementRule denies = 3;
+}
+
+// A spot conversion rate used to express risk in a single reporting numeraire:
+// how many units of the numeraire one unit of `ccy` is worth at spot (mirrors a
+// `celnet_risk_normalize::SpotResolver` entry). The numeraire's own rate is
+// implicitly 1.0 and need not be listed.
+message NumeraireRate {
+  // The currency this rate converts from (a 3-letter code, e.g. "EUR").
+  string ccy = 1;
+  // Units of the reporting numeraire per 1 unit of `ccy` at spot (finite, > 0).
+  double rate = 2;
+}
+
+// The reporting-currency conversion table for an aggregate (mirrors a
+// `celnet_risk_normalize::SpotResolver`): the numeraire plus the per-currency
+// rates needed to collapse every node's per-ccy exposure legs into one scalar. A
+// missing rate fails the request loudly (no silent leg drop).
+message ReportingNumeraire {
+  // The reporting currency every node measure is expressed in (a 3-letter code).
+  string numeraire = 1;
+  // Units-of-numeraire-per-unit-ccy at spot, one per currency that appears in the
+  // aggregated book (the numeraire itself is implicitly 1.0).
+  repeated NumeraireRate rates = 2;
+}
+
+// A (tenor x delta) vega pillar coordinate — the bucket key for the vega ladder
+// (mirrors `celnet_risk_cube::VegaPillar`). Tenor and delta are quantized to
+// integer pillars so buckets net exactly across leaves.
+message VegaPillar {
+  // The tenor pillar, labelled in calendar days.
+  uint32 tenor_days = 1;
+  // The signed delta pillar in basis-points of delta (0.25 delta -> 2500).
+  int32 delta_bp = 2;
+}
+
+// One (tenor x delta) bucket of the additive vega ladder: the netted vega in that
+// pillar, in the reporting numeraire (mirrors a `celnet_risk_cube::VegaLadder`
+// bucket after numeraire conversion through each leaf's premium currency).
+message VegaLadderBucket {
+  // The pillar this bucket sums.
+  VegaPillar pillar = 1;
+  // The netted vega in this pillar (reporting numeraire, per 1.0 absolute vol).
+  double vega = 2;
+}
+
+// One signed currency leg of a node's netted delta exposure vector (mirrors
+// `celnet_risk_normalize::CcyExposure`): the per-currency-node netting result,
+// pre-collapse. The base leg (+delta) and the funding leg (-delta*spot) of every
+// constituent leaf net here before the vector is collapsed to the numeraire.
+message CcyExposureLeg {
+  // The currency this leg is denominated in (a 3-letter code).
+  string ccy = 1;
+  // Signed amount in units of `ccy` (positive = long that currency).
+  double amount = 2;
+}
+
+// The additive measures of a node, netted and expressed in the reporting
+// numeraire (mirrors `celnet_risk_cube::NetGreeks` summed over the node's
+// canonical leaves, with the delta/premium/vega numeraire collapse from
+// `celnet_risk_normalize::Numeraire`). Additive ⇒ a parent node's measures equal
+// the sum of its children's.
+message AdditiveRisk {
+  // Net base-currency delta amount collapsed to the reporting numeraire (the
+  // numeraire-converted total of the per-ccy delta vector).
+  double delta_numeraire = 1;
+  // The netted per-currency delta exposure vector (legs in their own currencies),
+  // so a consumer can hedge leg-by-leg and reconcile to `delta_numeraire`.
+  repeated CcyExposureLeg delta_vector = 2;
+  // Net gamma (summed canonical gamma; raw, not numeraire-scaled — gamma is a
+  // pure second-order sensitivity per the cube's `NetGreeks`).
+  double gamma = 3;
+  // Net vega in the reporting numeraire, converted through each leaf's PREMIUM
+  // currency (the celnet-risk-normalize coupling), per 1.0 absolute vol.
+  double vega_numeraire = 4;
+  // Net theta (per year, summed canonical).
+  double theta = 5;
+  // Net vanna (summed canonical, the FX spot x vol cross-Greek).
+  double vanna = 6;
+  // Net volga (summed canonical, the FX vol-convexity Greek).
+  double volga = 7;
+  // Net charm (delta decay per year, summed canonical).
+  double charm = 8;
+  // Net speed (third spot derivative, summed canonical).
+  double speed = 9;
+  // Net zomma (d gamma / d sigma, summed canonical).
+  double zomma = 10;
+  // Net color (d gamma / d T, summed canonical).
+  double color = 11;
+  // Total premium (option PV) in the reporting numeraire.
+  double premium_numeraire = 12;
+  // Vega bucketed by (tenor x delta) pillar, in the reporting numeraire — the
+  // desk's working vega representation, hedged pillar by pillar.
+  repeated VegaLadderBucket vega_ladder = 13;
+}
+
+// The non-additive measures of a node, RE-DERIVED per node by bump-and-revalue
+// over the node's constituent positions (mirrors `celnet_risk_cube::node_var_es`
+// and `node_curvature_spot`). These are NOT summed from children — VaR/ES
+// diversify and curvature charges short-gamma only. Presence-tracked: a measure
+// not evaluated this cycle is absent (never a spurious zero).
+message NonAdditiveRisk {
+  // Value-at-Risk loss magnitude at `var_alpha` (reporting numeraire), or absent
+  // if not evaluated this cycle.
+  optional double var = 1;
+  // Expected-Shortfall tail-loss magnitude at `var_alpha`, or absent.
+  optional double es = 2;
+  // The confidence level VaR/ES were evaluated at (e.g. 0.99). Present iff `var`
+  // or `es` is present.
+  optional double var_alpha = 3;
+  // FRTB-SbM spot curvature charge (max(CVR+, CVR-, 0)), or absent. Floors at 0
+  // for a long-gamma node; positive only for short gamma.
+  optional double curvature_spot = 4;
+}
+
+// One node of the rolled-up risk tree: a group along the request's `dimension`,
+// its netted additive measures, its re-derived non-additive measures, and the
+// count of constituent positions (so a consumer knows the node's depth without
+// fetching the leaves — those come from `DrillNode`).
+message RiskNode {
+  // The dimension this node groups along (echoed for self-describing nodes).
+  RiskDimension dimension = 1;
+  // The group value along that dimension (`celnet_risk_cube::NodeAggregate::group`;
+  // for FIRM it is 0, the apex).
+  uint64 group = 2;
+  // The additive measures, netted and in the reporting numeraire.
+  AdditiveRisk additive = 3;
+  // The re-derived non-additive measures (VaR/ES/curvature), presence-tracked.
+  NonAdditiveRisk nonadditive = 4;
+  // The number of constituent positions that rolled into this node.
+  uint32 position_count = 5;
+}
+
+// =========================== positions ==============================
+
+// List the open positions the cube aggregates (the desk's book), optionally
+// scoped to one dimension subtree and pruned by an entitlement principal. The
+// response carries each position with its attribution so the hierarchy keys on
+// real attribution.
+message ListPositionsRequest {
+  // Optional scope pinning the listing to one dimension subtree (absent ⇒ the
+  // whole entitled book).
+  optional RiskScope scope = 1;
+  // The entitlement principal whose admitted facts are listed (absent ⇒ the
+  // grant-all default — the show-all-now posture).
+  optional EntitlementPrincipal principal = 2;
+  // Optional caller correlation id, echoed on the response. Presence-tracked.
+  optional uint64 correlation_id = 3;
+}
+
+// The positions admitted for the principal under the scope.
+message ListPositionsResponse {
+  // The open positions (each with its org placement + attribution).
+  repeated RiskPosition positions = 1;
+  // Echo of the request's `correlation_id`, if supplied.
+  optional uint64 correlation_id = 2;
+}
+
+// =========================== aggregate ==============================
+
+// Request a hierarchical risk aggregate, computed SERVER-SIDE over the org
+// hierarchy. The server prunes the fact stream by `principal` BEFORE rolling up
+// (no aggregate leakage), groups by `dimension`, sums the additive measures and
+// re-derives the non-additive ones per node, and converts everything into
+// `numeraire`. The response is the rolled-up node tree — the client never sums
+// positions itself.
+message AggregateRiskRequest {
+  // The dimension to roll up onto (FIRM ⇒ a single firm-apex node).
+  RiskDimension dimension = 1;
+  // The reporting numeraire + conversion rates every node measure is expressed in.
+  ReportingNumeraire numeraire = 2;
+  // The entitlement principal pruning the facts before aggregation (absent ⇒
+  // grant-all default).
+  optional EntitlementPrincipal principal = 3;
+  // Optional scope narrowing the aggregate to one dimension subtree before the
+  // group-by (absent ⇒ the whole entitled book). Composes with the principal.
+  optional RiskScope scope = 4;
+  // The (tenor x delta) pillars to report bucketed vega for. Empty ⇒ the server
+  // derives the live pillar set from the positions' tenors at a default delta
+  // pillar; supplying pillars pins the regulatory/internal grid (external data,
+  // never compiled in — the celnet-risk-cube `VegaPillarMap` contract).
+  repeated VegaPillar vega_pillars = 5;
+  // The spot shock steps (relative, multiplicative — e.g. -0.01, 0.0, 0.01) the
+  // server bumps-and-revalues over to re-derive VaR/ES per node. Empty ⇒ the
+  // non-additive measures are not evaluated (the response's `NonAdditiveRisk` is
+  // absent — never a spurious zero).
+  repeated double var_spot_shocks = 6;
+  // The VaR/ES confidence level (e.g. 0.99). Ignored when `var_spot_shocks` is
+  // empty; defaults to 0.99 when shocks are supplied and this is 0.
+  double var_alpha = 7;
+  // The FRTB-SbM spot curvature risk weight to charge curvature at (external
+  // data). 0 ⇒ curvature is not evaluated (absent in the response).
+  double curvature_risk_weight = 8;
+  // Optional caller correlation id, echoed on the response. Presence-tracked.
+  optional uint64 correlation_id = 9;
+}
+
+// The rolled-up risk node tree for the requested dimension.
+message AggregateRiskResponse {
+  // The dimension the aggregate rolled up onto (echoed).
+  RiskDimension dimension = 1;
+  // The reporting numeraire every node measure is expressed in (echoed code).
+  string numeraire = 2;
+  // The rolled-up nodes (one per group along `dimension`; a single firm-apex node
+  // when `dimension` is FIRM).
+  repeated RiskNode nodes = 3;
+  // Echo of the request's `correlation_id`, if supplied.
+  optional uint64 correlation_id = 4;
+}
+
+// =========================== drill ==============================
+
+// Drill into one node: fetch its child sub-nodes at a finer dimension and/or its
+// contributing positions, so the Book -> Risk drill can expand a node to its
+// constituents. The same entitlement principal prunes the drill (a principal can
+// only drill into what it can see).
+message DrillRiskRequest {
+  // The node to drill into: the dimension + group it was reported at.
+  RiskScope node = 1;
+  // The finer dimension to break the node's children out by (e.g. drilling a Desk
+  // node into its Books). Ignored when `include_children` is false.
+  RiskDimension child_dimension = 2;
+  // The reporting numeraire + rates the child nodes are expressed in.
+  ReportingNumeraire numeraire = 3;
+  // The entitlement principal pruning the drill (absent ⇒ grant-all default).
+  optional EntitlementPrincipal principal = 4;
+  // The (tenor x delta) pillars for the child nodes' bucketed vega (as in
+  // `AggregateRiskRequest`). Empty ⇒ server-derived default grid.
+  repeated VegaPillar vega_pillars = 5;
+  // Whether to return the child sub-nodes broken out by `child_dimension`.
+  bool include_children = 6;
+  // Whether to return the node's contributing positions (the drill-down leaves).
+  bool include_positions = 7;
+  // Optional caller correlation id, echoed on the response. Presence-tracked.
+  optional uint64 correlation_id = 8;
+}
+
+// The drill result for a node: its child sub-nodes and/or its contributing
+// positions.
+message DrillRiskResponse {
+  // The node that was drilled (echoed scope).
+  RiskScope node = 1;
+  // The child sub-nodes broken out by the request's `child_dimension` (empty when
+  // `include_children` was false).
+  repeated RiskNode children = 2;
+  // The node's contributing positions (empty when `include_positions` was false)
+  // — the leaves a node total reconciles to.
+  repeated RiskPosition positions = 3;
+  // Echo of the request's `correlation_id`, if supplied.
+  optional uint64 correlation_id = 4;
+}
+
+// =========================== limits ==============================
+
+// Which exposure a limit constrains — mirrors `celnet_limits::LimitMetric`. The
+// pillar/tenor payloads ride on the dedicated fields below, selected by `kind`.
+enum LimitMetricKind {
+  // Net base-currency delta amount (additive). The proto3 zero default.
+  LIMIT_METRIC_KIND_DELTA = 0;
+  // Net gamma (additive).
+  LIMIT_METRIC_KIND_GAMMA = 1;
+  // Net vega per 1.0 absolute vol (additive).
+  LIMIT_METRIC_KIND_VEGA = 2;
+  // Net vanna (additive).
+  LIMIT_METRIC_KIND_VANNA = 3;
+  // Net volga (additive).
+  LIMIT_METRIC_KIND_VOLGA = 4;
+  // Vega in one (tenor x delta) pillar (additive) — `vega_pillar` selects it.
+  LIMIT_METRIC_KIND_VEGA_BUCKET = 5;
+  // Aggregate vega in one tenor across delta pillars — `tenor_days` selects it.
+  LIMIT_METRIC_KIND_TENOR_VEGA = 6;
+  // Gross (un-netted) base-currency delta concentration.
+  LIMIT_METRIC_KIND_CONCENTRATION_DELTA = 7;
+  // Gross (un-netted) vega concentration.
+  LIMIT_METRIC_KIND_CONCENTRATION_VEGA = 8;
+  // Value-at-Risk loss magnitude (non-additive, re-derived per node).
+  LIMIT_METRIC_KIND_VAR = 9;
+  // Expected-Shortfall tail-loss magnitude (non-additive).
+  LIMIT_METRIC_KIND_EXPECTED_SHORTFALL = 10;
+  // Stop-loss realized/scenario loss magnitude.
+  LIMIT_METRIC_KIND_STOP_LOSS = 11;
+}
+
+// Traffic-light status of a limit's utilization — mirrors
+// `celnet_limits::RagStatus`. Ordered by severity (BREACH worst).
+enum RagStatus {
+  // Below the amber band — comfortable headroom. The proto3 zero default.
+  RAG_STATUS_GREEN = 0;
+  // At/above the amber band, below red — early warning.
+  RAG_STATUS_AMBER = 1;
+  // At/above the red band, at/below the cap — pre-breach.
+  RAG_STATUS_RED = 2;
+  // Over the cap — a breach.
+  RAG_STATUS_BREACH = 3;
+}
+
+// Whether a limit warns or blocks — mirrors `celnet_limits::Enforcement`.
+enum Enforcement {
+  // A breach warns but never blocks a trade. The proto3 zero default.
+  ENFORCEMENT_SOFT = 0;
+  // A breach blocks a pre-trade and escalates post-trade.
+  ENFORCEMENT_HARD = 1;
+}
+
+// One limit's evaluated utilization at a scope node — mirrors a
+// `celnet_limits::LimitCheck` (the limit + its `Utilization` + RAG). This is a
+// first-class node measure, computed server-side, not derived at the GUI.
+message LimitUtilization {
+  // What this limit constrains.
+  LimitMetricKind metric = 1;
+  // The (tenor x delta) pillar for a VEGA_BUCKET metric (ignored otherwise).
+  VegaPillar vega_pillar = 2;
+  // The tenor (calendar days) for a TENOR_VEGA metric (ignored otherwise).
+  uint32 tenor_days = 3;
+  // The cap, as a non-negative magnitude in the metric's native units.
+  double cap = 4;
+  // The signed exposure measured against the cap (reporting numeraire for the
+  // numeraire-converted additive metrics; native loss units for VaR/ES).
+  double exposure = 5;
+  // |exposure| / cap, in [0, inf).
+  double ratio = 6;
+  // The RAG classification of `ratio` against the limit's bands.
+  RagStatus status = 7;
+  // Soft (warn-only) or hard (blocking).
+  Enforcement enforcement = 8;
+  // Remaining headroom (signed: positive = room left, negative = over the cap).
+  double headroom = 9;
+}
+
+// Request the limit-tree utilization for one scope node — the limits configured at
+// that scope, each with its current utilization/RAG against the node's aggregated
+// exposure (mirrors `celnet_limits::post_trade_check` for the scope). The same
+// numeraire + non-additive shock inputs as `AggregateRisk` drive the exposures.
+message LimitStatusRequest {
+  // The scope node to report limits for (e.g. Desk 99, or FIRM).
+  RiskScope scope = 1;
+  // The reporting numeraire + rates the additive exposures are expressed in.
+  ReportingNumeraire numeraire = 2;
+  // The entitlement principal pruning the facts before the scope is aggregated
+  // (absent ⇒ grant-all default).
+  optional EntitlementPrincipal principal = 3;
+  // The (tenor x delta) pillars for bucketed/tenor-vega limits' exposures (as in
+  // `AggregateRiskRequest`). Empty ⇒ server-derived default grid.
+  repeated VegaPillar vega_pillars = 4;
+  // The spot shock steps the server bumps over to re-derive the non-additive
+  // (VaR/ES/stop-loss) limit exposures. Empty ⇒ those limits read 0 (can't
+  // spuriously breach), matching `celnet_limits::NonAdditiveExposure::default`.
+  repeated double var_spot_shocks = 5;
+  // The VaR/ES confidence level (e.g. 0.99); defaults to 0.99 when shocks are
+  // supplied and this is 0.
+  double var_alpha = 6;
+  // Optional caller correlation id, echoed on the response. Presence-tracked.
+  optional uint64 correlation_id = 7;
+}
+
+// The limit utilizations + worst RAG for a scope node.
+message LimitStatusResponse {
+  // The scope the limits were evaluated at (echoed).
+  RiskScope scope = 1;
+  // Every limit configured at the scope, with its current utilization/RAG.
+  repeated LimitUtilization limits = 2;
+  // The worst RAG status across the scope's limits (GREEN if no limit breaches).
+  RagStatus worst = 3;
+  // True if any HARD limit at the scope is breached (the post-trade escalation
+  // trigger). Soft breaches surface in `limits` but do not set this flag.
+  bool hard_breach = 4;
+  // Echo of the request's `correlation_id`, if supplied.
+  optional uint64 correlation_id = 5;
+}
+
+// ===========================================================================
 // surface — smile read / broker mark / arbitrage report / scenario risk
 // ===========================================================================
 
@@ -1410,6 +1906,27 @@ service QuoteService {
 service StreamService {
   // Open the multiplexed bidirectional `StreamSession` for this client.
   rpc StreamSession(stream ClientStreamMessage) returns (stream ServerStreamMessage);
+}
+
+// Firm-scale hierarchical risk, computed SERVER-SIDE. A client (GUI/SDK/Excel)
+// never loops positions and sums — it lists positions, asks for a rolled-up
+// aggregate over an org dimension, drills a node to its constituents, and reads
+// limit utilization, all behind the one contract. Aggregation, common-numeraire
+// conversion, non-additive re-derivation, entitlement pruning, and limit RAG are
+// all the server's job (celnet-risk-cube / -normalize / -limits / -entitlements).
+service RiskService {
+  // List the open positions the cube aggregates (scoped + entitlement-pruned),
+  // each carrying its attribution so the hierarchy keys on real attribution.
+  rpc ListPositions(ListPositionsRequest) returns (ListPositionsResponse);
+  // Roll the entitled facts up over an org dimension into a node tree of netted
+  // additive + re-derived non-additive measures in a reporting numeraire.
+  rpc AggregateRisk(AggregateRiskRequest) returns (AggregateRiskResponse);
+  // Drill one node into its child sub-nodes and/or contributing positions (the
+  // Book -> Risk drill), entitlement-pruned.
+  rpc DrillRisk(DrillRiskRequest) returns (DrillRiskResponse);
+  // Read the limit tree + utilization/RAG status for a scope node, including the
+  // hard-breach escalation flag.
+  rpc LimitStatus(LimitStatusRequest) returns (LimitStatusResponse);
 }
 
 // The surface workflow: read a smile, mark/recalibrate from broker quotes, and

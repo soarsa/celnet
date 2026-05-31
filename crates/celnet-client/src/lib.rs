@@ -86,6 +86,7 @@
 mod error;
 mod idempotency;
 pub mod rfs;
+pub mod risk;
 pub mod series;
 pub mod surface_vocab;
 pub mod vocab;
@@ -94,6 +95,12 @@ pub use error::{ClientError, ClientResult};
 pub use rfs::{
     ClickExecution, ExecuteOutcome, RejectReason, StreamEvent, StreamLine, StreamSession,
     Subscription, TradableLine,
+};
+pub use risk::{
+    AdditiveRisk, AggregateQuery, CcyExposure, DrillQuery, Enforcement, EntitlementScope,
+    Entitlements, LimitMetric, LimitQuery, LimitStatus, LimitUtilization, NonAdditiveRisk,
+    Numeraire, OrgDimension, OrgKey, PositionList, PositionQuery, Rag, RiskAggregate, RiskDrill,
+    RiskNode, RiskPillar, RiskPosition, Scope, VegaLadderBucket,
 };
 pub use series::{MarketSeries, Observable, SeriesEvent, SeriesPoint};
 pub use surface_vocab::{
@@ -109,6 +116,7 @@ pub use vocab::{
 
 use celnet_proto::pricing_service_client::PricingServiceClient;
 use celnet_proto::quote_service_client::QuoteServiceClient;
+use celnet_proto::risk_service_client::RiskServiceClient;
 use celnet_proto::surface_service_client::SurfaceServiceClient;
 use celnet_proto::{
     GetSmileRequest, MarkSurfaceRequest, PriceRequest, QuoteAccept, QuoteReject, QuoteRequest,
@@ -442,6 +450,89 @@ impl Client {
         };
         let resp = svc.scenario(request).await?.into_inner();
         ScenarioRisk::from_wire(resp)
+    }
+
+    // ---- firm-scale hierarchical risk -------------------------------------
+
+    /// List the open positions the server's cube aggregates — the entitled open
+    /// book, each [`risk::RiskPosition`] carrying its [`risk::OrgKey`] placement and
+    /// attribution. Build the [`risk::PositionQuery`] to scope the listing and/or
+    /// apply an entitlement principal (omitting the principal is the grant-all
+    /// show-all-now default).
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure or a malformed response.
+    pub async fn list_positions(
+        &self,
+        query: &risk::PositionQuery,
+    ) -> ClientResult<risk::PositionList> {
+        let mut svc = RiskServiceClient::new(self.channel.clone());
+        let resp = svc
+            .list_positions(risk::list_positions_request(query))
+            .await?
+            .into_inner();
+        risk::position_list_from_wire(resp)
+    }
+
+    /// Request a hierarchical risk aggregate, rolled up SERVER-SIDE over an org
+    /// dimension into a [`risk::RiskAggregate`] node tree of netted additive +
+    /// re-derived non-additive measures in one reporting [`risk::Numeraire`]. The
+    /// server prunes by the [`risk::Entitlements`] principal BEFORE the roll-up (no
+    /// aggregate leakage). This is the SAME call the GUI Book view makes — the
+    /// client never loops positions and sums.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure (e.g. `failed_precondition`
+    /// for a numeraire missing a rate it needs) or a malformed response.
+    pub async fn aggregate_risk(
+        &self,
+        query: &risk::AggregateQuery,
+    ) -> ClientResult<risk::RiskAggregate> {
+        let mut svc = RiskServiceClient::new(self.channel.clone());
+        let resp = svc
+            .aggregate_risk(risk::aggregate_request(query))
+            .await?
+            .into_inner();
+        risk::aggregate_from_wire(resp)
+    }
+
+    /// Drill one node into its child sub-nodes (at a finer dimension) and/or its
+    /// contributing positions — the Book → Risk drill — returning a
+    /// [`risk::RiskDrill`]. Address the node with a [`risk::Scope`] (e.g. from
+    /// [`risk::RiskNode::scope`]); opt into children / positions on the
+    /// [`risk::DrillQuery`]. The drill is entitlement-pruned identically to the
+    /// aggregate.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure or a malformed response.
+    pub async fn drill_risk(&self, query: &risk::DrillQuery) -> ClientResult<risk::RiskDrill> {
+        let mut svc = RiskServiceClient::new(self.channel.clone());
+        let resp = svc
+            .drill_risk(risk::drill_request(query))
+            .await?
+            .into_inner();
+        risk::drill_from_wire(resp)
+    }
+
+    /// Read the limit-tree utilization + RAG for one scope node into a
+    /// [`risk::LimitStatus`]: every limit configured at the [`risk::Scope`] with its
+    /// cap / exposure / ratio / [`risk::Rag`], the worst status across them, and the
+    /// hard-breach escalation flag. Build the [`risk::LimitQuery`] to add VaR/ES
+    /// shocks for the non-additive limits.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure or a malformed response.
+    pub async fn limit_status(&self, query: &risk::LimitQuery) -> ClientResult<risk::LimitStatus> {
+        let mut svc = RiskServiceClient::new(self.channel.clone());
+        let resp = svc
+            .limit_status(risk::limit_request(query))
+            .await?
+            .into_inner();
+        risk::limit_status_from_wire(resp)
     }
 }
 

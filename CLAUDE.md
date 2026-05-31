@@ -120,6 +120,26 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-05-31 — **Phase 1+2 DONE — contract capabilities + risk crates, full client parity (commit `c5985af`).**
+  One canonical `celnet-proto` contract extended (no versioning): **SmileModel** selector (real fitted
+  SABR/SVI/SSVI in `celnet-surface` via deterministic damped Gauss-Newton, no-arb-projected, alongside
+  Vanna-Volga), **market-series feed** (MarketObservable + MarketSeries* on the multiplexed
+  StreamSession, served from live state), **attribution** (Owner/BookId/AttributionRecord on the
+  quote/trade lifecycle, emitted over gRPC **and** WS). `celnet-calendar` **ON-resolves-as-SN bug
+  fixed** (ON anchored on horizon ~T+1, not spot) + TN/SN + IMM resolver (CME-validated) + BrokenDate;
+  schedule/vol_year_fraction fallible w/ `vol_anchor`. New single-node risk crates:
+  **celnet-risk-normalize** (convention canonicalization + common-numeraire), **celnet-risk-cube**
+  (hierarchical additive roll-up + non-additive bump-and-revalue VaR/ES/curvature), **celnet-limits**
+  (RAG + pre/post-trade), **celnet-entitlements** (grant-all default + scoped pruning). Honestly
+  deferred in module docs (not stubbed): AAD/GPU adjoint, cross-shard reduction, audit/admin GUI half.
+  Full **client parity**: GUI (model chips, live `useTrendSeries`, attribution), `celnet-client`
+  (`mark_surface_with`/`subscribe_series`), Excel (`CELNET.MARKSURFACE` model arg, `CELNET.SERIES`),
+  `docs/INTERFACES.md`. Verified by hand: **`just check` 769 tests** + fmt/clippy-D/deny green;
+  `npm run build` green; **Excel e2e PASS A–G** (F=SABR-vs-VV selection, G=market-series) vs a fresh
+  demo edge. **Next:** expose the risk-cube estate through a RiskService contract + wire GUI Book/Risk
+  to consume the **server** aggregate (closes the client-side-aggregation parity gap), keyed on the
+  now-on-the-wire attribution chain; then AAD/GPU + cross-fleet fan-out + GUI scale views.
+
 - 2026-05-31 — **GUI → Celer-product rebrand + experience-architecture design corpus.** (1) GUI
   rebranded to **Celer Technologies** (coral `--brand` + indigo `--accent`, Anaheim, pinwheel mark
   once in the rail, mark-less toolbar wordmark, no traffic lights, real build-stamp); added a **pair

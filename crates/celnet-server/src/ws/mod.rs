@@ -54,6 +54,7 @@ use tonic::Request;
 
 use celnet_proto::pricing_service_server::PricingService;
 use celnet_proto::quote_service_server::QuoteService;
+use celnet_proto::risk_service_server::RiskService;
 use celnet_proto::surface_service_server::SurfaceService;
 use celnet_proto::{ClientStreamMessage, ServerStreamMessage, client_stream_message};
 
@@ -62,6 +63,8 @@ use crate::core_link::CoreLink;
 use crate::readiness::{InFlightGuard, ReadinessGate};
 use crate::services::pricing::PricingEdge;
 use crate::services::quote::QuoteEdge;
+use crate::services::risk::RiskEdge;
+use crate::services::risk::store::PositionStore;
 use crate::services::stream::{StreamEdge, run_session};
 use crate::services::surface::SurfaceEdge;
 use crate::spread::SpreadModel;
@@ -82,12 +85,14 @@ pub struct WsServices {
     quote: Arc<QuoteEdge>,
     stream: Arc<StreamEdge>,
     surface: Arc<SurfaceEdge>,
+    risk: Arc<RiskEdge>,
     gate: Arc<ReadinessGate>,
 }
 
 impl WsServices {
     /// Construct the WS service set from the same shared components the gRPC edge is
-    /// built from, so both fronts speak one contract over one pricing path.
+    /// built from, so both fronts speak one contract over one pricing path — now
+    /// including `RiskService` over the same shared live position book.
     #[must_use]
     pub fn new(
         link: Arc<CoreLink>,
@@ -95,6 +100,7 @@ impl WsServices {
         spread: SpreadModel,
         clock: Clock,
         surface_book: Arc<SurfaceBook>,
+        store: Arc<PositionStore>,
     ) -> Self {
         let pricing = Arc::new(PricingEdge::new(
             Arc::clone(&gate),
@@ -107,12 +113,13 @@ impl WsServices {
             clock.clone(),
             Arc::clone(&surface_book),
         ));
-        let stream = Arc::new(StreamEdge::new(
+        let stream = Arc::new(StreamEdge::with_store(
             Arc::clone(&link),
             Arc::clone(&gate),
             spread,
             clock.clone(),
             Arc::clone(&surface_book),
+            Arc::clone(&store),
         ));
         let surface = Arc::new(SurfaceEdge::new(
             Arc::clone(&link),
@@ -120,11 +127,13 @@ impl WsServices {
             clock,
             surface_book,
         ));
+        let risk = Arc::new(RiskEdge::new(store, Arc::clone(&gate)));
         Self {
             pricing,
             quote,
             stream,
             surface,
+            risk,
             gate,
         }
     }
@@ -493,6 +502,39 @@ async fn handle_unary(
                 services.surface.scenario(Request::new(req)),
                 "scenario_response",
                 codec::scenario_response_to_json
+            )
+        }
+        // ---- risk: server-side hierarchical risk over the live book ----------
+        "list_positions" => {
+            let req = decode!(codec::list_positions_request_from_json(o));
+            call!(
+                services.risk.list_positions(Request::new(req)),
+                "list_positions_response",
+                codec::list_positions_response_to_json
+            )
+        }
+        "aggregate_risk" => {
+            let req = decode!(codec::aggregate_risk_request_from_json(o));
+            call!(
+                services.risk.aggregate_risk(Request::new(req)),
+                "aggregate_risk_response",
+                codec::aggregate_risk_response_to_json
+            )
+        }
+        "drill_risk" => {
+            let req = decode!(codec::drill_risk_request_from_json(o));
+            call!(
+                services.risk.drill_risk(Request::new(req)),
+                "drill_risk_response",
+                codec::drill_risk_response_to_json
+            )
+        }
+        "limit_status" => {
+            let req = decode!(codec::limit_status_request_from_json(o));
+            call!(
+                services.risk.limit_status(Request::new(req)),
+                "limit_status_response",
+                codec::limit_status_response_to_json
             )
         }
         other => codec::error_frame(&format!("unknown request type `{other}`"), correlation_id),

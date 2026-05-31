@@ -26,6 +26,9 @@ commercial add-in SDK).
 | `=CELNET.SUBSCRIBE(pair, tenor, strikeOrDelta, callPut, notional)` | **streaming** live two-way; re-ticks; stale-aware | `subscribe`/`update` (multiplexed) |
 | `=CELNET.SERIES(pair, observable, [tenor], [delta])` | **streaming** live market-observable trend (ATM/SPOT/RR/BF/FWD); re-ticks | `market_series_subscribe`/`…_point` (multiplexed) |
 | `=CELNET.MARK(pair, tenor, pillar, vol, [model], [comment])` | status spill `[status, version, detail]` — **two-phase, idempotent**; commits via the task pane | `mark_surface` (`smile_model`, on confirm) |
+| `=CELNET.RISK(dimension, numeraire, [rates], [scope])` | hierarchical risk node grid (one row per rolled-up node) + reporting-numeraire footer — **server-side aggregation** | `aggregate_risk` |
+| `=CELNET.POSITIONS([scope])` | the entitled open-position leaf grid (org placement + attribution) + count/empty footer | `list_positions` |
+| `=CELNET.LIMITS(scope, numeraire, [rates])` | limit-tree utilization/RAG grid + worst-RAG / hard-breach footer | `limit_status` |
 
 `strikeOrDelta` accepts an absolute strike (`1.12`), a delta string (`25dP`,
 `10dC`), or `ATM`/`DNS`. `callPut` is `C`/`P`. `model` accepts `VV` (market
@@ -39,6 +42,21 @@ on evaluation; the model the surface was calibrated under is echoed in the foote
 from the server's `model=<family>` provenance note (the frozen contract has no
 echo field). The model a surface was last marked under is read back by
 `CELNET.SURFACE(pair, tenor, model)` so a model mismatch is visible, never assumed.
+
+`CELNET.RISK` / `CELNET.POSITIONS` / `CELNET.LIMITS` are the **server-side
+hierarchical-risk** surface (the `RiskService` contract). Aggregation is **owned by
+the server**: the workbook never loops positions and sums — it asks `aggregate_risk`
+for the rolled-up node tree over a `dimension` (`FIRM`/`TRADER`/`BOOK`/`DESK`/`PAIR`/
+`LOCATION`/`ENTITY`), reads its constituents with `list_positions`, and reads
+`limit_status` for RAG/utilization. Every measure is in the **reporting numeraire**
+the caller names (e.g. `USD`) — aggregation runs through `celnet-risk-normalize`
+server-side, so a cell is never in native premium units. Supply the per-currency
+conversion rates as an optional `[ccy, rate]` range (numeraire units per 1 unit of
+ccy at spot; the numeraire's own rate is implicit 1.0); a rate the book needs but you
+omit fails the request loudly server-side, never a silent leg drop. The default
+entitlement principal is **grant-all** (show-all-now; entitlement-ready). The
+non-additive measures (VaR/ES/curvature) are presence-tracked — a blank cell when not
+evaluated this cycle, never a spurious zero.
 
 ### Streaming, staleness, and click-to-trade
 

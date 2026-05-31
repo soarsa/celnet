@@ -498,3 +498,319 @@ export interface RiskBucketRequest {
   crossGammaPairs: CrossGammaPair[];
   rollHorizonsYears: number[];
 }
+
+// --- hierarchical risk (RiskService) ----------------------------------------
+//
+// The wire face of the single-node risk estate: server-side hierarchical risk
+// over the org cube (`celnet-risk-cube` aggregation, `celnet-risk-normalize`
+// common-numeraire conversion, `celnet-limits` utilization/RAG,
+// `celnet-entitlements` pre-aggregation pruning). Aggregation is owned by the
+// SERVER (CLAUDE.md rule 11 / API-first parity): a client never loops positions
+// and sums — it lists positions, asks for a rolled-up node tree over an org
+// dimension, drills a node to its constituents, and reads limit utilization, all
+// behind this one contract. Mirrors `celnet.proto` `service RiskService`.
+
+/**
+ * The organizational dimension the cube groups by (`celnet.wire.RiskDimension`,
+ * mirrors `celnet_risk_cube::DimensionId` + the firm apex). ORTHOGONAL axes —
+ * these are different ways to slice the SAME fact cube, not a nesting order. The
+ * proto enum NUMBER is canonical on both gRPC and the WS mirror.
+ */
+export type RiskDimension =
+  | "FIRM" // =0 (apex; the cube firm_aggregate, default)
+  | "TRADER" // =1
+  | "BOOK" // =2
+  | "DESK" // =3
+  | "CCY_PAIR" // =4
+  | "LOCATION" // =5
+  | "ENTITY"; // =6
+
+/**
+ * The org key of a position/leaf (`celnet.wire.OrgKey`, mirrors
+ * `celnet_risk_cube::FactKey`). Identifiers are the cube's interned dimension
+ * handles (`u32`); `desk=0` ⇒ resolve from the book's Book→Desk parent pointer,
+ * `entity=0` ⇒ resolve from Location→Entity. The GUI treats these as opaque
+ * numeric handles (it never invents them; the server interns them from a fill's
+ * attribution).
+ */
+export interface OrgKey {
+  trader: number;
+  book: number;
+  desk: number;
+  ccyPair: CcyPair;
+  location: number;
+  entity: number;
+}
+
+/**
+ * A `(dimension, value)` key — the space the cube groups by and an entitlement
+ * scope covers (`celnet.wire.RiskScope`). `value` is `FactKey::group_value` (for
+ * Desk/Entity the resolved ancestor handle); ignored for `FIRM`.
+ */
+export interface RiskScope {
+  dimension: RiskDimension;
+  value: bigint;
+}
+
+/**
+ * An entitlement rule (`celnet.wire.EntitlementRule`): a conjunction of scopes an
+ * actor may see. Empty `scopes` ⇒ covers everything (the firm root).
+ */
+export interface EntitlementRule {
+  scopes: RiskScope[];
+}
+
+/**
+ * The entitlement principal (`celnet.wire.EntitlementPrincipal`, mirrors
+ * `celnet_entitlements`). DEFAULT = grant-all: a request that OMITS the principal
+ * is treated by the server as grant-all (the GUI's show-all-now posture). A
+ * present principal with `grantAll=false` and no grants is deny-by-default; a
+ * `deny` rule applies to any principal (deny wins).
+ */
+export interface EntitlementPrincipal {
+  grantAll: boolean;
+  grants: EntitlementRule[];
+  denies: EntitlementRule[];
+}
+
+/** One reporting-numeraire spot rate (`celnet.wire.NumeraireRate`): units of the
+ * numeraire per 1 unit of `ccy` at spot (finite, > 0). */
+export interface NumeraireRate {
+  ccy: string;
+  rate: number;
+}
+
+/**
+ * The reporting numeraire (`celnet.wire.ReportingNumeraire`, mirrors a server
+ * `SpotResolver`): the currency every node measure is collapsed into, plus the
+ * spot rates to convert each leg into it. The numeraire's own rate is implicitly
+ * 1.0; a missing rate fails the request loudly server-side (no silent leg drop).
+ */
+export interface ReportingNumeraire {
+  numeraire: string;
+  rates: NumeraireRate[];
+}
+
+/**
+ * A vega-ladder pillar key (`celnet.wire.VegaPillar`, mirrors
+ * `celnet_risk_cube::VegaPillar`): tenor in DAYS and delta in BASIS POINTS
+ * (0.25Δ → 2500). The grid is external request data, never compiled in.
+ */
+export interface RiskVegaPillar {
+  tenorDays: number;
+  deltaBp: number;
+}
+
+/** One rung of the aggregated vega ladder (`celnet.wire.VegaLadderBucket`), in the
+ * reporting numeraire. */
+export interface VegaLadderBucket {
+  pillar: RiskVegaPillar;
+  vega: number;
+}
+
+/** One signed leg of a netted delta vector (`celnet.wire.CcyExposureLeg`). */
+export interface CcyExposureLeg {
+  ccy: string;
+  amount: number;
+}
+
+/**
+ * The ADDITIVE risk of a node (`celnet.wire.AdditiveRisk`): the per-leaf Greeks
+ * summed and collapsed into the reporting numeraire. `deltaVector` is the netted
+ * per-ccy delta exposure (a high-spot pair no longer dominates a raw sum — every
+ * leg is already in common units). `vegaNumeraire` is converted through each
+ * leaf's PREMIUM currency.
+ */
+export interface AdditiveRisk {
+  deltaNumeraire: number;
+  deltaVector: CcyExposureLeg[];
+  gamma: number;
+  vegaNumeraire: number;
+  theta: number;
+  vanna: number;
+  volga: number;
+  charm: number;
+  speed: number;
+  zomma: number;
+  color: number;
+  premiumNumeraire: number;
+  vegaLadder: VegaLadderBucket[];
+}
+
+/**
+ * The NON-ADDITIVE risk of a node (`celnet.wire.NonAdditiveRisk`): RE-DERIVED per
+ * node (never summed). Each field is presence-tracked — `undefined` ⇒ not
+ * evaluated this cycle (e.g. no VaR shocks requested), NEVER a spurious zero.
+ */
+export interface NonAdditiveRisk {
+  var?: number;
+  es?: number;
+  varAlpha?: number;
+  curvatureSpot?: number;
+}
+
+/**
+ * One rolled-up node of the risk tree (`celnet.wire.RiskNode`): the aggregate at a
+ * `(dimension, group)` cell, with its additive + non-additive measures and the
+ * count of contributing positions.
+ */
+export interface RiskNode {
+  dimension: RiskDimension;
+  group: bigint;
+  additive: AdditiveRisk;
+  nonadditive: NonAdditiveRisk;
+  positionCount: number;
+}
+
+/** Canonical vanilla pricing inputs (`celnet.wire.VanillaInputs`), the
+ * convention-free leaf the server re-derives a position's risk from. */
+export interface VanillaInputs {
+  spot: number;
+  strike: number;
+  vol: number;
+  t: number;
+  rDom: number;
+  rFor: number;
+}
+
+/**
+ * An open position the cube aggregates (`celnet.wire.RiskPosition`): a risk fact +
+ * the originating leaf. `notionalBase` is signed (+ = long). The canonical
+ * convention-free leaf is re-derived server-side, never sent by a client.
+ */
+export interface RiskPosition {
+  positionId: bigint;
+  org: OrgKey;
+  optionType: OptionType;
+  notionalBase: number;
+  inputs: VanillaInputs;
+  quotedDelta: DeltaConvention;
+  premiumStyle: PremiumStyle;
+  surfaceVersion: bigint;
+  attribution?: AttributionRecord;
+}
+
+/** The limit metric a utilization row measures (`celnet.wire.LimitMetricKind`),
+ * mirrors `celnet_limits`. */
+export type LimitMetricKind =
+  | "DELTA" // =0
+  | "GAMMA"
+  | "VEGA"
+  | "VANNA"
+  | "VOLGA"
+  | "VEGA_BUCKET" // payload: vegaPillar
+  | "TENOR_VEGA" // payload: tenorDays
+  | "CONCENTRATION_DELTA"
+  | "CONCENTRATION_VEGA"
+  | "VAR"
+  | "EXPECTED_SHORTFALL"
+  | "STOP_LOSS";
+
+/** Limit RAG status (`celnet.wire.RagStatus`), ordered by severity. */
+export type RagStatus = "GREEN" | "AMBER" | "RED" | "BREACH";
+
+/** Limit enforcement posture (`celnet.wire.Enforcement`). */
+export type Enforcement = "SOFT" | "HARD";
+
+/**
+ * One limit utilization row (`celnet.wire.LimitUtilization`): the metric, its cap
+ * and current exposure (reporting numeraire), the utilization ratio, the RAG
+ * status, the enforcement posture, and the remaining headroom. `vegaPillar` is set
+ * for VEGA_BUCKET; `tenorDays` for TENOR_VEGA.
+ */
+export interface LimitUtilization {
+  metric: LimitMetricKind;
+  vegaPillar: RiskVegaPillar;
+  tenorDays: number;
+  cap: number;
+  exposure: number;
+  ratio: number;
+  status: RagStatus;
+  enforcement: Enforcement;
+  headroom: number;
+}
+
+// --- RiskService requests / responses ---------------------------------------
+
+/** `RiskService.ListPositions` request — the entitled open book, optionally scoped. */
+export interface ListPositionsRequest {
+  scope?: RiskScope;
+  principal?: EntitlementPrincipal;
+  correlationId?: bigint;
+}
+
+export interface ListPositionsResponse {
+  positions: RiskPosition[];
+  correlationId?: bigint;
+}
+
+/**
+ * `RiskService.AggregateRisk` request — prune by principal BEFORE roll-up, group
+ * by `dimension`, sum the additive measures + re-derive the non-additive ones per
+ * node, and collapse everything into the reporting `numeraire`. `vegaPillars`
+ * empty ⇒ server default grid; `varSpotShocks` empty ⇒ no VaR/ES; `varAlpha` 0 ⇒
+ * 0.99 when shocks present; `curvatureRiskWeight` 0 ⇒ no curvature.
+ */
+export interface AggregateRiskRequest {
+  dimension: RiskDimension;
+  numeraire: ReportingNumeraire;
+  principal?: EntitlementPrincipal;
+  scope?: RiskScope;
+  vegaPillars: RiskVegaPillar[];
+  varSpotShocks: number[];
+  varAlpha: number;
+  curvatureRiskWeight: number;
+  correlationId?: bigint;
+}
+
+export interface AggregateRiskResponse {
+  dimension: RiskDimension;
+  numeraire: string;
+  nodes: RiskNode[];
+  correlationId?: bigint;
+}
+
+/**
+ * `RiskService.DrillRisk` request — drill one node into child sub-nodes at a finer
+ * dimension and/or its contributing positions (the Book→Risk drill),
+ * entitlement-pruned.
+ */
+export interface DrillRiskRequest {
+  node: RiskScope;
+  childDimension: RiskDimension;
+  numeraire: ReportingNumeraire;
+  principal?: EntitlementPrincipal;
+  vegaPillars: RiskVegaPillar[];
+  includeChildren: boolean;
+  includePositions: boolean;
+  correlationId?: bigint;
+}
+
+export interface DrillRiskResponse {
+  node: RiskScope;
+  children: RiskNode[];
+  positions: RiskPosition[];
+  correlationId?: bigint;
+}
+
+/**
+ * `RiskService.LimitStatus` request — the limit tree + per-limit utilization/RAG
+ * for a scope node, with the `hardBreach` escalation flag.
+ */
+export interface LimitStatusRequest {
+  scope: RiskScope;
+  numeraire: ReportingNumeraire;
+  principal?: EntitlementPrincipal;
+  vegaPillars: RiskVegaPillar[];
+  varSpotShocks: number[];
+  varAlpha: number;
+  correlationId?: bigint;
+}
+
+export interface LimitStatusResponse {
+  scope: RiskScope;
+  limits: LimitUtilization[];
+  worst: RagStatus;
+  hardBreach: boolean;
+  correlationId?: bigint;
+}

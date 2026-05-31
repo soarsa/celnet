@@ -22,18 +22,33 @@ import {
   ShapingError,
   formatCalibratedSmileSpill,
   formatGreeksSpill,
+  formatLimitsSpill,
   formatMarkStatusSpill,
+  formatPositionsSpill,
   formatRfqSpill,
+  formatRiskSpill,
   formatSeriesCell,
   formatSmileSpill,
   parseObservable,
   parsePair,
+  parseRiskDimension,
+  parseRiskScope,
   parseSmileModel,
   parseTenor,
   shapeCalibration,
+  shapeReportingNumeraire,
   shapeVanillaInstrument,
   type SpillMatrix,
 } from "./shaping";
+import {
+  aggregateRiskRequest,
+  aggregateRiskResponseFromWire,
+  limitStatusRequest,
+  limitStatusResponseFromWire,
+  listPositionsRequest,
+  listPositionsResponseFromWire,
+  type RiskScope,
+} from "../contract/riskCodec";
 import { stageMark } from "./markStaging";
 import { getConnection, getRegistry, getSeriesRegistry } from "./runtime";
 import { brokerQuoteSetToWire, ccyPairToWire, conventionsToWire, smileFromWire, type WireObject } from "../contract/wsCodec";
@@ -434,6 +449,101 @@ export async function MARK(
   }
 }
 
+/**
+ * Hierarchical risk aggregate over the org cube — the SERVER computes the roll-up
+ * (the API-first parity rule: a client never loops positions and sums). Spills the
+ * node tree the server returns: a header row plus one row per rolled-up node, then a
+ * reporting-numeraire / dimension footer.
+ *
+ * Aggregation goes through `celnet-risk-normalize` server-side into the chosen
+ * reporting numeraire, so every measure is in that numeraire — there is no "native
+ * premium units" caveat. Supply the per-currency conversion rates (units of the
+ * numeraire per 1 unit of ccy at spot) as the optional `rates` range of `[ccy, rate]`
+ * rows; the numeraire's own rate is implicit 1.0. A missing rate the book needs fails
+ * the request loudly server-side (never a silent leg drop).
+ * @customfunction RISK
+ * @param dimension Roll-up dimension: FIRM, TRADER, BOOK, DESK, PAIR, LOCATION or ENTITY.
+ * @param numeraire Reporting currency, e.g. USD (3-letter code).
+ * @param rates Optional [ccy, rate] rows: numeraire units per 1 unit of ccy at spot.
+ * @param scope Optional scope DIM:value (e.g. DESK:99) to narrow before the group-by.
+ * @returns A node grid: header, one row per node, and a numeraire/dimension footer.
+ */
+export async function RISK(
+  dimension: string,
+  numeraire: string,
+  rates?: unknown,
+  scope?: string,
+): Promise<SpillMatrix> {
+  try {
+    const dim = parseRiskDimension(dimension);
+    const reporting = shapeReportingNumeraire(numeraire, rates);
+    const scopeKey = parseRiskScope(typeof scope === "string" ? scope : undefined);
+    const body = aggregateRiskRequest({
+      dimension: dim,
+      numeraire: reporting,
+      ...(scopeKey !== undefined ? { scope: scopeKey } : {}),
+    });
+    const reply = await getConnection().aggregateRisk(body);
+    const result = aggregateRiskResponseFromWire(reply);
+    return formatRiskSpill(result.dimension, result.numeraire, result.nodes);
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
+/**
+ * List the entitled open positions the cube aggregates (the desk's book), each with
+ * its org placement + attribution. Spills a leaf grid; an honest empty-state row when
+ * the principal (default grant-all) sees nothing. The list is the drill-down behind a
+ * CELNET.RISK node — same single contract, server-owned book.
+ * @customfunction POSITIONS
+ * @param scope Optional scope DIM:value (e.g. BOOK:7) to narrow the listing (omit ⇒ all).
+ * @returns A position grid: header, one row per position, and a count/empty footer.
+ */
+export async function POSITIONS(scope?: string): Promise<SpillMatrix> {
+  try {
+    const scopeKey: RiskScope | undefined = parseRiskScope(
+      typeof scope === "string" ? scope : undefined,
+    );
+    const body = listPositionsRequest(scopeKey !== undefined ? { scope: scopeKey } : {});
+    const reply = await getConnection().listPositions(body);
+    const result = listPositionsResponseFromWire(reply);
+    return formatPositionsSpill(result.positions);
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
+/**
+ * The limit-tree utilization + RAG for a scope node — the limits configured at the
+ * scope, each with cap / exposure / ratio / RAG status / enforcement / headroom,
+ * computed server-side against the node's aggregated exposure. Spills a utilization
+ * grid plus a worst-RAG / hard-breach footer.
+ * @customfunction LIMITS
+ * @param scope Scope DIM:value (e.g. DESK:99) or FIRM for the firm apex.
+ * @param numeraire Reporting currency the additive exposures are expressed in, e.g. USD.
+ * @param rates Optional [ccy, rate] rows: numeraire units per 1 unit of ccy at spot.
+ * @returns A limit grid: header, one row per limit, and a worst-RAG / breach footer.
+ */
+export async function LIMITS(
+  scope: string,
+  numeraire: string,
+  rates?: unknown,
+): Promise<SpillMatrix> {
+  try {
+    const scopeKey = parseRiskScope(scope) ?? { dimension: "FIRM" as const, value: 0n };
+    const reporting = shapeReportingNumeraire(numeraire, rates);
+    const body = limitStatusRequest({ scope: scopeKey, numeraire: reporting });
+    const reply = await getConnection().limitStatus(body);
+    const result = limitStatusResponseFromWire(reply);
+    const scopeLabel =
+      scopeKey.dimension === "FIRM" ? "FIRM" : `${scopeKey.dimension}:${scopeKey.value}`;
+    return formatLimitsSpill(scopeLabel, result.limits, result.worst, result.hardBreach);
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
 // Register the functions with the Office.js custom-function association map when
 // running inside the host (the `CustomFunctions` global exists). Under node (no
 // host) this is a no-op, so the pure logic stays importable for unit tests.
@@ -452,6 +562,9 @@ function registerAll(): void {
   cf.associate("SUBSCRIBE", SUBSCRIBE as (...a: never[]) => unknown);
   cf.associate("SERIES", SERIES as (...a: never[]) => unknown);
   cf.associate("MARK", MARK as (...a: never[]) => unknown);
+  cf.associate("RISK", RISK as (...a: never[]) => unknown);
+  cf.associate("POSITIONS", POSITIONS as (...a: never[]) => unknown);
+  cf.associate("LIMITS", LIMITS as (...a: never[]) => unknown);
 }
 
 registerAll();

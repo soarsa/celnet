@@ -83,10 +83,31 @@ under-specified message here would be a placeholder, banned by rule 2).
 | `QuoteService.RequestQuote(QuoteRequest) → Quote` | RFQ: client-supplied `idempotency_key`, `Instrument`, side(s) (omit ⇒ two-way), quantity → server `quote_id`, `TwoWayPrice`, full Greeks, `valid_until` last-look deadline, resolved `Conventions`. |
 | `QuoteService.AcceptQuote(QuoteAccept) → Execution` | Accept within the last-look window → booked `Execution`. |
 | `QuoteService.RejectQuote(QuoteReject) → RejectAck` | Decline a live quote. |
-| `StreamService.Stream(stream ClientStreamMessage) → stream ServerStreamMessage` | RFS bidi keyed on a client `SubscriptionId`. |
+| `StreamService.StreamSession(stream ClientStreamMessage) → stream ServerStreamMessage` | Multiplexed RFS bidi session carrying many subscriptions, each keyed on a client `SubscriptionId`. |
 | `SurfaceService.GetSmile(GetSmileRequest) → Smile` | Smile on a delta axis with ATM/25Δ&10Δ RR/BF and an `ArbReport`. |
 | `SurfaceService.MarkSurface(MarkSurfaceRequest) → MarkSurfaceResponse` | Calibrate from a `BrokerQuoteSet` + `Conventions`, with an optional `SmileModel` selector → a marked surface version. |
 | `SurfaceService.Scenario(ScenarioRequest) → ScenarioResponse` | `ShockAxis` grid (spot/vol/rate, absolute or relative) → `ScenarioPoint`s. |
+| `RiskService.ListPositions(ListPositionsRequest) → ListPositionsResponse` | The entitled open position book (each `RiskPosition` with its `OrgKey` + attribution), scope- and principal-pruned. |
+| `RiskService.AggregateRisk(AggregateRiskRequest) → AggregateRiskResponse` | Server-side hierarchical roll-up over an org `RiskDimension` into a `RiskNode` tree (netted additive + re-derived non-additive measures) in a reporting numeraire. |
+| `RiskService.DrillRisk(DrillRiskRequest) → DrillRiskResponse` | Drill one node into child sub-nodes at a finer dimension and/or its contributing positions (Book→Risk). |
+| `RiskService.LimitStatus(LimitStatusRequest) → LimitStatusResponse` | Limit tree + per-limit utilization/RAG for a scope node, with the `hard_breach` escalation flag. |
+
+### Risk — server-side hierarchical aggregation (implemented)
+
+`RiskService` is the wire face of the single-node risk estate (`celnet-risk-cube` /
+`celnet-risk-normalize` / `celnet-limits` / `celnet-entitlements`). **Aggregation is owned by the
+server** — a client never loops positions and sums; it asks `AggregateRisk` for the rolled-up node
+tree, `DrillRisk` to expand a node, `ListPositions` for the leaves, and `LimitStatus` for utilization.
+The server prunes by the entitlement `principal` (default **grant-all**, show-all-now) **before**
+roll-up so a node total never leaks an invisible subtree, groups by the org `RiskDimension`, sums the
+additive measures + re-derives the non-additive ones (VaR/ES, FRTB curvature) per node by
+bump-and-revalue, and collapses everything into a real `ReportingNumeraire` via `celnet-risk-normalize`
+(resolving the GUI's prior "native premium units" caveat at the source). Served over **both** gRPC
+(`risk_service_client`) and the WS mirror (`aggregate_risk`/`list_positions`/`drill_risk`/`limit_status`
+frames) off the **same** shared live `PositionStore` the RFS click-to-trade path books vanilla fills
+into. Honest scope: only vanilla fills become risk facts (an exotic has no canonical-vanilla leaf); a
+`CCY_PAIR` limit scope is rejected loudly (a bare `u64` cannot reconstruct the pair). Full field-level
+contract in `docs/INTERFACES.md` §"Phase-2 contract: `RiskService`".
 
 ### Smile-model selection on `MarkSurface` (implemented)
 
@@ -140,7 +161,9 @@ auto_pricer } }` — a human seat OR an automated pricer, uniformly.
 engine-quoted flow is never anonymous — and a client-supplied requesting seat (its request
 `quoted_by`) becomes `held_by`, carrying `won`/`lp_count` through verbatim. RFQ and RFS attribute
 identically (API-first parity). The risk roll-up that *keys* on `AttributionRecord` (mapping it onto
-the `celnet-risk-cube` `BookId`/`Owner` dimensions) is the Phase-2 risk lane.
+the `celnet-risk-cube` org `OrgKey` dimensions) is **served** by `RiskService` — `celnet-server` maps
+each booked fill's `AttributionRecord` book/seat onto the cube's interned `u32` org handles (§"Risk"
+below and `docs/INTERFACES.md` §"Phase-2 contract: `RiskService`").
 
 ### RFQ idempotency (implemented)
 
@@ -211,12 +234,15 @@ per-subscription RFS with resync, and a callable arb-free surface object.
 
 ## 7. Designed but not yet on the wire
 
-- **Position / P&L** — `GetPosition(book)` and `AttributePnl(book, from_mark, to_mark)`
-  (delta/gamma/vega/theta/vanna/volga decomposition). The Greeks and engine exist; the
-  service is not yet in `celnet-proto`. The Phase-2 risk lane (`celnet-risk-cube` /
-  `celnet-risk-normalize` / `celnet-limits` / `celnet-entitlements`, see `docs/INTERFACES.md`)
-  builds the canonical-leaf → cube → limits/entitlements pipeline this service will expose;
-  the **attribution identity** that keys the roll-up is already on the wire (§4).
+- **Position / P&L attribution** — a Greek-decomposed `AttributePnl(book, from_mark, to_mark)`
+  (delta/gamma/vega/theta/vanna/volga explain) is not yet in `celnet-proto`. **Note this is no longer
+  the whole risk lane:** the hierarchical-risk pipeline (canonical-leaf → cube → numeraire →
+  limits/entitlements) **is** on the wire and **served** as `RiskService`
+  (`ListPositions`/`AggregateRisk`/`DrillRisk`/`LimitStatus` — see §"Risk" and `docs/INTERFACES.md`),
+  built on `celnet-risk-cube` / `-normalize` / `-limits` / `-entitlements`, with the **attribution
+  identity** that keys the roll-up already on the wire (§4). What remains designed-only here is the
+  per-mark **P&L-explain** decomposition (a distinct attribution report over two surface marks); the
+  position book itself is queryable today via `ListPositions`.
 - **`Tarf` / `Accumulator`** instrument variants (§3).
 - **`SmileModel`-dependent `Scenario`** — `Scenario` validates the selector but reprices off
   the supplied flat `base_market.vol`; a model-dependent shock grid needs a skewed surface

@@ -11,18 +11,31 @@
  */
 
 import type {
+  AdditiveRisk,
+  AggregateRiskRequest,
+  AggregateRiskResponse,
   BrokerQuoteSet,
+  CcyExposureLeg,
   CcyPair,
   Conventions,
+  DrillRiskRequest,
+  DrillRiskResponse,
   Executed,
   Execution,
   Greeks,
   Instrument,
+  LimitStatusRequest,
+  LimitStatusResponse,
+  ListPositionsRequest,
+  ListPositionsResponse,
   MarkedSurface,
   MarketContext,
   MarketSeriesPoint,
+  NonAdditiveRisk,
   Quote,
+  ReportingNumeraire,
   RiskBucketRequest,
+  RiskNode,
   ScenarioPoint,
   ScenarioResult,
   ShockAxis,
@@ -37,7 +50,13 @@ import type {
 } from "./contract";
 import { forward, priceInstrument, strikeFromDelta } from "./pricing";
 import { Rng } from "./rng";
-import { brokerLadder, DEFAULT_CONVENTIONS, PAIRS, type PairContext } from "./seed";
+import {
+  brokerLadder,
+  DEFAULT_CONVENTIONS,
+  PAIRS,
+  seedSubscriptions,
+  type PairContext,
+} from "./seed";
 import { calibrateSmile, markSurface } from "./surface";
 import { tenorYearsOf } from "../lib/trend";
 import type {
@@ -627,6 +646,164 @@ export class MockTransport implements CelnetTransport {
     };
   }
 
+  // --- RiskService (offline) -------------------------------------------------
+  //
+  // In offline mode the mock IS the server: it aggregates its own deterministic
+  // seed book (the same structures the RFS blotter streams) GENUINELY — pricing
+  // each position on the real GK core and collapsing every leg into the requested
+  // reporting numeraire (src/data/contract.ReportingNumeraire). This is NOT a
+  // placeholder: every number is a real repriced exposure, exactly as the live
+  // server computes it; only the data source differs (a local seed book vs the
+  // server's live `PositionStore`). The offline demo book carries no per-position
+  // org attribution, so it rolls up to a SINGLE node (one firm/desk/book) — for
+  // any group-by dimension the honest answer is that one node; the offline build
+  // has no finer org structure to fabricate. Limits have no offline tree, so
+  // `limitStatus` returns an honest empty utilization set.
+
+  async listPositions(request: ListPositionsRequest): Promise<ListPositionsResponse> {
+    const res: ListPositionsResponse = { positions: [] };
+    if (request.correlationId !== undefined) res.correlationId = request.correlationId;
+    // The offline book has no canonical-vanilla leaf per booked structure (the
+    // seed positions are multi-leg strategies/vanillas without server-side
+    // canonicalisation), so we honestly report no flat `RiskPosition` rows rather
+    // than fabricate convention-free leaves the offline core cannot derive. The
+    // aggregate (below) is the genuine offline risk view.
+    return res;
+  }
+
+  async aggregateRisk(request: AggregateRiskRequest): Promise<AggregateRiskResponse> {
+    const node = aggregateSeedBook(request.dimension, request.numeraire);
+    const res: AggregateRiskResponse = {
+      dimension: request.dimension,
+      numeraire: request.numeraire.numeraire,
+      nodes: node.positionCount > 0 ? [node] : [],
+    };
+    if (request.correlationId !== undefined) res.correlationId = request.correlationId;
+    return res;
+  }
+
+  async drillRisk(request: DrillRiskRequest): Promise<DrillRiskResponse> {
+    // The offline book is a single node; a drill to a finer dimension yields the
+    // same genuine aggregate as its one child (honest: there is no finer org
+    // structure offline). Positions are omitted for the same reason listPositions
+    // reports none (no offline canonical leaf).
+    const child = aggregateSeedBook(request.childDimension, request.numeraire);
+    const res: DrillRiskResponse = {
+      node: request.node,
+      children: request.includeChildren && child.positionCount > 0 ? [child] : [],
+      positions: [],
+    };
+    if (request.correlationId !== undefined) res.correlationId = request.correlationId;
+    return res;
+  }
+
+  async limitStatus(request: LimitStatusRequest): Promise<LimitStatusResponse> {
+    // No limit tree is configured in the offline mock; report an honest empty set
+    // (GREEN, no breach) rather than fabricate caps the desk never set.
+    const res: LimitStatusResponse = {
+      scope: request.scope,
+      limits: [],
+      worst: "GREEN",
+      hardBreach: false,
+    };
+    if (request.correlationId !== undefined) res.correlationId = request.correlationId;
+    return res;
+  }
+}
+
+/**
+ * Genuinely aggregate the offline seed book into one `RiskNode`, collapsing every
+ * position's signed-notional-scaled Greeks into the reporting numeraire. The mock
+ * holds one book (no org attribution), so the result is independent of the
+ * requested `dimension` — the single node IS the firm/desk/book/… view offline.
+ */
+function aggregateSeedBook(
+  dimension: AggregateRiskRequest["dimension"],
+  numeraire: ReportingNumeraire,
+): RiskNode {
+  // Resolve the spot rate of a currency INTO the reporting numeraire. The
+  // numeraire's own rate is implicitly 1.0; any other ccy must be supplied (a
+  // missing rate fails loudly, mirroring the server's fail-on-missing-rate).
+  const rateOf = (ccy: string): number => {
+    if (ccy === numeraire.numeraire) return 1;
+    const r = numeraire.rates.find((x) => x.ccy === ccy);
+    if (!r || !(r.rate > 0) || !Number.isFinite(r.rate)) {
+      throw new Error(`reporting numeraire ${numeraire.numeraire} has no rate for ${ccy}`);
+    }
+    return r.rate;
+  };
+
+  const deltaByCcy = new Map<string, number>();
+  let deltaNumeraire = 0;
+  let gamma = 0;
+  let vegaNumeraire = 0;
+  let theta = 0;
+  let vanna = 0;
+  let volga = 0;
+  let charm = 0;
+  let speed = 0;
+  let zomma = 0;
+  let color = 0;
+  let premiumNumeraire = 0;
+  let positionCount = 0;
+
+  for (const { instrument } of seedSubscriptions()) {
+    const ctx = findPair(instrument.pair);
+    const greeks = priceInstrument(instrument, ctx.market).greeks;
+    // Sign by direction; offline seed positions are the long the desk carries.
+    const sign = instrument.side === "SELL" ? -1 : 1;
+    const notional = instrument.quantity.notional * sign;
+    // Premium/price is quoted as a fraction; the base-ccy delta exposure is
+    // notional×delta, converted into the reporting numeraire by the base ccy's
+    // rate (the quote/premium ccy is the pair's quote leg).
+    const baseRate = rateOf(instrument.pair.base);
+    const quoteRate = rateOf(instrument.pair.quote);
+    const baseDelta = notional * greeks.deltaSpot;
+    deltaByCcy.set(instrument.pair.base, (deltaByCcy.get(instrument.pair.base) ?? 0) + baseDelta);
+    deltaNumeraire += baseDelta * baseRate;
+    // Vega / premium are premium-ccy (quote) amounts per unit notional.
+    const wn = notional * quoteRate;
+    gamma += notional * greeks.gamma * baseRate;
+    vegaNumeraire += greeks.vega * wn;
+    theta += greeks.theta * wn;
+    vanna += greeks.vanna * wn;
+    volga += greeks.volga * wn;
+    charm += greeks.charm * wn;
+    speed += notional * greeks.speed * baseRate;
+    zomma += notional * greeks.zomma * baseRate;
+    color += greeks.color * wn;
+    premiumNumeraire += greeks.price * wn;
+    positionCount += 1;
+  }
+
+  const deltaVector: CcyExposureLeg[] = [...deltaByCcy.entries()]
+    .map(([ccy, amount]) => ({ ccy, amount }))
+    .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
+
+  const additive: AdditiveRisk = {
+    deltaNumeraire,
+    deltaVector,
+    gamma,
+    vegaNumeraire,
+    theta,
+    vanna,
+    volga,
+    charm,
+    speed,
+    zomma,
+    color,
+    premiumNumeraire,
+    // The offline aggregate does not bucket the vega ladder server-side (the
+    // pillar grid is request data the offline core does not slice the book on);
+    // an empty ladder is honest, not a row of zeros.
+    vegaLadder: [],
+  };
+
+  // Non-additive measures are not evaluated offline (no historical shock engine);
+  // every field absent ⇒ the consumer shows "not evaluated", never a spurious 0.
+  const nonadditive: NonAdditiveRisk = {};
+
+  return { dimension, group: 0n, additive, nonadditive, positionCount };
 }
 
 /**

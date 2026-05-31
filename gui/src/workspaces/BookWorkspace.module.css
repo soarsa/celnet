@@ -272,6 +272,110 @@
   color: var(--text-tertiary);
 }
 
+/* --- right column: stacked ladder + limits panels --- */
+.sideCol {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-height: 0;
+}
+.limitsPanel {
+  min-height: 0;
+}
+
+/* --- limits RAG --- */
+.limits {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.limitsHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+  margin-bottom: var(--space-2);
+}
+.rag {
+  font-family: var(--font-brand);
+  font-weight: var(--weight-emphasis);
+  letter-spacing: 0.04em;
+}
+.hardBreach {
+  font-family: var(--font-brand);
+  font-size: var(--type-micro);
+  letter-spacing: 0.06em;
+  color: var(--offer);
+  border: 1px solid var(--offer);
+  border-radius: var(--r-sm);
+  padding: 1px 6px;
+}
+.limitRow {
+  display: grid;
+  grid-template-columns: 1fr 64px 36px 10px;
+  align-items: center;
+  column-gap: var(--space-3);
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+  padding: 2px 0;
+}
+.limitMetric {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.limitBar {
+  position: relative;
+  height: 8px;
+  background: var(--bg-inset);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+.limitFill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: var(--r-sm);
+}
+.limitRatio {
+  text-align: right;
+  font-size: var(--type-micro);
+}
+.ragDot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--r-full);
+}
+/* RAG semantics: green ok, amber warn, red near-cap, breach = offer red emphasis. */
+.ragGreen {
+  color: var(--bid);
+}
+.ragGreen.limitFill,
+.ragGreen.ragDot {
+  background: var(--bid);
+  color: transparent;
+}
+.ragAmber {
+  color: oklch(0.82 0.16 85);
+}
+.ragAmber.limitFill,
+.ragAmber.ragDot {
+  background: oklch(0.82 0.16 85);
+}
+.ragRed,
+.ragBreach {
+  color: var(--offer);
+}
+.ragRed.limitFill,
+.ragRed.ragDot,
+.ragBreach.limitFill,
+.ragBreach.ragDot {
+  background: var(--offer);
+}
+.ragBreach.ragDot {
+  box-shadow: 0 0 0 2px oklch(from var(--offer) l c h / 0.3);
+}
+
 /* --- semantic risk signs (bid green / offer red) — NEVER coral --- */
 .pos {
   color: var(--bid);

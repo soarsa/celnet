@@ -107,6 +107,38 @@
         { "name": "model", "description": "Optional smile model the commit calibrates under: VV, SABR, SVI, SSVI.", "type": "string", "optional": true },
         { "name": "comment", "description": "Optional contribution comment.", "type": "string", "optional": true }
       ]
+    },
+    {
+      "id": "RISK",
+      "name": "RISK",
+      "description": "Server-side hierarchical risk aggregate over the org cube: spill the rolled-up node tree in a reporting numeraire.",
+      "result": { "dimensionality": "matrix", "type": "any" },
+      "parameters": [
+        { "name": "dimension", "description": "Roll-up dimension: FIRM, TRADER, BOOK, DESK, PAIR, LOCATION or ENTITY.", "type": "string" },
+        { "name": "numeraire", "description": "Reporting currency, e.g. USD (3-letter code).", "type": "string" },
+        { "name": "rates", "description": "Optional [ccy, rate] rows: numeraire units per 1 unit of ccy at spot.", "type": "any", "dimensionality": "matrix", "optional": true },
+        { "name": "scope", "description": "Optional scope DIM:value (e.g. DESK:99) to narrow before the group-by.", "type": "string", "optional": true }
+      ]
+    },
+    {
+      "id": "POSITIONS",
+      "name": "POSITIONS",
+      "description": "List the entitled open positions the cube aggregates (the desk's book) with org placement + attribution.",
+      "result": { "dimensionality": "matrix", "type": "any" },
+      "parameters": [
+        { "name": "scope", "description": "Optional scope DIM:value (e.g. BOOK:7) to narrow the listing (omit for all).", "type": "string", "optional": true }
+      ]
+    },
+    {
+      "id": "LIMITS",
+      "name": "LIMITS",
+      "description": "Limit-tree utilization + RAG for a scope node, computed server-side against the node's aggregated exposure.",
+      "result": { "dimensionality": "matrix", "type": "any" },
+      "parameters": [
+        { "name": "scope", "description": "Scope DIM:value (e.g. DESK:99) or FIRM for the firm apex.", "type": "string" },
+        { "name": "numeraire", "description": "Reporting currency the exposures are expressed in, e.g. USD.", "type": "string" },
+        { "name": "rates", "description": "Optional [ccy, rate] rows: numeraire units per 1 unit of ccy at spot.", "type": "any", "dimensionality": "matrix", "optional": true }
+      ]
     }
   ]
 }

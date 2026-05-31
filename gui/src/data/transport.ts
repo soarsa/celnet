@@ -15,13 +15,21 @@
  */
 
 import type {
+  AggregateRiskRequest,
+  AggregateRiskResponse,
   BrokerQuoteSet,
   CcyPair,
   Conventions,
+  DrillRiskRequest,
+  DrillRiskResponse,
   Executed,
   Execution,
   Greeks,
   Instrument,
+  LimitStatusRequest,
+  LimitStatusResponse,
+  ListPositionsRequest,
+  ListPositionsResponse,
   MarkedSurface,
   MarketContext,
   MarketObservable,
@@ -152,4 +160,33 @@ export interface CelnetTransport {
     axes: ShockAxis[],
     riskBuckets?: RiskBucketRequest,
   ): Promise<ScenarioResult>;
+
+  // --- RiskService — server-side hierarchical risk over the org cube ---------
+  //
+  // Aggregation is owned by the SERVER (API-first parity, CLAUDE.md rule 11): a
+  // client never loops positions and sums. It lists positions, asks for a
+  // rolled-up node tree over an org dimension, drills a node to its constituents,
+  // and reads limit utilization — all behind this one contract.
+
+  /** RiskService.ListPositions — the entitled open book, optionally scoped. */
+  listPositions(request: ListPositionsRequest): Promise<ListPositionsResponse>;
+
+  /**
+   * RiskService.AggregateRisk — prune by principal BEFORE roll-up, group by the
+   * org `dimension`, sum the additive measures + re-derive the non-additive ones
+   * per node, and collapse everything into the reporting `numeraire`.
+   */
+  aggregateRisk(request: AggregateRiskRequest): Promise<AggregateRiskResponse>;
+
+  /**
+   * RiskService.DrillRisk — drill one node into child sub-nodes at a finer
+   * dimension and/or its contributing positions (the Book→Risk drill).
+   */
+  drillRisk(request: DrillRiskRequest): Promise<DrillRiskResponse>;
+
+  /**
+   * RiskService.LimitStatus — the limit tree + per-limit utilization/RAG for a
+   * scope node, with the `hardBreach` escalation flag.
+   */
+  limitStatus(request: LimitStatusRequest): Promise<LimitStatusResponse>;
 }

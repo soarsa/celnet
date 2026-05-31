@@ -25,3 +25,5 @@ celnet-engine.workspace = true
 celnet-vanilla.workspace = true
 celnet-exotics.workspace = true
 celnet-conventions.workspace = true
+celnet-limits.workspace = true
+celnet-risk-cube.workspace = true

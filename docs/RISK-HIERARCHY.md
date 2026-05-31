@@ -50,6 +50,25 @@ immaterial for vanilla FX (FX has no issuer-default leg unless a credit-linked o
 wrapper is present — see §2.4). These are flagged as future workstreams in `docs/ROADMAP.md`, not
 quietly dropped.
 
+> **Implementation status (2026-05-31).** The single-node layer this document specifies is **shipped
+> and served end-to-end**, no longer proposal-only. The four crates of §3.2 are **built and gated
+> green** — `celnet-risk-cube` (dimension model + group-by/reduce roll-up + per-node non-additive
+> re-derivation), `celnet-risk-normalize` (convention canonicalization + common-numeraire conversion),
+> `celnet-limits` (limit tree + utilization/RAG + pre/post-trade checks), `celnet-entitlements`
+> (server-side pre-aggregation pruning, grant-all default). They are exposed over the **one
+> `celnet-proto` contract** as `RiskService` (`ListPositions` / `AggregateRisk` / `DrillRisk` /
+> `LimitStatus`) and **served by `celnet-server`** over both gRPC and the WS mirror, off a shared live
+> `PositionStore` the RFS click-to-trade path books vanilla fills into — so aggregation is now done
+> **server-side**, retiring the client-side roll-up. See `docs/INTERFACES.md` §"Phase-2 contract:
+> `RiskService`". **Still deferred (target architecture, not shipped):** AAD / batched-GPU non-additive
+> reval (§3.3 — non-additive measures are re-derived by bump-and-revalue today), and the cross-shard /
+> HRW-router fleet tier (§3.4 — single-node only). The client lanes (GUI Book, `celnet-client` SDK,
+> Excel `CELNET.*`) **all now consume the served contract in lockstep** — the GUI Book's client-side
+> roll-up is **deleted** (`gui/src/data/portfolioRisk.ts` removed; the Book drives `AggregateRisk`/
+> `LimitStatus`/`DrillRisk` server-side), the SDK exposes the four calls as typed `Client` methods, and
+> Excel ships `CELNET.RISK`/`CELNET.POSITIONS`/`CELNET.LIMITS`. The client-side-aggregation violation is
+> retired.
+
 ---
 
 ## 2. The risk-aggregation model
@@ -317,7 +336,12 @@ allocation-free). Aggregation, limits, and entitlement evaluation run on **non-c
 the hot path — preserving the latency budget in `docs/ARCHITECTURE.md` §1.2. *(Design proposal,
 consistent with the engine's existing offload architecture.)*
 
-### 3.2 New services (proposed crates)
+### 3.2 New services (crates — **BUILT & SERVED**)
+
+These four crates are **built and gated green**, and exposed over the one `celnet-proto` contract as
+`RiskService` (served by `celnet-server` over gRPC + the WS mirror — see the Implementation-status note
+under §1 and `docs/INTERFACES.md` §"Phase-2 contract: `RiskService`"). The roll-up runs **server-side**
+off a shared live `PositionStore`; clients never sum positions themselves.
 
 - **`celnet-risk-cube`** — the dimension/hierarchy model + the OLAP fact store and group-by/reduce
   engine. Holds the immutable `RiskFact` table, the additive-measure roll-up index (incremental:
@@ -344,13 +368,17 @@ Celnet's answer is three-fold:
 2. **Non-additive measures use a recompute-trigger strategy**, not every-tick reval: delta-driven
    (recompute a node only when its constituents' risk moves beyond a threshold) and throttled
    (bounded cadence per node), so the cube cost tracks *activity*, not clock ticks.
-3. **Scenario/VaR/curvature reval uses adjoint algorithmic differentiation (AAD) and batched GPU**
+3. **Scenario/VaR/curvature reval should use adjoint algorithmic differentiation (AAD) and batched GPU**
    (`celnet-gpu`) — the same Philox-seeded, f32-GPU/f64-CPU-reconciled path used in pricing. This is
    the **single most important throughput requirement**: a firm-hierarchical risk claim that relied
    on bump-and-revalue would lose on throughput exactly where it claims to win. Numerix's headline
    scaling lever for portfolio Greeks is AAD *(numerix.com/oneview-xva — high)*; Celnet must match it
    with AAD and/or batched-GPU or the scale claim is hollow. *(Design requirement — flagged as the
-   top technical risk in the summary; see §7 honest gaps.)*
+   top technical risk in the summary; see §7 honest gaps.)* **Build-status honesty: this is deferred,
+   not shipped.** The served `RiskService` re-derives the non-additive node measures
+   (`celnet_risk_cube::node_var_es` / `node_curvature_spot`) by **bump-and-revalue** over the node's
+   constituents today — correct, and bounded by the recompute-trigger strategy of point 2, but the
+   AAD / batched-GPU lever is the target for the scale-out throughput work, not a current capability.
 
 ### 3.4 Scale-out
 

@@ -1,0 +1,150 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Anaheim:wght@400..800&display=swap" rel="stylesheet"><style>
+:root{--brand:#ff7357;--brand-deep:#e85d42;--accent:#6b6bf5;--navy:#1B1F2A;--raised:#282C3E;--muted:#979CB7;--ink:#1d2230;--line:#d9deec;--bg:#f4f6fb;--green:#1c8c5a;}
+*{box-sizing:border-box;margin:0;padding:0;font-family:Anaheim,system-ui,"Segoe UI",sans-serif}
+body{background:#fff}
+.canvas{position:relative;background:linear-gradient(180deg,#ffffff,#f4f6fb);overflow:hidden}
+.rail{position:absolute;left:0;top:0;bottom:0;width:8px;background:linear-gradient(180deg,var(--brand),var(--accent))}
+.hd{display:flex;align-items:center;gap:12px;padding:22px 34px 10px}
+.hd .mk{width:26px;height:26px}.hd h1{font-size:24px;font-weight:800;color:var(--navy);letter-spacing:.2px}
+.hd .sub{margin-left:auto;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:1.5px}
+.wrap{padding:8px 34px 30px}
+.box{border-radius:12px;border:1.5px solid var(--line);background:#fff;padding:12px 15px;box-shadow:0 1px 2px rgba(20,30,60,.05)}
+.box .t{font-weight:800;color:var(--navy);font-size:14.5px;display:flex;align-items:center;gap:8px}
+.box .d{color:#5b6376;font-size:12px;margin-top:5px;line-height:1.45}
+.box.brand{border-color:var(--brand);box-shadow:0 4px 18px rgba(255,115,87,.18)}
+.box.brandfill{background:var(--navy);border-color:var(--navy)}.box.brandfill .t{color:#fff}.box.brandfill .d{color:#c4c9dc}
+.box.accent{border-color:var(--accent)}.box.tint{background:#fbfcff}
+.row{display:flex;gap:15px}.col{display:flex;flex-direction:column;gap:15px}.grid{display:grid;gap:15px}
+.arrow{align-self:center;color:var(--brand);font-size:24px;font-weight:800;padding:0 2px}
+.tag{display:inline-block;font-size:11px;font-weight:700;color:var(--accent);background:rgba(107,107,245,.1);border-radius:6px;padding:2px 8px;margin:3px 4px 0 0}
+.chip{display:inline-block;font-size:11.5px;color:var(--ink);background:#eef1f8;border:1px solid var(--line);border-radius:6px;padding:3px 9px;margin:3px 4px 0 0}
+.chip.k{background:rgba(255,115,87,.1);border-color:rgba(255,115,87,.35);color:var(--brand-deep);font-weight:700}
+.section-label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);margin:2px 0 7px}
+.note{font-size:11.5px;color:var(--muted);font-style:italic;margin-top:9px}
+.foot{position:absolute;left:34px;bottom:13px;font-size:11px;color:var(--muted)}.foot b{color:var(--brand-deep)}
+</style></head><body>
+<div class="canvas" style="width:1720px;height:1000px">
+<div class="rail"></div>
+<div class="hd">
+<svg class="mk" viewBox="0 0 501 500"><path fill="#ff7357" d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg>
+<h1>Celer Trade Lifecycle with Celnet</h1>
+<span class="sub">Celnet · Celer Technologies</span>
+</div>
+<div class="wrap">
+
+<!-- PRICE PATH -->
+<div class="section-label">Price path · market-data inbound to the trader</div>
+<div class="row" style="align-items:stretch">
+  <div class="box tint" style="width:150px">
+    <div class="t">Venues</div>
+    <div class="d">FX-options liquidity sources and reference markets.</div>
+    <div><span class="chip">Fenics</span><span class="chip">Bloomberg</span><span class="chip">Refinitiv</span><span class="chip">EBS</span></div>
+  </div>
+  <div class="arrow">→</div>
+  <div class="box" style="width:140px">
+    <div class="t">FIX-in</div>
+    <div class="d">Real FIX 4.4 acceptor with an FX-options dialect, normalising every inbound feed.</div>
+  </div>
+  <div class="arrow">→</div>
+  <div class="box" style="width:170px">
+    <div class="t">celertech-marketdata</div>
+    <div class="d">The Celer market-data fabric — curated, blended observables for the desk.</div>
+  </div>
+  <div class="arrow">→</div>
+  <div class="box brand" style="width:210px">
+    <div class="t">celertech-marketmerchant</div>
+    <div class="d">Quote assembly. <b>Celnet</b> injects the FX-option price, the full Greek set and the calibrated surface here.</div>
+    <div><span class="chip k">Celnet · price &amp; surface</span></div>
+  </div>
+  <div class="arrow">→</div>
+  <div class="box brand" style="width:165px">
+    <div class="t">distributor</div>
+    <div class="d">Fan-out to many counterparties; <b>Celnet</b> streams two-way options pricing on the line.</div>
+    <div><span class="chip k">Celnet · stream</span></div>
+  </div>
+  <div class="arrow">→</div>
+  <div class="box accent" style="width:150px">
+    <div class="t">WebSocket</div>
+    <div class="d">A byte-identical WebSocket mirror carries the same contract to the browser.</div>
+  </div>
+  <div class="arrow">→</div>
+  <div class="box accent" style="width:215px">
+    <div class="t">Celer Trader</div>
+    <div class="d">celertech-orderrouting-webtrader-react — the React FX front-end the desk trades from.</div>
+  </div>
+</div>
+
+<!-- ORDER PATH -->
+<div class="section-label" style="margin-top:20px">Order path · execution outbound from the trader</div>
+<div class="row" style="align-items:stretch">
+  <div class="box accent" style="width:200px">
+    <div class="t">Celer Trader</div>
+    <div class="d">Click-to-trade on a keyed-MAC tradable token — sell-at-bid / buy-at-offer, last-look validity, idempotent execution.</div>
+  </div>
+  <div class="arrow">→</div>
+  <div class="box" style="width:185px">
+    <div class="t">celertech-orderrouting</div>
+    <div class="d">The order-lifecycle hub routing each ticket through the estate.</div>
+  </div>
+  <div class="arrow">→</div>
+  <div class="box brand" style="width:200px">
+    <div class="t">celertech-risk</div>
+    <div class="d">Pre-trade credit and limit checks. <b>Celnet</b> supplies option risk — sensitivities and scenario exposure — into the gate.</div>
+    <div><span class="chip k">Celnet · option risk</span></div>
+  </div>
+  <div class="arrow">→</div>
+  <div class="box" style="width:165px">
+    <div class="t">celertech-destination</div>
+    <div class="d">FIX-out to many venues via the FIX 4.4 initiator.</div>
+  </div>
+  <div class="arrow">→</div>
+  <div class="box" style="width:150px">
+    <div class="t">celertech-clearing</div>
+    <div class="d">Post-trade clearing and confirmation across the estate.</div>
+  </div>
+  <div class="arrow">→</div>
+  <div class="box brand" style="width:235px">
+    <div class="t">celertech-positionmanager</div>
+    <div class="d">Net position and P&amp;L truth source. <b>Celnet</b> drives the option risk and revaluation behind every position.</div>
+    <div><span class="chip k">Celnet · position risk</span></div>
+  </div>
+</div>
+
+<!-- CELNET SYSTEM-OF-RECORD CORE -->
+<div class="section-label" style="margin-top:22px">Celnet — the FX-options pricing system-of-record</div>
+<div class="row" style="align-items:stretch">
+  <div class="box brandfill" style="width:430px">
+    <div class="t"><svg width="15" height="15" viewBox="0 0 501 500"><path fill="#ff7357" d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg> Celnet pricing core</div>
+    <div class="d">A pinned, allocation-free hot core joined to the edge by wait-free single-producer rings. In-core pricing is so fast that network framing, not the maths, is the only meaningful latency — with zero-cost tail-percentile observability and regression-gated benchmarks.</div>
+    <div><span class="tag">Vanilla + full FX Greek set in one pass</span><span class="tag">4 delta conventions + strike↔delta solver</span><span class="tag">ATMF / DNS</span><span class="tag">VV · SABR · SVI · SSVI surface</span><span class="tag">broker-strangle calibration</span><span class="tag">arbitrage gates + arb-free term structure</span><span class="tag">first-gen exotics: digitals · touches · DNT · barriers</span><span class="tag">analytic · CN/Rannacher PDE · Philox MC</span><span class="tag">validated to machine precision vs an independent reference</span></div>
+  </div>
+  <div class="arrow">→</div>
+  <div class="box accent" style="width:355px">
+    <div class="t">Book &amp; risk cube</div>
+    <div class="d">Book-shaped scenario risk — a shock grid by real repricing, bucketed vega per (tenor × delta), a cross-gamma stencil, theta-roll over horizons, and a versioned marked-surface registry. The firm-wide OLAP position-fact cube nets in a common numeraire across eight dimensions with additive roll-up, non-additive per-node re-derivation, a cascading limit tree and entitlement-aware pruning.</div>
+    <div><span class="chip">Book ↔ Risk: two zooms of one cube</span></div>
+  </div>
+  <div class="arrow">→</div>
+  <div class="box brand" style="width:360px">
+    <div class="t">One contract · every surface</div>
+    <div class="d">A single clean, unversioned API — Pricing, Quote, a multiplex StreamSession and Surface with a Pin resolver. The GUI, the Rust client SDK, the admin CLI and the Excel CELNET.* add-in all consume the same contract; every value is bit-identical across surfaces.</div>
+    <div><span class="chip">React + WebGPU GUI</span><span class="chip">Rust SDK</span><span class="chip">CLI</span><span class="chip">Excel CELNET.*</span><span class="chip k">Open Quant SDK · plugin host</span></div>
+  </div>
+</div>
+
+<!-- DEPLOYMENT MODES -->
+<div class="row" style="margin-top:16px;align-items:stretch">
+  <div class="box tint" style="flex:1">
+    <div class="t">Three deployment modes · one seam</div>
+    <div class="d">Adapter swaps on the market-data / price-sink / order-exec seam traits move Celnet between
+    <span class="chip">Standalone</span><span class="chip">Hybrid</span><span class="chip">CelerIntegrated</span>
+    — reversible swaps, never a rewrite. A conflating egress governor, a resilient market-data subscriber, vendor-feed normalisation and an intra-fleet partition map carry node-local speed into horizontal scale-out and fan-out to many counterparties. The same seam ingests external products and feeds as integration targets.</div>
+  </div>
+</div>
+
+<div class="note">Celnet is the FX-options pricing system-of-record in the Celer trade lifecycle — pricing, Greeks and the surface flow into the price path; option risk flows into the risk and position path.</div>
+
+</div>
+<div class="foot">Celnet — a <b>Celer Technologies</b> product</div>
+</div>
+</body></html>
