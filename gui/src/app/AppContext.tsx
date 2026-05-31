@@ -39,6 +39,45 @@ export interface TicketSeed {
   expiryYears: number;
 }
 
+// --- scope (P0-6: entitlement-ready "what slice of the firm" seam) ----------
+
+/** The organizational level a scope crumb sits at, firm-down. */
+export type ScopeLevel = "firm" | "desk" | "book" | "pair";
+
+/** One node on the scope path (a breadcrumb crumb). */
+export interface ScopeNode {
+  level: ScopeLevel;
+  label: string;
+}
+
+/** A secondary grouping dimension for scoped views (book/blotter aggregation). */
+export type ScopeGroupBy = "none" | "desk" | "book" | "pair";
+
+/**
+ * The active scope: WHO is looking (principal) and WHAT slice (path + groupBy).
+ * Today `principal` is the literal `"grant-all"` — the scope filters NOTHING, but
+ * every data path flows through it so a real entitlement predicate slots in later
+ * with zero rework. The root path is always `[{level:"firm"}]` meaning "all desks
+ * · all books · all pairs"; drilling appends desk/book/pair crumbs.
+ */
+export interface ScopeContext {
+  /** Entitlement principal. `"grant-all"` today (no filtering); a real predicate later. */
+  principal: "grant-all";
+  /** The drill path, firm root first. The tail crumb is the current scope. */
+  path: ScopeNode[];
+  /** Secondary grouping for aggregated views. */
+  groupBy: ScopeGroupBy;
+}
+
+/** The firm root — "all desks · all books · all pairs". */
+export const FIRM_SCOPE_ROOT: ScopeNode = { level: "firm", label: "Firm" };
+
+/** A shared selection: the instrument under focus and a human label for it. */
+export interface Selection {
+  instrument: Instrument;
+  label: string;
+}
+
 interface AppState {
   transport: CelnetTransport;
   conventions: Conventions;
@@ -66,6 +105,23 @@ interface AppState {
   remarkSurface: (ladder?: BrokerQuoteSet[]) => Promise<void>;
   paletteOpen: boolean;
   setPaletteOpen: (open: boolean) => void;
+  /**
+   * The active scope (P0-6). Entitlement-ready: `grant-all` today, so it filters
+   * nothing, but data flows through it. Default path = `[Firm]`.
+   */
+  scope: ScopeContext;
+  /** Set the scope drill path (e.g. truncate to an ancestor crumb). */
+  setScopePath: (path: ScopeNode[]) => void;
+  /**
+   * The shared selection (P0-5): the instrument the Risk workspace analyses,
+   * driven by the Book/Ticket lanes. `null` until something is selected — Risk
+   * falls back to its seeded default so first load still shows a structure.
+   */
+  selected: Selection | null;
+  /** Set the shared selection without changing the active workspace. */
+  setSelected: (sel: Selection | null) => void;
+  /** Select an instrument AND jump to the Risk workspace (one-click drill-to-risk). */
+  drillToRisk: (instrument: Instrument, label: string) => void;
 }
 
 const Ctx = createContext<AppState | null>(null);
@@ -88,6 +144,11 @@ export function AppProvider({ children }: { children: React.ReactNode }): React.
   const [pairIndex, setPairIndex] = useState(0);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [surface, setSurface] = useState<MarkedSurface | null>(null);
+  // Scope (P0-6): default to the firm root — "all desks · all books · all pairs".
+  const [scopePath, setScopePath] = useState<ScopeNode[]>([FIRM_SCOPE_ROOT]);
+  // Shared selection (P0-5): null until a lane selects/drills; Risk falls back to
+  // its seeded default so first load still renders a structure.
+  const [selected, setSelected] = useState<Selection | null>(null);
 
   const pairCtx = PAIRS[pairIndex]!;
 
@@ -163,6 +224,16 @@ export function AppProvider({ children }: { children: React.ReactNode }): React.
     if (idx >= 0) setPairIndex(idx);
   };
 
+  const scope: ScopeContext = useMemo(
+    () => ({ principal: "grant-all", path: scopePath, groupBy: "none" }),
+    [scopePath],
+  );
+
+  const drillToRisk = (instrument: Instrument, label: string) => {
+    setSelected({ instrument, label });
+    setWorkspace("risk");
+  };
+
   const value: AppState = {
     transport,
     conventions,
@@ -177,6 +248,11 @@ export function AppProvider({ children }: { children: React.ReactNode }): React.
     remarkSurface,
     paletteOpen,
     setPaletteOpen,
+    scope,
+    setScopePath,
+    selected,
+    setSelected,
+    drillToRisk,
   };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

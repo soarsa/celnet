@@ -13,6 +13,7 @@ import { useApp } from "../app/AppContext";
 import type {
   Instrument,
   Leg,
+  MarketContext,
   Quote,
   StrategyKind,
 } from "../data/contract";
@@ -31,6 +32,7 @@ import {
   sideVerb,
 } from "../lib/format";
 import { nowNanos } from "../hooks/useClock";
+import { tenorLabel } from "../lib/trend";
 import styles from "./TicketWorkspace.module.css";
 
 type Structure = "VANILLA" | StrategyKind;
@@ -43,14 +45,16 @@ const STRUCTURES: { id: Structure; label: string }[] = [
   { id: "SEAGULL", label: "Seagull" },
 ];
 
-const TENORS: { label: string; years: number }[] = [
-  { label: "ON", years: 1 / 365 },
-  { label: "1W", years: 7 / 365 },
-  { label: "1M", years: 30 / 365 },
-  { label: "2M", years: 60 / 365 },
-  { label: "3M", years: 91 / 365 },
-  { label: "6M", years: 182 / 365 },
-  { label: "1Y", years: 1 },
+// Year fractions only; the LABEL is derived from the shared `tenorLabel` seam so
+// the ticket names a tenor identically to the Stream lane (single source of truth).
+const TENOR_YEARS: readonly number[] = [
+  1 / 365,
+  7 / 365,
+  30 / 365,
+  60 / 365,
+  91 / 365,
+  182 / 365,
+  1,
 ];
 
 function buildInstrument(
@@ -131,7 +135,11 @@ export function TicketWorkspace(): React.ReactElement {
     return () => window.removeEventListener("keydown", onKey);
   }, [accept, requestQuote, app.paletteOpen]);
 
-  const legs = describeLegs(instrument, app.pairCtx.market.spot, app.pairCtx.market.vol, tenorYears);
+  // P0-10: strikes (and any delta→strike resolution) are computed off the
+  // ACTIVE pair's real market (spot/vol/rDom/rFor) — never the old hardcoded
+  // rDom 0.04 / rFor 0.02 constants — so the displayed legs reprice with the
+  // pair the trader is actually looking at.
+  const legs = describeLegs(instrument, app.pairCtx.market, tenorYears);
 
   return (
     <div className={styles.wrap}>
@@ -172,16 +180,16 @@ export function TicketWorkspace(): React.ReactElement {
         </div>
 
         <div className={styles.tenorRow}>
-          {TENORS.map((t) => (
+          {TENOR_YEARS.map((years) => (
             <button
-              key={t.label}
-              className={`${styles.tenorPill} ${Math.abs(t.years - tenorYears) < 1e-9 ? styles.tenorActive : ""}`}
+              key={years}
+              className={`${styles.tenorPill} ${Math.abs(years - tenorYears) < 1e-9 ? styles.tenorActive : ""}`}
               onClick={() => {
-                setTenorYears(t.years);
+                setTenorYears(years);
                 setQuote(null);
               }}
             >
-              {t.label}
+              {tenorLabel(years)}
             </button>
           ))}
         </div>
@@ -278,7 +286,15 @@ export function TicketWorkspace(): React.ReactElement {
             >
               Stream this ≋
             </Button>
-            <Button variant="ghost" onClick={() => app.setWorkspace("risk")}>
+            <Button
+              variant="ghost"
+              onClick={() =>
+                app.drillToRisk(
+                  instrument,
+                  `${app.pairCtx.pair.base}/${app.pairCtx.pair.quote} ${tenorLabel(tenorYears)} ${structureLabel(structure)}`,
+                )
+              }
+            >
               Add to risk ⊞
             </Button>
           </span>
@@ -303,11 +319,9 @@ interface LegView {
 
 function describeLegs(
   instrument: Instrument,
-  spot: number,
-  vol: number,
+  market: MarketContext,
   t: number,
 ): LegView[] {
-  const market = { spot, vol, rDom: 0.04, rFor: 0.02 };
   const toView = (leg: Leg): LegView => {
     const strike =
       leg.strike.kind === "strike"

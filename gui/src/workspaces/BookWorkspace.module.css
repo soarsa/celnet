@@ -128,6 +128,28 @@
 .table tbody tr:hover {
   background: oklch(from var(--accent) l c h / 0.06);
 }
+/* drillable pair rows — Book→Risk drill (P0-5). Cursor + accent affordance; the
+   accent (indigo) marks the actionable selection target, never coral. */
+.drillRow {
+  cursor: pointer;
+}
+.drillRow:hover {
+  background: oklch(from var(--accent) l c h / 0.1);
+}
+.drillRow:focus-visible {
+  outline: 1.5px solid var(--accent);
+  outline-offset: -1.5px;
+}
+.drillCue {
+  display: inline-block;
+  width: 0.9em;
+  margin-right: var(--space-1);
+  color: var(--accent);
+  opacity: 0.55;
+}
+.drillRow:hover .drillCue {
+  opacity: 1;
+}
 .pairCell {
   text-align: left;
   font-family: var(--font-brand);
@@ -239,6 +261,14 @@
 }
 .emptyInline {
   font-size: var(--type-micro);
+  color: var(--text-tertiary);
+}
+
+/* honest Σ native-units caveat under the aggregate ladder */
+.ladderNote {
+  margin: var(--space-3) 0 0;
+  font-size: var(--type-micro);
+  line-height: 1.5;
   color: var(--text-tertiary);
 }
 

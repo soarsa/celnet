@@ -23,21 +23,17 @@ import { SmileChart } from "../viz/SmileChart";
 import { calibrateLadder } from "../data/surface";
 import { rampGradient } from "../viz/ramp";
 import { fmtVol, fmtVolPoint, fmtClock } from "../lib/format";
+import { tenorLabel } from "../lib/trend";
 import { nowNanos } from "../hooks/useClock";
 import styles from "./SurfaceWorkspace.module.css";
 
 /** The five editable broker handles, in display order. */
 type Handle = "atmVol" | "rr25" | "bf25" | "rr10" | "bf10";
 const HANDLES: Handle[] = ["atmVol", "rr25", "bf25", "rr10", "bf10"];
+/** Stable per-tenor key — selection compares on this, never an absolute-float window. */
 const tkey = (t: number): string => t.toFixed(8);
-
-function tenorName(years: number): string {
-  const days = Math.round(years * 365);
-  if (days <= 1) return "ON";
-  if (days < 28) return `${Math.round(days / 7)}W`;
-  if (days < 360) return `${Math.round(days / 30)}M`;
-  return `${Math.round(days / 365)}Y`;
-}
+/** Snap a signed delta to a stable integer key (pillars are coarse: 0.10/0.25/0.50…). */
+const deltaKey = (d: number): number => Math.round(d * 1e4);
 
 export function SurfaceWorkspace(): React.ReactElement {
   const app = useApp();
@@ -66,6 +62,8 @@ export function SurfaceWorkspace(): React.ReactElement {
 
   const selectedSmile = useMemo(() => {
     if (!preview) return null;
+    // Nearest tenor by absolute distance — a robust selector that never depends on
+    // an exact-float match (which breaks after recalibration re-derives tenorYears).
     let best = preview.smiles[0];
     let bestD = Infinity;
     for (const s of preview.smiles) {
@@ -78,10 +76,31 @@ export function SurfaceWorkspace(): React.ReactElement {
     return best ?? null;
   }, [preview, selTenorYears]);
 
+  // STABLE surface-wide vol band (P0-9): the min/max calibrated vol across EVERY
+  // smile point of the working preview. Passed to SmileChart so its y-axis stays
+  // fixed across tenor switches and edits — smiles stay visually comparable rather
+  // than the axis re-fitting to each curve. Recomputes only when the preview does.
+  const volRange = useMemo(() => {
+    if (!preview) return undefined;
+    let min = Infinity;
+    let max = -Infinity;
+    for (const s of preview.smiles) {
+      for (const p of s.points) {
+        if (p.vol < min) min = p.vol;
+        if (p.vol > max) max = p.vol;
+      }
+    }
+    return Number.isFinite(min) && Number.isFinite(max) && max > min ? { min, max } : undefined;
+  }, [preview]);
+
   if (!surface || !preview || !selectedSmile) {
     return <div className={styles.loading}>Marking surface…</div>;
   }
 
+  // The selected tenor's stable key — the marking grid marks a row active by
+  // comparing this against each row's key, never by an absolute-float window
+  // (`< 1e-9`), which could mis-select after the ladder recalibrates.
+  const selectedTenorKey = tkey(selectedSmile.tenorYears);
   const dirty = Object.values(edits).some((e) => Object.keys(e).length > 0);
   // Publish gate: the WHOLE surface must be arb-free (every tenor's butterfly AND
   // the cross-tenor calendar check) — not just the selected smile's butterfly.
@@ -110,6 +129,7 @@ export function SurfaceWorkspace(): React.ReactElement {
             smile={selectedSmile}
             selectedDelta={selDelta}
             onSelect={setSelDelta}
+            volRange={volRange}
           />
           <div className={styles.legend}>
             <span className={styles.legendLabel}>low</span>
@@ -130,7 +150,7 @@ export function SurfaceWorkspace(): React.ReactElement {
             <span>10BF</span>
           </div>
           {preview.smiles.map((s) => {
-            const active = Math.abs(s.tenorYears - selTenorYears) < 1e-9;
+            const active = tkey(s.tenorYears) === selectedTenorKey;
             const q = s.brokerQuotes;
             const edited = edits[tkey(s.tenorYears)] ?? {};
             return (
@@ -139,7 +159,7 @@ export function SurfaceWorkspace(): React.ReactElement {
                 className={`${styles.markRow} ${active ? styles.markActive : ""}`}
                 onClick={() => setSelTenorYears(s.tenorYears)}
               >
-                <span className={styles.tenorCell}>{tenorName(s.tenorYears)}</span>
+                <span className={styles.tenorCell}>{tenorLabel(s.tenorYears)}</span>
                 {HANDLES.map((h) => {
                   const val = q[h];
                   const isEdited = edited[h] !== undefined;
@@ -153,7 +173,7 @@ export function SurfaceWorkspace(): React.ReactElement {
                         value={(val * 100).toFixed(2)}
                         onChange={(e) => setHandle(s.tenorYears, h, e.target.value)}
                         onClick={(e) => e.stopPropagation()}
-                        aria-label={`${tenorName(s.tenorYears)} ${h}`}
+                        aria-label={`${tenorLabel(s.tenorYears)} ${h}`}
                       />
                     );
                   }
@@ -170,10 +190,21 @@ export function SurfaceWorkspace(): React.ReactElement {
 
         <ArbBanner arb={arb} />
 
+        {/* P0-7 model PROVENANCE (display only). The current contract carries no
+            smile-model field on MarkSurface/Smile, so we surface the HONEST known
+            provenance — a broker-calibrated mark from the ATM/RR/BF handle set —
+            never a fabricated VV/SABR/SVI/SSVI selector (that selector is Phase-1
+            contract work; an API the server can't honor would be a placeholder). */}
         <div className={styles.provenance}>
-          <span className={styles.provLabel}>source</span>
-          <span>{selectedSmile.brokerQuotes.hasTenDelta ? "5-pt broker" : "3-pt broker"}</span>
+          <span className={styles.provLabel}>model</span>
+          <span title="Calibrated from the broker ATM / RR / BF handles; no smile-model selector exists in the current contract.">
+            broker-calibrated
+          </span>
           <span className={styles.provDot}>·</span>
+          <span>{selectedSmile.brokerQuotes.hasTenDelta ? "5-pt handles" : "3-pt handles"}</span>
+        </div>
+        <div className={styles.provenance}>
+          <span className={styles.provLabel}>marked</span>
           <span className="num">{fmtClock(selectedSmile.epochNanos)}</span>
           <span className={styles.provDot}>·</span>
           <span className="num">surf v{surface.surfaceVersion.toString()}</span>
@@ -209,7 +240,10 @@ export function SurfaceWorkspace(): React.ReactElement {
             <span className="num">
               {Math.abs(selDelta) >= 0.49 ? "ATM" : `${Math.round(Math.abs(selDelta) * 100)}Δ ${selDelta < 0 ? "put" : "call"}`}
               {" · "}
-              {fmtVol(selectedSmile.points.find((p) => Math.abs(p.delta - selDelta) < 1e-6)?.vol ?? selectedSmile.brokerQuotes.atmVol)}
+              {fmtVol(
+                selectedSmile.points.find((p) => deltaKey(p.delta) === deltaKey(selDelta))?.vol ??
+                  selectedSmile.brokerQuotes.atmVol,
+              )}
             </span>
           </div>
         )}

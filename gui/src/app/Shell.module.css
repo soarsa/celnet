@@ -129,11 +129,36 @@
   background: oklch(0 0 0 / 0.2);
 }
 
+/*
+ * P0-11: the canvas is a stacking container. Every workspace pane stays MOUNTED
+ * and occupies the same cell; only the active pane is displayed. Switching toggles
+ * visibility (no destructive remount, no lost in-progress state / re-fired effects)
+ * while the active pane replays the cross-fade-with-parallax entrance — CSS
+ * animations restart when an element returns from `display:none`, so the depth cue
+ * survives without remounting the workspace subtree.
+ */
 .canvas {
+  position: relative;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.pane {
+  position: absolute;
+  inset: 0;
   min-height: 0;
   min-width: 0;
   overflow: hidden;
   padding: var(--space-5);
+}
+
+.paneHidden {
+  display: none;
+}
+
+.paneActive {
+  display: block;
   animation: ws-in var(--workspace-switch) var(--ease-out);
 }
 

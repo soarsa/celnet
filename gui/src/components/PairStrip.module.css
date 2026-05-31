@@ -184,8 +184,22 @@
 .spark {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
   height: 18px;
   margin-top: var(--space-1);
+}
+
+/* Honest provenance: the strip's series is the pair's primary streamed PREMIUM
+   mid, not a synthetic activity index — say so on the face (P0-4). */
+.sparkTag {
+  flex: 0 0 auto;
+  font-family: var(--font-brand);
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  opacity: 0.8;
 }
 
 .noSpark {
