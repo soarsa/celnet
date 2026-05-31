@@ -609,6 +609,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "celnet-risk-fleet"
+version = "0.0.0"
+dependencies = [
+ "celnet-core",
+ "celnet-risk-cube",
+ "celnet-risk-normalize",
+ "celnet-router",
+ "celnet-types",
+ "proptest",
+]
+
+[[package]]
 name = "celnet-risk-normalize"
 version = "0.0.0"
 dependencies = [

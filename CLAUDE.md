@@ -120,6 +120,32 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-05-31 — **Cross-fleet distributed risk fan-out (aggregation algebra) — DONE; closes the
+  LAST frontier item.** New clean crate **`celnet-risk-fleet`** (one-way deps → {`celnet-risk-cube`,
+  `celnet-router`, `celnet-types`}; verified acyclic — neither cube nor router gains a fleet dep).
+  Partitions `RiskFact`s by **(legal-entity, ccy-pair)** through `celnet-router`'s real **HRW**
+  `PartitionMap`/`natural_owner` (NOT modulo) onto a `ReplicaSet`; **shard-local roll-up** (each
+  logical shard owns its facts in its own `Cube`); **cross-shard reduce** — *additive* measures
+  (per-ccy `NetGreeks` + `VegaLadder`) combine via `NodeAggregate::merge_additive` (associative →
+  EXACT), *non-additive* (VaR/ES, curvature) **re-gathered at firm level** (union of constituents →
+  re-derive once; summing shard VaRs would be wrong by sub-additivity — proven). 13 tests:
+  **fan-out == single-node** `firm_aggregate` to 1e-12 across the full Greek set + vega ladder;
+  non-additive VaR/ES & curvature reconcile exactly (same constituent multiset → same oracle; residual
+  only FP summation order, bit-identical when order fixed); HRW disjoint-cover + (entity,pair)
+  co-residency + **minimal-reshuffle** (5→6 replicas moves ~1/N, only onto the new replica);
+  bit-reproducible. **Honest scope:** this is the cross-shard aggregation ALGEBRA + HRW partitioning,
+  validated **in-process** (logical shards = local `Cube` standing in for a separate node); the
+  **physical cross-node transport, replicated event log, and hot-standby/failover remain
+  designed-only** (no sockets/RPC faking a cluster) — `docs/SCALE-OUT.md` §0 prose + table corrected
+  to match (router HRW + fleet algebra now Built; transport/log/standby still Designed only). Verified
+  by hand: **`just check-crate celnet-risk-fleet` 13/13 + full `just check` green ("All gates
+  passed.")**; built via an implement→adversarial-verify dynamic workflow (verdict accept), then
+  independently re-gated, diff-reviewed (no mocks/modulo/placeholder), and the dependency graph
+  confirmed acyclic (`cargo tree -i celnet-risk-fleet --edges normal` empty). **Frontier now clear:**
+  both honestly-deferred items (AAD/GPU reval; cross-fleet risk) are landed; what remains is the
+  physical fleet plumbing (transport/log/standby — gated on a measured single-shard bottleneck) and
+  the deferred GPU items (closed-form batch kernel / Workload A·G2, GPU pathwise Greeks / G6).
+
 - 2026-05-31 — **AAD adjoint Greeks + GPU-batched scenario — built AND wired into the risk
   estate (closes the first frontier item; bump-and-revalue/analytic kept as oracles).** Resumed
   the in-flight dynamic workflow and finished it end-to-end. **(1) `celnet-vanilla::adjoint_greeks`**
