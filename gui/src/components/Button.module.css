@@ -32,12 +32,17 @@
 
 .primary {
   background: var(--accent);
-  color: oklch(0.16 0.012 250);
+  /* legible ink on the indigo accent — track the navy hue (264) */
+  color: oklch(0.16 0.012 264);
   border-color: transparent;
   box-shadow: 0 1px 0 oklch(1 0 0 / 0.18) inset;
 }
 .primary:hover {
   background: oklch(from var(--accent) calc(l + 0.04) c h);
+}
+.primary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .secondary {

@@ -27,6 +27,7 @@
 .headerRow {
   height: 34px;
   border-bottom: var(--hairline);
+  font-family: var(--font-brand);
   font-size: var(--type-micro);
   text-transform: uppercase;
   letter-spacing: 0.06em;

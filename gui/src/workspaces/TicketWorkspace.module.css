@@ -20,8 +20,10 @@
   border-bottom: var(--hairline);
 }
 .pair {
+  font-family: var(--font-brand);
   font-size: var(--type-title);
   font-weight: var(--weight-header);
+  letter-spacing: 0.01em;
 }
 .dot {
   color: var(--text-tertiary);
@@ -93,7 +95,9 @@
   font-size: var(--type-callout);
 }
 .legNo {
+  font-family: var(--font-brand);
   font-size: var(--type-micro);
+  text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-tertiary);
   width: 44px;
@@ -146,7 +150,9 @@
   gap: var(--space-2);
 }
 .priceLabel {
+  font-family: var(--font-brand);
   font-size: var(--type-micro);
+  text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--text-tertiary);
 }

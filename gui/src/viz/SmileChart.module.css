@@ -10,6 +10,7 @@
 }
 
 .title {
+  font-family: var(--font-brand);
   font-size: var(--type-micro);
   text-transform: uppercase;
   letter-spacing: 0.08em;

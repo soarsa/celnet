@@ -13,7 +13,10 @@ import { TicketWorkspace } from "../workspaces/TicketWorkspace";
 import { StreamWorkspace } from "../workspaces/StreamWorkspace";
 import { SurfaceWorkspace } from "../workspaces/SurfaceWorkspace";
 import { RiskWorkspace } from "../workspaces/RiskWorkspace";
+import { BookWorkspace } from "../workspaces/BookWorkspace";
 import { StatusRibbon } from "./StatusRibbon";
+import { CelerMark, CelerLockup } from "../components/CelerMark";
+import { PairStrip } from "../components/PairStrip";
 import { PAIRS, strategyInstrument } from "../data/seed";
 import styles from "./Shell.module.css";
 
@@ -22,6 +25,7 @@ const RAIL: { id: WorkspaceId; glyph: string; label: string; kbd: string }[] = [
   { id: "stream", glyph: "≋", label: "Stream", kbd: "⌘2" },
   { id: "surface", glyph: "◷", label: "Surface", kbd: "⌘3" },
   { id: "risk", glyph: "⊞", label: "Risk", kbd: "⌘4" },
+  { id: "book", glyph: "Σ", label: "Book", kbd: "⌘5" },
 ];
 
 export function Shell(): React.ReactElement {
@@ -35,7 +39,7 @@ export function Shell(): React.ReactElement {
       if (meta && e.key.toLowerCase() === "k") {
         e.preventDefault();
         app.setPaletteOpen(true);
-      } else if (meta && e.key >= "1" && e.key <= "4") {
+      } else if (meta && e.key >= "1" && e.key <= "5") {
         e.preventDefault();
         app.setWorkspace(RAIL[Number(e.key) - 1]!.id);
       } else if (meta && e.key.toLowerCase() === "p") {
@@ -126,8 +130,8 @@ export function Shell(): React.ReactElement {
   return (
     <div className={styles.shell}>
       <aside className={styles.rail} aria-label="workspaces">
-        <div className={styles.brand} title="Celnet">
-          <span className={styles.mark}>◆</span>
+        <div className={styles.brand} title="Celnet · a Celer product">
+          <CelerMark size={30} className={styles.mark} title="Celer" />
         </div>
         <nav className={styles.nav}>
           {RAIL.map((r) => (
@@ -156,11 +160,13 @@ export function Shell(): React.ReactElement {
 
       <div className={styles.main}>
         <TitleBar />
+        <PairStrip />
         <div className={styles.canvas} key={app.workspace}>
           {app.workspace === "ticket" && <TicketWorkspace />}
           {app.workspace === "stream" && <StreamWorkspace />}
           {app.workspace === "surface" && <SurfaceWorkspace />}
           {app.workspace === "risk" && <RiskWorkspace />}
+          {app.workspace === "book" && <BookWorkspace />}
         </div>
         <StatusRibbon />
       </div>
@@ -183,13 +189,15 @@ function TitleBar(): React.ReactElement {
         <span />
         <span />
       </div>
+      <CelerLockup size={22} className={styles.lockup} />
+      <span className={styles.divider} aria-hidden>
+        ·
+      </span>
       <button
         className={styles.pairSwitch}
         onClick={() => app.setPaletteOpen(true)}
         title="Switch pair (⌘P)"
       >
-        <span className={styles.product}>Celnet</span>
-        <span className={styles.divider}>·</span>
         <span className={`num ${styles.pair}`}>
           {app.pairCtx.pair.base}/{app.pairCtx.pair.quote}
         </span>

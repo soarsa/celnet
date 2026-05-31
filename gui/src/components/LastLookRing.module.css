@@ -14,7 +14,8 @@
 }
 
 .arc {
-  stroke: var(--accent);
+  /* the live last-look countdown is a brand-pulse moment — coral */
+  stroke: var(--brand);
   stroke-width: 2;
   stroke-linecap: round;
   transition: stroke-dasharray 120ms linear, stroke 200ms var(--ease-out);

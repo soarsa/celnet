@@ -14,13 +14,15 @@ interface Oklch {
   h: number;
 }
 
-// Stops mirror the --ramp-* design tokens.
+// Stops mirror the rebranded --ramp-* design tokens (Celer dark appearance): the
+// cool (negative) pole tracks the Celer indigo accent hue (~280), the mid is a
+// near-neutral on the navy hue (264), the warm (positive) pole stays green.
 const STOPS: { t: number; col: Oklch }[] = [
-  { t: 0.0, col: { l: 0.55, c: 0.14, h: 255 } },
-  { t: 0.25, col: { l: 0.68, c: 0.09, h: 250 } },
-  { t: 0.5, col: { l: 0.82, c: 0.012, h: 250 } },
-  { t: 0.75, col: { l: 0.74, c: 0.1, h: 145 } },
-  { t: 1.0, col: { l: 0.62, c: 0.16, h: 150 } },
+  { t: 0.0, col: { l: 0.55, c: 0.15, h: 280 } }, // --ramp-neg-2
+  { t: 0.25, col: { l: 0.68, c: 0.09, h: 278 } }, // --ramp-neg-1
+  { t: 0.5, col: { l: 0.8, c: 0.01, h: 264 } }, // --ramp-mid
+  { t: 0.75, col: { l: 0.74, c: 0.1, h: 145 } }, // --ramp-pos-1
+  { t: 1.0, col: { l: 0.62, c: 0.16, h: 150 } }, // --ramp-pos-2
 ];
 
 function lerp(a: number, b: number, w: number): number {
