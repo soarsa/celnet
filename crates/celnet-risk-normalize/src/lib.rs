@@ -21,6 +21,14 @@
 //!    **spot-unadjusted delta, premium excluded**, with the premium carried as a
 //!    *separate* monetary line so premium-adjusted views remain reconstructable.
 //!    The result is a [`CanonicalLeaf`] — a convention-free fact the cube can sum.
+//!    The per-position Greek set is produced by **reverse-mode adjoint AD** by
+//!    default ([`GreekEngine::Adjoint`]) — one reverse sweep yields the full
+//!    first-order block at ~O(1) price-cost regardless of factor count
+//!    (`docs/RISK-HIERARCHY.md` §3.3, the portfolio-risk scale path), replacing the
+//!    O(factors) bump-and-revalue for this additive leaf. The closed-form analytic
+//!    Greeks ([`GreekEngine::Analytic`]) stay the validation oracle / fallback; the
+//!    two are gated equal to ~1e-9 in the test suite, which licenses defaulting to
+//!    the faster path.
 //!
 //! 2. **Common-numeraire conversion** ([`CanonicalLeaf::currency_exposure`] +
 //!    [`Numeraire`]) — §2.3. Delta is a *currency amount*, not a scalar: for
@@ -61,7 +69,9 @@
 mod leaf;
 mod numeraire;
 
-pub use leaf::{CanonicalGreeks, CanonicalLeaf, PositionRisk, canonicalize};
+pub use leaf::{
+    CanonicalGreeks, CanonicalLeaf, GreekEngine, PositionRisk, canonicalize, canonicalize_with,
+};
 pub use numeraire::{
     CcyExposure, CurrencyExposure, MonetaryAmount, Numeraire, NumeraireError, SpotResolver,
     StaticSpotResolver,

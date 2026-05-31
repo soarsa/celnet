@@ -16,3 +16,9 @@ celnet-types.workspace = true
 celnet-core.workspace = true
 celnet-vanilla.workspace = true
 celnet-risk-normalize.workspace = true
+# Batched scenario revaluation: the spot×vol grid for a node is priced in ONE
+# GPU dispatch (Metal/Vulkan) with the f64 CPU oracle as the headless/CI fallback
+# — internal acceleration of the non-additive bump-and-revalue path, reconciled to
+# the analytic closed form. celnet-gpu depends only on -types/-core, so this is a
+# one-way edge (no cycle).
+celnet-gpu.workspace = true

@@ -46,6 +46,14 @@ struct GpuParams {
     seed_hi: u32,
 }
 
+/// A borrow of a live wgpu device + queue, handed to the batched-scenario
+/// kernel so it can record its own dispatch on the backend's shared adapter
+/// without owning or re-probing the device.
+pub(crate) struct GpuContextRef<'a> {
+    pub(crate) device: &'a wgpu::Device,
+    pub(crate) queue: &'a wgpu::Queue,
+}
+
 /// Live wgpu device state for the GPU path.
 struct GpuContext {
     device: wgpu::Device,
@@ -95,6 +103,19 @@ impl GpuBackend {
     #[must_use]
     pub fn is_gpu(&self) -> bool {
         self.context.is_some()
+    }
+
+    /// Borrow the live device/queue when a GPU adapter is present, so the
+    /// batched-scenario kernel ([`crate::scenario`]) can build its own pipeline
+    /// over the *same* device this backend probed — sharing the one adapter
+    /// rather than re-probing. `None` on a headless host (the scenario pricer
+    /// then uses its exact f64 CPU oracle, mirroring this backend's fallback).
+    #[must_use]
+    pub(crate) fn gpu_context(&self) -> Option<GpuContextRef<'_>> {
+        self.context.as_ref().map(|ctx| GpuContextRef {
+            device: &ctx.device,
+            queue: &ctx.queue,
+        })
     }
 
     /// Attempt full wgpu setup; `None` on any failure (no adapter, no device,

@@ -8,9 +8,11 @@
 //!    dimension at any level and sum their canonical Greeks + vega ladder. This is
 //!    the cheap, associative OLAP reduction (§2.5).
 //! 2. **Non-additive re-derivation** ([`Cube::node_var_es`],
-//!    [`Cube::node_curvature_spot`], [`Cube::node_correlation_weighted_vega`]) —
-//!    re-run the bump-and-revalue reducers over a node's constituent positions
-//!    (§2.5). These are NOT summed from children.
+//!    [`Cube::node_var_es_sensitivity`], [`Cube::node_curvature_spot`],
+//!    [`Cube::node_correlation_weighted_vega`]) — re-derive the non-additive
+//!    reducers over a node's constituent positions (§2.5). These are NOT summed
+//!    from children. VaR/ES has two lenses: the exact bump-and-revalue oracle and
+//!    the AAD sensitivity scale path (§3.3).
 //!
 //! Roll-up and drill-down operate over the **same** facts, so a node total is
 //! always reconcilable to its constituents (§2.5) — `group_by` returns the leaf
@@ -37,6 +39,7 @@ use crate::additive::{NetGreeks, VegaLadder, VegaPillar};
 use crate::dimension::{DimensionId, FactKey, Hierarchy, PositionId, RiskFact};
 use crate::nonadditive::{
     Scenario, VarEs, correlation_weighted_vega, historical_var_es, sbm_curvature_spot,
+    sensitivity_var_es,
 };
 
 /// A mapping from a leaf to its `(tenor × delta)` vega pillar — supplied by the
@@ -236,11 +239,31 @@ impl Cube {
         agg
     }
 
-    /// **Non-additive**: VaR/ES of a node's constituent positions by
-    /// bump-and-revalue (`docs/RISK-HIERARCHY.md` §2.5). Re-derived, not summed.
+    /// **Non-additive**: VaR/ES of a node's constituent positions by full
+    /// **bump-and-revalue** — the exact reference / oracle (`docs/RISK-HIERARCHY.md`
+    /// §2.5). Re-derived, not summed. O(positions × scenarios) repricings.
     #[must_use]
     pub fn node_var_es(node: &NodeAggregate, scenarios: &[Scenario], alpha: f64) -> VarEs {
         historical_var_es(&node.positions, scenarios, alpha)
+    }
+
+    /// **Non-additive (scale path)**: VaR/ES of a node by the **AAD sensitivity
+    /// lens** (`docs/RISK-HIERARCHY.md` §3.3). Each position's full Greek set is
+    /// computed in ONE reverse-mode `celnet_vanilla::adjoint_greeks` sweep, then
+    /// every scenario's node P&L is a second-order Taylor expansion — O(positions)
+    /// sweeps + O(positions × scenarios) cheap arithmetic, vs [`Cube::node_var_es`]'s
+    /// O(positions × scenarios) full repricings.
+    ///
+    /// Accurate to the truncation error of a 2nd-order series over moderate VaR-scale
+    /// shocks; reconcile against [`Cube::node_var_es`] (the oracle) for the exact
+    /// tail. See [`crate::nonadditive::sensitivity_var_es`] for the precise regime.
+    #[must_use]
+    pub fn node_var_es_sensitivity(
+        node: &NodeAggregate,
+        scenarios: &[Scenario],
+        alpha: f64,
+    ) -> VarEs {
+        sensitivity_var_es(&node.positions, scenarios, alpha)
     }
 
     /// **Non-additive**: FRTB-SbM spot curvature of a node by up/down full reprice

@@ -351,7 +351,10 @@ dependencies = [
  "celnet-conventions",
  "celnet-core",
  "celnet-engine",
+ "celnet-gpu",
  "celnet-proto",
+ "celnet-risk-cube",
+ "celnet-risk-normalize",
  "celnet-server",
  "celnet-types",
  "celnet-vanilla",
@@ -599,6 +602,7 @@ name = "celnet-risk-cube"
 version = "0.0.0"
 dependencies = [
  "celnet-core",
+ "celnet-gpu",
  "celnet-risk-normalize",
  "celnet-types",
  "celnet-vanilla",

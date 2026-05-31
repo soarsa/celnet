@@ -40,11 +40,13 @@ pub mod backend;
 pub mod counter_rng;
 pub mod cpu;
 pub mod gpu;
+pub mod scenario;
 
 pub use backend::{PathSpec, PayoffKernel, PricingBackend, Reduction};
 pub use counter_rng::{CounterAddress, CounterNormals};
 pub use cpu::CpuBackend;
 pub use gpu::GpuBackend;
+pub use scenario::{ScenarioAxes, ScenarioGrid, ScenarioPricer};
 
 /// The simulation precision a [`PricingBackend`] computes in.
 ///
