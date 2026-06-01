@@ -5,6 +5,9 @@
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Celnet Ticket</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Anaheim:wght@400..800&display=swap" rel="stylesheet" />
     <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
     <link rel="stylesheet" href="./taskpane/taskpane.css" />
     <script type="module" src="./taskpane/taskpane.ts"></script>
@@ -12,39 +15,44 @@
   <body>
     <main id="app" class="app">
       <header class="hdr">
-        <h1>Celnet Ticket</h1>
+        <svg class="mark" viewBox="0 0 501 500" aria-hidden="true"><path fill="#ff7357" d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg>
+        <h1>Celnet <span class="light">Ticket</span></h1>
         <span id="conn" class="pill pill-off">disconnected</span>
       </header>
 
       <section class="card">
         <h2>RFQ</h2>
-        <div class="grid">
+        <div class="frow">
           <label>Pair <input id="rfq-pair" value="EURUSD" /></label>
           <label>Tenor <input id="rfq-tenor" value="1Y" /></label>
-          <label>Strike/Δ <input id="rfq-strike" value="1.12" /></label>
-          <label>C/P <input id="rfq-cp" value="C" /></label>
-          <label>Notional <input id="rfq-notional" value="1000000" /></label>
+          <label>Strike / Δ <input id="rfq-strike" value="1.12" /></label>
+          <label>C / P <input id="rfq-cp" value="C" /></label>
+          <label class="full">Notional <input id="rfq-notional" value="1000000" /></label>
         </div>
         <div class="row">
-          <button id="rfq-go">Request quote</button>
+          <button id="rfq-go" class="btn ghost">Request quote</button>
           <span id="rfq-state" class="state"></span>
         </div>
-        <div id="rfq-result" class="result"></div>
-        <div class="row">
-          <button id="trade-buy" disabled>Trade BUY (lift offer)</button>
-          <button id="trade-sell" disabled>Trade SELL (hit bid)</button>
-          <span id="trade-state" class="state"></span>
+        <div class="two-way">
+          <div class="qbox bid"><div class="k">Bid · hit (sell)</div><div id="rfq-bid" class="v">—</div></div>
+          <div class="qbox offer"><div class="k">Offer · lift (buy)</div><div id="rfq-offer" class="v">—</div></div>
         </div>
+        <div id="rfq-lastlook" class="lastlook">no live quote</div>
+        <div class="btnrow">
+          <button id="trade-buy" class="btn primary" disabled>Trade BUY — lift offer</button>
+          <button id="trade-sell" class="btn ghost" disabled>Trade SELL — hit bid</button>
+        </div>
+        <div class="row"><span id="trade-state" class="state"></span></div>
       </section>
 
       <section class="card">
         <h2>Contribute mark</h2>
-        <div class="grid">
+        <div class="frow">
           <label>Pair <input id="mk-pair" value="EURUSD" /></label>
           <label>Tenor <input id="mk-tenor" value="1Y" /></label>
           <label>Pillar <input id="mk-pillar" value="ATM" /></label>
           <label>Vol <input id="mk-vol" value="0.102" /></label>
-          <label>Model
+          <label class="full">Smile model
             <select id="mk-model">
               <option value="VV">VV (market hedge)</option>
               <option value="SABR">SABR</option>
@@ -52,15 +60,18 @@
               <option value="SSVI">SSVI</option>
             </select>
           </label>
+          <label class="full">Comment <input id="mk-comment" value="" /></label>
         </div>
-        <label class="full">Comment <input id="mk-comment" value="" /></label>
-        <div class="row">
-          <button id="mk-stage">Stage</button>
-          <button id="mk-commit" disabled>Confirm &amp; contribute</button>
-          <span id="mk-state" class="state"></span>
+        <div class="btnrow">
+          <button id="mk-stage" class="btn ghost">Stage</button>
+          <button id="mk-commit" class="btn primary" disabled>Confirm &amp; contribute</button>
         </div>
+        <div class="row"><span id="mk-state" class="state"></span></div>
         <div id="mk-pending" class="result"></div>
+        <div class="footnote">Two-phase mark: <b>Stage</b> previews the calibrated, arb-checked smile; <b>Confirm</b> deposits a new <b>surface_version</b> the whole firm pins. Re-mark under SABR / SVI / SSVI from the same panel.</div>
       </section>
+
+      <div class="footnote">Every cell and button shapes the one <b>celnet-proto</b> contract over the shared WS mirror — identical to the GUI, the SDK and the CLI. No pricing runs in Excel.</div>
     </main>
   </body>
 </html>

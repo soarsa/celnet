@@ -66,8 +66,15 @@ function boot(): void {
   let mark: MarkState = IDLE_MARK;
 
   const renderRfq = (): void => {
-    el("rfq-result").textContent =
-      rfq.phase === "idle" ? "" : `${rfq.status}\nvalid until ${formatNanos(rfq.validUntilNanos)}`;
+    const idle = rfq.phase === "idle";
+    // The two-way comes straight off the server quote (no pricing in Excel): the
+    // bid is "hit (sell)", the offer is "lift (buy)". The last-look line shows the
+    // keyed-MAC token's remaining validity window — the same token the cell binds.
+    el("rfq-bid").textContent = idle ? "—" : rfq.bid.toFixed(5);
+    el("rfq-offer").textContent = idle ? "—" : rfq.offer.toFixed(5);
+    el("rfq-lastlook").textContent = idle
+      ? "no live quote"
+      : `quote q-${rfq.quoteId.toString()} · valid ${validMs(rfq.validUntilNanos)} ms · token bound to line (keyed-MAC)`;
     (el("trade-buy") as HTMLButtonElement).disabled = !rfq.tradable;
     (el("trade-sell") as HTMLButtonElement).disabled = !rfq.tradable;
   };
@@ -199,8 +206,9 @@ function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function formatNanos(nanos: bigint): string {
-  return nanos === 0n ? "—" : new Date(Number(nanos / 1_000_000n)).toISOString();
+/** Remaining validity window of a last-look token, in ms (clamped at 0). */
+function validMs(nanos: bigint): number {
+  return nanos === 0n ? 0 : Math.max(0, Math.round(Number(nanos / 1_000_000n) - Date.now()));
 }
 
 // Loose parsers for the commit body (the strict ones throw on stage already).
