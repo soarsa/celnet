@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { defineConfig } from "vite";
+import { officeAddin } from "./tools/vitePluginOffice";
 
 /**
  * HTTPS for the dev server: Office requires TLS for a sideloaded add-in. Read the
@@ -34,6 +35,7 @@ function devHttps(): { cert: Buffer; key: Buffer } | undefined {
 const httpsCerts = devHttps();
 
 export default defineConfig({
+  plugins: [officeAddin()],
   root: resolve(__dirname, "src"),
   publicDir: resolve(__dirname, "assets"),
   base: "./",

@@ -20,14 +20,14 @@
   xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
   xsi:type="TaskPaneApp">
 
-  <Id>b8e3a1c2-4f6d-4e7a-9c10-celnetexcel01</Id>
+  <Id>b45578c3-e46b-4001-b56f-693baf323ab3</Id>
   <Version>1.0.0.0</Version>
   <ProviderName>Celnet</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Celnet FX Options" />
   <Description DefaultValue="Celnet FX-options pricing in Excel: live streaming custom functions, RFQ, and surface contribution over the single Celnet contract." />
-  <IconUrl DefaultValue="https://localhost:3000/assets/icon-32.png" />
-  <HighResolutionIconUrl DefaultValue="https://localhost:3000/assets/icon-80.png" />
+  <IconUrl DefaultValue="https://localhost:3000/icon-32.png" />
+  <HighResolutionIconUrl DefaultValue="https://localhost:3000/icon-80.png" />
   <SupportUrl DefaultValue="https://localhost:3000/taskpane.html" />
 
   <AppDomains>
@@ -53,10 +53,6 @@
   <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
     <Hosts>
       <Host xsi:type="Workbook">
-        <Runtimes>
-          <Runtime resid="Celnet.Functions.Runtime" lifetime="long" />
-        </Runtimes>
-
         <AllFormFactors>
           <ExtensionPoint xsi:type="CustomFunctions">
             <Script>
@@ -112,9 +108,9 @@
 
     <Resources>
       <bt:Images>
-        <bt:Image id="Celnet.Icon.16" DefaultValue="https://localhost:3000/assets/icon-16.png" />
-        <bt:Image id="Celnet.Icon.32" DefaultValue="https://localhost:3000/assets/icon-32.png" />
-        <bt:Image id="Celnet.Icon.80" DefaultValue="https://localhost:3000/assets/icon-80.png" />
+        <bt:Image id="Celnet.Icon.16" DefaultValue="https://localhost:3000/icon-16.png" />
+        <bt:Image id="Celnet.Icon.32" DefaultValue="https://localhost:3000/icon-32.png" />
+        <bt:Image id="Celnet.Icon.80" DefaultValue="https://localhost:3000/icon-80.png" />
       </bt:Images>
       <bt:Urls>
         <bt:Url id="Celnet.Functions.Script" DefaultValue="https://localhost:3000/functions.js" />
@@ -132,9 +128,6 @@
         <bt:String id="Celnet.Taskpane.Tooltip" DefaultValue="Open the Celnet ticket: RFQ, click-to-trade, and surface contribution." />
         <bt:String id="Celnet.GetStarted.Description" DefaultValue="Use =CELNET.PRICE, =CELNET.GREEKS, =CELNET.SURFACE, =CELNET.MARKSURFACE, =CELNET.RFQ, =CELNET.SUBSCRIBE, =CELNET.SERIES, =CELNET.MARK, =CELNET.RISK, =CELNET.POSITIONS and =CELNET.LIMITS, and open the Celnet Ticket task pane." />
       </bt:LongStrings>
-      <bt:Runtimes>
-        <bt:Runtime id="Celnet.Functions.Runtime" resid="Celnet.Functions.Page" />
-      </bt:Runtimes>
     </Resources>
   </VersionOverrides>
 </OfficeApp>
