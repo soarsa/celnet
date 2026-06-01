@@ -1,41 +1,97 @@
+/*
+ * Celnet Ticket task pane — Celer Technologies brand.
+ *
+ * Matches docs/assets/celnet-capabilities/_src/excel-grid-branded.html (the
+ * branded brochure render): navy pane, coral brand, indigo accent, Anaheim
+ * wordmark, two-way bid/offer quote boxes, two-phase contribute card. The pane
+ * renders the ONE celnet-proto contract over the shared WS mirror — no pricing
+ * runs here; every number comes from the server (see taskpane.ts).
+ */
 :root {
-  --bg: #0f1115;
-  --card: #171a21;
-  --line: #2a2f3a;
-  --text: #e6e9ef;
-  --muted: #8b93a3;
-  --accent: #4c8dff;
-  --ok: #3fb950;
-  --warn: #d29922;
-  --bad: #f85149;
+  --brand: #ff7357;       /* Celer coral */
+  --brand-deep: #e85d42;
+  --accent: #6b6bf5;      /* indigo */
+  --navy: #1b1f2a;
+  --raised: #282c3e;
+  --field: #11141d;
+  --text: #eef0f6;
+  --muted: #979cb7;
+  --ok: #5fe0a0;
+  --warn: #ffcf70;
+  --bad: #ff8d76;
+  --bid: #ff8d76;         /* hit (sell) — coral-tinted */
+  --offer: #7ce6ad;       /* lift (buy) — green */
 }
-* { box-sizing: border-box; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
 body {
-  margin: 0;
-  font: 13px/1.45 -apple-system, "Segoe UI", system-ui, sans-serif;
-  background: var(--bg);
+  font-family: Anaheim, "Segoe UI", system-ui, sans-serif;
+  background: var(--navy);
   color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
 }
-.app { padding: 12px; display: flex; flex-direction: column; gap: 12px; }
-.hdr { display: flex; align-items: center; justify-content: space-between; }
-.hdr h1 { font-size: 15px; margin: 0; }
-.card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
-.card h2 { font-size: 13px; margin: 0 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
-.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
-label.full { grid-column: 1 / -1; }
-input { background: #0b0d11; border: 1px solid var(--line); color: var(--text); border-radius: 5px; padding: 5px 7px; font: inherit; }
-.row { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
-button {
-  background: var(--accent); color: #fff; border: 0; border-radius: 5px;
-  padding: 6px 12px; font: inherit; cursor: pointer;
+.app { padding: 16px 16px 20px; display: flex; flex-direction: column; gap: 14px; }
+
+/* ---- header (pinwheel mark + wordmark + connection pill) ---- */
+.hdr { display: flex; align-items: center; gap: 9px; }
+.hdr .mark { width: 22px; height: 22px; flex: 0 0 auto; }
+.hdr h1 { font-size: 17px; font-weight: 800; letter-spacing: 0.2px; }
+.hdr h1 .light { font-weight: 400; color: var(--muted); margin-left: 6px; font-size: 13px; letter-spacing: 1px; text-transform: uppercase; }
+.hdr .pill { margin-left: auto; }
+
+/* ---- connection pill ---- */
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.pill-on { background: rgba(28, 140, 90, 0.18); color: var(--ok); }
+.pill-off { background: rgba(210, 73, 47, 0.18); color: var(--bad); }
+
+/* ---- cards ---- */
+.card { background: var(--raised); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 12px; padding: 14px 14px 16px; }
+.card h2 { font-size: 12px; letter-spacing: 1.4px; text-transform: uppercase; color: var(--muted); font-weight: 700; margin-bottom: 10px; }
+
+/* ---- fields ---- */
+.frow { display: grid; grid-template-columns: 1fr 1fr; gap: 9px 12px; }
+label { display: block; font-size: 11px; color: var(--muted); letter-spacing: 0.4px; }
+label.full { grid-column: 1 / -1; margin-top: 9px; }
+input, select {
+  width: 100%; margin-top: 3px; background: var(--field);
+  border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 7px; height: 30px;
+  padding: 0 10px; font: inherit; color: var(--text);
+  font-variant-numeric: tabular-nums;
 }
-button:disabled { background: #2a2f3a; color: var(--muted); cursor: not-allowed; }
+select { appearance: none; cursor: pointer; }
+
+/* ---- buttons ---- */
+.btnrow { display: flex; gap: 9px; margin-top: 12px; }
+.btnrow .btn { flex: 1; }
+.btn {
+  height: 34px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center;
+  font: inherit; font-weight: 700; border: none; cursor: pointer;
+}
+.btn.primary { background: var(--brand); color: var(--navy); }
+.btn.primary:hover { background: var(--brand-deep); }
+.btn.ghost { background: transparent; border: 1px solid rgba(255, 255, 255, 0.16); color: var(--text); }
+.btn.ghost:hover { border-color: rgba(255, 255, 255, 0.32); }
+.btn:disabled { background: #20242f; border-color: transparent; color: var(--muted); cursor: not-allowed; }
+
+/* ---- two-way quote boxes ---- */
+.two-way { display: flex; gap: 9px; margin: 12px 0 2px; }
+.qbox { flex: 1; background: var(--field); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; padding: 8px 10px; }
+.qbox .k { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; }
+.qbox .v { font-size: 18px; font-weight: 800; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.qbox.bid .v { color: var(--bid); }
+.qbox.offer .v { color: var(--offer); }
+.lastlook { margin-top: 8px; font-size: 11px; color: var(--muted); }
+.lastlook b { color: var(--text); }
+
+/* ---- status + result ---- */
+.row { display: flex; align-items: center; gap: 9px; margin-top: 10px; flex-wrap: wrap; }
 .state { font-size: 12px; color: var(--muted); }
 .state.ok { color: var(--ok); }
 .state.warn { color: var(--warn); }
 .state.bad { color: var(--bad); }
-.result { margin-top: 10px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; white-space: pre-wrap; color: var(--text); }
-.pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; }
-.pill-on { background: rgba(63,185,80,0.15); color: var(--ok); }
-.pill-off { background: rgba(248,81,73,0.15); color: var(--bad); }
+.result { margin-top: 10px; font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 12px; white-space: pre-wrap; color: var(--muted); }
+
+/* ---- footnotes ---- */
+.footnote { margin-top: 13px; font-size: 11px; color: var(--muted); line-height: 1.5; }
+.footnote b { color: var(--text); }
