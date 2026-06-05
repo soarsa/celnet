@@ -366,6 +366,7 @@ dependencies = [
  "celnet-risk-fleet",
  "celnet-risk-normalize",
  "celnet-server",
+ "celnet-surface",
  "celnet-types",
  "celnet-vanilla",
  "core_affinity",

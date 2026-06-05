@@ -30,12 +30,14 @@ mod common;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-use celnet_proto::risk_service_server::RiskService;
+use celnet_proto::risk_service_server::{RiskService, RiskServiceServer};
 use celnet_proto::{
-    AdditiveRisk, AggregateRiskRequest, AggregateRiskResponse, DrillRiskRequest,
-    EntitlementPrincipal, EntitlementRule, LimitStatusRequest, ListPositionsRequest, NumeraireRate,
-    ReportingNumeraire, RiskDimension, RiskScope,
+    AdditiveRisk, AggregateRiskRequest, AggregateRiskResponse, DrillRiskRequest, DrillRiskResponse,
+    EntitlementPrincipal, EntitlementRule, LimitStatusRequest, LimitStatusResponse,
+    ListPositionsRequest, ListPositionsResponse, NumeraireRate, ReportingNumeraire, RiskDimension,
+    RiskScope,
 };
 use celnet_risk_cube::{
     BookId as CubeBookId, DeskId, EntityId, FactKey, FactMeasure, LocationId, PositionId, RiskFact,
@@ -49,7 +51,7 @@ use celnet_server::services::risk::federate::Fleet;
 use celnet_server::services::risk::store::{BookedPosition, PositionStore};
 use celnet_server::{Clock, CoreLink, Edge, ReadinessGate, SpreadModel};
 use celnet_types::{Ccy, CcyPair, DeltaConvention, OptionType, PremiumStyle, VanillaInputs};
-use tonic::Request;
+use tonic::{Request, Response, Status};
 
 use common::TEST_DEADLINE;
 
@@ -784,6 +786,155 @@ async fn failover_standby_then_unavailable() {
 
         // Keep the standby health asserted at the type level.
         assert_eq!(b4.replica, ReplicaId(4));
+    })
+    .await
+    .expect("within deadline");
+}
+
+// ---------------------------------------------------------------------------
+// concurrency proof: a delaying backend (latency ~ max, not Σ)
+// ---------------------------------------------------------------------------
+
+/// A `RiskService` that **sleeps `delay` before every RPC**, then delegates to an
+/// inner single-node [`RiskEdge`]. Standing N of these up and federating across them
+/// makes the per-backend latency observable: a SEQUENTIAL fan-out would cost ~N×delay
+/// (each await serialized), whereas the CONCURRENT fan-out under test costs ~delay
+/// (all backends sleep at once) — which the latency test below asserts directly.
+///
+/// The delegate answers are real (the same algebra the reconciliation tests use), so
+/// the response is a genuine slice, not a stub — only the *timing* is injected.
+struct DelayingBackend {
+    inner: RiskEdge,
+    delay: Duration,
+}
+
+#[tonic::async_trait]
+impl RiskService for DelayingBackend {
+    async fn list_positions(
+        &self,
+        request: Request<ListPositionsRequest>,
+    ) -> Result<Response<ListPositionsResponse>, Status> {
+        tokio::time::sleep(self.delay).await;
+        RiskService::list_positions(&self.inner, request).await
+    }
+
+    async fn aggregate_risk(
+        &self,
+        request: Request<AggregateRiskRequest>,
+    ) -> Result<Response<AggregateRiskResponse>, Status> {
+        tokio::time::sleep(self.delay).await;
+        RiskService::aggregate_risk(&self.inner, request).await
+    }
+
+    async fn drill_risk(
+        &self,
+        request: Request<DrillRiskRequest>,
+    ) -> Result<Response<DrillRiskResponse>, Status> {
+        tokio::time::sleep(self.delay).await;
+        RiskService::drill_risk(&self.inner, request).await
+    }
+
+    async fn limit_status(
+        &self,
+        request: Request<LimitStatusRequest>,
+    ) -> Result<Response<LimitStatusResponse>, Status> {
+        tokio::time::sleep(self.delay).await;
+        RiskService::limit_status(&self.inner, request).await
+    }
+}
+
+/// Boot a delaying `RiskService` backend (seeded with `legs`, sleeping `delay` before
+/// each RPC) on an ephemeral 127.0.0.1 port over real gRPC, returning its dial URL.
+/// The server task runs until the test process ends (the test is deadline-bounded).
+async fn boot_delaying_backend(legs: Vec<Master>, delay: Duration) -> String {
+    let gate = Arc::new(ReadinessGate::new());
+    gate.mark_ready();
+    let store = Arc::new(PositionStore::new());
+    seed(&store, legs);
+    let svc = DelayingBackend {
+        inner: RiskEdge::new(store, gate),
+        delay,
+    };
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let incoming =
+        tonic::transport::server::TcpIncoming::from_listener(listener, true, None).unwrap();
+    tokio::spawn(async move {
+        tonic::transport::Server::builder()
+            .add_service(RiskServiceServer::new(svc))
+            .serve_with_incoming(incoming)
+            .await
+            .ok();
+    });
+    format!("http://{addr}")
+}
+
+/// **Genuine concurrency proof: federated fan-out latency ≈ slowest backend, NOT the
+/// sum.** Stand up N real gRPC backends that EACH sleep `DELAY` before responding,
+/// federate across them, and assert the federated `AggregateRisk` completes in well
+/// under `N × DELAY` (it would take ≥ `N × DELAY` under the old sequential fan-out)
+/// — and within a small multiple of a single `DELAY` (proving all backends were
+/// dialled at once). Hard wall-clock bounded so a regression fails fast, never hangs.
+#[tokio::test]
+async fn federated_fan_out_latency_is_max_not_sum() {
+    tokio::time::timeout(TEST_DEADLINE, async {
+        const DELAY: Duration = Duration::from_millis(300);
+        let n = 4u64;
+
+        // Each backend owns its HRW slice and sleeps DELAY before answering.
+        let parts = partition(n);
+        let mut members: Vec<(String, Replica)> = Vec::new();
+        for i in 1..=n {
+            let legs = parts.get(&i).cloned().unwrap_or_default();
+            let url = boot_delaying_backend(legs, DELAY).await;
+            members.push((url, Replica::up(ReplicaId(i))));
+        }
+
+        let fleet = Arc::new(
+            Fleet::connect_with_membership(&members)
+                .await
+                .expect("delaying fleet connects"),
+        );
+        let gate = Arc::new(ReadinessGate::new());
+        gate.mark_ready();
+        let fed = RiskEdge::with_fleet(Arc::new(PositionStore::new()), gate, fleet);
+
+        // A non-additive request fans out TWICE (additive aggregate, then a re-gather
+        // ListPositions per node) — the strongest sequential-cost case. Concurrency
+        // must still keep each fan-out wave ~ one DELAY.
+        let started = Instant::now();
+        let resp = RiskService::aggregate_risk(&fed, Request::new(firm_request_with_risk()))
+            .await
+            .expect("federated aggregate over delaying backends");
+        let elapsed = started.elapsed();
+
+        // Correctness still holds against the single-node oracle (the delay is timing
+        // only — the slices are real).
+        let oracle = single_node_edge(master_book());
+        let single = RiskService::aggregate_risk(&oracle, Request::new(firm_request_with_risk()))
+            .await
+            .expect("oracle aggregate")
+            .into_inner();
+        assert_nodes_eq(&resp.into_inner(), &single);
+
+        // Sequential fan-out would cost ≥ n × DELAY for the additive wave alone, plus
+        // another n × DELAY for the re-gather wave (≥ 2 n × DELAY ≈ 2.4 s). Concurrent
+        // fan-out collapses each wave to ~one DELAY; with a couple of fan-out waves +
+        // gRPC overhead we bound generously at 4 × DELAY and STRICTLY below the
+        // sequential floor (n × DELAY) to prove genuine concurrency, not luck.
+        let sequential_floor = DELAY * u32::try_from(n).unwrap(); // 1.2 s
+        let concurrent_ceiling = DELAY * 4; // 1.2 s budget for ~2 concurrent waves + overhead
+        assert!(
+            elapsed < sequential_floor + DELAY, // < (n+1)×DELAY: cannot be the Σ-cost path
+            "federated fan-out took {elapsed:?}; a sequential per-backend fan-out would be \
+             ≥ {sequential_floor:?} (n×DELAY) per wave — concurrency regressed"
+        );
+        assert!(
+            elapsed < concurrent_ceiling,
+            "federated fan-out took {elapsed:?}, expected ≈ DELAY ({DELAY:?}) per concurrent \
+             wave (ceiling {concurrent_ceiling:?})"
+        );
     })
     .await
     .expect("within deadline");

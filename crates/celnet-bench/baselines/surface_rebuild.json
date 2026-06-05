@@ -1,0 +1,43 @@
+{
+  "workload": "per_pair_all_tenors_surface_rebuild",
+  "pair": "EURUSD",
+  "tenor_count": 11,
+  "grid_strikes": 11,
+  "grid_points": 121,
+  "host": "aarch64-unix-macos (64-bit)",
+  "pinned": false,
+  "elevated_priority": true,
+  "warmup_samples": 5000,
+  "timed_samples": 200000,
+  "models": [
+    {
+      "model": "MarketHedge",
+      "latency": {
+        "min_ns": 15624,
+        "p50_ns": 15959,
+        "p99_ns": 19583,
+        "p999_ns": 23503,
+        "p9999_ns": 28463,
+        "max_ns": 60319
+      },
+      "throughput_per_s": 60038.36751275519,
+      "cold_calibration_ns": 2203750
+    },
+    {
+      "model": "ParametricSurface",
+      "latency": {
+        "min_ns": 6080,
+        "p50_ns": 6251,
+        "p99_ns": 7751,
+        "p999_ns": 16255,
+        "p9999_ns": 19583,
+        "max_ns": 32255
+      },
+      "throughput_per_s": 151781.12309646702,
+      "cold_calibration_ns": 3406959
+    }
+  ],
+  "budget": {
+    "p99_ns": 150000
+  }
+}

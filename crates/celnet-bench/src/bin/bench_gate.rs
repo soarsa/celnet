@@ -1,4 +1,4 @@
-//! `bench_gate` — the CI bench-regression gate. Three arms, all must pass:
+//! `bench_gate` — the CI bench-regression gate. Four arms, all must pass:
 //!
 //! 1. **In-core ABSOLUTE §1.2 budget gate.** Runs the low-jitter, pinned,
 //!    priority-elevated in-core measurement (`celnet_bench::core_load`) of
@@ -7,6 +7,14 @@
 //!    p99 ≤ 10 µs, p99.9 ≤ 25 µs** — failing if any *measured* percentile exceeds
 //!    its committed budget number. This is the contract gate: it asserts the real
 //!    budget, not a relative drift.
+//!
+//! 1b. **Surface-rebuild ABSOLUTE §1.2 budget gate.** Runs the same low-jitter,
+//!    pinned, priority-elevated discipline on the per-pair-all-tenors surface
+//!    recompute (`celnet_bench::surface_rebuild`) for BOTH the Vanna-Volga and
+//!    SSVI models, and asserts the **absolute** §1.2 ceiling for that workload —
+//!    **surface rebuild (single pair, all tenors) p99 ≤ 150 µs** — failing if
+//!    either model's measured recompute p99 exceeds it. Like arm 1 this asserts
+//!    the committed contract number directly (it passes with multiple-× margin).
 //!
 //! 2. **Wire-path RELATIVE regression gate.** Runs a short, bounded wire-path
 //!    load against a real in-process [`celnet_server::Edge`], then compares the
@@ -52,6 +60,7 @@ use celnet_bench::core_load::{CoreLoadConfig, measure};
 use celnet_bench::fleet_slo::{
     FleetSloConfig, FleetSloReport, compare_to_baseline as fleet_compare, measure as fleet_measure,
 };
+use celnet_bench::surface_rebuild::{SurfaceLoadConfig, measure as surface_measure};
 use celnet_bench::wire::{LoadConfig, WireReport, compare_to_baseline, run_load, start_ready_edge};
 
 const DEFAULT_BASELINE: &str = "crates/celnet-bench/baselines/wire_path.json";
@@ -102,6 +111,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         for b in &core_breaches {
             eprintln!(
                 "  {} = {:.3}µs ({} ns) > §1.2 ceiling {:.3}µs ({} ns)",
+                b.metric,
+                b.measured_ns as f64 / 1000.0,
+                b.measured_ns,
+                b.ceiling_ns as f64 / 1000.0,
+                b.ceiling_ns,
+            );
+        }
+    }
+    println!();
+
+    // ---------------------------------------------------------------------
+    // Arm 1b: surface-rebuild ABSOLUTE §1.2 budget gate (per-pair-all-tenors
+    // recompute p99 ≤ 150µs, for both the VV and SSVI models). Synchronous,
+    // pinned, bounded — run it on a dedicated thread for the same reason as arm 1.
+    // ---------------------------------------------------------------------
+    println!("== arm 1b: surface-rebuild ABSOLUTE §1.2 budget gate ==");
+    println!();
+    let surface_report = std::thread::Builder::new()
+        .name("surface_rebuild_gate".to_owned())
+        .spawn(|| surface_measure(SurfaceLoadConfig::default()))
+        .map_err(|e| format!("could not spawn the surface-rebuild measurement thread: {e}"))?
+        .join()
+        .map_err(|_| "the surface-rebuild measurement thread panicked")?;
+    surface_report.print_summary();
+    println!();
+    let surface_breaches = surface_report.budget_breaches();
+    if surface_breaches.is_empty() {
+        println!(
+            "arm 1b PASSED: every model's per-pair-all-tenors surface-rebuild p99 ≤ 150µs (§1.2)."
+        );
+    } else {
+        eprintln!(
+            "arm 1b FAILED: {} §1.2 surface-rebuild budget(s) breached:",
+            surface_breaches.len()
+        );
+        for b in &surface_breaches {
+            eprintln!(
+                "  {} {} = {:.3}µs ({} ns) > §1.2 ceiling {:.3}µs ({} ns)",
+                b.model,
                 b.metric,
                 b.measured_ns as f64 / 1000.0,
                 b.measured_ns,
@@ -237,19 +285,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // All three arms must pass.
+    // All four arms must pass.
     println!();
-    if core_breaches.is_empty() && breaches.is_empty() && fleet_breaches.is_empty() {
+    if core_breaches.is_empty()
+        && surface_breaches.is_empty()
+        && breaches.is_empty()
+        && fleet_breaches.is_empty()
+    {
         println!(
-            "bench gate PASSED: in-core §1.2 absolute budgets met, wire-path within tolerance, \
-             AND fleet §11 loopback SLOs within tolerance."
+            "bench gate PASSED: in-core §1.2 absolute budgets met, surface-rebuild §1.2 absolute \
+             budget met, wire-path within tolerance, AND fleet §11 loopback SLOs within tolerance."
         );
         Ok(())
     } else {
         eprintln!(
-            "bench gate FAILED: {} in-core §1.2 breach(es), {} wire-path regression(s), \
-             {} fleet-SLO regression(s).",
+            "bench gate FAILED: {} in-core §1.2 breach(es), {} surface-rebuild §1.2 breach(es), \
+             {} wire-path regression(s), {} fleet-SLO regression(s).",
             core_breaches.len(),
+            surface_breaches.len(),
             breaches.len(),
             fleet_breaches.len()
         );
