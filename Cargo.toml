@@ -58,6 +58,7 @@ rtrb = "0.3"                                   # MIT/Apache-2.0 wait-free SPSC r
 arc-swap = "1"                                 # MIT/Apache-2.0 lock-free read-mostly publication
 crossbeam-utils = "0.8"                        # MIT/Apache-2.0 CachePadded (false-sharing guard)
 core_affinity = "0.8"                          # MIT/Apache-2.0 core pinning for the hot path
+thread-priority = "1"                          # MIT/Apache-2.0 safe cross-platform thread QoS/priority (macOS QOS_CLASS / POSIX sched) for the low-jitter in-core latency measurement
 # Integration + edge lanes (vetted: deny advisories+licenses ok)
 serde_json = "1"                               # MIT/Apache-2.0 vendor-feed (FMD-style) JSON normalization
 tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time", "macros"] } # MIT async edge runtime
@@ -72,6 +73,7 @@ clap = { version = "4", features = ["derive"] } # MIT/Apache-2.0 admin CLI
 tracing = "0.1"                                # MIT structured tracing facade
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] } # MIT subscriber
 hdrhistogram = "7"                             # MIT/Apache-2.0 p50/p99/p99.9 latency (coordinated-omission aware)
+iai-callgrind = "0.16"                         # MIT/Apache-2.0 jitter-free instruction-count bench gate (Linux+Valgrind CI lane; dev-dep only)
 metrics = "0.24"                               # MIT counters/gauges/histograms facade
 # Plugin-host sandbox (vetted: deny advisories+licenses ok) — wasmtime REJECTED for open
 # 2026 RUSTSEC advisories; wasmi is the pure-Rust, fuel-metered, advisory-clean replacement.
