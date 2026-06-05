@@ -25,7 +25,11 @@ pub mod risk;
 pub mod stream;
 pub mod surface;
 
+pub mod deploy;
+pub mod fix;
+
 mod attribution;
+pub(crate) mod clicktrade;
 pub(crate) mod forward;
 mod pin;
 mod stream_rx;

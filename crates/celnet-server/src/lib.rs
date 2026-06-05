@@ -103,6 +103,7 @@ use celnet_proto::risk_service_server::RiskServiceServer;
 use celnet_proto::stream_service_server::StreamServiceServer;
 use celnet_proto::surface_service_server::SurfaceServiceServer;
 
+use services::fix::{FixAcceptor, FixContext};
 use services::pricing::PricingEdge;
 use services::quote::QuoteEdge;
 use services::risk::RiskEdge;
@@ -126,6 +127,32 @@ fn fleet_topology_from_env() -> FleetTopology {
     FleetTopology::parse(&mode, &backends)
 }
 
+/// Read the optional live-FIX-acceptor bind address from `CELNET_FIX_ADDR`.
+///
+/// Absent (or unparseable) ⇒ `None` — no FIX listener is started and the edge is
+/// byte-identical to today. Present and a valid `HOST:PORT` ⇒ `Some(addr)` and a FIX
+/// 4.4 acceptor binds there at boot. This is the one place the env is read for the FIX
+/// edge (the same deploy-time-knob discipline as `CELNET_FLEET_MODE`).
+fn fix_addr_from_env() -> Option<SocketAddr> {
+    std::env::var("CELNET_FIX_ADDR")
+        .ok()
+        .and_then(|s| s.parse().ok())
+}
+
+/// Read the deployment-mode knob from the environment and resolve it via the pure
+/// [`DeployMode::parse`]. `CELNET_DEPLOY` selects the mode label (`"hybrid"` ⇒ the
+/// Hybrid integration mode, else CelerIntegrated when a feed is configured) and
+/// `CELNET_VENDOR_WS` carries the vendor-feed WS endpoint a [`MarketDataSource`] would
+/// dial. Both absent (or no usable `CELNET_VENDOR_WS`) ⇒ [`DeployMode::Standalone`], the
+/// **byte-identical** default in which no feed and no governor is bound. This is the one
+/// place the env is read for the deployment edge (the same discipline as
+/// `CELNET_FLEET_MODE` / `CELNET_FIX_ADDR`).
+fn deploy_mode_from_env() -> services::deploy::DeployMode {
+    let deploy = std::env::var("CELNET_DEPLOY").unwrap_or_default();
+    let vendor_ws = std::env::var("CELNET_VENDOR_WS").unwrap_or_default();
+    services::deploy::DeployMode::parse(&deploy, &vendor_ws)
+}
+
 /// A fully-wired, running service edge: the gRPC server (all four services), the
 /// pricing-core bridge, the maker spread model, the edge clock, and the readiness
 /// gate.
@@ -146,6 +173,18 @@ pub struct Edge {
     grpc_shutdown: oneshot::Sender<()>,
     grpc_task: tokio::task::JoinHandle<Result<(), tonic::transport::Error>>,
     ws_mirror: WsMirror,
+    /// The optional live FIX 4.4 acceptor edge: `Some` iff `CELNET_FIX_ADDR` was set
+    /// (or an explicit address was supplied), bound on that address and serving the
+    /// RFQ→Quote→lift→ExecutionReport lifecycle over the same pricing + click-to-trade
+    /// token path the gRPC/RFS edges use. Absent ⇒ the edge is byte-identical to today.
+    fix_acceptor: Option<FixAcceptor>,
+    /// The optional bound vendor-feed ingress: `Some` iff `CELNET_VENDOR_WS` named a
+    /// reachable WS endpoint at boot (the [`DeployMode::WithVendorFeed`] inbound). It
+    /// drives the resilient subscriber → normalize → [`SurfaceBook`] deposit → governed
+    /// egress pump, sharing the SAME marked-surface registry every gRPC/WS service
+    /// prices a pinned request against. Absent (the `Standalone` default) ⇒ no feed and
+    /// no governor are bound and the edge is byte-identical to today.
+    vendor_feed: Option<services::deploy::VendorFeed>,
 }
 
 impl Edge {
@@ -320,6 +359,9 @@ impl Edge {
         // one spread/clock) — a second encoding of one pricing path, never a fork
         // (`CLAUDE.md` rule 9). Bound on the caller-supplied `ws_addr` (a fixed port
         // for a demo edge, or `:0` for an OS-assigned ephemeral port).
+        // Clone the edge clock for the FIX acceptor before `clock` is moved into the
+        // WS mirror's services (one clock source shared across every edge).
+        let fix_clock = clock.clone();
         let ws_services = ws::WsServices::new(
             Arc::clone(&link),
             Arc::clone(&gate),
@@ -332,6 +374,56 @@ impl Edge {
         );
         let ws_mirror = ws::WsMirror::start(ws_addr, ws_services).await?;
 
+        // The optional live FIX 4.4 acceptor edge: bound only when `CELNET_FIX_ADDR`
+        // names an address (the deploy-time knob, mirroring `CELNET_FLEET_MODE`). It
+        // shares the SAME pricing core, marked-surface registry, spread, and edge clock
+        // as the gRPC/WS edges — a FIX RFQ prices and books through the identical paths,
+        // never a forked engine. Absent ⇒ no listener and the edge is byte-identical to
+        // today. A bad/unbindable address surfaces here, at boot, as an `io::Error`.
+        let fix_acceptor = match fix_addr_from_env() {
+            Some(addr) => {
+                let ctx = FixContext::new(
+                    Arc::clone(&link),
+                    spread,
+                    fix_clock,
+                    Arc::clone(&surface_book),
+                );
+                Some(FixAcceptor::start(addr, ctx).await?)
+            }
+            None => None,
+        };
+
+        // The optional vendor-feed ingress: bound only when `CELNET_DEPLOY` /
+        // `CELNET_VENDOR_WS` resolve to a `WithVendorFeed` mode (the deploy-time knob,
+        // mirroring `CELNET_FLEET_MODE` / `CELNET_FIX_ADDR`). It dials the vendor WS
+        // endpoint, drives the resilient subscriber → normalize → deposit into the SAME
+        // shared `SurfaceBook`, and drains governed price updates to its own standalone
+        // distributor sink. Absent ⇒ `Standalone`: no feed, no governor, byte-identical
+        // to today.
+        let vendor_feed = match deploy_mode_from_env() {
+            services::deploy::DeployMode::Standalone => None,
+            services::deploy::DeployMode::WithVendorFeed { vendor_ws, .. } => {
+                let source = services::deploy::VendorReplaySource::new(
+                    vendor_ws,
+                    services::deploy::VendorFeedConfig::default().max_connections,
+                );
+                // The seeded default subscription (the demo fixture's EURUSD 1Y slice);
+                // a real deployment configures its universe here.
+                let keys = vec![celnet_integration::SubscriptionKey::new("EURUSD", "1Y")];
+                let sink = celnet_integration::StandaloneSink::new();
+                Some(
+                    services::deploy::VendorFeed::start(
+                        source,
+                        sink,
+                        Arc::clone(&surface_book),
+                        keys,
+                        services::deploy::VendorFeedConfig::default(),
+                    )
+                    .map_err(std::io::Error::other)?,
+                )
+            }
+        };
+
         Ok(Self {
             grpc_addr: bound,
             ws_addr: ws_mirror.addr(),
@@ -342,6 +434,8 @@ impl Edge {
             grpc_shutdown,
             grpc_task,
             ws_mirror,
+            fix_acceptor,
+            vendor_feed,
         })
     }
 
@@ -351,11 +445,100 @@ impl Edge {
         self.grpc_addr
     }
 
+    /// The actually-bound live FIX 4.4 acceptor address, if one is running (`Some` iff
+    /// `CELNET_FIX_ADDR` was set at boot, or a FIX acceptor was attached via
+    /// [`Edge::attach_fix_acceptor`]). Resolves an ephemeral `:0` port.
+    #[must_use]
+    pub fn fix_addr(&self) -> Option<SocketAddr> {
+        self.fix_acceptor.as_ref().map(FixAcceptor::local_addr)
+    }
+
+    /// Attach (bind + start) a live FIX 4.4 acceptor on `addr` against this edge's
+    /// shared pricing core + marked-surface registry, with explicit `spread` / `clock`
+    /// and the pre-agreed `(sender, counterparty)` CompIDs.
+    ///
+    /// This is the **race-free** entry point for a test that binds an ephemeral FIX
+    /// port and dials it with a real `celnet-fix` initiator, without mutating
+    /// process-global `CELNET_FIX_ADDR`. The acceptor shares the SAME `CoreLink`,
+    /// `SurfaceBook`, spread, and clock as the gRPC/WS edges — a FIX RFQ prices and
+    /// books through the identical paths.
+    ///
+    /// # Errors
+    /// Returns an [`std::io::Error`] if the FIX listener cannot bind on `addr`.
+    pub async fn attach_fix_acceptor(
+        &mut self,
+        addr: SocketAddr,
+        spread: SpreadModel,
+        clock: Clock,
+        sender: Vec<u8>,
+        counterparty: Vec<u8>,
+    ) -> std::io::Result<SocketAddr> {
+        let ctx = FixContext::with_comp_ids(
+            Arc::clone(&self.link),
+            spread,
+            clock,
+            Arc::clone(&self.surface_book),
+            sender,
+            counterparty,
+        );
+        let acceptor = FixAcceptor::start(addr, ctx).await?;
+        let bound = acceptor.local_addr();
+        if let Some(prev) = self.fix_acceptor.replace(acceptor) {
+            prev.abort();
+        }
+        Ok(bound)
+    }
+
     /// The actually-bound WebSocket-mirror socket address (resolves the ephemeral
     /// port the WS JSON mirror serves the single current contract on).
     #[must_use]
     pub fn ws_addr(&self) -> SocketAddr {
         self.ws_addr
+    }
+
+    /// The bound vendor-feed ingress, if one is running (`Some` iff
+    /// `CELNET_VENDOR_WS` resolved a `WithVendorFeed` mode at boot, or a feed was
+    /// attached via [`Edge::attach_vendor_feed`]). Exposes the governed-egress metrics
+    /// (offered / delivered / conflated / capacity drops) for an ops scraper / a test.
+    #[must_use]
+    pub fn vendor_feed(&self) -> Option<&services::deploy::VendorFeed> {
+        self.vendor_feed.as_ref()
+    }
+
+    /// Attach (bind + start) a vendor-feed ingress dialling `source`, draining governed
+    /// price updates to `sink`, depositing calibrated smiles into this edge's shared
+    /// [`SurfaceBook`] under fresh surface versions. `keys` are the `(pair, tenor)`
+    /// subscriptions; `cfg` configures the governed egress + connection economy.
+    ///
+    /// This is the **race-free** entry point for a test that boots a vendor replay
+    /// server on an ephemeral port and binds a feed against it without mutating
+    /// process-global `CELNET_VENDOR_WS`. The feed shares the SAME `SurfaceBook` the
+    /// gRPC/WS price paths pin against — a marked-from-feed surface is reproducible to
+    /// the bit on the same path the rest of the edge uses.
+    pub fn attach_vendor_feed<S, K>(
+        &mut self,
+        source: S,
+        sink: K,
+        keys: Vec<celnet_integration::SubscriptionKey>,
+        cfg: services::deploy::VendorFeedConfig,
+    ) -> Result<(), celnet_integration::EgressError>
+    where
+        S: celnet_integration::MarketDataSource + Send + Sync + 'static,
+        S::Transport: Send,
+        <S::Transport as celnet_integration::FeedTransport>::Error: Send,
+        K: celnet_integration::PriceSink + Send + 'static,
+    {
+        let feed = services::deploy::VendorFeed::start(
+            source,
+            sink,
+            Arc::clone(&self.surface_book),
+            keys,
+            cfg,
+        )?;
+        if let Some(prev) = self.vendor_feed.replace(feed) {
+            prev.abort();
+        }
+        Ok(())
     }
 
     /// The shared readiness gate driving the `/readyz` probe and drain state.
@@ -403,5 +586,11 @@ impl Edge {
         let _ = self.grpc_shutdown.send(());
         let _ = self.grpc_task.await;
         self.ws_mirror.abort();
+        if let Some(fix) = self.fix_acceptor {
+            fix.abort();
+        }
+        if let Some(feed) = self.vendor_feed {
+            feed.abort();
+        }
     }
 }
