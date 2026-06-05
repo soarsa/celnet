@@ -363,6 +363,7 @@ dependencies = [
  "celnet-gpu",
  "celnet-proto",
  "celnet-risk-cube",
+ "celnet-risk-fleet",
  "celnet-risk-normalize",
  "celnet-server",
  "celnet-types",
@@ -393,13 +394,20 @@ dependencies = [
 name = "celnet-cli"
 version = "0.0.0"
 dependencies = [
+ "celnet-client",
  "celnet-conventions",
  "celnet-core",
+ "celnet-engine",
  "celnet-exotics",
+ "celnet-limits",
+ "celnet-proto",
+ "celnet-risk-cube",
+ "celnet-server",
  "celnet-surface",
  "celnet-types",
  "celnet-vanilla",
  "clap",
+ "tokio",
 ]
 
 [[package]]

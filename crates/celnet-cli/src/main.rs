@@ -3,9 +3,13 @@
 //!
 //! `main` is intentionally thin: it parses the [`cli::Cli`] command tree and hands
 //! off to [`cli::dispatch`], which converts arguments and invokes the per-command
-//! core functions in [`price`], [`surface`], [`exotic`], and [`convention`]. Those
-//! cores route every number through the underlying Celnet crates, so the CLI adds
-//! no pricing logic of its own.
+//! core functions in [`price`], [`surface`], [`exotic`], [`convention`], and
+//! [`risk`]. The local-compute cores route every number through the underlying
+//! Celnet crates, and the networked [`risk`] (`risk aggregate`/`drill`/`positions`/
+//! `limits`) and `stream` commands route every number through the typed
+//! `celnet-client` SDK against a running edge — the SAME contract the GUI and Excel
+//! add-in consume — so the CLI adds no pricing/aggregation of its own (four-client
+//! parity).
 
 #![forbid(unsafe_code)]
 
@@ -14,6 +18,7 @@ mod cli;
 mod convention;
 mod exotic;
 mod price;
+mod risk;
 mod surface;
 mod tenor;
 

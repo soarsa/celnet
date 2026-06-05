@@ -57,6 +57,7 @@
 #![forbid(unsafe_code)]
 
 pub mod core_load;
+pub mod fleet_slo;
 pub mod sched;
 pub mod wire;
 

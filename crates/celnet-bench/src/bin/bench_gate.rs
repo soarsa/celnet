@@ -1,4 +1,4 @@
-//! `bench_gate` — the CI bench-regression gate. Two arms, both must pass:
+//! `bench_gate` — the CI bench-regression gate. Three arms, all must pass:
 //!
 //! 1. **In-core ABSOLUTE §1.2 budget gate.** Runs the low-jitter, pinned,
 //!    priority-elevated in-core measurement (`celnet_bench::core_load`) of
@@ -17,7 +17,17 @@
 //!    budget because it additionally pays the full gRPC/HTTP-2 framing + async⇄
 //!    core hop; §1.2 is the in-core compute budget, gated in arm 1.)
 //!
-//! The process exits non-zero (failing CI) if **either** arm breaches.
+//! 3. **Fleet §11 SLO RELATIVE regression gate (LOOPBACK).** Re-measures the four
+//!    fleet SLOs (`docs/SCALE-OUT.md` §11) that can be honestly measured without a
+//!    real NIC — cross-shard federation overhead, publish→snapshot lag, conflation
+//!    correctness under a stalled consumer, and many-sub fan-out spread — over the
+//!    REAL fleet primitives on loopback, and compares to the committed LOOPBACK
+//!    baseline (`crates/celnet-bench/baselines/fleet_slo.json`) at the same relative
+//!    tolerance. This gates routing/conflation/fan-out ARITHMETIC + relative
+//!    regression — it is **NOT** a claim about the absolute §11 wire-latency SLOs
+//!    under a real NIC (those stay deploy-gated; see `docs/SCALE-OUT.md` §0/§11).
+//!
+//! The process exits non-zero (failing CI) if **any** arm breaches.
 //!
 //! Usage:
 //!
@@ -39,10 +49,14 @@
 use std::time::Duration;
 
 use celnet_bench::core_load::{CoreLoadConfig, measure};
+use celnet_bench::fleet_slo::{
+    FleetSloConfig, FleetSloReport, compare_to_baseline as fleet_compare, measure as fleet_measure,
+};
 use celnet_bench::wire::{LoadConfig, WireReport, compare_to_baseline, run_load, start_ready_edge};
 
 const DEFAULT_BASELINE: &str = "crates/celnet-bench/baselines/wire_path.json";
 const DEFAULT_TOLERANCE: f64 = 1.0;
+const FLEET_BASELINE: &str = "crates/celnet-bench/baselines/fleet_slo.json";
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -160,18 +174,84 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Both arms must pass.
+    // ---------------------------------------------------------------------
+    // Arm 3: fleet §11 SLO RELATIVE regression gate (LOOPBACK).
+    //
+    // Re-measures the four fleet-SLO arms (cross-shard federation overhead,
+    // publish→snapshot lag, conflation correctness, many-sub fan-out spread) over
+    // the REAL fleet primitives on loopback, and compares to the committed LOOPBACK
+    // baseline (`fleet_slo.json`) at the SAME relative tolerance. This is a
+    // routing/conflation/fan-out-ARITHMETIC + relative-regression gate — NOT a
+    // claim about the absolute §11 wire-latency SLOs under a real NIC (those stay
+    // deploy-gated; see docs/SCALE-OUT.md §0/§11). A >tolerance slowdown of any
+    // gated metric fails CI.
+    // ---------------------------------------------------------------------
     println!();
-    if core_breaches.is_empty() && breaches.is_empty() {
+    println!("== arm 3: fleet §11 SLO RELATIVE regression gate (LOOPBACK) ==");
+    println!();
+    println!(
+        "  HONEST BOUNDARY: loopback numbers — routing/conflation/fan-out arithmetic +\n  \
+         relative regression + the architectural invariant. NOT the absolute §11 wire\n  \
+         SLOs under a real NIC (deploy-gated)."
+    );
+    println!();
+    let fleet_baseline_json = std::fs::read_to_string(FLEET_BASELINE).map_err(|e| {
+        format!(
+            "cannot read fleet baseline {FLEET_BASELINE}: {e} — refresh it with `fleet_slo --ci`"
+        )
+    })?;
+    let fleet_baseline: FleetSloReport =
+        serde_json::from_str(&fleet_baseline_json).map_err(|e| {
+            format!("fleet baseline {FLEET_BASELINE} is not a valid FleetSloReport: {e}")
+        })?;
+
+    let fleet_config = FleetSloConfig::ci();
+    let fleet_cap = fleet_config.wall_clock_cap + Duration::from_secs(40);
+    let fleet_measured = tokio::time::timeout(fleet_cap, fleet_measure(fleet_config))
+        .await
+        .map_err(|_| "fleet SLO arm exceeded its wall-clock cap")?
+        .map_err(std::io::Error::other)?;
+    fleet_measured.print_summary();
+    println!();
+    println!(
+        "fleet baseline: {FLEET_BASELINE}  (tolerance: +{:.0}%)",
+        tolerance * 100.0
+    );
+    let fleet_breaches = fleet_compare(&fleet_baseline, &fleet_measured, tolerance);
+    if fleet_breaches.is_empty() {
+        println!("arm 3 PASSED: every gated fleet-SLO metric within tolerance (loopback).");
+    } else {
+        eprintln!(
+            "arm 3 FAILED: {} fleet-SLO metric(s) regressed:",
+            fleet_breaches.len()
+        );
+        for b in &fleet_breaches {
+            eprintln!(
+                "  {} = {:.3} > ceiling {:.3} (baseline {:.3} + {:.0}%)",
+                b.metric,
+                b.measured,
+                b.ceiling,
+                b.baseline,
+                tolerance * 100.0
+            );
+        }
+    }
+
+    // All three arms must pass.
+    println!();
+    if core_breaches.is_empty() && breaches.is_empty() && fleet_breaches.is_empty() {
         println!(
-            "bench gate PASSED: in-core §1.2 absolute budgets met AND wire-path within tolerance."
+            "bench gate PASSED: in-core §1.2 absolute budgets met, wire-path within tolerance, \
+             AND fleet §11 loopback SLOs within tolerance."
         );
         Ok(())
     } else {
         eprintln!(
-            "bench gate FAILED: {} in-core §1.2 breach(es), {} wire-path regression(s).",
+            "bench gate FAILED: {} in-core §1.2 breach(es), {} wire-path regression(s), \
+             {} fleet-SLO regression(s).",
             core_breaches.len(),
-            breaches.len()
+            breaches.len(),
+            fleet_breaches.len()
         );
         std::process::exit(1);
     }
