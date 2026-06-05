@@ -123,6 +123,28 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-06-05 — **Leadership program kicked off + Wave 1 DONE (commits `29e806b`, `0761a03`,
+  `6a8bde3`; pushed to github.com/soarsa/celnet).** Multi-agent assessment + architect synthesis →
+  **`docs/LEADERSHIP-PROGRAM.md`**: a 6-wave, dependency-ordered, gate-defined program to
+  world-leading, with a measurable bar and a verbatim **honest boundary** (cross-host wire p99 /
+  NVIDIA throughput / live JVM Celer estate stay deploy/live-gated, never claimed in-repo). Executed
+  as gated implement→adversarial-verify waves; **SOTA, zero workarounds** (user directive — verify
+  phase greps the diff for lowered gates / `#[ignore]` / `as any` / disabled lints). **Wave 1
+  (`0761a03` perf+gui, `6a8bde3` integration):** (1) **in-core §1.2 absolute latency truth-gate** —
+  `celnet-bench` `core_load` HdrHistogram of the pinned price+13-Greek loop, asserts p50≤2µs/p99≤10µs/
+  p99.9≤25µs ABSOLUTELY (measured M4: 42ns/125ns/~1µs → 24–80× margin), replacing the divan medians;
+  `bench_gate` now absolute+relative; **iai-callgrind** instruction gate (Linux CI lane). (2) **live
+  FIX acceptor** on `celnet-server` — real celnet-fix 4.4 engine over a real loopback socket,
+  external RFQ→Quote(==golden 1e-12)→fill, reusing the keyed-MAC click-to-trade token path (extracted
+  to shared `services/clicktrade.rs`); forged/replayed/stale rejected; `CELNET_FIX_ADDR` knob. (3)
+  **`CELNET_DEPLOY` Standalone edge** — DeployMode bound at boot (default byte-identical, exact f64
+  bits), vendor-replay→ResilientSubscriber(gap-resync)→normalize→SurfaceBook, PriceSink→EgressGovernor
+  (bounded, counted drops). (4) **GUI test harness** — `gui/` vitest 3.2.6 (vite-6 deduped) + jsdom,
+  6 suites / 72 tests over real modules. No `celnet.proto` change. Per-crate: bench 9 / server 125 /
+  fix 42 / gui 72; **full `just check` green** each milestone; independently re-gated + diff-reviewed.
+  **Next:** Wave 2 (fleet §11 SLO benches, concurrent federation fan-out, GUI Playwright e2e + axe,
+  CLI four-client parity, `wide` SIMD batch, surface-rebuild p99 bench).
+
 - 2026-05-31 — **Configurable in-process / out-of-process node scaling — ENABLED + fully tested
   across scale up/down (commits `4118fe8`, `614bdd5`, `b220787`).** Researched + critiqued the
   optimal route (Plan-mode, approved) → mirror the `DEPLOYMENT-MODES.md` §1 pattern: *engine never
