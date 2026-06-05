@@ -1,0 +1,144 @@
+- generic [ref=e3]:
+  - complementary "workspaces" [ref=e4]:
+    - generic "Celnet — a Celer Technologies product" [ref=e5]:
+      - img "Celnet — a Celer Technologies product" [ref=e6]
+    - navigation [ref=e8]:
+      - button "⌁ Ticket" [ref=e9] [cursor=pointer]:
+        - generic [ref=e10]: ⌁
+        - generic [ref=e11]: Ticket
+      - button "≋ Stream" [ref=e12] [cursor=pointer]:
+        - generic [ref=e13]: ≋
+        - generic [ref=e14]: Stream
+      - button "◷ Surface" [ref=e15] [cursor=pointer]:
+        - generic [ref=e16]: ◷
+        - generic [ref=e17]: Surface
+      - button "⊞ Risk" [ref=e18] [cursor=pointer]:
+        - generic [ref=e19]: ⊞
+        - generic [ref=e20]: Risk
+      - button "Σ Book" [ref=e21] [cursor=pointer]:
+        - generic [ref=e22]: Σ
+        - generic [ref=e23]: Book
+    - button "☾" [ref=e25] [cursor=pointer]:
+      - generic [ref=e26]: ☾
+  - generic [ref=e27]:
+    - banner [ref=e28]:
+      - generic [ref=e29]:
+        - generic [ref=e30]: Celnet
+        - generic [ref=e31]: Celer Technologies
+      - generic [ref=e32]: ·
+      - navigation "scope" [ref=e33]:
+        - generic [ref=e35]: Firm
+        - 'generic "Grant-all: every desk, book and pair" [ref=e36]': all desks · all books
+      - generic [ref=e37]: ·
+      - button "EUR/USD" [ref=e39] [cursor=pointer]:
+        - generic [ref=e40]: EUR/USD
+        - generic [ref=e41]: ▾
+      - button "browse the pair universe" [ref=e42] [cursor=pointer]:
+        - generic [ref=e43]: ⊞
+        - generic [ref=e44]: Pairs
+      - button "⌘K Search / command…" [ref=e45] [cursor=pointer]:
+        - generic [ref=e46]: ⌘K
+        - generic [ref=e47]: Search / command…
+    - navigation "currency pair watchlist" [ref=e48]:
+      - generic [ref=e49]: Pairs
+      - tablist "currency pairs" [ref=e50]:
+        - tab "EUR/USD — set active pair · no live stream" [ref=e51] [cursor=pointer]:
+          - generic [ref=e53]: EUR/USD
+          - generic [ref=e55]:
+            - generic [ref=e56]: "1.0768"
+            - generic [ref=e57]: –
+          - generic [ref=e59]: no live stream
+        - tab "GBP/USD — set active pair · no live stream" [ref=e60] [cursor=pointer]:
+          - generic [ref=e62]: GBP/USD
+          - generic [ref=e63]:
+            - generic [ref=e64]: "1.2712"
+            - generic [ref=e65]: –
+          - generic [ref=e67]: no live stream
+        - tab "USD/JPY — set active pair · no live stream" [ref=e68] [cursor=pointer]:
+          - generic [ref=e70]: USD/JPY
+          - generic [ref=e71]:
+            - generic [ref=e72]: "156.42"
+            - generic [ref=e73]: –
+          - generic [ref=e75]: no live stream
+        - tab "AUD/USD — set active pair · no live stream" [ref=e76] [cursor=pointer]:
+          - generic [ref=e78]: AUD/USD
+          - generic [ref=e79]:
+            - generic [ref=e80]: "0.6638"
+            - generic [ref=e81]: –
+          - generic [ref=e83]: no live stream
+        - tab "USD/CHF — set active pair · no live stream" [ref=e84] [cursor=pointer]:
+          - generic [ref=e86]: USD/CHF
+          - generic [ref=e87]:
+            - generic [ref=e88]: "0.9018"
+            - generic [ref=e89]: –
+          - generic [ref=e91]: no live stream
+    - generic [ref=e94]:
+      - generic [ref=e95]:
+        - group "group by" [ref=e96]:
+          - generic [ref=e97]: Group
+          - button "Pair" [pressed] [ref=e98] [cursor=pointer]
+          - button "Tenor" [ref=e99] [cursor=pointer]
+        - group "columns" [ref=e100]:
+          - generic [ref=e101]: Columns
+          - button "Structure" [pressed] [ref=e102] [cursor=pointer]
+          - button "Trend" [pressed] [ref=e103] [cursor=pointer]
+          - button "Δ" [pressed] [ref=e104] [cursor=pointer]
+          - button "σ" [pressed] [ref=e105] [cursor=pointer]
+        - generic [ref=e106]: 0 lines · 0 pairs
+      - generic [ref=e107]:
+        - generic [ref=e108]: Pair
+        - generic [ref=e109]: Structure
+        - generic [ref=e110]: Tenor
+        - generic [ref=e111]: Bid
+        - button "Premium mid %" [ref=e112] [cursor=pointer]:
+          - text: Premium mid
+          - generic [ref=e113]: "%"
+        - generic [ref=e114]: Offer
+        - generic [ref=e115]:
+          - text: Trend
+          - generic [ref=e116]: premium
+        - button "Δ spot" [ref=e117] [cursor=pointer]:
+          - text: Δ
+          - generic [ref=e118]: spot
+        - button "σ impl" [ref=e119] [cursor=pointer]:
+          - text: σ
+          - generic [ref=e120]: impl
+        - generic "stream health" [ref=e121]: ◉
+      - grid "streaming two-way markets" [ref=e122]:
+        - generic [ref=e123]:
+          - text: No streaming lines. Subscribe with
+          - generic [ref=e124]: ⌘K
+          - text: to populate the blotter.
+      - generic [ref=e125]:
+        - button "+ Subscribe (⌘K)" [ref=e126] [cursor=pointer]:
+          - generic [ref=e127]: + Subscribe (⌘K)
+        - group "trend series mode" [ref=e128]:
+          - generic [ref=e129]: Trend
+          - button "Premium" [pressed] [ref=e130] [cursor=pointer]
+          - button "ATM vol" [ref=e131] [cursor=pointer]
+          - button "Risk reversal" [ref=e132] [cursor=pointer]
+          - button "Butterfly" [ref=e133] [cursor=pointer]
+          - button "Spot" [ref=e134] [cursor=pointer]
+          - button "Forward" [ref=e135] [cursor=pointer]
+          - button "Vega" [disabled] [ref=e136]
+          - button "P&L" [disabled] [ref=e137]
+        - generic [ref=e138]: Conflated 60Hz · click a side to trade · 3 LPs in competition
+    - contentinfo [ref=e139]:
+      - generic [ref=e140]:
+        - generic [ref=e141]: ◉
+        - text: Stream healthy
+      - generic [ref=e142]: ·
+      - generic [ref=e143]: seq 0
+      - generic [ref=e144]: ·
+      - generic [ref=e145]: 0/0 lines
+      - generic [ref=e146]: ·
+      - generic [ref=e147]: 3 LPs in competition
+      - generic [ref=e148]: ·
+      - generic [ref=e149]: 0 gaps
+      - generic "transport seam" [ref=e150]: live ws://127.0.0.1:8081
+      - generic [ref=e151]: ·
+      - generic "P99 inter-frame render time (target ≤8.3ms @120Hz, ceiling 16.6ms)" [ref=e152]: P99 render 0.0ms
+      - generic [ref=e153]: ·
+      - generic [ref=e154]: ◷ 09:13:07
+      - generic [ref=e155]: ·
+      - generic "build provenance — git short SHA · UTC build time" [ref=e156]: celnet v0.0.0 · 2026-06-03 13:10:38Z

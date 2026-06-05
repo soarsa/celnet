@@ -36,3 +36,16 @@ This will cause a hydration error.%s <button> button
                   ...
                 ...
  @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:2153
+[  285292ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:5174/@vite/client:963
+[  285518ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:20100
+[ 2038784ms] DataCloneError: Failed to execute 'measure' on 'Performance': Data cannot be cloned, out of memory.
+    at logComponentRender (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:3180:623)
+    at commitPassiveMountOnFiber (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:11024:131)
+    at recursivelyTraversePassiveMountEffects (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:11008:13)
+    at commitPassiveMountOnFiber (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:11199:13)
+    at recursivelyTraversePassiveMountEffects (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:11008:13)
+    at commitPassiveMountOnFiber (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:11199:13)
+    at recursivelyTraversePassiveMountEffects (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:11008:13)
+    at commitPassiveMountOnFiber (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:11031:13)
+    at recursivelyTraversePassiveMountEffects (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:11008:13)
+    at commitPassiveMountOnFiber (http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=6a4e8fdd:11199:13)

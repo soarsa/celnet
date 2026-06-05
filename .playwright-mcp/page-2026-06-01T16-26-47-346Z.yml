@@ -1,0 +1,67 @@
+- main [ref=e2]:
+  - generic [ref=e3]:
+    - img [ref=e4]
+    - heading "Celnet Ticket" [level=1] [ref=e6]
+    - generic [ref=e7]: connected
+  - generic [ref=e8]:
+    - heading "RFQ" [level=2] [ref=e9]
+    - generic [ref=e10]:
+      - generic [ref=e11]:
+        - text: Pair
+        - textbox "Pair" [ref=e12]: EURUSD
+      - generic [ref=e13]:
+        - text: Tenor
+        - textbox "Tenor" [ref=e14]: 1Y
+      - generic [ref=e15]:
+        - text: Strike / Δ
+        - textbox "Strike / Δ" [ref=e16]: "1.12"
+      - generic [ref=e17]:
+        - text: C / P
+        - textbox "C / P" [ref=e18]: C
+      - generic [ref=e19]:
+        - text: Notional
+        - textbox "Notional" [ref=e20]: "1000000"
+    - generic [ref=e21]:
+      - button "Request quote" [active] [ref=e22] [cursor=pointer]
+      - generic [ref=e54]: quoted
+    - generic [ref=e23]:
+      - generic [ref=e24]:
+        - generic [ref=e25]: Bid · hit (sell)
+        - generic [ref=e26]: "0.04099"
+      - generic [ref=e27]:
+        - generic [ref=e28]: Offer · lift (buy)
+        - generic [ref=e29]: "0.04254"
+    - generic [ref=e30]: quote q-13346662674469556224 · valid 4993 ms · token bound to line (keyed-MAC)
+    - generic [ref=e31]:
+      - button "Trade BUY — lift offer" [ref=e32] [cursor=pointer]
+      - button "Trade SELL — hit bid" [ref=e33] [cursor=pointer]
+  - generic [ref=e34]:
+    - heading "Contribute mark" [level=2] [ref=e35]
+    - generic [ref=e36]:
+      - generic [ref=e37]:
+        - text: Pair
+        - textbox "Pair" [ref=e38]: EURUSD
+      - generic [ref=e39]:
+        - text: Tenor
+        - textbox "Tenor" [ref=e40]: 1Y
+      - generic [ref=e41]:
+        - text: Pillar
+        - textbox "Pillar" [ref=e42]: ATM
+      - generic [ref=e43]:
+        - text: Vol
+        - textbox "Vol" [ref=e44]: "0.102"
+      - generic [ref=e45]:
+        - text: Smile model
+        - combobox "Smile model" [ref=e46] [cursor=pointer]:
+          - option "VV (market hedge)" [selected]
+          - option "SABR"
+          - option "SVI"
+          - option "SSVI"
+      - generic [ref=e47]:
+        - text: Comment
+        - textbox "Comment" [ref=e48]
+    - generic [ref=e49]:
+      - button "Stage" [ref=e50] [cursor=pointer]
+      - button "Confirm & contribute" [disabled] [ref=e51]
+    - generic [ref=e52]: "Two-phase mark: Stage previews the calibrated, arb-checked smile; Confirm deposits a new surface_version the whole firm pins. Re-mark under SABR / SVI / SSVI from the same panel."
+  - generic [ref=e53]: Every cell and button shapes the one celnet-proto contract over the shared WS mirror — identical to the GUI, the SDK and the CLI. No pricing runs in Excel.

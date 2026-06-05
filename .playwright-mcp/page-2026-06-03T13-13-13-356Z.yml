@@ -1,0 +1,313 @@
+- generic [ref=e3]:
+  - complementary "workspaces" [ref=e4]:
+    - generic "Celnet — a Celer Technologies product" [ref=e5]:
+      - img "Celnet — a Celer Technologies product" [ref=e6]
+    - navigation [ref=e8]:
+      - button "⌁ Ticket" [ref=e9] [cursor=pointer]:
+        - generic [ref=e10]: ⌁
+        - generic [ref=e11]: Ticket
+      - button "≋ Stream" [ref=e12] [cursor=pointer]:
+        - generic [ref=e13]: ≋
+        - generic [ref=e14]: Stream
+      - button "◷ Surface" [ref=e15] [cursor=pointer]:
+        - generic [ref=e16]: ◷
+        - generic [ref=e17]: Surface
+      - button "⊞ Risk" [ref=e18] [cursor=pointer]:
+        - generic [ref=e19]: ⊞
+        - generic [ref=e20]: Risk
+      - button "Σ Book" [ref=e21] [cursor=pointer]:
+        - generic [ref=e22]: Σ
+        - generic [ref=e23]: Book
+    - button "☾" [ref=e25] [cursor=pointer]:
+      - generic [ref=e26]: ☾
+  - generic [ref=e27]:
+    - banner [ref=e28]:
+      - generic [ref=e29]:
+        - generic [ref=e30]: Celnet
+        - generic [ref=e31]: Celer Technologies
+      - generic [ref=e32]: ·
+      - navigation "scope" [ref=e33]:
+        - generic [ref=e35]: Firm
+        - 'generic "Grant-all: every desk, book and pair" [ref=e36]': all desks · all books
+      - generic [ref=e37]: ·
+      - button "EUR/USD" [ref=e39] [cursor=pointer]:
+        - generic [ref=e40]: EUR/USD
+        - generic [ref=e41]: ▾
+      - button "browse the pair universe" [ref=e42] [cursor=pointer]:
+        - generic [ref=e43]: ⊞
+        - generic [ref=e44]: Pairs
+      - button "⌘K Search / command…" [ref=e45] [cursor=pointer]:
+        - generic [ref=e46]: ⌘K
+        - generic [ref=e47]: Search / command…
+    - navigation "currency pair watchlist" [ref=e48]:
+      - generic [ref=e49]: Pairs
+      - tablist "currency pairs" [ref=e50]:
+        - 'tab "EUR/USD — set active pair · trend: premium mid of ATM straddle · 3 live lines" [ref=e157] [cursor=pointer]':
+          - generic [ref=e53]: EUR/USD
+          - generic [ref=e55]:
+            - generic [ref=e56]: "1.0768"
+            - generic [ref=e57]: ▲
+          - generic [ref=e58]:
+            - generic [ref=e59]: premium
+            - img "premium-mid trend, up" [ref=e158]
+        - 'tab "GBP/USD — set active pair · trend: premium mid of 10Δ strangle · 1 live line" [ref=e159] [cursor=pointer]':
+          - generic [ref=e62]: GBP/USD
+          - generic [ref=e63]:
+            - generic [ref=e64]: "1.2712"
+            - generic [ref=e65]: ▼
+          - generic [ref=e66]:
+            - generic [ref=e67]: premium
+            - img "premium-mid trend, down" [ref=e160]
+        - 'tab "USD/JPY — set active pair · trend: premium mid of ATM · 1 live line" [ref=e161] [cursor=pointer]':
+          - generic [ref=e70]: USD/JPY
+          - generic [ref=e71]:
+            - generic [ref=e72]: "156.42"
+            - generic [ref=e73]: ▼
+          - generic [ref=e74]:
+            - generic [ref=e75]: premium
+            - img "premium-mid trend, down" [ref=e162]
+        - 'tab "AUD/USD — set active pair · trend: premium mid of 10Δ strangle · 1 live line" [ref=e163] [cursor=pointer]':
+          - generic [ref=e78]: AUD/USD
+          - generic [ref=e79]:
+            - generic [ref=e80]: "0.6638"
+            - generic [ref=e81]: ▼
+          - generic [ref=e82]:
+            - generic [ref=e83]: premium
+            - img "premium-mid trend, down" [ref=e164]
+        - tab "USD/CHF — set active pair · no live stream" [ref=e84] [cursor=pointer]:
+          - generic [ref=e86]: USD/CHF
+          - generic [ref=e87]:
+            - generic [ref=e88]: "0.9018"
+            - generic [ref=e89]: –
+          - generic [ref=e91]: no live stream
+    - generic [ref=e94]:
+      - generic [ref=e95]:
+        - group "group by" [ref=e96]:
+          - generic [ref=e97]: Group
+          - button "Pair" [pressed] [ref=e98] [cursor=pointer]
+          - button "Tenor" [ref=e99] [cursor=pointer]
+        - group "columns" [ref=e100]:
+          - generic [ref=e101]: Columns
+          - button "Structure" [pressed] [ref=e102] [cursor=pointer]
+          - button "Trend" [pressed] [ref=e103] [cursor=pointer]
+          - button "Δ" [pressed] [ref=e104] [cursor=pointer]
+          - button "σ" [pressed] [ref=e105] [cursor=pointer]
+        - generic [ref=e106]: 6 lines · 4 pairs
+      - generic [ref=e107]:
+        - generic [ref=e108]: Pair
+        - generic [ref=e109]: Structure
+        - generic [ref=e110]: Tenor
+        - generic [ref=e111]: Bid
+        - button "Premium mid %" [ref=e112] [cursor=pointer]:
+          - text: Premium mid
+          - generic [ref=e113]: "%"
+        - generic [ref=e114]: Offer
+        - generic [ref=e115]:
+          - text: Trend
+          - generic [ref=e116]: premium
+        - button "Δ spot" [ref=e117] [cursor=pointer]:
+          - text: Δ
+          - generic [ref=e118]: spot
+        - button "σ impl" [ref=e119] [cursor=pointer]:
+          - text: σ
+          - generic [ref=e120]: impl
+        - generic "stream health" [ref=e121]: ◉
+      - grid "streaming two-way markets" [ref=e122]:
+        - generic [ref=e123]:
+          - generic [ref=e165]:
+            - button "EUR/USD 3" [expanded] [ref=e166] [cursor=pointer]:
+              - generic [ref=e167]: ▾
+              - generic [ref=e168]: EUR/USD
+              - generic [ref=e169]: "3"
+            - generic [ref=e170]:
+              - generic "Net spot delta across the group" [ref=e171]: ΣΔ +0.922
+              - generic "Mean implied vol across the group" [ref=e172]: σ̄ 10.55
+              - generic "Healthy / total streamed lines" [ref=e173]:
+                - text: ◉
+                - generic [ref=e174]: 3/3
+          - generic [ref=e175]:
+            - generic [ref=e176]: EUR/USD
+            - generic [ref=e177]:
+              - text: ATM straddle
+              - generic "Quoted by" [ref=e178]: celnet-auto-pricer
+            - generic [ref=e179]: 1M
+            - button "2.394" [ref=e180] [cursor=pointer]:
+              - generic [ref=e181]: "2.394"
+            - generic "Premium mid (%)" [ref=e182]: "2.659"
+            - button "2.923" [ref=e183] [cursor=pointer]:
+              - generic [ref=e184]:
+                - generic [ref=e185]: ▲
+                - text: "2.923"
+            - generic [ref=e186]:
+              - generic [ref=e187]: ▲
+              - img "Premium trend, up" [ref=e188]
+              - generic "Premium (premium)" [ref=e189]: "2.659"
+            - generic "Spot delta (Δ)" [ref=e190]: "+0.024"
+            - generic "Implied volatility (annualised, vol points)" [ref=e191]: "10.55"
+            - img "stream healthy" [ref=e193]: ◉
+          - generic [ref=e194]:
+            - generic [ref=e195]: EUR/USD
+            - generic [ref=e196]:
+              - text: 25Δ RR
+              - generic "Quoted by" [ref=e197]: celnet-auto-pricer
+            - generic [ref=e198]: 1M
+            - button "0.000" [disabled] [ref=e199]:
+              - generic [ref=e200]: "0.000"
+            - generic "Premium mid (%)" [ref=e201]: "0.009"
+            - button "0.019" [disabled] [ref=e202]:
+              - generic [ref=e203]:
+                - generic [ref=e204]: ▼
+                - text: "0.019"
+            - generic [ref=e205]:
+              - generic [ref=e206]: ▼
+              - img "Premium trend, down" [ref=e207]
+              - generic "Premium (premium)" [ref=e208]: "0.009"
+            - generic "Spot delta (Δ)" [ref=e209]: "+0.500"
+            - generic "Implied volatility (annualised, vol points)" [ref=e210]: "10.55"
+            - img "stream healthy" [ref=e212]: ◉
+          - generic [ref=e213]:
+            - generic [ref=e214]: EUR/USD
+            - generic [ref=e215]:
+              - text: seagull
+              - generic "Quoted by" [ref=e216]: celnet-auto-pricer
+            - generic [ref=e217]: 3M
+            - button "0.000" [disabled] [ref=e218]:
+              - generic [ref=e219]: "0.000"
+            - generic "Premium mid (%)" [ref=e220]: "-0.106"
+            - button "-0.213" [disabled] [ref=e221]:
+              - generic [ref=e222]:
+                - generic [ref=e223]: ▲
+                - text: "-0.213"
+            - generic [ref=e224]:
+              - generic [ref=e225]: ▼
+              - img "Premium trend, down" [ref=e226]
+              - generic "Premium (premium)" [ref=e227]: "-0.106"
+            - generic "Spot delta (Δ)" [ref=e228]: "+0.398"
+            - generic "Implied volatility (annualised, vol points)" [ref=e229]: "10.55"
+            - img "stream healthy" [ref=e231]: ◉
+          - generic [ref=e232]:
+            - button "GBP/USD 1" [expanded] [ref=e233] [cursor=pointer]:
+              - generic [ref=e234]: ▾
+              - generic [ref=e235]: GBP/USD
+              - generic [ref=e236]: "1"
+            - generic [ref=e237]:
+              - generic "Net spot delta across the group" [ref=e238]: ΣΔ +0.004
+              - generic "Mean implied vol across the group" [ref=e239]: σ̄ 10.55
+              - generic "Healthy / total streamed lines" [ref=e240]:
+                - text: ◉
+                - generic [ref=e241]: 1/1
+          - generic [ref=e242]:
+            - generic [ref=e243]: GBP/USD
+            - generic [ref=e244]:
+              - text: 10Δ strangle
+              - generic "Quoted by" [ref=e245]: celnet-auto-pricer
+            - generic [ref=e246]: 2M
+            - button "0.356" [ref=e247] [cursor=pointer]:
+              - generic [ref=e248]: "0.356"
+            - generic "Premium mid (%)" [ref=e249]: "0.446"
+            - button "0.536" [ref=e250] [cursor=pointer]:
+              - generic [ref=e251]:
+                - generic [ref=e252]: ▼
+                - text: "0.536"
+            - generic [ref=e253]:
+              - generic [ref=e254]: ▼
+              - img "Premium trend, down" [ref=e255]
+              - generic "Premium (premium)" [ref=e256]: "0.446"
+            - generic "Spot delta (Δ)" [ref=e257]: "+0.004"
+            - generic "Implied volatility (annualised, vol points)" [ref=e258]: "10.55"
+            - img "stream healthy" [ref=e260]: ◉
+          - generic [ref=e261]:
+            - button "USD/JPY 1" [expanded] [ref=e262] [cursor=pointer]:
+              - generic [ref=e263]: ▾
+              - generic [ref=e264]: USD/JPY
+              - generic [ref=e265]: "1"
+            - generic [ref=e266]:
+              - generic "Net spot delta across the group" [ref=e267]: ΣΔ +0.502
+              - generic "Mean implied vol across the group" [ref=e268]: σ̄ 10.55
+              - generic "Healthy / total streamed lines" [ref=e269]:
+                - text: ◉
+                - generic [ref=e270]: 1/1
+          - generic [ref=e271]:
+            - generic [ref=e272]: USD/JPY
+            - generic [ref=e273]:
+              - text: ATM
+              - generic "Quoted by" [ref=e274]: celnet-auto-pricer
+            - generic [ref=e275]: "ON"
+            - button "0.000" [disabled] [ref=e276]:
+              - generic [ref=e277]: "0.000"
+            - generic "Premium mid (%)" [ref=e278]: "0.451"
+            - button "0.902" [disabled] [ref=e279]:
+              - generic [ref=e280]:
+                - generic [ref=e281]: ▼
+                - text: "0.902"
+            - generic [ref=e282]:
+              - generic [ref=e283]: ▼
+              - img "Premium trend, down" [ref=e284]
+              - generic "Premium (premium)" [ref=e285]: "0.451"
+            - generic "Spot delta (Δ)" [ref=e286]: "+0.502"
+            - generic "Implied volatility (annualised, vol points)" [ref=e287]: "10.55"
+            - img "stream healthy" [ref=e289]: ◉
+          - generic [ref=e290]:
+            - button "AUD/USD 1" [expanded] [ref=e291] [cursor=pointer]:
+              - generic [ref=e292]: ▾
+              - generic [ref=e293]: AUD/USD
+              - generic [ref=e294]: "1"
+            - generic [ref=e295]:
+              - generic "Net spot delta across the group" [ref=e296]: ΣΔ +0.005
+              - generic "Mean implied vol across the group" [ref=e297]: σ̄ 10.55
+              - generic "Healthy / total streamed lines" [ref=e298]:
+                - text: ◉
+                - generic [ref=e299]: 1/1
+          - generic [ref=e300]:
+            - generic [ref=e301]: AUD/USD
+            - generic [ref=e302]:
+              - text: 10Δ strangle
+              - generic "Quoted by" [ref=e303]: celnet-auto-pricer
+            - generic [ref=e304]: 3M
+            - button "0.469" [ref=e305] [cursor=pointer]:
+              - generic [ref=e306]: "0.469"
+            - generic "Premium mid (%)" [ref=e307]: "0.549"
+            - button "0.629" [ref=e308] [cursor=pointer]:
+              - generic [ref=e309]:
+                - generic [ref=e310]: ▲
+                - text: "0.629"
+            - generic [ref=e311]:
+              - generic [ref=e312]: ▼
+              - img "Premium trend, down" [ref=e313]
+              - generic "Premium (premium)" [ref=e314]: "0.549"
+            - generic "Spot delta (Δ)" [ref=e315]: "+0.005"
+            - generic "Implied volatility (annualised, vol points)" [ref=e316]: "10.55"
+            - img "stream healthy" [ref=e318]: ◉
+      - generic [ref=e125]:
+        - button "+ Subscribe (⌘K)" [ref=e126] [cursor=pointer]:
+          - generic [ref=e127]: + Subscribe (⌘K)
+        - group "trend series mode" [ref=e128]:
+          - generic [ref=e129]: Trend
+          - button "Premium" [pressed] [ref=e130] [cursor=pointer]
+          - button "ATM vol" [ref=e131] [cursor=pointer]
+          - button "Risk reversal" [ref=e132] [cursor=pointer]
+          - button "Butterfly" [ref=e133] [cursor=pointer]
+          - button "Spot" [ref=e134] [cursor=pointer]
+          - button "Forward" [ref=e135] [cursor=pointer]
+          - button "Vega" [disabled] [ref=e136]
+          - button "P&L" [disabled] [ref=e137]
+        - generic [ref=e138]: Conflated 60Hz · click a side to trade · 3 LPs in competition
+    - contentinfo [ref=e139]:
+      - generic [ref=e140]:
+        - generic [ref=e141]: ◉
+        - text: Stream healthy
+      - generic [ref=e142]: ·
+      - generic [ref=e143]: seq 1203
+      - generic [ref=e144]: ·
+      - generic [ref=e145]: 6/6 lines
+      - generic [ref=e146]: ·
+      - generic [ref=e147]: 3 LPs in competition
+      - generic [ref=e148]: ·
+      - generic [ref=e149]: 0 gaps
+      - generic "transport seam" [ref=e150]: live ws://127.0.0.1:8081
+      - generic [ref=e151]: ·
+      - generic "P99 inter-frame render time (target ≤8.3ms @120Hz, ceiling 16.6ms)" [ref=e152]: P99 render 12.8ms
+      - generic [ref=e153]: ·
+      - generic [ref=e154]: ◷ 09:13:13
+      - generic [ref=e155]: ·
+      - generic "build provenance — git short SHA · UTC build time" [ref=e156]: celnet v0.0.0 · 2026-06-03 13:10:38Z

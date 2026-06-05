@@ -1,0 +1,177 @@
+- generic [ref=e3]:
+  - complementary "workspaces" [ref=e4]:
+    - generic "Celnet — a Celer Technologies product" [ref=e5]:
+      - img "Celnet — a Celer Technologies product" [ref=e6]
+    - navigation [ref=e8]:
+      - button "⌁ Ticket" [active] [ref=e9] [cursor=pointer]:
+        - generic [ref=e10]: ⌁
+        - generic [ref=e11]: Ticket
+      - button "≋ Stream" [ref=e12] [cursor=pointer]:
+        - generic [ref=e13]: ≋
+        - generic [ref=e14]: Stream
+      - button "◷ Surface" [ref=e15] [cursor=pointer]:
+        - generic [ref=e16]: ◷
+        - generic [ref=e17]: Surface
+      - button "⊞ Risk" [ref=e18] [cursor=pointer]:
+        - generic [ref=e19]: ⊞
+        - generic [ref=e20]: Risk
+      - button "Σ Book" [ref=e21] [cursor=pointer]:
+        - generic [ref=e22]: Σ
+        - generic [ref=e23]: Book
+    - button "☾" [ref=e25] [cursor=pointer]:
+      - generic [ref=e26]: ☾
+  - generic [ref=e27]:
+    - banner [ref=e28]:
+      - generic [ref=e29]:
+        - generic [ref=e30]: Celnet
+        - generic [ref=e31]: Celer Technologies
+      - generic [ref=e32]: ·
+      - navigation "scope" [ref=e33]:
+        - generic [ref=e35]: Firm
+        - 'generic "Grant-all: every desk, book and pair" [ref=e36]': all desks · all books
+      - generic [ref=e37]: ·
+      - button "EUR/USD" [ref=e39] [cursor=pointer]:
+        - generic [ref=e40]: EUR/USD
+        - generic [ref=e41]: ▾
+      - button "browse the pair universe" [ref=e42] [cursor=pointer]:
+        - generic [ref=e43]: ⊞
+        - generic [ref=e44]: Pairs
+      - button "⌘K Search / command…" [ref=e45] [cursor=pointer]:
+        - generic [ref=e46]: ⌘K
+        - generic [ref=e47]: Search / command…
+    - navigation "currency pair watchlist" [ref=e48]:
+      - generic [ref=e49]: Pairs
+      - tablist "currency pairs" [ref=e50]:
+        - 'tab "EUR/USD — set active pair · trend: premium mid of ATM straddle · 3 live lines" [ref=e157] [cursor=pointer]':
+          - generic [ref=e53]: EUR/USD
+          - generic [ref=e55]:
+            - generic [ref=e56]: "1.0768"
+            - generic [ref=e57]: ▲
+          - generic [ref=e58]:
+            - generic [ref=e59]: premium
+            - img "premium-mid trend, up" [ref=e158]
+        - 'tab "GBP/USD — set active pair · trend: premium mid of 10Δ strangle · 1 live line" [ref=e159] [cursor=pointer]':
+          - generic [ref=e62]: GBP/USD
+          - generic [ref=e63]:
+            - generic [ref=e64]: "1.2712"
+            - generic [ref=e65]: ▼
+          - generic [ref=e66]:
+            - generic [ref=e67]: premium
+            - img "premium-mid trend, down" [ref=e240]
+        - 'tab "USD/JPY — set active pair · trend: premium mid of ATM · 1 live line" [ref=e161] [cursor=pointer]':
+          - generic [ref=e70]: USD/JPY
+          - generic [ref=e71]:
+            - generic [ref=e72]: "156.42"
+            - generic [ref=e73]: ▼
+          - generic [ref=e74]:
+            - generic [ref=e75]: premium
+            - img "premium-mid trend, down" [ref=e162]
+        - 'tab "AUD/USD — set active pair · trend: premium mid of 10Δ strangle · 1 live line" [ref=e163] [cursor=pointer]':
+          - generic [ref=e78]: AUD/USD
+          - generic [ref=e79]:
+            - generic [ref=e80]: "0.6638"
+            - generic [ref=e81]: ▼
+          - generic [ref=e82]:
+            - generic [ref=e83]: premium
+            - img "premium-mid trend, down" [ref=e164]
+        - tab "USD/CHF — set active pair · no live stream" [ref=e84] [cursor=pointer]:
+          - generic [ref=e86]: USD/CHF
+          - generic [ref=e87]:
+            - generic [ref=e88]: "0.9018"
+            - generic [ref=e89]: –
+          - generic [ref=e91]: no live stream
+    - generic [ref=e166]:
+      - generic [ref=e168]:
+        - generic [ref=e169]:
+          - generic [ref=e170]: EUR/USD
+          - generic [ref=e171]: ·
+          - combobox "structure" [ref=e172]:
+            - option "Vanilla"
+            - option "Risk Reversal" [selected]
+            - option "Strangle"
+            - option "Straddle"
+            - option "Seagull"
+          - generic [ref=e174]:
+            - generic [ref=e175]: notional
+            - spinbutton "notional mm EUR" [ref=e176]: "10"
+            - generic [ref=e177]: mm EUR
+        - generic [ref=e178]:
+          - generic [ref=e179]:
+            - generic [ref=e180]: Expiry
+            - tablist "expiry mode" [ref=e181]:
+              - tab "Tenor" [selected] [ref=e182] [cursor=pointer]
+              - tab "Broken date" [ref=e183] [cursor=pointer]
+          - generic [ref=e184]:
+            - button "ON" [ref=e185] [cursor=pointer]
+            - button "TN" [ref=e186] [cursor=pointer]
+            - button "SN" [ref=e187] [cursor=pointer]
+            - button "1W" [ref=e188] [cursor=pointer]
+            - button "2W" [ref=e189] [cursor=pointer]
+            - button "1M" [ref=e190] [cursor=pointer]
+            - button "2M" [ref=e191] [cursor=pointer]
+            - button "3M" [ref=e192] [cursor=pointer]
+            - button "6M" [ref=e193] [cursor=pointer]
+            - button "1Y" [ref=e194] [cursor=pointer]
+            - button "IMM1" [ref=e195] [cursor=pointer]
+        - generic [ref=e196]:
+          - generic [ref=e197]:
+            - generic [ref=e198]: LEG 1
+            - generic [ref=e199]: BUY
+            - generic [ref=e200]: Call
+            - generic [ref=e201]: 25Δ
+            - generic [ref=e202]: ▸
+            - generic [ref=e203]: K 1.0948
+          - generic [ref=e204]:
+            - generic [ref=e205]: LEG 2
+            - generic [ref=e206]: SELL
+            - generic [ref=e207]: Put
+            - generic [ref=e208]: 25Δ
+            - generic [ref=e209]: ▸
+            - generic [ref=e210]: K 1.0633
+          - 'button "Solve: zero-cost" [ref=e211] [cursor=pointer]'
+        - generic [ref=e212]:
+          - generic [ref=e213]:
+            - generic [ref=e214]: BID
+            - generic [ref=e215]: — · —
+          - generic [ref=e216]:
+            - generic [ref=e217]: MID
+            - generic [ref=e218]: — · —
+          - generic [ref=e219]:
+            - generic [ref=e220]: OFFER
+            - generic [ref=e221]: — · —
+            - generic [ref=e222]: "% EUR prem"
+        - generic "resolved conventions" [ref=e224]:
+          - generic [ref=e225]: spot Δ pa
+          - generic [ref=e226]: DNS
+          - generic [ref=e227]: NY 1000
+          - generic [ref=e228]: "% for"
+          - generic [ref=e229]: deliv
+        - generic [ref=e230]:
+          - button "Request quote ⏎" [ref=e231] [cursor=pointer]:
+            - generic [ref=e232]: Request quote
+            - generic [ref=e233]: ⏎
+          - generic [ref=e234]:
+            - button "Stream this ≋" [ref=e235] [cursor=pointer]:
+              - generic [ref=e236]: Stream this ≋
+            - button "Add to risk ⊞" [ref=e237] [cursor=pointer]:
+              - generic [ref=e238]: Add to risk ⊞
+      - paragraph [ref=e239]: One card = analytics + executable. Conventions on the face, Solve inline, last-look visible. Promote the exact structure to the blotter or the risk grid — same Instrument, no re-keying.
+    - contentinfo [ref=e139]:
+      - generic [ref=e140]:
+        - generic [ref=e141]: ◉
+        - text: Stream healthy
+      - generic [ref=e142]: ·
+      - generic [ref=e143]: seq 2365
+      - generic [ref=e144]: ·
+      - generic [ref=e145]: 6/6 lines
+      - generic [ref=e146]: ·
+      - generic [ref=e147]: 3 LPs in competition
+      - generic [ref=e148]: ·
+      - generic [ref=e149]: 0 gaps
+      - generic "transport seam" [ref=e150]: live ws://127.0.0.1:8081
+      - generic [ref=e151]: ·
+      - generic "P99 inter-frame render time (target ≤8.3ms @120Hz, ceiling 16.6ms)" [ref=e152]: P99 render 12.7ms
+      - generic [ref=e153]: ·
+      - generic [ref=e154]: ◷ 11:06:44
+      - generic [ref=e155]: ·
+      - generic "build provenance — git short SHA · UTC build time" [ref=e156]: celnet v0.0.0 · 2026-06-03 13:10:38Z

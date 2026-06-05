@@ -1,0 +1,2 @@
+[     201ms] [LOG] Warning: Office.js is loaded outside of Office client @ https://appsforoffice.microsoft.com/lib/1/hosted/o15apptofilemappingtable.js:10
+[     205ms] [ERROR] Failed to load resource: the server responded with a status of 404 (File not found) @ http://127.0.0.1:8099/favicon.ico:0
