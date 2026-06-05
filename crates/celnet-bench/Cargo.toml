@@ -32,6 +32,12 @@ celnet-conventions.workspace = true
 celnet-engine.workspace = true
 celnet-proto.workspace = true
 celnet-server.workspace = true
+# Fleet §11 SLO truth-benches (loopback): the federation-overhead arm boots a
+# `Distributed{[backend]}` federating edge (`FleetTopology` lives in
+# celnet-risk-fleet) and seeds the backend's position book (FactKey org handles
+# from celnet-risk-cube, already a dep above). Read-only library dep — the harness
+# constructs the public APIs, it never modifies those crates.
+celnet-risk-fleet.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "sync", "time", "macros"] }
 tonic.workspace = true
 futures-util.workspace = true
@@ -103,6 +109,17 @@ path = "src/bin/bench_gate.rs"
 [[bin]]
 name = "core_load"
 path = "src/bin/core_load.rs"
+
+# Fleet §11 SLO truth-benches (LOOPBACK / in-process): measures (a) cross-shard
+# federation overhead, (b) publish→snapshot lag, (c) conflation correctness under
+# a stalled consumer, (d) many-sub fan-out delivery spread — over the REAL fleet
+# primitives, with HdrHistogram. Emits a `FleetSloReport` the bench gate compares
+# against a committed LOOPBACK baseline for >2× relative regression. NOT a wire-SLO
+# claim (the absolute §11 wire-latency SLOs stay deploy-gated; see docs/SCALE-OUT
+# §0/§11). Bounded; self-terminating.
+[[bin]]
+name = "fleet_slo"
+path = "src/bin/fleet_slo.rs"
 
 # ---------------------------------------------------------------------------
 # iai-callgrind instruction-count gate (jitter-free, deterministic). Runs under

@@ -1,0 +1,40 @@
+{
+  "measurement": "loopback",
+  "federation": {
+    "direct": {
+      "p50_us": 49.439,
+      "p99_us": 73.215
+    },
+    "federated": {
+      "p50_us": 137.343,
+      "p99_us": 176.895
+    },
+    "added_p99_us": 103.68,
+    "samples": 600
+  },
+  "publish_snapshot": {
+    "lag": {
+      "p50_us": 0.125,
+      "p99_us": 0.208
+    },
+    "p999_us": 0.667,
+    "samples": 30000
+  },
+  "conflation": {
+    "baseline_p99_us": 0.042,
+    "stalled_p99_us": 0.042,
+    "producer_throughput_per_s": 22452152.218407355,
+    "max_queue_depth": 256,
+    "channel_capacity": 256,
+    "samples": 50000
+  },
+  "fan_out": {
+    "subscribers": 64,
+    "window": {
+      "p50_us": 111.295,
+      "p99_us": 143.359
+    },
+    "p999_us": 173.183,
+    "rounds": 2000
+  }
+}

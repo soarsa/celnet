@@ -12,8 +12,13 @@ use celnet_types::{AtmConvention, CcyPair};
 use clap::{Args, Parser, Subcommand};
 
 use crate::args::{CliBarrier, CliDeltaConvention, CliDigital, CliOptionType, Market};
+use crate::risk::{
+    self, AggregateReq, CliDimension, DrillReq, LimitsReq, PositionsReq, RiskCommon, StreamReq,
+};
 use crate::tenor::parse_tenor;
 use crate::{convention, exotic, price, surface};
+
+use celnet_client::{OrgDimension, Scope, StrikeSpec};
 
 /// The Celnet operator/quant CLI.
 #[derive(Debug, Parser)]
@@ -39,6 +44,132 @@ pub(crate) enum Command {
     Exotic(ExoticArgs),
     /// Resolve and print the convention record for a pair and tenor.
     Convention(ConventionArgs),
+    /// Firm-scale hierarchical risk against a running edge (the same `RiskService`
+    /// the GUI Book view and Excel `CELNET.*` consume, via the `celnet-client` SDK).
+    Risk(RiskArgs),
+    /// Subscribe to a two-way RFS stream for an instrument against a running edge,
+    /// print the sequenced ticks, then unsubscribe cleanly (the `celnet-client`
+    /// multiplexed session — the same stream the GUI blotter consumes).
+    Stream(StreamArgs),
+}
+
+/// Arguments to `risk` — the edge endpoint, the entitlement scope flags, and one
+/// of the four risk sub-subcommands.
+#[derive(Debug, Args)]
+pub(crate) struct RiskArgs {
+    /// The gRPC endpoint of the edge, e.g. `http://127.0.0.1:50551`.
+    #[arg(long, default_value = "http://127.0.0.1:50551")]
+    pub(crate) endpoint: String,
+    /// The reporting currency every node measure is expressed in.
+    #[arg(long, default_value = "USD")]
+    pub(crate) numeraire: String,
+    /// A spot conversion rate `CCY=RATE` (units of numeraire per 1 unit of ccy),
+    /// repeatable. The numeraire's own rate is implicitly 1.0; a rate missing for a
+    /// currency in the book fails the request loudly server-side.
+    #[arg(long = "rate", value_parser = risk::parse_rate)]
+    pub(crate) rates: Vec<(String, f64)>,
+    /// A read grant `DIM:VALUE` (repeatable); any grant switches to a
+    /// deny-by-default scoped principal. No grant/deny ⇒ the grant-all
+    /// (show-all-now) default, identical to the GUI/SDK/Excel.
+    #[arg(long = "grant", value_parser = risk::parse_scope_flag)]
+    pub(crate) grants: Vec<(OrgDimension, u64)>,
+    /// An information-barrier deny `DIM:VALUE` (repeatable); deny wins over any
+    /// grant (a Chinese wall on a grant-all firm view).
+    #[arg(long = "deny", value_parser = risk::parse_scope_flag)]
+    pub(crate) denies: Vec<(OrgDimension, u64)>,
+    /// The risk sub-subcommand.
+    #[command(subcommand)]
+    pub(crate) kind: RiskKind,
+}
+
+/// The `risk` sub-subcommands — one per `RiskService` operation.
+#[derive(Debug, Subcommand)]
+pub(crate) enum RiskKind {
+    /// Roll the entitled book up over an org dimension into a node tree.
+    Aggregate {
+        /// The dimension to group along.
+        #[arg(long, value_enum, default_value = "firm")]
+        dimension: CliDimension,
+        /// Narrow to one `DIM:VALUE` subtree before the group-by.
+        #[arg(long = "scope", value_parser = risk::parse_scope_flag)]
+        scope: Option<(OrgDimension, u64)>,
+        /// Evaluate VaR/ES by bumping spot over these relative shocks (repeatable,
+        /// e.g. `--var-shock -0.01 --var-shock 0.01`). Without any, the non-additive
+        /// block is absent (never a spurious zero).
+        #[arg(long = "var-shock", allow_hyphen_values = true)]
+        var_shocks: Vec<f64>,
+        /// The VaR/ES confidence level (e.g. 0.99).
+        #[arg(long, default_value_t = 0.99)]
+        var_alpha: f64,
+        /// Charge FRTB-SbM spot curvature at this risk weight (0 ⇒ not evaluated).
+        #[arg(long, default_value_t = 0.0)]
+        curvature: f64,
+    },
+    /// Drill one node into its child sub-nodes and/or constituent positions.
+    Drill {
+        /// The node to drill, `DIM:VALUE` (use `firm:0` for the apex).
+        #[arg(long, value_parser = risk::parse_scope_flag)]
+        node: (OrgDimension, u64),
+        /// The finer dimension to break children out at.
+        #[arg(long, value_enum, default_value = "book")]
+        child_dimension: CliDimension,
+        /// Return the child sub-nodes.
+        #[arg(long, default_value_t = false)]
+        children: bool,
+        /// Return the constituent positions.
+        #[arg(long, default_value_t = false)]
+        positions: bool,
+    },
+    /// List the entitled open book.
+    Positions {
+        /// Narrow the listing to one `DIM:VALUE` subtree.
+        #[arg(long = "scope", value_parser = risk::parse_scope_flag)]
+        scope: Option<(OrgDimension, u64)>,
+    },
+    /// Read the limit-tree RAG / utilization at a scope.
+    Limits {
+        /// The scope to evaluate, `DIM:VALUE`.
+        #[arg(long, value_parser = risk::parse_scope_flag)]
+        scope: (OrgDimension, u64),
+        /// VaR/ES spot shocks for the non-additive limits (repeatable).
+        #[arg(long = "var-shock", allow_hyphen_values = true)]
+        var_shocks: Vec<f64>,
+        /// The VaR/ES confidence level.
+        #[arg(long, default_value_t = 0.99)]
+        var_alpha: f64,
+    },
+}
+
+/// Arguments to `stream`.
+#[derive(Debug, Args)]
+pub(crate) struct StreamArgs {
+    /// The gRPC endpoint of the edge.
+    #[arg(long, default_value = "http://127.0.0.1:50551")]
+    pub(crate) endpoint: String,
+    /// Currency pair, e.g. EURUSD.
+    #[arg(long)]
+    pub(crate) pair: String,
+    /// Tenor shorthand, e.g. 1Y, 3M, ON.
+    #[arg(long, default_value = "1Y")]
+    pub(crate) tenor: String,
+    /// Time to expiry in years (authoritative for pricing).
+    #[arg(long, default_value_t = 1.0)]
+    pub(crate) expiry_years: f64,
+    /// Call or put.
+    #[arg(long, value_enum, default_value = "call")]
+    pub(crate) option: CliOptionType,
+    /// Explicit strike (mutually exclusive with `--delta`).
+    #[arg(long, group = "stream_strike")]
+    pub(crate) strike: Option<f64>,
+    /// A signed convention delta resolved to a strike server-side.
+    #[arg(long, group = "stream_strike", allow_hyphen_values = true)]
+    pub(crate) delta: Option<f64>,
+    /// Base-currency notional.
+    #[arg(long, default_value_t = 1_000_000.0)]
+    pub(crate) notional: f64,
+    /// The number of post-snapshot ticks to print before unsubscribing.
+    #[arg(long, default_value_t = 3)]
+    pub(crate) ticks: u32,
 }
 
 /// Shared Garman-Kohlhagen market inputs accepted by `price` and `exotic`.
@@ -251,6 +382,8 @@ pub(crate) enum DispatchError {
     Price(price::PriceError),
     /// A `surface` calibration failure.
     Surface(celnet_surface::CalibrationError),
+    /// A `risk` / `stream` networked-command failure (connect, status, timeout).
+    Risk(risk::RiskError),
     /// An argument was out of its valid domain.
     Invalid(String),
 }
@@ -262,6 +395,7 @@ impl core::fmt::Display for DispatchError {
             DispatchError::BadTenor(e) => write!(f, "{e}"),
             DispatchError::Price(e) => write!(f, "{e}"),
             DispatchError::Surface(e) => write!(f, "surface calibration failed: {e:?}"),
+            DispatchError::Risk(e) => write!(f, "{e}"),
             DispatchError::Invalid(s) => write!(f, "invalid argument: {s}"),
         }
     }
@@ -395,6 +529,108 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
             let resolved = convention::run(pair, tenor);
             write!(out, "{}", convention::format_report(pair, tenor, &resolved)).ok();
             Ok(())
+        }
+        Command::Risk(a) => dispatch_risk(a, out),
+        Command::Stream(a) => {
+            let pair = parse_pair(&a.pair)?;
+            let tenor = parse_tenor(&a.tenor).map_err(DispatchError::BadTenor)?;
+            let strike = if let Some(k) = a.strike {
+                StrikeSpec::Absolute(k)
+            } else if let Some(d) = a.delta {
+                StrikeSpec::Delta(d)
+            } else {
+                return Err(DispatchError::Invalid(
+                    "specify exactly one of --strike or --delta".to_owned(),
+                ));
+            };
+            let req = StreamReq {
+                endpoint: a.endpoint,
+                pair,
+                tenor,
+                expiry_years: a.expiry_years,
+                option: a.option.into(),
+                strike,
+                notional_base: a.notional,
+                ticks: a.ticks,
+            };
+            risk::run_stream(&req, out).map_err(DispatchError::Risk)?;
+            Ok(())
+        }
+    }
+}
+
+/// Build the `RiskCommon` shared by the four risk sub-subcommands.
+fn risk_common(a: &RiskArgs) -> RiskCommon {
+    RiskCommon {
+        endpoint: a.endpoint.clone(),
+        numeraire_ccy: a.numeraire.clone(),
+        rates: a.rates.clone(),
+    }
+}
+
+/// Dispatch the `risk` subcommand to the matching `RiskService` SDK call.
+fn dispatch_risk<W: Write>(a: RiskArgs, out: &mut W) -> Result<(), DispatchError> {
+    let common = risk_common(&a);
+    match a.kind {
+        RiskKind::Aggregate {
+            dimension,
+            scope,
+            var_shocks,
+            var_alpha,
+            curvature,
+        } => {
+            let req = AggregateReq {
+                common,
+                dimension: dimension.into(),
+                scope: scope.map(|(d, v)| Scope::at(d, v)),
+                grants: a.grants,
+                denies: a.denies,
+                var_shocks,
+                var_alpha,
+                curvature_risk_weight: curvature,
+            };
+            risk::run_aggregate(&req, out).map_err(DispatchError::Risk)
+        }
+        RiskKind::Drill {
+            node,
+            child_dimension,
+            children,
+            positions,
+        } => {
+            let req = DrillReq {
+                common,
+                node: Scope::at(node.0, node.1),
+                child_dimension: child_dimension.into(),
+                grants: a.grants,
+                denies: a.denies,
+                include_children: children,
+                include_positions: positions,
+            };
+            risk::run_drill(&req, out).map_err(DispatchError::Risk)
+        }
+        RiskKind::Positions { scope } => {
+            let req = PositionsReq {
+                endpoint: a.endpoint,
+                scope: scope.map(|(d, v)| Scope::at(d, v)),
+                grants: a.grants,
+                denies: a.denies,
+            };
+            risk::run_positions(&req, out).map_err(DispatchError::Risk)
+        }
+        RiskKind::Limits {
+            scope,
+            var_shocks,
+            var_alpha,
+        } => {
+            let req = LimitsReq {
+                common,
+                scope: Scope::at(scope.0, scope.1),
+                grants: a.grants,
+                denies: a.denies,
+                var_shocks,
+                var_alpha,
+            };
+            risk::run_limits(&req, out).map_err(DispatchError::Risk)
         }
     }
 }

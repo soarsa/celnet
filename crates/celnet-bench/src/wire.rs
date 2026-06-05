@@ -188,7 +188,10 @@ fn eurusd_conv() -> ConventionRecord {
 }
 
 /// The wire conventions every request carries (mirrors the server test fixture).
-fn wire_conventions() -> Conventions {
+///
+/// Public so the architectural-invariant integration test can build a `Price`
+/// request against the same EUR/USD fixture this harness prices.
+pub fn wire_conventions() -> Conventions {
     Conventions {
         delta_convention: DeltaConvention::SpotUnadjusted as i32,
         atm_convention: AtmConvention::AtmForward as i32,
@@ -200,7 +203,10 @@ fn wire_conventions() -> Conventions {
 }
 
 /// A vanilla EUR/USD call struck at `strike` with a 1Y expiry.
-fn vanilla_call(strike: f64) -> Instrument {
+///
+/// Public so the architectural-invariant integration test can price the same owned
+/// EUR/USD pair this harness streams/quotes.
+pub fn vanilla_call(strike: f64) -> Instrument {
     Instrument {
         pair: Some(CcyPair {
             base: "EUR".to_owned(),
