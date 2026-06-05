@@ -11,13 +11,25 @@
 //!
 //! | Workload | Target |
 //! |---|---|
-//! | Vanilla price + full 13-Greek set (cached surface), hot path | p50 ≤ 2 µs, p99 ≤ 10 µs |
+//! | Vanilla price + full 13-Greek set (cached surface), hot path | p50 ≤ 2 µs, p99 ≤ 10 µs, p99.9 ≤ 25 µs |
 //! | Streaming quote throughput | ≥ 1M price updates/s/core |
 //!
 //! `divan` reports the **median** and **min** per operation; the median is the
 //! quantity compared against the p50 ≤ 2 µs budget, while the min approximates
 //! the warm-cache floor. The batched bench amortizes a many-strike surface
 //! slice and is the basis for the throughput comparison.
+//!
+//! ## Absolute per-option §1.2 truth-gate
+//!
+//! `divan`'s median is a central tendency, not a tail. The [`core_load`] module
+//! (driven by the `core_load` binary) turns the **absolute** §1.2 ceilings
+//! (p50 ≤ 2 µs, p99 ≤ 10 µs, p99.9 ≤ 25 µs) into a *measured, asserted* gate: it
+//! times each individual price + full-Greek call into a coordinated-omission-
+//! aware [`hdrhistogram::Histogram`] under a low-jitter, priority-elevated,
+//! core-pinned regime over the [`sweep_inputs`] working set, and exits non-zero
+//! if any measured percentile exceeds its committed budget. The op is ~tens of
+//! ns, so the budgets pass with large margin. The [`sched`] module hosts the
+//! safe (no-`unsafe`) priority-elevation affordance.
 //!
 //! ## Fixtures
 //!
@@ -44,6 +56,8 @@
 //! bench-regression gate compares against a committed baseline.
 #![forbid(unsafe_code)]
 
+pub mod core_load;
+pub mod sched;
 pub mod wire;
 
 use celnet_core::math::ln;
@@ -101,11 +115,75 @@ pub fn representative_batch() -> Vec<VanillaInputs> {
         .collect()
 }
 
+/// Number of distinct options in the in-core latency sweep.
+///
+/// A prime length, deliberately co-prime with the 2-element call/put cycle, so
+/// stepping `idx = k % SWEEP_LEN` together with `opt = opts[k % 2]` walks every
+/// (option-type, input) combination over the run rather than locking one parity
+/// to one input — every sample prices a genuinely different option.
+pub const SWEEP_LEN: usize = 257;
+
+/// A deterministic sweep of representative vanilla inputs spanning the liquid
+/// regime (varied spot, vol and strike around an at-the-money EUR/USD forward).
+///
+/// This is the working set the in-core latency truth-gate (`core_load`) cycles
+/// through under sustained injection. It varies all three of spot, vol and strike
+/// so the optimizer cannot constant-fold `greeks(..)` to a single value, yet
+/// stays inside the smooth, in-the-budget regime the §1.2 hot-path target governs
+/// (no degenerate near-zero-vol or near-expiry inputs that would price a
+/// different, slower branch). Built once, outside any timed region.
+#[must_use]
+pub fn sweep_inputs() -> Vec<VanillaInputs> {
+    let base = representative_inputs();
+    let forward = base.forward();
+    let n = SWEEP_LEN;
+    (0..n)
+        .map(|k| {
+            let frac = k as f64 / (n as f64 - 1.0); // [0, 1]
+            // Spot drifts ±5% across the sweep; strike fans ±25% in moneyness;
+            // vol ranges ~7%..~13% — a realistic liquid window, all smooth.
+            let spot = base.spot * (0.95 + 0.10 * frac);
+            let moneyness = 0.75 + 0.50 * frac;
+            let strike = forward * moneyness;
+            let vol = 0.07 + 0.06 * frac;
+            VanillaInputs {
+                spot,
+                strike,
+                vol,
+                ..base
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use celnet_types::OptionType;
     use celnet_vanilla::{greeks, price};
+
+    #[test]
+    fn sweep_inputs_is_varied_and_smooth() {
+        let sweep = sweep_inputs();
+        assert_eq!(sweep.len(), SWEEP_LEN);
+        // All three driving inputs genuinely vary across the sweep (so the
+        // optimizer cannot fold the priced result to a constant).
+        let spots: std::collections::BTreeSet<u64> =
+            sweep.iter().map(|i| i.spot.to_bits()).collect();
+        let vols: std::collections::BTreeSet<u64> = sweep.iter().map(|i| i.vol.to_bits()).collect();
+        let strikes: std::collections::BTreeSet<u64> =
+            sweep.iter().map(|i| i.strike.to_bits()).collect();
+        assert!(spots.len() > SWEEP_LEN / 2, "spot must vary");
+        assert!(vols.len() > SWEEP_LEN / 2, "vol must vary");
+        assert!(strikes.len() > SWEEP_LEN / 2, "strike must vary");
+        // Every fixture is in the smooth, finite-price regime.
+        for i in &sweep {
+            assert!(i.spot > 0.0 && i.strike > 0.0 && i.vol > 0.0 && i.t > 0.0);
+            let g = greeks(OptionType::Call, i);
+            assert!(g.price.is_finite() && g.price >= 0.0);
+            assert!(g.vega.is_finite() && g.gamma.is_finite());
+        }
+    }
 
     #[test]
     fn batch_builder_is_sane() {

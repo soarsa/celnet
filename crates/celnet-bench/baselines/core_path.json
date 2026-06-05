@@ -1,0 +1,22 @@
+{
+  "workload": "vanilla_price_plus_full_greeks",
+  "host": "aarch64-unix-macos (64-bit)",
+  "pinned": false,
+  "elevated_priority": true,
+  "warmup_samples": 2000000,
+  "timed_samples": 10000000,
+  "latency": {
+    "min_ns": 1,
+    "p50_ns": 42,
+    "p99_ns": 125,
+    "p999_ns": 1385,
+    "p9999_ns": 7835,
+    "max_ns": 16751
+  },
+  "throughput_per_s": 12977238.631996706,
+  "budget": {
+    "p50_ns": 2000,
+    "p99_ns": 10000,
+    "p999_ns": 25000
+  }
+}

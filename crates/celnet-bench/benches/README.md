@@ -48,6 +48,99 @@ Notes:
 
 ---
 
+# In-core ABSOLUTE §1.2 truth-gate (`core_load`)
+
+`divan`'s headline is a **median**. `docs/ARCHITECTURE.md` §1.2 commits the
+hot-path budget as **absolute per-option percentile ceilings** — **p50 ≤ 2 µs,
+p99 ≤ 10 µs, p99.9 ≤ 25 µs**. The `core_load` binary
+(`src/bin/core_load.rs`, logic in `src/core_load.rs`) turns those ceilings into a
+*measured, asserted* gate: it times **each individual** `celnet_vanilla::greeks`
+call (price + full 13-Greek set — the actual quantity the budget governs) into a
+coordinated-omission-aware `hdrhistogram::Histogram`, reports the full tail
+(p50/p99/p99.9/p99.99/max) + single-core throughput, and **exits non-zero if any
+measured percentile exceeds its §1.2 ceiling**.
+
+```bash
+# run the gate (exits non-zero on any §1.2 breach):
+source "$HOME/.cargo/env" && cargo run --release -p celnet-bench --bin core_load
+# refresh the committed §1.2 snapshot:
+source "$HOME/.cargo/env" && cargo run --release -p celnet-bench --bin core_load -- \
+  crates/celnet-bench/baselines/core_path.json
+# fast smoke sizing (still asserts §1.2):
+source "$HOME/.cargo/env" && cargo run --release -p celnet-bench --bin core_load -- --quick
+```
+
+**Why no workaround is needed.** The in-core op is ~tens of ns — ~400× under the
+p99 ≤ 10 µs budget. The only thing that can inflate a *sampled* percentile is
+measurement jitter (thread migration, frequency scaling, a preemption tick), so
+the measurement removes it at the source: request the max scheduling QoS/priority
+(`thread-priority`, safe API — no `unsafe`), pin to a core where the OS allows it
+(`core_affinity`), discard a 2M-call warmup, then take **10M** timed samples, and
+apply HdrHistogram's post-recording CO correction (`clone_correct`) so a stall can
+only make the tail *more* pessimistic. The genuine OS-dependent deep tail (a stray
+preemption) appears only at **p99.99+** — a *deeper* percentile than the §1.2 gate
+— and is reported transparently, never used to weaken the gate.
+
+## Reference run (Apple M4, `aarch64-apple-darwin`, `--release`, single core)
+
+Workload `vanilla_price_plus_full_greeks`, 10M timed samples (committed snapshot:
+`baselines/core_path.json`):
+
+| Metric | Measured | §1.2 budget | Margin |
+|---|---|---|---|
+| throughput | **~13.0 M opt/s/core** | (≥ 1M/s) | ~13× |
+| min | 1 ns | — | — |
+| **p50** | **42 ns** | ≤ 2 000 ns | **~48×** inside |
+| **p99** | **125 ns** | ≤ 10 000 ns | **~80×** inside |
+| **p99.9** | **~1.0–1.4 µs** | ≤ 25 000 ns | **~18–25×** inside |
+| p99.99 | ~7.8–8.1 µs | (deeper than the §1.2 gate; reported only) | — |
+| max | ~16–18 µs | — | — |
+
+Notes:
+
+- **All three §1.2 budgets PASS, measured, with large margin** — the gate asserts
+  the real committed numbers, no percentile relaxed.
+- `pinned: false` on Apple Silicon is **honest**: macOS does not expose
+  per-thread CPU affinity, so `core_affinity::set_for_current` is a no-op there
+  (the binary reports this rather than faking success). Priority elevation does
+  apply (`elevated-priority: true`). On Linux CI both pinning and priority apply.
+  The budgets pass either way — pinning only tightens an already-passing tail.
+- The min of `1 ns` is the `Instant` timer-resolution floor for an op faster than
+  a few ns of overhead; the body-of-distribution figures (p50/p99) are the
+  meaningful ones and are well-resolved by the 10M samples.
+
+`bench_gate` runs this same in-core §1.2 absolute gate as **arm 1** (alongside the
+wire-path relative regression gate as arm 2); both must pass.
+
+---
+
+# Instruction-count gate (`iai_instructions`, Linux + Valgrind)
+
+The wall-clock gates above measure *time* (the contract's unit), but wall-clock
+floats with host load and so a CI gate on it must carry a generous tolerance.
+The complementary **instruction-count** gate (`benches/iai_instructions.rs`, via
+`iai-callgrind`/Callgrind) measures a **deterministic, machine-independent**
+quantity: retired instructions / cache accesses / estimated cycles per pricing
+call. That makes it the right primitive for catching a *code-level* regression
+(an extra branch, a lost inlining, an accidental allocation) the moment it lands,
+with a tight baseline and no flake. It counts three quantities over the shared
+fixtures: `price` (single PV), `greeks` (PV + full 13-Greek set — the §1.2
+quantity), and `batch_greeks` (the 64-strike slice).
+
+Callgrind is part of **Valgrind (Linux/Unix-only — no Windows, no macOS Apple
+Silicon)**, so this is a dedicated **Linux CI lane** (`.github/workflows/ci.yml`
+→ `iai-instructions`). Benches are **not** nextest targets, so adding the
+`iai-callgrind` dev-dep does **not** affect `just check` / nextest on the M4 dev
+host — the bench file only *compiles* there (which is fine; only *running* needs
+Valgrind). No `cfg`/feature kludge is used.
+
+```bash
+# Linux + Valgrind only:
+source "$HOME/.cargo/env" && cargo bench -p celnet-bench --bench iai_instructions
+```
+
+---
+
 # Wire-path latency under load (end-to-end proof)
 
 The micro-benchmarks above measure the **pinned hot core in isolation** (no

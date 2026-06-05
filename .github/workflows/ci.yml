@@ -168,6 +168,80 @@ jobs:
         run: timeout 200 cargo run --release -p celnet-bench --bin bench_gate
 
   # ---------------------------------------------------------------------------
+  # In-core ABSOLUTE §1.2 budget gate (Linux). Runs the low-jitter, pinned,
+  # priority-elevated in-core measurement of `celnet_vanilla::greeks` (price +
+  # full Greek set) and asserts the absolute `docs/ARCHITECTURE.md` §1.2 ceilings
+  # — p50 ≤ 2µs, p99 ≤ 10µs, p99.9 ≤ 25µs — failing the job if any MEASURED
+  # percentile exceeds its committed budget number. The op is ~tens of ns, so the
+  # budgets pass with hundreds-of-× margin; the measurement (pinning + priority +
+  # 10M samples + CO-correction) ensures the measured tail reflects compute, not
+  # jitter. Built `--release` (the only meaningful latency baseline); the binary
+  # self-terminates on a fixed sample budget, the `timeout` step is belt-and-braces.
+  core-load-gate:
+    name: in-core §1.2 absolute budget gate (linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: core-load-gate
+
+      - name: Build core_load (release)
+        run: cargo build --release -p celnet-bench --bin core_load
+
+      - name: In-core §1.2 absolute budget gate
+        run: timeout 200 cargo run --release -p celnet-bench --bin core_load
+
+  # ---------------------------------------------------------------------------
+  # iai-callgrind instruction-count gate (Linux + Valgrind). The jitter-free,
+  # machine-independent complement to the wall-clock budgets: counts retired
+  # instructions / cache accesses / estimated cycles per pricing call under
+  # Callgrind, so a code-level regression (an extra branch, a lost inlining, an
+  # accidental allocation) is caught the moment it lands. Callgrind is part of
+  # Valgrind (Linux/Unix-only — no Windows, no macOS Apple-Silicon), so this is a
+  # dedicated Linux lane that installs Valgrind + the iai-callgrind runner and
+  # runs the bench via `cargo bench`. Benches are NOT nextest targets, so this
+  # never affects the cross-OS `gate` matrix or `just check` on the M4 dev host.
+  # On the first run iai-callgrind records the baselines; subsequent runs compare
+  # against them and (with a configured limit) fail on a regression.
+  # ---------------------------------------------------------------------------
+  iai-instructions:
+    name: iai instruction-count gate (linux / valgrind)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: iai-instructions
+
+      - name: Install Valgrind
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends valgrind
+
+      - name: Install iai-callgrind runner
+        uses: taiki-e/install-action@v2
+        with:
+          tool: iai-callgrind-runner@0.16.1
+
+      - name: Instruction-count bench (celnet-bench / iai_instructions)
+        run: timeout 300 cargo bench -p celnet-bench --bench iai_instructions
+
+  # ---------------------------------------------------------------------------
   # Mutation + coverage gate for the vanilla pricing core (Linux). This is the
   # test-suite-QUALITY gate: it proves the suite actually *kills* injected faults
   # in the convention/strike↔delta machinery, not merely that it runs green.

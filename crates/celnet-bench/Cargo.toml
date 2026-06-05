@@ -38,9 +38,26 @@ futures-util.workspace = true
 hdrhistogram.workspace = true
 serde = { workspace = true }
 serde_json.workspace = true
+# In-core per-option latency truth-gate (`core_load`): pin the measuring thread
+# to a core and request the max scheduling QoS/priority so the *measured* tail
+# reflects the pricing core's intrinsic cost (~tens of ns) rather than OS jitter
+# — that is what lets the absolute ARCHITECTURE §1.2 budgets (p50 ≤ 2µs / p99 ≤
+# 10µs / p99.9 ≤ 25µs) be asserted as MEASURED facts. Both are safe-API crates
+# (no `unsafe` leaks into this crate; the workspace forbids it).
+core_affinity.workspace = true
+thread-priority.workspace = true
 
 [dev-dependencies]
 divan.workspace = true
+# iai-callgrind: the STANDARD jitter-free instruction-count gate. It drives
+# `cargo bench` under Valgrind/Callgrind to count retired instructions, cache
+# accesses and estimated cycles — a deterministic, machine-independent metric
+# that complements the wall-clock §1.2 budgets. It runs on the Linux CI lane
+# (Valgrind is Linux/x86_64); benches are NOT nextest targets, so adding this
+# dev-dep does not affect `just check` / nextest on macOS. The benchmark binary
+# is only *built* (not run) on macOS; building is fine — only *running* needs
+# Valgrind, which the Linux CI lane provides.
+iai-callgrind.workspace = true
 
 # ---------------------------------------------------------------------------
 # In-core micro-benchmarks (divan). These measure the pinned hot core in
@@ -79,3 +96,20 @@ path = "src/bin/wire_load.rs"
 [[bin]]
 name = "bench_gate"
 path = "src/bin/bench_gate.rs"
+
+# In-core per-option latency truth-gate: measures + asserts the ABSOLUTE
+# ARCHITECTURE §1.2 budgets (p50 ≤ 2µs / p99 ≤ 10µs / p99.9 ≤ 25µs) on the real
+# `celnet_vanilla::greeks` hot path. Bounded; exits non-zero on any breach.
+[[bin]]
+name = "core_load"
+path = "src/bin/core_load.rs"
+
+# ---------------------------------------------------------------------------
+# iai-callgrind instruction-count gate (jitter-free, deterministic). Runs under
+# `cargo bench` on the Linux+Valgrind CI lane; counts retired instructions /
+# cache accesses / estimated cycles for price()/greeks()/batch against committed
+# baselines. `harness = false` (iai-callgrind supplies its own main()).
+# ---------------------------------------------------------------------------
+[[bench]]
+name = "iai_instructions"
+harness = false

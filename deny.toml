@@ -4,7 +4,22 @@
 [advisories]
 version = 2
 yanked = "deny"
-ignore = []
+# Narrowly-scoped, individually-justified advisory triage. This is NOT a blanket
+# relaxation: every other advisory (and all yanked crates) still fails the gate.
+ignore = [
+    # RUSTSEC-2025-0141 — bincode 1.3.3 "unmaintained" (NOT a vulnerability).
+    # This is an *informational* advisory: after a doxxing/harassment incident the
+    # bincode team ceased development, explicitly stating 1.3.3 is "a complete
+    # version that is not in need of any updates." There is no CVE, no memory-
+    # safety or correctness defect — only an end-of-maintenance notice.
+    # In this workspace bincode appears *solely* as a transitive **dev-dependency**
+    # of `iai-callgrind` (the instruction-count bench's runner IPC). It is never in
+    # any runtime/shipped artifact, never on a pricing/wire/data path, and never in
+    # the hot core. cargo-deny offers no `dev-only` advisory scope, so the
+    # narrowest available action is to ignore this one ID with this justification.
+    # Re-evaluate when iai-callgrind migrates off bincode (tracked upstream).
+    "RUSTSEC-2025-0141",
+]
 
 [bans]
 multiple-versions = "warn"
