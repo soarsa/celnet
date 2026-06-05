@@ -17,6 +17,11 @@
 //! Ports (env-overridable so the same example serves any local layout):
 //!   * `CELNET_WS_ADDR`   — WebSocket-mirror bind address (default `127.0.0.1:8081`).
 //!   * `CELNET_GRPC_ADDR` — gRPC bind address           (default `127.0.0.1:50551`).
+//!   * `CELNET_FIX_ADDR`  — **optional** live FIX 4.4 acceptor bind address. Absent ⇒
+//!     no FIX listener is started (the edge is byte-identical to today); present ⇒ a
+//!     real FIX acceptor binds there and serves RFQ→Quote→lift→ExecutionReport over the
+//!     same pricing + click-to-trade token path as gRPC/WS. The bound address is
+//!     printed alongside the WS address when set.
 //!
 //! The WS mirror binds on its own ephemeral port *inside* [`Edge::start`]; to expose
 //! it on a fixed port we bind the WS listener address from `CELNET_WS_ADDR`. The
@@ -81,10 +86,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // reproducibility guarantee) without first issuing its own MarkSurface.
     let pre_marked_version = pre_mark_eurusd_1y(&edge);
 
+    // If a FIX acceptor was started (CELNET_FIX_ADDR set), surface its bound address so
+    // an external FIX counterparty can dial it.
+    let fix_note = match edge.fix_addr() {
+        Some(addr) => format!(" | FIX-acceptor {addr}"),
+        None => String::new(),
+    };
     eprintln!(
-        "celnet-server demo edge ready — gRPC {} | WS-mirror ws://{} | pre-marked surface_version={}",
+        "celnet-server demo edge ready — gRPC {} | WS-mirror ws://{}{} | pre-marked surface_version={}",
         edge.grpc_addr(),
         edge.ws_addr(),
+        fix_note,
         pre_marked_version
     );
 

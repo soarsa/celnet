@@ -80,6 +80,9 @@ use crate::clock::Clock;
 use crate::core_link::{CoreLink, Observable, ObservableQuery};
 use crate::pricer::{ConventionSet, Priced, price_instrument};
 use crate::readiness::ReadinessGate;
+use crate::services::clicktrade::{
+    BookOutcome, TokenLedger, TokenMinter, TwoWayLine, mint_two_way,
+};
 use crate::services::forward::route_pair;
 use crate::services::pin::{PinnedVol, resolve_pinned_vol};
 use crate::services::risk::federate::Fleet;
@@ -241,18 +244,6 @@ impl StreamEdge {
     }
 }
 
-/// A live click-to-trade token stamped on a streamed line: the side and premium it
-/// books and the deadline after which it is dead.
-#[derive(Debug, Clone, Copy)]
-struct LiveToken {
-    /// BUY lifts the offer; SELL hits the bid.
-    side: Side,
-    /// The premium this token books (the offer for BUY, the bid for SELL).
-    premium: f64,
-    /// The token validity deadline (nanoseconds since the Unix epoch, UTC).
-    valid_until_nanos: i64,
-}
-
 /// The per-subscription server-side state.
 struct Subscription {
     id: SubscriptionId,
@@ -284,18 +275,11 @@ struct Subscription {
     tick: SpotTick,
     /// Recent server messages retained for a Resync replay (seq → message).
     replay: VecDeque<(u64, ServerStreamMessage)>,
-    /// The currently-live click-to-trade tokens (keyed by opaque token value). A
-    /// new sequence mints fresh tokens and clears the prior ones, so a token is
-    /// live only for the sequence it was stamped on.
-    live_tokens: HashMap<u64, LiveToken>,
-    /// Tokens already consumed by an accepted `Execute`, mapped to their validity
-    /// deadline, so a replayed `Execute` (or a second click) is rejected as
-    /// already-consumed rather than re-booked. **Bounded**: a consumed token only
-    /// needs to block replay *within its own validity window* (after expiry the
-    /// token is rejected as `Expired` regardless), so entries past their
-    /// `valid_until_nanos` are evicted — the set can never grow without bound over a
-    /// long session. See [`Subscription::record_consumed`].
-    consumed_tokens: HashMap<u64, i64>,
+    /// The click-to-trade token ledger (live + bounded-consumed sets): the SAME
+    /// keyed-MAC last-look / replay discipline the FIX acceptor uses, shared via
+    /// [`crate::services::clicktrade`]. A new sequence mints fresh tokens and retires
+    /// the prior ones; a consumed token blocks replay within its window.
+    tokens: TokenLedger,
     /// `Execute` idempotency: a client key → the `Executed` it booked, so an
     /// `Execute` retry carrying the same key returns the same booking.
     execute_idempotency: HashMap<String, Executed>,
@@ -369,122 +353,6 @@ impl Subscription {
         }
         self.replay.push_back((seq, msg));
     }
-
-    /// Record `token` as consumed (so a replayed `Execute` is rejected as
-    /// already-consumed), keyed by its validity deadline, and **evict every
-    /// already-expired consumed token** in the same pass.
-    ///
-    /// Replay protection only has to hold *within a token's validity window*: once a
-    /// token is past its `valid_until_nanos` an `Execute` presenting it is rejected
-    /// as `Expired` before the consumed-set is ever consulted, so retaining expired
-    /// entries buys no extra protection — they are dead weight. Pruning them on every
-    /// insert bounds the set to at most the tokens minted within one validity window
-    /// (a few per the millisecond-cadence tick over the 1-second window), so it can
-    /// never grow without bound over an arbitrarily long session (the scale
-    /// guardrail, `CLAUDE.md` rule 6).
-    fn record_consumed(&mut self, token: u64, valid_until_nanos: i64, now_nanos: i64) {
-        // Evict expired entries first (amortized O(1): the live window is small).
-        self.consumed_tokens
-            .retain(|_, &mut deadline| deadline >= now_nanos);
-        self.consumed_tokens.insert(token, valid_until_nanos);
-    }
-
-    /// Is `token` a still-valid consumed token (consumed within its window, blocking
-    /// a replay)? Expired consumed entries are lazily pruned and never matched here:
-    /// an expired token is the `Expired` path, not the `AlreadyConsumed` path.
-    fn is_consumed(&self, token: u64, now_nanos: i64) -> bool {
-        self.consumed_tokens
-            .get(&token)
-            .is_some_and(|&deadline| deadline >= now_nanos)
-    }
-}
-
-/// A cryptographically-unforgeable click-to-trade token minter.
-///
-/// A click-to-trade token must be impossible to forge without the server secret:
-/// presenting a guessed/enumerated token would otherwise book a trade the maker never
-/// quoted. The token is therefore a **keyed MAC** (a truncated `blake3` keyed hash,
-/// RFC-grade keyed-hash construction) over the immutable line-binding tuple
-/// `(subscription_id, sequence, side, premium_bits, valid_until_nanos)` plus a fresh
-/// per-mint nonce. The 256-bit key is drawn **once at session start from the OS
-/// CSPRNG** ([`getrandom`]); without it an attacker cannot produce a value that the
-/// server will accept, even by enumeration of the 64-bit token space.
-///
-/// # Why a CSPRNG secret does not break pricing determinism
-///
-/// This is a **runtime, control-plane ephemeral identity** — it authenticates a click,
-/// it is *never* an input to any priced number. The platform's determinism guardrail
-/// (`CLAUDE.md` rule 5) governs the **pricing** path (libm, no OS RNG) so prices are
-/// bit-reproducible; a token's MAC tag is not a price and is not replayed for pricing.
-/// Seeding the MAC key from a CSPRNG is exactly correct here: unpredictability is the
-/// security property we need, and it leaves every priced value untouched.
-struct TokenMinter {
-    /// The session-unique MAC key, drawn once from the OS CSPRNG at session start.
-    key: [u8; 32],
-    /// A fresh per-mint nonce so two tokens for the *same* binding tuple still differ
-    /// (and a token reveals nothing about the key).
-    nonce: AtomicU64,
-}
-
-/// The immutable binding a click-to-trade token authenticates: a token is valid only
-/// for *exactly* the line it was stamped on (its subscription, sequence, side,
-/// premium, and validity deadline). The MAC is computed over this tuple, so a token
-/// cannot be lifted onto a different line, side, or premium.
-#[derive(Debug, Clone, Copy)]
-struct TokenBinding {
-    subscription_id: u64,
-    sequence: u64,
-    side: Side,
-    premium: f64,
-    valid_until_nanos: i64,
-}
-
-impl TokenMinter {
-    fn new() -> Self {
-        let mut key = [0u8; 32];
-        // OS CSPRNG. `getrandom` cannot fail on a supported platform; a failure here
-        // means the OS entropy source is unavailable, which is unrecoverable for a
-        // security-bearing token, so we refuse to serve forgeable tokens.
-        getrandom::getrandom(&mut key)
-            .expect("OS CSPRNG unavailable: cannot mint unforgeable tokens");
-        Self {
-            key,
-            nonce: AtomicU64::new(0),
-        }
-    }
-
-    /// Serialize a binding + nonce into the MAC message: a fixed-width, unambiguous
-    /// big-endian encoding so distinct tuples never collide on the same message.
-    fn message(binding: &TokenBinding, nonce: u64) -> [u8; 41] {
-        let mut msg = [0u8; 41];
-        msg[0..8].copy_from_slice(&binding.subscription_id.to_be_bytes());
-        msg[8..16].copy_from_slice(&binding.sequence.to_be_bytes());
-        msg[16] = binding.side as u8;
-        msg[17..25].copy_from_slice(&binding.premium.to_bits().to_be_bytes());
-        msg[25..33].copy_from_slice(&binding.valid_until_nanos.to_be_bytes());
-        msg[33..41].copy_from_slice(&nonce.to_be_bytes());
-        msg
-    }
-
-    /// The 64-bit MAC tag for a binding under a given nonce (first 8 bytes of the
-    /// keyed `blake3` hash, big-endian).
-    fn tag(&self, binding: &TokenBinding, nonce: u64) -> u64 {
-        let mac = blake3::keyed_hash(&self.key, &Self::message(binding, nonce));
-        u64::from_be_bytes(mac.as_bytes()[0..8].try_into().expect("32-byte hash"))
-    }
-
-    /// Mint an unforgeable token for a line binding (always `>= 1`). The fresh nonce
-    /// makes two mints of the same binding distinct; a zero tag is re-minted so the
-    /// token is always a non-zero sentinel-safe value.
-    fn mint(&self, binding: &TokenBinding) -> u64 {
-        loop {
-            let nonce = self.nonce.fetch_add(1, Ordering::Relaxed);
-            let t = self.tag(binding, nonce);
-            if t != 0 {
-                return t;
-            }
-        }
-    }
 }
 
 /// Re-encode a decoded [`ConventionSet`] back to the wire form for echoing.
@@ -545,59 +413,28 @@ fn mint_tokens(
     two_way: &TwoWayPrice,
     now_nanos: i64,
 ) -> Vec<TradableToken> {
-    // A new sequence retires the prior sequence's tokens: a click always books the
-    // current streamed premium, never a stale one.
-    sub.live_tokens.clear();
-    let valid_until = now_nanos.saturating_add(TOKEN_VALIDITY_NANOS);
-    let sub_id = sub.id.value;
-    let mut out = Vec::with_capacity(2);
-    // SELL hits the bid (only when the bid is a real, positive price).
-    if two_way.bid > 0.0 {
-        let token = minter.mint(&TokenBinding {
-            subscription_id: sub_id,
+    // Delegate to the SHARED keyed-MAC mint path (the same one the FIX acceptor
+    // uses), then map the minted tokens to the RFS `TradableToken` wire form.
+    mint_two_way(
+        &mut sub.tokens,
+        minter,
+        TwoWayLine {
+            line_id: sub.id.value,
             sequence: seq,
-            side: Side::Sell,
-            premium: two_way.bid,
-            valid_until_nanos: valid_until,
-        });
-        sub.live_tokens.insert(
-            token,
-            LiveToken {
-                side: Side::Sell,
-                premium: two_way.bid,
-                valid_until_nanos: valid_until,
-            },
-        );
-        out.push(TradableToken {
-            token,
-            side: Side::Sell as i32,
-            premium: two_way.bid,
-            valid_until_nanos: valid_until,
-        });
-    }
-    // BUY lifts the offer.
-    let token = minter.mint(&TokenBinding {
-        subscription_id: sub_id,
-        sequence: seq,
-        side: Side::Buy,
-        premium: two_way.offer,
-        valid_until_nanos: valid_until,
-    });
-    sub.live_tokens.insert(
-        token,
-        LiveToken {
-            side: Side::Buy,
-            premium: two_way.offer,
-            valid_until_nanos: valid_until,
+            bid: two_way.bid,
+            offer: two_way.offer,
         },
-    );
-    out.push(TradableToken {
-        token,
-        side: Side::Buy as i32,
-        premium: two_way.offer,
-        valid_until_nanos: valid_until,
-    });
-    out
+        now_nanos,
+        TOKEN_VALIDITY_NANOS,
+    )
+    .into_iter()
+    .map(|m| TradableToken {
+        token: m.token,
+        side: m.side as i32,
+        premium: m.premium,
+        valid_until_nanos: m.valid_until_nanos,
+    })
+    .collect()
 }
 
 /// Build a [`Snapshot`] message for a subscription at `seq` priced against
@@ -1144,8 +981,7 @@ impl Session {
             lag_notified: false,
             tick: SpotTick::new(market.spot, id.value),
             replay: VecDeque::new(),
-            live_tokens: HashMap::new(),
-            consumed_tokens: HashMap::new(),
+            tokens: TokenLedger::new(),
             execute_idempotency: HashMap::new(),
         };
         let snap = match make_snapshot(
@@ -1228,7 +1064,7 @@ impl Session {
         // Modifying retires the prior structure's tradable tokens (they reference a
         // line that no longer exists). Consumed tokens stay recorded so a late
         // replayed Execute is still rejected as already-consumed.
-        sub.live_tokens.clear();
+        sub.tokens.clear_live();
         let seq = sub.sequence + 1;
         sub.sequence = seq;
         let snap = match make_snapshot(sub, seq, &market, &self.spread, &self.minter, &self.clock) {
@@ -1296,41 +1132,39 @@ impl Session {
             })),
         };
 
-        // Already consumed (a second click / replayed Execute on a booked token,
-        // within its validity window — expired consumed entries are pruned and fall
-        // through to the Expired path below).
-        if sub.is_consumed(e.token, now) {
-            return out_tx
-                .send(Ok(reject(stream_reject::Reason::AlreadyConsumed)))
-                .await
-                .is_ok();
-        }
-        // Unknown / forged token: not a live stamped token for this subscription.
-        let Some(live) = sub.live_tokens.get(&e.token).copied() else {
-            return out_tx
-                .send(Ok(reject(stream_reject::Reason::UnknownToken)))
-                .await
-                .is_ok();
+        // Present the token to the SHARED last-look ledger (the same try_book the FIX
+        // acceptor lift uses): already-consumed (replay) → unknown/forged → expired →
+        // book. On a successful book the token is marked consumed (bounded,
+        // expiry-evicting) and retired so a second lift rejects as already-consumed.
+        let (side, premium) = match sub.tokens.try_book(e.token, now) {
+            BookOutcome::AlreadyConsumed => {
+                return out_tx
+                    .send(Ok(reject(stream_reject::Reason::AlreadyConsumed)))
+                    .await
+                    .is_ok();
+            }
+            BookOutcome::UnknownToken => {
+                return out_tx
+                    .send(Ok(reject(stream_reject::Reason::UnknownToken)))
+                    .await
+                    .is_ok();
+            }
+            BookOutcome::Expired => {
+                return out_tx
+                    .send(Ok(reject(stream_reject::Reason::Expired)))
+                    .await
+                    .is_ok();
+            }
+            BookOutcome::Booked { side, premium } => (side, premium),
         };
-        // Expired: presented after its validity deadline (last-look).
-        if now > live.valid_until_nanos {
-            return out_tx
-                .send(Ok(reject(stream_reject::Reason::Expired)))
-                .await
-                .is_ok();
-        }
 
-        // Book it: mark the token consumed (bounded, expiry-evicting), mint an
-        // execution, record idempotency.
-        sub.record_consumed(e.token, live.valid_until_nanos, now);
-        sub.live_tokens.remove(&e.token);
         let execution_id = exec_id_counter.fetch_add(1, Ordering::Relaxed);
         let executed = Executed {
             subscription: Some(id),
             token: e.token,
             execution_id,
-            side: live.side as i32,
-            traded_premium: live.premium,
+            side: side as i32,
+            traded_premium: premium,
             correlation_id: e.correlation_id,
             epoch_nanos: now,
             // Resolve the fill's attribution from the subscription's chain so a
@@ -1349,7 +1183,7 @@ impl Session {
         // (honest scope — never a faked vanilla risk). Booking is best-effort: a
         // failure to record a risk fact must never fail the trade itself.
         if let Some(store) = self.store.clone() {
-            record_booked_position(&store, sub, &self.spread, execution_id, live.side);
+            record_booked_position(&store, sub, &self.spread, execution_id, side);
         }
 
         let msg = ServerStreamMessage {
@@ -1742,8 +1576,7 @@ mod tests {
             lag_notified: false,
             tick: SpotTick::new(market.spot, 1),
             replay: VecDeque::new(),
-            live_tokens: HashMap::new(),
-            consumed_tokens: HashMap::new(),
+            tokens: TokenLedger::new(),
             execute_idempotency: HashMap::new(),
         };
         let snap = make_snapshot(
@@ -1786,76 +1619,21 @@ mod tests {
         }
     }
 
-    /// A fixed line binding for token-MAC tests.
-    fn binding(seq: u64, side: Side, premium: f64) -> TokenBinding {
-        TokenBinding {
-            subscription_id: 1,
-            sequence: seq,
-            side,
-            premium,
-            valid_until_nanos: 2_000_000_000,
-        }
-    }
-
-    /// Minted tokens are unguessable (not a dense 1,2,3 sequence) and distinct, even
-    /// for the *same* binding (the per-mint nonce differs).
-    #[test]
-    fn token_minter_is_unguessable_and_distinct() {
-        let minter = TokenMinter::new();
-        let b = binding(1, Side::Buy, 0.012);
-        let t1 = minter.mint(&b);
-        let t2 = minter.mint(&b);
-        assert!(t1 >= 1 && t2 >= 1);
-        assert_ne!(t1, t2, "fresh nonce ⇒ distinct tokens for one binding");
-        assert_ne!(t1.abs_diff(t2), 1, "tokens must not be a dense sequence");
-    }
-
-    /// The MAC is **unforgeable without the key** and **binds the whole line**: the
-    /// same binding+nonce under a different key yields a different tag (so a forged
-    /// token cannot be produced without the server secret), and changing any bound
-    /// field (sequence / side / premium / expiry) changes the tag (so a token cannot
-    /// be lifted onto another line).
-    #[test]
-    fn token_mac_is_key_bound_and_field_bound() {
-        let minter = TokenMinter::new();
-        let other = TokenMinter::new();
-        let b = binding(5, Side::Buy, 0.012);
-        // Same message, different key ⇒ different tag (key-bound / unforgeable).
-        assert_ne!(
-            minter.tag(&b, 0),
-            other.tag(&b, 0),
-            "a different key must yield a different MAC (forgery needs the key)"
-        );
-        // Field-bound: flipping any bound field changes the tag.
-        assert_ne!(
-            minter.tag(&b, 0),
-            minter.tag(&binding(6, Side::Buy, 0.012), 0)
-        );
-        assert_ne!(
-            minter.tag(&b, 0),
-            minter.tag(&binding(5, Side::Sell, 0.012), 0)
-        );
-        assert_ne!(
-            minter.tag(&b, 0),
-            minter.tag(&binding(5, Side::Buy, 0.013), 0)
-        );
-        let mut expiry_shift = binding(5, Side::Buy, 0.012);
-        expiry_shift.valid_until_nanos += 1;
-        assert_ne!(minter.tag(&b, 0), minter.tag(&expiry_shift, 0));
-    }
-
     /// A snapshot stamps two click-to-trade tokens (SELL@bid, BUY@offer) whose
-    /// premiums match the streamed two-way, and they are registered live.
+    /// premiums match the streamed two-way, and they are registered live. (The
+    /// keyed-MAC unforgeability / field-binding invariants are proven in
+    /// [`crate::services::clicktrade`], the single source of truth for the token.)
     #[tokio::test]
     async fn snapshot_stamps_live_tradable_tokens() {
         tokio::time::timeout(Duration::from_secs(10), async {
             let clock = Clock::manual(1_000_000_000);
             let session = make_session(clock);
             let sub = session.subs.get(&1).unwrap();
-            assert_eq!(sub.live_tokens.len(), 2, "SELL@bid + BUY@offer");
+            assert_eq!(sub.tokens.live_len(), 2, "SELL@bid + BUY@offer");
             let buy = sub
-                .live_tokens
-                .values()
+                .tokens
+                .live_tokens()
+                .map(|(_, t)| t)
                 .find(|t| t.side == Side::Buy)
                 .expect("a BUY token");
             assert!(buy.premium > 0.0, "buy books the offer");
@@ -2033,13 +1811,12 @@ mod tests {
             let mut session = make_session(clock);
             let (tx, mut rx) = mpsc::channel::<Result<ServerStreamMessage, Status>>(64);
             // The open subscription is at sequence 1.
-            let prior_token = *session
+            let prior_token = session
                 .subs
                 .get(&1)
                 .unwrap()
-                .live_tokens
-                .keys()
-                .next()
+                .tokens
+                .any_live_token()
                 .unwrap();
 
             assert!(
@@ -2064,12 +1841,7 @@ mod tests {
             assert_eq!(snap.sequence, 2, "modify re-baselines at the next sequence");
             // The prior token is retired (no longer live for the new structure).
             assert!(
-                !session
-                    .subs
-                    .get(&1)
-                    .unwrap()
-                    .live_tokens
-                    .contains_key(&prior_token),
+                !session.subs.get(&1).unwrap().tokens.is_live(prior_token),
                 "modify retires the prior structure's tokens"
             );
         })
@@ -2166,7 +1938,7 @@ mod tests {
             // After 500 books spread across 500 disjoint validity windows, the
             // consumed set holds at most the few tokens minted within ONE window —
             // never ~500. Generously bound it to a small constant.
-            let consumed = session.subs.get(&1).unwrap().consumed_tokens.len();
+            let consumed = session.subs.get(&1).unwrap().tokens.consumed_len();
             assert!(
                 consumed <= 4,
                 "consumed_tokens must stay bounded as tokens expire; held {consumed}"
@@ -2190,8 +1962,8 @@ mod tests {
                 .subs
                 .get(&1)
                 .unwrap()
-                .live_tokens
-                .iter()
+                .tokens
+                .live_tokens()
                 .find(|(_, t)| t.side == Side::Buy)
                 .map(|(k, _)| *k)
                 .unwrap();

@@ -31,6 +31,8 @@ celnet-entitlements.workspace = true
 celnet-risk-fleet.workspace = true
 celnet-router.workspace = true
 celnet-client.workspace = true
+celnet-fix.workspace = true
+celnet-integration.workspace = true
 rtrb.workspace = true
 tokio = { workspace = true, features = ["signal"] }
 tonic.workspace = true
@@ -40,6 +42,7 @@ blake3.workspace = true
 getrandom.workspace = true
 serde_json.workspace = true
 tokio-tungstenite.workspace = true
+time.workspace = true
 
 [dev-dependencies]
 celnet-testkit.workspace = true

@@ -172,6 +172,20 @@ impl<'a> QuoteRequestView<'a> {
     }
 }
 
+/// Dialect tag carrying the **round-trip-exact** bid premium (full f64 precision),
+/// alongside the human-readable 8-dp `BidPx(132)`. FX-option premia are quoted to
+/// pips on the standard price tags, but the maker's *booked* premium is the exact
+/// model value; this user-defined field carries that exact value so a counterparty (or
+/// an audit) can reconcile the fill to the engine/golden price to the last bit. A FIX
+/// receiver that does not understand the tag simply ignores it (unknown tags are
+/// tolerated); it never alters the standard price fields.
+pub const TAG_BID_EXACT: u32 = 7011;
+/// Dialect tag carrying the round-trip-exact offer premium (see [`TAG_BID_EXACT`]).
+pub const TAG_OFFER_EXACT: u32 = 7012;
+/// Dialect tag carrying the round-trip-exact `LastPx` fill premium on an
+/// `ExecutionReport(8)` (see [`TAG_BID_EXACT`]).
+pub const TAG_LAST_PX_EXACT: u32 = 7013;
+
 /// Build a `Quote(S)` reply: a two-sided price with a `QuoteID(117)` carrying
 /// last-look identity and a `ValidUntilTime(62)`.
 #[derive(Debug, Clone, Copy)]
@@ -190,6 +204,16 @@ pub struct QuoteParams<'a> {
     pub size: f64,
     /// `ValidUntilTime(62)` bytes (UTC timestamp).
     pub valid_until: &'a [u8],
+}
+
+/// Render a price as a **round-trip-exact** decimal (Rust's `{}` f64 formatting emits
+/// the shortest decimal that parses back to the identical bits), so the exact model
+/// premium survives the wire with no precision loss. Used only for the dialect's
+/// exact-premium provenance tags, never for the standard pip-resolution price fields.
+fn push_exact(enc: &mut FrameEncoder, tag: u32, v: f64) {
+    if v.is_finite() {
+        enc.push(tag, format!("{v}").as_bytes());
+    }
 }
 
 /// Encode a fixed-precision decimal (8 dp) for a price/size field. FX-option
@@ -247,6 +271,11 @@ pub fn build_quote(hdr: &Header<'_>, p: &QuoteParams<'_>, enc: &mut FrameEncoder
     push_decimal(enc, 134, p.size);
     push_decimal(enc, 135, p.size);
     enc.push(62, p.valid_until);
+    // Exact-premium provenance: the booked two-way to full f64 precision, so a fill
+    // reconciles to the engine/golden price to the last bit (the standard 132/133 stay
+    // pip-resolution).
+    push_exact(enc, TAG_BID_EXACT, p.bid_px);
+    push_exact(enc, TAG_OFFER_EXACT, p.offer_px);
     enc.finish()
 }
 
@@ -297,6 +326,24 @@ impl<'a> QuoteView<'a> {
     #[must_use]
     pub fn offer(&self) -> Option<f64> {
         self.offer_px().and_then(crate::dialect_fx::parse_float)
+    }
+
+    /// The round-trip-exact bid premium ([`TAG_BID_EXACT`]), if the maker stamped it
+    /// (full f64 precision, for last-bit reconciliation to the engine/golden price).
+    #[must_use]
+    pub fn bid_exact(&self) -> Option<f64> {
+        self.frame
+            .get(TAG_BID_EXACT)
+            .and_then(crate::dialect_fx::parse_float)
+    }
+
+    /// The round-trip-exact offer premium ([`TAG_OFFER_EXACT`]), if the maker stamped
+    /// it (full f64 precision).
+    #[must_use]
+    pub fn offer_exact(&self) -> Option<f64> {
+        self.frame
+            .get(TAG_OFFER_EXACT)
+            .and_then(crate::dialect_fx::parse_float)
     }
 }
 
@@ -463,6 +510,11 @@ pub fn build_execution_report(
     enc.push(54, &[p.side]);
     push_decimal(enc, 32, p.last_qty);
     push_decimal(enc, 31, p.last_px);
+    // Exact-premium provenance: the locked fill premium to full f64 precision, so the
+    // booked fill reconciles to the engine/golden price to the last bit (the standard
+    // `LastPx(31)` stays pip-resolution). Emitted on every report; a reject's
+    // `last_px` is zero and reconciles trivially.
+    push_exact(enc, TAG_LAST_PX_EXACT, p.last_px);
     if let Some(t) = p.multileg_type {
         enc.push_int(442, t);
     }
@@ -501,6 +553,15 @@ impl<'a> ExecReportView<'a> {
     #[must_use]
     pub fn last_px(&self) -> Option<f64> {
         self.frame.get(31).and_then(crate::dialect_fx::parse_float)
+    }
+
+    /// The round-trip-exact fill premium ([`TAG_LAST_PX_EXACT`]), if the maker stamped
+    /// it (full f64 precision, for last-bit reconciliation to the engine/golden price).
+    #[must_use]
+    pub fn last_px_exact(&self) -> Option<f64> {
+        self.frame
+            .get(TAG_LAST_PX_EXACT)
+            .and_then(crate::dialect_fx::parse_float)
     }
 
     /// Echoed `ClOrdID(11)`.
