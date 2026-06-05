@@ -8,8 +8,11 @@ Greenfield, started 30 May 2026.
 
 ## Hard guardrails (non-negotiable)
 
-1. **Git is local-only.** Never `git push`, never add a remote. A deny rule in
-   `.claude/settings.json` enforces it. Commit locally freely.
+1. **Git: local-first; one sanctioned remote.** Commit locally freely. Pushing is
+   permitted **only** to `github.com/soarsa/celnet` (the `origin` remote, owner
+   `soarsa`) — authorized 2026-06-05. Do **not** add any other remote or push
+   elsewhere. (The previous local-only deny rules in `.claude/settings.json` were
+   removed for this explicit authorization.)
 2. **No mocks, no placeholders, no `todo!()`.** Only 100% complete, state-of-the-art
    implementations. If scope can't be finished, narrow it — never fake depth. Split large
    implementations across files/crates instead of abbreviating.
