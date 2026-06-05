@@ -38,9 +38,12 @@ and native Celer trade-lifecycle integration — validated against QuantLib 1.42
 >    replay harness. wasmtime was rejected for open 2026 RustSec advisories; wasmi is the
 >    advisory-clean pure-Rust replacement (see `docs/PLUGIN-HOST-ALT.md`). All four WS-G gates
 >    pass — this is now a current win, not a pending one.
-> 2. **No structured products (TARF / accumulator / pivot).** SynOption/Fenics/Bloomberg
->    monetize these; Celnet's LSV+MC+PDE substrate can build them but has not yet. Celnet
->    out-functions on the vanilla + first-generation-exotic core, not the structured book.
+> 2. **Structured book now partly built & gated; breadth still narrower than SynOption.**
+>    **TARF, accumulator, quanto and lookback are implemented and gated** in the parity
+>    matrix (rows 16–19: closed-form ⇄ Monte-Carlo cross-validation, the TARF gap-risk
+>    premium, accumulator knock-out correctness). **Pivot** and the wider structured catalogue
+>    SynOption/Fenics/Bloomberg carry are the remaining gap — so the structured-product story
+>    is now *depth on the core structures*, not absence, but not yet the full catalogue.
 > 3. **~9 G10 pairs + a few EM NDFs vs SynOption's 75**, no crypto/metals; **FIX STP and a
 >    trader GUI are table-stakes that are designed-only / via-Celer**. The convention-correctness
 >    edge is real but demonstrated on a narrow, deep universe.
@@ -129,17 +132,17 @@ and native Celer trade-lifecycle integration — validated against QuantLib 1.42
 | Auditable arbitrage-free guarantee | ✅ butterfly+calendar+vertical | ⚠️ heuristics | ❌ ML fill, no guarantee | ⚠️ closed | partial |
 | First-gen exotics (digital/touch/DNT/barrier) | ✅ QuantLib-gated | ✅ (closed) | ✅ kACE | ✅ | ✅ |
 | LSV booking model | ✅ particle-calibrated | ⚠️ closed | ⚠️ closed | ⚠️ closed | ✅ |
-| TARF / accumulator / pivot | ⛔ deferred (LSV+MC substrate ready) | ✅ | ✅ | ✅ MARS | ✅ |
+| TARF / accumulator / pivot | ✅ TARF + accumulator built & gated (`tarf.rs`/`accumulator.rs`; parity rows 18–19); pivot pending | ✅ | ✅ | ✅ MARS | ✅ |
 | Asian (arithmetic + geometric, control-variate) | ✅ Kemna-Vorst CV (`mc.rs`) | ✅ | ✅ kACE | ✅ | ✅ |
 | Window / partial barrier (PDE + MC) | ✅ LSV PDE + MC (`lsv.rs`/`adi.rs`) | ✅ | ✅ kACE | ✅ | ✅ |
-| Quanto / lookback breadth | ⛔ deferred | ✅ | ✅ kACE | ✅ | ✅ |
+| Quanto / lookback breadth | ✅ built & gated (`quanto.rs` closed+MC, `lookback.rs` floating/fixed; parity rows 16–17) | ✅ | ✅ kACE | ✅ | ✅ |
 | GPU-accelerated MC/PDE as a service | ✅ wgpu + CPU reconcile | ❌ | ❌ | ❌ | ❌ |
 | Microsecond pricing, **published numbers** | ✅ 23.4 ns price+Greeks; 3.33 µs 64-strike batch (~52 ns/opt) | ❌ none | ❌ snapshot feed | ❌ terminal | ❌ batch/EOD |
 | Typed gRPC + streaming API contract | ✅ single current | ❌ FIX/UI | ❌ data feed | ❌ BLPAPI/terminal | ❌ |
 | RFQ lifecycle + caller idempotency | ✅ | ✅ venue | ⚠️ | ⚠️ | ✅ |
 | Single-dealer quote-accept → execution booking | ✅ idempotent (`quote.rs`) | ✅ venue | ⚠️ | ⚠️ | ✅ |
 | RFS per-subscription streaming + resync | ✅ | ⚠️ indicative | ❌ | ❌ | ❌ |
-| Customer-extensible quant SDK (own models) | 🟡 API done, host deferred | ❌ | ❌ | ❌ | ❌ |
+| Customer-extensible quant SDK (own models) | ✅ built — `celnet-plugin-host` (Tier-0 native + Tier-2 **wasmi** fuel-metered sandbox), four WS-G gates green | ❌ | ❌ | ❌ | ❌ |
 | Zero-downtime (blue-green) hot upgrade | ✅ | n/a SaaS | n/a | n/a | ❌ multi-year upgrades |
 | Multi-source surface aggregation + divergence | ✅ algorithm (feed-panel breadth = integration-wave gap) | ✅ Primus (broad LP/broker panel) | partial | ❌ | ⚠️ |
 | Asset-class / pair breadth | ⚠️ ~9 G10 + few EM NDFs (no crypto/metals) | ✅ 75 pairs + crypto | ✅ 300+ pairs + 27 metals (data) | ✅ 200+ pairs | ✅ |
@@ -187,7 +190,7 @@ and native Celer trade-lifecycle integration — validated against QuantLib 1.42
 
 | Gap | Status | Plan |
 |---|---|---|
-| TARF / accumulator / pivot; quanto / lookback breadth | ⛔ deferred (LSV+MC stack ready; Asian + window-barrier already ✅) | Next exotics wave on the existing engines |
+| TARF / accumulator / quanto / lookback | ✅ built & **gated** (parity rows 16–19: closed-form ⇄ MC, gap-risk premium, knock-out correctness) | Pivot + wider structured catalogue are the remaining breadth gap |
 | Customer quant SDK runtime (wasm sandbox) | ✅ shipped — tiered `celnet-plugin-host` on **wasmi** (pure-Rust, fuel-metered, no-WASI, deterministic); four WS-G gates green; wasmtime rejected for RUSTSEC advisories | Tier-1 trusted `.so` (stabby) + Tier-3 Landlock ring designed (`PLUGIN-HOST-ALT.md`), wire as needed |
 | API evolution v2 (multiplex RFS session, click-to-trade, book-shaped risk, surface versioning) | 🟡 critique captured (task #20) | Apply the trader-ergonomics critique; wire observability into engine/server |
 | Distributed / horizontal scale-out | 🟡 designed (`SCALE-OUT.md`) | Validate partitioning vs latency budgets |
