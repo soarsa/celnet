@@ -70,6 +70,7 @@ use celnet_proto::{
 };
 use celnet_router::{PartitionKey, PartitionMap, Replica, ReplicaId, ReplicaSet};
 use celnet_types::CcyPair;
+use futures_util::future::join_all;
 use tonic::Status;
 
 use super::store::{BookedPosition, PositionStore};
@@ -326,9 +327,14 @@ impl RiskEdge {
         req: &ListPositionsRequest,
     ) -> Result<ListPositionsResponse, Status> {
         let backends = fleet.reachable_serving()?;
+        // CONCURRENT fan-out: dial every backend at once; `join_all` yields the
+        // per-backend results in input (endpoint) order, so the union below is
+        // assembled in the SAME deterministic order as a sequential loop while the
+        // wall-clock cost is that of the slowest backend, not their sum. Any errored
+        // slice surfaces loudly (never a silent partial union) via `fan_out`.
+        let responses = fan_out(&backends, |c| list_positions_via(c, req)).await?;
         let mut by_id: BTreeMap<u64, RiskPosition> = BTreeMap::new();
-        for b in backends {
-            let resp = list_positions_via(&b.client, req).await?;
+        for resp in responses {
             for p in resp.positions {
                 by_id.insert(p.position_id, p);
             }
@@ -355,13 +361,18 @@ impl RiskEdge {
     ) -> Result<AggregateRiskResponse, Status> {
         let backends = fleet.reachable_serving()?;
 
-        // 1. Additive fan-in: sum the wire AdditiveRisk per (dimension, group),
-        //    preserving first-seen node order so the response order is deterministic.
+        // 1. Additive fan-in: dial every backend CONCURRENTLY (latency ~ slowest
+        //    backend, not the sum), then sum the wire AdditiveRisk per (dimension,
+        //    group) folding the results in endpoint order — `join_all` preserves input
+        //    order, so the per-(dimension,group) summation order is bit-identical to a
+        //    sequential loop (the merge is additive/commutative; pinning the order
+        //    keeps the aggregate bit-reproducible). First-seen node order is preserved
+        //    so the response order is deterministic.
+        let responses = fan_out(&backends, |c| aggregate_via(c, req)).await?;
         let mut order: Vec<u64> = Vec::new();
         let mut summed: BTreeMap<u64, RiskNode> = BTreeMap::new();
         let mut numeraire_code = String::new();
-        for b in &backends {
-            let resp = aggregate_via(&b.client, req).await?;
+        for resp in responses {
             numeraire_code = resp.numeraire;
             for node in resp.nodes {
                 match summed.get_mut(&node.group) {
@@ -417,12 +428,15 @@ impl RiskEdge {
         req: &DrillRiskRequest,
     ) -> Result<DrillRiskResponse, Status> {
         let backends = fleet.reachable_serving()?;
+        // CONCURRENT fan-out (latency ~ slowest backend); `join_all` preserves endpoint
+        // order so the per-child additive summation and position-union order are
+        // deterministic / bit-reproducible.
+        let responses = fan_out(&backends, |c| drill_via(c, req)).await?;
         let mut child_order: Vec<u64> = Vec::new();
         let mut children: BTreeMap<u64, RiskNode> = BTreeMap::new();
         let mut positions: BTreeMap<u64, RiskPosition> = BTreeMap::new();
         let node_scope = req.node;
-        for b in &backends {
-            let resp = drill_via(&b.client, req).await?;
+        for resp in responses {
             for child in resp.children {
                 match children.get_mut(&child.group) {
                     Some(acc) => merge_node_additive(acc, &child),
@@ -541,9 +555,11 @@ impl RiskEdge {
         backends: &[&Backend],
         req: &ListPositionsRequest,
     ) -> Result<Vec<RiskPosition>, Status> {
+        // CONCURRENT gather (latency ~ slowest backend); endpoint-ordered results keep
+        // the de-duplicated union deterministic.
+        let responses = fan_out(backends, |c| list_positions_via(c, req)).await?;
         let mut by_id: BTreeMap<u64, RiskPosition> = BTreeMap::new();
-        for b in backends {
-            let resp = list_positions_via(&b.client, req).await?;
+        for resp in responses {
             for p in resp.positions {
                 by_id.insert(p.position_id, p);
             }
@@ -632,6 +648,37 @@ fn merge_node_additive(acc: &mut RiskNode, other: &RiskNode) {
         (None, Some(o)) => acc.additive = Some(o.clone()),
         _ => {}
     }
+}
+
+/// Fan one per-backend RPC out across `backends` **concurrently** and collect the
+/// responses in **input (endpoint) order**.
+///
+/// This is the load-bearing latency fix: instead of `await`-ing each backend in
+/// turn (cost ~ Σ backends), every per-backend future is driven simultaneously by
+/// [`join_all`], so the wall-clock cost is that of the **slowest** backend
+/// (`max`, not `sum`). `join_all` resolves to a `Vec` of results in the SAME order
+/// as the input futures, so the caller's reducer (additive summation / union)
+/// folds them in endpoint order exactly as the previous sequential loop did —
+/// preserving bit-reproducibility of the additive sum (floating-point summation is
+/// not associative, so the order is pinned, not left to completion order).
+///
+/// Failure semantics are unchanged: if **any** slice errors, the first error in
+/// endpoint order is returned (a backend status, e.g. [`Status::unavailable`]),
+/// never a silent partial union over the surviving backends. The whole fan-out is
+/// driven to completion before the first error is surfaced, so there is no
+/// dangling in-flight RPC.
+async fn fan_out<'a, T, F, Fut>(backends: &[&'a Backend], call: F) -> Result<Vec<T>, Status>
+where
+    F: Fn(&'a Client) -> Fut,
+    Fut: std::future::Future<Output = Result<T, Status>>,
+{
+    let results = join_all(backends.iter().map(|b| call(&b.client))).await;
+    // Surface the first error in endpoint order (deterministic) — never a partial.
+    let mut out = Vec::with_capacity(results.len());
+    for r in results {
+        out.push(r?);
+    }
+    Ok(out)
 }
 
 // --- the four backend RPCs, dialled over a connected client's channel -----------

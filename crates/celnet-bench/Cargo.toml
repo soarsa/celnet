@@ -15,6 +15,14 @@ workspace = true
 celnet-types.workspace = true
 celnet-core.workspace = true
 celnet-vanilla.workspace = true
+# Surface-rebuild truth-gate (`surface_rebuild`): the public surface construction
+# — convention-aware delta-space smile calibration from broker ATM/RR/BF quotes
+# (Vanna-Volga + SABR/SVI/SSVI) plus the term-structure assembly across all
+# standard tenors — is the work the §1.2 "surface rebuild on market tick (single
+# pair, all tenors) p99 ≤ 150µs" budget governs. Read-only library dep — the bench
+# constructs the public APIs (`build_model_smile`, `VolSurface`), it never modifies
+# the crate. (`celnet-conventions`, also needed, is already a dep below.)
+celnet-surface.workspace = true
 # Risk-path acceleration benches: AAD vs bump-and-revalue (celnet-risk-normalize),
 # and GPU-batched vs CPU node-by-node scenario grids (celnet-risk-cube + the
 # batched kernel in celnet-gpu). Read-only library deps — the benches construct
@@ -109,6 +117,16 @@ path = "src/bin/bench_gate.rs"
 [[bin]]
 name = "core_load"
 path = "src/bin/core_load.rs"
+
+# Surface-rebuild latency truth-gate: measures + asserts the ABSOLUTE
+# ARCHITECTURE §1.2 budget for a full per-pair-all-tenors surface rebuild
+# (p99 ≤ 150µs) — calibrating every standard-tenor slice from representative
+# broker quotes (VV and SSVI) and assembling the term structure, timed per
+# rebuild into a coordinated-omission-aware HdrHistogram. Bounded; exits non-zero
+# on any breach.
+[[bin]]
+name = "surface_rebuild"
+path = "src/bin/surface_rebuild.rs"
 
 # Fleet §11 SLO truth-benches (LOOPBACK / in-process): measures (a) cross-shard
 # federation overhead, (b) publish→snapshot lag, (c) conflation correctness under

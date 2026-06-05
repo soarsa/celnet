@@ -59,6 +59,7 @@
 pub mod core_load;
 pub mod fleet_slo;
 pub mod sched;
+pub mod surface_rebuild;
 pub mod wire;
 
 use celnet_core::math::ln;
