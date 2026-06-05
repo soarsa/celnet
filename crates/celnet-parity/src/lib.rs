@@ -31,10 +31,18 @@
 //! | 13 | First-gen exotics: one-touch / no-touch / DNT / double-touch match QuantLib | `exotics::touches_and_dnt_match_quantlib` |
 //! | 14 | First-gen exotics: all eight single-barrier flavours + double-KO match QuantLib | `exotics::barriers_match_quantlib`, `exotics::double_barriers_match_quantlib` |
 //! | 15 | Determinism: identical inputs → bit-identical price and full Greek set | `determinism::price_and_greeks_are_bit_identical`, `determinism::smile_and_exotics_are_bit_identical` |
+//! | 16 | Second-gen exotics: **quanto** vanilla + digital closed forms cross-validated by MC, zero-correlation collapse to plain price (the product class SynOption/Fenics price opaquely) | `structured::quanto_closed_form_matches_mc_and_collapses_at_zero_correlation` |
+//! | 17 | Second-gen exotics: **lookback** (floating/fixed) closed forms cross-validated by MC + lookback-dominates-vanilla invariant | `structured::lookback_closed_form_matches_mc_and_dominates_vanilla` |
+//! | 18 | Structured: **TARF** gap-risk decomposition — FullGain (overshoot kept) strictly costlier to the bank than CappedGain; explicit, signed gap premium (the structured book SynOption monetises) | `structured::tarf_gap_risk_premium_is_priced_and_signed` |
+//! | 19 | Structured: **accumulator** continuous (Brownian-bridge) monitoring knocks out more than discrete — model-free knock-out correctness | `structured::accumulator_continuous_monitoring_knocks_out_more_than_discrete` |
 //!
 //! Every row above is gated: a regression makes `cargo nextest run -p
 //! celnet-parity` fail, so the matrix cannot silently rot out of sync with the
-//! capabilities document (zero-legacy invariant).
+//! capabilities document (zero-legacy invariant). Rows 16–19 promote the
+//! second-generation / structured-product book (quanto, lookback, TARF,
+//! accumulator) from "deferred" to **delivered & gated** — each validated against
+//! an independent route (closed form ⇄ Monte-Carlo) or a model-free financial
+//! invariant, in the open.
 //!
 //! ## Property-based coverage
 //!
