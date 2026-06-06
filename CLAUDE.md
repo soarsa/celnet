@@ -123,6 +123,37 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-06-06 — **Leadership program Wave 4a DONE (commit `0c54958`; pushed).** First catalogue
+  increment, two disjoint gated `celnet-parity` rows built as parallel implement→adversarial-verify
+  tracks (both verdict **accept**), then independently re-gated. **Track A — eSSVI** in
+  `celnet-surface/extended_surface.rs`: maturity-dependent ρ(θ) in the (θ,ρ,ψ) variables (ψ=θ·φ the
+  ATM skew-scale), **SSVI byte-recovered as the constant-ρ special case** (`ExtendedSlice::from_curvature`
+  → `to_bits` identity over a 1680-pt sweep). Closed-form per-slice butterfly domain `ψ(1+|ρ|)<4 ∧
+  (ψ²/θ)(1+|ρ|)≤4` + consecutive-slice calendar `|ρ₂ψ₂−ρ₁ψ₁|≤ψ₂−ψ₁` (Hendriks-Martini 2019,
+  provenance in doc comments only; identifiers purpose-named). Extended the ONE wire contract:
+  **`SMILE_MODEL_EXTENDED_SURFACE=4`** (appended, no renumber, **no `schema_version`**), types/proto/
+  convert round-trip + surface `SmileModel` + `build_model_smile` (damped Gauss-Newton fit projected
+  into the butterfly domain) + server/bench label maps — a mark request selects eSSVI exactly like
+  SSVI. Parity `tests/essvi.rs` (4 rows): density≥0 (Breeden-Litzenberger pointwise re-pricing) +
+  calendar-monotone (pointwise w) validate the **closed-form claims against genuinely independent
+  numerics**; golden self-reprice ≤1e-9; SSVI `to_bits` byte-recovery. **Track B — variance + vol
+  swaps** in `celnet-exotics` (`var_swap.rs`/`vol_swap.rs`): var-swap fair strike by **log-contract
+  1/K² static replication** (Demeterfi-DKZ / Carr-Madan) over the OTM forward strip in log-moneyness
+  with an **adaptive wing to machine precision**; vol-swap by the **Carr-Lee convexity adjustment**
+  `K_vol=√K_var − Var(v)/(8·K_var^{3/2})`, strictly < √K_var for any non-degenerate smile. Parity
+  `tests/var_vol_swap.rs` (5 rows): strip == an **independently-coded strike-space recursive
+  adaptive-Simpson** quadrature ~1e-6; **flat-σ closed form `K_var==σ²`** ~1e-6 (catches forward/
+  discount/scale/sign errors a quadrature pair could share); strict `K_vol<√K_var` widening with
+  convexity; default strip on the <1e-7 convergence plateau. **SOTA, ZERO workarounds** (verify phase
+  + my own diff grep: no `#[ignore]`/lint-dodge/stub/lowered-tolerance/overclaim; the only `unreachable!`
+  is an exhaustiveness guard after the three real slice variants; the only `#[allow]` is
+  `too_many_arguments` on a 9-arg recursive quadrature oracle). Independently re-gated: **full `just
+  check` green (literal "All gates passed."), 923/923 tests** (was 898). Honest boundary respected
+  (pure in-repo numerics). **Next: Wave 4b** (arithmetic Asian, then forward-start/cliquet, standalone
+  Heston FFT/COS, Sobol+Brownian-bridge QMC — CPU-first, reused by Wave 5 GPU — FRTB-SA completeness,
+  pair-universe breadth; each its own fully-gated wave); Wave 3 (replicated log/hot-standby/SPMC, XL)
+  and Wave 5 (GPU ratios) remain.
+
 - 2026-06-06 — **Leadership program Wave 2 DONE (commits `32a39f6`, `375b808`, `911e294`; pushed).**
   **2a (`32a39f6`):** fleet **§11 SLO loopback truth-benches** (`celnet-bench/fleet_slo.rs` + bin +
   `baselines/fleet_slo.json`, gated by `bench_gate` arm 3) — cross-shard routing overhead, publish→
