@@ -123,6 +123,24 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-06-06 — **COMPLETION-PROGRAM launched (`docs/COMPLETION-PROGRAM.md`, commit `133af6f`) + Wave 1 DONE
+  (commit `2c09d18`; pushed).** A planning Workflow (4 parallel assessors → architect) found the dominant
+  gap is **api-first client parity, not missing math**: a large built+parity-gated `celnet-exotics`
+  catalogue (Asian, fwd-start/cliquet, var/vol swaps, TARF, accumulator, quanto, lookback, eSSVI, LSV) is
+  unreachable from the wire/clients. Plan = **12 waves, 3 arcs** (I: close parity W1–W6; II: infra/numerics
+  depth W7–W9; III: breadth/risk/polish W10–W12); honest boundary held out of scope. Driving each wave as a
+  gated implement→adversarial-verify Workflow (pipeline: Rust slice → GUI ∥ Excel → verify), then I
+  independently re-gate (literal "All gates passed." + GUI/Excel build+test + re-derive math) + commit +
+  push + ledger. **W1 (`2c09d18`):** variance swap / vol swap / arithmetic Asian onto the ONE oneof
+  (additive `variance_swap=13`/`volatility_swap=14`/`asian_option=15`, NO schema_version) → server pricer
+  (→ celnet-exotics closed forms) + WS-JSON mirror + SDK (`InstrumentSpec::{variance_swap,..}` + AsianTerms)
+  + CLI (`exotic var-swap|vol-swap|asian`) + Excel (`CELNET.VARSWAP/VOLSWAP/ASIAN`) + GUI ticket — all five
+  clients reach all three products (verifier confirmed by reading code). Oracle: server==exotics ~1e-9 + the
+  **independent flat-σ `K_var==σ²` full-wire-path limit** + vol-swap `K_vol<√K_var` + Asian closed-form
+  limits. (Caught + dismissed a STALE phantom TS diagnostic by checking the file on disk myself.) Full
+  `just check` green ("All gates passed."), **1092/1092** (was 1077); GUI tsc/build/90 tests; Excel
+  build/95 tests. **Next: W2** (forward-start/cliquet + quanto on the wire).
+
 - 2026-06-06 — **Deepening increment §4(i) COMPLETE — `celnet-replog` full Raft + log compaction (Track B;
   commit `aabdb8f`; pushed).** Raft §7 snapshotting on top of Track A's consensus core, via a gated
   implement→adversarial-verify Workflow, then INDEPENDENTLY re-gated (I re-derived the base-index offset
