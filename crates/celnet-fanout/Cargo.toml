@@ -1,0 +1,30 @@
+[package]
+name = "celnet-fanout"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet lock-free single-producer / multi-consumer (SPMC) broadcast ring — the per-shard price fan-out substrate (every consumer sees every item in order; slow consumers conflate with counted skips)."
+publish = false
+
+# This crate cannot inherit the workspace `unsafe_code = "forbid"`: the broadcast
+# ring slot publication (a release/acquire seqlock over an `UnsafeCell<T>` payload)
+# and the allocation-counting test guard are irreducibly `unsafe` (raw `UnsafeCell`
+# torn-read protocol; `GlobalAlloc`). `forbid` cannot be relaxed by a local
+# `#[allow]`, so we restate the workspace lint policy here with `unsafe_code =
+# "deny"` (still denied by default; opted into only in the audited slot module via
+# an explicit `#[allow(unsafe_code)]` with a `// SAFETY:` rationale). Every other
+# lint matches the workspace exactly.
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+unreachable_pub = "warn"
+
+[lints.clippy]
+all = "warn"
+
+[dependencies]
+# Leaf crate: std + atomics only, plus the workspace false-sharing guard already
+# vetted for the engine hot path. No celnet-* deps (the ring is payload-generic).
+crossbeam-utils.workspace = true

@@ -1,0 +1,22 @@
+[package]
+name = "celnet-replog"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet leader-replicated, deterministic-replay event log over the durable journal — real loopback-socket multi-node replication with quorum commit and hot-standby failover."
+publish = false
+
+[lints]
+workspace = true
+
+# Deliberately dependency-light: the replicated log layers on the dependency-free
+# `celnet-journal` (each node's durable local log) and uses only `std::net` TCP +
+# threads for the real-socket transport — no async runtime, no extra supply-chain
+# surface. The replicated state machine is a self-contained deterministic
+# `u64 -> f64` priced book (compared by `f64::to_bits`), so no domain-type crate
+# dependency is pulled in; the log stays a true leaf.
+
+[dependencies]
+celnet-journal.workspace = true
