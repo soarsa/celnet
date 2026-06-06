@@ -96,6 +96,14 @@ harness = false
 name = "scenario"
 harness = false
 
+# GPU batch warm-cache micro-throughput (divan): the `gpu_load` binary's companion
+# — times the EXISTING `celnet_gpu::GpuBackend` (and the CPU oracle) pricing a fixed
+# MC batch over a small sweep, reporting items/s (paths/s). HEADLESS ⇒ CPU fallback.
+# RATIO / relative-regression signal only — never an absolute GPU throughput claim.
+[[bench]]
+name = "gpu_batch"
+harness = false
+
 # ---------------------------------------------------------------------------
 # End-to-end wire-path latency-under-load harness + the CI bench-regression
 # gate. Both are bounded binaries (self-terminating, timeout-friendly): the
@@ -138,6 +146,24 @@ path = "src/bin/surface_rebuild.rs"
 [[bin]]
 name = "fleet_slo"
 path = "src/bin/fleet_slo.rs"
+
+# GPU batch throughput + dispatch-latency load harness (Wave 5, G1): drives the
+# EXISTING `celnet_gpu::GpuBackend` Monte-Carlo pricing path over a bounded batch
+# sweep, records per-dispatch latency + path throughput + the host-local GPU/CPU
+# ratio into a committed baseline (`baselines/gpu_batch.json`). HEADLESS: no
+# adapter ⇒ CPU fallback, labelled as such. RATIO / relative numbers only — the
+# absolute GPU/NVIDIA throughput headline stays deploy-gated, never claimed here.
+[[bin]]
+name = "gpu_load"
+path = "src/bin/gpu_load.rs"
+
+# GPU batch RELATIVE-regression gate (mirrors `bench_gate`): re-measures the sweep
+# and fails on a >2× structural slowdown vs the committed baseline (throughput
+# collapse / dispatch-p99 inflation). Explicitly a ratio gate, NOT an absolute
+# throughput assertion; on a headless runner a completes-within-ceiling check.
+[[bin]]
+name = "gpu_gate"
+path = "src/bin/gpu_gate.rs"
 
 # ---------------------------------------------------------------------------
 # iai-callgrind instruction-count gate (jitter-free, deterministic). Runs under

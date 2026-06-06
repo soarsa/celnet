@@ -37,12 +37,16 @@
 #![forbid(unsafe_code)]
 
 pub mod backend;
+pub mod batch;
 pub mod counter_rng;
 pub mod cpu;
 pub mod gpu;
 pub mod scenario;
 
 pub use backend::{PathSpec, PayoffKernel, PricingBackend, Reduction};
+pub use batch::{
+    BatchInstrument, BatchPricer, as_erf_price_bound, cpu_batch_with_as_erf, derived_batch_bound,
+};
 pub use counter_rng::{CounterAddress, CounterNormals};
 pub use cpu::CpuBackend;
 pub use gpu::GpuBackend;
