@@ -246,6 +246,9 @@ pub enum SmileModel {
     Parametric,
     /// Surface-level parametric family, closed-form arbitrage-free (SSVI method).
     ParametricSurface,
+    /// Extended surface-level parametric family with maturity-dependent
+    /// correlation, closed-form arbitrage-free (eSSVI method).
+    ExtendedSurface,
 }
 
 impl Default for SmileModel {

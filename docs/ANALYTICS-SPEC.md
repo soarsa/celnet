@@ -129,10 +129,11 @@ The FX-native, fast, closed-form smile engine that exactly reprices the 3 quotes
 
 Stochastic-vol smile: `dF = alpha F^beta dW1`, `d(alpha) = nu alpha dW2`, `corr = rho`. Parameters: `alpha` (level), `beta` (CEV backbone exponent), `rho` (skew), `nu` (vol-of-vol/curvature). Use **Hagan's singular-perturbation lognormal (Black) implied-vol expansion** for speed. **Fix beta** by market convention/backbone (it is weakly identified / confounded with rho from a single smile). Switch to **arbitrage-free PDE SABR (Hagan 2014)** — the 1-D effective-forward density PDE — for low-vol/low-rate or deep-wing strikes where the asymptotic formula is inaccurate/arbitrageable (validity needs `nu sqrt(T)`, `|beta-1| sqrt(T)` small). Use **shifted/normal SABR** only if forwards approach or cross zero.
 
-### 3.3 SVI / SSVI — Gatheral (2004), Gatheral-Jacquier (2014)
+### 3.3 SVI / SSVI / eSSVI — Gatheral (2004), Gatheral-Jacquier (2014), Hendriks-Martini (2019)
 
 - **Raw SVI** total implied variance per slice: `w(k) = a + b{ rho(k - m) + sqrt((k - m)^2 + sigma^2) }` in log-moneyness `k` (5 params/slice, linear wings consistent with Lee's moment formula).
 - **SSVI / Surface SVI:** single surface parametrized by ATM total variance `theta_t`, constant correlation `rho`, and a curvature function `phi(theta)`. Gives **explicit closed-form sufficient conditions for no butterfly arbitrage and no calendar-spread arbitrage** across the whole surface — the preferred choice for a globally arbitrage-free, smoothly interpolated **production surface** (needed for local-vol/exotics stripping).
+- **eSSVI / Extended SSVI:** generalizes SSVI by making the correlation **maturity-dependent**, `rho -> rho(theta)`, while keeping the closed-form static no-arbitrage conditions. Each slice is `(theta, rho, psi)` with `psi = theta·phi(theta)` the ATM skew-scale (`d_k w|_{k=0} = rho·psi`) and `w(k) = (theta/2)·{ 1 + rho·(psi/theta)·k + sqrt(((psi/theta)·k + rho)^2 + (1 - rho^2)) }`. **Butterfly (per slice):** `psi·(1+|rho|) < 4` and `(psi^2/theta)·(1+|rho|) <= 4`. **Calendar (consecutive slices `theta_1 < theta_2`):** `psi_1 <= psi_2` and `|rho_2·psi_2 - rho_1·psi_1| <= psi_2 - psi_1`. **SSVI is the special case `rho(theta) == const`** with `psi = theta·phi`, which `celnet-surface::extended_surface` recovers **byte-for-byte**. (`crates/celnet-surface/src/extended_surface.rs`; closed-form predicates validated against the Breeden-Litzenberger density + pointwise calendar numerics in `crates/celnet-parity/tests/essvi.rs`.)
 
 ### 3.4 Arbitrage-free constraints (asserted on every surface)
 
@@ -153,6 +154,7 @@ vendor/method-neutral enum; the §3.1–3.3 provenance is documentation only):
 | `StochasticVol` | SABR (§3.2) | β=1 lognormal-FX; fits (α, ρ, ν) to ATM + 25Δ (+10Δ) anchors. |
 | `Parametric` | SVI (§3.3) | fits (b, ρ, m, σ) with `a` ATM-pinned; step projected into the no-butterfly box. |
 | `ParametricSurface` | SSVI (§3.3) | θ pinned to ATM total variance; (ρ, φ) under the closed-form butterfly conditions. |
+| `ExtendedSurface` | eSSVI (§3.3) | θ pinned to ATM total variance; (ρ, ψ) under the closed-form (θ,ρ,ψ) butterfly conditions; maturity-dependent ρ across slices, SSVI byte-recovered at constant ρ. |
 
 All four are deterministic (libm-only damped Gauss-Newton in `(log-moneyness, total-variance)`
 space) and calibrate to the **same** VV-anchored ATM/25Δ(/10Δ) points, so model selection changes
@@ -188,8 +190,8 @@ Interpolate **ATM, RR, and BF separately** across tenors in **total-variance / b
 | Lookback (floating/fixed strike) | LSV (forward-vol sensitive) | MC (path max/min) / PDE | Pure LV mis-prices forward smile |
 | Forward-start / cliquet | LSV (forward-smile sensitive) | MC / PDE | Strike set at future fixing; pure LV fails here |
 | TARF / accumulator / decumulator | LV often sufficient for vanilla strips; **LSV** where forward-smile/barrier dynamics matter | **Monte Carlo** (low-dim PDE/quadrature for approximations) | Model **gap/digital risk** explicitly; stress target/knock-out; reserve for model risk; suitability/disclosure |
-| Variance swap | Model-free static replication | **Log-contract**: continuum of OTM puts+calls weighted `1/K^2` + dynamic `1/S_t` position | Strike = model-free integral of OTM option prices |
-| Volatility swap | **Not** statically replicable | Explicit **convexity adjustment** (Carr-Lee robust replication) or LSV-model expectation | Never set vol-swap strike = sqrt(var-swap strike) |
+| Variance swap | Model-free static replication | **Log-contract**: continuum of OTM puts+calls weighted `1/K^2` + dynamic `1/S_t` position | Strike = model-free integral of OTM option prices. **Built** — `celnet-exotics::var_swap` (`fair_variance`): adaptive-wing, fixed-`u`-resolution Simpson strip of OTM **forward** values off any arbitrage-free `Smile`. Recovers `sigma^2` exactly for a flat smile; gated in `celnet-parity/tests/var_vol_swap.rs` against an independent adaptive-Simpson quadrature (~1e-6) and the flat closed form (~1e-6). |
+| Volatility swap | **Not** statically replicable | Explicit **convexity adjustment** (Carr-Lee robust replication) or LSV-model expectation | Never set vol-swap strike = sqrt(var-swap strike). **Built** — `celnet-exotics::vol_swap` (`fair_volatility`): `K_vol = sqrt(K_var) - Var(v)/(8*K_var^{3/2})`, the Carr-Lee/Brockhaus-Long convexity (Jensen) adjustment from the log-contract-weighted variance-of-variance. Strictly `< sqrt(K_var)` for any non-degenerate smile; gated in the same parity row (strict bound + Var(v) monotone in butterfly). |
 
 **Continuously-monitored barriers in MC** require a discrete-monitoring bias correction: (a) **Broadie-Glasserman-Kou** barrier shift by `~0.5826 sigma sqrt(dt)`, or (b) **Brownian-bridge** exit-probability between steps. Digital/barrier payoffs are discontinuous -> **Rannacher smoothing** in PDE and barrier-aligned grid nodes.
 

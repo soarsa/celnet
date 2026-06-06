@@ -326,6 +326,7 @@ impl From<SmileModel> for WireSmileModel {
             SmileModel::StochasticVol => WireSmileModel::StochasticVol,
             SmileModel::Parametric => WireSmileModel::Parametric,
             SmileModel::ParametricSurface => WireSmileModel::ParametricSurface,
+            SmileModel::ExtendedSurface => WireSmileModel::ExtendedSurface,
         }
     }
 }
@@ -339,6 +340,7 @@ impl TryFrom<WireSmileModel> for SmileModel {
             WireSmileModel::StochasticVol => SmileModel::StochasticVol,
             WireSmileModel::Parametric => SmileModel::Parametric,
             WireSmileModel::ParametricSurface => SmileModel::ParametricSurface,
+            WireSmileModel::ExtendedSurface => SmileModel::ExtendedSurface,
         })
     }
 }
@@ -534,6 +536,7 @@ mod tests {
             SmileModel::StochasticVol,
             SmileModel::Parametric,
             SmileModel::ParametricSurface,
+            SmileModel::ExtendedSurface,
         ] {
             let back =
                 SmileModel::try_from(WireSmileModel::from(m)).expect("smile model round-trips");

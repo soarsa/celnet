@@ -248,6 +248,9 @@ enum SmileModel {
   SMILE_MODEL_PARAMETRIC = 2;
   // Surface-level parametric family, closed-form arbitrage-free (SSVI method).
   SMILE_MODEL_PARAMETRIC_SURFACE = 3;
+  // Extended surface-level parametric family with maturity-dependent
+  // correlation, closed-form arbitrage-free (eSSVI method).
+  SMILE_MODEL_EXTENDED_SURFACE = 4;
 }
 
 // The trade conventions a quote / surface is expressed under. Carrying these

@@ -187,6 +187,7 @@ fn decode_smile_model(wire: Option<i32>) -> Result<SmileModel, Status> {
         celnet_proto::SmileModel::StochasticVol => SmileModel::StochasticVol,
         celnet_proto::SmileModel::Parametric => SmileModel::Parametric,
         celnet_proto::SmileModel::ParametricSurface => SmileModel::ParametricSurface,
+        celnet_proto::SmileModel::ExtendedSurface => SmileModel::ExtendedSurface,
     })
 }
 
@@ -200,6 +201,7 @@ fn model_label(model: SmileModel) -> &'static str {
         SmileModel::StochasticVol => "stochastic-vol",
         SmileModel::Parametric => "parametric",
         SmileModel::ParametricSurface => "parametric-surface",
+        SmileModel::ExtendedSurface => "extended-surface",
     }
 }
 

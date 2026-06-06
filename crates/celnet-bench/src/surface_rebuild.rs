@@ -317,6 +317,7 @@ fn model_name(model: SmileModel) -> &'static str {
         SmileModel::StochasticVol => "StochasticVol",
         SmileModel::Parametric => "Parametric",
         SmileModel::ParametricSurface => "ParametricSurface",
+        SmileModel::ExtendedSurface => "ExtendedSurface",
     }
 }
 
