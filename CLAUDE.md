@@ -123,6 +123,35 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-06-06 — **Leadership program Wave 4b DONE (commit `91d8e2c`; pushed).** Second catalogue
+  increment, two disjoint gated `celnet-parity` rows (parallel implement→adversarial-verify, both
+  **accept**), then **independently re-gated** — and the full `just check` caught a real defect both
+  track verifiers missed (an `excessive_precision` float literal in `tests/asian.rs:453`, the Acklam
+  inverse-CDF coeff with a trailing 0 — fixed forward by clippy's exact truncation, a numeric no-op;
+  Track A's verifier had misattributed it to heston). **Track A — analytic arithmetic-Asian** in
+  `celnet-exotics/asian.rs`: MC-free **Turnbull-Wakeman** (two-moment lognormal matching) + **Curran**
+  (geometric-conditioning, in-crate 64-node Gauss-Legendre, no external quadrature dep), FX carry +
+  seasoned (in-progress-average) case. Arithmetic Asian has NO exact closed form ⇒ parity
+  `tests/asian.rs` (8 rows) **honestly toleranced**: exact closed-form limits (single-obs→GK vanilla,
+  zero-vol→discounted intrinsic, geometric leg→Kemna-Vorst ~1e-12); Curran within a few **reported MC
+  stderr** of the existing independent `price_asian` MC; TW gated at its TRUE **~1.5% approximation
+  band** (explicitly NOT an MC-precision claim); Curran≤TW; seasoned vs a code-disjoint splitmix64+
+  Acklam MC. **Track B — standalone Heston** as a NEW crate **`celnet-heston`** (deps {core,types,libm};
+  vanilla dev-dep): two genuinely independent CF transforms over a shared **branch-cut-free CF**
+  (Cui-del-Baño-Germano) — **Carr-Madan** damped-integral Gauss-Legendre quadrature ∥ **Fang-Oosterlee
+  COS** (cumulant range, c4 by finite-difference; prices the bounded put leg, call by exact parity);
+  **no external FFT crate** (guardrail #7). Parity `tests/heston.rs` (5 rows): CM≈COS to 1e-8+1e-7·price
+  on the full ≤3y FX grid (560 pts); **BS σ→0,v0=θ limit** vs independent celnet-vanilla GK ≤1e-5 with
+  verified O(σ²) rate; put-call parity ≤1e-10; strike-monotonicity; published **Albrecher-2007
+  little-Heston-trap anchor** (~5.785). >3y deep-OTM Fourier precision wall documented + gated only ≤3y
+  (not claimed tight). New crate auto-joins via the `members=["crates/*"]` glob (**no root Cargo.toml
+  edit**); parity references it by path like `celnet-golden`. **SOTA, ZERO workarounds** (verifiers +
+  my own diff grep: no `#[ignore]`/lint-dodge/stub/overclaim; OSS-only deps). Full `just check` green
+  (literal "All gates passed."), **949/949 tests** (was 923). **Next: Wave 4c** — forward-start/cliquet,
+  then Sobol+Brownian-bridge QMC (CPU-first, reused by Wave 5 GPU), FRTB-SA completeness, pair-universe
+  breadth (each its own fully-gated wave); Wave 3 (replicated log/hot-standby/SPMC, XL) + Wave 5 (GPU
+  ratios) remain.
+
 - 2026-06-06 — **Leadership program Wave 4a DONE (commit `0c54958`; pushed).** First catalogue
   increment, two disjoint gated `celnet-parity` rows built as parallel implement→adversarial-verify
   tracks (both verdict **accept**), then independently re-gated. **Track A — eSSVI** in
