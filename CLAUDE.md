@@ -123,6 +123,35 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-06-06 — **Leadership program Wave 5 DONE → ALL IN-REPO WAVES (1–5) COMPLETE (commit `b743fea`;
+  pushed).** GPU perf at scale, **RATIOS only** (NVIDIA absolute headline stays deploy-gated). Two
+  disjoint tracks, gated implement→adversarial-verify, then independently re-gated (I re-derived the f32
+  bound, read the reconcile assertion, and re-ran `gpu_gate` myself). **Track A — G2 batch closed-form
+  kernel** in `celnet-gpu` (`batch.wgsl`/`batch.rs`): one GPU dispatch prices a large vanilla batch by
+  closed-form Garman-Kohlhagen in f32 (zero RNG/MC noise; in-kernel A&S-7.1.26 erf), reconciled
+  NODE-BY-NODE within TWO separately-DERIVED (not fitted) bounds — (1) f32 round-off vs the f64 eval of
+  the SAME A&S-erf algorithm (bit-identical f32 coeffs by to_bits ⇒ only round-off differs; bound from
+  f32::EPSILON + per-op ULP budgets), (2) A&S algorithmic error vs the production `libm::erfc` path
+  (bit-gated to the QuantLib golden). Three-way **GPU-f32 ≈ CPU-f64 ≈ golden** element-wise over 1792
+  instruments; **max f32 round-off rel err 3.11e-7** inside the per-node bound; real Metal path exercised
+  (`is_gpu()==true` asserted, not vacuous CPU-vs-CPU); bit-reproducible; headless fallback reconciles to
+  golden. **Track B — G1 perf harness** in `celnet-bench` over the EXISTING `GpuBackend`:
+  `src/bin/gpu_load.rs` (bounded HdrHistogram sweep, GPU+CPU kpaths/s + gpu/cpu RATIO + dispatch
+  p50/p99/p99.9), `benches/gpu_batch.rs`, committed `baselines/gpu_batch.json`, `src/bin/gpu_gate.rs`
+  (**slowdown-only RELATIVE** gate — >2× collapse or p99 inflation; never absolute; completes-within-
+  ceiling headless). Measured M4 dispatch-amortization curve **0.68×@4k → 53×@1M paths** (device
+  saturated). **HONEST BOUNDARY** (verbatim in both crates' docs + GPU-AT-SCALE-PLAN.md): M4 Metal lacks
+  f64 ⇒ GPU is f32; in-repo proves CORRECTNESS (f32↔f64↔golden) + a host-local RATIO only; the **NVIDIA
+  absolute throughput headline / ≤50ms exotic / Workload-A/B absolute numbers are DEFERRED** to the CUDA
+  deploy-gate (G8), never claimed here. **SOTA, ZERO workarounds** (OSS wgpu/Metal; no root Cargo.toml
+  edit; proto untouched). Full `just check` green (literal "All gates passed."), **1044/1044 tests** (was
+  1035). **▶ PROGRAM STATUS: all five in-repo leadership waves (1 truth-gates+integration, 2 fleet-SLO+
+  experience, 3 distributed-correctness, 4 catalogue, 5 GPU-ratios) are COMPLETE & pushed.** Only **Wave 6**
+  (deploy/live-estate proof tracks — cross-host wire p99, CUDA deploy-gate baselines, live JVM Celer
+  estate lifecycle) remains, and it is **deploy/live-gated by design — never built or claimed in-repo**
+  per the honest boundary; in-repo it is closed by the seams + ADRs + the docs-anchor lint already in
+  place. The leadership program is materially complete against its measurable bar.
+
 - 2026-06-06 — **Leadership program Wave 3 DONE (distributed correctness, XL; commit `1a57def`; pushed).**
   Two new disjoint leaf crates, gated implement→adversarial-verify, then independently re-gated (I read
   the quorum/commit-index logic + the `to_bits` assertions + the real-socket transport myself). **Track A
