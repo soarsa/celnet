@@ -22,9 +22,10 @@
 //! All conventions are first-class **data**, never global mutable defaults: the
 //! registry is a pure function of `(pair, tenor)`.
 
-use celnet_calendar::centre_for;
+use celnet_calendar::{centre_for, spot_lag_days};
 use celnet_types::{
-    AtmConvention, Ccy, CcyPair, Cut, DayCount, DeltaConvention, PremiumStyle, Settlement, Tenor,
+    AtmConvention, Ccy, CcyPair, Cut, DayCount, DeltaConvention, FixingSource, PremiumStyle,
+    Settlement, Tenor,
 };
 
 use crate::record::{ConventionRecord, ResolutionSource, ResolvedConvention};
@@ -87,6 +88,34 @@ const fn premium_adjusted_of(forward: bool, premium_adjusted: bool) -> DeltaConv
     }
 }
 
+/// The asset class of a covered pair — used to surface metals distinctly in the
+/// [`PairMeta`] universe view without changing the wire-facing convention record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstrumentClass {
+    /// A spot/forward FX pair between two fiat currencies.
+    Fiat,
+    /// A precious-metal-vs-fiat pair (e.g. XAUUSD, XAGUSD): the **metal is the
+    /// base** (the asset/FOR leg), quoted against a fiat currency, settling T+2
+    /// loco-London. The metal carries no interest accrual of its own (the lease
+    /// rate is modelled as the foreign rate by the pricer).
+    PreciousMetal,
+}
+
+/// The cash-settlement terms of a non-deliverable pair (NDF/NDO): the published
+/// fixing it references and the convertible currency it settles in.
+///
+/// A non-deliverable option pays the strike-vs-fixing difference in the
+/// **settlement currency** (always the convertible leg — USD for the covered
+/// USD/EM pairs) at the published [`FixingSource`]. This is convention identity,
+/// not market data: the live fixing values stay estate-gated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NdfTerms {
+    /// The published reference fixing the contract cash-settles against.
+    pub fixing: FixingSource,
+    /// The currency the net cash settlement is paid in (the convertible leg).
+    pub settlement_ccy: Ccy,
+}
+
 /// A bespoke market-practice profile for one currency pair.
 ///
 /// The profile is tenor-independent *except* for the delta convention, which is
@@ -105,6 +134,11 @@ struct PairProfile {
     day_count_accrual_dom: DayCount,
     /// Settlement style (deliverable vs non-deliverable).
     settlement: Settlement,
+    /// Non-deliverable cash-settlement terms, present iff `settlement` is
+    /// [`Settlement::NonDeliverable`]. The registry guarantees this invariant.
+    ndf: Option<NdfTerms>,
+    /// Asset class of the pair (fiat vs precious metal).
+    instrument: InstrumentClass,
 }
 
 impl PairProfile {
@@ -128,6 +162,11 @@ impl PairProfile {
             day_count_accrual_for: self.day_count_accrual_dom,
             day_count_accrual_dom: self.day_count_accrual_for,
             settlement: self.settlement,
+            // The fixing reference and the physical settlement currency of an NDF
+            // are pair properties, invariant under quote-orientation: KRW always
+            // cash-settles in USD at KFTC18 whether quoted USDKRW or KRWUSD.
+            ndf: self.ndf,
+            instrument: self.instrument,
         }
     }
 
@@ -229,6 +268,16 @@ fn key(pair: CcyPair) -> [u8; 6] {
 }
 
 /// Whether a six-byte key is one of the covered canonical pairs.
+///
+/// The covered set (each in its canonical market-quotation ordering) is:
+/// * **G10 majors:** EURUSD, USDJPY, GBPUSD, AUDUSD, USDCHF, USDCAD, NZDUSD.
+/// * **EM deliverable crosses:** USDMXN, USDZAR, USDNOK, USDSEK.
+/// * **EM non-deliverable (NDF/NDO):** USDKRW, USDTWD, USDINR, USDBRL, USDCLP,
+///   USDCOP — each cash-settled in USD at its published fixing.
+/// * **Precious metals:** XAUUSD, XAGUSD (metal as base, T+2 loco-London).
+///
+/// This is the EXACT set; nothing outside it carries a bespoke profile (such
+/// pairs fall through to the region default).
 #[must_use]
 fn is_covered_key(k: [u8; 6]) -> bool {
     matches!(
@@ -240,7 +289,21 @@ fn is_covered_key(k: [u8; 6]) -> bool {
             | b"USDCHF"
             | b"USDCAD"
             | b"NZDUSD"
+            // EM deliverable crosses.
+            | b"USDMXN"
+            | b"USDZAR"
+            | b"USDNOK"
+            | b"USDSEK"
+            // EM non-deliverable (NDF/NDO).
             | b"USDKRW"
+            | b"USDTWD"
+            | b"USDINR"
+            | b"USDBRL"
+            | b"USDCLP"
+            | b"USDCOP"
+            // Precious metals.
+            | b"XAUUSD"
+            | b"XAGUSD"
     )
 }
 
@@ -258,104 +321,98 @@ fn profile_for_canonical(k: [u8; 6]) -> PairProfile {
     // FOR (base) is bytes 0..3, DOM (quote) is bytes 3..6 of the canonical key.
     let accrual_for = Ccy::new([k[0], k[1], k[2]]).map_or(DayCount::Act360, accrual_basis);
     let accrual_dom = Ccy::new([k[3], k[4], k[5]]).map_or(DayCount::Act360, accrual_basis);
-    // Each arm fixes the orientation-independent pair properties (ATM, premium
-    // style, cut, settlement) and takes its accrual legs from `accrual_basis`
-    // (keyed on the canonical pair's currencies) so the per-currency day-count
-    // is the single source of truth.
+    // A deliverable fiat profile builder: fixes the orientation-independent pair
+    // properties and takes its accrual legs from `accrual_basis` (the
+    // per-currency single source of truth). DNS ATM is universal for the covered
+    // interbank set.
+    let deliverable = |premium_style: PremiumStyle, cut: Cut| PairProfile {
+        atm: AtmConvention::DeltaNeutralStraddle,
+        premium_style,
+        cut,
+        day_count_accrual_for: accrual_for,
+        day_count_accrual_dom: accrual_dom,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        instrument: InstrumentClass::Fiat,
+    };
+    // A non-deliverable (NDF/NDO) profile builder: cash-settled in USD at the
+    // named published fixing. Premium in USD = FOR (base) for all covered USD/EM
+    // NDFs → premium-adjusted (PercentForeign).
+    let ndf = |fixing: FixingSource, cut: Cut| PairProfile {
+        atm: AtmConvention::DeltaNeutralStraddle,
+        premium_style: PremiumStyle::PercentForeign,
+        cut,
+        day_count_accrual_for: accrual_for,
+        day_count_accrual_dom: accrual_dom,
+        settlement: Settlement::NonDeliverable,
+        ndf: Some(NdfTerms {
+            fixing,
+            settlement_ccy: Ccy::USD,
+        }),
+        instrument: InstrumentClass::Fiat,
+    };
     match &k {
-        // EURUSD: premium in EUR (FOR) → premium-adjusted; DNS ATM; NY cut;
-        // physically deliverable. (§1.2, §1.3)
-        b"EURUSD" => PairProfile {
-            atm: AtmConvention::DeltaNeutralStraddle,
-            premium_style: PremiumStyle::PercentForeign,
-            cut: Cut::NewYork1000,
-            day_count_accrual_for: accrual_for,
-            day_count_accrual_dom: accrual_dom,
-            settlement: Settlement::Deliverable,
-        },
-        // USDJPY: premium in USD; for USDJPY USD is the FOR (base) leg, so the
-        // premium is in the foreign ccy → premium-adjusted. Tokyo cut for the
-        // JPY-region business; spot delta ≤1Y, forward >1Y (the §1.2 worked
-        // example). Deliverable.
-        b"USDJPY" => PairProfile {
-            atm: AtmConvention::DeltaNeutralStraddle,
-            premium_style: PremiumStyle::PercentForeign,
-            cut: Cut::Tokyo1500,
-            day_count_accrual_for: accrual_for,
-            day_count_accrual_dom: accrual_dom,
-            settlement: Settlement::Deliverable,
-        },
-        // GBPUSD: premium in USD = DOM (quote) → NOT premium-adjusted (the
-        // textbook unadjusted-delta major). DNS ATM, NY cut. Deliverable. (§1.2)
-        b"GBPUSD" => PairProfile {
-            atm: AtmConvention::DeltaNeutralStraddle,
-            premium_style: PremiumStyle::DomesticPips,
-            cut: Cut::NewYork1000,
-            day_count_accrual_for: accrual_for,
-            day_count_accrual_dom: accrual_dom,
-            settlement: Settlement::Deliverable,
-        },
-        // AUDUSD: premium in USD = DOM → unadjusted. DNS ATM, NY cut.
-        b"AUDUSD" => PairProfile {
-            atm: AtmConvention::DeltaNeutralStraddle,
-            premium_style: PremiumStyle::DomesticPips,
-            cut: Cut::NewYork1000,
-            day_count_accrual_for: accrual_for,
-            day_count_accrual_dom: accrual_dom,
-            settlement: Settlement::Deliverable,
-        },
-        // USDCHF: premium in USD = FOR (base) → premium-adjusted. DNS, NY cut.
-        // Deliverable.
-        b"USDCHF" => PairProfile {
-            atm: AtmConvention::DeltaNeutralStraddle,
-            premium_style: PremiumStyle::PercentForeign,
-            cut: Cut::NewYork1000,
-            day_count_accrual_for: accrual_for,
-            day_count_accrual_dom: accrual_dom,
-            settlement: Settlement::Deliverable,
-        },
-        // USDCAD: premium in USD = FOR (base) → premium-adjusted. DNS, NY cut.
-        // T+1 spot lag is handled by the calendar layer, not the convention
-        // record. Deliverable.
-        b"USDCAD" => PairProfile {
-            atm: AtmConvention::DeltaNeutralStraddle,
-            premium_style: PremiumStyle::PercentForeign,
-            cut: Cut::NewYork1000,
-            day_count_accrual_for: accrual_for,
-            day_count_accrual_dom: accrual_dom,
-            settlement: Settlement::Deliverable,
-        },
-        // NZDUSD: premium in USD = DOM → unadjusted. DNS, NY cut. Deliverable.
-        b"NZDUSD" => PairProfile {
+        // --- G10 majors (deliverable). The premium-style → premium-adjusted
+        // mapping per pair is the §1.2/§1.3 market standard. ---
+        // EURUSD: premium in EUR (FOR) → premium-adjusted; NY cut.
+        b"EURUSD" => deliverable(PremiumStyle::PercentForeign, Cut::NewYork1000),
+        // USDJPY: USD is FOR → premium in foreign ccy → premium-adjusted; Tokyo
+        // cut (the §1.2 spot-≤1Y / forward->1Y worked example).
+        b"USDJPY" => deliverable(PremiumStyle::PercentForeign, Cut::Tokyo1500),
+        // GBPUSD: premium in USD = DOM → unadjusted (textbook). NY cut.
+        b"GBPUSD" => deliverable(PremiumStyle::DomesticPips, Cut::NewYork1000),
+        // AUDUSD: premium in USD = DOM → unadjusted. NY cut.
+        b"AUDUSD" => deliverable(PremiumStyle::DomesticPips, Cut::NewYork1000),
+        // USDCHF: premium in USD = FOR → premium-adjusted. NY cut.
+        b"USDCHF" => deliverable(PremiumStyle::PercentForeign, Cut::NewYork1000),
+        // USDCAD: premium in USD = FOR → premium-adjusted. NY cut. (T+1 spot lag
+        // is the calendar layer's responsibility.)
+        b"USDCAD" => deliverable(PremiumStyle::PercentForeign, Cut::NewYork1000),
+        // NZDUSD: premium in USD = DOM → unadjusted. NY cut.
+        b"NZDUSD" => deliverable(PremiumStyle::DomesticPips, Cut::NewYork1000),
+
+        // --- EM deliverable crosses. All are USD/EM with USD as FOR (base), so
+        // the premium is in USD = foreign ccy → premium-adjusted; NY cut (the
+        // interbank standard for the LatAm/EMEA deliverable EM set). T+2. ---
+        // USDMXN, USDZAR, USDNOK, USDSEK.
+        b"USDMXN" | b"USDZAR" | b"USDNOK" | b"USDSEK" => {
+            deliverable(PremiumStyle::PercentForeign, Cut::NewYork1000)
+        }
+
+        // --- EM non-deliverable (NDF/NDO), cash-settled in USD at the published
+        // fixing. Cut follows the fixing region: Tokyo for the Asian fixings
+        // (KRW/TWD/INR), New York for the LatAm fixings (BRL/CLP/COP). ---
+        // USDKRW — KFTC18 (the original §1.6 example).
+        b"USDKRW" => ndf(FixingSource::KrwKftc18, Cut::Tokyo1500),
+        // USDTWD — Taipei TFEMA fixing.
+        b"USDTWD" => ndf(FixingSource::TwdTaipei, Cut::Tokyo1500),
+        // USDINR — RBI reference rate.
+        b"USDINR" => ndf(FixingSource::InrRbiRef, Cut::Tokyo1500),
+        // USDBRL — PTAX (BRL09).
+        b"USDBRL" => ndf(FixingSource::BrlPtax, Cut::NewYork1000),
+        // USDCLP — Dólar Observado (CLP10).
+        b"USDCLP" => ndf(FixingSource::ClpDolarObs, Cut::NewYork1000),
+        // USDCOP — TRM (COP04).
+        b"USDCOP" => ndf(FixingSource::CopTrm, Cut::NewYork1000),
+
+        // --- Precious metals (XAUUSD, XAGUSD): metal is the base (asset/FOR),
+        // quoted in USD. Premium is paid in USD = DOM (quote) → premium-unadjusted
+        // (the bullion-market standard quotes the premium in USD terms). DNS ATM,
+        // NY cut, deliverable (physical/loco-London) settlement, T+2. ---
+        b"XAUUSD" | b"XAGUSD" => PairProfile {
             atm: AtmConvention::DeltaNeutralStraddle,
             premium_style: PremiumStyle::DomesticPips,
             cut: Cut::NewYork1000,
             day_count_accrual_for: accrual_for,
             day_count_accrual_dom: accrual_dom,
             settlement: Settlement::Deliverable,
+            ndf: None,
+            instrument: InstrumentClass::PreciousMetal,
         },
-        // USDKRW: the non-deliverable example. NDOs cash-settle in USD at a
-        // published fixing (KFTC18). Premium in USD = FOR (base) → premium-
-        // adjusted. DNS ATM, Tokyo cut (Asian fixing region). Non-deliverable.
-        // (§1.6)
-        b"USDKRW" => PairProfile {
-            atm: AtmConvention::DeltaNeutralStraddle,
-            premium_style: PremiumStyle::PercentForeign,
-            cut: Cut::Tokyo1500,
-            day_count_accrual_for: accrual_for,
-            day_count_accrual_dom: accrual_dom,
-            settlement: Settlement::NonDeliverable,
-        },
+
         // Unreachable: caller guarantees the key is covered. Fall back to a
         // EURUSD-style G10 profile rather than panic.
-        _ => PairProfile {
-            atm: AtmConvention::DeltaNeutralStraddle,
-            premium_style: PremiumStyle::PercentForeign,
-            cut: Cut::NewYork1000,
-            day_count_accrual_for: accrual_for,
-            day_count_accrual_dom: accrual_dom,
-            settlement: Settlement::Deliverable,
-        },
+        _ => deliverable(PremiumStyle::PercentForeign, Cut::NewYork1000),
     }
 }
 
@@ -442,6 +499,127 @@ pub fn has_calendar_support(pair: CcyPair) -> bool {
 #[must_use]
 pub fn has_pair_profile(pair: CcyPair) -> bool {
     pair_profile(pair).is_some()
+}
+
+/// The full **pair-universe** view of a covered pair: the resolved convention
+/// fields the wire record carries, plus the universe-level metadata that does not
+/// belong on the per-`(pair, tenor)` wire record — the spot lag, the physical
+/// premium currency, the asset class, and (for NDFs) the cash-settlement terms.
+///
+/// This is the read model behind the broadened pair-universe registry. It is
+/// resolved in the **queried orientation** (so the premium currency and the
+/// premium-adjusted flag are correct for `USDKRW` vs `KRWUSD`), and is purely
+/// additive: it consults the same [`PairProfile`] the wire [`resolve`] uses, so
+/// the two can never disagree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PairMeta {
+    /// The pair, in the queried orientation.
+    pub pair: CcyPair,
+    /// Spot lag in business days (T+2 default; T+1 for the USDCAD/TRY/RUB/PHP
+    /// set), from `celnet-calendar` — the single source of truth for the lag.
+    pub spot_lag_days: u32,
+    /// ATM strike convention.
+    pub atm: AtmConvention,
+    /// Premium quotation style in the queried orientation.
+    pub premium_style: PremiumStyle,
+    /// The physical currency the premium is paid in (FOR/base for the
+    /// foreign-premium styles, DOM/quote for the domestic-premium styles).
+    pub premium_ccy: Ccy,
+    /// Whether the (short-tenor) delta is premium-adjusted — equivalently,
+    /// whether `premium_style` is a foreign-premium style.
+    pub premium_adjusted: bool,
+    /// Expiry/fixing cut.
+    pub cut: Cut,
+    /// Settlement style (deliverable vs non-deliverable).
+    pub settlement: Settlement,
+    /// Cash-settlement terms, present iff `settlement` is non-deliverable.
+    pub ndf: Option<NdfTerms>,
+    /// Asset class (fiat vs precious metal).
+    pub instrument: InstrumentClass,
+}
+
+impl PairMeta {
+    /// Whether the pair is a non-deliverable (NDF/NDO) pair.
+    #[must_use]
+    pub const fn is_non_deliverable(self) -> bool {
+        matches!(self.settlement, Settlement::NonDeliverable)
+    }
+
+    /// Whether the pair is a precious-metal pair (metal as the base leg).
+    #[must_use]
+    pub const fn is_precious_metal(self) -> bool {
+        matches!(self.instrument, InstrumentClass::PreciousMetal)
+    }
+
+    /// Structural self-consistency of the universe entry: the NDF terms are
+    /// present **iff** the pair is non-deliverable, the cash-settlement currency
+    /// (when present) is one of the pair's two legs, the premium currency is one
+    /// of the pair's legs and agrees with the premium-adjusted flag, and the spot
+    /// lag is the canonical T+1 or T+2. Returns `false` on any contradiction.
+    #[must_use]
+    pub fn is_self_consistent(self) -> bool {
+        // NDF terms present iff non-deliverable.
+        if self.is_non_deliverable() != self.ndf.is_some() {
+            return false;
+        }
+        // The settlement currency is one of the pair's legs (the convertible one).
+        if let Some(terms) = self.ndf
+            && terms.settlement_ccy != self.pair.base
+            && terms.settlement_ccy != self.pair.quote
+        {
+            return false;
+        }
+        // The premium currency is one of the pair's legs.
+        if self.premium_ccy != self.pair.base && self.premium_ccy != self.pair.quote {
+            return false;
+        }
+        // The premium-adjusted flag agrees with the premium style and with the
+        // premium currency being the FOR (base) leg.
+        if self.premium_adjusted != self.premium_style.is_premium_adjusted() {
+            return false;
+        }
+        if self.premium_adjusted != (self.premium_ccy == self.pair.base) {
+            return false;
+        }
+        // Spot lag is canonical.
+        matches!(self.spot_lag_days, 1 | 2)
+    }
+}
+
+/// The physical premium currency for a `(pair, premium_style)`: the FOR (base)
+/// leg for the foreign-premium styles, the DOM (quote) leg otherwise.
+#[must_use]
+fn premium_ccy_of(pair: CcyPair, premium_style: PremiumStyle) -> Ccy {
+    if premium_style.is_premium_adjusted() {
+        pair.base
+    } else {
+        pair.quote
+    }
+}
+
+/// Resolve the full [`PairMeta`] universe view for a covered pair, in the queried
+/// orientation, or `None` if the pair has no bespoke profile.
+///
+/// Like [`resolve`], this consults the bespoke [`PairProfile`] (orientation-
+/// transformed for the inverted ordering), so the premium currency and the
+/// premium-adjusted flag are correct for both `USDKRW` and `KRWUSD`. The spot lag
+/// comes from `celnet-calendar` so there is one source of truth.
+#[must_use]
+pub fn pair_meta(pair: CcyPair) -> Option<PairMeta> {
+    let profile = pair_profile(pair)?;
+    let premium_ccy = premium_ccy_of(pair, profile.premium_style);
+    Some(PairMeta {
+        pair,
+        spot_lag_days: spot_lag_days(pair),
+        atm: profile.atm,
+        premium_style: profile.premium_style,
+        premium_ccy,
+        premium_adjusted: profile.premium_style.is_premium_adjusted(),
+        cut: profile.cut,
+        settlement: profile.settlement,
+        ndf: profile.ndf,
+        instrument: profile.instrument,
+    })
 }
 
 #[cfg(test)]
@@ -542,5 +720,107 @@ mod tests {
         let rec = resolve(pair("USDJPY"), Tenor::Weeks(60)).record;
         assert!(rec.is_delta_forward());
         assert!(rec.is_delta_premium_adjusted());
+    }
+
+    #[test]
+    fn em_deliverable_crosses_are_usd_premium_adjusted_t2() {
+        for p in ["USDMXN", "USDZAR", "USDNOK", "USDSEK"] {
+            let m = pair_meta(pair(p)).unwrap_or_else(|| panic!("{p} covered"));
+            assert_eq!(m.settlement, Settlement::Deliverable, "{p}");
+            assert!(m.ndf.is_none(), "{p}");
+            assert_eq!(m.premium_ccy, Ccy::USD, "{p} premium in USD (FOR)");
+            assert!(m.premium_adjusted, "{p}");
+            assert_eq!(m.spot_lag_days, 2, "{p} is T+2");
+            assert_eq!(m.cut, Cut::NewYork1000, "{p}");
+            assert!(m.is_self_consistent(), "{p}");
+            assert_eq!(m.instrument, InstrumentClass::Fiat, "{p}");
+        }
+    }
+
+    #[test]
+    fn ndf_pairs_carry_fixing_and_usd_settlement() {
+        let cases = [
+            ("USDKRW", FixingSource::KrwKftc18, Cut::Tokyo1500),
+            ("USDTWD", FixingSource::TwdTaipei, Cut::Tokyo1500),
+            ("USDINR", FixingSource::InrRbiRef, Cut::Tokyo1500),
+            ("USDBRL", FixingSource::BrlPtax, Cut::NewYork1000),
+            ("USDCLP", FixingSource::ClpDolarObs, Cut::NewYork1000),
+            ("USDCOP", FixingSource::CopTrm, Cut::NewYork1000),
+        ];
+        for (p, fixing, cut) in cases {
+            let m = pair_meta(pair(p)).unwrap_or_else(|| panic!("{p} covered"));
+            assert!(m.is_non_deliverable(), "{p}");
+            let terms = m.ndf.unwrap_or_else(|| panic!("{p} has NDF terms"));
+            assert_eq!(terms.fixing, fixing, "{p} fixing");
+            assert_eq!(terms.settlement_ccy, Ccy::USD, "{p} settles USD");
+            assert_eq!(m.cut, cut, "{p} cut");
+            assert!(m.premium_adjusted, "{p} USD-FOR premium-adjusted");
+            assert!(m.is_self_consistent(), "{p}");
+            // The wire record agrees on non-deliverability.
+            assert!(
+                resolve(pair(p), Tenor::Months(3))
+                    .record
+                    .is_non_deliverable()
+            );
+        }
+    }
+
+    #[test]
+    fn precious_metals_have_metal_base_usd_premium() {
+        for (p, metal) in [("XAUUSD", Ccy::new(*b"XAU")), ("XAGUSD", Ccy::new(*b"XAG"))] {
+            let cp = pair(p);
+            let m = pair_meta(cp).unwrap_or_else(|| panic!("{p} covered"));
+            assert!(m.is_precious_metal(), "{p}");
+            // Metal is the base (asset/FOR) leg.
+            assert_eq!(cp.base, metal.unwrap(), "{p} base is the metal");
+            assert_eq!(cp.quote, Ccy::USD, "{p} quote is USD");
+            // Premium in USD = quote → unadjusted.
+            assert_eq!(m.premium_ccy, Ccy::USD, "{p} premium in USD (DOM)");
+            assert!(!m.premium_adjusted, "{p}");
+            assert_eq!(m.settlement, Settlement::Deliverable, "{p}");
+            assert!(m.ndf.is_none(), "{p}");
+            assert_eq!(m.spot_lag_days, 2, "{p} loco-London T+2");
+            assert!(m.is_self_consistent(), "{p}");
+        }
+    }
+
+    #[test]
+    fn ndf_meta_is_orientation_invariant_in_fixing_and_settlement() {
+        // Quoting KRWUSD must still cash-settle in USD at KFTC18 — the fixing and
+        // settlement currency are physical pair properties.
+        let direct = pair_meta(pair("USDKRW")).unwrap();
+        let flipped = pair_meta(pair("KRWUSD")).unwrap();
+        assert!(direct.is_non_deliverable() && flipped.is_non_deliverable());
+        assert_eq!(direct.ndf.unwrap().fixing, flipped.ndf.unwrap().fixing);
+        assert_eq!(
+            direct.ndf.unwrap().settlement_ccy,
+            flipped.ndf.unwrap().settlement_ccy
+        );
+        assert_eq!(direct.ndf.unwrap().settlement_ccy, Ccy::USD);
+        // Both orientations are individually self-consistent.
+        assert!(direct.is_self_consistent() && flipped.is_self_consistent());
+        // The premium-adjusted flag flips with orientation (USD is FOR in USDKRW,
+        // DOM in KRWUSD).
+        assert!(direct.premium_adjusted);
+        assert!(!flipped.premium_adjusted);
+    }
+
+    #[test]
+    fn every_covered_pair_meta_is_self_consistent() {
+        let covered = [
+            "EURUSD", "USDJPY", "GBPUSD", "AUDUSD", "USDCHF", "USDCAD", "NZDUSD", "USDMXN",
+            "USDZAR", "USDNOK", "USDSEK", "USDKRW", "USDTWD", "USDINR", "USDBRL", "USDCLP",
+            "USDCOP", "XAUUSD", "XAGUSD",
+        ];
+        for p in covered {
+            let m = pair_meta(pair(p)).unwrap_or_else(|| panic!("{p} covered"));
+            assert!(m.is_self_consistent(), "{p} inconsistent: {m:?}");
+            // The wire record's settlement matches the meta's.
+            let rec = resolve(pair(p), Tenor::Months(3)).record;
+            assert_eq!(rec.settlement, m.settlement, "{p} wire/meta settlement");
+            assert_eq!(rec.is_non_deliverable(), m.is_non_deliverable(), "{p}");
+        }
+        // An uncovered pair has no meta.
+        assert!(pair_meta(pair("EURGBP")).is_none());
     }
 }

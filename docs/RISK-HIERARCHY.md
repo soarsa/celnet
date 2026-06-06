@@ -328,6 +328,51 @@ RW_σ = 55 % with RW = min(RW_σ·√(LH/10), 100 %) and LH = 40d, FX-delta RW =
 15/√2 ≈ 10.6 % — all verified high. **DRC is immaterial for vanilla FX** (no issuer-default leg) —
 stated explicitly rather than left dangling.)*
 
+### 2.11 FRTB-SA capital aggregation — the full SbM charge (BUILT)
+
+The non-additive lenses of §2.5 (FRTB-SbM **curvature** reprice, and the
+`√(quadratic-form)` **correlation-weighted vega**) are the building blocks; the
+**Standardised-Approach capital aggregation** that turns net sensitivities into a
+single capital number is now built in `celnet-risk-cube::frtb` (BCBS **MAR21** SbM,
+**MAR23** RRAO, **MAR22** DRC). It **composes with**, and does not duplicate, the
+§2.5 lenses — the within-bucket `K_b`, the vega aggregation and the cross-bucket step
+all route through one shared `√(Σ WS² + ΣΣ ρ WS WS)` quadratic-form kernel
+(`frtb::quadratic_form`), gated bit-identical to the existing
+`nonadditive::correlation_weighted_vega`.
+
+- **Within bucket** (MAR21.4): `K_b = √( max(0, Σ_k WS_k² + Σ_k Σ_{l≠k} ρ_{kl} WS_k
+  WS_l) )` for delta/vega, with `WS_k = RW_k·s_k`.
+- **Across buckets** (MAR21.5): `K = √( Σ_b K_b² + Σ_b Σ_{c≠b} γ_{bc} S_b S_c )` with
+  the signed bucket sums `S_b = Σ WS_k`, and the **MAR21.6 low-correlation
+  alternative** `S_b = max(min(Σ WS_k, K_b), −K_b)` applied only when the radicand
+  would go negative.
+- **Three correlation scenarios** (MAR21.6): the whole charge is evaluated under
+  **HIGH** (`ρ,γ → min(1, 1.25ρ)`), **MEDIUM** (prescribed), and **LOW**
+  (`ρ,γ → max(0, 2ρ−1)`), and the reported capital is the **maximum** of the three —
+  the defining SbM property. For the SbM *total* across risk classes the single
+  scenario that maximises the *sum* of the per-class charges is chosen (MAR21.6).
+- **Curvature** (MAR21.5.2): per-bucket `K_b = max(K_b^+, K_b^-)` over the up/down
+  reprice-net-of-delta legs (the same arithmetic as the §2.5 curvature lens, re-used
+  via `frtb::curvature_legs`, with the selected direction's signed `CVR` and the
+  `ψ`-zeroing of both-negative cross terms carried into the cross-bucket `γ²` sum).
+- **RRAO** (MAR23): `Σ |notional|·weight` — **1.0 %** of gross exotic-underlying
+  notional + **0.1 %** of gross other-residual notional. For an FX-**exotics** book
+  this is the most relevant FRTB piece: barriers, digitals, one-touches/DNTs and
+  TARFs are textbook `OtherResidual` (gap/digital risk).
+- **DRC** (MAR22): an **honest, documented zero** for a deliverable-FX book. DRC
+  capitalises *issuer* jump-to-default; a deliverable FX option references two
+  sovereign currencies, not a defaultable issuer security, so its gross JTD — and
+  hence market-risk DRC — is identically zero (settlement / counterparty risk is the
+  **CCR/CVA** framework, not market-risk DRC). The JTD aggregation is implemented and
+  returns zero on FX with that rationale; no fabricated non-zero charge.
+
+All risk weights and correlations are **caller-supplied data** (`SbmParams`,
+`RiskBucket::rho_intra`, the `γ` closure), never compiled in — a recalibration is
+data, not a recompile. Validated in `celnet-parity/tests/frtb.rs` against a
+**longhand** independent recomputation (the SbM aggregation written out by hand to
+~1e-10), the three-scenario-max identity, single-bucket reduction, perfectly-hedged
+`K_b = 0`, monotonicity, the exact RRAO hand-sum, and the documented FX DRC zero.
+
 ---
 
 ## 3. Computing this at scale

@@ -49,7 +49,7 @@ pub use calendar::{BusinessCalendar, MAX_CENTRES};
 pub use daycount::{actual_days, year_fraction};
 pub use fx::{
     FxSchedule, TenorError, calendar_for, centre_for, delivery_date, expiry_for_tenor, imm_date,
-    is_t_plus_one_pair, schedule, spot_date, spot_lag_days,
+    is_business_day_civil, is_t_plus_one_pair, schedule, spot_date, spot_date_civil, spot_lag_days,
 };
 pub use holiday::{CentreId, SettlementCentre, WeekendRule};
 pub use roll::{

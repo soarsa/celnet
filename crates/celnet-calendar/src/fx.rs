@@ -54,9 +54,16 @@ impl std::error::Error for TenorError {}
 
 /// Map a currency to its principal settlement centre.
 ///
-/// Returns `None` for currencies outside the WS-A coverage set (the eight G10
-/// majors). Callers needing an exotic leg extend this map before pricing — the
-/// engine never silently substitutes a wrong calendar.
+/// Returns `None` for currencies outside the covered set. The covered set is the
+/// eight G10 majors (USD, EUR, GBP, JPY, CHF, AUD, CAD, NZD) plus four EM
+/// deliverable currencies whose national holiday schedule is **fully
+/// Gregorian-computable** — MXN (Mexico), ZAR (South Africa), NOK (Norway), SEK
+/// (Sweden). Currencies with lunisolar banking holidays (KRW/TWD/HKD/INR/BRL/…)
+/// are deliberately not given a settlement centre here (see
+/// [`crate::holiday::CentreId`]); their conventions still resolve in
+/// `celnet-conventions`, but the engine never silently substitutes a wrong
+/// settlement calendar. Callers needing an exotic leg extend this map before
+/// pricing.
 #[must_use]
 pub fn centre_for(ccy: Ccy) -> Option<CentreId> {
     Some(match ccy {
@@ -68,6 +75,28 @@ pub fn centre_for(ccy: Ccy) -> Option<CentreId> {
         Ccy::AUD => CentreId::Australia,
         Ccy::CAD => CentreId::Canada,
         Ccy::NZD => CentreId::NewZealand,
+        _ => return centre_for_em(ccy),
+    })
+}
+
+/// Settlement centres for the covered EM deliverable currencies (split out so the
+/// G10 arm above stays matchable on the `Ccy` associated constants; these EM
+/// codes are parsed rather than exposed as constants on [`Ccy`]).
+#[must_use]
+fn centre_for_em(ccy: Ccy) -> Option<CentreId> {
+    let code = ccy.as_str();
+    Some(match code {
+        "MXN" => CentreId::Mexico,
+        "ZAR" => CentreId::SouthAfrica,
+        "NOK" => CentreId::Norway,
+        "SEK" => CentreId::Sweden,
+        // Precious metals trade as FX pairs (XAUUSD/XAGUSD) and settle T+2
+        // **loco-London** against USD: a good metal settlement day is one open in
+        // both London (the bullion clearing centre, LBMA) and New York. Mapping
+        // the metal leg to the London (UK) centre composes the correct
+        // London ∩ US calendar via the standard cross-leg intersection.
+        // (Source: LBMA loco-London good-business-day convention.)
+        "XAU" | "XAG" => CentreId::UnitedKingdom,
         _ => return None,
     })
 }
@@ -138,6 +167,42 @@ pub fn calendar_for(pair: CcyPair) -> BusinessCalendar {
 pub fn spot_date(pair: CcyPair, horizon: Date) -> Date {
     let cal = calendar_for(pair);
     cal.add_business_days(horizon, spot_lag_days(pair))
+}
+
+/// The spot date for a pair given a civil `(year, month, day)` horizon, returned
+/// as a civil [`BrokenDate`] triple.
+///
+/// A `celnet-types`-only convenience over [`spot_date`] for callers that do not
+/// depend on the `time` crate (the dependency-graph root stays `time`-free):
+/// inputs and outputs are POD civil triples. Returns `None` if the horizon triple
+/// is not a real Gregorian date.
+#[must_use]
+pub fn spot_date_civil(pair: CcyPair, horizon: BrokenDate) -> Option<BrokenDate> {
+    let h = civil_to_date(horizon)?;
+    Some(date_to_civil(spot_date(pair, h)))
+}
+
+/// Whether a civil `(year, month, day)` is a good joint business day for `pair`.
+///
+/// A `time`-free convenience over [`calendar_for`] + `is_business_day`. Returns
+/// `None` if the triple is not a real Gregorian date.
+#[must_use]
+pub fn is_business_day_civil(pair: CcyPair, day: BrokenDate) -> Option<bool> {
+    let d = civil_to_date(day)?;
+    Some(calendar_for(pair).is_business_day(d))
+}
+
+/// Convert a civil [`BrokenDate`] triple to a `time::Date`, validating it.
+#[must_use]
+fn civil_to_date(b: BrokenDate) -> Option<Date> {
+    let month = Month::try_from(b.month).ok()?;
+    Date::from_calendar_date(b.year, month, b.day).ok()
+}
+
+/// Convert a `time::Date` back to a civil [`BrokenDate`] triple.
+#[must_use]
+fn date_to_civil(d: Date) -> BrokenDate {
+    BrokenDate::new(d.year(), d.month() as u8, d.day())
 }
 
 /// The delivery/settlement date for a given `expiry`, by the **same** spot-lag
@@ -368,6 +433,21 @@ mod tests {
         // for full calendars; the lag rule is currency-pair-level.
         assert_eq!(spot_lag_days(pair("USDTRY")), 1);
         assert_eq!(spot_lag_days(pair("USDPHP")), 1);
+    }
+
+    #[test]
+    fn spot_date_civil_matches_time_based() {
+        use celnet_types::BrokenDate;
+        // USDMXN T+2 over US ∩ Mexico. Horizon Mon 3 Jun 2024.
+        let p = pair("USDMXN");
+        let h = BrokenDate::new(2024, 6, 3);
+        let civ = spot_date_civil(p, h).unwrap();
+        let time_based = date_to_civil(spot_date(p, d(2024, Month::June, 3)));
+        assert_eq!(civ, time_based);
+        // Business-day predicate convenience agrees.
+        assert!(is_business_day_civil(p, BrokenDate::new(2024, 6, 4)).unwrap());
+        // An invalid civil triple is rejected, not silently substituted.
+        assert!(spot_date_civil(p, BrokenDate::new(2024, 2, 31)).is_none());
     }
 
     #[test]
