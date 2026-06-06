@@ -31,3 +31,8 @@ celnet-golden = { path = "../celnet-golden" }
 # `.workspace`. Backs the cross-method (Carr-Madan vs COS) + Black-Scholes-limit
 # parity row in tests/heston.rs.
 celnet-heston = { path = "../celnet-heston" }
+# Scrambled Sobol + Brownian-bridge QMC engine (Wave 4c). Referenced by path —
+# like celnet-golden/celnet-heston it is a leaf crate not in the central
+# workspace.dependencies table. Backs the Sobol KAT / (t,m,s)-net equidistribution
+# / measured-variance-reduction / bridge-covariance parity row in tests/qmc.rs.
+celnet-qmc = { path = "../celnet-qmc" }
