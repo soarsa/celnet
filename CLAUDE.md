@@ -123,6 +123,39 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-06-06 — **Leadership program Wave 3 DONE (distributed correctness, XL; commit `1a57def`; pushed).**
+  Two new disjoint leaf crates, gated implement→adversarial-verify, then independently re-gated (I read
+  the quorum/commit-index logic + the `to_bits` assertions + the real-socket transport myself). **Track A
+  — `celnet-replog`** (→ {`celnet-journal`}, acyclic leaf; std::net + threads, no async runtime): thin
+  **leader-replicated** event log — leader durably appends (term,index) entries to its journal, streams
+  to followers over **REAL 127.0.0.1 TCP sockets** (length-prefixed, ephemeral ports — mirrors the
+  `risk_federation` pattern, NOT a shared-mem fake), commits **only on quorum** (`acks+self >
+  cluster/2`); follower/recovered node replays to **BIT-IDENTICAL** state (`f64::to_bits`; workload has
+  0.1+0.2 and a 1-ULP value so the bits must match); hot-standby term-bump takeover with zero committed
+  loss. `tests/replication.rs` (real ≥3-node loopback, deadline-bounded): gate_a kill-leader→byte-
+  identical log + to_bits state; gate_b lost-quorum no-false-progress + bare-majority boundary; gate_c
+  bounded standby takeover; gate_d crash-recovery from journal alone. Full Raft election + conflicting-
+  tail truncation documented as the next increment (not half-built). **Track B — `celnet-fanout`**
+  (lock-free **SPMC broadcast ring**): one producer → power-of-two ring via a **two-phase per-slot
+  seqlock** (odd in-progress/even stable straddling the payload store ⇒ no torn read); N consumers each
+  own a cursor, observe every item in order (genuine broadcast, not work-stealing); overflow = bounded
+  **conflation with exact skip-accounting** (`received + skipped == produced`); zero-alloc lock-free
+  publish. `tests/broadcast.rs`: no-loss/total-order at **100 AND 1000** consumers, conflation-
+  correctness, measured throughput floor, zero-alloc. (A real single-stamp torn-read bug was caught
+  LOUDLY by the conflation test during dev and fixed forward to the two-phase seqlock — no gate lowered;
+  the contention-deflated throughput was handled per the §1.2 lesson: best-of-8 bursts, wide-margin
+  uncontended floor gated, contended figure reported-not-gated.) **HONEST BOUNDARY** (both crates' docs
+  + SCALE-OUT.md): loopback proves compute+framing+quorum/replay/ring arithmetic + relative regression
+  (upper bound on compute, lower bound on cross-host wire); absolute cross-host wire p99 / inter-DC SLO
+  stays **DEPLOY-GATED**, never claimed here. **SOTA, ZERO workarounds** (OSS-only: replog std-only,
+  fanout reuses already-pinned crossbeam-utils CachePadded; both auto-join via the members glob, no root
+  Cargo.toml edit; proto untouched). Full `just check` green (literal "All gates passed."), **1035/1035
+  tests** (was 1009). SCALE-OUT.md reconciled (replicated log + SPMC ring designed→built). **Next: Wave 5**
+  (GPU ratios — reuses `celnet-qmc` Sobol/bridge; `celnet-gpu` perf harness headless on M4/Lavapipe,
+  f32↔f64 reconcile, three-way GPU-MC≈CPU-MC≈golden; **NVIDIA absolute throughput headline DEFERRED** per
+  the honest boundary). Then Wave 6 = the deploy/live-estate proof tracks (designed+seamed here, proven at
+  deploy — never blocks/claims in-repo).
+
 - 2026-06-06 — **Leadership program Wave 4d DONE → FUNCTIONALITY CATALOGUE (Wave 4) COMPLETE (commit
   `416951c`; pushed).** Final two disjoint gated `celnet-parity` rows (implement→adversarial-verify),
   then independently re-gated. **Track A — FRTB-SA completeness** in `celnet-risk-cube/frtb.rs`: full
