@@ -237,6 +237,33 @@ export function markSurface(
  * surface has no smiles. This mirrors the server's smile read; the calibration
  * itself lives in `calibrateSmile`/`smileVol` above.
  */
+/**
+ * The single-strike smile legs of an instrument for a vega-weighted smile read.
+ * Vanilla → one leg; strategy → its legs; the variance/volatility swaps and the
+ * average-rate Asian have no single representative smile strike ⇒ no legs (the
+ * caller falls back to the ATM read).
+ */
+function legsOf(instrument: Instrument): { strikeSpec: StrikeOrDelta; isCall: boolean }[] {
+  switch (instrument.product.kind) {
+    case "vanilla":
+      return [
+        {
+          strikeSpec: instrument.product.vanilla.strike,
+          isCall: instrument.product.vanilla.optionType === "CALL",
+        },
+      ];
+    case "strategy":
+      return instrument.product.strategy.legs.map((leg: Leg) => ({
+        strikeSpec: leg.strike,
+        isCall: leg.optionType === "CALL",
+      }));
+    case "varianceSwap":
+    case "volatilitySwap":
+    case "asianOption":
+      return [];
+  }
+}
+
 export function impliedVolForInstrument(
   surface: MarkedSurface,
   instrument: Instrument,
@@ -246,18 +273,12 @@ export function impliedVolForInstrument(
   const atm = market.vol;
   if (surface.smiles.length === 0) return atm;
 
-  const legs: { strikeSpec: StrikeOrDelta; isCall: boolean }[] =
-    instrument.product.kind === "vanilla"
-      ? [
-          {
-            strikeSpec: instrument.product.vanilla.strike,
-            isCall: instrument.product.vanilla.optionType === "CALL",
-          },
-        ]
-      : instrument.product.strategy.legs.map((leg: Leg) => ({
-          strikeSpec: leg.strike,
-          isCall: leg.optionType === "CALL",
-        }));
+  const legs: { strikeSpec: StrikeOrDelta; isCall: boolean }[] = legsOf(instrument);
+  // Vol-strip products (variance/volatility swaps) and the average-rate Asian are
+  // not single-strike smile reads — the swaps consume the whole strip and the
+  // Asian an average. The trader-facing face vol for those is the ATM read
+  // (honest: there is no single representative smile strike), so return ATM.
+  if (legs.length === 0) return sampleSurface(surface, t, 0.5);
 
   let volWeighted = 0;
   let weightSum = 0;

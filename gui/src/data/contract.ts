@@ -43,6 +43,22 @@ export type Settlement = "DELIVERABLE" | "NON_DELIVERABLE";
 
 export type StrategyKind = "RISK_REVERSAL" | "STRANGLE" | "STRADDLE" | "SEAGULL";
 
+/**
+ * The averaging schedule of an Asian option (`celnet.wire.AveragingStyle`):
+ * `DISCRETE` samples at a finite count of fixings, `CONTINUOUS` averages the
+ * whole window (the `n → ∞` limit). Purpose-named, vendor/method-neutral.
+ */
+export type AveragingStyle = "DISCRETE" | "CONTINUOUS";
+
+/**
+ * The analytic Asian estimator the server prices the arithmetic average with
+ * (`celnet.wire.AsianMethod`): `CURRAN` (geometric-conditioning, the default)
+ * or `TURNBULL_WAKEMAN` (two-moment lognormal matching). The mathematical
+ * family each maps to lives in the server's doc comments, never in this
+ * identifier (CLAUDE.md rule 8).
+ */
+export type AsianMethod = "CURRAN" | "TURNBULL_WAKEMAN";
+
 export type TenorUnit =
   | "OVERNIGHT"
   | "WEEKS"
@@ -204,10 +220,48 @@ export interface Strategy {
   legs: Leg[];
 }
 
+/**
+ * A variance swap (`celnet.wire.VarianceSwap`): pays realised variance against a
+ * fixed variance strike. `strikeVol` is the strike quoted in VOL terms (the fair
+ * variance strike is `strikeVol²`); `0` ⇒ request the fair strike off the reply.
+ */
+export interface VarianceSwap {
+  strikeVol: number;
+}
+
+/**
+ * A volatility swap (`celnet.wire.VolatilitySwap`): pays realised volatility
+ * against a fixed vol strike. `strikeVol` is the strike in vol terms; `0` ⇒
+ * request the fair strike off the reply.
+ */
+export interface VolatilitySwap {
+  strikeVol: number;
+}
+
+/**
+ * An arithmetic-average-rate Asian option (`celnet.wire.AsianOption`).
+ * `averaging` selects discrete vs continuous fixings; `observations` is the
+ * fixing count for the discrete schedule (ignored for continuous); `method`
+ * selects the analytic estimator; `elapsedAvg`/`elapsedWeight` carry the
+ * in-progress (seasoned) average and its weight `∈ [0,1)` (both `0` ⇒ fresh).
+ */
+export interface AsianOption {
+  optionType: OptionType;
+  strike: number;
+  averaging: AveragingStyle;
+  observations: number;
+  method: AsianMethod;
+  elapsedAvg: number;
+  elapsedWeight: number;
+}
+
 /** The product payoff carried by an Instrument (the proto `product` oneof). */
 export type Product =
   | { kind: "vanilla"; vanilla: Vanilla }
-  | { kind: "strategy"; strategy: Strategy };
+  | { kind: "strategy"; strategy: Strategy }
+  | { kind: "varianceSwap"; varianceSwap: VarianceSwap }
+  | { kind: "volatilitySwap"; volatilitySwap: VolatilitySwap }
+  | { kind: "asianOption"; asianOption: AsianOption };
 
 /** Solve directive: solve a free parameter to hit a target (e.g. zero premium). */
 export interface Solve {

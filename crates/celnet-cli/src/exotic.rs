@@ -6,9 +6,11 @@
 //! reflection-principle touch / double-no-touch formulae). This module only maps
 //! the chosen variant and inputs onto those functions and formats the result.
 
+use celnet_core::FlatSmile;
 use celnet_exotics::{
-    DigitalKind, DoubleNoTouch, RebateTiming, SingleBarrier, digital_price, double_no_touch_price,
-    one_touch_price, single_barrier_price,
+    AnalyticAsian, AveragingSchedule, DigitalKind, DoubleNoTouch, RebateTiming, SingleBarrier,
+    VarSwapContext, curran_price, digital_price, double_no_touch_price, fair_variance,
+    fair_volatility, one_touch_price, single_barrier_price, turnbull_wakeman_price,
 };
 use celnet_types::{OptionType, VanillaInputs};
 
@@ -50,6 +52,29 @@ pub(crate) enum ExoticSpec {
         barrier: f64,
         /// Rebate paid on the terminating event (domestic).
         rebate: f64,
+    },
+    /// A variance swap — the result `price` carries the fair *variance* strike
+    /// `K_var` (so a flat σ returns σ²).
+    VarianceSwap,
+    /// A volatility swap — the result `price` carries the fair *vol* strike
+    /// `K_vol` (Carr-Lee convexity-adjusted, < √K_var for any non-flat smile).
+    VolatilitySwap,
+    /// A fixed-strike arithmetic-average-rate Asian (Curran or Turnbull-Wakeman).
+    Asian {
+        /// Call or put on the realised arithmetic average.
+        option: OptionType,
+        /// Continuous averaging instead of discrete fixings.
+        continuous: bool,
+        /// Number of equally-spaced future fixings (discrete style only).
+        observations: u32,
+        /// Use the Turnbull-Wakeman estimator instead of the Curran default.
+        turnbull_wakeman: bool,
+        /// The strike `K`.
+        strike: f64,
+        /// Realised running average of already-fixed observations (seasoned).
+        elapsed_avg: f64,
+        /// Fraction `∈ [0, 1)` of the average weight already fixed (seasoned).
+        elapsed_weight: f64,
     },
 }
 
@@ -102,6 +127,49 @@ pub(crate) fn run(spec: ExoticSpec, inputs: &VanillaInputs) -> ExoticResult {
                 rebate,
             },
         ),
+        // The wire market input carries a single Black vol, so the smile here is
+        // the flat smile at that vol (a flat σ replicates to K_var = σ² exactly).
+        ExoticSpec::VarianceSwap => {
+            let ctx = VarSwapContext::from_inputs(inputs);
+            fair_variance(&FlatSmile::new(inputs.vol), &ctx).fair_variance
+        }
+        ExoticSpec::VolatilitySwap => {
+            let ctx = VarSwapContext::from_inputs(inputs);
+            fair_volatility(&FlatSmile::new(inputs.vol), &ctx).fair_vol
+        }
+        ExoticSpec::Asian {
+            option,
+            continuous,
+            observations,
+            turnbull_wakeman,
+            strike,
+            elapsed_avg,
+            elapsed_weight,
+        } => {
+            let schedule = if continuous {
+                AveragingSchedule::Continuous
+            } else {
+                AveragingSchedule::Discrete {
+                    future_obs: observations as usize,
+                }
+            };
+            let spec = AnalyticAsian {
+                option,
+                strike,
+                schedule,
+                t_start: 0.0,
+                elapsed_avg,
+                elapsed_weight,
+            };
+            // Price at the strike the spec carries (the CLI `inputs.strike` is the
+            // digital/barrier strike; the Asian strike is its own field).
+            let asian_inputs = VanillaInputs { strike, ..*inputs };
+            if turnbull_wakeman {
+                turnbull_wakeman_price(&asian_inputs, spec)
+            } else {
+                curran_price(&asian_inputs, spec)
+            }
+        }
     };
     ExoticResult { price }
 }
@@ -114,7 +182,22 @@ pub(crate) fn format_report(spec: ExoticSpec, r: &ExoticResult) -> String {
         ExoticSpec::OneTouch { .. } => "one-touch",
         ExoticSpec::DoubleNoTouch { .. } => "double-no-touch",
         ExoticSpec::SingleBarrier { .. } => "single-barrier",
+        ExoticSpec::VarianceSwap => "variance-swap",
+        ExoticSpec::VolatilitySwap => "volatility-swap",
+        ExoticSpec::Asian { .. } => "asian",
     };
+    // The variance swap's headline figure is a fair *variance* strike `K_var`;
+    // echo its realised-vol equivalent `√K_var` so the desk reads both.
+    if matches!(spec, ExoticSpec::VarianceSwap) {
+        return format!(
+            "{label}\n  fair_variance   {:.10}\n  fair_vol        {:.10}\n",
+            r.price,
+            r.price.max(0.0).sqrt()
+        );
+    }
+    if matches!(spec, ExoticSpec::VolatilitySwap) {
+        return format!("{label}\n  fair_vol        {:.10}\n", r.price);
+    }
     format!("{label}\n  price           {:.10}\n", r.price)
 }
 
@@ -193,5 +276,68 @@ mod tests {
         );
         let direct = double_no_touch_price(&inputs(), DoubleNoTouch::new(1.00, 1.20, 1.0));
         assert!(is_close(r.price, direct, 1e-15, 1e-15));
+    }
+
+    #[test]
+    fn variance_swap_matches_direct_and_flat_sigma_oracle() {
+        let i = inputs();
+        let r = run(ExoticSpec::VarianceSwap, &i);
+        let ctx = VarSwapContext::from_inputs(&i);
+        let direct = fair_variance(&FlatSmile::new(i.vol), &ctx).fair_variance;
+        assert!(is_close(r.price, direct, 1e-12, 1e-12));
+        // Flat-σ closed-form limit oracle: K_var == σ².
+        assert!(is_close(r.price, i.vol * i.vol, 1e-7, 1e-9));
+    }
+
+    #[test]
+    fn volatility_swap_matches_direct_and_flat_sigma_oracle() {
+        let i = inputs();
+        let r = run(ExoticSpec::VolatilitySwap, &i);
+        let ctx = VarSwapContext::from_inputs(&i);
+        let direct = fair_volatility(&FlatSmile::new(i.vol), &ctx).fair_vol;
+        assert!(is_close(r.price, direct, 1e-12, 1e-12));
+        // Flat smile ⇒ zero convexity gap ⇒ K_vol == σ.
+        assert!(is_close(r.price, i.vol, 1e-6, 1e-7));
+    }
+
+    #[test]
+    fn asian_curran_matches_direct() {
+        let i = inputs();
+        let spec = ExoticSpec::Asian {
+            option: OptionType::Call,
+            continuous: false,
+            observations: 12,
+            turnbull_wakeman: false,
+            strike: 1.10,
+            elapsed_avg: 0.0,
+            elapsed_weight: 0.0,
+        };
+        let r = run(spec, &i);
+        let direct = curran_price(
+            &VanillaInputs { strike: 1.10, ..i },
+            AnalyticAsian::fresh_discrete(OptionType::Call, 1.10, 12),
+        );
+        assert!(is_close(r.price, direct, 1e-12, 1e-12));
+        assert!(r.price > 0.0);
+    }
+
+    #[test]
+    fn asian_turnbull_wakeman_continuous_matches_direct() {
+        let i = inputs();
+        let spec = ExoticSpec::Asian {
+            option: OptionType::Put,
+            continuous: true,
+            observations: 0,
+            turnbull_wakeman: true,
+            strike: 1.12,
+            elapsed_avg: 0.0,
+            elapsed_weight: 0.0,
+        };
+        let r = run(spec, &i);
+        let direct = turnbull_wakeman_price(
+            &VanillaInputs { strike: 1.12, ..i },
+            AnalyticAsian::fresh_continuous(OptionType::Put, 1.12),
+        );
+        assert!(is_close(r.price, direct, 1e-12, 1e-12));
     }
 }

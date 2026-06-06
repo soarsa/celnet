@@ -11,10 +11,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useApp } from "../app/AppContext";
 import type {
+  AsianMethod,
+  AveragingStyle,
   BrokenDate,
   Instrument,
   Leg,
   MarketContext,
+  OptionType,
   Quote,
   StrategyKind,
   Tenor,
@@ -25,8 +28,16 @@ import { DatePicker } from "../components/DatePicker";
 import { TwoWayQuote } from "../components/TwoWayQuote";
 import { GreeksStrip } from "../components/GreeksStrip";
 import { ConventionRow } from "../components/ConventionChip";
-import { strategyInstrument, vanillaInstrument, tenorYearsToTenor } from "../data/seed";
-import { strikeFromDelta } from "../data/pricing";
+import {
+  asianInstrument,
+  strategyInstrument,
+  vanillaInstrument,
+  varianceSwapInstrument,
+  volatilitySwapInstrument,
+  tenorYearsToTenor,
+  type AsianTerms,
+} from "../data/seed";
+import { forward as forwardRate, strikeFromDelta } from "../data/pricing";
 import { impliedVolForInstrument, sampleSurface } from "../data/surface";
 import {
   fmtPremiumPct,
@@ -38,7 +49,27 @@ import { nowNanos } from "../hooks/useClock";
 import { samePair } from "../lib/universe";
 import styles from "./TicketWorkspace.module.css";
 
-type Structure = "VANILLA" | StrategyKind;
+/**
+ * The product the ticket builds: a vanilla, one of the multi-leg strategies, or
+ * one of the volatility products newly on the contract (variance / volatility
+ * swap, arithmetic-average-rate Asian). Purpose-named, vendor/method-neutral.
+ */
+type Structure =
+  | "VANILLA"
+  | StrategyKind
+  | "VARIANCE_SWAP"
+  | "VOLATILITY_SWAP"
+  | "ASIAN";
+
+/** True for the products that carry no option legs (the swaps + the Asian). */
+function isLegless(s: Structure): boolean {
+  return s === "VARIANCE_SWAP" || s === "VOLATILITY_SWAP" || s === "ASIAN";
+}
+
+/** True for the variance/volatility swaps (priced as a fair strike, not a premium). */
+function isSwap(s: Structure): boolean {
+  return s === "VARIANCE_SWAP" || s === "VOLATILITY_SWAP";
+}
 
 /** Which expiry input the trader is using: a standard tenor or an arbitrary date. */
 type ExpiryMode = "TENOR" | "DATE";
@@ -78,7 +109,42 @@ const STRUCTURES: { id: Structure; label: string }[] = [
   { id: "STRANGLE", label: "Strangle" },
   { id: "STRADDLE", label: "Straddle" },
   { id: "SEAGULL", label: "Seagull" },
+  { id: "VARIANCE_SWAP", label: "Variance Swap" },
+  { id: "VOLATILITY_SWAP", label: "Volatility Swap" },
+  { id: "ASIAN", label: "Asian" },
 ];
+
+/** The Asian-specific ticket inputs (option type / strike / schedule / method). */
+interface AsianInputs {
+  optionType: OptionType;
+  /** Strike as an absolute level; defaults to ATM-forward when first shown. */
+  strike: number;
+  averaging: AveragingStyle;
+  observations: number;
+  method: AsianMethod;
+}
+
+/** The default Asian inputs at first render (a fresh, discrete, ATM-ish call). */
+const DEFAULT_ASIAN: AsianInputs = {
+  optionType: "CALL",
+  strike: 0,
+  averaging: "DISCRETE",
+  observations: 12,
+  method: "CURRAN",
+};
+
+/** Build the Asian `AsianTerms` from the ticket inputs (fresh — no seasoning). */
+function asianTerms(a: AsianInputs): AsianTerms {
+  return {
+    optionType: a.optionType,
+    strike: a.strike,
+    averaging: a.averaging,
+    observations: a.observations,
+    method: a.method,
+    elapsedAvg: 0,
+    elapsedWeight: 0,
+  };
+}
 
 /** Today (UTC, calendar-only) as a `BrokenDate` — the trade date for date math. */
 function todayUtc(): BrokenDate {
@@ -111,17 +177,40 @@ function expiryYearsForDate(today: BrokenDate, expiry: BrokenDate, basis: number
   return Math.max(ONE_BIZ_DAY_YEARS, daysBetween(today, expiry) / basis);
 }
 
+/** The non-structural build inputs the volatility products need. */
+interface BuildExtras {
+  /** Variance/volatility swap strike in vol terms (0 ⇒ price the fair strike). */
+  swapStrikeVol: number;
+  /** Asian inputs (option type / strike / schedule / method). */
+  asian: AsianInputs;
+}
+
 function buildInstrument(
   structure: Structure,
   pair: { base: string; quote: string },
   tenor: Tenor,
   tenorYears: number,
   notionalMm: number,
+  extras: BuildExtras,
 ): Instrument {
-  const base =
-    structure === "VANILLA"
-      ? vanillaInstrument(pair, tenorYears, "CALL", 0.25, notionalMm)
-      : strategyInstrument(pair, tenorYears, structure, notionalMm);
+  let base: Instrument;
+  switch (structure) {
+    case "VANILLA":
+      base = vanillaInstrument(pair, tenorYears, "CALL", 0.25, notionalMm);
+      break;
+    case "VARIANCE_SWAP":
+      base = varianceSwapInstrument(pair, tenorYears, notionalMm, extras.swapStrikeVol);
+      break;
+    case "VOLATILITY_SWAP":
+      base = volatilitySwapInstrument(pair, tenorYears, notionalMm, extras.swapStrikeVol);
+      break;
+    case "ASIAN":
+      base = asianInstrument(pair, tenorYears, notionalMm, asianTerms(extras.asian));
+      break;
+    default:
+      base = strategyInstrument(pair, tenorYears, structure, notionalMm);
+      break;
+  }
   // Stamp the trader-facing tenor (ON/TN/SN/IMM/BROKEN_DATE) onto the instrument;
   // `expiryYears` stays authoritative for pricing (see celnet.proto Instrument).
   return { ...base, tenor };
@@ -138,6 +227,12 @@ export function TicketWorkspace(): React.ReactElement {
   const [quote, setQuote] = useState<Quote | null>(null);
   const [busy, setBusy] = useState(false);
   const [fill, setFill] = useState<string | null>(null);
+  // Variance/volatility-swap strike in VOL terms; 0 ⇒ request the fair strike off
+  // the priced reply (the server echoes K_var/K_vol in `resolved_strike`).
+  const [swapStrikeVol, setSwapStrikeVol] = useState(0);
+  // Asian inputs (option type / strike / schedule / method). Strike 0 ⇒ default to
+  // the ATM-forward level on first build so the ticket prices a sensible default.
+  const [asianInputs, setAsianInputs] = useState<AsianInputs>(DEFAULT_ASIAN);
 
   const today = useMemo(() => todayUtc(), []);
   // Selectable broken-date window: from spot (~2 calendar days) out to ~3 years.
@@ -171,12 +266,29 @@ export function TicketWorkspace(): React.ReactElement {
   // In DATE mode the trader must pick a date before there is a horizon to price.
   const expiryReady = expiryMode === "TENOR" || brokenDate !== null;
 
+  // The Asian strike defaults to the ATM-forward level when the trader has not
+  // typed one (strike 0), so the ticket prices a sensible at-the-money average by
+  // default; an explicit strike overrides it. The forward uses the active pair's
+  // real market (spot/rDom/rFor) at the selected horizon.
+  const atmForward = forwardRate(app.pairCtx.market, tenorYears);
+  const extras = useMemo<BuildExtras>(
+    () => ({
+      swapStrikeVol,
+      asian: {
+        ...asianInputs,
+        strike: asianInputs.strike > 0 ? asianInputs.strike : atmForward,
+      },
+    }),
+    [swapStrikeVol, asianInputs, atmForward],
+  );
+
   const instrument = buildInstrument(
     structure,
     app.pairCtx.pair,
     resolved.tenor,
     tenorYears,
     notionalMm,
+    extras,
   );
 
   // Total-variance interpolation in time of the marked surface's ATM term
@@ -234,6 +346,7 @@ export function TicketWorkspace(): React.ReactElement {
       resolved.tenor,
       tenorYears,
       notionalMm,
+      extras,
     );
     const q = await app.transport.requestQuote(
       inst,
@@ -242,7 +355,7 @@ export function TicketWorkspace(): React.ReactElement {
     );
     setQuote(q);
     setBusy(false);
-  }, [app, structure, resolved.tenor, tenorYears, notionalMm]);
+  }, [app, structure, resolved.tenor, tenorYears, notionalMm, extras]);
 
   const accept = useCallback(
     async (side: "BUY" | "SELL") => {
@@ -418,32 +531,52 @@ export function TicketWorkspace(): React.ReactElement {
           )}
         </div>
 
-        <div className={styles.legs}>
-          {legs.map((leg, i) => (
-            <div className={styles.leg} key={i}>
-              <span className={styles.legNo}>LEG {i + 1}</span>
-              <span className={`${styles.legSide} ${leg.side === "BUY" ? styles.buy : styles.sell}`}>
-                {leg.side}
-              </span>
-              <span className={styles.legType}>{leg.type}</span>
-              <span className={`num ${styles.legDelta}`}>{leg.deltaLabel}</span>
-              <span className={styles.legArrow}>▸</span>
-              <span className={`num ${styles.legStrike}`}>K {fmtRate(leg.strike, app.pairCtx.pipDecimals)}</span>
-            </div>
-          ))}
-          {structure !== "VANILLA" && (
-            <button
-              className={styles.solveChip}
-              onClick={requestQuote}
-              disabled={!expiryReady}
-              title="Solve zero-cost strike inline"
-            >
-              Solve: zero-cost
-            </button>
-          )}
-        </div>
+        {isLegless(structure) ? (
+          <ProductInputs
+            structure={structure}
+            swapStrikeVol={swapStrikeVol}
+            onSwapStrikeVol={(v) => {
+              setSwapStrikeVol(v);
+              setQuote(null);
+            }}
+            asian={asianInputs}
+            atmForward={atmForward}
+            pipDecimals={app.pairCtx.pipDecimals}
+            onAsian={(next) => {
+              setAsianInputs(next);
+              setQuote(null);
+            }}
+          />
+        ) : (
+          <div className={styles.legs}>
+            {legs.map((leg, i) => (
+              <div className={styles.leg} key={i}>
+                <span className={styles.legNo}>LEG {i + 1}</span>
+                <span className={`${styles.legSide} ${leg.side === "BUY" ? styles.buy : styles.sell}`}>
+                  {leg.side}
+                </span>
+                <span className={styles.legType}>{leg.type}</span>
+                <span className={`num ${styles.legDelta}`}>{leg.deltaLabel}</span>
+                <span className={styles.legArrow}>▸</span>
+                <span className={`num ${styles.legStrike}`}>K {fmtRate(leg.strike, app.pairCtx.pipDecimals)}</span>
+              </div>
+            ))}
+            {structure !== "VANILLA" && (
+              <button
+                className={styles.solveChip}
+                onClick={requestQuote}
+                disabled={!expiryReady}
+                title="Solve zero-cost strike inline"
+              >
+                Solve: zero-cost
+              </button>
+            )}
+          </div>
+        )}
 
-        {quote ? (
+        {quote && isSwap(structure) ? (
+          <SwapResult structure={structure} quote={quote} />
+        ) : quote ? (
           <div className={styles.quoted}>
             <TwoWayQuote
               price={quote.price}
@@ -454,7 +587,9 @@ export function TicketWorkspace(): React.ReactElement {
               onHitBid={() => accept("SELL")}
               onLiftOffer={() => accept("BUY")}
             />
-            <span className={styles.unit}>% {app.pairCtx.pair.base} prem</span>
+            <span className={styles.unit}>
+              {structure === "ASIAN" ? `% ${app.pairCtx.pair.base} prem (avg-rate)` : `% ${app.pairCtx.pair.base} prem`}
+            </span>
           </div>
         ) : (
           <div className={styles.market}>
@@ -474,7 +609,7 @@ export function TicketWorkspace(): React.ReactElement {
           </div>
         )}
 
-        {quote && (
+        {quote && !isSwap(structure) && (
           <div className={styles.greeksRow}>
             <GreeksStrip greeks={quote.greeks} />
           </div>
@@ -579,11 +714,20 @@ function describeLegs(
       strike,
     };
   };
-  if (instrument.product.kind === "vanilla") {
-    const v = instrument.product.vanilla;
-    return [toView({ optionType: v.optionType, strike: v.strike, side: "BUY", ratio: 1 })];
+  switch (instrument.product.kind) {
+    case "vanilla": {
+      const v = instrument.product.vanilla;
+      return [toView({ optionType: v.optionType, strike: v.strike, side: "BUY", ratio: 1 })];
+    }
+    case "strategy":
+      return instrument.product.strategy.legs.map(toView);
+    case "varianceSwap":
+    case "volatilitySwap":
+    case "asianOption":
+      // Vol-strip / average-rate products carry no option legs to enumerate; the
+      // ticket renders their own input block instead of a leg ladder.
+      return [];
   }
-  return instrument.product.strategy.legs.map(toView);
 }
 
 function structureLabel(s: Structure): string {
@@ -598,7 +742,180 @@ function structureLabel(s: Structure): string {
       return "ATM straddle";
     case "SEAGULL":
       return "seagull";
+    case "VARIANCE_SWAP":
+      return "var swap";
+    case "VOLATILITY_SWAP":
+      return "vol swap";
+    case "ASIAN":
+      return "Asian";
   }
+}
+
+/**
+ * The product-specific input block for the legless volatility products. A
+ * variance/volatility swap takes a single strike in VOL terms (0 ⇒ price the
+ * fair strike); an Asian takes its option type, strike, averaging schedule
+ * (discrete fixings count or continuous) and the analytic method. Every control
+ * is keyboard-reachable and resets the live quote on change (the parent clears
+ * it) so a stale price is never shown against changed terms.
+ */
+function ProductInputs(props: {
+  structure: Structure;
+  swapStrikeVol: number;
+  onSwapStrikeVol: (v: number) => void;
+  asian: AsianInputs;
+  atmForward: number;
+  pipDecimals: number;
+  onAsian: (next: AsianInputs) => void;
+}): React.ReactElement {
+  const { structure, swapStrikeVol, onSwapStrikeVol, asian, atmForward, pipDecimals, onAsian } =
+    props;
+
+  if (structure === "VARIANCE_SWAP" || structure === "VOLATILITY_SWAP") {
+    const isVar = structure === "VARIANCE_SWAP";
+    return (
+      <div className={styles.product}>
+        <div className={styles.productRow}>
+          <span className={styles.productLabel}>Strike vol</span>
+          <label className={styles.productField}>
+            <input
+              className="num"
+              type="number"
+              min={0}
+              step={0.005}
+              value={swapStrikeVol}
+              aria-label="strike vol"
+              onChange={(ev) => onSwapStrikeVol(Math.max(0, Number(ev.target.value)))}
+            />
+            <span>vol{swapStrikeVol > 0 ? ` = ${fmtVol(swapStrikeVol)}` : ""}</span>
+          </label>
+        </div>
+        <p className={styles.productNote}>
+          {isVar
+            ? "Fair variance strike K_var = strike_vol². Leave 0 to price the fair strike (log-contract static replication, server-side)."
+            : "Fair volatility strike K_vol (convexity-adjusted). Leave 0 to price the fair strike server-side."}
+        </p>
+      </div>
+    );
+  }
+
+  // Asian.
+  return (
+    <div className={styles.product}>
+      <div className={styles.productRow}>
+        <span className={styles.productLabel}>Option</span>
+        <div className={styles.toggleGroup} role="tablist" aria-label="option type">
+          {(["CALL", "PUT"] as OptionType[]).map((ot) => (
+            <button
+              key={ot}
+              role="tab"
+              aria-selected={asian.optionType === ot}
+              className={`${styles.modeTab} ${asian.optionType === ot ? styles.modeActive : ""}`}
+              onClick={() => onAsian({ ...asian, optionType: ot })}
+            >
+              {ot === "CALL" ? "Call" : "Put"}
+            </button>
+          ))}
+        </div>
+        <label className={styles.productField}>
+          <span>Strike</span>
+          <input
+            className="num"
+            type="number"
+            min={0}
+            step={Math.pow(10, -pipDecimals)}
+            value={asian.strike}
+            aria-label="strike"
+            placeholder={atmForward.toFixed(pipDecimals)}
+            onChange={(ev) => onAsian({ ...asian, strike: Math.max(0, Number(ev.target.value)) })}
+          />
+          <span>{asian.strike > 0 ? "" : `ATMF ${fmtRate(atmForward, pipDecimals)}`}</span>
+        </label>
+      </div>
+      <div className={styles.productRow}>
+        <span className={styles.productLabel}>Averaging</span>
+        <div className={styles.toggleGroup} role="tablist" aria-label="averaging">
+          {(["DISCRETE", "CONTINUOUS"] as AveragingStyle[]).map((av) => (
+            <button
+              key={av}
+              role="tab"
+              aria-selected={asian.averaging === av}
+              className={`${styles.modeTab} ${asian.averaging === av ? styles.modeActive : ""}`}
+              onClick={() => onAsian({ ...asian, averaging: av })}
+            >
+              {av === "DISCRETE" ? "Discrete" : "Continuous"}
+            </button>
+          ))}
+        </div>
+        {asian.averaging === "DISCRETE" && (
+          <label className={styles.productField}>
+            <span>Fixings</span>
+            <input
+              className="num"
+              type="number"
+              min={1}
+              step={1}
+              value={asian.observations}
+              aria-label="observations"
+              onChange={(ev) =>
+                onAsian({ ...asian, observations: Math.max(1, Math.trunc(Number(ev.target.value))) })
+              }
+            />
+          </label>
+        )}
+      </div>
+      <div className={styles.productRow}>
+        <span className={styles.productLabel}>Method</span>
+        <div className={styles.toggleGroup} role="tablist" aria-label="method">
+          {(["CURRAN", "TURNBULL_WAKEMAN"] as AsianMethod[]).map((mm) => (
+            <button
+              key={mm}
+              role="tab"
+              aria-selected={asian.method === mm}
+              className={`${styles.modeTab} ${asian.method === mm ? styles.modeActive : ""}`}
+              onClick={() => onAsian({ ...asian, method: mm })}
+            >
+              {mm === "CURRAN" ? "Curran" : "Turnbull-Wakeman"}
+            </button>
+          ))}
+        </div>
+      </div>
+      <p className={styles.productNote}>
+        Arithmetic-average-rate Asian. The selected analytic method is priced server-side; the
+        standalone build prices a two-moment closed form (exact in the single-fixing / zero-vol
+        limits).
+      </p>
+    </div>
+  );
+}
+
+/**
+ * The variance/volatility-swap result panel: the priced FAIR STRIKE (not a
+ * premium two-way). For a variance swap the headline is the fair variance strike
+ * `K_var` with its `√K_var` shown in vol terms; for a volatility swap it is the
+ * fair vol strike `K_vol`. The server (and the standalone build) echo the fair
+ * strike in the quote's `resolvedStrike` (and `greeks.price`).
+ */
+function SwapResult(props: { structure: Structure; quote: Quote }): React.ReactElement {
+  const { structure, quote } = props;
+  const fair = quote.resolvedStrike;
+  if (structure === "VARIANCE_SWAP") {
+    const fairVol = fair > 0 ? Math.sqrt(fair) : 0;
+    return (
+      <div className={styles.swapResult}>
+        <span className={styles.swapHead}>Fair variance strike</span>
+        <span className={`num ${styles.swapStrike}`}>K_var {fair.toFixed(6)}</span>
+        <span className={`num ${styles.swapSub}`}>√K_var = {fmtVol(fairVol)}</span>
+      </div>
+    );
+  }
+  return (
+    <div className={styles.swapResult}>
+      <span className={styles.swapHead}>Fair volatility strike</span>
+      <span className={`num ${styles.swapStrike}`}>K_vol {fmtVol(fair)}</span>
+      <span className={`num ${styles.swapSub}`}>convexity-adjusted</span>
+    </div>
+  );
 }
 
 // Re-export to satisfy tree-shaking honesty of the tenor helper used elsewhere.

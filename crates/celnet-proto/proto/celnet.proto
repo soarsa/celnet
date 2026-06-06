@@ -153,6 +153,27 @@ enum DigitalStyle {
   DIGITAL_STYLE_ASSET_OR_NOTHING = 1;
 }
 
+// How the averaging observations of an arithmetic-average-rate Asian are laid
+// out across the averaging window.
+enum AveragingStyle {
+  // Equally-spaced discrete observations (a real fixing schedule); pair with
+  // `AsianOption.observations`.
+  AVERAGING_STYLE_DISCRETE = 0;
+  // Continuous arithmetic averaging over the window (the n → ∞ limit).
+  AVERAGING_STYLE_CONTINUOUS = 1;
+}
+
+// Analytic estimator used to price an arithmetic-average-rate Asian (the
+// arithmetic average is not lognormal, so there is no exact closed form). The
+// geometric-conditioning estimator is the more accurate default.
+enum AsianMethod {
+  // Geometric-conditioning ("Curran") closed-form approximation — the more
+  // accurate default for low-to-moderate vol and longer windows.
+  ASIAN_METHOD_CURRAN = 0;
+  // Lognormal two-moment matching ("Turnbull-Wakeman") approximation.
+  ASIAN_METHOD_TURNBULL_WAKEMAN = 1;
+}
+
 // A recognized multi-leg vol strategy template — mirrors the `Strategy`
 // instrument leg sets the desk books as a single contract.
 enum StrategyKind {
@@ -512,6 +533,54 @@ message Touch {
   MonitoringStyle monitoring = 5;
 }
 
+// A variance swap: pays realised variance of the log-returns against a fixed
+// fair variance strike. Priced model-free by log-contract static replication of
+// the OTM option continuum read off the marked smile; the headline output is the
+// fair (annualised) variance strike `K_var` and its realised-vol equivalent
+// `√K_var`. The notional/leg side live on the enclosing `Instrument`.
+message VarianceSwap {
+  // The fixed variance strike the swap trades against, expressed as a
+  // volatility (so the variance strike is `strike_vol²`). A fresh request may
+  // leave this zero and read the fair strike off the response. Quoted in
+  // absolute vol (e.g. 0.10 = 10%).
+  double strike_vol = 1;
+}
+
+// A volatility swap: pays realised volatility (not variance) against a fixed
+// fair vol strike. Priced by the convexity (Jensen) adjustment to the companion
+// variance-swap strike, so the fair vol strike is strictly below `√K_var` for
+// any non-degenerate smile. The notional/leg side live on the `Instrument`.
+message VolatilitySwap {
+  // The fixed volatility strike the swap trades against, in absolute vol. A
+  // fresh request may leave this zero and read the fair strike off the response.
+  double strike_vol = 1;
+}
+
+// A fixed-strike arithmetic-average-rate Asian option. The arithmetic average
+// of lognormal observations is not lognormal, so this is priced by a fast
+// analytic estimator (`method`); the geometric-conditioning estimator is the
+// accurate default.
+message AsianOption {
+  // Call or put on the realised arithmetic average.
+  OptionType option_type = 1;
+  // The strike `K` (quote per 1 unit of base).
+  double strike = 2;
+  // How the averaging observations are laid out across the window.
+  AveragingStyle averaging = 3;
+  // Number of equally-spaced future (not-yet-fixed) observations; required and
+  // `≥ 1` for `AVERAGING_STYLE_DISCRETE`, ignored for the continuous style.
+  uint32 observations = 4;
+  // Analytic estimator to price with (default: geometric-conditioning Curran).
+  AsianMethod method = 5;
+  // Seasoning of an in-progress average: the realised running arithmetic average
+  // of the already-fixed observations. Ignored when `elapsed_weight == 0`.
+  double elapsed_avg = 6;
+  // Fraction `∈ [0, 1)` of the total average weight already accumulated by the
+  // fixed observations (e.g. 3 of 12 monthly fixings done ⇒ 0.25). `0` ⇒ a
+  // fresh, not-yet-started average.
+  double elapsed_weight = 7;
+}
+
 // The unified instrument every Celnet workflow speaks. Exactly one variant is
 // set. Pricing, RFQ, RFS, and scenario all carry an `Instrument`, so adding a
 // product type is a single additive change here.
@@ -543,6 +612,12 @@ message Instrument {
     Digital digital = 11;
     // A touch structure (one-/no-/double-no-/double-one-touch).
     Touch touch = 12;
+    // A variance swap (fair-variance-strike replication).
+    VarianceSwap variance_swap = 13;
+    // A volatility swap (convexity-adjusted fair-vol strike).
+    VolatilitySwap volatility_swap = 14;
+    // A fixed-strike arithmetic-average-rate Asian option.
+    AsianOption asian_option = 15;
   }
 }
 

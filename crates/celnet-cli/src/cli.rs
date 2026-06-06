@@ -355,6 +355,31 @@ pub(crate) enum ExoticKind {
         #[arg(long, default_value_t = 0.0)]
         rebate: f64,
     },
+    /// A variance swap: print the fair variance strike `K_var` and `√K_var`.
+    VarSwap,
+    /// A volatility swap: print the fair vol strike `K_vol` (Carr-Lee adjusted).
+    VolSwap,
+    /// A fixed-strike arithmetic-average-rate Asian option.
+    Asian {
+        /// Underlying option type on the realised average.
+        #[arg(long, value_enum)]
+        option: CliOptionType,
+        /// Use continuous averaging instead of discrete fixings.
+        #[arg(long, default_value_t = false)]
+        continuous: bool,
+        /// Number of equally-spaced future fixings (discrete style only).
+        #[arg(long, default_value_t = 12)]
+        observations: u32,
+        /// Use the Turnbull-Wakeman estimator instead of the Curran default.
+        #[arg(long, default_value_t = false)]
+        turnbull_wakeman: bool,
+        /// Realised running average of already-fixed observations (seasoned).
+        #[arg(long, default_value_t = 0.0)]
+        elapsed_avg: f64,
+        /// Fraction `∈ [0, 1)` of the average weight already fixed (seasoned).
+        #[arg(long, default_value_t = 0.0)]
+        elapsed_weight: f64,
+    },
 }
 
 /// Arguments to `convention`.
@@ -518,6 +543,36 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
                     barrier,
                     rebate,
                 },
+                ExoticKind::VarSwap => exotic::ExoticSpec::VarianceSwap,
+                ExoticKind::VolSwap => exotic::ExoticSpec::VolatilitySwap,
+                ExoticKind::Asian {
+                    option,
+                    continuous,
+                    observations,
+                    turnbull_wakeman,
+                    elapsed_avg,
+                    elapsed_weight,
+                } => {
+                    if !continuous && observations < 1 {
+                        return Err(DispatchError::Invalid(
+                            "discrete Asian needs --observations ≥ 1".to_owned(),
+                        ));
+                    }
+                    if !(0.0..1.0).contains(&elapsed_weight) {
+                        return Err(DispatchError::Invalid(
+                            "Asian --elapsed-weight must lie in [0, 1)".to_owned(),
+                        ));
+                    }
+                    exotic::ExoticSpec::Asian {
+                        option: option.into(),
+                        continuous,
+                        observations,
+                        turnbull_wakeman,
+                        strike: a.strike,
+                        elapsed_avg,
+                        elapsed_weight,
+                    }
+                }
             };
             let r = exotic::run(spec, &inputs);
             write!(out, "{}", exotic::format_report(spec, &r)).ok();

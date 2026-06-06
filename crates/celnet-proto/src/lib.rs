@@ -335,6 +335,54 @@ mod tests {
     }
 
     #[test]
+    fn round_trip_swap_and_asian_instruments() {
+        let var_swap = Instrument {
+            pair: Some(sample_pair()),
+            tenor: Some(sample_tenor()),
+            expiry_years: 1.0,
+            quantity: Some(sample_quantity()),
+            side: Side::Buy as i32,
+            solve: None,
+            product: Some(instrument::Product::VarianceSwap(VarianceSwap {
+                strike_vol: 0.11,
+            })),
+        };
+        round_trip(&var_swap);
+
+        let vol_swap = Instrument {
+            pair: Some(sample_pair()),
+            tenor: Some(sample_tenor()),
+            expiry_years: 0.5,
+            quantity: Some(sample_quantity()),
+            side: Side::Sell as i32,
+            solve: None,
+            product: Some(instrument::Product::VolatilitySwap(VolatilitySwap {
+                strike_vol: 0.0,
+            })),
+        };
+        round_trip(&vol_swap);
+
+        let asian = Instrument {
+            pair: Some(sample_pair()),
+            tenor: Some(sample_tenor()),
+            expiry_years: 1.0,
+            quantity: Some(sample_quantity()),
+            side: Side::Buy as i32,
+            solve: None,
+            product: Some(instrument::Product::AsianOption(AsianOption {
+                option_type: OptionType::Call as i32,
+                strike: 1.10,
+                averaging: AveragingStyle::Discrete as i32,
+                observations: 12,
+                method: AsianMethod::Curran as i32,
+                elapsed_avg: 1.095,
+                elapsed_weight: 0.25,
+            })),
+        };
+        round_trip(&asian);
+    }
+
+    #[test]
     fn round_trip_rfq_lifecycle() {
         let request = QuoteRequest {
             idempotency_key: "5f0c1b2e-2a4d-4f8a-9c1e-7b6a5d4c3b2a".to_owned(),

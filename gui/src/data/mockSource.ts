@@ -819,21 +819,35 @@ function freezeStrikes(instrument: Instrument, m: MarketContext): Instrument {
   ): { kind: "strike"; strike: number } =>
     spec.kind === "strike" ? spec : { kind: "strike", strike: strikeFromDelta(spec.delta, m, t) };
 
-  if (instrument.product.kind === "vanilla") {
-    const v = instrument.product.vanilla;
-    return {
-      ...instrument,
-      product: { kind: "vanilla", vanilla: { ...v, strike: freezeStrike(v.strike) } },
-    };
+  switch (instrument.product.kind) {
+    case "vanilla": {
+      const v = instrument.product.vanilla;
+      return {
+        ...instrument,
+        product: { kind: "vanilla", vanilla: { ...v, strike: freezeStrike(v.strike) } },
+      };
+    }
+    case "strategy": {
+      const s = instrument.product.strategy;
+      return {
+        ...instrument,
+        product: {
+          kind: "strategy",
+          strategy: {
+            ...s,
+            legs: s.legs.map((leg) => ({ ...leg, strike: freezeStrike(leg.strike) })),
+          },
+        },
+      };
+    }
+    case "varianceSwap":
+    case "volatilitySwap":
+    case "asianOption":
+      // The vol-strip swaps carry no strike to freeze; the Asian's fixed strike is
+      // already absolute (not a delta). Scenario shocks move them through the
+      // market alone, so return the instrument unchanged.
+      return instrument;
   }
-  const s = instrument.product.strategy;
-  return {
-    ...instrument,
-    product: {
-      kind: "strategy",
-      strategy: { ...s, legs: s.legs.map((leg) => ({ ...leg, strike: freezeStrike(leg.strike) })) },
-    },
-  };
 }
 
 function applyShock(

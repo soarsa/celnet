@@ -458,6 +458,95 @@ pub enum DigitalStyle {
     AssetOrNothing,
 }
 
+/// How the averaging observations of an arithmetic-average-rate Asian are laid
+/// out across the averaging window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AveragingStyle {
+    /// Equally-spaced discrete observations (a real fixing schedule).
+    Discrete {
+        /// Number of equally-spaced future (not-yet-fixed) observations, `≥ 1`.
+        observations: u32,
+    },
+    /// Continuous arithmetic averaging over the window (the `n → ∞` limit).
+    Continuous,
+}
+
+/// Analytic estimator used to price an arithmetic-average-rate Asian.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AsianMethod {
+    /// Geometric-conditioning ("Curran") — the accurate default.
+    Curran,
+    /// Lognormal two-moment matching ("Turnbull-Wakeman").
+    TurnbullWakeman,
+}
+
+/// The payoff terms of a fixed-strike arithmetic-average-rate Asian option: the
+/// option direction, strike, averaging layout, analytic estimator, and the
+/// seasoning state of an in-progress average. Built fluently via
+/// [`AsianTerms::fresh_discrete`] / [`AsianTerms::fresh_continuous`] then
+/// optionally [`AsianTerms::method`] / [`AsianTerms::seasoned`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AsianTerms {
+    /// Call or put on the realised arithmetic average.
+    pub option: OptionType,
+    /// The strike `K` (absolute level).
+    pub strike: f64,
+    /// How the averaging observations are laid out across the window.
+    pub averaging: AveragingStyle,
+    /// Analytic estimator to price with.
+    pub method: AsianMethod,
+    /// Realised running average of the already-fixed observations (ignored when
+    /// `elapsed_weight == 0`).
+    pub elapsed_avg: f64,
+    /// Fraction `∈ [0, 1)` of the total average weight already accumulated.
+    pub elapsed_weight: f64,
+}
+
+impl AsianTerms {
+    /// A fresh discrete-fixing Asian over `observations` equally-spaced future
+    /// fixings, priced by the default geometric-conditioning estimator.
+    #[must_use]
+    pub fn fresh_discrete(option: OptionType, strike: f64, observations: u32) -> Self {
+        Self {
+            option,
+            strike,
+            averaging: AveragingStyle::Discrete { observations },
+            method: AsianMethod::Curran,
+            elapsed_avg: 0.0,
+            elapsed_weight: 0.0,
+        }
+    }
+
+    /// A fresh continuously-averaged Asian, priced by the default estimator.
+    #[must_use]
+    pub fn fresh_continuous(option: OptionType, strike: f64) -> Self {
+        Self {
+            option,
+            strike,
+            averaging: AveragingStyle::Continuous,
+            method: AsianMethod::Curran,
+            elapsed_avg: 0.0,
+            elapsed_weight: 0.0,
+        }
+    }
+
+    /// Select the analytic estimator (default [`AsianMethod::Curran`]).
+    #[must_use]
+    pub fn method(mut self, method: AsianMethod) -> Self {
+        self.method = method;
+        self
+    }
+
+    /// Seed an in-progress (seasoned) average: a fraction `elapsed_weight` of the
+    /// total weight has already fixed with realised running average `elapsed_avg`.
+    #[must_use]
+    pub fn seasoned(mut self, elapsed_avg: f64, elapsed_weight: f64) -> Self {
+        self.elapsed_avg = elapsed_avg;
+        self.elapsed_weight = elapsed_weight;
+        self
+    }
+}
+
 /// The product payoff of an instrument — the typed form of the wire `Instrument`
 /// `product` oneof. Exactly one variant is built per instrument.
 #[derive(Debug, Clone, PartialEq)]
@@ -527,6 +616,38 @@ pub enum Product {
         upper: f64,
         /// The rebate paid when the touch condition is satisfied.
         rebate: f64,
+    },
+    /// A variance swap (fair-variance-strike replication). The response carries
+    /// the fair variance strike `K_var` (in `price`/`resolved_strike`) and its
+    /// realised-vol equivalent `√K_var` (in `vol`).
+    VarianceSwap {
+        /// The fixed variance strike as a volatility (variance = `strike_vol²`);
+        /// `0.0` to read the fair strike off the response.
+        strike_vol: f64,
+    },
+    /// A volatility swap (convexity-adjusted fair-vol strike). The response
+    /// carries the fair vol strike `K_vol` (in `price`/`resolved_strike`/`vol`).
+    VolatilitySwap {
+        /// The fixed volatility strike (absolute vol); `0.0` to read the fair
+        /// strike off the response.
+        strike_vol: f64,
+    },
+    /// A fixed-strike arithmetic-average-rate Asian option.
+    AsianOption {
+        /// Call or put on the realised arithmetic average.
+        option: OptionType,
+        /// The strike `K` (absolute level).
+        strike: f64,
+        /// How the averaging observations are laid out across the window.
+        averaging: AveragingStyle,
+        /// Analytic estimator to price with.
+        method: AsianMethod,
+        /// Realised running arithmetic average of the already-fixed observations
+        /// (ignored when `elapsed_weight == 0`).
+        elapsed_avg: f64,
+        /// Fraction `∈ [0, 1)` of the total average weight already accumulated by
+        /// the fixed observations; `0` ⇒ a fresh average.
+        elapsed_weight: f64,
     },
 }
 
@@ -621,6 +742,43 @@ impl Product {
                 rebate: *rebate,
                 monitoring: celnet_proto::MonitoringStyle::Continuous as i32,
             }),
+            Product::VarianceSwap { strike_vol } => {
+                instrument::Product::VarianceSwap(celnet_proto::VarianceSwap {
+                    strike_vol: *strike_vol,
+                })
+            }
+            Product::VolatilitySwap { strike_vol } => {
+                instrument::Product::VolatilitySwap(celnet_proto::VolatilitySwap {
+                    strike_vol: *strike_vol,
+                })
+            }
+            Product::AsianOption {
+                option,
+                strike,
+                averaging,
+                method,
+                elapsed_avg,
+                elapsed_weight,
+            } => {
+                let (averaging_tag, observations) = match averaging {
+                    AveragingStyle::Discrete { observations } => {
+                        (celnet_proto::AveragingStyle::Discrete, *observations)
+                    }
+                    AveragingStyle::Continuous => (celnet_proto::AveragingStyle::Continuous, 0),
+                };
+                instrument::Product::AsianOption(celnet_proto::AsianOption {
+                    option_type: celnet_proto::OptionType::from(*option) as i32,
+                    strike: *strike,
+                    averaging: averaging_tag as i32,
+                    observations,
+                    method: match method {
+                        AsianMethod::Curran => celnet_proto::AsianMethod::Curran,
+                        AsianMethod::TurnbullWakeman => celnet_proto::AsianMethod::TurnbullWakeman,
+                    } as i32,
+                    elapsed_avg: *elapsed_avg,
+                    elapsed_weight: *elapsed_weight,
+                })
+            }
         }
     }
 }
@@ -710,6 +868,77 @@ impl InstrumentSpec {
             quantity,
             side,
             product: Product::Strategy { kind, legs },
+        }
+    }
+
+    /// A variance swap on the given pair / tenor / expiry / notional. Pass
+    /// `strike_vol = 0.0` to read the fair variance strike off the response.
+    #[must_use]
+    pub fn variance_swap(
+        pair: CcyPair,
+        tenor: Tenor,
+        expiry_years: f64,
+        quantity: Quantity,
+        side: Side,
+        strike_vol: f64,
+    ) -> Self {
+        Self {
+            pair,
+            tenor,
+            expiry_years,
+            quantity,
+            side,
+            product: Product::VarianceSwap { strike_vol },
+        }
+    }
+
+    /// A volatility swap on the given pair / tenor / expiry / notional. Pass
+    /// `strike_vol = 0.0` to read the fair vol strike off the response.
+    #[must_use]
+    pub fn volatility_swap(
+        pair: CcyPair,
+        tenor: Tenor,
+        expiry_years: f64,
+        quantity: Quantity,
+        side: Side,
+        strike_vol: f64,
+    ) -> Self {
+        Self {
+            pair,
+            tenor,
+            expiry_years,
+            quantity,
+            side,
+            product: Product::VolatilitySwap { strike_vol },
+        }
+    }
+
+    /// A fixed-strike arithmetic-average-rate Asian option on the given pair /
+    /// tenor / expiry / notional, carrying an [`AsianTerms`] payoff spec
+    /// (averaging layout, estimator, and seasoning state).
+    #[must_use]
+    pub fn asian_option(
+        pair: CcyPair,
+        tenor: Tenor,
+        expiry_years: f64,
+        quantity: Quantity,
+        side: Side,
+        terms: AsianTerms,
+    ) -> Self {
+        Self {
+            pair,
+            tenor,
+            expiry_years,
+            quantity,
+            side,
+            product: Product::AsianOption {
+                option: terms.option,
+                strike: terms.strike,
+                averaging: terms.averaging,
+                method: terms.method,
+                elapsed_avg: terms.elapsed_avg,
+                elapsed_weight: terms.elapsed_weight,
+            },
         }
     }
 

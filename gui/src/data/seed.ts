@@ -6,12 +6,15 @@
  */
 
 import type {
+  AsianMethod,
+  AveragingStyle,
   BrokerQuoteSet,
   CcyPair,
   Conventions,
   Instrument,
   Leg,
   MarketContext,
+  OptionType,
   StrategyKind,
 } from "./contract";
 
@@ -127,6 +130,72 @@ function strategyInstrument(
   };
 }
 
+/**
+ * A variance-swap instrument (`product.varianceSwap`). `strikeVol` is the strike
+ * in vol terms (the fair variance strike is `strikeVol²`); `0` requests the fair
+ * strike off the priced reply.
+ */
+function varianceSwapInstrument(
+  pair: CcyPair,
+  tenorYears: number,
+  notionalMm: number,
+  strikeVol: number,
+): Instrument {
+  return {
+    pair,
+    tenor: tenorYearsToTenor(tenorYears),
+    expiryYears: tenorYears,
+    quantity: { notional: notionalMm * 1e6, baseCcy: true },
+    side: "TWO_WAY",
+    product: { kind: "varianceSwap", varianceSwap: { strikeVol } },
+  };
+}
+
+/** A volatility-swap instrument (`product.volatilitySwap`). */
+function volatilitySwapInstrument(
+  pair: CcyPair,
+  tenorYears: number,
+  notionalMm: number,
+  strikeVol: number,
+): Instrument {
+  return {
+    pair,
+    tenor: tenorYearsToTenor(tenorYears),
+    expiryYears: tenorYears,
+    quantity: { notional: notionalMm * 1e6, baseCcy: true },
+    side: "TWO_WAY",
+    product: { kind: "volatilitySwap", volatilitySwap: { strikeVol } },
+  };
+}
+
+/** The inputs for an arithmetic-average-rate Asian instrument. */
+export interface AsianTerms {
+  optionType: OptionType;
+  strike: number;
+  averaging: AveragingStyle;
+  observations: number;
+  method: AsianMethod;
+  elapsedAvg: number;
+  elapsedWeight: number;
+}
+
+/** An Asian-option instrument (`product.asianOption`). */
+function asianInstrument(
+  pair: CcyPair,
+  tenorYears: number,
+  notionalMm: number,
+  terms: AsianTerms,
+): Instrument {
+  return {
+    pair,
+    tenor: tenorYearsToTenor(tenorYears),
+    expiryYears: tenorYears,
+    quantity: { notional: notionalMm * 1e6, baseCcy: true },
+    side: "TWO_WAY",
+    product: { kind: "asianOption", asianOption: { ...terms } },
+  };
+}
+
 function strategyLegs(kind: StrategyKind): Leg[] {
   switch (kind) {
     case "RISK_REVERSAL":
@@ -177,4 +246,10 @@ export function seedSubscriptions(): { instrument: Instrument; label: string }[]
   ];
 }
 
-export { vanillaInstrument, strategyInstrument };
+export {
+  vanillaInstrument,
+  strategyInstrument,
+  varianceSwapInstrument,
+  volatilitySwapInstrument,
+  asianInstrument,
+};

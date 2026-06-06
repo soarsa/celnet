@@ -327,16 +327,42 @@ export function instrumentToWire(i: Instrument): WireObject {
   };
   if (i.solve) base["solve"] = solveToWire(i.solve);
   // The product oneof: nest the body under its own key, exactly like the proto.
-  if (i.product.kind === "vanilla") {
-    base["vanilla"] = {
-      option_type: e.optionType.toWire(i.product.vanilla.optionType),
-      strike: strikeOrDeltaToWire(i.product.vanilla.strike),
-    };
-  } else {
-    base["strategy"] = {
-      kind: e.strategyKind.toWire(i.product.strategy.kind),
-      legs: i.product.strategy.legs.map(legToWire),
-    };
+  // The wire field numbers are: vanilla=7, strategy=8, …, digital=11, touch=12,
+  // variance_swap=13, volatility_swap=14, asian_option=15 (appended additively —
+  // one current contract, no schema_version; CLAUDE.md rule 9). The WS mirror
+  // keys each arm by the proto field NAME (snake_case), matching the server codec.
+  switch (i.product.kind) {
+    case "vanilla":
+      base["vanilla"] = {
+        option_type: e.optionType.toWire(i.product.vanilla.optionType),
+        strike: strikeOrDeltaToWire(i.product.vanilla.strike),
+      };
+      break;
+    case "strategy":
+      base["strategy"] = {
+        kind: e.strategyKind.toWire(i.product.strategy.kind),
+        legs: i.product.strategy.legs.map(legToWire),
+      };
+      break;
+    case "varianceSwap":
+      base["variance_swap"] = { strike_vol: i.product.varianceSwap.strikeVol };
+      break;
+    case "volatilitySwap":
+      base["volatility_swap"] = { strike_vol: i.product.volatilitySwap.strikeVol };
+      break;
+    case "asianOption": {
+      const a = i.product.asianOption;
+      base["asian_option"] = {
+        option_type: e.optionType.toWire(a.optionType),
+        strike: a.strike,
+        averaging: e.averagingStyle.toWire(a.averaging),
+        observations: a.observations,
+        method: e.asianMethod.toWire(a.method),
+        elapsed_avg: a.elapsedAvg,
+        elapsed_weight: a.elapsedWeight,
+      };
+      break;
+    }
   }
   return base;
 }

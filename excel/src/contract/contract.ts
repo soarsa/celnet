@@ -79,6 +79,25 @@ export type MarketObservable =
   | "BUTTERFLY"
   | "FORWARD";
 
+/**
+ * How an Asian option's averaging observations are laid out over the window
+ * (proto `AveragingStyle`). DISCRETE samples a fixed number of equally-spaced
+ * future fixings; CONTINUOUS is the continuous-monitoring limit. Vendor/method-
+ * neutral names mirroring `celnet_proto::AveragingStyle`.
+ */
+export type AveragingStyle = "DISCRETE" | "CONTINUOUS";
+
+/**
+ * The analytic estimator an Asian option is priced with (proto `AsianMethod`).
+ * The arithmetic average of lognormal observations is not lognormal, so it is
+ * priced by a fast analytic estimator: CURRAN (geometric-conditioning, the
+ * accurate default) or TURNBULL_WAKEMAN (two-moment lognormal matching).
+ * Vendor/method-neutral names mirroring `celnet_proto::AsianMethod`; the method
+ * provenance (Curran / Turnbull-Wakeman) is documentation-only per the naming
+ * guardrail — the identifiers are purpose-named.
+ */
+export type AsianMethod = "CURRAN" | "TURNBULL_WAKEMAN";
+
 // --- value messages ---------------------------------------------------------
 
 /** An FX currency pair BASE/QUOTE (market form CCY1CCY2), e.g. EUR/USD. */
@@ -189,10 +208,56 @@ export interface Strategy {
   legs: Leg[];
 }
 
+/**
+ * A variance swap: pays realised variance against a fixed variance strike,
+ * priced by 1/K² log-contract static replication (proto `VarianceSwap`). The
+ * variance strike is `strikeVol²`; a fresh request may leave `strikeVol` zero
+ * and read the fair strike off the response.
+ */
+export interface VarianceSwap {
+  /** The fixed variance strike expressed as a volatility (absolute, e.g. 0.10). */
+  strikeVol: number;
+}
+
+/**
+ * A volatility swap: pays realised volatility against a fixed fair-vol strike,
+ * priced by the convexity (Jensen) adjustment to the companion variance-swap
+ * strike (proto `VolatilitySwap`).
+ */
+export interface VolatilitySwap {
+  /** The fixed volatility strike (absolute, e.g. 0.10); zero ⇒ read fair off the response. */
+  strikeVol: number;
+}
+
+/**
+ * A fixed-strike arithmetic-average-rate Asian option (proto `AsianOption`). The
+ * realised arithmetic average is not lognormal, so it is priced by a fast
+ * analytic estimator (`method`); the geometric-conditioning estimator is the
+ * accurate default.
+ */
+export interface AsianOption {
+  optionType: OptionType;
+  /** The strike `K` (quote per 1 unit of base). */
+  strike: number;
+  /** How the averaging observations are laid out across the window. */
+  averaging: AveragingStyle;
+  /** Number of equally-spaced future fixings; required `≥ 1` for DISCRETE, ignored for CONTINUOUS. */
+  observations: number;
+  /** Analytic estimator to price with (default CURRAN). */
+  method: AsianMethod;
+  /** Realised running arithmetic average of the already-fixed observations (seasoning). */
+  elapsedAvg: number;
+  /** Fraction `∈ [0, 1)` of the total average weight already accumulated; `0` ⇒ a fresh average. */
+  elapsedWeight: number;
+}
+
 /** The product payoff carried by an Instrument (the proto `product` oneof). */
 export type Product =
   | { kind: "vanilla"; vanilla: Vanilla }
-  | { kind: "strategy"; strategy: Strategy };
+  | { kind: "strategy"; strategy: Strategy }
+  | { kind: "varianceSwap"; varianceSwap: VarianceSwap }
+  | { kind: "volatilitySwap"; volatilitySwap: VolatilitySwap }
+  | { kind: "asianOption"; asianOption: AsianOption };
 
 /** Solve directive: solve a free parameter to hit a target (e.g. zero premium). */
 export interface Solve {
