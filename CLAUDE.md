@@ -123,6 +123,36 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-06-06 — **Leadership program Wave 4d DONE → FUNCTIONALITY CATALOGUE (Wave 4) COMPLETE (commit
+  `416951c`; pushed).** Final two disjoint gated `celnet-parity` rows (implement→adversarial-verify),
+  then independently re-gated. **Track A — FRTB-SA completeness** in `celnet-risk-cube/frtb.rs`: full
+  **SbM** capital aggregation (within-bucket K_b MAR21.4, cross-bucket MAR21.5 + the MAR21.6 low-corr
+  S_b floor, the **three correlation scenarios → max**, curvature K_b±/ψ/γ² reusing the existing
+  curvature reprice) + **RRAO** 1.0%/0.1% (MAR23) + an **honest cited DRC zero** for deliverable FX
+  (MAR22 — no issuer JTD; not fabricated). Parity `tests/frtb.rs`: SbM == a **longhand independent
+  recomputation** (~1e-10, never calls frtb.rs); three-scenario max; hedged K_b=0; monotonicity; RRAO
+  exact hand-sum; DRC documented zero. **⚠️ CORRECTNESS BUG I CAUGHT MYSELF (workflow verifier had
+  rubber-stamped it):** the LOW scenario was `max(2ρ−1, 0)` — **missing the MAR21.6(2) `0.75ρ` floor**
+  (`ρ_low = max(2ρ−1, 0.75ρ)`; material for ρ<0.8 — FX γ=0.6 must give 0.45 not 0.2). The longhand
+  oracle had re-derived the SAME wrong formula ⇒ a **circular self-check** that passed while wrong.
+  Fixed code + oracle + unit test, and added `correlation_scenario_transform_matches_basel_constants`
+  pinning the transform to BCBS hand-computed values so it can't recur. **Track B — pair-universe
+  breadth** in `celnet-conventions`/`celnet-calendar`/`celnet-types`: documented **19-pair** universe
+  (7 G10 majors, 4 EM deliverable crosses, 6 EM NDF/NDO USD-cash-settled at named fixings, 2 precious
+  metals XAU/XAG metal-base T+2 loco-London); internal vendor-neutral **`FixingSource`** enum
+  (**celnet-proto/wire UNCHANGED**; `ConventionRecord::new` preserved); Gregorian calendars for
+  MXN/ZAR/NOK/SEK + metals-on-London∩US. Parity `tests/pair_universe.rs`: resolved conventions ==
+  published EMTA/ISDA table; algorithmic spot date == an **independent Hinnant rata-die + holiday-walk**
+  over ~8.7k (pair,date) combos; structural invariants. Honest scope: NDF lunisolar onshore calendars
+  correctly **NOT modelled** (`has_calendar_support=false`) rather than faked; live feed VALUES stay
+  estate-gated (only fixing IDENTITY encoded). **SOTA, ZERO workarounds.** Both new parity tests pass
+  `clippy -p celnet-parity --test <name> -D warnings` (the gate W4b/W4c omitted — added to this wave's
+  spec). Full `just check` green (literal "All gates passed."), **1009/1009 tests** (was 976).
+  **Wave 4 (catalogue) is now COMPLETE** across 4a–4d: eSSVI, var/vol swaps, analytic Asian, Heston
+  FFT/COS, forward-start/cliquet, Sobol+bridge QMC, FRTB-SA, pair-universe — each a gated parity row vs
+  an independent oracle. **Next: Wave 3** (replicated log/hot-standby/SPMC, XL — new crate `celnet-replog`)
+  then **Wave 5** (GPU ratios — reuses the `celnet-qmc` Sobol/bridge).
+
 - 2026-06-06 — **Leadership program Wave 4c DONE (commit `428a424`; pushed).** Third catalogue
   increment, two disjoint gated `celnet-parity` rows (parallel implement→adversarial-verify), then
   **independently re-gated**. **Track A — forward-start vanilla + cliquet** in
