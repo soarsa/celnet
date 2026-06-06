@@ -1,0 +1,66 @@
+{
+  "workload": "gpu_batch_vanilla_mc_throughput",
+  "is_gpu": true,
+  "backend_label": "gpu-f32:Metal:Apple M4",
+  "host": "aarch64-unix-macos (64-bit)",
+  "warmup_dispatches": 4,
+  "timed_dispatches": 64,
+  "points": [
+    {
+      "paths": 4096,
+      "latency": {
+        "min_ns": 237440,
+        "p50_ns": 254079,
+        "p99_ns": 295423,
+        "p999_ns": 295423,
+        "p9999_ns": 295423,
+        "max_ns": 295423
+      },
+      "throughput_paths_per_s": 15920965.58265782,
+      "cpu_throughput_paths_per_s": 23157255.54225481,
+      "gpu_over_cpu_ratio": 0.6875152175786545
+    },
+    {
+      "paths": 16384,
+      "latency": {
+        "min_ns": 262144,
+        "p50_ns": 278783,
+        "p99_ns": 379391,
+        "p999_ns": 379391,
+        "p9999_ns": 379391,
+        "max_ns": 379391
+      },
+      "throughput_paths_per_s": 57667798.38049101,
+      "cpu_throughput_paths_per_s": 20999221.332813393,
+      "gpu_over_cpu_ratio": 2.7461874641217903
+    },
+    {
+      "paths": 65536,
+      "latency": {
+        "min_ns": 401152,
+        "p50_ns": 418815,
+        "p99_ns": 559103,
+        "p999_ns": 559103,
+        "p9999_ns": 559103,
+        "max_ns": 559103
+      },
+      "throughput_paths_per_s": 152514826.84658378,
+      "cpu_throughput_paths_per_s": 20119131.160588842,
+      "gpu_over_cpu_ratio": 7.580587135161358
+    },
+    {
+      "paths": 262144,
+      "latency": {
+        "min_ns": 562688,
+        "p50_ns": 852991,
+        "p99_ns": 957439,
+        "p999_ns": 957439,
+        "p9999_ns": 957439,
+        "max_ns": 957439
+      },
+      "throughput_paths_per_s": 329388057.21073145,
+      "cpu_throughput_paths_per_s": 19971082.145371895,
+      "gpu_over_cpu_ratio": 16.49325033130786
+    }
+  ]
+}
