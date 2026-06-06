@@ -57,6 +57,18 @@ pub struct SettlementCentre {
 }
 
 /// Identifier of a settlement centre, one per supported currency.
+///
+/// Coverage is intentionally limited to centres whose public-holiday schedule is
+/// **fully Gregorian-computable** — fixed dates with a weekend-observance policy,
+/// the moving Western-Christian feasts from the computus, and nth/last-weekday
+/// rules. Currencies whose banking holidays are driven by **lunisolar** calendars
+/// (e.g. KRW Chuseok, TWD/HKD Lunar New Year, INR's religious calendar, BRL
+/// Carnival's mid-week run) are deliberately **not** modelled as centres here:
+/// approximating a lunar holiday would be a placeholder, and a wrong settlement
+/// date is worse than a loud "unsupported". Those currencies still carry their
+/// full *convention* profile (fixing source, settlement currency, cut) in
+/// `celnet-conventions`; only their onshore settlement *calendar* is out of scope
+/// until a real lunisolar ephemeris is wired.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CentreId {
     /// United States settlement (US Federal Reserve / SIFMA bond-market days).
@@ -75,6 +87,16 @@ pub enum CentreId {
     Canada,
     /// New Zealand — national bank holidays.
     NewZealand,
+    /// Mexico — Banxico / national bank holidays (fully Gregorian-computable).
+    Mexico,
+    /// South Africa — national public holidays (fully Gregorian-computable, with
+    /// the Sunday→Monday Public Holidays Act observance).
+    SouthAfrica,
+    /// Norway — Oslo bank holidays (fixed dates + the full computus set).
+    Norway,
+    /// Sweden — Stockholm bank holidays (fixed dates + computus + Midsummer/All
+    /// Saints' anchored Saturdays).
+    Sweden,
 }
 
 impl SettlementCentre {
@@ -105,6 +127,10 @@ impl SettlementCentre {
             CentreId::Australia => is_australia_holiday(date),
             CentreId::Canada => is_canada_holiday(date),
             CentreId::NewZealand => is_newzealand_holiday(date),
+            CentreId::Mexico => is_mexico_holiday(date),
+            CentreId::SouthAfrica => is_southafrica_holiday(date),
+            CentreId::Norway => is_norway_holiday(date),
+            CentreId::Sweden => is_sweden_holiday(date),
         }
     }
 }
@@ -680,6 +706,173 @@ fn is_commonwealth_christmas_substitute(d: Date) -> bool {
     d == xmas || d == boxing
 }
 
+/// Maundy Thursday: the Thursday before Easter (Good Friday − 1 day). Observed as
+/// a bank holiday in the Nordics (Norway, and historically Sweden/Denmark).
+fn maundy_thursday(year: i32) -> Date {
+    easter_sunday(year) - time::Duration::days(3)
+}
+
+/// Mexico (Banxico) bank holidays, per the Ley Federal del Trabajo / Banxico
+/// non-working-day calendar. **Fully Gregorian-computable** (no lunar dates):
+///
+/// New Year's Day (1 Jan); Constitution Day (1st Mon Feb — moved to Monday by the
+/// 2006 reform); Benito Juárez's Birthday (3rd Mon Mar); Labour Day (1 May);
+/// Independence Day (16 Sep); Revolution Day (3rd Mon Nov); the December
+/// presidential-handover day (1 Dec) only in transition years is **excluded** as
+/// it is not an annual rule; Christmas Day (25 Dec). Banxico fixed-date holidays
+/// are observed on the day itself (no weekend shift in the bank calendar).
+/// (Source: Banco de México non-working-days circular.)
+fn is_mexico_holiday(d: Date) -> bool {
+    let y = d.year();
+    if d == date(y, Month::January, 1) {
+        return true;
+    }
+    if d == nth_weekday(y, Month::February, Weekday::Monday, 1) {
+        return true; // Constitution Day (observed 1st Mon Feb)
+    }
+    if d == nth_weekday(y, Month::March, Weekday::Monday, 3) {
+        return true; // Benito Juárez (observed 3rd Mon Mar)
+    }
+    if d == date(y, Month::May, 1) {
+        return true; // Labour Day
+    }
+    if d == date(y, Month::September, 16) {
+        return true; // Independence Day
+    }
+    if d == nth_weekday(y, Month::November, Weekday::Monday, 3) {
+        return true; // Revolution Day (observed 3rd Mon Nov)
+    }
+    if d == date(y, Month::December, 25) {
+        return true; // Christmas
+    }
+    false
+}
+
+/// South Africa national public holidays (Public Holidays Act 36 of 1994).
+/// **Fully Gregorian-computable**: fixed dates with the Act's Sunday→Monday
+/// observance, plus Good Friday and Family Day (Easter Monday).
+///
+/// New Year's Day (1 Jan), Human Rights Day (21 Mar), Good Friday, Family Day
+/// (Easter Monday), Freedom Day (27 Apr), Workers' Day (1 May), Youth Day
+/// (16 Jun), National Women's Day (9 Aug), Heritage Day (24 Sep), Day of
+/// Reconciliation (16 Dec), Christmas Day (25 Dec), Day of Goodwill (26 Dec).
+/// The Act grants the following Monday off when a fixed-date holiday falls on a
+/// **Sunday** (Saturday is unaffected). (Source: Public Holidays Act, 1994.)
+fn is_southafrica_holiday(d: Date) -> bool {
+    let y = d.year();
+    // Easter-linked holidays (observed on the day itself).
+    if d == good_friday(y) || d == easter_monday(y) {
+        return true; // Good Friday, Family Day
+    }
+    // Fixed-date holidays with the Sunday→Monday observance.
+    let fixed = [
+        (Month::January, 1),    // New Year's Day
+        (Month::March, 21),     // Human Rights Day
+        (Month::April, 27),     // Freedom Day
+        (Month::May, 1),        // Workers' Day
+        (Month::June, 16),      // Youth Day
+        (Month::August, 9),     // National Women's Day
+        (Month::September, 24), // Heritage Day
+        (Month::December, 16),  // Day of Reconciliation
+        (Month::December, 25),  // Christmas Day
+        (Month::December, 26),  // Day of Goodwill
+    ];
+    fixed
+        .iter()
+        .any(|&(m, day)| d == sa_observed(date(y, m, day)))
+}
+
+/// South African Public Holidays Act observance: a fixed-date holiday on a
+/// **Sunday** is observed the following Monday. Saturday is not shifted.
+fn sa_observed(d: Date) -> Date {
+    match d.weekday() {
+        Weekday::Sunday => d + time::Duration::days(1),
+        _ => d,
+    }
+}
+
+/// Norway (Oslo) bank holidays. **Fully Gregorian-computable**: fixed dates plus
+/// the full computus set; no weekend-shift observance (a holiday on a weekend is
+/// simply lost, as in the Norwegian bank calendar).
+///
+/// New Year's Day (1 Jan), Maundy Thursday, Good Friday, Easter Monday, Labour
+/// Day (1 May), Constitution Day (17 May), Ascension Day, Whit Monday, Christmas
+/// Day (25 Dec), Boxing Day / 2nd Day of Christmas (26 Dec).
+/// (Source: Norwegian public-holidays / Oslo Børs settlement calendar.)
+fn is_norway_holiday(d: Date) -> bool {
+    let y = d.year();
+    if d == date(y, Month::January, 1) {
+        return true;
+    }
+    if d == maundy_thursday(y) || d == good_friday(y) || d == easter_monday(y) {
+        return true;
+    }
+    if d == date(y, Month::May, 1) {
+        return true; // Labour Day
+    }
+    if d == date(y, Month::May, 17) {
+        return true; // Constitution Day
+    }
+    if d == ascension(y) || d == whit_monday(y) {
+        return true;
+    }
+    if d == date(y, Month::December, 25) || d == date(y, Month::December, 26) {
+        return true;
+    }
+    false
+}
+
+/// Sweden (Stockholm) bank holidays. **Fully Gregorian-computable**: fixed dates,
+/// the computus set, and the Saturday-anchored Midsummer Eve / All Saints' Day.
+/// No weekend-shift observance.
+///
+/// New Year's Day (1 Jan), Epiphany (6 Jan), Good Friday, Easter Monday, Labour
+/// Day (1 May), Ascension Day, National Day (6 Jun), Midsummer Eve (the Friday
+/// between 19–25 Jun), Christmas Eve (24 Dec — a de-facto bank close), Christmas
+/// Day (25 Dec), Boxing Day (26 Dec), New Year's Eve (31 Dec — bank close).
+/// (Source: Sveriges Riksbank / Nasdaq Stockholm holiday calendar.)
+fn is_sweden_holiday(d: Date) -> bool {
+    let y = d.year();
+    if d == date(y, Month::January, 1) || d == date(y, Month::January, 6) {
+        return true; // New Year, Epiphany
+    }
+    if d == good_friday(y) || d == easter_monday(y) || d == ascension(y) {
+        return true;
+    }
+    if d == date(y, Month::May, 1) {
+        return true; // Labour Day
+    }
+    if d == date(y, Month::June, 6) {
+        return true; // National Day
+    }
+    if d == swedish_midsummer_eve(y) {
+        return true; // Midsummer Eve (Friday 19–25 Jun)
+    }
+    // The Swedish "mellandagar" bank closes around Christmas/New Year.
+    if d == date(y, Month::December, 24)
+        || d == date(y, Month::December, 25)
+        || d == date(y, Month::December, 26)
+        || d == date(y, Month::December, 31)
+    {
+        return true;
+    }
+    false
+}
+
+/// Swedish Midsummer Eve: the Friday that falls between 19 and 25 June inclusive
+/// (Midsummer Day is the Saturday 20–26 Jun; the Eve is the day before and is the
+/// observed bank holiday).
+fn swedish_midsummer_eve(year: i32) -> Date {
+    // Find the Friday in 19..=25 June.
+    for day in 19..=25u8 {
+        let d = date(year, Month::June, day);
+        if d.weekday() == Weekday::Friday {
+            return d;
+        }
+    }
+    unreachable!("a 7-day window always contains exactly one Friday")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -816,6 +1009,61 @@ mod tests {
         assert!(jp.is_holiday(d(2015, Month::September, 21)));
         assert!(jp.is_holiday(d(2015, Month::September, 22))); // kokumin sandwich
         assert!(jp.is_holiday(d(2015, Month::September, 23)));
+    }
+
+    #[test]
+    fn mexico_banxico_holidays_2024() {
+        let mx = SettlementCentre::new(CentreId::Mexico);
+        assert!(mx.is_holiday(d(2024, Month::January, 1))); // New Year
+        assert!(mx.is_holiday(d(2024, Month::February, 5))); // Constitution (1st Mon Feb)
+        assert!(mx.is_holiday(d(2024, Month::March, 18))); // Benito Juárez (3rd Mon Mar)
+        assert!(mx.is_holiday(d(2024, Month::May, 1))); // Labour Day
+        assert!(mx.is_holiday(d(2024, Month::September, 16))); // Independence
+        assert!(mx.is_holiday(d(2024, Month::November, 18))); // Revolution (3rd Mon Nov)
+        assert!(mx.is_holiday(d(2024, Month::December, 25))); // Christmas
+        // An ordinary day is not a holiday.
+        assert!(!mx.is_holiday(d(2024, Month::July, 4)));
+    }
+
+    #[test]
+    fn southafrica_sunday_monday_observance_2025() {
+        let za = SettlementCentre::new(CentreId::SouthAfrica);
+        // Good Friday / Family Day 2025: 18 Apr / 21 Apr.
+        assert!(za.is_holiday(d(2025, Month::April, 18)));
+        assert!(za.is_holiday(d(2025, Month::April, 21)));
+        // Freedom Day 27 Apr 2025 is a Sunday → observed Mon 28 Apr.
+        assert!(za.is_holiday(d(2025, Month::April, 28)));
+        // The Sunday itself is not the *observed* bank holiday (it is already a
+        // weekend, but the observed weekday is the Monday).
+        assert!(!za.is_holiday(d(2025, Month::April, 29)));
+        assert!(za.is_holiday(d(2025, Month::December, 16))); // Reconciliation
+    }
+
+    #[test]
+    fn norway_computus_and_constitution_day_2024() {
+        let no = SettlementCentre::new(CentreId::Norway);
+        // 2024 Easter: 31 Mar → Maundy Thu 28 Mar, Good Fri 29 Mar, Easter Mon 1 Apr.
+        assert!(no.is_holiday(d(2024, Month::March, 28)));
+        assert!(no.is_holiday(d(2024, Month::March, 29)));
+        assert!(no.is_holiday(d(2024, Month::April, 1)));
+        assert!(no.is_holiday(d(2024, Month::May, 17))); // Constitution Day
+        assert!(no.is_holiday(ascension(2024)));
+        assert!(no.is_holiday(whit_monday(2024)));
+        assert!(no.is_holiday(d(2024, Month::December, 26)));
+    }
+
+    #[test]
+    fn sweden_midsummer_eve_and_epiphany_2024() {
+        let se = SettlementCentre::new(CentreId::Sweden);
+        assert!(se.is_holiday(d(2024, Month::January, 6))); // Epiphany
+        assert!(se.is_holiday(d(2024, Month::June, 6))); // National Day
+        // Midsummer Eve 2024 = Fri 21 Jun.
+        assert_eq!(swedish_midsummer_eve(2024), d(2024, Month::June, 21));
+        assert!(se.is_holiday(d(2024, Month::June, 21)));
+        assert!(se.is_holiday(d(2024, Month::December, 24))); // Christmas Eve close
+        assert!(se.is_holiday(d(2024, Month::December, 31))); // New Year's Eve close
+        // Midsummer Eve 2025 = Fri 20 Jun.
+        assert_eq!(swedish_midsummer_eve(2025), d(2025, Month::June, 20));
     }
 
     #[test]

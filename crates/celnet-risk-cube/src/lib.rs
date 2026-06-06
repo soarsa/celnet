@@ -90,6 +90,7 @@
 pub mod additive;
 pub mod cube;
 pub mod dimension;
+pub mod frtb;
 pub mod nonadditive;
 pub mod scenario_grid;
 
@@ -98,6 +99,12 @@ pub use cube::{Cube, NodeAggregate, VegaPillarMap};
 pub use dimension::{
     BookId, DeskId, DimensionId, EntityId, FactKey, FactMeasure, Hierarchy, LocationId, PositionId,
     RiskFact, TraderId,
+};
+pub use frtb::{
+    CorrelationScenario, CurvatureBucket, FrtbCapital, ResidualInstrument, ResidualKind,
+    RiskBucket, SbmCharge, SbmParams, assemble_capital, curvature_class, curvature_legs,
+    delta_vega_class, fx_default_risk_charge, node_curvature_bucket, quadratic_form,
+    residual_addon,
 };
 pub use nonadditive::{
     PositionSensitivity, Scenario, VarEs, correlation_weighted_vega, historical_var_es, node_pnl,

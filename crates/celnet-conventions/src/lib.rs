@@ -21,13 +21,36 @@
 //!
 //! # Coverage
 //!
-//! Bespoke profiles encode real OTC market practice for the G10 majors
-//! (EURUSD, USDJPY, GBPUSD, AUDUSD, USDCHF, USDCAD, NZDUSD) and a
-//! non-deliverable example (USDKRW). Pairs without a bespoke profile resolve to
-//! an explicit region default keyed off the quote (numeraire) currency. The
+//! Bespoke profiles encode real OTC market practice for a documented pair
+//! universe. The **EXACT covered set** is:
+//!
+//! * **G10 majors:** EURUSD, USDJPY, GBPUSD, AUDUSD, USDCHF, USDCAD, NZDUSD.
+//! * **EM deliverable crosses:** USDMXN, USDZAR, USDNOK, USDSEK (T+2, USD
+//!   premium-adjusted, NY cut).
+//! * **EM non-deliverable (NDF/NDO):** USDKRW (KFTC18), USDTWD (Taipei),
+//!   USDINR (RBI ref), USDBRL (PTAX), USDCLP (Dólar Observado), USDCOP (TRM) —
+//!   each cash-settled in **USD** at its published fixing.
+//! * **Precious metals:** XAUUSD, XAGUSD (metal as base, USD premium, T+2
+//!   loco-London).
+//!
+//! Each pair's full universe metadata (spot lag, premium currency, ATM/delta
+//! convention, cut, settlement style, NDF fixing source + settlement currency,
+//! metal-base flag) is exposed via [`pair_meta`]; the per-`(pair, tenor)` wire
+//! convention is [`resolve`]. Pairs without a bespoke profile resolve to an
+//! explicit region default keyed off the quote (numeraire) currency. The
 //! headline term-structure rule — **spot delta for short tenors, forward
 //! (driftless) delta beyond 1Y** — is applied uniformly (USDJPY ≤1Y spot
 //! premium-adjusted, >1Y forward premium-adjusted, is the worked example).
+//!
+//! **Calendar honesty:** the EM deliverable crosses and metals resolve their
+//! spot date over **fully Gregorian-computable** settlement calendars (MXN, ZAR,
+//! NOK, SEK in `celnet-calendar`; metals on London ∩ US). The NDF currencies'
+//! *onshore* settlement calendars (KRW/TWD/INR/BRL/CLP/COP) are driven by
+//! lunisolar/religious holidays and are deliberately **not** faked: those pairs
+//! carry their full *convention* identity here, but [`has_calendar_support`]
+//! returns `false` for them until a real lunisolar ephemeris is wired. Live
+//! EM/NDF *fixing values* are an estate-gated feed and are never sourced here —
+//! only the convention identity is encoded.
 //!
 //! # Integration with `celnet-calendar`
 //!
@@ -43,7 +66,9 @@ mod record;
 mod registry;
 
 pub use record::{ConventionRecord, ResolutionSource, ResolvedConvention};
-pub use registry::{has_calendar_support, has_pair_profile, resolve};
+pub use registry::{
+    InstrumentClass, NdfTerms, PairMeta, has_calendar_support, has_pair_profile, pair_meta, resolve,
+};
 
 use celnet_calendar::{FxSchedule, TenorError, schedule as calendar_schedule, year_fraction};
 use celnet_types::{CcyPair, Tenor};

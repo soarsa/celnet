@@ -357,6 +357,57 @@ pub enum Settlement {
     NonDeliverable,
 }
 
+/// The published reference fixing a non-deliverable FX option (NDO) or NDF
+/// cash-settles against on the fixing date.
+///
+/// A non-deliverable option pays out the difference between its strike and a
+/// **published official fixing** for the restricted currency, settled in the
+/// convertible currency (USD). The fixing source is a market-data identity, not
+/// a model input: it names *which* published rate the contract references (the
+/// EMTA/ISDA template names each one). This enum is the vendor-neutral catalogue
+/// of the fixings the convention registry resolves; the *live values* of these
+/// fixings remain an estate-gated market-data feed and are never sourced from
+/// this repository — only the convention identity is encoded here.
+///
+/// References: EMTA (Emerging Markets Trade Association) template terms and the
+/// 2005/2018 ISDA FX/Currency Option definitions per-currency matrices, which
+/// name the settlement-rate option for each restricted currency.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum FixingSource {
+    /// Korea — KFTC18 (the MAS/KFTC USD/KRW spot rate, ~15:30 Seoul) per the
+    /// EMTA "KRW KFTC18" settlement-rate option.
+    KrwKftc18,
+    /// Taiwan — the Taipei Forex / TFEMA USD/TWD fixing (EMTA "TWD Taipei").
+    TwdTaipei,
+    /// India — the Reserve Bank of India USD/INR reference rate (EMTA "INR RBIB",
+    /// the RBI 12:30 reference rate).
+    InrRbiRef,
+    /// Brazil — the BCB PTAX USD/BRL rate (EMTA "BRL PTAX", BRL09).
+    BrlPtax,
+    /// Chile — the "Dólar Observado" USD/CLP rate published by the Banco Central
+    /// de Chile (EMTA "CLP Dolar Observado", CLP10).
+    ClpDolarObs,
+    /// Colombia — the TRM (Tasa Representativa del Mercado) USD/COP rate (EMTA
+    /// "COP TRM", COP04).
+    CopTrm,
+}
+
+impl FixingSource {
+    /// A short, stable identifier for the fixing (the EMTA-style code), suitable
+    /// for logging and reconciliation. Vendor-neutral and method-neutral.
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            FixingSource::KrwKftc18 => "KRW.KFTC18",
+            FixingSource::TwdTaipei => "TWD.TAIPEI",
+            FixingSource::InrRbiRef => "INR.RBIB",
+            FixingSource::BrlPtax => "BRL.PTAX",
+            FixingSource::ClpDolarObs => "CLP.DOLAROBS",
+            FixingSource::CopTrm => "COP.TRM",
+        }
+    }
+}
+
 /// Annualized Black volatility (absolute; `0.10` = 10 vol), a transparent `f64`.
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[repr(transparent)]
@@ -521,6 +572,25 @@ mod tests {
     fn premium_adjusted_flag() {
         assert!(PremiumStyle::PercentForeign.is_premium_adjusted());
         assert!(!PremiumStyle::DomesticPips.is_premium_adjusted());
+    }
+
+    #[test]
+    fn fixing_source_codes_are_distinct_and_nonempty() {
+        let all = [
+            FixingSource::KrwKftc18,
+            FixingSource::TwdTaipei,
+            FixingSource::InrRbiRef,
+            FixingSource::BrlPtax,
+            FixingSource::ClpDolarObs,
+            FixingSource::CopTrm,
+        ];
+        for (i, a) in all.iter().enumerate() {
+            assert!(!a.code().is_empty());
+            for b in &all[i + 1..] {
+                assert_ne!(a.code(), b.code(), "fixing codes must be unique");
+                assert_ne!(a, b);
+            }
+        }
     }
 
     /// Determinism guardrail: the derived discount/forward quantities feed the

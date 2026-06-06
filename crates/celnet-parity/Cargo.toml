@@ -18,8 +18,10 @@ celnet-core.workspace = true
 [dev-dependencies]
 celnet-vanilla.workspace = true
 celnet-conventions.workspace = true
+celnet-calendar.workspace = true
 celnet-surface.workspace = true
 celnet-exotics.workspace = true
+celnet-risk-cube.workspace = true
 celnet-testkit.workspace = true
 proptest.workspace = true
 # The QuantLib-sourced golden reference tables are the independent oracle for the

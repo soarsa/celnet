@@ -40,3 +40,33 @@ positive-IMM always resolve.
 average). Strike↔delta is a guarded root-find in the configured delta convention
 (premium-adjusted call delta is non-monotone). These land in `celnet-conventions` (WS-A),
 `celnet-vanilla` (WS-B), and `celnet-surface` (WS-C).
+
+## Pair universe (Wave 4d)
+
+`celnet-conventions::pair_meta` resolves the full **pair-universe** view of a covered pair —
+spot lag, premium currency, ATM/delta convention, cut, settlement style, NDF fixing source +
+cash-settlement currency, and the metal-base flag — in the queried orientation. It consults the
+same `PairProfile` the wire `resolve` uses, so the universe view and the per-`(pair, tenor)` wire
+record can never disagree. New `celnet-types` enum `FixingSource` names the published NDF/NDO
+reference fixing (EMTA/ISDA identity only — never live values). The **EXACT covered set**:
+
+| Class | Pairs | Spot lag | Premium ccy | ATM | Cut | Settlement | Fixing |
+|---|---|---|---|---|---|---|---|
+| G10 majors | EURUSD, USDJPY, GBPUSD, AUDUSD, USDCHF, **USDCAD**, NZDUSD | T+2 (**USDCAD T+1**) | per-pair (FOR or DOM) | DNS | NY (JPY→Tokyo) | Deliverable | — |
+| EM deliverable | USDMXN, USDZAR, USDNOK, USDSEK | T+2 | USD (FOR, prem-adj) | DNS | NY | Deliverable | — |
+| EM non-deliverable (NDF/NDO) | USDKRW, USDTWD, USDINR, USDBRL, USDCLP, USDCOP | T+2 | USD (FOR, prem-adj) | DNS | Tokyo (Asia) / NY (LatAm) | **Non-deliverable, cash-settled USD** | KFTC18 / Taipei / RBIB / PTAX / Dólar-Obs / TRM |
+| Precious metals | XAUUSD, XAGUSD | T+2 (loco-London) | USD (DOM, unadj) | DNS | NY | Deliverable | — |
+
+**Calendar coverage (honest boundary).** Spot dates resolve **algorithmically** over the joined
+leg calendars. `celnet-calendar` adds fully **Gregorian-computable** settlement calendars for the
+EM deliverable currencies — **MXN** (Banxico), **ZAR** (SA Public Holidays Act), **NOK** (Oslo),
+**SEK** (Stockholm) — and metals settle on the **London ∩ US** loco-London calendar. The NDF
+currencies' *onshore* calendars (KRW/TWD/INR/BRL/CLP/COP) are driven by **lunisolar/religious**
+holidays and are deliberately **not** modelled (approximating a lunar holiday would be a
+placeholder); those pairs carry their full *convention* identity but `has_calendar_support`
+returns `false` until a real lunisolar ephemeris is wired. The `celnet-parity` row
+`tests/pair_universe.rs` proves (i) every resolved convention matches the published EMTA/ISDA +
+interbank standard, (ii) the algorithmic spot date equals an **independent** rata-die +
+holiday-predicate walk over ~8.7k trade-date/pair combinations, and (iii) the structural
+invariants (NDF⇒USD-cash-settled+flagged, metal-base, self-consistency, orientation-invariant
+fixing). **No live EM/NDF feed data is claimed** — only the convention/calendar code.
