@@ -1,72 +1,86 @@
-//! Celnet leader-replicated, deterministic-replay event log
-//! (`docs/SCALE-OUT.md` — moves the replicated-log item from *designed* to
-//! *built*, behind the honest boundary below).
+//! Celnet replicated, deterministic-replay event log with **full Raft consensus**
+//! (`docs/SCALE-OUT.md` — moves the replicated-log item from *designed* to *built*
+//! with leader election + log-matching + conflicting-tail truncation, behind the
+//! honest boundary below).
 //!
-//! This crate is the distributed-correctness backbone: a **thin
-//! leader-replicated log** layered on the dependency-free durable WAL
-//! [`celnet_journal`]. A leader durably appends `(term, index)`-stamped
-//! [`entry::LogEntry`]s to its journal and streams them, over **real loopback
-//! TCP sockets**, to followers who append in the *same order* to their own
-//! journals; an entry **commits only on quorum durability** (a strict majority
-//! of the cluster has `fsync`'d it). A follower (or a recovered node) replays
-//! its journal to rebuild **bit-identical** state (`f64::to_bits` equality), and
-//! a caught-up **hot standby** can take over as leader with zero loss of
-//! committed entries.
+//! This crate is the distributed-correctness backbone: a real Raft consensus
+//! module (Ongaro & Ousterhout, USENIX ATC 2014; provenance in doc comments only,
+//! identifiers purpose-named per the naming guardrail) layered on the
+//! dependency-free durable WAL [`celnet_journal`]. A cluster of [`RaftNode`]s,
+//! each backed by its own durable [`log::Log`] over a journal, **elects a leader**
+//! via randomized timeouts + [`wire::Message::RequestVote`], the leader replicates
+//! its log via [`wire::Message::AppendEntries`] with the **log-matching property**
+//! and **conflicting-tail truncation**, and an entry **commits** when a majority's
+//! `match_index` reaches it under the leader's current term (§5.4.2). Every node
+//! applies committed entries in order to a deterministic [`state::BookState`] whose
+//! [`state::BookState::to_bits`] is the cross-node bit-identity oracle.
 //!
 //! # What is built here
 //!
-//! * [`entry`] — the replicated [`entry::LogEntry`] + its deterministic,
-//!   CRC-checked byte codec.
+//! * [`entry`] — the replicated [`entry::LogEntry`] (`(term, index, payload)`) and
+//!   its deterministic, CRC-checked byte codec (on-disk/wire layout is frozen).
 //! * [`state`] — a deterministic priced-book state machine (`u64 → f64`) whose
 //!   [`state::BookState::to_bits`] is the cross-node bit-identity oracle.
+//! * [`persist`] — the durable Raft persistent state (`current_term`/`voted_for`),
+//!   CRC-protected and atomically written (Raft §5 persistence requirement).
+//! * [`log`] — the durable, index-addressed replicated log over a journal, with
+//!   **append** and **durable conflicting-tail truncation** (atomic rewrite:
+//!   write-fresh → fsync → rename → dir-fsync — the journal is the source of truth,
+//!   never a memory-only mask).
 //! * [`wire`] — length-prefixed [`wire::Message`] framing over real
-//!   `std::net::TcpStream` loopback sockets (no shared-memory fake).
-//! * [`follower`] — a real TCP-server follower that durably mirrors the leader's
-//!   log and applies committed entries.
-//! * [`leader`] — the leader: durable-append → replicate → **quorum commit**,
-//!   advancing the commit index only on majority durability.
-//! * [`standby`] — hot-standby pre-warm + bounded operator-driven failover.
+//!   `std::net::TcpStream` loopback sockets (AppendEntries / RequestVote + replies,
+//!   plus a Status probe). No shared-memory fake.
+//! * [`election`] — the cohesive [`election::RaftNode`] role state machine
+//!   (Follower / Candidate / Leader): randomized election timers, RequestVote with
+//!   the §5.4.1 up-to-date voting rule, AppendEntries with §5.3 log-matching +
+//!   conflicting-tail truncation, the §5.4.2 commitment rule, step-down on a higher
+//!   term, and ordered apply — all over the real-socket transport, with no blocking
+//!   IO held across the core lock so nothing can hang.
 //!
-//! # What is explicitly the *next* increment (not half-built here)
+//! # Safety invariant (proven by the parity row)
 //!
-//! This is a **thin leader-replicated log, deliberately before full Raft**. The
-//! leader is constructed with its term and the standby is promoted by an explicit
-//! [`standby::promote`] (a term bump). What is *not* built — and documented here
-//! rather than stubbed — is automatic **leader election** (vote RPCs that
-//! auto-advance the term on leader loss) and **conflicting-tail truncation**
-//! across divergent followers. A standby re-replicates its whole durable prefix
-//! to survivors on the first post-promotion proposals; cross-follower log
-//! reconciliation under arbitrary divergence is the Raft-election increment.
+//! Any two nodes that have committed index `i` hold **byte-identical** `log[0..=i]`
+//! and **`to_bits`-identical** applied [`state::BookState`]. Election safety holds:
+//! at most one leader per term (a minority/partitioned candidate cannot win), and a
+//! stale leader steps down on observing a higher term, its uncommitted divergent
+//! tail reconciled (truncated) by the new leader's AppendEntries.
+//!
+//! # What is explicitly the *next* increment (documented, not half-built)
+//!
+//! Membership is **fixed** for a cluster's lifetime: a [`RaftNode`] is constructed
+//! with its full peer set and `cluster_size`, and there is no live add/remove of
+//! members. Dynamic **membership change** (Raft §6 — joint consensus, or the
+//! single-server add/remove of the Ongaro thesis) and **log compaction / snapshot
+//! install** (Raft §7, to bound an unbounded log's replay/transfer cost — the
+//! [`celnet_journal`] module docs already sketch the durable compaction recipe this
+//! crate's truncation reuses) are the next increments. They are documented here
+//! rather than stubbed: the present cluster is correct and complete for a fixed
+//! membership, and nothing fakes the unbuilt parts.
 //!
 //! # Honest boundary (reproduced verbatim, never violated)
 //!
-//! The multi-node replication proof in this crate runs **logical nodes over real
-//! loopback (`127.0.0.1`) TCP sockets on ephemeral ports** — genuine OS sockets
-//! with kernel framing, not a shared in-memory `Vec` pretending to be a network.
-//! Loopback proves the **compute, the wire framing, and the replication / quorum
-//! / replay *arithmetic* and relative regression**: it is an **upper bound on
-//! compute** and a **lower bound on real cross-host wire latency**. The
+//! The multi-node proof in this crate runs **logical nodes over real loopback
+//! (`127.0.0.1`) TCP sockets on ephemeral ports** — genuine OS sockets with kernel
+//! framing, not a shared in-memory `Vec` pretending to be a network. Loopback
+//! proves the **consensus arithmetic** (election safety, log-matching, truncation,
+//! quorum commit, bit-identical replay) and **relative regression**: it is an
+//! **upper bound on compute** and a **lower bound on cross-host wire latency**. The
 //! **absolute cross-host wire p99 / inter-datacentre replication SLO** is
-//! provable only on a tuned LAN and stays **DEPLOY-GATED** — it is *never*
-//! claimed from this repository. No NVIDIA throughput and no live-JVM-estate
-//! claim is made here either. What loopback *does* prove — byte-identical
-//! committed logs, `to_bits`-identical replayed state, quorum-commit safety
-//! (no false progress under lost quorum), bounded hot-standby takeover with zero
-//! committed-entry loss, and crash-recovery — is the honest in-repo distributed-
-//! correctness guarantee.
+//! deploy-gated and is **never** claimed from this repository. No NVIDIA
+//! throughput and no live-JVM-estate claim is made here either.
 
 #![forbid(unsafe_code)]
 
+pub mod election;
 pub mod entry;
-pub mod follower;
-pub mod leader;
-pub mod standby;
+pub mod log;
+pub mod persist;
 pub mod state;
 pub mod wire;
 
+pub use election::{RaftConfig, RaftNode, Role};
 pub use entry::{EntryError, Index, LogEntry, Term};
-pub use follower::{Follower, FollowerShared};
-pub use leader::{Leader, ProposeOutcome, durable_entry_bytes};
-pub use standby::{is_caught_up, promote};
+pub use log::{EMPTY_PREV, Log};
+pub use persist::{PersistStore, PersistentState};
 pub use state::{BookState, BookUpdate, UpdateError};
 pub use wire::{EMPTY_LOG, MAX_FRAME_LEN, Message, WireError};

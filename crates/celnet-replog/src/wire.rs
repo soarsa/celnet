@@ -1,13 +1,27 @@
-//! Length-prefixed framing and the leader↔follower message types, over real
-//! blocking `std::net::TcpStream` sockets.
+//! Length-prefixed framing and the Raft RPC message types, over real blocking
+//! `std::net::TcpStream` sockets.
 //!
-//! The transport is deliberately the simplest honest real-socket transport: a
-//! blocking [`std::net::TcpStream`] with **4-byte big-endian length-prefixed**
-//! frames. Each frame is one [`Message`]. There is no shared-memory shortcut —
-//! a follower process talks to the leader process strictly through bytes on a
-//! loopback TCP connection, exactly as a cross-host deployment would (the only
-//! difference being the route the kernel takes; see the crate-root honest
-//! boundary on what loopback does and does not prove).
+//! The transport is the simplest honest real-socket transport: a blocking
+//! [`std::net::TcpStream`] carrying **4-byte big-endian length-prefixed** frames,
+//! each holding one [`Message`]. There is no shared-memory shortcut — a node
+//! process talks to a peer process strictly through bytes on a loopback TCP
+//! connection, exactly as a cross-host deployment would (the only difference being
+//! the route the kernel takes; see the crate-root honest boundary on what loopback
+//! does and does not prove).
+//!
+//! # The two Raft RPCs
+//!
+//! * [`Message::AppendEntries`] — a leader replicates a (possibly empty, i.e. a
+//!   heartbeat) run of [`LogEntry`]s, carrying `prev_log_index`/`prev_log_term`
+//!   for the §5.3 log-matching check and `leader_commit` for commit propagation.
+//!   The reply is [`Message::AppendReply`] (`success` + the follower's resulting
+//!   `match_index`, plus its `term` so a stale leader steps down).
+//! * [`Message::RequestVote`] — a candidate solicits a vote, carrying its
+//!   `last_log_index`/`last_log_term` so a voter can apply the §5.4.1 up-to-date
+//!   rule. The reply is [`Message::VoteReply`] (`granted` + the voter's `term`).
+//!
+//! [`Message::StatusRequest`]/[`Message::Status`] remain for an out-of-band
+//! liveness/high-water probe.
 
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
@@ -18,54 +32,85 @@ use crate::entry::LogEntry;
 /// against a corrupt/hostile length prefix — mirrors the journal's payload bound.
 pub const MAX_FRAME_LEN: u32 = 64 * 1024 * 1024;
 
-/// A protocol message exchanged between a leader and a follower.
+/// Sentinel `last_index` / `prev_log_index` meaning "no entry" (empty log, or no
+/// preceding entry). Shared with [`crate::log::EMPTY_PREV`].
+pub const EMPTY_LOG: u64 = u64::MAX;
+
+/// A protocol message exchanged between cluster nodes.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Message {
-    /// Leader → follower: append this entry to your journal in index order.
-    ///
-    /// `leader_commit` piggybacks the leader's current commit index so a
-    /// follower can advance its own applied/commit watermark for already-quorum-
-    /// committed entries without a second round trip.
-    Append {
-        /// The entry to durably append.
-        entry: LogEntry,
-        /// The leader's commit index at send time (entries `<=` this are
-        /// quorum-committed and safe to apply).
-        leader_commit: u64,
-    },
-    /// Follower → leader: I have **durably** appended every entry up to and
-    /// including `match_index` (in this `term`). The leader counts these acks to
-    /// advance the commit index on a majority.
-    Ack {
-        /// The follower's current durable high-water index.
-        match_index: u64,
-        /// The term the follower is acknowledging under (rejects stale leaders).
+    /// Leader → follower: replicate `entries` (empty ⇒ heartbeat). The follower
+    /// applies the §5.3 log-matching check against `prev_log_index`/`prev_log_term`
+    /// and, on success, reconciles its log (truncating any conflicting tail) and
+    /// advances its commit watermark toward `leader_commit`.
+    AppendEntries {
+        /// The leader's current term.
         term: u64,
-    },
-    /// Leader → follower: advance your applied/commit watermark to
-    /// `leader_commit` (no new entry). Sent after a quorum-commit so a follower
-    /// applies the just-committed tail (the entry whose own Append predated the
-    /// commit it enabled). The follower replies [`Message::Ack`].
-    Commit {
-        /// The leader's commit index (entries `<=` this are quorum-committed).
+        /// Index of the entry immediately preceding `entries`, or [`EMPTY_LOG`] if
+        /// `entries` begins at index 0 (no preceding entry).
+        prev_log_index: u64,
+        /// Term of the entry at `prev_log_index` (ignored when `prev_log_index`
+        /// is [`EMPTY_LOG`]).
+        prev_log_term: u64,
+        /// The entries to replicate, in contiguous ascending index order (may be
+        /// empty for a pure heartbeat / commit-advance).
+        entries: Vec<LogEntry>,
+        /// The leader's commit index ([`EMPTY_LOG`] if nothing committed).
         leader_commit: u64,
     },
-    /// Either direction: a request for the peer's durable high-water index, used
-    /// by a recovering/standby node to learn how far behind it is.
+    /// Follower → leader: the result of an [`Message::AppendEntries`].
+    AppendReply {
+        /// The follower's current term (a leader observing a higher term steps down).
+        term: u64,
+        /// Whether the log-matching check passed and the entries were appended.
+        success: bool,
+        /// On success, the follower's resulting durable high-water index; on
+        /// failure, the follower's current high-water (so the leader can back up
+        /// `next_index` toward a matching point). [`EMPTY_LOG`] if empty.
+        match_index: u64,
+    },
+    /// Candidate → peer: solicit a vote in `term`.
+    RequestVote {
+        /// The candidate's term. For a **pre-vote** (`pre_vote == true`) this is the
+        /// term the candidate *would* run in (its current term + 1) — a hypothetical,
+        /// NOT yet adopted: a pre-vote never causes either side to change its
+        /// persistent term, so a flaky node cannot disrupt a healthy leader by
+        /// bumping terms (Ongaro thesis §9.6, the Pre-Vote optimisation).
+        term: u64,
+        /// `true` for a pre-vote straw poll (no term change on either side); `false`
+        /// for a real vote that durably records `voted_for`.
+        pre_vote: bool,
+        /// A stable identifier of the candidate (its listen port) so a voter's
+        /// `voted_for` records *who* it voted for and re-grants idempotently.
+        candidate_id: u64,
+        /// Index of the candidate's last log entry ([`EMPTY_LOG`] if empty).
+        last_log_index: u64,
+        /// Term of the candidate's last log entry (0 if empty).
+        last_log_term: u64,
+    },
+    /// Peer → candidate: the vote decision.
+    VoteReply {
+        /// The voter's current term (a candidate observing a higher term steps down).
+        /// For a pre-vote reply this is the voter's real current term, used only to
+        /// let a hopelessly-behind pre-candidate learn it should not proceed.
+        term: u64,
+        /// `true` if this replies to a pre-vote straw poll (the granter has NOT
+        /// recorded any vote); `false` for a real vote grant.
+        pre_vote: bool,
+        /// Whether the (pre-)vote was granted.
+        granted: bool,
+    },
+    /// Either direction: a request for the peer's durable high-water index + term.
     StatusRequest,
-    /// Reply to [`Message::StatusRequest`]: the responder's durable high-water
-    /// index and current term.
+    /// Reply to [`Message::StatusRequest`].
     Status {
         /// The responder's durable high-water (last appended) index, or
-        /// `u64::MAX` sentinel meaning "empty log".
+        /// [`EMPTY_LOG`] meaning "empty log".
         last_index: u64,
         /// The responder's current term.
         term: u64,
     },
 }
-
-/// Sentinel `last_index` meaning the log is empty (no entries yet).
-pub const EMPTY_LOG: u64 = u64::MAX;
 
 impl Message {
     /// Encode to deterministic bytes (1-byte tag + fields).
@@ -73,30 +118,64 @@ impl Message {
     pub fn encode(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         match self {
-            Message::Append {
-                entry,
+            Message::AppendEntries {
+                term,
+                prev_log_index,
+                prev_log_term,
+                entries,
                 leader_commit,
             } => {
                 buf.push(0u8);
-                buf.extend_from_slice(&leader_commit.to_le_bytes());
-                let e = entry.encode();
-                buf.extend_from_slice(&(e.len() as u32).to_le_bytes());
-                buf.extend_from_slice(&e);
-            }
-            Message::Ack { match_index, term } => {
-                buf.push(1u8);
-                buf.extend_from_slice(&match_index.to_le_bytes());
                 buf.extend_from_slice(&term.to_le_bytes());
+                buf.extend_from_slice(&prev_log_index.to_le_bytes());
+                buf.extend_from_slice(&prev_log_term.to_le_bytes());
+                buf.extend_from_slice(&leader_commit.to_le_bytes());
+                buf.extend_from_slice(&(entries.len() as u32).to_le_bytes());
+                for e in entries {
+                    let eb = e.encode();
+                    buf.extend_from_slice(&(eb.len() as u32).to_le_bytes());
+                    buf.extend_from_slice(&eb);
+                }
             }
-            Message::StatusRequest => buf.push(2u8),
-            Message::Status { last_index, term } => {
+            Message::AppendReply {
+                term,
+                success,
+                match_index,
+            } => {
+                buf.push(1u8);
+                buf.extend_from_slice(&term.to_le_bytes());
+                buf.push(u8::from(*success));
+                buf.extend_from_slice(&match_index.to_le_bytes());
+            }
+            Message::RequestVote {
+                term,
+                pre_vote,
+                candidate_id,
+                last_log_index,
+                last_log_term,
+            } => {
+                buf.push(2u8);
+                buf.extend_from_slice(&term.to_le_bytes());
+                buf.push(u8::from(*pre_vote));
+                buf.extend_from_slice(&candidate_id.to_le_bytes());
+                buf.extend_from_slice(&last_log_index.to_le_bytes());
+                buf.extend_from_slice(&last_log_term.to_le_bytes());
+            }
+            Message::VoteReply {
+                term,
+                pre_vote,
+                granted,
+            } => {
                 buf.push(3u8);
+                buf.extend_from_slice(&term.to_le_bytes());
+                buf.push(u8::from(*pre_vote));
+                buf.push(u8::from(*granted));
+            }
+            Message::StatusRequest => buf.push(4u8),
+            Message::Status { last_index, term } => {
+                buf.push(5u8);
                 buf.extend_from_slice(&last_index.to_le_bytes());
                 buf.extend_from_slice(&term.to_le_bytes());
-            }
-            Message::Commit { leader_commit } => {
-                buf.push(4u8);
-                buf.extend_from_slice(&leader_commit.to_le_bytes());
             }
         }
         buf
@@ -110,54 +189,88 @@ impl Message {
     /// nested [`LogEntry`] that fails its own CRC/length check.
     pub fn decode(bytes: &[u8]) -> Result<Self, WireError> {
         let (&tag, rest) = bytes.split_first().ok_or(WireError::Malformed)?;
+        let mut c = Cursor::new(rest);
         match tag {
             0 => {
-                if rest.len() < 12 {
-                    return Err(WireError::Malformed);
+                let term = c.u64()?;
+                let prev_log_index = c.u64()?;
+                let prev_log_term = c.u64()?;
+                let leader_commit = c.u64()?;
+                let n = c.u32()? as usize;
+                let mut entries = Vec::with_capacity(n.min(1024));
+                for _ in 0..n {
+                    let elen = c.u32()? as usize;
+                    let eb = c.take(elen)?;
+                    entries.push(LogEntry::decode(eb).map_err(|_| WireError::Malformed)?);
                 }
-                let leader_commit = u64::from_le_bytes(rest[0..8].try_into().expect("8"));
-                let elen = u32::from_le_bytes(rest[8..12].try_into().expect("4")) as usize;
-                let start = 12usize;
-                let end = start.checked_add(elen).ok_or(WireError::Malformed)?;
-                if rest.len() < end {
-                    return Err(WireError::Malformed);
-                }
-                let entry =
-                    LogEntry::decode(&rest[start..end]).map_err(|_| WireError::Malformed)?;
-                Ok(Message::Append {
-                    entry,
+                Ok(Message::AppendEntries {
+                    term,
+                    prev_log_index,
+                    prev_log_term,
+                    entries,
                     leader_commit,
                 })
             }
             1 => {
-                if rest.len() < 16 {
-                    return Err(WireError::Malformed);
-                }
-                Ok(Message::Ack {
-                    match_index: u64::from_le_bytes(rest[0..8].try_into().expect("8")),
-                    term: u64::from_le_bytes(rest[8..16].try_into().expect("8")),
+                let term = c.u64()?;
+                let success = c.bool()?;
+                let match_index = c.u64()?;
+                Ok(Message::AppendReply {
+                    term,
+                    success,
+                    match_index,
                 })
             }
-            2 => Ok(Message::StatusRequest),
-            3 => {
-                if rest.len() < 16 {
-                    return Err(WireError::Malformed);
-                }
-                Ok(Message::Status {
-                    last_index: u64::from_le_bytes(rest[0..8].try_into().expect("8")),
-                    term: u64::from_le_bytes(rest[8..16].try_into().expect("8")),
-                })
-            }
-            4 => {
-                if rest.len() < 8 {
-                    return Err(WireError::Malformed);
-                }
-                Ok(Message::Commit {
-                    leader_commit: u64::from_le_bytes(rest[0..8].try_into().expect("8")),
-                })
-            }
+            2 => Ok(Message::RequestVote {
+                term: c.u64()?,
+                pre_vote: c.bool()?,
+                candidate_id: c.u64()?,
+                last_log_index: c.u64()?,
+                last_log_term: c.u64()?,
+            }),
+            3 => Ok(Message::VoteReply {
+                term: c.u64()?,
+                pre_vote: c.bool()?,
+                granted: c.bool()?,
+            }),
+            4 => Ok(Message::StatusRequest),
+            5 => Ok(Message::Status {
+                last_index: c.u64()?,
+                term: c.u64()?,
+            }),
             _ => Err(WireError::Malformed),
         }
+    }
+}
+
+/// A tiny bounds-checked little-endian field reader for the wire decoder.
+struct Cursor<'a> {
+    buf: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> Cursor<'a> {
+    fn new(buf: &'a [u8]) -> Self {
+        Self { buf, pos: 0 }
+    }
+    fn take(&mut self, n: usize) -> Result<&'a [u8], WireError> {
+        let end = self.pos.checked_add(n).ok_or(WireError::Malformed)?;
+        let slice = self.buf.get(self.pos..end).ok_or(WireError::Malformed)?;
+        self.pos = end;
+        Ok(slice)
+    }
+    fn u64(&mut self) -> Result<u64, WireError> {
+        Ok(u64::from_le_bytes(
+            self.take(8)?.try_into().expect("8 bytes"),
+        ))
+    }
+    fn u32(&mut self) -> Result<u32, WireError> {
+        Ok(u32::from_le_bytes(
+            self.take(4)?.try_into().expect("4 bytes"),
+        ))
+    }
+    fn bool(&mut self) -> Result<bool, WireError> {
+        Ok(self.take(1)?[0] != 0)
     }
 }
 
@@ -244,12 +357,12 @@ pub enum FrameRead {
 /// Read one frame, but return [`FrameRead::Idle`] if the read times out **at a
 /// frame boundary** (before any byte of the length prefix arrives).
 ///
-/// This is the teardown-liveness read used by the follower serve loop: it lets
-/// the loop wake periodically to observe a stop request or a vanished peer
-/// without ever leaving a half-consumed frame on the wire. Once the *first*
-/// length byte has been read, the rest of the frame is completed with a blocking
-/// read (the timeout is cleared), so a slow-but-live sender never desyncs the
-/// stream. The caller must have set a read timeout on `stream`.
+/// This is the teardown-liveness read used by the serve loop: it lets the loop
+/// wake periodically to observe a stop request or a vanished peer without ever
+/// leaving a half-consumed frame on the wire. Once the *first* length byte has
+/// been read, the rest of the frame is completed with a blocking read (the timeout
+/// is cleared), so a slow-but-live sender never desyncs the stream. The caller
+/// must have set a read timeout on `stream`.
 ///
 /// # Errors
 ///
@@ -257,7 +370,6 @@ pub enum FrameRead {
 /// surfaces as [`WireError::Io`] — that is a real stalled peer, not idleness.
 pub fn read_frame_or_idle(stream: &mut TcpStream) -> Result<FrameRead, WireError> {
     let mut len_buf = [0u8; 4];
-    // Try to read the first byte; a clean timeout here means "no frame started".
     match stream.read(&mut len_buf[..1]) {
         Ok(0) => return Err(WireError::Io(io::Error::from(io::ErrorKind::UnexpectedEof))),
         Ok(_) => {}
@@ -271,8 +383,6 @@ pub fn read_frame_or_idle(stream: &mut TcpStream) -> Result<FrameRead, WireError
         }
         Err(e) => return Err(WireError::Io(e)),
     }
-    // A frame has begun. Complete it under a blocking read so a slow sender does
-    // not cause a mid-frame desync. Restore the prior timeout afterwards.
     let prior = stream.read_timeout().ok().flatten();
     stream.set_read_timeout(None)?;
     let result = (|| {
@@ -296,37 +406,106 @@ mod tests {
     use std::net::{TcpListener, TcpStream};
     use std::thread;
 
-    #[test]
-    fn messages_round_trip() {
-        let msgs = [
-            Message::Append {
-                entry: LogEntry::new(3, 9, vec![1, 2, 3]),
-                leader_commit: 8,
+    fn sample_messages() -> Vec<Message> {
+        vec![
+            Message::AppendEntries {
+                term: 7,
+                prev_log_index: 3,
+                prev_log_term: 5,
+                entries: vec![
+                    LogEntry::new(7, 4, vec![1, 2, 3]),
+                    LogEntry::new(7, 5, vec![]),
+                ],
+                leader_commit: 4,
             },
-            Message::Ack {
-                match_index: 9,
-                term: 3,
+            // heartbeat (empty entries, empty-prev sentinel)
+            Message::AppendEntries {
+                term: 9,
+                prev_log_index: EMPTY_LOG,
+                prev_log_term: 0,
+                entries: vec![],
+                leader_commit: EMPTY_LOG,
+            },
+            Message::AppendReply {
+                term: 7,
+                success: true,
+                match_index: 5,
+            },
+            Message::AppendReply {
+                term: 8,
+                success: false,
+                match_index: EMPTY_LOG,
+            },
+            Message::RequestVote {
+                term: 12,
+                pre_vote: false,
+                candidate_id: 40_001,
+                last_log_index: 5,
+                last_log_term: 7,
+            },
+            Message::RequestVote {
+                term: 12,
+                pre_vote: true,
+                candidate_id: 40_002,
+                last_log_index: EMPTY_LOG,
+                last_log_term: 0,
+            },
+            Message::VoteReply {
+                term: 12,
+                pre_vote: false,
+                granted: true,
+            },
+            Message::VoteReply {
+                term: 13,
+                pre_vote: true,
+                granted: false,
             },
             Message::StatusRequest,
             Message::Status {
                 last_index: 9,
                 term: 3,
             },
-            Message::Commit { leader_commit: 7 },
-        ];
-        for m in msgs {
-            assert_eq!(Message::decode(&m.encode()).unwrap(), m);
+        ]
+    }
+
+    #[test]
+    fn all_messages_round_trip() {
+        for m in sample_messages() {
+            assert_eq!(Message::decode(&m.encode()).unwrap(), m, "round-trip {m:?}");
         }
     }
 
     #[test]
+    fn truncated_append_entries_is_rejected() {
+        let m = Message::AppendEntries {
+            term: 1,
+            prev_log_index: 0,
+            prev_log_term: 1,
+            entries: vec![LogEntry::new(1, 1, vec![9])],
+            leader_commit: 0,
+        };
+        let bytes = m.encode();
+        // Lopping off the tail must surface as Malformed, never a panic or a
+        // silently-short entry list.
+        for cut in 1..bytes.len() {
+            let _ = Message::decode(&bytes[..cut]); // must not panic
+        }
+        assert!(matches!(
+            Message::decode(&bytes[..bytes.len() - 1]),
+            Err(WireError::Malformed)
+        ));
+    }
+
+    #[test]
     fn frames_traverse_a_real_loopback_socket() {
-        // Bind on an ephemeral 127.0.0.1 port — a genuine OS socket, not a fake.
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral");
         let addr = listener.local_addr().unwrap();
-        let sent = Message::Append {
-            entry: LogEntry::new(1, 0, vec![42, 7]),
-            leader_commit: 0,
+        let sent = Message::AppendEntries {
+            term: 1,
+            prev_log_index: EMPTY_LOG,
+            prev_log_term: 0,
+            entries: vec![LogEntry::new(1, 0, vec![42, 7])],
+            leader_commit: EMPTY_LOG,
         };
         let sent2 = sent.clone();
         let server = thread::spawn(move || {

@@ -38,3 +38,8 @@ celnet-heston = { path = "../celnet-heston" }
 # workspace.dependencies table. Backs the Sobol KAT / (t,m,s)-net equidistribution
 # / measured-variance-reduction / bridge-covariance parity row in tests/qmc.rs.
 celnet-qmc = { path = "../celnet-qmc" }
+# Full Raft consensus module (replicated log). Referenced by path — like the other
+# leaf crates above it is not in the central workspace.dependencies table. Backs
+# the leader-election / election-safety / log-matching+conflicting-tail-truncation /
+# convergence-oracle parity row in tests/raft_election.rs (real loopback cluster).
+celnet-replog = { path = "../celnet-replog" }

@@ -8,10 +8,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 /// Hard upper bound on any single test body — a regression fails loudly here.
 pub(crate) const TEST_DEADLINE: Duration = Duration::from_secs(15);
 
-/// Per-RPC socket timeout: small enough that a dead peer fails fast, large
-/// enough to never flake under parallel-nextest contention on loopback.
-pub(crate) const IO_TIMEOUT: Duration = Duration::from_secs(2);
-
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// A fresh, unique journal path under the OS temp dir for this test process.
