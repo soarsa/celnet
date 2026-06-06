@@ -24,9 +24,15 @@
 //! * [`persist`] — the durable Raft persistent state (`current_term`/`voted_for`),
 //!   CRC-protected and atomically written (Raft §5 persistence requirement).
 //! * [`log`] — the durable, index-addressed replicated log over a journal, with
-//!   **append** and **durable conflicting-tail truncation** (atomic rewrite:
-//!   write-fresh → fsync → rename → dir-fsync — the journal is the source of truth,
-//!   never a memory-only mask).
+//!   **append**, **durable conflicting-tail truncation**, and **durable log
+//!   prefix discard** (atomic rewrite: write-fresh → fsync → rename → dir-fsync —
+//!   the journal is the source of truth, never a memory-only mask). A base-index
+//!   offset keeps every accessor correct in *absolute* Raft indices over a log
+//!   whose physical start has shifted past a discarded prefix.
+//! * [`compaction`] — the durable, CRC-protected, atomically-written
+//!   [`compaction::Snapshot`] (the applied [`state::BookState`] captured at a
+//!   committed `(last_included_index, last_included_term)` boundary) and its
+//!   [`compaction::SnapshotStore`], the substrate for §7 log compaction.
 //! * [`wire`] — length-prefixed [`wire::Message`] framing over real
 //!   `std::net::TcpStream` loopback sockets (AppendEntries / RequestVote + replies,
 //!   plus a Status probe). No shared-memory fake.
@@ -45,17 +51,50 @@
 //! stale leader steps down on observing a higher term, its uncommitted divergent
 //! tail reconciled (truncated) by the new leader's AppendEntries.
 //!
+//! # Log compaction / snapshotting (Raft §7 — BUILT)
+//!
+//! An unbounded append-only log replays in time linear in its length and grows
+//! without bound. This crate bounds it with **durable snapshotting + log prefix
+//! discard**, behind the same honest boundary:
+//!
+//! * [`compaction::Snapshot`] / [`compaction::SnapshotStore`] capture the applied
+//!   [`state::BookState`] at a committed `(last_included_index,
+//!   last_included_term)` boundary, durably and atomically (CRC-protected, temp →
+//!   fsync → rename → dir-fsync).
+//! * [`log::Log::discard_prefix`] really shrinks the durable journal on disk to
+//!   the retained tail `[last_included_index + 1, ..]`, and a **base-index
+//!   offset** keeps every absolute-index accessor correct (including
+//!   `matches_prev` at the snapshot boundary, so a leader replicating right after
+//!   the boundary still matches).
+//! * [`RaftNode::compact`] snapshots the applied state at the current commit
+//!   index and discards the prefix; [`RaftNode`] boot **seeds** the applied state
+//!   from the snapshot first, then replays only the retained tail, reaching the
+//!   same `to_bits` state as a full-log replay. A committed entry captured in a
+//!   snapshot is never lost, and an uncommitted entry is never discarded.
+//!
 //! # What is explicitly the *next* increment (documented, not half-built)
 //!
 //! Membership is **fixed** for a cluster's lifetime: a [`RaftNode`] is constructed
 //! with its full peer set and `cluster_size`, and there is no live add/remove of
-//! members. Dynamic **membership change** (Raft §6 — joint consensus, or the
-//! single-server add/remove of the Ongaro thesis) and **log compaction / snapshot
-//! install** (Raft §7, to bound an unbounded log's replay/transfer cost — the
-//! [`celnet_journal`] module docs already sketch the durable compaction recipe this
-//! crate's truncation reuses) are the next increments. They are documented here
-//! rather than stubbed: the present cluster is correct and complete for a fixed
-//! membership, and nothing fakes the unbuilt parts.
+//! members. Two increments are documented here rather than stubbed:
+//!
+//! * Dynamic **membership change** (Raft §6 — joint consensus, or the
+//!   single-server add/remove of the Ongaro thesis).
+//! * The **InstallSnapshot RPC** (Raft §7): a leader whose log no longer holds the
+//!   entries a *far-behind* follower needs would ship the durable snapshot over the
+//!   wire, the follower installing it and resuming from `last_included_index + 1`.
+//!   The local snapshotting, prefix discard, and snapshot-seeded recovery it builds
+//!   on are **fully built and gated here**; the on-the-wire transfer + follower
+//!   install path is deliberately deferred to its own increment (it must extend the
+//!   wire contract and the AppendEntries/serve path with a streamed install and a
+//!   correct follower discard-and-resume, gated by a real far-behind-follower
+//!   loopback catch-up test) rather than be half-built. Until then a follower that
+//!   somehow needs a discarded prefix is served correctly by the present design by
+//!   simply *not compacting past the slowest follower's match index* (the supported
+//!   operational discipline — see [`RaftNode::safe_compact_index`]).
+//!
+//! Nothing fakes the unbuilt parts: the present cluster is correct and complete
+//! for a fixed membership with local compaction.
 //!
 //! # Honest boundary (reproduced verbatim, never violated)
 //!
@@ -71,6 +110,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod compaction;
 pub mod election;
 pub mod entry;
 pub mod log;
@@ -78,6 +118,7 @@ pub mod persist;
 pub mod state;
 pub mod wire;
 
+pub use compaction::{Snapshot, SnapshotError, SnapshotStore, snapshot_path};
 pub use election::{RaftConfig, RaftNode, Role};
 pub use entry::{EntryError, Index, LogEntry, Term};
 pub use log::{EMPTY_PREV, Log};

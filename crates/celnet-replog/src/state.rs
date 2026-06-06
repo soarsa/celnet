@@ -189,6 +189,56 @@ impl BookState {
     pub fn to_bits(&self) -> Vec<(u64, u64)> {
         self.book.iter().map(|(&k, &v)| (k, v.to_bits())).collect()
     }
+
+    /// Serialize the whole book to a canonical, deterministic byte form for a
+    /// durable snapshot (the captured state machine inside a snapshot file).
+    ///
+    /// Layout (all little-endian): a `u64` entry count, then each `(key u64,
+    /// value-bits u64)` pair **in `BTreeMap` key order**. Values are stored by
+    /// their raw IEEE-754 bits (`f64::to_bits`), so the round-trip is *exact* —
+    /// signed zero, subnormals and NaN bit patterns are preserved, never decimal-
+    /// rounded — and the byte stream is independent of the order updates arrived
+    /// (the sorted iteration is the same canonicalization [`BookState::to_bits`]
+    /// uses). Encoding is a pure function of the state, so two nodes with the same
+    /// applied state encode to byte-identical snapshot payloads.
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(8 + self.book.len() * 16);
+        buf.extend_from_slice(&(self.book.len() as u64).to_le_bytes());
+        for (&k, &v) in &self.book {
+            buf.extend_from_slice(&k.to_le_bytes());
+            buf.extend_from_slice(&v.to_bits().to_le_bytes());
+        }
+        buf
+    }
+
+    /// Reconstruct a book from its canonical [`BookState::encode`] bytes.
+    ///
+    /// The result is `to_bits`-identical to the state that was encoded.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UpdateError::Truncated`] if the buffer is shorter than the
+    /// declared entry count requires (a corrupt or partial snapshot payload).
+    pub fn decode(bytes: &[u8]) -> Result<Self, UpdateError> {
+        if bytes.len() < 8 {
+            return Err(UpdateError::Truncated);
+        }
+        let count = u64::from_le_bytes(bytes[0..8].try_into().expect("8 bytes")) as usize;
+        let body = &bytes[8..];
+        let need = count.checked_mul(16).ok_or(UpdateError::Truncated)?;
+        if body.len() < need {
+            return Err(UpdateError::Truncated);
+        }
+        let mut book = BTreeMap::new();
+        for i in 0..count {
+            let off = i * 16;
+            let key = u64::from_le_bytes(body[off..off + 8].try_into().expect("8 bytes"));
+            let bits = u64::from_le_bytes(body[off + 8..off + 16].try_into().expect("8 bytes"));
+            book.insert(key, f64::from_bits(bits));
+        }
+        Ok(Self { book })
+    }
 }
 
 #[cfg(test)]
@@ -223,6 +273,52 @@ mod tests {
         // The replicated add reproduces the same (non-exact-decimal) sum bits a
         // single node would compute — that is the point: identical ops, identical bits.
         assert_eq!(s.get(1).unwrap().to_bits(), (0.1f64 + 0.2f64).to_bits());
+    }
+
+    #[test]
+    fn snapshot_codec_round_trips_bit_identically() {
+        let mut s = BookState::new();
+        s.apply(&BookUpdate::Add { key: 1, delta: 0.1 });
+        s.apply(&BookUpdate::Add { key: 1, delta: 0.2 });
+        s.apply(&BookUpdate::Set {
+            key: 7,
+            value: f64::from_bits(0x3ff0_0000_0000_0001), // 1.0 + 1 ULP
+        });
+        s.apply(&BookUpdate::Set {
+            key: 3,
+            value: -0.0,
+        });
+        s.apply(&BookUpdate::Set {
+            key: 9,
+            value: f64::from_bits(0x7ff8_0000_0000_0001), // a NaN bit pattern
+        });
+        let back = BookState::decode(&s.encode()).expect("decodes");
+        // Bit-exact equality of the whole book (NaN / -0.0 / sub-ULP safe).
+        assert_eq!(s.to_bits(), back.to_bits());
+        // Encoding is a pure function of the state.
+        assert_eq!(s.encode(), back.encode());
+    }
+
+    #[test]
+    fn snapshot_decode_rejects_truncated_payload() {
+        let mut s = BookState::new();
+        s.apply(&BookUpdate::Set { key: 1, value: 1.0 });
+        let bytes = s.encode();
+        // Lopping any byte off the tail must surface Truncated, never panic.
+        for cut in 0..bytes.len() {
+            assert_eq!(
+                BookState::decode(&bytes[..cut]),
+                Err(UpdateError::Truncated)
+            );
+        }
+    }
+
+    #[test]
+    fn empty_book_snapshot_round_trips() {
+        let s = BookState::new();
+        let back = BookState::decode(&s.encode()).expect("decodes empty");
+        assert!(back.is_empty());
+        assert_eq!(s.to_bits(), back.to_bits());
     }
 
     #[test]
