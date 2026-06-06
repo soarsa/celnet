@@ -36,17 +36,21 @@ validated**; what remains is cross-DC *hardening* and the durability tier. The s
   edge processes, drives every API capability through the edge, and holds the firm aggregate +
   prices **invariant across node scale-up/scale-down** (3→4→2) — the stateless edge scales by
   being repointed at the new fleet. No `celnet.proto` change (single current contract).
-- **Built (the durability/replication tier — `celnet-replog`):** the thin **leader-replicated
-  event log** over real loopback sockets — leader durably appends `(term, index)` entries to its
-  `celnet-journal`, streams them to followers who append in the same order, and **commits only on
-  quorum durability**; a follower/recovered node **replays its journal to bit-identical
-  (`f64::to_bits`) state**; and a caught-up **hot standby pre-warm + bounded failover** takes over
-  with zero loss of committed entries. Proven by ≥3 logical nodes on **ephemeral 127.0.0.1 TCP
-  ports** (genuine OS sockets, not a shared-memory fake): kill-leader → byte-identical committed
-  log + `to_bits`-identical replay; lost-quorum makes no false progress; bounded standby takeover;
-  crash-recovery. **This is a thin leader-replicated log *before* full Raft** — automatic leader
-  **election** (vote RPCs auto-advancing the term) and cross-follower conflicting-tail truncation
-  are the documented next increment, not half-built.
+- **Built (the durability/replication tier — `celnet-replog`):** **full Raft consensus** over real
+  loopback sockets. A cluster of `RaftNode`s **elects a leader** (randomized election timeouts +
+  RequestVote with the §5.4.1 up-to-date voting rule + **Pre-Vote** so a flaky node cannot disrupt a
+  healthy leader; persistent `current_term`/`voted_for`/commit-watermark); the leader replicates via
+  **AppendEntries with the §5.3 log-matching property** and **durable conflicting-tail truncation**
+  (an atomic write-fresh→fsync→rename journal rewrite — the journal is the source of truth, never a
+  memory-only mask); an entry **commits** under the §5.4.2 rule (a majority's `match_index ≥ N` AND
+  `log[N].term == current_term`); every node applies committed entries in order to bit-identical
+  (`f64::to_bits`) state. Proven by ≥3 logical nodes on **ephemeral 127.0.0.1 TCP ports** (genuine OS
+  sockets, not a shared-memory fake): kill-leader → survivors auto-elect a higher-term leader & keep
+  progressing with no committed loss; partitioned minority cannot win (election safety); a divergent
+  uncommitted tail is truncated/overwritten byte-identically; lost-quorum makes no false progress;
+  crash-recovery to exact committed state. **The documented next increment** (not half-built) is Raft
+  §6 **dynamic membership change** and §7 **log compaction / snapshot install** — fixed membership is
+  complete and correct today.
 - **Designed only / deferred (the cross-DC tier, §12):** the inter-**datacenter** transport
   *hardening* (TLS, the `io_uring`/DPDK datapath, the §11 latency **SLOs** — the built federation +
   replog prove *correctness + routing + churn + failover + quorum/replay arithmetic* over loopback,
@@ -70,19 +74,20 @@ The honest split, mechanism by mechanism:
 | **Configurable fleet topology** (`InProcess` default / `Distributed{endpoints}`), deploy-time bound | **Built** | `celnet-risk-fleet` `FleetTopology`; `celnet-server` `Edge::start_on_with_topology` (`CELNET_FLEET_MODE`/`CELNET_FLEET_BACKENDS`) |
 | **Cross-node serving over real gRPC** — edge federates RiskService + forwards owned-pair Pricing/Quote/Surface across N backend processes; reconciled fan-out == single-node; `unavailable` on unreachable slice | **Built** (localhost multi-process; cross-DC hardening + latency SLOs deferred) | `celnet-server` `services/forward.rs`, `services/risk/federate.rs`; OS-process proof `examples/scale_harness.rs` |
 | Cross-**datacenter** transport **hardening** (TLS, `io_uring`/DPDK datapath, §11 latency SLOs) | **Designed only** | — (§12) |
-| Thin **leader-replicated log** (quorum-commit) + deterministic `to_bits` replay + hot-standby pre-warm/bounded failover + crash-recovery | **Built** (logical nodes over real loopback sockets; full Raft leader-election + conflicting-tail truncation = documented next increment; absolute cross-host wire SLO stays deploy-gated) | `celnet-replog` (`leader`/`follower`/`standby`/`entry`/`state`/`wire`); proof `tests/replication.rs` |
+| **Full Raft consensus** — leader election (randomized timeouts + RequestVote §5.4.1 + Pre-Vote; persistent term/vote/commit-watermark), AppendEntries with §5.3 log-matching + **durable conflicting-tail truncation**, §5.4.2 commitment, deterministic `to_bits` apply | **Built** (logical nodes over real loopback sockets; Raft §6 membership change + §7 snapshot/compaction = documented next increment; absolute cross-host wire SLO stays deploy-gated) | `celnet-replog` (`election`/`log`/`persist`/`entry`/`state`/`wire`); proofs `tests/replication.rs` + parity row `celnet-parity/tests/raft_election.rs` |
 | In-proc **SPMC broadcast** fan-out ring (lock-free, per-slot two-phase seqlock, conflation with exact skip-accounting; no-loss/total-order at 100/1000 consumers) | **Built** (crate; in-process loopback throughput is an upper-bound/relative signal — absolute network fan-out stays deploy-gated; edge-wiring to replace the `tokio` broadcast still pending) | `celnet-fanout` (`ring`); proof `tests/broadcast.rs` |
 | `SO_REUSEPORT` sharded accept + eBPF steering; `io_uring`/XDP tier | **Designed only** (readiness probe references the handoff intent) | — (build-now, §12) |
 | DPDK/RDMA multicast tier | **Deferred** (ADR-gated on measured bottleneck) | — (§12) |
 
 The **partition map, the cross-shard aggregation algebra, the configurable topology, the
-cross-node gRPC serving/federation, and now the thin leader-replicated event log
-(`celnet-replog`: quorum-commit + deterministic `to_bits` replay + hot-standby/failover +
-crash-recovery) are built** (see the rows above). What is still **design** below the §0 line is
-the **cross-DC hardening tier**: the kernel-bypass datapath, the §11 latency SLOs, and — atop the
-built thin replicated log — full **Raft leader-election** + conflicting-tail truncation. Treat the
-§11 absolute cross-host latency numbers as target, not deployed; the replog's correctness
-(byte-identical committed log, `to_bits`-identical replay, quorum safety, bounded failover) is
+cross-node gRPC serving/federation, and now full Raft consensus
+(`celnet-replog`: leader election + log-matching + durable conflicting-tail truncation +
+quorum commit + deterministic `to_bits` replay + crash-recovery) are built** (see the rows above).
+What is still **design** below the §0 line is the **cross-DC hardening tier** (the kernel-bypass
+datapath, the §11 latency SLOs) and — atop the built consensus — Raft §6 **membership change** +
+§7 **snapshot/compaction**. Treat the §11 absolute cross-host latency numbers as target, not
+deployed; the replog's correctness (election safety, byte-identical committed log,
+`to_bits`-identical replay, quorum safety, conflicting-tail truncation, bounded failover) is
 **built and validated over real loopback sockets**, an upper bound on compute and a lower bound on
 real cross-host wire latency — the absolute inter-host SLO stays deploy-gated. Treat "shard /
 router / federation / replicated-log" as built (validated multi-process/multi-node on localhost

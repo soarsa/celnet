@@ -21,9 +21,25 @@ slow-timeout = { period = "30s", terminate-after = 4 }
 # counters uncorrupted and the spinning reads from starving each other.
 [test-groups]
 engine-serial = { max-threads = 1 }
+# The Raft consensus loopback tests each boot a multi-node cluster of real threads
+# driven by *real wall-clock election timers*. They are correct and deadline-bounded,
+# but their election timing is sensitive to CPU scheduling jitter: if several such
+# multi-node tests co-schedule they saturate every core, the tick threads are starved,
+# election timeouts fire spuriously, and leadership churns — a measurement-methodology
+# artifact, NOT a protocol regression (each passes comfortably with cores to spare).
+# Pinning them to a single serialized group removes the artifact without weakening any
+# assertion, exactly as the engine-serial group does for the spin/alloc probes.
+replog-consensus = { max-threads = 1 }
 
 [[profile.default.overrides]]
 # The zero-allocation proofs (share the process-global counting allocator) and the
 # lock-free concurrency probes (CPU-spinning torn-read/coherent-publish detectors).
 filter = 'package(celnet-engine) & (test(/zero_alloc/) | binary(zero_alloc) | binary(concurrency))'
 test-group = 'engine-serial'
+
+[[profile.default.overrides]]
+# The real-socket, real-timer Raft consensus multi-node tests (celnet-replog's
+# replication suite + celnet-parity's raft_election row). Serialized — see the
+# replog-consensus group note above.
+filter = 'binary(replication) | binary(raft_election)'
+test-group = 'replog-consensus'
