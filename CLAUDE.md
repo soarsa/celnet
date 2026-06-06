@@ -123,6 +123,33 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-06-06 — **Leadership program Wave 4c DONE (commit `428a424`; pushed).** Third catalogue
+  increment, two disjoint gated `celnet-parity` rows (parallel implement→adversarial-verify), then
+  **independently re-gated**. **Track A — forward-start vanilla + cliquet** in
+  `celnet-exotics/forward_start.rs`: exact **Rubinstein (1990)** FX dual-carry strike-reset closed form
+  (`e^{-r_f·t1}·S0·unit-GK` over residual maturity) + cliquet as the exact **Σ forward-start legs**
+  (plain ratchet) + locally-capped/floored cliquet by MC. Parity `tests/forward_start.rs` (6 rows):
+  closed form == from-scratch two-leg-GBM MC within reported stderr; t1→0 → celnet-vanilla GK ~1e-9;
+  plain cliquet == Σ legs ~1e-10; capped MC == independent in-test clamped MC; tighter cap ⇒ strictly
+  lower (structural). **Track B — Sobol + Brownian-bridge QMC** as a NEW crate **`celnet-qmc`** (dep
+  {core}): gray-code Joe-Kuo Sobol (embedded **BSD-3-Clause** `new-joe-kuo-6.21201` direction numbers,
+  dims 2..=300 documented+gated), **Owen-style nested scramble** (unbiased RQMC), principal-bisection
+  Brownian bridge, high-accuracy inverse-normal CDF; direction numbers exposed for **Wave-5 GPU reuse**
+  (no GPU claim). Parity `tests/qmc.rs` (7 rows): Sobol KAT vs canonical `sobol.cc` + dim-1 van-der-Corput
+  identity; exact (0,m,1)/(0,m,2)-net equidistribution (honestly NOT overclaiming (0,m,s) for s≥3);
+  **MEASURED** variance reduction vs fair plain MC on exact targets — geometric-Asian (Kemna-Vorst)
+  **≈37.7×**, European (Black-Scholes) **≈88.5×**, both ≥3× required, ratios measured-not-asserted;
+  bridge covariance `A·Aᵀ=min(t_i,t_j)` exact; RQMC unbiasedness. **LESSON AGAIN:** the per-track verifier
+  REJECTED Track B (correct) because `tests/qmc.rs` failed `clippy -p celnet-parity --test qmc -D warnings`
+  (21 lints: doc-overindent + needless-range-loop + too-many-arguments) — the impl had only run clippy on
+  `celnet-qmc`, not the parity test target (my Track-B gate spec omitted it). Fixed forward myself
+  (doc-list reflow, iterator loops, an `RmseCase` config struct replacing two 8-arg helpers — pure
+  refactors, tests unchanged incl. the variance-reduction gate). **SOTA, ZERO workarounds** (OSS-only
+  deps; my own diff grep clean). Full `just check` green (literal "All gates passed."), **976/976 tests**
+  (was 949). **Next: Wave 4d** — FRTB-SA completeness (DRC/RRAO, risk crates) ∥ pair-universe breadth
+  (conventions/calendar/types), each its own fully-gated wave; then **Wave 3** (replicated log/hot-standby/
+  SPMC, XL) and **Wave 5** (GPU ratios — reuses the celnet-qmc Sobol/bridge).
+
 - 2026-06-06 — **Leadership program Wave 4b DONE (commit `91d8e2c`; pushed).** Second catalogue
   increment, two disjoint gated `celnet-parity` rows (parallel implement→adversarial-verify, both
   **accept**), then **independently re-gated** — and the full `just check` caught a real defect both
