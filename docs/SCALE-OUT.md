@@ -36,13 +36,24 @@ validated**; what remains is cross-DC *hardening* and the durability tier. The s
   edge processes, drives every API capability through the edge, and holds the firm aggregate +
   prices **invariant across node scale-up/scale-down** (3→4→2) — the stateless edge scales by
   being repointed at the new fleet. No `celnet.proto` change (single current contract).
-- **Designed only / deferred (the cross-DC + durability tier, §12):** the inter-**datacenter**
-  transport *hardening* (TLS, the `io_uring`/DPDK datapath, the §11 latency **SLOs** — the
-  built federation proves *correctness + routing + churn + failover*, not the wire-latency
-  budgets, which need the real datapath + bench gates), the thin Raft/Aeron-style **replicated
-  event log** (fleet durability/replay — `celnet-journal` is a per-node WAL, not a replicated
-  log), **hot-standby pre-warm** with bounded failover, and the LMAX-disruptor SPMC fan-out
-  ring. These are drop-ins behind the now-built seam — no engine or contract change.
+- **Built (the durability/replication tier — `celnet-replog`):** the thin **leader-replicated
+  event log** over real loopback sockets — leader durably appends `(term, index)` entries to its
+  `celnet-journal`, streams them to followers who append in the same order, and **commits only on
+  quorum durability**; a follower/recovered node **replays its journal to bit-identical
+  (`f64::to_bits`) state**; and a caught-up **hot standby pre-warm + bounded failover** takes over
+  with zero loss of committed entries. Proven by ≥3 logical nodes on **ephemeral 127.0.0.1 TCP
+  ports** (genuine OS sockets, not a shared-memory fake): kill-leader → byte-identical committed
+  log + `to_bits`-identical replay; lost-quorum makes no false progress; bounded standby takeover;
+  crash-recovery. **This is a thin leader-replicated log *before* full Raft** — automatic leader
+  **election** (vote RPCs auto-advancing the term) and cross-follower conflicting-tail truncation
+  are the documented next increment, not half-built.
+- **Designed only / deferred (the cross-DC tier, §12):** the inter-**datacenter** transport
+  *hardening* (TLS, the `io_uring`/DPDK datapath, the §11 latency **SLOs** — the built federation +
+  replog prove *correctness + routing + churn + failover + quorum/replay arithmetic* over loopback,
+  **not** the absolute cross-host wire-latency budgets, which need a tuned LAN + bench gates and
+  stay deploy-gated). The in-process SPMC fan-out ring is now **built** (`celnet-fanout`); only its
+  wiring under the async edge (replacing the bounded `tokio` broadcast) remains. These are drop-ins
+  behind the now-built seams — no engine or contract change.
 
 The honest split, mechanism by mechanism:
 
@@ -59,17 +70,23 @@ The honest split, mechanism by mechanism:
 | **Configurable fleet topology** (`InProcess` default / `Distributed{endpoints}`), deploy-time bound | **Built** | `celnet-risk-fleet` `FleetTopology`; `celnet-server` `Edge::start_on_with_topology` (`CELNET_FLEET_MODE`/`CELNET_FLEET_BACKENDS`) |
 | **Cross-node serving over real gRPC** — edge federates RiskService + forwards owned-pair Pricing/Quote/Surface across N backend processes; reconciled fan-out == single-node; `unavailable` on unreachable slice | **Built** (localhost multi-process; cross-DC hardening + latency SLOs deferred) | `celnet-server` `services/forward.rs`, `services/risk/federate.rs`; OS-process proof `examples/scale_harness.rs` |
 | Cross-**datacenter** transport **hardening** (TLS, `io_uring`/DPDK datapath, §11 latency SLOs) | **Designed only** | — (§12) |
-| Thin **Raft/Aeron-style replicated log** + hot-standby pre-warm + replay | **Designed only** | — (build-now, §12) |
-| In-proc **LMAX-disruptor SPMC** fan-out ring | **Designed only** (today: tokio broadcast) | — (build-now, §12) |
+| Thin **leader-replicated log** (quorum-commit) + deterministic `to_bits` replay + hot-standby pre-warm/bounded failover + crash-recovery | **Built** (logical nodes over real loopback sockets; full Raft leader-election + conflicting-tail truncation = documented next increment; absolute cross-host wire SLO stays deploy-gated) | `celnet-replog` (`leader`/`follower`/`standby`/`entry`/`state`/`wire`); proof `tests/replication.rs` |
+| In-proc **SPMC broadcast** fan-out ring (lock-free, per-slot two-phase seqlock, conflation with exact skip-accounting; no-loss/total-order at 100/1000 consumers) | **Built** (crate; in-process loopback throughput is an upper-bound/relative signal — absolute network fan-out stays deploy-gated; edge-wiring to replace the `tokio` broadcast still pending) | `celnet-fanout` (`ring`); proof `tests/broadcast.rs` |
 | `SO_REUSEPORT` sharded accept + eBPF steering; `io_uring`/XDP tier | **Designed only** (readiness probe references the handoff intent) | — (build-now, §12) |
 | DPDK/RDMA multicast tier | **Deferred** (ADR-gated on measured bottleneck) | — (§12) |
 
-The **partition map, the cross-shard aggregation algebra, the configurable topology, and the
-cross-node gRPC serving/federation are now built** (see the rows above). What is still
-**design** below the §0 line is the **cross-DC hardening + durability tier**: the replicated
-log, hot-standby pre-warm, the kernel-bypass datapath, and the §11 latency SLOs. Treat "the
-replicated log" and the §11 latency numbers as target, not deployed; treat "shard / router /
-federation" as built (validated multi-process on localhost over real gRPC).
+The **partition map, the cross-shard aggregation algebra, the configurable topology, the
+cross-node gRPC serving/federation, and now the thin leader-replicated event log
+(`celnet-replog`: quorum-commit + deterministic `to_bits` replay + hot-standby/failover +
+crash-recovery) are built** (see the rows above). What is still **design** below the §0 line is
+the **cross-DC hardening tier**: the kernel-bypass datapath, the §11 latency SLOs, and — atop the
+built thin replicated log — full **Raft leader-election** + conflicting-tail truncation. Treat the
+§11 absolute cross-host latency numbers as target, not deployed; the replog's correctness
+(byte-identical committed log, `to_bits`-identical replay, quorum safety, bounded failover) is
+**built and validated over real loopback sockets**, an upper bound on compute and a lower bound on
+real cross-host wire latency — the absolute inter-host SLO stays deploy-gated. Treat "shard /
+router / federation / replicated-log" as built (validated multi-process/multi-node on localhost
+over real gRPC and real TCP).
 
 ---
 
@@ -185,8 +202,35 @@ update used for booking.
   multi-consumer fan-out with batch publish, which is exactly the quoting use case.
   **What is built today** (§0): the hot path is the `rtrb` **SPSC** core→edge ring, and the
   async edge fans out to per-session subscribers with a tokio `mpsc` + a bounded **broadcast
-  depth 256**. The disruptor SPMC ring is the planned upgrade when measured fan-out fan-degree
-  per shard makes the broadcast the bottleneck — it does **not** exist in the tree yet.
+  depth 256**. The disruptor-style SPMC broadcast ring (next bullet) is now **built** in
+  `celnet-fanout`; wiring it under the async edge in place of the tokio broadcast is the
+  remaining integration step (gated on a measured per-shard fan-degree bottleneck).
+
+- **`celnet-fanout` — lock-free SPMC broadcast ring (BUILT, Wave 3).** A single-producer /
+  multi-consumer broadcast ring (the LMAX-Disruptor multi-consumer pattern, Thompson et al.
+  2011): one producer publishes a monotonic sequence into a power-of-two ring via a true
+  per-slot **seqlock** (an in-progress write flag straddling the payload store, so a reader
+  copying concurrently always detects an overlapping write — no torn read); each of N
+  consumers holds its **own** read cursor and observes every published item in order, with no
+  inter-consumer contention and a **zero-allocation, lock-free publish hot path** (storage
+  allocated once; proven by a counting-allocator test). **Overflow policy = bounded +
+  conflation with counted skips** (the FX-streaming-correct choice, §6): a slow consumer is
+  never able to back-pressure the producer — when lapped it fast-forwards to the oldest
+  still-live item, counts the gap into a per-consumer `skipped` metric, and converges on the
+  latest price, with the exact invariant `received + skipped == produced`. Gated
+  (`crates/celnet-fanout/tests/`): broadcast **no-loss + total-order at 100 and 1000
+  concurrent consumer threads** (every consumer receives the exact published sequence, in
+  order, zero skips, deadline-bounded); **conflation-correctness under overflow** (lapped slow
+  consumer sees the latest, strict-increasing, never-duplicated delivery, `received + skipped
+  == produced`, skip count > capacity proving conflation actually engaged); and a **measured
+  in-process throughput** figure. **Honest measurement boundary:** the throughput number
+  (best-of-bursts raw publish ~3×10⁷ items/s on the dev M4; a contended busy-poll 16-reader
+  fan-out figure reported alongside) is an **in-process loopback** measurement — an *upper*
+  bound on compute throughput and a *relative-regression* signal, **not** a cross-host wire
+  claim. Absolute network fan-out latency/throughput to remote counterparties is provable only
+  on the deployed datapath and stays **deploy-gated** (see the proxy-multicast-tree tier below
+  and §11); this crate proves the ring arithmetic, ordering, conflation accounting, and
+  zero-alloc publish — nothing about a live cross-DC fabric or NVIDIA.
 - **Network edge:** default to `SO_REUSEPORT` sharded accept + eBPF steering (the intended
   blue-green graceful-handoff mechanism; the readiness probe in `celnet-server` is wired for
   it, the socket-level handoff itself is *designed*) with conflation. Adopt `io_uring`/XDP as

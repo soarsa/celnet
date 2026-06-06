@@ -490,6 +490,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "celnet-fanout"
+version = "0.0.0"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "celnet-fix"
 version = "0.0.0"
 dependencies = [
@@ -585,12 +592,14 @@ dependencies = [
 name = "celnet-parity"
 version = "0.0.0"
 dependencies = [
+ "celnet-calendar",
  "celnet-conventions",
  "celnet-core",
  "celnet-exotics",
  "celnet-golden",
  "celnet-heston",
  "celnet-qmc",
+ "celnet-risk-cube",
  "celnet-surface",
  "celnet-testkit",
  "celnet-types",
@@ -635,6 +644,13 @@ name = "celnet-qmc"
 version = "0.0.0"
 dependencies = [
  "celnet-core",
+]
+
+[[package]]
+name = "celnet-replog"
+version = "0.0.0"
+dependencies = [
+ "celnet-journal",
 ]
 
 [[package]]
