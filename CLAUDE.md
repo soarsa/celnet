@@ -123,6 +123,31 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-06-06 — **Leadership program Wave 2 DONE (commits `32a39f6`, `375b808`, `911e294`; pushed).**
+  **2a (`32a39f6`):** fleet **§11 SLO loopback truth-benches** (`celnet-bench/fleet_slo.rs` + bin +
+  `baselines/fleet_slo.json`, gated by `bench_gate` arm 3) — cross-shard routing overhead, publish→
+  snapshot lag, conflation-correctness, fan-out tail — **honestly labelled LOOPBACK** (a HONEST
+  BOUNDARY banner in code+output; absolute wire SLOs stay deploy-gated) + the architectural
+  invariant (`forward.rs` serve_mode(None)==Serve::Local structural test + a behavioral
+  in-process-prices-locally test: **per-tick price path never crosses the router**); and **CLI
+  four-client parity** (`celnet-cli` `risk {aggregate,drill,positions,limits}` + `stream` via the
+  SDK, proven **CLI==SDK==server** against a real edge). **2b (`375b808`):** **concurrent federation
+  fan-out** (`federate.rs` sequential awaits → `join_all`; reducer + 1e-12/1e-9 invariance UNCHANGED;
+  new latency test proves ~max-backend not Σ — empirically discriminates: 0.62s vs 2.4s sequential) +
+  **surface-rebuild §1.2 truth-bench** (all-tenors VV/SSVI recompute, p99 VV 19.6µs/SSVI 7.75µs inside
+  the 150µs budget; `bench_gate` arm 1b). **PROCESS LESSON (`911e294`):** I pushed `375b808` on a
+  false background-wrapper "exit 0" while the full `just check` had FAILED fail-fast — the surface
+  budget UNIT test asserted §1.2 p99≤150µs but a latency percentile measured *inside parallel nextest*
+  (898 tests saturating all cores) inflates (181µs) = a measurement-methodology bug, not a regression.
+  Fixed forward (NO gate relaxation): the STRICT §1.2 budgets stay in the un-contended `core_load`/
+  `surface_rebuild` bins + `bench_gate` + the CI `core-load-gate`/`bench-gate` perf lanes; the in-suite
+  unit tests now assert harness + a contention-robust gross-sanity ceiling. **RULE: always verify the
+  literal "All gates passed" line, never the background wrapper exit code, before committing.** Full
+  `just check` green (898/898 twice under contention). **Next: Wave 4** (catalogue — independent of the
+  fleet waves, high product value: eSSVI, variance/vol swaps, arithmetic Asian, forward-start/cliquet,
+  Heston FFT/COS, Sobol QMC, FRTB-SA — each a gated `celnet-parity` row) per `docs/LEADERSHIP-PROGRAM.md`;
+  Wave 3 (replicated log/hot-standby/SPMC, XL) and Wave 5 (GPU ratios) remain.
+
 - 2026-06-05 — **Leadership program kicked off + Wave 1 DONE (commits `29e806b`, `0761a03`,
   `6a8bde3`; pushed to github.com/soarsa/celnet).** Multi-agent assessment + architect synthesis →
   **`docs/LEADERSHIP-PROGRAM.md`**: a 6-wave, dependency-ordered, gate-defined program to
