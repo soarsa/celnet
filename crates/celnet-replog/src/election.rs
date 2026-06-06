@@ -48,6 +48,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use crate::compaction::{Snapshot, SnapshotStore, snapshot_path};
 use crate::entry::LogEntry;
 use crate::log::{EMPTY_PREV, Log};
 use crate::persist::PersistStore;
@@ -113,6 +114,9 @@ struct NodeCore {
     role: Role,
     persist: PersistStore,
     log: Log,
+    /// The durable snapshot store (the `<journal>.snapshot` sibling file). Holds
+    /// the applied state captured at the most recent compaction boundary.
+    snapshots: SnapshotStore,
     /// Applied committed state machine (the bit-identity oracle target).
     applied: BookState,
     /// Highest index known committed, or `None`.
@@ -227,6 +231,73 @@ impl NodeCore {
         }
     }
 
+    /// Capture a durable snapshot of the applied state **as of `at_index`** and
+    /// discard the now-redundant log prefix `[.., at_index]` (Raft §7 compaction).
+    ///
+    /// `at_index` must be **committed and applied** (it is clamped to
+    /// `last_applied`); because `last_applied <= commit_index`, the snapshot only
+    /// ever subsumes committed entries — an uncommitted entry is never discarded,
+    /// and a committed entry it captures is never lost (the snapshot is durably
+    /// written before the prefix is discarded).
+    ///
+    /// The captured state is the state machine **exactly through `boundary`**, not
+    /// the node's current (possibly further-applied) state — it is reconstructed by
+    /// replaying the committed prefix `[base_index, boundary]` from the retained
+    /// durable log on top of the previous snapshot's state (if any). This is what
+    /// lets recovery seed from the snapshot and then replay only the *tail*
+    /// `(boundary, ..]` without double-applying entries `(boundary, last_applied]`.
+    ///
+    /// The snapshot is written FIRST (durably), THEN the prefix is discarded, so a
+    /// crash between the two leaves the (redundant) prefix on disk to be recovered
+    /// harmlessly. A request at or below an existing snapshot boundary is a no-op.
+    ///
+    /// Returns the boundary index actually snapshotted, or `None` if there was
+    /// nothing new to compact. Errors propagate the durable IO failure.
+    fn compact_to(&mut self, at_index: u64) -> std::io::Result<Option<u64>> {
+        // Only compact committed+applied entries.
+        let Some(applied_hw) = self.last_applied else {
+            return Ok(None);
+        };
+        let boundary = at_index.min(applied_hw);
+        // No-op if already snapshotted at/beyond this boundary.
+        if self.log.snapshot_index().is_some_and(|s| s >= boundary) {
+            return Ok(None);
+        }
+        // The boundary entry's term must be known (it is within the retained log,
+        // or it IS the current snapshot boundary). A committed+applied index is
+        // always within range, so this is always Some.
+        let Some(boundary_term) = self.log.term_at(boundary) else {
+            return Ok(None);
+        };
+
+        // Reconstruct the state machine AS OF `boundary` (not the current applied
+        // state, which may include entries above `boundary`). Start from the prior
+        // snapshot's state if one exists (its boundary is `base_index - 1`), then
+        // replay the retained committed prefix up to and including `boundary`.
+        let mut state_at_boundary = match self.snapshots.load()? {
+            Some(prev) if Some(prev.last_included_index) == self.log.snapshot_index() => prev.state,
+            _ => BookState::new(),
+        };
+        let replay_from = self.log.base_index();
+        if replay_from <= boundary {
+            for e in self.log.entries_from(replay_from)? {
+                if e.index > boundary {
+                    break;
+                }
+                if let Ok(upd) = BookUpdate::decode(&e.payload) {
+                    state_at_boundary.apply(&upd);
+                }
+            }
+        }
+
+        // 1) Durably write the snapshot of the state AS OF `boundary`.
+        let snap = Snapshot::new(boundary, boundary_term, state_at_boundary);
+        self.snapshots.save(&snap)?;
+        // 2) Discard the log prefix up to and including `boundary`.
+        self.log.discard_prefix(boundary, boundary_term)?;
+        Ok(Some(boundary))
+    }
+
     /// Leader §5.4.2 commit advance: find the highest `N > commit_index` such that
     /// a strict majority of nodes (self + peers with `match_index >= N`) hold it
     /// **and** `log[N].term == current_term`, then advance and apply.
@@ -328,35 +399,62 @@ impl RaftNode {
             "cluster_size must equal 1 (self) + the peer count"
         );
         let path = journal_path.into();
-        let log = Log::open(&path)?;
+        let mut log = Log::open(&path)?;
         let persist = PersistStore::open(persist_path(&path))?;
+        let snapshots = SnapshotStore::new(snapshot_path(&path));
 
         let addr = listener.local_addr()?;
         let id = u64::from(addr.port());
 
-        // Recover the applied state from the DURABLE COMMITTED prefix only. The
-        // commit-index watermark is persisted (Raft §5 + our durable-commit design),
-        // so a restarted node knows exactly which prefix is committed — and only the
-        // *uncommitted* tail above it is eligible for conflicting-tail truncation.
-        // Entries above the watermark are NOT applied on boot; the leader re-drives
-        // their commit via AppendEntries, and apply is monotone.
+        // --- Snapshot-aware recovery (Raft §7). Recovery order:
+        //   1. If a durable snapshot exists, SEED the applied state machine and
+        //      the (last_applied, commit) watermarks from it FIRST, and adopt its
+        //      `(last_included_index, last_included_term)` boundary on the log so
+        //      the durable tail's absolute indices are correct over the already-
+        //      discarded prefix.
+        //   2. Replay ONLY the retained committed tail (entries strictly above the
+        //      snapshot boundary, up to the durable commit watermark) on top of the
+        //      seeded state. The result is `to_bits`-identical to a full-log replay.
+        // The commit-index watermark is persisted (Raft §5 + our durable-commit
+        // design), so a restarted node knows exactly which prefix is committed; only
+        // the *uncommitted* tail above it is eligible for conflicting-tail
+        // truncation. Entries above the watermark are NOT applied on boot; the
+        // leader re-drives their commit via AppendEntries, and apply is monotone.
+        let snapshot = snapshots.load()?;
         let mut applied = BookState::new();
         let mut last_applied = None;
+        if let Some(snap) = &snapshot {
+            log.adopt_snapshot_boundary(snap.last_included_index, snap.last_included_term);
+            applied = snap.state.clone();
+            last_applied = Some(snap.last_included_index);
+        }
+
+        // The committed high-water this node may safely apply: the durable watermark
+        // clamped to what the log accounts for. With a snapshot, `log.last_index()`
+        // already reflects the boundary, so a node whose tail is wholly subsumed
+        // still has its full committed prefix applied (from the snapshot).
         let commit_index = match persist.commit_index() {
-            // Clamp the durable watermark to what the (possibly torn-tail-healed)
-            // log actually holds, then apply that committed prefix.
+            // Clamp the durable watermark to the log high-water (None when there is
+            // no snapshot and the log is empty — nothing committed can be applied).
             Some(c) => log.last_index().map(|last| c.min(last)),
-            None => None,
+            // No durable watermark, but a snapshot implies its boundary was once
+            // committed — that prefix is captured and applied via the seed above.
+            None => snapshot.as_ref().map(|s| s.last_included_index),
         };
+
+        // Replay the retained committed tail above the seeded boundary.
         if let Some(commit) = commit_index {
-            for e in log.entries_from(0)? {
-                if e.index > commit {
-                    break;
+            let start = last_applied.map_or(0, |a| a + 1);
+            if start <= commit {
+                for e in log.entries_from(start)? {
+                    if e.index > commit {
+                        break;
+                    }
+                    if let Ok(upd) = BookUpdate::decode(&e.payload) {
+                        applied.apply(&upd);
+                    }
+                    last_applied = Some(e.index);
                 }
-                if let Ok(upd) = BookUpdate::decode(&e.payload) {
-                    applied.apply(&upd);
-                }
-                last_applied = Some(e.index);
             }
         }
 
@@ -377,6 +475,7 @@ impl RaftNode {
             role: Role::Follower,
             persist,
             log,
+            snapshots,
             applied,
             commit_index,
             last_applied,
@@ -538,6 +637,84 @@ impl RaftNode {
             thread::sleep(Duration::from_millis(2));
         }
         self.commit_index().is_some_and(|c| c >= index)
+    }
+
+    /// Compact the durable log: capture a snapshot of the applied state at
+    /// `at_index` (clamped to `last_applied`) and discard the prefix `[..,
+    /// at_index]` (Raft §7). Returns the boundary index actually snapshotted, or
+    /// `None` if nothing new was compacted (e.g. nothing applied yet, or already
+    /// compacted at/beyond `at_index`).
+    ///
+    /// Safe to call on any node (leader or follower) — it compacts only this
+    /// node's own committed+applied prefix and never affects consensus safety. For
+    /// a cluster where a far-behind follower might still need an entry, prefer
+    /// [`RaftNode::safe_compact_index`] to choose `at_index` no higher than the
+    /// slowest follower's replicated point (until the InstallSnapshot RPC lands —
+    /// see the crate root).
+    ///
+    /// # Errors
+    ///
+    /// Propagates the durable snapshot-write / prefix-discard IO failure.
+    pub fn compact(&self, at_index: u64) -> std::io::Result<Option<u64>> {
+        let mut core = self.core.lock().expect("core lock");
+        core.compact_to(at_index)
+    }
+
+    /// Compact this node's log up to its current `last_applied` (the full
+    /// committed+applied prefix). Convenience over [`RaftNode::compact`].
+    ///
+    /// # Errors
+    ///
+    /// Propagates the durable IO failure.
+    pub fn compact_applied(&self) -> std::io::Result<Option<u64>> {
+        let at = {
+            let core = self.core.lock().expect("core lock");
+            core.last_applied
+        };
+        match at {
+            Some(at) => self.compact(at),
+            None => Ok(None),
+        }
+    }
+
+    /// The highest index it is **safe to compact past** without a far-behind
+    /// follower needing a discarded entry: the minimum of this node's
+    /// `last_applied` and every peer's known `match_index`. A leader uses this to
+    /// pick a compaction boundary that never strands a follower before the
+    /// InstallSnapshot RPC exists (the documented operational discipline — see the
+    /// crate root). Returns `None` if any peer's progress is still unknown (be
+    /// conservative — do not compact) or nothing is applied yet.
+    #[must_use]
+    pub fn safe_compact_index(&self) -> Option<u64> {
+        let core = self.core.lock().expect("core lock");
+        let mut floor = core.last_applied?;
+        for p in core.peers.values() {
+            floor = floor.min(p.match_index?);
+        }
+        Some(floor)
+    }
+
+    /// The boundary index of this node's most recent durable snapshot, or `None`
+    /// if no prefix has been discarded.
+    #[must_use]
+    pub fn snapshot_index(&self) -> Option<u64> {
+        self.core.lock().expect("core lock").log.snapshot_index()
+    }
+
+    /// The absolute index of physical log position 0 — `last_included_index + 1`
+    /// after a compaction, else `0`. The count of physically-retained entries is
+    /// `last_log_index + 1 - base_log_index`.
+    #[must_use]
+    pub fn base_log_index(&self) -> u64 {
+        self.core.lock().expect("core lock").log.base_index()
+    }
+
+    /// The number of entries physically retained in the durable log (the tail
+    /// after any discarded prefix) — for asserting a compaction really shrank the
+    /// on-disk log.
+    #[must_use]
+    pub fn retained_log_len(&self) -> usize {
+        self.core.lock().expect("core lock").log.len()
     }
 
     /// Wake the tick thread immediately (e.g. after a proposal).
@@ -933,6 +1110,13 @@ fn start_election(core: &Arc<Mutex<NodeCore>>, stop: &Arc<AtomicBool>) {
         c.role = Role::Candidate;
         c.votes_for_me = 1; // self-vote
         c.reset_election_timer();
+        // A single-node cluster (majority == 1) wins on its own self-vote — there
+        // are no peers to solicit, so become leader immediately rather than fall
+        // through the (empty) reply-folding loop below.
+        if c.votes_for_me >= majority {
+            become_leader(&mut c);
+            return;
+        }
         new_term
     };
 

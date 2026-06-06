@@ -479,6 +479,105 @@ fn gate_d_crash_recovery_rebuilds_exact_committed_state() {
 }
 
 // ---------------------------------------------------------------------------
+// Gate (e): log compaction (Raft §7) in a LIVE cluster — every node can
+// snapshot+discard its committed prefix, the durable log really shrinks, the
+// cluster keeps making progress past the boundary, and a node crash-recovered
+// from (snapshot + retained tail) rebuilds the EXACT committed to_bits state.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn gate_e_compaction_shrinks_log_and_recovery_is_exact() {
+    let start = Instant::now();
+    let nodes = boot_cluster(3, &["ce-n0", "ce-n1", "ce-n2"]);
+    let updates = workload();
+    let (leader, committed) = drive_workload(start, &nodes, &updates);
+    assert_eq!(committed, (updates.len() - 1) as u64);
+    // Every node converges and applies the full committed prefix.
+    assert!(wait_until(start, || nodes
+        .iter()
+        .all(|n| n.commit_index() == Some(committed))));
+    let oracle = oracle_bits(&updates, updates.len());
+    assert!(wait_until(start, || nodes
+        .iter()
+        .all(|n| n.applied_bits() == oracle)));
+
+    // Compact EVERY node at an interior committed boundary. Each writes a durable
+    // snapshot of its applied state and discards the prefix on disk.
+    let boundary = committed / 2;
+    for n in &nodes {
+        let done = n.compact(boundary).expect("compact");
+        assert_eq!(
+            done,
+            Some(boundary),
+            "compaction did not reach the boundary"
+        );
+        // The durable log REALLY shrank: retained tail == entries above boundary.
+        let retained = committed - boundary; // indices (boundary, committed]
+        assert_eq!(
+            n.retained_log_len() as u64,
+            retained,
+            "log was not physically shrunk by compaction"
+        );
+        assert_eq!(n.base_log_index(), boundary + 1);
+        assert_eq!(n.snapshot_index(), Some(boundary));
+        // Applied state is UNCHANGED by compaction (it captures, does not mutate).
+        assert_eq!(n.applied_bits(), oracle, "compaction altered applied state");
+    }
+
+    // The cluster still makes progress AFTER the snapshot boundary: propose more.
+    let leader2 = establish_stable_leader(start, &nodes);
+    let extra = [
+        BookUpdate::Set {
+            key: 100,
+            value: 7.0,
+        },
+        BookUpdate::Add {
+            key: 100,
+            delta: 0.5,
+        },
+    ];
+    let mut full = updates.clone();
+    let mut last = committed;
+    for u in &extra {
+        let idx = nodes[leader2]
+            .propose(u)
+            .expect("propose")
+            .expect("leader stepped down");
+        assert!(nodes[leader2].wait_for_commit(idx, TEST_DEADLINE));
+        full.push(u.clone());
+        last = idx;
+    }
+    let oracle2 = oracle_bits(&full, full.len());
+    assert!(wait_until(start, || nodes.iter().all(|n| n.commit_index()
+        == Some(last)
+        && n.applied_bits() == oracle2)));
+
+    // Crash-recover a follower PURELY from (its durable snapshot + retained tail).
+    let victim = (0..3)
+        .find(|&i| i != leader2 && i != leader)
+        .unwrap_or_else(|| (0..3).find(|&i| i != leader2).unwrap());
+    let victim_path = nodes[victim].path().to_path_buf();
+    for n in nodes {
+        n.shutdown();
+    }
+    let restarted = RaftNode::boot(&victim_path, &[], 1, test_cfg())
+        .expect("victim recovers from snapshot + tail");
+    // It recovered the boundary (its log was compacted on disk) and the EXACT
+    // committed to_bits state — seeded from the snapshot, then retained tail.
+    assert_eq!(restarted.snapshot_index(), Some(boundary));
+    assert_eq!(restarted.base_log_index(), boundary + 1);
+    assert!(wait_until(start, || restarted.commit_index() == Some(last)));
+    assert_eq!(
+        restarted.applied_bits(),
+        oracle2,
+        "snapshot-recovered state not to_bits-identical"
+    );
+
+    assert_within_deadline(start);
+    restarted.shutdown();
+}
+
+// ---------------------------------------------------------------------------
 // Sanity: a freshly booted multi-node cluster elects exactly one leader.
 // ---------------------------------------------------------------------------
 
