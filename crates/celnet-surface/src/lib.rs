@@ -43,9 +43,11 @@
 //! * [`stochvol`] — a stochastic-volatility smile (the singular-perturbation
 //!   lognormal expansion plus an arbitrage-free density-PDE refinement for the
 //!   wings, the SABR method) implementing [`celnet_core::Smile`];
-//! * [`parametric`] / [`parametric_surface`] — the parametric total-variance
-//!   **slice** and the **surface** form (the SVI / SSVI methods), the latter
-//!   carrying closed-form static no-arbitrage (butterfly + calendar) conditions;
+//! * [`parametric`] / [`parametric_surface`] / [`extended_surface`] — the
+//!   parametric total-variance **slice** and the **surface** forms (the SVI /
+//!   SSVI / eSSVI methods); the surface forms carry closed-form static
+//!   no-arbitrage (butterfly + calendar) conditions, and the eSSVI extension lets
+//!   the correlation be maturity-dependent (`ρ → ρ(θ)`) while keeping them;
 //! * [`termstructure`] — interpolation in **total variance / business time**
 //!   (calendar-arbitrage-free: total variance non-decreasing in maturity), tying
 //!   slices into a continuously re-strikable surface;
@@ -59,7 +61,9 @@
 //! (2011). The stochastic-volatility smile uses the SABR expansion and an
 //! arbitrage-free density: Hagan, Kumar, Lesniewski & Woodward (2002, 2014). The
 //! parametric slice / surface use the SVI / SSVI methods and their closed-form
-//! no-arbitrage conditions: Gatheral (2004), Gatheral & Jacquier (2014). Density
+//! no-arbitrage conditions: Gatheral (2004), Gatheral & Jacquier (2014); the
+//! extended (maturity-dependent-`ρ`) surface uses the eSSVI method and its
+//! closed-form conditions: Hendriks & Martini (2019). Density
 //! / arbitrage conditions: Breeden-Litzenberger; Durrleman. All such names are
 //! provenance only — every public identifier is purpose-named and
 //! vendor/research-neutral.
@@ -68,6 +72,7 @@
 
 pub mod arbitrage;
 pub mod calibrate;
+pub mod extended_surface;
 pub mod market_hedge;
 pub mod parametric;
 pub mod parametric_surface;
@@ -81,6 +86,7 @@ mod mathx;
 
 pub use arbitrage::{ArbitrageReport, check_slice, implied_density};
 pub use calibrate::{CalibratedSmile, build_model_smile};
+pub use extended_surface::{ExtendedSlice, ExtendedSurface};
 pub use market_hedge::MarketHedgeSmile;
 pub use parametric::ParametricSlice;
 pub use parametric_surface::ParametricSurface;

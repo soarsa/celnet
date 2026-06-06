@@ -78,6 +78,17 @@
 //!      up-and-out knock-out barrier (discrete or Brownian-bridge continuous) and
 //!      below-pivot gearing, priced by Monte-Carlo.
 //!
+//! 6. **Variance & volatility swaps** — the model-free volatility products,
+//!    priced directly off an arbitrage-free [`celnet_surface`] smile:
+//!    * [`var_swap`] — the **variance-swap fair strike** by log-contract static
+//!      replication (the `1/K²`-weighted strip of OTM option forward values),
+//!      which recovers `σ²` exactly for a flat smile and lifts above ATM variance
+//!      for a positive-butterfly smile;
+//!    * [`vol_swap`] — the **volatility-swap fair strike** by the Carr–Lee
+//!      convexity (Jensen) adjustment `K_vol = √K_var − Var(v)/(8·K_var^{3/2})`,
+//!      strictly below `√K_var` for any non-degenerate smile and widening with
+//!      smile convexity.
+//!
 //! # Method provenance (doc comments only)
 //!
 //! Reflection-principle / image closed forms for barriers and touches:
@@ -122,6 +133,8 @@ pub mod rng;
 pub mod stochvol;
 pub mod tarf;
 pub mod touch;
+pub mod var_swap;
+pub mod vol_swap;
 
 pub use accumulator::{
     Accumulator, AccumulatorMcConfig, AccumulatorResult, Monitoring, accumulator_price,
@@ -163,6 +176,10 @@ pub use touch::{
     DoubleNoTouch, RebateTiming, TouchSide, double_no_touch_price, double_touch_price,
     no_touch_price, one_touch_price,
 };
+pub use var_swap::{
+    VarSwapContext, VarSwapResult, VarSwapStrip, fair_variance, fair_variance_with,
+};
+pub use vol_swap::{VolSwapResult, fair_volatility, fair_volatility_with};
 
 use celnet_core::math::{exp, ln, sqrt};
 use celnet_types::VanillaInputs;

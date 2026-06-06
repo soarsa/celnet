@@ -65,6 +65,11 @@ pub enum CalibratedSmile {
     /// materialised raw slice at the calibrated maturity (the SSVI→raw closed-form
     /// map is exact, so this is the same smile the surface form evaluates).
     ParametricSurface(ParametricSlice),
+    /// An extended surface-level parametric (eSSVI) slice fitted to the anchors.
+    /// Carried as a materialised raw slice at the calibrated maturity (the
+    /// eSSVI→raw closed-form map is exact, so this is the same smile the extended
+    /// surface form evaluates).
+    ExtendedSurface(ParametricSlice),
 }
 
 impl CalibratedSmile {
@@ -77,6 +82,7 @@ impl CalibratedSmile {
             CalibratedSmile::StochasticVol(_) => SmileModel::StochasticVol,
             CalibratedSmile::Parametric(_) => SmileModel::Parametric,
             CalibratedSmile::ParametricSurface(_) => SmileModel::ParametricSurface,
+            CalibratedSmile::ExtendedSurface(_) => SmileModel::ExtendedSurface,
         }
     }
 
@@ -86,7 +92,9 @@ impl CalibratedSmile {
         match self {
             CalibratedSmile::MarketHedge(s) => s.forward(),
             CalibratedSmile::StochasticVol(s) => s.params().forward,
-            CalibratedSmile::Parametric(s) | CalibratedSmile::ParametricSurface(s) => s.forward,
+            CalibratedSmile::Parametric(s)
+            | CalibratedSmile::ParametricSurface(s)
+            | CalibratedSmile::ExtendedSurface(s) => s.forward,
         }
     }
 }
@@ -96,9 +104,9 @@ impl Smile for CalibratedSmile {
         match self {
             CalibratedSmile::MarketHedge(s) => s.implied_vol(strike, forward, t),
             CalibratedSmile::StochasticVol(s) => s.implied_vol(strike, forward, t),
-            CalibratedSmile::Parametric(s) | CalibratedSmile::ParametricSurface(s) => {
-                s.implied_vol(strike, forward, t)
-            }
+            CalibratedSmile::Parametric(s)
+            | CalibratedSmile::ParametricSurface(s)
+            | CalibratedSmile::ExtendedSurface(s) => s.implied_vol(strike, forward, t),
         }
     }
 }
@@ -190,6 +198,10 @@ pub fn build_model_smile(
         SmileModel::ParametricSurface => {
             let slice = fit_ssvi(ctx, quotes)?;
             Ok(CalibratedSmile::ParametricSurface(slice))
+        }
+        SmileModel::ExtendedSurface => {
+            let slice = fit_essvi(ctx, quotes)?;
+            Ok(CalibratedSmile::ExtendedSurface(slice))
         }
     }
 }
@@ -463,6 +475,80 @@ fn fit_ssvi(
     }
     let surface = ParametricSurface::new(rho, eta, SSVI_GAMMA);
     Ok(surface.to_slice(theta, forward, t))
+}
+
+// ===========================================================================
+// eSSVI (ExtendedSurface) — the extended SSVI in the (θ, ρ, ψ) variables, with
+// the ATM total variance θ pinned to the ATM anchor and the two free shape
+// parameters (ρ, ψ) fitted to the wing anchors. ψ = θ·φ is the ATM skew-scale;
+// for a single calibrated maturity eSSVI's per-slice butterfly domain is exactly
+// the SSVI domain re-expressed in (θ,ρ,ψ): ψ(1+|ρ|) < 4 and (ψ²/θ)(1+|ρ|) ≤ 4.
+// The fitted slice is materialised via the exact eSSVI→raw map. (The
+// maturity-dependence of ρ — the genuine eSSVI generalisation — lives across
+// slices in `ExtendedSurface`; one mark request calibrates one slice.)
+// ===========================================================================
+
+/// Fit an eSSVI slice (materialised as a raw slice) to the anchors, pinning θ to
+/// the ATM total variance and fitting `(ρ, ψ)` to the wings, projecting each step
+/// into the eSSVI per-slice butterfly domain.
+fn fit_essvi(
+    ctx: &MarketContext,
+    quotes: &MarketQuotes,
+) -> Result<ParametricSlice, CalibrationError> {
+    let pts = anchors(ctx, quotes)?;
+    let forward = ctx.forward();
+    let t = ctx.t;
+    let atm_vol = quotes.atm_vol;
+    let theta = atm_vol * atm_vol * t;
+    if theta <= 0.0 {
+        return Err(CalibrationError::DegenerateQuote);
+    }
+
+    // eSSVI total variance with θ pinned and (ρ, ψ) the free shape parameters
+    // (φ = ψ/θ):
+    //   w(k) = (θ/2)·(1 + ρ·(ψ/θ)·k + √(((ψ/θ)·k + ρ)² + (1 − ρ²))).
+    let w_of = |rho: f64, psi: f64, k: f64| -> f64 {
+        let p = psi / theta;
+        let pk = p * k + rho;
+        0.5 * theta * (1.0 + rho * p * k + sqrt(pk * pk + (1.0 - rho * rho)))
+    };
+
+    let inner = calibrate_pillar(ctx, atm_vol, quotes.inner)?;
+    let rr = inner.call_vol - inner.put_vol;
+    let bf = 0.5 * (inner.call_vol + inner.put_vol) - atm_vol;
+
+    let mut rho = clamp(
+        rr.signum() * (rr.abs() / atm_vol.max(1e-3)).min(0.9),
+        -0.9,
+        0.9,
+    );
+    // ψ seeds off the convexity; ATM skew is ρ·ψ, so scale modestly.
+    let mut psi = (bf.abs() / atm_vol.max(1e-3) * theta * 10.0 + 0.1).clamp(1e-3, 3.0);
+
+    let residuals = |rho: f64, psi: f64| -> Vec<f64> {
+        pts.iter().map(|a| w_of(rho, psi, a.k) - a.w).collect()
+    };
+
+    // The eSSVI per-slice butterfly domain in (θ, ρ, ψ):
+    //   ψ·(1+|ρ|) < 4  and  (ψ²/θ)·(1+|ρ|) ≤ 4 (project ψ to the tighter cap).
+    let project = |rho: f64, psi: f64| {
+        let rho = clamp(rho, -0.999, 0.999);
+        let one_p = 1.0 + rho.abs();
+        let cap1 = 4.0 / one_p * 0.999;
+        let cap2 = sqrt(4.0 * theta / one_p) * 0.999;
+        let psi = clamp(psi, 1e-3, cap1.min(cap2));
+        (rho, psi)
+    };
+
+    gauss_newton_2(&mut rho, &mut psi, residuals, (-0.999, 0.999), project);
+
+    let (rho, psi) = project(rho, psi);
+    if !(psi.is_finite() && psi > 0.0 && rho.is_finite()) {
+        return Err(CalibrationError::DegenerateQuote);
+    }
+    // Materialise via the exact eSSVI→raw map (φ = ψ/θ).
+    let slice = crate::extended_surface::ExtendedSlice::new(theta, rho, psi);
+    Ok(slice.to_slice(forward, t))
 }
 
 // ===========================================================================
@@ -765,6 +851,7 @@ mod tests {
             SmileModel::StochasticVol,
             SmileModel::Parametric,
             SmileModel::ParametricSurface,
+            SmileModel::ExtendedSurface,
         ] {
             let s = build_model_smile(model, &c, &q).unwrap();
             assert_eq!(s.model(), model);
@@ -795,6 +882,7 @@ mod tests {
             SmileModel::StochasticVol,
             SmileModel::Parametric,
             SmileModel::ParametricSurface,
+            SmileModel::ExtendedSurface,
         ] {
             let s = build_model_smile(model, &c, &q).unwrap();
             let v = s.implied_vol(k, f, c.t).0;
@@ -823,6 +911,7 @@ mod tests {
             SmileModel::StochasticVol,
             SmileModel::Parametric,
             SmileModel::ParametricSurface,
+            SmileModel::ExtendedSurface,
         ] {
             let s = build_model_smile(model, &c, &q).unwrap();
             let put = s.implied_vol(k_put, f, c.t).0;
@@ -840,10 +929,16 @@ mod tests {
     fn fitted_parametric_slices_are_butterfly_free() {
         let c = ctx(1.10, 1.0);
         let q = MarketQuotes::three_point(0.10, -0.006, 0.0025);
-        for model in [SmileModel::Parametric, SmileModel::ParametricSurface] {
+        for model in [
+            SmileModel::Parametric,
+            SmileModel::ParametricSurface,
+            SmileModel::ExtendedSurface,
+        ] {
             let s = build_model_smile(model, &c, &q).unwrap();
             let slice = match s {
-                CalibratedSmile::Parametric(p) | CalibratedSmile::ParametricSurface(p) => p,
+                CalibratedSmile::Parametric(p)
+                | CalibratedSmile::ParametricSurface(p)
+                | CalibratedSmile::ExtendedSurface(p) => p,
                 _ => unreachable!(),
             };
             assert!(
@@ -862,6 +957,7 @@ mod tests {
             SmileModel::StochasticVol,
             SmileModel::Parametric,
             SmileModel::ParametricSurface,
+            SmileModel::ExtendedSurface,
         ] {
             let a = build_model_smile(model, &c, &q).unwrap();
             let b = build_model_smile(model, &c, &q).unwrap();
