@@ -123,6 +123,38 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-06-06 — **Deepening increment: `celnet-replog` → FULL RAFT (NEXT-WORKFLOWS §4(i) Track A; commit
+  `e5f6738`; pushed).** Evolved the thin leader-replicated log into a real Raft consensus module via a
+  gated implement→adversarial-verify Workflow, then INDEPENDENTLY re-gated (I re-derived the five safety
+  properties vs Ongaro&Ousterhout myself, read the durable-truncation + commitment code, confirmed the
+  parity oracle is genuinely independent, re-ran every gate + the literal "All gates passed." line).
+  **Zero-legacy:** thin `leader.rs`/`follower.rs`/`standby.rs` **DELETED**. New `election.rs` — cohesive
+  `RaftNode` role machine: randomized election timers + **Pre-Vote** (Ongaro §9.6) + RequestVote (§5.4.1
+  up-to-date rule) + AppendEntries receiver (§5.3 log-matching → reconcile → commit/apply) + leader
+  replication with **§5.4.2 current-term-only commit** (no figure-8) + step-down on higher term; core
+  mutex never held across blocking IO; per-peer concurrent RPCs; every socket deadline-bounded. New
+  `log.rs` — durable index-addressed log over `celnet-journal`; conflicting-tail truncation is a **real
+  atomic durable rewrite** (write-fresh→fsync→rename→parent-dir-fsync→re-open), NOT an in-memory mask.
+  New `persist.rs` — CRC'd atomically-written `current_term`/`voted_for` + monotonic commit watermark
+  (exact crash-recovery; a committed entry is never truncated). `wire.rs` rewritten with the Raft RPCs
+  over real loopback TCP. **PROOF — new parity row `celnet-parity/tests/raft_election.rs`** over a REAL
+  loopback cluster: (1) kill-leader→survivors elect a higher-term leader and keep committing; (2) election
+  safety — a partitioned 1-of-5 minority never wins (Pre-Vote stops term inflation); (3) log-matching +
+  durable tail truncation — divergent uncommitted tail overwritten, follower's on-disk log byte-identical
+  to leader; (4) convergence — all survivors byte-identical logs + to_bits-identical state == an
+  **INDEPENDENT single-node replay oracle** (workload has 0.1+0.2 and a 1-ULP value ⇒ bits asserted, not
+  rounded decimals). `replication.rs` gates a–d adapted to auto-election; `.config/nextest.toml`
+  `replog-consensus` serial group (real-timer tests, like `engine-serial`) removes a CPU-contention
+  artifact, weakens no assertion. **HONEST BOUNDARY** (verbatim in lib.rs + the parity test): loopback
+  proves the consensus arithmetic + relative regression (upper bound on compute, lower bound on
+  cross-host wire); absolute cross-host wire p99 / inter-DC SLO stays **DEPLOY-GATED**. Membership change
+  (§6) + snapshot install (§7) documented as next increments, not half-built. **SOTA, ZERO workarounds**
+  (grep-clean: no `#[ignore]`/`#[allow]`-dodge/`todo!`/fake cluster). Full `just check` green (literal
+  "All gates passed."), cargo-deny clean, **1057/1057 tests** (was 1044); raft_election 3/3 + replog 26/26
+  stable across re-runs; clippy on the parity TEST target clean; fmt clean. **Next: §4(i) Track B** —
+  log compaction / snapshotting (`compaction.rs` + `raft_compaction.rs`: replay-from-snapshot+tail ==
+  replay-from-full-log, bit-identical), built on this finalized Raft log; then §4(ii)/(iii) per the runbook.
+
 - 2026-06-06 — **Leadership program Wave 5 DONE → ALL IN-REPO WAVES (1–5) COMPLETE (commit `b743fea`;
   pushed).** GPU perf at scale, **RATIOS only** (NVIDIA absolute headline stays deploy-gated). Two
   disjoint tracks, gated implement→adversarial-verify, then independently re-gated (I re-derived the f32
