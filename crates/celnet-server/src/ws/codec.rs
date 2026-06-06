@@ -15,18 +15,19 @@
 use serde_json::{Map, Value, json};
 
 use celnet_proto::{
-    AdditiveRisk, AggregateRiskRequest, AggregateRiskResponse, ArbReport, BrokerQuoteSet,
-    BucketedRisk, CcyExposureLeg, CcyPair, Conventions, CrossGamma, Digital, DoubleBarrier,
-    DrillRiskRequest, DrillRiskResponse, EntitlementPrincipal, EntitlementRule, Execute, Executed,
-    Execution, GetSmileRequest, Greeks, Instrument, Leg, LimitStatusRequest, LimitStatusResponse,
-    LimitUtilization, ListPositionsRequest, ListPositionsResponse, MarkSurfaceRequest,
-    MarkSurfaceResponse, MarketContext, Modify, NonAdditiveRisk, NumeraireRate, OrgKey,
-    PriceRequest, PriceResponse, Quantity, Quote, QuoteAccept, QuoteReject, QuoteRequest,
+    AdditiveRisk, AggregateRiskRequest, AggregateRiskResponse, ArbReport, AsianOption,
+    BrokerQuoteSet, BucketedRisk, CcyExposureLeg, CcyPair, Conventions, CrossGamma, Digital,
+    DoubleBarrier, DrillRiskRequest, DrillRiskResponse, EntitlementPrincipal, EntitlementRule,
+    Execute, Executed, Execution, GetSmileRequest, Greeks, Instrument, Leg, LimitStatusRequest,
+    LimitStatusResponse, LimitUtilization, ListPositionsRequest, ListPositionsResponse,
+    MarkSurfaceRequest, MarkSurfaceResponse, MarketContext, Modify, NonAdditiveRisk, NumeraireRate,
+    OrgKey, PriceRequest, PriceResponse, Quantity, Quote, QuoteAccept, QuoteReject, QuoteRequest,
     RejectAck, ReportingNumeraire, Resync, RiskBucketRequest, RiskNode, RiskPosition, RiskScope,
     ScenarioPoint, ScenarioRequest, ScenarioResponse, ShockAxis, SingleBarrier, Smile, SmilePoint,
     Snapshot, Solve, Strategy, StrategyKind, StreamEnd, StreamReject, StrikeOrDelta, Subscribe,
     SubscriptionId, Tenor, Touch, TradableToken, TwoWayPrice, Unsubscribe, Update, Vanilla,
-    VanillaInputs, VegaLadderBucket, VegaPillar, instrument, shock_axis, strike_or_delta, tenor,
+    VanillaInputs, VarianceSwap, VegaLadderBucket, VegaPillar, VolatilitySwap, instrument,
+    shock_axis, strike_or_delta, tenor,
 };
 
 /// A codec error: a malformed or out-of-contract JSON message. Carries a
@@ -367,9 +368,39 @@ fn touch_from_json(v: &Value) -> Result<Touch> {
     })
 }
 
+fn variance_swap_from_json(v: &Value) -> Result<VarianceSwap> {
+    let o = obj(v, "variance_swap")?;
+    Ok(VarianceSwap {
+        strike_vol: f64_or_zero(o, "strike_vol"),
+    })
+}
+
+fn volatility_swap_from_json(v: &Value) -> Result<VolatilitySwap> {
+    let o = obj(v, "volatility_swap")?;
+    Ok(VolatilitySwap {
+        strike_vol: f64_or_zero(o, "strike_vol"),
+    })
+}
+
+fn asian_option_from_json(v: &Value) -> Result<AsianOption> {
+    let o = obj(v, "asian_option")?;
+    let observations = u32::try_from(u64_or_zero(o, "observations"))
+        .map_err(|_| err("asian_option.observations out of range"))?;
+    Ok(AsianOption {
+        option_type: enum_or_zero(o, "option_type"),
+        strike: f64_field(o, "strike")?,
+        averaging: enum_or_zero(o, "averaging"),
+        observations,
+        method: enum_or_zero(o, "method"),
+        elapsed_avg: f64_or_zero(o, "elapsed_avg"),
+        elapsed_weight: f64_or_zero(o, "elapsed_weight"),
+    })
+}
+
 /// Decode the instrument `product` oneof. The JSON carries exactly one of the
 /// product keys (`vanilla`, `strategy`, `single_barrier`, `double_barrier`,
-/// `digital`, `touch`) — the same shape as the proto oneof.
+/// `digital`, `touch`, `variance_swap`, `volatility_swap`, `asian_option`) — the
+/// same shape as the proto oneof.
 fn product_from_json(o: &Map<String, Value>) -> Result<instrument::Product> {
     // Each product variant nests its body under its own key (mirroring the proto
     // oneof field names); descend into that body before decoding.
@@ -389,10 +420,21 @@ fn product_from_json(o: &Map<String, Value>) -> Result<instrument::Product> {
         Ok(instrument::Product::Digital(digital_from_json(v)?))
     } else if let Some(v) = o.get("touch") {
         Ok(instrument::Product::Touch(touch_from_json(v)?))
+    } else if let Some(v) = o.get("variance_swap") {
+        Ok(instrument::Product::VarianceSwap(variance_swap_from_json(
+            v,
+        )?))
+    } else if let Some(v) = o.get("volatility_swap") {
+        Ok(instrument::Product::VolatilitySwap(
+            volatility_swap_from_json(v)?,
+        ))
+    } else if let Some(v) = o.get("asian_option") {
+        Ok(instrument::Product::AsianOption(asian_option_from_json(v)?))
     } else {
         Err(err(
             "instrument needs exactly one product (vanilla / strategy / \
-             single_barrier / double_barrier / digital / touch)",
+             single_barrier / double_barrier / digital / touch / variance_swap / \
+             volatility_swap / asian_option)",
         ))
     }
 }
@@ -1358,6 +1400,62 @@ mod tests {
                 other => panic!("expected a strike spec, got {other:?}"),
             },
             other => panic!("expected a vanilla product, got {other:?}"),
+        }
+    }
+
+    /// The Wave-1 products decode from the JSON a browser client sends, into the
+    /// correct `product` oneof arms with their fields carried by snake_case name
+    /// and enums by their canonical proto numbers.
+    #[test]
+    fn wave1_products_decode_from_json() {
+        let base = |product: Value| {
+            let mut m = serde_json::Map::new();
+            m.insert("expiry_years".to_owned(), json!(1.0));
+            if let Value::Object(p) = product {
+                for (k, v) in p {
+                    m.insert(k, v);
+                }
+            }
+            Value::Object(m)
+        };
+
+        let var_swap =
+            instrument_from_json(&base(json!({ "variance_swap": { "strike_vol": 0.11 } })))
+                .expect("decode var swap");
+        match var_swap.product {
+            Some(instrument::Product::VarianceSwap(vs)) => {
+                assert_eq!(vs.strike_vol.to_bits(), 0.11_f64.to_bits());
+            }
+            other => panic!("expected variance_swap, got {other:?}"),
+        }
+
+        let vol_swap =
+            instrument_from_json(&base(json!({ "volatility_swap": { "strike_vol": 0.0 } })))
+                .expect("decode vol swap");
+        assert!(matches!(
+            vol_swap.product,
+            Some(instrument::Product::VolatilitySwap(_))
+        ));
+
+        let asian = instrument_from_json(&base(json!({
+            "asian_option": {
+                "option_type": 0,
+                "strike": 1.10,
+                "averaging": 0,
+                "observations": 12,
+                "method": 0,
+                "elapsed_avg": 1.095,
+                "elapsed_weight": 0.25
+            }
+        })))
+        .expect("decode asian");
+        match asian.product {
+            Some(instrument::Product::AsianOption(a)) => {
+                assert_eq!(a.observations, 12);
+                assert_eq!(a.strike.to_bits(), 1.10_f64.to_bits());
+                assert_eq!(a.elapsed_weight.to_bits(), 0.25_f64.to_bits());
+            }
+            other => panic!("expected asian_option, got {other:?}"),
         }
     }
 

@@ -31,11 +31,13 @@ use celnet_types::{
     VanillaInputs,
 };
 
+use celnet_core::FlatSmile;
 use celnet_exotics::{
-    BarrierKind as ExBarrierKind, BarrierStyle, DigitalKind, DoubleBarrierKnockOut, DoubleNoTouch,
-    RebateTiming, SingleBarrier as ExSingleBarrier, digital_price, double_knock_out_price,
-    double_no_touch_price, double_touch_price, no_touch_price, one_touch_price,
-    single_barrier_price,
+    AnalyticAsian, AveragingSchedule, BarrierKind as ExBarrierKind, BarrierStyle, DigitalKind,
+    DoubleBarrierKnockOut, DoubleNoTouch, RebateTiming, SingleBarrier as ExSingleBarrier,
+    VarSwapContext, curran_price, digital_price, double_knock_out_price, double_no_touch_price,
+    double_touch_price, fair_variance, fair_volatility, no_touch_price, one_touch_price,
+    single_barrier_price, turnbull_wakeman_price,
 };
 
 /// A failure pricing a wire instrument: a malformed / unsupported message.
@@ -187,6 +189,14 @@ fn inputs_at(
         market.r_dom,
         market.r_for,
     )
+}
+
+/// Build a [`VarSwapContext`] (forward + carry) for the swap/replication math
+/// from the wire market context and the instrument expiry. The forward is
+/// `F = S·e^{(r_d−r_f)T}`, derived via [`VanillaInputs::from_inputs`] semantics.
+fn var_swap_context(market: &WireMarketContext, expiry_years: f64) -> VarSwapContext {
+    let template = inputs_at(market, expiry_years, market.spot, market.vol);
+    VarSwapContext::from_inputs(&template)
 }
 
 /// Resolve a [`celnet_proto::StrikeOrDelta`] to an absolute strike. A delta key
@@ -658,6 +668,121 @@ pub fn price_instrument(
                 vol: market.vol,
             })
         }
+        instrument::Product::VarianceSwap(_vs) => {
+            // Fair (annualised) variance strike `K_var` by log-contract static
+            // replication over the marked smile. The wire market context carries
+            // a single Black vol, so the smile-consistent surface here is the
+            // flat smile at that vol (a flat σ replicates to K_var = σ² exactly).
+            // The headline `price` is the fair *variance* strike `K_var`; the
+            // echoed `vol` is its realised-vol equivalent `√K_var`. The FD Greek
+            // set is the sensitivity of the fair strike to spot/vol/rates/time.
+            let price = move |m: &WireMarketContext| -> f64 {
+                let ctx = var_swap_context(m, expiry);
+                fair_variance(&FlatSmile::new(m.vol), &ctx).fair_variance
+            };
+            let price_at = move |t: f64, m: &WireMarketContext| -> f64 {
+                let ctx = var_swap_context(m, t);
+                fair_variance(&FlatSmile::new(m.vol), &ctx).fair_variance
+            };
+            let greeks = exotic_greeks(&price, &price_at, market, expiry);
+            let fair_var = greeks.price;
+            Ok(Priced {
+                greeks,
+                resolved_strike: fair_var,
+                vol: fair_var.max(0.0).sqrt(),
+            })
+        }
+        instrument::Product::VolatilitySwap(_vs) => {
+            // Fair volatility strike `K_vol = √K_var − convexity_correction`
+            // (Carr-Lee Jensen adjustment). The headline `price` is the fair vol
+            // strike; under a flat smile the convexity gap is zero so K_vol = σ
+            // exactly. FD Greeks are the fair-vol-strike sensitivities.
+            let price = move |m: &WireMarketContext| -> f64 {
+                let ctx = var_swap_context(m, expiry);
+                fair_volatility(&FlatSmile::new(m.vol), &ctx).fair_vol
+            };
+            let price_at = move |t: f64, m: &WireMarketContext| -> f64 {
+                let ctx = var_swap_context(m, t);
+                fair_volatility(&FlatSmile::new(m.vol), &ctx).fair_vol
+            };
+            let greeks = exotic_greeks(&price, &price_at, market, expiry);
+            let fair_vol = greeks.price;
+            Ok(Priced {
+                greeks,
+                resolved_strike: fair_vol,
+                vol: fair_vol,
+            })
+        }
+        instrument::Product::AsianOption(a) => {
+            let option_type = decode_option_type(a.option_type)?;
+            let averaging = celnet_proto::AveragingStyle::try_from(a.averaging).map_err(|_| {
+                PriceError::UnknownEnum {
+                    kind: "AveragingStyle",
+                    tag: a.averaging,
+                }
+            })?;
+            let method = celnet_proto::AsianMethod::try_from(a.method).map_err(|_| {
+                PriceError::UnknownEnum {
+                    kind: "AsianMethod",
+                    tag: a.method,
+                }
+            })?;
+            let schedule = match averaging {
+                celnet_proto::AveragingStyle::Discrete => {
+                    if a.observations < 1 {
+                        return Err(PriceError::Domain(
+                            "discrete Asian needs at least one future observation",
+                        ));
+                    }
+                    AveragingSchedule::Discrete {
+                        future_obs: a.observations as usize,
+                    }
+                }
+                celnet_proto::AveragingStyle::Continuous => AveragingSchedule::Continuous,
+            };
+            if !(a.elapsed_weight >= 0.0 && a.elapsed_weight < 1.0) {
+                return Err(PriceError::Domain(
+                    "Asian elapsed_weight must lie in [0, 1)",
+                ));
+            }
+            let strike = a.strike;
+            let spec = AnalyticAsian {
+                option: option_type,
+                strike,
+                schedule,
+                t_start: 0.0,
+                elapsed_avg: a.elapsed_avg,
+                elapsed_weight: a.elapsed_weight,
+            };
+            // The arithmetic-Asian price is a genuine discounted option value, so
+            // the standard FD Greek machinery applies exactly as for the other
+            // exotic legs. `t_start` stays 0 (a fresh remaining window); the
+            // realised running average enters via the seasoned-strike shift.
+            let price = move |m: &WireMarketContext| -> f64 {
+                let inputs = inputs_at(m, expiry, strike, m.vol);
+                match method {
+                    celnet_proto::AsianMethod::Curran => curran_price(&inputs, spec),
+                    celnet_proto::AsianMethod::TurnbullWakeman => {
+                        turnbull_wakeman_price(&inputs, spec)
+                    }
+                }
+            };
+            let price_at = move |t: f64, m: &WireMarketContext| -> f64 {
+                let inputs = inputs_at(m, t, strike, m.vol);
+                match method {
+                    celnet_proto::AsianMethod::Curran => curran_price(&inputs, spec),
+                    celnet_proto::AsianMethod::TurnbullWakeman => {
+                        turnbull_wakeman_price(&inputs, spec)
+                    }
+                }
+            };
+            let greeks = exotic_greeks(&price, &price_at, market, expiry);
+            Ok(Priced {
+                greeks,
+                resolved_strike: strike,
+                vol: market.vol,
+            })
+        }
     }
 }
 
@@ -909,6 +1034,238 @@ mod tests {
             call.vega - put.vega,
             1e-12,
             1e-12
+        ));
+    }
+
+    // ====================================================================
+    // Wave-1 products: variance swap / volatility swap / arithmetic Asian.
+    // Each gate proves the SERVER pricer == the celnet-exotics closed form
+    // (the independent oracle), plus a closed-form limit oracle.
+    // ====================================================================
+
+    fn base_instrument(product: Product) -> Instrument {
+        Instrument {
+            pair: None,
+            tenor: None,
+            expiry_years: 1.0,
+            quantity: None,
+            side: celnet_proto::Side::Buy as i32,
+            solve: None,
+            product: Some(product),
+        }
+    }
+
+    #[test]
+    fn variance_swap_matches_exotics_closed_form() {
+        use celnet_core::FlatSmile;
+        use celnet_exotics::{VarSwapContext, fair_variance};
+        let m = market();
+        let instr = base_instrument(Product::VarianceSwap(celnet_proto::VarianceSwap {
+            strike_vol: 0.0,
+        }));
+        let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+        // Independent oracle: the exotics closed form on the same flat smile/ctx.
+        let template = VanillaInputs::new(m.spot, m.spot, m.vol, 1.0, m.r_dom, m.r_for);
+        let ctx = VarSwapContext::from_inputs(&template);
+        let oracle = fair_variance(&FlatSmile::new(m.vol), &ctx);
+        assert!(
+            is_close(priced.greeks.price, oracle.fair_variance, 1e-9, 1e-12),
+            "server K_var {} vs oracle {}",
+            priced.greeks.price,
+            oracle.fair_variance
+        );
+        // The echoed resolved strike is K_var; the echoed vol is √K_var.
+        assert!(is_close(
+            priced.resolved_strike,
+            oracle.fair_variance,
+            1e-9,
+            1e-12
+        ));
+        assert!(is_close(
+            priced.vol,
+            oracle.fair_variance.sqrt(),
+            1e-9,
+            1e-12
+        ));
+    }
+
+    #[test]
+    fn variance_swap_flat_sigma_recovers_sigma_squared() {
+        // The genuinely independent closed-form limit oracle: a flat vol σ must
+        // give the fair variance K_var == σ² exactly. Catches forward / discount
+        // / scale / sign errors in the wire-path replication.
+        let conv = conv_set();
+        for sigma in [0.05_f64, 0.10, 0.20, 0.35] {
+            let m = WM {
+                spot: 1.30,
+                vol: sigma,
+                r_dom: 0.03,
+                r_for: 0.01,
+            };
+            let instr = base_instrument(Product::VarianceSwap(celnet_proto::VarianceSwap {
+                strike_vol: 0.0,
+            }));
+            let priced = price_instrument(&instr, &m, &conv).unwrap();
+            assert!(
+                is_close(priced.greeks.price, sigma * sigma, 1e-7, 1e-9),
+                "K_var {} != σ²={} for σ={}",
+                priced.greeks.price,
+                sigma * sigma,
+                sigma
+            );
+        }
+    }
+
+    #[test]
+    fn volatility_swap_matches_exotics_closed_form() {
+        use celnet_core::FlatSmile;
+        use celnet_exotics::{VarSwapContext, fair_volatility};
+        let m = market();
+        let instr = base_instrument(Product::VolatilitySwap(celnet_proto::VolatilitySwap {
+            strike_vol: 0.0,
+        }));
+        let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+        let template = VanillaInputs::new(m.spot, m.spot, m.vol, 1.0, m.r_dom, m.r_for);
+        let ctx = VarSwapContext::from_inputs(&template);
+        let oracle = fair_volatility(&FlatSmile::new(m.vol), &ctx);
+        assert!(
+            is_close(priced.greeks.price, oracle.fair_vol, 1e-9, 1e-12),
+            "server K_vol {} vs oracle {}",
+            priced.greeks.price,
+            oracle.fair_vol
+        );
+        assert!(is_close(
+            priced.resolved_strike,
+            oracle.fair_vol,
+            1e-9,
+            1e-12
+        ));
+        assert!(is_close(priced.vol, oracle.fair_vol, 1e-9, 1e-12));
+    }
+
+    #[test]
+    fn volatility_swap_flat_sigma_recovers_sigma() {
+        // Flat smile ⇒ zero convexity gap ⇒ K_vol == σ exactly.
+        let conv = conv_set();
+        for sigma in [0.08_f64, 0.15, 0.25] {
+            let m = WM {
+                spot: 1.30,
+                vol: sigma,
+                r_dom: 0.03,
+                r_for: 0.01,
+            };
+            let instr = base_instrument(Product::VolatilitySwap(celnet_proto::VolatilitySwap {
+                strike_vol: 0.0,
+            }));
+            let priced = price_instrument(&instr, &m, &conv).unwrap();
+            assert!(
+                is_close(priced.greeks.price, sigma, 1e-6, 1e-7),
+                "K_vol {} != σ={}",
+                priced.greeks.price,
+                sigma
+            );
+        }
+    }
+
+    #[test]
+    fn asian_curran_matches_exotics_closed_form() {
+        use celnet_exotics::{AnalyticAsian, curran_price};
+        let m = market();
+        let instr = base_instrument(Product::AsianOption(celnet_proto::AsianOption {
+            option_type: celnet_proto::OptionType::Call as i32,
+            strike: 1.10,
+            averaging: celnet_proto::AveragingStyle::Discrete as i32,
+            observations: 12,
+            method: celnet_proto::AsianMethod::Curran as i32,
+            elapsed_avg: 0.0,
+            elapsed_weight: 0.0,
+        }));
+        let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+        let inputs = VanillaInputs::new(m.spot, 1.10, m.vol, 1.0, m.r_dom, m.r_for);
+        let spec = AnalyticAsian::fresh_discrete(OptionType::Call, 1.10, 12);
+        let oracle = curran_price(&inputs, spec);
+        assert!(
+            is_close(priced.greeks.price, oracle, 1e-9, 1e-12),
+            "server Asian (Curran) {} vs oracle {}",
+            priced.greeks.price,
+            oracle
+        );
+        assert!(is_close(priced.resolved_strike, 1.10, 1e-14, 1e-14));
+        assert!(priced.greeks.price > 0.0 && priced.greeks.vega > 0.0);
+    }
+
+    #[test]
+    fn asian_turnbull_wakeman_matches_exotics_closed_form() {
+        use celnet_exotics::{AnalyticAsian, turnbull_wakeman_price};
+        let m = market();
+        let instr = base_instrument(Product::AsianOption(celnet_proto::AsianOption {
+            option_type: celnet_proto::OptionType::Put as i32,
+            strike: 1.12,
+            averaging: celnet_proto::AveragingStyle::Continuous as i32,
+            observations: 0,
+            method: celnet_proto::AsianMethod::TurnbullWakeman as i32,
+            elapsed_avg: 0.0,
+            elapsed_weight: 0.0,
+        }));
+        let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+        let inputs = VanillaInputs::new(m.spot, 1.12, m.vol, 1.0, m.r_dom, m.r_for);
+        let spec = AnalyticAsian::fresh_continuous(OptionType::Put, 1.12);
+        let oracle = turnbull_wakeman_price(&inputs, spec);
+        assert!(
+            is_close(priced.greeks.price, oracle, 1e-9, 1e-12),
+            "server Asian (TW) {} vs oracle {}",
+            priced.greeks.price,
+            oracle
+        );
+    }
+
+    #[test]
+    fn asian_seasoned_average_matches_exotics_closed_form() {
+        use celnet_exotics::{AnalyticAsian, AveragingSchedule, curran_price};
+        let m = market();
+        let instr = base_instrument(Product::AsianOption(celnet_proto::AsianOption {
+            option_type: celnet_proto::OptionType::Call as i32,
+            strike: 1.08,
+            averaging: celnet_proto::AveragingStyle::Discrete as i32,
+            observations: 9,
+            method: celnet_proto::AsianMethod::Curran as i32,
+            elapsed_avg: 1.095,
+            elapsed_weight: 0.25,
+        }));
+        let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+        let inputs = VanillaInputs::new(m.spot, 1.08, m.vol, 1.0, m.r_dom, m.r_for);
+        let spec = AnalyticAsian {
+            option: OptionType::Call,
+            strike: 1.08,
+            schedule: AveragingSchedule::Discrete { future_obs: 9 },
+            t_start: 0.0,
+            elapsed_avg: 1.095,
+            elapsed_weight: 0.25,
+        };
+        let oracle = curran_price(&inputs, spec);
+        assert!(
+            is_close(priced.greeks.price, oracle, 1e-9, 1e-12),
+            "seasoned Asian {} vs oracle {}",
+            priced.greeks.price,
+            oracle
+        );
+    }
+
+    #[test]
+    fn asian_rejects_zero_discrete_observations() {
+        let m = market();
+        let instr = base_instrument(Product::AsianOption(celnet_proto::AsianOption {
+            option_type: celnet_proto::OptionType::Call as i32,
+            strike: 1.10,
+            averaging: celnet_proto::AveragingStyle::Discrete as i32,
+            observations: 0,
+            method: celnet_proto::AsianMethod::Curran as i32,
+            elapsed_avg: 0.0,
+            elapsed_weight: 0.0,
+        }));
+        assert!(matches!(
+            price_instrument(&instr, &m, &conv_set()),
+            Err(PriceError::Domain(_))
         ));
     }
 }

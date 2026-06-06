@@ -109,9 +109,9 @@ pub use surface_vocab::{
     SmilePoint, VegaPillar,
 };
 pub use vocab::{
-    Attribution, BarrierKind, BarrierSide, BookId, Calibration, Conventions, DigitalStyle,
-    Execution, InstrumentSpec, Leg, PricedLine, Product, Quantity, Quote, RejectAck, Seat, Side,
-    StrategyKind, StrikeSpec, TouchKind, TwoWay,
+    AsianMethod, AsianTerms, Attribution, AveragingStyle, BarrierKind, BarrierSide, BookId,
+    Calibration, Conventions, DigitalStyle, Execution, InstrumentSpec, Leg, PricedLine, Product,
+    Quantity, Quote, RejectAck, Seat, Side, StrategyKind, StrikeSpec, TouchKind, TwoWay,
 };
 
 use celnet_proto::pricing_service_client::PricingServiceClient;

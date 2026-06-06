@@ -60,8 +60,19 @@ Instrument = Vanilla
            | SingleBarrier
            | DoubleBarrier
            | Digital
-           | Touch   // one-touch / no-touch / double-no-touch
+           | Touch            // one-touch / no-touch / double-no-touch
+           | VarianceSwap     // fair-variance-strike replication (K_var)
+           | VolatilitySwap   // convexity-adjusted fair-vol strike (K_vol)
+           | AsianOption      // fixed-strike arithmetic-average-rate (Curran / Turnbull-Wakeman)
 ```
+
+The wire field numbers are append-only (no renumber, no `schema_version`): `vanilla=7 …
+touch=12`, then `variance_swap=13`, `volatility_swap=14`, `asian_option=15`. Variance/vol
+swaps echo the fair strike in the priced `resolved_strike` (and the server's `vol` field
+carries `√K_var` for the variance swap); the arithmetic Asian carries a genuine discounted
+option price with the full FD Greek set. SDK builders: `InstrumentSpec::variance_swap`,
+`::volatility_swap`, `::asian_option(.., AsianTerms)`; CLI: `exotic var-swap`,
+`exotic vol-swap`, `exotic asian`.
 
 Supporting messages: `Quantity` (notional + which leg-ccy), `Solve` (solve strike or premium
 so a leg/structure is zero-cost), `StrikeOrDelta` (`oneof spec` — quote by strike or by

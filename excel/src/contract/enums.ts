@@ -17,7 +17,9 @@
  */
 
 import type {
+  AsianMethod,
   AtmConvention,
+  AveragingStyle,
   Cut,
   DayCount,
   DeltaConvention,
@@ -147,3 +149,15 @@ export const marketObservable = enumCodec<MarketObservable>([
   "BUTTERFLY",
   "FORWARD",
 ]);
+
+/**
+ * `AveragingStyle` ↔ proto `AveragingStyle`
+ * (AVERAGING_STYLE_DISCRETE=0, AVERAGING_STYLE_CONTINUOUS=1).
+ */
+export const averagingStyle = enumCodec<AveragingStyle>(["DISCRETE", "CONTINUOUS"]);
+
+/**
+ * `AsianMethod` ↔ proto `AsianMethod`
+ * (ASIAN_METHOD_CURRAN=0, ASIAN_METHOD_TURNBULL_WAKEMAN=1).
+ */
+export const asianMethod = enumCodec<AsianMethod>(["CURRAN", "TURNBULL_WAKEMAN"]);

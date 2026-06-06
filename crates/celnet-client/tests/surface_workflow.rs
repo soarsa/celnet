@@ -18,7 +18,7 @@ mod common;
 
 use std::time::Duration;
 
-use celnet_client::{BrokerQuoteSet, ShockAxis, ShockFactor};
+use celnet_client::{BrokerQuoteSet, InstrumentSpec, Quantity, ShockAxis, ShockFactor, Side};
 use celnet_core::is_close;
 use celnet_types::{OptionType, VanillaInputs};
 
@@ -196,6 +196,141 @@ async fn one_shot_price_equals_direct() {
         assert!(is_close(priced.greeks.vega, direct.vega, 1e-12, 1e-12));
         assert!(is_close(priced.greeks.gamma, direct.gamma, 1e-12, 1e-12));
         assert!(is_close(priced.resolved_strike, strike, 1e-12, 1e-12));
+
+        edge.shutdown(Duration::from_secs(5)).await;
+    })
+    .await
+    .expect("test must not hang");
+}
+
+/// Wave-1 products through the SDK: a variance swap, a volatility swap, and an
+/// arithmetic Asian price end-to-end via `Client::price` and equal the
+/// `celnet-exotics` closed forms (the independent oracle) at the live market —
+/// the api-first parity proof that the new wire products are reachable from the
+/// SDK exactly like the existing ones.
+#[tokio::test]
+async fn wave1_swaps_and_asian_price_through_sdk() {
+    use celnet_client::{AsianMethod, AsianTerms, AveragingStyle};
+    use celnet_exotics::{
+        AnalyticAsian, VarSwapContext, curran_price, fair_variance, fair_volatility,
+    };
+
+    tokio::time::timeout(TEST_DEADLINE, async {
+        let (edge, client) = start_edge_and_client().await;
+        let market = live_market();
+        let template = VanillaInputs::new(
+            market.spot,
+            market.spot,
+            market.vol,
+            1.0,
+            market.r_dom,
+            market.r_for,
+        );
+        let ctx = VarSwapContext::from_inputs(&template);
+        let flat = celnet_core::FlatSmile::new(market.vol);
+
+        // Variance swap: headline price == fair variance strike K_var; vol == √K_var.
+        let var_spec = InstrumentSpec::variance_swap(
+            eurusd(),
+            celnet_types::Tenor::Years(1),
+            1.0,
+            Quantity::base(1_000_000.0),
+            Side::Buy,
+            0.0,
+        );
+        let var_priced = tokio::time::timeout(
+            STEP_DEADLINE,
+            client.price(&var_spec, market, conventions()),
+        )
+        .await
+        .expect("var swap price returns")
+        .expect("var swap price succeeds");
+        let var_oracle = fair_variance(&flat, &ctx);
+        assert!(
+            is_close(
+                var_priced.greeks.price,
+                var_oracle.fair_variance,
+                1e-9,
+                1e-12
+            ),
+            "SDK K_var {} != oracle {}",
+            var_priced.greeks.price,
+            var_oracle.fair_variance
+        );
+        // The SDK echoes the fair variance strike as the resolved strike.
+        assert!(is_close(
+            var_priced.resolved_strike,
+            var_oracle.fair_variance,
+            1e-9,
+            1e-12
+        ));
+
+        // Volatility swap: headline price == fair vol strike K_vol.
+        let vol_spec = InstrumentSpec::volatility_swap(
+            eurusd(),
+            celnet_types::Tenor::Years(1),
+            1.0,
+            Quantity::base(1_000_000.0),
+            Side::Buy,
+            0.0,
+        );
+        let vol_priced = tokio::time::timeout(
+            STEP_DEADLINE,
+            client.price(&vol_spec, market, conventions()),
+        )
+        .await
+        .expect("vol swap price returns")
+        .expect("vol swap price succeeds");
+        let vol_oracle = fair_volatility(&flat, &ctx);
+        assert!(
+            is_close(vol_priced.greeks.price, vol_oracle.fair_vol, 1e-9, 1e-12),
+            "SDK K_vol {} != oracle {}",
+            vol_priced.greeks.price,
+            vol_oracle.fair_vol
+        );
+
+        // Arithmetic Asian (Curran, 12 discrete fixings): SDK price == oracle.
+        let asian_strike = 1.10;
+        let asian_spec = InstrumentSpec::asian_option(
+            eurusd(),
+            celnet_types::Tenor::Years(1),
+            1.0,
+            Quantity::base(1_000_000.0),
+            Side::Buy,
+            AsianTerms::fresh_discrete(OptionType::Call, asian_strike, 12)
+                .method(AsianMethod::Curran),
+        );
+        // Exercise the fluent continuous variant too (compile + value parity).
+        assert_eq!(
+            AsianTerms::fresh_continuous(OptionType::Put, 1.0).averaging,
+            AveragingStyle::Continuous
+        );
+        let asian_priced = tokio::time::timeout(
+            STEP_DEADLINE,
+            client.price(&asian_spec, market, conventions()),
+        )
+        .await
+        .expect("asian price returns")
+        .expect("asian price succeeds");
+        let asian_inputs = VanillaInputs::new(
+            market.spot,
+            asian_strike,
+            market.vol,
+            1.0,
+            market.r_dom,
+            market.r_for,
+        );
+        let asian_oracle = curran_price(
+            &asian_inputs,
+            AnalyticAsian::fresh_discrete(OptionType::Call, asian_strike, 12),
+        );
+        assert!(
+            is_close(asian_priced.greeks.price, asian_oracle, 1e-9, 1e-12),
+            "SDK Asian {} != oracle {}",
+            asian_priced.greeks.price,
+            asian_oracle
+        );
+        assert!(asian_priced.greeks.price > 0.0 && asian_priced.greeks.vega > 0.0);
 
         edge.shutdown(Duration::from_secs(5)).await;
     })

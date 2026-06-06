@@ -310,3 +310,71 @@
   color: var(--text-tertiary);
   line-height: var(--type-body-lh);
 }
+
+/* --- volatility / average-rate product inputs (var/vol swap, Asian) --------- */
+
+.product {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-6);
+  border-bottom: var(--hairline);
+}
+.productRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+.productLabel {
+  font-family: var(--font-brand);
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  min-width: 84px;
+}
+.productField {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+}
+.productField input {
+  width: 96px;
+}
+.productNote {
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+  line-height: var(--type-body-lh);
+  margin: 0;
+}
+.toggleGroup {
+  display: flex;
+  gap: var(--space-1);
+}
+
+/* --- variance / volatility swap fair-strike result ------------------------- */
+
+.swapResult {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-5) var(--space-6);
+}
+.swapHead {
+  font-family: var(--font-brand);
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+}
+.swapStrike {
+  font-size: var(--type-title);
+  color: var(--text-primary);
+}
+.swapSub {
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+}

@@ -20,6 +20,7 @@
 import {
   DEFAULT_CONVENTIONS,
   ShapingError,
+  formatAsianSpill,
   formatCalibratedSmileSpill,
   formatGreeksSpill,
   formatLimitsSpill,
@@ -29,15 +30,20 @@ import {
   formatRiskSpill,
   formatSeriesCell,
   formatSmileSpill,
+  formatVarSwapSpill,
+  formatVolSwapSpill,
   parseObservable,
   parsePair,
   parseRiskDimension,
   parseRiskScope,
   parseSmileModel,
   parseTenor,
+  shapeAsianOption,
   shapeCalibration,
   shapeReportingNumeraire,
   shapeVanillaInstrument,
+  shapeVarianceSwap,
+  shapeVolatilitySwap,
   type SpillMatrix,
 } from "./shaping";
 import {
@@ -279,6 +285,147 @@ export async function RFQ(
       offer: quote.price.offer,
       quoteId: quote.quoteId,
       validUntilNanos: quote.validUntilNanos,
+      conventions: quote.conventions,
+      surfaceVersion: quote.surfaceVersion,
+      epochNanos: quote.epochNanos,
+    });
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
+/**
+ * Price a variance swap: a 2×2 spill `["fair_variance", K_var]` /
+ * `["fair_vol", √K_var]` plus a convention footer. The fair variance strike is
+ * the log-contract static-replication strike the server computes (the same
+ * `celnet-exotics` closed form the SDK/CLI read); the fair vol is its √. Supply a
+ * non-zero `strikeVol` only to pin a fixed strike — a fresh quote (zero/omitted)
+ * reads the fair strike off the response.
+ * @customfunction VARSWAP
+ * @param pair Currency pair, e.g. "EURUSD".
+ * @param tenor Tenor, e.g. "1Y".
+ * @param notional Trade notional in the base currency.
+ * @param strikeVol Optional fixed strike vol to pin (absolute, e.g. 0.11); omit for the fair strike.
+ * @returns A spill: fair_variance, fair_vol, and a convention footer.
+ */
+export async function VARSWAP(
+  pair: string,
+  tenor: string,
+  notional: number,
+  strikeVol?: number,
+): Promise<SpillMatrix> {
+  try {
+    const instrument = shapeVarianceSwap({ pair, tenor, notional, strikeVol });
+    const quote = await getConnection().requestQuote(
+      instrument,
+      DEFAULT_CONVENTIONS,
+      `varswap:${pair}:${tenor}:${notional}:${strikeVol ?? 0}`,
+    );
+    // The server returns the fair variance strike on both `resolved_strike` and
+    // `greeks.price` (K_var); read the resolved strike (the canonical strike echo).
+    return formatVarSwapSpill({
+      fairVariance: quote.resolvedStrike,
+      conventions: quote.conventions,
+      surfaceVersion: quote.surfaceVersion,
+      epochNanos: quote.epochNanos,
+    });
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
+/**
+ * Price a volatility swap: a 1×2 spill `["fair_vol", K_vol]` plus a convention
+ * footer. `K_vol` is the convexity-adjusted fair volatility strike (strictly below
+ * `√K_var` for any non-degenerate smile), the same `celnet-exotics` closed form
+ * the SDK/CLI read.
+ * @customfunction VOLSWAP
+ * @param pair Currency pair, e.g. "EURUSD".
+ * @param tenor Tenor, e.g. "1Y".
+ * @param notional Trade notional in the base currency.
+ * @param strikeVol Optional fixed strike vol to pin (absolute, e.g. 0.11); omit for the fair strike.
+ * @returns A spill: fair_vol and a convention footer.
+ */
+export async function VOLSWAP(
+  pair: string,
+  tenor: string,
+  notional: number,
+  strikeVol?: number,
+): Promise<SpillMatrix> {
+  try {
+    const instrument = shapeVolatilitySwap({ pair, tenor, notional, strikeVol });
+    const quote = await getConnection().requestQuote(
+      instrument,
+      DEFAULT_CONVENTIONS,
+      `volswap:${pair}:${tenor}:${notional}:${strikeVol ?? 0}`,
+    );
+    // The server returns the fair vol strike on both `resolved_strike` and
+    // `greeks.price` (K_vol).
+    return formatVolSwapSpill({
+      fairVol: quote.resolvedStrike,
+      conventions: quote.conventions,
+      surfaceVersion: quote.surfaceVersion,
+      epochNanos: quote.epochNanos,
+    });
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
+/**
+ * Price a fixed-strike arithmetic-average-rate Asian option: a spill of
+ * `["premium", PV]`, the 13 risk Greeks, and a convention footer. The premium is
+ * the discounted option PV the server computes via the chosen analytic estimator
+ * (the same `celnet-exotics` closed form the SDK/CLI read). The strike must be an
+ * absolute level. DISCRETE averaging needs `observations ≥ 1`; CONTINUOUS ignores
+ * it. The seasoning pair (`elapsedAvg`, `elapsedWeight`) prices an in-progress
+ * average (e.g. 3 of 12 fixings done ⇒ elapsedWeight 0.25); omit for a fresh one.
+ * @customfunction ASIAN
+ * @param pair Currency pair, e.g. "EURUSD".
+ * @param tenor Tenor, e.g. "1Y".
+ * @param strike Absolute strike level, e.g. 1.10.
+ * @param callPut "C" for call, "P" for put.
+ * @param notional Trade notional in the base currency.
+ * @param averaging Optional averaging style: DISCRETE (default) or CONTINUOUS.
+ * @param observations Number of equally-spaced fixings (DISCRETE; ≥ 1).
+ * @param method Optional analytic estimator: CURRAN (default) or TW.
+ * @param elapsedAvg Optional realised running average of the fixed observations (seasoning).
+ * @param elapsedWeight Optional fraction ∈ [0,1) of the average already accumulated.
+ * @returns A spill: premium, the 13 Greeks, and a convention footer.
+ */
+export async function ASIAN(
+  pair: string,
+  tenor: string,
+  strike: number,
+  callPut: string,
+  notional: number,
+  averaging?: string,
+  observations?: number,
+  method?: string,
+  elapsedAvg?: number,
+  elapsedWeight?: number,
+): Promise<SpillMatrix> {
+  try {
+    const instrument = shapeAsianOption({
+      pair,
+      tenor,
+      strike,
+      callPut,
+      notional,
+      averaging,
+      observations,
+      method,
+      elapsedAvg,
+      elapsedWeight,
+    });
+    const quote = await getConnection().requestQuote(
+      instrument,
+      DEFAULT_CONVENTIONS,
+      `asian:${pair}:${tenor}:${strike}:${callPut}:${notional}:${averaging ?? ""}:${observations ?? ""}:${method ?? ""}:${elapsedAvg ?? ""}:${elapsedWeight ?? ""}`,
+    );
+    return formatAsianSpill({
+      premium: quote.greeks.price,
+      greeks: quote.greeks,
       conventions: quote.conventions,
       surfaceVersion: quote.surfaceVersion,
       epochNanos: quote.epochNanos,
@@ -559,6 +706,9 @@ function registerAll(): void {
   cf.associate("SURFACE", SURFACE as (...a: never[]) => unknown);
   cf.associate("MARKSURFACE", MARKSURFACE as (...a: never[]) => unknown);
   cf.associate("RFQ", RFQ as (...a: never[]) => unknown);
+  cf.associate("VARSWAP", VARSWAP as (...a: never[]) => unknown);
+  cf.associate("VOLSWAP", VOLSWAP as (...a: never[]) => unknown);
+  cf.associate("ASIAN", ASIAN as (...a: never[]) => unknown);
   cf.associate("SUBSCRIBE", SUBSCRIBE as (...a: never[]) => unknown);
   cf.associate("SERIES", SERIES as (...a: never[]) => unknown);
   cf.associate("MARK", MARK as (...a: never[]) => unknown);

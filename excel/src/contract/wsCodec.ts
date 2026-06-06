@@ -158,17 +158,40 @@ export function instrumentToWire(i: Instrument): WireObject {
     side: e.side.toWire(i.side),
   };
   if (i.solve) base["solve"] = solveToWire(i.solve);
-  // The product oneof: nest the body under its own key, exactly like the proto.
-  if (i.product.kind === "vanilla") {
-    base["vanilla"] = {
-      option_type: e.optionType.toWire(i.product.vanilla.optionType),
-      strike: strikeOrDeltaToWire(i.product.vanilla.strike),
-    };
-  } else {
-    base["strategy"] = {
-      kind: e.strategyKind.toWire(i.product.strategy.kind),
-      legs: i.product.strategy.legs.map(legToWire),
-    };
+  // The product oneof: nest the body under its own key (the proto field name) with
+  // the proto field number it occupies — vanilla=7, strategy=8, … variance_swap=13,
+  // volatility_swap=14, asian_option=15. The WS JSON mirror keys by name, exactly
+  // like `crates/celnet-server/src/ws/codec.rs` decodes.
+  switch (i.product.kind) {
+    case "vanilla":
+      base["vanilla"] = {
+        option_type: e.optionType.toWire(i.product.vanilla.optionType),
+        strike: strikeOrDeltaToWire(i.product.vanilla.strike),
+      };
+      break;
+    case "strategy":
+      base["strategy"] = {
+        kind: e.strategyKind.toWire(i.product.strategy.kind),
+        legs: i.product.strategy.legs.map(legToWire),
+      };
+      break;
+    case "varianceSwap":
+      base["variance_swap"] = { strike_vol: i.product.varianceSwap.strikeVol };
+      break;
+    case "volatilitySwap":
+      base["volatility_swap"] = { strike_vol: i.product.volatilitySwap.strikeVol };
+      break;
+    case "asianOption":
+      base["asian_option"] = {
+        option_type: e.optionType.toWire(i.product.asianOption.optionType),
+        strike: i.product.asianOption.strike,
+        averaging: e.averagingStyle.toWire(i.product.asianOption.averaging),
+        observations: i.product.asianOption.observations,
+        method: e.asianMethod.toWire(i.product.asianOption.method),
+        elapsed_avg: i.product.asianOption.elapsedAvg,
+        elapsed_weight: i.product.asianOption.elapsedWeight,
+      };
+      break;
   }
   return base;
 }

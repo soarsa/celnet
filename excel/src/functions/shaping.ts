@@ -16,12 +16,15 @@
  */
 
 import type {
+  AsianMethod,
+  AveragingStyle,
   CcyPair,
   Conventions,
   Greeks,
   Instrument,
   MarketObservable,
   OptionType,
+  Product,
   Side,
   SmileModel,
   StrikeOrDelta,
@@ -428,6 +431,191 @@ export function shapeCalibration(args: CalibrateArgs): ShapedCalibration {
 }
 
 // ---------------------------------------------------------------------------
+// swap + Asian shaping (variance/volatility swaps, arithmetic Asian options)
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse an averaging-style selector for an Asian option. Accepts `DISCRETE`/`D`
+ * (a fixed number of equally-spaced fixings) or `CONTINUOUS`/`C`/`CONT` (the
+ * continuous-monitoring limit), case-insensitive. Empty/absent ⇒ `DISCRETE`
+ * (the proto3 zero value), the common desk default.
+ */
+export function parseAveragingStyle(raw: string | undefined): AveragingStyle {
+  const s = (raw ?? "").trim().toUpperCase();
+  switch (s) {
+    case "":
+    case "DISCRETE":
+    case "D":
+      return "DISCRETE";
+    case "CONTINUOUS":
+    case "CONT":
+    case "C":
+      return "CONTINUOUS";
+    default:
+      throw new ShapingError(
+        `invalid averaging \`${raw}\` (expected DISCRETE or CONTINUOUS)`,
+      );
+  }
+}
+
+/**
+ * Parse an Asian analytic-estimator selector. Accepts `CURRAN` (the geometric-
+ * conditioning default) or `TW`/`TURNBULL_WAKEMAN`/`TURNBULL-WAKEMAN` (the
+ * two-moment lognormal-matching estimator), case-insensitive. Empty/absent ⇒
+ * `CURRAN` (the proto3 zero value, the accurate default).
+ */
+export function parseAsianMethod(raw: string | undefined): AsianMethod {
+  const s = (raw ?? "").trim().toUpperCase();
+  switch (s) {
+    case "":
+    case "CURRAN":
+      return "CURRAN";
+    case "TW":
+    case "TURNBULL_WAKEMAN":
+    case "TURNBULL-WAKEMAN":
+    case "TURNBULLWAKEMAN":
+      return "TURNBULL_WAKEMAN";
+    default:
+      throw new ShapingError(
+        `invalid Asian method \`${raw}\` (expected CURRAN or TW)`,
+      );
+  }
+}
+
+/** The fully-parsed inputs a swap CELNET.* function shapes into a request. */
+export interface SwapArgs {
+  readonly pair: string;
+  readonly tenor: string;
+  readonly notional: number;
+  /** Fixed strike vol; `0`/absent ⇒ a fresh request reading the fair strike off the response. */
+  readonly strikeVol?: number | undefined;
+}
+
+/** Validate the common (pair, tenor, notional) of a swap/Asian request. */
+function shapeSwapBase(args: { pair: string; tenor: string; notional: number }): {
+  pair: CcyPair;
+  tenor: Tenor;
+  expiryYears: number;
+} {
+  if (!Number.isFinite(args.notional) || args.notional <= 0) {
+    throw new ShapingError(`invalid notional \`${args.notional}\``);
+  }
+  const { tenor, expiryYears } = parseTenor(args.tenor);
+  return { pair: parsePair(args.pair), tenor, expiryYears };
+}
+
+/** Validate an optional fixed strike-vol; absent/zero ⇒ 0 (read fair off the response). */
+function shapeStrikeVol(raw: number | undefined): number {
+  if (raw === undefined) return 0;
+  if (!Number.isFinite(raw) || raw < 0 || raw >= 5) {
+    throw new ShapingError(`invalid strike vol \`${raw}\` (absolute vol ≥ 0, e.g. 0.11)`);
+  }
+  return raw;
+}
+
+/**
+ * Shape a variance-swap instrument from the cell arguments. `side` is TWO_WAY (the
+ * cell reads a fair-strike market); the notional is in the base/foreign ccy (CCY1).
+ */
+export function shapeVarianceSwap(args: SwapArgs): Instrument {
+  const { pair, tenor, expiryYears } = shapeSwapBase(args);
+  return {
+    pair,
+    tenor,
+    expiryYears,
+    quantity: { notional: args.notional, baseCcy: true },
+    side: "TWO_WAY" as Side,
+    product: { kind: "varianceSwap", varianceSwap: { strikeVol: shapeStrikeVol(args.strikeVol) } },
+  };
+}
+
+/** Shape a volatility-swap instrument from the cell arguments. */
+export function shapeVolatilitySwap(args: SwapArgs): Instrument {
+  const { pair, tenor, expiryYears } = shapeSwapBase(args);
+  return {
+    pair,
+    tenor,
+    expiryYears,
+    quantity: { notional: args.notional, baseCcy: true },
+    side: "TWO_WAY" as Side,
+    product: { kind: "volatilitySwap", volatilitySwap: { strikeVol: shapeStrikeVol(args.strikeVol) } },
+  };
+}
+
+/** The fully-parsed inputs an Asian CELNET.* function shapes into a request. */
+export interface AsianArgs {
+  readonly pair: string;
+  readonly tenor: string;
+  readonly strike: string | number;
+  readonly callPut: string;
+  readonly notional: number;
+  readonly averaging?: string | undefined;
+  readonly observations?: number | undefined;
+  readonly method?: string | undefined;
+  readonly elapsedAvg?: number | undefined;
+  readonly elapsedWeight?: number | undefined;
+}
+
+/**
+ * Shape an arithmetic-average-rate Asian-option instrument from the cell
+ * arguments. The strike must be an absolute level (an Asian has no delta-quoted
+ * strike convention). For DISCRETE averaging `observations` must be `≥ 1`; for
+ * CONTINUOUS it is ignored (encoded as 0, matching the contract). The seasoning
+ * pair (`elapsedAvg`, `elapsedWeight`) prices an in-progress average; an absent
+ * pair ⇒ a fresh average (weight 0). `elapsedWeight` must be `∈ [0, 1)`.
+ */
+export function shapeAsianOption(args: AsianArgs): Instrument {
+  const { pair, tenor, expiryYears } = shapeSwapBase(args);
+  const strike = parseStrikeOrDelta(args.strike);
+  if (strike.kind !== "strike") {
+    throw new ShapingError(
+      `Asian strike must be an absolute level (e.g. 1.10), not a delta \`${args.strike}\``,
+    );
+  }
+  const averaging = parseAveragingStyle(args.averaging);
+  const method = parseAsianMethod(args.method);
+  let observations = 0;
+  if (averaging === "DISCRETE") {
+    const n = args.observations;
+    if (n === undefined || !Number.isFinite(n) || !Number.isInteger(n) || n < 1) {
+      throw new ShapingError(
+        `DISCRETE averaging needs observations ≥ 1 (e.g. 12); got \`${args.observations}\``,
+      );
+    }
+    observations = n;
+  }
+  const elapsedWeight = args.elapsedWeight ?? 0;
+  if (!Number.isFinite(elapsedWeight) || elapsedWeight < 0 || elapsedWeight >= 1) {
+    throw new ShapingError(
+      `elapsed weight \`${elapsedWeight}\` out of range (expected 0 ≤ w < 1)`,
+    );
+  }
+  const elapsedAvg = args.elapsedAvg ?? 0;
+  if (!Number.isFinite(elapsedAvg) || elapsedAvg < 0) {
+    throw new ShapingError(`elapsed average \`${elapsedAvg}\` must be finite and ≥ 0`);
+  }
+  return {
+    pair,
+    tenor,
+    expiryYears,
+    quantity: { notional: args.notional, baseCcy: true },
+    side: "TWO_WAY" as Side,
+    product: {
+      kind: "asianOption",
+      asianOption: {
+        optionType: parseOptionType(args.callPut),
+        strike: strike.strike,
+        averaging,
+        observations,
+        method,
+        elapsedAvg,
+        elapsedWeight,
+      },
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // dynamic-array formatting (spill geometries)
 // ---------------------------------------------------------------------------
 
@@ -571,6 +759,74 @@ export function formatRfqSpill(r: RfqResult): SpillMatrix {
     [r.bid, r.offer, r.quoteId.toString(), validIso],
     [conventionFooter(r.conventions, r.surfaceVersion, r.epochNanos)],
   ];
+}
+
+/** The decoded fields a CELNET.VARSWAP spill renders (fair variance + fair vol). */
+export interface VarSwapResult {
+  /** The fair variance strike `K_var` (the server's `resolved_strike` / `greeks.price`). */
+  readonly fairVariance: number;
+  readonly conventions: Conventions;
+  readonly surfaceVersion: bigint | undefined;
+  readonly epochNanos: bigint;
+}
+
+/**
+ * Format CELNET.VARSWAP as a labelled 2×2 spill — `["fair_variance", K_var]` and
+ * `["fair_vol", √K_var]` — followed by a convention footer. The fair vol is the
+ * √ of the fair variance the server returns; both are shown so the desk reads the
+ * variance strike AND its vol-equivalent without a hidden √.
+ */
+export function formatVarSwapSpill(r: VarSwapResult): SpillMatrix {
+  const fairVol = r.fairVariance >= 0 ? Math.sqrt(r.fairVariance) : Number.NaN;
+  return [
+    ["fair_variance", r.fairVariance],
+    ["fair_vol", fairVol],
+    [conventionFooter(r.conventions, r.surfaceVersion, r.epochNanos)],
+  ];
+}
+
+/** The decoded fields a CELNET.VOLSWAP spill renders (the convexity-adjusted fair vol). */
+export interface VolSwapResult {
+  /** The fair volatility strike `K_vol` (the server's `resolved_strike` / `greeks.price`). */
+  readonly fairVol: number;
+  readonly conventions: Conventions;
+  readonly surfaceVersion: bigint | undefined;
+  readonly epochNanos: bigint;
+}
+
+/**
+ * Format CELNET.VOLSWAP as a labelled 1×2 spill `["fair_vol", K_vol]` followed by
+ * a convention footer. `K_vol` is the convexity-adjusted fair volatility strike,
+ * strictly below `√K_var` for any non-degenerate smile.
+ */
+export function formatVolSwapSpill(r: VolSwapResult): SpillMatrix {
+  return [
+    ["fair_vol", r.fairVol],
+    [conventionFooter(r.conventions, r.surfaceVersion, r.epochNanos)],
+  ];
+}
+
+/** The decoded fields a CELNET.ASIAN spill renders (the discounted option PV + Greeks). */
+export interface AsianResult {
+  /** The discounted Asian-option premium (the server's `greeks.price`). */
+  readonly premium: number;
+  readonly greeks: Greeks;
+  readonly conventions: Conventions;
+  readonly surfaceVersion: bigint | undefined;
+  readonly epochNanos: bigint;
+}
+
+/**
+ * Format CELNET.ASIAN as a labelled spill: `["premium", PV]`, then the 13 risk
+ * Greeks the server returns (the same set/order as CELNET.GREEKS), then a
+ * convention footer. The Asian carries a genuine discounted PV + the full FD
+ * Greek set (unlike the swaps, whose headline is a fair strike).
+ */
+export function formatAsianSpill(r: AsianResult): SpillMatrix {
+  const rows: SpillMatrix = [["premium", r.premium]];
+  for (const g of GREEK_ROWS) rows.push([g.label, r.greeks[g.key]]);
+  rows.push([conventionFooter(r.conventions, r.surfaceVersion, r.epochNanos)]);
+  return rows;
 }
 
 /**
@@ -817,14 +1073,7 @@ export function subscriptionKey(instrument: Instrument, conventions: Conventions
 }
 
 function canonicalInstrument(i: Instrument): unknown {
-  const product =
-    i.product.kind === "vanilla"
-      ? {
-          k: "v",
-          ot: i.product.vanilla.optionType,
-          s: canonicalStrike(i.product.vanilla.strike),
-        }
-      : { k: "s", kind: i.product.strategy.kind };
+  const product = canonicalProduct(i.product);
   return {
     base: i.pair.base,
     quote: i.pair.quote,
@@ -836,6 +1085,31 @@ function canonicalInstrument(i: Instrument): unknown {
     side: i.side,
     product,
   };
+}
+
+/** The order-stable canonical form of the product oneof for the coalescing key. */
+function canonicalProduct(p: Product): unknown {
+  switch (p.kind) {
+    case "vanilla":
+      return { k: "v", ot: p.vanilla.optionType, s: canonicalStrike(p.vanilla.strike) };
+    case "strategy":
+      return { k: "s", kind: p.strategy.kind };
+    case "varianceSwap":
+      return { k: "var", sv: p.varianceSwap.strikeVol };
+    case "volatilitySwap":
+      return { k: "vol", sv: p.volatilitySwap.strikeVol };
+    case "asianOption":
+      return {
+        k: "asn",
+        ot: p.asianOption.optionType,
+        strike: p.asianOption.strike,
+        avg: p.asianOption.averaging,
+        obs: p.asianOption.observations,
+        m: p.asianOption.method,
+        ea: p.asianOption.elapsedAvg,
+        ew: p.asianOption.elapsedWeight,
+      };
+  }
 }
 
 function canonicalStrike(s: StrikeOrDelta): unknown {
