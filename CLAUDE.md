@@ -123,6 +123,37 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-06-06 — **Deepening increment §4(i) COMPLETE — `celnet-replog` full Raft + log compaction (Track B;
+  commit `aabdb8f`; pushed).** Raft §7 snapshotting on top of Track A's consensus core, via a gated
+  implement→adversarial-verify Workflow, then INDEPENDENTLY re-gated (I re-derived the base-index offset
+  arithmetic at every boundary case myself, read `discard_prefix`/`compact_to`, confirmed the parity oracle
+  is independent, re-ran every gate incl. the literal "All gates passed." line). New `compaction.rs` —
+  durable CRC'd atomically-written `Snapshot{last_included_index,term,BookState}` + `SnapshotStore`
+  (temp→fsync→rename→dir-fsync; torn/CRC-fail reads as absent so the prefix is only discarded AFTER the
+  snapshot is durable). `log.rs` gains a **base-index OFFSET** model: Raft ABSOLUTE indices over a
+  physically-shrunken log — every accessor absolute-correct; `term_at(last_included_index)→snapshot_term`
+  so log-matching succeeds AT the boundary; `discard_prefix` REALLY shrinks the journal on disk (same
+  atomic rewrite, not a mask). `state.rs` gains canonical bit-exact `BookState` encode/decode. `election.rs`
+  gains snapshot-aware boot recovery (seed from snapshot → replay only the retained tail) + `RaftNode::
+  compact`/`safe_compact_index`; `compact_to` reconstructs state AS OF the boundary and only covers
+  committed+applied entries. **The independent oracle caught TWO real bugs during dev (no gate lowered):**
+  a recovery double-apply via a mislabeled boundary, and a pre-existing solo-cluster (majority==1) never
+  self-electing — both fixed forward. **PROOF — new parity row `raft_compaction.rs`** (5 rows): three-way
+  replay-from-(snapshot+tail) == full-log replay == an INDEPENDENT fresh-BookState oracle (f64::to_bits;
+  workload has 1.0+0.1+0.2 and a 1-ULP value); prefix really discarded on disk; recovery == oracle; full
+  RaftNode compact+boot recovery; repeated-compaction guard. `replication.rs` gate_e: a live 3-node cluster
+  compacts (each node physically shrinks its log), progresses past the boundary, and a follower
+  crash-recovers from snapshot+tail to exact to_bits. **HONEST DEFERRAL** (documented, NOT half-built): the
+  InstallSnapshot wire RPC (far-behind follower catch-up over the wire) is the next increment — no
+  half-wired RPC; bridged operationally by `safe_compact_index`. Honest boundary intact (loopback proves
+  compute+arithmetic; cross-host wire p99 / inter-DC SLO deploy-gated). **SOTA, ZERO workarounds**
+  (grep-clean). Full `just check` green (literal "All gates passed."), cargo-deny clean, **1077/1077 tests**
+  (was 1057); raft_compaction 5/5 + replog 41/41 stable; parity-TEST-target clippy clean; fmt clean.
+  **▶ §4(i) (Full Raft: election+truncation [A] + compaction/snapshot [B]) is COMPLETE.** Next backlog:
+  §4(ii) GPU G3/G6 + QMC-on-GPU KAT, §4(iii) wire `celnet-fanout` under the async edge (per
+  `docs/NEXT-WORKFLOWS.md`) — deepening increments only, launch if the user asks. Remaining Raft depth =
+  InstallSnapshot RPC + dynamic membership (§6), both documented as next increments.
+
 - 2026-06-06 — **Deepening increment: `celnet-replog` → FULL RAFT (NEXT-WORKFLOWS §4(i) Track A; commit
   `e5f6738`; pushed).** Evolved the thin leader-replicated log into a real Raft consensus module via a
   gated implement→adversarial-verify Workflow, then INDEPENDENTLY re-gated (I re-derived the five safety
