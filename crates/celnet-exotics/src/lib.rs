@@ -117,6 +117,7 @@
 
 pub mod accumulator;
 pub mod adi;
+pub mod asian;
 pub mod barrier;
 pub mod digital;
 pub mod leverage;
@@ -140,6 +141,9 @@ pub use accumulator::{
     Accumulator, AccumulatorMcConfig, AccumulatorResult, Monitoring, accumulator_price,
 };
 pub use adi::{AdiGrid, AdiProblem, WindowSpec, solve as adi_solve, solve_window};
+pub use asian::{
+    AnalyticAsian, AveragingSchedule, curran_price, geometric_average_price, turnbull_wakeman_price,
+};
 pub use barrier::{
     BarrierKind, BarrierStyle, DoubleBarrierKnockOut, SingleBarrier, double_knock_out_price,
     single_barrier_price,

@@ -525,6 +525,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "celnet-heston"
+version = "0.0.0"
+dependencies = [
+ "celnet-core",
+ "celnet-types",
+ "celnet-vanilla",
+ "libm",
+]
+
+[[package]]
 name = "celnet-integration"
 version = "0.0.0"
 dependencies = [
@@ -579,6 +589,7 @@ dependencies = [
  "celnet-core",
  "celnet-exotics",
  "celnet-golden",
+ "celnet-heston",
  "celnet-surface",
  "celnet-testkit",
  "celnet-types",

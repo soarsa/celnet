@@ -1,0 +1,25 @@
+[package]
+name = "celnet-heston"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet standalone Heston (1993) stochastic-volatility European vanilla pricer via two independent characteristic-function transforms (Carr-Madan integration + Fang-Oosterlee COS), cross-validated."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+celnet-core.workspace = true
+celnet-types.workspace = true
+# Cross-platform-deterministic cos/sin/atan2/hypot for the complex CF evaluation
+# (celnet-core::math exposes exp/ln/sqrt but not the trig primitives the Fourier
+# transforms need). Same correctly-rounded software libm the whole stack pins.
+libm.workspace = true
+
+[dev-dependencies]
+# The Black-Scholes (Garman-Kohlhagen) closed form is the independent oracle for
+# the sigma->0, v0=theta limit of both Heston transforms.
+celnet-vanilla.workspace = true
