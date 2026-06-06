@@ -26,3 +26,8 @@ proptest.workspace = true
 # exotics parity rows (rows 12–14). Not in the workspace dependency table (it is
 # itself a leaf test-data crate), so referenced by path here in the parity lane.
 celnet-golden = { path = "../celnet-golden" }
+# Standalone Heston pricer (Wave 4b). Referenced by path — like celnet-golden it
+# is not in the central workspace.dependencies table; nothing depends on it via
+# `.workspace`. Backs the cross-method (Carr-Madan vs COS) + Black-Scholes-limit
+# parity row in tests/heston.rs.
+celnet-heston = { path = "../celnet-heston" }
