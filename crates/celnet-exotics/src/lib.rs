@@ -76,7 +76,12 @@
 //!      fixing, priced by Monte-Carlo;
 //!    * [`accumulator`] — periodic accumulation at a discounted pivot with an
 //!      up-and-out knock-out barrier (discrete or Brownian-bridge continuous) and
-//!      below-pivot gearing, priced by Monte-Carlo.
+//!      below-pivot gearing, priced by Monte-Carlo;
+//!    * [`forward_start`] — **forward-start** vanillas (strike reset to
+//!      `m·S(t₁)` at a future date, with the exact Rubinstein (1990) FX
+//!      dual-carry closed form) and **cliquet / ratchet** strips (the plain
+//!      ratchet as the exact sum of forward-start legs, the locally-capped /
+//!      -floored variant by Monte-Carlo, cross-validated).
 //!
 //! 6. **Variance & volatility swaps** — the model-free volatility products,
 //!    priced directly off an arbitrage-free [`celnet_surface`] smile:
@@ -120,6 +125,7 @@ pub mod adi;
 pub mod asian;
 pub mod barrier;
 pub mod digital;
+pub mod forward_start;
 pub mod leverage;
 pub mod lookback;
 pub mod lsv;
@@ -149,6 +155,10 @@ pub use barrier::{
     single_barrier_price,
 };
 pub use digital::{DigitalKind, DigitalStyle, digital_greeks, digital_price};
+pub use forward_start::{
+    Cliquet, CliquetEstimate, CliquetMcConfig, CliquetSchedule, ForwardStart,
+    cliquet_price_capped_mc, cliquet_price_plain, cliquet_price_plain_mc, forward_start_price,
+};
 pub use leverage::{ImpliedVolSurface, LeverageSurface, LocalVolSurface};
 pub use lookback::{
     Lookback, LookbackEstimate, LookbackMcConfig, LookbackStyle, fixed_lookback_price,

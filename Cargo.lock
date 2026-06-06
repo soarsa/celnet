@@ -590,6 +590,7 @@ dependencies = [
  "celnet-exotics",
  "celnet-golden",
  "celnet-heston",
+ "celnet-qmc",
  "celnet-surface",
  "celnet-testkit",
  "celnet-types",
@@ -627,6 +628,13 @@ dependencies = [
  "protox",
  "tonic",
  "tonic-build",
+]
+
+[[package]]
+name = "celnet-qmc"
+version = "0.0.0"
+dependencies = [
+ "celnet-core",
 ]
 
 [[package]]
