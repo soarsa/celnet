@@ -123,6 +123,33 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-06-07 — **▶▶ POST-COMPLETION-AUDIT BACKLOG COMPLETE — all 13 items landed & pushed (final commit
+  `970fb27`; `just check` 1306/1306, "All gates passed.").** After the 12-wave program, an honest fan-out
+  gap-audit (`docs/POST-COMPLETION-AUDIT.md`) found the platform **materially complete** (no P0/P1
+  functional gaps) with a short bar-raising tail — implemented in 3 staged rounds (disjoint lanes on
+  parallel git-worktrees; the two new-analytics waves sequential since they share proto/exotics/clients).
+  **NEW ANALYTICS:** **American/Bermudan** early-exercise (`celnet-exotics/american.rs`: PSOR free-boundary
+  CN FD + Longstaff-Schwartz LSM; `american=24`; hand-pinned LS-2001 Table-1 put 2.314) + **correlated
+  multi-asset basket/best-of/worst-of** (`multiasset.rs`: Cholesky GBM via celnet-qmc; `basket=25`;
+  hand-pinned Levy-1992; non-PSD rejected; MC stderr; Greeks honestly deferred) — both api-first across all
+  5 clients. **RIGOR:** mutation-gate widened to surface/exotics/risk-cube/xva (found+KILLED 33 real
+  arbitrage.rs survivors); fuzz targets for the untrusted byte decoders (replog/journal/proto) + gated
+  proptests; Heston published-reference golden (Fang-Oosterlee, QuantLib unavailable in-sandbox); surface
+  coverage gate; obs-deps cleanup. **POLISH:** runnable SDK examples (ran live vs demo_edge); GUI a11y
+  sweep widened to Cube+Universe (found+fixed 2 serious axe findings: nested-interactive + contrast) +
+  keyboard shortcuts overlay; **doc reconciliation** (guardrail #10: crate count 19→34, plugin/Sobol/GPU/
+  Raft-snapshot marked Built with citations, full INTERFACES wire registry incl. american/basket).
+  **BONUS correctness fix the stress test surfaced:** the `celnet-fanout` SPMC seqlock reader was missing
+  the canonical Acquire fence between the plain payload copy and the post-stamp re-check — a real (rare,
+  aarch64-only, 16x-oversubscription) torn-read window; fixed at root (not a test relaxation). Integration
+  caught + fixed-forward several contention/freshness issues my full-`just check` re-gate exists for
+  (SDK smoke liveness deadlines; a freshly-published dev-only unmaintained advisory RUSTSEC-2026-0173 on
+  proc-macro-error2 via iai-callgrind, triaged like the bincode one; cargo-mutants worktree-leak merge
+  artifacts). **1306/1306 tests**; GUI app+e2e tsc 0 / 247 tests + Playwright a11y 8/8; Excel 221. **Only
+  the deploy/live-gated frontier remains (NEVER in-repo): NVIDIA absolute GPU throughput / ≤50ms exotic,
+  cross-host wire p99 / §11 SLOs, live JVM Celer estate, Raft §6 dynamic membership, plugin Tier-1/3. The
+  in-repo platform is complete, SOTA, api-first across all clients, and polished.**
+
 - 2026-06-07 — **▶▶ COMPLETION-PROGRAM COMPLETE — ALL 12 WAVES + the full Raft increment landed & pushed
   (final commit `1983956`; `just check` 1231/1231, "All gates passed.").** W12 capstone (`1983956`):
   **typed Smile provenance** (`ArbReport.smile_model=5`, additive — retires the model=<family> regex across
