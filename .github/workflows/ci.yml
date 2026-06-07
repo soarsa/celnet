@@ -297,10 +297,24 @@ jobs:
   # Fuzz lane (Linux only, nightly). The fuzz harness under `fuzz/` is a
   # standalone, non-workspace crate carrying the nightly-only libFuzzer
   # (cargo-fuzz) targets, so it cannot run on the pinned stable gate. This job
-  # builds and runs it time-boxed on nightly so the `vanilla_inputs` target is
-  # exercised in CI (contract: no panic; premium finite/≥0; all 13 Greeks finite)
-  # — not merely runnable by hand. The run is short (a smoke budget) so it does
-  # not become a long pole; longer campaigns are run out-of-band.
+  # builds and runs each target time-boxed on nightly so they are exercised in CI
+  # — not merely runnable by hand. The run is short (a smoke budget per target) so
+  # it does not become a long pole; longer campaigns are run out-of-band.
+  #
+  # Targets:
+  #   * vanilla_inputs     — in-domain pricing inputs (no panic; premium ≥0/finite;
+  #                          all Greeks finite).
+  #   * the UNTRUSTED-INPUT byte parsers (the real socket/disk attack surface) —
+  #     contract: no panic / no UB / Ok-or-typed-Err on arbitrary bytes, bounded
+  #     allocation, decode a sound inverse of encode on the accepted path:
+  #       replog_log_entry / replog_snapshot / replog_wire_message
+  #       journal_recover (torn-tail recovery over a real temp file)
+  #       proto_convert   (prost decode of the wire contract + convert.rs TryFrom)
+  #
+  # NOTE: the same no-panic / typed-Err property is ALSO gated on the pinned stable
+  # `just check` lane via `proptest` decode-fuzz integration tests in
+  # `celnet-replog/tests/decode_fuzz.rs` and `celnet-journal/tests/decode_fuzz.rs`,
+  # so the property holds whether or not this nightly lane runs.
   # ---------------------------------------------------------------------------
   fuzz:
     name: fuzz (linux / nightly, time-boxed)
@@ -328,10 +342,32 @@ jobs:
         with:
           tool: cargo-fuzz
 
-      # Time-boxed smoke run of the vanilla_inputs target. -max_total_time keeps
-      # the lane short and deterministic; a crash (panic / contract break / new
-      # coverage stall into UB) fails the job. Working dir is the standalone
-      # fuzz crate so its own [workspace] table and nightly profile apply.
+      # Time-boxed smoke run of every target. -max_total_time keeps each lane
+      # short and deterministic; a crash (panic / contract break / new coverage
+      # stall into UB) fails the job. Working dir is the standalone fuzz crate so
+      # its own [workspace] table and nightly profile apply. The pricing target
+      # gets a slightly longer budget; the byte-parser targets are pure and very
+      # fast (millions of execs/s) so 30s of coverage-guided search is ample.
       - name: Fuzz vanilla_inputs (60s smoke)
         working-directory: fuzz
         run: cargo +nightly fuzz run vanilla_inputs -- -max_total_time=60
+
+      - name: Fuzz replog_log_entry (30s smoke)
+        working-directory: fuzz
+        run: cargo +nightly fuzz run replog_log_entry -- -max_total_time=30
+
+      - name: Fuzz replog_snapshot (30s smoke)
+        working-directory: fuzz
+        run: cargo +nightly fuzz run replog_snapshot -- -max_total_time=30
+
+      - name: Fuzz replog_wire_message (30s smoke)
+        working-directory: fuzz
+        run: cargo +nightly fuzz run replog_wire_message -- -max_total_time=30
+
+      - name: Fuzz journal_recover (30s smoke)
+        working-directory: fuzz
+        run: cargo +nightly fuzz run journal_recover -- -max_total_time=30
+
+      - name: Fuzz proto_convert (30s smoke)
+        working-directory: fuzz
+        run: cargo +nightly fuzz run proto_convert -- -max_total_time=30
