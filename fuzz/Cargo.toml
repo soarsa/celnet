@@ -7,9 +7,19 @@
 #     cargo install cargo-fuzz
 #     cd fuzz && cargo +nightly fuzz run vanilla_inputs -- -max_total_time=120
 #
+# Targets fall in two families:
+#   * `vanilla_inputs` — in-domain adversarial pricing inputs (no panic, finite).
+#   * the UNTRUSTED-INPUT byte parsers — the real attack surface: hand-rolled
+#     socket/disk decoders fed arbitrary bytes. Their contract is NO panic / no
+#     UB / Ok-or-typed-Err (never an unwrap on attacker input), bounded alloc:
+#       - `replog_log_entry`    celnet_replog::LogEntry::decode
+#       - `replog_snapshot`     celnet_replog Snapshot::decode + BookState::decode + BookUpdate::decode
+#       - `replog_wire_message` celnet_replog::Message::decode (the Raft RPC frame)
+#       - `journal_recover`     celnet_journal::Journal::open + replay (torn-tail recovery)
+#       - `proto_convert`       prost decode of the wire contract + convert.rs TryFrom mapping
+#
 # It depends on the product crates by relative path; it never re-implements any
-# product logic. The targets feed arbitrary adversarial bytes into the public
-# pricing API and assert the contract: no panic, finite output.
+# product logic.
 [package]
 name = "celnet-fuzz"
 version = "0.0.0"
@@ -32,10 +42,57 @@ libm = "0.2"
 # Product crates under test — referenced by path, no duplicated logic.
 celnet-types = { path = "../crates/celnet-types" }
 celnet-vanilla = { path = "../crates/celnet-vanilla" }
+# The untrusted-input hand-rolled byte parsers (socket + disk attack surface).
+celnet-replog = { path = "../crates/celnet-replog" }
+celnet-journal = { path = "../crates/celnet-journal" }
+# The wire-contract decode path (prost) + the convert.rs domain mapping.
+celnet-proto = { path = "../crates/celnet-proto" }
+# Same protobuf runtime the contract is generated against (workspace pin 0.13).
+prost = "0.13"
 
 [[bin]]
 name = "vanilla_inputs"
 path = "fuzz_targets/vanilla_inputs.rs"
+test = false
+doc = false
+bench = false
+
+# --- Untrusted-input decode targets (PC-FUZZ-DECODE) ------------------------
+# Each feeds arbitrary adversarial bytes straight into a hand-rolled byte parser
+# and asserts the per-target contract: no panic / no UB / Ok-or-typed-Err, never
+# an unwrap on attacker input, bounded allocation.
+
+[[bin]]
+name = "replog_log_entry"
+path = "fuzz_targets/replog_log_entry.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "replog_snapshot"
+path = "fuzz_targets/replog_snapshot.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "replog_wire_message"
+path = "fuzz_targets/replog_wire_message.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "journal_recover"
+path = "fuzz_targets/journal_recover.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "proto_convert"
+path = "fuzz_targets/proto_convert.rs"
 test = false
 doc = false
 bench = false

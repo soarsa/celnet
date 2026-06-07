@@ -30,6 +30,10 @@ use celnet_types::{OptionType, VanillaInputs};
 /// is defined on, so the fuzzer cannot waste iterations on inputs the API does
 /// not promise to handle (zero/negative spot etc.). The *interesting* stress is
 /// the adversarial spread *within* the valid domain.
+///
+/// `Debug` is required by `libfuzzer-sys` 0.4 so a triggering input can be
+/// printed on a crash for reproduction.
+#[derive(Debug)]
 struct Draw {
     is_call: bool,
     inputs: VanillaInputs,
@@ -77,10 +81,7 @@ fuzz_target!(|draw: Draw| {
 
     // Contract 1: pricing never panics; the premium is finite.
     let px = celnet_vanilla::price(opt, i);
-    assert!(
-        px.is_finite(),
-        "non-finite price {px} for {i:?} ({opt:?})"
-    );
+    assert!(px.is_finite(), "non-finite price {px} for {i:?} ({opt:?})");
     // A vanilla premium is non-negative.
     assert!(px >= 0.0, "negative price {px} for {i:?} ({opt:?})");
 
@@ -102,6 +103,9 @@ fuzz_target!(|draw: Draw| {
         ("zomma", g.zomma),
         ("color", g.color),
     ] {
-        assert!(v.is_finite(), "non-finite greek {name}={v} for {i:?} ({opt:?})");
+        assert!(
+            v.is_finite(),
+            "non-finite greek {name}={v} for {i:?} ({opt:?})"
+        );
     }
 });
