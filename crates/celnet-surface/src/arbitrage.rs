@@ -212,9 +212,9 @@ mod tests {
 
     /// `forward_call` returns the exact undiscounted Black forward-call price.
     /// Pinned, for a flat smile, against an *independent* in-test recomputation
-    /// of `F·Φ(d₁) − K·Φ(d₂)` — this fixes the absolute value, not just a sign,
-    /// so any perturbation of the price arithmetic (the `*`/`+` in `vsqt`, `d1`,
-    /// or the final `F·Φ(d₁) − K·Φ(d₂)` payoff) is caught.
+    /// of `F*Phi(d1) - K*Phi(d2)` — this fixes the absolute value, not just a
+    /// sign, so any perturbation of the price arithmetic (the `*`/`+` in `vsqt`,
+    /// `d1`, or the final `F*Phi(d1) - K*Phi(d2)` payoff) is caught.
     #[test]
     fn forward_call_matches_black_closed_form() {
         let vol = 0.137_f64;
@@ -241,12 +241,12 @@ mod tests {
     }
 
     /// `implied_density` is the Breeden-Litzenberger second difference
-    /// `[c(K−h) − 2c(K) + c(K+h)] / h²`. For a flat smile the exact risk-neutral
+    /// `[c(K-h) - 2c(K) + c(K+h)] / h^2`. For a flat smile the exact risk-neutral
     /// density in forward measure is the lognormal density
-    /// `g(K) = φ(d₂) / (K·σ·√t)`; the finite-difference approximation converges
-    /// to it. Pinning the absolute density against that closed form fixes the
-    /// `down − 2·mid + up` numerator and the `h·h` denominator — a `+`→`-` or
-    /// `*`→`/` there breaks the match.
+    /// `g(K) = phi(d2) / (K*sigma*sqrt(t))`; the finite-difference approximation
+    /// converges to it. Pinning the absolute density against that closed form
+    /// fixes the `down - 2*mid + up` numerator and the `h*h` denominator — a
+    /// `+`->`-` or `*`->`/` there breaks the match.
     #[test]
     fn implied_density_matches_lognormal_closed_form() {
         let vol = 0.11_f64;
@@ -271,10 +271,10 @@ mod tests {
         }
     }
 
-    /// `forward_call_strike_slope` returns `∂c/∂K = −Φ(d₂)`. Two independent
-    /// pins: (1) the closed-form `−Φ(d₂)` value, and (2) a central finite
+    /// `forward_call_strike_slope` returns `dc/dK = -Phi(d2)`. Two independent
+    /// pins: (1) the closed-form `-Phi(d2)` value, and (2) a central finite
     /// difference of `forward_call` itself. Both fix the `d1`/`d2` arithmetic and
-    /// the final `−Φ(d₂)`, so the formula mutations on this function are caught.
+    /// the final `-Phi(d2)`, so the formula mutations on this function are caught.
     #[test]
     fn call_strike_slope_matches_minus_phi_d2_and_fd() {
         let vol = 0.125_f64;
@@ -283,16 +283,16 @@ mod tests {
         let t = 0.4_f64;
         for k in grid(1.0, 1.45, 19) {
             let slope = forward_call_strike_slope(&s, k, f, t);
-            // (1) closed-form −Φ(d₂)
+            // (1) closed-form -Phi(d2)
             let vsqt = vol * t.sqrt();
             let d1 = ((f / k).ln() + 0.5 * vol * vol * t) / vsqt;
             let d2 = d1 - vsqt;
             let want = -norm_cdf(d2);
             assert!(
                 (slope - want).abs() <= 1e-12,
-                "slope {slope} != −Φ(d₂) {want} at K={k}"
+                "slope {slope} != -Phi(d2) {want} at K={k}"
             );
-            // (2) central FD of forward_call (sticky-vol flat smile ⇒ exact match
+            // (2) central FD of forward_call (sticky-vol flat smile => exact match
             // to FD order); confirms the slope IS the call's K-derivative.
             let dk = 1e-5 * k;
             let fd = (forward_call(&s, k + dk, f, t) - forward_call(&s, k - dk, f, t)) / (2.0 * dk);
@@ -304,9 +304,9 @@ mod tests {
     }
 
     /// `is_arbitrage_free` is the *conjunction* of three independent clauses
-    /// (butterfly ≥ −tol, vertical increase ≤ tol, density ≥ −tol). Each clause
+    /// (butterfly >= -tol, vertical increase <= tol, density >= -tol). Each clause
     /// is load-bearing: a report that violates exactly ONE must read non-free.
-    /// This kills the `&&`→`||` and `-tol`→`tol` mutations on the predicate (an
+    /// This kills the `&&`->`||` and `-tol`->`tol` mutations on the predicate (an
     /// `||` would call a single-clause violation arbitrage-free).
     #[test]
     fn is_arbitrage_free_each_clause_is_load_bearing() {
@@ -319,7 +319,7 @@ mod tests {
         };
         assert!(clean.is_arbitrage_free(tol));
 
-        // Violate ONLY the butterfly clause (min_butterfly < −tol).
+        // Violate ONLY the butterfly clause (min_butterfly < -tol).
         let bad_bf = ArbitrageReport {
             min_butterfly: -1e-3,
             ..clean
@@ -339,7 +339,7 @@ mod tests {
             "vertical clause not enforced"
         );
 
-        // Violate ONLY the density clause (< −tol).
+        // Violate ONLY the density clause (< -tol).
         let bad_dens = ArbitrageReport {
             min_density: -1e-3,
             ..clean
@@ -349,8 +349,8 @@ mod tests {
             "density clause not enforced"
         );
 
-        // The −tol vs +tol sign on the lower bounds is load-bearing: a tiny
-        // negative density within −tol IS free; just past −tol is NOT.
+        // The -tol vs +tol sign on the lower bounds is load-bearing: a tiny
+        // negative density within -tol IS free; just past -tol is NOT.
         let just_free = ArbitrageReport {
             min_density: -tol * 0.5,
             ..clean
@@ -364,10 +364,10 @@ mod tests {
     }
 
     /// `check_slice` reports the worst butterfly/vertical/density over the grid.
-    /// Pin the reported `min_butterfly == min_density · h²` relationship (line
-    /// 125 scaling) and that the vertical increase skips the first strike (the
-    /// `k != grid[0]` guard, line 131) — a `!=`→`==` there would compare only the
-    /// first strike to itself (increase 0) and miss every real rise.
+    /// Pin the reported `min_butterfly == min_density * h^2` relationship (the
+    /// `dens * h * h` scaling) and that the vertical increase skips the first
+    /// strike (the `k != grid[0]` guard) — a `!=`->`==` there would compare only
+    /// the first strike to itself (increase 0) and miss every real rise.
     #[test]
     fn check_slice_scaling_and_first_strike_guard() {
         let s = FlatSmile::new(0.12);
@@ -376,12 +376,12 @@ mod tests {
         let h = 1e-3_f64;
         let g = grid(0.8, 1.4, 41);
         let rep = check_slice(&s, &g, f, t, h);
-        // min_butterfly is exactly min over (density·h²); for a flat (clean)
+        // min_butterfly is exactly min over (density*h^2); for a flat (clean)
         // smile both are positive and the scaling ties them within FD noise.
         let min_dens_scaled = rep.min_density * h * h;
         assert!(
             (rep.min_butterfly - min_dens_scaled).abs() <= 1e-9 * rep.min_butterfly.abs().max(1e-9),
-            "min_butterfly {} != min_density·h² {}",
+            "min_butterfly {} != min_density*h^2 {}",
             rep.min_butterfly,
             min_dens_scaled
         );

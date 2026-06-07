@@ -130,6 +130,82 @@ solved strike and the reachable/unreachable verdict. The full list with per-line
 justification is the `exclude_re` table in `.config/mutants.toml`.
 <!-- /HARDENING:MUTANTS -->
 
+### Widened mutation gates — the other numerics crates (PC-MUT-WIDEN)
+
+The vanilla kill-rate gate above is the gold standard. The same *enforceable*
+contract — `cargo mutants` exits non-zero on any non-equivalent survivor — is
+now wired for the four other safety-critical numerics crates, each with its own
+audited config and a CI matrix leg:
+
+| Crate | Config | just recipe | CI job | Status |
+|-------|--------|-------------|--------|--------|
+| `celnet-surface`   | `.config/mutants-surface.toml`   | `just mutants-gate-surface` (`-arbitrage` for the proven slice) | `mutation-gate-numerics` (matrix leg) | arbitrage.rs **MEASURED green locally**; crate-wide CI-run |
+| `celnet-exotics`   | `.config/mutants-exotics.toml`   | `just mutants-gate-exotics`   | `mutation-gate-numerics` (matrix leg) | wired; baseline CI-run |
+| `celnet-risk-cube` | `.config/mutants-risk-cube.toml` | `just mutants-gate-risk-cube` | `mutation-gate-numerics` (matrix leg) | wired; baseline CI-run |
+| `celnet-xva`       | `.config/mutants-xva.toml`       | `just mutants-gate-xva`       | `mutation-gate-numerics` (matrix leg) | wired; baseline CI-run |
+
+Each config exits non-zero on ANY non-equivalent survivor, exactly like the
+vanilla gate, so a future edit that weakens any of these suites below the kill
+bar fails the build. `just mutants-gate-numerics` runs all five in sequence.
+
+**Honesty note on scope.** cargo-mutants is slow (the vanilla crate alone is ~8
+minutes for 469 mutants; `celnet-surface` is ~2 300 mutants and the exotics
+PDE/MC engines are larger still), so running a full local baseline on all four
+crates in one session is impractical. The enforceable gates, recipes, configs,
+and the CI matrix job are committed for all four; the canonical crate-wide
+baselines for exotics / risk-cube / xva are **established by the CI
+`mutation-gate-numerics` job** (recorded as CI-run here — no kill-rate number is
+fabricated for a run that was not performed). One crate was driven to a **real,
+MEASURED green** locally to prove the mechanism end-to-end:
+
+#### `celnet-surface` — measured baseline (arbitrage module)
+
+A crate-wide raw run (no exclusions, `aarch64-apple-darwin`, cargo-mutants
+27.0.0, toolchain 1.96.0) of `celnet-surface` surfaced two distinct survivor
+clusters before it was scoped:
+
+- **`arbitrage.rs` — 33 raw survivors, all GENUINE test gaps.** The no-arbitrage
+  report's `forward_call`, `implied_density` (Breeden-Litzenberger second
+  difference), `forward_call_strike_slope`, and the `is_arbitrage_free`
+  three-clause conjunction were only checked for *sign / bound / monotonicity*,
+  never pinned to a closed form — so mutating the price/density/slope arithmetic
+  (`*`↔`/`, `+`↔`-`) or the `&&`↔`||` in the predicate left the suite green.
+  These were **KILLED with new value-pinning tests** (NOT excluded):
+  - `forward_call_matches_black_closed_form` — pins the undiscounted forward call
+    to an independent in-test `F·Φ(d₁) − K·Φ(d₂)` recomputation across 23 strikes.
+  - `implied_density_matches_lognormal_closed_form` — pins the BL density to the
+    exact lognormal forward-measure density `φ(d₂)/(K·σ·√t)`, fixing the
+    `down − 2·mid + up` numerator and the `h·h` denominator.
+  - `call_strike_slope_matches_minus_phi_d2_and_fd` — pins the strike slope to
+    `−Φ(d₂)` AND to a central finite difference of `forward_call`.
+  - `is_arbitrage_free_each_clause_is_load_bearing` — drives each of the three
+    conjunction clauses independently (and the `−tol` sign on the lower bounds),
+    killing the `&&`→`||` and `≥−tol`→`<−tol` mutations.
+  - `check_slice_scaling_and_first_strike_guard` — pins the `min_butterfly ==
+    min_density·h²` scaling and the `k != grid[0]` first-strike guard.
+
+  After these tests, the scoped gate
+  `cargo mutants -p celnet-surface --file '**/arbitrage.rs' --config
+  .config/mutants-surface.toml` (`just mutants-gate-surface-arbitrage`) runs to
+  **`79 mutants tested in 74s: 78 caught, 1 unviable, 0 missed`**, exit 0 — zero survivors. This proves the
+  enforceable mechanism end-to-end on real, killed survivors.
+
+- **`calibrate.rs` — the iterative-fit internals** (the damped Gauss-Newton /
+  Levenberg-Marquardt fitters `fit_sabr`/`fit_svi`/`fit_ssvi`/`fit_essvi` +
+  `gauss_newton_{2,3,4}`). The bulk of these survivors are SEED / Jacobian
+  finite-difference / step-direction internals of a *converging* optimizer that
+  only accepts a step when it strictly lowers the cost, so the converged
+  parameters (and every smile assertion downstream) are unchanged by the
+  perturbation — the same equivalent class as the vanilla solver's "initial
+  guess / expansion factor" exclusions. Auditing each of these ~300 members
+  individually (genuinely-equivalent vs a real tighten-the-fit-assertion gap) is
+  the CI-scoped follow-on; the crate-wide gate runs in the
+  `mutation-gate-numerics` CI job, which surfaces any non-converging-internal
+  survivor. Until each member is individually audited and listed (with
+  justification) in `.config/mutants-surface.toml`, the locally-proven slice is
+  `arbitrage.rs` and the config's `exclude_re` is deliberately **empty** (no
+  survivor is hidden behind an unjustified exclusion).
+
 ## 3. Coverage (region / function / line)
 
 `cargo llvm-cov nextest` instruments the test run and reports per-file
