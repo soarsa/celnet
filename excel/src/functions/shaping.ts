@@ -20,9 +20,14 @@ import type {
   AccumulatorMonitoring,
   AsianMethod,
   AveragingStyle,
+  BarrierKind,
+  BarrierSide,
   CcyPair,
   Cliquet,
   Conventions,
+  Digital,
+  DigitalStyle,
+  DoubleBarrier,
   FixingSchedule,
   Greeks,
   Instrument,
@@ -30,16 +35,20 @@ import type {
   LookbackMonitoring,
   LookbackStyle,
   MarketObservable,
+  MonitoringStyle,
   OptionType,
   Product,
   QuantoPayoff,
   Side,
+  SingleBarrier,
   SmileModel,
   StrikeOrDelta,
   Tarf,
   TarfRedemption,
   Tenor,
   TenorUnit,
+  Touch,
+  TouchKind,
 } from "../contract/contract";
 import type {
   AdditiveRisk,
@@ -1201,6 +1210,351 @@ export function lookbackIsMonteCarlo(l: Lookback): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// barrier / digital / touch shaping (already-contracted exotics, W4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse a barrier knock-direction selector. Accepts `KNOCK_IN`/`KI`/`IN` (the
+ * option activates on a touch) or `KNOCK_OUT`/`KO`/`OUT` (it extinguishes on a
+ * touch), case-insensitive. Empty/absent ⇒ `KNOCK_IN` (the proto3 zero value).
+ */
+export function parseBarrierKind(raw: string | undefined): BarrierKind {
+  const s = (raw ?? "").trim().toUpperCase();
+  switch (s) {
+    case "":
+    case "KNOCK_IN":
+    case "KNOCK-IN":
+    case "KNOCKIN":
+    case "KI":
+    case "IN":
+      return "KNOCK_IN";
+    case "KNOCK_OUT":
+    case "KNOCK-OUT":
+    case "KNOCKOUT":
+    case "KO":
+    case "OUT":
+      return "KNOCK_OUT";
+    default:
+      throw new ShapingError(`invalid barrier kind \`${raw}\` (expected KNOCK_IN or KNOCK_OUT)`);
+  }
+}
+
+/**
+ * Parse a barrier-side selector (where the barrier sits relative to spot at
+ * inception). Accepts `UP`/`U` or `DOWN`/`DN`/`D`, case-insensitive. Empty/absent
+ * ⇒ `UP` (the proto3 zero value).
+ */
+export function parseBarrierSide(raw: string | undefined): BarrierSide {
+  const s = (raw ?? "").trim().toUpperCase();
+  switch (s) {
+    case "":
+    case "UP":
+    case "U":
+      return "UP";
+    case "DOWN":
+    case "DN":
+    case "D":
+      return "DOWN";
+    default:
+      throw new ShapingError(`invalid barrier side \`${raw}\` (expected UP or DOWN)`);
+  }
+}
+
+/**
+ * Parse a barrier/touch monitoring selector. Accepts `CONTINUOUS`/`CONT`/`C` (any
+ * touch at any instant triggers) or `DISCRETE`/`DISC`/`D` (scheduled fixings only),
+ * case-insensitive. Empty/absent ⇒ `CONTINUOUS` (the proto3 zero value, the OTC
+ * standard for barriers/touches).
+ */
+export function parseMonitoringStyle(raw: string | undefined): MonitoringStyle {
+  const s = (raw ?? "").trim().toUpperCase();
+  switch (s) {
+    case "":
+    case "CONTINUOUS":
+    case "CONT":
+    case "C":
+      return "CONTINUOUS";
+    case "DISCRETE":
+    case "DISC":
+    case "D":
+      return "DISCRETE";
+    default:
+      throw new ShapingError(`invalid monitoring \`${raw}\` (expected CONTINUOUS or DISCRETE)`);
+  }
+}
+
+/**
+ * Parse a touch-family selector. Accepts the trader-facing short names — `ONE_TOUCH`/
+ * `OT`/`ONE`, `NO_TOUCH`/`NT`/`NO`, `DOUBLE_NO_TOUCH`/`DNT`, `DOUBLE_ONE_TOUCH`/`DOT`
+ * — case-insensitive. Empty/absent ⇒ `ONE_TOUCH` (the proto3 zero value).
+ */
+export function parseTouchKind(raw: string | undefined): TouchKind {
+  const s = (raw ?? "").trim().toUpperCase();
+  switch (s) {
+    case "":
+    case "ONE_TOUCH":
+    case "ONE-TOUCH":
+    case "ONETOUCH":
+    case "OT":
+    case "ONE":
+      return "ONE_TOUCH";
+    case "NO_TOUCH":
+    case "NO-TOUCH":
+    case "NOTOUCH":
+    case "NT":
+    case "NO":
+      return "NO_TOUCH";
+    case "DOUBLE_NO_TOUCH":
+    case "DOUBLE-NO-TOUCH":
+    case "DNT":
+      return "DOUBLE_NO_TOUCH";
+    case "DOUBLE_ONE_TOUCH":
+    case "DOUBLE-ONE-TOUCH":
+    case "DOT":
+      return "DOUBLE_ONE_TOUCH";
+    default:
+      throw new ShapingError(
+        `invalid touch kind \`${raw}\` (expected ONE_TOUCH, NO_TOUCH, DNT or DOT)`,
+      );
+  }
+}
+
+/**
+ * Parse a digital settlement-style selector. Accepts `CASH_OR_NOTHING`/`CASH`/`C`
+ * (a fixed cash payout) or `ASSET_OR_NOTHING`/`ASSET`/`A` (one unit of the asset),
+ * case-insensitive. Empty/absent ⇒ `CASH_OR_NOTHING` (the proto3 zero value).
+ */
+export function parseDigitalStyle(raw: string | undefined): DigitalStyle {
+  const s = (raw ?? "").trim().toUpperCase();
+  switch (s) {
+    case "":
+    case "CASH_OR_NOTHING":
+    case "CASH-OR-NOTHING":
+    case "CASH":
+    case "C":
+      return "CASH_OR_NOTHING";
+    case "ASSET_OR_NOTHING":
+    case "ASSET-OR-NOTHING":
+    case "ASSET":
+    case "A":
+      return "ASSET_OR_NOTHING";
+    default:
+      throw new ShapingError(
+        `invalid digital style \`${raw}\` (expected CASH_OR_NOTHING or ASSET_OR_NOTHING)`,
+      );
+  }
+}
+
+/** Validate an optional non-negative rebate (`0`/absent ⇒ no rebate). */
+function shapeRebate(raw: number | undefined): number {
+  if (raw === undefined) return 0;
+  if (!Number.isFinite(raw) || raw < 0) {
+    throw new ShapingError(`rebate \`${raw}\` must be a finite, non-negative number`);
+  }
+  return raw;
+}
+
+/** Validate an absolute barrier level (strictly positive). */
+function shapeBarrierLevel(raw: number, what: string): number {
+  if (!Number.isFinite(raw) || raw <= 0) {
+    throw new ShapingError(`${what} \`${raw}\` must be a positive level (quote per 1 unit of base)`);
+  }
+  return raw;
+}
+
+/** The fully-parsed inputs the CELNET.BARRIER function shapes (single OR double). */
+export interface BarrierArgs {
+  readonly pair: string;
+  readonly tenor: string;
+  readonly strikeOrDelta: string | number;
+  readonly callPut: string;
+  readonly notional: number;
+  readonly kind?: string | undefined;
+  /**
+   * The barrier level. A single-barrier ticket supplies `barrier` (with `side`);
+   * a double-barrier ticket supplies BOTH `barrier` (the lower) and `upperBarrier`.
+   */
+  readonly barrier: number;
+  /** The upper barrier — supplying it makes the ticket a DOUBLE-barrier. */
+  readonly upperBarrier?: number | undefined;
+  /** UP/DOWN — single-barrier only (a double barrier brackets spot, so no side). */
+  readonly side?: string | undefined;
+  readonly rebate?: number | undefined;
+  readonly monitoring?: string | undefined;
+}
+
+/**
+ * Shape a barrier instrument from the cell arguments. ONE function covers both the
+ * single- and double-barrier products (the §4 spec: "single + double via params"):
+ * supplying `upperBarrier` selects the DOUBLE-barrier product (the supplied
+ * `barrier` is then the lower barrier and `side` is rejected — a double barrier
+ * brackets spot and has no single side); omitting it selects the SINGLE-barrier
+ * product with the given `side`. The vanilla payoff (call/put + strike) carries the
+ * exotic; `side` on the instrument is TWO_WAY (the cell reads a market).
+ */
+export function shapeBarrier(args: BarrierArgs): Instrument {
+  const { pair, tenor, expiryYears } = shapeSwapBase(args);
+  const vanilla = {
+    optionType: parseOptionType(args.callPut),
+    strike: parseStrikeOrDelta(args.strikeOrDelta),
+  };
+  const kind = parseBarrierKind(args.kind);
+  const rebate = shapeRebate(args.rebate);
+  const monitoring = parseMonitoringStyle(args.monitoring);
+  const base = {
+    pair,
+    tenor,
+    expiryYears,
+    quantity: { notional: args.notional, baseCcy: true },
+    side: "TWO_WAY" as Side,
+  };
+  if (args.upperBarrier !== undefined) {
+    // Double-barrier: `barrier` is the lower, `upperBarrier` the upper; reject a
+    // single `side` (a double barrier brackets spot — it has no single side).
+    if (args.side !== undefined && String(args.side).trim() !== "") {
+      throw new ShapingError(
+        "a double-barrier (upperBarrier supplied) takes no UP/DOWN side; omit it",
+      );
+    }
+    const lower = shapeBarrierLevel(args.barrier, "lower barrier");
+    const upper = shapeBarrierLevel(args.upperBarrier, "upper barrier");
+    if (upper <= lower) {
+      throw new ShapingError(
+        `upper barrier \`${upper}\` must be strictly above the lower barrier \`${lower}\``,
+      );
+    }
+    const doubleBarrier: DoubleBarrier = {
+      vanilla,
+      kind,
+      lowerBarrier: lower,
+      upperBarrier: upper,
+      rebate,
+      monitoring,
+    };
+    return { ...base, product: { kind: "doubleBarrier", doubleBarrier } };
+  }
+  const singleBarrier: SingleBarrier = {
+    vanilla,
+    kind,
+    side: parseBarrierSide(args.side),
+    barrier: shapeBarrierLevel(args.barrier, "barrier"),
+    rebate,
+    monitoring,
+  };
+  return { ...base, product: { kind: "singleBarrier", singleBarrier } };
+}
+
+/** The fully-parsed inputs the CELNET.DIGITAL function shapes into a request. */
+export interface DigitalArgs {
+  readonly pair: string;
+  readonly tenor: string;
+  readonly strike: string | number;
+  readonly callPut: string;
+  readonly notional: number;
+  readonly style?: string | undefined;
+  readonly payout?: number | undefined;
+}
+
+/**
+ * Shape a digital (binary) option from the cell arguments. The strike must be an
+ * absolute level (a digital is struck at a level). `callPut` selects the above-
+ * strike (call) vs below-strike (put) payoff; `style` cash-or-nothing (default) vs
+ * asset-or-nothing; `payout` the fixed cash payout (`0`/absent ⇒ unit payout for a
+ * cash digital). `side` on the instrument is TWO_WAY.
+ */
+export function shapeDigital(args: DigitalArgs): Instrument {
+  const { pair, tenor, expiryYears } = shapeSwapBase(args);
+  const sod = parseStrikeOrDelta(args.strike);
+  if (sod.kind !== "strike") {
+    throw new ShapingError(
+      `digital strike must be an absolute level (e.g. 1.10), not a delta \`${args.strike}\``,
+    );
+  }
+  const payout = args.payout ?? 0;
+  if (!Number.isFinite(payout) || payout < 0) {
+    throw new ShapingError(`digital payout \`${payout}\` must be a finite, non-negative amount`);
+  }
+  const digital: Digital = {
+    optionType: parseOptionType(args.callPut),
+    strike: sod.strike,
+    style: parseDigitalStyle(args.style),
+    payout,
+  };
+  return {
+    pair,
+    tenor,
+    expiryYears,
+    quantity: { notional: args.notional, baseCcy: true },
+    side: "TWO_WAY" as Side,
+    product: { kind: "digital", digital },
+  };
+}
+
+/** The fully-parsed inputs the CELNET.TOUCH function shapes into a request. */
+export interface TouchArgs {
+  readonly pair: string;
+  readonly tenor: string;
+  readonly notional: number;
+  readonly kind?: string | undefined;
+  /** The (lower / sole) barrier level. */
+  readonly barrier: number;
+  /** The upper barrier — required for the DOUBLE (DNT/DOT) kinds; rejected for the single kinds. */
+  readonly upperBarrier?: number | undefined;
+  readonly rebate?: number | undefined;
+  readonly monitoring?: string | undefined;
+}
+
+/** True iff a touch kind is a double-barrier structure (DNT / DOT). */
+function isDoubleTouch(kind: TouchKind): boolean {
+  return kind === "DOUBLE_NO_TOUCH" || kind === "DOUBLE_ONE_TOUCH";
+}
+
+/**
+ * Shape a touch structure from the cell arguments. The single-barrier kinds
+ * (ONE_TOUCH / NO_TOUCH) use `barrier` as the sole level and reject an
+ * `upperBarrier`; the double kinds (DOUBLE_NO_TOUCH / DOUBLE_ONE_TOUCH) require
+ * BOTH `barrier` (the lower) and a strictly-greater `upperBarrier`. A touch has no
+ * vanilla payoff (it pays the `rebate` on the touch condition); `side` on the
+ * instrument is TWO_WAY.
+ */
+export function shapeTouch(args: TouchArgs): Instrument {
+  const { pair, tenor, expiryYears } = shapeSwapBase(args);
+  const kind = parseTouchKind(args.kind);
+  const lower = shapeBarrierLevel(args.barrier, "barrier");
+  let upper = 0;
+  if (isDoubleTouch(kind)) {
+    if (args.upperBarrier === undefined) {
+      throw new ShapingError(`a ${kind} requires both a lower and an upper barrier`);
+    }
+    upper = shapeBarrierLevel(args.upperBarrier, "upper barrier");
+    if (upper <= lower) {
+      throw new ShapingError(
+        `upper barrier \`${upper}\` must be strictly above the lower barrier \`${lower}\``,
+      );
+    }
+  } else if (args.upperBarrier !== undefined) {
+    throw new ShapingError(
+      `a ${kind} is single-barrier and takes no upper barrier; use DNT/DOT for a double structure`,
+    );
+  }
+  const touch: Touch = {
+    kind,
+    lowerBarrier: lower,
+    upperBarrier: upper,
+    rebate: shapeRebate(args.rebate),
+    monitoring: parseMonitoringStyle(args.monitoring),
+  };
+  return {
+    pair,
+    tenor,
+    expiryYears,
+    quantity: { notional: args.notional, baseCcy: true },
+    side: "TWO_WAY" as Side,
+    product: { kind: "touch", touch },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // dynamic-array formatting (spill geometries)
 // ---------------------------------------------------------------------------
 
@@ -1486,6 +1840,36 @@ export interface QuantoResult {
  * so no standard-error row.
  */
 export function formatQuantoSpill(r: QuantoResult): SpillMatrix {
+  const rows: SpillMatrix = [["premium", r.premium]];
+  for (const g of GREEK_ROWS) rows.push([g.label, r.greeks[g.key]]);
+  rows.push([conventionFooter(r.conventions, r.surfaceVersion, r.epochNanos)]);
+  return rows;
+}
+
+/**
+ * The decoded fields a barrier / digital / touch spill renders (discounted PV +
+ * the 13 Greeks). These already-contracted exotics are priced by the server's
+ * exact/PDE closed forms — NO Monte-Carlo standard error (the server stamps
+ * `std_error: None` for all four), so the spill carries no std-error row, exactly
+ * like the forward-start / quanto closed-form spills.
+ */
+export interface ExoticPremiumResult {
+  /** The discounted premium (the server's `greeks.price`). */
+  readonly premium: number;
+  readonly greeks: Greeks;
+  readonly conventions: Conventions;
+  readonly surfaceVersion: bigint | undefined;
+  readonly epochNanos: bigint;
+}
+
+/**
+ * Format a barrier / digital / touch product as a labelled spill: `["premium", PV]`,
+ * then the 13 risk Greeks the server returns (the same set/order as CELNET.GREEKS),
+ * then a convention footer. Shared by CELNET.BARRIER / DIGITAL / TOUCH — these
+ * products are priced exactly (closed-form / PDE), so there is no standard-error
+ * row (mirrors `formatForwardStartSpill` / `formatQuantoSpill`).
+ */
+export function formatExoticPremiumSpill(r: ExoticPremiumResult): SpillMatrix {
   const rows: SpillMatrix = [["premium", r.premium]];
   for (const g of GREEK_ROWS) rows.push([g.label, r.greeks[g.key]]);
   rows.push([conventionFooter(r.conventions, r.surfaceVersion, r.epochNanos)]);
@@ -1799,6 +2183,45 @@ function canonicalProduct(p: Product): unknown {
       return { k: "v", ot: p.vanilla.optionType, s: canonicalStrike(p.vanilla.strike) };
     case "strategy":
       return { k: "s", kind: p.strategy.kind };
+    case "singleBarrier":
+      return {
+        k: "sbar",
+        ot: p.singleBarrier.vanilla.optionType,
+        strike: canonicalStrike(p.singleBarrier.vanilla.strike),
+        bk: p.singleBarrier.kind,
+        bs: p.singleBarrier.side,
+        bar: p.singleBarrier.barrier,
+        reb: p.singleBarrier.rebate,
+        mon: p.singleBarrier.monitoring,
+      };
+    case "doubleBarrier":
+      return {
+        k: "dbar",
+        ot: p.doubleBarrier.vanilla.optionType,
+        strike: canonicalStrike(p.doubleBarrier.vanilla.strike),
+        bk: p.doubleBarrier.kind,
+        lo: p.doubleBarrier.lowerBarrier,
+        hi: p.doubleBarrier.upperBarrier,
+        reb: p.doubleBarrier.rebate,
+        mon: p.doubleBarrier.monitoring,
+      };
+    case "digital":
+      return {
+        k: "dig",
+        ot: p.digital.optionType,
+        strike: p.digital.strike,
+        sty: p.digital.style,
+        po: p.digital.payout,
+      };
+    case "touch":
+      return {
+        k: "tch",
+        tk: p.touch.kind,
+        lo: p.touch.lowerBarrier,
+        hi: p.touch.upperBarrier,
+        reb: p.touch.rebate,
+        mon: p.touch.monitoring,
+      };
     case "varianceSwap":
       return { k: "var", sv: p.varianceSwap.strikeVol };
     case "volatilitySwap":

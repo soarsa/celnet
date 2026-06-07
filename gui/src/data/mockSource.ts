@@ -848,6 +848,34 @@ function freezeStrikes(instrument: Instrument, m: MarketContext): Instrument {
         },
       };
     }
+    case "singleBarrier": {
+      const b = instrument.product.singleBarrier;
+      return {
+        ...instrument,
+        product: {
+          kind: "singleBarrier",
+          singleBarrier: {
+            ...b,
+            vanilla: { ...b.vanilla, strike: freezeStrike(b.vanilla.strike) },
+          },
+        },
+      };
+    }
+    case "doubleBarrier": {
+      const b = instrument.product.doubleBarrier;
+      return {
+        ...instrument,
+        product: {
+          kind: "doubleBarrier",
+          doubleBarrier: {
+            ...b,
+            vanilla: { ...b.vanilla, strike: freezeStrike(b.vanilla.strike) },
+          },
+        },
+      };
+    }
+    case "digital":
+    case "touch":
     case "varianceSwap":
     case "volatilitySwap":
     case "asianOption":
@@ -857,10 +885,12 @@ function freezeStrikes(instrument: Instrument, m: MarketContext): Instrument {
     case "tarf":
     case "accumulator":
     case "lookback":
-      // These products carry no delta-specified strike to freeze (the swaps have
-      // none; the Asian/quanto/TARF/lookback strikes are absolute; the
-      // forward-start/cliquet/accumulator strikes reset/pivot off the spot path).
-      // Scenario shocks move them through the market alone, so return unchanged.
+      // These products carry no delta-specified strike to freeze (the swaps and the
+      // touch have none; the digital/Asian/quanto/TARF/lookback strikes are
+      // absolute; the forward-start/cliquet/accumulator strikes reset/pivot off the
+      // spot path). Scenario shocks move them through the market alone, so return
+      // unchanged. (The single-/double-barrier ARE frozen above — they wrap a
+      // delta-able vanilla strike.)
       return instrument;
   }
 }

@@ -110,10 +110,11 @@ pub use surface_vocab::{
 };
 pub use vocab::{
     AccumulatorMonitoring, AccumulatorTerms, AsianMethod, AsianTerms, Attribution, AveragingStyle,
-    BarrierKind, BarrierSide, BookId, Calibration, CliquetTerms, Conventions, DigitalStyle,
-    Execution, ForwardStartTerms, InstrumentSpec, Leg, LookbackMonitoring, LookbackStyle,
-    LookbackTerms, PricedLine, Product, Quantity, QuantoPayoff, QuantoTerms, Quote, RejectAck,
-    Seat, Side, StrategyKind, StrikeSpec, TarfRedemption, TarfTerms, TouchKind, TwoWay,
+    BarrierKind, BarrierSide, BarrierTerms, BookId, Calibration, CliquetTerms, Conventions,
+    DigitalStyle, DigitalTerms, DoubleBarrierTerms, Execution, ForwardStartTerms, InstrumentSpec,
+    Leg, LookbackMonitoring, LookbackStyle, LookbackTerms, PricedLine, Product, Quantity,
+    QuantoPayoff, QuantoTerms, Quote, RejectAck, Seat, Side, StrategyKind, StrikeSpec,
+    TarfRedemption, TarfTerms, TouchKind, TouchTerms, TwoWay,
 };
 
 use celnet_proto::pricing_service_client::PricingServiceClient;

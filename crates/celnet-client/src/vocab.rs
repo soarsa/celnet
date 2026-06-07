@@ -458,6 +458,210 @@ pub enum DigitalStyle {
     AssetOrNothing,
 }
 
+/// The payoff terms of a single-barrier option: the underlying vanilla
+/// option/strike, the knock style, the barrier side, the barrier level, and the
+/// rebate. Built via [`BarrierTerms::new`] then optionally [`BarrierTerms::rebate`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BarrierTerms {
+    /// Call or put for the underlying payoff.
+    pub option: OptionType,
+    /// The strike (absolute or delta).
+    pub strike: StrikeSpec,
+    /// Knock-in or knock-out.
+    pub kind: BarrierKind,
+    /// Barrier above or below spot at inception.
+    pub barrier_side: BarrierSide,
+    /// The barrier level (quote per 1 unit of base).
+    pub barrier: f64,
+    /// Rebate paid on the barrier event (`0.0` for a plain barrier).
+    pub rebate: f64,
+}
+
+impl BarrierTerms {
+    /// A plain (zero-rebate) single barrier with the given payoff, knock style,
+    /// side, and barrier level.
+    #[must_use]
+    pub fn new(
+        option: OptionType,
+        strike: StrikeSpec,
+        kind: BarrierKind,
+        barrier_side: BarrierSide,
+        barrier: f64,
+    ) -> Self {
+        Self {
+            option,
+            strike,
+            kind,
+            barrier_side,
+            barrier,
+            rebate: 0.0,
+        }
+    }
+
+    /// Set the rebate paid on the barrier event.
+    #[must_use]
+    pub fn rebate(mut self, rebate: f64) -> Self {
+        self.rebate = rebate;
+        self
+    }
+}
+
+/// The payoff terms of a double-barrier option: the underlying vanilla
+/// option/strike, the knock style, the lower/upper corridor barriers, and the
+/// rebate. Built via [`DoubleBarrierTerms::new`] then optionally
+/// [`DoubleBarrierTerms::rebate`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DoubleBarrierTerms {
+    /// Call or put for the underlying payoff.
+    pub option: OptionType,
+    /// The strike (absolute or delta).
+    pub strike: StrikeSpec,
+    /// Knock-in or knock-out (applied to whichever barrier is touched).
+    pub kind: BarrierKind,
+    /// The lower barrier level.
+    pub lower: f64,
+    /// The upper barrier level.
+    pub upper: f64,
+    /// Rebate paid on the barrier event (`0.0` for a plain barrier).
+    pub rebate: f64,
+}
+
+impl DoubleBarrierTerms {
+    /// A plain (zero-rebate) double barrier with the given payoff, knock style,
+    /// and `[lower, upper]` corridor.
+    #[must_use]
+    pub fn new(
+        option: OptionType,
+        strike: StrikeSpec,
+        kind: BarrierKind,
+        lower: f64,
+        upper: f64,
+    ) -> Self {
+        Self {
+            option,
+            strike,
+            kind,
+            lower,
+            upper,
+            rebate: 0.0,
+        }
+    }
+
+    /// Set the rebate paid on the barrier event.
+    #[must_use]
+    pub fn rebate(mut self, rebate: f64) -> Self {
+        self.rebate = rebate;
+        self
+    }
+}
+
+/// The payoff terms of a digital (binary) option: the option direction, the
+/// strike, the settlement style, and the fixed payout. Built via
+/// [`DigitalTerms::cash_or_nothing`] / [`DigitalTerms::asset_or_nothing`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DigitalTerms {
+    /// Call or put (above-strike vs below-strike payoff).
+    pub option: OptionType,
+    /// The strike (absolute level).
+    pub strike: f64,
+    /// Cash-or-nothing vs asset-or-nothing.
+    pub style: DigitalStyle,
+    /// The fixed payout amount (domestic ccy for cash-or-nothing; ignored for
+    /// asset-or-nothing, which pays one unit of the asset).
+    pub payout: f64,
+}
+
+impl DigitalTerms {
+    /// A cash-or-nothing digital paying a fixed `payout` if in-the-money at expiry.
+    #[must_use]
+    pub fn cash_or_nothing(option: OptionType, strike: f64, payout: f64) -> Self {
+        Self {
+            option,
+            strike,
+            style: DigitalStyle::CashOrNothing,
+            payout,
+        }
+    }
+
+    /// An asset-or-nothing digital paying one unit of the asset if in-the-money at
+    /// expiry (the payout field is unused for this style).
+    #[must_use]
+    pub fn asset_or_nothing(option: OptionType, strike: f64) -> Self {
+        Self {
+            option,
+            strike,
+            style: DigitalStyle::AssetOrNothing,
+            payout: 0.0,
+        }
+    }
+}
+
+/// The payoff terms of a touch structure: the touch family, the lower / sole
+/// barrier, the upper barrier (double structures only), and the rebate. Build via
+/// the family conveniences [`TouchTerms::one_touch`] / [`TouchTerms::no_touch`] /
+/// [`TouchTerms::double_no_touch`] / [`TouchTerms::double_one_touch`] so the kind
+/// and the barrier shape are always consistent.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TouchTerms {
+    /// The touch family.
+    pub kind: TouchKind,
+    /// The (lower / sole) barrier level.
+    pub lower: f64,
+    /// The upper barrier level (double structures only; `0.0` and ignored for the
+    /// single-barrier one-/no-touch kinds).
+    pub upper: f64,
+    /// The rebate paid when the touch condition is satisfied.
+    pub rebate: f64,
+}
+
+impl TouchTerms {
+    /// A one-touch on a single `barrier` paying `rebate` if it IS touched.
+    #[must_use]
+    pub fn one_touch(barrier: f64, rebate: f64) -> Self {
+        Self {
+            kind: TouchKind::OneTouch,
+            lower: barrier,
+            upper: 0.0,
+            rebate,
+        }
+    }
+
+    /// A no-touch on a single `barrier` paying `rebate` if it is NOT touched.
+    #[must_use]
+    pub fn no_touch(barrier: f64, rebate: f64) -> Self {
+        Self {
+            kind: TouchKind::NoTouch,
+            lower: barrier,
+            upper: 0.0,
+            rebate,
+        }
+    }
+
+    /// A double-no-touch over the `[lower, upper]` corridor paying `rebate` if
+    /// NEITHER barrier is touched.
+    #[must_use]
+    pub fn double_no_touch(lower: f64, upper: f64, rebate: f64) -> Self {
+        Self {
+            kind: TouchKind::DoubleNoTouch,
+            lower,
+            upper,
+            rebate,
+        }
+    }
+
+    /// A double-one-touch over the `[lower, upper]` corridor paying `rebate` if
+    /// EITHER barrier is touched.
+    #[must_use]
+    pub fn double_one_touch(lower: f64, upper: f64, rebate: f64) -> Self {
+        Self {
+            kind: TouchKind::DoubleOneTouch,
+            lower,
+            upper,
+            rebate,
+        }
+    }
+}
+
 /// How the averaging observations of an arithmetic-average-rate Asian are laid
 /// out across the averaging window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1505,6 +1709,197 @@ impl InstrumentSpec {
             side,
             product: Product::Strategy { kind, legs },
         }
+    }
+
+    /// A single-barrier knock-in / knock-out option on the given pair / tenor /
+    /// expiry / notional, carrying a [`BarrierTerms`] payoff spec: a vanilla
+    /// option/strike that activates ([`BarrierKind::KnockIn`]) or extinguishes
+    /// ([`BarrierKind::KnockOut`]) when spot touches the barrier, with a rebate
+    /// on the barrier event.
+    #[must_use]
+    pub fn single_barrier(
+        pair: CcyPair,
+        tenor: Tenor,
+        expiry_years: f64,
+        quantity: Quantity,
+        side: Side,
+        terms: BarrierTerms,
+    ) -> Self {
+        Self {
+            pair,
+            tenor,
+            expiry_years,
+            quantity,
+            side,
+            product: Product::SingleBarrier {
+                option: terms.option,
+                strike: terms.strike,
+                kind: terms.kind,
+                side: terms.barrier_side,
+                barrier: terms.barrier,
+                rebate: terms.rebate,
+            },
+        }
+    }
+
+    /// A double-barrier knock-in / knock-out option on the given pair / tenor /
+    /// expiry / notional, carrying a [`DoubleBarrierTerms`] payoff spec: a vanilla
+    /// option/strike bounded by a lower and upper barrier (the kind applies to
+    /// whichever is touched), with a rebate on the barrier event.
+    #[must_use]
+    pub fn double_barrier(
+        pair: CcyPair,
+        tenor: Tenor,
+        expiry_years: f64,
+        quantity: Quantity,
+        side: Side,
+        terms: DoubleBarrierTerms,
+    ) -> Self {
+        Self {
+            pair,
+            tenor,
+            expiry_years,
+            quantity,
+            side,
+            product: Product::DoubleBarrier {
+                option: terms.option,
+                strike: terms.strike,
+                kind: terms.kind,
+                lower: terms.lower,
+                upper: terms.upper,
+                rebate: terms.rebate,
+            },
+        }
+    }
+
+    /// A digital (binary) option on the given pair / tenor / expiry / notional,
+    /// carrying a [`DigitalTerms`] payoff spec: pays a fixed payout if
+    /// in-the-money at expiry (call ⇒ `S_T > strike`, put ⇒ `S_T < strike`),
+    /// settled cash-or-nothing or asset-or-nothing per [`DigitalStyle`].
+    #[must_use]
+    pub fn digital(
+        pair: CcyPair,
+        tenor: Tenor,
+        expiry_years: f64,
+        quantity: Quantity,
+        side: Side,
+        terms: DigitalTerms,
+    ) -> Self {
+        Self {
+            pair,
+            tenor,
+            expiry_years,
+            quantity,
+            side,
+            product: Product::Digital {
+                option: terms.option,
+                strike: terms.strike,
+                style: terms.style,
+                payout: terms.payout,
+            },
+        }
+    }
+
+    /// A touch structure on the given pair / tenor / expiry / notional, carrying a
+    /// [`TouchTerms`] payoff spec. Build the terms via the family conveniences
+    /// [`TouchTerms::one_touch`] / [`TouchTerms::no_touch`] /
+    /// [`TouchTerms::double_no_touch`] / [`TouchTerms::double_one_touch`].
+    #[must_use]
+    pub fn touch(
+        pair: CcyPair,
+        tenor: Tenor,
+        expiry_years: f64,
+        quantity: Quantity,
+        side: Side,
+        terms: TouchTerms,
+    ) -> Self {
+        Self {
+            pair,
+            tenor,
+            expiry_years,
+            quantity,
+            side,
+            product: Product::Touch {
+                kind: terms.kind,
+                lower: terms.lower,
+                upper: terms.upper,
+                rebate: terms.rebate,
+            },
+        }
+    }
+
+    /// A one-touch: pays `rebate` if spot touches the single `barrier` before
+    /// expiry.
+    #[must_use]
+    pub fn one_touch(
+        pair: CcyPair,
+        tenor: Tenor,
+        expiry_years: f64,
+        quantity: Quantity,
+        side: Side,
+        barrier: f64,
+        rebate: f64,
+    ) -> Self {
+        Self::touch(
+            pair,
+            tenor,
+            expiry_years,
+            quantity,
+            side,
+            TouchTerms::one_touch(barrier, rebate),
+        )
+    }
+
+    /// A no-touch: pays `rebate` if spot does NOT touch the single `barrier`
+    /// before expiry.
+    #[must_use]
+    pub fn no_touch(
+        pair: CcyPair,
+        tenor: Tenor,
+        expiry_years: f64,
+        quantity: Quantity,
+        side: Side,
+        barrier: f64,
+        rebate: f64,
+    ) -> Self {
+        Self::touch(
+            pair,
+            tenor,
+            expiry_years,
+            quantity,
+            side,
+            TouchTerms::no_touch(barrier, rebate),
+        )
+    }
+
+    /// A double-no-touch on the given pair / tenor / expiry / notional, carrying a
+    /// double-corridor [`TouchTerms`] (build via [`TouchTerms::double_no_touch`]):
+    /// pays the rebate if spot touches NEITHER corridor barrier before expiry.
+    #[must_use]
+    pub fn double_no_touch(
+        pair: CcyPair,
+        tenor: Tenor,
+        expiry_years: f64,
+        quantity: Quantity,
+        side: Side,
+        terms: TouchTerms,
+    ) -> Self {
+        Self::touch(pair, tenor, expiry_years, quantity, side, terms)
+    }
+
+    /// A double-one-touch on the given pair / tenor / expiry / notional, carrying a
+    /// double-corridor [`TouchTerms`] (build via [`TouchTerms::double_one_touch`]):
+    /// pays the rebate if spot touches EITHER corridor barrier before expiry.
+    #[must_use]
+    pub fn double_one_touch(
+        pair: CcyPair,
+        tenor: Tenor,
+        expiry_years: f64,
+        quantity: Quantity,
+        side: Side,
+        terms: TouchTerms,
+    ) -> Self {
+        Self::touch(pair, tenor, expiry_years, quantity, side, terms)
     }
 
     /// A variance swap on the given pair / tenor / expiry / notional. Pass

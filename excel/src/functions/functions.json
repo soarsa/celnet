@@ -190,6 +190,179 @@
       ]
     },
     {
+      "id": "BARRIER",
+      "name": "BARRIER",
+      "description": "Price a barrier option (single OR double via params): premium + 13 Greeks + footer.",
+      "result": {
+        "dimensionality": "matrix",
+        "type": "any"
+      },
+      "parameters": [
+        {
+          "name": "pair",
+          "description": "Currency pair, e.g. EURUSD.",
+          "type": "string"
+        },
+        {
+          "name": "tenor",
+          "description": "Tenor, e.g. 1Y.",
+          "type": "string"
+        },
+        {
+          "name": "strikeOrDelta",
+          "description": "Absolute strike or delta (25dP, ATM) of the vanilla payoff.",
+          "type": "string"
+        },
+        {
+          "name": "callPut",
+          "description": "C for call, P for put.",
+          "type": "string"
+        },
+        {
+          "name": "notional",
+          "description": "Trade notional in the base currency.",
+          "type": "number"
+        },
+        {
+          "name": "barrier",
+          "description": "Barrier level (single: the sole barrier; double: the LOWER barrier).",
+          "type": "number"
+        },
+        {
+          "name": "kind",
+          "description": "Optional KNOCK_IN (default) or KNOCK_OUT.",
+          "type": "string",
+          "optional": true
+        },
+        {
+          "name": "side",
+          "description": "Optional UP (default) or DOWN; single-barrier only (omit for a double barrier).",
+          "type": "string",
+          "optional": true
+        },
+        {
+          "name": "upperBarrier",
+          "description": "Optional upper barrier; supplying it makes the ticket a DOUBLE barrier.",
+          "type": "number",
+          "optional": true
+        },
+        {
+          "name": "rebate",
+          "description": "Optional rebate paid on the barrier event (omit => 0).",
+          "type": "number",
+          "optional": true
+        },
+        {
+          "name": "monitoring",
+          "description": "Optional CONTINUOUS (default) or DISCRETE crossing.",
+          "type": "string",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "id": "DIGITAL",
+      "name": "DIGITAL",
+      "description": "Price a digital (binary) option: premium + 13 Greeks + convention footer.",
+      "result": {
+        "dimensionality": "matrix",
+        "type": "any"
+      },
+      "parameters": [
+        {
+          "name": "pair",
+          "description": "Currency pair, e.g. EURUSD.",
+          "type": "string"
+        },
+        {
+          "name": "tenor",
+          "description": "Tenor, e.g. 1Y.",
+          "type": "string"
+        },
+        {
+          "name": "strike",
+          "description": "Absolute strike level, e.g. 1.10.",
+          "type": "number"
+        },
+        {
+          "name": "callPut",
+          "description": "C for the above-strike payoff, P for the below-strike payoff.",
+          "type": "string"
+        },
+        {
+          "name": "notional",
+          "description": "Trade notional in the base currency.",
+          "type": "number"
+        },
+        {
+          "name": "style",
+          "description": "Optional CASH_OR_NOTHING (default) or ASSET_OR_NOTHING.",
+          "type": "string",
+          "optional": true
+        },
+        {
+          "name": "payout",
+          "description": "Optional fixed payout amount (omit => 0/unit).",
+          "type": "number",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "id": "TOUCH",
+      "name": "TOUCH",
+      "description": "Price a touch structure (one-/no-/double-no-/double-one-touch): premium + Greeks + footer.",
+      "result": {
+        "dimensionality": "matrix",
+        "type": "any"
+      },
+      "parameters": [
+        {
+          "name": "pair",
+          "description": "Currency pair, e.g. EURUSD.",
+          "type": "string"
+        },
+        {
+          "name": "tenor",
+          "description": "Tenor, e.g. 1Y.",
+          "type": "string"
+        },
+        {
+          "name": "kind",
+          "description": "Touch family: OT, NT, DNT (double-no-touch) or DOT (double-one-touch).",
+          "type": "string"
+        },
+        {
+          "name": "barrier",
+          "description": "The (lower / sole) barrier level.",
+          "type": "number"
+        },
+        {
+          "name": "notional",
+          "description": "Trade notional in the base currency.",
+          "type": "number"
+        },
+        {
+          "name": "rebate",
+          "description": "Optional rebate paid when the touch condition is satisfied (omit => 0).",
+          "type": "number",
+          "optional": true
+        },
+        {
+          "name": "upperBarrier",
+          "description": "Optional upper barrier (required for DNT/DOT; rejected for OT/NT).",
+          "type": "number",
+          "optional": true
+        },
+        {
+          "name": "monitoring",
+          "description": "Optional CONTINUOUS (default) or DISCRETE monitoring.",
+          "type": "string",
+          "optional": true
+        }
+      ]
+    },
+    {
       "id": "VARSWAP",
       "name": "VARSWAP",
       "description": "Price a variance swap: spill [fair_variance, K_var] / [fair_vol, sqrt(K_var)] + convention footer.",

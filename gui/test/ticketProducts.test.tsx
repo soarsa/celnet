@@ -112,6 +112,79 @@ describe("TicketWorkspace — wave-1 products in the selector", () => {
   });
 });
 
+describe("TicketWorkspace — wave-4 barrier/digital/touch in the selector", () => {
+  it("offers single barrier / double barrier / digital / touch", async () => {
+    await renderTicket();
+    const options = within(structureSelect())
+      .getAllByRole("option")
+      .map((o) => (o as HTMLOptionElement).value);
+    expect(options).toContain("SINGLE_BARRIER");
+    expect(options).toContain("DOUBLE_BARRIER");
+    expect(options).toContain("DIGITAL");
+    expect(options).toContain("TOUCH");
+    // The pre-existing products are untouched (additive, zero-legacy).
+    expect(options).toContain("VANILLA");
+    expect(options).toContain("ASIAN");
+  });
+
+  it("shows the strike, knock kind/side, barrier and rebate for a single barrier", async () => {
+    await renderTicket();
+    act(() => {
+      fireEvent.change(structureSelect(), { target: { value: "SINGLE_BARRIER" } });
+    });
+    expect(screen.getByRole("tablist", { name: "option type" })).toBeInTheDocument();
+    expect(screen.getByRole("tablist", { name: "barrier kind" })).toBeInTheDocument();
+    expect(screen.getByRole("tablist", { name: "barrier side" })).toBeInTheDocument();
+    expect(screen.getByLabelText("barrier")).toBeInTheDocument();
+    expect(screen.getByLabelText("rebate")).toBeInTheDocument();
+    // No option legs are rendered for a barrier.
+    expect(screen.queryByText(/^LEG 1$/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Single-barrier/)).toBeInTheDocument();
+  });
+
+  it("shows lower/upper barriers and the knock kind for a double barrier", async () => {
+    await renderTicket();
+    act(() => {
+      fireEvent.change(structureSelect(), { target: { value: "DOUBLE_BARRIER" } });
+    });
+    expect(screen.getByLabelText("lower barrier")).toBeInTheDocument();
+    expect(screen.getByLabelText("upper barrier")).toBeInTheDocument();
+    expect(screen.getByRole("tablist", { name: "barrier kind" })).toBeInTheDocument();
+    expect(screen.getByText(/Double-barrier/)).toBeInTheDocument();
+  });
+
+  it("shows the settlement-style toggle and payout for a digital", async () => {
+    await renderTicket();
+    act(() => {
+      fireEvent.change(structureSelect(), { target: { value: "DIGITAL" } });
+    });
+    const style = screen.getByRole("tablist", { name: "digital style" });
+    expect(within(style).getByText("Cash")).toBeInTheDocument();
+    expect(within(style).getByText("Asset")).toBeInTheDocument();
+    expect(screen.getByLabelText("payout")).toBeInTheDocument();
+    expect(screen.getByText(/digital/)).toBeInTheDocument();
+  });
+
+  it("shows the touch-kind toggle and reveals the upper barrier only for double kinds", async () => {
+    await renderTicket();
+    act(() => {
+      fireEvent.change(structureSelect(), { target: { value: "TOUCH" } });
+    });
+    const kind = screen.getByRole("tablist", { name: "touch kind" });
+    expect(within(kind).getByText("One-touch")).toBeInTheDocument();
+    expect(within(kind).getByText("Double-no-touch")).toBeInTheDocument();
+    // A single-barrier one-touch has only the sole barrier (no upper).
+    expect(screen.getByLabelText("barrier")).toBeInTheDocument();
+    expect(screen.queryByLabelText("upper barrier")).not.toBeInTheDocument();
+    // Switching to a double structure reveals the upper barrier (lower + upper).
+    act(() => {
+      fireEvent.click(within(kind).getByText("Double-no-touch"));
+    });
+    expect(screen.getByLabelText("lower barrier")).toBeInTheDocument();
+    expect(screen.getByLabelText("upper barrier")).toBeInTheDocument();
+  });
+});
+
 describe("TicketWorkspace — wave-2 products in the selector", () => {
   it("offers forward-start / cliquet / quanto alongside the wave-1 products", async () => {
     await renderTicket();

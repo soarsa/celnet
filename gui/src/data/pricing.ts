@@ -14,6 +14,8 @@ import type {
   Accumulator,
   AsianOption,
   Cliquet,
+  Digital,
+  DoubleBarrier,
   ForwardStart,
   Greeks,
   Instrument,
@@ -21,7 +23,10 @@ import type {
   Lookback,
   MarketContext,
   Quanto,
+  SingleBarrier,
+  StrikeOrDelta,
   Tarf,
+  Touch,
   VarianceSwap,
   VolatilitySwap,
 } from "./contract";
@@ -300,6 +305,14 @@ export function priceInstrument(
 ): PriceOutcome {
   const t = instrument.expiryYears;
   switch (instrument.product.kind) {
+    case "singleBarrier":
+      return priceSingleBarrier(instrument.product.singleBarrier, m, t);
+    case "doubleBarrier":
+      return priceDoubleBarrier(instrument.product.doubleBarrier, m, t);
+    case "digital":
+      return priceDigital(instrument.product.digital, m, t);
+    case "touch":
+      return priceTouch(instrument.product.touch, m, t);
     case "varianceSwap":
       return priceVarianceSwap(instrument.product.varianceSwap, m);
     case "volatilitySwap":
@@ -387,6 +400,442 @@ function priceVolatilitySwap(_spec: VolatilitySwap, m: MarketContext): PriceOutc
   greeks.price = kVol;
   greeks.vega = 1; // dK_vol/dσ
   return { greeks, resolvedStrike: kVol };
+}
+
+// ---------------------------------------------------------------------------
+// single / double barrier, digital, touch — reflection-principle closed forms
+// ---------------------------------------------------------------------------
+//
+// These four products are already on the ONE `celnet.wire` contract (proto field
+// numbers single_barrier=9, double_barrier=10, digital=11, touch=12) and priced
+// server-side by `celnet-exotics` (barrier.rs / digital.rs / touch.rs) under
+// Garman-Kohlhagen via the Reiner-Rubinstein / Ikeda-Kunitomo reflection-principle
+// closed forms. The offline mock here mirrors those exact closed forms on the SAME
+// GK math the mock already uses, so the standalone price is a genuine closed-form
+// value (not a stub) that agrees with the server's `celnet-exotics` reference and
+// satisfies the same structural identities (in/out parity, touch complementarity,
+// the digital−vanilla decomposition). The live WS transport prices the genuine
+// server form; offline this reproduces it. Greeks are by central finite difference
+// on the closed form so the ticket's strip is populated honestly. Provenance is in
+// doc comments only (never in identifiers; CLAUDE.md rule 8).
+
+/** Resolve a `StrikeOrDelta` to an absolute strike (delta via the mock convention). */
+function resolveStrikeOrDelta(spec: StrikeOrDelta, m: MarketContext, t: number): number {
+  return spec.kind === "strike" ? spec.strike : strikeFromDelta(spec.delta, m, t);
+}
+
+/** Populate delta/gamma/vega of a closed-form scalar price by central FD. */
+function fdGreeks(value: (mk: MarketContext) => number, m: MarketContext): Greeks {
+  const greeks = zeroGreeks();
+  greeks.price = value(m);
+  const hS = m.spot * 1e-4;
+  const hV = 1e-4;
+  const bump = (over: Partial<MarketContext>): MarketContext => ({ ...m, ...over });
+  greeks.deltaSpot =
+    (value(bump({ spot: m.spot + hS })) - value(bump({ spot: m.spot - hS }))) / (2 * hS);
+  greeks.gamma =
+    (value(bump({ spot: m.spot + hS })) - 2 * greeks.price + value(bump({ spot: m.spot - hS }))) /
+    (hS * hS);
+  greeks.vega = (value(bump({ vol: m.vol + hV })) - value(bump({ vol: m.vol - hV }))) / (2 * hV);
+  return greeks;
+}
+
+/** Plain Garman-Kohlhagen vanilla value (mirrors celnet-vanilla::price). */
+function gkVanillaValue(isCall: boolean, strike: number, m: MarketContext, t: number): number {
+  return vanillaGreeks(isCall, strike, m, t).price;
+}
+
+// --- single barrier (Reiner-Rubinstein A…D block selection) ----------------
+//
+// Mirrors `celnet-exotics::single_barrier::single_barrier_no_rebate`: the
+// KNOCK-IN value is the signed A…D block combination selected by {up/down,
+// call/put, K vs H}; KNOCK-OUT is derived by in/out parity (KO = vanilla − KI) so
+// the identity holds by construction. The rebate leg is a one-touch (at hit) for a
+// knocked-out out-option, or a no-touch on the barrier for an in-option.
+
+/** The Reiner-Rubinstein A…D building blocks for a single barrier. */
+interface RrBlocks {
+  a: number;
+  b: number;
+  c: number;
+  d: number;
+}
+
+function rrBlocks(
+  isCall: boolean,
+  up: boolean,
+  strike: number,
+  barrier: number,
+  m: MarketContext,
+  t: number,
+): RrBlocks {
+  const { spot: s, vol, rDom, rFor } = m;
+  const carry = rDom - rFor;
+  const vsqt = vol * Math.sqrt(t);
+  const mu = carry / (vol * vol) - 0.5;
+  const phi = isCall ? 1 : -1;
+  const eta = up ? -1 : 1;
+  const h = barrier;
+  const k = strike;
+
+  const x1 = Math.log(s / k) / vsqt + (1 + mu) * vsqt;
+  const x2 = Math.log(s / h) / vsqt + (1 + mu) * vsqt;
+  const y1 = Math.log((h * h) / (s * k)) / vsqt + (1 + mu) * vsqt;
+  const y2 = Math.log(h / s) / vsqt + (1 + mu) * vsqt;
+
+  const hs = h / s;
+  const pow2mu2 = Math.exp(2 * (mu + 1) * Math.log(hs));
+  const pow2mu = Math.exp(2 * mu * Math.log(hs));
+
+  const sDisc = s * Math.exp(-rFor * t);
+  const kDisc = k * Math.exp(-rDom * t);
+
+  const a =
+    phi * sDisc * normCdf(phi * x1) - phi * kDisc * normCdf(phi * (x1 - vsqt));
+  const b =
+    phi * sDisc * normCdf(phi * x2) - phi * kDisc * normCdf(phi * (x2 - vsqt));
+  const c =
+    phi * sDisc * pow2mu2 * normCdf(eta * y1) -
+    phi * kDisc * pow2mu * normCdf(eta * (y1 - vsqt));
+  const d =
+    phi * sDisc * pow2mu2 * normCdf(eta * y2) -
+    phi * kDisc * pow2mu * normCdf(eta * (y2 - vsqt));
+  return { a, b, c, d };
+}
+
+/** The rebate-free single-barrier value (mirrors `single_barrier_no_rebate`). */
+function singleBarrierBareValue(
+  spec: SingleBarrier,
+  strike: number,
+  m: MarketContext,
+  t: number,
+): number {
+  const isCall = spec.vanilla.optionType === "CALL";
+  const up = spec.side === "UP";
+  const vanilla = gkVanillaValue(isCall, strike, m, t);
+
+  // Already-breached resolution (mirrors the server's breached branch).
+  const breached = up ? m.spot >= spec.barrier : m.spot <= spec.barrier;
+  if (breached) {
+    return spec.kind === "KNOCK_OUT" ? 0 : vanilla;
+  }
+
+  const { a, b, c, d } = rrBlocks(isCall, up, strike, spec.barrier, m, t);
+  const kGeH = strike >= spec.barrier;
+  let knockIn: number;
+  if (up) {
+    knockIn = isCall ? (kGeH ? a : b - c + d) : kGeH ? a - b + d : c;
+  } else {
+    knockIn = isCall ? (kGeH ? c : a - b + d) : kGeH ? b - c + d : a;
+  }
+  return spec.kind === "KNOCK_IN" ? knockIn : vanilla - knockIn;
+}
+
+/** The single-barrier value INCLUDING the rebate leg (mirrors `single_barrier_price`). */
+function singleBarrierValue(
+  spec: SingleBarrier,
+  strike: number,
+  m: MarketContext,
+  t: number,
+): number {
+  const bare = singleBarrierBareValue(spec, strike, m, t);
+  if (spec.rebate === 0) return bare;
+  // A knocked-out out-option pays the rebate AT HIT (one-touch); a knock-in pays
+  // the rebate at expiry if it never knocks in (no-touch on the barrier).
+  const reb =
+    spec.kind === "KNOCK_OUT"
+      ? oneTouchValue(m, spec.barrier, spec.rebate, "AT_HIT", t)
+      : noTouchValue(m, spec.barrier, spec.rebate, t);
+  return bare + reb;
+}
+
+function priceSingleBarrier(spec: SingleBarrier, m: MarketContext, t: number): PriceOutcome {
+  const strike = resolveStrikeOrDelta(spec.vanilla.strike, m, t);
+  const greeks = fdGreeks((mk) => singleBarrierValue(spec, strike, mk, t), m);
+  return { greeks, resolvedStrike: strike };
+}
+
+// --- double barrier (Ikeda-Kunitomo method-of-images corridor series) -------
+//
+// Mirrors `celnet-exotics::barrier::double_knock_out_price`: the knock-out value is
+// the alternating sum of reflected Black-Scholes asset/cash legs over the corridor
+// (K,U) for a call or (L,K) for a put; a knock-in is priced by parity
+// (KI = vanilla − KO), exactly as the server does.
+
+/** Image-series term count (matches the exotics crate's `DKO_TERMS`). */
+const DKO_TERMS = 10;
+
+/**
+ * The double knock-out value (mirrors `celnet-exotics::barrier::double_knock_out_price`
+ * term-for-term: the Ikeda-Kunitomo method-of-images series with `μ = b/σ² − ½`,
+ * `μ₁ = 2(μ+1)`, `drift = (1+μ)·σ√T`, the direct image `S·(U/L)^{2n}` and the
+ * lower-wall mirror image `L^{2n+2}/(U^{2n}·S)`, summed over `±DKO_TERMS`; `φ`
+ * orients every CDF argument inside the loop and the value is floored at zero).
+ */
+function doubleKnockOutValue(
+  isCall: boolean,
+  strike: number,
+  lower: number,
+  upper: number,
+  m: MarketContext,
+  t: number,
+): number {
+  const s = m.spot;
+  if (s <= lower || s >= upper) return 0;
+
+  const { vol, rDom, rFor } = m;
+  const vsqt = vol * Math.sqrt(t);
+  const mu = (rDom - rFor) / (vol * vol) - 0.5;
+  const mu1 = 2 * (mu + 1); // = 2b/σ² + 1
+  const k = strike;
+  const dfDom = Math.exp(-rDom * t);
+  const dfFor = Math.exp(-rFor * t);
+  const phi = isCall ? 1 : -1;
+
+  // Payoff integration band on the corridor: call ⇒ (K, U); put ⇒ (L, K).
+  const fLo = isCall ? Math.max(k, lower) : lower;
+  const fHi = isCall ? upper : Math.min(k, upper);
+  if (fLo >= fHi) return 0;
+
+  const drift = (1 + mu) * vsqt;
+  const lnUl = Math.log(upper / lower);
+  const lnS = Math.log(s);
+  const lnL = Math.log(lower);
+  const lnU = Math.log(upper);
+  const pow = (b: number, ex: number): number => Math.exp(ex * Math.log(b));
+
+  let sum = 0;
+  for (let n = -DKO_TERMS; n <= DKO_TERMS; n += 1) {
+    // Direct image spot S·(U/L)^{2n}.
+    const directLog = lnS + 2 * n * lnUl;
+    const ddLo = (directLog - Math.log(fLo)) / vsqt + drift;
+    const ddHi = (directLog - Math.log(fHi)) / vsqt + drift;
+    const pow1 = pow(upper / lower, n * mu1);
+
+    // Lower-wall mirror image spot S' = L^{2n+2}/(U^{2n}·S).
+    const imgLog = (2 * n + 2) * lnL - 2 * n * lnU - lnS;
+    const dmLo = (imgLog - Math.log(fLo)) / vsqt + drift;
+    const dmHi = (imgLog - Math.log(fHi)) / vsqt + drift;
+    const mirrorBase = pow(lower, n + 1) / (pow(upper, n) * s);
+    const pow2 = pow(mirrorBase, mu1);
+
+    const asset =
+      s *
+      dfFor *
+      (pow1 * (normCdf(phi * ddLo) - normCdf(phi * ddHi)) -
+        pow2 * (normCdf(phi * dmLo) - normCdf(phi * dmHi)));
+
+    // Cash leg: power exponent μ₁ − 2 = 2μ, arguments shifted by −σ√T.
+    const pow1c = pow(upper / lower, n * (mu1 - 2));
+    const pow2c = pow(mirrorBase, mu1 - 2);
+    const cash =
+      k *
+      dfDom *
+      (pow1c * (normCdf(phi * (ddLo - vsqt)) - normCdf(phi * (ddHi - vsqt))) -
+        pow2c * (normCdf(phi * (dmLo - vsqt)) - normCdf(phi * (dmHi - vsqt))));
+
+    sum += asset - cash;
+  }
+  return Math.max(sum, 0);
+}
+
+function priceDoubleBarrier(spec: DoubleBarrier, m: MarketContext, t: number): PriceOutcome {
+  const strike = resolveStrikeOrDelta(spec.vanilla.strike, m, t);
+  const isCall = spec.vanilla.optionType === "CALL";
+  const knockIn = spec.kind === "KNOCK_IN";
+  const value = (mk: MarketContext): number => {
+    const ko = doubleKnockOutValue(isCall, strike, spec.lowerBarrier, spec.upperBarrier, mk, t);
+    return knockIn ? gkVanillaValue(isCall, strike, mk, t) - ko : ko;
+  };
+  const greeks = fdGreeks(value, m);
+  return { greeks, resolvedStrike: strike };
+}
+
+// --- digital (binary) ------------------------------------------------------
+//
+// Mirrors `celnet-exotics::digital::digital_price`, scaled by the payout amount
+// exactly as the server does (`payout * digital_price(...)`).
+
+function digitalUnitValue(spec: Digital, m: MarketContext, t: number): number {
+  const { spot: s, vol, rDom, rFor } = m;
+  const sqrtT = Math.sqrt(t);
+  const d1 = (Math.log(s / spec.strike) + (rDom - rFor + 0.5 * vol * vol) * t) / (vol * sqrtT);
+  const d2 = d1 - vol * sqrtT;
+  const dfDom = Math.exp(-rDom * t);
+  const dfFor = Math.exp(-rFor * t);
+  const isCall = spec.optionType === "CALL";
+  if (spec.style === "CASH_OR_NOTHING") {
+    return isCall ? dfDom * normCdf(d2) : dfDom * normCdf(-d2);
+  }
+  // Asset-or-nothing: pays one unit of the foreign asset (worth S_T).
+  return isCall ? s * dfFor * normCdf(d1) : s * dfFor * normCdf(-d1);
+}
+
+function priceDigital(spec: Digital, m: MarketContext, t: number): PriceOutcome {
+  const value = (mk: MarketContext): number => spec.payout * digitalUnitValue(spec, mk, t);
+  const greeks = fdGreeks(value, m);
+  return { greeks, resolvedStrike: spec.strike };
+}
+
+// --- touch (one-/no-/double-no-/double-one-touch) --------------------------
+//
+// Mirrors `celnet-exotics::touch`: a one-touch pays AT HIT via the Reiner-
+// Rubinstein discounted-hit expectation; a no-touch is the deferred complement
+// `e^{−r_d T} − one_touch_at_expiry`; the double-no-touch is the corridor survival
+// from the method-of-images series; the double-one-touch is its complement. Each is
+// clamped exactly as the crate does. The server echoes the lower barrier as the
+// resolved strike (a touch has no strike).
+
+type RebateTiming = "AT_HIT" | "AT_EXPIRY";
+
+/** `(H/S)^p · Φ(arg)` in log-space (no Inf×0 NaN; mirrors `pow_cdf`). */
+function powCdf(lnHs: number, p: number, arg: number): number {
+  const phi = normCdf(arg);
+  if (phi <= 0) return 0;
+  const v = Math.exp(p * lnHs + Math.log(phi));
+  return Number.isFinite(v) ? v : 0;
+}
+
+/** One-touch value (mirrors `one_touch_price` / `one_touch_with_side`). */
+function oneTouchValue(
+  m: MarketContext,
+  barrier: number,
+  rebate: number,
+  timing: RebateTiming,
+  t: number,
+): number {
+  const upper = barrier >= m.spot; // upper barrier ⇒ TouchSide::Upper
+  const through = upper ? m.spot >= barrier : m.spot <= barrier;
+  if (through) {
+    return timing === "AT_HIT" ? rebate : rebate * Math.exp(-m.rDom * t);
+  }
+  const { vol, rDom, rFor } = m;
+  const vsqt = vol * Math.sqrt(t);
+  const mu = (rDom - rFor) / (vol * vol) - 0.5;
+  const z = Math.log(barrier / m.spot);
+  const sideSign = upper ? -1 : 1;
+  const base = (sideSign * z) / vsqt;
+  const driftSign = -sideSign;
+
+  let value: number;
+  if (timing === "AT_HIT") {
+    const lam = Math.sqrt(mu * mu + (2 * rDom) / (vol * vol));
+    const a1 = base + driftSign * lam * vsqt;
+    const a2 = base - driftSign * lam * vsqt;
+    value = rebate * (powCdf(z, mu + lam, a1) + powCdf(z, mu - lam, a2));
+  } else {
+    const a1 = base + driftSign * mu * vsqt;
+    const a2 = base - driftSign * mu * vsqt;
+    const prob = normCdf(a1) + powCdf(z, 2 * mu, a2);
+    value = rebate * Math.exp(-rDom * t) * prob;
+  }
+  const maxDf = Math.max(Math.exp(-rDom * t), 1);
+  const cap = Math.max(rebate, 0) * maxDf;
+  return Number.isFinite(value) ? Math.min(Math.max(value, 0), cap) : 0;
+}
+
+/** No-touch value (mirrors `no_touch_price`). */
+function noTouchValue(m: MarketContext, barrier: number, rebate: number, t: number): number {
+  const df = Math.exp(-m.rDom * t);
+  const ot = oneTouchValue(m, barrier, rebate, "AT_EXPIRY", t);
+  const cap = Math.max(rebate, 0) * Math.max(df, 1);
+  return Math.min(Math.max(rebate * df - ot, 0), cap);
+}
+
+/** Single-wall hit probability (mirrors `single_wall_hit_prob`). */
+function singleWallHitProb(mu: number, vsqt: number, z: number): number {
+  const base = z >= 0 ? -z / vsqt : z / vsqt;
+  const ds = z >= 0 ? 1 : -1;
+  const a1 = base + ds * mu * vsqt;
+  const a2 = base - ds * mu * vsqt;
+  const p = normCdf(a1) + powCdf(z, 2 * mu, a2);
+  return Math.min(Math.max(p, 0), 1);
+}
+
+/** Image reflections summed in the DNT corridor survival (matches `IMAGE_TERMS`). */
+const DNT_IMAGE_TERMS = 12;
+
+/** Corridor (double-no-touch) survival probability (mirrors `dnt_survival`). */
+function dntSurvival(m: MarketContext, lower: number, upper: number, t: number): number {
+  const s = m.spot;
+  if (s <= lower || s >= upper) return 0;
+  const { vol, rDom, rFor } = m;
+  const vsqt = vol * Math.sqrt(t);
+  const mu = (rDom - rFor) / (vol * vol) - 0.5;
+  const sigma2t = vol * vol * t;
+  const zU = Math.log(upper / s);
+  const zL = Math.log(lower / s);
+  const bigZ = Math.log(upper / lower);
+  const drift = mu * sigma2t;
+
+  const weighted = (logW: number, hi: number, lo: number): number => {
+    const p = normCdf(hi) - normCdf(lo);
+    if (p <= 0) return 0;
+    const v = Math.exp(logW + Math.log(p));
+    return Number.isFinite(v) ? v : 0;
+  };
+
+  let sum = 0;
+  for (let n = -DNT_IMAGE_TERMS; n <= DNT_IMAGE_TERMS; n += 1) {
+    const img = 2 * n * bigZ;
+    const term1 = weighted(mu * img, (zU - img - drift) / vsqt, (zL - img - drift) / vsqt);
+    const rimg = 2 * zU - img;
+    const term2 = weighted(mu * rimg, (zU - rimg - drift) / vsqt, (zL - rimg - drift) / vsqt);
+    sum += term1 - term2;
+  }
+  const series = Number.isFinite(sum) ? Math.min(Math.max(sum, 0), 1) : 0;
+  const capUpper = 1 - singleWallHitProb(mu, vsqt, zU);
+  const capLower = 1 - singleWallHitProb(mu, vsqt, zL);
+  return Math.min(Math.max(Math.min(series, Math.min(capUpper, capLower)), 0), 1);
+}
+
+/** Double-no-touch value (mirrors `double_no_touch_price`). */
+function doubleNoTouchValue(
+  m: MarketContext,
+  lower: number,
+  upper: number,
+  rebate: number,
+  t: number,
+): number {
+  const df = Math.exp(-m.rDom * t);
+  const surv = dntSurvival(m, lower, upper, t);
+  const cap = Math.max(rebate, 0) * Math.max(df, 1);
+  return Math.min(Math.max(rebate * df * surv, 0), cap);
+}
+
+/** Double-(one-)touch value (mirrors `double_touch_price`). */
+function doubleTouchValue(
+  m: MarketContext,
+  lower: number,
+  upper: number,
+  rebate: number,
+  t: number,
+): number {
+  const df = Math.exp(-m.rDom * t);
+  const nt = doubleNoTouchValue(m, lower, upper, rebate, t);
+  const cap = Math.max(rebate, 0) * Math.max(df, 1);
+  return Math.min(Math.max(rebate * df - nt, 0), cap);
+}
+
+/** The touch value for the selected kind (mirrors the server's `Product::Touch` arm). */
+function touchValue(spec: Touch, m: MarketContext, t: number): number {
+  switch (spec.kind) {
+    case "ONE_TOUCH":
+      return oneTouchValue(m, spec.lowerBarrier, spec.rebate, "AT_HIT", t);
+    case "NO_TOUCH":
+      return noTouchValue(m, spec.lowerBarrier, spec.rebate, t);
+    case "DOUBLE_NO_TOUCH":
+      return doubleNoTouchValue(m, spec.lowerBarrier, spec.upperBarrier, spec.rebate, t);
+    case "DOUBLE_ONE_TOUCH":
+      return doubleTouchValue(m, spec.lowerBarrier, spec.upperBarrier, spec.rebate, t);
+  }
+}
+
+function priceTouch(spec: Touch, m: MarketContext, t: number): PriceOutcome {
+  const greeks = fdGreeks((mk) => touchValue(spec, mk, t), m);
+  // A touch carries no strike; the headline strike echoes the lower barrier so the
+  // ticket has a sensible level to display (matches the server).
+  return { greeks, resolvedStrike: spec.lowerBarrier };
 }
 
 // ---------------------------------------------------------------------------
