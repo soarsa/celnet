@@ -39,7 +39,7 @@ test-group = 'engine-serial'
 
 [[profile.default.overrides]]
 # The real-socket, real-timer Raft consensus multi-node tests (celnet-replog's
-# replication suite + celnet-parity's raft_election row). Serialized — see the
-# replog-consensus group note above.
-filter = 'binary(replication) | binary(raft_election)'
+# replication suite + celnet-parity's raft_election + raft_snapshot rows).
+# Serialized — see the replog-consensus group note above.
+filter = 'binary(replication) | binary(raft_election) | binary(raft_snapshot)'
 test-group = 'replog-consensus'

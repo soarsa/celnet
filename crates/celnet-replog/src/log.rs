@@ -475,6 +475,70 @@ impl Log {
         self.entry_at_physical(p)
     }
 
+    /// Install a snapshot boundary `(last_included_index, last_included_term)`
+    /// received over the wire (the follower side of the InstallSnapshot RPC, Raft
+    /// §7). This durably reshapes the on-disk log so that physical position 0 holds
+    /// absolute index `last_included_index + 1`, applying the §7 follower rule:
+    ///
+    /// * **If the follower already holds an entry at `last_included_index` whose
+    ///   term equals `last_included_term`** (the snapshot covers a prefix of the
+    ///   follower's own log — a redundant / lagging-but-consistent install), the
+    ///   tail `(last_included_index, ..]` is *retained* and only the now-subsumed
+    ///   prefix is discarded (this is exactly [`Log::discard_prefix`]). The
+    ///   follower keeps any already-replicated, possibly-further entries.
+    /// * **Otherwise** (the snapshot is ahead of, or conflicts with, the follower's
+    ///   log) the *entire* physical log is discarded and the base is reset to
+    ///   `last_included_index + 1`, so the follower starts fresh from the snapshot
+    ///   boundary and resumes AppendEntries from there. Any divergent tail the
+    ///   follower held is dropped (it could not have been committed past the
+    ///   snapshot boundary, which the leader has committed and applied).
+    ///
+    /// Returns `true` if the install advanced the boundary (work was done), `false`
+    /// if it was a stale no-op (the existing snapshot boundary is already at or
+    /// beyond `last_included_index`). The rewrite uses the same atomic write-fresh →
+    /// fsync → rename → dir-fsync discipline as the other durable mutations, so the
+    /// journal on disk is always either the whole old log or the whole new tail.
+    ///
+    /// # Errors
+    ///
+    /// Propagates journal IO / rewrite errors.
+    pub fn install_snapshot(
+        &mut self,
+        last_included_index: u64,
+        last_included_term: u64,
+    ) -> std::io::Result<bool> {
+        // Stale install: our boundary is already at or beyond it → nothing to do.
+        if self
+            .snapshot_index
+            .is_some_and(|s| s >= last_included_index)
+        {
+            return Ok(false);
+        }
+        // Case 1: we hold the boundary entry with the matching term and it is within
+        // the retained tail (not the existing snapshot boundary itself, handled
+        // above). Discard only the now-subsumed prefix, retaining our tail.
+        let matches_tail = last_included_index >= self.base_index
+            && self.term_at(last_included_index) == Some(last_included_term);
+        if matches_tail {
+            return self
+                .discard_prefix(last_included_index, last_included_term)
+                .map(|()| true);
+        }
+
+        // Case 2: the snapshot is ahead of, or conflicts with, our log. Discard the
+        // ENTIRE physical log and reset the base to last_included_index + 1.
+        let tmp = rewrite_tmp_path(&self.path);
+        write_fresh_journal(&tmp, &[])?;
+        fs::rename(&tmp, &self.path)?;
+        sync_parent_dir(&self.path)?;
+        self.journal = Journal::open(&self.path).map_err(to_io)?;
+        self.terms.clear();
+        self.base_index = last_included_index + 1;
+        self.snapshot_index = Some(last_included_index);
+        self.snapshot_term = last_included_term;
+        Ok(true)
+    }
+
     /// Every retained entry from **absolute** `from` to the last, decoded, in
     /// order (used by a leader to gather the slice it must replicate to a lagging
     /// follower). A `from` below the discarded-prefix boundary is clamped to the
@@ -787,6 +851,90 @@ mod tests {
         log.discard_prefix(1, 1).unwrap();
         assert_eq!(log.base_index(), 3);
         assert_eq!(log.len(), 1);
+    }
+
+    #[test]
+    fn install_snapshot_ahead_resets_log_to_boundary() {
+        // A far-behind follower holds a short, divergent log; the leader installs a
+        // snapshot whose boundary is BEYOND everything the follower has.
+        let path = temp_log();
+        let mut log = Log::open(&path).unwrap();
+        log.append(&e(1, 0, 1)).unwrap();
+        log.append(&e(1, 1, 2)).unwrap();
+        // Snapshot boundary at index 5 (term 3) — far ahead of our index-1 log.
+        assert!(log.install_snapshot(5, 3).unwrap());
+        // The entire physical log was discarded; base reset to boundary + 1.
+        assert!(log.is_empty());
+        assert_eq!(log.base_index(), 6);
+        assert_eq!(log.snapshot_index(), Some(5));
+        assert_eq!(log.last_index(), Some(5));
+        assert_eq!(log.last_term(), 3);
+        assert_eq!(log.term_at(5), Some(3)); // boundary term retained
+        assert_eq!(log.term_at(1), None); // our old entries are gone
+        // matches_prev holds at the boundary → leader can replicate index 6 next.
+        assert!(log.matches_prev(5, 3));
+        let last = log.reconcile(&[e(3, 6, 66)]).unwrap().unwrap();
+        assert_eq!(last, 6);
+        assert_eq!(log.entry_at(6).unwrap().unwrap().payload, vec![66u8]);
+
+        // Durable across reopen (with boundary adoption, as RaftNode::boot does).
+        drop(log);
+        let mut log = Log::open(&path).unwrap();
+        log.adopt_snapshot_boundary(5, 3);
+        assert_eq!(log.base_index(), 6);
+        assert_eq!(log.entry_at(6).unwrap().unwrap().payload, vec![66u8]);
+    }
+
+    #[test]
+    fn install_snapshot_matching_tail_retains_tail() {
+        // The follower already holds the boundary entry with the matching term plus
+        // some further entries; a snapshot covering only a prefix must KEEP the tail.
+        let path = temp_log();
+        let mut log = Log::open(&path).unwrap();
+        for i in 0..6u64 {
+            log.append(&e(1, i, i as u8)).unwrap();
+        }
+        // Install a snapshot at index 2 (term 1) — which the follower already holds.
+        assert!(log.install_snapshot(2, 1).unwrap());
+        // Only the prefix [0,2] was discarded; the tail [3,5] is retained.
+        assert_eq!(log.len(), 3);
+        assert_eq!(log.base_index(), 3);
+        assert_eq!(log.snapshot_index(), Some(2));
+        assert_eq!(log.entry_at(3).unwrap().unwrap().payload, vec![3u8]);
+        assert_eq!(log.entry_at(5).unwrap().unwrap().payload, vec![5u8]);
+        assert_eq!(log.last_index(), Some(5));
+    }
+
+    #[test]
+    fn install_snapshot_stale_is_noop() {
+        let path = temp_log();
+        let mut log = Log::open(&path).unwrap();
+        for i in 0..4u64 {
+            log.append(&e(1, i, i as u8)).unwrap();
+        }
+        log.discard_prefix(2, 1).unwrap(); // boundary now at 2
+        // A stale install at or below the existing boundary does nothing.
+        assert!(!log.install_snapshot(2, 1).unwrap());
+        assert!(!log.install_snapshot(1, 1).unwrap());
+        assert_eq!(log.base_index(), 3);
+        assert_eq!(log.len(), 1);
+    }
+
+    #[test]
+    fn install_snapshot_conflicting_term_resets_log() {
+        // The follower holds index 3 but in a DIFFERENT (stale) term than the
+        // snapshot boundary's term ⇒ the whole log is discarded (case 2).
+        let path = temp_log();
+        let mut log = Log::open(&path).unwrap();
+        for i in 0..5u64 {
+            log.append(&e(1, i, i as u8)).unwrap(); // all term 1
+        }
+        // Snapshot boundary at index 3 but term 7 (we hold index 3 in term 1).
+        assert!(log.install_snapshot(3, 7).unwrap());
+        assert!(log.is_empty());
+        assert_eq!(log.base_index(), 4);
+        assert_eq!(log.snapshot_index(), Some(3));
+        assert_eq!(log.term_at(3), Some(7)); // boundary term is the leader's
     }
 
     #[test]
