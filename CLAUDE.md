@@ -123,6 +123,22 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-06-06 — **COMPLETION-PROGRAM Wave 2 DONE (commit `f498f95`; pushed).** Forward-start/cliquet +
+  quanto onto the ONE oneof (additive `forward_start=16`/`cliquet=17`/`quanto=18` + `QuantoPayoff`) →
+  server pricer (Rubinstein fwd-start, Σ-leg plain cliquet, quanto vanilla/digital closed-form; clamped
+  cliquet MC) + WS mirror + SDK + CLI + Excel (`CELNET.FORWARDSTART/CLIQUET/QUANTO`) + GUI ticket.
+  **Adversarial verify REJECTED the first pass on a real blocker** (the clamped-cliquet MC std-error was
+  surfaced only on the gRPC `PriceResponse`; the WS quote path used by GUI-live/Excel silently dropped it,
+  masked by fabricated test fixtures). **Fixed forward (me):** `Quote.price_std_error=12` +
+  `PriceResponse.price_std_error=7`, emit in BOTH WS JSON encoders, stamp in `quote.rs`, map in the SDK
+  `Quote`; gated by a `quote_to_json` unit test + an SDK e2e asserting the clamped-cliquet QUOTE
+  (request_quote — the GUI/Excel path) carries stderr while plain cliquet does not. Oracle: server==exotics
+  ~1e-9 + t1→0→GK + plain cliquet==Σ legs ~1e-10 + quanto ρ=0→vanilla ~1e-12; clamped cliquet == same-seed
+  exotics MC (price+stderr, no closed-form overclaim). Full `just check` green ("All gates passed."),
+  cargo-deny clean, **1111/1111**; GUI tsc 0 / 115 tests; Excel build 0 / 116 tests. **Lesson reinforced:
+  MC honesty must hold on EVERY transport (gRPC AND WS AND SDK), not one.** **Next: W3** (TARF/accumulator/
+  lookback — MC products on the wire, reusing this `price_std_error` infra).
+
 - 2026-06-06 — **COMPLETION-PROGRAM launched (`docs/COMPLETION-PROGRAM.md`, commit `133af6f`) + Wave 1 DONE
   (commit `2c09d18`; pushed).** A planning Workflow (4 parallel assessors → architect) found the dominant
   gap is **api-first client parity, not missing math**: a large built+parity-gated `celnet-exotics`
