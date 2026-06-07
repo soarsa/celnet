@@ -1,0 +1,46 @@
+# Celnet frozen golden reference -- Heston (1993) stochastic-volatility European
+# vanilla, HAND-PINNED from the PUBLISHED LITERATURE (no in-sandbox QuantLib).
+#
+# Oracle: Fang & Oosterlee (2008), "A Novel Pricing Method for European Options
+# Based on Fourier-Cosine Series Expansions", SIAM J. Sci. Comput. 31(2):826-848
+# (MPRA preprint 8914). Section 5.3 "The Heston Model".
+#
+# The reference CALL prices are the paper's own "Reference val." figures, which
+# the authors compute by the **Carr-Madan method at N = 2^17 points** (truncated
+# Fourier domain [0,1200] for T=1, [0,500] for T=10) -- an oracle independent of
+# Celnet's code. Verbatim from the paper:
+#   * Table 4 (T = 1):  Reference val. = 5.785155450...    (eq. (53) params)
+#   * Table 5 (T = 10): Reference val. = 22.318945791...   (eq. (53) params)
+#
+# Parameter set, Fang-Oosterlee eq. (53):
+#   S0 = 100, K = 100, r = 0, q = 0,
+#   lambda (kappa, mean-reversion) = 1.5768,
+#   eta    (sigma, vol-of-vol)     = 0.5751,
+#   u_bar  (theta, long-run var)   = 0.0398,
+#   u_0    (v0, initial var)       = 0.0175,
+#   rho                            = -0.5711.
+# (In Celnet FX units, r_dom = r = 0 and r_for = q = 0.)
+#
+# PUT rows: derived from the SAME published call value by EXACT put-call parity
+#   C - P = S0*e^{-q T} - K*e^{-r T}.
+# With S0 = K = 100 and r = q = 0 the parity term is exactly 0, so the published
+# put equals the published call to the same precision. This adds the put leg of
+# each Celnet transform to the gate without inventing a number: it is the
+# published call under a parity identity that holds bit-exactly for these inputs.
+#
+# These are FROZEN: regenerate only by a deliberate, reviewed edit to the cited
+# published constants. The published reference precision is ~1e-9 (the paper
+# quotes the values truncated with a trailing ellipsis), so the gate tolerance is
+# set accordingly in tests/heston_grid.rs -- NOT a last-bit claim.
+#
+# col `cos_valid`: 1 where the Celnet COS transform's documented validity holds
+# (the <=3y FX-vanilla regime per celnet-heston's module docs), 0 where it does
+# not (deep long maturity: T=10 is past the Fourier COS precision wall, an
+# intrinsic, documented limitation -- there the Carr-Madan transform is gated to
+# the published value and the published value CATCHES the COS wall). The
+# Carr-Madan transform is gated against the oracle on EVERY row.
+option_type,spot,strike,t,r_dom,r_for,kappa,theta,vol_of_vol,rho,v0,price,cos_valid
+CALL,100.0,100.0,1.0,0.0,0.0,1.5768,0.0398,0.5751,-0.5711,0.0175,5.785155450,1
+PUT,100.0,100.0,1.0,0.0,0.0,1.5768,0.0398,0.5751,-0.5711,0.0175,5.785155450,1
+CALL,100.0,100.0,10.0,0.0,0.0,1.5768,0.0398,0.5751,-0.5711,0.0175,22.318945791,0
+PUT,100.0,100.0,10.0,0.0,0.0,1.5768,0.0398,0.5751,-0.5711,0.0175,22.318945791,0
