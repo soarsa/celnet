@@ -146,8 +146,10 @@
   border-radius: var(--r-sm);
   font-size: var(--type-callout);
   font-weight: var(--weight-emphasis);
-  /* dark ink legible on the heatmap ramp — track the navy hue (264) */
-  color: oklch(0.18 0.02 264);
+  /* Near-black ink so it clears WCAG AA 4.5:1 on the DARKEST shade of the heatmap
+   * ramp (the negative-end indigo at ~L0.5 gave only 4.01:1 at L0.18). Tracks the
+   * navy hue (264). Verified across the ramp by the axe a11y e2e. */
+  color: oklch(0.1 0.02 264);
   min-width: 64px;
 }
 .anchored {

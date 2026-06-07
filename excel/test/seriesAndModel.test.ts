@@ -178,11 +178,11 @@ describe("formatCalibratedSmileSpill", () => {
     { delta: 0, vol: 0.102 },
     { delta: 0.25, vol: 0.112 },
   ];
-  it("spills delta header + vol row + a model/version footer", () => {
+  it("spills delta header + vol row + a model/version footer from the TYPED provenance", () => {
     const spill = formatCalibratedSmileSpill({
       points,
       requestedModel: "STOCHASTIC_VOL",
-      providerNote: "calibrated; model=stochastic_vol",
+      actualModel: "STOCHASTIC_VOL",
       arbFree: true,
       conv: DEFAULT_CONVENTIONS,
       surfaceVersion: 7n,
@@ -194,23 +194,28 @@ describe("formatCalibratedSmileSpill", () => {
     // Sorted ascending by signed delta (put … call).
     expect(spill[0]!.slice(1)).toEqual([-0.25, 0, 0.25]);
     const footer = String(cell(spill, 2, 0));
-    // Provenance from the server note is preferred and surfaced verbatim.
-    expect(footer).toMatch(/model stochastic_vol/);
+    // The footer shows the authoritative typed family (no `(requested …)` flag
+    // when it matches), the arb status, and the surface version.
+    expect(footer).toMatch(/model STOCHASTIC_VOL/);
+    expect(footer).not.toMatch(/requested/);
     expect(footer).toMatch(/arb-free/);
     expect(footer).toMatch(/surface v7/);
   });
-  it("falls back to the requested model when the note carries no provenance", () => {
+  it("flags a mismatch when the surface was marked under a different family than requested", () => {
     const spill = formatCalibratedSmileSpill({
       points,
       requestedModel: "PARAMETRIC",
-      providerNote: "no provenance token here",
+      actualModel: "EXTENDED_SURFACE",
       arbFree: false,
       conv: DEFAULT_CONVENTIONS,
       surfaceVersion: undefined,
       epochNanos: 0n,
     });
     const footer = String(cell(spill, 2, 0));
-    expect(footer).toMatch(/model PARAMETRIC/);
+    // The ACTUAL (typed) family leads; the requested one is flagged so the trader
+    // sees the surface was last marked under another model.
+    expect(footer).toMatch(/model EXTENDED_SURFACE/);
+    expect(footer).toMatch(/\(requested PARAMETRIC\)/);
     expect(footer).toMatch(/ARB!/);
   });
 });

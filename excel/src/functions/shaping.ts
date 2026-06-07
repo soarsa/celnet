@@ -30,6 +30,7 @@ import type {
   DoubleBarrier,
   FixingSchedule,
   Greeks,
+  Heartbeat,
   Instrument,
   Lookback,
   LookbackMonitoring,
@@ -2062,16 +2063,17 @@ export function formatPathDependentSpill(r: PathDependentResult): SpillMatrix {
 /**
  * Format a calibrated smile (the result of a model-selected `mark_surface`) as a
  * spill: a delta-pillar header row, a vol row, then a footer carrying the marked
- * `surface_version`, the model provenance (read from the server's
- * `arbitrage.note`, which the server stamps as `model=<family>`), the arb status,
- * and the convention transparency. The `model` argument is the model the cell
- * REQUESTED; the footer prefers the server-reported provenance when present so a
- * silent server default is visible, never assumed.
+ * `surface_version`, the model provenance (the TYPED `ArbReport.smileModel` the
+ * server stamps from the calibrated smile itself), the arb status, and the
+ * convention transparency. The `requestedModel` is the model the cell REQUESTED;
+ * `actualModel` is what the surface was actually calibrated under — the footer
+ * shows `actualModel` and flags a mismatch so a silent server default is visible,
+ * never assumed. We read the typed field, never the legacy `model=` note token.
  */
 export function formatCalibratedSmileSpill(args: {
   readonly points: readonly SurfacePoint[];
   readonly requestedModel: SmileModel;
-  readonly providerNote: string;
+  readonly actualModel: SmileModel;
   readonly arbFree: boolean;
   readonly conv: Conventions;
   readonly surfaceVersion: bigint | undefined;
@@ -2080,14 +2082,14 @@ export function formatCalibratedSmileSpill(args: {
   const sorted = [...args.points].sort((a, b) => a.delta - b.delta);
   const header: (string | number)[] = ["delta", ...sorted.map((p) => p.delta)];
   const vols: (string | number)[] = ["vol", ...sorted.map((p) => p.vol)];
-  // The server stamps the model used as `model=<family>` inside the arbitrage
-  // note (the frozen contract has no echo field). Surface it verbatim when present
-  // so the trader sees exactly what was calibrated, falling back to the requested
-  // model name when the note carries no provenance token.
-  const noteModel = /model=([A-Za-z0-9_-]+)/.exec(args.providerNote)?.[1];
-  const modelLabel = noteModel ?? args.requestedModel;
+  // The authoritative provenance is the typed `smile_model` the server stamped on
+  // the calibrated smile. Show it directly; when it differs from the requested
+  // model (the surface was last marked under another family) flag the divergence
+  // so the trader never mistakes a stale family for the one they asked for.
+  const mismatch =
+    args.actualModel !== args.requestedModel ? ` (requested ${args.requestedModel})` : "";
   const footer: (string | number)[] = [
-    `model ${modelLabel} | ${args.arbFree ? "arb-free" : "ARB!"} | ` +
+    `model ${args.actualModel}${mismatch} | ${args.arbFree ? "arb-free" : "ARB!"} | ` +
       conventionFooter(args.conv, args.surfaceVersion, args.epochNanos),
   ];
   return [header, vols, footer];
@@ -2124,6 +2126,64 @@ export interface MarkStatus {
 /** Format CELNET.MARK as a 1×3 status spill `[status, surfaceVersionAfter, detail]`. */
 export function formatMarkStatusSpill(m: MarkStatus): SpillMatrix {
   return [[m.status, m.surfaceVersionAfter === undefined ? m.stagingId : `v${m.surfaceVersionAfter}`, m.detail]];
+}
+
+// ---------------------------------------------------------------------------
+// server observability (heartbeat) spill formatting
+// ---------------------------------------------------------------------------
+
+/**
+ * Render a server-latency percentile (nanoseconds on the wire) for the status
+ * spill: microseconds with two decimals so a desk reads it as a familiar µs
+ * figure. A zero (no price timed yet on the streaming edge) renders an honest
+ * waiting marker rather than a misleading "0.00µs".
+ */
+function formatLatencyNanos(nanos: bigint): string {
+  if (nanos === 0n) return "—";
+  // bigint → µs with 2dp; divide in integer hundredths-of-µs to avoid any float
+  // drift on the (ms-resolution) wire values, then place the decimal point.
+  const hundredthsMicros = (nanos * 100n) / 1000n; // ns → µs×100, truncated
+  const whole = hundredthsMicros / 100n;
+  const frac = (hundredthsMicros % 100n).toString().padStart(2, "0");
+  return `${whole}.${frac}µs`;
+}
+
+/**
+ * Format CELNET.STATUS as a 2-row server-observability spill: a header row and a
+ * value row carrying the live connection state plus the latest server heartbeat's
+ * drain-side price latency p50/p99/p99.9, the `celnet-fanout` ring conflation-drop
+ * count, and the surface-version / correlation provenance echo. Every value is the
+ * server's own observability stamp (HdrHistogram + the ring's
+ * `received + skipped == produced` accounting); nothing is computed client-side.
+ * Before the first beat arrives the value row is an honest waiting state.
+ */
+export function formatServerStatusSpill(open: boolean, hb: Heartbeat | undefined): SpillMatrix {
+  const header: (string | number)[] = [
+    "connection",
+    "price_p50",
+    "price_p99",
+    "price_p99.9",
+    "conflation_drops",
+    "surface",
+    "correlation",
+  ];
+  const link = open ? "LIVE" : "DOWN";
+  if (hb === undefined) {
+    return [header, [link, "…", "…", "…", "(awaiting beat)", "—", "—"]];
+  }
+  return [
+    header,
+    [
+      link,
+      formatLatencyNanos(hb.serverPriceP50Nanos),
+      formatLatencyNanos(hb.serverPriceP99Nanos),
+      formatLatencyNanos(hb.serverPriceP999Nanos),
+      // The exact ring skip count; 0 ⇒ never lagged (honest, not absence).
+      hb.conflationDrops.toString(),
+      hb.surfaceVersion === 0n ? "live" : `v${hb.surfaceVersion}`,
+      hb.correlationId === 0n ? "—" : hb.correlationId.toString(),
+    ],
+  ];
 }
 
 // ---------------------------------------------------------------------------

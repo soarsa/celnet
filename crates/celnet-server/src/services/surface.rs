@@ -192,9 +192,10 @@ fn decode_smile_model(wire: Option<i32>) -> Result<SmileModel, Status> {
 }
 
 /// A short, human-readable provenance label for the smile model actually used,
-/// emitted in the [`ArbReport.note`] so a consumer always learns which family
-/// produced the mark (the contract carries no dedicated echo field; the note is
-/// the honest provenance channel).
+/// emitted in the [`ArbReport.note`] for human eyes. The machine-readable,
+/// AUTHORITATIVE provenance is the typed [`ArbReport.smile_model`] field set by
+/// [`wire_smile_model`]; the note label is kept purely for the human-readable
+/// "why is this point what it is" transparency a desk wants.
 fn model_label(model: SmileModel) -> &'static str {
     match model {
         SmileModel::MarketHedge => "market-hedge",
@@ -202,6 +203,20 @@ fn model_label(model: SmileModel) -> &'static str {
         SmileModel::Parametric => "parametric",
         SmileModel::ParametricSurface => "parametric-surface",
         SmileModel::ExtendedSurface => "extended-surface",
+    }
+}
+
+/// Map the surface-crate [`SmileModel`] of the smile actually marked to the wire
+/// [`celnet_proto::SmileModel`] tag — the typed, authoritative provenance stamped
+/// on every [`ArbReport`]. A consumer reads the calibration family from this enum
+/// directly, never by parsing the `model=` token in [`ArbReport.note`].
+fn wire_smile_model(model: SmileModel) -> celnet_proto::SmileModel {
+    match model {
+        SmileModel::MarketHedge => celnet_proto::SmileModel::MarketHedge,
+        SmileModel::StochasticVol => celnet_proto::SmileModel::StochasticVol,
+        SmileModel::Parametric => celnet_proto::SmileModel::Parametric,
+        SmileModel::ParametricSurface => celnet_proto::SmileModel::ParametricSurface,
+        SmileModel::ExtendedSurface => celnet_proto::SmileModel::ExtendedSurface,
     }
 }
 
@@ -312,6 +327,9 @@ fn arb_report(smile: &CalibratedSmile, forward: f64, t: f64, model: SmileModel) 
         } else {
             format!("model={label}; static checks flagged; smile reported as calibrated")
         },
+        // The typed, authoritative provenance — what every consumer reads to learn
+        // the calibration family (the `note` token above is human-readable only).
+        smile_model: wire_smile_model(model) as i32,
     }
 }
 
@@ -885,5 +903,125 @@ mod tests {
         let outer = q.outer.expect("five-point has an outer pillar");
         assert!(is_close(outer.risk_reversal, -0.012, 1e-12, 1e-12));
         assert!(is_close(outer.butterfly, 0.006, 1e-12, 1e-12));
+    }
+
+    /// A deliverable major FX convention set for the provenance tests.
+    fn major_conv() -> ConventionSet {
+        ConventionSet {
+            delta: celnet_types::DeltaConvention::SpotPremiumAdjusted,
+            atm: celnet_types::AtmConvention::DeltaNeutralStraddle,
+            premium: celnet_types::PremiumStyle::PercentForeign,
+            cut: celnet_types::Cut::NewYork1000,
+            day_count: celnet_types::DayCount::Act365Fixed,
+            settlement: celnet_types::Settlement::Deliverable,
+        }
+    }
+
+    fn major_market() -> WireMarketContext {
+        WireMarketContext {
+            spot: 1.10,
+            vol: 0.10,
+            r_dom: 0.03,
+            r_for: 0.01,
+        }
+    }
+
+    /// **Independent oracle** (hand-pinned to the wire enum constants, Lesson c):
+    /// the typed provenance the server is *supposed* to stamp for each family.
+    /// Derived here from the contract's documented enum tags, NOT by calling the
+    /// production `wire_smile_model`, so a mis-map can't pass by sharing the bug.
+    fn expected_wire_tag(model: SmileModel) -> i32 {
+        match model {
+            SmileModel::MarketHedge => 0,       // SMILE_MODEL_MARKET_HEDGE
+            SmileModel::StochasticVol => 1,     // SMILE_MODEL_STOCHASTIC_VOL
+            SmileModel::Parametric => 2,        // SMILE_MODEL_PARAMETRIC
+            SmileModel::ParametricSurface => 3, // SMILE_MODEL_PARAMETRIC_SURFACE
+            SmileModel::ExtendedSurface => 4,   // SMILE_MODEL_EXTENDED_SURFACE
+        }
+    }
+
+    /// The typed `ArbReport.smile_model` the server stamps equals the family the
+    /// smile was ACTUALLY calibrated under (read from the calibrated smile's own
+    /// recorded `model()`), for every family — including the headline
+    /// **eSSVI → SMILE_MODEL_EXTENDED_SURFACE** mapping. This is the authoritative
+    /// provenance a consumer reads instead of regex-parsing the note string.
+    #[test]
+    fn typed_provenance_matches_the_family_marked_under() {
+        let conv = major_conv();
+        let market = major_market();
+        for model in [
+            SmileModel::MarketHedge,
+            SmileModel::StochasticVol,
+            SmileModel::Parametric,
+            SmileModel::ParametricSurface,
+            SmileModel::ExtendedSurface,
+        ] {
+            let b = broker(true, -0.012, 0.006);
+            let smile = calibrate(&b, &market, &conv, model).expect("calibration succeeds");
+            // The calibrated smile records the family it was built under.
+            assert_eq!(
+                smile.model(),
+                model,
+                "the calibrated smile records the requested family"
+            );
+            // The typed provenance is taken from the smile's own recorded model.
+            let arb = arb_report(&smile, smile.forward(), b.tenor_years, smile.model());
+            assert_eq!(
+                arb.smile_model,
+                expected_wire_tag(model),
+                "typed ArbReport.smile_model must equal the hand-pinned wire tag for {model:?}",
+            );
+            // And the human note still embeds the (now non-authoritative) label.
+            assert!(
+                arb.note.contains(&format!("model={}", model_label(model))),
+                "note keeps the human-readable model= token: {}",
+                arb.note
+            );
+        }
+    }
+
+    /// Pin the eSSVI headline explicitly: marking under the extended surface family
+    /// yields the `SMILE_MODEL_EXTENDED_SURFACE` (value 4) typed tag, end to end
+    /// through `smile_to_wire` (the exact field a GUI/Excel/SDK consumer reads).
+    #[test]
+    fn essvi_mark_stamps_extended_surface_typed_tag() {
+        let conv = major_conv();
+        let market = major_market();
+        let b = broker(true, -0.012, 0.006);
+        let smile = calibrate(&b, &market, &conv, SmileModel::ExtendedSurface)
+            .expect("eSSVI calibration succeeds");
+        let clock = Clock::system();
+        let wire = smile_to_wire(None, &b, &smile, &conv, &market, &clock);
+        let arb = wire.arbitrage.expect("smile carries an arb report");
+        assert_eq!(
+            arb.smile_model,
+            celnet_proto::SmileModel::ExtendedSurface as i32,
+            "eSSVI mark must stamp the EXTENDED_SURFACE typed provenance tag"
+        );
+        assert_eq!(arb.smile_model, 4, "EXTENDED_SURFACE is wire value 4");
+    }
+
+    /// `wire_smile_model` is a total bijection onto the wire enum — every family
+    /// maps to a distinct, in-range tag (no two families collide, no default leak).
+    #[test]
+    fn wire_smile_model_is_total_and_distinct() {
+        let families = [
+            SmileModel::MarketHedge,
+            SmileModel::StochasticVol,
+            SmileModel::Parametric,
+            SmileModel::ParametricSurface,
+            SmileModel::ExtendedSurface,
+        ];
+        let mut tags: Vec<i32> = families
+            .iter()
+            .map(|&m| wire_smile_model(m) as i32)
+            .collect();
+        let n = tags.len();
+        tags.sort_unstable();
+        tags.dedup();
+        assert_eq!(tags.len(), n, "every family maps to a distinct wire tag");
+        for (&m, &want) in families.iter().zip([0, 1, 2, 3, 4].iter()) {
+            assert_eq!(wire_smile_model(m) as i32, want, "tag for {m:?}");
+        }
     }
 }

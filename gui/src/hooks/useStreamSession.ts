@@ -12,6 +12,7 @@ import type {
   AttributionRecord,
   Conventions,
   Greeks,
+  Heartbeat,
   Instrument,
   Snapshot,
   StreamHealth,
@@ -44,6 +45,26 @@ export interface StreamRow {
   attribution?: AttributionRecord;
 }
 
+/**
+ * The latest server-reported observability, distilled from the most recent
+ * [`Heartbeat`] across all live subscriptions. The StatusRibbon renders this so
+ * the trader sees the SERVER's real numbers (drain-side price tail, ring
+ * conflation drops, surface/correlation provenance), not just a client-side proxy.
+ * `received === false` until the first heartbeat lands (honest empty-state — the
+ * ribbon shows "—", never a fabricated zero presented as a measurement).
+ */
+export interface ServerObservability {
+  received: boolean;
+  /** Sum of `conflationDrops` across live subscriptions (total ticks the rings dropped). */
+  conflationDrops: bigint;
+  /** Worst (max) drain-side price p99 across live subscriptions, in ns. */
+  serverPriceP99Nanos: bigint;
+  /** The surface version the most-recently-beating subscription is pinned to (0 ⇒ live). */
+  surfaceVersion?: bigint;
+  /** The correlation id echoed by the most-recently-beating subscription (0 ⇒ none). */
+  correlationId?: bigint;
+}
+
 /** A toast surfaced from click-to-trade Executed / StreamReject. */
 export interface TradeToast {
   id: number;
@@ -71,7 +92,15 @@ export interface StreamApi {
   /** Aggregate health for the status ribbon. */
   totalSeq: bigint;
   lpCount: number;
+  /** Latest server-reported observability, distilled from the live heartbeats. */
+  observability: ServerObservability;
 }
+
+const EMPTY_OBSERVABILITY: ServerObservability = {
+  received: false,
+  conflationDrops: 0n,
+  serverPriceP99Nanos: 0n,
+};
 
 export function useStreamSession(
   transport: CelnetTransport,
@@ -104,10 +133,15 @@ export function useStreamSession(
   const dirty = useRef(false);
   const raf = useRef(0);
   const toastSeq = useRef(0);
+  // The latest heartbeat per subscription (the authoritative source for the
+  // server observability the ribbon shows). Distilled into one ServerObservability
+  // on the same rAF batch as the rows, so a beat burst never causes >1 paint/frame.
+  const beatMap = useRef(new Map<bigint, Heartbeat>());
 
   const [rows, setRows] = useState<StreamRow[]>([]);
   const [toasts, setToasts] = useState<TradeToast[]>([]);
   const [totalSeq, setTotalSeq] = useState<bigint>(0n);
+  const [observability, setObservability] = useState<ServerObservability>(EMPTY_OBSERVABILITY);
 
   useEffect(() => {
     const session = transport.openStreamSession();
@@ -126,6 +160,7 @@ export function useStreamSession(
         let max = 0n;
         for (const r of rowMap.current.values()) if (r.sequence > max) max = r.sequence;
         setTotalSeq(max);
+        setObservability(distillObservability(beatMap.current));
       });
     };
 
@@ -215,6 +250,14 @@ export function useStreamSession(
           scheduleCommit();
           break;
         }
+        case "heartbeat": {
+          // Record the latest beat for this subscription. We DON'T gate on a known
+          // row: the beat is server observability in its own right (and arrives on
+          // every subscription incl. ones whose first snapshot we may not yet hold).
+          beatMap.current.set(event.heartbeat.subscriptionId, event.heartbeat);
+          scheduleCommit();
+          break;
+        }
         case "executed": {
           const e = event.executed;
           // Append the maker attribution when the wire carries it (honest: omit
@@ -261,6 +304,7 @@ export function useStreamSession(
       session.close();
       sessionRef.current = null;
       rowMap.current = new Map();
+      beatMap.current = new Map();
       meta.clear();
     };
     // Seed + transport are stable for the app lifetime; intentional one-time wire.
@@ -285,9 +329,11 @@ export function useStreamSession(
   };
   const unsubscribe = (subscriptionId: bigint) => {
     rowMap.current.delete(subscriptionId);
+    beatMap.current.delete(subscriptionId);
     metaRef.current.delete(subscriptionId);
     sessionRef.current?.unsubscribe(subscriptionId);
     setRows([...rowMap.current.values()]);
+    setObservability(distillObservability(beatMap.current));
   };
   const execute = (subscriptionId: bigint, side: "BUY" | "SELL"): boolean => {
     const session = sessionRef.current;
@@ -312,7 +358,36 @@ export function useStreamSession(
     dismissToast,
     totalSeq,
     lpCount: 3,
+    observability,
   };
+}
+
+/**
+ * Distil the per-subscription heartbeat map into one ServerObservability for the
+ * ribbon. `conflationDrops` SUMS across subscriptions (each is a monotonic
+ * per-ring skip counter — the firm-wide total dropped). `serverPriceP99Nanos`
+ * takes the MAX (the worst tail any live line is paying — the honest headline).
+ * The provenance echo is taken from the most recently-beating subscription.
+ * Returns the empty sentinel (`received: false`) when no beat has landed.
+ */
+export function distillObservability(beats: Map<bigint, Heartbeat>): ServerObservability {
+  if (beats.size === 0) return EMPTY_OBSERVABILITY;
+  let drops = 0n;
+  let worstP99 = 0n;
+  let latest: Heartbeat | undefined;
+  for (const beat of beats.values()) {
+    drops += beat.conflationDrops;
+    if (beat.serverPriceP99Nanos > worstP99) worstP99 = beat.serverPriceP99Nanos;
+    if (!latest || beat.epochNanos > latest.epochNanos) latest = beat;
+  }
+  const out: ServerObservability = {
+    received: true,
+    conflationDrops: drops,
+    serverPriceP99Nanos: worstP99,
+  };
+  if (latest?.surfaceVersion !== undefined) out.surfaceVersion = latest.surfaceVersion;
+  if (latest?.correlationId !== undefined) out.correlationId = latest.correlationId;
+  return out;
 }
 
 function mid(p: TwoWayPrice): number {

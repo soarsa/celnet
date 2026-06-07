@@ -29,6 +29,7 @@ import type {
   CcyPair,
   Conventions,
   Executed,
+  Heartbeat,
   Instrument,
   MarketObservable,
   MarketSeriesPoint,
@@ -45,6 +46,7 @@ import {
   conventionsToWire,
   executedFromWire,
   greeksFromWire,
+  heartbeatFromWire,
   instrumentToWire,
   marketSeriesPointFromWire,
   marketSeriesSnapshotFromWire,
@@ -113,7 +115,8 @@ export type StreamEvent =
       readonly health: StreamHealth;
     }
   | { readonly kind: "series_snapshot"; readonly snapshot: MarketSeriesSnapshot }
-  | { readonly kind: "series_point"; readonly point: MarketSeriesPoint };
+  | { readonly kind: "series_point"; readonly point: MarketSeriesPoint }
+  | { readonly kind: "heartbeat"; readonly heartbeat: Heartbeat };
 
 /** The shape of a market-series subscription request (one observable time series). */
 export interface MarketSeriesRequest {
@@ -188,6 +191,14 @@ export class Connection {
   private nextSubId = 1n;
   private readonly stateListeners = new Set<(open: boolean) => void>();
 
+  /**
+   * The most recent server observability beat seen on this connection (drain-side
+   * latency percentiles + ring conflation drops + provenance echo). Updated on
+   * every `heartbeat` frame; `undefined` until the first beat arrives. Surfaced
+   * by `CELNET.STATUS` so a desk sees the live server health without a stream row.
+   */
+  private lastHeartbeat: Heartbeat | undefined = undefined;
+
   constructor(opts: ConnectionOptions) {
     this.url = opts.url;
     this.factory = opts.factory;
@@ -205,6 +216,15 @@ export class Connection {
   /** True iff the underlying socket is currently OPEN. */
   isOpen(): boolean {
     return this.ws?.readyState === WS_OPEN;
+  }
+
+  /**
+   * The most recent server observability beat, or `undefined` if none has been
+   * seen yet. Read by `CELNET.STATUS` to render live server health (drain-side
+   * price latency percentiles, ring conflation drops, provenance echo).
+   */
+  latestHeartbeat(): Heartbeat | undefined {
+    return this.lastHeartbeat;
   }
 
   onState(listener: (open: boolean) => void): () => void {
@@ -496,7 +516,13 @@ export class Connection {
         // Liveness only: a heartbeat carries the current sequence so a silent gap
         // is detectable and resets the staleness window — but does not advance the
         // applied sequence. A heartbeat whose sequence is ahead of ours signals a
-        // missed update; resync to recover.
+        // missed update; resync to recover. The beat also carries the server's
+        // drain-side observability (latency percentiles + ring conflation drops +
+        // provenance echo); cache the latest for CELNET.STATUS and emit it so a
+        // live consumer can react without polling.
+        const beat = heartbeatFromWire(frame);
+        this.lastHeartbeat = beat;
+        this.emit({ kind: "heartbeat", heartbeat: beat });
         const subId = subscriptionIdOf(frame);
         if (subId === undefined) {
           // Connection-level heartbeat: refresh every subscription's liveness.

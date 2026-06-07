@@ -1183,6 +1183,31 @@ message Heartbeat {
   uint64 sequence = 2;
   // Send time, nanoseconds since the Unix epoch (UTC).
   int64 epoch_nanos = 3;
+  // Server observability surfaced on the liveness beat (appended; additive). All
+  // are honest, real measurements taken off the hot path — the pinned zero-alloc
+  // pricing core stays untouched; these are read on the edge/drain side only.
+  //
+  // The number of price ticks this subscription's fan-out ring CONFLATED (dropped
+  // by forward-conflation under back-pressure) since it was opened — the exact
+  // skip count from the `celnet-fanout` SPMC ring's `received + skipped ==
+  // produced` accounting. A non-decreasing counter; 0 ⇒ the consumer never lagged.
+  uint64 conflation_drops = 4;
+  // Server-side price-compute latency p50 (median, nanoseconds) over the
+  // per-subscription update path, from a drain-side HdrHistogram (3 sig-figs).
+  // Zero until the first update is timed.
+  uint64 server_price_p50_nanos = 5;
+  // Server-side price-compute latency p99 (nanoseconds) — the 99th-percentile
+  // tail of the per-subscription update path.
+  uint64 server_price_p99_nanos = 6;
+  // Server-side price-compute latency p99.9 (nanoseconds) — the 99.9th-percentile
+  // tail of the per-subscription update path.
+  uint64 server_price_p999_nanos = 7;
+  // Provenance echo: the surface version this subscription is pinned to (0 ⇒ live
+  // mark, unpinned) — so a consumer can reconcile the heartbeat against the
+  // snapshot/update provenance it already holds.
+  uint64 surface_version = 8;
+  // Provenance echo: the opening `Subscribe.correlation_id` (0 ⇒ none).
+  uint64 correlation_id = 9;
 }
 
 // The full state of a streamed instrument at a sequence point — the baseline a
@@ -2027,8 +2052,17 @@ message ArbReport {
   bool calendar_arbitrage_free = 2;
   // The worst negative density observed (0.0 = none); larger magnitude = worse.
   double worst_density = 3;
-  // A human-readable note describing any repair applied during calibration.
+  // A human-readable note describing any repair applied during calibration. The
+  // note still embeds a `model=<label>` token for human eyes, but `smile_model`
+  // (field 5) is the AUTHORITATIVE machine-readable provenance — consumers read
+  // the calibration family from the typed field, never by parsing this string.
   string note = 4;
+  // The calibration family this smile was actually marked under — the typed,
+  // authoritative provenance the server stamps on every marked smile. A consumer
+  // (GUI / Excel / SDK) reads the family from this enum directly instead of the
+  // fragile `model=` regex over `note`. Always present on a server-marked smile
+  // (defaults to `SMILE_MODEL_MARKET_HEDGE`, value 0, the baseline family).
+  SmileModel smile_model = 5;
 }
 
 // The smile for one (pair, tenor): the marked broker quote set, the calibrated

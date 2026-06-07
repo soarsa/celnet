@@ -287,8 +287,9 @@ impl Client {
     /// [`MarkedSurface`] carries a fresh `surface_version` pinning the model-tagged
     /// calibration; pin a later [`Client::price`] / [`Rfq`] / stream subscription to
     /// that version to price reproducibly against this exact marked model, and read
-    /// the model the server used from each smile's [`crate::ArbReport::note`] (the
-    /// frozen contract has no echo field, so the note is the provenance channel).
+    /// the family the server actually used from each smile's typed
+    /// [`crate::ArbReport::model`] field (the authoritative provenance — the
+    /// `model=` token in [`crate::ArbReport::note`] is human-readable only).
     ///
     /// # Errors
     ///

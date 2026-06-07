@@ -71,6 +71,7 @@
 //!     subscription: Some(SubscriptionId { value: 7 }),
 //!     sequence: 42,
 //!     epoch_nanos: 1_717_000_000_000_000_000,
+//!     ..Default::default()
 //! };
 //! let bytes = hb.encode_to_vec();
 //! let back = Heartbeat::decode(bytes.as_slice()).unwrap();
@@ -740,6 +741,7 @@ mod tests {
                 subscription: Some(sub),
                 sequence: 42,
                 epoch_nanos: 1,
+                ..Default::default()
             })),
         };
         round_trip(&client_hb);
@@ -787,6 +789,12 @@ mod tests {
                 subscription: Some(sub),
                 sequence: 2,
                 epoch_nanos: 3,
+                conflation_drops: 7,
+                server_price_p50_nanos: 800,
+                server_price_p99_nanos: 4200,
+                server_price_p999_nanos: 9100,
+                surface_version: 13,
+                correlation_id: 0xBEEF,
             })),
         };
         round_trip(&server_hb);
@@ -870,7 +878,8 @@ mod tests {
                 butterfly_arbitrage_free: true,
                 calendar_arbitrage_free: true,
                 worst_density: 0.0,
-                note: "no repair applied".to_owned(),
+                note: "model=stochastic-vol; no repair applied".to_owned(),
+                smile_model: SmileModel::StochasticVol as i32,
             }),
             epoch_nanos: 1_717_000_000_000_000_000,
         };

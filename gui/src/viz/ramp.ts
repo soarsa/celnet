@@ -17,12 +17,16 @@ interface Oklch {
 // Stops mirror the rebranded --ramp-* design tokens (Celer dark appearance): the
 // cool (negative) pole tracks the Celer indigo accent hue (~280), the mid is a
 // near-neutral on the navy hue (264), the warm (positive) pole stays green.
+// The negative (cool) pole is kept LIGHT ENOUGH that the heatmap's near-black cell
+// ink clears WCAG AA 4.5:1 even at the depth-shaded (0.92) darkest cell — the old
+// L0.55 negative pole composited to ~L0.50 and left black text at 4.40:1. Lifting
+// the two cool stops keeps the diverging direction (cool↔warm) and chroma intact.
 const STOPS: { t: number; col: Oklch }[] = [
-  { t: 0.0, col: { l: 0.55, c: 0.15, h: 280 } }, // --ramp-neg-2
-  { t: 0.25, col: { l: 0.68, c: 0.09, h: 278 } }, // --ramp-neg-1
+  { t: 0.0, col: { l: 0.63, c: 0.14, h: 280 } }, // --ramp-neg-2
+  { t: 0.25, col: { l: 0.71, c: 0.09, h: 278 } }, // --ramp-neg-1
   { t: 0.5, col: { l: 0.8, c: 0.01, h: 264 } }, // --ramp-mid
   { t: 0.75, col: { l: 0.74, c: 0.1, h: 145 } }, // --ramp-pos-1
-  { t: 1.0, col: { l: 0.62, c: 0.16, h: 150 } }, // --ramp-pos-2
+  { t: 1.0, col: { l: 0.66, c: 0.16, h: 150 } }, // --ramp-pos-2
 ];
 
 function lerp(a: number, b: number, w: number): number {

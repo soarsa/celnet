@@ -177,18 +177,34 @@ async fn quant_marks_surface_under_extended_surface_family() {
             broker.atm_vol
         );
 
-        // THE eSSVI CLIENT-PARITY ASSERTION: the arb-note provenance reflects the
-        // EXTENDED family (the contract has no dedicated echo field; the note is the
-        // honest provenance channel the GUI reads via its modelProvenance regex),
-        // and it is distinct from the baseline market-hedge mark of the same inputs.
+        // THE eSSVI CLIENT-PARITY ASSERTION (typed provenance, W12): the smile's
+        // TYPED `arbitrage.model` field is the authoritative calibration family the
+        // server marked under — read directly, NOT by regex over the note. It must be
+        // the extended-surface family, and distinct from the baseline market-hedge.
+        assert_eq!(
+            smile.arbitrage.model,
+            Calibration::ExtendedSurface,
+            "the typed provenance field names the extended-surface (eSSVI) family"
+        );
+        assert_eq!(
+            baseline.smiles[0].arbitrage.model,
+            Calibration::MarketHedge,
+            "the baseline mark's typed provenance is the market-hedge family"
+        );
+        assert_ne!(
+            smile.arbitrage.model, baseline.smiles[0].arbitrage.model,
+            "the typed provenance distinguishes the two families of the same inputs"
+        );
+        // The human-readable note still embeds the `model=` token (kept for eyes),
+        // but it is no longer the authoritative channel — the typed field above is.
         let note = smile.arbitrage.note.clone();
         assert!(
             note.contains("model=extended-surface"),
-            "the extended-surface mark's arb-note names the extended family, got {note:?}"
+            "the human-readable note still names the family, got {note:?}"
         );
         assert_ne!(
             note, baseline_note,
-            "the extended-surface mark's provenance differs from the market-hedge mark of the same inputs"
+            "the human note also differs from the market-hedge mark of the same inputs"
         );
 
         edge.shutdown(Duration::from_secs(5)).await;

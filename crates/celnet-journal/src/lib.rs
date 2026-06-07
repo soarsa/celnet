@@ -20,7 +20,7 @@
 //!
 //! # On-disk format
 //!
-//! The log is a flat file of back-to-back records. Each record is:
+//! The log is a flat file of back-to-back records. A normal **data** record is:
 //!
 //! ```text
 //! ┌──────────────┬──────────────┬─────────────────┬──────────────┐
@@ -34,6 +34,26 @@
 //! record is detected. A record whose bytes are present but whose CRC fails, or
 //! whose frame is truncated (a short read at EOF), is treated as a torn tail:
 //! recovery stops at the last good record and truncates the file to that offset.
+//!
+//! A leading **snapshot** record (written only by [`Journal::compact`]) reuses the
+//! exact same frame, distinguished losslessly by a **sentinel in the `payload_len`
+//! field**: `payload_len == SNAPSHOT_MARKER` (`u32::MAX`). A real data payload can
+//! never reach that value — it is bounded by [`MAX_PAYLOAD_LEN`] (64 MiB), and any
+//! `payload_len > MAX_PAYLOAD_LEN` was already treated as corruption — so the
+//! sentinel is unambiguous and the **data-record layout is byte-for-byte
+//! unchanged** (no per-record type tag is added to the common case). For a
+//! snapshot record the `sequence` field carries the checkpoint **watermark** and
+//! the *true* snapshot length is stored as a leading `u32` of its payload region:
+//!
+//! ```text
+//! ┌──────────────┬──────────────┬──────────────┬──────────────┬──────────┐
+//! │ SNAPSHOT_MARK│  watermark   │ snapshot_len │ snapshot B   │  crc32   │
+//! │  u32 = MAX   │  u64 LE      │  u32 LE      │ snapshot_len │  u32 LE  │
+//! └──────────────┴──────────────┴──────────────┴──────────────┴──────────┘
+//! ```
+//!
+//! The CRC still covers everything before it, so a corrupt snapshot record is
+//! detected exactly like a data record.
 //!
 //! # Durability contract
 //!
@@ -64,34 +84,68 @@
 //!   interior byte can silently drop committed records after it. Mitigations are
 //!   (a) the checkpoint/compaction cycle below, which bounds the residual tail and
 //!   thus the exposure window, and (b) external integrity scrubbing for cold logs.
-//! * The one interior inconsistency the format *can* cheaply detect — a
-//!   CRC-**valid** record whose sequence number is non-monotonic — **is** surfaced
-//!   as [`JournalError::CorruptInterior`] rather than healed.
+//! * The interior inconsistencies the format *can* cheaply detect — a CRC-**valid**
+//!   data record whose sequence number is non-monotonic, or a CRC-valid snapshot
+//!   record found anywhere but first — **are** surfaced as
+//!   [`JournalError::CorruptInterior`] rather than healed.
 //!
 //! (A future framed format with a per-record resync marker would let recovery
 //! distinguish interior CRC corruption from a torn tail and surface it; that is a
 //! deliberate non-goal of this first cut, recorded here, not silently assumed.)
 //!
-//! # Checkpointing & compaction (design note — not yet implemented)
+//! # Checkpointing & compaction
 //!
-//! An unbounded append-only log replays in time linear in its length. The
-//! intended bound is a **checkpoint + compaction** cycle, designed here and
-//! honestly *not* implemented in this crate yet:
+//! An unbounded append-only log replays in time linear in its length. The bound
+//! is a **checkpoint + compaction** cycle, implemented by [`Journal::compact`]:
 //!
-//! 1. A consumer periodically snapshots its rebuilt state and records the
-//!    highest sequence the snapshot covers (a *checkpoint watermark*).
-//! 2. Compaction then writes a fresh log containing only records *after* the
-//!    watermark (plus, optionally, a leading snapshot record), `fsync`s it, and
-//!    atomically renames it over the old log (`rename(2)` is atomic on POSIX),
-//!    so a crash mid-compaction leaves either the old or the new complete log —
-//!    never a half-state.
-//! 3. Startup then loads the snapshot, replays only the residual tail, and
-//!    continues. Sequence numbers stay globally monotonic across compactions by
-//!    seeding the compacted log's first sequence from the watermark.
+//! 1. A consumer periodically snapshots its rebuilt state and records the highest
+//!    sequence the snapshot covers (a *checkpoint watermark*).
+//! 2. [`Journal::compact`] writes a fresh log to a sibling temp file containing,
+//!    in order: a leading **snapshot record** carrying the watermark sequence and
+//!    the consumer's opaque snapshot bytes, then every **residual** data record
+//!    (sequence *strictly greater than* the watermark) copied **byte-for-byte**
+//!    with its original sequence preserved. The temp file is `fsync`'d, then
+//!    atomically `rename(2)`'d over the live log, then the parent directory is
+//!    `fsync`'d so the rename itself is durable.
+//! 3. Startup ([`Journal::open`]) loads the snapshot record's sequence as the
+//!    replay seed, then replays only the residual tail. [`Journal::replay`] yields
+//!    the snapshot bytes (as the first [`Record`], distinguished by
+//!    [`Record::kind`] `== `[`RecordKind::Snapshot`]) followed by the residual data
+//!    records, so a consumer rebuilds `snapshot ⊕ tail` instead of the whole
+//!    history.
 //!
-//! This keeps the durable format and the present API forward-compatible with
-//! compaction without committing a half-built mechanism now (guardrail: no
-//! placeholders — the unbuilt part is documented, not faked).
+//! ## Crash-safety of compaction
+//!
+//! Compaction is **atomic with respect to a crash** by construction. The only
+//! durable mutation of the live path is the `rename(2)`, which POSIX guarantees is
+//! atomic: an observer (including post-crash recovery) sees the live path bound to
+//! *either* the old inode (the complete pre-compaction log) *or* the new inode
+//! (the complete compacted log), **never** a partially-written file. Concretely:
+//!
+//! * A crash **before** the rename leaves the live log untouched and only an
+//!   orphan temp file behind (removed at the start of the next compaction);
+//!   recovery reads the complete old log.
+//! * A crash **during** the temp write (the temp file is half-written) is the same
+//!   case — the live log is still the complete old log; the half-written temp is
+//!   never named into place.
+//! * A crash **after** the rename returns reads the complete new (compacted) log.
+//! * Because the temp file is `fsync`'d *before* the rename and the parent
+//!   directory is `fsync`'d *after*, the new log's bytes and the rename are both on
+//!   stable storage once `compact` returns `Ok`.
+//!
+//! There is no window in which the live path names a torn file: the journal's own
+//! torn-tail healing ([`Journal::open`]) is a backstop for an interrupted
+//! *append*, never required for an interrupted *compaction*.
+//!
+//! ## Sequence monotonicity across compactions
+//!
+//! Sequence numbers stay **globally monotonic** across compactions. Residual
+//! records keep their original (post-watermark) sequence numbers, so they remain
+//! strictly increasing; the snapshot record carries the watermark sequence and
+//! seeds the post-snapshot replay expectation to `watermark + 1`. A subsequent
+//! [`Journal::append`] continues from the recovered `next_sequence` — the maximum
+//! of (last residual sequence + 1) and (watermark + 1) — so no sequence is ever
+//! reused or rewound by a compaction.
 
 #![forbid(unsafe_code)]
 
@@ -116,6 +170,13 @@ const CRC_LEN: usize = 4;
 /// this in a record header is itself treated as corruption (torn tail).
 const MAX_PAYLOAD_LEN: u32 = 64 * 1024 * 1024;
 
+/// Sentinel value in a record's `payload_len` field marking it as a **snapshot**
+/// record (written only by [`Journal::compact`]). A data record's `payload_len`
+/// is bounded by [`MAX_PAYLOAD_LEN`] (64 MiB) ≪ `u32::MAX`, so this value can
+/// never collide with a real data record — keeping the data-record layout
+/// byte-for-byte unchanged while distinguishing the snapshot losslessly.
+const SNAPSHOT_MARKER: u32 = u32::MAX;
+
 /// Errors surfaced by the journal.
 ///
 /// Note that a **torn or corrupt final record is *not* an error**: it is the
@@ -126,23 +187,24 @@ const MAX_PAYLOAD_LEN: u32 = 64 * 1024 * 1024;
 pub enum JournalError {
     /// An underlying filesystem IO error.
     Io(io::Error),
-    /// A CRC-**valid** record carried a non-monotonic sequence number — a
-    /// structurally detectable interior inconsistency (a reordered/duplicated
-    /// frame) that truncation cannot explain, so it is surfaced rather than
-    /// silently healed. Carries the expected sequence number at the bad record.
+    /// A CRC-**valid** record carried an interior inconsistency that truncation
+    /// cannot explain — a data record whose sequence is non-monotonic (a
+    /// reordered/duplicated frame), or a snapshot record placed after the start of
+    /// the log — so it is surfaced rather than silently healed. Carries the
+    /// expected sequence number at the bad record.
     ///
     /// Note the scope precisely: this is **not** raised for a CRC *failure*. A
     /// failed CRC is indistinguishable, in a marker-less format, from a torn tail,
     /// so it is handled as such (recovery stops and truncates — see
     /// [`Journal::open`] and the failure-model note there). This variant covers
-    /// only the case the format *can* detect: intact bytes, wrong sequence.
+    /// only cases the format *can* detect: intact bytes, wrong structure.
     CorruptInterior {
         /// The expected (monotonic) sequence number at the failing record.
         at_sequence: u64,
-        /// Human-readable reason (currently always a sequence-monotonicity break).
+        /// Human-readable reason for the surfaced interior inconsistency.
         reason: &'static str,
     },
-    /// An `append` payload exceeded [`MAX_PAYLOAD_LEN`].
+    /// An `append` payload (or a `compact` snapshot) exceeded [`MAX_PAYLOAD_LEN`].
     PayloadTooLarge {
         /// The rejected payload length in bytes.
         len: usize,
@@ -188,16 +250,33 @@ impl From<io::Error> for JournalError {
 /// Result alias for journal operations.
 pub type Result<T> = std::result::Result<T, JournalError>;
 
-/// One valid, recovered record: its monotonic sequence and its opaque payload.
+/// Whether a recovered [`Record`] is a normal data event or the leading
+/// snapshot record written by [`Journal::compact`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecordKind {
+    /// A normal data record — an appended domain event.
+    Data,
+    /// The leading snapshot/checkpoint record of a compacted log. Its `payload`
+    /// is the consumer's opaque snapshot bytes; its `sequence` is the checkpoint
+    /// watermark (the highest data sequence the snapshot covers).
+    Snapshot,
+}
+
+/// One valid, recovered record: its kind, monotonic sequence and opaque payload.
 ///
 /// The journal is payload-agnostic — it stores and returns raw bytes. A typed
 /// consumer pairs this with an [`EventCodec`] to decode the bytes back into a
-/// domain event for state rebuild.
+/// domain event for state rebuild. A [`RecordKind::Snapshot`] record (present iff
+/// the log has been compacted) appears first; its payload is the snapshot image,
+/// not a data event.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Record {
-    /// Strictly monotonic sequence number assigned at append time.
+    /// Whether this is a data record or the leading compaction snapshot.
+    pub kind: RecordKind,
+    /// For a data record, the strictly-monotonic sequence assigned at append
+    /// time; for a snapshot record, the checkpoint watermark it covers.
     pub sequence: u64,
-    /// Opaque, codec-defined payload bytes.
+    /// Opaque, codec-defined payload bytes (snapshot image for a snapshot record).
     pub payload: Vec<u8>,
 }
 
@@ -231,7 +310,7 @@ pub trait EventCodec {
 
 /// A durable, append-only, sequence-ordered event journal backed by a single
 /// file. Open/create with [`Journal::open`]; append with [`Journal::append`];
-/// rebuild with [`Journal::replay`].
+/// rebuild with [`Journal::replay`]; bound replay time with [`Journal::compact`].
 #[derive(Debug)]
 pub struct Journal {
     /// The append handle, always positioned at the logical end (last good byte).
@@ -250,23 +329,24 @@ impl Journal {
     /// Open the journal at `path`, creating it if absent.
     ///
     /// On open the file is scanned front-to-back: each record's CRC and the
-    /// strict sequence monotonicity (`0, 1, 2, …`) are validated. A truncated or
-    /// CRC-failing **final** record (a crash mid-`append`) is treated as a torn
-    /// tail — the file is truncated to the end of the last good record and the
-    /// caller sees a clean, consistent log (no partial record, no error).
+    /// strict sequence monotonicity (`0, 1, 2, …`, or `watermark+1, …` after a
+    /// leading snapshot) are validated. A truncated or CRC-failing **final**
+    /// record (a crash mid-`append`) is treated as a torn tail — the file is
+    /// truncated to the end of the last good record and the caller sees a clean,
+    /// consistent log (no partial record, no error).
     ///
     /// Recovery stops at the **first** record that fails its CRC and truncates
     /// from there: a CRC failure means the bytes from that record onward are not
     /// trustworthy, so the recovered prefix is exactly the contiguous run of
-    /// good records. A *sequence break* on an otherwise CRC-valid record (a
-    /// reordered/duplicated frame — corruption that truncation cannot explain)
+    /// good records. A *sequence break* on an otherwise CRC-valid data record (a
+    /// reordered/duplicated frame), or a snapshot record found after the start,
     /// is surfaced as [`JournalError::CorruptInterior`] rather than hidden.
     ///
     /// # Errors
     ///
     /// - [`JournalError::Io`] on filesystem failure.
-    /// - [`JournalError::CorruptInterior`] if a CRC-valid record carries a
-    ///   non-monotonic sequence number.
+    /// - [`JournalError::CorruptInterior`] on a detectable interior
+    ///   inconsistency (non-monotonic sequence, or a misplaced snapshot record).
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         let mut file = OpenOptions::new()
@@ -335,12 +415,7 @@ impl Journal {
         // Build the framed record in a single buffer, then issue one write so a
         // crash produces either nothing or a prefix (detected as a torn tail) —
         // never an interleaved frame. CRC covers header + payload.
-        let mut frame = Vec::with_capacity(HEADER_LEN + payload.len() + CRC_LEN);
-        frame.extend_from_slice(&len_u32.to_le_bytes());
-        frame.extend_from_slice(&seq.to_le_bytes());
-        frame.extend_from_slice(payload);
-        let checksum = crc32(&frame);
-        frame.extend_from_slice(&checksum.to_le_bytes());
+        let frame = frame_record(seq, len_u32, payload);
 
         // Ensure we write at the logical end (defensive against an external seek).
         self.file.seek(SeekFrom::Start(self.end_offset))?;
@@ -362,6 +437,10 @@ impl Journal {
     /// records; it re-validates CRC and sequence defensively and re-reports
     /// interior corruption should the file have changed underneath.
     ///
+    /// On a compacted log the first [`Record`] yielded is the
+    /// [`RecordKind::Snapshot`] checkpoint (so the consumer restores it), followed
+    /// by the residual data records.
+    ///
     /// # Errors
     ///
     /// - [`JournalError::Io`] on read failure.
@@ -374,11 +453,15 @@ impl Journal {
         let mut reader = BufReader::new(read_file);
         let mut expected_seq = 0u64;
         let mut count = 0u64;
+        let mut at_start = true;
 
-        // Stops on `Eof`/`TornTail` (the log already ends there); a sequence
-        // break inside the file propagates as `CorruptInterior` via `?`.
-        while let ReadOutcome::Record(rec) = read_one(&mut reader, expected_seq)? {
+        // Stops on `Eof`/`TornTail` (the log already ends there); an interior
+        // inconsistency propagates as `CorruptInterior` via `?`. A leading snapshot
+        // record is yielded to `f` (so the consumer rebuilds from it) and reseeds
+        // the expected data sequence to watermark+1.
+        while let ReadOutcome::Record(rec) = read_one(&mut reader, expected_seq, at_start)? {
             expected_seq = rec.sequence + 1;
+            at_start = false;
             count += 1;
             f(rec);
         }
@@ -418,8 +501,123 @@ impl Journal {
         self.end_offset
     }
 
+    /// Compact the log against a checkpoint, replacing it (atomically) with a
+    /// leading **snapshot record** followed by only the **residual tail** —
+    /// every data record whose sequence is strictly greater than `watermark`.
+    ///
+    /// `snapshot` is the consumer's opaque image of the state covered by all data
+    /// records up to and including `watermark` (e.g. a serialized book/marked-
+    /// surface). After compaction, [`Journal::replay`] yields the snapshot record
+    /// first (so the consumer restores it), then the residual data records, so a
+    /// rebuild is `snapshot ⊕ tail` instead of replaying the whole history.
+    ///
+    /// # Atomicity & crash-safety
+    ///
+    /// The new log is written to a sibling temp file, `fsync`'d, then atomically
+    /// `rename(2)`'d over the live path, after which the parent directory is
+    /// `fsync`'d. A crash at any point leaves the live path bound to **either** the
+    /// complete pre-compaction log **or** the complete compacted log — never a torn
+    /// file. See the crate-level "Crash-safety of compaction".
+    ///
+    /// # Sequence monotonicity
+    ///
+    /// Residual records keep their original sequence numbers and the snapshot
+    /// record carries `watermark`, so sequences remain globally monotonic across
+    /// the compaction; a subsequent [`Journal::append`] continues from the
+    /// (unchanged-or-advanced) `next_sequence`. The watermark may equal the current
+    /// [`Journal::last_sequence`] (compact everything, empty residual tail) or sit
+    /// below it (keep a tail); a watermark **above** the last durable sequence is
+    /// rejected, since the snapshot would claim coverage of records that do not
+    /// exist.
+    ///
+    /// # Errors
+    ///
+    /// - [`JournalError::PayloadTooLarge`] if `snapshot` exceeds [`MAX_PAYLOAD_LEN`].
+    /// - [`JournalError::CorruptInterior`] (reason names the watermark) if
+    ///   `watermark` exceeds the highest durable sequence (incl. an empty log).
+    /// - [`JournalError::Io`] on a filesystem failure (the live log is left intact —
+    ///   the failure is before or during the temp write, never a half-rename).
+    pub fn compact(&mut self, watermark: u64, snapshot: &[u8]) -> Result<()> {
+        let snapshot_len = u32::try_from(snapshot.len())
+            .ok()
+            .filter(|&l| l <= MAX_PAYLOAD_LEN)
+            .ok_or(JournalError::PayloadTooLarge {
+                len: snapshot.len(),
+            })?;
+
+        // The watermark cannot claim coverage past what is durably in the log.
+        // `last_sequence()` is None for an empty log; any watermark then over-claims.
+        match self.last_sequence() {
+            Some(last) if watermark <= last => {}
+            _ => {
+                return Err(JournalError::CorruptInterior {
+                    at_sequence: watermark,
+                    reason: "compaction watermark exceeds the highest durable sequence",
+                });
+            }
+        }
+
+        // 1) Materialize the residual records (sequence > watermark), byte-copied
+        //    with their original sequences preserved, in order.
+        let residual: Vec<Record> = {
+            let mut out = Vec::new();
+            self.replay(|rec| {
+                // Replaying a not-yet-compacted log yields only `Data` records; be
+                // defensive and keep only post-watermark data records regardless.
+                if rec.kind == RecordKind::Data && rec.sequence > watermark {
+                    out.push(rec);
+                }
+            })?;
+            out
+        };
+
+        // 2) Build the fresh log image: snapshot record, then residual data records.
+        let mut fresh = Vec::new();
+        fresh.extend_from_slice(&frame_snapshot(watermark, snapshot_len, snapshot));
+        for rec in &residual {
+            let len_u32 = u32::try_from(rec.payload.len())
+                .expect("residual payload length already validated on append");
+            fresh.extend_from_slice(&frame_record(rec.sequence, len_u32, &rec.payload));
+        }
+
+        // 3) Write the fresh image to a sibling temp file and fsync it.
+        let tmp = compaction_tmp_path(&self.path);
+        // Remove any stale temp from a previously-interrupted compaction so we
+        // never read its bytes; the only durable mutation remains the rename.
+        let _ = std::fs::remove_file(&tmp);
+        {
+            let mut tmp_file = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&tmp)?;
+            tmp_file.write_all(&fresh)?;
+            tmp_file.sync_data()?;
+        }
+
+        // 4) Atomically rename the temp over the live path (POSIX-atomic), then
+        //    make the rename itself durable by fsync'ing the parent directory.
+        std::fs::rename(&tmp, &self.path)?;
+        sync_parent_dir(&self.path)?;
+
+        // 5) Re-open the now-compacted log to refresh the cursor/sequence state.
+        //    `open` re-scans, seeds from the snapshot, and positions the append
+        //    cursor at the new logical end — keeping `next_sequence` monotonic.
+        let reopened = Journal::open(&self.path)?;
+        self.file = reopened.file;
+        self.next_sequence = reopened.next_sequence;
+        self.end_offset = reopened.end_offset;
+        Ok(())
+    }
+
     /// Scan a file from the start, validating records, and report where the last
     /// good record ends and what the next sequence number is.
+    ///
+    /// A leading snapshot record (from a prior compaction) reseeds the expected
+    /// data sequence to `watermark + 1`; data records then continue strictly
+    /// monotonically from there. `next_sequence` is the expected sequence past the
+    /// last good record, which never rewinds below `watermark + 1` even when the
+    /// residual tail is empty.
     fn scan(file: &File) -> Result<Scan> {
         let read_file = file.try_clone()?;
         let mut reader = BufReader::new(read_file);
@@ -427,9 +625,12 @@ impl Journal {
 
         let mut good_end_offset = 0u64;
         let mut expected_seq = 0u64;
+        let mut at_start = true;
 
-        while let ReadOutcome::Record(rec) = read_one(&mut reader, expected_seq)? {
+        while let ReadOutcome::Record(rec) = read_one(&mut reader, expected_seq, at_start)? {
+            // Snapshot (watermark) seeds to watermark+1; data advances by one.
             expected_seq = rec.sequence + 1;
+            at_start = false;
             good_end_offset = reader.stream_position()?;
         }
 
@@ -460,15 +661,18 @@ enum ReadOutcome {
 
 /// Read and validate a single record at the reader's current position.
 ///
-/// `expected_seq` is the sequence number this record must carry for strict
-/// monotonicity. Returns:
+/// `expected_seq` is the sequence number a **data** record must carry for strict
+/// monotonicity. A leading **snapshot** record is exempt from that check —
+/// instead its own sequence (the checkpoint watermark) reseeds the caller's
+/// expectation. `at_start` is true only for the very first record of the file.
+/// Returns:
 /// - `Record` on success (and leaves the reader at the next record),
 /// - `Eof` if the reader is exactly at end-of-file (clean boundary),
 /// - `TornTail` if the frame is truncated or its CRC fails (crash mid-append),
-/// - `Err(CorruptInterior)` if the record is well-formed and CRC-valid but its
-///   sequence number breaks monotonicity (interior corruption that truncation
-///   cannot heal).
-fn read_one<R: Read>(reader: &mut R, expected_seq: u64) -> Result<ReadOutcome> {
+/// - `Err(CorruptInterior)` if the record is well-formed and CRC-valid but a data
+///   record's sequence breaks monotonicity, or a snapshot record appears anywhere
+///   but first (interior corruption that truncation cannot heal).
+fn read_one<R: Read>(reader: &mut R, expected_seq: u64, at_start: bool) -> Result<ReadOutcome> {
     // Read the fixed header. A short read here means either a clean EOF (0 bytes)
     // or a torn header (1..HEADER_LEN bytes) — both end the log.
     let mut header = [0u8; HEADER_LEN];
@@ -478,15 +682,24 @@ fn read_one<R: Read>(reader: &mut R, expected_seq: u64) -> Result<ReadOutcome> {
         FillState::Full => {}
     }
 
-    let payload_len = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
-    // A length beyond the safety bound can only be corruption in the (final)
-    // length field; treat as a torn tail rather than attempting a wild read.
-    if payload_len > MAX_PAYLOAD_LEN {
-        return Ok(ReadOutcome::TornTail);
-    }
+    let len_field = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
     let sequence = u64::from_le_bytes([
         header[4], header[5], header[6], header[7], header[8], header[9], header[10], header[11],
     ]);
+
+    // A snapshot record is flagged by the SNAPSHOT_MARKER sentinel in the length
+    // field — handled separately (it carries an extra inner length prefix).
+    if len_field == SNAPSHOT_MARKER {
+        return read_snapshot(reader, &header, sequence, expected_seq, at_start);
+    }
+
+    // A length beyond the safety bound (but not the sentinel) can only be
+    // corruption in the (final) length field; treat as a torn tail rather than
+    // attempting a wild read.
+    if len_field > MAX_PAYLOAD_LEN {
+        return Ok(ReadOutcome::TornTail);
+    }
+    let payload_len = len_field;
 
     // Read the payload; a short read is a torn tail.
     let mut payload = vec![0u8; payload_len as usize];
@@ -520,8 +733,9 @@ fn read_one<R: Read>(reader: &mut R, expected_seq: u64) -> Result<ReadOutcome> {
         return Ok(ReadOutcome::TornTail);
     }
 
-    // CRC is valid ⇒ the record is intact. Sequence must be strictly monotonic;
-    // a valid record with the wrong sequence is genuine interior corruption.
+    // CRC is valid ⇒ the record is intact. A data record's sequence must be
+    // strictly monotonic; a valid record with the wrong sequence is genuine
+    // interior corruption.
     if sequence != expected_seq {
         return Err(JournalError::CorruptInterior {
             at_sequence: expected_seq,
@@ -529,7 +743,76 @@ fn read_one<R: Read>(reader: &mut R, expected_seq: u64) -> Result<ReadOutcome> {
         });
     }
 
-    Ok(ReadOutcome::Record(Record { sequence, payload }))
+    Ok(ReadOutcome::Record(Record {
+        kind: RecordKind::Data,
+        sequence,
+        payload,
+    }))
+}
+
+/// Read and validate a snapshot record whose header was already consumed (its
+/// `payload_len` field held [`SNAPSHOT_MARKER`]). The body is an inner `u32`
+/// length prefix, the snapshot bytes, then the CRC over the whole frame.
+///
+/// A snapshot record is legal **only** as the very first record of a compacted
+/// log; a CRC-valid snapshot record found anywhere else is interior corruption
+/// truncation cannot explain, so it is surfaced rather than healed. A torn or
+/// CRC-failing snapshot record is a torn tail like any other.
+fn read_snapshot<R: Read>(
+    reader: &mut R,
+    header: &[u8; HEADER_LEN],
+    watermark: u64,
+    expected_seq: u64,
+    at_start: bool,
+) -> Result<ReadOutcome> {
+    // Inner length prefix.
+    let mut inner_len_bytes = [0u8; 4];
+    match read_full_or_short(reader, &mut inner_len_bytes)? {
+        FillState::Full => {}
+        FillState::Empty | FillState::Short => return Ok(ReadOutcome::TornTail),
+    }
+    let snap_len = u32::from_le_bytes(inner_len_bytes);
+    if snap_len > MAX_PAYLOAD_LEN {
+        return Ok(ReadOutcome::TornTail);
+    }
+
+    // Snapshot bytes.
+    let mut snapshot = vec![0u8; snap_len as usize];
+    match read_full_or_short(reader, &mut snapshot)? {
+        FillState::Full => {}
+        FillState::Empty | FillState::Short => return Ok(ReadOutcome::TornTail),
+    }
+
+    // Trailing CRC.
+    let mut crc_bytes = [0u8; CRC_LEN];
+    match read_full_or_short(reader, &mut crc_bytes)? {
+        FillState::Full => {}
+        FillState::Empty | FillState::Short => return Ok(ReadOutcome::TornTail),
+    }
+    let stored_crc = u32::from_le_bytes(crc_bytes);
+
+    // CRC covers header (incl. the sentinel + watermark) + inner length + bytes.
+    let mut framed = Vec::with_capacity(HEADER_LEN + 4 + snapshot.len());
+    framed.extend_from_slice(header);
+    framed.extend_from_slice(&inner_len_bytes);
+    framed.extend_from_slice(&snapshot);
+    if crc32(&framed) != stored_crc {
+        return Ok(ReadOutcome::TornTail);
+    }
+
+    // CRC valid ⇒ intact. A snapshot record is only legal at the start of the log.
+    if !at_start {
+        return Err(JournalError::CorruptInterior {
+            at_sequence: expected_seq,
+            reason: "snapshot record appears after the start of the log",
+        });
+    }
+
+    Ok(ReadOutcome::Record(Record {
+        kind: RecordKind::Snapshot,
+        sequence: watermark,
+        payload: snapshot,
+    }))
 }
 
 /// How much of a target buffer a read managed to fill.
@@ -542,8 +825,55 @@ enum FillState {
     Full,
 }
 
-/// Fsync the directory containing `path` so a freshly-created (or just-truncated)
-/// journal file's directory entry is itself durable.
+/// Frame one **data** record into a single contiguous buffer in the canonical
+/// on-disk layout (`payload_len || sequence || payload || crc32`).
+///
+/// The CRC-32 covers the header and the payload, so any flipped byte — length,
+/// sequence, or payload — is detected on read. Used by both [`Journal::append`]
+/// and [`Journal::compact`] (for the byte-copied residual data records), so the
+/// two paths cannot drift in framing.
+fn frame_record(sequence: u64, payload_len: u32, payload: &[u8]) -> Vec<u8> {
+    debug_assert!(
+        payload_len <= MAX_PAYLOAD_LEN,
+        "data payload over the bound"
+    );
+    let mut frame = Vec::with_capacity(HEADER_LEN + payload.len() + CRC_LEN);
+    frame.extend_from_slice(&payload_len.to_le_bytes());
+    frame.extend_from_slice(&sequence.to_le_bytes());
+    frame.extend_from_slice(payload);
+    let checksum = crc32(&frame);
+    frame.extend_from_slice(&checksum.to_le_bytes());
+    frame
+}
+
+/// Frame the leading **snapshot** record of a compacted log: the
+/// [`SNAPSHOT_MARKER`] sentinel in the `payload_len` field, the checkpoint
+/// `watermark` in the `sequence` field, then the true snapshot length (`u32`)
+/// followed by the snapshot bytes, then the CRC over all of it. Distinguished
+/// from a data record purely by the sentinel — the data-record layout is
+/// unchanged.
+fn frame_snapshot(watermark: u64, snap_len: u32, snapshot: &[u8]) -> Vec<u8> {
+    debug_assert_eq!(snap_len as usize, snapshot.len());
+    debug_assert!(snap_len <= MAX_PAYLOAD_LEN, "snapshot over the bound");
+    let mut frame = Vec::with_capacity(HEADER_LEN + 4 + snapshot.len() + CRC_LEN);
+    frame.extend_from_slice(&SNAPSHOT_MARKER.to_le_bytes());
+    frame.extend_from_slice(&watermark.to_le_bytes());
+    frame.extend_from_slice(&snap_len.to_le_bytes());
+    frame.extend_from_slice(snapshot);
+    let checksum = crc32(&frame);
+    frame.extend_from_slice(&checksum.to_le_bytes());
+    frame
+}
+
+/// The sibling temp path used for the atomic compaction rewrite.
+fn compaction_tmp_path(path: &Path) -> PathBuf {
+    let mut s = path.as_os_str().to_os_string();
+    s.push(".compact");
+    PathBuf::from(s)
+}
+
+/// Fsync the directory containing `path` so a freshly-created (or just-truncated /
+/// just-renamed) journal file's directory entry is itself durable.
 ///
 /// Directory fsync is a POSIX concept (a directory is a file whose contents are
 /// its entries); on Unix we open the parent directory read-only and `sync_all`.

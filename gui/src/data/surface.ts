@@ -151,8 +151,9 @@ function checkArb(points: SmilePoint[], model: SmileModel): ArbReport {
     if (curv < worst) worst = curv;
   }
   const arbFree = worst > -0.02;
-  // The model is stamped into the note as `model=<family>` — the same provenance
-  // channel the server uses (the contract carries no model echo field).
+  // The model is carried on the TYPED `model` provenance field (authoritative,
+  // mirroring the server's `ArbReport.smile_model`). The note keeps a human
+  // `model=<family>` token for the eye only — never scraped by code.
   const tag = `model=${modelTag(model)}`;
   return {
     butterflyArbitrageFree: arbFree,
@@ -164,6 +165,7 @@ function checkArb(points: SmilePoint[], model: SmileModel): ArbReport {
     note: arbFree
       ? `arb-free · butterfly ≥ 0 · ${tag}`
       : `butterfly convexity breached — re-mark wings · ${tag}`,
+    model,
   };
 }
 
@@ -189,9 +191,10 @@ function applyCalendarArb(smiles: Smile[]): Smile[] {
   return smiles.map((s) => {
     const calOk = flagged.get(s.tenorYears) ?? true;
     if (calOk) return s;
-    // Preserve the `model=<family>` provenance tag (suffix on the smile's note).
-    const tagMatch = s.arbitrage.note.match(/model=[\w-]+/);
-    const tag = tagMatch ? ` · ${tagMatch[0]}` : "";
+    // Re-derive the human `model=<family>` note token from the TYPED provenance
+    // field (no regex round-trip on the note). The typed `model` is carried through
+    // unchanged by the spread — it stays authoritative regardless of the note.
+    const tag = ` · model=${modelTag(s.arbitrage.model)}`;
     const note = s.arbitrage.butterflyArbitrageFree
       ? `calendar arb — ATM total variance falls vs a shorter tenor${tag}`
       : `butterfly & calendar arb — re-mark wings and term${tag}`;

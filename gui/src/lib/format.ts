@@ -100,6 +100,18 @@ export function fmtClock(epochNanos: bigint): string {
   return d.toLocaleTimeString("en-GB", { hour12: false });
 }
 
+/**
+ * A latency in nanoseconds rendered to a human, scale-adaptive unit (ns / µs / ms).
+ * Sub-µs stays in ns; sub-ms in µs (1 dp); otherwise ms (2 dp). Used for the
+ * server-reported price-compute percentiles on the status ribbon. Pure integer
+ * `bigint` in, so no precision is lost above the JS safe-integer range.
+ */
+export function fmtLatencyNanos(nanos: bigint): string {
+  if (nanos < 1_000n) return `${nanos.toString()}ns`;
+  if (nanos < 1_000_000n) return `${(Number(nanos) / 1_000).toFixed(1)}µs`;
+  return `${(Number(nanos) / 1_000_000).toFixed(2)}ms`;
+}
+
 /** Seconds remaining until a nanosecond deadline, clamped at 0. */
 export function secondsUntil(deadlineNanos: bigint, nowNanos: bigint): number {
   const remNs = deadlineNanos - nowNanos;

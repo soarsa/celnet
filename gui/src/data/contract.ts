@@ -738,6 +738,33 @@ export interface Update {
   epochNanos: bigint;
 }
 
+/**
+ * The server liveness beat on a subscription (`celnet.wire.Heartbeat`). Carries
+ * the current sequence (so a silent gap is detectable) PLUS additive server
+ * observability surfaced off the hot path (proto fields 4–9, all appended — the
+ * pinned zero-alloc pricing core is untouched; these are real drain-side
+ * measurements, never fabricated):
+ *  - `conflationDrops`     — the exact `celnet-fanout` SPMC-ring skip count for
+ *                            this subscription (`received + skipped == produced`);
+ *                            non-decreasing, 0 ⇒ the consumer never lagged.
+ *  - `serverPriceP50Nanos` / `serverPriceP99Nanos` / `serverPriceP999Nanos` —
+ *                            the drain-side price-compute latency percentiles
+ *                            (HdrHistogram, ns); 0 until the first update is timed.
+ *  - `surfaceVersion`      — provenance echo (0 ⇒ live/unpinned).
+ *  - `correlationId`       — provenance echo (0 ⇒ none).
+ */
+export interface Heartbeat {
+  subscriptionId: bigint;
+  sequence: bigint;
+  conflationDrops: bigint;
+  serverPriceP50Nanos: bigint;
+  serverPriceP99Nanos: bigint;
+  serverPriceP999Nanos: bigint;
+  surfaceVersion?: bigint;
+  correlationId?: bigint;
+  epochNanos: bigint;
+}
+
 export type StreamEndReason =
   | "LAGGED"
   | "DRAINING"
@@ -850,6 +877,13 @@ export interface ArbReport {
   /** Worst negative density observed (0.0 = none); larger magnitude = worse. */
   worstDensity: number;
   note: string;
+  /**
+   * The TYPED, authoritative calibration-family provenance (`celnet.wire.ArbReport.smile_model`,
+   * proto field 5). This is the single source of truth for "which model was this
+   * marked under" — read it directly. The `note` still embeds a human `model=<label>`
+   * token, but it is NOT authoritative and must never be regex-scraped by code.
+   */
+  model: SmileModel;
 }
 
 /** The smile for one (pair, tenor): broker marks, calibrated points, arb report. */
