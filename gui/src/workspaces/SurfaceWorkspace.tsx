@@ -48,6 +48,11 @@ const SMILE_MODELS: { id: SmileModel; label: string; hint: string }[] = [
   { id: "STOCHASTIC_VOL", label: "Stochastic vol", hint: "Stochastic-vol fit to the broker anchors" },
   { id: "PARAMETRIC", label: "Parametric", hint: "Parametric per-slice fit" },
   { id: "PARAMETRIC_SURFACE", label: "Parametric surface", hint: "Parametric whole-surface fit" },
+  {
+    id: "EXTENDED_SURFACE",
+    label: "eSSVI",
+    hint: "Extended whole-surface fit with a maturity-dependent skew",
+  },
 ];
 
 /** Read the `model=<family>` provenance the server stamps into a smile's arb note. */

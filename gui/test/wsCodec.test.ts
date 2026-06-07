@@ -22,6 +22,7 @@ import {
   marketToWire,
   parseFrame,
   serializeFrame,
+  smileModelToWire,
 } from "../src/data/wsCodec";
 import type {
   AttributionRecord,
@@ -30,6 +31,7 @@ import type {
   DeltaConvention,
   MarketContext,
   PremiumStyle,
+  SmileModel,
 } from "../src/data/contract";
 import * as e from "../src/data/enums";
 import { DEFAULT_CONVENTIONS, PAIRS } from "../src/data/seed";
@@ -165,5 +167,29 @@ describe("wsCodec — frame (de)serialization", () => {
       label: string;
     };
     expect(parsed.label).toBe("99999999999999999999 lots");
+  });
+});
+
+describe("wsCodec — SmileModel codec (proto-number alignment)", () => {
+  // The array index MUST equal the proto enum number, or the GUI would mark a
+  // surface under a different family than the trader picked.
+  const PROTO_NUMBER: Record<SmileModel, number> = {
+    MARKET_HEDGE: 0,
+    STOCHASTIC_VOL: 1,
+    PARAMETRIC: 2,
+    PARAMETRIC_SURFACE: 3,
+    EXTENDED_SURFACE: 4,
+  };
+
+  it("maps every SmileModel to its proto enum number on the wire", () => {
+    for (const [model, number] of Object.entries(PROTO_NUMBER) as [SmileModel, number][]) {
+      expect(smileModelToWire(model)).toBe(number);
+    }
+  });
+
+  it("round-trips eSSVI (EXTENDED_SURFACE) through index 4 (the parity-break fix)", () => {
+    expect(smileModelToWire("EXTENDED_SURFACE")).toBe(4);
+    expect(e.smileModel.toWire("EXTENDED_SURFACE")).toBe(4);
+    expect(e.smileModel.fromWire(4)).toBe("EXTENDED_SURFACE");
   });
 });

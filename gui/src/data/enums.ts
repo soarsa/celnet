@@ -210,13 +210,15 @@ export const lookbackMonitoring = enumCodec<LookbackMonitoring>(["CONTINUOUS", "
 
 /**
  * `SmileModel` ↔ proto `SmileModel` (MARKET_HEDGE=0, STOCHASTIC_VOL=1,
- * PARAMETRIC=2, PARAMETRIC_SURFACE=3). Default (decode-zero) = MARKET_HEDGE.
+ * PARAMETRIC=2, PARAMETRIC_SURFACE=3, EXTENDED_SURFACE=4). Array index MUST
+ * equal the proto number. Default (decode-zero) = MARKET_HEDGE.
  */
 export const smileModel = enumCodec<SmileModel>([
   "MARKET_HEDGE",
   "STOCHASTIC_VOL",
   "PARAMETRIC",
   "PARAMETRIC_SURFACE",
+  "EXTENDED_SURFACE",
 ]);
 
 /**

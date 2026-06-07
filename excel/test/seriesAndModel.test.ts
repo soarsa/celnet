@@ -38,18 +38,54 @@ describe("parseSmileModel", () => {
     expect(parseSmileModel("SSVI")).toBe("PARAMETRIC_SURFACE");
     expect(parseSmileModel("parametric_surface")).toBe("PARAMETRIC_SURFACE");
   });
+  it("accepts the eSSVI / extended-surface aliases (case-insensitive)", () => {
+    expect(parseSmileModel("ESSVI")).toBe("EXTENDED_SURFACE");
+    expect(parseSmileModel("essvi")).toBe("EXTENDED_SURFACE");
+    expect(parseSmileModel("Extended")).toBe("EXTENDED_SURFACE");
+    expect(parseSmileModel("EXTENDED")).toBe("EXTENDED_SURFACE");
+    expect(parseSmileModel("extended_surface")).toBe("EXTENDED_SURFACE");
+    expect(parseSmileModel("EXTENDED-SURFACE")).toBe("EXTENDED_SURFACE");
+  });
   it("rejects an unknown model", () => {
     expect(() => parseSmileModel("HESTON")).toThrow(ShapingError);
   });
+  it("the rejection message is generated from the enum member list (cannot drift)", () => {
+    // The accepted-list message must name EXTENDED_SURFACE — derived from
+    // SMILE_MODEL_MEMBERS, so adding a model can never leave the message stale.
+    expect(() => parseSmileModel("HESTON")).toThrow(/EXTENDED_SURFACE/);
+    expect(() => parseSmileModel("HESTON")).toThrow(/ESSVI/);
+  });
   it("projects to the exact proto enum number and back", () => {
-    for (const m of ["MARKET_HEDGE", "STOCHASTIC_VOL", "PARAMETRIC", "PARAMETRIC_SURFACE"] as const) {
+    for (const m of [
+      "MARKET_HEDGE",
+      "STOCHASTIC_VOL",
+      "PARAMETRIC",
+      "PARAMETRIC_SURFACE",
+      "EXTENDED_SURFACE",
+    ] as const) {
       expect(smileModel.fromWire(smileModel.toWire(m))).toBe(m);
     }
-    // The wire numbers ARE the proto tags (SMILE_MODEL_MARKET_HEDGE=0, …=3).
+    // The wire numbers ARE the proto tags (SMILE_MODEL_MARKET_HEDGE=0, …=4).
     expect(smileModel.toWire("MARKET_HEDGE")).toBe(0);
     expect(smileModel.toWire("STOCHASTIC_VOL")).toBe(1);
     expect(smileModel.toWire("PARAMETRIC")).toBe(2);
     expect(smileModel.toWire("PARAMETRIC_SURFACE")).toBe(3);
+    expect(smileModel.toWire("EXTENDED_SURFACE")).toBe(4);
+  });
+  it("CELNET.MARKSURFACE(...,\"ESSVI\") routes EXTENDED_SURFACE (proto 4) on the wire", () => {
+    // The full mark route: a trader-typed "ESSVI" model arg shapes the calibration
+    // (shapeCalibration → parseSmileModel) and the function layer encodes
+    // smile_model = smileModel.toWire(shaped.model) onto the wire body.
+    const shaped = shapeCalibration({
+      pair: "EURUSD",
+      tenor: "1Y",
+      model: "ESSVI",
+      atmVol: 0.102,
+      rr25: 0.001,
+      bf25: 0.002,
+    });
+    expect(shaped.model).toBe("EXTENDED_SURFACE");
+    expect(smileModel.toWire(shaped.model)).toBe(4);
   });
 });
 
