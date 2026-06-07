@@ -621,6 +621,38 @@ export interface WindowBarrier {
   mcSeed: bigint;
 }
 
+/**
+ * The early-exercise style of an option (proto `ExerciseStyle`): AMERICAN
+ * (continuous exercise up to expiry) or BERMUDAN (exercise only on the discrete
+ * `AmericanOption.bermudanDates`).
+ */
+export type ExerciseStyle = "AMERICAN" | "BERMUDAN";
+
+/**
+ * An American / Bermudan early-exercise vanilla (proto `AmericanOption`, product
+ * field 24). Physically-settled FX options trade American-style. The default
+ * engine is the projected-SOR free-boundary finite difference (exact, no
+ * std-error); `lsmPaths > 0` selects the Longstaff-Schwartz regression
+ * Monte-Carlo (which reports `Quote.priceStdError`). BERMUDAN exercises only on
+ * `bermudanDates` (year-fractions in `(0, expiryYears]`; expiry always
+ * exercisable). Scope: American/Bermudan VANILLA.
+ */
+export interface AmericanOption {
+  optionType: OptionType;
+  /** The strike `K` (absolute level, quote per 1 unit of base). */
+  strike: number;
+  /** Continuous (AMERICAN) or discrete-date (BERMUDAN) exercise. */
+  exerciseStyle: ExerciseStyle;
+  /** BERMUDAN exercise dates as year-fractions in `(0, expiryYears]`. Ignored for AMERICAN. */
+  bermudanDates: number[];
+  /** Longstaff-Schwartz path count: `0` ⇒ the exact FD engine; `> 0` ⇒ LSM (reports a std-error). */
+  lsmPaths: number;
+  /** LSM equally-spaced exercise opportunities for AMERICAN (`0` ⇒ server default; ignored for BERMUDAN). */
+  lsmExerciseDates: number;
+  /** Sobol scramble seed for the LSM engine (reproducible; ignored for FD). */
+  lsmSeed: bigint;
+}
+
 /** The product payoff carried by an Instrument (the proto `product` oneof). */
 export type Product =
   | { kind: "vanilla"; vanilla: Vanilla }
@@ -638,7 +670,8 @@ export type Product =
   | { kind: "tarf"; tarf: Tarf }
   | { kind: "accumulator"; accumulator: Accumulator }
   | { kind: "lookback"; lookback: Lookback }
-  | { kind: "windowBarrier"; windowBarrier: WindowBarrier };
+  | { kind: "windowBarrier"; windowBarrier: WindowBarrier }
+  | { kind: "american"; american: AmericanOption };
 
 /** Solve directive: solve a free parameter to hit a target (e.g. zero premium). */
 export interface Solve {

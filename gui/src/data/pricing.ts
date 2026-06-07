@@ -12,6 +12,7 @@
 
 import type {
   Accumulator,
+  AmericanOption,
   AsianOption,
   Cliquet,
   Digital,
@@ -331,6 +332,8 @@ export function priceInstrument(
       return priceAccumulator(instrument.product.accumulator, m, t);
     case "lookback":
       return priceLookback(instrument.product.lookback, m, t);
+    case "american":
+      return priceAmerican(instrument.product.american, m, t);
     case "windowBarrier":
       // The window barrier has NO closed form — it is priced ONLY by the server's
       // local-stochastic-volatility ADI-PDE / Monte-Carlo engine (pricing model
@@ -1643,4 +1646,135 @@ function priceLookback(spec: Lookback, m: MarketContext, t: number): PriceOutcom
 
   const resolvedStrike = spec.style === "FIXED" ? spec.strike : m.spot;
   return { greeks, resolvedStrike };
+}
+
+// ---------------------------------------------------------------------------
+// American / Bermudan early-exercise vanilla — Cox-Ross-Rubinstein binomial
+// ---------------------------------------------------------------------------
+//
+// Physically-settled FX options trade American-style (early exercise up to
+// expiry). There is NO closed form for the early-exercise premium, so the
+// offline mock prices it with a GENUINE Cox-Ross-Rubinstein (CRR) recombining
+// binomial tree carrying the FX dual carry (the foreign rate r_f is the
+// dividend-yield analogue): up/down moves u = e^{σ√Δt}, d = 1/u, risk-neutral
+// up-probability p = (e^{(r_d−r_f)Δt} − d)/(u − d), discounted at r_d per step,
+// with the early-exercise test V_j ← max(continuation, intrinsic) applied at
+// every layer for AMERICAN, and ONLY at the layers coinciding with a permitted
+// BERMUDAN date (expiry always exercisable). This is a real, standard
+// early-exercise method — NOT a copy of the server's PSOR free-boundary FD, but
+// an INDEPENDENT numerical scheme that converges to the SAME value (so it
+// cross-checks the server rather than echoing it; CLAUDE.md: no mocks/
+// placeholders). The server prices the trader-selected engine (the PSOR FD, or
+// Longstaff-Schwartz LSM when lsm_paths > 0); the live WS transport carries that
+// authoritative value. Provenance (Cox-Ross-Rubinstein 1979) is in this doc
+// comment only, never in an identifier (CLAUDE.md rule 8).
+
+/** Binomial layers for the offline American/Bermudan tree (dense ⇒ ~1e-2 vs FD). */
+const AMERICAN_BINOMIAL_STEPS = 800;
+
+/**
+ * The set of step indices (over `[0, steps]`) at which BERMUDAN early exercise is
+ * permitted. Each Bermudan date (a year-fraction in `(0, t]`) is snapped to its
+ * nearest tree layer; the terminal layer (expiry) is always exercisable. For
+ * AMERICAN exercise the caller passes `null` (every layer is exercisable).
+ */
+function bermudanExerciseLayers(
+  bermudanDates: number[],
+  t: number,
+  steps: number,
+): Set<number> {
+  const layers = new Set<number>();
+  // Expiry is always an exercise opportunity.
+  layers.add(steps);
+  for (const date of bermudanDates) {
+    if (date <= 0 || date > t) continue; // out of (0, t] ⇒ ignore (matches server domain)
+    const layer = Math.round((date / t) * steps);
+    if (layer >= 1 && layer <= steps) layers.add(layer);
+  }
+  return layers;
+}
+
+/**
+ * The discounted American/Bermudan value on a CRR binomial tree. `exerciseLayers`
+ * `null` ⇒ AMERICAN (early exercise at every layer); a Set ⇒ BERMUDAN (early
+ * exercise only at those layers). Intrinsic is the physical-exercise payoff
+ * `max(S − K, 0)` (call) / `max(K − S, 0)` (put).
+ */
+function americanBinomialValue(
+  isCall: boolean,
+  strike: number,
+  m: MarketContext,
+  t: number,
+  exerciseLayers: Set<number> | null,
+): number {
+  const steps = AMERICAN_BINOMIAL_STEPS;
+  const dt = t / steps;
+  const sqrtDt = Math.sqrt(dt);
+  const u = Math.exp(m.vol * sqrtDt);
+  const d = 1 / u;
+  const disc = Math.exp(-m.rDom * dt);
+  // FX risk-neutral up-probability under the dual carry (r_f is the dividend yield).
+  const growth = Math.exp((m.rDom - m.rFor) * dt);
+  const p = (growth - d) / (u - d);
+  const q = 1 - p;
+  const intrinsic = (s: number): number =>
+    isCall ? Math.max(s - strike, 0) : Math.max(strike - s, 0);
+
+  // Terminal layer: value = intrinsic at every node S0·u^j·d^(steps−j).
+  const value = new Array<number>(steps + 1);
+  for (let j = 0; j <= steps; j += 1) {
+    const s = m.spot * Math.pow(u, j) * Math.pow(d, steps - j);
+    value[j] = intrinsic(s);
+  }
+
+  // Backward induction; apply early exercise at the permitted layers.
+  for (let layer = steps - 1; layer >= 0; layer -= 1) {
+    const exercisable = exerciseLayers === null || exerciseLayers.has(layer);
+    for (let j = 0; j <= layer; j += 1) {
+      const continuation = disc * (p * value[j + 1]! + q * value[j]!);
+      if (exercisable) {
+        const s = m.spot * Math.pow(u, j) * Math.pow(d, layer - j);
+        value[j] = Math.max(continuation, intrinsic(s));
+      } else {
+        value[j] = continuation;
+      }
+    }
+  }
+  return value[0]!;
+}
+
+/**
+ * Price an American / Bermudan early-exercise vanilla on the CRR binomial tree.
+ * AMERICAN exercises at every layer; BERMUDAN exercises only at the layers
+ * snapped from `bermudanDates` (plus expiry). The early-exercise premium is real
+ * (the tree discovers the free boundary by the nodewise `max(continuation,
+ * intrinsic)` test), so the offline price reflects genuine early exercise — never
+ * a European stand-in. Greeks are by central finite difference on the same tree
+ * value (so the ticket's strip is populated honestly). The binomial tree carries
+ * NO Monte-Carlo error, so `priceStdError` is left undefined (the server reports a
+ * std-error only for the Longstaff-Schwartz LSM engine when lsm_paths > 0).
+ */
+function priceAmerican(spec: AmericanOption, m: MarketContext, t: number): PriceOutcome {
+  const isCall = spec.optionType === "CALL";
+  const exerciseLayers =
+    spec.exerciseStyle === "BERMUDAN"
+      ? bermudanExerciseLayers(spec.bermudanDates, t, AMERICAN_BINOMIAL_STEPS)
+      : null;
+  const value = (mk: MarketContext): number =>
+    americanBinomialValue(isCall, spec.strike, mk, t, exerciseLayers);
+
+  const greeks = zeroGreeks();
+  greeks.price = value(m);
+
+  const hS = m.spot * 1e-4;
+  const hV = 1e-4;
+  const bump = (over: Partial<MarketContext>): MarketContext => ({ ...m, ...over });
+  greeks.deltaSpot =
+    (value(bump({ spot: m.spot + hS })) - value(bump({ spot: m.spot - hS }))) / (2 * hS);
+  greeks.gamma =
+    (value(bump({ spot: m.spot + hS })) - 2 * greeks.price + value(bump({ spot: m.spot - hS }))) /
+    (hS * hS);
+  greeks.vega = (value(bump({ vol: m.vol + hV })) - value(bump({ vol: m.vol - hV }))) / (2 * hV);
+
+  return { greeks, resolvedStrike: spec.strike };
 }

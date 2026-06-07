@@ -972,6 +972,89 @@ pub enum LookbackMonitoring {
     Discrete,
 }
 
+/// The early-exercise style of an option: continuous (American) or on a discrete
+/// set of permitted dates (Bermudan).
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExerciseStyle {
+    /// American: exercise permitted continuously up to and including expiry.
+    American,
+    /// Bermudan: exercise permitted only on the given dates (year-fractions in
+    /// `(0, T]`); expiry is always an exercise opportunity.
+    Bermudan {
+        /// The permitted exercise dates as year-fractions in `(0, T]`.
+        dates: Vec<f64>,
+    },
+}
+
+/// The terms of an American / Bermudan early-exercise vanilla option: the option
+/// direction, the strike, the exercise style, and — when the Longstaff-Schwartz
+/// Monte-Carlo engine is selected — the path budget, exercise-date resolution, and
+/// seed. The default engine is the projected-SOR free-boundary finite difference
+/// (exact, [`PricedLine::price_std_error`] is `None`); selecting
+/// [`AmericanTerms::monte_carlo`] routes through the regression Monte-Carlo
+/// engine, which surfaces a standard error. Built via [`AmericanTerms::american`]
+/// / [`AmericanTerms::bermudan`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct AmericanTerms {
+    /// Call or put.
+    pub option: OptionType,
+    /// Strike `K` (absolute level).
+    pub strike: f64,
+    /// Continuous (American) or discrete-date (Bermudan) exercise.
+    pub style: ExerciseStyle,
+    /// Longstaff-Schwartz Monte-Carlo path count; `0` ⇒ the finite-difference
+    /// engine (default, exact). `> 0` ⇒ the LSM engine (surfaces a std-error).
+    pub lsm_paths: u32,
+    /// For the LSM engine + American style: equally-spaced exercise opportunities
+    /// (`0` ⇒ server default). Ignored for FD and Bermudan.
+    pub lsm_exercise_dates: u32,
+    /// Sobol scramble seed for the LSM engine (bit-reproducible).
+    pub lsm_seed: u64,
+}
+
+impl AmericanTerms {
+    /// An American (continuous-exercise) vanilla, priced by the finite-difference
+    /// engine by default.
+    #[must_use]
+    pub fn american(option: OptionType, strike: f64) -> Self {
+        Self {
+            option,
+            strike,
+            style: ExerciseStyle::American,
+            lsm_paths: 0,
+            lsm_exercise_dates: 0,
+            lsm_seed: 0,
+        }
+    }
+
+    /// A Bermudan (discrete-date) vanilla over `dates` (year-fractions in
+    /// `(0, T]`), priced by the finite-difference engine by default.
+    #[must_use]
+    pub fn bermudan(option: OptionType, strike: f64, dates: Vec<f64>) -> Self {
+        Self {
+            option,
+            strike,
+            style: ExerciseStyle::Bermudan { dates },
+            lsm_paths: 0,
+            lsm_exercise_dates: 0,
+            lsm_seed: 0,
+        }
+    }
+
+    /// Select the Longstaff-Schwartz regression Monte-Carlo engine with `paths`
+    /// simulated paths and the given scramble `seed` (the FD engine is the
+    /// default; this surfaces a price standard error). `exercise_dates` sets the
+    /// equally-spaced exercise resolution for an American option (`0` ⇒ server
+    /// default; ignored for Bermudan, whose explicit dates are the grid).
+    #[must_use]
+    pub fn monte_carlo(mut self, paths: u32, exercise_dates: u32, seed: u64) -> Self {
+        self.lsm_paths = paths;
+        self.lsm_exercise_dates = exercise_dates;
+        self.lsm_seed = seed;
+        self
+    }
+}
+
 /// The terms of a Target-Redemption Forward: the favourable-side direction, the
 /// strike, the cumulative knock-out target, the adverse-leg gearing, the gap-risk
 /// settlement convention, the fixing schedule (count + per-fixing notional), and
@@ -1420,6 +1503,25 @@ pub enum Product {
         /// `mc_pairs == 0`).
         mc_seed: u64,
     },
+    /// An American / Bermudan early-exercise vanilla. Priced by the projected-SOR
+    /// free-boundary finite difference (default, exact, no std-error) or — when
+    /// `lsm_paths > 0` — the Longstaff-Schwartz regression Monte-Carlo (surfaces a
+    /// std-error on [`PricedLine::price_std_error`]).
+    American {
+        /// Call or put.
+        option: OptionType,
+        /// Strike `K` (absolute).
+        strike: f64,
+        /// Continuous (American) or discrete-date (Bermudan) exercise.
+        style: ExerciseStyle,
+        /// Longstaff-Schwartz path count (`0` ⇒ FD engine, exact; `> 0` ⇒ LSM).
+        lsm_paths: u32,
+        /// LSM equally-spaced exercise opportunities for American style (`0` ⇒
+        /// server default; ignored for FD and Bermudan).
+        lsm_exercise_dates: u32,
+        /// Sobol scramble seed for the LSM engine (ignored for FD).
+        lsm_seed: u64,
+    },
 }
 
 impl Product {
@@ -1701,6 +1803,30 @@ impl Product {
                 mc_steps: *mc_steps,
                 mc_seed: *mc_seed,
             }),
+            Product::American {
+                option,
+                strike,
+                style,
+                lsm_paths,
+                lsm_exercise_dates,
+                lsm_seed,
+            } => {
+                let (exercise_style, bermudan_dates) = match style {
+                    ExerciseStyle::American => (celnet_proto::ExerciseStyle::American, Vec::new()),
+                    ExerciseStyle::Bermudan { dates } => {
+                        (celnet_proto::ExerciseStyle::Bermudan, dates.clone())
+                    }
+                };
+                instrument::Product::American(celnet_proto::AmericanOption {
+                    option_type: celnet_proto::OptionType::from(*option) as i32,
+                    strike: *strike,
+                    exercise_style: exercise_style as i32,
+                    bermudan_dates,
+                    lsm_paths: *lsm_paths,
+                    lsm_exercise_dates: *lsm_exercise_dates,
+                    lsm_seed: *lsm_seed,
+                })
+            }
         }
     }
 }
@@ -2326,6 +2452,37 @@ impl InstrumentSpec {
         }
     }
 
+    /// An American / Bermudan early-exercise vanilla on the given pair / tenor /
+    /// expiry / notional, carrying an [`AmericanTerms`] spec. The finite-difference
+    /// engine prices exactly ([`PricedLine::price_std_error`] is `None`); selecting
+    /// [`AmericanTerms::monte_carlo`] surfaces a standard error.
+    #[must_use]
+    pub fn american(
+        pair: CcyPair,
+        tenor: Tenor,
+        expiry_years: f64,
+        quantity: Quantity,
+        side: Side,
+        terms: AmericanTerms,
+    ) -> Self {
+        Self {
+            pair,
+            tenor,
+            expiry_years,
+            quantity,
+            side,
+            pricing_model: PricingModel::Default,
+            product: Product::American {
+                option: terms.option,
+                strike: terms.strike,
+                style: terms.style,
+                lsm_paths: terms.lsm_paths,
+                lsm_exercise_dates: terms.lsm_exercise_dates,
+                lsm_seed: terms.lsm_seed,
+            },
+        }
+    }
+
     /// Encode to the wire instrument message. `solve` is left unset (the SDK
     /// exposes solve via a dedicated future iteration; the explicit strikes the
     /// caller supplies are used as given).
@@ -2533,4 +2690,62 @@ pub struct PricedLine {
     /// whose price is exact. Surfaced honestly so a caller never mistakes an MC
     /// estimate for closed-form precision.
     pub price_std_error: Option<f64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The SDK `InstrumentSpec::american` / `bermudan` builders encode to the wire
+    /// `AmericanOption` arm (product field 24) with the right enum tags, dates, and
+    /// LSM knobs — the SDK half of the five-surface api-first parity.
+    #[test]
+    fn american_terms_encode_to_the_wire_arm() {
+        // American, FD engine (default).
+        let spec = InstrumentSpec::american(
+            CcyPair::parse("EURUSD").unwrap(),
+            Tenor::Years(1),
+            1.0,
+            Quantity::base(1_000_000.0),
+            Side::Buy,
+            AmericanTerms::american(OptionType::Put, 1.10),
+        );
+        match spec.to_wire().product {
+            Some(instrument::Product::American(a)) => {
+                assert_eq!(a.option_type, celnet_proto::OptionType::Put as i32);
+                assert_eq!(a.strike.to_bits(), 1.10_f64.to_bits());
+                assert_eq!(
+                    a.exercise_style,
+                    celnet_proto::ExerciseStyle::American as i32
+                );
+                assert!(a.bermudan_dates.is_empty());
+                assert_eq!(a.lsm_paths, 0);
+            }
+            other => panic!("expected american, got {other:?}"),
+        }
+
+        // Bermudan, LSM engine.
+        let berm = InstrumentSpec::american(
+            CcyPair::parse("EURUSD").unwrap(),
+            Tenor::Years(1),
+            1.0,
+            Quantity::base(1_000_000.0),
+            Side::Buy,
+            AmericanTerms::bermudan(OptionType::Call, 1.05, vec![0.25, 0.5, 0.75, 1.0])
+                .monte_carlo(100_000, 50, 0xABCD),
+        );
+        match berm.to_wire().product {
+            Some(instrument::Product::American(a)) => {
+                assert_eq!(
+                    a.exercise_style,
+                    celnet_proto::ExerciseStyle::Bermudan as i32
+                );
+                assert_eq!(a.bermudan_dates.len(), 4);
+                assert_eq!(a.lsm_paths, 100_000);
+                assert_eq!(a.lsm_exercise_dates, 50);
+                assert_eq!(a.lsm_seed, 0xABCD);
+            }
+            other => panic!("expected american, got {other:?}"),
+        }
+    }
 }

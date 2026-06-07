@@ -27,6 +27,7 @@ import type {
   DayCount,
   DeltaConvention,
   DigitalStyle,
+  ExerciseStyle,
   LookbackMonitoring,
   LookbackStyle,
   MarketObservable,
@@ -262,3 +263,9 @@ export const lookbackStyle = enumCodec<LookbackStyle>(["FLOATING", "FIXED"]);
  * (LOOKBACK_MONITORING_CONTINUOUS=0, LOOKBACK_MONITORING_DISCRETE=1).
  */
 export const lookbackMonitoring = enumCodec<LookbackMonitoring>(["CONTINUOUS", "DISCRETE"]);
+
+/**
+ * `ExerciseStyle` ↔ proto `ExerciseStyle`
+ * (EXERCISE_STYLE_AMERICAN=0, EXERCISE_STYLE_BERMUDAN=1).
+ */
+export const exerciseStyle = enumCodec<ExerciseStyle>(["AMERICAN", "BERMUDAN"]);

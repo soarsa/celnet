@@ -254,6 +254,21 @@ enum LookbackMonitoring {
   LOOKBACK_MONITORING_DISCRETE = 1;
 }
 
+// The early-exercise style of an option: whether the holder may exercise
+// continuously up to expiry, or only on a discrete set of permitted dates.
+enum ExerciseStyle {
+  // American: exercise permitted continuously up to and including expiry. Priced
+  // by the projected-SOR free-boundary finite difference (exact, no Monte-Carlo
+  // std-error).
+  EXERCISE_STYLE_AMERICAN = 0;
+  // Bermudan: exercise permitted only on the dates in `AmericanOption.
+  // bermudan_dates` (year-fractions in `(0, T]`); expiry is always an exercise
+  // opportunity. Priced on the same FD grid (the projection is applied only at
+  // the permitted dates). A single date at expiry is exactly European; a dense
+  // set approaches American.
+  EXERCISE_STYLE_BERMUDAN = 1;
+}
+
 // A recognized multi-leg vol strategy template — mirrors the `Strategy`
 // instrument leg sets the desk books as a single contract.
 enum StrategyKind {
@@ -853,6 +868,48 @@ message Lookback {
   uint64 mc_seed = 7;
 }
 
+// An American or Bermudan early-exercise vanilla option. Physically-settled FX
+// options trade American-style: the holder may exercise at any time up to expiry
+// (`EXERCISE_STYLE_AMERICAN`) or only on a discrete set of permitted dates
+// (`EXERCISE_STYLE_BERMUDAN`). The expiry `T` is the enclosing
+// `Instrument.expiry_years`.
+//
+// The default engine is the projected-SOR free-boundary Crank-Nicolson finite
+// difference (exact to grid tolerance, no Monte-Carlo std-error, the full Greek
+// strip by central differences). Setting `lsm_paths > 0` selects the
+// Longstaff-Schwartz regression Monte-Carlo engine instead, which carries a
+// price standard error on `PriceResponse.price_std_error` (the independent
+// cross-check engine; the FD engine is the production workhorse).
+//
+// Scope: American/Bermudan VANILLA only. American *barrier* options price on the
+// same grid and are the documented next increment; they are intentionally not
+// offered here rather than half-built.
+message AmericanOption {
+  // Call or put.
+  OptionType option_type = 1;
+  // Strike `K` (absolute level, quote per 1 unit of base).
+  double strike = 2;
+  // Continuous (American) or discrete-date (Bermudan) exercise.
+  ExerciseStyle exercise_style = 3;
+  // For `EXERCISE_STYLE_BERMUDAN`: the permitted exercise dates as year-fractions
+  // in `(0, T]` (each measured from valuation). Out-of-range and duplicate
+  // entries are ignored; expiry is always added implicitly. Ignored for
+  // `EXERCISE_STYLE_AMERICAN`.
+  repeated double bermudan_dates = 4;
+  // The number of Longstaff-Schwartz Monte-Carlo paths. `0` selects the
+  // finite-difference engine (default, exact); `> 0` selects the LSM engine,
+  // which carries a price standard error.
+  uint32 lsm_paths = 5;
+  // For the LSM engine and an AMERICAN option: the number of equally-spaced
+  // exercise opportunities used to discretise continuous exercise; `0` selects a
+  // server default. Ignored for the FD engine and for Bermudan (whose explicit
+  // dates are the exercise grid).
+  uint32 lsm_exercise_dates = 6;
+  // The Sobol scramble seed for the LSM engine (identical seeds reproduce results
+  // bit-for-bit). Ignored for the FD engine.
+  uint64 lsm_seed = 7;
+}
+
 // The unified instrument every Celnet workflow speaks. Exactly one variant is
 // set. Pricing, RFQ, RFS, and scenario all carry an `Instrument`, so adding a
 // product type is a single additive change here.
@@ -916,6 +973,10 @@ message Instrument {
     // A window knock-out barrier (active only inside a calendar window). Priced
     // only under `PRICING_MODEL_LOCAL_STOCH_VOL`; no closed form.
     WindowBarrier window_barrier = 23;
+    // An American / Bermudan early-exercise vanilla. Priced by the projected-SOR
+    // free-boundary finite difference (default) or the Longstaff-Schwartz
+    // regression Monte-Carlo (when `lsm_paths > 0`, carrying a std-error).
+    AmericanOption american = 24;
   }
 }
 

@@ -21,6 +21,7 @@
 
 import type {
   Accumulator,
+  AmericanOption,
   ArbReport,
   BrokerQuoteSet,
   BucketedRisk,
@@ -347,8 +348,31 @@ export function instrumentToWire(i: Instrument): WireObject {
     case "windowBarrier":
       base["window_barrier"] = windowBarrierToWire(i.product.windowBarrier);
       break;
+    case "american":
+      base["american"] = americanToWire(i.product.american);
+      break;
   }
   return base;
+}
+
+/**
+ * Encode an American / Bermudan option body (proto field 24). The EXACT shape
+ * `american_from_json` decodes: `strike` is required; `bermudan_dates` is a JSON
+ * array (omitted/empty for AMERICAN); the LSM knobs follow the
+ * 64-bit-as-JSON-number convention (server reads with `u64_or_zero`). `lsmPaths`
+ * of `0` selects the exact finite-difference engine; `> 0` selects the
+ * Longstaff-Schwartz Monte-Carlo engine (which carries a `priceStdError`).
+ */
+function americanToWire(a: AmericanOption): WireObject {
+  return {
+    option_type: e.optionType.toWire(a.optionType),
+    strike: a.strike,
+    exercise_style: e.exerciseStyle.toWire(a.exerciseStyle),
+    bermudan_dates: [...a.bermudanDates],
+    lsm_paths: a.lsmPaths,
+    lsm_exercise_dates: a.lsmExerciseDates,
+    lsm_seed: Number(a.lsmSeed),
+  };
 }
 
 /**

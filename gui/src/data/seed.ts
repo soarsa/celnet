@@ -15,6 +15,7 @@ import type {
   CcyPair,
   Conventions,
   DigitalStyle,
+  ExerciseStyle,
   FixingSchedule,
   Instrument,
   Leg,
@@ -605,6 +606,45 @@ function windowBarrierInstrument(
 }
 
 /**
+ * The inputs for an American / Bermudan early-exercise vanilla
+ * (`product.american`). `bermudanDates` is the explicit set of permitted exercise
+ * year-fractions in `(0, expiry]` (ignored for AMERICAN; expiry is always
+ * exercisable). `lsmPaths` `0` selects the server's exact free-boundary FD engine
+ * (no std-error); `> 0` selects the Longstaff-Schwartz LSM (which reports a
+ * std-error). `lsmExerciseDates`/`lsmSeed` tune the LSM and are ignored by the FD
+ * engine (and by the offline binomial tree, which is FD-class — no MC error).
+ */
+export interface AmericanTerms {
+  optionType: OptionType;
+  strike: number;
+  exerciseStyle: ExerciseStyle;
+  bermudanDates: number[];
+  lsmPaths: number;
+  lsmExerciseDates: number;
+  lsmSeed: bigint;
+}
+
+/** An American / Bermudan early-exercise vanilla instrument (`product.american`). */
+function americanInstrument(
+  pair: CcyPair,
+  tenorYears: number,
+  notionalMm: number,
+  terms: AmericanTerms,
+): Instrument {
+  return {
+    pair,
+    tenor: tenorYearsToTenor(tenorYears),
+    expiryYears: tenorYears,
+    quantity: { notional: notionalMm * 1e6, baseCcy: true },
+    side: "TWO_WAY",
+    product: {
+      kind: "american",
+      american: { ...terms, bermudanDates: [...terms.bermudanDates] },
+    },
+  };
+}
+
+/**
  * The set of products the LOCAL_STOCH_VOL booking model prices (mirrors the
  * server's `lsv_pricer` supported list): vanilla, single (continuous) barrier and
  * the window barrier. Every other product carries no LSV engine route, so the
@@ -695,4 +735,5 @@ export {
   accumulatorInstrument,
   lookbackInstrument,
   windowBarrierInstrument,
+  americanInstrument,
 };

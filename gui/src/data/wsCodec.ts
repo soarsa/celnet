@@ -544,6 +544,26 @@ export function instrumentToWire(i: Instrument): WireObject {
       };
       break;
     }
+    // The American / Bermudan early-exercise vanilla, appended additively at
+    // american=24 (one current contract, no schema_version; CLAUDE.md rule 9).
+    // Fields match the server WS codec's `american_from_json` (option_type=1,
+    // strike=2, exercise_style=3, bermudan_dates=4, lsm_paths=5,
+    // lsm_exercise_dates=6, lsm_seed=7). `lsm_paths == 0` selects the exact FD
+    // engine; `> 0` selects the Longstaff-Schwartz MC engine (carries a
+    // price_std_error).
+    case "american": {
+      const a = i.product.american;
+      base["american"] = {
+        option_type: e.optionType.toWire(a.optionType),
+        strike: a.strike,
+        exercise_style: e.exerciseStyle.toWire(a.exerciseStyle),
+        bermudan_dates: [...a.bermudanDates],
+        lsm_paths: a.lsmPaths,
+        lsm_exercise_dates: a.lsmExerciseDates,
+        lsm_seed: a.lsmSeed,
+      };
+      break;
+    }
   }
   return base;
 }

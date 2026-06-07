@@ -561,6 +561,54 @@ mod tests {
     }
 
     #[test]
+    fn round_trip_american_bermudan_instruments() {
+        // The American early-exercise vanilla (oneof field 24) round-trips on the
+        // default model, including the LSM knobs.
+        let american = Instrument {
+            pair: Some(sample_pair()),
+            tenor: Some(sample_tenor()),
+            expiry_years: 1.0,
+            quantity: Some(sample_quantity()),
+            side: Side::Buy as i32,
+            solve: None,
+            pricing_model: PricingModel::Default as i32,
+            product: Some(instrument::Product::American(AmericanOption {
+                option_type: OptionType::Put as i32,
+                strike: 1.10,
+                exercise_style: ExerciseStyle::American as i32,
+                bermudan_dates: Vec::new(),
+                lsm_paths: 0,
+                lsm_exercise_dates: 0,
+                lsm_seed: 0,
+            })),
+        };
+        round_trip(&american);
+
+        // The Bermudan variant carries an explicit (repeated) date set and the
+        // LSM engine knobs; the proto3 zero of `ExerciseStyle` is AMERICAN.
+        assert_eq!(ExerciseStyle::American as i32, 0);
+        let bermudan = Instrument {
+            pair: Some(sample_pair()),
+            tenor: Some(sample_tenor()),
+            expiry_years: 1.0,
+            quantity: Some(sample_quantity()),
+            side: Side::Buy as i32,
+            solve: None,
+            pricing_model: PricingModel::Default as i32,
+            product: Some(instrument::Product::American(AmericanOption {
+                option_type: OptionType::Call as i32,
+                strike: 1.05,
+                exercise_style: ExerciseStyle::Bermudan as i32,
+                bermudan_dates: vec![0.25, 0.5, 0.75, 1.0],
+                lsm_paths: 100_000,
+                lsm_exercise_dates: 50,
+                lsm_seed: 0x00C0_FFEE,
+            })),
+        };
+        round_trip(&bermudan);
+    }
+
+    #[test]
     fn round_trip_rfq_lifecycle() {
         let request = QuoteRequest {
             idempotency_key: "5f0c1b2e-2a4d-4f8a-9c1e-7b6a5d4c3b2a".to_owned(),

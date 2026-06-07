@@ -18,6 +18,7 @@ import type {
   BarrierSide,
   BrokenDate,
   DigitalStyle,
+  ExerciseStyle,
   Instrument,
   Leg,
   LookbackMonitoring,
@@ -41,6 +42,7 @@ import { GreeksStrip } from "../components/GreeksStrip";
 import { ConventionRow } from "../components/ConventionChip";
 import {
   accumulatorInstrument,
+  americanInstrument,
   asianInstrument,
   cliquetInstrument,
   digitalInstrument,
@@ -62,6 +64,7 @@ import {
   windowBarrierInstrument,
   tenorYearsToTenor,
   type AccumulatorTerms,
+  type AmericanTerms,
   type AsianTerms,
   type CliquetTerms,
   type DigitalTerms,
@@ -107,7 +110,8 @@ type Structure =
   | "TARF"
   | "ACCUMULATOR"
   | "LOOKBACK"
-  | "WINDOW_BARRIER";
+  | "WINDOW_BARRIER"
+  | "AMERICAN";
 
 /**
  * True for the products that render their own input block instead of the vanilla/
@@ -129,7 +133,8 @@ function isLegless(s: Structure): boolean {
     s === "TARF" ||
     s === "ACCUMULATOR" ||
     s === "LOOKBACK" ||
-    s === "WINDOW_BARRIER"
+    s === "WINDOW_BARRIER" ||
+    s === "AMERICAN"
   );
 }
 
@@ -175,6 +180,8 @@ function productKindFor(s: Structure): Product["kind"] {
       return "lookback";
     case "WINDOW_BARRIER":
       return "windowBarrier";
+    case "AMERICAN":
+      return "american";
   }
 }
 
@@ -240,6 +247,7 @@ const STRUCTURES: { id: Structure; label: string }[] = [
   { id: "ACCUMULATOR", label: "Accumulator" },
   { id: "LOOKBACK", label: "Lookback" },
   { id: "WINDOW_BARRIER", label: "Window Barrier" },
+  { id: "AMERICAN", label: "American / Bermudan" },
 ];
 
 /** The Asian-specific ticket inputs (option type / strike / schedule / method). */
@@ -759,6 +767,65 @@ function windowBarrierTerms(
   };
 }
 
+/**
+ * The American / Bermudan ticket inputs. The trader picks the call/put, a strike
+ * (`0` ⇒ default to the ATM-forward level at build), the exercise style
+ * (AMERICAN = continuous up to expiry, BERMUDAN = a discrete set of dates), and —
+ * for BERMUDAN — the number of equally-spaced exercise dates over `(0, T]`
+ * (expiry always exercisable). `lsmPaths` `0` ⇒ the server's exact free-boundary
+ * FD engine; `> 0` ⇒ the Longstaff-Schwartz Monte-Carlo engine (which carries a
+ * standard error); `lsmSeed` makes the LSM reproducible. The offline build prices
+ * a genuine binomial tree (FD-class, no MC error) for BOTH styles.
+ */
+interface AmericanInputs {
+  optionType: OptionType;
+  /** Strike as an absolute level; `0` ⇒ default to the ATM-forward level. */
+  strike: number;
+  exerciseStyle: ExerciseStyle;
+  /** Number of equally-spaced BERMUDAN exercise dates over `(0, T]`; `≥ 1`. */
+  bermudanDates: number;
+  /** Longstaff-Schwartz path count: `0` ⇒ the exact FD engine; `> 0` ⇒ LSM. */
+  lsmPaths: number;
+  /** Sobol scramble seed for the LSM engine (reproducible; ignored for FD). */
+  lsmSeed: bigint;
+}
+
+const DEFAULT_AMERICAN: AmericanInputs = {
+  optionType: "PUT",
+  strike: 0,
+  exerciseStyle: "AMERICAN",
+  bermudanDates: 4,
+  lsmPaths: 0,
+  lsmSeed: 0xa3_e1n,
+};
+
+/**
+ * Build `AmericanTerms` from the inputs (strike ATMF-defaulted). For BERMUDAN the
+ * `bermudanDates` count becomes an equally-spaced schedule `t_k = k·T/n` over
+ * `(0, T]` (expiry inclusive — `k = n` lands on `T`); for AMERICAN the date set is
+ * empty (continuous exercise). `lsmExerciseDates` is left `0` (the server default
+ * resolution) — the AMERICAN exercise opportunities are an engine concern, not a
+ * trader input here.
+ */
+function americanTerms(a: AmericanInputs, atmForward: number, expiryYears: number): AmericanTerms {
+  const strike = a.strike > 0 ? a.strike : atmForward;
+  let bermudanDates: number[] = [];
+  if (a.exerciseStyle === "BERMUDAN") {
+    const n = Math.max(1, Math.trunc(a.bermudanDates));
+    bermudanDates = [];
+    for (let k = 1; k <= n; k += 1) bermudanDates.push((expiryYears * k) / n);
+  }
+  return {
+    optionType: a.optionType,
+    strike,
+    exerciseStyle: a.exerciseStyle,
+    bermudanDates,
+    lsmPaths: Math.max(0, Math.trunc(a.lsmPaths)),
+    lsmExerciseDates: 0,
+    lsmSeed: a.lsmSeed,
+  };
+}
+
 /** Today (UTC, calendar-only) as a `BrokenDate` — the trade date for date math. */
 function todayUtc(): BrokenDate {
   const d = new Date();
@@ -818,6 +885,8 @@ interface BuildExtras {
   lookback: LookbackTerms;
   /** Window-barrier terms (option / strike / barrier / side / active window / MC). */
   windowBarrier: WindowBarrierTerms;
+  /** American / Bermudan terms (option / strike / exercise style / dates / LSM). */
+  american: AmericanTerms;
 }
 
 function buildInstrument(
@@ -883,6 +952,9 @@ function buildInstrument(
       // form); the explicit stamp below keeps it locked there regardless.
       base = windowBarrierInstrument(pair, tenorYears, notionalMm, extras.windowBarrier);
       break;
+    case "AMERICAN":
+      base = americanInstrument(pair, tenorYears, notionalMm, extras.american);
+      break;
     default:
       base = strategyInstrument(pair, tenorYears, structure, notionalMm);
       break;
@@ -944,6 +1016,10 @@ export function TicketWorkspace(): React.ReactElement {
   // Wave-6 product input: window barrier (LOCAL_STOCH_VOL-only — no closed form).
   const [windowBarrierInputs, setWindowBarrierInputs] =
     useState<WindowBarrierInputs>(DEFAULT_WINDOW_BARRIER);
+  // American / Bermudan early-exercise vanilla (proto product field 24). The
+  // offline build prices it with a genuine binomial tree; the live server prices
+  // the exact free-boundary FD (lsmPaths 0) or Longstaff-Schwartz LSM (lsmPaths > 0).
+  const [americanInputs, setAmericanInputs] = useState<AmericanInputs>(DEFAULT_AMERICAN);
   // The selected booking/pricing model (`Instrument.pricing_model`). DEFAULT (the
   // per-product closed-form engine) unless the trader picks Local-Stoch-Vol for a
   // supported product; the window barrier locks it to LOCAL_STOCH_VOL.
@@ -1005,6 +1081,7 @@ export function TicketWorkspace(): React.ReactElement {
       accumulator: accumulatorTerms(accumulatorInputs, atmForward, tenorYears),
       lookback: lookbackTerms(lookbackInputs, atmForward),
       windowBarrier: windowBarrierTerms(windowBarrierInputs, atmForward, spot, tenorYears),
+      american: americanTerms(americanInputs, atmForward, tenorYears),
     }),
     [
       singleBarrierInputs,
@@ -1020,6 +1097,7 @@ export function TicketWorkspace(): React.ReactElement {
       accumulatorInputs,
       lookbackInputs,
       windowBarrierInputs,
+      americanInputs,
       atmForward,
       spot,
       tenorYears,
@@ -1421,6 +1499,11 @@ export function TicketWorkspace(): React.ReactElement {
               setWindowBarrierInputs(next);
               setQuote(null);
             }}
+            american={americanInputs}
+            onAmerican={(next) => {
+              setAmericanInputs(next);
+              setQuote(null);
+            }}
           />
         ) : (
           <div className={styles.legs}>
@@ -1621,9 +1704,10 @@ function describeLegs(
     case "accumulator":
     case "lookback":
     case "windowBarrier":
+    case "american":
       // Barrier / digital / touch / vol-strip / average-rate / reset / converted /
-      // path-dependent products carry no enumerable option legs; the ticket renders
-      // their own input block instead of a leg ladder.
+      // path-dependent / early-exercise products carry no enumerable option legs;
+      // the ticket renders their own input block instead of a leg ladder.
       return [];
   }
 }
@@ -1668,6 +1752,8 @@ function structureLabel(s: Structure): string {
       return "lookback";
     case "WINDOW_BARRIER":
       return "window barrier";
+    case "AMERICAN":
+      return "American";
   }
 }
 
@@ -1736,6 +1822,8 @@ function ProductInputs(props: {
   onLookback: (next: LookbackInputs) => void;
   windowBarrier: WindowBarrierInputs;
   onWindowBarrier: (next: WindowBarrierInputs) => void;
+  american: AmericanInputs;
+  onAmerican: (next: AmericanInputs) => void;
 }): React.ReactElement {
   const {
     structure,
@@ -1768,6 +1856,8 @@ function ProductInputs(props: {
     onLookback,
     windowBarrier,
     onWindowBarrier,
+    american,
+    onAmerican,
   } = props;
 
   if (structure === "SINGLE_BARRIER") {
@@ -2864,6 +2954,123 @@ function ProductInputs(props: {
           {windowBarrier.mcPairs > 0
             ? "Monte-Carlo (reports a standard error)"
             : "the exact ADI PDE (no standard error)"}
+          .
+        </p>
+      </div>
+    );
+  }
+
+  if (structure === "AMERICAN") {
+    const step = Math.pow(10, -pipDecimals);
+    const isLsm = american.lsmPaths > 0;
+    return (
+      <div className={styles.product}>
+        <div className={styles.productRow}>
+          <span className={styles.productLabel}>Option</span>
+          <OptionToggle
+            value={american.optionType}
+            onChange={(ot) => onAmerican({ ...american, optionType: ot })}
+          />
+          <label className={styles.productField}>
+            <span>Strike</span>
+            <input
+              className="num"
+              type="number"
+              min={0}
+              step={step}
+              value={american.strike}
+              aria-label="strike"
+              placeholder={atmForward.toFixed(pipDecimals)}
+              onChange={(ev) =>
+                onAmerican({ ...american, strike: Math.max(0, Number(ev.target.value)) })
+              }
+            />
+            <span>{american.strike > 0 ? "" : `ATMF ${fmtRate(atmForward, pipDecimals)}`}</span>
+          </label>
+        </div>
+        <div className={styles.productRow}>
+          <span className={styles.productLabel}>Exercise</span>
+          <div className={styles.toggleGroup} role="tablist" aria-label="exercise style">
+            {(["AMERICAN", "BERMUDAN"] as ExerciseStyle[]).map((es) => (
+              <button
+                key={es}
+                role="tab"
+                aria-selected={american.exerciseStyle === es}
+                className={`${styles.modeTab} ${american.exerciseStyle === es ? styles.modeActive : ""}`}
+                onClick={() => onAmerican({ ...american, exerciseStyle: es })}
+              >
+                {es === "AMERICAN" ? "American" : "Bermudan"}
+              </button>
+            ))}
+          </div>
+          {american.exerciseStyle === "BERMUDAN" && (
+            <label className={styles.productField}>
+              <span>Exercise dates</span>
+              <input
+                className="num"
+                type="number"
+                min={1}
+                step={1}
+                value={american.bermudanDates}
+                aria-label="bermudan dates"
+                onChange={(ev) =>
+                  onAmerican({
+                    ...american,
+                    bermudanDates: Math.max(1, Math.trunc(Number(ev.target.value))),
+                  })
+                }
+              />
+              <span>over (0, T]</span>
+            </label>
+          )}
+        </div>
+        <div className={styles.productRow}>
+          <span className={styles.productLabel}>Engine</span>
+          <label className={styles.productField}>
+            <span>LSM paths</span>
+            <input
+              className="num"
+              type="number"
+              min={0}
+              step={1000}
+              value={american.lsmPaths}
+              aria-label="lsm paths"
+              onChange={(ev) =>
+                onAmerican({ ...american, lsmPaths: Math.max(0, Math.trunc(Number(ev.target.value))) })
+              }
+            />
+            <span>{isLsm ? "Longstaff-Schwartz MC" : "exact FD"}</span>
+          </label>
+          {isLsm && (
+            <label className={styles.productField}>
+              <span>LSM seed</span>
+              <input
+                className="num"
+                type="number"
+                min={0}
+                step={1}
+                value={Number(american.lsmSeed)}
+                aria-label="lsm seed"
+                onChange={(ev) =>
+                  onAmerican({
+                    ...american,
+                    lsmSeed: BigInt(Math.max(0, Math.trunc(Number(ev.target.value)))),
+                  })
+                }
+              />
+            </label>
+          )}
+        </div>
+        <p className={styles.productNote}>
+          {american.exerciseStyle === "AMERICAN" ? "American" : "Bermudan"}{" "}
+          {american.optionType === "CALL" ? "call" : "put"}: an early-exercise vanilla
+          {american.exerciseStyle === "AMERICAN"
+            ? " exercisable continuously up to expiry"
+            : ` exercisable on ${Math.max(1, Math.trunc(american.bermudanDates))} equally-spaced dates (expiry inclusive)`}
+          . The offline build prices a genuine binomial tree; the server prices{" "}
+          {isLsm
+            ? "the Longstaff-Schwartz regression Monte-Carlo (reports a standard error)"
+            : "the exact projected-SOR free-boundary finite difference (no standard error)"}
           .
         </p>
       </div>

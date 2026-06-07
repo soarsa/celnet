@@ -958,6 +958,72 @@
       ]
     },
     {
+      "id": "AMERICAN",
+      "name": "AMERICAN",
+      "description": "Price an American / Bermudan early-exercise vanilla: premium + (std_error if LSM/MC) + 13 Greeks + footer.",
+      "result": {
+        "dimensionality": "matrix",
+        "type": "any"
+      },
+      "parameters": [
+        {
+          "name": "pair",
+          "description": "Currency pair, e.g. EURUSD.",
+          "type": "string"
+        },
+        {
+          "name": "tenor",
+          "description": "Tenor, e.g. 1Y.",
+          "type": "string"
+        },
+        {
+          "name": "strike",
+          "description": "Absolute strike level, e.g. 1.10.",
+          "type": "any"
+        },
+        {
+          "name": "callPut",
+          "description": "C for call, P for put.",
+          "type": "string"
+        },
+        {
+          "name": "notional",
+          "description": "Trade notional in the base currency.",
+          "type": "number"
+        },
+        {
+          "name": "style",
+          "description": "Optional AMERICAN (default, continuous) or BERMUDAN (discrete dates).",
+          "type": "string",
+          "optional": true
+        },
+        {
+          "name": "bermudanSteps",
+          "description": "Optional number of equally-spaced Bermudan exercise dates (k/n*T); >0 selects BERMUDAN (0 => continuous AMERICAN).",
+          "type": "number",
+          "optional": true
+        },
+        {
+          "name": "lsmPaths",
+          "description": "Optional Longstaff-Schwartz path count (0 => exact FD, no std-error; >0 => Monte-Carlo).",
+          "type": "number",
+          "optional": true
+        },
+        {
+          "name": "lsmExerciseDates",
+          "description": "Optional LSM AMERICAN exercise resolution (0 => server default; ignored for FD/BERMUDAN).",
+          "type": "number",
+          "optional": true
+        },
+        {
+          "name": "lsmSeed",
+          "description": "Optional LSM scramble seed (bit-reproducible; ignored by FD).",
+          "type": "number",
+          "optional": true
+        }
+      ]
+    },
+    {
       "id": "SUBSCRIBE",
       "name": "SUBSCRIBE",
       "description": "Stream a live two-way for a structure (multiplexed, coalesced, stale-aware).",

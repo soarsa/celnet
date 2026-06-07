@@ -8,10 +8,11 @@
 
 use celnet_core::FlatSmile;
 use celnet_exotics::{
-    Accumulator, AccumulatorMcConfig, AnalyticAsian, AveragingSchedule, Cliquet, CliquetMcConfig,
-    CliquetSchedule, DigitalKind, DoubleNoTouch, ForwardStart, Lookback, LookbackMcConfig,
-    LookbackStyle, Monitoring, QuantoParams, RebateTiming, RedemptionStyle, SingleBarrier, Tarf,
-    TarfMcConfig, VarSwapContext, accumulator_price, cliquet_price_capped_mc, cliquet_price_plain,
+    Accumulator, AccumulatorMcConfig, AmericanGrid, AmericanOption, AnalyticAsian,
+    AveragingSchedule, Cliquet, CliquetMcConfig, CliquetSchedule, DigitalKind, DoubleNoTouch,
+    ExerciseStyle, ForwardStart, Lookback, LookbackMcConfig, LookbackStyle, LsmConfig, Monitoring,
+    QuantoParams, RebateTiming, RedemptionStyle, SingleBarrier, Tarf, TarfMcConfig, VarSwapContext,
+    accumulator_price, american_fd, american_lsm, cliquet_price_capped_mc, cliquet_price_plain,
     curran_price, digital_price, double_no_touch_price, fair_variance, fair_volatility,
     fixed_lookback_price, floating_lookback_price, forward_start_price, lookback_mc,
     one_touch_price, quanto_digital_price, quanto_vanilla_price, single_barrier_price, tarf_price,
@@ -194,6 +195,25 @@ pub(crate) enum ExoticSpec {
         mc_pairs: usize,
         /// Counter-RNG seed for the Monte-Carlo estimator.
         mc_seed: u64,
+    },
+    /// An American / Bermudan early-exercise vanilla. Priced by the projected-SOR
+    /// free-boundary finite difference (default, exact) or — when `lsm_paths > 0`
+    /// — the Longstaff-Schwartz regression Monte-Carlo (carrying a std-error). A
+    /// `bermudan_steps` of `0` is continuous American; `n > 0` is a Bermudan with
+    /// `n` equally-spaced exercise dates (arbitrary date lists are available via
+    /// the SDK / wire contract).
+    American {
+        /// Call or put.
+        option: OptionType,
+        /// Strike `K` (absolute).
+        strike: f64,
+        /// `0` ⇒ continuous American; `n > 0` ⇒ Bermudan with `n` equally-spaced
+        /// exercise dates over `(0, T]`.
+        bermudan_steps: u32,
+        /// Longstaff-Schwartz path count (`0` ⇒ FD engine, exact; `> 0` ⇒ LSM).
+        lsm_paths: usize,
+        /// Counter-RNG / Sobol scramble seed for the LSM engine.
+        lsm_seed: u64,
     },
     /// A lookback option (continuous closed-form, or discrete Monte-Carlo with a
     /// standard error).
@@ -380,6 +400,31 @@ pub(crate) fn run(spec: ExoticSpec, inputs: &VanillaInputs) -> ExoticResult {
                 std_error: Some(estimate.std_error),
             };
         }
+        // American / Bermudan via the Longstaff-Schwartz Monte-Carlo engine
+        // (carries a std-error). The finite-difference engine (exact, no
+        // std-error) is handled in the closed-form match below.
+        ExoticSpec::American {
+            option,
+            strike,
+            bermudan_steps,
+            lsm_paths,
+            lsm_seed,
+        } if lsm_paths > 0 => {
+            let am_inputs = VanillaInputs { strike, ..*inputs };
+            let estimate = american_lsm(
+                &am_inputs,
+                &american_spec(option, strike, bermudan_steps, inputs.t),
+                LsmConfig {
+                    paths: lsm_paths,
+                    seed: lsm_seed,
+                    ..LsmConfig::default()
+                },
+            );
+            return ExoticResult {
+                price: estimate.price,
+                std_error: Some(estimate.std_error),
+            };
+        }
         _ => {}
     }
     let price = match spec {
@@ -504,11 +549,29 @@ pub(crate) fn run(spec: ExoticSpec, inputs: &VanillaInputs) -> ExoticResult {
                 floating_lookback_price(inputs, option)
             }
         }
+        // American / Bermudan via the projected-SOR free-boundary finite
+        // difference (exact, no std-error). The LSM (`lsm_paths > 0`) arm is
+        // handled up front as Monte-Carlo.
+        ExoticSpec::American {
+            option,
+            strike,
+            bermudan_steps,
+            lsm_paths: 0,
+            ..
+        } => {
+            let am_inputs = VanillaInputs { strike, ..*inputs };
+            american_fd(
+                &am_inputs,
+                &american_spec(option, strike, bermudan_steps, inputs.t),
+                AmericanGrid::default(),
+            )
+        }
         // Handled up front (the Monte-Carlo / std-error-carrying arms).
         ExoticSpec::Cliquet { .. }
         | ExoticSpec::Tarf { .. }
         | ExoticSpec::Accumulator { .. }
-        | ExoticSpec::Lookback { discrete: true, .. } => {
+        | ExoticSpec::Lookback { discrete: true, .. }
+        | ExoticSpec::American { .. } => {
             unreachable!("Monte-Carlo exotics are handled before this match")
         }
         // A window barrier has no closed form: it is LSV-only and is dispatched to
@@ -520,6 +583,24 @@ pub(crate) fn run(spec: ExoticSpec, inputs: &VanillaInputs) -> ExoticResult {
     ExoticResult {
         price,
         std_error: None,
+    }
+}
+
+/// Build the [`AmericanOption`] spec from the CLI fields: `bermudan_steps == 0`
+/// is continuous American; `n > 0` is a Bermudan with `n` equally-spaced exercise
+/// dates `k/n · T` for `k = 1..=n` over `(0, T]`.
+fn american_spec(option: OptionType, strike: f64, bermudan_steps: u32, t: f64) -> AmericanOption {
+    let style = if bermudan_steps == 0 {
+        ExerciseStyle::American
+    } else {
+        let n = bermudan_steps;
+        let dates = (1..=n).map(|k| t * f64::from(k) / f64::from(n)).collect();
+        ExerciseStyle::Bermudan { dates }
+    };
+    AmericanOption {
+        option,
+        strike,
+        style,
     }
 }
 
@@ -546,6 +627,16 @@ pub(crate) fn format_report(spec: ExoticSpec, r: &ExoticResult) -> String {
         } => "lookback-continuous",
         ExoticSpec::Lookback { discrete: true, .. } => "lookback-discrete",
         ExoticSpec::WindowBarrier { .. } => "window-barrier-lsv",
+        ExoticSpec::American {
+            bermudan_steps: 0,
+            lsm_paths: 0,
+            ..
+        } => "american-fd",
+        ExoticSpec::American { lsm_paths: 0, .. } => "bermudan-fd",
+        ExoticSpec::American {
+            bermudan_steps: 0, ..
+        } => "american-lsm",
+        ExoticSpec::American { .. } => "bermudan-lsm",
     };
     // The variance swap's headline figure is a fair *variance* strike `K_var`;
     // echo its realised-vol equivalent `√K_var` so the desk reads both.
@@ -739,6 +830,7 @@ pub(crate) fn lsv_run(spec: ExoticSpec, inputs: &VanillaInputs) -> Result<Exotic
         ExoticSpec::Tarf { .. } => Err(lsv_unsupported("tarf")),
         ExoticSpec::Accumulator { .. } => Err(lsv_unsupported("accumulator")),
         ExoticSpec::Lookback { .. } => Err(lsv_unsupported("lookback")),
+        ExoticSpec::American { .. } => Err(lsv_unsupported("american")),
     }
 }
 
@@ -1278,5 +1370,67 @@ mod tests {
             lsv.price,
             gk
         );
+    }
+
+    /// The CLI American FD arm matches the direct exotics `american_fd` and
+    /// dominates the European value (early-exercise premium ≥ 0).
+    #[test]
+    fn american_fd_matches_direct_and_dominates_european() {
+        let i = VanillaInputs::new(100.0, 100.0, 0.25, 1.0, 0.08, 0.0);
+        let spec = ExoticSpec::American {
+            option: OptionType::Put,
+            strike: 100.0,
+            bermudan_steps: 0,
+            lsm_paths: 0,
+            lsm_seed: 0,
+        };
+        let r = run(spec, &i);
+        assert!(r.std_error.is_none(), "the FD engine reports no std-error");
+        let direct = american_fd(
+            &VanillaInputs { strike: 100.0, ..i },
+            &american_spec(OptionType::Put, 100.0, 0, i.t),
+            AmericanGrid::default(),
+        );
+        assert!(is_close(r.price, direct, 1e-12, 1e-12));
+        let euro = celnet_vanilla::price(OptionType::Put, &VanillaInputs { strike: 100.0, ..i });
+        assert!(
+            r.price >= euro - 5e-3,
+            "American {} >= European {euro}",
+            r.price
+        );
+        assert_eq!(
+            format_report(spec, &r).split_whitespace().next(),
+            Some("american-fd")
+        );
+    }
+
+    /// The CLI American LSM arm carries a std-error and agrees with the FD arm
+    /// within it.
+    #[test]
+    fn american_lsm_carries_std_error_and_matches_fd() {
+        let i = VanillaInputs::new(100.0, 100.0, 0.25, 1.0, 0.08, 0.0);
+        let fd = run(
+            ExoticSpec::American {
+                option: OptionType::Put,
+                strike: 100.0,
+                bermudan_steps: 0,
+                lsm_paths: 0,
+                lsm_seed: 0,
+            },
+            &i,
+        );
+        let lsm = run(
+            ExoticSpec::American {
+                option: OptionType::Put,
+                strike: 100.0,
+                bermudan_steps: 0,
+                lsm_paths: 200_000,
+                lsm_seed: 0xABCD,
+            },
+            &i,
+        );
+        let se = lsm.std_error.expect("LSM arm carries a std-error");
+        assert!(se > 0.0);
+        assert!((fd.price - lsm.price).abs() < 4.0 * se + 1e-2);
     }
 }

@@ -122,6 +122,7 @@
 
 pub mod accumulator;
 pub mod adi;
+pub mod american;
 pub mod asian;
 pub mod barrier;
 pub mod digital;
@@ -147,6 +148,10 @@ pub use accumulator::{
     Accumulator, AccumulatorMcConfig, AccumulatorResult, Monitoring, accumulator_price,
 };
 pub use adi::{AdiGrid, AdiProblem, WindowSpec, solve as adi_solve, solve_window};
+pub use american::{
+    AmericanGrid, AmericanOption, ExerciseStyle, LsmConfig, LsmEstimate, american_fd,
+    american_fd_greeks, american_lsm,
+};
 pub use asian::{
     AnalyticAsian, AveragingSchedule, curran_price, geometric_average_price, turnbull_wakeman_price,
 };

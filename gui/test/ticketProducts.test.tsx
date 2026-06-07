@@ -325,3 +325,74 @@ describe("TicketWorkspace — wave-6 window barrier + booking-model selector", (
     expect(screen.getByRole("button", { name: /LSV — live server only/ })).toBeInTheDocument();
   });
 });
+
+describe("TicketWorkspace — American / Bermudan early-exercise vanilla", () => {
+  it("offers American / Bermudan in the structure selector (additive, zero-legacy)", async () => {
+    await renderTicket();
+    const options = within(structureSelect())
+      .getAllByRole("option")
+      .map((o) => (o as HTMLOptionElement).value);
+    expect(options).toContain("AMERICAN");
+    // The pre-existing products are untouched.
+    expect(options).toContain("VANILLA");
+    expect(options).toContain("WINDOW_BARRIER");
+  });
+
+  it("shows option / strike / exercise-style for an American (no Bermudan dates field)", async () => {
+    await renderTicket();
+    act(() => {
+      fireEvent.change(structureSelect(), { target: { value: "AMERICAN" } });
+    });
+    expect(screen.getByRole("tablist", { name: "option type" })).toBeInTheDocument();
+    expect(screen.getByRole("tablist", { name: "exercise style" })).toBeInTheDocument();
+    expect(screen.getByLabelText("lsm paths")).toBeInTheDocument();
+    // AMERICAN (the default) has no discrete exercise-date count.
+    expect(screen.queryByLabelText("bermudan dates")).not.toBeInTheDocument();
+    // No option legs are rendered for an early-exercise vanilla.
+    expect(screen.queryByText(/^LEG 1$/)).not.toBeInTheDocument();
+    expect(screen.getByText(/early-exercise vanilla/)).toBeInTheDocument();
+  });
+
+  it("reveals the exercise-date count only when Bermudan is selected", async () => {
+    await renderTicket();
+    act(() => {
+      fireEvent.change(structureSelect(), { target: { value: "AMERICAN" } });
+    });
+    const style = screen.getByRole("tablist", { name: "exercise style" });
+    act(() => {
+      fireEvent.click(within(style).getByText("Bermudan"));
+    });
+    expect(screen.getByLabelText("bermudan dates")).toBeInTheDocument();
+    // Switching back to American hides it again.
+    act(() => {
+      fireEvent.click(within(style).getByText("American"));
+    });
+    expect(screen.queryByLabelText("bermudan dates")).not.toBeInTheDocument();
+  });
+
+  it("reveals the LSM seed only when LSM paths > 0 (the Monte-Carlo engine)", async () => {
+    await renderTicket();
+    act(() => {
+      fireEvent.change(structureSelect(), { target: { value: "AMERICAN" } });
+    });
+    // FD engine by default (paths 0) ⇒ no seed field, labelled "exact FD".
+    expect(screen.queryByLabelText("lsm seed")).not.toBeInTheDocument();
+    expect(screen.getByText(/exact FD/)).toBeInTheDocument();
+    // Entering an LSM path count switches to the Longstaff-Schwartz MC engine.
+    act(() => {
+      fireEvent.change(screen.getByLabelText("lsm paths"), { target: { value: "50000" } });
+    });
+    expect(screen.getByLabelText("lsm seed")).toBeInTheDocument();
+    expect(screen.getByText(/Longstaff-Schwartz MC/)).toBeInTheDocument();
+  });
+
+  it("prices an American put offline (the binomial path is wired and reachable)", async () => {
+    await renderTicket();
+    act(() => {
+      fireEvent.change(structureSelect(), { target: { value: "AMERICAN" } });
+    });
+    // The offline binomial engine prices it (no LSV gate) ⇒ Request is enabled.
+    const request = screen.getByRole("button", { name: /Request quote/ });
+    expect((request as HTMLButtonElement).disabled).toBe(false);
+  });
+});

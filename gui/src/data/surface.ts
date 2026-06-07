@@ -299,6 +299,15 @@ function legsOf(instrument: Instrument): { strikeSpec: StrikeOrDelta; isCall: bo
           isCall: instrument.product.digital.optionType === "CALL",
         },
       ];
+    case "american":
+      // An American / Bermudan vanilla's strike is its representative smile leg
+      // (the early-exercise premium is priced server-side; this is a display read).
+      return [
+        {
+          strikeSpec: { kind: "strike", strike: instrument.product.american.strike },
+          isCall: instrument.product.american.optionType === "CALL",
+        },
+      ];
     case "touch":
       // A touch carries no strike (no single representative smile read) ⇒ ATM.
       return [];
