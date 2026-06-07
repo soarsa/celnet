@@ -16,13 +16,19 @@
  */
 
 import type {
+  Accumulator,
+  AccumulatorMonitoring,
   AsianMethod,
   AveragingStyle,
   CcyPair,
   Cliquet,
   Conventions,
+  FixingSchedule,
   Greeks,
   Instrument,
+  Lookback,
+  LookbackMonitoring,
+  LookbackStyle,
   MarketObservable,
   OptionType,
   Product,
@@ -30,6 +36,8 @@ import type {
   Side,
   SmileModel,
   StrikeOrDelta,
+  Tarf,
+  TarfRedemption,
   Tenor,
   TenorUnit,
 } from "../contract/contract";
@@ -843,6 +851,356 @@ export function shapeQuanto(args: QuantoArgs): Instrument {
 }
 
 // ---------------------------------------------------------------------------
+// TARF / accumulator / lookback shaping (path-dependent Monte-Carlo products)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the equally-spaced fixing year-fractions a count-based ticket implies: `n`
+ * points at `k/n` for `k = 1..=n`. This is bit-identical to the SDK's
+ * `equal_fixing_years` (`crates/celnet-client/src/vocab.rs`), so an Excel TARF /
+ * accumulator encodes the SAME `FixingSchedule.fixing_years` the SDK does and the
+ * engine (which normalises the fractions to the instrument expiry, spacing fixings
+ * equally over `[0, T]`) prices a cell identically to the SDK/CLI.
+ */
+function equalFixingYears(fixings: number): number[] {
+  const n = Math.max(1, fixings);
+  const years: number[] = [];
+  for (let k = 1; k <= n; k += 1) years.push(k / n);
+  return years;
+}
+
+/** Validate a fixing count: a positive integer (`≥ 1`). */
+function shapeFixings(raw: number, what: string): number {
+  if (!Number.isFinite(raw) || !Number.isInteger(raw) || raw < 1) {
+    throw new ShapingError(`${what} must be an integer ≥ 1; got \`${raw}\``);
+  }
+  return raw;
+}
+
+/** Validate a non-negative integer MC pair count (`0` ⇒ the server default). */
+function shapeMcPairs(raw: number | undefined): number {
+  const v = raw ?? 0;
+  if (!Number.isFinite(v) || !Number.isInteger(v) || v < 0) {
+    throw new ShapingError(`mc pairs must be a non-negative integer; got \`${raw}\``);
+  }
+  return v;
+}
+
+/** Validate a non-negative integer MC seed and lift it to a bigint (`0` ⇒ default). */
+function shapeMcSeed(raw: number | undefined): bigint {
+  const v = raw ?? 0;
+  if (!Number.isFinite(v) || !Number.isInteger(v) || v < 0) {
+    throw new ShapingError(`mc seed must be a non-negative integer; got \`${raw}\``);
+  }
+  return BigInt(v);
+}
+
+/** Validate a non-negative per-fixing notional (`0`/absent ⇒ the unit leg, 1.0). */
+function shapeFixingNotional(raw: number | undefined): number {
+  if (raw === undefined) return 1.0;
+  if (!Number.isFinite(raw) || raw <= 0) {
+    throw new ShapingError(`fixing notional \`${raw}\` must be a positive number`);
+  }
+  return raw;
+}
+
+/**
+ * Parse a TARF gap-risk redemption selector. Accepts `FULL_GAIN`/`FULL`/`F` (the
+ * breaching fixing pays its full intrinsic gain — genuine gap exposure) or
+ * `CAPPED_GAIN`/`CAPPED`/`C` (exact redemption, no overshoot), case-insensitive.
+ * Empty/absent ⇒ `FULL_GAIN` (the proto3 zero value).
+ */
+export function parseTarfRedemption(raw: string | undefined): TarfRedemption {
+  const s = (raw ?? "").trim().toUpperCase();
+  switch (s) {
+    case "":
+    case "FULL_GAIN":
+    case "FULL":
+    case "F":
+      return "FULL_GAIN";
+    case "CAPPED_GAIN":
+    case "CAPPED":
+    case "C":
+      return "CAPPED_GAIN";
+    default:
+      throw new ShapingError(
+        `invalid TARF redemption \`${raw}\` (expected FULL_GAIN or CAPPED_GAIN)`,
+      );
+  }
+}
+
+/**
+ * Parse an accumulator knock-out monitoring selector. Accepts `DISCRETE`/`DISC`/
+ * `D` (tested at fixings) or `CONTINUOUS`/`CONT`/`C` (Brownian-bridge between
+ * fixings), case-insensitive. Empty/absent ⇒ `DISCRETE` (the proto3 zero value).
+ */
+export function parseAccumulatorMonitoring(raw: string | undefined): AccumulatorMonitoring {
+  const s = (raw ?? "").trim().toUpperCase();
+  switch (s) {
+    case "":
+    case "DISCRETE":
+    case "DISC":
+    case "D":
+      return "DISCRETE";
+    case "CONTINUOUS":
+    case "CONT":
+    case "C":
+      return "CONTINUOUS";
+    default:
+      throw new ShapingError(
+        `invalid accumulator monitoring \`${raw}\` (expected DISCRETE or CONTINUOUS)`,
+      );
+  }
+}
+
+/**
+ * Parse a lookback style selector. Accepts `FLOATING`/`FLOAT`/`FL` (settle against
+ * the path extremum) or `FIXED`/`FIX`/`FX` (exercise against a fixed strike),
+ * case-insensitive. Empty/absent ⇒ `FLOATING` (the proto3 zero value).
+ */
+export function parseLookbackStyle(raw: string | undefined): LookbackStyle {
+  const s = (raw ?? "").trim().toUpperCase();
+  switch (s) {
+    case "":
+    case "FLOATING":
+    case "FLOAT":
+    case "FL":
+      return "FLOATING";
+    case "FIXED":
+    case "FIX":
+    case "FX":
+      return "FIXED";
+    default:
+      throw new ShapingError(
+        `invalid lookback style \`${raw}\` (expected FLOATING or FIXED)`,
+      );
+  }
+}
+
+/**
+ * Parse a lookback monitoring selector. Accepts `CONTINUOUS`/`CONT`/`C` (exact
+ * closed form, no MC std-error) or `DISCRETE`/`DISC`/`D` (Monte-Carlo, carries a
+ * std-error), case-insensitive. Empty/absent ⇒ `CONTINUOUS` (the proto3 zero
+ * value).
+ */
+export function parseLookbackMonitoring(raw: string | undefined): LookbackMonitoring {
+  const s = (raw ?? "").trim().toUpperCase();
+  switch (s) {
+    case "":
+    case "CONTINUOUS":
+    case "CONT":
+    case "C":
+      return "CONTINUOUS";
+    case "DISCRETE":
+    case "DISC":
+    case "D":
+      return "DISCRETE";
+    default:
+      throw new ShapingError(
+        `invalid lookback monitoring \`${raw}\` (expected CONTINUOUS or DISCRETE)`,
+      );
+  }
+}
+
+/** The fully-parsed inputs the CELNET.TARF function shapes into a request. */
+export interface TarfArgs {
+  readonly pair: string;
+  readonly tenor: string;
+  readonly callPut: string;
+  readonly strike: string | number;
+  readonly target: number;
+  readonly leverage: number;
+  readonly fixings: number;
+  readonly notional: number;
+  readonly redemption?: string | undefined;
+  readonly fixingNotional?: number | undefined;
+  readonly mcPairs?: number | undefined;
+  readonly mcSeed?: number | undefined;
+}
+
+/**
+ * Shape a Target-Redemption Forward from the cell arguments. The strike must be an
+ * absolute level (a TARF fixes at a level, not a delta); `target > 0` is the
+ * cumulative gain that redeems; `leverage ≥ 0` gears the adverse leg; `fixings ≥ 1`
+ * is the (equally-spaced) fixing count. Always Monte-Carlo priced — the premium
+ * carries a standard error, surfaced honestly in the spill. `side` is TWO_WAY.
+ */
+export function shapeTarf(args: TarfArgs): Instrument {
+  const { pair, tenor, expiryYears } = shapeSwapBase(args);
+  const strike = parseStrikeOrDelta(args.strike);
+  if (strike.kind !== "strike") {
+    throw new ShapingError(
+      `TARF strike must be an absolute level (e.g. 1.10), not a delta \`${args.strike}\``,
+    );
+  }
+  if (!Number.isFinite(args.target) || args.target <= 0) {
+    throw new ShapingError(`TARF target \`${args.target}\` must be a positive cumulative gain`);
+  }
+  if (!Number.isFinite(args.leverage) || args.leverage < 0) {
+    throw new ShapingError(`TARF leverage \`${args.leverage}\` must be ≥ 0`);
+  }
+  const fixings = shapeFixings(args.fixings, "TARF fixings");
+  const schedule: FixingSchedule = {
+    fixingYears: equalFixingYears(fixings),
+    fixingNotional: shapeFixingNotional(args.fixingNotional),
+  };
+  const tarf: Tarf = {
+    optionType: parseOptionType(args.callPut),
+    strike: strike.strike,
+    target: args.target,
+    leverage: args.leverage,
+    redemption: parseTarfRedemption(args.redemption),
+    schedule,
+    mcPairs: shapeMcPairs(args.mcPairs),
+    mcSeed: shapeMcSeed(args.mcSeed),
+  };
+  return {
+    pair,
+    tenor,
+    expiryYears,
+    quantity: { notional: args.notional, baseCcy: true },
+    side: "TWO_WAY" as Side,
+    product: { kind: "tarf", tarf },
+  };
+}
+
+/** The fully-parsed inputs the CELNET.ACCUMULATOR function shapes into a request. */
+export interface AccumulatorArgs {
+  readonly pair: string;
+  readonly tenor: string;
+  readonly pivot: string | number;
+  readonly barrier: number;
+  readonly leverage: number;
+  readonly fixings: number;
+  readonly notional: number;
+  readonly monitoring?: string | undefined;
+  readonly fixingNotional?: number | undefined;
+  readonly mcPairs?: number | undefined;
+  readonly mcSeed?: number | undefined;
+}
+
+/**
+ * Shape an accumulator from the cell arguments. The pivot must be an absolute
+ * level; the up-and-out `barrier` must be strictly above the pivot; `leverage ≥ 0`
+ * gears the below-pivot leg; `fixings ≥ 1` is the (equally-spaced) fixing count.
+ * Always Monte-Carlo priced — the premium carries a standard error. `side` is
+ * TWO_WAY.
+ */
+export function shapeAccumulator(args: AccumulatorArgs): Instrument {
+  const { pair, tenor, expiryYears } = shapeSwapBase(args);
+  const pivotSod = parseStrikeOrDelta(args.pivot);
+  if (pivotSod.kind !== "strike") {
+    throw new ShapingError(
+      `accumulator pivot must be an absolute level (e.g. 1.10), not a delta \`${args.pivot}\``,
+    );
+  }
+  const pivot = pivotSod.strike;
+  if (!Number.isFinite(args.barrier) || args.barrier <= pivot) {
+    throw new ShapingError(
+      `accumulator barrier \`${args.barrier}\` must be strictly above the pivot \`${pivot}\``,
+    );
+  }
+  if (!Number.isFinite(args.leverage) || args.leverage < 0) {
+    throw new ShapingError(`accumulator leverage \`${args.leverage}\` must be ≥ 0`);
+  }
+  const fixings = shapeFixings(args.fixings, "accumulator fixings");
+  const schedule: FixingSchedule = {
+    fixingYears: equalFixingYears(fixings),
+    fixingNotional: shapeFixingNotional(args.fixingNotional),
+  };
+  const accumulator: Accumulator = {
+    pivot,
+    barrier: args.barrier,
+    leverage: args.leverage,
+    monitoring: parseAccumulatorMonitoring(args.monitoring),
+    schedule,
+    mcPairs: shapeMcPairs(args.mcPairs),
+    mcSeed: shapeMcSeed(args.mcSeed),
+  };
+  return {
+    pair,
+    tenor,
+    expiryYears,
+    quantity: { notional: args.notional, baseCcy: true },
+    side: "TWO_WAY" as Side,
+    product: { kind: "accumulator", accumulator },
+  };
+}
+
+/** The fully-parsed inputs the CELNET.LOOKBACK function shapes into a request. */
+export interface LookbackArgs {
+  readonly pair: string;
+  readonly tenor: string;
+  readonly callPut: string;
+  readonly notional: number;
+  readonly style?: string | undefined;
+  readonly monitoring?: string | undefined;
+  readonly strike?: string | number | undefined;
+  readonly observations?: number | undefined;
+  readonly mcPairs?: number | undefined;
+  readonly mcSeed?: number | undefined;
+}
+
+/**
+ * Shape a lookback option from the cell arguments. A FLOATING-strike lookback
+ * settles against the path extremum (no strike — any supplied strike is rejected);
+ * a FIXED-strike lookback requires an absolute strike level. CONTINUOUS monitoring
+ * is exact closed form (no std-error); DISCRETE monitoring is Monte-Carlo (the
+ * premium carries a std-error, surfaced honestly). `observations` applies only to
+ * the DISCRETE variant. `side` is TWO_WAY.
+ */
+export function shapeLookback(args: LookbackArgs): Instrument {
+  const { pair, tenor, expiryYears } = shapeSwapBase(args);
+  const style = parseLookbackStyle(args.style);
+  const monitoring = parseLookbackMonitoring(args.monitoring);
+  let strike = 0;
+  if (style === "FIXED") {
+    if (args.strike === undefined || args.strike === "") {
+      throw new ShapingError("a FIXED-strike lookback requires an absolute strike level");
+    }
+    const sod = parseStrikeOrDelta(args.strike);
+    if (sod.kind !== "strike") {
+      throw new ShapingError(
+        `lookback strike must be an absolute level (e.g. 1.10), not a delta \`${args.strike}\``,
+      );
+    }
+    strike = sod.strike;
+  } else if (args.strike !== undefined && args.strike !== "") {
+    throw new ShapingError(
+      `a FLOATING-strike lookback takes no strike (its strike is the path extremum); got \`${args.strike}\``,
+    );
+  }
+  const observations = monitoring === "DISCRETE" ? shapeMcPairs(args.observations) : 0;
+  const lookback: Lookback = {
+    style,
+    optionType: parseOptionType(args.callPut),
+    monitoring,
+    strike,
+    observations,
+    mcPairs: monitoring === "DISCRETE" ? shapeMcPairs(args.mcPairs) : 0,
+    mcSeed: monitoring === "DISCRETE" ? shapeMcSeed(args.mcSeed) : 0n,
+  };
+  return {
+    pair,
+    tenor,
+    expiryYears,
+    quantity: { notional: args.notional, baseCcy: true },
+    side: "TWO_WAY" as Side,
+    product: { kind: "lookback", lookback },
+  };
+}
+
+/**
+ * True iff a lookback is priced by Monte-Carlo (its DISCRETE variant) ⇒ it carries
+ * a std-error. The CONTINUOUS variant is exact closed form (no std-error). Mirrors
+ * `cliquetIsMonteCarlo` — the function gates the std-error row on this, so a
+ * closed-form lookback never surfaces a stray precision claim.
+ */
+export function lookbackIsMonteCarlo(l: Lookback): boolean {
+  return l.monitoring === "DISCRETE";
+}
+
+// ---------------------------------------------------------------------------
 // dynamic-array formatting (spill geometries)
 // ---------------------------------------------------------------------------
 
@@ -1129,6 +1487,48 @@ export interface QuantoResult {
  */
 export function formatQuantoSpill(r: QuantoResult): SpillMatrix {
   const rows: SpillMatrix = [["premium", r.premium]];
+  for (const g of GREEK_ROWS) rows.push([g.label, r.greeks[g.key]]);
+  rows.push([conventionFooter(r.conventions, r.surfaceVersion, r.epochNanos)]);
+  return rows;
+}
+
+/**
+ * The decoded fields a path-dependent product spill renders (discounted PV, the
+ * optional MC standard error, the 13 Greeks, and the convention footer). Shared by
+ * CELNET.TARF / ACCUMULATOR / LOOKBACK: the `stdError` is present ONLY for a
+ * Monte-Carlo-priced product (always for TARF/accumulator; for a DISCRETE
+ * lookback) and `undefined` for the exact CONTINUOUS lookback, so a cell never
+ * mistakes a closed-form price for an MC estimate (or vice-versa).
+ */
+export interface PathDependentResult {
+  /** The discounted premium (the server's `greeks.price`). */
+  readonly premium: number;
+  /**
+   * The Monte-Carlo standard error of the premium (the server's `price_std_error`),
+   * present ONLY for an MC-priced product; `undefined` for the exact closed-form
+   * (continuous lookback) case. Surfaced honestly so an MC premium is never
+   * mistaken for closed-form precision.
+   */
+  readonly stdError: number | undefined;
+  readonly greeks: Greeks;
+  readonly conventions: Conventions;
+  readonly surfaceVersion: bigint | undefined;
+  readonly epochNanos: bigint;
+}
+
+/**
+ * Format a path-dependent product (TARF / accumulator / lookback) as a labelled
+ * spill: `["premium", PV]`, then — ONLY when the server returned a Monte-Carlo
+ * standard error — a `["std_error", σ̄]` row, then the 13 risk Greeks, then a
+ * convention footer. The TARF and accumulator are always MC (so always carry the
+ * std-error row); the lookback carries it for the DISCRETE variant only (the
+ * CONTINUOUS variant is exact closed form and omits it). The geometry is therefore
+ * honest about whether the headline carries MC noise. Shared by CELNET.TARF /
+ * ACCUMULATOR / LOOKBACK (mirrors `formatCliquetSpill`).
+ */
+export function formatPathDependentSpill(r: PathDependentResult): SpillMatrix {
+  const rows: SpillMatrix = [["premium", r.premium]];
+  if (r.stdError !== undefined) rows.push(["std_error", r.stdError]);
   for (const g of GREEK_ROWS) rows.push([g.label, r.greeks[g.key]]);
   rows.push([conventionFooter(r.conventions, r.surfaceVersion, r.epochNanos)]);
   return rows;
@@ -1443,6 +1843,43 @@ function canonicalProduct(p: Product): unknown {
         strike: p.quanto.strike,
         cv: p.quanto.conversionVol,
         rho: p.quanto.correlation,
+      };
+    case "tarf":
+      return {
+        k: "tarf",
+        ot: p.tarf.optionType,
+        strike: p.tarf.strike,
+        tgt: p.tarf.target,
+        lev: p.tarf.leverage,
+        red: p.tarf.redemption,
+        fy: p.tarf.schedule.fixingYears,
+        fn: p.tarf.schedule.fixingNotional,
+        mcp: p.tarf.mcPairs,
+        // The MC seed is a bigint; stringify so the coalescing key is JSON-serialisable.
+        mcs: p.tarf.mcSeed.toString(),
+      };
+    case "accumulator":
+      return {
+        k: "acc",
+        pv: p.accumulator.pivot,
+        bar: p.accumulator.barrier,
+        lev: p.accumulator.leverage,
+        mon: p.accumulator.monitoring,
+        fy: p.accumulator.schedule.fixingYears,
+        fn: p.accumulator.schedule.fixingNotional,
+        mcp: p.accumulator.mcPairs,
+        mcs: p.accumulator.mcSeed.toString(),
+      };
+    case "lookback":
+      return {
+        k: "lbk",
+        st: p.lookback.style,
+        ot: p.lookback.optionType,
+        mon: p.lookback.monitoring,
+        strike: p.lookback.strike,
+        obs: p.lookback.observations,
+        mcp: p.lookback.mcPairs,
+        mcs: p.lookback.mcSeed.toString(),
       };
   }
 }

@@ -20,6 +20,7 @@
  */
 
 import type {
+  Accumulator,
   ArbReport,
   BrokerQuoteSet,
   BucketedRisk,
@@ -29,9 +30,11 @@ import type {
   CrossGamma,
   Executed,
   Execution,
+  FixingSchedule,
   Greeks,
   Instrument,
   Leg,
+  Lookback,
   MarkedSurface,
   MarketContext,
   MarketSeriesPoint,
@@ -47,6 +50,7 @@ import type {
   StrategyKind,
   StreamReject,
   StrikeOrDelta,
+  Tarf,
   TradableToken,
   TwoWayPrice,
   Update,
@@ -167,9 +171,9 @@ export function instrumentToWire(i: Instrument): WireObject {
   if (i.solve) base["solve"] = solveToWire(i.solve);
   // The product oneof: nest the body under its own key (the proto field name) with
   // the proto field number it occupies — vanilla=7, strategy=8, … variance_swap=13,
-  // volatility_swap=14, asian_option=15, forward_start=16, cliquet=17, quanto=18.
-  // The WS JSON mirror keys by name, exactly like
-  // `crates/celnet-server/src/ws/codec.rs` decodes.
+  // volatility_swap=14, asian_option=15, forward_start=16, cliquet=17, quanto=18,
+  // tarf=19, accumulator=20, lookback=21. The WS JSON mirror keys by name, exactly
+  // like `crates/celnet-server/src/ws/codec.rs` decodes.
   switch (i.product.kind) {
     case "vanilla":
       base["vanilla"] = {
@@ -219,8 +223,75 @@ export function instrumentToWire(i: Instrument): WireObject {
         correlation: i.product.quanto.correlation,
       };
       break;
+    case "tarf":
+      base["tarf"] = tarfToWire(i.product.tarf);
+      break;
+    case "accumulator":
+      base["accumulator"] = accumulatorToWire(i.product.accumulator);
+      break;
+    case "lookback":
+      base["lookback"] = lookbackToWire(i.product.lookback);
+      break;
   }
   return base;
+}
+
+/**
+ * Encode a fixing schedule (`fixing_years` + `fixing_notional`) — the same nested
+ * shape the server's `fixing_schedule_from_json` reads. Carried under the product
+ * body's `schedule` key by the TARF / accumulator encoders.
+ */
+function fixingScheduleToWire(s: FixingSchedule): WireObject {
+  return { fixing_years: [...s.fixingYears], fixing_notional: s.fixingNotional };
+}
+
+/**
+ * Encode a TARF body (proto field 19). All scalar fields are always present; the
+ * fixing schedule nests under `schedule` exactly like the SDK's
+ * `Tarf.schedule = Some(FixingSchedule { … })`. `mc_pairs`/`mc_seed` follow the
+ * codec's 64-bit-as-JSON-number convention (server reads with `u64_or_zero`).
+ */
+function tarfToWire(t: Tarf): WireObject {
+  return {
+    option_type: e.optionType.toWire(t.optionType),
+    strike: t.strike,
+    target: t.target,
+    leverage: t.leverage,
+    redemption: e.tarfRedemption.toWire(t.redemption),
+    schedule: fixingScheduleToWire(t.schedule),
+    mc_pairs: t.mcPairs,
+    mc_seed: Number(t.mcSeed),
+  };
+}
+
+/** Encode an accumulator body (proto field 20) — see `tarfToWire` for the conventions. */
+function accumulatorToWire(a: Accumulator): WireObject {
+  return {
+    pivot: a.pivot,
+    barrier: a.barrier,
+    leverage: a.leverage,
+    monitoring: e.accumulatorMonitoring.toWire(a.monitoring),
+    schedule: fixingScheduleToWire(a.schedule),
+    mc_pairs: a.mcPairs,
+    mc_seed: Number(a.mcSeed),
+  };
+}
+
+/**
+ * Encode a lookback body (proto field 21). `strike`/`observations` are always
+ * present (the server ignores them for the FLOATING / CONTINUOUS variants);
+ * `mc_pairs`/`mc_seed` follow the 64-bit-as-JSON-number convention.
+ */
+function lookbackToWire(l: Lookback): WireObject {
+  return {
+    style: e.lookbackStyle.toWire(l.style),
+    option_type: e.optionType.toWire(l.optionType),
+    monitoring: e.lookbackMonitoring.toWire(l.monitoring),
+    strike: l.strike,
+    observations: l.observations,
+    mc_pairs: l.mcPairs,
+    mc_seed: Number(l.mcSeed),
+  };
 }
 
 /**

@@ -694,6 +694,249 @@ impl QuantoTerms {
     }
 }
 
+/// How the redeeming (target-breaching) fixing of a TARF settles — the gap-risk
+/// convention.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TarfRedemption {
+    /// The breaching fixing pays its full intrinsic gain (the client keeps the
+    /// overshoot past the target); the genuine gap exposure.
+    FullGain,
+    /// The breaching fixing pays only the remaining target (exact redemption).
+    CappedGain,
+}
+
+/// The knock-out monitoring convention for an accumulator's up-and-out barrier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccumulatorMonitoring {
+    /// Barrier tested only at the discrete fixing dates.
+    Discrete,
+    /// Barrier monitored continuously between fixings (knocks out more often).
+    Continuous,
+}
+
+/// The two lookback families.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LookbackStyle {
+    /// Floating strike: settle against the path extremum (always ≥ 0).
+    Floating,
+    /// Fixed strike: optimal exercise against a fixed `K`.
+    Fixed,
+}
+
+/// How a lookback's running extremum is monitored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LookbackMonitoring {
+    /// Continuous monitoring — priced by exact closed form (no MC std-error).
+    Continuous,
+    /// Discrete monitoring — priced by Monte-Carlo, reporting a std-error.
+    Discrete,
+}
+
+/// The terms of a Target-Redemption Forward: the favourable-side direction, the
+/// strike, the cumulative knock-out target, the adverse-leg gearing, the gap-risk
+/// settlement convention, the fixing schedule (count + per-fixing notional), and
+/// the Monte-Carlo knobs (a TARF is always priced by MC, surfacing a standard
+/// error on [`PricedLine::price_std_error`]). Built via [`TarfTerms::new`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TarfTerms {
+    /// The favourable-side direction (PUT = client gains when `S < strike`).
+    pub option: OptionType,
+    /// The strike `K` of every fixing.
+    pub strike: f64,
+    /// The cumulative gain target; accumulated client gain at/above it redeems.
+    pub target: f64,
+    /// The gearing/leverage on the adverse (loss) leg (`≥ 0`).
+    pub leverage: f64,
+    /// The gap-risk settlement convention of the redeeming fixing.
+    pub redemption: TarfRedemption,
+    /// The number of equally-spaced fixings over `[0, expiry]` (`≥ 1`).
+    pub fixings: u32,
+    /// The per-fixing notional.
+    pub fixing_notional: f64,
+    /// Antithetic Monte-Carlo path pairs; `0` ⇒ server default.
+    pub mc_pairs: u32,
+    /// Counter-RNG seed for the Monte-Carlo estimator (bit-reproducible).
+    pub mc_seed: u64,
+}
+
+impl TarfTerms {
+    /// A TARF with the given economics, an equally-spaced `fixings`-point schedule
+    /// of unit per-fixing notional, and a server-default MC budget.
+    #[must_use]
+    pub fn new(
+        option: OptionType,
+        strike: f64,
+        target: f64,
+        leverage: f64,
+        redemption: TarfRedemption,
+        fixings: u32,
+    ) -> Self {
+        Self {
+            option,
+            strike,
+            target,
+            leverage,
+            redemption,
+            fixings,
+            fixing_notional: 1.0,
+            mc_pairs: 0,
+            mc_seed: 0,
+        }
+    }
+
+    /// Set the per-fixing notional.
+    #[must_use]
+    pub fn fixing_notional(mut self, notional: f64) -> Self {
+        self.fixing_notional = notional;
+        self
+    }
+
+    /// Configure the Monte-Carlo path pairs and seed.
+    #[must_use]
+    pub fn monte_carlo(mut self, pairs: u32, seed: u64) -> Self {
+        self.mc_pairs = pairs;
+        self.mc_seed = seed;
+        self
+    }
+}
+
+/// The terms of an accumulator: the pivot strike, the up-and-out knock-out
+/// barrier, the below-pivot gearing, the monitoring convention, the fixing
+/// schedule, and the Monte-Carlo knobs (an accumulator is always priced by MC,
+/// surfacing a standard error on [`PricedLine::price_std_error`]). Built via
+/// [`AccumulatorTerms::new`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AccumulatorTerms {
+    /// The pivot strike `K` at which the client accumulates each fixing.
+    pub pivot: f64,
+    /// The up-and-out knock-out barrier `B` (`B > pivot`).
+    pub barrier: f64,
+    /// The gearing on the below-pivot (loss) leg (`≥ 0`).
+    pub leverage: f64,
+    /// The knock-out monitoring convention.
+    pub monitoring: AccumulatorMonitoring,
+    /// The number of equally-spaced fixings over `[0, expiry]` (`≥ 1`).
+    pub fixings: u32,
+    /// The per-fixing notional.
+    pub fixing_notional: f64,
+    /// Antithetic Monte-Carlo path pairs; `0` ⇒ server default.
+    pub mc_pairs: u32,
+    /// Counter-RNG seed for the Monte-Carlo estimator (bit-reproducible).
+    pub mc_seed: u64,
+}
+
+impl AccumulatorTerms {
+    /// An accumulator with the given economics, an equally-spaced `fixings`-point
+    /// schedule of unit per-fixing notional, and a server-default MC budget.
+    #[must_use]
+    pub fn new(
+        pivot: f64,
+        barrier: f64,
+        leverage: f64,
+        monitoring: AccumulatorMonitoring,
+        fixings: u32,
+    ) -> Self {
+        Self {
+            pivot,
+            barrier,
+            leverage,
+            monitoring,
+            fixings,
+            fixing_notional: 1.0,
+            mc_pairs: 0,
+            mc_seed: 0,
+        }
+    }
+
+    /// Set the per-fixing notional.
+    #[must_use]
+    pub fn fixing_notional(mut self, notional: f64) -> Self {
+        self.fixing_notional = notional;
+        self
+    }
+
+    /// Configure the Monte-Carlo path pairs and seed.
+    #[must_use]
+    pub fn monte_carlo(mut self, pairs: u32, seed: u64) -> Self {
+        self.mc_pairs = pairs;
+        self.mc_seed = seed;
+        self
+    }
+}
+
+/// The terms of a lookback option: the family (floating/fixed), the option
+/// direction, the monitoring convention, and — for the discrete-monitoring
+/// variant — the observation count and Monte-Carlo knobs. The continuous variant
+/// prices in closed form ([`PricedLine::price_std_error`] is `None`); the discrete
+/// variant prices by Monte-Carlo and surfaces a standard error. Built via
+/// [`LookbackTerms::continuous`] / [`LookbackTerms::discrete`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LookbackTerms {
+    /// Floating- or fixed-strike family.
+    pub style: LookbackStyle,
+    /// Call or put.
+    pub option: OptionType,
+    /// Continuous (closed-form) or discrete (Monte-Carlo) monitoring.
+    pub monitoring: LookbackMonitoring,
+    /// The strike `K` (used only by the FIXED-strike family).
+    pub strike: f64,
+    /// The number of equally-spaced monitoring observations for the DISCRETE
+    /// variant (`0` ⇒ server default). Ignored for CONTINUOUS monitoring.
+    pub observations: u32,
+    /// Antithetic Monte-Carlo path pairs for the DISCRETE variant (`0` ⇒ server
+    /// default). Ignored for CONTINUOUS monitoring.
+    pub mc_pairs: u32,
+    /// Counter-RNG seed for the DISCRETE Monte-Carlo estimator. Ignored for
+    /// CONTINUOUS monitoring.
+    pub mc_seed: u64,
+}
+
+impl LookbackTerms {
+    /// A continuously-monitored lookback (exact closed form, no MC std-error).
+    /// `strike` is used only for the FIXED-strike family.
+    #[must_use]
+    pub fn continuous(style: LookbackStyle, option: OptionType, strike: f64) -> Self {
+        Self {
+            style,
+            option,
+            monitoring: LookbackMonitoring::Continuous,
+            strike,
+            observations: 0,
+            mc_pairs: 0,
+            mc_seed: 0,
+        }
+    }
+
+    /// A discretely-monitored lookback (Monte-Carlo, surfacing a std-error) over
+    /// `observations` equally-spaced fixings. `strike` is used only for the
+    /// FIXED-strike family.
+    #[must_use]
+    pub fn discrete(
+        style: LookbackStyle,
+        option: OptionType,
+        strike: f64,
+        observations: u32,
+    ) -> Self {
+        Self {
+            style,
+            option,
+            monitoring: LookbackMonitoring::Discrete,
+            strike,
+            observations,
+            mc_pairs: 0,
+            mc_seed: 0,
+        }
+    }
+
+    /// Configure the Monte-Carlo path pairs and seed for a discrete lookback.
+    #[must_use]
+    pub fn monte_carlo(mut self, pairs: u32, seed: u64) -> Self {
+        self.mc_pairs = pairs;
+        self.mc_seed = seed;
+        self
+    }
+}
+
 /// The product payoff of an instrument — the typed form of the wire `Instrument`
 /// `product` oneof. Exactly one variant is built per instrument.
 #[derive(Debug, Clone, PartialEq)]
@@ -843,6 +1086,72 @@ pub enum Product {
         conversion_vol: f64,
         /// Correlation `ρ ∈ [−1, 1]` between the underlying and the conversion rate.
         correlation: f64,
+    },
+    /// A Target-Redemption Forward (strip of geared fixings with a knock-out
+    /// target). Always priced by Monte-Carlo; the std-error is surfaced on
+    /// [`PricedLine::price_std_error`].
+    Tarf {
+        /// The favourable-side direction.
+        option: OptionType,
+        /// The strike `K` of every fixing.
+        strike: f64,
+        /// The cumulative gain target.
+        target: f64,
+        /// The gearing on the adverse (loss) leg.
+        leverage: f64,
+        /// The gap-risk settlement convention of the redeeming fixing.
+        redemption: TarfRedemption,
+        /// The number of equally-spaced fixings over `[0, expiry]`.
+        fixings: u32,
+        /// The per-fixing notional.
+        fixing_notional: f64,
+        /// Antithetic Monte-Carlo path pairs (`0` ⇒ server default).
+        mc_pairs: u32,
+        /// Counter-RNG seed for the Monte-Carlo estimator.
+        mc_seed: u64,
+    },
+    /// An accumulator (periodic pivot accumulation with an up-and-out barrier).
+    /// Always priced by Monte-Carlo; the std-error is surfaced on
+    /// [`PricedLine::price_std_error`].
+    Accumulator {
+        /// The pivot strike `K`.
+        pivot: f64,
+        /// The up-and-out knock-out barrier `B` (`B > pivot`).
+        barrier: f64,
+        /// The gearing on the below-pivot (loss) leg.
+        leverage: f64,
+        /// The knock-out monitoring convention.
+        monitoring: AccumulatorMonitoring,
+        /// The number of equally-spaced fixings over `[0, expiry]`.
+        fixings: u32,
+        /// The per-fixing notional.
+        fixing_notional: f64,
+        /// Antithetic Monte-Carlo path pairs (`0` ⇒ server default).
+        mc_pairs: u32,
+        /// Counter-RNG seed for the Monte-Carlo estimator.
+        mc_seed: u64,
+    },
+    /// A lookback option (floating/fixed strike). The continuous variant prices
+    /// in closed form ([`PricedLine::price_std_error`] is `None`); the discrete
+    /// variant prices by Monte-Carlo and surfaces a std-error.
+    Lookback {
+        /// Floating- or fixed-strike family.
+        style: LookbackStyle,
+        /// Call or put.
+        option: OptionType,
+        /// Continuous (closed-form) or discrete (Monte-Carlo) monitoring.
+        monitoring: LookbackMonitoring,
+        /// The strike `K` (used only by the FIXED-strike family).
+        strike: f64,
+        /// The number of discrete observations (`0` ⇒ server default; ignored for
+        /// continuous monitoring).
+        observations: u32,
+        /// Antithetic Monte-Carlo path pairs (`0` ⇒ server default; ignored for
+        /// continuous monitoring).
+        mc_pairs: u32,
+        /// Counter-RNG seed for the discrete Monte-Carlo estimator (ignored for
+        /// continuous monitoring).
+        mc_seed: u64,
     },
 }
 
@@ -1020,8 +1329,94 @@ impl Product {
                 conversion_vol: *conversion_vol,
                 correlation: *correlation,
             }),
+            Product::Tarf {
+                option,
+                strike,
+                target,
+                leverage,
+                redemption,
+                fixings,
+                fixing_notional,
+                mc_pairs,
+                mc_seed,
+            } => instrument::Product::Tarf(celnet_proto::Tarf {
+                option_type: celnet_proto::OptionType::from(*option) as i32,
+                strike: *strike,
+                target: *target,
+                leverage: *leverage,
+                redemption: match redemption {
+                    TarfRedemption::FullGain => celnet_proto::TarfRedemption::FullGain,
+                    TarfRedemption::CappedGain => celnet_proto::TarfRedemption::CappedGain,
+                } as i32,
+                schedule: Some(celnet_proto::FixingSchedule {
+                    fixing_years: equal_fixing_years(*fixings),
+                    fixing_notional: *fixing_notional,
+                }),
+                mc_pairs: *mc_pairs,
+                mc_seed: *mc_seed,
+            }),
+            Product::Accumulator {
+                pivot,
+                barrier,
+                leverage,
+                monitoring,
+                fixings,
+                fixing_notional,
+                mc_pairs,
+                mc_seed,
+            } => instrument::Product::Accumulator(celnet_proto::Accumulator {
+                pivot: *pivot,
+                barrier: *barrier,
+                leverage: *leverage,
+                monitoring: match monitoring {
+                    AccumulatorMonitoring::Discrete => {
+                        celnet_proto::AccumulatorMonitoring::Discrete
+                    }
+                    AccumulatorMonitoring::Continuous => {
+                        celnet_proto::AccumulatorMonitoring::Continuous
+                    }
+                } as i32,
+                schedule: Some(celnet_proto::FixingSchedule {
+                    fixing_years: equal_fixing_years(*fixings),
+                    fixing_notional: *fixing_notional,
+                }),
+                mc_pairs: *mc_pairs,
+                mc_seed: *mc_seed,
+            }),
+            Product::Lookback {
+                style,
+                option,
+                monitoring,
+                strike,
+                observations,
+                mc_pairs,
+                mc_seed,
+            } => instrument::Product::Lookback(celnet_proto::Lookback {
+                style: match style {
+                    LookbackStyle::Floating => celnet_proto::LookbackStyle::Floating,
+                    LookbackStyle::Fixed => celnet_proto::LookbackStyle::Fixed,
+                } as i32,
+                option_type: celnet_proto::OptionType::from(*option) as i32,
+                monitoring: match monitoring {
+                    LookbackMonitoring::Continuous => celnet_proto::LookbackMonitoring::Continuous,
+                    LookbackMonitoring::Discrete => celnet_proto::LookbackMonitoring::Discrete,
+                } as i32,
+                strike: *strike,
+                observations: *observations,
+                mc_pairs: *mc_pairs,
+                mc_seed: *mc_seed,
+            }),
         }
     }
+}
+
+/// Build the equally-spaced fixing year-fractions a count-based TARF/accumulator
+/// term implies: `n` points at `k/n · 1` for `k = 1..=n` (the server reads only
+/// the count and the per-fixing notional; the year-fractions are normalised to the
+/// instrument expiry by the engine, which spaces fixings equally over `[0, T]`).
+fn equal_fixing_years(fixings: u32) -> Vec<f64> {
+    let n = fixings.max(1);
+    (1..=n).map(|k| f64::from(k) / f64::from(n)).collect()
 }
 
 /// A fully-specified instrument the SDK can quote, stream, or reprice — the typed
@@ -1265,6 +1660,100 @@ impl InstrumentSpec {
                 strike: terms.strike,
                 conversion_vol: terms.conversion_vol,
                 correlation: terms.correlation,
+            },
+        }
+    }
+
+    /// A Target-Redemption Forward on the given pair / tenor / expiry / notional,
+    /// carrying a [`TarfTerms`] spec. Always priced by Monte-Carlo: the standard
+    /// error is surfaced on [`PricedLine::price_std_error`] / [`Quote::price_std_error`].
+    #[must_use]
+    pub fn tarf(
+        pair: CcyPair,
+        tenor: Tenor,
+        expiry_years: f64,
+        quantity: Quantity,
+        side: Side,
+        terms: TarfTerms,
+    ) -> Self {
+        Self {
+            pair,
+            tenor,
+            expiry_years,
+            quantity,
+            side,
+            product: Product::Tarf {
+                option: terms.option,
+                strike: terms.strike,
+                target: terms.target,
+                leverage: terms.leverage,
+                redemption: terms.redemption,
+                fixings: terms.fixings,
+                fixing_notional: terms.fixing_notional,
+                mc_pairs: terms.mc_pairs,
+                mc_seed: terms.mc_seed,
+            },
+        }
+    }
+
+    /// An accumulator on the given pair / tenor / expiry / notional, carrying an
+    /// [`AccumulatorTerms`] spec. Always priced by Monte-Carlo: the standard error
+    /// is surfaced on [`PricedLine::price_std_error`] / [`Quote::price_std_error`].
+    #[must_use]
+    pub fn accumulator(
+        pair: CcyPair,
+        tenor: Tenor,
+        expiry_years: f64,
+        quantity: Quantity,
+        side: Side,
+        terms: AccumulatorTerms,
+    ) -> Self {
+        Self {
+            pair,
+            tenor,
+            expiry_years,
+            quantity,
+            side,
+            product: Product::Accumulator {
+                pivot: terms.pivot,
+                barrier: terms.barrier,
+                leverage: terms.leverage,
+                monitoring: terms.monitoring,
+                fixings: terms.fixings,
+                fixing_notional: terms.fixing_notional,
+                mc_pairs: terms.mc_pairs,
+                mc_seed: terms.mc_seed,
+            },
+        }
+    }
+
+    /// A lookback option on the given pair / tenor / expiry / notional, carrying a
+    /// [`LookbackTerms`] spec. The continuous variant prices in closed form
+    /// ([`PricedLine::price_std_error`] is `None`); the discrete variant prices by
+    /// Monte-Carlo and surfaces a standard error.
+    #[must_use]
+    pub fn lookback(
+        pair: CcyPair,
+        tenor: Tenor,
+        expiry_years: f64,
+        quantity: Quantity,
+        side: Side,
+        terms: LookbackTerms,
+    ) -> Self {
+        Self {
+            pair,
+            tenor,
+            expiry_years,
+            quantity,
+            side,
+            product: Product::Lookback {
+                style: terms.style,
+                option: terms.option,
+                monitoring: terms.monitoring,
+                strike: terms.strike,
+                observations: terms.observations,
+                mc_pairs: terms.mc_pairs,
+                mc_seed: terms.mc_seed,
             },
         }
     }

@@ -6,17 +6,22 @@
  */
 
 import type {
+  AccumulatorMonitoring,
   AsianMethod,
   AveragingStyle,
   BrokerQuoteSet,
   CcyPair,
   Conventions,
+  FixingSchedule,
   Instrument,
   Leg,
+  LookbackMonitoring,
+  LookbackStyle,
   MarketContext,
   OptionType,
   QuantoPayoff,
   StrategyKind,
+  TarfRedemption,
 } from "./contract";
 
 export const DEFAULT_CONVENTIONS: Conventions = {
@@ -294,6 +299,120 @@ function quantoInstrument(
   };
 }
 
+/**
+ * Build an equally-spaced `FixingSchedule` of `fixings` dates over `(0, expiry]`,
+ * mirroring how the exotics engine spaces a TARF / accumulator schedule (`t_k =
+ * k·T/n`, ascending, each ≤ expiry). `notional` is the per-fixing accrual notional.
+ */
+export function equalFixingSchedule(
+  fixings: number,
+  expiryYears: number,
+  notional: number,
+): FixingSchedule {
+  const n = Math.max(1, Math.trunc(fixings));
+  const fixingYears: number[] = [];
+  for (let k = 1; k <= n; k += 1) fixingYears.push((expiryYears * k) / n);
+  return { fixingYears, fixingNotional: notional };
+}
+
+/** The inputs for a Target-Redemption Forward (`product.tarf`). */
+export interface TarfTerms {
+  optionType: OptionType;
+  strike: number;
+  target: number;
+  leverage: number;
+  redemption: TarfRedemption;
+  schedule: FixingSchedule;
+  mcPairs: number;
+  mcSeed: bigint;
+}
+
+/** A TARF instrument (`product.tarf`). */
+function tarfInstrument(
+  pair: CcyPair,
+  tenorYears: number,
+  notionalMm: number,
+  terms: TarfTerms,
+): Instrument {
+  return {
+    pair,
+    tenor: tenorYearsToTenor(tenorYears),
+    expiryYears: tenorYears,
+    quantity: { notional: notionalMm * 1e6, baseCcy: true },
+    side: "TWO_WAY",
+    product: { kind: "tarf", tarf: { ...terms, schedule: { ...terms.schedule } } },
+  };
+}
+
+/** The inputs for an accumulator (`product.accumulator`). */
+export interface AccumulatorTerms {
+  pivot: number;
+  barrier: number;
+  leverage: number;
+  monitoring: AccumulatorMonitoring;
+  schedule: FixingSchedule;
+  mcPairs: number;
+  mcSeed: bigint;
+}
+
+/** An accumulator instrument (`product.accumulator`). */
+function accumulatorInstrument(
+  pair: CcyPair,
+  tenorYears: number,
+  notionalMm: number,
+  terms: AccumulatorTerms,
+): Instrument {
+  return {
+    pair,
+    tenor: tenorYearsToTenor(tenorYears),
+    expiryYears: tenorYears,
+    quantity: { notional: notionalMm * 1e6, baseCcy: true },
+    side: "TWO_WAY",
+    product: {
+      kind: "accumulator",
+      accumulator: { ...terms, schedule: { ...terms.schedule } },
+    },
+  };
+}
+
+/**
+ * The inputs for a lookback option (`product.lookback`). A CONTINUOUS-monitored
+ * lookback prices by exact closed form (no MC std-error); a DISCRETE-monitored
+ * lookback prices by Monte-Carlo over `observations` observations and reports a
+ * standard error. `strike` is used only by the FIXED family.
+ */
+export interface LookbackTerms {
+  style: LookbackStyle;
+  optionType: OptionType;
+  monitoring: LookbackMonitoring;
+  strike: number;
+  observations: number;
+  mcPairs: number;
+  mcSeed: bigint;
+}
+
+/** `true` iff a lookback is discretely monitored (the Monte-Carlo variant). */
+export function isDiscreteLookback(l: LookbackTerms): boolean {
+  return l.monitoring === "DISCRETE";
+}
+
+/** A lookback instrument (`product.lookback`). */
+function lookbackInstrument(
+  pair: CcyPair,
+  tenorYears: number,
+  notionalMm: number,
+  terms: LookbackTerms,
+): Instrument {
+  return {
+    pair,
+    tenor: tenorYearsToTenor(tenorYears),
+    expiryYears: tenorYears,
+    quantity: { notional: notionalMm * 1e6, baseCcy: true },
+    side: "TWO_WAY",
+    product: { kind: "lookback", lookback: { ...terms } },
+  };
+}
+
 function strategyLegs(kind: StrategyKind): Leg[] {
   switch (kind) {
     case "RISK_REVERSAL":
@@ -353,4 +472,7 @@ export {
   forwardStartInstrument,
   cliquetInstrument,
   quantoInstrument,
+  tarfInstrument,
+  accumulatorInstrument,
+  lookbackInstrument,
 };

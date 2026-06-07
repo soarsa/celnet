@@ -438,6 +438,86 @@ pub(crate) enum ExoticKind {
         #[arg(long)]
         correlation: f64,
     },
+    /// A Target-Redemption Forward (Monte-Carlo; reports a standard error).
+    Tarf {
+        /// The favourable-side direction (put = client gains when S < strike).
+        #[arg(long, value_enum)]
+        option: CliOptionType,
+        /// The cumulative gain target; reaching it redeems (knocks out).
+        #[arg(long)]
+        target: f64,
+        /// Gearing/leverage on the adverse (loss) leg.
+        #[arg(long, default_value_t = 1.0)]
+        leverage: f64,
+        /// Number of equally-spaced fixings over `[0, expiry]`.
+        #[arg(long, default_value_t = 12)]
+        fixings: u32,
+        /// Per-fixing notional.
+        #[arg(long, default_value_t = 1.0)]
+        fixing_notional: f64,
+        /// Settle the breaching fixing at the capped (remaining-target) gain
+        /// instead of the full intrinsic (the default carries the gap exposure).
+        #[arg(long, default_value_t = false)]
+        capped_gain: bool,
+        /// Antithetic Monte-Carlo path pairs.
+        #[arg(long, default_value_t = 200_000)]
+        mc_pairs: usize,
+        /// Counter-RNG seed for the Monte-Carlo estimator.
+        #[arg(long, default_value_t = 0)]
+        mc_seed: u64,
+    },
+    /// An accumulator (Monte-Carlo; reports a standard error).
+    Accumulator {
+        /// Pivot strike at which the client accumulates each fixing.
+        #[arg(long)]
+        pivot: f64,
+        /// Up-and-out knock-out barrier (must sit above the pivot).
+        #[arg(long)]
+        barrier: f64,
+        /// Gearing/leverage on the below-pivot (loss) leg.
+        #[arg(long, default_value_t = 1.0)]
+        leverage: f64,
+        /// Number of equally-spaced fixings over `[0, expiry]`.
+        #[arg(long, default_value_t = 12)]
+        fixings: u32,
+        /// Per-fixing notional.
+        #[arg(long, default_value_t = 1.0)]
+        fixing_notional: f64,
+        /// Monitor the knock-out barrier continuously between fixings instead of
+        /// only at the discrete fixing dates.
+        #[arg(long, default_value_t = false)]
+        continuous: bool,
+        /// Antithetic Monte-Carlo path pairs.
+        #[arg(long, default_value_t = 200_000)]
+        mc_pairs: usize,
+        /// Counter-RNG seed for the Monte-Carlo estimator.
+        #[arg(long, default_value_t = 0)]
+        mc_seed: u64,
+    },
+    /// A lookback option (continuous closed-form, or discrete Monte-Carlo with a
+    /// reported standard error).
+    Lookback {
+        /// Call or put.
+        #[arg(long, value_enum)]
+        option: CliOptionType,
+        /// Use the fixed-strike family (against `--strike`) instead of floating.
+        #[arg(long, default_value_t = false)]
+        fixed: bool,
+        /// Monitor discretely over `--observations` fixings (Monte-Carlo) instead
+        /// of continuously (exact closed form).
+        #[arg(long, default_value_t = false)]
+        discrete: bool,
+        /// Number of equally-spaced monitoring observations for the discrete
+        /// variant.
+        #[arg(long, default_value_t = 64)]
+        observations: u32,
+        /// Antithetic Monte-Carlo path pairs for the discrete variant.
+        #[arg(long, default_value_t = 200_000)]
+        mc_pairs: usize,
+        /// Counter-RNG seed for the discrete Monte-Carlo estimator.
+        #[arg(long, default_value_t = 0)]
+        mc_seed: u64,
+    },
 }
 
 /// Arguments to `convention`.
@@ -697,6 +777,113 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
                         strike: a.strike,
                         conversion_vol,
                         correlation,
+                    }
+                }
+                ExoticKind::Tarf {
+                    option,
+                    target,
+                    leverage,
+                    fixings,
+                    fixing_notional,
+                    capped_gain,
+                    mc_pairs,
+                    mc_seed,
+                } => {
+                    if target <= 0.0 {
+                        return Err(DispatchError::Invalid(
+                            "tarf --target must be positive".to_owned(),
+                        ));
+                    }
+                    if fixings < 1 {
+                        return Err(DispatchError::Invalid(
+                            "tarf --fixings must be ≥ 1".to_owned(),
+                        ));
+                    }
+                    if leverage < 0.0 {
+                        return Err(DispatchError::Invalid(
+                            "tarf --leverage must be non-negative".to_owned(),
+                        ));
+                    }
+                    if fixing_notional <= 0.0 {
+                        return Err(DispatchError::Invalid(
+                            "tarf --fixing-notional must be positive".to_owned(),
+                        ));
+                    }
+                    exotic::ExoticSpec::Tarf {
+                        option: option.into(),
+                        strike: a.strike,
+                        target,
+                        leverage,
+                        fixings,
+                        fixing_notional,
+                        capped_gain,
+                        mc_pairs,
+                        mc_seed,
+                    }
+                }
+                ExoticKind::Accumulator {
+                    pivot,
+                    barrier,
+                    leverage,
+                    fixings,
+                    fixing_notional,
+                    continuous,
+                    mc_pairs,
+                    mc_seed,
+                } => {
+                    if barrier <= pivot {
+                        return Err(DispatchError::Invalid(
+                            "accumulator --barrier must sit above --pivot".to_owned(),
+                        ));
+                    }
+                    if fixings < 1 {
+                        return Err(DispatchError::Invalid(
+                            "accumulator --fixings must be ≥ 1".to_owned(),
+                        ));
+                    }
+                    if leverage < 0.0 {
+                        return Err(DispatchError::Invalid(
+                            "accumulator --leverage must be non-negative".to_owned(),
+                        ));
+                    }
+                    if fixing_notional <= 0.0 {
+                        return Err(DispatchError::Invalid(
+                            "accumulator --fixing-notional must be positive".to_owned(),
+                        ));
+                    }
+                    exotic::ExoticSpec::Accumulator {
+                        pivot,
+                        barrier,
+                        leverage,
+                        fixings,
+                        fixing_notional,
+                        continuous,
+                        mc_pairs,
+                        mc_seed,
+                    }
+                }
+                ExoticKind::Lookback {
+                    option,
+                    fixed,
+                    discrete,
+                    observations,
+                    mc_pairs,
+                    mc_seed,
+                } => {
+                    if discrete && observations < 1 {
+                        return Err(DispatchError::Invalid(
+                            "lookback --observations must be ≥ 1 for the discrete variant"
+                                .to_owned(),
+                        ));
+                    }
+                    exotic::ExoticSpec::Lookback {
+                        option: option.into(),
+                        fixed,
+                        strike: a.strike,
+                        discrete,
+                        observations,
+                        mc_pairs,
+                        mc_seed,
                     }
                 }
             };

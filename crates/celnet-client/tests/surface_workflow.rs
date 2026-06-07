@@ -599,3 +599,283 @@ async fn wave2_forward_start_cliquet_quanto_price_through_sdk() {
     .await
     .expect("test must not hang");
 }
+
+/// Wave-3 products through the SDK: a TARF (Monte-Carlo, carrying an honest
+/// standard error on BOTH the price and the RFQ quote path), an accumulator
+/// (Monte-Carlo, std-error), a continuously-monitored lookback (exact closed
+/// form, no std-error), and a discretely-monitored lookback (Monte-Carlo,
+/// std-error) — each priced end-to-end via `Client::price` / `Rfq::request` and
+/// equal to the `celnet-exotics` reference (the independent oracle) at the live
+/// market. The api-first parity + MC-honesty proof for the W3 wire products.
+///
+/// The MC budgets are deliberately small: the SDK price == the celnet-exotics MC
+/// is **bit-reproducible from the shared (seed, pairs, observations)**, so the
+/// equality is exact at ANY budget — the count only sets the std-error magnitude
+/// (which must stay strictly positive), not the agreement. Small budgets keep the
+/// finite-difference Greek strip's repeated repricings inside the test deadline.
+#[tokio::test]
+async fn wave3_tarf_accumulator_lookback_price_through_sdk() {
+    use celnet_client::{
+        AccumulatorMonitoring, AccumulatorTerms, LookbackStyle, LookbackTerms, TarfRedemption,
+        TarfTerms,
+    };
+    use celnet_exotics::{
+        Accumulator as ExAccumulator, AccumulatorMcConfig, Lookback as ExLookback,
+        LookbackMcConfig, LookbackStyle as ExLookbackStyle, Monitoring as ExMonitoring,
+        RedemptionStyle as ExRedemptionStyle, Tarf as ExTarf, TarfMcConfig, accumulator_price,
+        floating_lookback_price, lookback_mc, tarf_price,
+    };
+
+    tokio::time::timeout(TEST_DEADLINE, async {
+        let (edge, client) = start_edge_and_client().await;
+        let market = live_market();
+        let inputs = VanillaInputs::new(
+            market.spot,
+            market.spot,
+            market.vol,
+            1.0,
+            market.r_dom,
+            market.r_for,
+        );
+
+        let fixings = 4u32;
+        let pairs = 1_000u32;
+
+        // TARF: Monte-Carlo. SDK price == celnet-exotics MC at the SAME (seed,
+        // pairs) and the same fixing count ⇒ bit-reproducible ⇒ exact agreement;
+        // the SDK surfaces the MC standard error.
+        let tarf_seed = 0x7A2F_BEEF_u64;
+        let tarf_spec = InstrumentSpec::tarf(
+            eurusd(),
+            celnet_types::Tenor::Years(1),
+            1.0,
+            Quantity::base(1_000_000.0),
+            Side::Sell,
+            TarfTerms::new(
+                OptionType::Put,
+                1.10,
+                0.30,
+                2.0,
+                TarfRedemption::FullGain,
+                fixings,
+            )
+            .monte_carlo(pairs, tarf_seed),
+        );
+        let tarf_priced = tokio::time::timeout(
+            STEP_DEADLINE,
+            client.price(&tarf_spec, market, conventions()),
+        )
+        .await
+        .expect("tarf price returns")
+        .expect("tarf price succeeds");
+        let tarf_oracle = tarf_price(
+            &inputs,
+            ExTarf {
+                strike: 1.10,
+                fixings: fixings as usize,
+                target: 0.30,
+                leverage: 2.0,
+                favourable_side: OptionType::Put,
+                notional: 1.0,
+                redemption: ExRedemptionStyle::FullGain,
+            },
+            TarfMcConfig {
+                pairs: pairs as usize,
+                seed: tarf_seed,
+            },
+        );
+        assert!(
+            is_close(tarf_priced.greeks.price, tarf_oracle.price, 1e-12, 1e-12),
+            "SDK TARF {} != oracle MC {}",
+            tarf_priced.greeks.price,
+            tarf_oracle.price
+        );
+        assert!(
+            tarf_priced
+                .price_std_error
+                .expect("TARF (MC) must surface a std-error through the SDK price")
+                > 0.0
+        );
+
+        // MC-honesty across the QUOTE path (the GUI live-WS + Excel path): a TARF
+        // `Quote` MUST carry `price_std_error`.
+        let tarf_quote = tokio::time::timeout(
+            STEP_DEADLINE,
+            client
+                .request_quote(tarf_spec.clone(), conventions())
+                .request(),
+        )
+        .await
+        .expect("tarf quote returns")
+        .expect("tarf quote succeeds");
+        assert!(
+            tarf_quote
+                .price_std_error
+                .expect("TARF QUOTE must surface std-error (WS/SDK quote path)")
+                > 0.0
+        );
+
+        // Accumulator: Monte-Carlo. SDK price == celnet-exotics MC at the SAME
+        // (seed, pairs); surfaces the std-error.
+        let acc_seed = 0xACC0_BEEF_u64;
+        let acc_spec = InstrumentSpec::accumulator(
+            eurusd(),
+            celnet_types::Tenor::Years(1),
+            1.0,
+            Quantity::base(1_000_000.0),
+            Side::Buy,
+            AccumulatorTerms::new(1.10, 1.16, 2.0, AccumulatorMonitoring::Discrete, fixings)
+                .monte_carlo(pairs, acc_seed),
+        );
+        let acc_priced = tokio::time::timeout(
+            STEP_DEADLINE,
+            client.price(&acc_spec, market, conventions()),
+        )
+        .await
+        .expect("accumulator price returns")
+        .expect("accumulator price succeeds");
+        let acc_oracle = accumulator_price(
+            &inputs,
+            ExAccumulator {
+                pivot: 1.10,
+                barrier: 1.16,
+                fixings: fixings as usize,
+                leverage: 2.0,
+                notional: 1.0,
+                monitoring: ExMonitoring::Discrete,
+            },
+            AccumulatorMcConfig {
+                pairs: pairs as usize,
+                seed: acc_seed,
+            },
+        );
+        assert!(
+            is_close(acc_priced.greeks.price, acc_oracle.price, 1e-12, 1e-12),
+            "SDK accumulator {} != oracle MC {}",
+            acc_priced.greeks.price,
+            acc_oracle.price
+        );
+        assert!(
+            acc_priced
+                .price_std_error
+                .expect("accumulator (MC) must surface a std-error")
+                > 0.0
+        );
+
+        // Continuous floating lookback: exact closed form, NO std-error, dominates
+        // the equivalent vanilla.
+        let lb_cont_spec = InstrumentSpec::lookback(
+            eurusd(),
+            celnet_types::Tenor::Years(1),
+            1.0,
+            Quantity::base(1_000_000.0),
+            Side::Buy,
+            LookbackTerms::continuous(LookbackStyle::Floating, OptionType::Call, 0.0),
+        );
+        let lb_cont = tokio::time::timeout(
+            STEP_DEADLINE,
+            client.price(&lb_cont_spec, market, conventions()),
+        )
+        .await
+        .expect("continuous lookback price returns")
+        .expect("continuous lookback price succeeds");
+        let lb_cont_oracle = floating_lookback_price(&inputs, OptionType::Call);
+        assert!(
+            is_close(lb_cont.greeks.price, lb_cont_oracle, 1e-9, 1e-12),
+            "SDK continuous lookback {} != closed form {}",
+            lb_cont.greeks.price,
+            lb_cont_oracle
+        );
+        assert!(
+            lb_cont.price_std_error.is_none(),
+            "a continuous lookback is closed-form and must NOT carry a std-error"
+        );
+        // ... and its quote must NOT carry a std-error either.
+        let lb_cont_quote = tokio::time::timeout(
+            STEP_DEADLINE,
+            client
+                .request_quote(lb_cont_spec.clone(), conventions())
+                .request(),
+        )
+        .await
+        .expect("continuous lookback quote returns")
+        .expect("continuous lookback quote succeeds");
+        assert!(
+            lb_cont_quote.price_std_error.is_none(),
+            "a closed-form (continuous lookback) quote must NOT carry a std-error"
+        );
+
+        // Discrete fixed lookback: Monte-Carlo. SDK price == celnet-exotics MC at
+        // the SAME (seed, observations, pairs); surfaces the std-error on both the
+        // price and the quote.
+        let observations = 16u32;
+        let lb_seed = 0x100C_BAC4_u64;
+        let lb_disc_spec = InstrumentSpec::lookback(
+            eurusd(),
+            celnet_types::Tenor::Years(1),
+            1.0,
+            Quantity::base(1_000_000.0),
+            Side::Buy,
+            LookbackTerms::discrete(LookbackStyle::Fixed, OptionType::Call, 1.05, observations)
+                .monte_carlo(pairs, lb_seed),
+        );
+        let lb_disc = tokio::time::timeout(
+            STEP_DEADLINE,
+            client.price(&lb_disc_spec, market, conventions()),
+        )
+        .await
+        .expect("discrete lookback price returns")
+        .expect("discrete lookback price succeeds");
+        let fixed_inputs = VanillaInputs::new(
+            market.spot,
+            1.05,
+            market.vol,
+            1.0,
+            market.r_dom,
+            market.r_for,
+        );
+        let lb_disc_oracle = lookback_mc(
+            &fixed_inputs,
+            ExLookback {
+                style: ExLookbackStyle::FixedStrike,
+                option: OptionType::Call,
+            },
+            LookbackMcConfig {
+                pairs: pairs as usize,
+                steps: observations as usize,
+                seed: lb_seed,
+            },
+        );
+        assert!(
+            is_close(lb_disc.greeks.price, lb_disc_oracle.price, 1e-12, 1e-12),
+            "SDK discrete lookback {} != oracle MC {}",
+            lb_disc.greeks.price,
+            lb_disc_oracle.price
+        );
+        assert!(
+            lb_disc
+                .price_std_error
+                .expect("a discrete lookback is MC and must surface a std-error")
+                > 0.0
+        );
+        let lb_disc_quote = tokio::time::timeout(
+            STEP_DEADLINE,
+            client
+                .request_quote(lb_disc_spec.clone(), conventions())
+                .request(),
+        )
+        .await
+        .expect("discrete lookback quote returns")
+        .expect("discrete lookback quote succeeds");
+        assert!(
+            lb_disc_quote
+                .price_std_error
+                .expect("discrete-lookback QUOTE must surface std-error")
+                > 0.0
+        );
+
+        edge.shutdown(Duration::from_secs(5)).await;
+    })
+    .await
+    .expect("test must not hang");
+}

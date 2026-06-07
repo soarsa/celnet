@@ -185,6 +185,48 @@ enum QuantoPayoff {
   QUANTO_PAYOFF_DIGITAL = 1;
 }
 
+// How the redeeming (target-breaching) fixing of a TARF settles — the gap-risk
+// convention. The spread between the two is the explicit gap-risk premium.
+enum TarfRedemption {
+  // The breaching fixing pays its **full** intrinsic gain (the accumulated
+  // client gain may overshoot the target). This carries the genuine gap
+  // exposure.
+  TARF_REDEMPTION_FULL_GAIN = 0;
+  // The breaching fixing pays only the **remaining** target (exact redemption,
+  // no overshoot).
+  TARF_REDEMPTION_CAPPED_GAIN = 1;
+}
+
+// The knock-out monitoring convention for an accumulator's up-and-out barrier.
+enum AccumulatorMonitoring {
+  // The barrier is tested only at the discrete fixing dates.
+  ACCUMULATOR_MONITORING_DISCRETE = 0;
+  // The barrier is monitored continuously between fixings via the
+  // Brownian-bridge crossing probability (knocks out more often).
+  ACCUMULATOR_MONITORING_CONTINUOUS = 1;
+}
+
+// The two lookback families.
+enum LookbackStyle {
+  // Floating strike: settle against the path extremum (`S_T − min` call,
+  // `max − S_T` put). Always finishes at or above zero.
+  LOOKBACK_STYLE_FLOATING = 0;
+  // Fixed strike: optimal exercise against a fixed `K` (`(max − K)⁺` call,
+  // `(K − min)⁺` put).
+  LOOKBACK_STYLE_FIXED = 1;
+}
+
+// How a lookback's running extremum is monitored.
+enum LookbackMonitoring {
+  // Continuous monitoring — priced by the exact Conze-Viswanathan / Goldman-
+  // Sosin-Gatto closed form. The price is exact (no Monte-Carlo std-error).
+  LOOKBACK_MONITORING_CONTINUOUS = 0;
+  // Discrete monitoring over a fixed number of observations — priced by Monte-
+  // Carlo with the Brownian-bridge extremum correction, reporting a standard
+  // error (`PriceResponse.price_std_error`).
+  LOOKBACK_MONITORING_DISCRETE = 1;
+}
+
 // A recognized multi-leg vol strategy template — mirrors the `Strategy`
 // instrument leg sets the desk books as a single contract.
 enum StrategyKind {
@@ -661,6 +703,93 @@ message Quanto {
   double correlation = 5;
 }
 
+// A Target-Redemption Forward (TARF): a strip of periodic FX fixings against a
+// strike, accruing a per-fixing gain on the favourable side toward a cumulative
+// `target` that **knocks the structure out** once reached, with `leverage`
+// gearing on the adverse side. Priced by Monte-Carlo (the terminal law per
+// fixing is exact, so the only error is statistical), so the reported `price`
+// carries a standard error (`PriceResponse.price_std_error`). The value is the
+// **bank's** present value (positive = value to the bank). The expiry `T` is the
+// enclosing `Instrument.expiry_years`.
+message Tarf {
+  // The single payoff direction whose favourable side accrues client gains: a
+  // PUT means the client gains when `S_k < strike` (the classic exporter TARF),
+  // a CALL when `S_k > strike`.
+  OptionType option_type = 1;
+  // The strike `K` of every fixing.
+  double strike = 2;
+  // The cumulative gain target; accumulated client gain at or above it redeems.
+  double target = 3;
+  // The gearing/leverage multiplier on the adverse (loss) leg (`≥ 0`).
+  double leverage = 4;
+  // The gap-risk settlement convention of the redeeming fixing.
+  TarfRedemption redemption = 5;
+  // The fixing schedule. The number of fixings is `fixing_years.len()` (the
+  // exotics engine spaces them equally over `[0, expiry_years]`); the per-fixing
+  // notional is `fixing_notional`.
+  FixingSchedule schedule = 6;
+  // The number of antithetic Monte-Carlo path pairs; `0` selects a server
+  // default.
+  uint32 mc_pairs = 7;
+  // The counter-RNG seed (identical seeds reproduce results bit-for-bit).
+  uint64 mc_seed = 8;
+}
+
+// An accumulator: periodic accumulation at a `pivot` strike with an up-and-out
+// knock-out `barrier` (`barrier > pivot`) and `leverage` gearing on the
+// below-pivot (loss) leg. Priced by Monte-Carlo, so the reported `price` carries
+// a standard error (`PriceResponse.price_std_error`). The value is the
+// **client's** present value (positive = value to the client). The expiry `T` is
+// the enclosing `Instrument.expiry_years`.
+message Accumulator {
+  // The pivot strike `K` at which the client accumulates each fixing.
+  double pivot = 1;
+  // The up-and-out knock-out barrier `B` (`B > pivot`); reaching it terminates
+  // the structure.
+  double barrier = 2;
+  // The gearing/leverage multiplier on the below-pivot (loss) leg (`≥ 0`).
+  double leverage = 3;
+  // The knock-out monitoring convention (discrete at fixings, or continuous via
+  // the Brownian-bridge crossing probability between fixings).
+  AccumulatorMonitoring monitoring = 4;
+  // The fixing schedule. The number of fixings is `fixing_years.len()` (spaced
+  // equally over `[0, expiry_years]`); the per-fixing notional is
+  // `fixing_notional`.
+  FixingSchedule schedule = 5;
+  // The number of antithetic Monte-Carlo path pairs; `0` selects a server
+  // default.
+  uint32 mc_pairs = 6;
+  // The counter-RNG seed (identical seeds reproduce results bit-for-bit).
+  uint64 mc_seed = 7;
+}
+
+// A lookback option on the running extremum of the path. The continuous-
+// monitoring variant prices by exact closed form (no Monte-Carlo std-error); the
+// discrete-monitoring variant prices by Monte-Carlo with the Brownian-bridge
+// extremum correction and reports a standard error
+// (`PriceResponse.price_std_error`). The expiry `T` is the enclosing
+// `Instrument.expiry_years`.
+message Lookback {
+  // Floating- or fixed-strike family.
+  LookbackStyle style = 1;
+  // Call or put.
+  OptionType option_type = 2;
+  // Continuous (closed-form) or discrete (Monte-Carlo) monitoring.
+  LookbackMonitoring monitoring = 3;
+  // The strike `K`, used only by the FIXED-strike family (ignored for FLOATING,
+  // whose strike is the path extremum).
+  double strike = 4;
+  // The number of equally-spaced monitoring observations for the DISCRETE
+  // variant; `0` selects a server default. Ignored for CONTINUOUS monitoring.
+  uint32 observations = 5;
+  // The number of antithetic Monte-Carlo path pairs for the DISCRETE variant;
+  // `0` selects a server default. Ignored for CONTINUOUS monitoring.
+  uint32 mc_pairs = 6;
+  // The counter-RNG seed for the DISCRETE Monte-Carlo estimator (identical seeds
+  // reproduce results bit-for-bit). Ignored for CONTINUOUS monitoring.
+  uint64 mc_seed = 7;
+}
+
 // The unified instrument every Celnet workflow speaks. Exactly one variant is
 // set. Pricing, RFQ, RFS, and scenario all carry an `Instrument`, so adding a
 // product type is a single additive change here.
@@ -705,6 +834,15 @@ message Instrument {
     Cliquet cliquet = 17;
     // A quanto option (vanilla or digital, settlement-currency converted).
     Quanto quanto = 18;
+    // A Target-Redemption Forward (strip of geared fixings with a knock-out
+    // target; Monte-Carlo, carries a price standard error).
+    Tarf tarf = 19;
+    // An accumulator (periodic pivot accumulation with an up-and-out barrier;
+    // Monte-Carlo, carries a price standard error).
+    Accumulator accumulator = 20;
+    // A lookback option (floating/fixed strike; continuous closed-form or
+    // discrete Monte-Carlo, the latter carrying a price standard error).
+    Lookback lookback = 21;
   }
 }
 

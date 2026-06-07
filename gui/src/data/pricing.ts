@@ -11,14 +11,17 @@
  */
 
 import type {
+  Accumulator,
   AsianOption,
   Cliquet,
   ForwardStart,
   Greeks,
   Instrument,
   Leg,
+  Lookback,
   MarketContext,
   Quanto,
+  Tarf,
   VarianceSwap,
   VolatilitySwap,
 } from "./contract";
@@ -309,6 +312,12 @@ export function priceInstrument(
       return priceCliquet(instrument.product.cliquet, m, t);
     case "quanto":
       return priceQuanto(instrument.product.quanto, m, t);
+    case "tarf":
+      return priceTarf(instrument.product.tarf, m, t);
+    case "accumulator":
+      return priceAccumulator(instrument.product.accumulator, m, t);
+    case "lookback":
+      return priceLookback(instrument.product.lookback, m, t);
     case "vanilla":
     case "strategy": {
       const legs: LegInputs[] =
@@ -786,4 +795,392 @@ function priceQuanto(spec: Quanto, m: MarketContext, t: number): PriceOutcome {
   greeks.vega = (value(bump({ vol: m.vol + hV })) - value(bump({ vol: m.vol - hV }))) / (2 * hV);
 
   return { greeks, resolvedStrike: spec.strike };
+}
+
+// ---------------------------------------------------------------------------
+// shared Monte-Carlo accumulator (Welford mean + std-error of the mean)
+// ---------------------------------------------------------------------------
+//
+// A streaming mean / standard-error accumulator (Welford), shared by the Wave-3
+// Monte-Carlo products (TARF, accumulator, discrete lookback). The reported std
+// error is the standard error OF THE MEAN — `√(M₂ / (n−1) / n)` — matching the
+// server's `Welford::std_error` so the offline `priceStdError` carries the same
+// honest precision band the live `Quote.priceStdError` does.
+
+class McAccumulator {
+  private count = 0;
+  private mean = 0;
+  private m2 = 0;
+
+  push(x: number): void {
+    this.count += 1;
+    const d = x - this.mean;
+    this.mean += d / this.count;
+    this.m2 += d * (x - this.mean);
+  }
+
+  get value(): number {
+    return this.mean;
+  }
+
+  /** Standard error of the mean (`0` until at least two samples). */
+  get stdError(): number {
+    return this.count >= 2 ? Math.sqrt(this.m2 / (this.count - 1) / this.count) : 0;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// TARF — Target-Redemption Forward, always Monte-Carlo (bank present value)
+// ---------------------------------------------------------------------------
+//
+// A strip of geared fixings at a single strike. The favourable side accrues client
+// gains (a PUT gains when S<K, a CALL when S>K); once the accumulated gain reaches
+// the target the structure REDEEMS (the breaching fixing pays its full intrinsic
+// gain, possibly overshooting, under FULL_GAIN, or only the remaining target under
+// CAPPED_GAIN — the explicit gap-risk premium). The adverse side pays the bank a
+// geared loss. The reported value is the BANK's present value (positive = value to
+// the bank). There is no closed form ⇒ an antithetic Monte-Carlo with a real
+// standard error, mirroring celnet-exotics `tarf_price` per-unit path math (one
+// unit of base notional per fixing; the fixing notional scales linearly and is not
+// part of the per-unit ticket display). The schedule is the EQUALLY-spaced grid
+// `t_k = k·T/n`, the server's convention.
+
+/** Default antithetic path-pairs for a TARF when the trader leaves `mcPairs = 0`. */
+const TARF_DEFAULT_PAIRS = 20_000;
+
+/** One TARF path's discounted bank PV for antithetic sign `s` (per unit, notional 1). */
+function tarfPathBankPv(
+  spec: Tarf,
+  m: MarketContext,
+  z: number[],
+  s: number,
+  dtYears: number,
+): number {
+  const n = z.length;
+  // A PUT gains the client when S<K ⇒ gain-sign −1; a CALL when S>K ⇒ +1.
+  const gainSign = spec.optionType === "CALL" ? 1 : -1;
+  const drift = (m.rDom - m.rFor - 0.5 * m.vol * m.vol) * dtYears;
+  const diffusionScale = m.vol * Math.sqrt(dtYears);
+  let lnS = Math.log(m.spot);
+  let accumulatedGain = 0;
+  let bankPv = 0;
+  for (let k = 0; k < n; k += 1) {
+    lnS += drift + diffusionScale * s * z[k]!;
+    const sK = Math.exp(lnS);
+    const df = Math.exp(-m.rDom * (k + 1) * dtYears);
+    const signed = gainSign * (sK - spec.strike);
+    if (signed > 0) {
+      const remaining = spec.target - accumulatedGain;
+      if (signed >= remaining) {
+        // Breaching (redeeming) fixing: settle per the gap-risk convention.
+        const settled = spec.redemption === "FULL_GAIN" ? signed : remaining;
+        bankPv -= settled * df;
+        return bankPv; // structure redeems — no further fixings.
+      }
+      bankPv -= signed * df;
+      accumulatedGain += signed;
+    } else if (signed < 0) {
+      // Adverse fixing: the bank receives the geared client loss.
+      bankPv += spec.leverage * -signed * df;
+    }
+  }
+  return bankPv;
+}
+
+/**
+ * Price a TARF by antithetic Monte-Carlo over the equally-spaced fixing grid,
+ * reporting the discounted bank PV AND its standard error (so the ticket shows an
+ * honest precision band — a TARF has no closed form). The MC uses the deterministic
+ * seeded `Rng`, so a fixed seed reproduces bit-for-bit.
+ */
+function priceTarf(spec: Tarf, m: MarketContext, t: number): PriceOutcome {
+  const n = Math.max(1, spec.schedule.fixingYears.length);
+  const dtYears = t / n;
+  const pairs = spec.mcPairs > 0 ? Math.trunc(spec.mcPairs) : TARF_DEFAULT_PAIRS;
+  const rng = new Rng(spec.mcSeed === 0n ? 0x7a_2fn : spec.mcSeed);
+
+  const acc = new McAccumulator();
+  const z = new Array<number>(n).fill(0);
+  for (let p = 0; p < pairs; p += 1) {
+    for (let k = 0; k < n; k += 1) z[k] = rng.normal();
+    const up = tarfPathBankPv(spec, m, z, 1, dtYears);
+    const dn = tarfPathBankPv(spec, m, z, -1, dtYears);
+    acc.push(0.5 * (up + dn));
+  }
+
+  const greeks = zeroGreeks();
+  greeks.price = acc.value;
+  return { greeks, resolvedStrike: spec.strike, priceStdError: acc.stdError };
+}
+
+// ---------------------------------------------------------------------------
+// accumulator — periodic accrual with up-and-out knock-out, always Monte-Carlo
+// ---------------------------------------------------------------------------
+//
+// Periodic accumulation at a pivot strike with an up-and-out knock-out barrier
+// (barrier > pivot) and gearing on the below-pivot (loss) leg. Above pivot the
+// client gains S−K on one unit; below pivot the client loses leverage·(K−S). The
+// reported value is the CLIENT's present value. DISCRETE monitoring tests the
+// barrier only at fixings (a node at/above barrier knocks the structure dead from
+// then on); CONTINUOUS monitoring weights each fixing by the Brownian-bridge
+// no-crossing probability between fixings (knocks out more often ⇒ shrinks |PV|).
+// No closed form ⇒ antithetic Monte-Carlo with a real standard error, mirroring
+// celnet-exotics `accumulator_price` per-unit path math.
+
+/** Default antithetic path-pairs for an accumulator when `mcPairs = 0`. */
+const ACCUMULATOR_DEFAULT_PAIRS = 20_000;
+
+/** One accumulator path's discounted client PV for antithetic sign `s` (per unit). */
+function accumulatorPathClientPv(
+  spec: Accumulator,
+  m: MarketContext,
+  z: number[],
+  s: number,
+  dtYears: number,
+): number {
+  const n = z.length;
+  const drift = (m.rDom - m.rFor - 0.5 * m.vol * m.vol) * dtYears;
+  const diffusionScale = m.vol * Math.sqrt(dtYears);
+  const varStep = diffusionScale * diffusionScale;
+  const lnB = Math.log(spec.barrier);
+  const continuous = spec.monitoring === "CONTINUOUS";
+  let lnPrev = Math.log(m.spot);
+  let clientPv = 0;
+  let survival = 1; // probability the structure is still alive (continuous)
+  for (let k = 0; k < n; k += 1) {
+    const lnNext = lnPrev + drift + diffusionScale * s * z[k]!;
+    // Continuous: probability the up-barrier was NOT crossed on the bridge between
+    // the two endpoints, conditional on both being below the barrier.
+    const stepSurvival = continuous
+      ? lnPrev < lnB && lnNext < lnB
+        ? 1 - Math.exp((-2 * (lnB - lnPrev) * (lnB - lnNext)) / varStep)
+        : 0
+      : 1;
+    const sK = Math.exp(lnNext);
+    const nodeKnocked = sK >= spec.barrier;
+    const aliveWeight = continuous ? survival * stepSurvival : nodeKnocked ? 0 : 1;
+    if (aliveWeight > 0) {
+      const leg = sK > spec.pivot ? sK - spec.pivot : -spec.leverage * (spec.pivot - sK);
+      const df = Math.exp(-m.rDom * (k + 1) * dtYears);
+      clientPv += aliveWeight * leg * df;
+    }
+    if (continuous) {
+      survival *= stepSurvival;
+    } else if (nodeKnocked) {
+      return clientPv; // discrete knock-out: dead from here on.
+    }
+    lnPrev = lnNext;
+  }
+  return clientPv;
+}
+
+/**
+ * Price an accumulator by antithetic Monte-Carlo over the equally-spaced fixing
+ * grid, reporting the discounted client PV AND its standard error. Reproducible
+ * bit-for-bit at a fixed seed.
+ */
+function priceAccumulator(spec: Accumulator, m: MarketContext, t: number): PriceOutcome {
+  const n = Math.max(1, spec.schedule.fixingYears.length);
+  const dtYears = t / n;
+  const pairs = spec.mcPairs > 0 ? Math.trunc(spec.mcPairs) : ACCUMULATOR_DEFAULT_PAIRS;
+  const rng = new Rng(spec.mcSeed === 0n ? 0xacc_1en : spec.mcSeed);
+
+  const acc = new McAccumulator();
+  const z = new Array<number>(n).fill(0);
+  for (let p = 0; p < pairs; p += 1) {
+    for (let k = 0; k < n; k += 1) z[k] = rng.normal();
+    const up = accumulatorPathClientPv(spec, m, z, 1, dtYears);
+    const dn = accumulatorPathClientPv(spec, m, z, -1, dtYears);
+    acc.push(0.5 * (up + dn));
+  }
+
+  const greeks = zeroGreeks();
+  greeks.price = acc.value;
+  return { greeks, resolvedStrike: spec.pivot, priceStdError: acc.stdError };
+}
+
+// ---------------------------------------------------------------------------
+// lookback — continuous = exact closed form; discrete = Monte-Carlo + stderr
+// ---------------------------------------------------------------------------
+//
+// A lookback on the running path extremum, started at-inception (the running
+// extremum equals the current spot). The CONTINUOUS-monitoring variant prices by
+// the exact closed form (floating-strike via the Goldman-Sosin-Gatto
+// representation, fixed-strike via the Conze-Viswanathan representation —
+// provenance in docs only); it carries NO Monte-Carlo std-error. The DISCRETE
+// variant samples the extremum over a finite observation grid and prices by
+// antithetic Monte-Carlo, reporting a standard error. Mirrors celnet-exotics
+// `floating_lookback_price` / `fixed_lookback_price` / `lookback_mc`.
+
+/** The discounted continuous-monitoring lookback value (exact closed form). */
+function lookbackContinuousValue(spec: Lookback, m: MarketContext, t: number): number {
+  const s = m.spot;
+  const sig = m.vol;
+  const sst = sig * Math.sqrt(t);
+  const b = m.rDom - m.rFor;
+  const dfDom = Math.exp(-m.rDom * t);
+  const dfFor = Math.exp(-m.rFor * t);
+  const twoBOverSig2 = (2 * b) / (sig * sig);
+  const isCall = spec.optionType === "CALL";
+
+  if (spec.style === "FLOATING") {
+    // At inception the running extremum ξ = S, so (S/ξ) = 1.
+    const a1 = ((b + 0.5 * sig * sig) * t) / sst;
+    const a2 = a1 - sst;
+    if (isCall) {
+      const main = s * dfFor * normCdf(a1) - s * dfDom * normCdf(a2);
+      const refl =
+        s *
+        dfDom *
+        ((sig * sig) / (2 * b)) *
+        (normCdf(-a1 + twoBOverSig2 * sst) - Math.exp(b * t) * normCdf(-a1));
+      return main + refl;
+    }
+    const main = s * dfDom * normCdf(-a2) - s * dfFor * normCdf(-a1);
+    const refl =
+      s *
+      dfDom *
+      ((sig * sig) / (2 * b)) *
+      (-normCdf(a1 - twoBOverSig2 * sst) + Math.exp(b * t) * normCdf(a1));
+    return main + refl;
+  }
+
+  // FIXED-strike (Conze-Viswanathan), running extremum = S at inception.
+  const k = spec.strike;
+  const d1 = (Math.log(s / k) + (b + 0.5 * sig * sig) * t) / sst;
+  const d2 = d1 - sst;
+  const e1 = ((b + 0.5 * sig * sig) * t) / sst;
+  const e2 = e1 - sst;
+  if (isCall) {
+    if (k >= s) {
+      const main = s * dfFor * normCdf(d1) - k * dfDom * normCdf(d2);
+      const refl =
+        s *
+        dfDom *
+        ((sig * sig) / (2 * b)) *
+        (-Math.pow(s / k, -twoBOverSig2) * normCdf(d1 - twoBOverSig2 * sst) +
+          Math.exp(b * t) * normCdf(d1));
+      return main + refl;
+    }
+    const main =
+      dfDom * (s * Math.exp(b * t) - k) +
+      s * dfFor * normCdf(e1) -
+      s * dfDom * Math.exp(b * t) * normCdf(e2);
+    const refl =
+      s *
+      dfDom *
+      ((sig * sig) / (2 * b)) *
+      (-normCdf(e1 - twoBOverSig2 * sst) + Math.exp(b * t) * normCdf(e1));
+    return main + refl;
+  }
+  if (k <= s) {
+    const main = k * dfDom * normCdf(-d2) - s * dfFor * normCdf(-d1);
+    const refl =
+      s *
+      dfDom *
+      ((sig * sig) / (2 * b)) *
+      (Math.pow(s / k, -twoBOverSig2) * normCdf(-d1 + twoBOverSig2 * sst) -
+        Math.exp(b * t) * normCdf(-d1));
+    return main + refl;
+  }
+  const main =
+    dfDom * (k - s * Math.exp(b * t)) +
+    s * dfDom * Math.exp(b * t) * normCdf(-e2) -
+    s * dfFor * normCdf(-e1);
+  const refl =
+    s *
+    dfDom *
+    ((sig * sig) / (2 * b)) *
+    (normCdf(-e1 + twoBOverSig2 * sst) - Math.exp(b * t) * normCdf(-e1));
+  return main + refl;
+}
+
+/** Default antithetic path-pairs / observations for a discrete lookback. */
+const LOOKBACK_DEFAULT_PAIRS = 20_000;
+const LOOKBACK_DEFAULT_OBSERVATIONS = 52;
+
+/** One discrete-lookback path's discounted payoff for antithetic sign `s`. */
+function lookbackPathPayoff(
+  spec: Lookback,
+  m: MarketContext,
+  z: number[],
+  s: number,
+  dtYears: number,
+  df: number,
+): number {
+  const drift = (m.rDom - m.rFor - 0.5 * m.vol * m.vol) * dtYears;
+  const diffusionScale = m.vol * Math.sqrt(dtYears);
+  let lnS = Math.log(m.spot);
+  let runMin = m.spot;
+  let runMax = m.spot;
+  let last = m.spot;
+  for (let k = 0; k < z.length; k += 1) {
+    lnS += drift + diffusionScale * s * z[k]!;
+    last = Math.exp(lnS);
+    if (last < runMin) runMin = last;
+    if (last > runMax) runMax = last;
+  }
+  const isCall = spec.optionType === "CALL";
+  let payoff: number;
+  if (spec.style === "FLOATING") {
+    payoff = isCall ? last - runMin : runMax - last;
+  } else {
+    payoff = isCall ? Math.max(0, runMax - spec.strike) : Math.max(0, spec.strike - runMin);
+  }
+  return df * payoff;
+}
+
+/**
+ * Price a discretely-monitored lookback by antithetic Monte-Carlo over the
+ * observation grid, reporting the discounted price AND its standard error.
+ * Reproducible bit-for-bit at a fixed seed.
+ */
+function priceLookbackDiscrete(spec: Lookback, m: MarketContext, t: number): PriceOutcome {
+  const obs = spec.observations > 0 ? Math.trunc(spec.observations) : LOOKBACK_DEFAULT_OBSERVATIONS;
+  const dtYears = t / obs;
+  const pairs = spec.mcPairs > 0 ? Math.trunc(spec.mcPairs) : LOOKBACK_DEFAULT_PAIRS;
+  const rng = new Rng(spec.mcSeed === 0n ? 0x100_b_acen : spec.mcSeed);
+  const df = Math.exp(-m.rDom * t);
+
+  const acc = new McAccumulator();
+  const z = new Array<number>(obs).fill(0);
+  for (let p = 0; p < pairs; p += 1) {
+    for (let k = 0; k < obs; k += 1) z[k] = rng.normal();
+    const up = lookbackPathPayoff(spec, m, z, 1, dtYears, df);
+    const dn = lookbackPathPayoff(spec, m, z, -1, dtYears, df);
+    acc.push(0.5 * (up + dn));
+  }
+
+  const greeks = zeroGreeks();
+  greeks.price = acc.value;
+  const resolvedStrike = spec.style === "FIXED" ? spec.strike : m.spot;
+  return { greeks, resolvedStrike, priceStdError: acc.stdError };
+}
+
+/**
+ * Price a lookback. CONTINUOUS monitoring uses the exact closed form (no MC
+ * std-error) with Greeks by central finite difference; DISCRETE monitoring is an
+ * honest antithetic Monte-Carlo that reports a standard error.
+ */
+function priceLookback(spec: Lookback, m: MarketContext, t: number): PriceOutcome {
+  if (spec.monitoring === "DISCRETE") {
+    return priceLookbackDiscrete(spec, m, t);
+  }
+
+  const value = (mk: MarketContext): number => lookbackContinuousValue(spec, mk, t);
+  const greeks = zeroGreeks();
+  greeks.price = value(m);
+
+  const hS = m.spot * 1e-4;
+  const hV = 1e-4;
+  const bump = (over: Partial<MarketContext>): MarketContext => ({ ...m, ...over });
+  greeks.deltaSpot =
+    (value(bump({ spot: m.spot + hS })) - value(bump({ spot: m.spot - hS }))) / (2 * hS);
+  greeks.gamma =
+    (value(bump({ spot: m.spot + hS })) - 2 * greeks.price + value(bump({ spot: m.spot - hS }))) /
+    (hS * hS);
+  greeks.vega = (value(bump({ vol: m.vol + hV })) - value(bump({ vol: m.vol - hV }))) / (2 * hV);
+
+  const resolvedStrike = spec.style === "FIXED" ? spec.strike : m.spot;
+  return { greeks, resolvedStrike };
 }
