@@ -20,3 +20,8 @@ workspace = true
 
 [dev-dependencies]
 celnet-types.workspace = true
+# Property-based adversarial-bytes test of the crash-recovery parser
+# (`Journal::open` + `replay` over an arbitrary on-disk file): the same
+# no-panic / heal-or-typed-Err / bounded-alloc contract the nightly cargo-fuzz
+# `journal_recover` target asserts, but gated in `just check`.
+proptest.workspace = true
