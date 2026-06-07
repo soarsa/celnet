@@ -1,0 +1,25 @@
+[package]
+name = "celnet-xva"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet valuation-adjustment (XVA) engine — expected-exposure profiles (EPE/ENE) for synthetic netting sets of vanilla FX options and the CVA/DVA/FVA aggregation over a hazard-rate survival curve. Synthetic netting sets only; not live CSAs/collateral/wrong-way risk (deploy/estate-gated)."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+celnet-vanilla.workspace = true
+celnet-types.workspace = true
+# Scrambled-Sobol / Brownian-bridge QMC engine drives the exposure simulation
+# (low-discrepancy spot paths → far lower exposure-profile variance than plain MC
+# at the same path budget). Referenced via the central workspace table.
+celnet-qmc = { path = "../celnet-qmc" }
+# Correctly-rounded, cross-platform-identical exp/sqrt/ln for the survival curve,
+# the GBM exposure simulation, and the discount arithmetic — the same OSS software
+# libm the rest of the stack pins (celnet-types itself uses it directly). Not a
+# celnet peer crate, so the leaf dependency graph stays {vanilla, types, qmc}.
+libm.workspace = true

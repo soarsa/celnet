@@ -605,6 +605,7 @@ dependencies = [
  "celnet-testkit",
  "celnet-types",
  "celnet-vanilla",
+ "celnet-xva",
  "proptest",
 ]
 
@@ -767,6 +768,16 @@ dependencies = [
  "celnet-core",
  "celnet-types",
  "proptest",
+]
+
+[[package]]
+name = "celnet-xva"
+version = "0.0.0"
+dependencies = [
+ "celnet-qmc",
+ "celnet-types",
+ "celnet-vanilla",
+ "libm",
 ]
 
 [[package]]
