@@ -22,6 +22,13 @@ bytemuck.workspace = true
 # When none is available at runtime the backend falls back to the CPU oracle.
 wgpu = { workspace = true, features = ["metal", "vulkan", "gles", "dx12"] }
 pollster.workspace = true
+# Scrambled Joe-Kuo Sobol' + Brownian-bridge QMC engine. Referenced BY PATH (a
+# leaf crate not in the central workspace.dependencies table, like celnet-golden
+# / celnet-heston elsewhere). The multi-step path kernel (path.rs/path.wgsl) and
+# the pathwise/LR Greeks kernel (pathwise.rs/greeks.wgsl) consume its Sobol'
+# direction numbers, Brownian-bridge weight matrix and inverse-normal CDF
+# verbatim, so the CPU oracle and the GPU kernels draw the IDENTICAL sequence.
+celnet-qmc = { path = "../celnet-qmc" }
 
 [dev-dependencies]
 # f64 closed-form oracle the Monte-Carlo backends reconcile against.
