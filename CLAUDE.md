@@ -123,6 +123,33 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-06-07 — **▶▶ COMPLETION-PROGRAM COMPLETE — ALL 12 WAVES + the full Raft increment landed & pushed
+  (final commit `1983956`; `just check` 1231/1231, "All gates passed.").** W12 capstone (`1983956`):
+  **typed Smile provenance** (`ArbReport.smile_model=5`, additive — retires the model=<family> regex across
+  GUI/Excel/SDK) + **server observability** (additive Heartbeat fields: real celnet-fanout conflation-drop
+  count + drain-side HdrHistogram p50/p99/p99.9 + surface_version/correlation echo; streaming-edge only,
+  zero-alloc hot core untouched; surfaced in GUI StatusRibbon) + **GUI Playwright e2e + axe a11y**
+  (`gui/e2e/`: boots the REAL demo_edge, drives ticket→price / surface mark→pin / stream→click-to-trade /
+  risk drill over live WS, 10/10 on real Chromium, zero serious/critical axe) + **celnet-journal
+  compaction** (checkpoint watermark + atomic snapshot-record swap via a `SNAPSHOT_MARKER` payload-len
+  sentinel so the data-record layout is byte-UNCHANGED → replog/engine stay green; replay-from-compacted ==
+  replay-from-full BIT-IDENTICAL, crash-safe old-or-new, monotonic seqs) + **docs reconcile**
+  (ANALYTICS-SPEC/ROADMAP P3 → Built; new `docs/CLIENT-PARITY-MATRIX.md`). Integration: dropped a redundant
+  concurrent-agent stash; confirmed the flagged GUI diagnostics were PHANTOM (arbReportFromWire exported;
+  e2e node: imports compile under `tsconfig.e2e.json`). **PROGRAM TALLY:** Raft (election+truncation /
+  compaction / InstallSnapshot) · Arc I W1–W6 (full exotic catalogue: var/vol swap, Asian, fwd-start/
+  cliquet, quanto, TARF, accumulator, lookback, barriers/digitals/touches, eSSVI, LSV+booking-model — every
+  product reachable from server+SDK+CLI+Excel+GUI) · Arc II W7/W8/W9 (InstallSnapshot, GPU G3/G6+QMC-KAT,
+  fanout-under-edge) · Arc III W10/W11/W12 (XVA, exotic risk-cube + eSSVI/Sobol numerics, capstone polish).
+  **1231 tests** (started this program at 1044). Each wave: gated implement→adversarial-verify, INDEPENDENT
+  oracle (Lesson c hand-pins), my own re-gate (literal "All gates passed." + re-derive + re-run perf SOLO)
+  before commit+push. Disjoint Arc-II/III waves run on parallel git-worktree lanes; Arc-I forced-sequential
+  (shared contract). **HONEST BOUNDARY held throughout (NEVER claimed in-repo):** cross-host wire p99 /
+  kernel-bypass NIC, CUDA/NVIDIA ABSOLUTE throughput + ≤50ms exotic + Workload-A/B absolutes (Metal lacks
+  f64 ⇒ correctness+ratios only), §11 absolute wire SLOs, live JVM Celer estate. Remaining in-repo frontier:
+  Raft §6 dynamic membership (documented next increment); everything else in `docs/COMPLETION-PROGRAM.md` is
+  built. **The program bar is met: SOTA, fully-integrated, api-first across all clients, polished.**
+
 - 2026-06-07 — **COMPLETION-PROGRAM W9 + W11-A DONE (commits `676dc47` W9, `77fee13`/`919c1d3` W11-A;
   pushed; `just check` 1216/1216).** **W9 — celnet-fanout under the async edge:** replaced N-per-subscription
   spot tickers with ONE `BroadcastRing<PriceTick>` producer per pair (Copy POD `{MarketContext, tick_seq}`;
