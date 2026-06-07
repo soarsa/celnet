@@ -123,6 +123,20 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-06-06 — **COMPLETION-PROGRAM Wave 3 DONE (commit `2ce6fac`; pushed).** TARF/accumulator/lookback
+  onto the ONE oneof (additive `tarf=19`/`accumulator=20`/`lookback=21` + 4 enums; TARF/accumulator reuse
+  the existing `FixingSchedule`) → server pricer (TARF+accumulator MC; lookback continuous closed-form
+  [Goldman-Sosin-Gatto floating / Conze-Viswanathan fixed], discrete MC) + WS mirror + SDK + CLI + Excel
+  (`CELNET.TARF/ACCUMULATOR/LOOKBACK`) + GUI ticket. **MC-honesty (W2's lesson) HELD this time** — verifier
+  accepted: server genuinely emits `price_std_error` for the MC products on both price+quote paths, proven
+  by a NON-fabricated Rust SDK e2e vs a real edge with a continuous-lookback `None` negative control.
+  Oracle: server==exotics MC bit-exact same-seed ~1e-12; continuous lookback closed-form ~1e-9; structural
+  invariants (lookback dominates vanilla; TARF FullGain<CappedGain; accumulator KO reduces value). Full
+  `just check` green ("All gates passed."), **1126/1126** (was 1111); GUI tsc 0 / 131 tests; Excel build 0
+  / 136 tests. Minor (logged for W12 polish): GUI/Excel *display* tests use fixtures, but server emission is
+  independently proven by the Rust e2e. **Next: W4** (GUI ticket + Excel + SDK ergonomic ctors for the
+  ORIGINAL barriers/digitals/touches — client-only, no contract/server change).
+
 - 2026-06-06 — **COMPLETION-PROGRAM Wave 2 DONE (commit `f498f95`; pushed).** Forward-start/cliquet +
   quanto onto the ONE oneof (additive `forward_start=16`/`cliquet=17`/`quanto=18` + `QuantoPayoff`) →
   server pricer (Rubinstein fwd-start, Σ-leg plain cliquet, quanto vanilla/digital closed-form; clamped
