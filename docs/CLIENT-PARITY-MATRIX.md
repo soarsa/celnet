@@ -101,6 +101,24 @@ Each row is **Built** with a gated `celnet-parity` row (cited in
    suites exercise the same wire codec).
 4. This matrix is updated in the same change, so no surface silently lags.
 
+## SDK onboarding — runnable examples
+
+The Rust SDK ships runnable quickstart examples under `crates/celnet-client/examples/`,
+the canonical `cargo run` onboarding affordance. Each connects to a running edge
+(`CELNET_GRPC_ADDR`, default `http://127.0.0.1:50551`), drives one trader workflow,
+prints real priced output, and exits non-zero on a degenerate/empty response:
+
+| Example | Workflow | Run |
+|---|---|---|
+| `quote_and_trade` | RFQ: request a two-way quote → BUY (lift the offer) → book | `cargo run -p celnet-client --example quote_and_trade` |
+| `stream_blotter` | one multiplexed session → 3 streamed vanilla lines (snapshot + live ticks) | `cargo run -p celnet-client --example stream_blotter` |
+| `price_exotic` | price an Asian (closed-form) and an American (FD) via the vocab builders | `cargo run -p celnet-client --example price_exotic` |
+
+Boot the edge first with `cargo run -p celnet-server --example demo_edge`. The same
+SDK code paths are gated in-process by `crates/celnet-client/tests/examples_smoke.rs`,
+which boots a real edge on an ephemeral port and asserts each workflow yields a
+non-empty priced result (so the examples cannot silently rot).
+
 **Honest boundary.** "Reachable from each surface" means the capability is wired to
 the one contract on that surface. Surface-specific UX depth differs by design (e.g.
 the GUI prices exotics through `TicketWorkspace` and selects the server-chosen model
