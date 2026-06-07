@@ -36,11 +36,14 @@
 
 #![forbid(unsafe_code)]
 
+mod as_normal;
 pub mod backend;
 pub mod batch;
 pub mod counter_rng;
 pub mod cpu;
 pub mod gpu;
+pub mod path;
+pub mod pathwise;
 pub mod scenario;
 
 pub use backend::{PathSpec, PayoffKernel, PricingBackend, Reduction};
@@ -50,6 +53,14 @@ pub use batch::{
 pub use counter_rng::{CounterAddress, CounterNormals};
 pub use cpu::CpuBackend;
 pub use gpu::GpuBackend;
+pub use path::{
+    AsianPathSpec, MultiStepPathPricer, cpu_path_payoffs, cpu_path_zmax, derived_path_bound,
+    derived_path_bound_for_zmax,
+};
+pub use pathwise::{
+    GreeksEstimate, GreeksSpec, PathwiseGreeksPricer, cpu_path_estimators, derived_greeks_bound,
+    derived_greeks_bound_for_z,
+};
 pub use scenario::{ScenarioAxes, ScenarioGrid, ScenarioPricer};
 
 /// The simulation precision a [`PricingBackend`] computes in.
