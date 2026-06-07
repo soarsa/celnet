@@ -22,6 +22,23 @@
 //!
 //! [`Message::StatusRequest`]/[`Message::Status`] remain for an out-of-band
 //! liveness/high-water probe.
+//!
+//! # The InstallSnapshot RPC (§7)
+//!
+//! [`Message::InstallSnapshot`] is the third leader→follower RPC: when a leader has
+//! **compacted past** the entries a far-behind (or freshly-restarted) follower
+//! needs — the follower's required next index has fallen below the leader's log
+//! `base_index`, so the entries to bridge the gap no longer exist in the leader's
+//! log — the leader cannot `AppendEntries` the missing prefix. Instead it ships the
+//! durable [`crate::compaction::Snapshot`] bytes (the applied
+//! [`crate::state::BookState`] captured at `(last_included_index,
+//! last_included_term)`). The follower durably installs it, discards any
+//! conflicting prefix, reseeds its applied state from the snapshot, and resumes
+//! normal [`Message::AppendEntries`] from `last_included_index + 1`. The reply
+//! reuses [`Message::AppendReply`] (carrying the follower's `term` so a stale
+//! leader steps down, and on success `match_index == last_included_index` so the
+//! leader advances `next_index`/`match_index` exactly as it would after a
+//! successful AppendEntries — one reply shape, no extra variant).
 
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
@@ -100,6 +117,32 @@ pub enum Message {
         /// Whether the (pre-)vote was granted.
         granted: bool,
     },
+    /// Leader → follower (§7): transfer the durable snapshot when the leader has
+    /// compacted past the entries the follower needs. The follower durably installs
+    /// the snapshot, reseeds its applied state and watermarks, discards any
+    /// conflicting log prefix, and resumes AppendEntries from the index just after
+    /// the boundary. The reply reuses [`Message::AppendReply`]: on success its
+    /// `match_index` is `last_included_index`, and the follower's `term` is always
+    /// reported (so a stale leader steps down).
+    InstallSnapshot {
+        /// The leader's current term (a follower observing a higher term steps the
+        /// leader down via the reply; a stale leader's install is rejected).
+        term: u64,
+        /// A stable identifier of the leader (its listen port) — informational,
+        /// mirroring `candidate_id` on [`Message::RequestVote`].
+        leader_id: u64,
+        /// The absolute log index of the last entry the snapshot subsumes
+        /// (inclusive). The follower resumes replication from here + 1.
+        last_included_index: u64,
+        /// The term of the entry at `last_included_index` (retained so log-matching
+        /// at the new snapshot boundary succeeds after the prefix is discarded).
+        last_included_term: u64,
+        /// The canonical [`crate::compaction::Snapshot`] bytes (its
+        /// [`crate::compaction::Snapshot::encode`] form: a CRC-protected capture of
+        /// the applied [`crate::state::BookState`] at the boundary). Bounded by
+        /// [`MAX_FRAME_LEN`] like every frame.
+        snapshot_bytes: Vec<u8>,
+    },
     /// Either direction: a request for the peer's durable high-water index + term.
     StatusRequest,
     /// Reply to [`Message::StatusRequest`].
@@ -177,6 +220,21 @@ impl Message {
                 buf.extend_from_slice(&last_index.to_le_bytes());
                 buf.extend_from_slice(&term.to_le_bytes());
             }
+            Message::InstallSnapshot {
+                term,
+                leader_id,
+                last_included_index,
+                last_included_term,
+                snapshot_bytes,
+            } => {
+                buf.push(6u8);
+                buf.extend_from_slice(&term.to_le_bytes());
+                buf.extend_from_slice(&leader_id.to_le_bytes());
+                buf.extend_from_slice(&last_included_index.to_le_bytes());
+                buf.extend_from_slice(&last_included_term.to_le_bytes());
+                buf.extend_from_slice(&(snapshot_bytes.len() as u32).to_le_bytes());
+                buf.extend_from_slice(snapshot_bytes);
+            }
         }
         buf
     }
@@ -238,6 +296,21 @@ impl Message {
                 last_index: c.u64()?,
                 term: c.u64()?,
             }),
+            6 => {
+                let term = c.u64()?;
+                let leader_id = c.u64()?;
+                let last_included_index = c.u64()?;
+                let last_included_term = c.u64()?;
+                let len = c.u32()? as usize;
+                let snapshot_bytes = c.take(len)?.to_vec();
+                Ok(Message::InstallSnapshot {
+                    term,
+                    leader_id,
+                    last_included_index,
+                    last_included_term,
+                    snapshot_bytes,
+                })
+            }
             _ => Err(WireError::Malformed),
         }
     }
@@ -465,6 +538,22 @@ mod tests {
                 last_index: 9,
                 term: 3,
             },
+            Message::InstallSnapshot {
+                term: 14,
+                leader_id: 40_007,
+                last_included_index: 128,
+                last_included_term: 13,
+                snapshot_bytes: vec![0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x01],
+            },
+            // An empty-state snapshot (e.g. boundary 0 of an empty book) still
+            // round-trips with a zero-length payload.
+            Message::InstallSnapshot {
+                term: 1,
+                leader_id: 40_008,
+                last_included_index: 0,
+                last_included_term: 1,
+                snapshot_bytes: vec![],
+            },
         ]
     }
 
@@ -494,6 +583,49 @@ mod tests {
             Message::decode(&bytes[..bytes.len() - 1]),
             Err(WireError::Malformed)
         ));
+    }
+
+    #[test]
+    fn truncated_install_snapshot_is_rejected() {
+        let m = Message::InstallSnapshot {
+            term: 5,
+            leader_id: 40_009,
+            last_included_index: 7,
+            last_included_term: 4,
+            snapshot_bytes: vec![1, 2, 3, 4, 5],
+        };
+        let bytes = m.encode();
+        for cut in 1..bytes.len() {
+            let _ = Message::decode(&bytes[..cut]); // must not panic
+        }
+        // Lopping the last payload byte off makes the declared length overrun the
+        // buffer ⇒ Malformed, never a silently-short snapshot.
+        assert!(matches!(
+            Message::decode(&bytes[..bytes.len() - 1]),
+            Err(WireError::Malformed)
+        ));
+    }
+
+    #[test]
+    fn install_snapshot_traverses_a_real_loopback_socket() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral");
+        let addr = listener.local_addr().unwrap();
+        let sent = Message::InstallSnapshot {
+            term: 9,
+            leader_id: 40_010,
+            last_included_index: 256,
+            last_included_term: 8,
+            snapshot_bytes: vec![7u8; 4096], // a non-trivial multi-KiB payload
+        };
+        let sent2 = sent.clone();
+        let server = thread::spawn(move || {
+            let (mut conn, _) = listener.accept().unwrap();
+            read_frame(&mut conn).unwrap()
+        });
+        let mut client = TcpStream::connect(addr).expect("connect");
+        write_frame(&mut client, &sent2).unwrap();
+        let got = server.join().unwrap();
+        assert_eq!(got, sent);
     }
 
     #[test]

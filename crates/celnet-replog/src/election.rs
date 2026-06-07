@@ -298,6 +298,69 @@ impl NodeCore {
         Ok(Some(boundary))
     }
 
+    /// Follower side of the InstallSnapshot RPC (Raft §7): durably install a
+    /// snapshot the leader shipped because it had compacted past the entries this
+    /// node needs. Returns the boundary index installed, or `None` if the install
+    /// was stale (the node is already at or beyond `last_included_index`).
+    ///
+    /// The ordering mirrors local compaction's "never lose a committed entry" rule:
+    /// the snapshot file is written durably FIRST, THEN the log is reshaped to the
+    /// boundary, THEN the applied state machine + watermarks are reseeded. A crash
+    /// between the snapshot write and the log reshape leaves the (redundant) old log
+    /// on disk to be recovered harmlessly; a crash before the snapshot is durable
+    /// reads the snapshot back as absent and the old log is replayed — either way
+    /// the committed state is exact.
+    ///
+    /// On install the applied [`BookState`] is reseeded from the snapshot, and
+    /// `last_applied`/`commit_index` are advanced to the boundary (clamped to never
+    /// regress) — the snapshot *is* the applied state through `last_included_index`,
+    /// so the follower is now caught up to that committed point and resumes normal
+    /// AppendEntries from `last_included_index + 1`.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the durable snapshot-write / log-reshape IO failure.
+    fn install_snapshot(&mut self, snapshot: &Snapshot) -> std::io::Result<Option<u64>> {
+        let lii = snapshot.last_included_index;
+        let lit = snapshot.last_included_term;
+        // Stale: we already hold this boundary or a later one (via our own snapshot
+        // or simply a longer log that already covers it). A node that already has the
+        // boundary entry committed+applied needs no install.
+        if self.log.snapshot_index().is_some_and(|s| s >= lii) {
+            return Ok(None);
+        }
+        if self.last_applied.is_some_and(|a| a >= lii) {
+            return Ok(None);
+        }
+
+        // 1) Durably write the snapshot FIRST (the safe ordering).
+        self.snapshots.save(snapshot)?;
+        // 2) Reshape the durable log to the boundary (retain a matching tail, else
+        //    discard the whole log) — really on disk, atomically.
+        let advanced = self.log.install_snapshot(lii, lit)?;
+        if !advanced {
+            // The log already accounted for the boundary (matching tail discard was
+            // a no-op); nothing further to reseed.
+            return Ok(None);
+        }
+        // 3) Reseed the applied state machine + watermarks from the snapshot. The
+        //    snapshot captures the applied state through `last_included_index`, so it
+        //    becomes our applied state and our last_applied/commit at the boundary.
+        self.applied = snapshot.state.clone();
+        self.last_applied = Some(lii);
+        // Advance the commit watermark to the boundary (monotone — never regress).
+        let new_commit = match self.commit_index {
+            Some(c) if c >= lii => Some(c),
+            _ => Some(lii),
+        };
+        self.commit_index = new_commit;
+        let _ = self.persist.save_commit_index(new_commit);
+        // Any retained tail above the boundary that is now committed (≤ commit_index)
+        // is applied in order on top of the seeded state.
+        self.apply_committed();
+        Ok(Some(lii))
+    }
+
     /// Leader §5.4.2 commit advance: find the highest `N > commit_index` such that
     /// a strict majority of nodes (self + peers with `match_index >= N`) hold it
     /// **and** `log[N].term == current_term`, then advance and apply.
@@ -646,11 +709,14 @@ impl RaftNode {
     /// compacted at/beyond `at_index`).
     ///
     /// Safe to call on any node (leader or follower) — it compacts only this
-    /// node's own committed+applied prefix and never affects consensus safety. For
-    /// a cluster where a far-behind follower might still need an entry, prefer
-    /// [`RaftNode::safe_compact_index`] to choose `at_index` no higher than the
-    /// slowest follower's replicated point (until the InstallSnapshot RPC lands —
-    /// see the crate root).
+    /// node's own committed+applied prefix and never affects consensus safety. A
+    /// leader that compacts past a far-behind follower's replicated point now
+    /// catches that follower up automatically via the **InstallSnapshot RPC** (Raft
+    /// §7 — built; see the crate root): the next replication round ships the durable
+    /// snapshot instead of the (discarded) entries. [`RaftNode::safe_compact_index`]
+    /// remains available as a *conservative* boundary (compact no higher than the
+    /// slowest follower) for operators who prefer to avoid the snapshot transfer
+    /// entirely, but it is no longer required for correctness.
     ///
     /// # Errors
     ///
@@ -679,11 +745,14 @@ impl RaftNode {
 
     /// The highest index it is **safe to compact past** without a far-behind
     /// follower needing a discarded entry: the minimum of this node's
-    /// `last_applied` and every peer's known `match_index`. A leader uses this to
-    /// pick a compaction boundary that never strands a follower before the
-    /// InstallSnapshot RPC exists (the documented operational discipline — see the
-    /// crate root). Returns `None` if any peer's progress is still unknown (be
-    /// conservative — do not compact) or nothing is applied yet.
+    /// `last_applied` and every peer's known `match_index`. With the
+    /// **InstallSnapshot RPC** now built (see the crate root), this is no longer
+    /// required for correctness — a leader that compacts past a lagging follower
+    /// catches it up automatically by shipping the snapshot. It is retained as the
+    /// *conservative* operational choice for an operator who would rather never
+    /// trigger a snapshot transfer (e.g. to bound steady-state network cost).
+    /// Returns `None` if any peer's progress is still unknown (be conservative — do
+    /// not compact) or nothing is applied yet.
     #[must_use]
     pub fn safe_compact_index(&self) -> Option<u64> {
         let core = self.core.lock().expect("core lock");
@@ -857,6 +926,20 @@ fn handle_rpc(core: &mut NodeCore, msg: Message) -> Option<Message> {
             last_log_index,
             last_log_term,
         )),
+        Message::InstallSnapshot {
+            term,
+            leader_id,
+            last_included_index,
+            last_included_term,
+            snapshot_bytes,
+        } => Some(handle_install_snapshot(
+            core,
+            term,
+            leader_id,
+            last_included_index,
+            last_included_term,
+            &snapshot_bytes,
+        )),
         Message::StatusRequest => Some(Message::Status {
             last_index: core.log.last_index().unwrap_or(EMPTY_LOG),
             term: core.current_term(),
@@ -923,6 +1006,83 @@ fn handle_append_entries(
         term: core.current_term(),
         success: true,
         match_index: core.log.last_index().unwrap_or(EMPTY_LOG),
+    }
+}
+
+/// InstallSnapshot receiver (§7): term check → step-down → durably install the
+/// snapshot (reseed applied state + log boundary + watermarks) → reply.
+///
+/// The reply reuses [`Message::AppendReply`]: `term` always (so a stale leader
+/// steps down), and on success `match_index == last_included_index` so the leader
+/// advances this follower's `next_index`/`match_index` to the snapshot boundary,
+/// then resumes AppendEntries from `last_included_index + 1`.
+fn handle_install_snapshot(
+    core: &mut NodeCore,
+    term: u64,
+    _leader_id: u64,
+    last_included_index: u64,
+    last_included_term: u64,
+    snapshot_bytes: &[u8],
+) -> Message {
+    let my_term = core.current_term();
+    // (1) Reply false if the leader's term is stale — do not touch any state.
+    if term < my_term {
+        return Message::AppendReply {
+            term: my_term,
+            success: false,
+            match_index: core.log.last_index().unwrap_or(EMPTY_LOG),
+        };
+    }
+    // (2) A term >= ours from a leader: adopt it and (re)become a follower; this is
+    //     valid leader contact, so reset the election timer.
+    if term > my_term {
+        let _ = core.persist.save(term, None);
+    }
+    core.role = Role::Follower;
+    core.last_leader_contact = Instant::now();
+    core.reset_election_timer();
+
+    // (3) Decode the shipped snapshot. A corrupt frame is rejected (success=false)
+    //     rather than silently installing garbage — the leader simply retries.
+    let Ok(snapshot) = Snapshot::decode(snapshot_bytes) else {
+        return Message::AppendReply {
+            term: core.current_term(),
+            success: false,
+            match_index: core.log.last_index().unwrap_or(EMPTY_LOG),
+        };
+    };
+    // The boundary the leader declared in the RPC must match the snapshot it shipped
+    // (defence against a mismatched/forged header) — reject otherwise.
+    if snapshot.last_included_index != last_included_index
+        || snapshot.last_included_term != last_included_term
+    {
+        return Message::AppendReply {
+            term: core.current_term(),
+            success: false,
+            match_index: core.log.last_index().unwrap_or(EMPTY_LOG),
+        };
+    }
+
+    // (4) Durably install (snapshot file → log reshape → reseed applied + commit).
+    //     A stale install (we already cover the boundary) is harmless — reply success
+    //     reporting our own high-water so the leader advances next_index correctly.
+    match core.install_snapshot(&snapshot) {
+        Ok(_installed) => Message::AppendReply {
+            term: core.current_term(),
+            success: true,
+            // The boundary is now durably accounted for: confirm match up to it (or
+            // our own higher high-water if our retained tail already extends past it).
+            match_index: core
+                .log
+                .last_index()
+                .map_or(last_included_index, |hw| hw.max(last_included_index)),
+        },
+        // A durable IO failure: do not claim success — the leader retries.
+        Err(_) => Message::AppendReply {
+            term: core.current_term(),
+            success: false,
+            match_index: core.log.last_index().unwrap_or(EMPTY_LOG),
+        },
     }
 }
 
@@ -1235,12 +1395,51 @@ fn replicate_round(core: &Arc<Mutex<NodeCore>>, stop: &Arc<AtomicBool>) {
         let rpc_timeout = (c.cfg.heartbeat * 3)
             .min(c.cfg.io_timeout)
             .max(Duration::from_millis(20));
+        let base_index = c.log.base_index();
+        let leader_id = c.id;
+        // Read the leader's durable snapshot once if any peer is behind the log base
+        // (it has been compacted past) — shared across all such peers this round.
+        let need_snapshot = c
+            .peers
+            .values()
+            .any(|p| base_index > 0 && p.next_index < base_index);
+        let snapshot = if need_snapshot {
+            c.snapshots.load().ok().flatten()
+        } else {
+            None
+        };
         let mut plans = Vec::new();
         // Gather per-peer plans; reading entries from the log needs the lock.
         let peer_ids: Vec<u64> = c.peers.keys().copied().collect();
         for pid in peer_ids {
             let next_index = c.peers[&pid].next_index;
             let addr = c.peers[&pid].addr;
+
+            // If the entries this peer needs (from `next_index`) have been compacted
+            // away (`next_index < base_index`), AppendEntries cannot bridge the gap —
+            // ship the durable snapshot instead (§7). `sent_match` on success is the
+            // snapshot boundary, so a successful install advances the peer to it. (If
+            // the base shifted but no durable snapshot is on disk — which cannot
+            // happen, since the base only shifts via `discard_prefix`, always preceded
+            // by a snapshot save — we fall through to a heartbeat rather than send a
+            // gap the follower would reject, and retry next round.)
+            let behind_base = base_index > 0 && next_index < base_index;
+            if let Some(snap) = snapshot.as_ref().filter(|_| behind_base) {
+                plans.push(Plan {
+                    pid,
+                    addr,
+                    msg: Message::InstallSnapshot {
+                        term,
+                        leader_id,
+                        last_included_index: snap.last_included_index,
+                        last_included_term: snap.last_included_term,
+                        snapshot_bytes: snap.encode(),
+                    },
+                    sent_match: snap.last_included_index,
+                });
+                continue;
+            }
+
             // prev = entry just before next_index.
             let (prev_log_index, prev_log_term) = match next_index.checked_sub(1) {
                 None => (EMPTY_PREV, 0),
