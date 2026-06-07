@@ -368,16 +368,23 @@ fn measured_throughput_above_floor() {
          docs/SCALE-OUT.md §5/§11)."
     );
 
-    // Floor: the lock-free single-slot Copy publish must clear 10 million items/s.
-    // Measured on this host it is well above this (tens of millions); the floor is
-    // set with wide margin to never flake under parallel-nextest contention, yet
-    // tight enough to catch a catastrophic regression (an accidental lock, alloc,
-    // or syscall would drop publish by 1–2 orders of magnitude). The contended
-    // fan-out figure is reported but deliberately NOT gated (harness spin storm).
-    const FLOOR: f64 = 1.0e7;
+    // Floor: a **contention-robust catastrophic-regression** sanity bound, NOT the
+    // throughput SLO. The lock-free single-slot Copy publish runs at tens of
+    // millions/s uncontended (the figure reported in the println above — the
+    // relative-regression signal). The in-suite assertion only has to survive being
+    // measured while the WHOLE workspace test suite saturates every core (under
+    // full `just check`, raw publish has been observed ~4.5e6/s purely from core
+    // starvation, with no code change). So the gated floor is set to 1e6/s: an
+    // accidental lock, alloc, or syscall on the hot publish path would drop
+    // throughput by 1–2 orders of magnitude (to ~1e4–1e5/s) and trip this, while a
+    // mere scheduling spin storm cannot. The strict uncontended floor is a perf-lane
+    // concern (run without contention), per the §1.2 measurement-methodology lesson
+    // (gate the catastrophic-regression bound in the contended suite; the absolute
+    // figure is reported-not-gated — same rule as the engine-serial latency probes).
+    const FLOOR: f64 = 1.0e6;
     assert!(
         raw_per_sec > FLOOR,
         "raw publish throughput {raw_per_sec:.3e}/s fell below the {FLOOR:.0e}/s \
-         floor (lock/alloc/syscall regression on the hot path?)"
+         catastrophic-regression floor (lock/alloc/syscall on the hot path?)"
     );
 }
