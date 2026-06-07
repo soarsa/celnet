@@ -88,10 +88,17 @@ async fn smile_model_selection_marks_and_tags_the_model() {
             "model selection changes the 10Δ put wing: hedge {hedge_put} vs sv {sv_put}"
         );
 
-        // The model used is carried in the arbitrage note (the provenance channel).
+        // The family the server marked under is carried in the TYPED, authoritative
+        // `arbitrage.model` field (read directly, not by parsing the note). The note
+        // still embeds the `model=` token for human eyes.
+        assert_eq!(
+            sv_smile.arbitrage.model,
+            Calibration::StochasticVol,
+            "the typed provenance field names the stochastic-vol family the server used"
+        );
         assert!(
             sv_smile.arbitrage.note.contains("model="),
-            "the smile note carries the model provenance, got {:?}",
+            "the human note still carries a model= token, got {:?}",
             sv_smile.arbitrage.note
         );
 

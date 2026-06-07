@@ -23,6 +23,7 @@ import type {
   Executed,
   Execution,
   Greeks,
+  Heartbeat,
   Instrument,
   LimitStatusRequest,
   LimitStatusResponse,
@@ -84,6 +85,18 @@ function twoWayAround(midPct: number, spreadPct: number): TwoWayPrice {
   return { bid: midPct - spreadPct / 2, offer: midPct + spreadPct / 2 };
 }
 
+/**
+ * The `q`-quantile (0..1) of a sample of nanosecond latencies as a `bigint` ns —
+ * nearest-rank on the sorted copy (matching an HdrHistogram's percentile lookup
+ * closely enough for the standalone surfacing). Empty ⇒ 0n (no measurement yet).
+ */
+function percentileNs(samples: number[], q: number): bigint {
+  if (samples.length === 0) return 0n;
+  const sorted = [...samples].sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil(q * sorted.length) - 1));
+  return BigInt(Math.round(sorted[idx] ?? 0));
+}
+
 interface LiveSubscription {
   id: bigint;
   instrument: Instrument;
@@ -98,6 +111,14 @@ interface LiveSubscription {
   /** Frames until the next health perturbation (deterministic). */
   healthTimer: number;
   tokens: TradableToken[];
+  /**
+   * Bounded ring of REAL measured price-compute durations (ns) for this line —
+   * the same drain-side latency the server reports on its heartbeat, measured here
+   * around the standalone `priceSub`. Used to compute an honest p50/p99/p99.9.
+   */
+  latencyRing: number[];
+  /** Frames until the next liveness heartbeat for this subscription. */
+  beatCountdown: number;
 }
 
 /** A live market-series subscription: a deterministic walk of one observable. */
@@ -166,6 +187,9 @@ class MockStreamSession implements StreamSession {
       health: "HEALTHY",
       healthTimer: 40 + Number(id % 11n) * 7,
       tokens: [],
+      latencyRing: [],
+      // Stagger the first beat across lines so they don't all fire on one frame.
+      beatCountdown: 12 + Number(id % 7n) * 3,
     };
     this.subs.set(id, sub);
     // Immediate baseline snapshot.
@@ -385,6 +409,28 @@ class MockStreamSession implements StreamSession {
     };
   }
 
+  /**
+   * Build a liveness [`Heartbeat`] for a subscription with HONEST observability:
+   * real p50/p99/p99.9 (ns) from the line's measured latency ring, the live
+   * surface_version (1), correlation 0 (the mock opens with none), and
+   * conflation_drops=0 — the standalone mock has no fan-out ring, so it reports 0
+   * truthfully rather than inventing a drop count. (The live WS transport carries
+   * the server's real ring skip count straight through.)
+   */
+  private buildHeartbeat(sub: LiveSubscription): Heartbeat {
+    return {
+      subscriptionId: sub.id,
+      sequence: sub.sequence,
+      conflationDrops: 0n,
+      serverPriceP50Nanos: percentileNs(sub.latencyRing, 0.5),
+      serverPriceP99Nanos: percentileNs(sub.latencyRing, 0.99),
+      serverPriceP999Nanos: percentileNs(sub.latencyRing, 0.999),
+      surfaceVersion: 1n,
+      correlationId: 0n,
+      epochNanos: nowNanos(),
+    };
+  }
+
   private tick(): void {
     this.frame += 1;
     // Advance every live market series: a deterministic mean-reverting walk around
@@ -425,6 +471,17 @@ class MockStreamSession implements StreamSession {
       }
       if (sub.health === "RESYNCING") continue;
 
+      // Emit a liveness heartbeat on cadence — carrying the current sequence PLUS
+      // honest observability: a real measured price-compute p50/p99/p99.9 (ns) from
+      // this line's latency ring, surface_version=1 (the mock's single live mark),
+      // and conflation_drops=0 (the standalone mock has no fan-out ring to drop from
+      // — reported honestly as 0, never a fabricated non-zero).
+      sub.beatCountdown -= 1;
+      if (sub.beatCountdown <= 0) {
+        sub.beatCountdown = 24 + Number(sub.id % 5n) * 6;
+        this.emit({ kind: "heartbeat", heartbeat: this.buildHeartbeat(sub) });
+      }
+
       // Only a fraction of subscriptions tick each frame (calm under fire): the
       // tape is bursty but the blotter flashes only the changed lines.
       const draw = sub.rng.next();
@@ -435,7 +492,13 @@ class MockStreamSession implements StreamSession {
       sub.vol += 0.04 * (anchor - sub.vol) + 0.0006 * sub.rng.normal();
       sub.vol = Math.max(0.01, sub.vol);
 
+      // Time the standalone price-compute — a REAL drain-side measurement, mirroring
+      // the server's per-subscription LatencyRecorder. Push into a bounded ring.
+      const t0 = performance.now();
       const { price, greeks, strike } = this.priceSub(sub);
+      const elapsedNs = Math.max(0, Math.round((performance.now() - t0) * 1_000_000));
+      sub.latencyRing.push(elapsedNs);
+      if (sub.latencyRing.length > 256) sub.latencyRing.shift();
       sub.sequence += 1n;
       const update: Update = {
         subscriptionId: sub.id,

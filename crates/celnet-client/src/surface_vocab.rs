@@ -10,7 +10,7 @@
 use celnet_types::Greeks;
 
 use crate::error::{ClientError, ClientResult};
-use crate::vocab::Conventions;
+use crate::vocab::{Calibration, Conventions};
 
 /// Relative tolerance for matching a calibrated smile pillar by its signed
 /// convention delta. Pillars sit at conventional deltas (0.10, 0.25, 0.50, …),
@@ -161,8 +161,16 @@ pub struct ArbReport {
     pub calendar_arbitrage_free: bool,
     /// The worst negative density observed (`0.0` = none).
     pub worst_density: f64,
-    /// A human-readable note on any repair applied during calibration.
+    /// A human-readable note on any repair applied during calibration. Still
+    /// embeds a `model=<label>` token for human eyes, but [`ArbReport::model`] is
+    /// the authoritative, typed provenance — read the calibration family from that
+    /// field, never by parsing this string.
     pub note: String,
+    /// The calibration family this smile was actually marked under — the typed,
+    /// authoritative provenance the server stamps on every marked smile (the typed
+    /// form of the wire `ArbReport.smile_model`). Read this instead of parsing the
+    /// `model=` token from [`ArbReport::note`].
+    pub model: Calibration,
 }
 
 impl ArbReport {
@@ -178,6 +186,7 @@ impl ArbReport {
             calendar_arbitrage_free: w.calendar_arbitrage_free,
             worst_density: w.worst_density,
             note: w.note.clone(),
+            model: crate::vocab::calibration_from_wire(w.smile_model),
         }
     }
 }
@@ -655,6 +664,7 @@ mod tests {
                 calendar_arbitrage_free: true,
                 worst_density: 0.0,
                 note: String::new(),
+                model: Calibration::MarketHedge,
             },
             epoch_nanos: 0,
         }

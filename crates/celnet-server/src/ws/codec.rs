@@ -956,6 +956,15 @@ pub(super) fn server_stream_message_to_json(
                 "subscription": h.subscription.as_ref().map(subscription_id_to_json),
                 "sequence": h.sequence,
                 "epoch_nanos": h.epoch_nanos,
+                // Server observability surfaced on the beat (additive): the exact
+                // ring conflation-drop count, the drain-side price p50/p99/p99.9
+                // (ns), and the surface-version / correlation provenance echo.
+                "conflation_drops": h.conflation_drops,
+                "server_price_p50_nanos": h.server_price_p50_nanos,
+                "server_price_p99_nanos": h.server_price_p99_nanos,
+                "server_price_p999_nanos": h.server_price_p999_nanos,
+                "surface_version": h.surface_version,
+                "correlation_id": h.correlation_id,
             }),
         ),
         Message::StreamEnd(e) => ("stream_end", stream_end_to_json(e)),
@@ -1072,7 +1081,27 @@ fn arb_report_to_json(a: &ArbReport) -> Value {
         "calendar_arbitrage_free": a.calendar_arbitrage_free,
         "worst_density": a.worst_density,
         "note": a.note,
+        // The TYPED, authoritative calibration-family provenance: the numeric
+        // SmileModel tag plus a stable label. A consumer reads `smile_model` (or
+        // `smile_model_label`) directly — never the `model=` token in `note`.
+        "smile_model": a.smile_model,
+        "smile_model_label": smile_model_label(a.smile_model),
     })
+}
+
+/// A stable, machine-friendly label for a wire [`celnet_proto::SmileModel`] tag,
+/// surfaced alongside the numeric provenance so a JSON consumer can render the
+/// calibration family without re-deriving the enum. Vendor-/method-neutral by name
+/// (guardrail #8). An unknown tag is reported honestly as `unknown`.
+fn smile_model_label(tag: i32) -> &'static str {
+    match celnet_proto::SmileModel::try_from(tag) {
+        Ok(celnet_proto::SmileModel::MarketHedge) => "market-hedge",
+        Ok(celnet_proto::SmileModel::StochasticVol) => "stochastic-vol",
+        Ok(celnet_proto::SmileModel::Parametric) => "parametric",
+        Ok(celnet_proto::SmileModel::ParametricSurface) => "parametric-surface",
+        Ok(celnet_proto::SmileModel::ExtendedSurface) => "extended-surface",
+        Err(_) => "unknown",
+    }
 }
 
 fn smile_to_json(s: &Smile) -> Value {

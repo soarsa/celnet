@@ -40,8 +40,8 @@ const HANDLES: Handle[] = ["atmVol", "rr25", "bf25", "rr10", "bf10"];
  * The selectable smile-calibration models. These are a REAL control now: the
  * contract's `MarkSurfaceRequest.smile_model` field routes the selection to the
  * server's calibration engine (VV/SABR/SVI/SSVI), which marks under the chosen
- * family and echoes it in each smile's `arbitrage.note` as `model=<family>`. The
- * labels are purpose-named (vendor/method-neutral, CLAUDE.md rule 8).
+ * family and echoes it back in each smile's TYPED `arbitrage.model` provenance
+ * field. The labels are purpose-named (vendor/method-neutral, CLAUDE.md rule 8).
  */
 const SMILE_MODELS: { id: SmileModel; label: string; hint: string }[] = [
   { id: "MARKET_HEDGE", label: "Market hedge", hint: "Desk market-hedge construction (default)" },
@@ -55,10 +55,25 @@ const SMILE_MODELS: { id: SmileModel; label: string; hint: string }[] = [
   },
 ];
 
-/** Read the `model=<family>` provenance the server stamps into a smile's arb note. */
-function modelProvenance(note: string): string | null {
-  const m = note.match(/model=([\w-]+)/);
-  return m ? m[1]! : null;
+/**
+ * The stable, vendor-/method-neutral family label for a TYPED [`SmileModel`] —
+ * the calibration family the server actually marked under, read from the typed
+ * `arbitrage.model` provenance field (the `model=` note regex is RETIRED). Mirrors
+ * the server's `smile_model_label`, so GUI and server agree byte-for-byte.
+ */
+function modelProvenance(model: SmileModel): string {
+  switch (model) {
+    case "MARKET_HEDGE":
+      return "market-hedge";
+    case "STOCHASTIC_VOL":
+      return "stochastic-vol";
+    case "PARAMETRIC":
+      return "parametric";
+    case "PARAMETRIC_SURFACE":
+      return "parametric-surface";
+    case "EXTENDED_SURFACE":
+      return "extended-surface";
+  }
 }
 /** Stable per-tenor key — selection compares on this, never an absolute-float window. */
 const tkey = (t: number): string => t.toFixed(8);
@@ -250,12 +265,25 @@ export function SurfaceWorkspace(): React.ReactElement {
             const q = s.brokerQuotes;
             const edited = edits[tkey(s.tenorYears)] ?? {};
             return (
-              <button
+              // A11y: the row is a plain container, NOT a <button> — the active row
+              // holds focusable <input>s, and a button-with-focusable-descendants is
+              // a nested-interactive violation. The tenor cell is the row's single
+              // select control (a real button); inactive cells are static, active
+              // cells are the edit inputs (now siblings of, not nested in, a button).
+              // No role="row" here: we don't claim a grid, so a bare div is correct.
+              <div
                 key={tkey(s.tenorYears)}
                 className={`${styles.markRow} ${active ? styles.markActive : ""}`}
-                onClick={() => setSelTenorYears(s.tenorYears)}
               >
-                <span className={styles.tenorCell}>{tenorLabel(s.tenorYears)}</span>
+                <button
+                  type="button"
+                  className={styles.tenorCell}
+                  onClick={() => setSelTenorYears(s.tenorYears)}
+                  aria-pressed={active}
+                  title={`Select ${tenorLabel(s.tenorYears)} to edit its marks`}
+                >
+                  {tenorLabel(s.tenorYears)}
+                </button>
                 {HANDLES.map((h) => {
                   const val = q[h];
                   const isEdited = edited[h] !== undefined;
@@ -268,7 +296,6 @@ export function SurfaceWorkspace(): React.ReactElement {
                         step={h === "atmVol" ? 0.05 : 0.01}
                         value={(val * 100).toFixed(2)}
                         onChange={(e) => setHandle(s.tenorYears, h, e.target.value)}
-                        onClick={(e) => e.stopPropagation()}
                         aria-label={`${tenorLabel(s.tenorYears)} ${h}`}
                       />
                     );
@@ -279,7 +306,7 @@ export function SurfaceWorkspace(): React.ReactElement {
                     </span>
                   );
                 })}
-              </button>
+              </div>
             );
           })}
         </div>
@@ -318,12 +345,11 @@ export function SurfaceWorkspace(): React.ReactElement {
         <div className={styles.provenance}>
           <span className={styles.provLabel}>marked as</span>
           {/* The honest provenance the server reports — the model family it actually
-              calibrated under, parsed from the marked smile's arb note. Falls back to
-              the selected model's label if the note carries no tag. */}
-          <span title="The calibration family the server marked this surface under (from the smile arb-report provenance).">
-            {modelProvenance(selectedSmile.arbitrage.note) ??
-              SMILE_MODELS.find((m) => m.id === app.surfaceModel)?.label.toLowerCase() ??
-              "market-hedge"}
+              calibrated under, read from the marked smile's TYPED `arbitrage.model`
+              provenance field (the authoritative source; the `model=` note regex is
+              retired). */}
+          <span title="The calibration family the server marked this surface under (from the smile arb-report's typed provenance field).">
+            {modelProvenance(selectedSmile.arbitrage.model)}
           </span>
           <span className={styles.provDot}>·</span>
           <span>{selectedSmile.brokerQuotes.hasTenDelta ? "5-pt handles" : "3-pt handles"}</span>

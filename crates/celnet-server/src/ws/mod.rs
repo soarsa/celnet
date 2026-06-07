@@ -423,6 +423,7 @@ fn decode_stream_control(
             subscription: None,
             sequence: 0,
             epoch_nanos: 0,
+            ..Default::default()
         }),
         other => {
             return Err(codec::CodecError(format!(

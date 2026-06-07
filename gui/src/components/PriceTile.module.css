@@ -48,9 +48,17 @@
   animation: flash-dn var(--flash-decay) var(--ease-out);
 }
 
+/* The flash animates BOTH the background wash AND the text colour together: while
+ * the coloured wash is up, the digits go to high-contrast primary so a same-hue
+ * collision never occurs (the green bid text on the green up-flash was 2.04:1).
+ * As the wash decays to transparent the colour returns to the resting bid/offer
+ * hue — so the semantic up/down colour is fully preserved; only the ~450ms flash
+ * window is neutralised. Default fill-mode reverts both to the resting state, so
+ * the persistent flash class never strands a low-contrast pairing. */
 @keyframes flash-up {
   0% {
     background-color: var(--flash-up);
+    color: var(--text-primary);
   }
   100% {
     background-color: transparent;
@@ -59,6 +67,7 @@
 @keyframes flash-dn {
   0% {
     background-color: var(--flash-dn);
+    color: var(--text-primary);
   }
   100% {
     background-color: transparent;

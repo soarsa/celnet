@@ -96,9 +96,15 @@
   --bg-inset: oklch(0.21 0.016 264);
 
   --text-primary: oklch(0.97 0.008 264);
-  /* Celer secondary text ≈ #979CB7 (periwinkle-grey). */
-  --text-secondary: oklch(0.68 0.03 276);
-  --text-tertiary: oklch(0.55 0.025 276);
+  /* Celer secondary text ≈ #979CB7 (periwinkle-grey), lifted to stay above the
+   * AA-tuned tertiary and keep the secondary>tertiary hierarchy. */
+  --text-secondary: oklch(0.8 0.03 276);
+  /* Tertiary lifted to clear WCAG AA 4.5:1 at the 9–12px sizes it labels (rail
+   * labels, kbd hints, search placeholder, build stamp, blotter owner/tenor)
+   * against the darkest→lightest dark surfaces incl. the raised row bg — verified
+   * by the axe a11y e2e (was 0.55 ⇒ 3.4:1; 0.68 still left 4.44:1 on raised). It
+   * stays dimmer than --text-secondary, preserving the type hierarchy. */
+  --text-tertiary: oklch(0.74 0.025 276);
 
   /* Celer brand coral #ff7357 — logo/pulse/active-pair marker (NOT up/down). */
   --brand: oklch(0.72 0.17 35);

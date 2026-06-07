@@ -63,15 +63,17 @@ describe("calibrateSmile — marks reproduce the broker inputs", () => {
     expect(s.arbitrage.note).toMatch(/butterfly/i);
   });
 
-  it("stamps the model provenance tag into the arb note", () => {
+  it("stamps the TYPED model provenance (authoritative) + a human note token", () => {
     const s = calibrateSmile(PAIR, quote(), DEFAULT_CONVENTIONS, NOW, "STOCHASTIC_VOL");
+    // The TYPED field is the authoritative source the GUI reads.
+    expect(s.arbitrage.model).toBe("STOCHASTIC_VOL");
+    // The note keeps a human token for the eye only (not scraped by code).
     expect(s.arbitrage.note).toContain("model=stochastic-vol");
   });
 
-  it("stamps the eSSVI (EXTENDED_SURFACE) provenance the server emits", () => {
-    // Mirrors the server's `model=extended-surface` stamp so the GUI's
-    // modelProvenance regex displays the family the trader picked.
+  it("stamps the eSSVI (EXTENDED_SURFACE) typed provenance the server emits", () => {
     const s = calibrateSmile(PAIR, quote(), DEFAULT_CONVENTIONS, NOW, "EXTENDED_SURFACE");
+    expect(s.arbitrage.model).toBe("EXTENDED_SURFACE");
     expect(s.arbitrage.note).toContain("model=extended-surface");
   });
 });

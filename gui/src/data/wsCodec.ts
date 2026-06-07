@@ -37,6 +37,7 @@ import type {
   Execution,
   FixingSchedule,
   Greeks,
+  Heartbeat,
   Instrument,
   Leg,
   LimitStatusRequest,
@@ -774,6 +775,31 @@ export function updateFromWire(o: WireObject): Update {
   return u;
 }
 
+/**
+ * Decode a server [`Heartbeat`] frame. The `subscription`/`sequence`/`epoch_nanos`
+ * are the liveness fields; `conflation_drops` and the `server_price_p*_nanos`
+ * percentiles are the additive observability the server surfaces off the hot path
+ * (read straight from the ring's skip count and the drain-side HdrHistogram —
+ * the GUI carries them as plain `bigint` ns/counts). `surface_version`/
+ * `correlation_id` are the optional provenance echo (absent/0 ⇒ live/none).
+ */
+export function heartbeatFromWire(o: WireObject): Heartbeat {
+  const h: Heartbeat = {
+    subscriptionId: subscriptionIdFromWire(o),
+    sequence: numToBigInt(o, "sequence"),
+    conflationDrops: numToBigInt(o, "conflation_drops"),
+    serverPriceP50Nanos: numToBigInt(o, "server_price_p50_nanos"),
+    serverPriceP99Nanos: numToBigInt(o, "server_price_p99_nanos"),
+    serverPriceP999Nanos: numToBigInt(o, "server_price_p999_nanos"),
+    epochNanos: numToBigInt(o, "epoch_nanos"),
+  };
+  const surf = optBigInt(o, "surface_version");
+  if (surf !== undefined) h.surfaceVersion = surf;
+  const corr = optBigInt(o, "correlation_id");
+  if (corr !== undefined) h.correlationId = corr;
+  return h;
+}
+
 export function executedFromWire(o: WireObject): Executed {
   const ex: Executed = {
     subscriptionId: subscriptionIdFromWire(o),
@@ -878,12 +904,17 @@ function smilePointFromWire(o: WireObject): SmilePoint {
   return { delta: num(o, "delta"), tenorYears: num(o, "tenor_years"), vol: num(o, "vol") };
 }
 
-function arbReportFromWire(o: WireObject): ArbReport {
+export function arbReportFromWire(o: WireObject): ArbReport {
   return {
     butterflyArbitrageFree: Boolean(o["butterfly_arbitrage_free"]),
     calendarArbitrageFree: Boolean(o["calendar_arbitrage_free"]),
     worstDensity: num(o, "worst_density"),
     note: str(o, "note"),
+    // The TYPED, authoritative calibration-family provenance the server stamps
+    // (`arb_report_to_json` → `smile_model`, the numeric SmileModel tag). The GUI
+    // reads this directly — never the `model=` token in `note`. Absent ⇒ the
+    // codec's decode-zero default (MARKET_HEDGE), matching proto3 enum semantics.
+    model: e.smileModel.fromWire(enumNum(o, "smile_model")),
   };
 }
 

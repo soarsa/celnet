@@ -9,3 +9,9 @@ dist-ssr/
 npm-debug.log*
 coverage/
 .eslintcache
+
+# Playwright e2e artifacts (browsers live in the OS cache; reports are local)
+test-results/
+playwright-report/
+.playwright/
+blob-report/

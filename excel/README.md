@@ -29,6 +29,7 @@ commercial add-in SDK).
 | `=CELNET.RISK(dimension, numeraire, [rates], [scope])` | hierarchical risk node grid (one row per rolled-up node) + reporting-numeraire footer — **server-side aggregation** | `aggregate_risk` |
 | `=CELNET.POSITIONS([scope])` | the entitled open-position leaf grid (org placement + attribution) + count/empty footer | `list_positions` |
 | `=CELNET.LIMITS(scope, numeraire, [rates])` | limit-tree utilization/RAG grid + worst-RAG / hard-breach footer | `limit_status` |
+| `=CELNET.STATUS()` | live server observability spill: connection state, drain-side price latency p50/p99/p99.9, ring conflation drops, surface/correlation provenance | `heartbeat` (latest beat) |
 
 `strikeOrDelta` accepts an absolute strike (`1.12`), a delta string (`25dP`,
 `10dC`), or `ATM`/`DNS`. `callPut` is `C`/`P`. `model` accepts `VV` (market
@@ -39,8 +40,9 @@ idempotency key and the trader confirms in the task pane (or the server four-eye
 it) — so a thousand recalcs produce at most one mark. `CELNET.MARKSURFACE` is the
 direct (non-staged) "re-mark under model X" action cell — it issues `mark_surface`
 on evaluation; the model the surface was calibrated under is echoed in the footer
-from the server's `model=<family>` provenance note (the frozen contract has no
-echo field). The model a surface was last marked under is read back by
+from the server's TYPED `ArbReport.smile_model` provenance field (the authoritative
+contract field, appended — no `schema_version`), never the legacy `model=` note
+token. The model a surface was last marked under is read back by
 `CELNET.SURFACE(pair, tenor, model)` so a model mismatch is visible, never assumed.
 
 `CELNET.RISK` / `CELNET.POSITIONS` / `CELNET.LIMITS` are the **server-side

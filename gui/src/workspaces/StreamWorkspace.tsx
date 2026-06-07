@@ -695,6 +695,12 @@ export function StreamWorkspace(): React.ReactElement {
         </span>
       </div>
 
+      {/* The blotter is a labelled, sortable region (a table-like presentation). We
+          deliberately do NOT claim role="grid": the full grid keyboard-navigation
+          model isn't implemented, and a half-claimed grid is an a11y anti-pattern
+          (axe flags `aria-sort`/required-children misuse). Sort state is conveyed
+          on each header button via aria-pressed + an explicit accessible name. */}
+      <section className={styles.gridRegion} aria-label="streaming two-way markets">
       {/* Sticky header — sortable numeric/price cells; the track layout is shared
           with every body row via the same grid template. */}
       <div className={styles.headerRow} style={{ gridTemplateColumns: template }}>
@@ -726,13 +732,18 @@ export function StreamWorkspace(): React.ReactElement {
               </span>
             );
           }
+          // Sort state is carried on the button itself: aria-pressed when this is
+          // the active sort key, plus a descriptive accessible name announcing the
+          // current direction (valid on a button; `aria-sort` is grid-only).
+          const sortDir = isSorted ? (sort!.dir === "asc" ? "ascending" : "descending") : null;
           return (
             <button
               key={col.key}
               type="button"
               className={`${styles.colCell} ${styles.colSortable} ${alignCls} ${isSorted ? styles.colSorted : ""}`}
               onClick={() => cycleSort(col.sort!)}
-              aria-sort={isSorted ? (sort!.dir === "asc" ? "ascending" : "descending") : "none"}
+              aria-pressed={isSorted ? true : false}
+              aria-label={`Sort by ${col.label}${sortDir ? ` (${sortDir})` : ""}`}
               title={`Sort by ${col.label}`}
             >
               {col.label}
@@ -748,7 +759,7 @@ export function StreamWorkspace(): React.ReactElement {
       {/* Virtualised body: only the in-view slice (+ overscan) is in the DOM. The
           spacers carry the off-screen height so the scrollbar reflects the whole
           book. Verifiable: off-screen items never render. */}
-      <div className={styles.body} ref={v.ref} role="grid" aria-label="streaming two-way markets">
+      <div className={styles.body} ref={v.ref}>
         {items.length === 0 ? (
           <div className={styles.empty}>
             No streaming lines. Subscribe with <kbd>⌘K</kbd> to populate the blotter.
@@ -785,6 +796,7 @@ export function StreamWorkspace(): React.ReactElement {
           </div>
         )}
       </div>
+      </section>
 
       <div className={styles.foot}>
         <Button variant="ghost" onClick={() => app.setPaletteOpen(true)}>

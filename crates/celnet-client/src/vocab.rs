@@ -357,6 +357,17 @@ pub(crate) fn calibration_to_wire(c: Calibration) -> i32 {
     celnet_proto::SmileModel::from(c) as i32
 }
 
+/// Decode a wire [`celnet_proto::SmileModel`] tag into the typed [`Calibration`].
+/// An unknown tag (a contract the client does not understand) maps to the
+/// market-hedge baseline rather than failing — the calibration family is
+/// provenance, not a correctness gate, and the smile itself is already valid.
+pub(crate) fn calibration_from_wire(tag: i32) -> Calibration {
+    match celnet_proto::SmileModel::try_from(tag) {
+        Ok(wire) => SmileModel::try_from(wire).unwrap_or(SmileModel::MarketHedge),
+        Err(_) => SmileModel::MarketHedge,
+    }
+}
+
 /// One leg of a multi-leg strategy: a call/put at a strike spec, a side, and a
 /// notional ratio relative to the structure's base notional.
 #[derive(Debug, Clone, Copy, PartialEq)]

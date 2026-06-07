@@ -59,9 +59,9 @@ export type TenorUnit = "OVERNIGHT" | "WEEKS" | "MONTHS" | "YEARS";
  * parametric families. EXTENDED_SURFACE is the surface-level parametric family
  * with maturity-dependent correlation (eSSVI method; provenance in this doc
  * comment only — the trader-facing/wire name is purpose-named "Extended").
- * Provenance of the model a surface was marked under is echoed by the server on
- * `Smile.arbitrage.note` as `model=<family>` (the frozen contract carries no
- * echo field — the note is the honest provenance channel).
+ * Provenance of the model a surface was marked under is the TYPED, authoritative
+ * `ArbReport.smileModel` field (proto `ArbReport.smile_model`, appended) — read
+ * that, never the legacy `model=<family>` token in `note` (kept human-only).
  */
 export type SmileModel =
   | "MARKET_HEDGE"
@@ -724,6 +724,29 @@ export interface Update {
   epochNanos: bigint;
 }
 
+/**
+ * A liveness beat (proto `Heartbeat`) carrying the current sequence plus the
+ * server's drain-side observability (all appended fields — NO `schema_version`).
+ * `subscriptionId` is `undefined` for a connection-level beat (one beat for the
+ * whole session) and set for a per-subscription beat. The observability fields
+ * are the EXACT values the server stamps: `conflationDrops` is the `celnet-fanout`
+ * ring's real skip count (`received + skipped == produced`); the three latency
+ * percentiles are the drain-side HdrHistogram of `sub.price(...)` in nanoseconds
+ * (0 until the first timed price); `surfaceVersion`/`correlationId` echo
+ * provenance (0 ⇒ live/unpinned / none).
+ */
+export interface Heartbeat {
+  subscriptionId?: bigint;
+  sequence: bigint;
+  conflationDrops: bigint;
+  serverPriceP50Nanos: bigint;
+  serverPriceP99Nanos: bigint;
+  serverPriceP999Nanos: bigint;
+  surfaceVersion: bigint;
+  correlationId: bigint;
+  epochNanos: bigint;
+}
+
 export type StreamEndReason =
   | "LAGGED"
   | "DRAINING"
@@ -779,6 +802,14 @@ export interface ArbReport {
   /** Worst negative density observed (0.0 = none); larger magnitude = worse. */
   worstDensity: number;
   note: string;
+  /**
+   * The TYPED, authoritative calibration-family provenance (proto
+   * `ArbReport.smile_model`, appended — NO `schema_version`). This is what the
+   * surface was actually marked under, taken from the calibrated smile itself;
+   * read it directly and never parse the legacy `model=<family>` token in `note`
+   * (which is retained for human eyes only).
+   */
+  smileModel: SmileModel;
 }
 
 /** The smile for one (pair, tenor): broker marks, calibrated points, arb report. */

@@ -161,6 +161,10 @@
 }
 
 .tenorCell {
+  /* The row's select control — a real <button> (the global button reset strips
+   * its chrome; global :focus-visible gives the focus ring) so the row is no
+   * longer a button wrapping focusable inputs (nested-interactive a11y fix). */
+  padding: 0;
   text-align: left;
   color: var(--text-secondary);
   font-family: var(--font-mono);
@@ -242,7 +246,9 @@
 .modelChipActive {
   border-color: var(--accent);
   background: var(--accent-soft);
-  color: var(--accent);
+  /* AA contrast: active label uses primary text (the accent border + soft fill
+   * carry the active cue); accent-on-accent-soft was 2.63:1. */
+  color: var(--text-primary);
   font-weight: var(--weight-emphasis);
 }
 .provLabel {

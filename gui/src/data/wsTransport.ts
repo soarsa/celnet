@@ -53,6 +53,7 @@ import {
   executedFromWire,
   executionFromWire,
   greeksFromWire,
+  heartbeatFromWire,
   instrumentToWire,
   limitStatusRequestToWire,
   limitStatusResponseFromWire,
@@ -541,10 +542,14 @@ class WsStreamSession implements StreamSession {
         break;
       }
       case "heartbeat": {
-        // Liveness only: a heartbeat carries the current sequence so a silent gap
-        // is detectable. It does not advance the applied sequence — but a
-        // heartbeat ahead of our last applied sequence signals a missed update, so
-        // resync to recover (matching the SDK / add-in connection).
+        // A heartbeat carries (1) the current sequence so a silent gap is
+        // detectable AND (2) the server's additive observability (ring conflation
+        // drops + drain-side price p50/p99/p99.9 + provenance echo). Surface the
+        // decoded beat to the store (StatusRibbon reads it), THEN do liveness:
+        // a heartbeat ahead of our last applied sequence signals a missed update,
+        // so resync to recover (matching the SDK / add-in connection).
+        const heartbeat = heartbeatFromWire(frame);
+        this.emit({ kind: "heartbeat", heartbeat });
         const sub = this.subs.get(subscriptionIdOf(frame) ?? -1n);
         if (!sub || !sub.baselined) break;
         const seq = bigField(frame, "sequence");

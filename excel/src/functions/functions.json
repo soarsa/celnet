@@ -1155,6 +1155,16 @@
           "optional": true
         }
       ]
+    },
+    {
+      "id": "STATUS",
+      "name": "STATUS",
+      "description": "Live server observability: connection state, drain-side price latency (p50/p99/p99.9), celnet-fanout ring conflation drops, and surface-version / correlation provenance echo from the latest server heartbeat.",
+      "result": {
+        "dimensionality": "matrix",
+        "type": "any"
+      },
+      "parameters": []
     }
   ]
 }

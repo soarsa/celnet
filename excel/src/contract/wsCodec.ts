@@ -34,6 +34,7 @@ import type {
   Execution,
   FixingSchedule,
   Greeks,
+  Heartbeat,
   Instrument,
   Leg,
   Lookback,
@@ -576,6 +577,32 @@ export function updateFromWire(o: WireObject): Update {
   return u;
 }
 
+/**
+ * Decode a `heartbeat` frame, including the appended server observability fields.
+ * A connection-level beat carries `subscription: null`/absent (⇒ `subscriptionId`
+ * undefined); a per-subscription beat carries the id. The conflation-drop count
+ * and the three drain-side latency percentiles (ns) and the provenance echo are
+ * read verbatim — `0` is an honest value (never lagged / no timed price yet),
+ * never fabricated.
+ */
+export function heartbeatFromWire(o: WireObject): Heartbeat {
+  const sub = o["subscription"];
+  const hb: Heartbeat = {
+    sequence: numToBigInt(o, "sequence"),
+    conflationDrops: numToBigInt(o, "conflation_drops"),
+    serverPriceP50Nanos: numToBigInt(o, "server_price_p50_nanos"),
+    serverPriceP99Nanos: numToBigInt(o, "server_price_p99_nanos"),
+    serverPriceP999Nanos: numToBigInt(o, "server_price_p999_nanos"),
+    surfaceVersion: numToBigInt(o, "surface_version"),
+    correlationId: numToBigInt(o, "correlation_id"),
+    epochNanos: numToBigInt(o, "epoch_nanos"),
+  };
+  if (sub != null && typeof sub === "object") {
+    hb.subscriptionId = numToBigInt(child(o, "subscription"), "value");
+  }
+  return hb;
+}
+
 export function executedFromWire(o: WireObject): Executed {
   const ex: Executed = {
     subscriptionId: subscriptionIdFromWire(o),
@@ -648,12 +675,17 @@ function smilePointFromWire(o: WireObject): SmilePoint {
   return { delta: num(o, "delta"), tenorYears: num(o, "tenor_years"), vol: num(o, "vol") };
 }
 
-function arbReportFromWire(o: WireObject): ArbReport {
+export function arbReportFromWire(o: WireObject): ArbReport {
   return {
     butterflyArbitrageFree: Boolean(o["butterfly_arbitrage_free"]),
     calendarArbitrageFree: Boolean(o["calendar_arbitrage_free"]),
     worstDensity: num(o, "worst_density"),
     note: str(o, "note"),
+    // TYPED authoritative provenance: read the proto `smile_model` enum tag
+    // directly (the server stamps it from the calibrated smile's own family).
+    // An absent tag is the proto3 zero value (MARKET_HEDGE), matching a server
+    // built before this field existed. We never parse the `model=` note token.
+    smileModel: e.smileModel.fromWire(enumNum(o, "smile_model")),
   };
 }
 

@@ -35,6 +35,7 @@ import {
   formatRfqSpill,
   formatRiskSpill,
   formatSeriesCell,
+  formatServerStatusSpill,
   formatSmileSpill,
   formatVarSwapSpill,
   formatVolSwapSpill,
@@ -156,11 +157,12 @@ export async function GREEKS(
  *
  * The optional `model` argument records the smile-calibration family the trader
  * wants surfaced (VV/SABR/SVI/SSVI). The read path (`get_smile`) returns whatever
- * model the surface was last MARKED under; the model provenance the server stamps
- * on `arbitrage.note` as `model=<family>` is surfaced in the footer, and the
- * requested model is shown alongside so a mismatch (the surface was marked under a
- * different family) is visible — to actually re-calibrate a surface under a chosen
- * model, use `CELNET.MARKSURFACE` (the `mark_surface` `smile_model` path).
+ * model the surface was last MARKED under; the TYPED `arbitrage.smileModel` the
+ * server stamps (proto `ArbReport.smile_model`) is surfaced in the footer as the
+ * authoritative provenance, and the requested model is shown alongside so a
+ * mismatch (the surface was marked under a different family) is visible — to
+ * actually re-calibrate a surface under a chosen model, use `CELNET.MARKSURFACE`
+ * (the `mark_surface` `smile_model` path).
  * @customfunction SURFACE
  * @param pair Currency pair, e.g. "EURUSD".
  * @param tenor Tenor, e.g. "1Y".
@@ -186,7 +188,7 @@ export async function SURFACE(pair: string, tenor: string, model?: string): Prom
     return formatCalibratedSmileSpill({
       points,
       requestedModel,
-      providerNote: smile.arbitrage.note,
+      actualModel: smile.arbitrage.smileModel,
       arbFree,
       conv: smile.conventions,
       surfaceVersion: undefined,
@@ -261,7 +263,7 @@ export async function MARKSURFACE(
     return formatCalibratedSmileSpill({
       points,
       requestedModel: shaped.model,
-      providerNote: smile.arbitrage.note,
+      actualModel: smile.arbitrage.smileModel,
       arbFree: smile.arbitrage.butterflyArbitrageFree && smile.arbitrage.calendarArbitrageFree,
       conv: smile.conventions,
       surfaceVersion,
@@ -1347,6 +1349,28 @@ export async function LIMITS(
   }
 }
 
+/**
+ * Live server observability for the desk: the connection state plus the latest
+ * server heartbeat's drain-side price latency (p50/p99/p99.9), the
+ * `celnet-fanout` ring conflation-drop count, and the surface-version /
+ * correlation provenance echo. Every value is the server's own observability
+ * stamp surfaced over the ONE contract's `Heartbeat` (HdrHistogram percentiles +
+ * the ring's `received + skipped == produced` accounting); nothing is computed
+ * locally. This is a passive status cell — it never sends a request, it reads the
+ * most recent beat the shared connection has already seen, so it is safe to leave
+ * live. Before the first beat it renders an honest waiting state.
+ * @customfunction STATUS
+ * @returns A 2-row spill: a header and a live server-health value row.
+ */
+export async function STATUS(): Promise<SpillMatrix> {
+  try {
+    const conn = getConnection();
+    return formatServerStatusSpill(conn.isOpen(), conn.latestHeartbeat());
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
 // Register the functions with the Office.js custom-function association map when
 // running inside the host (the `CustomFunctions` global exists). Under node (no
 // host) this is a no-op, so the pure logic stays importable for unit tests.
@@ -1381,6 +1405,7 @@ function registerAll(): void {
   cf.associate("RISK", RISK as (...a: never[]) => unknown);
   cf.associate("POSITIONS", POSITIONS as (...a: never[]) => unknown);
   cf.associate("LIMITS", LIMITS as (...a: never[]) => unknown);
+  cf.associate("STATUS", STATUS as (...a: never[]) => unknown);
 }
 
 registerAll();

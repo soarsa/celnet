@@ -25,6 +25,7 @@ import type {
   Executed,
   Execution,
   Greeks,
+  Heartbeat,
   Instrument,
   LimitStatusRequest,
   LimitStatusResponse,
@@ -70,6 +71,7 @@ export type StreamEvent =
   | { kind: "executed"; executed: Executed }
   | { kind: "reject"; reject: StreamReject }
   | { kind: "health"; subscriptionId: bigint; health: "HEALTHY" | "RESYNCING" | "STALE" }
+  | { kind: "heartbeat"; heartbeat: Heartbeat }
   | { kind: "marketSeriesSnapshot"; snapshot: MarketSeriesSnapshot }
   | { kind: "marketSeriesPoint"; point: MarketSeriesPoint };
 

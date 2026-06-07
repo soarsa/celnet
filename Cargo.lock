@@ -720,6 +720,7 @@ dependencies = [
  "celnet-fix",
  "celnet-integration",
  "celnet-limits",
+ "celnet-observability",
  "celnet-proto",
  "celnet-risk-cube",
  "celnet-risk-fleet",

@@ -55,7 +55,9 @@
 .segBtnActive {
   border-color: var(--accent);
   background: var(--accent-soft);
-  color: var(--accent);
+  /* AA contrast: the active label uses primary text (the accent border + soft
+   * fill already carry the active cue); accent-on-accent-soft was 2.75:1. */
+  color: var(--text-primary);
   font-weight: var(--weight-emphasis);
 }
 .controlMeta {
@@ -142,8 +144,18 @@
   font-weight: var(--weight-regular);
   letter-spacing: 0.04em;
   text-transform: none;
-  color: oklch(from var(--text-tertiary) calc(l - 0.04) c h);
-  opacity: 0.85;
+  /* AA contrast: use the (AA-tuned) tertiary directly — the prior `l-0.04` +
+   * 0.85 opacity eroded it below 4.5:1 on the raised header at 9px. */
+  color: var(--text-tertiary);
+}
+
+/* The labelled blotter region wraps the sticky header + scrolling body; it fills
+ * the remaining column height so the body's flex:1 + sticky header still work. */
+.gridRegion {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 
 .body {
@@ -403,7 +415,9 @@
 .trendChipActive {
   border-color: var(--accent);
   background: var(--accent-soft);
-  color: var(--accent);
+  /* AA contrast: active label uses primary text (border + soft fill carry the
+   * active cue); accent-on-accent-soft was 2.63:1. */
+  color: var(--text-primary);
   font-weight: var(--weight-emphasis);
 }
 .trendChipDisabled,

@@ -66,6 +66,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use celnet_fanout::Consumer;
+use celnet_observability::LatencyRecorder;
 use celnet_proto::stream_service_server::StreamService;
 use celnet_proto::{
     ClientStreamMessage, Conventions, Execute, Executed, Heartbeat, Instrument, MarketContext,
@@ -299,6 +300,11 @@ struct Subscription {
     /// `Execute` idempotency: a client key → the `Executed` it booked, so an
     /// `Execute` retry carrying the same key returns the same booking.
     execute_idempotency: HashMap<String, Executed>,
+    /// Drain-side HdrHistogram of the server-side price-compute latency (ns) for
+    /// this subscription's updates — surfaced as the p50/p99/p99.9 on the
+    /// heartbeat. Lives on the streaming edge, NEVER the pinned hot core (see
+    /// [`make_update`]).
+    latency: LatencyRecorder,
 }
 
 impl Subscription {
@@ -449,7 +455,15 @@ fn make_update(
     minter: &TokenMinter,
     clock: &Clock,
 ) -> Result<ServerStreamMessage, Status> {
+    // Time the server-side price compute on the DRAIN path (the streaming edge),
+    // never the pinned zero-alloc hot core — `Instant` + the HdrHistogram record
+    // both live here on the already-non-critical update path, so the price+Greek
+    // loop itself is untouched. This is the honest per-subscription p50/p99/p99.9
+    // surfaced on the heartbeat.
+    let t0 = std::time::Instant::now();
     let (priced, two_way) = sub.price(market, spread)?;
+    let compute_ns = u64::try_from(t0.elapsed().as_nanos()).unwrap_or(u64::MAX);
+    sub.latency.record_ns(compute_ns);
     let now = clock.now_nanos();
     let tradable = mint_tokens(sub, minter, seq, &two_way, now);
     Ok(ServerStreamMessage {
@@ -985,6 +999,7 @@ impl Session {
             replay: VecDeque::new(),
             tokens: TokenLedger::new(),
             execute_idempotency: HashMap::new(),
+            latency: LatencyRecorder::new(),
         };
         let snap = match make_snapshot(
             &mut sub,
@@ -1512,11 +1527,9 @@ fn drive_one_update(
         sub.retain(seq, update);
         if seq.is_multiple_of(HEARTBEAT_EVERY) {
             let hb = ServerStreamMessage {
-                message: Some(server_stream_message::Message::Heartbeat(Heartbeat {
-                    subscription: Some(sub.id),
-                    sequence: seq,
-                    epoch_nanos: clock.now_nanos(),
-                })),
+                message: Some(server_stream_message::Message::Heartbeat(heartbeat_for(
+                    sub, seq, clock,
+                ))),
             };
             let _ = out_tx.try_send(Ok(hb));
         }
@@ -1529,6 +1542,30 @@ fn drive_one_update(
         // the next emitted line, so no gap, duplicate, or stale token leaks.
         mark_lagged(sub, out_tx);
         UpdateOutcome::Lagged
+    }
+}
+
+/// Build the observability-bearing [`Heartbeat`] for a subscription: liveness
+/// (subscription + sequence + send time) plus the additive server observability —
+/// the exact `celnet-fanout` ring conflation-drop count (`skipped()`), the
+/// drain-side price-compute p50/p99/p99.9 (ns), and the surface-version /
+/// correlation-id provenance echo. Every figure is a real measurement taken off
+/// the streaming edge; the pinned hot core is never touched.
+fn heartbeat_for(sub: &Subscription, seq: u64, clock: &Clock) -> Heartbeat {
+    Heartbeat {
+        subscription: Some(sub.id),
+        sequence: seq,
+        epoch_nanos: clock.now_nanos(),
+        // The exact number of ticks this subscription's ring conflated (dropped)
+        // since it was opened — the `received + skipped == produced` skip count.
+        conflation_drops: sub.tick.skipped(),
+        // Drain-side price-compute latency percentiles (0 until first timed).
+        server_price_p50_nanos: sub.latency.p50_ns(),
+        server_price_p99_nanos: sub.latency.p99_ns(),
+        server_price_p999_nanos: sub.latency.p999_ns(),
+        // Provenance echo: pinned surface version (0 ⇒ live mark) + correlation id.
+        surface_version: sub.surface_version.unwrap_or(0),
+        correlation_id: sub.correlation_id.unwrap_or(0),
     }
 }
 
@@ -1670,6 +1707,7 @@ mod tests {
             replay: VecDeque::new(),
             tokens: TokenLedger::new(),
             execute_idempotency: HashMap::new(),
+            latency: LatencyRecorder::new(),
         };
         let snap = make_snapshot(
             &mut sub,
@@ -1698,6 +1736,150 @@ mod tests {
             Some(server_stream_message::Message::Snapshot(s)) => s.tradable.clone(),
             _ => Vec::new(),
         }
+    }
+
+    /// The heartbeat's `conflation_drops` reflects the EXACT number of price ticks
+    /// the subscription's `celnet-fanout` ring conflated (dropped) under
+    /// back-pressure — the real `received + skipped == produced` skip accounting,
+    /// not a fabricated metric. We drive a genuine over-publish into a bounded ring,
+    /// drain once (so the lapped consumer conflates forward and counts the gap), then
+    /// assert the heartbeat carries precisely that skip count.
+    #[tokio::test]
+    async fn heartbeat_reports_real_ring_conflation_drops() {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            use celnet_fanout::BroadcastRing;
+
+            let clock = Clock::manual(1_000_000_000);
+            let mut session = make_session(clock.clone());
+            let market = MarketContext {
+                spot: 1.10,
+                vol: 0.10,
+                r_dom: 0.02,
+                r_for: 0.01,
+            };
+
+            // A bounded ring with a tiny capacity, its own producer + the consumer the
+            // subscription will drain. (A power-of-two capacity is required.)
+            let cap = 8usize;
+            let ring = BroadcastRing::<PriceTick>::new(cap);
+            let consumer = ring.consumer();
+            let mut producer = ring.into_producer();
+
+            // Install this consumer on the live subscription, replacing the session's.
+            {
+                let sub = session.subs.get_mut(&1).unwrap();
+                sub.tick = consumer;
+                assert_eq!(sub.tick.skipped(), 0, "fresh consumer has skipped nothing");
+            }
+
+            // Over-publish FAR past capacity WITHOUT draining: the producer laps the
+            // consumer many times over (genuine back-pressure on the bounded ring).
+            let produced = 100u64;
+            for i in 0..produced {
+                let tick = PriceTick {
+                    market: MarketContext {
+                        spot: 1.10 + f64::from(u32::try_from(i).unwrap()) * 1e-6,
+                        ..market
+                    },
+                    tick_seq: i,
+                };
+                producer.publish(tick);
+            }
+
+            // Drive the subscription once: `drive_tick` drains the ring (conflating
+            // forward to the newest live tick) and emits one Update, then — because
+            // this happens to be a heartbeat sequence or not — we read the skip count.
+            let (tx, mut rx) = mpsc::channel::<Result<ServerStreamMessage, Status>>(64);
+            assert!(session.drive_tick(&tx), "drive_tick succeeds");
+
+            let sub = session.subs.get(&1).unwrap();
+            let skipped = sub.tick.skipped();
+            let received = sub.tick.received();
+            // The ring conflated: the consumer saw far fewer than were produced, and
+            // the skip count is the exact gap (received + skipped == produced-observed).
+            assert!(
+                skipped > 0,
+                "the lapped consumer must have counted real skips"
+            );
+            assert!(
+                received >= 1,
+                "the consumer delivered at least the newest live tick"
+            );
+            assert!(
+                received + skipped <= produced,
+                "received + skipped is bounded by produced (exact ring accounting)"
+            );
+
+            // The heartbeat built for this subscription carries EXACTLY that skip count
+            // — the wire field equals the ring's own accounting, no fabrication.
+            let hb = heartbeat_for(sub, sub.sequence, &clock);
+            assert_eq!(
+                hb.conflation_drops, skipped,
+                "heartbeat.conflation_drops must equal the ring's exact skip count"
+            );
+            // Provenance echo: unpinned ⇒ surface_version 0, no correlation ⇒ 0.
+            assert_eq!(hb.surface_version, 0);
+            assert_eq!(hb.correlation_id, 0);
+
+            // Drain any emitted updates so the channel does not back up.
+            while rx.try_recv().is_ok() {}
+        })
+        .await
+        .expect("no hang");
+    }
+
+    /// The heartbeat surfaces a real, non-zero server-side price-compute latency once
+    /// updates have been timed, and echoes the pinned surface version + correlation id
+    /// provenance. The latency comes from the drain-side HdrHistogram fed in
+    /// `make_update` — an honest measurement off the streaming edge.
+    #[tokio::test]
+    async fn heartbeat_reports_real_price_latency_and_provenance_echo() {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let clock = Clock::manual(1_000_000_000);
+            let mut session = make_session(clock.clone());
+            // Pin a surface version + correlation id so the echo is non-trivial.
+            {
+                let sub = session.subs.get_mut(&1).unwrap();
+                sub.surface_version = Some(42);
+                sub.correlation_id = Some(0xABCD);
+            }
+
+            // Time several updates so the per-subscription histogram is populated.
+            let market = MarketContext {
+                spot: 1.10,
+                vol: 0.10,
+                r_dom: 0.02,
+                r_for: 0.01,
+            };
+            let spread = SpreadModel::default();
+            let minter = TokenMinter::new();
+            {
+                let sub = session.subs.get_mut(&1).unwrap();
+                for seq in 2..=40u64 {
+                    let _ = make_update(sub, seq, &market, &spread, &minter, &clock)
+                        .expect("update prices");
+                }
+                assert!(
+                    sub.latency.count() >= 1,
+                    "the drain-side histogram recorded real compute samples"
+                );
+            }
+
+            let sub = session.subs.get(&1).unwrap();
+            let hb = heartbeat_for(sub, sub.sequence, &clock);
+            // Latency percentiles are real, monotone, and non-zero (compute is timed).
+            assert!(
+                hb.server_price_p50_nanos > 0,
+                "a timed compute yields a non-zero p50"
+            );
+            assert!(hb.server_price_p50_nanos <= hb.server_price_p99_nanos);
+            assert!(hb.server_price_p99_nanos <= hb.server_price_p999_nanos);
+            // Provenance echo carries the pinned version + correlation id.
+            assert_eq!(hb.surface_version, 42);
+            assert_eq!(hb.correlation_id, 0xABCD);
+        })
+        .await
+        .expect("no hang");
     }
 
     /// A snapshot stamps two click-to-trade tokens (SELL@bid, BUY@offer) whose

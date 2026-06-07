@@ -4,12 +4,20 @@
  * clock, and a real measured P99 render time (principle 10 — the budget is an
  * instrument, not decor). The frame timer samples requestAnimationFrame deltas
  * and reports the rolling P99.
+ *
+ * It also surfaces the SERVER's own observability — distilled from the live
+ * heartbeats (`StreamApi.observability`): the drain-side price-compute p99, the
+ * exact ring conflation-drop count, and the surface-version / correlation
+ * provenance echo. These are honest server measurements (the ribbon shows "—"
+ * until the first beat lands — never a fabricated zero), complementing the
+ * client-side render p99 above.
  */
 
 import { useEffect, useRef, useState } from "react";
 import { useApp } from "./AppContext";
 import { useSecondClock } from "../hooks/useClock";
-import { fmtClock } from "../lib/format";
+import type { ServerObservability } from "../hooks/useStreamSession";
+import { fmtClock, fmtLatencyNanos } from "../lib/format";
 import styles from "./StatusRibbon.module.css";
 
 /** A rolling P99 of inter-frame render times, computed off a small ring. */
@@ -57,6 +65,70 @@ function fmtBuildTime(iso: string): string {
   return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}Z`;
 }
 
+/**
+ * The server-observability cluster of the ribbon — drain-side price p99, the
+ * exact ring conflation-drop count, and the surface/correlation provenance echo.
+ * A pure component over [`ServerObservability`] (no hooks), so it renders the
+ * SAME honest output for the live WS heartbeat and the offline mock heartbeat,
+ * and is unit-testable with hand-pinned values. Renders "—" until the first beat
+ * lands (`received === false`) — never a fabricated zero presented as a measurement.
+ */
+export function ServerObservabilityItems({
+  observability: obs,
+}: {
+  observability: ServerObservability;
+}): React.ReactElement {
+  const dropsClean = obs.conflationDrops === 0n;
+  const surfaceVersion = obs.surfaceVersion;
+  const correlationId = obs.correlationId;
+  return (
+    <>
+      <span className={styles.sep} aria-hidden>
+        ·
+      </span>
+      {/* Server price-compute p99 (drain-side HdrHistogram), distinct from the
+          client render p99 — the trader sees both ends of the latency budget. */}
+      <span
+        className={`num ${styles.item}`}
+        data-testid="server-p99"
+        title="Server price-compute P99 (drain-side HdrHistogram, off the pinned hot core) — reported on the stream heartbeat"
+      >
+        server P99 {obs.received ? fmtLatencyNanos(obs.serverPriceP99Nanos) : "—"}
+      </span>
+      <span className={styles.sep} aria-hidden>
+        ·
+      </span>
+      {/* Exact ring conflation-drop count (celnet-fanout `received + skipped ==
+          produced`) — 0 ⇒ the consumer never lagged. */}
+      <span
+        className={`num ${styles.item} ${obs.received && !dropsClean ? styles.warn : styles.ok}`}
+        data-testid="conflation-drops"
+        title="Ticks the server's fan-out ring conflated (dropped under back-pressure) since open — exact skip count from the stream heartbeat"
+      >
+        {obs.received ? `${obs.conflationDrops.toString()} drops` : "— drops"}
+      </span>
+      {(surfaceVersion !== undefined || correlationId !== undefined) && (
+        <>
+          <span className={styles.sep} aria-hidden>
+            ·
+          </span>
+          {/* Provenance echo from the heartbeat — the surface version this line is
+              pinned to (0 ⇒ live/unpinned) and the opening correlation id (0 ⇒ none). */}
+          <span
+            className={`num ${styles.item}`}
+            data-testid="provenance-echo"
+            title="Provenance echoed by the server heartbeat — surface version (sv) and correlation id (corr)"
+          >
+            {surfaceVersion !== undefined ? `sv ${surfaceVersion.toString()}` : ""}
+            {surfaceVersion !== undefined && correlationId !== undefined ? " · " : ""}
+            {correlationId !== undefined ? `corr ${correlationId.toString()}` : ""}
+          </span>
+        </>
+      )}
+    </>
+  );
+}
+
 export function StatusRibbon(): React.ReactElement {
   const app = useApp();
   const now = useSecondClock();
@@ -95,6 +167,7 @@ export function StatusRibbon(): React.ReactElement {
       <span className={`num ${styles.item} ${totalGaps === 0 ? styles.ok : styles.warn}`}>
         {totalGaps} gaps
       </span>
+      <ServerObservabilityItems observability={app.stream.observability} />
 
       <span className={styles.spacer} />
 
