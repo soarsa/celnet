@@ -43,3 +43,14 @@ celnet-qmc = { path = "../celnet-qmc" }
 # the leader-election / election-safety / log-matching+conflicting-tail-truncation /
 # convergence-oracle parity row in tests/raft_election.rs (real loopback cluster).
 celnet-replog = { path = "../celnet-replog" }
+# Cross-platform GPU compute backend (f32 GPU + f64 CPU reconciliation). Referenced
+# BY PATH (a leaf crate not in the central workspace.dependencies table, like the
+# others above). Backs the GPU multi-step path kernel row (tests/gpu_path.rs) and
+# the GPU pathwise/LR Greeks row (tests/gpu_greeks.rs): three-way GPU-f32 ≈ CPU-f64
+# ≈ golden/closed-form within the DERIVED f32 bound, the CPU↔GPU Sobol' KAT, and
+# central-FD as an independent Greek check.
+celnet-gpu = { path = "../celnet-gpu" }
+# Adapter probe for the GPU parity rows (assert is_gpu() honestly when a device
+# exists; skip the requirement headless). Same platform backends celnet-gpu uses.
+wgpu = { workspace = true, features = ["metal", "vulkan", "gles", "dx12"] }
+pollster.workspace = true
