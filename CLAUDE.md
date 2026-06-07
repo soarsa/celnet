@@ -123,6 +123,17 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-06-06 — **COMPLETION-PROGRAM Wave 5 DONE (commit `9897fa6`; pushed).** eSSVI client parity:
+  `SMILE_MODEL_EXTENDED_SURFACE=4` was on the wire+server (and `celnet_types::SmileModel` already had
+  `ExtendedSurface`) but invisible to GUI/Excel (codecs stopped at 4 entries). NO contract/server change;
+  3 file-disjoint tracks (GUI ∥ Excel ∥ SDK) → verify (accept, zero issues). GUI: 5th codec entry at index
+  4 + "eSSVI" model chip. Excel: 5th codec entry + `parseSmileModel` accepts ESSVI/EXTENDED aliases (error
+  msg generated from the enum list so it can't drift). SDK: e2e marks via `Calibration::ExtendedSurface` vs
+  a real edge (arb-note `model=extended-surface`). Verifier re-derived codec index==proto 4 (no off-by-one
+  that would route the wrong family). Full `just check` green ("All gates passed."), **1128/1128**; GUI tsc
+  0 / 164 tests; Excel build 0 / 165 tests. **Next: W6** (LSV oracle parity row + booking-model selector —
+  closes Arc I).
+
 - 2026-06-06 — **COMPLETION-PROGRAM Wave 4 DONE (commits `dd4441d` fanout-fix, `15c3ea6` W4; pushed).**
   Surfaced the ORIGINAL exotics (single/double barrier, digital, touch) — already on the wire+server (incl.
   the WS decoder) but unreachable from GUI ticket / Excel / ergonomic SDK ctors. NO contract/server change;
