@@ -257,6 +257,32 @@ function legsOf(instrument: Instrument): { strikeSpec: StrikeOrDelta; isCall: bo
         strikeSpec: leg.strike,
         isCall: leg.optionType === "CALL",
       }));
+    case "singleBarrier":
+      // The barrier's underlying vanilla strike is its representative smile leg.
+      return [
+        {
+          strikeSpec: instrument.product.singleBarrier.vanilla.strike,
+          isCall: instrument.product.singleBarrier.vanilla.optionType === "CALL",
+        },
+      ];
+    case "doubleBarrier":
+      return [
+        {
+          strikeSpec: instrument.product.doubleBarrier.vanilla.strike,
+          isCall: instrument.product.doubleBarrier.vanilla.optionType === "CALL",
+        },
+      ];
+    case "digital":
+      // A digital's strike is its representative smile leg.
+      return [
+        {
+          strikeSpec: { kind: "strike", strike: instrument.product.digital.strike },
+          isCall: instrument.product.digital.optionType === "CALL",
+        },
+      ];
+    case "touch":
+      // A touch carries no strike (no single representative smile read) ⇒ ATM.
+      return [];
     case "varianceSwap":
     case "volatilitySwap":
     case "asianOption":

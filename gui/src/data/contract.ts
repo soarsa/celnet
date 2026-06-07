@@ -44,6 +44,46 @@ export type Settlement = "DELIVERABLE" | "NON_DELIVERABLE";
 export type StrategyKind = "RISK_REVERSAL" | "STRANGLE" | "STRADDLE" | "SEAGULL";
 
 /**
+ * The crossing semantics of a barrier level (`celnet.wire.BarrierKind`):
+ * `KNOCK_IN` activates the option only once the barrier is touched; `KNOCK_OUT`
+ * extinguishes it when the barrier is touched. Purpose-named, vendor/method-neutral.
+ */
+export type BarrierKind = "KNOCK_IN" | "KNOCK_OUT";
+
+/**
+ * Where a single barrier sits relative to spot at inception
+ * (`celnet.wire.BarrierSide`): `UP` is above spot (up-and-*), `DOWN` is below
+ * (down-and-*).
+ */
+export type BarrierSide = "UP" | "DOWN";
+
+/**
+ * How a barrier / touch is monitored along the path (`celnet.wire.MonitoringStyle`):
+ * `CONTINUOUS` triggers on any touch at any instant (the closed-form
+ * reflection-principle regime), `DISCRETE` only at scheduled fixing instants.
+ */
+export type MonitoringStyle = "CONTINUOUS" | "DISCRETE";
+
+/**
+ * The touch family of a touch structure (`celnet.wire.TouchKind`): `ONE_TOUCH`
+ * pays if the (single) barrier IS touched before expiry; `NO_TOUCH` pays if it is
+ * NOT; `DOUBLE_NO_TOUCH` pays if NEITHER of two barriers is touched;
+ * `DOUBLE_ONE_TOUCH` pays if EITHER is touched. Purpose-named, vendor/method-neutral.
+ */
+export type TouchKind =
+  | "ONE_TOUCH"
+  | "NO_TOUCH"
+  | "DOUBLE_NO_TOUCH"
+  | "DOUBLE_ONE_TOUCH";
+
+/**
+ * The settlement style of a digital (binary) option (`celnet.wire.DigitalStyle`):
+ * `CASH_OR_NOTHING` pays a fixed cash amount if in-the-money at expiry;
+ * `ASSET_OR_NOTHING` pays one unit of the asset (worth `S_T`) if in-the-money.
+ */
+export type DigitalStyle = "CASH_OR_NOTHING" | "ASSET_OR_NOTHING";
+
+/**
  * The averaging schedule of an Asian option (`celnet.wire.AveragingStyle`):
  * `DISCRETE` samples at a finite count of fixings, `CONTINUOUS` averages the
  * whole window (the `n → ∞` limit). Purpose-named, vendor/method-neutral.
@@ -263,6 +303,83 @@ export interface Strategy {
 }
 
 /**
+ * A single-barrier knock-in / knock-out option (`celnet.wire.SingleBarrier`): a
+ * vanilla payoff (`vanilla`) that activates (`KNOCK_IN`) or extinguishes
+ * (`KNOCK_OUT`) when the continuously-monitored spot first touches `barrier`,
+ * optionally paying a `rebate` (at hit for a knocked-out out-option, at expiry for
+ * a never-knocked-in in-option). `side` is the barrier's position relative to spot
+ * at inception (up/down). Priced by the reflection-principle closed form
+ * server-side; in/out parity (`knock_in + knock_out = vanilla`) holds by
+ * construction.
+ */
+export interface SingleBarrier {
+  /** The underlying vanilla payoff (call/put + strike or delta). */
+  vanilla: Vanilla;
+  kind: BarrierKind;
+  side: BarrierSide;
+  /** The barrier level `H` (quote per 1 unit of base). */
+  barrier: number;
+  /** Rebate paid on the barrier event (`0` for a plain barrier). */
+  rebate: number;
+  monitoring: MonitoringStyle;
+}
+
+/**
+ * A double-barrier option bounded by a lower and an upper barrier
+ * (`celnet.wire.DoubleBarrier`): a vanilla that knocks out if EITHER barrier is
+ * touched (`KNOCK_OUT`), or activates if either is touched (`KNOCK_IN`, priced by
+ * parity `KI = vanilla − KO`). Requires `0 < lowerBarrier < upperBarrier`. Priced
+ * server-side by the method-of-images corridor series.
+ */
+export interface DoubleBarrier {
+  /** The underlying vanilla payoff (call/put + strike or delta). */
+  vanilla: Vanilla;
+  kind: BarrierKind;
+  /** The lower barrier level `L` (`0 < L < U`). */
+  lowerBarrier: number;
+  /** The upper barrier level `U`. */
+  upperBarrier: number;
+  /** Rebate paid on the barrier event (`0` for a plain corridor). */
+  rebate: number;
+  monitoring: MonitoringStyle;
+}
+
+/**
+ * A digital (binary) option (`celnet.wire.Digital`): pays a fixed `payout` (in the
+ * settlement style's unit) if it finishes in the money at expiry. A digital `CALL`
+ * pays when `S_T > strike`, a `PUT` when `S_T < strike`. `style` selects
+ * cash-or-nothing (one unit of domestic cash) vs asset-or-nothing (one unit of the
+ * foreign asset). Priced by the closed-form digital value scaled by `payout`.
+ */
+export interface Digital {
+  optionType: OptionType;
+  /** The strike `K` (quote per 1 unit of base). */
+  strike: number;
+  style: DigitalStyle;
+  /** The fixed payout amount (in domestic ccy for cash-or-nothing). */
+  payout: number;
+}
+
+/**
+ * A touch structure (`celnet.wire.Touch`): one-touch / no-touch / double-no-touch /
+ * double-one-touch. `lowerBarrier` is the sole barrier for the single-barrier
+ * kinds (`ONE_TOUCH`/`NO_TOUCH`); the double kinds additionally use `upperBarrier`
+ * (requiring `0 < lowerBarrier < upperBarrier`). Pays the `rebate` (in domestic
+ * cash) when its touch condition is satisfied. Priced server-side by the
+ * reflection-principle first-passage / corridor-survival closed forms.
+ */
+export interface Touch {
+  kind: TouchKind;
+  /** The (lower / sole) barrier level. */
+  lowerBarrier: number;
+  /** The upper barrier level (double structures only; ignored otherwise). */
+  upperBarrier: number;
+  /** The rebate paid when the touch condition is satisfied. */
+  rebate: number;
+  monitoring: MonitoringStyle;
+}
+
+/**
  * A variance swap (`celnet.wire.VarianceSwap`): pays realised variance against a
  * fixed variance strike. `strikeVol` is the strike quoted in VOL terms (the fair
  * variance strike is `strikeVol²`); `0` ⇒ request the fair strike off the reply.
@@ -457,6 +574,10 @@ export interface Lookback {
 export type Product =
   | { kind: "vanilla"; vanilla: Vanilla }
   | { kind: "strategy"; strategy: Strategy }
+  | { kind: "singleBarrier"; singleBarrier: SingleBarrier }
+  | { kind: "doubleBarrier"; doubleBarrier: DoubleBarrier }
+  | { kind: "digital"; digital: Digital }
+  | { kind: "touch"; touch: Touch }
   | { kind: "varianceSwap"; varianceSwap: VarianceSwap }
   | { kind: "volatilitySwap"; volatilitySwap: VolatilitySwap }
   | { kind: "asianOption"; asianOption: AsianOption }

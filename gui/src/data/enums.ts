@@ -19,14 +19,18 @@ import type {
   AsianMethod,
   AtmConvention,
   AveragingStyle,
+  BarrierKind,
+  BarrierSide,
   Cut,
   DayCount,
   DeltaConvention,
+  DigitalStyle,
   Enforcement,
   LimitMetricKind,
   LookbackMonitoring,
   LookbackStyle,
   MarketObservable,
+  MonitoringStyle,
   OptionType,
   PremiumStyle,
   QuantoPayoff,
@@ -40,6 +44,7 @@ import type {
   StreamRejectReason,
   TarfRedemption,
   TenorUnit,
+  TouchKind,
 } from "./contract";
 
 /** A bidirectional string↔number enum projection plus a zero-value fallback. */
@@ -125,6 +130,41 @@ export const tenorUnit = enumCodec<TenorUnit>([
   "IMM",
   "BROKEN_DATE",
 ]);
+
+/**
+ * `BarrierKind` ↔ proto `BarrierKind`
+ * (BARRIER_KIND_KNOCK_IN=0, BARRIER_KIND_KNOCK_OUT=1).
+ */
+export const barrierKind = enumCodec<BarrierKind>(["KNOCK_IN", "KNOCK_OUT"]);
+
+/**
+ * `BarrierSide` ↔ proto `BarrierSide`
+ * (BARRIER_SIDE_UP=0, BARRIER_SIDE_DOWN=1).
+ */
+export const barrierSide = enumCodec<BarrierSide>(["UP", "DOWN"]);
+
+/**
+ * `MonitoringStyle` ↔ proto `MonitoringStyle`
+ * (MONITORING_STYLE_CONTINUOUS=0, MONITORING_STYLE_DISCRETE=1).
+ */
+export const monitoringStyle = enumCodec<MonitoringStyle>(["CONTINUOUS", "DISCRETE"]);
+
+/**
+ * `TouchKind` ↔ proto `TouchKind` (TOUCH_KIND_ONE_TOUCH=0, TOUCH_KIND_NO_TOUCH=1,
+ * TOUCH_KIND_DOUBLE_NO_TOUCH=2, TOUCH_KIND_DOUBLE_ONE_TOUCH=3).
+ */
+export const touchKind = enumCodec<TouchKind>([
+  "ONE_TOUCH",
+  "NO_TOUCH",
+  "DOUBLE_NO_TOUCH",
+  "DOUBLE_ONE_TOUCH",
+]);
+
+/**
+ * `DigitalStyle` ↔ proto `DigitalStyle`
+ * (DIGITAL_STYLE_CASH_OR_NOTHING=0, DIGITAL_STYLE_ASSET_OR_NOTHING=1).
+ */
+export const digitalStyle = enumCodec<DigitalStyle>(["CASH_OR_NOTHING", "ASSET_OR_NOTHING"]);
 
 /**
  * `AveragingStyle` ↔ proto `AveragingStyle`

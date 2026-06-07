@@ -18,10 +18,16 @@ mod common;
 use std::time::Duration;
 
 use celnet_client::{
-    Conventions, InstrumentSpec, Quantity, Side, StrikeSpec, TouchKind, vocab::Product,
+    BarrierKind as SdkBarrierKind, BarrierSide as SdkBarrierSide, BarrierTerms, Conventions,
+    DigitalTerms, DoubleBarrierTerms, InstrumentSpec, Quantity, Side, StrikeSpec, TouchKind,
+    vocab::Product,
 };
 use celnet_core::is_close;
-use celnet_exotics::{DoubleNoTouch, double_no_touch_price};
+use celnet_exotics::{
+    BarrierKind as ExBarrierKind, BarrierStyle, DigitalKind, DoubleBarrierKnockOut, DoubleNoTouch,
+    RebateTiming, SingleBarrier as ExSingleBarrier, digital_price, double_knock_out_price,
+    double_no_touch_price, one_touch_price, single_barrier_price,
+};
 use celnet_server::Clock;
 use celnet_types::{OptionType, Tenor, VanillaInputs};
 
@@ -331,6 +337,177 @@ async fn reject_returns_typed_ack_and_quote_cannot_be_accepted() {
             }
             other => panic!("expected a FailedPrecondition status, got {other:?}"),
         }
+
+        edge.shutdown(Duration::from_secs(5)).await;
+    })
+    .await
+    .expect("test must not hang");
+}
+
+/// W4 Track C — api-first close for the originally-contracted barrier / digital /
+/// touch products: the SDK now exposes ergonomic [`InstrumentSpec`] constructors
+/// for them, and a request built through those constructors and priced over a real
+/// edge equals the first-principles `celnet-exotics` reference — the same closed
+/// form the server's own pricer evaluates. This proves the contracted-but-formerly-
+/// unbuildable products are now reachable through the typed SDK with no contract or
+/// server change (field numbers single_barrier=9 / double_barrier=10 / digital=11 /
+/// touch=12 are unchanged on the wire).
+///
+/// Coverage: a single-barrier EURUSD up-and-out call, a double-barrier knock-out
+/// call, a cash-or-nothing digital call, and a one-touch — each through its own
+/// ergonomic constructor, each reconciled to the independent `celnet-exotics` oracle
+/// to machine precision.
+#[tokio::test]
+async fn sdk_ctors_price_barriers_digital_touch_equal_exotics_reference() {
+    tokio::time::timeout(TEST_DEADLINE, async {
+        let (edge, client) = start_edge_and_client().await;
+
+        let m = live_market();
+        // The headline `greeks.price` is per 1 unit of base notional — the same raw
+        // per-unit quantity the `celnet-exotics` closed forms return — so the
+        // reconciliation is direct, with the notional left on the `Instrument`.
+        let inputs = |strike: f64| VanillaInputs::new(m.spot, strike, m.vol, 1.0, m.r_dom, m.r_for);
+
+        // ---- single-barrier: EURUSD 1Y up-and-out call, strike 1.10, H = 1.30 ----
+        let strike = 1.10;
+        let barrier = 1.30;
+        let rebate = 0.0;
+        let up_and_out = InstrumentSpec::single_barrier(
+            eurusd(),
+            Tenor::Years(1),
+            1.0,
+            Quantity::base(1_000_000.0),
+            Side::Sell,
+            BarrierTerms::new(
+                OptionType::Call,
+                StrikeSpec::Absolute(strike),
+                SdkBarrierKind::KnockOut,
+                SdkBarrierSide::Up,
+                barrier,
+            )
+            .rebate(rebate),
+        );
+        let priced =
+            tokio::time::timeout(STEP_DEADLINE, client.price(&up_and_out, m, conventions()))
+                .await
+                .expect("single-barrier price returns in time")
+                .expect("single-barrier price succeeds");
+        let sb_ref = single_barrier_price(
+            &inputs(strike),
+            ExSingleBarrier {
+                kind: ExBarrierKind {
+                    up: true,
+                    style: BarrierStyle::KnockOut,
+                    option: OptionType::Call,
+                },
+                strike,
+                barrier,
+                rebate,
+            },
+        );
+        assert!(
+            is_close(priced.greeks.price, sb_ref, 1e-12, 1e-12),
+            "up-and-out call SDK price {} != celnet-exotics reference {sb_ref}",
+            priced.greeks.price
+        );
+        assert!(
+            is_close(priced.resolved_strike, strike, 1e-12, 1e-12),
+            "single-barrier echoes the requested strike"
+        );
+
+        // ---- double-barrier: 1Y knock-out call, K = 1.10, corridor [0.95, 1.25] ----
+        let lower = 0.95;
+        let upper = 1.25;
+        let dbarrier = InstrumentSpec::double_barrier(
+            eurusd(),
+            Tenor::Years(1),
+            1.0,
+            Quantity::base(1_000_000.0),
+            Side::Sell,
+            DoubleBarrierTerms::new(
+                OptionType::Call,
+                StrikeSpec::Absolute(strike),
+                SdkBarrierKind::KnockOut,
+                lower,
+                upper,
+            ),
+        );
+        let priced_db =
+            tokio::time::timeout(STEP_DEADLINE, client.price(&dbarrier, m, conventions()))
+                .await
+                .expect("double-barrier price returns in time")
+                .expect("double-barrier price succeeds");
+        let db_ref = double_knock_out_price(
+            &inputs(strike),
+            DoubleBarrierKnockOut::new(OptionType::Call, strike, lower, upper),
+        );
+        assert!(
+            is_close(priced_db.greeks.price, db_ref, 1e-12, 1e-12),
+            "double knock-out call SDK price {} != celnet-exotics reference {db_ref}",
+            priced_db.greeks.price
+        );
+
+        // ---- digital: 1Y cash-or-nothing call, K = 1.12, payout = 1.0 -------------
+        let dig_strike = 1.12;
+        let payout = 1.0;
+        let digital = InstrumentSpec::digital(
+            eurusd(),
+            Tenor::Years(1),
+            1.0,
+            Quantity::base(1_000_000.0),
+            Side::Sell,
+            DigitalTerms::cash_or_nothing(OptionType::Call, dig_strike, payout),
+        );
+        let priced_dig =
+            tokio::time::timeout(STEP_DEADLINE, client.price(&digital, m, conventions()))
+                .await
+                .expect("digital price returns in time")
+                .expect("digital price succeeds");
+        let dig_ref =
+            payout * digital_price(DigitalKind::cash(OptionType::Call), &inputs(dig_strike));
+        assert!(
+            is_close(priced_dig.greeks.price, dig_ref, 1e-12, 1e-12),
+            "cash-or-nothing digital SDK price {} != celnet-exotics reference {dig_ref}",
+            priced_dig.greeks.price
+        );
+
+        // ---- one-touch: 1Y, barrier 1.25 above spot, rebate 1.0 ------------------
+        let touch_barrier = 1.25;
+        let touch_rebate = 1.0;
+        let one_touch = InstrumentSpec::one_touch(
+            eurusd(),
+            Tenor::Years(1),
+            1.0,
+            Quantity::base(1_000_000.0),
+            Side::Sell,
+            touch_barrier,
+            touch_rebate,
+        );
+        let priced_ot =
+            tokio::time::timeout(STEP_DEADLINE, client.price(&one_touch, m, conventions()))
+                .await
+                .expect("one-touch price returns in time")
+                .expect("one-touch price succeeds");
+        // A touch has no strike; the server prices on inputs with strike = barrier.
+        let ot_ref = one_touch_price(
+            &inputs(touch_barrier),
+            touch_barrier,
+            touch_rebate,
+            RebateTiming::AtHit,
+        );
+        assert!(
+            is_close(priced_ot.greeks.price, ot_ref, 1e-12, 1e-12),
+            "one-touch SDK price {} != celnet-exotics reference {ot_ref}",
+            priced_ot.greeks.price
+        );
+
+        // Structural sanity: an up-and-out call is worth strictly less than a plain
+        // vanilla call of the same strike (the knock-out can only extinguish value).
+        let vanilla_ref = celnet_vanilla::price(OptionType::Call, &inputs(strike));
+        assert!(
+            sb_ref < vanilla_ref,
+            "up-and-out call {sb_ref} must be cheaper than the vanilla {vanilla_ref}"
+        );
 
         edge.shutdown(Duration::from_secs(5)).await;
     })

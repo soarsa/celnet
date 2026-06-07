@@ -345,6 +345,65 @@ export function instrumentToWire(i: Instrument): WireObject {
         legs: i.product.strategy.legs.map(legToWire),
       };
       break;
+    // The already-contracted barrier/digital/touch arms (proto field numbers
+    // single_barrier=9, double_barrier=10, digital=11, touch=12 — already on the
+    // wire AND priced server-side; the GUI ticket now builds them). Each arm uses
+    // the EXACT snake_case field NAMES + numeric enum tags the server WS codec
+    // decodes (crates/celnet-server/src/ws/codec.rs single_barrier_from_json /
+    // double_barrier_from_json / digital_from_json / touch_from_json). The single-
+    // and double-barrier reuse the SAME nested `vanilla` message (option_type +
+    // strike-or-delta), exactly like the proto.
+    case "singleBarrier": {
+      const b = i.product.singleBarrier;
+      base["single_barrier"] = {
+        vanilla: {
+          option_type: e.optionType.toWire(b.vanilla.optionType),
+          strike: strikeOrDeltaToWire(b.vanilla.strike),
+        },
+        kind: e.barrierKind.toWire(b.kind),
+        side: e.barrierSide.toWire(b.side),
+        barrier: b.barrier,
+        rebate: b.rebate,
+        monitoring: e.monitoringStyle.toWire(b.monitoring),
+      };
+      break;
+    }
+    case "doubleBarrier": {
+      const b = i.product.doubleBarrier;
+      base["double_barrier"] = {
+        vanilla: {
+          option_type: e.optionType.toWire(b.vanilla.optionType),
+          strike: strikeOrDeltaToWire(b.vanilla.strike),
+        },
+        kind: e.barrierKind.toWire(b.kind),
+        lower_barrier: b.lowerBarrier,
+        upper_barrier: b.upperBarrier,
+        rebate: b.rebate,
+        monitoring: e.monitoringStyle.toWire(b.monitoring),
+      };
+      break;
+    }
+    case "digital": {
+      const d = i.product.digital;
+      base["digital"] = {
+        option_type: e.optionType.toWire(d.optionType),
+        strike: d.strike,
+        style: e.digitalStyle.toWire(d.style),
+        payout: d.payout,
+      };
+      break;
+    }
+    case "touch": {
+      const t = i.product.touch;
+      base["touch"] = {
+        kind: e.touchKind.toWire(t.kind),
+        lower_barrier: t.lowerBarrier,
+        upper_barrier: t.upperBarrier,
+        rebate: t.rebate,
+        monitoring: e.monitoringStyle.toWire(t.monitoring),
+      };
+      break;
+    }
     case "varianceSwap":
       base["variance_swap"] = { strike_vol: i.product.varianceSwap.strikeVol };
       break;

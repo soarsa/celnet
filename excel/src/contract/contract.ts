@@ -88,6 +88,46 @@ export type MarketObservable =
 export type AveragingStyle = "DISCRETE" | "CONTINUOUS";
 
 /**
+ * Barrier crossing semantics for a single barrier level (proto `BarrierKind`).
+ * KNOCK_IN activates the option when the barrier is touched; KNOCK_OUT
+ * extinguishes it. Mirrors `celnet_proto::BarrierKind`
+ * (BARRIER_KIND_KNOCK_IN=0, BARRIER_KIND_KNOCK_OUT=1).
+ */
+export type BarrierKind = "KNOCK_IN" | "KNOCK_OUT";
+
+/**
+ * Where a single barrier sits relative to spot at inception (proto `BarrierSide`).
+ * UP is above spot (up-and-*); DOWN is below spot (down-and-*). Mirrors
+ * `celnet_proto::BarrierSide` (BARRIER_SIDE_UP=0, BARRIER_SIDE_DOWN=1).
+ */
+export type BarrierSide = "UP" | "DOWN";
+
+/**
+ * How a barrier / touch is monitored along the path (proto `MonitoringStyle`).
+ * CONTINUOUS triggers on any touch at any instant; DISCRETE tests only at the
+ * scheduled fixing instants. Mirrors `celnet_proto::MonitoringStyle`
+ * (MONITORING_STYLE_CONTINUOUS=0, MONITORING_STYLE_DISCRETE=1).
+ */
+export type MonitoringStyle = "CONTINUOUS" | "DISCRETE";
+
+/**
+ * The touch family for one-/no-/double-no-/double-one-touch structures (proto
+ * `TouchKind`). ONE_TOUCH pays if the barrier IS touched; NO_TOUCH if it is NOT;
+ * DOUBLE_NO_TOUCH if NEITHER of two barriers is touched; DOUBLE_ONE_TOUCH if
+ * EITHER is touched. Mirrors `celnet_proto::TouchKind` (TOUCH_KIND_ONE_TOUCH=0,
+ * NO_TOUCH=1, DOUBLE_NO_TOUCH=2, DOUBLE_ONE_TOUCH=3).
+ */
+export type TouchKind = "ONE_TOUCH" | "NO_TOUCH" | "DOUBLE_NO_TOUCH" | "DOUBLE_ONE_TOUCH";
+
+/**
+ * The settlement style of a digital (binary) option (proto `DigitalStyle`).
+ * CASH_OR_NOTHING pays a fixed cash amount if in-the-money at expiry;
+ * ASSET_OR_NOTHING pays one unit of the asset. Mirrors `celnet_proto::DigitalStyle`
+ * (DIGITAL_STYLE_CASH_OR_NOTHING=0, DIGITAL_STYLE_ASSET_OR_NOTHING=1).
+ */
+export type DigitalStyle = "CASH_OR_NOTHING" | "ASSET_OR_NOTHING";
+
+/**
  * The analytic estimator an Asian option is priced with (proto `AsianMethod`).
  * The arithmetic average of lognormal observations is not lognormal, so it is
  * priced by a fast analytic estimator: CURRAN (geometric-conditioning, the
@@ -449,10 +489,81 @@ export interface Lookback {
   mcSeed: bigint;
 }
 
+/**
+ * A single-barrier knock-in / knock-out option (proto `SingleBarrier`): a vanilla
+ * payoff plus one barrier. `kind` selects knock-in/out, `side` whether the barrier
+ * sits above (up) or below (down) spot at inception, `barrier` the level, `rebate`
+ * the amount paid if the barrier event extinguishes/never activates the option, and
+ * `monitoring` continuous vs discrete crossing.
+ */
+export interface SingleBarrier {
+  vanilla: Vanilla;
+  kind: BarrierKind;
+  side: BarrierSide;
+  /** The barrier level (quote per 1 unit of base). */
+  barrier: number;
+  /** Rebate paid if the barrier event extinguishes/never activates the option. */
+  rebate: number;
+  monitoring: MonitoringStyle;
+}
+
+/**
+ * A double-barrier option bounded by a lower and an upper barrier (proto
+ * `DoubleBarrier`): a vanilla payoff plus two barriers. `kind` applies the
+ * knock-in/out to whichever barrier is touched.
+ */
+export interface DoubleBarrier {
+  vanilla: Vanilla;
+  kind: BarrierKind;
+  /** The lower barrier level (quote per 1 unit of base). */
+  lowerBarrier: number;
+  /** The upper barrier level (quote per 1 unit of base). */
+  upperBarrier: number;
+  /** Rebate paid on the barrier event. */
+  rebate: number;
+  monitoring: MonitoringStyle;
+}
+
+/**
+ * A digital (binary) option paying a fixed amount on an in-the-money expiry
+ * (proto `Digital`). `optionType` selects the above-strike (call) vs below-strike
+ * (put) payoff; `style` cash-or-nothing vs asset-or-nothing; `payout` the fixed
+ * payout amount (in domestic ccy for cash-or-nothing).
+ */
+export interface Digital {
+  optionType: OptionType;
+  /** The strike (quote per 1 unit of base). */
+  strike: number;
+  style: DigitalStyle;
+  /** The fixed payout amount (in domestic ccy for cash-or-nothing). */
+  payout: number;
+}
+
+/**
+ * A touch structure — one-touch / no-touch / double-no-touch / double-one-touch
+ * (proto `Touch`). `lowerBarrier` is the sole barrier for the single-barrier
+ * (one-/no-touch) kinds; `upperBarrier` is used only by the double structures.
+ * `rebate` is paid when the touch condition is satisfied.
+ */
+export interface Touch {
+  kind: TouchKind;
+  /** The (lower / sole) barrier level (quote per 1 unit of base). */
+  lowerBarrier: number;
+  /** The upper barrier level (double structures only; ignored for the single kinds). */
+  upperBarrier: number;
+  /** The rebate paid when the touch condition is satisfied. */
+  rebate: number;
+  monitoring: MonitoringStyle;
+}
+
 /** The product payoff carried by an Instrument (the proto `product` oneof). */
 export type Product =
   | { kind: "vanilla"; vanilla: Vanilla }
   | { kind: "strategy"; strategy: Strategy }
+  | { kind: "singleBarrier"; singleBarrier: SingleBarrier }
+  | { kind: "doubleBarrier"; doubleBarrier: DoubleBarrier }
+  | { kind: "digital"; digital: Digital }
+  | { kind: "touch"; touch: Touch }
   | { kind: "varianceSwap"; varianceSwap: VarianceSwap }
   | { kind: "volatilitySwap"; volatilitySwap: VolatilitySwap }
   | { kind: "asianOption"; asianOption: AsianOption }

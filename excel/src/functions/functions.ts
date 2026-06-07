@@ -24,6 +24,7 @@ import {
   formatAsianSpill,
   formatCalibratedSmileSpill,
   formatCliquetSpill,
+  formatExoticPremiumSpill,
   formatForwardStartSpill,
   formatGreeksSpill,
   formatLimitsSpill,
@@ -46,13 +47,16 @@ import {
   parseTenor,
   shapeAccumulator,
   shapeAsianOption,
+  shapeBarrier,
   shapeCalibration,
   shapeCliquet,
+  shapeDigital,
   shapeForwardStart,
   shapeLookback,
   shapeQuanto,
   shapeReportingNumeraire,
   shapeTarf,
+  shapeTouch,
   shapeVanillaInstrument,
   shapeVarianceSwap,
   shapeVolatilitySwap,
@@ -297,6 +301,177 @@ export async function RFQ(
       offer: quote.price.offer,
       quoteId: quote.quoteId,
       validUntilNanos: quote.validUntilNanos,
+      conventions: quote.conventions,
+      surfaceVersion: quote.surfaceVersion,
+      epochNanos: quote.epochNanos,
+    });
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
+/**
+ * Price a barrier option — single OR double — as a labelled spill of
+ * `["premium", PV]`, the 13 risk Greeks, and a convention footer. The premium is
+ * the server's exact closed-form / PDE value (the same `celnet-exotics` value the
+ * SDK/CLI read); barriers are priced exactly, so there is no standard-error row.
+ *
+ * ONE function covers both products via params: supplying `upperBarrier` selects a
+ * DOUBLE barrier (the `barrier` argument is then the LOWER barrier, `upperBarrier`
+ * the upper, and `side` is omitted — a double barrier brackets spot, so it has no
+ * single side); omitting `upperBarrier` selects a SINGLE barrier with the given
+ * `side` (UP/DOWN). The strike may be an absolute level or a delta ("25dP", "ATM").
+ * @customfunction BARRIER
+ * @param pair Currency pair, e.g. EURUSD.
+ * @param tenor Tenor, e.g. 1Y.
+ * @param strikeOrDelta Absolute strike (1.12) or delta (25dP, ATM) of the vanilla payoff.
+ * @param callPut C for call, P for put.
+ * @param notional Trade notional in the base currency.
+ * @param barrier Barrier level (single: the sole barrier; double: the LOWER barrier).
+ * @param kind Optional KNOCK_IN (default) or KNOCK_OUT.
+ * @param side Optional UP (default) or DOWN — single-barrier only (omit for a double barrier).
+ * @param upperBarrier Optional upper barrier; supplying it makes the ticket a DOUBLE barrier.
+ * @param rebate Optional rebate paid on the barrier event (omit => 0).
+ * @param monitoring Optional CONTINUOUS (default) or DISCRETE crossing.
+ * @returns A spill: premium, the 13 Greeks, and a convention footer.
+ */
+export async function BARRIER(
+  pair: string,
+  tenor: string,
+  strikeOrDelta: string,
+  callPut: string,
+  notional: number,
+  barrier: number,
+  kind?: string,
+  side?: string,
+  upperBarrier?: number,
+  rebate?: number,
+  monitoring?: string,
+): Promise<SpillMatrix> {
+  try {
+    const instrument = shapeBarrier({
+      pair,
+      tenor,
+      strikeOrDelta,
+      callPut,
+      notional,
+      barrier,
+      kind,
+      side,
+      upperBarrier,
+      rebate,
+      monitoring,
+    });
+    const quote = await getConnection().requestQuote(
+      instrument,
+      DEFAULT_CONVENTIONS,
+      `barrier:${pair}:${tenor}:${strikeOrDelta}:${callPut}:${notional}:${barrier}:${kind ?? ""}:${side ?? ""}:${upperBarrier ?? ""}:${rebate ?? ""}:${monitoring ?? ""}`,
+    );
+    return formatExoticPremiumSpill({
+      premium: quote.greeks.price,
+      greeks: quote.greeks,
+      conventions: quote.conventions,
+      surfaceVersion: quote.surfaceVersion,
+      epochNanos: quote.epochNanos,
+    });
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
+/**
+ * Price a digital (binary) option as a labelled spill of `["premium", PV]`, the 13
+ * risk Greeks, and a convention footer. The premium is the server's exact
+ * closed-form value (the same `celnet-exotics` value the SDK/CLI read). The strike
+ * must be an absolute level; `callPut` selects the above-strike (call) vs
+ * below-strike (put) payoff; `style` cash-or-nothing (default) vs asset-or-nothing;
+ * `payout` the fixed cash payout (omit => unit payout).
+ * @customfunction DIGITAL
+ * @param pair Currency pair, e.g. EURUSD.
+ * @param tenor Tenor, e.g. 1Y.
+ * @param strike Absolute strike level, e.g. 1.10.
+ * @param callPut C for the above-strike payoff, P for the below-strike payoff.
+ * @param notional Trade notional in the base currency.
+ * @param style Optional CASH_OR_NOTHING (default) or ASSET_OR_NOTHING.
+ * @param payout Optional fixed payout amount (omit => 0/unit).
+ * @returns A spill: premium, the 13 Greeks, and a convention footer.
+ */
+export async function DIGITAL(
+  pair: string,
+  tenor: string,
+  strike: number,
+  callPut: string,
+  notional: number,
+  style?: string,
+  payout?: number,
+): Promise<SpillMatrix> {
+  try {
+    const instrument = shapeDigital({ pair, tenor, strike, callPut, notional, style, payout });
+    const quote = await getConnection().requestQuote(
+      instrument,
+      DEFAULT_CONVENTIONS,
+      `digital:${pair}:${tenor}:${strike}:${callPut}:${notional}:${style ?? ""}:${payout ?? ""}`,
+    );
+    return formatExoticPremiumSpill({
+      premium: quote.greeks.price,
+      greeks: quote.greeks,
+      conventions: quote.conventions,
+      surfaceVersion: quote.surfaceVersion,
+      epochNanos: quote.epochNanos,
+    });
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
+/**
+ * Price a touch structure — one-touch / no-touch / double-no-touch /
+ * double-one-touch — as a labelled spill of `["premium", PV]`, the 13 risk Greeks,
+ * and a convention footer. The premium is the server's exact closed-form value (the
+ * same `celnet-exotics` value the SDK/CLI read). A touch pays the `rebate` on the
+ * touch condition and has no vanilla payoff. The single kinds (OT/NT) use `barrier`
+ * as the sole level; the double kinds (DNT/DOT) require BOTH `barrier` (the lower)
+ * and a strictly-greater `upperBarrier`.
+ * @customfunction TOUCH
+ * @param pair Currency pair, e.g. EURUSD.
+ * @param tenor Tenor, e.g. 1Y.
+ * @param kind Touch family: OT (one-touch), NT (no-touch), DNT (double-no-touch), DOT (double-one-touch).
+ * @param barrier The (lower / sole) barrier level.
+ * @param notional Trade notional in the base currency.
+ * @param rebate Optional rebate paid when the touch condition is satisfied (omit => 0).
+ * @param upperBarrier Optional upper barrier (required for DNT/DOT; rejected for OT/NT).
+ * @param monitoring Optional CONTINUOUS (default) or DISCRETE monitoring.
+ * @returns A spill: premium, the 13 Greeks, and a convention footer.
+ */
+export async function TOUCH(
+  pair: string,
+  tenor: string,
+  kind: string,
+  barrier: number,
+  notional: number,
+  rebate?: number,
+  upperBarrier?: number,
+  monitoring?: string,
+): Promise<SpillMatrix> {
+  try {
+    const instrument = shapeTouch({
+      pair,
+      tenor,
+      kind,
+      barrier,
+      notional,
+      rebate,
+      upperBarrier,
+      monitoring,
+    });
+    const quote = await getConnection().requestQuote(
+      instrument,
+      DEFAULT_CONVENTIONS,
+      `touch:${pair}:${tenor}:${kind}:${barrier}:${notional}:${rebate ?? ""}:${upperBarrier ?? ""}:${monitoring ?? ""}`,
+    );
+    return formatExoticPremiumSpill({
+      premium: quote.greeks.price,
+      greeks: quote.greeks,
       conventions: quote.conventions,
       surfaceVersion: quote.surfaceVersion,
       epochNanos: quote.epochNanos,
@@ -1104,6 +1279,9 @@ function registerAll(): void {
   cf.associate("SURFACE", SURFACE as (...a: never[]) => unknown);
   cf.associate("MARKSURFACE", MARKSURFACE as (...a: never[]) => unknown);
   cf.associate("RFQ", RFQ as (...a: never[]) => unknown);
+  cf.associate("BARRIER", BARRIER as (...a: never[]) => unknown);
+  cf.associate("DIGITAL", DIGITAL as (...a: never[]) => unknown);
+  cf.associate("TOUCH", TOUCH as (...a: never[]) => unknown);
   cf.associate("VARSWAP", VARSWAP as (...a: never[]) => unknown);
   cf.associate("VOLSWAP", VOLSWAP as (...a: never[]) => unknown);
   cf.associate("ASIAN", ASIAN as (...a: never[]) => unknown);

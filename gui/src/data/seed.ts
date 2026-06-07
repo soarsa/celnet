@@ -9,19 +9,25 @@ import type {
   AccumulatorMonitoring,
   AsianMethod,
   AveragingStyle,
+  BarrierKind,
+  BarrierSide,
   BrokerQuoteSet,
   CcyPair,
   Conventions,
+  DigitalStyle,
   FixingSchedule,
   Instrument,
   Leg,
   LookbackMonitoring,
   LookbackStyle,
   MarketContext,
+  MonitoringStyle,
   OptionType,
   QuantoPayoff,
   StrategyKind,
+  StrikeOrDelta,
   TarfRedemption,
+  TouchKind,
 } from "./contract";
 
 export const DEFAULT_CONVENTIONS: Conventions = {
@@ -133,6 +139,140 @@ function strategyInstrument(
     quantity: { notional: notionalMm * 1e6, baseCcy: true },
     side: "TWO_WAY",
     product: { kind: "strategy", strategy: { kind, legs } },
+  };
+}
+
+/** The inputs for a single-barrier option (`product.singleBarrier`). */
+export interface SingleBarrierTerms {
+  optionType: OptionType;
+  /** Strike as an absolute level or a signed convention delta. */
+  strike: StrikeOrDelta;
+  kind: BarrierKind;
+  side: BarrierSide;
+  barrier: number;
+  rebate: number;
+  monitoring: MonitoringStyle;
+}
+
+/** A single-barrier instrument (`product.singleBarrier`). */
+function singleBarrierInstrument(
+  pair: CcyPair,
+  tenorYears: number,
+  notionalMm: number,
+  terms: SingleBarrierTerms,
+): Instrument {
+  return {
+    pair,
+    tenor: tenorYearsToTenor(tenorYears),
+    expiryYears: tenorYears,
+    quantity: { notional: notionalMm * 1e6, baseCcy: true },
+    side: "TWO_WAY",
+    product: {
+      kind: "singleBarrier",
+      singleBarrier: {
+        vanilla: { optionType: terms.optionType, strike: terms.strike },
+        kind: terms.kind,
+        side: terms.side,
+        barrier: terms.barrier,
+        rebate: terms.rebate,
+        monitoring: terms.monitoring,
+      },
+    },
+  };
+}
+
+/** The inputs for a double-barrier option (`product.doubleBarrier`). */
+export interface DoubleBarrierTerms {
+  optionType: OptionType;
+  /** Strike as an absolute level or a signed convention delta. */
+  strike: StrikeOrDelta;
+  kind: BarrierKind;
+  lowerBarrier: number;
+  upperBarrier: number;
+  rebate: number;
+  monitoring: MonitoringStyle;
+}
+
+/** A double-barrier instrument (`product.doubleBarrier`). */
+function doubleBarrierInstrument(
+  pair: CcyPair,
+  tenorYears: number,
+  notionalMm: number,
+  terms: DoubleBarrierTerms,
+): Instrument {
+  return {
+    pair,
+    tenor: tenorYearsToTenor(tenorYears),
+    expiryYears: tenorYears,
+    quantity: { notional: notionalMm * 1e6, baseCcy: true },
+    side: "TWO_WAY",
+    product: {
+      kind: "doubleBarrier",
+      doubleBarrier: {
+        vanilla: { optionType: terms.optionType, strike: terms.strike },
+        kind: terms.kind,
+        lowerBarrier: terms.lowerBarrier,
+        upperBarrier: terms.upperBarrier,
+        rebate: terms.rebate,
+        monitoring: terms.monitoring,
+      },
+    },
+  };
+}
+
+/** The inputs for a digital (binary) option (`product.digital`). */
+export interface DigitalTerms {
+  optionType: OptionType;
+  strike: number;
+  style: DigitalStyle;
+  payout: number;
+}
+
+/** A digital instrument (`product.digital`). */
+function digitalInstrument(
+  pair: CcyPair,
+  tenorYears: number,
+  notionalMm: number,
+  terms: DigitalTerms,
+): Instrument {
+  return {
+    pair,
+    tenor: tenorYearsToTenor(tenorYears),
+    expiryYears: tenorYears,
+    quantity: { notional: notionalMm * 1e6, baseCcy: true },
+    side: "TWO_WAY",
+    product: { kind: "digital", digital: { ...terms } },
+  };
+}
+
+/** The inputs for a touch structure (`product.touch`). */
+export interface TouchTerms {
+  kind: TouchKind;
+  lowerBarrier: number;
+  upperBarrier: number;
+  rebate: number;
+  monitoring: MonitoringStyle;
+}
+
+/** `true` iff a touch kind uses two barriers (the corridor structures). */
+export function isDoubleTouch(kind: TouchKind): boolean {
+  return kind === "DOUBLE_NO_TOUCH" || kind === "DOUBLE_ONE_TOUCH";
+}
+
+/** A touch instrument (`product.touch`). */
+function touchInstrument(
+  pair: CcyPair,
+  tenorYears: number,
+  notionalMm: number,
+  terms: TouchTerms,
+): Instrument {
+  return {
+    pair,
+    tenor: tenorYearsToTenor(tenorYears),
+    expiryYears: tenorYears,
+    quantity: { notional: notionalMm * 1e6, baseCcy: true },
+    side: "TWO_WAY",
+    product: { kind: "touch", touch: { ...terms } },
   };
 }
 
@@ -466,6 +606,10 @@ export function seedSubscriptions(): { instrument: Instrument; label: string }[]
 export {
   vanillaInstrument,
   strategyInstrument,
+  singleBarrierInstrument,
+  doubleBarrierInstrument,
+  digitalInstrument,
+  touchInstrument,
   varianceSwapInstrument,
   volatilitySwapInstrument,
   asianInstrument,

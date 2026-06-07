@@ -28,6 +28,8 @@ import type {
   Cliquet,
   Conventions,
   CrossGamma,
+  Digital,
+  DoubleBarrier,
   Executed,
   Execution,
   FixingSchedule,
@@ -35,6 +37,9 @@ import type {
   Instrument,
   Leg,
   Lookback,
+  SingleBarrier,
+  Touch,
+  Vanilla,
   MarkedSurface,
   MarketContext,
   MarketSeriesPoint,
@@ -160,6 +165,72 @@ function legToWire(leg: Leg): WireObject {
   };
 }
 
+/**
+ * Encode a vanilla payoff body (`{ option_type, strike }`). Shared by the bare
+ * `vanilla` product arm and the single/double-barrier bodies that nest a vanilla
+ * under their own `vanilla` key — exactly the shape the server's `vanilla_from_json`
+ * reads (it descends into the `vanilla` value and decodes `option_type`/`strike`).
+ */
+function vanillaToWire(v: Vanilla): WireObject {
+  return {
+    option_type: e.optionType.toWire(v.optionType),
+    strike: strikeOrDeltaToWire(v.strike),
+  };
+}
+
+/**
+ * Encode a single-barrier body (proto field 9). The vanilla payoff nests under
+ * `vanilla`; `kind`/`side`/`monitoring` are numeric enums; `barrier`/`rebate` are
+ * plain numbers — the EXACT shape `single_barrier_from_json` decodes.
+ */
+function singleBarrierToWire(b: SingleBarrier): WireObject {
+  return {
+    vanilla: vanillaToWire(b.vanilla),
+    kind: e.barrierKind.toWire(b.kind),
+    side: e.barrierSide.toWire(b.side),
+    barrier: b.barrier,
+    rebate: b.rebate,
+    monitoring: e.monitoringStyle.toWire(b.monitoring),
+  };
+}
+
+/** Encode a double-barrier body (proto field 10) — see `single_barrier` for conventions. */
+function doubleBarrierToWire(b: DoubleBarrier): WireObject {
+  return {
+    vanilla: vanillaToWire(b.vanilla),
+    kind: e.barrierKind.toWire(b.kind),
+    lower_barrier: b.lowerBarrier,
+    upper_barrier: b.upperBarrier,
+    rebate: b.rebate,
+    monitoring: e.monitoringStyle.toWire(b.monitoring),
+  };
+}
+
+/** Encode a digital body (proto field 11) — `option_type`/`style` numeric enums. */
+function digitalToWire(d: Digital): WireObject {
+  return {
+    option_type: e.optionType.toWire(d.optionType),
+    strike: d.strike,
+    style: e.digitalStyle.toWire(d.style),
+    payout: d.payout,
+  };
+}
+
+/**
+ * Encode a touch body (proto field 12). `upper_barrier` is always present (the
+ * server ignores it for the single-barrier one-/no-touch kinds); `kind`/
+ * `monitoring` are numeric enums — the EXACT shape `touch_from_json` decodes.
+ */
+function touchToWire(t: Touch): WireObject {
+  return {
+    kind: e.touchKind.toWire(t.kind),
+    lower_barrier: t.lowerBarrier,
+    upper_barrier: t.upperBarrier,
+    rebate: t.rebate,
+    monitoring: e.monitoringStyle.toWire(t.monitoring),
+  };
+}
+
 export function instrumentToWire(i: Instrument): WireObject {
   const base: WireObject = {
     pair: ccyPairToWire(i.pair),
@@ -170,22 +241,32 @@ export function instrumentToWire(i: Instrument): WireObject {
   };
   if (i.solve) base["solve"] = solveToWire(i.solve);
   // The product oneof: nest the body under its own key (the proto field name) with
-  // the proto field number it occupies — vanilla=7, strategy=8, … variance_swap=13,
-  // volatility_swap=14, asian_option=15, forward_start=16, cliquet=17, quanto=18,
-  // tarf=19, accumulator=20, lookback=21. The WS JSON mirror keys by name, exactly
-  // like `crates/celnet-server/src/ws/codec.rs` decodes.
+  // the proto field number it occupies — vanilla=7, strategy=8, single_barrier=9,
+  // double_barrier=10, digital=11, touch=12, variance_swap=13, volatility_swap=14,
+  // asian_option=15, forward_start=16, cliquet=17, quanto=18, tarf=19,
+  // accumulator=20, lookback=21. The WS JSON mirror keys by name, exactly like
+  // `crates/celnet-server/src/ws/codec.rs` decodes.
   switch (i.product.kind) {
     case "vanilla":
-      base["vanilla"] = {
-        option_type: e.optionType.toWire(i.product.vanilla.optionType),
-        strike: strikeOrDeltaToWire(i.product.vanilla.strike),
-      };
+      base["vanilla"] = vanillaToWire(i.product.vanilla);
       break;
     case "strategy":
       base["strategy"] = {
         kind: e.strategyKind.toWire(i.product.strategy.kind),
         legs: i.product.strategy.legs.map(legToWire),
       };
+      break;
+    case "singleBarrier":
+      base["single_barrier"] = singleBarrierToWire(i.product.singleBarrier);
+      break;
+    case "doubleBarrier":
+      base["double_barrier"] = doubleBarrierToWire(i.product.doubleBarrier);
+      break;
+    case "digital":
+      base["digital"] = digitalToWire(i.product.digital);
+      break;
+    case "touch":
+      base["touch"] = touchToWire(i.product.touch);
       break;
     case "varianceSwap":
       base["variance_swap"] = { strike_vol: i.product.varianceSwap.strikeVol };
