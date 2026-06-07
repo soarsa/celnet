@@ -577,8 +577,6 @@ dependencies = [
 name = "celnet-observability"
 version = "0.0.0"
 dependencies = [
- "celnet-core",
- "celnet-types",
  "crossbeam-utils",
  "hdrhistogram",
  "metrics",
