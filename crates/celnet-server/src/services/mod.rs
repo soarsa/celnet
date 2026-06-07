@@ -32,4 +32,5 @@ mod attribution;
 pub(crate) mod clicktrade;
 pub(crate) mod forward;
 mod pin;
+pub mod pricefanout;
 mod stream_rx;

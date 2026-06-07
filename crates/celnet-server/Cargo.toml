@@ -30,6 +30,7 @@ celnet-limits.workspace = true
 celnet-entitlements.workspace = true
 celnet-risk-fleet.workspace = true
 celnet-router.workspace = true
+celnet-fanout.workspace = true
 celnet-client.workspace = true
 celnet-fix.workspace = true
 celnet-integration.workspace = true
