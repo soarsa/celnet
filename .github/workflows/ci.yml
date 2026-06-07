@@ -435,3 +435,61 @@ jobs:
       - name: Fuzz proto_convert (30s smoke)
         working-directory: fuzz
         run: cargo +nightly fuzz run proto_convert -- -max_total_time=30
+
+  # ---------------------------------------------------------------------------
+  # SDK runnable-examples gate (Linux). Proves the canonical `cargo run -p
+  # celnet-client --example <x>` onboarding affordance actually works end-to-end
+  # against a real edge — not just that it compiles. Boots `demo_edge` as a
+  # background OS process on a fixed loopback port, then runs each of the three
+  # quickstart examples against it; every example exits NON-ZERO on a degenerate /
+  # empty priced response, so a real, non-empty priced result is asserted by the
+  # exit code. (The same SDK code paths are also gated in-process by the
+  # `examples_smoke` integration test in the `gate` job; this lane additionally
+  # proves the two-process `demo_edge` → example wiring the docs promise.)
+  sdk-examples:
+    name: SDK runnable-examples gate (linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: sdk-examples
+
+      # Build the edge + the three examples up front so the timed run steps bound
+      # only the workflow, not a cold compile.
+      - name: Build demo_edge + SDK examples
+        run: |
+          cargo build -p celnet-server --example demo_edge
+          cargo build -p celnet-client \
+            --example quote_and_trade \
+            --example stream_blotter \
+            --example price_exotic
+
+      - name: Boot demo_edge, run each example, assert priced output
+        env:
+          CELNET_GRPC_ADDR: 127.0.0.1:50551
+          CELNET_WS_ADDR: 127.0.0.1:8081
+        run: |
+          set -euo pipefail
+          ./target/debug/examples/demo_edge > demo_edge.log 2>&1 &
+          edge_pid=$!
+          trap 'kill "$edge_pid" 2>/dev/null || true' EXIT
+
+          # Wait for the edge to print its ready line (bounded).
+          for _ in $(seq 1 60); do
+            if grep -q "demo edge ready" demo_edge.log 2>/dev/null; then break; fi
+            sleep 1
+          done
+          grep -q "demo edge ready" demo_edge.log || { echo "edge never came up"; cat demo_edge.log; exit 1; }
+
+          # Each example exits non-zero on an empty / degenerate priced result.
+          timeout 60 ./target/debug/examples/quote_and_trade
+          timeout 60 ./target/debug/examples/stream_blotter
+          timeout 60 ./target/debug/examples/price_exotic

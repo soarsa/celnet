@@ -15,6 +15,25 @@
 //! idempotency keys, click-to-trade tokens, and the bidirectional control protocol
 //! are all handled inside the SDK.
 //!
+//! ## Quickstart — runnable examples
+//!
+//! Three runnable examples under `crates/celnet-client/examples/` are the canonical
+//! onboarding affordance; each connects to a running edge, drives one workflow, and
+//! prints real priced output (exiting non-zero on a degenerate / empty response).
+//! Boot a seeded demo edge in one terminal, then run an example in another:
+//!
+//! ```text
+//! cargo run -p celnet-server --example demo_edge          # gRPC :50551
+//! cargo run -p celnet-client --example quote_and_trade    # RFQ: request → BUY → book
+//! cargo run -p celnet-client --example stream_blotter     # one session, 3 streamed lines
+//! cargo run -p celnet-client --example price_exotic       # Asian (closed-form) + American (FD)
+//! ```
+//!
+//! Each example reads `CELNET_GRPC_ADDR` (default `http://127.0.0.1:50551`) so it
+//! can target any local edge. The same SDK code paths are gated in-process by
+//! `tests/examples_smoke.rs`, which boots a real edge on an ephemeral port and
+//! asserts each workflow yields a non-empty priced result.
+//!
 //! ## RFQ — request → quote → accept
 //!
 //! [`Client::request_quote`] builds an [`Rfq`] handle carrying a stable
