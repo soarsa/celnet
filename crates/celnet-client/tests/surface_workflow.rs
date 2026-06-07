@@ -1000,3 +1000,153 @@ async fn wave3_tarf_accumulator_lookback_price_through_sdk() {
     .await
     .expect("test must not hang");
 }
+
+/// A correlated multi-asset basket prices end-to-end through the SDK (five-surface
+/// api-first parity): the SDK price equals the `celnet-exotics` multi-asset MC
+/// oracle bit-for-bit at the SAME (paths, replications, steps, seed), surfaces the
+/// MC standard error on both the `price` and the `quote` paths, and a degenerate
+/// one-leg weight-1 basket equals the independent Garman-Kohlhagen vanilla within
+/// the MC standard error. Greeks are the honest deferred zero strip.
+#[tokio::test]
+async fn basket_prices_through_sdk_with_std_error() {
+    use celnet_client::{BasketKind, BasketLegTerms, BasketTerms};
+    use celnet_exotics::{
+        BasketKind as ExBasketKind, BasketLeg as ExBasketLeg, BasketMcConfig, BasketSpec,
+        price_basket,
+    };
+
+    tokio::time::timeout(TEST_DEADLINE, async {
+        let (edge, client) = start_edge_and_client().await;
+        let market = live_market();
+
+        // A genuine 2-asset worst-of call. Per-leg market data travels in the
+        // legs; the shared domestic rate is the request market context's r_dom.
+        let leg_a = (0.5_f64, 1.10_f64, 0.11_f64, 0.015_f64); // (w, spot, vol, r_for)
+        let leg_b = (0.5_f64, 1.27_f64, 0.13_f64, 0.020_f64);
+        let rho = 0.4_f64;
+        let strike = 0.6_f64;
+        let paths = 8_192u32;
+        let reps = 16u32;
+        let seed = 0x0BA5_E700_u64;
+
+        let terms = BasketTerms::new(
+            vec![
+                BasketLegTerms::new(eurusd(), leg_a.0, leg_a.1, leg_a.2, leg_a.3),
+                BasketLegTerms::new(eurusd(), leg_b.0, leg_b.1, leg_b.2, leg_b.3),
+            ],
+            vec![1.0, rho, rho, 1.0],
+            BasketKind::WorstOf,
+            OptionType::Call,
+            strike,
+        )
+        .monte_carlo(paths, reps, 1, seed);
+        let spec = InstrumentSpec::basket(
+            eurusd(),
+            celnet_types::Tenor::Years(1),
+            1.0,
+            Quantity::base(1_000_000.0),
+            Side::Buy,
+            terms,
+        );
+        let priced =
+            tokio::time::timeout(STEP_DEADLINE, client.price(&spec, market, conventions()))
+                .await
+                .expect("basket price returns")
+                .expect("basket price succeeds");
+
+        // Oracle: the same multi-asset MC at the same config ⇒ bit-reproducible.
+        let oracle = price_basket(
+            &BasketSpec {
+                legs: vec![
+                    ExBasketLeg::new(leg_a.1, leg_a.2, leg_a.3, leg_a.0),
+                    ExBasketLeg::new(leg_b.1, leg_b.2, leg_b.3, leg_b.0),
+                ],
+                correlation: vec![vec![1.0, rho], vec![rho, 1.0]],
+                option_type: OptionType::Call,
+                strike,
+                kind: ExBasketKind::WorstOf,
+            },
+            market.r_dom,
+            1.0,
+            BasketMcConfig {
+                budget: paths as usize,
+                replications: reps as usize,
+                steps: 1,
+                seed,
+            },
+        )
+        .expect("oracle prices");
+        assert_eq!(
+            priced.greeks.price.to_bits(),
+            oracle.price.to_bits(),
+            "SDK basket {} != oracle MC {} (must be bit-identical at the same config)",
+            priced.greeks.price,
+            oracle.price
+        );
+        assert!(
+            priced
+                .price_std_error
+                .expect("basket (MC) must surface a std-error through the SDK price")
+                > 0.0
+        );
+        // Greeks are the honest deferred zero strip.
+        assert_eq!(priced.greeks.delta_spot, 0.0);
+        assert_eq!(priced.greeks.vega, 0.0);
+
+        // The QUOTE path (GUI live-WS + Excel) also carries the MC std-error.
+        let quote = tokio::time::timeout(
+            STEP_DEADLINE,
+            client.request_quote(spec.clone(), conventions()).request(),
+        )
+        .await
+        .expect("basket quote returns")
+        .expect("basket quote succeeds");
+        assert!(
+            quote
+                .price_std_error
+                .expect("basket QUOTE must surface std-error (WS/SDK quote path)")
+                > 0.0
+        );
+
+        // Degenerate one-leg weight-1 basket == GK vanilla within the MC stderr.
+        let one_leg = BasketTerms::new(
+            vec![BasketLegTerms::new(eurusd(), 1.0, 1.12, 0.13, 0.012)],
+            vec![1.0],
+            BasketKind::Basket,
+            OptionType::Call,
+            1.10,
+        )
+        .monte_carlo(16_384, 24, 1, 0xC0FF_EE00);
+        let one_spec = InstrumentSpec::basket(
+            eurusd(),
+            celnet_types::Tenor::Years(1),
+            1.0,
+            Quantity::base(1_000_000.0),
+            Side::Buy,
+            one_leg,
+        );
+        let one_priced = tokio::time::timeout(
+            STEP_DEADLINE,
+            client.price(&one_spec, market, conventions()),
+        )
+        .await
+        .expect("one-leg basket price returns")
+        .expect("one-leg basket price succeeds");
+        let gk = celnet_vanilla::price(
+            OptionType::Call,
+            &VanillaInputs::new(1.12, 1.10, 0.13, 1.0, market.r_dom, 0.012),
+        );
+        let se = one_priced.price_std_error.expect("MC std-error present");
+        assert!(
+            (one_priced.greeks.price - gk).abs() <= 4.0 * se + 1e-9,
+            "degenerate SDK basket {} vs GK {} (4·se {})",
+            one_priced.greeks.price,
+            gk,
+            4.0 * se
+        );
+
+        edge.shutdown(Duration::from_secs(5)).await;
+    })
+    .await
+    .expect("test must not hang");
+}

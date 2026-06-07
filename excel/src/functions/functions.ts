@@ -51,6 +51,7 @@ import {
   shapeAmerican,
   shapeAsianOption,
   shapeBarrier,
+  shapeBasket,
   shapeCalibration,
   shapeCliquet,
   shapeDigital,
@@ -1170,6 +1171,90 @@ export async function AMERICAN(
 }
 
 /**
+ * Price a correlated multi-asset basket / best-of / worst-of option: a spill of
+ * `["premium", PV]`, an honest `["std_error", σ̄]` row (a basket is ALWAYS
+ * Monte-Carlo priced over N correlated FX legs), the 13 risk Greeks, and a
+ * convention footer. The premium is the server's `celnet-exotics` multi-asset MC
+ * value (== the SDK/CLI), discounted at the shared domestic rate. Each leg row of
+ * `legs` is `[pair, weight, spot, vol, rFor]`; `correlations` is the N×N
+ * correlation range (encoded ROW-MAJOR on the wire). The settlement / numeraire
+ * pair is the top-level `pair`; the underlyings are the per-leg pairs. The server
+ * validates the correlation matrix is symmetric / unit-diagonal / positive-definite
+ * (a non-PSD matrix is rejected, never regularised).
+ *
+ * Multi-asset basket Greeks (a per-leg N×{spot,vol} Jacobian + cross-gammas) are a
+ * distinct larger increment and are NOT yet computed: the server returns a zeroed
+ * Greek strip alongside the priced premium + measured MC std-error, so the spill's
+ * Greek rows are honestly `0` (the headline number — premium and its std-error —
+ * is real; the sensitivities are deferred, not faked).
+ * @customfunction BASKET
+ * @param pair Settlement / numeraire currency pair, e.g. EURUSD.
+ * @param tenor Tenor, e.g. 1Y.
+ * @param callPut C for call, P for put on the aggregated underlying.
+ * @param strike Absolute strike level on the aggregated underlying, e.g. 1.18.
+ * @param notional Trade notional in the base currency.
+ * @param legs The legs as a range, one row per leg: [pair, weight, spot, vol, rFor].
+ * @param correlations The N×N correlation matrix as a range (row-major), for the N legs.
+ * @param kind Optional aggregation: BASKET (default, weighted sum), BEST_OF (max) or WORST_OF (min).
+ * @param mcPaths Optional scrambled-Sobol points per replication (0 => server default).
+ * @param mcReplications Optional independent randomized scrambles (0 => server default).
+ * @param mcSteps Optional time steps per path (0 => server default).
+ * @param mcSeed Optional base scramble seed (bit-reproducible; 0 => default).
+ * @returns A spill: premium, std_error, the 13 Greeks (deferred => 0), and a convention footer.
+ */
+export async function BASKET(
+  pair: string,
+  tenor: string,
+  callPut: string,
+  strike: number,
+  notional: number,
+  legs: (string | number)[][],
+  correlations: number[][],
+  kind?: string,
+  mcPaths?: number,
+  mcReplications?: number,
+  mcSteps?: number,
+  mcSeed?: number,
+): Promise<SpillMatrix> {
+  try {
+    const instrument = shapeBasket({
+      pair,
+      tenor,
+      notional,
+      callPut,
+      strike,
+      kind,
+      legs,
+      correlations,
+      mcPaths,
+      mcReplications,
+      mcSteps,
+      mcSeed,
+    });
+    const correlationKey = correlations.map((row) => row.join(",")).join(";");
+    const legsKey = legs.map((row) => row.join(",")).join(";");
+    const quote = await getConnection().requestQuote(
+      instrument,
+      DEFAULT_CONVENTIONS,
+      `basket:${pair}:${tenor}:${callPut}:${strike}:${notional}:${kind ?? ""}:${legsKey}:${correlationKey}:${mcPaths ?? ""}:${mcReplications ?? ""}:${mcSteps ?? ""}:${mcSeed ?? ""}`,
+    );
+    // A basket is always multi-asset Monte-Carlo priced ⇒ the server genuinely
+    // stamps `price_std_error`; surface it honestly. The Greek strip is the
+    // server's zeroed price-only strip (multi-asset Greeks are the next increment).
+    return formatPathDependentSpill({
+      premium: quote.greeks.price,
+      stdError: quote.priceStdError,
+      greeks: quote.greeks,
+      conventions: quote.conventions,
+      surfaceVersion: quote.surfaceVersion,
+      epochNanos: quote.epochNanos,
+    });
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
+/**
  * Stream a live two-way for a structure, multiplexed on the single session and
  * coalesced with identical-argument cells. Re-emits on every Update; flips to a
  * stale state on a heartbeat gap rather than freezing as live (docs §5).
@@ -1476,6 +1561,7 @@ function registerAll(): void {
   cf.associate("ACCUMULATOR", ACCUMULATOR as (...a: never[]) => unknown);
   cf.associate("LOOKBACK", LOOKBACK as (...a: never[]) => unknown);
   cf.associate("AMERICAN", AMERICAN as (...a: never[]) => unknown);
+  cf.associate("BASKET", BASKET as (...a: never[]) => unknown);
   cf.associate("SUBSCRIBE", SUBSCRIBE as (...a: never[]) => unknown);
   cf.associate("SERIES", SERIES as (...a: never[]) => unknown);
   cf.associate("MARK", MARK as (...a: never[]) => unknown);

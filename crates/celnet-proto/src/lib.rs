@@ -609,6 +609,58 @@ mod tests {
     }
 
     #[test]
+    fn round_trip_basket_instrument() {
+        // The correlated multi-asset basket (oneof field 25) round-trips with its
+        // per-leg market data and the row-major correlation array.
+        let basket = Instrument {
+            pair: Some(sample_pair()),
+            tenor: Some(sample_tenor()),
+            expiry_years: 1.0,
+            quantity: Some(sample_quantity()),
+            side: Side::Buy as i32,
+            solve: None,
+            pricing_model: PricingModel::Default as i32,
+            product: Some(instrument::Product::Basket(BasketOption {
+                legs: vec![
+                    BasketLeg {
+                        pair: Some(CcyPair {
+                            base: "EUR".to_owned(),
+                            quote: "USD".to_owned(),
+                        }),
+                        weight: 0.5,
+                        spot: 1.10,
+                        vol: 0.11,
+                        r_for: 0.015,
+                    },
+                    BasketLeg {
+                        pair: Some(CcyPair {
+                            base: "GBP".to_owned(),
+                            quote: "USD".to_owned(),
+                        }),
+                        weight: 0.5,
+                        spot: 1.27,
+                        vol: 0.13,
+                        r_for: 0.02,
+                    },
+                ],
+                // Row-major 2×2 correlation [1, 0.4; 0.4, 1].
+                correlations: vec![1.0, 0.4, 0.4, 1.0],
+                option_type: OptionType::Call as i32,
+                strike: 1.18,
+                kind: BasketKind::WorstOf as i32,
+                mc_paths: 8192,
+                mc_replications: 16,
+                mc_steps: 1,
+                mc_seed: 0x00C0_FFEE,
+            })),
+        };
+        round_trip(&basket);
+
+        // proto3 zero of BasketKind is BASKET (the canonical first member).
+        assert_eq!(BasketKind::Basket as i32, 0);
+    }
+
+    #[test]
     fn round_trip_rfq_lifecycle() {
         let request = QuoteRequest {
             idempotency_key: "5f0c1b2e-2a4d-4f8a-9c1e-7b6a5d4c3b2a".to_owned(),

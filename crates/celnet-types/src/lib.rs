@@ -532,6 +532,37 @@ pub struct Greeks {
     pub color: f64,
 }
 
+impl Greeks {
+    /// A price-only Greek set: the present value with every sensitivity zeroed.
+    ///
+    /// Used by products whose sensitivity strip is a distinct, larger increment
+    /// not yet computed — e.g. correlated multi-asset baskets, whose Greeks are a
+    /// per-leg `N × {spot, vol}` Jacobian plus cross-gammas. Returning an honest
+    /// zero strip alongside the price (and the Monte-Carlo standard error)
+    /// signals the deferral explicitly, rather than fabricating a
+    /// single-underlying bump that would be silently wrong for a multi-asset
+    /// payoff.
+    #[must_use]
+    pub const fn price_only(price: f64) -> Self {
+        Self {
+            price,
+            delta_spot: 0.0,
+            delta_forward: 0.0,
+            gamma: 0.0,
+            vega: 0.0,
+            theta: 0.0,
+            rho_dom: 0.0,
+            rho_for: 0.0,
+            vanna: 0.0,
+            volga: 0.0,
+            charm: 0.0,
+            speed: 0.0,
+            zomma: 0.0,
+            color: 0.0,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

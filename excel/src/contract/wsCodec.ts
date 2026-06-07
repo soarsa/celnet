@@ -23,6 +23,7 @@ import type {
   Accumulator,
   AmericanOption,
   ArbReport,
+  BasketOption,
   BrokerQuoteSet,
   BucketedRisk,
   CcyPair,
@@ -351,8 +352,39 @@ export function instrumentToWire(i: Instrument): WireObject {
     case "american":
       base["american"] = americanToWire(i.product.american);
       break;
+    case "basket":
+      base["basket"] = basketToWire(i.product.basket);
+      break;
   }
   return base;
+}
+
+/**
+ * Encode a correlated multi-asset basket body (proto field 25). The EXACT shape
+ * `basket_from_json` decodes: a `legs` array of `{pair, weight, spot, vol, r_for}`
+ * leg objects (per-leg market data), a row-major `correlations` array (length
+ * N²), the option/kind enums, the strike, and the MC knobs following the codec's
+ * 64-bit-as-JSON-number convention (server reads with `u64_or_zero`). The reported
+ * price carries a `priceStdError` (multi-asset Monte-Carlo).
+ */
+function basketToWire(b: BasketOption): WireObject {
+  return {
+    legs: b.legs.map((l) => ({
+      pair: ccyPairToWire(l.pair),
+      weight: l.weight,
+      spot: l.spot,
+      vol: l.vol,
+      r_for: l.rFor,
+    })),
+    correlations: [...b.correlations],
+    option_type: e.optionType.toWire(b.optionType),
+    strike: b.strike,
+    kind: e.basketKind.toWire(b.kind),
+    mc_paths: b.mcPaths,
+    mc_replications: b.mcReplications,
+    mc_steps: b.mcSteps,
+    mc_seed: Number(b.mcSeed),
+  };
 }
 
 /**

@@ -386,6 +386,66 @@
   gap: var(--space-1);
 }
 
+/* --- basket (correlated multi-asset) leg builder --------------------------- */
+
+.basketLeg {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-2) 0;
+  border-bottom: var(--hairline);
+}
+.basketLeg:last-of-type {
+  border-bottom: none;
+}
+.basketLegNo {
+  font-family: var(--font-brand);
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  min-width: 48px;
+}
+.basketLegRemove {
+  appearance: none;
+  border: var(--hairline);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: var(--type-caption);
+  line-height: 1;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.basketLegRemove:hover:not(:disabled) {
+  color: var(--brand);
+  border-color: var(--brand);
+}
+.basketLegRemove:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.basketAddLeg {
+  appearance: none;
+  border: var(--hairline);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--type-caption);
+  padding: 4px 12px;
+  cursor: pointer;
+  align-self: flex-start;
+}
+.basketAddLeg:hover:not(:disabled) {
+  color: var(--brand);
+  border-color: var(--brand);
+}
+.basketAddLeg:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* --- variance / volatility swap fair-strike result ------------------------- */
 
 .swapResult {

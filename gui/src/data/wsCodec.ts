@@ -564,6 +564,35 @@ export function instrumentToWire(i: Instrument): WireObject {
       };
       break;
     }
+    // The correlated multi-asset basket, appended additively at the next field
+    // number basket=25 (one current contract, no schema_version, no renumber;
+    // CLAUDE.md rule 9). Per-leg market data travels IN each leg (the single-pair
+    // market context cannot hold N underlyings); the shared domestic rate is the
+    // request market context's r_dom. Fields match the server WS codec's
+    // `basket_from_json` (legs=1, correlations=2, option_type=3, strike=4, kind=5,
+    // mc_paths=6, mc_replications=7, mc_steps=8, mc_seed=9). Multi-asset Monte-
+    // Carlo, so the price carries a `price_std_error`.
+    case "basket": {
+      const b = i.product.basket;
+      base["basket"] = {
+        legs: b.legs.map((l) => ({
+          pair: ccyPairToWire(l.pair),
+          weight: l.weight,
+          spot: l.spot,
+          vol: l.vol,
+          r_for: l.rFor,
+        })),
+        correlations: [...b.correlations],
+        option_type: e.optionType.toWire(b.optionType),
+        strike: b.strike,
+        kind: e.basketKind.toWire(b.kind),
+        mc_paths: b.mcPaths,
+        mc_replications: b.mcReplications,
+        mc_steps: b.mcSteps,
+        mc_seed: b.mcSeed,
+      };
+      break;
+    }
   }
   return base;
 }

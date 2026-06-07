@@ -12,6 +12,7 @@ use celnet_types::{AtmConvention, CcyPair};
 use clap::{Args, Parser, Subcommand};
 
 use crate::args::{CliBarrier, CliDeltaConvention, CliDigital, CliOptionType, Market};
+use crate::basket::{self, CliBasketKind};
 use crate::risk::{
     self, AggregateReq, CliDimension, DrillReq, LimitsReq, PositionsReq, RiskCommon, StreamReq,
 };
@@ -42,6 +43,10 @@ pub(crate) enum Command {
     Surface(SurfaceArgs),
     /// Price a digital / one-touch / double-no-touch / single-barrier exotic.
     Exotic(ExoticArgs),
+    /// Price a correlated multi-asset FX option (weighted basket / best-of /
+    /// worst-of) over N currency-pair legs (Cholesky-correlated multi-asset GBM
+    /// Monte-Carlo; reports a standard error; multi-asset Greeks deferred).
+    Basket(BasketArgs),
     /// Resolve and print the convention record for a pair and tenor.
     Convention(ConventionArgs),
     /// Firm-scale hierarchical risk against a running edge (the same `RiskService`
@@ -600,6 +605,48 @@ pub(crate) enum ExoticKind {
     },
 }
 
+/// Arguments to `basket`.
+#[derive(Debug, Args)]
+pub(crate) struct BasketArgs {
+    /// A leg `PAIR:WEIGHT:SPOT:VOL:R_FOR` (repeatable, at least one). Per-leg
+    /// market data travels in the leg; the shared domestic rate is `--r-dom`.
+    #[arg(long = "leg", value_parser = basket::parse_leg, required = true)]
+    pub(crate) legs: Vec<basket::ParsedLeg>,
+    /// The row-major N×N correlation matrix entries (repeatable; exactly N²
+    /// values, e.g. for 2 legs: `--correlation 1 --correlation 0.4
+    /// --correlation 0.4 --correlation 1`). Must be symmetric, unit-diagonal,
+    /// positive-definite.
+    #[arg(long = "correlation", allow_hyphen_values = true, required = true)]
+    pub(crate) correlations: Vec<f64>,
+    /// Call or put on the aggregated underlying.
+    #[arg(long, value_enum, default_value = "call")]
+    pub(crate) option: CliOptionType,
+    /// The strike `K` on the aggregated underlying.
+    #[arg(long)]
+    pub(crate) strike: f64,
+    /// The aggregation kind.
+    #[arg(long, value_enum, default_value = "basket")]
+    pub(crate) kind: CliBasketKind,
+    /// The shared domestic (numeraire / settlement) rate `r_dom`.
+    #[arg(long, default_value_t = 0.0)]
+    pub(crate) r_dom: f64,
+    /// The expiry in vol-time years.
+    #[arg(long)]
+    pub(crate) t: f64,
+    /// Scrambled-Sobol points per replication (paths per scramble).
+    #[arg(long, default_value_t = 16_384)]
+    pub(crate) mc_paths: usize,
+    /// Independent randomized scrambles (`≥ 2` for a finite standard error).
+    #[arg(long, default_value_t = 24)]
+    pub(crate) mc_replications: usize,
+    /// Time steps per path (`1` suffices for these European payoffs).
+    #[arg(long, default_value_t = 1)]
+    pub(crate) mc_steps: usize,
+    /// The base scramble seed (identical seeds reproduce results bit-for-bit).
+    #[arg(long, default_value_t = 0)]
+    pub(crate) mc_seed: u64,
+}
+
 /// Arguments to `convention`.
 #[derive(Debug, Args)]
 pub(crate) struct ConventionArgs {
@@ -1040,6 +1087,49 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
             write!(out, "{}", exotic::format_report(spec, &r)).ok();
             Ok(())
         }
+        Command::Basket(a) => {
+            let n = a.legs.len();
+            if a.correlations.len() != n * n {
+                return Err(DispatchError::Invalid(format!(
+                    "expected exactly {n}² = {} --correlation values for {n} legs, got {}",
+                    n * n,
+                    a.correlations.len()
+                )));
+            }
+            if !(a.strike.is_finite() && a.strike > 0.0) {
+                return Err(DispatchError::Invalid(
+                    "basket --strike must be positive".to_owned(),
+                ));
+            }
+            if !(a.t.is_finite() && a.t > 0.0) {
+                return Err(DispatchError::Invalid(
+                    "basket --t (expiry) must be positive".to_owned(),
+                ));
+            }
+            let replications = a.mc_replications.max(2);
+            let correlation: Vec<Vec<f64>> = (0..n)
+                .map(|i| a.correlations[i * n..i * n + n].to_vec())
+                .collect();
+            let req = basket::BasketRequest {
+                legs: a.legs,
+                correlation,
+                option: a.option.into(),
+                strike: a.strike,
+                kind: a.kind.into(),
+                r_dom: a.r_dom,
+                t: a.t,
+                cfg: celnet_exotics::BasketMcConfig {
+                    budget: a.mc_paths.max(1),
+                    replications,
+                    steps: a.mc_steps.max(1),
+                    seed: a.mc_seed,
+                },
+            };
+            let r = basket::run(&req)
+                .map_err(|e| DispatchError::Invalid(format!("basket pricing failed: {e}")))?;
+            write!(out, "{}", basket::format_report(&req, &r)).ok();
+            Ok(())
+        }
         Command::Convention(a) => {
             let pair = parse_pair(&a.pair)?;
             let tenor = parse_tenor(&a.tenor).map_err(DispatchError::BadTenor)?;
@@ -1214,6 +1304,66 @@ mod tests {
         .unwrap();
         assert!(out.contains("single-barrier"));
         assert!(out.contains("price"));
+    }
+
+    #[test]
+    fn basket_parses_and_prices() {
+        let out = run_to_string(&[
+            "celnet",
+            "basket",
+            "--leg",
+            "EURUSD:0.5:1.10:0.11:0.015",
+            "--leg",
+            "GBPUSD:0.5:1.27:0.13:0.02",
+            "--correlation",
+            "1",
+            "--correlation",
+            "0.4",
+            "--correlation",
+            "0.4",
+            "--correlation",
+            "1",
+            "--option",
+            "call",
+            "--strike",
+            "1.18",
+            "--kind",
+            "worst-of",
+            "--r-dom",
+            "0.02",
+            "--t",
+            "1.0",
+            "--mc-paths",
+            "2048",
+            "--mc-replications",
+            "8",
+        ])
+        .unwrap();
+        assert!(out.contains("worst-of call"));
+        assert!(out.contains("price"));
+        assert!(out.contains("std_error"));
+    }
+
+    #[test]
+    fn basket_rejects_wrong_correlation_count() {
+        let err = run_to_string(&[
+            "celnet",
+            "basket",
+            "--leg",
+            "EURUSD:0.5:1.10:0.11:0.015",
+            "--leg",
+            "GBPUSD:0.5:1.27:0.13:0.02",
+            "--correlation",
+            "1",
+            "--correlation",
+            "0.4",
+            "--strike",
+            "1.18",
+            "--t",
+            "1.0",
+        ])
+        .unwrap_err();
+        assert!(matches!(err, DispatchError::Invalid(_)));
     }
 
     #[test]

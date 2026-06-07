@@ -16,10 +16,10 @@ use serde_json::{Map, Value, json};
 
 use celnet_proto::{
     Accumulator, AdditiveRisk, AggregateRiskRequest, AggregateRiskResponse, AmericanOption,
-    ArbReport, AsianOption, BrokerQuoteSet, BucketedRisk, CcyExposureLeg, CcyPair, Cliquet,
-    Conventions, CrossGamma, Digital, DoubleBarrier, DrillRiskRequest, DrillRiskResponse,
-    EntitlementPrincipal, EntitlementRule, Execute, Executed, Execution, FixingSchedule,
-    ForwardStart, GetSmileRequest, Greeks, Instrument, Leg, LimitStatusRequest,
+    ArbReport, AsianOption, BasketLeg, BasketOption, BrokerQuoteSet, BucketedRisk, CcyExposureLeg,
+    CcyPair, Cliquet, Conventions, CrossGamma, Digital, DoubleBarrier, DrillRiskRequest,
+    DrillRiskResponse, EntitlementPrincipal, EntitlementRule, Execute, Executed, Execution,
+    FixingSchedule, ForwardStart, GetSmileRequest, Greeks, Instrument, Leg, LimitStatusRequest,
     LimitStatusResponse, LimitUtilization, ListPositionsRequest, ListPositionsResponse, Lookback,
     MarkSurfaceRequest, MarkSurfaceResponse, MarketContext, Modify, NonAdditiveRisk, NumeraireRate,
     OrgKey, PriceRequest, PriceResponse, Quantity, Quanto, Quote, QuoteAccept, QuoteReject,
@@ -529,6 +529,48 @@ fn window_barrier_from_json(v: &Value) -> Result<WindowBarrier> {
     })
 }
 
+fn basket_leg_from_json(v: &Value) -> Result<BasketLeg> {
+    let o = obj(v, "basket leg")?;
+    Ok(BasketLeg {
+        pair: opt_nested(o, "pair", ccy_pair_from_json)?,
+        weight: f64_field(o, "weight")?,
+        spot: f64_field(o, "spot")?,
+        vol: f64_field(o, "vol")?,
+        r_for: f64_or_zero(o, "r_for"),
+    })
+}
+
+fn basket_from_json(v: &Value) -> Result<BasketOption> {
+    let o = obj(v, "basket")?;
+    // The `legs` array: one BasketLeg object per underlying.
+    let legs = o
+        .get("legs")
+        .and_then(Value::as_array)
+        .ok_or_else(|| err("basket.legs must be an array of leg objects"))?
+        .iter()
+        .map(basket_leg_from_json)
+        .collect::<Result<Vec<_>>>()?;
+    // The `correlations` array: the row-major N×N correlation matrix (length N²).
+    let correlations = f64_vec(o, "correlations");
+    let mc_paths = u32::try_from(u64_or_zero(o, "mc_paths"))
+        .map_err(|_| err("basket.mc_paths out of range"))?;
+    let mc_replications = u32::try_from(u64_or_zero(o, "mc_replications"))
+        .map_err(|_| err("basket.mc_replications out of range"))?;
+    let mc_steps = u32::try_from(u64_or_zero(o, "mc_steps"))
+        .map_err(|_| err("basket.mc_steps out of range"))?;
+    Ok(BasketOption {
+        legs,
+        correlations,
+        option_type: enum_or_zero(o, "option_type"),
+        strike: f64_field(o, "strike")?,
+        kind: enum_or_zero(o, "kind"),
+        mc_paths,
+        mc_replications,
+        mc_steps,
+        mc_seed: u64_or_zero(o, "mc_seed"),
+    })
+}
+
 fn american_from_json(v: &Value) -> Result<AmericanOption> {
     let o = obj(v, "american")?;
     let lsm_paths = u32::try_from(u64_or_zero(o, "lsm_paths"))
@@ -613,12 +655,14 @@ fn product_from_json(o: &Map<String, Value>) -> Result<instrument::Product> {
         ))
     } else if let Some(v) = o.get("american") {
         Ok(instrument::Product::American(american_from_json(v)?))
+    } else if let Some(v) = o.get("basket") {
+        Ok(instrument::Product::Basket(basket_from_json(v)?))
     } else {
         Err(err(
             "instrument needs exactly one product (vanilla / strategy / \
              single_barrier / double_barrier / digital / touch / variance_swap / \
              volatility_swap / asian_option / forward_start / cliquet / quanto / \
-             tarf / accumulator / lookback / window_barrier / american)",
+             tarf / accumulator / lookback / window_barrier / american / basket)",
         ))
     }
 }
@@ -1622,6 +1666,50 @@ mod tests {
                 other => panic!("expected a strike spec, got {other:?}"),
             },
             other => panic!("expected a vanilla product, got {other:?}"),
+        }
+    }
+
+    /// The correlated multi-asset basket decodes from the JSON a browser/Excel
+    /// client sends, including the `legs` array (each leg's own market data) and
+    /// the row-major `correlations` array — the WS half of the five-surface
+    /// api-first parity.
+    #[test]
+    fn basket_instrument_round_trips_from_json() {
+        let v = json!({
+            "pair": { "base": "EUR", "quote": "USD" },
+            "expiry_years": 1.0,
+            "side": 0,
+            "basket": {
+                "legs": [
+                    { "pair": { "base": "EUR", "quote": "USD" },
+                      "weight": 0.5, "spot": 1.10, "vol": 0.11, "r_for": 0.015 },
+                    { "pair": { "base": "GBP", "quote": "USD" },
+                      "weight": 0.5, "spot": 1.27, "vol": 0.13, "r_for": 0.02 }
+                ],
+                "correlations": [1.0, 0.4, 0.4, 1.0],
+                "option_type": 0,
+                "strike": 1.18,
+                "kind": 2,
+                "mc_paths": 8192,
+                "mc_replications": 16,
+                "mc_steps": 1,
+                "mc_seed": 12648430
+            }
+        });
+        let instr = instrument_from_json(&v).expect("decode");
+        match instr.product {
+            Some(instrument::Product::Basket(b)) => {
+                assert_eq!(b.legs.len(), 2);
+                assert_eq!(b.legs[0].spot.to_bits(), 1.10_f64.to_bits());
+                assert_eq!(b.legs[1].vol.to_bits(), 0.13_f64.to_bits());
+                assert_eq!(b.legs[0].pair.as_ref().unwrap().base, "EUR");
+                assert_eq!(b.correlations, vec![1.0, 0.4, 0.4, 1.0]);
+                assert_eq!(b.kind, celnet_proto::BasketKind::WorstOf as i32);
+                assert_eq!(b.strike.to_bits(), 1.18_f64.to_bits());
+                assert_eq!(b.mc_paths, 8192);
+                assert_eq!(b.mc_replications, 16);
+            }
+            other => panic!("expected a basket product, got {other:?}"),
         }
     }
 

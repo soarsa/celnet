@@ -23,6 +23,7 @@ import type {
   AveragingStyle,
   BarrierKind,
   BarrierSide,
+  BasketKind,
   Cut,
   DayCount,
   DeltaConvention,
@@ -269,3 +270,9 @@ export const lookbackMonitoring = enumCodec<LookbackMonitoring>(["CONTINUOUS", "
  * (EXERCISE_STYLE_AMERICAN=0, EXERCISE_STYLE_BERMUDAN=1).
  */
 export const exerciseStyle = enumCodec<ExerciseStyle>(["AMERICAN", "BERMUDAN"]);
+
+/**
+ * `BasketKind` ↔ proto `BasketKind`
+ * (BASKET_KIND_BASKET=0, BASKET_KIND_BEST_OF=1, BASKET_KIND_WORST_OF=2).
+ */
+export const basketKind = enumCodec<BasketKind>(["BASKET", "BEST_OF", "WORST_OF"]);
