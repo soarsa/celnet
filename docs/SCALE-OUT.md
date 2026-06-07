@@ -55,9 +55,10 @@ validated**; what remains is cross-DC *hardening* and the durability tier. The s
   *hardening* (TLS, the `io_uring`/DPDK datapath, the §11 latency **SLOs** — the built federation +
   replog prove *correctness + routing + churn + failover + quorum/replay arithmetic* over loopback,
   **not** the absolute cross-host wire-latency budgets, which need a tuned LAN + bench gates and
-  stay deploy-gated). The in-process SPMC fan-out ring is now **built** (`celnet-fanout`); only its
-  wiring under the async edge (replacing the bounded `tokio` broadcast) remains. These are drop-ins
-  behind the now-built seams — no engine or contract change.
+  stay deploy-gated). The in-process SPMC fan-out ring (`celnet-fanout`) is now **built AND wired
+  under the async edge** (Wave 9): the RFS edge fans per-pair price ticks out through ONE producer
+  per pair → N session consumers, replacing the old per-subscription spot tickers. These are
+  drop-ins behind the now-built seams — no engine or contract change.
 
 The honest split, mechanism by mechanism:
 
@@ -66,7 +67,7 @@ The honest split, mechanism by mechanism:
 | Node-local **whole-`MarketState` snapshot** via `arc-swap` (surface+curves+conventions) | **Built** | `celnet-engine` `rt::StateHandle`/`StateReader` (load path avoids `arc-swap`'s allocating guard) |
 | Node-local **top-of-book** publication via single-writer **seqlock** (small `Copy` snapshot) | **Built** | `celnet-engine` `rt::Seqlock`, `core::PricingCore` |
 | Core→edge **SPSC** ring (hot path stays SPSC) | **Built** (`rtrb`) | `celnet-engine`, `celnet-server` `core_link` |
-| Edge async fan-in/fan-out + per-session stream | **Built** (tokio `mpsc` + bounded broadcast depth 256) | `celnet-server` `services/stream`, `core_link` |
+| Edge async fan-in/fan-out + per-session stream | **Built** (per-session tokio `mpsc` for control/lifecycle; per-pair price fan-out over the `celnet-fanout` SPMC ring — 1 producer/pair → N consumers, Wave 9) | `celnet-server` `services/stream`, `services/pricefanout`, `core_link` |
 | Blue-green **live-state handoff** over a hand-rolled little-endian codec | **Built** (not `rkyv`) | `celnet-engine` `handoff` |
 | Multi-source MD aggregation + divergence detection | **Built** | `celnet-integration` |
 | HRW/rendezvous **partition map** + stateless **router tier** primitives | **Built** | `celnet-router` (`map`/`key`/`hash`/`replica`/`backpressure`) |
@@ -75,7 +76,7 @@ The honest split, mechanism by mechanism:
 | **Cross-node serving over real gRPC** — edge federates RiskService + forwards owned-pair Pricing/Quote/Surface across N backend processes; reconciled fan-out == single-node; `unavailable` on unreachable slice | **Built** (localhost multi-process; cross-DC hardening + latency SLOs deferred) | `celnet-server` `services/forward.rs`, `services/risk/federate.rs`; OS-process proof `examples/scale_harness.rs` |
 | Cross-**datacenter** transport **hardening** (TLS, `io_uring`/DPDK datapath, §11 latency SLOs) | **Designed only** | — (§12) |
 | **Full Raft consensus** — leader election (randomized timeouts + RequestVote §5.4.1 + Pre-Vote; persistent term/vote/commit-watermark), AppendEntries with §5.3 log-matching + **durable conflicting-tail truncation**, §5.4.2 commitment, deterministic `to_bits` apply | **Built** (logical nodes over real loopback sockets; Raft §6 membership change + §7 snapshot/compaction = documented next increment; absolute cross-host wire SLO stays deploy-gated) | `celnet-replog` (`election`/`log`/`persist`/`entry`/`state`/`wire`); proofs `tests/replication.rs` + parity row `celnet-parity/tests/raft_election.rs` |
-| In-proc **SPMC broadcast** fan-out ring (lock-free, per-slot two-phase seqlock, conflation with exact skip-accounting; no-loss/total-order at 100/1000 consumers) | **Built** (crate; in-process loopback throughput is an upper-bound/relative signal — absolute network fan-out stays deploy-gated; edge-wiring to replace the `tokio` broadcast still pending) | `celnet-fanout` (`ring`); proof `tests/broadcast.rs` |
+| In-proc **SPMC broadcast** fan-out ring (lock-free, per-slot two-phase seqlock, conflation with exact skip-accounting; no-loss/total-order at 100/1000 consumers) | **Built AND wired** (crate + edge integration, Wave 9: the RFS edge drives per-pair price ticks through 1 producer/pair → N session consumers, replacing the per-subscription spot tickers; in-process loopback throughput is an upper-bound/relative signal — absolute network fan-out stays deploy-gated) | `celnet-fanout` (`ring`); edge wiring `celnet-server` `services/pricefanout.rs` + `services/stream.rs`; proofs `celnet-fanout/tests/broadcast.rs`, `celnet-server/tests/fanout_edge.rs` |
 | `SO_REUSEPORT` sharded accept + eBPF steering; `io_uring`/XDP tier | **Designed only** (readiness probe references the handoff intent) | — (build-now, §12) |
 | DPDK/RDMA multicast tier | **Deferred** (ADR-gated on measured bottleneck) | — (§12) |
 
@@ -205,11 +206,16 @@ update used for booking.
   Mature Rust implementations exist (`disruptor`-style SPMC, broadcast rings). Note: a simple
   `crossbeam` SPSC/MPSC can beat the disruptor for trivial cases — the disruptor's win is
   multi-consumer fan-out with batch publish, which is exactly the quoting use case.
-  **What is built today** (§0): the hot path is the `rtrb` **SPSC** core→edge ring, and the
-  async edge fans out to per-session subscribers with a tokio `mpsc` + a bounded **broadcast
-  depth 256**. The disruptor-style SPMC broadcast ring (next bullet) is now **built** in
-  `celnet-fanout`; wiring it under the async edge in place of the tokio broadcast is the
-  remaining integration step (gated on a measured per-shard fan-degree bottleneck).
+  **What is built today** (§0): the hot path is the `rtrb` **SPSC** core→edge ring; the async
+  edge keeps per-session control/lifecycle frames (snapshot / modify / resync / executed /
+  reject / heartbeat / stream-end / market-series) on a bounded tokio `mpsc`, and fans the
+  **high-volume per-pair price ticks** out over the `celnet-fanout` SPMC broadcast ring — **ONE
+  producer per pair → N session consumers** (Wave 9, `celnet-server` `services/pricefanout.rs`).
+  The per-pair deterministic market evolution is computed once on a dedicated off-runtime
+  producer thread and broadcast; each session drains an independent ring consumer with
+  non-blocking `try_recv` in its `select!` loop and formats its own `Update` (its sequence,
+  click-to-trade tokens, snapshot/delta) from the shared tick. This replaced the old
+  per-subscription spot tickers (*O(subscribers)* generators for an *O(pairs)* quantity).
 
 - **`celnet-fanout` — lock-free SPMC broadcast ring (BUILT, Wave 3).** A single-producer /
   multi-consumer broadcast ring (the LMAX-Disruptor multi-consumer pattern, Thompson et al.

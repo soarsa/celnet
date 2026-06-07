@@ -65,6 +65,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use celnet_fanout::Consumer;
 use celnet_proto::stream_service_server::StreamService;
 use celnet_proto::{
     ClientStreamMessage, Conventions, Execute, Executed, Heartbeat, Instrument, MarketContext,
@@ -85,10 +86,10 @@ use crate::services::clicktrade::{
 };
 use crate::services::forward::route_pair;
 use crate::services::pin::{PinnedVol, resolve_pinned_vol};
+use crate::services::pricefanout::{PriceFanout, PriceTick};
 use crate::services::risk::federate::Fleet;
 use crate::spread::SpreadModel;
 use crate::surface_book::SurfaceBook;
-use crate::tick::TickSource;
 
 use super::stream_rx::ReceiverStream;
 
@@ -110,10 +111,6 @@ const TICK_INTERVAL: Duration = Duration::from_millis(5);
 /// Emit a heartbeat every this many ticks (so the stream proves liveness even if
 /// the repriced line is momentarily unchanged).
 const HEARTBEAT_EVERY: u64 = 8;
-
-/// The per-tick fractional spot bump for the streaming tick source; small enough
-/// to stay realistic, large enough that consecutive updates carry a real delta.
-const STREAM_BUMP: f64 = 0.0005;
 
 /// How long a streamed line's click-to-trade tokens stay valid for execution, in
 /// nanoseconds (1 second — a tight last-look window appropriate for a live stream
@@ -168,6 +165,13 @@ pub struct StreamEdge {
     /// subscription** and the bidi stream is relayed to that backend (see
     /// [`StreamEdge::stream_session`]).
     fleet: Option<Arc<Fleet>>,
+    /// The shared per-pair price-tick fan-out: ONE producer per pair drives the
+    /// deterministic spot path into a `celnet-fanout` SPMC ring; every session
+    /// subscribed to that pair drains an independent consumer (the 1-producer →
+    /// N-consumers scale improvement that replaced the old per-subscription
+    /// counter-based spot ticker). Shared across all sessions on this edge (and
+    /// the WS mirror, which builds its session driver from the same `StreamEdge`).
+    fanout: Arc<PriceFanout>,
 }
 
 impl StreamEdge {
@@ -190,6 +194,7 @@ impl StreamEdge {
             next_execution_id: Arc::new(AtomicU64::new(1)),
             store: None,
             fleet: None,
+            fanout: PriceFanout::start(),
         }
     }
 
@@ -214,6 +219,7 @@ impl StreamEdge {
             next_execution_id: Arc::new(AtomicU64::new(1)),
             store: Some(store),
             fleet: None,
+            fanout: PriceFanout::start(),
         }
     }
 
@@ -240,6 +246,7 @@ impl StreamEdge {
             next_execution_id: Arc::new(AtomicU64::new(1)),
             store: Some(store),
             fleet,
+            fanout: PriceFanout::start(),
         }
     }
 }
@@ -271,8 +278,17 @@ struct Subscription {
     lagged: bool,
     /// Whether the `LAGGED` [`StreamEnd`] marker has been delivered to the client.
     lag_notified: bool,
-    /// Deterministic spot-tick source seeded from the subscription id.
-    tick: SpotTick,
+    /// This subscription's independent consumer on its **pair's** shared
+    /// `celnet-fanout` price-tick ring. `drive_tick` drains it (non-blocking) to
+    /// learn the next per-pair market and emit one `Update` per drained tick. The
+    /// ring is the 1-producer-per-pair → N-consumers fan-out that replaced the old
+    /// per-subscription counter-based spot ticker.
+    tick: Consumer<PriceTick>,
+    /// The most recently streamed market for this subscription (the last tick
+    /// delivered as an `Update`, or the opening baseline before any tick). A
+    /// server-assisted Resync whose gap predates the replay buffer re-baselines on
+    /// this on-path market so the client never holds an off-path baseline.
+    last_market: MarketContext,
     /// Recent server messages retained for a Resync replay (seq → message).
     replay: VecDeque<(u64, ServerStreamMessage)>,
     /// The click-to-trade token ledger (live + bounded-consumed sets): the SAME
@@ -283,52 +299,6 @@ struct Subscription {
     /// `Execute` idempotency: a client key → the `Executed` it booked, so an
     /// `Execute` retry carrying the same key returns the same booking.
     execute_idempotency: HashMap<String, Executed>,
-}
-
-/// A deterministic, counter-based spot perturbation for one subscription. Mirrors
-/// the engine's `splitmix64` tick discipline (no wall-clock, no OS RNG) so a
-/// stream is reproducible from its `(seed, base_spot)`.
-struct SpotTick {
-    base_spot: f64,
-    seed: u64,
-    counter: u64,
-}
-
-impl SpotTick {
-    fn new(base_spot: f64, seed: u64) -> Self {
-        Self {
-            base_spot,
-            seed,
-            counter: 0,
-        }
-    }
-
-    /// The deterministically-bumped spot for a given counter value, *without*
-    /// advancing the counter. Reuses the same public-domain `splitmix64` mixer as
-    /// [`crate::tick::TickSource`] so the path is bit-identical to the tick source.
-    ///
-    /// Centering and bumping use *separate* multiply/add (never a fused `mul_add`):
-    /// FMA rounds the fused op once at a rounding not guaranteed bit-identical
-    /// across targets/opt-levels, which would break the cross-target bit-stable
-    /// reproduction the RFS determinism discipline promises.
-    fn spot_at(&self, counter: u64) -> f64 {
-        let mixed = TickSource::splitmix64(self.seed ^ counter.wrapping_mul(0x2545_F491_4F6C_DD1D));
-        let u = TickSource::unit_signed(mixed);
-        self.base_spot * (u * STREAM_BUMP + 1.0)
-    }
-
-    /// The next deterministically-bumped spot the upcoming live tick will use,
-    /// *without* consuming it.
-    fn peek_spot(&self) -> f64 {
-        self.spot_at(self.counter)
-    }
-
-    /// The next deterministically-bumped spot, advancing the internal counter.
-    fn next_spot(&mut self) -> f64 {
-        let spot = self.spot_at(self.counter);
-        self.counter = self.counter.wrapping_add(1);
-        spot
-    }
 }
 
 impl Subscription {
@@ -584,6 +554,7 @@ impl StreamEdge {
             minter: TokenMinter::new(),
             next_execution_id: Arc::clone(&self.next_execution_id),
             store: self.store.clone(),
+            fanout: Arc::clone(&self.fanout),
         }
     }
 }
@@ -854,6 +825,10 @@ pub(crate) struct Session {
     /// The shared live position book a click-to-trade fill records into (`None` ⇒
     /// no risk store wired; booking is a no-op).
     store: Option<Arc<crate::services::risk::store::PositionStore>>,
+    /// The shared per-pair price-tick fan-out (see [`StreamEdge::fanout`]). On
+    /// subscribe the session draws a [`PriceTick`] consumer for the subscription's
+    /// pair; `drive_tick` drains it to emit per-subscription updates.
+    fanout: Arc<PriceFanout>,
 }
 
 impl Session {
@@ -964,6 +939,32 @@ impl Session {
             }
         };
         let market = pinned.market;
+        // Subscribe to the instrument's pair on the shared per-pair price-tick ring
+        // (the 1-producer → N-consumers fan-out). The pair's producer is created
+        // lazily on first subscribe, seeded from this baseline market. An instrument
+        // without a pair cannot be fanned out — a hard subscribe error (better than
+        // opening a line that can never tick), never a fabricated stream.
+        let tick = match instrument.pair.as_ref() {
+            Some(wire_pair) => match self.fanout.subscribe(wire_pair, market) {
+                Some(consumer) => consumer,
+                None => {
+                    let _ = out_tx
+                        .send(Err(Status::unavailable(
+                            "price fan-out unavailable (edge draining)",
+                        )))
+                        .await;
+                    return true;
+                }
+            },
+            None => {
+                let _ = out_tx
+                    .send(Err(Status::invalid_argument(
+                        "subscribe instrument requires a `pair`",
+                    )))
+                    .await;
+                return true;
+            }
+        };
         let mut sub = Subscription {
             id,
             instrument,
@@ -979,7 +980,8 @@ impl Session {
             delivered: 0,
             lagged: false,
             lag_notified: false,
-            tick: SpotTick::new(market.spot, id.value),
+            tick,
+            last_market: market,
             replay: VecDeque::new(),
             tokens: TokenLedger::new(),
             execute_idempotency: HashMap::new(),
@@ -1053,6 +1055,31 @@ impl Session {
             }
         };
         let market = pinned.market;
+        // Re-subscribe to the (possibly new) pair's ring before taking the mutable
+        // subscription borrow (avoids a double borrow of `self`). The modified
+        // structure may name a different pair, so the line follows that pair's tick
+        // stream from now on.
+        let tick = match instrument.pair.as_ref() {
+            Some(wire_pair) => match self.fanout.subscribe(wire_pair, market) {
+                Some(consumer) => consumer,
+                None => {
+                    let _ = out_tx
+                        .send(Err(Status::unavailable(
+                            "price fan-out unavailable (edge draining)",
+                        )))
+                        .await;
+                    return true;
+                }
+            },
+            None => {
+                let _ = out_tx
+                    .send(Err(Status::invalid_argument(
+                        "modify instrument requires a `pair`",
+                    )))
+                    .await;
+                return true;
+            }
+        };
         let sub = self.subs.get_mut(&id.value).expect("checked present");
         // Re-baseline the subscription in place at the next sequence.
         sub.instrument = instrument;
@@ -1060,7 +1087,8 @@ impl Session {
         sub.base_market = market;
         sub.surface_version = pinned.echo_version;
         sub.lagged = false;
-        sub.tick = SpotTick::new(market.spot, id.value);
+        sub.tick = tick;
+        sub.last_market = market;
         // Modifying retires the prior structure's tradable tokens (they reference a
         // line that no longer exists). Consumed tokens stay recorded so a late
         // replayed Execute is still rejected as already-consumed.
@@ -1230,12 +1258,10 @@ impl Session {
             let seq = sub.sequence + 1;
             sub.sequence = seq;
             // The gap predates the retained buffer, so send a fresh snapshot priced
-            // on the current live path (the spot the next live Update continues
-            // from), so the client never holds an off-path baseline.
-            let market = MarketContext {
-                spot: sub.tick.peek_spot(),
-                ..sub.base_market
-            };
+            // on the last on-path market this subscription streamed (the most recent
+            // per-pair tick it delivered), so the client never holds an off-path
+            // baseline. Subsequent live updates continue from the next ring tick.
+            let market = sub.last_market;
             let snap = match make_snapshot(sub, seq, &market, &spread, minter, &clock) {
                 Ok(m) => m,
                 Err(status) => {
@@ -1391,8 +1417,25 @@ impl Session {
         true
     }
 
-    /// Drive one market tick across every live subscription. Returns `false` only
-    /// when the channel has closed (client gone).
+    /// Drive a market-tick pass across every live subscription. Each subscription
+    /// drains its **per-pair price-tick ring** (the shared `celnet-fanout` SPMC
+    /// ring, the 1-producer → N-consumers fan-out) of every tick available this
+    /// cadence, **conflating to the latest** and emitting **at most one** sequenced
+    /// `Update` per pass. Returns `false` only when the outbound channel has closed.
+    ///
+    /// **Conflation hint / throttle (preserved).** The previous per-subscription
+    /// ticker advanced exactly one synthetic spot per cadence pass and emitted one
+    /// `Update`; the edge's one-`Update`-per-pass cadence is a deliberate client
+    /// conflation throttle (a live RFS line shows the *current* two-way, not a
+    /// backlog of stale intermediates, and a token lives a full cadence so a click
+    /// can land). The ring preserves that exactly: it delivers the per-pair ticks
+    /// **in order, never torn, never duplicated**, but the driver **conflates the
+    /// pass to the most recent tick** (the producer typically advances faster than
+    /// the cadence) and emits a single `Update` carrying it. When a consumer falls
+    /// more than the ring's capacity behind, the ring's own latest-value conflation
+    /// (with exact `received + skipped == produced` accounting) also engages — so a
+    /// momentarily-slow session always converges on the latest market, the
+    /// FX-streaming-correct "a stale quote is worse than a skipped one" policy.
     fn drive_tick(&mut self, out_tx: &mpsc::Sender<Result<ServerStreamMessage, Status>>) -> bool {
         let spread = self.spread;
         let clock = self.clock.clone();
@@ -1405,51 +1448,87 @@ impl Session {
                 notify_lagged(sub, out_tx);
                 continue;
             }
-            let spot = sub.tick.next_spot();
-            let market = MarketContext {
-                spot,
-                ..sub.base_market
-            };
-            let seq = sub.sequence + 1;
-            debug_assert!(
-                seq > sub.delivered,
-                "live tick must advance past the last delivered sequence"
-            );
-            let update = match make_update(sub, seq, &market, &spread, minter, &clock) {
-                Ok(m) => m,
-                Err(status) => {
-                    let _ = out_tx.try_send(Err(status));
-                    if out_tx.is_closed() {
-                        return false;
-                    }
-                    mark_lagged(sub, out_tx);
-                    continue;
+            // Conflate the pass to the LATEST available tick: drain the ring (each
+            // `try_recv` is in-order; the ring conflates internally if we were
+            // lapped) and keep only the most recent market. Emit at most one Update.
+            let mut latest: Option<MarketContext> = None;
+            while let Ok(tick) = sub.tick.try_recv() {
+                latest = Some(tick.market);
+            }
+            if let Some(market) = latest {
+                match drive_one_update(sub, market, &spread, minter, &clock, out_tx) {
+                    UpdateOutcome::Emitted | UpdateOutcome::Lagged => {}
+                    UpdateOutcome::Closed => return false,
                 }
-            };
-            if try_emit(out_tx, update.clone()) {
-                sub.sequence = seq;
-                sub.delivered = seq;
-                sub.retain(seq, update);
-                if seq % HEARTBEAT_EVERY == 0 {
-                    let hb = ServerStreamMessage {
-                        message: Some(server_stream_message::Message::Heartbeat(Heartbeat {
-                            subscription: Some(sub.id),
-                            sequence: seq,
-                            epoch_nanos: clock.now_nanos(),
-                        })),
-                    };
-                    let _ = out_tx.try_send(Ok(hb));
-                }
-            } else if out_tx.is_closed() {
-                return false;
-            } else {
-                // The dropped `seq` was neither advanced nor retained, and the
-                // just-minted tokens (in `live_tokens`) are about to be retired by
-                // the next emitted line, so no gap, duplicate, or stale token leaks.
-                mark_lagged(sub, out_tx);
             }
         }
         true
+    }
+}
+
+/// The outcome of attempting to emit one `Update` to a subscriber.
+enum UpdateOutcome {
+    /// The update was delivered; the per-subscription sequence advanced.
+    Emitted,
+    /// The outbound channel is closed (client gone) — tear the session down.
+    Closed,
+    /// The subscriber lagged (outbound channel full / a price error); it is parked
+    /// in the recoverable lagged state awaiting a Resync.
+    Lagged,
+}
+
+/// Emit one sequenced `Update` for `sub` priced against `market` (one drained
+/// per-pair tick), stamping fresh click-to-trade tokens and interleaving a
+/// periodic `Heartbeat`. Advances the per-subscription sequence and retains the
+/// message for Resync replay only on a successful emit.
+fn drive_one_update(
+    sub: &mut Subscription,
+    market: MarketContext,
+    spread: &SpreadModel,
+    minter: &TokenMinter,
+    clock: &Clock,
+    out_tx: &mpsc::Sender<Result<ServerStreamMessage, Status>>,
+) -> UpdateOutcome {
+    let seq = sub.sequence + 1;
+    debug_assert!(
+        seq > sub.delivered,
+        "live tick must advance past the last delivered sequence"
+    );
+    let update = match make_update(sub, seq, &market, spread, minter, clock) {
+        Ok(m) => m,
+        Err(status) => {
+            let _ = out_tx.try_send(Err(status));
+            if out_tx.is_closed() {
+                return UpdateOutcome::Closed;
+            }
+            mark_lagged(sub, out_tx);
+            return UpdateOutcome::Lagged;
+        }
+    };
+    if try_emit(out_tx, update.clone()) {
+        sub.sequence = seq;
+        sub.delivered = seq;
+        sub.last_market = market;
+        sub.retain(seq, update);
+        if seq.is_multiple_of(HEARTBEAT_EVERY) {
+            let hb = ServerStreamMessage {
+                message: Some(server_stream_message::Message::Heartbeat(Heartbeat {
+                    subscription: Some(sub.id),
+                    sequence: seq,
+                    epoch_nanos: clock.now_nanos(),
+                })),
+            };
+            let _ = out_tx.try_send(Ok(hb));
+        }
+        UpdateOutcome::Emitted
+    } else if out_tx.is_closed() {
+        UpdateOutcome::Closed
+    } else {
+        // The dropped `seq` was neither advanced nor retained, and the
+        // just-minted tokens (in `live_tokens`) are about to be retired by
+        // the next emitted line, so no gap, duplicate, or stale token leaks.
+        mark_lagged(sub, out_tx);
+        UpdateOutcome::Lagged
     }
 }
 
@@ -1552,6 +1631,16 @@ mod tests {
             ),
             None,
         );
+        let fanout = PriceFanout::start();
+        let tick = fanout
+            .subscribe(
+                &celnet_proto::CcyPair {
+                    base: "EUR".to_owned(),
+                    quote: "USD".to_owned(),
+                },
+                market,
+            )
+            .expect("the EURUSD price-tick ring");
         let mut session = Session {
             subs: HashMap::new(),
             series: HashMap::new(),
@@ -1562,6 +1651,7 @@ mod tests {
             minter: TokenMinter::new(),
             next_execution_id: Arc::new(AtomicU64::new(1)),
             store: None,
+            fanout,
         };
         let mut sub = Subscription {
             id: SubscriptionId { value: 1 },
@@ -1575,7 +1665,8 @@ mod tests {
             delivered: 1,
             lagged: false,
             lag_notified: false,
-            tick: SpotTick::new(market.spot, 1),
+            tick,
+            last_market: market,
             replay: VecDeque::new(),
             tokens: TokenLedger::new(),
             execute_idempotency: HashMap::new(),
@@ -1606,17 +1697,6 @@ mod tests {
         match msg.message.as_ref() {
             Some(server_stream_message::Message::Snapshot(s)) => s.tradable.clone(),
             _ => Vec::new(),
-        }
-    }
-
-    /// `peek_spot` must return exactly the value the next `next_spot` consumes.
-    #[test]
-    fn peek_spot_matches_the_next_consumed_spot() {
-        let mut t = SpotTick::new(1.2345, 99);
-        for _ in 0..32 {
-            let peeked = t.peek_spot();
-            assert_eq!(t.peek_spot().to_bits(), peeked.to_bits());
-            assert_eq!(t.next_spot().to_bits(), peeked.to_bits());
         }
     }
 
@@ -1850,27 +1930,38 @@ mod tests {
         .expect("no hang");
     }
 
-    /// `drive_tick` advances the per-subscription sequence and stamps fresh tokens.
+    /// `drive_tick` drains the per-pair price-tick ring and emits one sequenced
+    /// `Update` per drained tick, advancing the per-subscription sequence strictly
+    /// by one and stamping fresh tokens. (The producer thread publishes ticks
+    /// asynchronously; the test drives repeatedly, deadline-bounded, until it has
+    /// observed ≥2 updates past the baseline.)
     #[tokio::test]
     async fn drive_tick_advances_sequence_and_remints_tokens() {
         tokio::time::timeout(Duration::from_secs(10), async {
             let clock = Clock::manual(1_000_000_000);
             let mut session = make_session(clock);
-            let (tx, mut rx) = mpsc::channel::<Result<ServerStreamMessage, Status>>(64);
-            assert!(session.drive_tick(&tx));
+            let (tx, mut rx) = mpsc::channel::<Result<ServerStreamMessage, Status>>(256);
             let mut last = 1u64;
-            while let Ok(msg) = rx.try_recv() {
-                let msg = msg.unwrap();
-                if let Some(seq) = seq_of(&msg) {
-                    assert_eq!(seq, last + 1, "strictly +1");
-                    last = seq;
-                    assert!(
-                        !snapshot_tokens_update(&msg).is_empty(),
-                        "update mints tokens"
-                    );
+            let deadline = std::time::Instant::now() + Duration::from_secs(8);
+            while last < 3 && std::time::Instant::now() < deadline {
+                assert!(session.drive_tick(&tx));
+                while let Ok(msg) = rx.try_recv() {
+                    let msg = msg.unwrap();
+                    if let Some(seq) = seq_of(&msg) {
+                        assert_eq!(seq, last + 1, "strictly +1 (no gap, no duplicate)");
+                        last = seq;
+                        assert!(
+                            !snapshot_tokens_update(&msg).is_empty(),
+                            "update mints tokens"
+                        );
+                    }
                 }
+                tokio::time::sleep(Duration::from_millis(2)).await;
             }
-            assert!(last >= 2, "the tick advanced past the baseline");
+            assert!(
+                last >= 3,
+                "the tick advanced past the baseline (saw ≥2 updates)"
+            );
         })
         .await
         .expect("no hang");
