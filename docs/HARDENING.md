@@ -137,26 +137,48 @@ region/function/line coverage. We track the three core pricing crates.
 
 ```
 just coverage-core            # cargo llvm-cov nextest -p celnet-vanilla -p celnet-surface -p celnet-exotics --summary-only
-just coverage-gate-vanilla    # same, with --fail-under-lines 95 --fail-under-regions 95 (the GATE)
+just coverage-gate-vanilla    # vanilla, with --fail-under-lines 95 --fail-under-regions 95 (the GATE)
+just coverage-gate-surface    # surface, with --fail-under-lines 90 --fail-under-regions 90 (the GATE)
 ```
 
 The `celnet-vanilla` coverage GATE (`just coverage-gate-vanilla`, the CI
-`mutation-coverage-gate` job) fails below **95 % line / 95 % region**; the measured
-baseline (below) clears it with headroom, so a regression in either floor fails the
-build before the mutation gate even runs.
+`mutation-coverage-gate` job) fails below **95 % line / 95 % region**; the
+`celnet-surface` coverage GATE (`just coverage-gate-surface`, same CI job) fails
+below **90 % line / 90 % region**. The measured baselines (below) clear both with
+headroom, so a regression in either floor fails the build before the mutation gate
+even runs.
 
 ### Latest run — core pricing crates
 
 | Crate            | Region  | Function | Line    | Notes                                              |
 |------------------|---------|----------|---------|----------------------------------------------------|
 | `celnet-vanilla` | 98.62%  | 95.18%   | 97.83%  | `atm`/`delta`/`lib`/`premium` 100%; `solver` 97.2% region / 95.7% line (the residual is the deep-convergence safety branches + in-test bisection oracle helpers). Gate floor 95/95. |
-| `celnet-surface` | high    | high     | high    | `strangle.rs` (broker-strangle smile solve) and `stochvol.rs` are the lowest at ~78–86% — flagged for added tests. |
+| `celnet-surface` | 96.43%  | 96.35%   | 96.10%  | Surface-lane backlog **closed**: `market_hedge.rs` 98.9% line, `stochvol.rs` 98.0% line, `strangle.rs` 92.0% line (was 87.2/85.0/80.2). Residual uncovered lines are the `?`-error sub-regions + deep-convergence safety branches (the calibration bracket watchdog caps, the never-taken `mean ≤ 0` / downward far-wing fallbacks, measure-zero bisection exact-converge exits) — the same equivalent-class as the vanilla solver residual. Gate floor 90/90. |
 | `celnet-exotics` | ~99%    | 100%     | ~99%    | PDE/MC/touch/particle engines all ≥ 98.5% line.    |
-| **Aggregate (3 crates)** | **96.30%** | **96.32%** | **95.86%** | 9 798 regions / 489 functions / 5 704 lines instrumented. |
 
 Coverage is a floor, not the goal — mutation kill-rate (§2) is the sharper
-signal. Lowest-covered surface modules (`strangle.rs`, `stochvol.rs`,
-`market_hedge.rs`) are the standing backlog for the surface lane (WS-C).
+signal. The previously-lowest surface modules (`strangle.rs`, `stochvol.rs`,
+`market_hedge.rs`) — the standing backlog for the surface lane (WS-C) — were
+closed by targeted branch/edge tests, each asserting against an **independent
+oracle** rather than padding coverage:
+
+- `market_hedge.rs`: the `Smile`-trait re-evaluation against a non-reference
+  forward/time is pinned bit-for-bit against an in-test Castagna-Mercurio
+  second-approximation re-derivation; `try_new`/`new` rejection surface and the
+  benchmark accessors are exercised directly.
+- `stochvol.rs`: `implied_black_vol` is round-tripped against an independent
+  forward-Black-call oracle (including its three no-arbitrage `None` rejections);
+  the small-ν risk-neutral density is matched exactly to a hand-derived
+  transformed-Gaussian closed form; the wing crossover path
+  (`density_implied_vol`) is forced by a strongly-curved slice with a finite
+  two-sided core band and shown to genuinely switch off the asymptotic vol.
+- `strangle.rs`: the geometric **bracket-expansion** `else` block is driven on
+  both step directions by two confirmed EM-like quotes (a high-vol short-tenor
+  strongly-skewed quote stepping down, and a tiny-butterfly quote stepping up
+  with a 17× convexity correction), each validated by the two defining
+  invariants (broker-strike reprice + risk-reversal); the degenerate-via-floor,
+  immediate-seed-floor, unbracketable-NoConvergence, and strike-inversion error
+  paths are each pinned to their specific `CalibrationError` variant.
 
 ## 4. Fuzzing (adversarial input robustness)
 
