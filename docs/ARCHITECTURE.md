@@ -65,7 +65,7 @@ multiple options, this document picks one and states why.
 | **Streaming quote throughput** | ≥ 1M price updates/s/core sustained | Thread-per-core, lock-free fan-out, no cross-core cache traffic. |
 | **Availability** | 99.99% incl. upgrades; **zero dropped connections / zero in-flight order loss on upgrade** | `SO_REUSEPORT` graceful handoff + versioned live-state transfer (§5). |
 | **Determinism** | bit-identical prices across Linux/macOS/Windows and across rebuilds | `rust-lang/libm`, no FMA contraction on reproducible paths, fuel-metered Wasm plugins (§8). |
-| **Plugin call budget** | per-invocation fuel cap = latency/compute SLA | Wasmtime fuel metering bounds untrusted model runtime deterministically (§6). |
+| **Plugin call budget** | per-invocation fuel cap = latency/compute SLA | wasmi fuel metering bounds untrusted model runtime deterministically (§6). |
 | **Recovery** | warm restart with state handoff ≤ 1 s; cold start ≤ 10 s | Pre-fault + `mlock` + huge pages at boot; shadow-pod pre-warm (§5). |
 
 > All latency NFRs are *measured*, not asserted: `HdrHistogram` in production, `criterion`/
@@ -85,9 +85,11 @@ pinned centrally via `[workspace.dependencies]` and `[workspace.lints]`; a singl
 Crates are **layered by domain function, not by technical tier**. New transports (a new
 gRPC service, an admin CLI) are added as *thin new crates*, not by bloating existing ones.
 
-The **implemented** workspace is **19 crates** (flat under `crates/`). The early design
-sketched a finer ~40-crate split; in practice closely-coupled domains were **consolidated**
-into cohesive crates (noted inline). This block reflects the real tree (`ls crates`):
+The **implemented** workspace is **34 crates** (flat under `crates/`; verified by
+`ls crates | wc -l`). The early design sketched a finer ~40-crate split; closely-coupled
+domains were **consolidated** into cohesive crates, while the scale-out, risk-hierarchy,
+durability and verification waves added new disjoint leaf crates. This block reflects the
+real tree (`ls crates`):
 
 ```
 celnet/
@@ -105,39 +107,61 @@ celnet/
     ├── celnet-conventions     # per-(pair,tenor) convention registry: delta/ATM/premium/cut/day-count/spot-lag
     ├── celnet-calendar        # holiday calendars, spot lag, delivery, modified-following, EOM
     ├── celnet-vanilla         # Garman-Kohlhagen + full 13-Greek set + branch-safe strike↔delta solver
-    # ── Layer 2: surface (VV/SABR/SVI/SSVI consolidated here) ──
-    ├── celnet-surface         # delta-space smile, broker→smile fly calibration, VV/SABR/SVI/SSVI,
+    # ── Layer 2: surface (VV/SABR/SVI/SSVI/eSSVI consolidated here) ──
+    ├── celnet-surface         # delta-space smile, broker→smile fly calibration, VV/SABR/SVI/SSVI/eSSVI, Dupire local vol,
     │                          #   arbitrage gates (butterfly/calendar/vertical), term-structure interpolation
-    # ── Layer 3: exotics (LSV + PDE + MC + numerics consolidated here) ──
-    ├── celnet-exotics         # digitals/touches/DNT/barriers + double-KO; VV overlay; CN+Rannacher PDE;
-    │                          #   Philox MC + BGK + control variates; geometric/arithmetic Asian; window barrier;
+    # ── Layer 3: exotics + standalone models + QMC ──
+    ├── celnet-exotics         # digitals/touches/DNT/barriers + double-KO + window barrier; VV overlay; CN+Rannacher PDE;
+    │                          #   Philox MC + BGK + control variates; geo/arith Asian; var/vol swap; forward-start/cliquet;
+    │                          #   TARF/accumulator/quanto/lookback; American/Bermudan (PSOR/LSM); correlated multi-asset basket;
     │                          #   LSV (Andersen-QE variance + Dupire/particle leverage + HV-ADI)
+    ├── celnet-heston          # standalone Heston (1993) European vanilla via two independent CF transforms (Carr-Madan + Fang-Oosterlee COS)
+    ├── celnet-qmc             # scrambled Joe-Kuo Sobol + Owen-style nested scramble + Brownian-bridge path construction (CPU-first; GPU-reusable)
     # ── Layer 5: GPU ──
-    ├── celnet-gpu             # PricingBackend trait + wgpu (Metal/Vulkan/DX12) f32 backend + f64 CPU reconciliation; Philox WGSL
+    ├── celnet-gpu             # PricingBackend trait + wgpu (Metal/Vulkan/DX12) f32 backend + f64 CPU reconciliation; Philox WGSL;
+    │                          #   path/greeks/batch/scenario kernels (closed-form batch + MC path + pathwise/LR Greeks)
     # ── Layer 4: engine (hot core) ──
-    ├── celnet-engine          # core-pinned zero-alloc hot path; rtrb SPSC; arc-swap/seqlock; blue-green state handoff
+    ├── celnet-engine          # core-pinned zero-alloc hot path; rtrb SPSC; arc-swap/seqlock; blue-green state handoff; durable-book journal
+    # ── Layer 5b: durability + replication + fan-out ──
+    ├── celnet-journal         # fsync'd append-only sequence-ordered log + deterministic crash recovery (CRC + torn-tail truncation + compaction)
+    ├── celnet-replog          # leader-replicated, deterministic-replay log over real loopback sockets: quorum commit, hot-standby failover, full Raft
+    ├── celnet-fanout          # lock-free SPMC broadcast ring (every consumer sees every item in order; slow consumers conflate with counted skips)
+    # ── Layer 6: risk hierarchy ──
+    ├── celnet-risk-normalize  # convention canonicalization + common-numeraire conversion → convention-free canonical risk leaf
+    ├── celnet-risk-cube       # single-node hierarchical OLAP risk cube: additive roll-up + non-additive (VaR/ES, FRTB curvature) bump-and-revalue
+    ├── celnet-risk-fleet      # cross-shard risk fan-out ALGEBRA over the celnet-router HRW map; fan-out == single-node (transport designed-only)
+    ├── celnet-router          # fleet router — shard-by-pair/tenant HRW partition map, stateless replica routing, hot-standby failover
+    ├── celnet-limits          # hierarchical limit tree (greek/vega/VaR/concentration/tenor/stop-loss) + RAG + pre/post-trade breach checks
+    ├── celnet-entitlements    # principal role-grants + deny rules (information barriers); pre-aggregation pruning predicate (grant-all default)
+    ├── celnet-xva             # XVA engine — EPE/ENE exposure profiles + CVA/DVA/FVA over a hazard-rate survival curve (synthetic netting sets)
+    # ── Layer 7: plugin host ──
+    ├── celnet-plugin-host     # tiered host: Tier-0 native registry + Tier-2 wasmi fuel-metered sandbox + deterministic replay harness
     # ── Layer 8: integration ──
-    ├── celnet-integration     # Celer estate + vendor FX-options MD adapters; multi-source aggregation + divergence detection
-    # ── Layer 7: edge & clients ──
-    ├── celnet-server          # tokio async edge: tonic gRPC (Pricing/Quote/Stream/Surface); control plane
-    ├── celnet-cli             # operator/quant CLI: price, surface, exotic, convention
-    ├── celnet-client          # typed async Rust SDK over the wire contract (RFQ/RFS/surface/scenario)
+    ├── celnet-integration     # Celer estate + vendor FX-options MD adapters; multi-source aggregation + divergence detection; egress governor
+    ├── celnet-fix             # FIX engine — zero-copy framing, FIXT/4.4 session, FX-options dialect, acceptor + initiator
+    # ── Layer 9: edge & clients ──
+    ├── celnet-server          # tokio async edge: tonic gRPC (Pricing/Quote/Stream/Surface/Risk); FIX acceptor; fleet federation; control plane
+    ├── celnet-cli             # operator/quant CLI: price, surface, exotic, convention, risk, stream
+    ├── celnet-client          # typed async Rust SDK over the wire contract (RFQ/RFS/surface/scenario/risk + exotic vocab builders)
     # ── Observability & validation ──
     ├── celnet-observability   # POD telemetry rings, drain threads, HdrHistogram, metrics, audit, error taxonomy
     ├── celnet-golden          # frozen QuantLib 1.42.1 reference tables (oracle + generator)
+    ├── celnet-parity          # executable competitive-parity matrix — each capability claim vs incumbents backed by a gated test
     ├── celnet-testkit         # invariant assertions, proptest strategies, fixture loaders
-    └── celnet-bench           # divan latency/throughput suites + committed baseline (benches/README.md)
+    └── celnet-bench           # divan + HdrHistogram latency/throughput suites + committed baselines (core_load/bench_gate/gpu_load/gpu_gate)
 ```
 
 > **Built:** `celnet-plugin-host` — the tiered plugin host (Tier-0 native registry + Tier-2
 > **wasmi** fuel-metered sandbox; wasmtime was rejected for open 2026 RustSec advisories, see
-> §6 and `docs/PLUGIN-HOST-ALT.md`). The native `.so`/FIX/IPC crates the early design
-> sketched (`celnet-fix`, `celnet-ipc`, `celnet-plugin-guest`) are not separate crates today;
-> FIX/IPC framing is integration-wave work. Provenance-named draft crates (`celnet-num`,
-> `celnet-vannavolga`, `celnet-sabr`, `celnet-svi`, `celnet-lsv`, `celnet-numerics`,
-> `celnet-pricer`, `celnet-risk`, `celnet-rt`, `celnet-compute*`, `celnet-md-*`,
-> `celnet-distributor`, `celnet-staticdata`, `celnet-lifecycle`, `celnet-goldgen`,
-> `celnet-surface-build`) were **consolidated** into the crates above and do **not** exist.
+> §6 and `docs/PLUGIN-HOST-ALT.md`). `celnet-fix` is built (zero-copy FIX 4.4 engine,
+> acceptor + initiator, wired into `celnet-server`). The remaining provenance-named draft
+> crates the early design sketched (`celnet-num`, `celnet-vannavolga`, `celnet-sabr`,
+> `celnet-svi`, `celnet-lsv`, `celnet-numerics`, `celnet-pricer`, `celnet-rt`,
+> `celnet-compute*`, `celnet-md-*`, `celnet-distributor`, `celnet-staticdata`,
+> `celnet-lifecycle`, `celnet-goldgen`, `celnet-surface-build`, `celnet-plugin-guest`,
+> `celnet-ipc`) were **consolidated** into the crates above and do **not** exist as separate
+> crates. The native Tier-1 `.so` ABI (`stabby`) and Tier-3 Landlock/seccomp ring remain
+> designed-only by intent (`docs/PLUGIN-HOST-ALT.md`).
 
 ### 2.1 Why this split aids performance
 
@@ -153,9 +177,9 @@ celnet/
 - **GPU is behind a trait (`PricingBackend` in `celnet-gpu`) with swappable backends.** The
   engine depends on the abstraction, not on `wgpu`/CUDA, so the heavy/optional GPU stack never
   bloats the hot core's compile or binary and can degrade to CPU at runtime.
-- **The plugin host is isolated.** The (deferred) Wasm host would be a leaf the engine calls
-  through `celnet-plugin-api`; the Wasm runtime's weight and security surface never touch the
-  native hot path for first-party models.
+- **The plugin host is isolated.** The Wasm host (`celnet-plugin-host`, **built**) is a leaf
+  the engine calls through `celnet-plugin-api`; the Wasm runtime's weight and security surface
+  never touch the native hot path for first-party models.
 - **`celnet-proto` centralizes the single current wire format** in one place (§8) rather than
   smeared across services — and there is exactly one version, so there is no compatibility
   matrix to gate.
@@ -288,17 +312,22 @@ pub trait PricingBackend {
   each variate seeded from `(global_seed, path_index, time_step, dimension)`. Stateless,
   embarrassingly parallel, and **bit-stable across backends** — naive LCG/per-thread RNGs are
   rejected. Box-Muller / inverse-CDF for normals.
-- **QMC: Sobol + Brownian-bridge — designed, not yet implemented.** A Sobol direction-number
-  sequence with Brownian-bridge dimension ordering is the intended variance-optimal variate
-  source for path-dependent exotics, swappable with Philox behind the `VariateSource`
-  interface. **Today only the Philox pseudo-random path exists** in `celnet-gpu` and
-  `celnet-exotics` (a `grep` for `sobol`/`brownian_bridge` across the tree returns nothing);
-  the CPU MC engine implements the **BGK 0.5826·σ·√dt** barrier shift and control variates,
-  but **not** a Brownian-bridge path constructor. Sobol/Brownian-bridge are deferred QMC work.
+- **QMC: Sobol + Brownian-bridge — built (`celnet-qmc`).** A scrambled Joe-Kuo Sobol'
+  direction-number sequence (embedded BSD-3-Clause `new-joe-kuo-6.21201` numbers, dims 2..=300)
+  with **Owen-style nested scramble** (unbiased RQMC) and **principal-bisection Brownian-bridge**
+  dimension ordering is the variance-optimal variate source for path-dependent exotics, swappable
+  with Philox behind the `VariateSource` interface (`crates/celnet-qmc/src/{sobol.rs,bridge.rs,
+  direction_numbers.rs,normal.rs}`). Measured variance reduction vs fair plain MC: ≈37.7×
+  (geometric Asian) / ≈88.5× (European), gated in `celnet-parity/tests/qmc.rs`. The direction
+  numbers are exposed for GPU reuse (`celnet-gpu` path/greeks kernels), and `celnet-xva` /
+  `celnet-exotics` consume the Sobol+bridge generator. The CPU MC engine additionally implements
+  the **BGK 0.5826·σ·√dt** barrier shift and control variates.
 - **PDE on GPU:** explicit/ADI as tiled stencil kernels using workgroup shared memory;
-  implicit/Crank-Nicolson via cyclic-reduction / PCR tridiagonal solvers (the production
-  CN+Rannacher and HV-ADI PDEs run on the CPU in `celnet-exotics` today; the GPU PDE path is
-  designed). Validated against the MC engine on vanillas.
+  implicit/Crank-Nicolson via cyclic-reduction / PCR tridiagonal solvers — the production
+  CN+Rannacher and HV-ADI PDEs run on the CPU in `celnet-exotics` today; **the GPU PDE path
+  remains designed-only** (the GPU compute that *is* built is the closed-form batch kernel
+  `batch.wgsl`, the MC path kernel `path.wgsl`, the pathwise/LR Greeks kernel `greeks.wgsl`,
+  and the scenario-grid kernel `scenario.wgsl`). Validated against the MC engine on vanillas.
 - **Deployment:** Linux containers can bundle **Mesa Lavapipe** so GPU-less CI / headless
   nodes exercise the same `wgpu`/Vulkan path on a software device. A CUDA path via Vulkan is
   validated in CI/containers on Linux; the Apple-M4 dev host runs Metal (no native f64), which
@@ -438,34 +467,39 @@ boxed; the async edge sits at the boundaries.
                                                                        ▼
    convention registry ─────► ┌──────────────────────────────────────────────────────────┐
    (celnet-conventions,        │                         celnet-engine                       │
-    arc-swap)                 │  PricingModel registry: native (inventory) [Wasm host deferred]│
+    arc-swap)                 │  ModelRegistry: native (inventory) + wasmi Tier-2 sandbox   │
                               │  ┌───────────────┐   ┌──────────────────┐   GPU dispatch  │
                               │  │ celnet-vanilla │   │ celnet-surface VV │   ┌───────────┐ │
-   [plugin host deferred] ───►│  │ GK + 13 Greeks│   │ first-gen exotic │──►│celnet-gpu  │ │
-                              │  └───────────────┘   └──────────────────┘   │(wgpu/WGSL):│ │
-                              │  ┌───────────────────────────────────────┐  │Metal/Vulkan│ │
+   celnet-plugin-host ───────►│  │ GK + 13 Greeks│   │ first-gen exotic │──►│celnet-gpu  │ │
+   (Tier-0 native +          │  └───────────────┘   └──────────────────┘   │(wgpu/WGSL):│ │
+    Tier-2 wasmi)            │  ┌───────────────────────────────────────┐  │Metal/Vulkan│ │
                               │  │ celnet-exotics (LSV/PDE/MC, path-dep.)   │─►│/DX12 + CPU │ │
-                              │  └───────────────────────────────────────┘  │reconcile   │ │
+                              │  │ + celnet-qmc (Sobol+bridge variates)     │  │reconcile;  │ │
+                              │  └───────────────────────────────────────┘  │path/greeks/│ │
+                              │                                              │batch kernels│ │
                               └───────────────────────────┬─────────────────└───────────┘─┘
                                        seqlock publish     ▼
                               ┌──────────────────────────────────────────┐
                               │      portfolio Greeks / risk (engine)      │
                               │ Δ,Γ,vega,θ, ρ_d, ρ_f, vanna,volga,charm,  │
                               │ speed,zomma,color · scenario/stress · PnL │
+                              │ celnet-risk-{normalize,cube,fleet,limits}  │
                               └───────────────────────┬───────────────────┘
                                      rtrb SPSC         ▼
   ASYNC EDGE (tokio)          ┌──────────────────────────────────────────┐
-  ───────────────            │   celnet-server (tonic gRPC; WS mirror designed) │──►  Celer front end
+  ───────────────            │   celnet-server (tonic gRPC + WS mirror)    │──►  Celer front end
                               │   celnet-client (typed Rust SDK)            │──►  programmatic MMs
                               │   celnet-integration (Celer estate bridge)  │──►  Celer OMS/EMS/risk
-                              │   [FIX dialect / lifecycle: integration-wave]│──►  venues / clearing
+                              │   celnet-fix (FIX 4.4 acceptor + initiator) │──►  venues / clearing
                               └────────────────────────────────────────────┘
 ```
 
-**Notes on the Celer integration edge (from the integration research).** *All of this lives in
-the single `celnet-integration` crate today (the early design's `celnet-distributor` /
-`celnet-staticdata` / `celnet-fix` / `celnet-md-*` split was consolidated); FIX-dialect and
-lifecycle wiring are integration-wave work.*
+**Notes on the Celer integration edge (from the integration research).** *Market-data
+normalization, multi-source aggregation and the egress governor live in the single
+`celnet-integration` crate (the early design's `celnet-distributor` / `celnet-staticdata` /
+`celnet-md-*` split was consolidated); the **FIX 4.4 engine is built as `celnet-fix`** (zero-copy
+framing, FIXT/4.4 session, FX-options dialect, acceptor + initiator) and wired into
+`celnet-server` as a live acceptor; live JVM-estate lifecycle wiring remains deploy/estate-gated.*
 - The Celer distributor is an **in-process disruptor mailbox in the JVM** with
   *skip-while-full* back-pressure — a high-frequency option pricer can cause silent price
   drops, so `celnet-integration` sizes mailboxes and rate-limits, and a Rust process joins via
@@ -535,8 +569,10 @@ lifecycle wiring are integration-wave work.*
   renumber ceremony is required because no old reader must ever decode a new message.
 - **Two framings, one version:** **`rkyv`** zero-copy for in-host IPC, shared-memory and the
   upgrade state handoff (access archived bytes directly); **`tonic` + `prost`** for external
-  service RPC. A hand-rolled zero-copy FIX dialect for the venue/Celer-destination wire is
-  **integration-wave work** (no `celnet-fix`/`celnet-ipc` crate exists yet).
+  service RPC. The hand-rolled zero-copy FIX 4.4 dialect for the venue/Celer-destination wire
+  is **built as `celnet-fix`** (acceptor + initiator, loopback-tested, wired into
+  `celnet-server`); a separate `celnet-ipc` crate was not needed (the rkyv handoff lives in
+  `celnet-engine`).
 
 ---
 
@@ -581,8 +617,9 @@ The analytics standard (see `docs/ANALYTICS-SPEC.md`) maps onto crates as follow
 - **Calendar/date engine** (intersect both currency calendars + USD; spot/delivery by
   identical lag; modified-following + EOM; NY 10am / Tokyo 3pm cut) → **`celnet-calendar`**;
   conventions + NDF settlement config → `celnet-conventions`/`celnet-types`.
-- **Numerical engines — all in `celnet-exotics`:** PDE (Crank-Nicolson + Rannacher;
+- **Numerical engines — `celnet-exotics` + `celnet-qmc`:** PDE (Crank-Nicolson + Rannacher;
   Hundsdorfer-Verwer ADI for 2-D LSV), MC (Andersen QE variance, **counter-based Philox** RNG,
   Broadie-Glasserman-Kou 0.5826·σ·√dt barrier shift, control variates, geometric/arithmetic
-  Asian). **Sobol QMC + Brownian-bridge path construction are designed but not yet
-  implemented** (deferred — see §4).
+  Asian). **Sobol' QMC + Owen scramble + Brownian-bridge path construction are built in
+  `celnet-qmc`** (≈37.7×/88.5× measured variance reduction; see §4) and reused by
+  `celnet-exotics`, `celnet-xva` and the `celnet-gpu` path/greeks kernels.
