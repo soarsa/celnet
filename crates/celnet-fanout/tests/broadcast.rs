@@ -169,20 +169,36 @@ fn conflation_correctness_under_overflow() {
     const PRODUCED: u64 = 2_000_000;
     let done = Arc::new(AtomicBool::new(false));
     let max_published = Arc::new(AtomicU64::new(0));
+    // Deterministically put the consumer into the conflation regime BEFORE it
+    // starts reading, so the "real conflation engaged" assertion (skipped > cap)
+    // cannot flake under full-suite CPU contention if the producer thread is
+    // momentarily starved: the consumer waits until the producer has published
+    // several ring-fulls, guaranteeing its first read is lapped by >> capacity.
+    // Every other assertion here is already scheduling-independent (the seqlock
+    // read is torn-read-free and the cursor only advances forward).
+    let primed = Arc::new(AtomicBool::new(false));
 
     std::thread::scope(|s| {
         let done_p = Arc::clone(&done);
         let max_pub = Arc::clone(&max_published);
+        let primed_p = Arc::clone(&primed);
         // Producer: blast the full sequence as fast as possible (overflows the
         // ring relative to the slow consumer).
         let prod = s.spawn(move || {
             for i in 0..PRODUCED {
                 producer.publish(i);
+                // Once several ring-fulls are out, release the consumer — its
+                // first read is then guaranteed to be lapped by >> capacity.
+                if i == cap * 4 {
+                    primed_p.store(true, Ordering::Release);
+                }
                 // Publish high-water mark occasionally (cheap, relaxed).
                 if i & 0x3FFF == 0 {
                     max_pub.store(i + 1, Ordering::Release);
                 }
             }
+            // Defensive: ensure the consumer is released even if PRODUCED is small.
+            primed_p.store(true, Ordering::Release);
             max_pub.store(PRODUCED, Ordering::Release);
             done_p.store(true, Ordering::Release);
         });
@@ -192,6 +208,14 @@ fn conflation_correctness_under_overflow() {
             let mut got: Vec<u64> = Vec::new();
             let mut last: Option<u64> = None;
             let deadline = Instant::now() + DEADLINE;
+            // Wait until the producer has lapped the ring several times so this
+            // consumer deterministically starts in the conflation regime.
+            while !primed.load(Ordering::Acquire) {
+                if Instant::now() > deadline {
+                    panic!("producer never primed the overflow window (regression)");
+                }
+                std::hint::spin_loop();
+            }
             loop {
                 match consumer.try_recv() {
                     Ok(v) => {
