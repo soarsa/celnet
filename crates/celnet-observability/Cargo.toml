@@ -26,8 +26,6 @@ unreachable_pub = "warn"
 all = "warn"
 
 [dependencies]
-celnet-types.workspace = true
-celnet-core.workspace = true
 serde.workspace = true
 tracing.workspace = true
 # `time` adds the `UtcTime` RFC-3339 timestamper used by the JSON subscriber; it
