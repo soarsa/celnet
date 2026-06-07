@@ -72,29 +72,46 @@
 //!   same `to_bits` state as a full-log replay. A committed entry captured in a
 //!   snapshot is never lost, and an uncommitted entry is never discarded.
 //!
+//! # The InstallSnapshot RPC (Raft §7 — BUILT)
+//!
+//! When a leader has **compacted past** the entries a far-behind (or
+//! freshly-restarted) follower needs — the follower's required next index has
+//! fallen **below the leader's log `base_index`**, so the bridging entries no longer
+//! exist in the leader's log — AppendEntries cannot close the gap. The leader
+//! instead transfers the durable snapshot:
+//!
+//! * [`wire::Message::InstallSnapshot`] carries `(term, leader_id,
+//!   last_included_index, last_included_term, snapshot_bytes)`, the bytes being the
+//!   canonical [`compaction::Snapshot::encode`] capture of the applied
+//!   [`state::BookState`] at the boundary (CRC-protected, bounded by
+//!   [`wire::MAX_FRAME_LEN`]).
+//! * The **leader** sends it (instead of AppendEntries) in the replication round
+//!   for any peer whose `next_index < base_index`, and on the success reply advances
+//!   that peer's `match_index`/`next_index` to the boundary, then resumes normal
+//!   AppendEntries from `last_included_index + 1`.
+//! * The **follower** durably installs it (snapshot file written FIRST, then the log
+//!   is reshaped to the boundary — retaining a matching tail or discarding the whole
+//!   log — then the applied state machine + `last_applied`/`commit_index` are
+//!   reseeded from the snapshot), and replies success (reusing
+//!   [`wire::Message::AppendReply`], so there is one reply shape, no extra variant).
+//!
+//! The local snapshotting, prefix discard, and snapshot-seeded recovery this builds
+//! on were already built; this closes the wire transfer + follower install + resume
+//! path, gated by a real far-behind / restarted-follower loopback catch-up row
+//! (`celnet-parity/tests/raft_snapshot.rs`).
+//!
 //! # What is explicitly the *next* increment (documented, not half-built)
 //!
 //! Membership is **fixed** for a cluster's lifetime: a [`RaftNode`] is constructed
 //! with its full peer set and `cluster_size`, and there is no live add/remove of
-//! members. Two increments are documented here rather than stubbed:
+//! members. One increment is documented here rather than stubbed:
 //!
 //! * Dynamic **membership change** (Raft §6 — joint consensus, or the
 //!   single-server add/remove of the Ongaro thesis).
-//! * The **InstallSnapshot RPC** (Raft §7): a leader whose log no longer holds the
-//!   entries a *far-behind* follower needs would ship the durable snapshot over the
-//!   wire, the follower installing it and resuming from `last_included_index + 1`.
-//!   The local snapshotting, prefix discard, and snapshot-seeded recovery it builds
-//!   on are **fully built and gated here**; the on-the-wire transfer + follower
-//!   install path is deliberately deferred to its own increment (it must extend the
-//!   wire contract and the AppendEntries/serve path with a streamed install and a
-//!   correct follower discard-and-resume, gated by a real far-behind-follower
-//!   loopback catch-up test) rather than be half-built. Until then a follower that
-//!   somehow needs a discarded prefix is served correctly by the present design by
-//!   simply *not compacting past the slowest follower's match index* (the supported
-//!   operational discipline — see [`RaftNode::safe_compact_index`]).
 //!
-//! Nothing fakes the unbuilt parts: the present cluster is correct and complete
-//! for a fixed membership with local compaction.
+//! Nothing fakes the unbuilt part: the present cluster is correct and complete for a
+//! fixed membership with local compaction **and** the InstallSnapshot catch-up of a
+//! far-behind follower.
 //!
 //! # Honest boundary (reproduced verbatim, never violated)
 //!
