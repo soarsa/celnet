@@ -15,18 +15,18 @@
 use serde_json::{Map, Value, json};
 
 use celnet_proto::{
-    AdditiveRisk, AggregateRiskRequest, AggregateRiskResponse, ArbReport, AsianOption,
+    Accumulator, AdditiveRisk, AggregateRiskRequest, AggregateRiskResponse, ArbReport, AsianOption,
     BrokerQuoteSet, BucketedRisk, CcyExposureLeg, CcyPair, Cliquet, Conventions, CrossGamma,
     Digital, DoubleBarrier, DrillRiskRequest, DrillRiskResponse, EntitlementPrincipal,
-    EntitlementRule, Execute, Executed, Execution, ForwardStart, GetSmileRequest, Greeks,
-    Instrument, Leg, LimitStatusRequest, LimitStatusResponse, LimitUtilization,
-    ListPositionsRequest, ListPositionsResponse, MarkSurfaceRequest, MarkSurfaceResponse,
+    EntitlementRule, Execute, Executed, Execution, FixingSchedule, ForwardStart, GetSmileRequest,
+    Greeks, Instrument, Leg, LimitStatusRequest, LimitStatusResponse, LimitUtilization,
+    ListPositionsRequest, ListPositionsResponse, Lookback, MarkSurfaceRequest, MarkSurfaceResponse,
     MarketContext, Modify, NonAdditiveRisk, NumeraireRate, OrgKey, PriceRequest, PriceResponse,
     Quantity, Quanto, Quote, QuoteAccept, QuoteReject, QuoteRequest, RejectAck, ReportingNumeraire,
     Resync, RiskBucketRequest, RiskNode, RiskPosition, RiskScope, ScenarioPoint, ScenarioRequest,
     ScenarioResponse, ShockAxis, SingleBarrier, Smile, SmilePoint, Snapshot, Solve, Strategy,
-    StrategyKind, StreamEnd, StreamReject, StrikeOrDelta, Subscribe, SubscriptionId, Tenor, Touch,
-    TradableToken, TwoWayPrice, Unsubscribe, Update, Vanilla, VanillaInputs, VarianceSwap,
+    StrategyKind, StreamEnd, StreamReject, StrikeOrDelta, Subscribe, SubscriptionId, Tarf, Tenor,
+    Touch, TradableToken, TwoWayPrice, Unsubscribe, Update, Vanilla, VanillaInputs, VarianceSwap,
     VegaLadderBucket, VegaPillar, VolatilitySwap, instrument, shock_axis, strike_or_delta, tenor,
 };
 
@@ -444,10 +444,77 @@ fn quanto_from_json(v: &Value) -> Result<Quanto> {
     })
 }
 
+/// Decode a nested `FixingSchedule` (the `schedule` body inside a TARF /
+/// accumulator product).
+fn fixing_schedule_from_json(v: &Value) -> Result<FixingSchedule> {
+    let o = obj(v, "schedule")?;
+    Ok(FixingSchedule {
+        fixing_years: f64_vec(o, "fixing_years"),
+        fixing_notional: f64_or_zero(o, "fixing_notional"),
+    })
+}
+
+fn tarf_from_json(v: &Value) -> Result<Tarf> {
+    let o = obj(v, "tarf")?;
+    let mc_pairs =
+        u32::try_from(u64_or_zero(o, "mc_pairs")).map_err(|_| err("tarf.mc_pairs out of range"))?;
+    let schedule = o
+        .get("schedule")
+        .map(fixing_schedule_from_json)
+        .transpose()?;
+    Ok(Tarf {
+        option_type: enum_or_zero(o, "option_type"),
+        strike: f64_field(o, "strike")?,
+        target: f64_field(o, "target")?,
+        leverage: f64_or_zero(o, "leverage"),
+        redemption: enum_or_zero(o, "redemption"),
+        schedule,
+        mc_pairs,
+        mc_seed: u64_or_zero(o, "mc_seed"),
+    })
+}
+
+fn accumulator_from_json(v: &Value) -> Result<Accumulator> {
+    let o = obj(v, "accumulator")?;
+    let mc_pairs = u32::try_from(u64_or_zero(o, "mc_pairs"))
+        .map_err(|_| err("accumulator.mc_pairs out of range"))?;
+    let schedule = o
+        .get("schedule")
+        .map(fixing_schedule_from_json)
+        .transpose()?;
+    Ok(Accumulator {
+        pivot: f64_field(o, "pivot")?,
+        barrier: f64_field(o, "barrier")?,
+        leverage: f64_or_zero(o, "leverage"),
+        monitoring: enum_or_zero(o, "monitoring"),
+        schedule,
+        mc_pairs,
+        mc_seed: u64_or_zero(o, "mc_seed"),
+    })
+}
+
+fn lookback_from_json(v: &Value) -> Result<Lookback> {
+    let o = obj(v, "lookback")?;
+    let observations = u32::try_from(u64_or_zero(o, "observations"))
+        .map_err(|_| err("lookback.observations out of range"))?;
+    let mc_pairs = u32::try_from(u64_or_zero(o, "mc_pairs"))
+        .map_err(|_| err("lookback.mc_pairs out of range"))?;
+    Ok(Lookback {
+        style: enum_or_zero(o, "style"),
+        option_type: enum_or_zero(o, "option_type"),
+        monitoring: enum_or_zero(o, "monitoring"),
+        strike: f64_or_zero(o, "strike"),
+        observations,
+        mc_pairs,
+        mc_seed: u64_or_zero(o, "mc_seed"),
+    })
+}
+
 /// Decode the instrument `product` oneof. The JSON carries exactly one of the
 /// product keys (`vanilla`, `strategy`, `single_barrier`, `double_barrier`,
 /// `digital`, `touch`, `variance_swap`, `volatility_swap`, `asian_option`,
-/// `forward_start`, `cliquet`, `quanto`) — the same shape as the proto oneof.
+/// `forward_start`, `cliquet`, `quanto`, `tarf`, `accumulator`, `lookback`) — the
+/// same shape as the proto oneof.
 fn product_from_json(o: &Map<String, Value>) -> Result<instrument::Product> {
     // Each product variant nests its body under its own key (mirroring the proto
     // oneof field names); descend into that body before decoding.
@@ -485,11 +552,18 @@ fn product_from_json(o: &Map<String, Value>) -> Result<instrument::Product> {
         Ok(instrument::Product::Cliquet(cliquet_from_json(v)?))
     } else if let Some(v) = o.get("quanto") {
         Ok(instrument::Product::Quanto(quanto_from_json(v)?))
+    } else if let Some(v) = o.get("tarf") {
+        Ok(instrument::Product::Tarf(tarf_from_json(v)?))
+    } else if let Some(v) = o.get("accumulator") {
+        Ok(instrument::Product::Accumulator(accumulator_from_json(v)?))
+    } else if let Some(v) = o.get("lookback") {
+        Ok(instrument::Product::Lookback(lookback_from_json(v)?))
     } else {
         Err(err(
             "instrument needs exactly one product (vanilla / strategy / \
              single_barrier / double_barrier / digital / touch / variance_swap / \
-             volatility_swap / asian_option / forward_start / cliquet / quanto)",
+             volatility_swap / asian_option / forward_start / cliquet / quanto / \
+             tarf / accumulator / lookback)",
         ))
     }
 }
@@ -1622,6 +1696,109 @@ mod tests {
                 assert_eq!(q.correlation.to_bits(), (-0.3_f64).to_bits());
             }
             other => panic!("expected quanto, got {other:?}"),
+        }
+    }
+
+    /// The Wave-3 products (TARF / accumulator / lookback) decode from a browser
+    /// client's JSON into the correct `product` oneof arms — including the nested
+    /// `FixingSchedule` body on the TARF/accumulator and the MC knobs.
+    #[test]
+    fn wave3_products_decode_from_json() {
+        let base = |product: Value| {
+            let mut m = serde_json::Map::new();
+            m.insert("expiry_years".to_owned(), json!(1.0));
+            if let Value::Object(p) = product {
+                for (k, v) in p {
+                    m.insert(k, v);
+                }
+            }
+            Value::Object(m)
+        };
+
+        let tarf = instrument_from_json(&base(json!({
+            "tarf": {
+                "option_type": 1, "strike": 1.10, "target": 0.30, "leverage": 2.0,
+                "redemption": 1,
+                "schedule": { "fixing_years": [0.25, 0.5, 0.75, 1.0], "fixing_notional": 1.0 },
+                "mc_pairs": 50000, "mc_seed": 999
+            }
+        })))
+        .expect("decode tarf");
+        match tarf.product {
+            Some(instrument::Product::Tarf(t)) => {
+                assert_eq!(
+                    t.redemption,
+                    celnet_proto::TarfRedemption::CappedGain as i32
+                );
+                assert_eq!(t.target.to_bits(), 0.30_f64.to_bits());
+                let s = t.schedule.expect("tarf carries a schedule");
+                assert_eq!(s.fixing_years.len(), 4);
+                assert_eq!(s.fixing_notional.to_bits(), 1.0_f64.to_bits());
+                assert_eq!(t.mc_pairs, 50_000);
+                assert_eq!(t.mc_seed, 999);
+            }
+            other => panic!("expected tarf, got {other:?}"),
+        }
+
+        let acc = instrument_from_json(&base(json!({
+            "accumulator": {
+                "pivot": 1.10, "barrier": 1.16, "leverage": 2.0, "monitoring": 1,
+                "schedule": { "fixing_years": [0.5, 1.0], "fixing_notional": 1.0 },
+                "mc_pairs": 40000, "mc_seed": 7
+            }
+        })))
+        .expect("decode accumulator");
+        match acc.product {
+            Some(instrument::Product::Accumulator(a)) => {
+                assert_eq!(
+                    a.monitoring,
+                    celnet_proto::AccumulatorMonitoring::Continuous as i32
+                );
+                assert_eq!(a.barrier.to_bits(), 1.16_f64.to_bits());
+                assert_eq!(a.schedule.expect("schedule").fixing_years.len(), 2);
+            }
+            other => panic!("expected accumulator, got {other:?}"),
+        }
+
+        // Continuous lookback: no MC knobs needed.
+        let lb = instrument_from_json(&base(json!({
+            "lookback": {
+                "style": 0, "option_type": 0, "monitoring": 0
+            }
+        })))
+        .expect("decode lookback");
+        match lb.product {
+            Some(instrument::Product::Lookback(l)) => {
+                assert_eq!(l.style, celnet_proto::LookbackStyle::Floating as i32);
+                assert_eq!(
+                    l.monitoring,
+                    celnet_proto::LookbackMonitoring::Continuous as i32
+                );
+            }
+            other => panic!("expected lookback, got {other:?}"),
+        }
+
+        // Discrete lookback: MC knobs round-trip.
+        let lbd = instrument_from_json(&base(json!({
+            "lookback": {
+                "style": 1, "option_type": 0, "monitoring": 1,
+                "strike": 1.05, "observations": 32, "mc_pairs": 20000, "mc_seed": 11
+            }
+        })))
+        .expect("decode discrete lookback");
+        match lbd.product {
+            Some(instrument::Product::Lookback(l)) => {
+                assert_eq!(l.style, celnet_proto::LookbackStyle::Fixed as i32);
+                assert_eq!(
+                    l.monitoring,
+                    celnet_proto::LookbackMonitoring::Discrete as i32
+                );
+                assert_eq!(l.strike.to_bits(), 1.05_f64.to_bits());
+                assert_eq!(l.observations, 32);
+                assert_eq!(l.mc_pairs, 20_000);
+                assert_eq!(l.mc_seed, 11);
+            }
+            other => panic!("expected lookback, got {other:?}"),
         }
     }
 

@@ -17,12 +17,15 @@
  */
 
 import type {
+  AccumulatorMonitoring,
   AsianMethod,
   AtmConvention,
   AveragingStyle,
   Cut,
   DayCount,
   DeltaConvention,
+  LookbackMonitoring,
+  LookbackStyle,
   MarketObservable,
   OptionType,
   PremiumStyle,
@@ -33,6 +36,7 @@ import type {
   SmileModel,
   StrategyKind,
   StreamRejectReason,
+  TarfRedemption,
   TenorUnit,
 } from "./contract";
 
@@ -168,3 +172,27 @@ export const asianMethod = enumCodec<AsianMethod>(["CURRAN", "TURNBULL_WAKEMAN"]
  * (QUANTO_PAYOFF_VANILLA=0, QUANTO_PAYOFF_DIGITAL=1).
  */
 export const quantoPayoff = enumCodec<QuantoPayoff>(["VANILLA", "DIGITAL"]);
+
+/**
+ * `TarfRedemption` ↔ proto `TarfRedemption`
+ * (TARF_REDEMPTION_FULL_GAIN=0, TARF_REDEMPTION_CAPPED_GAIN=1).
+ */
+export const tarfRedemption = enumCodec<TarfRedemption>(["FULL_GAIN", "CAPPED_GAIN"]);
+
+/**
+ * `AccumulatorMonitoring` ↔ proto `AccumulatorMonitoring`
+ * (ACCUMULATOR_MONITORING_DISCRETE=0, ACCUMULATOR_MONITORING_CONTINUOUS=1).
+ */
+export const accumulatorMonitoring = enumCodec<AccumulatorMonitoring>(["DISCRETE", "CONTINUOUS"]);
+
+/**
+ * `LookbackStyle` ↔ proto `LookbackStyle`
+ * (LOOKBACK_STYLE_FLOATING=0, LOOKBACK_STYLE_FIXED=1).
+ */
+export const lookbackStyle = enumCodec<LookbackStyle>(["FLOATING", "FIXED"]);
+
+/**
+ * `LookbackMonitoring` ↔ proto `LookbackMonitoring`
+ * (LOOKBACK_MONITORING_CONTINUOUS=0, LOOKBACK_MONITORING_DISCRETE=1).
+ */
+export const lookbackMonitoring = enumCodec<LookbackMonitoring>(["CONTINUOUS", "DISCRETE"]);

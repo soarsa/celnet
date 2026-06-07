@@ -8,11 +8,14 @@
 
 use celnet_core::FlatSmile;
 use celnet_exotics::{
-    AnalyticAsian, AveragingSchedule, Cliquet, CliquetMcConfig, CliquetSchedule, DigitalKind,
-    DoubleNoTouch, ForwardStart, QuantoParams, RebateTiming, SingleBarrier, VarSwapContext,
-    cliquet_price_capped_mc, cliquet_price_plain, curran_price, digital_price,
-    double_no_touch_price, fair_variance, fair_volatility, forward_start_price, one_touch_price,
-    quanto_digital_price, quanto_vanilla_price, single_barrier_price, turnbull_wakeman_price,
+    Accumulator, AccumulatorMcConfig, AnalyticAsian, AveragingSchedule, Cliquet, CliquetMcConfig,
+    CliquetSchedule, DigitalKind, DoubleNoTouch, ForwardStart, Lookback, LookbackMcConfig,
+    LookbackStyle, Monitoring, QuantoParams, RebateTiming, RedemptionStyle, SingleBarrier, Tarf,
+    TarfMcConfig, VarSwapContext, accumulator_price, cliquet_price_capped_mc, cliquet_price_plain,
+    curran_price, digital_price, double_no_touch_price, fair_variance, fair_volatility,
+    fixed_lookback_price, floating_lookback_price, forward_start_price, lookback_mc,
+    one_touch_price, quanto_digital_price, quanto_vanilla_price, single_barrier_price, tarf_price,
+    turnbull_wakeman_price,
 };
 use celnet_types::{OptionType, VanillaInputs};
 
@@ -123,6 +126,65 @@ pub(crate) enum ExoticSpec {
         /// Correlation `ρ ∈ [−1, 1]` between the underlying and the conversion rate.
         correlation: f64,
     },
+    /// A Target-Redemption Forward (Monte-Carlo; carries a standard error).
+    Tarf {
+        /// The favourable-side direction.
+        option: OptionType,
+        /// The strike `K` of every fixing.
+        strike: f64,
+        /// The cumulative gain target (reaching it redeems).
+        target: f64,
+        /// Gearing on the adverse (loss) leg.
+        leverage: f64,
+        /// Number of equally-spaced fixings over `[0, expiry]`.
+        fixings: u32,
+        /// Per-fixing notional.
+        fixing_notional: f64,
+        /// Settle the breaching fixing at the capped (remaining-target) gain
+        /// instead of the full intrinsic.
+        capped_gain: bool,
+        /// Antithetic Monte-Carlo path pairs.
+        mc_pairs: usize,
+        /// Counter-RNG seed for the Monte-Carlo estimator.
+        mc_seed: u64,
+    },
+    /// An accumulator (Monte-Carlo; carries a standard error).
+    Accumulator {
+        /// Pivot strike.
+        pivot: f64,
+        /// Up-and-out knock-out barrier (above the pivot).
+        barrier: f64,
+        /// Gearing on the below-pivot (loss) leg.
+        leverage: f64,
+        /// Number of equally-spaced fixings over `[0, expiry]`.
+        fixings: u32,
+        /// Per-fixing notional.
+        fixing_notional: f64,
+        /// Monitor the barrier continuously between fixings.
+        continuous: bool,
+        /// Antithetic Monte-Carlo path pairs.
+        mc_pairs: usize,
+        /// Counter-RNG seed for the Monte-Carlo estimator.
+        mc_seed: u64,
+    },
+    /// A lookback option (continuous closed-form, or discrete Monte-Carlo with a
+    /// standard error).
+    Lookback {
+        /// Call or put.
+        option: OptionType,
+        /// Use the fixed-strike family (against `strike`) instead of floating.
+        fixed: bool,
+        /// The strike `K` (used only by the fixed-strike family).
+        strike: f64,
+        /// Monitor discretely (Monte-Carlo) instead of continuously (closed form).
+        discrete: bool,
+        /// Number of equally-spaced observations for the discrete variant.
+        observations: u32,
+        /// Antithetic Monte-Carlo path pairs for the discrete variant.
+        mc_pairs: usize,
+        /// Counter-RNG seed for the discrete Monte-Carlo estimator.
+        mc_seed: u64,
+    },
 }
 
 /// The result of an `exotic` run: the priced present value and a label.
@@ -185,6 +247,112 @@ pub(crate) fn run(spec: ExoticSpec, inputs: &VanillaInputs) -> ExoticResult {
             price: estimate.price,
             std_error: Some(estimate.std_error),
         };
+    }
+    // TARF, accumulator, and the discrete-monitored lookback are Monte-Carlo and
+    // carry a standard error; handle them up front too.
+    match spec {
+        ExoticSpec::Tarf {
+            option,
+            strike,
+            target,
+            leverage,
+            fixings,
+            fixing_notional,
+            capped_gain,
+            mc_pairs,
+            mc_seed,
+        } => {
+            let estimate = tarf_price(
+                inputs,
+                Tarf {
+                    strike,
+                    fixings: fixings as usize,
+                    target,
+                    leverage,
+                    favourable_side: option,
+                    notional: fixing_notional,
+                    redemption: if capped_gain {
+                        RedemptionStyle::CappedGain
+                    } else {
+                        RedemptionStyle::FullGain
+                    },
+                },
+                TarfMcConfig {
+                    pairs: mc_pairs,
+                    seed: mc_seed,
+                },
+            );
+            return ExoticResult {
+                price: estimate.price,
+                std_error: Some(estimate.std_error),
+            };
+        }
+        ExoticSpec::Accumulator {
+            pivot,
+            barrier,
+            leverage,
+            fixings,
+            fixing_notional,
+            continuous,
+            mc_pairs,
+            mc_seed,
+        } => {
+            let estimate = accumulator_price(
+                inputs,
+                Accumulator {
+                    pivot,
+                    barrier,
+                    fixings: fixings as usize,
+                    leverage,
+                    notional: fixing_notional,
+                    monitoring: if continuous {
+                        Monitoring::Continuous
+                    } else {
+                        Monitoring::Discrete
+                    },
+                },
+                AccumulatorMcConfig {
+                    pairs: mc_pairs,
+                    seed: mc_seed,
+                },
+            );
+            return ExoticResult {
+                price: estimate.price,
+                std_error: Some(estimate.std_error),
+            };
+        }
+        ExoticSpec::Lookback {
+            option,
+            fixed,
+            strike,
+            discrete: true,
+            observations,
+            mc_pairs,
+            mc_seed,
+        } => {
+            let lb_inputs = VanillaInputs { strike, ..*inputs };
+            let estimate = lookback_mc(
+                &lb_inputs,
+                Lookback {
+                    style: if fixed {
+                        LookbackStyle::FixedStrike
+                    } else {
+                        LookbackStyle::FloatingStrike
+                    },
+                    option,
+                },
+                LookbackMcConfig {
+                    pairs: mc_pairs,
+                    steps: observations as usize,
+                    seed: mc_seed,
+                },
+            );
+            return ExoticResult {
+                price: estimate.price,
+                std_error: Some(estimate.std_error),
+            };
+        }
+        _ => {}
     }
     let price = match spec {
         ExoticSpec::Digital(kind) => digital_price(kind, inputs),
@@ -291,8 +459,29 @@ pub(crate) fn run(spec: ExoticSpec, inputs: &VanillaInputs) -> ExoticResult {
                 quanto_vanilla_price(option, &quanto_inputs, params)
             }
         }
-        // Handled up front (it is the only Monte-Carlo / std-error-carrying arm).
-        ExoticSpec::Cliquet { .. } => unreachable!("cliquet is handled before this match"),
+        // A continuously-monitored lookback is closed-form (the discrete variant
+        // is handled up front as Monte-Carlo).
+        ExoticSpec::Lookback {
+            option,
+            fixed,
+            strike,
+            discrete: false,
+            ..
+        } => {
+            if fixed {
+                let lb_inputs = VanillaInputs { strike, ..*inputs };
+                fixed_lookback_price(&lb_inputs, option)
+            } else {
+                floating_lookback_price(inputs, option)
+            }
+        }
+        // Handled up front (the Monte-Carlo / std-error-carrying arms).
+        ExoticSpec::Cliquet { .. }
+        | ExoticSpec::Tarf { .. }
+        | ExoticSpec::Accumulator { .. }
+        | ExoticSpec::Lookback { discrete: true, .. } => {
+            unreachable!("Monte-Carlo exotics are handled before this match")
+        }
     };
     ExoticResult {
         price,
@@ -315,6 +504,12 @@ pub(crate) fn format_report(spec: ExoticSpec, r: &ExoticResult) -> String {
         ExoticSpec::Cliquet { .. } => "cliquet",
         ExoticSpec::Quanto { digital: false, .. } => "quanto-vanilla",
         ExoticSpec::Quanto { digital: true, .. } => "quanto-digital",
+        ExoticSpec::Tarf { .. } => "tarf",
+        ExoticSpec::Accumulator { .. } => "accumulator",
+        ExoticSpec::Lookback {
+            discrete: false, ..
+        } => "lookback-continuous",
+        ExoticSpec::Lookback { discrete: true, .. } => "lookback-discrete",
     };
     // The variance swap's headline figure is a fair *variance* strike `K_var`;
     // echo its realised-vol equivalent `√K_var` so the desk reads both.
@@ -646,5 +841,153 @@ mod tests {
             QuantoParams::new(0.07, 0.4),
         );
         assert!(is_close(r.price, direct, 1e-13, 1e-13));
+    }
+
+    #[test]
+    fn tarf_matches_direct_mc_and_carries_std_error() {
+        let i = inputs();
+        let seed = 0x7A2F_C111_u64;
+        let pairs = 4_000usize;
+        let r = run(
+            ExoticSpec::Tarf {
+                option: OptionType::Put,
+                strike: 1.10,
+                target: 0.30,
+                leverage: 2.0,
+                fixings: 8,
+                fixing_notional: 1.0,
+                capped_gain: false,
+                mc_pairs: pairs,
+                mc_seed: seed,
+            },
+            &i,
+        );
+        let direct = tarf_price(
+            &i,
+            Tarf {
+                strike: 1.10,
+                fixings: 8,
+                target: 0.30,
+                leverage: 2.0,
+                favourable_side: OptionType::Put,
+                notional: 1.0,
+                redemption: RedemptionStyle::FullGain,
+            },
+            TarfMcConfig { pairs, seed },
+        );
+        // Same (seed, pairs) ⇒ bit-reproducible ⇒ exact agreement.
+        assert!(is_close(r.price, direct.price, 1e-12, 1e-12));
+        let stderr = r.std_error.expect("TARF (MC) must carry a std-error");
+        assert!(stderr > 0.0);
+        assert!(
+            format_report(
+                ExoticSpec::Tarf {
+                    option: OptionType::Put,
+                    strike: 1.10,
+                    target: 0.30,
+                    leverage: 2.0,
+                    fixings: 8,
+                    fixing_notional: 1.0,
+                    capped_gain: false,
+                    mc_pairs: pairs,
+                    mc_seed: seed,
+                },
+                &r
+            )
+            .contains("std_error")
+        );
+    }
+
+    #[test]
+    fn accumulator_matches_direct_mc_and_carries_std_error() {
+        let i = inputs();
+        let seed = 0xACC0_C111_u64;
+        let pairs = 4_000usize;
+        let r = run(
+            ExoticSpec::Accumulator {
+                pivot: 1.10,
+                barrier: 1.16,
+                leverage: 2.0,
+                fixings: 8,
+                fixing_notional: 1.0,
+                continuous: false,
+                mc_pairs: pairs,
+                mc_seed: seed,
+            },
+            &i,
+        );
+        let direct = accumulator_price(
+            &i,
+            Accumulator {
+                pivot: 1.10,
+                barrier: 1.16,
+                fixings: 8,
+                leverage: 2.0,
+                notional: 1.0,
+                monitoring: Monitoring::Discrete,
+            },
+            AccumulatorMcConfig { pairs, seed },
+        );
+        assert!(is_close(r.price, direct.price, 1e-12, 1e-12));
+        assert!(r.std_error.expect("accumulator (MC) std-error") > 0.0);
+    }
+
+    #[test]
+    fn lookback_continuous_matches_direct_closed_form_no_std_error() {
+        let i = inputs();
+        let r = run(
+            ExoticSpec::Lookback {
+                option: OptionType::Call,
+                fixed: false,
+                strike: 0.0,
+                discrete: false,
+                observations: 0,
+                mc_pairs: 0,
+                mc_seed: 0,
+            },
+            &i,
+        );
+        let direct = floating_lookback_price(&i, OptionType::Call);
+        assert!(is_close(r.price, direct, 1e-13, 1e-13));
+        assert!(r.std_error.is_none(), "continuous lookback is closed-form");
+        // A lookback dominates the equivalent vanilla.
+        let vanilla = celnet_vanilla::price(OptionType::Call, &i);
+        assert!(r.price > vanilla);
+    }
+
+    #[test]
+    fn lookback_discrete_matches_direct_mc_and_carries_std_error() {
+        let i = inputs();
+        let seed = 0x100C_BAC4_u64;
+        let pairs = 4_000usize;
+        let observations = 16u32;
+        let strike = 1.05;
+        let r = run(
+            ExoticSpec::Lookback {
+                option: OptionType::Call,
+                fixed: true,
+                strike,
+                discrete: true,
+                observations,
+                mc_pairs: pairs,
+                mc_seed: seed,
+            },
+            &i,
+        );
+        let lb_inputs = VanillaInputs { strike, ..i };
+        let direct = lookback_mc(
+            &lb_inputs,
+            Lookback {
+                style: LookbackStyle::FixedStrike,
+                option: OptionType::Call,
+            },
+            LookbackMcConfig {
+                pairs,
+                steps: observations as usize,
+                seed,
+            },
+        );
+        assert!(is_close(r.price, direct.price, 1e-12, 1e-12));
+        assert!(r.std_error.expect("discrete lookback (MC) std-error") > 0.0);
     }
 }

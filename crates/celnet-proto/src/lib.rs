@@ -440,6 +440,73 @@ mod tests {
     }
 
     #[test]
+    fn round_trip_tarf_accumulator_lookback_instruments() {
+        let tarf = Instrument {
+            pair: Some(sample_pair()),
+            tenor: Some(sample_tenor()),
+            expiry_years: 1.0,
+            quantity: Some(sample_quantity()),
+            side: Side::Sell as i32,
+            solve: None,
+            product: Some(instrument::Product::Tarf(Tarf {
+                option_type: OptionType::Put as i32,
+                strike: 1.10,
+                target: 0.30,
+                leverage: 2.0,
+                redemption: TarfRedemption::FullGain as i32,
+                schedule: Some(FixingSchedule {
+                    fixing_years: vec![0.25, 0.5, 0.75, 1.0],
+                    fixing_notional: 1.0,
+                }),
+                mc_pairs: 4096,
+                mc_seed: 0x7A2F_0001,
+            })),
+        };
+        round_trip(&tarf);
+
+        let accumulator = Instrument {
+            pair: Some(sample_pair()),
+            tenor: Some(sample_tenor()),
+            expiry_years: 1.0,
+            quantity: Some(sample_quantity()),
+            side: Side::Buy as i32,
+            solve: None,
+            product: Some(instrument::Product::Accumulator(Accumulator {
+                pivot: 1.10,
+                barrier: 1.16,
+                leverage: 2.0,
+                monitoring: AccumulatorMonitoring::Continuous as i32,
+                schedule: Some(FixingSchedule {
+                    fixing_years: vec![0.25, 0.5, 0.75, 1.0],
+                    fixing_notional: 1.0,
+                }),
+                mc_pairs: 4096,
+                mc_seed: 0xACC0_0001,
+            })),
+        };
+        round_trip(&accumulator);
+
+        let lookback = Instrument {
+            pair: Some(sample_pair()),
+            tenor: Some(sample_tenor()),
+            expiry_years: 1.0,
+            quantity: Some(sample_quantity()),
+            side: Side::Buy as i32,
+            solve: None,
+            product: Some(instrument::Product::Lookback(Lookback {
+                style: LookbackStyle::Fixed as i32,
+                option_type: OptionType::Call as i32,
+                monitoring: LookbackMonitoring::Discrete as i32,
+                strike: 1.05,
+                observations: 64,
+                mc_pairs: 8192,
+                mc_seed: 0x100C_BAC4,
+            })),
+        };
+        round_trip(&lookback);
+    }
+
+    #[test]
     fn round_trip_rfq_lifecycle() {
         let request = QuoteRequest {
             idempotency_key: "5f0c1b2e-2a4d-4f8a-9c1e-7b6a5d4c3b2a".to_owned(),

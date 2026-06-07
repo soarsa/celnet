@@ -854,10 +854,13 @@ function freezeStrikes(instrument: Instrument, m: MarketContext): Instrument {
     case "forwardStart":
     case "cliquet":
     case "quanto":
+    case "tarf":
+    case "accumulator":
+    case "lookback":
       // These products carry no delta-specified strike to freeze (the swaps have
-      // none; the Asian/quanto strikes are absolute; the forward-start/cliquet
-      // strikes reset off the spot path). Scenario shocks move them through the
-      // market alone, so return the instrument unchanged.
+      // none; the Asian/quanto/TARF/lookback strikes are absolute; the
+      // forward-start/cliquet/accumulator strikes reset/pivot off the spot path).
+      // Scenario shocks move them through the market alone, so return unchanged.
       return instrument;
   }
 }

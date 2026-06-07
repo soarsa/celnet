@@ -490,6 +490,218 @@
       ]
     },
     {
+      "id": "TARF",
+      "name": "TARF",
+      "description": "Price a Target-Redemption Forward (Monte-Carlo): spill [premium, PV], [std_error], the 13 Greeks, + footer.",
+      "result": {
+        "dimensionality": "matrix",
+        "type": "any"
+      },
+      "parameters": [
+        {
+          "name": "pair",
+          "description": "Currency pair, e.g. EURUSD.",
+          "type": "string"
+        },
+        {
+          "name": "tenor",
+          "description": "Tenor, e.g. 1Y.",
+          "type": "string"
+        },
+        {
+          "name": "callPut",
+          "description": "C for the favourable-up direction, P for the classic exporter (favourable-down) TARF.",
+          "type": "string"
+        },
+        {
+          "name": "strike",
+          "description": "Absolute strike level of every fixing, e.g. 1.10.",
+          "type": "number"
+        },
+        {
+          "name": "target",
+          "description": "Cumulative client-gain target that redeems the structure (> 0).",
+          "type": "number"
+        },
+        {
+          "name": "leverage",
+          "description": "Gearing on the adverse (loss) leg (>= 0).",
+          "type": "number"
+        },
+        {
+          "name": "fixings",
+          "description": "Number of equally-spaced fixings (>= 1).",
+          "type": "number"
+        },
+        {
+          "name": "notional",
+          "description": "Trade notional in the base currency.",
+          "type": "number"
+        },
+        {
+          "name": "redemption",
+          "description": "Optional gap-risk settlement: FULL_GAIN (default) or CAPPED_GAIN.",
+          "type": "string",
+          "optional": true
+        },
+        {
+          "name": "fixingNotional",
+          "description": "Optional notional that accrues at each fixing (omit => 1.0).",
+          "type": "number",
+          "optional": true
+        },
+        {
+          "name": "mcPairs",
+          "description": "Optional Monte-Carlo antithetic pairs (0 => server default).",
+          "type": "number",
+          "optional": true
+        },
+        {
+          "name": "mcSeed",
+          "description": "Optional Monte-Carlo seed (bit-reproducible).",
+          "type": "number",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "id": "ACCUMULATOR",
+      "name": "ACCUMULATOR",
+      "description": "Price an accumulator (Monte-Carlo): spill [premium, PV], [std_error], the 13 Greeks, + footer.",
+      "result": {
+        "dimensionality": "matrix",
+        "type": "any"
+      },
+      "parameters": [
+        {
+          "name": "pair",
+          "description": "Currency pair, e.g. EURUSD.",
+          "type": "string"
+        },
+        {
+          "name": "tenor",
+          "description": "Tenor, e.g. 1Y.",
+          "type": "string"
+        },
+        {
+          "name": "pivot",
+          "description": "Absolute pivot strike level at which the client accumulates, e.g. 1.10.",
+          "type": "number"
+        },
+        {
+          "name": "barrier",
+          "description": "Absolute up-and-out knock-out barrier (> pivot), e.g. 1.15.",
+          "type": "number"
+        },
+        {
+          "name": "leverage",
+          "description": "Gearing on the below-pivot (loss) leg (>= 0).",
+          "type": "number"
+        },
+        {
+          "name": "fixings",
+          "description": "Number of equally-spaced fixings (>= 1).",
+          "type": "number"
+        },
+        {
+          "name": "notional",
+          "description": "Trade notional in the base currency.",
+          "type": "number"
+        },
+        {
+          "name": "monitoring",
+          "description": "Optional knock-out monitoring: DISCRETE (default) or CONTINUOUS.",
+          "type": "string",
+          "optional": true
+        },
+        {
+          "name": "fixingNotional",
+          "description": "Optional notional that accrues at each fixing (omit => 1.0).",
+          "type": "number",
+          "optional": true
+        },
+        {
+          "name": "mcPairs",
+          "description": "Optional Monte-Carlo antithetic pairs (0 => server default).",
+          "type": "number",
+          "optional": true
+        },
+        {
+          "name": "mcSeed",
+          "description": "Optional Monte-Carlo seed (bit-reproducible).",
+          "type": "number",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "id": "LOOKBACK",
+      "name": "LOOKBACK",
+      "description": "Price a lookback option: spill [premium, PV], (std_error if DISCRETE/MC), the 13 Greeks, + footer.",
+      "result": {
+        "dimensionality": "matrix",
+        "type": "any"
+      },
+      "parameters": [
+        {
+          "name": "pair",
+          "description": "Currency pair, e.g. EURUSD.",
+          "type": "string"
+        },
+        {
+          "name": "tenor",
+          "description": "Tenor, e.g. 1Y.",
+          "type": "string"
+        },
+        {
+          "name": "callPut",
+          "description": "C for call, P for put.",
+          "type": "string"
+        },
+        {
+          "name": "notional",
+          "description": "Trade notional in the base currency.",
+          "type": "number"
+        },
+        {
+          "name": "style",
+          "description": "Optional FLOATING (default, settle vs path extremum) or FIXED.",
+          "type": "string",
+          "optional": true
+        },
+        {
+          "name": "monitoring",
+          "description": "Optional CONTINUOUS (default, exact closed form) or DISCRETE (Monte-Carlo).",
+          "type": "string",
+          "optional": true
+        },
+        {
+          "name": "strike",
+          "description": "Optional absolute strike level (required for FIXED; rejected for FLOATING).",
+          "type": "any",
+          "optional": true
+        },
+        {
+          "name": "observations",
+          "description": "Optional monitoring observations for the DISCRETE variant (0 => server default).",
+          "type": "number",
+          "optional": true
+        },
+        {
+          "name": "mcPairs",
+          "description": "Optional Monte-Carlo antithetic pairs for the DISCRETE variant (0 => server default).",
+          "type": "number",
+          "optional": true
+        },
+        {
+          "name": "mcSeed",
+          "description": "Optional Monte-Carlo seed for the DISCRETE variant (bit-reproducible).",
+          "type": "number",
+          "optional": true
+        }
+      ]
+    },
+    {
       "id": "SUBSCRIBE",
       "name": "SUBSCRIBE",
       "description": "Stream a live two-way for a structure (multiplexed, coalesced, stale-aware).",

@@ -66,6 +66,41 @@ export type AsianMethod = "CURRAN" | "TURNBULL_WAKEMAN";
  */
 export type QuantoPayoff = "VANILLA" | "DIGITAL";
 
+/**
+ * How the redeeming (target-breaching) fixing of a TARF settles
+ * (`celnet.wire.TarfRedemption`): `FULL_GAIN` pays the breaching fixing's full
+ * intrinsic gain (the accumulated gain may overshoot the target — genuine gap
+ * exposure); `CAPPED_GAIN` pays only the remaining target (exact redemption, no
+ * overshoot). The spread between the two is the explicit gap-risk premium.
+ */
+export type TarfRedemption = "FULL_GAIN" | "CAPPED_GAIN";
+
+/**
+ * The knock-out monitoring convention for an accumulator's up-and-out barrier
+ * (`celnet.wire.AccumulatorMonitoring`): `DISCRETE` tests the barrier only at the
+ * fixing dates; `CONTINUOUS` monitors it between fixings via the Brownian-bridge
+ * crossing probability (knocks out more often, shrinking the structure's value).
+ */
+export type AccumulatorMonitoring = "DISCRETE" | "CONTINUOUS";
+
+/**
+ * The two lookback families (`celnet.wire.LookbackStyle`): `FLOATING` settles
+ * against the path extremum (`S_T − min` call, `max − S_T` put; always finishes
+ * at or above zero); `FIXED` exercises optimally against a fixed `K`
+ * (`(max − K)⁺` call, `(K − min)⁺` put).
+ */
+export type LookbackStyle = "FLOATING" | "FIXED";
+
+/**
+ * How a lookback's running extremum is monitored (`celnet.wire.LookbackMonitoring`):
+ * `CONTINUOUS` is priced by the exact closed form (no Monte-Carlo std-error);
+ * `DISCRETE` is priced by Monte-Carlo with the Brownian-bridge extremum
+ * correction over a fixed observation count, reporting a standard error
+ * (`Quote.priceStdError`). The mathematical family each maps to lives in the
+ * server's doc comments, never in this identifier (CLAUDE.md rule 8).
+ */
+export type LookbackMonitoring = "CONTINUOUS" | "DISCRETE";
+
 export type TenorUnit =
   | "OVERNIGHT"
   | "WEEKS"
@@ -322,6 +357,102 @@ export interface Quanto {
   correlation: number;
 }
 
+/**
+ * A discrete fixing schedule for path-dependent structures
+ * (`celnet.wire.FixingSchedule`): the ascending fixing year fractions (each ≤ the
+ * structure's expiry) and the notional that accrues at each fixing. The number of
+ * fixings is `fixingYears.length`. Shared by the TARF and accumulator (CLAUDE.md
+ * rule 9: one current contract — the same message is reused, not forked).
+ */
+export interface FixingSchedule {
+  /** The fixing year fractions, ascending, each ≤ the structure's expiry. */
+  fixingYears: number[];
+  /** The notional that accrues at each fixing (usually one leg notional). */
+  fixingNotional: number;
+}
+
+/**
+ * A Target-Redemption Forward (`celnet.wire.Tarf`): a strip of geared fixings at
+ * a single `strike`, accumulating client gains until a cumulative `target` is
+ * reached (which redeems the structure). Always priced by Monte-Carlo (the value
+ * is the BANK's present value), so the reply always carries a standard error
+ * (`Quote.priceStdError`). `0` `mcPairs` ⇒ a server default; the number of fixings
+ * is `schedule.fixingYears.length`.
+ */
+export interface Tarf {
+  /**
+   * The payoff direction whose favourable side accrues client gains: a `PUT`
+   * means the client gains when `S_k < strike` (the classic exporter TARF), a
+   * `CALL` when `S_k > strike`.
+   */
+  optionType: OptionType;
+  /** The strike `K` of every fixing. */
+  strike: number;
+  /** The cumulative gain target; accumulated gain at or above it redeems. */
+  target: number;
+  /** The gearing/leverage multiplier on the adverse (loss) leg (`≥ 0`). */
+  leverage: number;
+  /** The gap-risk settlement convention of the redeeming fixing. */
+  redemption: TarfRedemption;
+  /** The fixing schedule (year fractions + per-fixing notional). */
+  schedule: FixingSchedule;
+  /** Antithetic Monte-Carlo path pairs; `0` ⇒ a server default. */
+  mcPairs: number;
+  /** Counter-RNG seed (identical seeds reproduce results bit-for-bit). */
+  mcSeed: bigint;
+}
+
+/**
+ * An accumulator (`celnet.wire.Accumulator`): periodic accumulation at a `pivot`
+ * strike with an up-and-out knock-out `barrier` (`barrier > pivot`) and `leverage`
+ * gearing on the below-pivot (loss) leg. Always priced by Monte-Carlo (the value
+ * is the CLIENT's present value), so the reply always carries a standard error
+ * (`Quote.priceStdError`). `monitoring` selects discrete-at-fixings vs continuous
+ * (Brownian-bridge) knock-out testing; the number of fixings is
+ * `schedule.fixingYears.length`.
+ */
+export interface Accumulator {
+  /** The pivot strike `K` at which the client accumulates each fixing. */
+  pivot: number;
+  /** The up-and-out knock-out barrier `B` (`B > pivot`). */
+  barrier: number;
+  /** The gearing/leverage multiplier on the below-pivot (loss) leg (`≥ 0`). */
+  leverage: number;
+  /** The knock-out monitoring convention (discrete-at-fixings or continuous). */
+  monitoring: AccumulatorMonitoring;
+  /** The fixing schedule (year fractions + per-fixing notional). */
+  schedule: FixingSchedule;
+  /** Antithetic Monte-Carlo path pairs; `0` ⇒ a server default. */
+  mcPairs: number;
+  /** Counter-RNG seed (identical seeds reproduce results bit-for-bit). */
+  mcSeed: bigint;
+}
+
+/**
+ * A lookback option on the running path extremum (`celnet.wire.Lookback`). The
+ * CONTINUOUS-monitoring variant prices by the exact closed form (no Monte-Carlo
+ * std-error); the DISCRETE-monitoring variant prices by Monte-Carlo with the
+ * Brownian-bridge extremum correction over `observations` observations and reports
+ * a standard error (`Quote.priceStdError`). `strike` is used only by the FIXED
+ * family (the FLOATING family's strike is the path extremum). `observations`,
+ * `mcPairs` and `mcSeed` are ignored for CONTINUOUS monitoring.
+ */
+export interface Lookback {
+  /** Floating- or fixed-strike family. */
+  style: LookbackStyle;
+  optionType: OptionType;
+  /** Continuous (closed-form) or discrete (Monte-Carlo) monitoring. */
+  monitoring: LookbackMonitoring;
+  /** The strike `K`, used only by the FIXED family (ignored for FLOATING). */
+  strike: number;
+  /** Equally-spaced monitoring observations for DISCRETE; `0` ⇒ a server default. */
+  observations: number;
+  /** Antithetic Monte-Carlo path pairs for DISCRETE; `0` ⇒ a server default. */
+  mcPairs: number;
+  /** Counter-RNG seed for the DISCRETE Monte-Carlo estimator (reproducible). */
+  mcSeed: bigint;
+}
+
 /** The product payoff carried by an Instrument (the proto `product` oneof). */
 export type Product =
   | { kind: "vanilla"; vanilla: Vanilla }
@@ -331,7 +462,10 @@ export type Product =
   | { kind: "asianOption"; asianOption: AsianOption }
   | { kind: "forwardStart"; forwardStart: ForwardStart }
   | { kind: "cliquet"; cliquet: Cliquet }
-  | { kind: "quanto"; quanto: Quanto };
+  | { kind: "quanto"; quanto: Quanto }
+  | { kind: "tarf"; tarf: Tarf }
+  | { kind: "accumulator"; accumulator: Accumulator }
+  | { kind: "lookback"; lookback: Lookback };
 
 /** Solve directive: solve a free parameter to hit a target (e.g. zero premium). */
 export interface Solve {

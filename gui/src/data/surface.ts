@@ -263,6 +263,9 @@ function legsOf(instrument: Instrument): { strikeSpec: StrikeOrDelta; isCall: bo
     case "forwardStart":
     case "cliquet":
     case "quanto":
+    case "tarf":
+    case "accumulator":
+    case "lookback":
       return [];
   }
 }

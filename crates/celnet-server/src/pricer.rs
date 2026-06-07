@@ -33,13 +33,17 @@ use celnet_types::{
 
 use celnet_core::FlatSmile;
 use celnet_exotics::{
-    AnalyticAsian, AveragingSchedule, BarrierKind as ExBarrierKind, BarrierStyle, Cliquet,
-    CliquetMcConfig, CliquetSchedule, DigitalKind, DoubleBarrierKnockOut, DoubleNoTouch,
-    ForwardStart, QuantoParams, RebateTiming, SingleBarrier as ExSingleBarrier, VarSwapContext,
-    cliquet_price_capped_mc, cliquet_price_plain, curran_price, digital_price,
-    double_knock_out_price, double_no_touch_price, double_touch_price, fair_variance,
-    fair_volatility, forward_start_price, no_touch_price, one_touch_price, quanto_digital_price,
-    quanto_vanilla_price, single_barrier_price, turnbull_wakeman_price,
+    Accumulator as ExAccumulator, AccumulatorMcConfig, AnalyticAsian, AveragingSchedule,
+    BarrierKind as ExBarrierKind, BarrierStyle, Cliquet, CliquetMcConfig, CliquetSchedule,
+    DigitalKind, DoubleBarrierKnockOut, DoubleNoTouch, ForwardStart, Lookback as ExLookback,
+    LookbackMcConfig, LookbackStyle as ExLookbackStyle, Monitoring as ExMonitoring, QuantoParams,
+    RebateTiming, RedemptionStyle as ExRedemptionStyle, SingleBarrier as ExSingleBarrier,
+    Tarf as ExTarf, TarfMcConfig, VarSwapContext, accumulator_price, cliquet_price_capped_mc,
+    cliquet_price_plain, curran_price, digital_price, double_knock_out_price,
+    double_no_touch_price, double_touch_price, fair_variance, fair_volatility,
+    fixed_lookback_price, floating_lookback_price, forward_start_price, lookback_mc,
+    no_touch_price, one_touch_price, quanto_digital_price, quanto_vanilla_price,
+    single_barrier_price, tarf_price, turnbull_wakeman_price,
 };
 
 /// A failure pricing a wire instrument: a malformed / unsupported message.
@@ -257,6 +261,18 @@ const FD_TIME_REL: f64 = 1e-4;
 /// request leaves `mc_pairs` unset. Sized so the reported standard error is small
 /// relative to the price for typical structured-note specs.
 const DEFAULT_CLIQUET_MC_PAIRS: usize = 200_000;
+/// Default antithetic Monte-Carlo path pairs for a TARF when the wire request
+/// leaves `mc_pairs` unset.
+const DEFAULT_TARF_MC_PAIRS: usize = 200_000;
+/// Default antithetic Monte-Carlo path pairs for an accumulator when the wire
+/// request leaves `mc_pairs` unset.
+const DEFAULT_ACCUMULATOR_MC_PAIRS: usize = 200_000;
+/// Default antithetic Monte-Carlo path pairs for a discrete lookback when the
+/// wire request leaves `mc_pairs` unset.
+const DEFAULT_LOOKBACK_MC_PAIRS: usize = 200_000;
+/// Default monitoring observations for a discrete lookback when the wire request
+/// leaves `observations` unset.
+const DEFAULT_LOOKBACK_OBSERVATIONS: usize = 64;
 
 /// Shock a market context's spot multiplicatively.
 fn bump_spot(m: &WireMarketContext, rel: f64) -> WireMarketContext {
@@ -979,6 +995,241 @@ pub fn price_instrument(
                 vol: market.vol,
                 std_error: None,
             })
+        }
+        instrument::Product::Tarf(t) => {
+            let favourable_side = decode_option_type(t.option_type)?;
+            let redemption = match celnet_proto::TarfRedemption::try_from(t.redemption) {
+                Ok(celnet_proto::TarfRedemption::FullGain) => ExRedemptionStyle::FullGain,
+                Ok(celnet_proto::TarfRedemption::CappedGain) => ExRedemptionStyle::CappedGain,
+                Err(_) => {
+                    return Err(PriceError::UnknownEnum {
+                        kind: "TarfRedemption",
+                        tag: t.redemption,
+                    });
+                }
+            };
+            let schedule = t
+                .schedule
+                .as_ref()
+                .ok_or(PriceError::MissingField("tarf.schedule"))?;
+            let fixings = schedule.fixing_years.len();
+            if fixings < 1 {
+                return Err(PriceError::Domain("TARF needs at least one fixing"));
+            }
+            if !t.target.is_finite() || t.target <= 0.0 {
+                return Err(PriceError::Domain("TARF target must be positive"));
+            }
+            if t.leverage < 0.0 {
+                return Err(PriceError::Domain("TARF leverage must be non-negative"));
+            }
+            if !schedule.fixing_notional.is_finite() || schedule.fixing_notional <= 0.0 {
+                return Err(PriceError::Domain("TARF fixing notional must be positive"));
+            }
+            let strike = t.strike;
+            let target = t.target;
+            let leverage = t.leverage;
+            let notional = schedule.fixing_notional;
+            let cfg = TarfMcConfig {
+                pairs: if t.mc_pairs == 0 {
+                    DEFAULT_TARF_MC_PAIRS
+                } else {
+                    t.mc_pairs as usize
+                },
+                seed: t.mc_seed,
+            };
+            let spec_at = move |fx: usize| ExTarf {
+                strike,
+                fixings: fx,
+                target,
+                leverage,
+                favourable_side,
+                notional,
+                redemption,
+            };
+            // The MC estimator is bit-reproducible from (seed, pairs), so the FD
+            // Greek strip is a deterministic function of the market context — the
+            // differences are real, not RNG jitter.
+            let price = move |m: &WireMarketContext| -> f64 {
+                let inputs = inputs_at(m, expiry, m.spot, m.vol);
+                tarf_price(&inputs, spec_at(fixings), cfg).price
+            };
+            let price_at = move |t: f64, m: &WireMarketContext| -> f64 {
+                let inputs = inputs_at(m, t, m.spot, m.vol);
+                tarf_price(&inputs, spec_at(fixings), cfg).price
+            };
+            let greeks = exotic_greeks(&price, &price_at, market, expiry);
+            let inputs = inputs_at(market, expiry, market.spot, market.vol);
+            let estimate = tarf_price(&inputs, spec_at(fixings), cfg);
+            Ok(Priced {
+                greeks,
+                resolved_strike: strike,
+                vol: market.vol,
+                std_error: Some(estimate.std_error),
+            })
+        }
+        instrument::Product::Accumulator(a) => {
+            let monitoring = match celnet_proto::AccumulatorMonitoring::try_from(a.monitoring) {
+                Ok(celnet_proto::AccumulatorMonitoring::Discrete) => ExMonitoring::Discrete,
+                Ok(celnet_proto::AccumulatorMonitoring::Continuous) => ExMonitoring::Continuous,
+                Err(_) => {
+                    return Err(PriceError::UnknownEnum {
+                        kind: "AccumulatorMonitoring",
+                        tag: a.monitoring,
+                    });
+                }
+            };
+            let schedule = a
+                .schedule
+                .as_ref()
+                .ok_or(PriceError::MissingField("accumulator.schedule"))?;
+            let fixings = schedule.fixing_years.len();
+            if fixings < 1 {
+                return Err(PriceError::Domain("accumulator needs at least one fixing"));
+            }
+            if !(a.pivot.is_finite() && a.barrier.is_finite()) || a.barrier <= a.pivot {
+                return Err(PriceError::Domain(
+                    "accumulator barrier must sit above the pivot",
+                ));
+            }
+            if a.leverage < 0.0 {
+                return Err(PriceError::Domain(
+                    "accumulator leverage must be non-negative",
+                ));
+            }
+            if !schedule.fixing_notional.is_finite() || schedule.fixing_notional <= 0.0 {
+                return Err(PriceError::Domain(
+                    "accumulator fixing notional must be positive",
+                ));
+            }
+            let pivot = a.pivot;
+            let barrier = a.barrier;
+            let leverage = a.leverage;
+            let notional = schedule.fixing_notional;
+            let cfg = AccumulatorMcConfig {
+                pairs: if a.mc_pairs == 0 {
+                    DEFAULT_ACCUMULATOR_MC_PAIRS
+                } else {
+                    a.mc_pairs as usize
+                },
+                seed: a.mc_seed,
+            };
+            let spec = ExAccumulator {
+                pivot,
+                barrier,
+                fixings,
+                leverage,
+                notional,
+                monitoring,
+            };
+            let price = move |m: &WireMarketContext| -> f64 {
+                let inputs = inputs_at(m, expiry, m.spot, m.vol);
+                accumulator_price(&inputs, spec, cfg).price
+            };
+            let price_at = move |t: f64, m: &WireMarketContext| -> f64 {
+                let inputs = inputs_at(m, t, m.spot, m.vol);
+                accumulator_price(&inputs, spec, cfg).price
+            };
+            let greeks = exotic_greeks(&price, &price_at, market, expiry);
+            let inputs = inputs_at(market, expiry, market.spot, market.vol);
+            let estimate = accumulator_price(&inputs, spec, cfg);
+            Ok(Priced {
+                greeks,
+                resolved_strike: pivot,
+                vol: market.vol,
+                std_error: Some(estimate.std_error),
+            })
+        }
+        instrument::Product::Lookback(l) => {
+            let option = decode_option_type(l.option_type)?;
+            let style = match celnet_proto::LookbackStyle::try_from(l.style) {
+                Ok(celnet_proto::LookbackStyle::Floating) => ExLookbackStyle::FloatingStrike,
+                Ok(celnet_proto::LookbackStyle::Fixed) => ExLookbackStyle::FixedStrike,
+                Err(_) => {
+                    return Err(PriceError::UnknownEnum {
+                        kind: "LookbackStyle",
+                        tag: l.style,
+                    });
+                }
+            };
+            let monitoring =
+                celnet_proto::LookbackMonitoring::try_from(l.monitoring).map_err(|_| {
+                    PriceError::UnknownEnum {
+                        kind: "LookbackMonitoring",
+                        tag: l.monitoring,
+                    }
+                })?;
+            // The fixed-strike family prices against `l.strike`; the floating-strike
+            // family settles against the path extremum (its `inputs.strike` is
+            // unused by the closed form), so we echo the spot as the resolved strike.
+            let strike = match style {
+                ExLookbackStyle::FixedStrike => l.strike,
+                ExLookbackStyle::FloatingStrike => market.spot,
+            };
+            match monitoring {
+                celnet_proto::LookbackMonitoring::Continuous => {
+                    // Exact closed form (Goldman-Sosin-Gatto floating /
+                    // Conze-Viswanathan fixed) — no Monte-Carlo std-error.
+                    let price = move |m: &WireMarketContext| -> f64 {
+                        let inputs = inputs_at(m, expiry, strike, m.vol);
+                        match style {
+                            ExLookbackStyle::FloatingStrike => {
+                                floating_lookback_price(&inputs, option)
+                            }
+                            ExLookbackStyle::FixedStrike => fixed_lookback_price(&inputs, option),
+                        }
+                    };
+                    let price_at = move |t: f64, m: &WireMarketContext| -> f64 {
+                        let inputs = inputs_at(m, t, strike, m.vol);
+                        match style {
+                            ExLookbackStyle::FloatingStrike => {
+                                floating_lookback_price(&inputs, option)
+                            }
+                            ExLookbackStyle::FixedStrike => fixed_lookback_price(&inputs, option),
+                        }
+                    };
+                    let greeks = exotic_greeks(&price, &price_at, market, expiry);
+                    Ok(Priced {
+                        greeks,
+                        resolved_strike: strike,
+                        vol: market.vol,
+                        std_error: None,
+                    })
+                }
+                celnet_proto::LookbackMonitoring::Discrete => {
+                    let steps = if l.observations == 0 {
+                        DEFAULT_LOOKBACK_OBSERVATIONS
+                    } else {
+                        l.observations as usize
+                    };
+                    let cfg = LookbackMcConfig {
+                        pairs: if l.mc_pairs == 0 {
+                            DEFAULT_LOOKBACK_MC_PAIRS
+                        } else {
+                            l.mc_pairs as usize
+                        },
+                        steps,
+                        seed: l.mc_seed,
+                    };
+                    let spec = ExLookback { style, option };
+                    let price = move |m: &WireMarketContext| -> f64 {
+                        let inputs = inputs_at(m, expiry, strike, m.vol);
+                        lookback_mc(&inputs, spec, cfg).price
+                    };
+                    let price_at = move |t: f64, m: &WireMarketContext| -> f64 {
+                        let inputs = inputs_at(m, t, strike, m.vol);
+                        lookback_mc(&inputs, spec, cfg).price
+                    };
+                    let greeks = exotic_greeks(&price, &price_at, market, expiry);
+                    let inputs = inputs_at(market, expiry, strike, market.vol);
+                    let estimate = lookback_mc(&inputs, spec, cfg);
+                    Ok(Priced {
+                        greeks,
+                        resolved_strike: strike,
+                        vol: market.vol,
+                        std_error: Some(estimate.std_error),
+                    })
+                }
+            }
         }
     }
 }
@@ -1782,5 +2033,314 @@ mod tests {
             price_instrument(&instr, &m, &conv_set()),
             Err(PriceError::Domain(_))
         ));
+    }
+
+    // ====================================================================
+    // Wave-3 products: TARF (MC) / accumulator (MC) / lookback (continuous
+    // closed-form + discrete MC). Each gate proves the SERVER pricer == the
+    // celnet-exotics reference (MC bit-exact at the same seed; lookback
+    // continuous closed-form to ~1e-9), surfaces a positive std-error on the
+    // MC products and `None` on the closed-form lookback, and pins a structural
+    // invariant (TARF FullGain vs CappedGain redemption ordering; accumulator
+    // knock-out reduces value; lookback dominates the equivalent vanilla).
+    // ====================================================================
+
+    fn tarf_schedule() -> celnet_proto::FixingSchedule {
+        celnet_proto::FixingSchedule {
+            fixing_years: vec![0.25, 0.5, 0.75, 1.0],
+            fixing_notional: 1.0,
+        }
+    }
+
+    #[test]
+    fn tarf_matches_exotics_mc_and_carries_std_error() {
+        let m = market();
+        let strike = 1.10;
+        let target = 0.30;
+        let leverage = 2.0;
+        let pairs = 20_000u32;
+        let seed = 0x7A2F_BEEF_u64;
+        let instr = base_instrument(Product::Tarf(celnet_proto::Tarf {
+            option_type: celnet_proto::OptionType::Put as i32,
+            strike,
+            target,
+            leverage,
+            redemption: celnet_proto::TarfRedemption::FullGain as i32,
+            schedule: Some(tarf_schedule()),
+            mc_pairs: pairs,
+            mc_seed: seed,
+        }));
+        let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+        // Independent oracle: the celnet-exotics MC with the SAME (seed, pairs)
+        // and the same fixing count ⇒ bit-reproducible ⇒ exact agreement.
+        let inputs = VanillaInputs::new(m.spot, m.spot, m.vol, 1.0, m.r_dom, m.r_for);
+        let oracle = tarf_price(
+            &inputs,
+            ExTarf {
+                strike,
+                fixings: 4,
+                target,
+                leverage,
+                favourable_side: OptionType::Put,
+                notional: 1.0,
+                redemption: ExRedemptionStyle::FullGain,
+            },
+            TarfMcConfig {
+                pairs: pairs as usize,
+                seed,
+            },
+        );
+        assert!(
+            is_close(priced.greeks.price, oracle.price, 1e-12, 1e-12),
+            "server TARF {} vs exotics MC {}",
+            priced.greeks.price,
+            oracle.price
+        );
+        let stderr = priced.std_error.expect("TARF must carry MC std-error");
+        assert!(
+            is_close(stderr, oracle.std_error, 1e-12, 1e-12) && stderr > 0.0,
+            "surfaced stderr {stderr} vs oracle {} (must be positive)",
+            oracle.std_error
+        );
+    }
+
+    #[test]
+    fn tarf_full_gain_redeems_below_capped_gain_in_bank_pv() {
+        // FullGain lets the breaching fixing pay the client its full overshoot ⇒
+        // the bank pays away more ⇒ a strictly lower bank PV than CappedGain. The
+        // shared seed gives common random numbers for a clean structural spread.
+        let m = market();
+        let seed = 0x7A2F_0042_u64;
+        let mk = |redemption: celnet_proto::TarfRedemption| {
+            let instr = base_instrument(Product::Tarf(celnet_proto::Tarf {
+                option_type: celnet_proto::OptionType::Put as i32,
+                strike: 1.10,
+                target: 0.30,
+                leverage: 2.0,
+                redemption: redemption as i32,
+                schedule: Some(tarf_schedule()),
+                mc_pairs: 40_000,
+                mc_seed: seed,
+            }));
+            price_instrument(&instr, &m, &conv_set())
+                .unwrap()
+                .greeks
+                .price
+        };
+        let full = mk(celnet_proto::TarfRedemption::FullGain);
+        let capped = mk(celnet_proto::TarfRedemption::CappedGain);
+        assert!(
+            full < capped,
+            "FullGain bank PV {full} should be below CappedGain {capped}"
+        );
+    }
+
+    #[test]
+    fn tarf_rejects_missing_schedule() {
+        let m = market();
+        let instr = base_instrument(Product::Tarf(celnet_proto::Tarf {
+            option_type: celnet_proto::OptionType::Put as i32,
+            strike: 1.10,
+            target: 0.30,
+            leverage: 2.0,
+            redemption: celnet_proto::TarfRedemption::FullGain as i32,
+            schedule: None,
+            mc_pairs: 0,
+            mc_seed: 0,
+        }));
+        assert!(matches!(
+            price_instrument(&instr, &m, &conv_set()),
+            Err(PriceError::MissingField(_))
+        ));
+    }
+
+    fn accumulator_schedule() -> celnet_proto::FixingSchedule {
+        celnet_proto::FixingSchedule {
+            fixing_years: vec![0.25, 0.5, 0.75, 1.0],
+            fixing_notional: 1.0,
+        }
+    }
+
+    #[test]
+    fn accumulator_matches_exotics_mc_and_carries_std_error() {
+        let m = market();
+        let pivot = 1.10;
+        let barrier = 1.16;
+        let leverage = 2.0;
+        let pairs = 20_000u32;
+        let seed = 0xACC0_BEEF_u64;
+        let instr = base_instrument(Product::Accumulator(celnet_proto::Accumulator {
+            pivot,
+            barrier,
+            leverage,
+            monitoring: celnet_proto::AccumulatorMonitoring::Discrete as i32,
+            schedule: Some(accumulator_schedule()),
+            mc_pairs: pairs,
+            mc_seed: seed,
+        }));
+        let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+        let inputs = VanillaInputs::new(m.spot, m.spot, m.vol, 1.0, m.r_dom, m.r_for);
+        let oracle = accumulator_price(
+            &inputs,
+            ExAccumulator {
+                pivot,
+                barrier,
+                fixings: 4,
+                leverage,
+                notional: 1.0,
+                monitoring: ExMonitoring::Discrete,
+            },
+            AccumulatorMcConfig {
+                pairs: pairs as usize,
+                seed,
+            },
+        );
+        assert!(
+            is_close(priced.greeks.price, oracle.price, 1e-12, 1e-12),
+            "server accumulator {} vs exotics MC {}",
+            priced.greeks.price,
+            oracle.price
+        );
+        let stderr = priced
+            .std_error
+            .expect("accumulator must carry MC std-error");
+        assert!(stderr > 0.0, "accumulator MC std-error must be positive");
+    }
+
+    #[test]
+    fn accumulator_continuous_knock_out_reduces_value_vs_discrete() {
+        // Continuous monitoring sees between-fixing barrier crossings discrete
+        // monitoring misses ⇒ knocks out sooner ⇒ strictly fewer settled fixings
+        // ⇒ the accumulated economics are smaller in magnitude (the structure's PV
+        // shrinks toward zero — model-free regardless of its net sign). Shared
+        // seed ⇒ common random numbers for a clean structural spread.
+        let m = market();
+        let seed = 0xACC0_0042_u64;
+        let mk = |monitoring: celnet_proto::AccumulatorMonitoring| {
+            let instr = base_instrument(Product::Accumulator(celnet_proto::Accumulator {
+                pivot: 1.10,
+                barrier: 1.16,
+                leverage: 2.0,
+                monitoring: monitoring as i32,
+                schedule: Some(accumulator_schedule()),
+                mc_pairs: 40_000,
+                mc_seed: seed,
+            }));
+            price_instrument(&instr, &m, &conv_set())
+                .unwrap()
+                .greeks
+                .price
+        };
+        let discrete = mk(celnet_proto::AccumulatorMonitoring::Discrete);
+        let continuous = mk(celnet_proto::AccumulatorMonitoring::Continuous);
+        assert!(
+            continuous.abs() < discrete.abs(),
+            "continuous-monitoring KO must shrink the PV magnitude: \
+             continuous {continuous} vs discrete {discrete}"
+        );
+    }
+
+    #[test]
+    fn lookback_continuous_matches_exotics_closed_form_and_dominates_vanilla() {
+        let m = market();
+        // Floating-strike call: closed form, no std-error, dominates the ATM
+        // vanilla (the path minimum is ≤ the strike at expiry).
+        let instr = base_instrument(Product::Lookback(celnet_proto::Lookback {
+            style: celnet_proto::LookbackStyle::Floating as i32,
+            option_type: celnet_proto::OptionType::Call as i32,
+            monitoring: celnet_proto::LookbackMonitoring::Continuous as i32,
+            strike: 0.0,
+            observations: 0,
+            mc_pairs: 0,
+            mc_seed: 0,
+        }));
+        let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+        let inputs = VanillaInputs::new(m.spot, m.spot, m.vol, 1.0, m.r_dom, m.r_for);
+        let oracle = floating_lookback_price(&inputs, OptionType::Call);
+        assert!(
+            is_close(priced.greeks.price, oracle, 1e-9, 1e-12),
+            "server floating lookback {} vs closed form {oracle}",
+            priced.greeks.price
+        );
+        assert!(
+            priced.std_error.is_none(),
+            "a continuous lookback is closed-form and must NOT carry a std-error"
+        );
+        let vanilla = celnet_vanilla::price(OptionType::Call, &inputs);
+        assert!(
+            priced.greeks.price > vanilla,
+            "lookback {} must dominate the vanilla {vanilla}",
+            priced.greeks.price
+        );
+    }
+
+    #[test]
+    fn lookback_fixed_continuous_matches_exotics_closed_form() {
+        let m = market();
+        let strike = 1.05;
+        let instr = base_instrument(Product::Lookback(celnet_proto::Lookback {
+            style: celnet_proto::LookbackStyle::Fixed as i32,
+            option_type: celnet_proto::OptionType::Call as i32,
+            monitoring: celnet_proto::LookbackMonitoring::Continuous as i32,
+            strike,
+            observations: 0,
+            mc_pairs: 0,
+            mc_seed: 0,
+        }));
+        let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+        let inputs = VanillaInputs::new(m.spot, strike, m.vol, 1.0, m.r_dom, m.r_for);
+        let oracle = fixed_lookback_price(&inputs, OptionType::Call);
+        assert!(
+            is_close(priced.greeks.price, oracle, 1e-9, 1e-12),
+            "server fixed lookback {} vs closed form {oracle}",
+            priced.greeks.price
+        );
+        assert!(priced.std_error.is_none());
+        assert!(is_close(priced.resolved_strike, strike, 1e-14, 1e-14));
+    }
+
+    #[test]
+    fn lookback_discrete_matches_exotics_mc_and_carries_std_error() {
+        let m = market();
+        let strike = 1.05;
+        let observations = 32u32;
+        let pairs = 20_000u32;
+        let seed = 0x100C_BAC4_u64;
+        let instr = base_instrument(Product::Lookback(celnet_proto::Lookback {
+            style: celnet_proto::LookbackStyle::Fixed as i32,
+            option_type: celnet_proto::OptionType::Call as i32,
+            monitoring: celnet_proto::LookbackMonitoring::Discrete as i32,
+            strike,
+            observations,
+            mc_pairs: pairs,
+            mc_seed: seed,
+        }));
+        let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+        let inputs = VanillaInputs::new(m.spot, strike, m.vol, 1.0, m.r_dom, m.r_for);
+        let oracle = lookback_mc(
+            &inputs,
+            ExLookback {
+                style: ExLookbackStyle::FixedStrike,
+                option: OptionType::Call,
+            },
+            LookbackMcConfig {
+                pairs: pairs as usize,
+                steps: observations as usize,
+                seed,
+            },
+        );
+        assert!(
+            is_close(priced.greeks.price, oracle.price, 1e-12, 1e-12),
+            "server discrete lookback {} vs exotics MC {}",
+            priced.greeks.price,
+            oracle.price
+        );
+        let stderr = priced
+            .std_error
+            .expect("a discrete lookback is MC and must carry a std-error");
+        assert!(
+            stderr > 0.0,
+            "discrete lookback MC std-error must be positive"
+        );
     }
 }

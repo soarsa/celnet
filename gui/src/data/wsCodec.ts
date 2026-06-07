@@ -35,6 +35,7 @@ import type {
   EntitlementRule,
   Executed,
   Execution,
+  FixingSchedule,
   Greeks,
   Instrument,
   Leg,
@@ -404,8 +405,65 @@ export function instrumentToWire(i: Instrument): WireObject {
       };
       break;
     }
+    // Wave-3 products, appended additively at the next field numbers:
+    // tarf=19, accumulator=20, lookback=21 (one current contract, no
+    // schema_version, no renumber; CLAUDE.md rule 9). TARF and accumulator reuse
+    // the SAME nested `FixingSchedule` message (`schedule`); every one is priced by
+    // Monte-Carlo except a CONTINUOUS-monitored lookback (exact closed form).
+    case "tarf": {
+      const t = i.product.tarf;
+      base["tarf"] = {
+        option_type: e.optionType.toWire(t.optionType),
+        strike: t.strike,
+        target: t.target,
+        leverage: t.leverage,
+        redemption: e.tarfRedemption.toWire(t.redemption),
+        schedule: fixingScheduleToWire(t.schedule),
+        mc_pairs: t.mcPairs,
+        mc_seed: t.mcSeed,
+      };
+      break;
+    }
+    case "accumulator": {
+      const a = i.product.accumulator;
+      base["accumulator"] = {
+        pivot: a.pivot,
+        barrier: a.barrier,
+        leverage: a.leverage,
+        monitoring: e.accumulatorMonitoring.toWire(a.monitoring),
+        schedule: fixingScheduleToWire(a.schedule),
+        mc_pairs: a.mcPairs,
+        mc_seed: a.mcSeed,
+      };
+      break;
+    }
+    case "lookback": {
+      const l = i.product.lookback;
+      base["lookback"] = {
+        style: e.lookbackStyle.toWire(l.style),
+        option_type: e.optionType.toWire(l.optionType),
+        monitoring: e.lookbackMonitoring.toWire(l.monitoring),
+        strike: l.strike,
+        observations: l.observations,
+        mc_pairs: l.mcPairs,
+        mc_seed: l.mcSeed,
+      };
+      break;
+    }
   }
   return base;
+}
+
+/**
+ * Encode a `FixingSchedule` into its nested wire body (the `schedule` field of a
+ * TARF / accumulator). The server reads `fixing_years` (the ascending year
+ * fractions) and `fixing_notional` (matching `fixing_schedule_from_json`).
+ */
+function fixingScheduleToWire(s: FixingSchedule): WireObject {
+  return {
+    fixing_years: [...s.fixingYears],
+    fixing_notional: s.fixingNotional,
+  };
 }
 
 // ---------------------------------------------------------------------------

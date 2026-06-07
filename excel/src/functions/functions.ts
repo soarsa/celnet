@@ -28,6 +28,7 @@ import {
   formatGreeksSpill,
   formatLimitsSpill,
   formatMarkStatusSpill,
+  formatPathDependentSpill,
   formatPositionsSpill,
   formatQuantoSpill,
   formatRfqSpill,
@@ -36,18 +37,22 @@ import {
   formatSmileSpill,
   formatVarSwapSpill,
   formatVolSwapSpill,
+  lookbackIsMonteCarlo,
   parseObservable,
   parsePair,
   parseRiskDimension,
   parseRiskScope,
   parseSmileModel,
   parseTenor,
+  shapeAccumulator,
   shapeAsianOption,
   shapeCalibration,
   shapeCliquet,
   shapeForwardStart,
+  shapeLookback,
   shapeQuanto,
   shapeReportingNumeraire,
+  shapeTarf,
   shapeVanillaInstrument,
   shapeVarianceSwap,
   shapeVolatilitySwap,
@@ -619,6 +624,216 @@ export async function QUANTO(
 }
 
 /**
+ * Price a Target-Redemption Forward (TARF): a spill of `["premium", PV]`, an honest
+ * `["std_error", σ̄]` row (a TARF is ALWAYS Monte-Carlo priced — the breaching
+ * fixing carries genuine gap risk), the 13 risk Greeks, and a convention footer.
+ * The premium is the BANK's present value (the server's `greeks.price`, the same
+ * `celnet-exotics` value the SDK/CLI read). The strike is an absolute level;
+ * `target > 0` is the cumulative client gain that redeems; `leverage ≥ 0` gears the
+ * adverse leg; `fixings ≥ 1` is the (equally-spaced) fixing count.
+ * @customfunction TARF
+ * @param pair Currency pair, e.g. EURUSD.
+ * @param tenor Tenor, e.g. 1Y.
+ * @param callPut C for the favourable-up direction, P for the classic exporter (favourable-down) TARF.
+ * @param strike Absolute strike level of every fixing, e.g. 1.10.
+ * @param target Cumulative client-gain target that redeems the structure (> 0).
+ * @param leverage Gearing on the adverse (loss) leg (>= 0).
+ * @param fixings Number of equally-spaced fixings (>= 1).
+ * @param notional Trade notional in the base currency.
+ * @param redemption Optional gap-risk settlement: FULL_GAIN (default) or CAPPED_GAIN.
+ * @param fixingNotional Optional notional that accrues at each fixing (omit => 1.0).
+ * @param mcPairs Optional Monte-Carlo antithetic pairs (0 => server default).
+ * @param mcSeed Optional Monte-Carlo seed (bit-reproducible).
+ * @returns A spill: premium, std_error, the 13 Greeks, and a convention footer.
+ */
+export async function TARF(
+  pair: string,
+  tenor: string,
+  callPut: string,
+  strike: string | number,
+  target: number,
+  leverage: number,
+  fixings: number,
+  notional: number,
+  redemption?: string,
+  fixingNotional?: number,
+  mcPairs?: number,
+  mcSeed?: number,
+): Promise<SpillMatrix> {
+  try {
+    const instrument = shapeTarf({
+      pair,
+      tenor,
+      callPut,
+      strike,
+      target,
+      leverage,
+      fixings,
+      notional,
+      redemption,
+      fixingNotional,
+      mcPairs,
+      mcSeed,
+    });
+    const quote = await getConnection().requestQuote(
+      instrument,
+      DEFAULT_CONVENTIONS,
+      `tarf:${pair}:${tenor}:${callPut}:${strike}:${target}:${leverage}:${fixings}:${notional}:${redemption ?? ""}:${fixingNotional ?? ""}:${mcPairs ?? ""}:${mcSeed ?? ""}`,
+    );
+    // A TARF is always MC-priced ⇒ the std-error row is surfaced when the server
+    // stamped `price_std_error` (it always does for an MC product).
+    return formatPathDependentSpill({
+      premium: quote.greeks.price,
+      stdError: quote.priceStdError,
+      greeks: quote.greeks,
+      conventions: quote.conventions,
+      surfaceVersion: quote.surfaceVersion,
+      epochNanos: quote.epochNanos,
+    });
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
+/**
+ * Price an accumulator: a spill of `["premium", PV]`, an honest `["std_error", σ̄]`
+ * row (an accumulator is ALWAYS Monte-Carlo priced), the 13 risk Greeks, and a
+ * convention footer. The premium is the CLIENT's present value (the server's
+ * `greeks.price`, the same `celnet-exotics` value the SDK/CLI read). The pivot and
+ * barrier are absolute levels (`barrier > pivot`); `leverage ≥ 0` gears the
+ * below-pivot leg; `fixings ≥ 1` is the (equally-spaced) fixing count.
+ * @customfunction ACCUMULATOR
+ * @param pair Currency pair, e.g. EURUSD.
+ * @param tenor Tenor, e.g. 1Y.
+ * @param pivot Absolute pivot strike level at which the client accumulates, e.g. 1.10.
+ * @param barrier Absolute up-and-out knock-out barrier (> pivot), e.g. 1.15.
+ * @param leverage Gearing on the below-pivot (loss) leg (>= 0).
+ * @param fixings Number of equally-spaced fixings (>= 1).
+ * @param notional Trade notional in the base currency.
+ * @param monitoring Optional knock-out monitoring: DISCRETE (default) or CONTINUOUS.
+ * @param fixingNotional Optional notional that accrues at each fixing (omit => 1.0).
+ * @param mcPairs Optional Monte-Carlo antithetic pairs (0 => server default).
+ * @param mcSeed Optional Monte-Carlo seed (bit-reproducible).
+ * @returns A spill: premium, std_error, the 13 Greeks, and a convention footer.
+ */
+export async function ACCUMULATOR(
+  pair: string,
+  tenor: string,
+  pivot: string | number,
+  barrier: number,
+  leverage: number,
+  fixings: number,
+  notional: number,
+  monitoring?: string,
+  fixingNotional?: number,
+  mcPairs?: number,
+  mcSeed?: number,
+): Promise<SpillMatrix> {
+  try {
+    const instrument = shapeAccumulator({
+      pair,
+      tenor,
+      pivot,
+      barrier,
+      leverage,
+      fixings,
+      notional,
+      monitoring,
+      fixingNotional,
+      mcPairs,
+      mcSeed,
+    });
+    const quote = await getConnection().requestQuote(
+      instrument,
+      DEFAULT_CONVENTIONS,
+      `accumulator:${pair}:${tenor}:${pivot}:${barrier}:${leverage}:${fixings}:${notional}:${monitoring ?? ""}:${fixingNotional ?? ""}:${mcPairs ?? ""}:${mcSeed ?? ""}`,
+    );
+    // An accumulator is always MC-priced ⇒ surface the server's std-error.
+    return formatPathDependentSpill({
+      premium: quote.greeks.price,
+      stdError: quote.priceStdError,
+      greeks: quote.greeks,
+      conventions: quote.conventions,
+      surfaceVersion: quote.surfaceVersion,
+      epochNanos: quote.epochNanos,
+    });
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
+/**
+ * Price a lookback option: a spill of `["premium", PV]`, then — ONLY for the
+ * DISCRETE (Monte-Carlo) variant — an honest `["std_error", σ̄]` row, then the 13
+ * risk Greeks and a convention footer. The CONTINUOUS variant prices by the exact
+ * closed form (no std-error row); the DISCRETE variant prices by Monte-Carlo over
+ * `observations` monitoring points. A FLOATING-strike lookback takes no strike (it
+ * settles against the path extremum); a FIXED-strike lookback requires an absolute
+ * strike. The premium is the server's `celnet-exotics` value (== SDK/CLI).
+ * @customfunction LOOKBACK
+ * @param pair Currency pair, e.g. EURUSD.
+ * @param tenor Tenor, e.g. 1Y.
+ * @param callPut C for call, P for put.
+ * @param notional Trade notional in the base currency.
+ * @param style Optional FLOATING (default, settle vs path extremum) or FIXED.
+ * @param monitoring Optional CONTINUOUS (default, exact closed form) or DISCRETE (Monte-Carlo).
+ * @param strike Optional absolute strike level (required for FIXED; rejected for FLOATING).
+ * @param observations Optional monitoring observations for the DISCRETE variant (0 => server default).
+ * @param mcPairs Optional Monte-Carlo antithetic pairs for the DISCRETE variant (0 => server default).
+ * @param mcSeed Optional Monte-Carlo seed for the DISCRETE variant (bit-reproducible).
+ * @returns A spill: premium, (std_error if DISCRETE/MC), the 13 Greeks, and a footer.
+ */
+export async function LOOKBACK(
+  pair: string,
+  tenor: string,
+  callPut: string,
+  notional: number,
+  style?: string,
+  monitoring?: string,
+  strike?: string | number,
+  observations?: number,
+  mcPairs?: number,
+  mcSeed?: number,
+): Promise<SpillMatrix> {
+  try {
+    const instrument = shapeLookback({
+      pair,
+      tenor,
+      callPut,
+      notional,
+      style,
+      monitoring,
+      strike,
+      observations,
+      mcPairs,
+      mcSeed,
+    });
+    const quote = await getConnection().requestQuote(
+      instrument,
+      DEFAULT_CONVENTIONS,
+      `lookback:${pair}:${tenor}:${callPut}:${notional}:${style ?? ""}:${monitoring ?? ""}:${strike ?? ""}:${observations ?? ""}:${mcPairs ?? ""}:${mcSeed ?? ""}`,
+    );
+    // The std-error is surfaced ONLY for the DISCRETE (MC-priced) variant AND when
+    // the server stamped `price_std_error`. The CONTINUOUS variant is exact closed
+    // form, so the spill honestly omits the row — a cell never reads a precision
+    // claim the price doesn't have. `lookbackIsMonteCarlo` gates on the shaped
+    // product so we never surface a stray non-MC std-error.
+    const isMc =
+      instrument.product.kind === "lookback" && lookbackIsMonteCarlo(instrument.product.lookback);
+    return formatPathDependentSpill({
+      premium: quote.greeks.price,
+      stdError: isMc ? quote.priceStdError : undefined,
+      greeks: quote.greeks,
+      conventions: quote.conventions,
+      surfaceVersion: quote.surfaceVersion,
+      epochNanos: quote.epochNanos,
+    });
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
+/**
  * Stream a live two-way for a structure, multiplexed on the single session and
  * coalesced with identical-argument cells. Re-emits on every Update; flips to a
  * stale state on a heartbeat gap rather than freezing as live (docs §5).
@@ -895,6 +1110,9 @@ function registerAll(): void {
   cf.associate("FORWARDSTART", FORWARDSTART as (...a: never[]) => unknown);
   cf.associate("CLIQUET", CLIQUET as (...a: never[]) => unknown);
   cf.associate("QUANTO", QUANTO as (...a: never[]) => unknown);
+  cf.associate("TARF", TARF as (...a: never[]) => unknown);
+  cf.associate("ACCUMULATOR", ACCUMULATOR as (...a: never[]) => unknown);
+  cf.associate("LOOKBACK", LOOKBACK as (...a: never[]) => unknown);
   cf.associate("SUBSCRIBE", SUBSCRIBE as (...a: never[]) => unknown);
   cf.associate("SERIES", SERIES as (...a: never[]) => unknown);
   cf.associate("MARK", MARK as (...a: never[]) => unknown);
