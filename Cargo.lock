@@ -605,6 +605,7 @@ dependencies = [
  "celnet-testkit",
  "celnet-types",
  "celnet-vanilla",
+ "libm",
  "proptest",
 ]
 
