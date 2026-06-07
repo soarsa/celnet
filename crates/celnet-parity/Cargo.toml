@@ -22,6 +22,12 @@ celnet-calendar.workspace = true
 celnet-surface.workspace = true
 celnet-exotics.workspace = true
 celnet-risk-cube.workspace = true
+# Exotic risk-cube aggregation parity (W11-A): the cross-shard fan-out reconcile vs
+# the single-node firm aggregate INCLUDING exotic legs, and the convention-free
+# canonical leaf the cube sums. Both already in the central workspace table.
+celnet-risk-fleet.workspace = true
+celnet-risk-normalize.workspace = true
+celnet-router.workspace = true
 celnet-testkit.workspace = true
 proptest.workspace = true
 # Correctly-rounded, cross-platform-identical transcendentals for the standalone

@@ -524,6 +524,7 @@ version = "0.0.0"
 dependencies = [
  "bytemuck",
  "celnet-core",
+ "celnet-qmc",
  "celnet-types",
  "celnet-vanilla",
  "libm",
@@ -597,16 +598,23 @@ dependencies = [
  "celnet-core",
  "celnet-exotics",
  "celnet-golden",
+ "celnet-gpu",
  "celnet-heston",
  "celnet-qmc",
  "celnet-replog",
  "celnet-risk-cube",
+ "celnet-risk-fleet",
+ "celnet-risk-normalize",
+ "celnet-router",
  "celnet-surface",
  "celnet-testkit",
  "celnet-types",
  "celnet-vanilla",
  "celnet-xva",
+ "libm",
+ "pollster",
  "proptest",
+ "wgpu",
 ]
 
 [[package]]
@@ -660,6 +668,7 @@ name = "celnet-risk-cube"
 version = "0.0.0"
 dependencies = [
  "celnet-core",
+ "celnet-exotics",
  "celnet-gpu",
  "celnet-risk-normalize",
  "celnet-types",

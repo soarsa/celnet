@@ -164,6 +164,7 @@ impl Master {
             measure: FactMeasure {
                 leaf: canonicalize(&position),
                 position,
+                exotic: None,
             },
             surface_version: 1,
         }

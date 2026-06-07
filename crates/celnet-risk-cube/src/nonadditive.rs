@@ -388,6 +388,17 @@ pub struct VarEs {
 /// representative spot — it is recomputed from each position's own spot/delta here.
 #[must_use]
 pub fn sbm_curvature_spot(positions: &[PositionRisk], rw: f64) -> f64 {
+    let (cvr_up, cvr_down) = vanilla_curvature_legs(positions, rw);
+    cvr_up.max(cvr_down).max(0.0)
+}
+
+/// The vanilla node's FRTB-SbM curvature legs `(CVR_up, CVR_down)` along spot, BEFORE
+/// the `max(·, ·, 0)` reduction — so a node containing both vanilla and exotic legs
+/// can sum the two `(up, down)` pairs and take a single `max` over the WHOLE node
+/// (curvature is non-additive in exactly this way: `max(Σ_vanilla up + Σ_exotic up,
+/// Σ_vanilla down + Σ_exotic down, 0)`, not the sum of two independent `max`es).
+#[must_use]
+pub fn vanilla_curvature_legs(positions: &[PositionRisk], rw: f64) -> (f64, f64) {
     // Reprice the node up and down by the relative shock.
     let base = node_value(positions);
     let up = node_value_shocked(positions, 1.0 + rw);
@@ -402,7 +413,75 @@ pub fn sbm_curvature_spot(positions: &[PositionRisk], rw: f64) -> f64 {
         .sum::<f64>();
     let cvr_up = -((up - base) - linear);
     let cvr_down = -((down - base) + linear);
-    cvr_up.max(cvr_down).max(0.0)
+    (cvr_up, cvr_down)
+}
+
+/// **Combined node VaR/ES** over a node's vanilla positions AND its exotic legs by
+/// full bump-and-revalue (`docs/RISK-HIERARCHY.md` §2.5, exotic extension). Each
+/// scenario reprices BOTH the vanilla legs (`celnet-vanilla`) and the exotic legs
+/// (the real closed-form exotic pricer) and sums their P&L into one node loss, so an
+/// exotic leg contributes its true tail risk — never a vanilla proxy, never excluded.
+/// Reduces to [`historical_var_es`] exactly when there are no exotic legs.
+#[must_use]
+pub fn node_var_es_combined(
+    positions: &[PositionRisk],
+    exotic_legs: &[crate::exotic::ExoticLeg],
+    scenarios: &[Scenario],
+    alpha: f64,
+) -> VarEs {
+    if scenarios.is_empty() {
+        return VarEs { var: 0.0, es: 0.0 };
+    }
+    let mut pnl: Vec<f64> = scenarios
+        .iter()
+        .map(|s| node_pnl(positions, *s) + crate::exotic::exotic_node_pnl(exotic_legs, *s))
+        .collect();
+    quantile_var_es(&mut pnl, alpha)
+}
+
+/// **Combined node VaR/ES (scale path)**: the AAD Taylor lens over the vanilla legs
+/// PLUS a full closed-form reprice of the exotic legs per scenario. The exotic legs
+/// are repriced exactly (the closed forms are cheap and the second-order Taylor of a
+/// barrier near its knock-out would be a poor approximation), so this lens stays
+/// honest about the exotic tail; the vanilla legs keep the O(positions)-sweep
+/// Taylor speed-up. Reduces to [`sensitivity_var_es`] exactly when there are no
+/// exotic legs.
+#[must_use]
+pub fn node_var_es_sensitivity_combined(
+    positions: &[PositionRisk],
+    exotic_legs: &[crate::exotic::ExoticLeg],
+    scenarios: &[Scenario],
+    alpha: f64,
+) -> VarEs {
+    if scenarios.is_empty() {
+        return VarEs { var: 0.0, es: 0.0 };
+    }
+    let sens = node_sensitivities(positions);
+    let mut pnl: Vec<f64> = scenarios
+        .iter()
+        .map(|s| {
+            let vanilla: f64 = sens.iter().map(|p| p.taylor_pnl(*s)).sum();
+            vanilla + crate::exotic::exotic_node_pnl(exotic_legs, *s)
+        })
+        .collect();
+    quantile_var_es(&mut pnl, alpha)
+}
+
+/// **Combined node FRTB-SbM spot curvature** over vanilla + exotic legs: sum the
+/// vanilla `(up, down)` legs and the exotic `(up, down)` legs, THEN take the single
+/// node `max(Σ up, Σ down, 0)`. Curvature is non-additive precisely because of this
+/// `max`, so the two leg classes must be combined before the reduction (taking a
+/// `max` per class and summing would over-count). Reduces to [`sbm_curvature_spot`]
+/// exactly when there are no exotic legs.
+#[must_use]
+pub fn sbm_curvature_spot_combined(
+    positions: &[PositionRisk],
+    exotic_legs: &[crate::exotic::ExoticLeg],
+    rw: f64,
+) -> f64 {
+    let (v_up, v_down) = vanilla_curvature_legs(positions, rw);
+    let (e_up, e_down) = crate::exotic::exotic_curvature_legs(exotic_legs, rw);
+    (v_up + e_up).max(v_down + e_down).max(0.0)
 }
 
 /// Correlation-weighted vega aggregation across vega buckets — the SbM-style
