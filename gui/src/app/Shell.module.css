@@ -69,6 +69,13 @@
   font-size: var(--type-micro);
   letter-spacing: 0.04em;
 }
+/* A11y (WCAG 2.1 AA): the active glyph keeps the brand accent (large text, so
+ * 3:1 is sufficient), but the small 10px label needs the 4.5:1 small-text ratio
+ * — accent-on-accent-soft is only ~3.34:1, so the active LABEL uses the primary
+ * text colour while the accent tint + glyph still carry the "active" cue. */
+.railActive .railLabel {
+  color: var(--text-primary);
+}
 
 /* --- main column --- */
 .main {
