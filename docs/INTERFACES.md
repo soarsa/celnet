@@ -59,7 +59,7 @@ celnet-golden, celnet-testkit, celnet-bench  →  test/validation/bench only
 |-------|---------|---------|---------|
 | `celnet-types` | 0.0.0 | **freeze-candidate** | `OptionType`, `Ccy`, `CcyPair`, `Tenor` (now `Overnight`/`TomNext`/`SpotNext`/`Weeks`/`Months`/`Years`/`Imm(u8)`/`BrokenDate(BrokenDate)`), `BrokenDate{year:i32,month:u8,day:u8}`, `SmileModel` (`MarketHedge`/`StochasticVol`/`Parametric`/`ParametricSurface`, `Default=MarketHedge`); newtypes `Vol`/`Strike`/`Rate`/`Delta`/`Df`/`Time`; convention enums `DeltaConvention`/`AtmConvention`/`PremiumStyle`/`Cut`/`DayCount`/`Settlement`; DTOs `VanillaInputs`, `Greeks`. POD/`Copy`, `serde`. (No `time` dep — a broken date is the POD triple.) |
 | `celnet-core` | 0.0.0 | **freeze-candidate** | `math` (`norm_cdf`, `norm_pdf`, `exp`/`ln`/`sqrt` via `libm`); `is_close` + `assert_close!` (ULP/rel/abs); trait `Smile` + `FlatSmile`. Zero IO. |
-| `celnet-proto` | 0.0.0 | **freeze-candidate** | single current wire contract (`prost 0.13` / `tonic 0.12`); `celnet.proto` services `PricingService`/`QuoteService`/`StreamService`/`SurfaceService`; `Instrument` oneof; **no** version field / negotiation. Phase-1 additions: `Tenor` short-end/IMM/`BrokenDate` units; `SmileModel` enum on `MarkSurfaceRequest`/`ScenarioRequest`; market-series feed (`MarketObservable`, `MarketSeriesSubscribe`/`Unsubscribe`/`Point`/`Snapshot`) multiplexed on `StreamSession`; attribution identity (`BookId`/`Owner`/`AttributionRecord`) on the quote/trade lifecycle. Phase-2 addition: `RiskService` (`ListPositions`/`AggregateRisk`/`DrillRisk`/`LimitStatus`) — server-side hierarchical risk over the org cube. See §"Phase-1 contract extensions" and §"Phase-2 contract: `RiskService`". |
+| `celnet-proto` | 0.0.0 | **freeze-candidate** | single current wire contract (`prost 0.13` / `tonic 0.12`); `celnet.proto` services `PricingService`/`QuoteService`/`StreamService`/`SurfaceService`; `Instrument` oneof; **no** version field / negotiation. Phase-1 additions: `Tenor` short-end/IMM/`BrokenDate` units; `SmileModel` enum on `MarkSurfaceRequest`/`ScenarioRequest`; market-series feed (`MarketObservable`, `MarketSeriesSubscribe`/`Unsubscribe`/`Point`/`Snapshot`) multiplexed on `StreamSession`; attribution identity (`BookId`/`Owner`/`AttributionRecord`) on the quote/trade lifecycle. Phase-2 addition: `RiskService` (`ListPositions`/`AggregateRisk`/`DrillRisk`/`LimitStatus`) — server-side hierarchical risk over the org cube. api-first catalogue (W1–W6) additions: `Instrument.product` exotic arms `variance_swap=13`…`basket=25`, supporting enums (`AsianMethod`/`QuantoPayoff`/`TarfRedemption`/`AccumulatorMonitoring`/`LookbackStyle`/`BasketKind`/`ExerciseStyle`), `PricingModel pricing_model=22` booking selector, `SMILE_MODEL_EXTENDED_SURFACE=4`, `PriceResponse.price_std_error=7`/`Quote.price_std_error=12`, `ArbReport.smile_model=5` typed provenance. See §"Phase-1 contract extensions", §"Phase-2 contract: `RiskService`", and §"Exotic catalogue + booking-model + provenance". |
 | `celnet-plugin-api` | 0.0.0 | **freeze-candidate** | SDK traits (`PricingModel`/`PricingBackend`) + WIT world. |
 
 > `celnet-proto` and `celnet-plugin-api` are built — **Gate G0 is reached** (consistent with
@@ -123,13 +123,16 @@ celnet-golden, celnet-testkit, celnet-bench  →  test/validation/bench only
   (`Default = MarketHedge`). Mirrors `celnet_surface::SmileModel` exactly (vendor-neutral
   names; the vanna-volga / SABR / SVI / SSVI provenance is documented, not named).
 - **Wire (`celnet-proto`):** `enum SmileModel { SMILE_MODEL_MARKET_HEDGE=0, …STOCHASTIC_VOL=1,
-  …PARAMETRIC=2, …PARAMETRIC_SURFACE=3 }`; `MarkSurfaceRequest.smile_model` (field 4) and
+  …PARAMETRIC=2, …PARAMETRIC_SURFACE=3, …EXTENDED_SURFACE=4 }` (value **4 = eSSVI**, appended; no
+  renumber, no `schema_version`); `MarkSurfaceRequest.smile_model` (field 4) and
   `ScenarioRequest.smile_model` (field 7), both `optional` — absent ⇒ server default
-  calibration. **Server status:** `MarkSurface` **honours** the selection — it routes to the
-  matching `celnet-surface` calibrator (market-hedge VV baseline / fitted SABR / SVI / SSVI via
-  `celnet_surface::build_model_smile`), deposits the model-tagged `CalibratedSmile` under the
-  surface version (so a pinned RFQ/RFS re-prices against the exact marked model), and echoes the
-  model used in the `Smile.arbitrage.note` (`model=<family>`) as provenance. The default reproduces
+  calibration. The typed-provenance echo `ArbReport.smile_model` (field 5) also carries this enum
+  (see the catalogue registry below). **Server status:** `MarkSurface` **honours** the selection — it
+  routes to the matching `celnet-surface` calibrator (market-hedge VV baseline / fitted SABR / SVI /
+  SSVI / eSSVI via `celnet_surface::build_model_smile`), deposits the model-tagged `CalibratedSmile`
+  under the surface version (so a pinned RFQ/RFS re-prices against the exact marked model), and echoes
+  the model used in `ArbReport.smile_model` (typed) plus the `Smile.arbitrage.note` token as
+  provenance. The default reproduces
   the market-hedge baseline byte-for-byte. `Scenario` validates the selector but reprices each node
   off the supplied flat `base_market.vol`; with no broker skew a neutral smile collapses to the same
   flat slice, so the shock grid is model-invariant by construction (a model-dependent scenario marks
@@ -599,3 +602,76 @@ no contract change. Default principal = **grant-all** everywhere (entitlement-re
 request omitting a principal is grant-all). Validated by the proto round-trip, the server suite (62 lib
 + 92 integration tests), the SDK risk-workflow suite (7 tests), the Excel suite (75 tests) + e2e Check H,
 the GUI `npm run build`, and full `just check` green (791 tests).
+
+---
+
+## Exotic catalogue + booking-model + provenance — `celnet-proto` `Instrument` extensions (api-first program W1–W6)
+
+The api-first completion program additively extended the **one** `Instrument` oneof and its
+supporting enums/fields so the full built `celnet-exotics` / `celnet-surface` catalogue is reachable
+from the wire and from all five clients (server pricer + SDK + CLI + Excel + GUI). **No
+`schema_version`, no renumber** — every tag is appended; an absent product/field reproduces the
+pre-extension contract byte-for-byte. The frozen registry of additions:
+
+### `Instrument.product` oneof arms (each: proto field number → server pricer → parity row)
+
+| Product | oneof arm (field #) | Server pricer (`celnet-server/src/pricer.rs`) | Independent parity/gate |
+|---|---|---|---|
+| Variance swap | `VarianceSwap variance_swap = 13` | `Product::VarianceSwap` → `celnet-exotics` log-contract 1/K² replication | `celnet-parity/tests/var_vol_swap.rs` (flat-σ `K_var==σ²`; independent adaptive-Simpson strip) |
+| Volatility swap | `VolatilitySwap volatility_swap = 14` | `Product::VolatilitySwap` → Carr-Lee convexity adjustment | `celnet-parity/tests/var_vol_swap.rs` (`K_vol<√K_var` widening) |
+| Asian (arithmetic) | `AsianOption asian_option = 15` | `Product::AsianOption` → Turnbull-Wakeman / Curran (uses `AsianMethod`) | `celnet-parity/tests/asian.rs` (closed-form limits; Curran vs MC stderr; TW band) |
+| Forward-start vanilla | `ForwardStart forward_start = 16` | `Product::ForwardStart` → Rubinstein (1990) dual-carry reset | `celnet-parity/tests/forward_start.rs` (t1→0 → GK ~1e-9; vs two-leg GBM MC) |
+| Cliquet / ratchet | `Cliquet cliquet = 17` | `Product::Cliquet` → Σ forward-start legs (plain) / clamped MC | `celnet-parity/tests/forward_start.rs` (plain == Σ legs ~1e-10; capped MC) |
+| Quanto | `Quanto quanto = 18` | `Product::Quanto` → vanilla/digital closed form (uses `QuantoPayoff`) | `celnet-parity/tests/structured.rs` (ρ=0 → vanilla; CF == MC) |
+| TARF | `Tarf tarf = 19` | `Product::Tarf` → geared-fixing MC (uses `TarfRedemption`; emits `price_std_error`) | `celnet-parity/tests/structured.rs` (gap-risk premium signed; server==exotics MC) |
+| Accumulator | `Accumulator accumulator = 20` | `Product::Accumulator` → pivot-accumulation MC (uses `AccumulatorMonitoring`; emits `price_std_error`) | `celnet-parity/tests/structured.rs` (continuous KO > discrete) |
+| Lookback | `Lookback lookback = 21` | `Product::Lookback` → Goldman-Sosin-Gatto / Conze-Viswanathan closed form, discrete MC (uses `LookbackStyle`/`LookbackMonitoring`) | `celnet-parity/tests/structured.rs` (CF==MC; dominates vanilla) |
+| Window barrier | `WindowBarrier window_barrier = 23` | `Product::WindowBarrier` → LSV engine only (no closed form; requires `PRICING_MODEL_LOCAL_STOCH_VOL`) | `celnet-parity/tests/lsv.rs` (LSV oracle: ξ=0→Dupire limit; PDE≈MC) |
+| American / Bermudan | `AmericanOption american = 24` | `Product::American` → projected-SOR free-boundary FD (default) / Longstaff-Schwartz LSM when `lsm_paths>0` (uses `ExerciseStyle`; emits `price_std_error` for LSM) | `celnet-exotics/src/american.rs` (American≥European; no-foreign-rate==European; PSOR-FD==LSM-MC within stderr) |
+| Basket / best-of / worst-of | `BasketOption basket = 25` | `Product::Basket` → Cholesky-correlated multi-asset GBM MC over scrambled-Sobol/Brownian-bridge (uses `BasketKind`; emits `price_std_error`) | `celnet-parity/tests/basket.rs` (Lévy two-asset band; worst≤single≤best sandwich; ρ→1 collapse) |
+
+(The pre-program arms `vanilla=7`, `strategy=8`, `single_barrier=9`, `double_barrier=10`,
+`digital=11`, `touch=12` are unchanged; W4 added their ergonomic client ctors only, no contract
+change.)
+
+### Supporting enums (`celnet-proto`, all appended)
+
+`AsianMethod` (Asian averaging family), `QuantoPayoff` (vanilla/digital), `TarfRedemption`
+(full-gain/capped-gain), `AccumulatorMonitoring` (discrete/continuous), `LookbackStyle`
+(floating/fixed) + `LookbackMonitoring`, `BasketKind` (basket/best-of/worst-of), `ExerciseStyle`
+(American/Bermudan/European). Each maps 1:1 to a `celnet-exotics` enum in the server pricer (named
+imports `… as Ex…`).
+
+### Booking-model selector — `Instrument.pricing_model = 22`
+
+`enum PricingModel { PRICING_MODEL_DEFAULT=0, PRICING_MODEL_LOCAL_STOCH_VOL=1 }`. Travels on the
+`Instrument` so it reaches price/quote/stream/scenario uniformly. **`DEFAULT` (or absent) is
+byte-identical** to the contract before this field existed (`to_bits`-gated). `LOCAL_STOCH_VOL`
+routes the supported products (vanilla, single-barrier KO, window-barrier) through the real
+`celnet-exotics::LsvModel`; an unsupported product returns a clear `invalid_argument` (no silent
+fallback). Parity: `celnet-parity/tests/lsv.rs`.
+
+### MC-honesty std-error fields
+
+- **`PriceResponse.price_std_error = 7`** (`optional double`) and **`Quote.price_std_error = 12`**
+  (`optional double`) — the Monte-Carlo products (clamped cliquet, TARF, accumulator, discrete
+  lookback, American-LSM, basket) emit a genuine standard error on **both** the gRPC price path and
+  the WS quote path (the GUI/Excel transport). Gated by a `quote_to_json` unit test + SDK e2e
+  asserting an MC product's quote carries stderr while a closed-form product does not.
+
+### Typed smile provenance — `ArbReport.smile_model = 5`
+
+`ArbReport.smile_model` (field 5, `SmileModel`) carries the **typed** calibrated-family identity,
+retiring the `model=<family>` regex previously parsed out of `Smile.arbitrage.note` across GUI /
+Excel / SDK. Values per the `SmileModel` enum above, including `SMILE_MODEL_EXTENDED_SURFACE=4`
+(eSSVI). Parity/round-trip in `celnet-parity/tests/essvi.rs` + the client codec tests.
+
+**Cross-check.** Every arm/enum/field above is present in `crates/celnet-proto/proto/celnet.proto`,
+dispatched in `crates/celnet-server/src/pricer.rs`, reachable from all five clients
+(see `docs/CLIENT-PARITY-MATRIX.md`), and backed by the cited gated test. No proto symbol is
+present-but-unregistered.
+
+**Build status.** All catalogue extensions are **DONE and gated green** end-to-end (server pricer +
+SDK `InstrumentSpec`/vocab builders + CLI `exotic …` + Excel `CELNET.*` + GUI ticket), validated by
+the cited `celnet-parity` rows, the server suite, the SDK e2e suites, the GUI/Excel build+test
+suites, and full `just check` ("All gates passed."). One unversioned contract; no `schema_version`.

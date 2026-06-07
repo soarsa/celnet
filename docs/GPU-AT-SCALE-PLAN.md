@@ -65,30 +65,38 @@ From a read of `crates/celnet-gpu/src/` (`backend.rs`, `cpu.rs`, `gpu.rs`,
 | **Batched spot×vol scenario kernel** (`ScenarioPricer`/`ScenarioAxes`/`ScenarioGrid`): whole ladder priced in **one 2-D dispatch** (x = path-block, y = grid node) under common random numbers; per-node f32↔f64 reconciliation to the CPU oracle (same derived bound); ragged-tail + monotone-under-CRN + centre-node tests; **CPU oracle fallback** node-by-node when no adapter. Wired into the risk cube as `celnet_risk_cube::gpu_pv_grid` (sums notional-scaled per-position grids) with `NodeScenarioGrid::reconciles_to_analytic` vs the closed-form oracle. **Measured (M4 Metal, `celnet-bench`):** 121 nodes × 3 positions × 65 536 paths/node ~13 ms batched vs ~165 ms unbatched per-node MC (~12.7×); the exact closed form (~9.6 µs) still dominates for analytic vanillas (honest crossover — GPU MC is the scale path for path-dependent payoffs / large amortizing grids). | **Built** | `scenario.rs`, `scenario.wgsl`; `celnet-risk-cube::scenario_grid.rs`; `celnet-bench::scenario.rs` |
 | **Batch closed-form vanilla kernel** (Workload A / G2 — `BatchPricer`/`BatchInstrument`): **one 1-D dispatch** prices a large batch of *independent* vanillas (varying spot/strike/vol/expiry/rates/call-put) by the **Garman-Kohlhagen closed form in f32**, one thread per instrument — a smooth, exact, embarrassingly-parallel batch with **no Monte-Carlo noise**. WGSL has no `erf`, so Φ is the **A&S 7.1.26** rational-times-Gaussian (max abs `erf` error `1.5e-7`, at the f32 floor); its f32 coefficients are **bit-identical** to the CPU oracle's (`erf_as_oracle`) and to the canonical A&S constants. Reconciliation is **split into two separately-derived bounds**: (i) GPU-f32 vs the **f64 A&S-erf oracle** within `derived_batch_bound` (pure f32 round-off, from `f32::EPSILON` and the GK condition numbers `dmax`/`scale` — *not* a fitted constant); (ii) the f64 A&S oracle vs `celnet_vanilla::price` (production `libm::erfc` Φ, gated bit-for-bit vs the **QuantLib golden** in `celnet-golden`) within `as_erf_price_bound` (A&S algorithmic error). The **three-way bracket** `GPU-f32 ~ f64-oracle ~ golden-closed-form` holds node-by-node within their sum. **Measured (M4 Metal):** n=1792-instrument batch (ITM/ATM/OTM × short/long expiry × varied vol/rates × call/put), `is_gpu=true`, **max f32 round-off rel = 3.11e-7**, max A&S-alg rel = 1.24e-7 — both inside the per-node derived bounds (f32 round-off well under the ~few×1e-6 f32 expectation). Bit-reproducible (no RNG: `to_bits`-identical across runs/backends); ragged-tail tested; **CPU oracle fallback** reconciles to golden when no adapter (headless/CI). **HONEST BOUNDARY:** in-repo this proves **correctness** (the f32↔f64↔golden reconcile) only; the M4 is integrated-GPU/unified-memory and has no f64 — the **absolute throughput / speedup** for Workload A is a *ratio* on this host and the NVIDIA absolute headline is **deferred to the CUDA deploy-gate (G8)**, never claimed here. | **Built** | `batch.rs`, `batch.wgsl` |
 
-**What is *not* built (the gap this plan closes):**
+**Built since this plan was first written (the gap is largely closed):**
 
-- Only the **single-step GBM terminal** is on GPU (`PathSpec::steps` is reserved
-  but ignored — see `backend.rs` docs). **No multi-step path engine**, so **no
-  path-dependent exotic** (barrier/touch/DNT/Asian/autocall) runs on GPU; those
-  price on the CPU PDE/MC in `celnet-exotics` today.
-- **No batch / many-instrument dispatch**: one `PathSpec` = one option per
-  dispatch, one strike. There is no many-pair / many-tenor / many-strike GPU
-  kernel and no persistent device context reuse across a sweep (each `dispatch`
-  re-creates buffers).
+- **Multi-step path engine on GPU — Built (W8).** `path.wgsl` runs a multi-step GBM path
+  (Sobol or Philox variates, Brownian-bridge ordering) so path-dependent payoffs run on GPU;
+  three-way GPU-f32 ≈ CPU-f64 ≈ golden within derived f32 bounds, with a CPU↔GPU **Sobol KAT**
+  (`celnet-parity/tests/{gpu_path,gpu_greeks,qmc_highdim}.rs`).
+- **Batch / many-instrument dispatch — Built.** The Workload-A closed-form batch kernel
+  (`batch.wgsl`, one 1-D dispatch over a large independent-vanilla batch) and the spot×vol
+  scenario kernel (`scenario.wgsl`, one 2-D dispatch) — see the Built table above.
+- **QMC — Built (`celnet-qmc`).** Owen-scrambled Joe-Kuo Sobol' + Brownian-bridge, consumed
+  unmodified by the GPU path/greeks kernels; the integer/direction-number layer is bit-identical
+  CPU↔GPU (KAT). Measured ≈37.7×/88.5× variance reduction (`celnet-parity/tests/qmc.rs`).
+- **GPU throughput/latency RATIO harness — Built.** `celnet-bench` `gpu_load` (HdrHistogram
+  GPU+CPU kpaths/s + gpu/cpu ratio + dispatch p50/p99/p99.9), `benches/gpu_batch.rs` +
+  `baselines/gpu_batch.json`, and `gpu_gate` (slowdown-only relative gate). Measured M4 Metal
+  dispatch-amortization curve 0.68×@4k → 53×@1M paths.
+- **Greeks on GPU — Built (W8).** `greeks.wgsl` carries pathwise + likelihood-ratio Greek
+  estimators in the path sweep, each reconciled vs the f64 CPU estimator and analytic golden
+  (`celnet-parity/tests/gpu_greeks.rs`).
+
+**Still genuinely not built (the remaining gap):**
+
 - **No GPU PDE** (the production CN+Rannacher and HV-ADI PDEs are CPU-only in
   `celnet-exotics`; the GPU PDE path is *designed* in §4 of ARCHITECTURE).
-- **No QMC**: only Philox pseudo-random. Sobol + Brownian-bridge are *designed,
-  not implemented* (confirmed: no `sobol`/`brownian_bridge` in the tree).
-- **No throughput/latency benchmark for the GPU path.** `celnet-bench` measures
-  the CPU hot core and the wire path; it does **not** measure GPU batch
-  throughput, GPU dispatch latency, or the ≤ 50 ms exotic budget. The GPU lane in
-  CI runs *correctness* tests only, not a perf gate.
-- **No Greeks on GPU** (pathwise / likelihood-ratio / bumped). Reductions return
-  price + std-error only.
+- **No absolute GPU throughput headline.** The M4 is integrated-GPU/unified-memory and has
+  **no f64**, so in-repo the GPU lane proves **correctness** (f32↔f64↔golden) + host-local
+  **ratios** only. The **NVIDIA ABSOLUTE throughput / ≤ 50 ms exotic / Workload-A·B absolute
+  numbers are deferred to the CUDA deploy-gate (G8)**, never claimed in-repo.
 
-So the honest one-line state: **the GPU vanilla path is correct and reconciled,
-but it is neither at-scale (batch/exotic) nor perf-proven (no measured throughput
-or latency gate).** The rest of this document is the route to both.
+So the honest one-line state: **the GPU path is correct, reconciled, at-scale (batch/path/Greeks
+on GPU + Sobol QMC), and host-ratio perf-proven; the GPU PDE and the NVIDIA absolute headline are
+the remaining deploy-gated items.** The rest of this document is the design route + the deploy-gate.
 
 ---
 
@@ -349,7 +357,13 @@ and a `16·eps` absolute floor — *not* a hand-tuned constant. Extending to sca
 
 ---
 
-## 5. Sobol QMC + Brownian bridge (the next variance-reduction step)
+## 5. Sobol QMC + Brownian bridge — **BUILT** (`celnet-qmc`, consumed on GPU)
+
+> **STATUS: built.** Owen-scrambled Joe-Kuo Sobol' + principal-bisection Brownian bridge ship in
+> `celnet-qmc` (`sobol.rs`/`bridge.rs`/`direction_numbers.rs`), swappable behind `VariateSource`,
+> consumed unmodified by the GPU path/greeks kernels (`path.wgsl`/`greeks.wgsl`) with a CPU↔GPU
+> Sobol KAT. Measured ≈37.7×/88.5× variance reduction (`celnet-parity/tests/qmc.rs`); high-dim RQMC
+> convergence in `qmc_highdim.rs`. The design rationale below is retained.
 
 Pseudo-random Philox converges at `O(N^{-1/2})`. For the smooth-ish payoffs that
 dominate FX exotics, **randomized QMC (scrambled Sobol) + Brownian-bridge
@@ -462,12 +476,12 @@ Ordered by leverage. Every item is "done" only when its gate is green under
 
 | # | Task | Build / Defer | Validation gate |
 |---|---|---|---|
-| **G1** | **GPU perf harness skeleton**: persistent `GpuContext` with reused buffers; `celnet-bench` `benches/gpu_batch.rs` (divan) + `src/bin/gpu_load.rs` (HdrHistogram, bounded) + committed `baselines/gpu_*.json` + `gpu_gate` regression binary (slowdown-only, 2× tol). | **Build now** | `gpu_load` runs bounded on M4 (Metal) and Lavapipe; emits throughput + p50/p99/p99.9; `gpu_gate` fails on >2× baseline; CI Lavapipe lane runs it as a *completes-within-ceiling* check, not a speedup. |
+| **G1** | **GPU perf harness skeleton**: persistent `GpuContext` with reused buffers; `celnet-bench` `benches/gpu_batch.rs` (divan) + `src/bin/gpu_load.rs` (HdrHistogram, bounded) + committed `baselines/gpu_*.json` + `gpu_gate` regression binary (slowdown-only, 2× tol). | **DONE** (`gpu_load.rs`/`gpu_gate.rs`/`gpu_batch.rs`) | **Built + gated.** `gpu_load` runs bounded on M4 (Metal) and Lavapipe; emits GPU+CPU throughput + gpu/cpu ratio + p50/p99/p99.9; `gpu_gate` fails on >2× baseline; CI Lavapipe lane runs it as a *completes-within-ceiling* check, not a speedup. Measured M4 dispatch-amortization curve 0.68×@4k → 53×@1M paths. |
 | **G2** | **Batch many-pair/many-tenor/many-strike vanilla kernel** (Workload A): structured-buffer instrument inputs, one thread per instrument, one 1-D dispatch per sweep. | **DONE** (`batch.rs`/`batch.wgsl`) | **Built + gated.** Reconciles each instrument vs the f64 A&S-erf oracle within `derived_batch_bound` (pure f32 round-off, derived from `f32::EPSILON`/GK condition numbers) **and** vs the golden-validated `celnet_vanilla::price` within the three-way sum; measured M4: max f32-roundoff rel `3.11e-7` over a 1792-instrument ITM/ATM/OTM × expiry × vol/rate × call-put batch, `is_gpu=true`. Bit-reproducible (no RNG). **Absolute** points/s + the speedup-vs-CPU **headline stays deferred to the NVIDIA deploy gate (G8)**; in-repo proves correctness + (per the plan's honesty rule) only a ratio on this integrated GPU. |
-| **G3** | **Multi-step GBM path engine on GPU** (honor `PathSpec::steps`): per-path register state, `normal(path, step, dim)` loop; CPU oracle gains the identical multi-step engine. | **Build now** | GPU multi-step terminal reconciles with CPU multi-step oracle within the extended derived bound (§4); single-step result unchanged (regression). |
-| **G4** | **Path-dependent exotic payoff kernels** (Workload B): barriers (8 single + double-KO), touch/no-touch/DNT, window barrier, geometric/arithmetic Asian, BGK shift in-kernel. | **Build now** | Three-way bracket GPU-MC ≈ CPU-MC ≈ `celnet-golden` (QuantLib) within MC-noise + derived bound, across a proptest FX grid; **booking-grade ≤ 1e-3 rel error inside the ≤ 50 ms wall-clock budget** measured on the deploy-gate NVIDIA (indicative on M4). |
-| **G5** | **Sobol QMC + Brownian-bridge variate source** behind `VariateSource`; scrambled (ART-Owen), committed Joe-Kuo direction numbers; RQMC error from `R` scrambles; CPU + GPU share the bridge. | **Build now (after G3/G4)** | Integer layer bit-identical CPU↔GPU (KAT); reconciles within derived bound on the same Sobol points; matches golden within RQMC interval; **measured variance-reduction ≥ 3× (≈ 9× effective) vs Philox** at equal paths on real hardware. |
-| **G6** | **GPU Greeks** (pathwise + LR/Malliavin, mixed for 2nd order) carried in the path sweep; widen `Reduction` to carry Greeks. | **Defer** (needs G3/G4) | Each GPU Greek reconciles vs f64 CPU estimator and vs analytic golden where available; discontinuous-payoff Greeks use LR and beat naive bumping in variance (measured). |
+| **G3** | **Multi-step GBM path engine on GPU** (honor `PathSpec::steps`): per-path register state, `normal(path, step, dim)` loop; CPU oracle gains the identical multi-step engine. | **DONE** (W8 — `path.wgsl`/`path.rs`) | **Built + gated.** GPU multi-step path reconciles with the CPU multi-step oracle within the derived bound; three-way GPU-f32 ≈ CPU-f64 ≈ golden (`celnet-parity/tests/gpu_path.rs`); real Metal exercised. |
+| **G4** | **Path-dependent exotic payoff kernels** (Workload B): barriers (8 single + double-KO), touch/no-touch/DNT, window barrier, geometric/arithmetic Asian, BGK shift in-kernel. | **Partial / deploy-gated** | The multi-step path + Greeks kernels (G3/G6) are built; the full per-payoff exotic kernel set + the **booking-grade ≤ 1e-3 rel inside ≤ 50 ms** absolute is **deploy-gated to NVIDIA (G8)** (M4 Metal lacks f64 ⇒ in-repo proves correctness + ratios only). |
+| **G5** | **Sobol QMC + Brownian-bridge variate source** behind `VariateSource`; scrambled (ART-Owen), committed Joe-Kuo direction numbers; RQMC error from `R` scrambles; CPU + GPU share the bridge. | **DONE** (`celnet-qmc`; consumed on GPU) | **Built + gated.** Integer/direction-number layer bit-identical CPU↔GPU (KAT, `gpu_path.rs`); matches golden within the RQMC interval; **measured variance reduction ≈37.7×/88.5× vs plain MC** (`celnet-parity/tests/qmc.rs`), high-dim RQMC convergence in `qmc_highdim.rs`. |
+| **G6** | **GPU Greeks** (pathwise + LR/Malliavin, mixed for 2nd order) carried in the path sweep; widen `Reduction` to carry Greeks. | **DONE** (W8 — `greeks.wgsl`/`pathwise.rs`) | **Built + gated.** Each GPU pathwise/LR Greek reconciles vs the f64 CPU estimator and analytic golden within the derived bound (`celnet-parity/tests/gpu_greeks.rs`); discontinuous-payoff Greeks use LR. |
 | **G7** | **End-to-end RFQ-exotic wire proof**: barrier RFQ through real `celnet-server` → engine GPU dispatch → reconcile → respond, timed client-side (GPU analogue of `wire_load`). | **Defer** (needs G4 + engine GPU-dispatch wiring) | ≤ 50 ms p99 *as a counterparty observes it* on the deploy-gate hardware, under concurrent RFS load; bounded, never hangs. |
 | **G8** | **CUDA deploy-gate job**: scheduled/pre-release CI on real NVIDIA (wgpu-Vulkan first; cubecl-cuda only if §7 ADR re-opens) producing the production-hardware baseline the GA headline cites. | **Defer** (infra; gates the GA perf headline) | Produces signed baseline JSON for Workloads A/B + exotic ≤ 50 ms; reconciliation green on f32; f64-on-GPU used only as a slow reference. |
 | **G9** | **GPU PDE** (tiled-stencil explicit/ADI; PCR tridiagonal for implicit) for dense 2-D LSV grids. | **Defer** (gate on measured CPU-ADI bottleneck) | Only built if a measured book-revaluation shows CPU HV-ADI as the bottleneck; then reconciles vs CPU PDE within derived bound and vs golden; honest finding recorded if 1-D booking grids are *slower* on GPU. |
@@ -510,12 +524,13 @@ ARCHITECTURE §4 / ROADMAP WS-E updated after each landed item.
 
 ## 10. Sequencing summary
 
-**Next wave (build now):** G1 (perf harness) → **G2 (batch closed-form vanilla) —
-DONE** (`batch.rs`/`batch.wgsl`, correctness-reconciled f32↔f64↔golden; absolute
-throughput deferred to G8) ∥ G3 (multi-step paths) → G4 (exotic payoffs, the
-≤ 50 ms headline) → G5 (Sobol QMC + bridge).
-**Deferred, gated:** G6 (GPU Greeks), G7 (wire-path exotic proof), G8 (NVIDIA
-deploy gate — gates the GA perf headline), G9 (GPU PDE), G10 (CubeCL ADR).
+**DONE (correctness-reconciled f32↔f64↔golden + host ratios):** G1 (perf harness —
+`gpu_load`/`gpu_gate`), G2 (batch closed-form vanilla — `batch.rs`/`batch.wgsl`),
+G3 (multi-step paths — `path.wgsl`), G5 (Sobol QMC + bridge — `celnet-qmc`, consumed
+on GPU), G6 (GPU pathwise/LR Greeks — `greeks.wgsl`).
+**Deferred / deploy-gated:** G4 (full per-payoff exotic kernel set + the ≤ 50 ms
+absolute — NVIDIA-gated), G7 (wire-path exotic proof), G8 (NVIDIA deploy gate —
+gates the GA absolute perf headline), G9 (GPU PDE), G10 (CubeCL ADR).
 
 The throughline: **measure before claiming** (G1 first), **reconcile every result
 against the f64 oracle within a derived bound**, and **stratify the claim by
