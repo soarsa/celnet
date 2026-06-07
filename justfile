@@ -113,6 +113,42 @@ mutants-vanilla:
 mutants-gate-vanilla:
     timeout 700 {{_cargo}} mutants -p celnet-vanilla --config .config/mutants.toml
 
+# Mutation GATEs on the other safety-critical numerics crates (PC-MUT-WIDEN).
+# Each uses its own `.config/mutants-<crate>.toml` (an audited, justified
+# equivalence/exclude set — see that file + docs/HARDENING.md s2) and exits
+# non-zero on ANY non-equivalent survivor, exactly like the vanilla gate. These
+# crates are large (surface ~2.3k mutants, exotics PDE/MC even larger), so the
+# canonical baselines are CI-run by the `mutation-gate-numerics` job; the local
+# recipes are for re-baselining / debugging a single crate. The timeout is a
+# belt-and-braces wedge guard (cargo-mutants also self-times-out per mutant).
+
+# Surface calibration crate (VV/SABR/SVI/SSVI/eSSVI + arbitrage + strangle).
+mutants-gate-surface:
+    timeout 3600 {{_cargo}} mutants -p celnet-surface --config .config/mutants-surface.toml
+
+# Surface arbitrage module ONLY — the locally-proven-green slice (PC-MUT-WIDEN).
+# Drives the gate over src/arbitrage.rs (no-arbitrage report numerics) to zero
+# survivors, exercising the enforceable mechanism end-to-end quickly. The full
+# crate-wide gate (mutants-gate-surface) is CI-run.
+mutants-gate-surface-arbitrage:
+    timeout 600 {{_cargo}} mutants -p celnet-surface --file '**/arbitrage.rs' --config .config/mutants-surface.toml
+
+# Exotics pricing crate (digitals/barriers/Asian/TARF/... + PDE/MC/particle/LSV).
+mutants-gate-exotics:
+    timeout 5400 {{_cargo}} mutants -p celnet-exotics --config .config/mutants-exotics.toml
+
+# Risk-cube crate (additive roll-up + non-additive VaR/ES + FRTB-SA capital).
+mutants-gate-risk-cube:
+    timeout 3600 {{_cargo}} mutants -p celnet-risk-cube --config .config/mutants-risk-cube.toml
+
+# XVA crate (CVA/DVA/FVA over exposure + survival curve + netting).
+mutants-gate-xva:
+    timeout 1800 {{_cargo}} mutants -p celnet-xva --config .config/mutants-xva.toml
+
+# All numerics mutation gates in sequence (vanilla + the four widened crates).
+mutants-gate-numerics: mutants-gate-vanilla mutants-gate-surface mutants-gate-exotics mutants-gate-risk-cube mutants-gate-xva
+    @echo "All numerics mutation gates passed."
+
 # Coverage GATE on the vanilla pricing core: fail if region/line coverage drops
 # below the committed floor (see docs/HARDENING.md). `--fail-under-lines` /
 # `--fail-under-regions` make llvm-cov exit non-zero below the threshold.

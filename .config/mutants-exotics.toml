@@ -1,0 +1,37 @@
+# cargo-mutants gate configuration — celnet-exotics mutation-testing policy.
+#
+# Mirrors `.config/mutants.toml` (the celnet-vanilla gate) for the exotics
+# pricing crate: digitals/touches/DNT, all-8 barriers, window/Asian, var/vol
+# swaps, forward-start/cliquet, TARF/accumulator, quanto, lookback, American,
+# plus the PDE (Crank-Nicolson/Rannacher, ADI-HV), Monte-Carlo (Philox), and
+# particle engines and the LSV booking model.
+#
+# How the gate works
+# ------------------
+# `cargo mutants -p celnet-exotics --config .config/mutants-exotics.toml`
+# generates a syntactic mutant for every operator/comparison/return value,
+# applies it, and re-runs the suite. A mutant the suite still passes ("MISSED")
+# is a test gap; a mutant the suite catches (fail/panic/hang->timeout) is caught.
+# cargo-mutants exits non-zero on ANY survivor, so this gate enforces ZERO
+# non-equivalent survivors: a future edit that weakens the suite below the kill
+# bar fails the build. See docs/HARDENING.md section 2.
+#
+# Equivalence exclusions
+# ----------------------
+# `exclude_re` lists ONLY mutants that are provably *semantically equivalent* to
+# the original — each justified inline with WHY it cannot change an observable
+# result — never to hide a real survivor. The baseline (kill-rate + the
+# per-cluster equivalence argument) is recorded in docs/HARDENING.md section 2;
+# the canonical baseline for this crate is established by the CI
+# `mutation-gate-numerics` job (full local mutation of every numerics crate in
+# one session is impractical — this crate's baseline is CI-run).
+#
+# The exclusion set is populated from the CI baseline run. Each entry is the
+# exact cargo-mutants line (`<file>:<line>:<col>: replace ...`) plus an inline
+# justification of the equivalence (a measure-zero float-equality boundary, a
+# never-hit watchdog cap, an unobservable iteration-internal of a converging
+# root-finder/solver, etc.). It starts empty: the gate runs strict (every viable
+# mutant must be caught) until the CI baseline identifies a genuinely-equivalent
+# cluster, at which point each member is added here WITH its justification.
+exclude_re = [
+]

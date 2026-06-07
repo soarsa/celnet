@@ -1,0 +1,27 @@
+# cargo-mutants gate configuration — celnet-xva mutation-testing policy.
+#
+# Mirrors `.config/mutants.toml` (the celnet-vanilla gate) for the XVA crate:
+# CVA/DVA/FVA over the exposure profile, the survival-probability curve
+# (hazard-rate bootstrap), and synthetic netting-set aggregation. Counterparty
+# valuation adjustments feed regulatory and accounting numbers — a silently
+# weakened suite here could let a discounting/survival/exposure error ship.
+#
+# How the gate works
+# ------------------
+# `cargo mutants -p celnet-xva --config .config/mutants-xva.toml` applies a
+# syntactic mutant per operator/comparison/return value and re-runs the suite; a
+# MISSED mutant is a test gap. cargo-mutants exits non-zero on ANY survivor, so
+# the gate enforces ZERO non-equivalent survivors — a future edit that weakens
+# the suite below the kill bar fails the build. See HARDENING.md s2.
+#
+# Equivalence exclusions
+# ----------------------
+# `exclude_re` lists ONLY provably semantically-equivalent mutants, each
+# justified inline with WHY it cannot change an observable result — never to hide
+# a real survivor. This crate's baseline (kill-rate + per-cluster equivalence
+# argument) is CI-run via `mutation-gate-numerics` (full local mutation of every
+# numerics crate in one session is impractical; recorded in HARDENING.md s2). It
+# starts empty: the gate runs strict until the CI baseline identifies a genuinely
+# equivalent cluster, at which point each member is added here WITH justification.
+exclude_re = [
+]
