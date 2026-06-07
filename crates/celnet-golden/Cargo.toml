@@ -16,3 +16,10 @@ celnet-types.workspace = true
 celnet-core.workspace = true
 celnet-vanilla.workspace = true
 celnet-exotics.workspace = true
+
+[dev-dependencies]
+# Heston pricer under test by the published-literature Heston golden table
+# (tests/heston_grid.rs). Referenced by direct path — like celnet-parity does —
+# because celnet-heston is a leaf crate not registered in the central
+# workspace.dependencies (the sole shared manifest, which lane agents do not edit).
+celnet-heston = { path = "../celnet-heston" }
