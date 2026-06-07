@@ -139,17 +139,27 @@ export const streamRejectReason = enumCodec<StreamRejectReason>([
 ]);
 
 /**
- * `SmileModel` ↔ proto `SmileModel` (SMILE_MODEL_MARKET_HEDGE=0, …). The wire
+ * `SmileModel` ↔ proto `SmileModel` (SMILE_MODEL_MARKET_HEDGE=0, …,
+ * SMILE_MODEL_EXTENDED_SURFACE=4). The wire
  * carries the proto enum number; the server's WS `mark_surface` decoder also
  * accepts the `SMILE_MODEL_*` string name, but we always emit the canonical
  * number so the projection is exact and reversible.
  */
-export const smileModel = enumCodec<SmileModel>([
+/**
+ * The canonical `SmileModel` members in wire order (index === proto enum number).
+ * Exported as the single source of truth so the codec AND any human-facing
+ * accepted-list message (e.g. `parseSmileModel`) derive from one list and cannot
+ * drift apart when a model is added.
+ */
+export const SMILE_MODEL_MEMBERS: readonly SmileModel[] = [
   "MARKET_HEDGE",
   "STOCHASTIC_VOL",
   "PARAMETRIC",
   "PARAMETRIC_SURFACE",
-]);
+  "EXTENDED_SURFACE",
+];
+
+export const smileModel = enumCodec<SmileModel>(SMILE_MODEL_MEMBERS);
 
 /** `MarketObservable` ↔ proto `MarketObservable` (ATM_VOL=0, SPOT=1, RR=2, BF=3, FORWARD=4). */
 export const marketObservable = enumCodec<MarketObservable>([

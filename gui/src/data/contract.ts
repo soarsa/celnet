@@ -159,12 +159,15 @@ export type TenorUnit =
  *  - `STOCHASTIC_VOL`      — a stochastic-vol parameterisation fitted to the same anchors
  *  - `PARAMETRIC`          — a parametric per-slice fit
  *  - `PARAMETRIC_SURFACE`  — a parametric whole-surface fit
+ *  - `EXTENDED_SURFACE`    — an extended whole-surface calibration with a
+ *                            maturity-dependent skew family (proto value 4)
  */
 export type SmileModel =
   | "MARKET_HEDGE"
   | "STOCHASTIC_VOL"
   | "PARAMETRIC"
-  | "PARAMETRIC_SURFACE";
+  | "PARAMETRIC_SURFACE"
+  | "EXTENDED_SURFACE";
 
 /**
  * A market observable a time-series feed can stream (`celnet.wire.MarketObservable`).

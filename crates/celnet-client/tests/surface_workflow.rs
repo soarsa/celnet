@@ -92,6 +92,111 @@ async fn quant_marks_surface_reads_smile_and_arb_report() {
     .expect("test must not hang");
 }
 
+/// eSSVI client-parity proof: a quant marks the surface under the **extended
+/// surface** calibration family (the eSSVI / maturity-dependent-ρ family carried
+/// on the wire as `SMILE_MODEL_EXTENDED_SURFACE=4`) through the typed
+/// [`celnet_client::Client::mark_surface_with`] over a REAL edge, and reads back
+/// calibrated smiles whose arbitrage-note provenance reflects the extended family
+/// (`model=extended-surface`).
+///
+/// This mirrors the existing market-hedge mark flow but selects the extended
+/// surface via the ergonomic [`celnet_client::Calibration::ExtendedSurface`]
+/// variant — the SDK already maps it to wire tag 4 via `calibration_to_wire`
+/// (`Calibration = celnet_types::SmileModel`, which carries `ExtendedSurface`), so
+/// this proves the SDK leg of the eSSVI client-parity contract end-to-end: the
+/// model is selectable, the smile calibrates, and the family the server actually
+/// used is visible to the consumer through the arb-note provenance channel.
+#[tokio::test]
+async fn quant_marks_surface_under_extended_surface_family() {
+    use celnet_client::Calibration;
+
+    tokio::time::timeout(TEST_DEADLINE, async {
+        let (edge, client) = start_edge_and_client().await;
+
+        let broker = BrokerQuoteSet::three_point(1.0, 0.105, -0.0040, 0.0020);
+
+        // Baseline market-hedge mark, for a same-input differential comparison: the
+        // arb-note provenance must name a DIFFERENT family than the extended mark.
+        let baseline = tokio::time::timeout(
+            STEP_DEADLINE,
+            client.mark_surface(eurusd(), &[broker], conventions()),
+        )
+        .await
+        .expect("baseline mark_surface returns in time")
+        .expect("baseline mark_surface succeeds");
+        let baseline_note = baseline.smiles[0].arbitrage.note.clone();
+        assert!(
+            baseline_note.contains("model=market-hedge"),
+            "baseline note names the market-hedge family, got {baseline_note:?}"
+        );
+
+        // Mark the SAME broker set under the extended-surface (eSSVI) family via the
+        // ergonomic typed selector — the SDK encodes it to wire tag 4.
+        let marked = tokio::time::timeout(
+            STEP_DEADLINE,
+            client.mark_surface_with(
+                eurusd(),
+                &[broker],
+                conventions(),
+                Calibration::ExtendedSurface,
+            ),
+        )
+        .await
+        .expect("extended mark_surface_with returns in time")
+        .expect("extended mark_surface_with succeeds");
+
+        assert!(
+            marked.surface_version >= 1,
+            "the extended mark stamps a surface version"
+        );
+        assert_eq!(marked.smiles.len(), 1, "one smile per broker quote set");
+        let smile = &marked.smiles[0];
+        assert!(is_close(smile.tenor_years, 1.0, 1e-12, 1e-12));
+        assert_eq!(smile.points.len(), 5, "delta-axis pillars reported");
+
+        // The smile is genuinely calibrated under the extended family: every
+        // delta-axis pillar carries a sane positive vol.
+        for p in &smile.points {
+            assert!(
+                p.vol > 0.0 && p.vol < 1.0,
+                "extended-surface pillar vol {} in range",
+                p.vol
+            );
+        }
+        // The calibrated extended smile is butterfly-arbitrage-free for this mild
+        // EURUSD quote set.
+        assert!(
+            smile.arbitrage.butterfly_arbitrage_free,
+            "the extended-surface mark is butterfly-arbitrage-free"
+        );
+        // The 50Δ pillar reproduces the marked ATM vol.
+        let atm = smile.atm_vol().expect("a 50Δ pillar exists");
+        assert!(
+            is_close(atm, broker.atm_vol, 5e-3, 5e-3),
+            "extended ATM pillar vol {atm} ~ marked {}",
+            broker.atm_vol
+        );
+
+        // THE eSSVI CLIENT-PARITY ASSERTION: the arb-note provenance reflects the
+        // EXTENDED family (the contract has no dedicated echo field; the note is the
+        // honest provenance channel the GUI reads via its modelProvenance regex),
+        // and it is distinct from the baseline market-hedge mark of the same inputs.
+        let note = smile.arbitrage.note.clone();
+        assert!(
+            note.contains("model=extended-surface"),
+            "the extended-surface mark's arb-note names the extended family, got {note:?}"
+        );
+        assert_ne!(
+            note, baseline_note,
+            "the extended-surface mark's provenance differs from the market-hedge mark of the same inputs"
+        );
+
+        edge.shutdown(Duration::from_secs(5)).await;
+    })
+    .await
+    .expect("test must not hang");
+}
+
 /// Scenario 4: a risk manager runs a spot × vol shock grid. Every node's repriced
 /// price equals a first-principles `celnet-vanilla` price at the node's shocked
 /// market, and the unshocked `[0, 0]` node equals the base price.

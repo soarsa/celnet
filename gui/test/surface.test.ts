@@ -67,6 +67,13 @@ describe("calibrateSmile — marks reproduce the broker inputs", () => {
     const s = calibrateSmile(PAIR, quote(), DEFAULT_CONVENTIONS, NOW, "STOCHASTIC_VOL");
     expect(s.arbitrage.note).toContain("model=stochastic-vol");
   });
+
+  it("stamps the eSSVI (EXTENDED_SURFACE) provenance the server emits", () => {
+    // Mirrors the server's `model=extended-surface` stamp so the GUI's
+    // modelProvenance regex displays the family the trader picked.
+    const s = calibrateSmile(PAIR, quote(), DEFAULT_CONVENTIONS, NOW, "EXTENDED_SURFACE");
+    expect(s.arbitrage.note).toContain("model=extended-surface");
+  });
 });
 
 describe("calibrateLadder — cross-tenor calendar arb", () => {

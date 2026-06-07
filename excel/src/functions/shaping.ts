@@ -60,6 +60,7 @@ import type {
   RiskPosition,
   RiskScope,
 } from "../contract/riskCodec";
+import { SMILE_MODEL_MEMBERS } from "../contract/enums";
 
 /** The canonical desk default convention (spot-unadjusted Δ / ATM-forward / …),
  * matching the server fixture (`crates/celnet-server/tests/common` wire_conventions).
@@ -166,11 +167,13 @@ export function parseStrikeOrDelta(raw: string | number): StrikeOrDelta {
 
 /**
  * Parse a smile-model selector string into the contract `SmileModel`. Accepts the
- * trader-facing short names (`VV`, `SABR`, `SVI`, `SSVI`) and the canonical
- * contract names (`MARKET_HEDGE`, `STOCHASTIC_VOL`, `PARAMETRIC`,
- * `PARAMETRIC_SURFACE`), case-insensitive. Empty/absent ⇒ `MARKET_HEDGE` (the
- * server default Vanna-Volga construction), so an omitted argument is the
- * unchanged current behaviour.
+ * trader-facing short names (`VV`, `SABR`, `SVI`, `SSVI`, `ESSVI`/`EXTENDED`) and
+ * the canonical contract names (`MARKET_HEDGE`, `STOCHASTIC_VOL`, `PARAMETRIC`,
+ * `PARAMETRIC_SURFACE`, `EXTENDED_SURFACE`), case-insensitive. Empty/absent ⇒
+ * `MARKET_HEDGE` (the server default Vanna-Volga construction), so an omitted
+ * argument is the unchanged current behaviour. The rejection message lists the
+ * canonical members straight from `SMILE_MODEL_MEMBERS` (the same list the wire
+ * codec is built from) so it can never drift from the supported set.
  */
 export function parseSmileModel(raw: string | undefined): SmileModel {
   const s = (raw ?? "").trim().toUpperCase();
@@ -194,9 +197,15 @@ export function parseSmileModel(raw: string | undefined): SmileModel {
     case "PARAMETRIC_SURFACE":
     case "PARAMETRIC-SURFACE":
       return "PARAMETRIC_SURFACE";
+    case "ESSVI":
+    case "EXTENDED":
+    case "EXTENDED_SURFACE":
+    case "EXTENDED-SURFACE":
+      return "EXTENDED_SURFACE";
     default:
       throw new ShapingError(
-        `invalid smile model \`${raw}\` (expected VV, SABR, SVI or SSVI)`,
+        `invalid smile model \`${raw}\` (expected one of: ${SMILE_MODEL_MEMBERS.join(", ")}; ` +
+          `or the trader short names VV, SABR, SVI, SSVI, ESSVI)`,
       );
   }
 }

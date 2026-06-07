@@ -55,16 +55,20 @@ export type TenorUnit = "OVERNIGHT" | "WEEKS" | "MONTHS" | "YEARS";
 /**
  * The smile-calibration family a surface is marked with (proto `SmileModel`).
  * Vendor/method-neutral names mirroring `celnet_proto::SmileModel`: MARKET_HEDGE
- * (the default Vanna-Volga market-hedge construction), and the three fitted
- * parametric families. Provenance of the model a surface was marked under is
- * echoed by the server on `Smile.arbitrage.note` as `model=<family>` (the frozen
- * contract carries no echo field — the note is the honest provenance channel).
+ * (the default Vanna-Volga market-hedge construction), and the four fitted
+ * parametric families. EXTENDED_SURFACE is the surface-level parametric family
+ * with maturity-dependent correlation (eSSVI method; provenance in this doc
+ * comment only — the trader-facing/wire name is purpose-named "Extended").
+ * Provenance of the model a surface was marked under is echoed by the server on
+ * `Smile.arbitrage.note` as `model=<family>` (the frozen contract carries no
+ * echo field — the note is the honest provenance channel).
  */
 export type SmileModel =
   | "MARKET_HEDGE"
   | "STOCHASTIC_VOL"
   | "PARAMETRIC"
-  | "PARAMETRIC_SURFACE";
+  | "PARAMETRIC_SURFACE"
+  | "EXTENDED_SURFACE";
 
 /**
  * A streamable market observable (proto `MarketObservable`). The market-series

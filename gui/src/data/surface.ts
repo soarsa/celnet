@@ -50,6 +50,8 @@ function modelTag(model: SmileModel): string {
       return "parametric";
     case "PARAMETRIC_SURFACE":
       return "parametric-surface";
+    case "EXTENDED_SURFACE":
+      return "extended-surface";
   }
 }
 
@@ -77,6 +79,11 @@ function modelWingShape(model: SmileModel): {
     case "PARAMETRIC_SURFACE":
       // Whole-surface fit: balanced convexity, slightly damped asymmetry.
       return { convexity: 1.04, asymmetry: 0.92, wingPower: 2.1 };
+    case "EXTENDED_SURFACE":
+      // Extended whole-surface calibration with a maturity-dependent skew
+      // family: lifts wing convexity and carries a stronger asymmetry than the
+      // plain whole-surface fit (the maturity-dependent skew scale).
+      return { convexity: 1.08, asymmetry: 1.0, wingPower: 2.15 };
   }
 }
 
