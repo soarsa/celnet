@@ -288,6 +288,15 @@ jobs:
           timeout 600 cargo llvm-cov nextest -p celnet-vanilla \
             --fail-under-lines 95 --fail-under-regions 95 --summary-only
 
+      # Surface calibration coverage gate: closes the standing surface-lane
+      # backlog (strangle/stochvol/market_hedge), enforced at a committed 90%
+      # line/region floor (measured baseline: 96.1% line / 96.4% region — see
+      # docs/HARDENING.md §3). A regression below the floor fails the job.
+      - name: Coverage gate (celnet-surface)
+        run: |
+          timeout 600 cargo llvm-cov nextest -p celnet-surface \
+            --fail-under-lines 90 --fail-under-regions 90 --summary-only
+
       # Mutation kill gate: zero non-equivalent survivors (equivalents excluded
       # via .config/mutants.toml). Exits non-zero on any survivor → fails CI.
       - name: Mutation gate (celnet-vanilla)

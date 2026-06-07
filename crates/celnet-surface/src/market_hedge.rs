@@ -328,4 +328,122 @@ mod tests {
             "interior vol {mid} should sit near [{lo},{hi}]"
         );
     }
+
+    /// The benchmark accessors return exactly the pillars the smile was built
+    /// from (the public read-back contract used by the surface layer).
+    #[test]
+    fn benchmark_accessors_round_trip() {
+        let s = smile();
+        let ks = s.benchmark_strikes();
+        let vs = s.benchmark_vols();
+        assert_eq!(ks, [1.02, 1.11, 1.20]);
+        assert_eq!(vs, [0.125, 0.11, 0.118]);
+        // The middle pillar is the ATM anchor.
+        assert!(is_close(vs[1], s.atm_vol(), 0.0, 0.0));
+        assert!(is_close(ks[1], s.forward(), 0.0, 0.0));
+    }
+
+    /// `try_new` rejects every kind of ill-posed pillar set (the fallible
+    /// contract calibration relies on), and `new` PANICS on the same inputs
+    /// (the construction-time-error contract). This pins the precise rejection
+    /// surface: out-of-order / non-positive strikes, non-positive or non-finite
+    /// vols, and non-positive forward/time.
+    #[test]
+    fn try_new_rejects_ill_posed_pillars() {
+        // Well-posed baseline accepted.
+        assert!(
+            MarketHedgeSmile::try_new([1.0, 1.1, 1.2], [0.12, 0.11, 0.118], 1.1, 1.0).is_some()
+        );
+        // Strikes not strictly increasing.
+        assert!(
+            MarketHedgeSmile::try_new([1.1, 1.0, 1.2], [0.12, 0.11, 0.118], 1.1, 1.0).is_none()
+        );
+        // Non-positive strike.
+        assert!(
+            MarketHedgeSmile::try_new([0.0, 1.1, 1.2], [0.12, 0.11, 0.118], 1.1, 1.0).is_none()
+        );
+        // Non-positive wing vol (the degenerate-quote case calibration guards).
+        assert!(
+            MarketHedgeSmile::try_new([1.0, 1.1, 1.2], [-0.01, 0.11, 0.118], 1.1, 1.0).is_none()
+        );
+        // Non-finite vol.
+        assert!(
+            MarketHedgeSmile::try_new([1.0, 1.1, 1.2], [f64::NAN, 0.11, 0.118], 1.1, 1.0).is_none()
+        );
+        // Non-positive forward and time.
+        assert!(
+            MarketHedgeSmile::try_new([1.0, 1.1, 1.2], [0.12, 0.11, 0.118], 0.0, 1.0).is_none()
+        );
+        assert!(
+            MarketHedgeSmile::try_new([1.0, 1.1, 1.2], [0.12, 0.11, 0.118], 1.1, 0.0).is_none()
+        );
+    }
+
+    /// `new` panics on an ill-posed pillar set — the strict (non-market-input)
+    /// constructor's documented behaviour.
+    #[test]
+    #[should_panic(expected = "vanna-volga benchmark pillars must be well-posed")]
+    fn new_panics_on_non_positive_wing_vol() {
+        // A non-positive wing vol must panic in `new` (it routes through try_new).
+        let _ = MarketHedgeSmile::new([1.0, 1.1, 1.2], [-0.01, 0.11, 0.118], 1.1, 1.0);
+    }
+
+    /// The `Smile` trait re-evaluates the smile against a caller-supplied
+    /// forward/time that differs from the reference, recomputing the
+    /// Castagna-Mercurio second-approximation corrections at that forward while
+    /// the benchmark pillars stay fixed. INDEPENDENT ORACLE: an in-test
+    /// re-implementation of the second-approximation formula (weights + d₁d₂ +
+    /// the two correction terms) evaluated at the requested forward/time must
+    /// reproduce the trait value bit-for-bit. This pins the non-reference branch
+    /// the audit flagged as uncovered (`market_hedge.rs` re-evaluation arm).
+    #[test]
+    fn trait_reevaluates_against_a_different_forward_and_time() {
+        let s = smile();
+        let strikes = s.benchmark_strikes();
+        let vols = s.benchmark_vols();
+        // A forward/time deliberately different from the reference (1.11, 1.0).
+        let fwd = 1.15;
+        let t = 0.7;
+        let k = 1.08;
+
+        let via_trait = s.implied_vol(k, fwd, t).0;
+
+        // Independent Castagna-Mercurio second-approximation re-derivation.
+        let s0 = vols[1];
+        let [k1, k2, k3] = strikes;
+        let d12 = |strike: f64, vol: f64| -> (f64, f64) {
+            let vsqt = vol * t.sqrt();
+            let d1 = ((fwd / strike).ln() + 0.5 * vol * vol * t) / vsqt;
+            (d1, d1 - vsqt)
+        };
+        let p = ((k2 / k).ln() * (k3 / k).ln()) / ((k2 / k1).ln() * (k3 / k1).ln());
+        let q = ((k / k1).ln() * (k / k2).ln()) / ((k3 / k1).ln() * (k3 / k2).ln());
+        let big_d1 = p * (vols[0] - s0) + q * (vols[2] - s0);
+        let (a1, a2) = d12(k1, s0);
+        let (c1, c2) = d12(k3, s0);
+        let dv1 = vols[0] - s0;
+        let dv3 = vols[2] - s0;
+        let big_d2 = p * a1 * a2 * dv1 * dv1 + q * c1 * c2 * dv3 * dv3;
+        let (d1, d2) = d12(k, s0);
+        let prod = d1 * d2;
+        let expect = if prod.abs() < 1e-14 {
+            s0 + big_d1
+        } else {
+            let radicand = s0 * s0 + prod * (2.0 * s0 * big_d1 + big_d2);
+            s0 + (-s0 + radicand.max(0.0).sqrt()) / prod
+        };
+
+        assert!(
+            is_close(via_trait, expect, 0.0, 0.0),
+            "re-evaluated smile {via_trait} must equal the independent oracle {expect} exactly"
+        );
+        // And it genuinely differs from the reference-forward evaluation — the
+        // re-evaluation branch is doing real work, not echoing `vol_at`.
+        let at_reference = s.vol_at(k);
+        assert!(
+            (via_trait - at_reference).abs() > 1e-6,
+            "re-evaluation at a different forward {via_trait} must differ from \
+             the reference-forward value {at_reference}"
+        );
+    }
 }
