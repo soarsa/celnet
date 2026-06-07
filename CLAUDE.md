@@ -123,6 +123,34 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-06-06 — **COMPLETION-PROGRAM: Arc I CLOSED (W6) + 4 disjoint waves landed via PARALLEL worktrees
+  (W7/W8/W10/W11-B) — integrated to `f29aaee`/`c2189bd`; pushed; `just check` 1198/1198.** After Arc I's
+  forced-sequential waves (all share the contract), I fanned out the crate-disjoint Arc-II/III waves on
+  **git-worktree-isolated lanes** running CONCURRENTLY with the main-tree W6, then merged each branch (only
+  `celnet-parity/Cargo.toml` needed a hand union — and a w8/w10 merge left conflict markers I caught + fixed
+  in `f29aaee`; lesson: never `git add -A` a conflicted file). Waves:
+  • **W6 (`b8f7be4`, closes Arc I):** LSV independent-oracle parity row (`tests/lsv.rs`: ξ=0→Dupire limit
+  HAND-PINNED to 4 external-Python GK constants per Lesson c; PDE≈MC; surface-reprice) + **booking-model
+  selector** (additive `PricingModel`{DEFAULT,LOCAL_STOCH_VOL} + `Instrument.pricing_model=22` + new
+  `WindowBarrier`=23) routing vanilla/single-barrier/window-barrier through the real `LsvModel`; DEFAULT
+  path BYTE-IDENTICAL (to_bits-gated); unsupported product→clear `invalid_argument` (no silent fallback);
+  all 5 clients. (Verifier rejected first pass only on an `lsv.rs` fmt blocker — the recurring "verify the
+  literal line" lesson — fixed by `cargo fmt`.)
+  • **W8 (`7ee8779`):** `celnet-gpu` G3 multi-step path kernel + G6 pathwise/LR Greeks + **CPU↔GPU Sobol
+  KAT** (consumes `celnet-qmc` unmodified); three-way GPU-f32≈CPU-f64≈golden within DERIVED f32 bounds;
+  real Metal exercised. Honest boundary: Metal-no-f64 ⇒ correctness+ratios only; NVIDIA absolutes deferred.
+  • **W10 (`f755ac6`):** NEW leaf crate `celnet-xva` (CVA/DVA/FVA on synthetic netting sets), acyclic;
+  CVA hand-pinned to an offline literal (Lesson c); monotone in hazard/LGD; CVA=0 at zero default prob.
+  • **W7 (`9e06ebd`):** `celnet-replog` **InstallSnapshot RPC** (closes the last Raft seam) — leader
+  ships a snapshot when it has compacted past a lagging/restarted follower; bit-identical catch-up;
+  non-vacuity proven (disabling the send fails all 4 rows). Only Raft §6 membership now remains (documented).
+  • **W11-B (`5b23d5a`):** robust no-arb eSSVI calibration (projection; 0 density/calendar violations on a
+  stress grid) + Sobol high-dim RQMC convergence (3.41×/26.97× measured, deterministic).
+  **All gated vs INDEPENDENT oracles, full `just check` green ("All gates passed."), 1198/1198 (was 1128),
+  GUI 183 / Excel 184.** Remaining: **W9** (wire celnet-fanout under the async edge — run SOLO next for
+  clean §1.2 perf measurement), **W11-A** (exotic risk-cube roll-up), **W12** (polish: GUI Playwright e2e +
+  axe, observability, journal compaction, docs). These are sequential by the DAG / contention sensitivity.
+
 - 2026-06-06 — **COMPLETION-PROGRAM Wave 5 DONE (commit `9897fa6`; pushed).** eSSVI client parity:
   `SMILE_MODEL_EXTENDED_SURFACE=4` was on the wire+server (and `celnet_types::SmileModel` already had
   `ExtendedSurface`) but invisible to GUI/Excel (codecs stopped at 4 entries). NO contract/server change;
