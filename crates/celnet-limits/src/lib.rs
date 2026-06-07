@@ -131,6 +131,7 @@ mod tests {
             measure: FactMeasure {
                 leaf: canonicalize(&position),
                 position,
+                exotic: None,
             },
             surface_version: 1,
         }
@@ -144,6 +145,7 @@ mod tests {
             vega_ladder: VegaLadder::new(),
             positions: Vec::new(),
             leaves: Vec::new(),
+            exotic_legs: Vec::new(),
         }
     }
 
