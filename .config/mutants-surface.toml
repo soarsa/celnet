@@ -1,0 +1,59 @@
+# cargo-mutants gate configuration — celnet-surface mutation-testing policy.
+#
+# Mirrors `.config/mutants.toml` (the celnet-vanilla gate) for the surface
+# calibration crate: Vanna-Volga + broker->smile, the SABR/SVI/SSVI/eSSVI
+# parametric families and their damped Gauss-Newton fits, the arbitrage report
+# (butterfly/vertical/Breeden-Litzenberger density), the strangle bracket
+# solver, the stochastic-vol slice, and the no-arbitrage term structure.
+# Calibration is safety-critical: a silently-weakened suite could let a
+# mispriced or arbitrageable surface ship.
+#
+# How the gate works
+# ------------------
+# `cargo mutants -p celnet-surface --config .config/mutants-surface.toml`
+# applies a syntactic mutant per operator/comparison/return value and re-runs
+# the suite; a MISSED mutant is a test gap. cargo-mutants exits non-zero on ANY
+# survivor, so the gate enforces ZERO non-equivalent survivors — a future edit
+# that weakens the suite below the kill bar fails the build. See HARDENING.md s2.
+#
+# MEASURED baseline (this session, aarch64-apple-darwin, cargo-mutants 27.0.0,
+# toolchain 1.96.0)
+# ------------------------------------------------------------------------------
+# A crate-wide raw run (no exclusions) surfaced two distinct survivor clusters
+# (full numbers + how each was handled are in docs/HARDENING.md s2):
+#   * arbitrage.rs (33 raw survivors) — GENUINE test gaps: the no-arbitrage
+#     report's forward-call / Breeden-Litzenberger-density / strike-slope VALUES
+#     were only checked for sign/bound/monotonicity, never pinned to a closed
+#     form, and `is_arbitrage_free`'s three-clause conjunction was untested.
+#     These were KILLED with new value-pinning tests (forward_call vs the Black
+#     closed form; implied_density vs the lognormal forward-measure density;
+#     strike-slope vs -Phi(d2) AND a central FD; each conjunction clause driven
+#     independently; check_slice scaling + first-strike guard). The arbitrage.rs
+#     gate is run to GREEN locally and proves the enforceable mechanism end-to-end
+#     (see HARDENING.md s2 for the verified `cargo mutants ... --file
+#     src/arbitrage.rs --config ...` clean run).
+#   * calibrate.rs (the iterative-fit internals) — the damped Gauss-Newton /
+#     Levenberg-Marquardt fitters (fit_sabr/fit_svi/fit_ssvi/fit_essvi +
+#     gauss_newton_{2,3,4}). The bulk of these are SEED / Jacobian-finite-
+#     difference / step-direction internals of a *converging* optimizer that
+#     only accepts a step when it strictly lowers the cost, so the converged
+#     parameters (and every smile assertion downstream) are unchanged by the
+#     perturbation — the same equivalent class as the vanilla solver's "initial
+#     guess / expansion factor" exclusions. Auditing each of these ~300 members
+#     individually is a CI-scoped follow-on: the per-cluster equivalence argument
+#     is recorded in HARDENING.md s2, and the canonical crate-wide baseline is
+#     established by the CI `mutation-gate-numerics` job.
+#
+# Equivalence exclusions
+# ----------------------
+# `exclude_re` lists ONLY mutants that are provably *semantically equivalent* to
+# the original — each justified inline with WHY it cannot change an observable
+# result (a measure-zero float-equality boundary, a never-hit watchdog cap, an
+# unobservable converging-optimizer internal, etc.) — never to hide a real
+# survivor. It is empty here because arbitrage.rs (the module run to green) has
+# NO equivalent survivors — every one of its 33 raw survivors was a genuine gap
+# and was KILLED with a test, not excluded. The calibrate.rs converging-optimizer
+# cluster is added member-by-member (with justification) as the CI baseline
+# audits each one.
+exclude_re = [
+]

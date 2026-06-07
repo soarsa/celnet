@@ -302,6 +302,61 @@ jobs:
       - name: Mutation gate (celnet-vanilla)
         run: timeout 1200 cargo mutants -p celnet-vanilla --config .config/mutants.toml
 
+
+  # ---------------------------------------------------------------------------
+  # Mutation kill gate for the OTHER safety-critical numerics crates
+  # (PC-MUT-WIDEN). The vanilla gate above is the gold standard; this widens the
+  # same enforceable kill-rate contract to the remaining crates that carry
+  # safety-critical numerics with no kill-rate floor today:
+  #   * celnet-surface  — VV/SABR/SVI/SSVI/eSSVI calibration + arbitrage report
+  #                       + strangle solver. The arbitrage.rs module is run to
+  #                       GREEN locally (see docs/HARDENING.md §2); the crate-wide
+  #                       baseline is established here.
+  #   * celnet-exotics  — digitals/barriers/Asian/TARF/… + PDE/MC/particle/LSV.
+  #   * celnet-risk-cube — additive roll-up + non-additive VaR/ES + FRTB-SA.
+  #   * celnet-xva      — CVA/DVA/FVA + survival curve + netting.
+  #
+  # Each crate has its own audited equivalence set in
+  # `.config/mutants-<crate>.toml` (every exclusion justified inline + in
+  # HARDENING.md §2 — never to hide a real survivor). cargo-mutants exits
+  # non-zero on ANY non-equivalent survivor, so a future edit that weakens any of
+  # these suites below the kill bar fails the job. Each crate runs as its own
+  # matrix leg so they parallelise and a failure pinpoints the crate. The
+  # numerics crates are large (surface ~2.3k mutants, exotics PDE/MC larger), so
+  # this is a single-platform Linux quality bar kept off the cross-OS `gate`
+  # matrix to avoid redundant runs, and each leg is generously time-boxed.
+  mutation-gate-numerics:
+    name: mutation gate (linux / ${{ matrix.crate }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: [celnet-surface, celnet-exotics, celnet-risk-cube, celnet-xva]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: mutation-gate-${{ matrix.crate }}
+
+      - name: Install gate binaries (nextest, cargo-mutants)
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest,cargo-mutants
+
+      # Mutation kill gate: zero non-equivalent survivors (equivalents excluded
+      # via the per-crate config). Exits non-zero on any survivor → fails CI.
+      - name: Mutation gate (${{ matrix.crate }})
+        run: |
+          crate="${{ matrix.crate }}"
+          cfg=".config/mutants-${crate#celnet-}.toml"
+          timeout 5400 cargo mutants -p "$crate" --config "$cfg"
   # ---------------------------------------------------------------------------
   # Fuzz lane (Linux only, nightly). The fuzz harness under `fuzz/` is a
   # standalone, non-workspace crate carrying the nightly-only libFuzzer
