@@ -257,6 +257,10 @@ pub fn position_to_fact(p: &RiskPosition) -> Result<RiskFact, Status> {
         measure: FactMeasure {
             leaf: canonicalize(&position),
             position,
+            // The wire `RiskPosition` carries a vanilla leg (the proto is unchanged
+            // — guardrail #9); a federated exotic leg, when present, is staged via
+            // the cube's exotic path, not this vanilla wire conversion.
+            exotic: None,
         },
         surface_version: p.surface_version,
     })
