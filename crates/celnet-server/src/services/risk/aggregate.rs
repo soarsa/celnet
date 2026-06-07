@@ -301,6 +301,10 @@ fn nonadditive_measures(
     // contract of `historical_var_es`). This scaled set is used ONLY for the
     // non-additive re-derivation.
     let scaled = scale_positions_to_numeraire(node, resolver)?;
+    // Exotic legs are scaled into the reporting numeraire the same way (their P&L is
+    // in quote ccy too), so a booked exotic contributes its true tail to the
+    // node's non-additive VaR/ES + curvature, never silently dropped.
+    let scaled_exotics = scale_exotic_legs_to_numeraire(node, resolver)?;
     // Re-derive over a transient cube node holding the scaled positions, reusing
     // the cube's bump-and-revalue reducers (the oracle path, RH §2.5).
     let scaled_node = NodeAggregate {
@@ -308,6 +312,7 @@ fn nonadditive_measures(
         net_greeks: node.net_greeks,
         vega_ladder: node.vega_ladder.clone(),
         positions: scaled,
+        exotic_legs: scaled_exotics,
         leaves: node.leaves.clone(),
     };
 
@@ -361,6 +366,34 @@ fn scale_positions_to_numeraire(
             p.inputs,
             p.quoted_delta,
             p.premium_style,
+        ));
+    }
+    Ok(out)
+}
+
+/// Scale a node's exotic legs into the reporting numeraire: each leg's P&L is in its
+/// quote currency, so its notional is multiplied by the quote→numeraire rate exactly
+/// like a vanilla position (the canonical-numeraire contract). Empty when the node
+/// holds no exotic legs.
+fn scale_exotic_legs_to_numeraire(
+    node: &NodeAggregate,
+    resolver: &WireResolver,
+) -> Result<Vec<celnet_risk_cube::ExoticLeg>, Status> {
+    let mut out = Vec::with_capacity(node.exotic_legs.len());
+    for l in &node.exotic_legs {
+        let rate = resolver
+            .rate_into_numeraire(l.pair.quote)
+            .ok_or_else(|| convert::numeraire_status(NumeraireError::MissingRate(l.pair.quote)))?;
+        if !rate.is_finite() || rate <= 0.0 {
+            return Err(convert::numeraire_status(NumeraireError::InvalidRate(
+                l.pair.quote,
+            )));
+        }
+        out.push(celnet_risk_cube::ExoticLeg::new(
+            l.pair,
+            l.kind,
+            l.notional * rate,
+            l.inputs,
         ));
     }
     Ok(out)
@@ -461,6 +494,7 @@ pub(crate) fn test_fact(
         measure: FactMeasure {
             leaf: canonicalize(&position),
             position,
+            exotic: None,
         },
         surface_version: 1,
     }

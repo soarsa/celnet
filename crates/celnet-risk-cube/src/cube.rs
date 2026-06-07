@@ -37,9 +37,10 @@ use celnet_risk_normalize::{CanonicalLeaf, Numeraire, NumeraireError, PositionRi
 
 use crate::additive::{NetGreeks, VegaLadder, VegaPillar};
 use crate::dimension::{DimensionId, FactKey, Hierarchy, PositionId, RiskFact};
+use crate::exotic::ExoticLeg;
 use crate::nonadditive::{
-    Scenario, VarEs, correlation_weighted_vega, historical_var_es, sbm_curvature_spot,
-    sensitivity_var_es,
+    Scenario, VarEs, correlation_weighted_vega, node_var_es_combined,
+    node_var_es_sensitivity_combined, sbm_curvature_spot_combined,
 };
 
 /// A mapping from a leaf to its `(tenor × delta)` vega pillar — supplied by the
@@ -63,10 +64,17 @@ pub struct NodeAggregate {
     pub net_greeks: NetGreeks,
     /// The vega bucketed by `(tenor × delta)` pillar (additive).
     pub vega_ladder: VegaLadder,
-    /// The constituent positions of this node (the re-derivation source for
-    /// non-additive measures, and the drill-down target).
+    /// The constituent **vanilla** positions of this node (the re-derivation source
+    /// for non-additive measures over vanilla legs, and the drill-down target).
     pub positions: Vec<PositionRisk>,
+    /// The constituent **exotic** legs of this node (the re-derivation source for
+    /// non-additive measures over exotic legs — re-priced through the real
+    /// closed-form exotic pricer, never as a vanilla proxy). Empty for a vanilla-only
+    /// node, so existing vanilla behaviour is byte-identical.
+    pub exotic_legs: Vec<ExoticLeg>,
     /// The canonical leaves of this node (for a numeraire view / reconciliation).
+    /// Carries BOTH vanilla and exotic leaves — an exotic's leaf is its real Greek
+    /// set, so the additive roll-up and numeraire view include exotics.
     pub leaves: Vec<CanonicalLeaf>,
 }
 
@@ -77,6 +85,7 @@ impl NodeAggregate {
             net_greeks: NetGreeks::zero(),
             vega_ladder: VegaLadder::new(),
             positions: Vec::new(),
+            exotic_legs: Vec::new(),
             leaves: Vec::new(),
         }
     }
@@ -106,7 +115,30 @@ impl NodeAggregate {
         self.net_greeks = self.net_greeks + other.net_greeks;
         self.vega_ladder.merge(&other.vega_ladder);
         self.positions.extend_from_slice(&other.positions);
+        self.exotic_legs.extend_from_slice(&other.exotic_legs);
         self.leaves.extend_from_slice(&other.leaves);
+    }
+}
+
+/// Accumulate one fact into a node aggregate, routing the additive measures (the
+/// canonical leaf's Greeks + vega ladder — uniform for vanilla and exotic, since the
+/// leaf already carries the real exotic Greeks) and the **non-additive re-derivation
+/// source** (a vanilla fact's `position`, an exotic fact's `exotic` leg). The
+/// vega-pillar `(tenor × delta)` is mapped from the fact's `position` metadata, which
+/// for an exotic fact is its honest underlying-vanilla bucketing tuple.
+fn accumulate_fact<P: VegaPillarMap>(agg: &mut NodeAggregate, fact: &RiskFact, pillars: &P) {
+    let leaf = &fact.measure.leaf;
+    agg.net_greeks.add_leaf(leaf);
+    agg.vega_ladder.add(
+        pillars.pillar_of(leaf, &fact.measure.position),
+        leaf.greeks.vega,
+    );
+    agg.leaves.push(*leaf);
+    match fact.measure.exotic {
+        // An exotic fact re-prices through the real closed-form exotic pricer.
+        Some(leg) => agg.exotic_legs.push(leg),
+        // A vanilla fact re-prices through celnet-vanilla.
+        None => agg.positions.push(fact.measure.position),
     }
 }
 
@@ -211,14 +243,7 @@ impl Cube {
                 }
             };
             let agg = &mut out[idx];
-            let leaf = &fact.measure.leaf;
-            agg.net_greeks.add_leaf(leaf);
-            agg.vega_ladder.add(
-                pillars.pillar_of(leaf, &fact.measure.position),
-                leaf.greeks.vega,
-            );
-            agg.positions.push(fact.measure.position);
-            agg.leaves.push(*leaf);
+            accumulate_fact(agg, fact, pillars);
         }
         out
     }
@@ -227,14 +252,7 @@ impl Cube {
     pub fn firm_aggregate<P: VegaPillarMap>(&self, pillars: &P) -> NodeAggregate {
         let mut agg = NodeAggregate::empty(0);
         for fact in &self.facts {
-            let leaf = &fact.measure.leaf;
-            agg.net_greeks.add_leaf(leaf);
-            agg.vega_ladder.add(
-                pillars.pillar_of(leaf, &fact.measure.position),
-                leaf.greeks.vega,
-            );
-            agg.positions.push(fact.measure.position);
-            agg.leaves.push(*leaf);
+            accumulate_fact(&mut agg, fact, pillars);
         }
         agg
     }
@@ -244,7 +262,7 @@ impl Cube {
     /// §2.5). Re-derived, not summed. O(positions × scenarios) repricings.
     #[must_use]
     pub fn node_var_es(node: &NodeAggregate, scenarios: &[Scenario], alpha: f64) -> VarEs {
-        historical_var_es(&node.positions, scenarios, alpha)
+        node_var_es_combined(&node.positions, &node.exotic_legs, scenarios, alpha)
     }
 
     /// **Non-additive (scale path)**: VaR/ES of a node by the **AAD sensitivity
@@ -263,14 +281,14 @@ impl Cube {
         scenarios: &[Scenario],
         alpha: f64,
     ) -> VarEs {
-        sensitivity_var_es(&node.positions, scenarios, alpha)
+        node_var_es_sensitivity_combined(&node.positions, &node.exotic_legs, scenarios, alpha)
     }
 
     /// **Non-additive**: FRTB-SbM spot curvature of a node by up/down full reprice
     /// net of the linear delta term (`docs/RISK-HIERARCHY.md` §2.5).
     #[must_use]
     pub fn node_curvature_spot(node: &NodeAggregate, rw: f64) -> f64 {
-        sbm_curvature_spot(&node.positions, rw)
+        sbm_curvature_spot_combined(&node.positions, &node.exotic_legs, rw)
     }
 
     /// **Non-additive**: the correlation-weighted vega aggregate over a node's

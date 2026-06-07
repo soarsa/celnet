@@ -15,6 +15,12 @@ workspace = true
 celnet-types.workspace = true
 celnet-core.workspace = true
 celnet-vanilla.workspace = true
+# Closed-form exotic pricers (single barrier / European digital) backing the
+# exotic-leg risk measure: an exotic position contributes its REAL exotic Greeks
+# (additive) and re-prices under shocks (non-additive), so a booked exotic is no
+# longer silently excluded from firm/desk/book roll-ups. celnet-exotics depends
+# only on -types/-core/-vanilla, so this is a one-way edge (no cycle).
+celnet-exotics.workspace = true
 celnet-risk-normalize.workspace = true
 # Batched scenario revaluation: the spot×vol grid for a node is priced in ONE
 # GPU dispatch (Metal/Vulkan) with the f64 CPU oracle as the headless/CI fallback

@@ -30,15 +30,17 @@
 //!   attribution chain it reports;
 //! * the [`LimitTree`](celnet_limits::LimitTree) configured at hierarchy scopes.
 //!
-//! # Honest scope: vanilla leaves only
+//! # Scope: vanilla AND exotic legs
 //!
 //! The risk cube aggregates **vanilla** option leaves (`celnet-risk-normalize`'s
-//! `canonicalize` re-derives a vanilla `PositionRisk` via `celnet-vanilla`). A booked
-//! exotic (barrier / digital / touch) has no canonical-vanilla leaf, so it is **not**
-//! recorded as a risk fact — recording one would fake a vanilla risk it does not
-//! have (guardrail #2). The store records the vanilla legs of the live book; exotic
-//! aggregation is a named, deferred extension (it would need the cube to grow an
-//! exotic-leaf measure), not a stub here.
+//! `canonicalize` re-derives a vanilla `PositionRisk` via `celnet-vanilla`) **and**,
+//! since the cube grew an exotic-leaf measure (`celnet_risk_cube::exotic`),
+//! closed-form **exotic** legs (single barrier / European digital). A booked exotic
+//! is recorded via [`PositionStore::upsert_exotic`] as a [`RiskFact`] carrying its
+//! REAL exotic Greeks (additive) and the [`ExoticLeg`](celnet_risk_cube::ExoticLeg)
+//! re-derivation source (non-additive) — so it rolls into firm/desk/book risk
+//! instead of being silently excluded. The Greeks are the true exotic
+//! sensitivities, not a vanilla proxy (guardrail #2).
 
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -107,6 +109,26 @@ pub struct BookedPosition {
     /// The delta convention the position was quoted under (provenance).
     pub quoted_delta: DeltaConvention,
     /// The premium style the position was quoted under (provenance).
+    pub premium_style: PremiumStyle,
+    /// The marked-surface version that produced this fact.
+    pub surface_version: u64,
+}
+
+/// One booked **exotic** position as captured by the live book, before it is recorded
+/// as a [`RiskFact`]. Carries the closed-form exotic leg
+/// ([`ExoticLeg`](celnet_risk_cube::ExoticLeg)) plus the metadata the canonical leaf
+/// and bucketing need.
+#[derive(Debug, Clone, Copy)]
+pub struct BookedExotic {
+    /// The position identity (one current fact per id; a re-book supersedes).
+    pub position_id: u64,
+    /// The closed-form exotic leg (kind + spec + inputs + signed notional + pair).
+    pub leg: celnet_risk_cube::ExoticLeg,
+    /// The underlying option type (for the bucketing metadata).
+    pub option: OptionType,
+    /// The delta convention quoted under (provenance / bucketing metadata).
+    pub quoted_delta: DeltaConvention,
+    /// The premium style quoted under (provenance / bucketing metadata).
     pub premium_style: PremiumStyle,
     /// The marked-surface version that produced this fact.
     pub surface_version: u64,
@@ -251,6 +273,81 @@ impl PositionStore {
             measure: FactMeasure {
                 leaf: canonicalize(&position),
                 position,
+                // The live RFS / click-to-trade book records vanilla legs here; a
+                // booked exotic is recorded via `upsert_exotic` (its `exotic` field
+                // is `Some`). This vanilla path leaves it `None`.
+                exotic: None,
+            },
+            surface_version: booked.surface_version,
+        };
+        let mut g = self.inner.write().expect("position store lock poisoned");
+        if let Some(slot) = g
+            .facts
+            .iter_mut()
+            .find(|f| f.position_id == fact.position_id)
+        {
+            *slot = fact;
+        } else {
+            g.facts.push(fact);
+        }
+        g.wire_ids.insert(handle, booked.position_id);
+        match attribution {
+            Some(a) => {
+                g.attribution.insert(handle, a);
+            }
+            None => {
+                g.attribution.remove(&handle);
+            }
+        }
+        Ok(())
+    }
+
+    /// Record a booked **exotic** position into the live book under an explicit
+    /// [`FactKey`] org placement and an optional attribution chain. The exotic's REAL
+    /// Greeks (additive leaf) and its [`ExoticLeg`](celnet_risk_cube::ExoticLeg)
+    /// re-derivation source (non-additive) are produced here, so the booked exotic
+    /// rolls up into firm/desk/book risk exactly like a vanilla leg — never silently
+    /// excluded.
+    ///
+    /// The fact's `position` carries the exotic's honest underlying-vanilla bucketing
+    /// metadata (same pair/option/notional/inputs) so the vega ladder has a
+    /// `(tenor × delta)` to map onto; the leaf and all re-pricing use the exotic.
+    ///
+    /// One current fact per `position_id` (a re-book supersedes the prior fact).
+    ///
+    /// # Errors
+    /// `invalid_argument` if `position_id` does not fit a `u32` cube handle.
+    pub fn upsert_exotic(
+        &self,
+        booked: BookedExotic,
+        key: FactKey,
+        attribution: Option<AttributionRecord>,
+    ) -> Result<(), tonic::Status> {
+        let handle = u32::try_from(booked.position_id).map_err(|_| {
+            tonic::Status::invalid_argument(format!(
+                "position_id {} exceeds the u32 cube handle space",
+                booked.position_id
+            ))
+        })?;
+        let leg = booked.leg;
+        // The underlying-vanilla metadata for vega-pillar bucketing (never priced for
+        // an exotic fact — the cube routes exotic facts through the exotic pricer).
+        let position = PositionRisk::new(
+            leg.pair,
+            booked.option,
+            leg.notional,
+            leg.inputs,
+            booked.quoted_delta,
+            booked.premium_style,
+        );
+        let fact = RiskFact {
+            position_id: PositionId(handle),
+            key,
+            measure: FactMeasure {
+                // The REAL exotic Greek set (additive roll-up carrier).
+                leaf: leg.canonical_leaf(),
+                position,
+                exotic: Some(leg),
             },
             surface_version: booked.surface_version,
         };
@@ -517,5 +614,65 @@ mod tests {
         assert_eq!(snap.facts.len(), 2);
         assert_eq!(snap.hierarchy.desk_of(CubeBookId(b1)), Some(DeskId(desk)));
         assert_eq!(snap.hierarchy.desk_of(CubeBookId(b2)), Some(DeskId(desk)));
+    }
+
+    /// A booked **exotic** is recorded as a risk fact carrying its real exotic Greeks
+    /// (additive leaf) and its `ExoticLeg` re-derivation source — so it appears in the
+    /// roll-up alongside vanilla legs (W11-A: exotics no longer silently excluded).
+    #[test]
+    fn upsert_exotic_records_a_fact_with_exotic_leg() {
+        use celnet_exotics::{BarrierKind, BarrierStyle, SingleBarrier};
+        use celnet_risk_cube::{ExoticKind, ExoticLeg};
+
+        let store = PositionStore::new();
+        let spec = SingleBarrier {
+            kind: BarrierKind {
+                up: true,
+                style: BarrierStyle::KnockOut,
+                option: OptionType::Call,
+            },
+            strike: 1.10,
+            barrier: 1.25,
+            rebate: 0.0,
+        };
+        let leg = ExoticLeg::new(
+            eurusd(),
+            ExoticKind::SingleBarrier(spec),
+            8_000_000.0,
+            celnet_types::VanillaInputs::new(1.10, 1.10, 0.10, 1.0, 0.04, 0.02),
+        );
+        let key = FactKey {
+            trader: TraderId(1),
+            book: CubeBookId(1),
+            desk: DeskId(0),
+            ccy_pair: eurusd(),
+            location: LocationId(1),
+            entity: EntityId(1),
+        };
+        store
+            .upsert_exotic(
+                BookedExotic {
+                    position_id: 42,
+                    leg,
+                    option: OptionType::Call,
+                    quoted_delta: DeltaConvention::SpotUnadjusted,
+                    premium_style: PremiumStyle::DomesticPips,
+                    surface_version: 1,
+                },
+                key,
+                None,
+            )
+            .unwrap();
+
+        let snap = store.snapshot();
+        assert_eq!(snap.facts.len(), 1);
+        let fact = &snap.facts[0];
+        assert!(
+            fact.measure.exotic.is_some(),
+            "the booked exotic must carry an ExoticLeg re-derivation source"
+        );
+        // The leaf is the REAL exotic Greek set (premium == closed-form barrier price).
+        let want = celnet_exotics::single_barrier_price(&leg.inputs, spec) * 8_000_000.0;
+        assert!((fact.measure.leaf.premium_quote - want).abs() <= 1e-6 * (1.0 + want.abs()));
     }
 }
