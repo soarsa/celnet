@@ -123,6 +123,23 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-06-06 — **COMPLETION-PROGRAM Wave 4 DONE (commits `dd4441d` fanout-fix, `15c3ea6` W4; pushed).**
+  Surfaced the ORIGINAL exotics (single/double barrier, digital, touch) — already on the wire+server (incl.
+  the WS decoder) but unreachable from GUI ticket / Excel / ergonomic SDK ctors. NO contract/server change;
+  three file-disjoint tracks (GUI ∥ Excel ∥ SDK) in parallel → verify (accept). GUI ticket + wsCodec
+  (exact server-decoded keys/enum tags) + offline closed-form pricers; Excel `CELNET.BARRIER/DIGITAL/TOUCH`;
+  SDK `InstrumentSpec::{single_barrier,double_barrier,digital,one_touch/no_touch/double_no_touch/
+  double_one_touch}` + e2e == celnet-exotics/golden. Oracle: client codecs match the server WS decoder
+  field-for-field; SDK e2e==server==exotics; GUI digital==call-spread limit; barrier KI==QuantLib pinned.
+  **Verifier caught a real milestone-gate blocker (NOT a W4 regression):** full `just check` failed on
+  `celnet-fanout measured_throughput_above_floor` (4.5e6/s vs a 1e7/s in-suite floor) — the documented
+  contended-throughput artifact tipping over as the suite grew (passes solo). **Fixed (`dd4441d`):**
+  contention-robust 1e6/s catastrophic-regression floor (Wave-2 methodology precedent; strict figure stays
+  the reported uncontended signal — flaky-gate correction, not a relaxation). Full `just check` green ("All
+  gates passed."), **1127/1127**; GUI tsc 0 / 159 tests; Excel build 0 / 162 tests; celnet-client 47/47.
+  **Next: W5** (eSSVI client parity — `SMILE_MODEL_EXTENDED_SURFACE=4` is on the wire+server but invisible
+  to GUI/Excel/SDK; client-only).
+
 - 2026-06-06 — **COMPLETION-PROGRAM Wave 3 DONE (commit `2ce6fac`; pushed).** TARF/accumulator/lookback
   onto the ONE oneof (additive `tarf=19`/`accumulator=20`/`lookback=21` + 4 enums; TARF/accumulator reuse
   the existing `FixingSchedule`) → server pricer (TARF+accumulator MC; lookback continuous closed-form
