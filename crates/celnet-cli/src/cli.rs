@@ -573,6 +573,31 @@ pub(crate) enum ExoticKind {
         #[arg(long, default_value_t = 0)]
         mc_seed: u64,
     },
+    /// An American / Bermudan early-exercise vanilla. Priced by the projected-SOR
+    /// free-boundary finite difference by default (exact); pass `--lsm-paths` to
+    /// price by the Longstaff-Schwartz regression Monte-Carlo (reports a standard
+    /// error). `--bermudan-steps n` (n > 0) prices a Bermudan with n equally-spaced
+    /// exercise dates; 0 (the default) is continuous American.
+    American {
+        /// Call or put.
+        #[arg(long, value_enum)]
+        option: CliOptionType,
+        /// Strike `K` (absolute level).
+        #[arg(long)]
+        strike: f64,
+        /// `0` (default) ⇒ continuous American; `n > 0` ⇒ Bermudan with `n`
+        /// equally-spaced exercise dates over the option life.
+        #[arg(long, default_value_t = 0)]
+        bermudan_steps: u32,
+        /// Longstaff-Schwartz Monte-Carlo paths. `0` (default) selects the exact
+        /// finite-difference engine; `> 0` selects the LSM engine (reports a
+        /// standard error).
+        #[arg(long, default_value_t = 0)]
+        lsm_paths: usize,
+        /// Sobol scramble seed for the LSM engine.
+        #[arg(long, default_value_t = 0)]
+        lsm_seed: u64,
+    },
 }
 
 /// Arguments to `convention`.
@@ -974,6 +999,26 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
                         observations,
                         mc_pairs,
                         mc_seed,
+                    }
+                }
+                ExoticKind::American {
+                    option,
+                    strike,
+                    bermudan_steps,
+                    lsm_paths,
+                    lsm_seed,
+                } => {
+                    if !(strike.is_finite() && strike > 0.0) {
+                        return Err(DispatchError::Invalid(
+                            "american --strike must be positive".to_owned(),
+                        ));
+                    }
+                    exotic::ExoticSpec::American {
+                        option: option.into(),
+                        strike,
+                        bermudan_steps,
+                        lsm_paths,
+                        lsm_seed,
                     }
                 }
             };

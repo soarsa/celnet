@@ -15,20 +15,20 @@
 use serde_json::{Map, Value, json};
 
 use celnet_proto::{
-    Accumulator, AdditiveRisk, AggregateRiskRequest, AggregateRiskResponse, ArbReport, AsianOption,
-    BrokerQuoteSet, BucketedRisk, CcyExposureLeg, CcyPair, Cliquet, Conventions, CrossGamma,
-    Digital, DoubleBarrier, DrillRiskRequest, DrillRiskResponse, EntitlementPrincipal,
-    EntitlementRule, Execute, Executed, Execution, FixingSchedule, ForwardStart, GetSmileRequest,
-    Greeks, Instrument, Leg, LimitStatusRequest, LimitStatusResponse, LimitUtilization,
-    ListPositionsRequest, ListPositionsResponse, Lookback, MarkSurfaceRequest, MarkSurfaceResponse,
-    MarketContext, Modify, NonAdditiveRisk, NumeraireRate, OrgKey, PriceRequest, PriceResponse,
-    Quantity, Quanto, Quote, QuoteAccept, QuoteReject, QuoteRequest, RejectAck, ReportingNumeraire,
-    Resync, RiskBucketRequest, RiskNode, RiskPosition, RiskScope, ScenarioPoint, ScenarioRequest,
-    ScenarioResponse, ShockAxis, SingleBarrier, Smile, SmilePoint, Snapshot, Solve, Strategy,
-    StrategyKind, StreamEnd, StreamReject, StrikeOrDelta, Subscribe, SubscriptionId, Tarf, Tenor,
-    Touch, TradableToken, TwoWayPrice, Unsubscribe, Update, Vanilla, VanillaInputs, VarianceSwap,
-    VegaLadderBucket, VegaPillar, VolatilitySwap, WindowBarrier, instrument, shock_axis,
-    strike_or_delta, tenor,
+    Accumulator, AdditiveRisk, AggregateRiskRequest, AggregateRiskResponse, AmericanOption,
+    ArbReport, AsianOption, BrokerQuoteSet, BucketedRisk, CcyExposureLeg, CcyPair, Cliquet,
+    Conventions, CrossGamma, Digital, DoubleBarrier, DrillRiskRequest, DrillRiskResponse,
+    EntitlementPrincipal, EntitlementRule, Execute, Executed, Execution, FixingSchedule,
+    ForwardStart, GetSmileRequest, Greeks, Instrument, Leg, LimitStatusRequest,
+    LimitStatusResponse, LimitUtilization, ListPositionsRequest, ListPositionsResponse, Lookback,
+    MarkSurfaceRequest, MarkSurfaceResponse, MarketContext, Modify, NonAdditiveRisk, NumeraireRate,
+    OrgKey, PriceRequest, PriceResponse, Quantity, Quanto, Quote, QuoteAccept, QuoteReject,
+    QuoteRequest, RejectAck, ReportingNumeraire, Resync, RiskBucketRequest, RiskNode, RiskPosition,
+    RiskScope, ScenarioPoint, ScenarioRequest, ScenarioResponse, ShockAxis, SingleBarrier, Smile,
+    SmilePoint, Snapshot, Solve, Strategy, StrategyKind, StreamEnd, StreamReject, StrikeOrDelta,
+    Subscribe, SubscriptionId, Tarf, Tenor, Touch, TradableToken, TwoWayPrice, Unsubscribe, Update,
+    Vanilla, VanillaInputs, VarianceSwap, VegaLadderBucket, VegaPillar, VolatilitySwap,
+    WindowBarrier, instrument, shock_axis, strike_or_delta, tenor,
 };
 
 /// A codec error: a malformed or out-of-contract JSON message. Carries a
@@ -529,6 +529,36 @@ fn window_barrier_from_json(v: &Value) -> Result<WindowBarrier> {
     })
 }
 
+fn american_from_json(v: &Value) -> Result<AmericanOption> {
+    let o = obj(v, "american")?;
+    let lsm_paths = u32::try_from(u64_or_zero(o, "lsm_paths"))
+        .map_err(|_| err("american.lsm_paths out of range"))?;
+    let lsm_exercise_dates = u32::try_from(u64_or_zero(o, "lsm_exercise_dates"))
+        .map_err(|_| err("american.lsm_exercise_dates out of range"))?;
+    // The optional Bermudan date set: a JSON array of year-fractions.
+    let bermudan_dates = match o.get("bermudan_dates") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(arr) => arr
+            .as_array()
+            .ok_or_else(|| err("american.bermudan_dates must be an array of numbers"))?
+            .iter()
+            .map(|d| {
+                d.as_f64()
+                    .ok_or_else(|| err("american.bermudan_dates entries must be numbers"))
+            })
+            .collect::<Result<Vec<f64>>>()?,
+    };
+    Ok(AmericanOption {
+        option_type: enum_or_zero(o, "option_type"),
+        strike: f64_field(o, "strike")?,
+        exercise_style: enum_or_zero(o, "exercise_style"),
+        bermudan_dates,
+        lsm_paths,
+        lsm_exercise_dates,
+        lsm_seed: u64_or_zero(o, "lsm_seed"),
+    })
+}
+
 /// Decode the instrument `product` oneof. The JSON carries exactly one of the
 /// product keys (`vanilla`, `strategy`, `single_barrier`, `double_barrier`,
 /// `digital`, `touch`, `variance_swap`, `volatility_swap`, `asian_option`,
@@ -581,12 +611,14 @@ fn product_from_json(o: &Map<String, Value>) -> Result<instrument::Product> {
         Ok(instrument::Product::WindowBarrier(
             window_barrier_from_json(v)?,
         ))
+    } else if let Some(v) = o.get("american") {
+        Ok(instrument::Product::American(american_from_json(v)?))
     } else {
         Err(err(
             "instrument needs exactly one product (vanilla / strategy / \
              single_barrier / double_barrier / digital / touch / variance_swap / \
              volatility_swap / asian_option / forward_start / cliquet / quanto / \
-             tarf / accumulator / lookback / window_barrier)",
+             tarf / accumulator / lookback / window_barrier / american)",
         ))
     }
 }
@@ -1911,6 +1943,67 @@ mod tests {
             plain.pricing_model,
             celnet_proto::PricingModel::Default as i32
         );
+    }
+
+    /// The American / Bermudan early-exercise product decodes from the browser
+    /// JSON path (GUI/Excel transport). The exact wire shape: an `american`
+    /// product key carrying `option_type`, `strike`, `exercise_style`, an optional
+    /// `bermudan_dates` array, and the LSM knobs `lsm_paths`/`lsm_exercise_dates`/
+    /// `lsm_seed`.
+    #[test]
+    fn american_decodes_from_json() {
+        // American (continuous), FD engine (lsm_paths absent ⇒ 0).
+        let american = instrument_from_json(&json!({
+            "expiry_years": 1.0,
+            "american": {
+                "option_type": 1,
+                "strike": 1.10,
+                "exercise_style": 0
+            }
+        }))
+        .expect("decode american");
+        match american.product {
+            Some(instrument::Product::American(a)) => {
+                assert_eq!(a.option_type, celnet_proto::OptionType::Put as i32);
+                assert_eq!(a.strike.to_bits(), 1.10_f64.to_bits());
+                assert_eq!(
+                    a.exercise_style,
+                    celnet_proto::ExerciseStyle::American as i32
+                );
+                assert!(a.bermudan_dates.is_empty());
+                assert_eq!(a.lsm_paths, 0);
+            }
+            other => panic!("expected american, got {other:?}"),
+        }
+
+        // Bermudan with an explicit date set + LSM engine knobs.
+        let bermudan = instrument_from_json(&json!({
+            "expiry_years": 1.0,
+            "american": {
+                "option_type": 0,
+                "strike": 1.05,
+                "exercise_style": 1,
+                "bermudan_dates": [0.25, 0.5, 0.75, 1.0],
+                "lsm_paths": 100000,
+                "lsm_exercise_dates": 50,
+                "lsm_seed": 7
+            }
+        }))
+        .expect("decode bermudan");
+        match bermudan.product {
+            Some(instrument::Product::American(a)) => {
+                assert_eq!(
+                    a.exercise_style,
+                    celnet_proto::ExerciseStyle::Bermudan as i32
+                );
+                assert_eq!(a.bermudan_dates.len(), 4);
+                assert_eq!(a.bermudan_dates[0].to_bits(), 0.25_f64.to_bits());
+                assert_eq!(a.lsm_paths, 100_000);
+                assert_eq!(a.lsm_exercise_dates, 50);
+                assert_eq!(a.lsm_seed, 7);
+            }
+            other => panic!("expected american, got {other:?}"),
+        }
     }
 
     /// A delta-specified strike decodes to the `delta` oneof arm.

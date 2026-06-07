@@ -26,6 +26,7 @@ import type {
   DeltaConvention,
   DigitalStyle,
   Enforcement,
+  ExerciseStyle,
   LimitMetricKind,
   LookbackMonitoring,
   LookbackStyle,
@@ -215,6 +216,12 @@ export const lookbackStyle = enumCodec<LookbackStyle>(["FLOATING", "FIXED"]);
  * (LOOKBACK_MONITORING_CONTINUOUS=0, LOOKBACK_MONITORING_DISCRETE=1).
  */
 export const lookbackMonitoring = enumCodec<LookbackMonitoring>(["CONTINUOUS", "DISCRETE"]);
+
+/**
+ * `ExerciseStyle` ↔ proto `ExerciseStyle`
+ * (EXERCISE_STYLE_AMERICAN=0, EXERCISE_STYLE_BERMUDAN=1).
+ */
+export const exerciseStyle = enumCodec<ExerciseStyle>(["AMERICAN", "BERMUDAN"]);
 
 /**
  * `SmileModel` ↔ proto `SmileModel` (MARKET_HEDGE=0, STOCHASTIC_VOL=1,

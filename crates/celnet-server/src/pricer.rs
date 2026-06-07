@@ -33,16 +33,17 @@ use celnet_types::{
 
 use celnet_core::FlatSmile;
 use celnet_exotics::{
-    Accumulator as ExAccumulator, AccumulatorMcConfig, AnalyticAsian, AveragingSchedule,
-    BarrierKind as ExBarrierKind, BarrierStyle, Cliquet, CliquetMcConfig, CliquetSchedule,
-    DigitalKind, DoubleBarrierKnockOut, DoubleNoTouch, ForwardStart, Lookback as ExLookback,
-    LookbackMcConfig, LookbackStyle as ExLookbackStyle, Monitoring as ExMonitoring, QuantoParams,
+    Accumulator as ExAccumulator, AccumulatorMcConfig, AmericanGrid, AmericanOption as ExAmerican,
+    AnalyticAsian, AveragingSchedule, BarrierKind as ExBarrierKind, BarrierStyle, Cliquet,
+    CliquetMcConfig, CliquetSchedule, DigitalKind, DoubleBarrierKnockOut, DoubleNoTouch,
+    ExerciseStyle as ExExerciseStyle, ForwardStart, Lookback as ExLookback, LookbackMcConfig,
+    LookbackStyle as ExLookbackStyle, LsmConfig, Monitoring as ExMonitoring, QuantoParams,
     RebateTiming, RedemptionStyle as ExRedemptionStyle, SingleBarrier as ExSingleBarrier,
-    Tarf as ExTarf, TarfMcConfig, VarSwapContext, accumulator_price, cliquet_price_capped_mc,
-    cliquet_price_plain, curran_price, digital_price, double_knock_out_price,
-    double_no_touch_price, double_touch_price, fair_variance, fair_volatility,
-    fixed_lookback_price, floating_lookback_price, forward_start_price, lookback_mc,
-    no_touch_price, one_touch_price, quanto_digital_price, quanto_vanilla_price,
+    Tarf as ExTarf, TarfMcConfig, VarSwapContext, accumulator_price, american_fd_greeks,
+    american_lsm, cliquet_price_capped_mc, cliquet_price_plain, curran_price, digital_price,
+    double_knock_out_price, double_no_touch_price, double_touch_price, fair_variance,
+    fair_volatility, fixed_lookback_price, floating_lookback_price, forward_start_price,
+    lookback_mc, no_touch_price, one_touch_price, quanto_digital_price, quanto_vanilla_price,
     single_barrier_price, tarf_price, turnbull_wakeman_price,
 };
 
@@ -1259,6 +1260,89 @@ pub fn price_instrument(
                 }
             }
         }
+        instrument::Product::American(a) => {
+            let option = decode_option_type(a.option_type)?;
+            if !(a.strike.is_finite() && a.strike > 0.0) {
+                return Err(PriceError::Domain("American strike must be positive"));
+            }
+            let exercise =
+                celnet_proto::ExerciseStyle::try_from(a.exercise_style).map_err(|_| {
+                    PriceError::UnknownEnum {
+                        kind: "ExerciseStyle",
+                        tag: a.exercise_style,
+                    }
+                })?;
+            let style = match exercise {
+                celnet_proto::ExerciseStyle::American => ExExerciseStyle::American,
+                celnet_proto::ExerciseStyle::Bermudan => {
+                    // Validate the date set: every entry must be a finite
+                    // year-fraction in (0, expiry]; an empty Bermudan set is a
+                    // clear error (no exercise opportunity before expiry).
+                    if a.bermudan_dates.is_empty() {
+                        return Err(PriceError::Domain(
+                            "Bermudan option needs at least one exercise date",
+                        ));
+                    }
+                    for d in &a.bermudan_dates {
+                        if !(d.is_finite() && *d > 0.0 && *d <= expiry + 1e-12) {
+                            return Err(PriceError::Domain(
+                                "Bermudan exercise dates must lie in (0, expiry]",
+                            ));
+                        }
+                    }
+                    ExExerciseStyle::Bermudan {
+                        dates: a.bermudan_dates.clone(),
+                    }
+                }
+            };
+            let strike = a.strike;
+            let spec = ExAmerican {
+                option,
+                strike,
+                style,
+            };
+            let grid = AmericanGrid::default();
+            if a.lsm_paths == 0 {
+                // Default engine: projected-SOR free-boundary finite difference.
+                // Exact to grid tolerance; the full Greek strip is central FD over
+                // the FD price (each bumped axis re-solves the free boundary).
+                let greeks =
+                    american_fd_greeks(&inputs_at(market, expiry, strike, market.vol), &spec, grid);
+                Ok(Priced {
+                    greeks,
+                    resolved_strike: strike,
+                    vol: market.vol,
+                    std_error: None,
+                })
+            } else {
+                // Longstaff-Schwartz regression Monte-Carlo engine: the price and
+                // its honest standard error come from the simulation; the Greek
+                // strip is taken from the deterministic FD engine (an MC-FD-of-MC
+                // risk would be dominated by simulation noise — the FD risk is the
+                // sound choice, and the FD/LSM prices agree within stderr).
+                let cfg = LsmConfig {
+                    paths: a.lsm_paths as usize,
+                    exercise_dates: if a.lsm_exercise_dates == 0 {
+                        LsmConfig::default().exercise_dates
+                    } else {
+                        a.lsm_exercise_dates as usize
+                    },
+                    seed: a.lsm_seed,
+                };
+                let inputs = inputs_at(market, expiry, strike, market.vol);
+                let estimate = american_lsm(&inputs, &spec, cfg);
+                let mut greeks = american_fd_greeks(&inputs, &spec, grid);
+                // Report the LSM price (with its std-error) as the headline; the
+                // FD-derived risk sensitivities ride alongside.
+                greeks.price = estimate.price;
+                Ok(Priced {
+                    greeks,
+                    resolved_strike: strike,
+                    vol: market.vol,
+                    std_error: Some(estimate.std_error),
+                })
+            }
+        }
         instrument::Product::WindowBarrier(_) => {
             // A window barrier has no closed form: it is priced only under the LSV
             // model (handled above). Selecting the default model for it is a clear
@@ -1319,6 +1403,7 @@ fn product_name(product: &instrument::Product) -> &'static str {
         instrument::Product::Accumulator(_) => "accumulator",
         instrument::Product::Lookback(_) => "lookback",
         instrument::Product::WindowBarrier(_) => "window_barrier",
+        instrument::Product::American(_) => "american",
     }
 }
 
@@ -2434,5 +2519,294 @@ mod tests {
             stderr > 0.0,
             "discrete lookback MC std-error must be positive"
         );
+    }
+
+    // ====================================================================
+    // American / Bermudan early-exercise — wire-arm gates (PC-AMERICAN)
+    // ====================================================================
+
+    /// Build an `Instrument` carrying an American/Bermudan vanilla against the
+    /// given market/expiry, with the supplied LSM knobs (lsm_paths == 0 selects
+    /// the FD engine).
+    fn american_instrument(
+        option: celnet_proto::OptionType,
+        strike: f64,
+        expiry: f64,
+        exercise: celnet_proto::ExerciseStyle,
+        bermudan_dates: Vec<f64>,
+        lsm_paths: u32,
+        lsm_seed: u64,
+    ) -> Instrument {
+        Instrument {
+            pair: None,
+            tenor: None,
+            expiry_years: expiry,
+            quantity: None,
+            side: celnet_proto::Side::Buy as i32,
+            solve: None,
+            pricing_model: celnet_proto::PricingModel::Default as i32,
+            product: Some(Product::American(celnet_proto::AmericanOption {
+                option_type: option as i32,
+                strike,
+                exercise_style: exercise as i32,
+                bermudan_dates,
+                lsm_paths,
+                lsm_exercise_dates: 0,
+                lsm_seed,
+            })),
+        }
+    }
+
+    fn american_fd_market() -> WM {
+        // A 1Y FX market with positive carry both ways so early exercise can bind.
+        WM {
+            spot: 100.0,
+            vol: 0.25,
+            r_dom: 0.08,
+            r_for: 0.0,
+        }
+    }
+
+    /// Gate (a): the American value is never below the European value for the same
+    /// inputs (the early-exercise premium is non-negative). Routed through the
+    /// wire `price_instrument` arm; the oracle is the independent
+    /// `celnet_vanilla` European Garman-Kohlhagen price.
+    #[test]
+    fn american_at_least_european_on_the_wire() {
+        let m = american_fd_market();
+        for option in [
+            celnet_proto::OptionType::Call,
+            celnet_proto::OptionType::Put,
+        ] {
+            for k in [80.0, 100.0, 120.0] {
+                let instr = american_instrument(
+                    option,
+                    k,
+                    1.0,
+                    celnet_proto::ExerciseStyle::American,
+                    Vec::new(),
+                    0,
+                    0,
+                );
+                let american = price_instrument(&instr, &m, &conv_set())
+                    .unwrap()
+                    .greeks
+                    .price;
+                let euro = celnet_vanilla::price(
+                    option.into(),
+                    &VanillaInputs::new(m.spot, k, m.vol, 1.0, m.r_dom, m.r_for),
+                );
+                // Dominance holds up to the FD discretisation error.
+                assert!(
+                    american >= euro - 5e-3,
+                    "{option:?} K={k}: American {american} < European {euro}"
+                );
+            }
+        }
+    }
+
+    /// Gate (b): the discriminating no-early-exercise oracle. An American FX CALL
+    /// with `r_for = 0` is never worth exercising early, so the wire-priced
+    /// American value equals the independent European Garman-Kohlhagen value to FD
+    /// tolerance.
+    #[test]
+    fn american_call_no_foreign_rate_equals_european_on_the_wire() {
+        let m = WM {
+            spot: 100.0,
+            vol: 0.20,
+            r_dom: 0.05,
+            r_for: 0.0,
+        };
+        for k in [80.0, 100.0, 120.0] {
+            let instr = american_instrument(
+                celnet_proto::OptionType::Call,
+                k,
+                1.0,
+                celnet_proto::ExerciseStyle::American,
+                Vec::new(),
+                0,
+                0,
+            );
+            let american = price_instrument(&instr, &m, &conv_set())
+                .unwrap()
+                .greeks
+                .price;
+            let euro = celnet_vanilla::price(
+                OptionType::Call,
+                &VanillaInputs::new(m.spot, k, m.vol, 1.0, m.r_dom, m.r_for),
+            );
+            assert!(
+                (american - euro).abs() < 5e-3,
+                "American call (r_for=0) K={k}: wire {american} vs European {euro}"
+            );
+        }
+    }
+
+    /// Gate (c): the PSOR finite-difference price (wire FD engine) agrees with the
+    /// Longstaff-Schwartz regression Monte-Carlo (wire LSM engine) within the
+    /// reported MC standard error — two genuinely independent engines.
+    #[test]
+    fn american_fd_matches_lsm_within_stderr_on_the_wire() {
+        let m = american_fd_market();
+        let fd_instr = american_instrument(
+            celnet_proto::OptionType::Put,
+            100.0,
+            1.0,
+            celnet_proto::ExerciseStyle::American,
+            Vec::new(),
+            0,
+            0,
+        );
+        let lsm_instr = american_instrument(
+            celnet_proto::OptionType::Put,
+            100.0,
+            1.0,
+            celnet_proto::ExerciseStyle::American,
+            Vec::new(),
+            200_000,
+            0xABCD,
+        );
+        let fd = price_instrument(&fd_instr, &m, &conv_set()).unwrap();
+        let lsm = price_instrument(&lsm_instr, &m, &conv_set()).unwrap();
+        let se = lsm
+            .std_error
+            .expect("the LSM engine must carry a price standard error");
+        assert!(se > 0.0, "LSM std-error must be positive");
+        let tol = 4.0 * se + 1e-2;
+        assert!(
+            (fd.greeks.price - lsm.greeks.price).abs() < tol,
+            "FD {} vs LSM {} (se {se}, tol {tol})",
+            fd.greeks.price,
+            lsm.greeks.price
+        );
+        // The FD engine is exact: no std-error.
+        assert!(
+            fd.std_error.is_none(),
+            "the FD engine must report no std-error"
+        );
+    }
+
+    /// Gate (d): a HAND-PINNED published American option value. Longstaff &
+    /// Schwartz (2001), Table 1, first row: American PUT `S₀ = K = 40`, `r = 0.06`,
+    /// `σ = 0.20`, `T = 1`, no dividend (`r_for = 0`); their finite-difference
+    /// reference is `2.314`. The wire FD arm must reproduce it to FD tolerance.
+    #[test]
+    fn american_matches_published_value_on_the_wire() {
+        let m = WM {
+            spot: 40.0,
+            vol: 0.20,
+            r_dom: 0.06,
+            r_for: 0.0,
+        };
+        let instr = american_instrument(
+            celnet_proto::OptionType::Put,
+            40.0,
+            1.0,
+            celnet_proto::ExerciseStyle::American,
+            Vec::new(),
+            0,
+            0,
+        );
+        let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+        const PUBLISHED_FD: f64 = 2.314;
+        assert!(
+            (priced.greeks.price - PUBLISHED_FD).abs() < 1e-2,
+            "wire American put (LS 2001 Table 1) {} vs published {PUBLISHED_FD}",
+            priced.greeks.price
+        );
+    }
+
+    /// Gate (e): a Bermudan with a single date at expiry equals the European value;
+    /// a dense date set approaches (and never exceeds) the American value.
+    #[test]
+    fn bermudan_endpoints_on_the_wire() {
+        let m = WM {
+            spot: 100.0,
+            vol: 0.30,
+            r_dom: 0.10,
+            r_for: 0.0,
+        };
+        // Single date at expiry ⇒ European.
+        let one = american_instrument(
+            celnet_proto::OptionType::Put,
+            110.0,
+            1.0,
+            celnet_proto::ExerciseStyle::Bermudan,
+            vec![1.0],
+            0,
+            0,
+        );
+        let berm_one = price_instrument(&one, &m, &conv_set())
+            .unwrap()
+            .greeks
+            .price;
+        let euro = celnet_vanilla::price(
+            OptionType::Put,
+            &VanillaInputs::new(m.spot, 110.0, m.vol, 1.0, m.r_dom, m.r_for),
+        );
+        assert!(
+            (berm_one - euro).abs() < 5e-3,
+            "Bermudan(1 date @ T) {berm_one} vs European {euro}"
+        );
+
+        // Dense date set ⇒ approaches American from below.
+        let dense_dates: Vec<f64> = (1..=50).map(|k| k as f64 / 50.0).collect();
+        let dense = american_instrument(
+            celnet_proto::OptionType::Put,
+            110.0,
+            1.0,
+            celnet_proto::ExerciseStyle::Bermudan,
+            dense_dates,
+            0,
+            0,
+        );
+        let berm_dense = price_instrument(&dense, &m, &conv_set())
+            .unwrap()
+            .greeks
+            .price;
+        let american = price_instrument(
+            &american_instrument(
+                celnet_proto::OptionType::Put,
+                110.0,
+                1.0,
+                celnet_proto::ExerciseStyle::American,
+                Vec::new(),
+                0,
+                0,
+            ),
+            &m,
+            &conv_set(),
+        )
+        .unwrap()
+        .greeks
+        .price;
+        assert!(
+            berm_dense <= american + 1e-3 && (american - berm_dense) < 5e-2,
+            "Bermudan(dense) {berm_dense} vs American {american}"
+        );
+        assert!(
+            berm_dense >= berm_one - 1e-3,
+            "more dates ⇒ at least as valuable"
+        );
+    }
+
+    /// An empty Bermudan date set is a clear domain error (no exercise
+    /// opportunity), never a silent fallback.
+    #[test]
+    fn empty_bermudan_dates_is_a_domain_error() {
+        let m = american_fd_market();
+        let instr = american_instrument(
+            celnet_proto::OptionType::Put,
+            100.0,
+            1.0,
+            celnet_proto::ExerciseStyle::Bermudan,
+            Vec::new(),
+            0,
+            0,
+        );
+        assert!(matches!(
+            price_instrument(&instr, &m, &conv_set()),
+            Err(PriceError::Domain(_))
+        ));
     }
 }

@@ -18,6 +18,7 @@
 import type {
   Accumulator,
   AccumulatorMonitoring,
+  AmericanOption,
   AsianMethod,
   AveragingStyle,
   BarrierKind,
@@ -28,6 +29,7 @@ import type {
   Digital,
   DigitalStyle,
   DoubleBarrier,
+  ExerciseStyle,
   FixingSchedule,
   Greeks,
   Heartbeat,
@@ -1253,6 +1255,151 @@ export function shapeLookback(args: LookbackArgs): Instrument {
  */
 export function lookbackIsMonteCarlo(l: Lookback): boolean {
   return l.monitoring === "DISCRETE";
+}
+
+// ---------------------------------------------------------------------------
+// American / Bermudan early-exercise shaping (proto AmericanOption, field 24)
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse an exercise-style selector string into the contract `ExerciseStyle`.
+ * Accepts the trader-facing names (`AMERICAN`/`AMER`/`A`, `BERMUDAN`/`BERM`/`B`)
+ * and the canonical contract names, case-insensitive. Empty/absent ⇒ `AMERICAN`
+ * (the proto3 zero value), so an omitted argument is continuous early exercise.
+ * The choice of BERMUDAN additionally requires a non-empty exercise-date set
+ * (supplied via `bermudanSteps` to the shaper); a BERMUDAN with no dates is a
+ * domain error the shaper rejects (mirroring the server's domain validation).
+ */
+export function parseExerciseStyle(raw: string | undefined): ExerciseStyle {
+  const s = (raw ?? "").trim().toUpperCase();
+  if (s === "" || s === "AMERICAN" || s === "AMER" || s === "A") return "AMERICAN";
+  if (s === "BERMUDAN" || s === "BERM" || s === "B") return "BERMUDAN";
+  throw new ShapingError(
+    `invalid exercise style \`${raw}\` (expected AMERICAN or BERMUDAN)`,
+  );
+}
+
+/** The fully-parsed inputs the CELNET.AMERICAN function shapes into a request. */
+export interface AmericanArgs {
+  readonly pair: string;
+  readonly tenor: string;
+  /** The strike `K` — must be an absolute level (an American is struck at a level). */
+  readonly strike: string | number;
+  readonly callPut: string;
+  readonly notional: number;
+  /** Optional AMERICAN (default, continuous exercise) or BERMUDAN (discrete dates). */
+  readonly style?: string | undefined;
+  /**
+   * Optional number of equally-spaced Bermudan exercise dates `k/n · T` for
+   * `k = 1..=n` over `(0, T]` (bit-identical to the CLI's `--bermudan-steps`).
+   * Supplying `n ≥ 1` selects BERMUDAN even if `style` is omitted; `0`/absent ⇒
+   * continuous AMERICAN. (Arbitrary non-uniform date sets are exposed via the SDK
+   * `AmericanTerms::bermudan`; the Excel cell uses the count-based ticket.)
+   */
+  readonly bermudanSteps?: number | undefined;
+  /**
+   * Optional Longstaff-Schwartz path count: `0`/absent ⇒ the exact projected-SOR
+   * finite-difference engine (no std-error); `> 0` ⇒ the regression Monte-Carlo
+   * engine (which carries a `priceStdError`, surfaced honestly).
+   */
+  readonly lsmPaths?: number | undefined;
+  /**
+   * Optional equally-spaced AMERICAN exercise opportunities for the LSM engine
+   * (`0` ⇒ the server default; ignored for the FD engine and for BERMUDAN, whose
+   * dates are explicit).
+   */
+  readonly lsmExerciseDates?: number | undefined;
+  /** Optional LSM scramble seed (bit-reproducible; ignored by the FD engine). */
+  readonly lsmSeed?: number | undefined;
+}
+
+/**
+ * Build the equally-spaced Bermudan exercise year-fractions a count-based ticket
+ * implies: `n` points at `k/n · T` for `k = 1..=n` over `(0, T]`. Bit-identical to
+ * the CLI's `american_spec` (`crates/celnet-cli/src/exotic.rs`), so an Excel
+ * Bermudan encodes the SAME `bermudan_dates` the CLI does and the server prices a
+ * cell identically to the SDK/CLI. The final point is exactly `T` (expiry is always
+ * exercisable). A single date at `T` ⇒ the European identity the server proves.
+ */
+function equalBermudanDates(steps: number, expiryYears: number): number[] {
+  const dates: number[] = [];
+  for (let k = 1; k <= steps; k += 1) dates.push((expiryYears * k) / steps);
+  return dates;
+}
+
+/**
+ * Shape an American / Bermudan early-exercise vanilla from the cell arguments. The
+ * strike must be an absolute level (rejected as a delta). BERMUDAN — selected by
+ * `style` OR by a positive `bermudanSteps` — exercises only on the `n` equally-
+ * spaced dates `k/n · T`; a BERMUDAN with no dates is a domain error. `lsmPaths`
+ * of `0`/absent selects the exact FD engine (no std-error); `> 0` selects the
+ * Longstaff-Schwartz Monte-Carlo engine (the reply then carries a `priceStdError`).
+ * `side` on the instrument is TWO_WAY (the cell reads a market). The booking model
+ * stays DEFAULT — early exercise is the product's native engine, not a pricing
+ * directive. Scope: American/Bermudan VANILLA only.
+ */
+export function shapeAmerican(args: AmericanArgs): Instrument {
+  const { pair, tenor, expiryYears } = shapeSwapBase(args);
+  const sod = parseStrikeOrDelta(args.strike);
+  if (sod.kind !== "strike") {
+    throw new ShapingError(
+      `american strike must be an absolute level (e.g. 1.10), not a delta \`${args.strike}\``,
+    );
+  }
+  // BERMUDAN is selected by an explicit style OR by a positive step count. A
+  // count-based ticket implies BERMUDAN even when `style` is omitted (matching the
+  // CLI's `--bermudan-steps n`); an explicit AMERICAN with a positive count is a
+  // contradiction the shaper rejects rather than silently ignoring the count.
+  const requested = parseExerciseStyle(args.style);
+  const steps = args.bermudanSteps ?? 0;
+  if (!Number.isFinite(steps) || !Number.isInteger(steps) || steps < 0) {
+    throw new ShapingError(`bermudan steps must be a non-negative integer; got \`${args.bermudanSteps}\``);
+  }
+  if (requested === "AMERICAN" && steps > 0 && args.style !== undefined && args.style.trim() !== "") {
+    throw new ShapingError(
+      "an explicit AMERICAN style takes no bermudan steps (omit the style, or use BERMUDAN)",
+    );
+  }
+  const style: ExerciseStyle = requested === "BERMUDAN" || steps > 0 ? "BERMUDAN" : "AMERICAN";
+  let bermudanDates: number[] = [];
+  if (style === "BERMUDAN") {
+    if (steps < 1) {
+      throw new ShapingError(
+        "a BERMUDAN american requires a positive number of exercise dates (bermudanSteps ≥ 1)",
+      );
+    }
+    bermudanDates = equalBermudanDates(steps, expiryYears);
+  }
+  const american: AmericanOption = {
+    optionType: parseOptionType(args.callPut),
+    strike: sod.strike,
+    exerciseStyle: style,
+    bermudanDates,
+    lsmPaths: shapeMcPairs(args.lsmPaths),
+    // The LSM American exercise-date resolution is only meaningful for the LSM
+    // engine on an AMERICAN; the server ignores it for FD and for BERMUDAN.
+    lsmExerciseDates: shapeMcPairs(args.lsmExerciseDates),
+    lsmSeed: shapeMcSeed(args.lsmSeed),
+  };
+  return {
+    pair,
+    tenor,
+    expiryYears,
+    quantity: { notional: args.notional, baseCcy: true },
+    side: "TWO_WAY" as Side,
+    product: { kind: "american", american },
+  };
+}
+
+/**
+ * True iff an American/Bermudan is priced by the Longstaff-Schwartz Monte-Carlo
+ * engine (`lsmPaths > 0`) ⇒ it carries a std-error. `lsmPaths == 0` selects the
+ * exact projected-SOR finite-difference engine (no std-error). Mirrors
+ * `lookbackIsMonteCarlo` — the function gates the std-error row on this, so an
+ * exact FD price never surfaces a stray precision claim.
+ */
+export function americanIsMonteCarlo(a: AmericanOption): boolean {
+  return a.lsmPaths > 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -2521,6 +2668,17 @@ function canonicalProduct(p: Product): unknown {
         mcp: p.windowBarrier.mcPairs,
         mst: p.windowBarrier.mcSteps,
         mcs: p.windowBarrier.mcSeed.toString(),
+      };
+    case "american":
+      return {
+        k: "amr",
+        ot: p.american.optionType,
+        strike: p.american.strike,
+        ex: p.american.exerciseStyle,
+        bd: [...p.american.bermudanDates],
+        lp: p.american.lsmPaths,
+        led: p.american.lsmExerciseDates,
+        ls: p.american.lsmSeed.toString(),
       };
   }
 }

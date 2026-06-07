@@ -20,6 +20,7 @@
 import {
   DEFAULT_CONVENTIONS,
   ShapingError,
+  americanIsMonteCarlo,
   cliquetIsMonteCarlo,
   formatAsianSpill,
   formatCalibratedSmileSpill,
@@ -47,6 +48,7 @@ import {
   parseSmileModel,
   parseTenor,
   shapeAccumulator,
+  shapeAmerican,
   shapeAsianOption,
   shapeBarrier,
   shapeCalibration,
@@ -1094,6 +1096,80 @@ export async function LOOKBACK(
 }
 
 /**
+ * Price an American / Bermudan early-exercise vanilla: a spill of `["premium", PV]`,
+ * then — ONLY for the Longstaff-Schwartz Monte-Carlo engine (`lsmPaths > 0`) — an
+ * honest `["std_error", σ̄]` row, then the 13 risk Greeks and a convention footer.
+ * Physically-settled FX options trade American-style. The default engine is the
+ * exact projected-SOR free-boundary finite difference (no std-error); `lsmPaths > 0`
+ * selects the regression Monte-Carlo engine. AMERICAN (default) exercises
+ * continuously to expiry; BERMUDAN — selected by `style` or by a positive
+ * `bermudanSteps` — exercises only on the `n` equally-spaced dates `k/n · T`. The
+ * strike must be an absolute level. The premium is the server's `celnet-exotics`
+ * value (== SDK/CLI).
+ * @customfunction AMERICAN
+ * @param pair Currency pair, e.g. EURUSD.
+ * @param tenor Tenor, e.g. 1Y.
+ * @param strike Absolute strike level, e.g. 1.10.
+ * @param callPut C for call, P for put.
+ * @param notional Trade notional in the base currency.
+ * @param style Optional AMERICAN (default, continuous) or BERMUDAN (discrete dates).
+ * @param bermudanSteps Optional number of equally-spaced Bermudan exercise dates (k/n·T); >0 selects BERMUDAN (0 => continuous AMERICAN).
+ * @param lsmPaths Optional Longstaff-Schwartz path count (0 => exact FD, no std-error; >0 => Monte-Carlo).
+ * @param lsmExerciseDates Optional LSM AMERICAN exercise resolution (0 => server default; ignored for FD/BERMUDAN).
+ * @param lsmSeed Optional LSM scramble seed (bit-reproducible; ignored by FD).
+ * @returns A spill: premium, (std_error if LSM/MC), the 13 Greeks, and a convention footer.
+ */
+export async function AMERICAN(
+  pair: string,
+  tenor: string,
+  strike: string | number,
+  callPut: string,
+  notional: number,
+  style?: string,
+  bermudanSteps?: number,
+  lsmPaths?: number,
+  lsmExerciseDates?: number,
+  lsmSeed?: number,
+): Promise<SpillMatrix> {
+  try {
+    const instrument = shapeAmerican({
+      pair,
+      tenor,
+      strike,
+      callPut,
+      notional,
+      style,
+      bermudanSteps,
+      lsmPaths,
+      lsmExerciseDates,
+      lsmSeed,
+    });
+    const quote = await getConnection().requestQuote(
+      instrument,
+      DEFAULT_CONVENTIONS,
+      `american:${pair}:${tenor}:${strike}:${callPut}:${notional}:${style ?? ""}:${bermudanSteps ?? ""}:${lsmPaths ?? ""}:${lsmExerciseDates ?? ""}:${lsmSeed ?? ""}`,
+    );
+    // The std-error is surfaced ONLY for the Longstaff-Schwartz Monte-Carlo engine
+    // (lsmPaths > 0) AND when the server stamped `price_std_error`. The exact FD
+    // engine reports none, so the spill honestly omits the row — a cell never reads
+    // a precision claim the price doesn't have. `americanIsMonteCarlo` gates on the
+    // shaped product so we never surface a stray non-MC std-error.
+    const isMc =
+      instrument.product.kind === "american" && americanIsMonteCarlo(instrument.product.american);
+    return formatPathDependentSpill({
+      premium: quote.greeks.price,
+      stdError: isMc ? quote.priceStdError : undefined,
+      greeks: quote.greeks,
+      conventions: quote.conventions,
+      surfaceVersion: quote.surfaceVersion,
+      epochNanos: quote.epochNanos,
+    });
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
+/**
  * Stream a live two-way for a structure, multiplexed on the single session and
  * coalesced with identical-argument cells. Re-emits on every Update; flips to a
  * stale state on a heartbeat gap rather than freezing as live (docs §5).
@@ -1399,6 +1475,7 @@ function registerAll(): void {
   cf.associate("TARF", TARF as (...a: never[]) => unknown);
   cf.associate("ACCUMULATOR", ACCUMULATOR as (...a: never[]) => unknown);
   cf.associate("LOOKBACK", LOOKBACK as (...a: never[]) => unknown);
+  cf.associate("AMERICAN", AMERICAN as (...a: never[]) => unknown);
   cf.associate("SUBSCRIBE", SUBSCRIBE as (...a: never[]) => unknown);
   cf.associate("SERIES", SERIES as (...a: never[]) => unknown);
   cf.associate("MARK", MARK as (...a: never[]) => unknown);
