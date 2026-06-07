@@ -33,11 +33,13 @@ use celnet_types::{
 
 use celnet_core::FlatSmile;
 use celnet_exotics::{
-    AnalyticAsian, AveragingSchedule, BarrierKind as ExBarrierKind, BarrierStyle, DigitalKind,
-    DoubleBarrierKnockOut, DoubleNoTouch, RebateTiming, SingleBarrier as ExSingleBarrier,
-    VarSwapContext, curran_price, digital_price, double_knock_out_price, double_no_touch_price,
-    double_touch_price, fair_variance, fair_volatility, no_touch_price, one_touch_price,
-    single_barrier_price, turnbull_wakeman_price,
+    AnalyticAsian, AveragingSchedule, BarrierKind as ExBarrierKind, BarrierStyle, Cliquet,
+    CliquetMcConfig, CliquetSchedule, DigitalKind, DoubleBarrierKnockOut, DoubleNoTouch,
+    ForwardStart, QuantoParams, RebateTiming, SingleBarrier as ExSingleBarrier, VarSwapContext,
+    cliquet_price_capped_mc, cliquet_price_plain, curran_price, digital_price,
+    double_knock_out_price, double_no_touch_price, double_touch_price, fair_variance,
+    fair_volatility, forward_start_price, no_touch_price, one_touch_price, quanto_digital_price,
+    quanto_vanilla_price, single_barrier_price, turnbull_wakeman_price,
 };
 
 /// A failure pricing a wire instrument: a malformed / unsupported message.
@@ -86,6 +88,11 @@ pub struct Priced {
     pub resolved_strike: f64,
     /// The absolute Black vol used for the headline leg.
     pub vol: f64,
+    /// For a Monte-Carlo-priced product (the clamped cliquet), the standard
+    /// error of the mean of `greeks.price`; `None` for the closed-form products
+    /// whose price is exact. Surfaced honestly on `PriceResponse.price_std_error`
+    /// so a client never mistakes an MC estimate for closed-form precision.
+    pub std_error: Option<f64>,
 }
 
 /// The resolved trade conventions decoded from the wire.
@@ -230,6 +237,7 @@ fn price_vanilla_leg(
         greeks: celnet_vanilla::greeks(option_type, &inputs),
         resolved_strike: strike,
         vol: market.vol,
+        std_error: None,
     }
 }
 
@@ -245,6 +253,10 @@ const FD_VOL_ABS: f64 = 1e-4;
 const FD_RATE_ABS: f64 = 1e-4;
 /// The relative time bump for finite-difference theta/charm/color.
 const FD_TIME_REL: f64 = 1e-4;
+/// Default antithetic Monte-Carlo path pairs for a clamped cliquet when the wire
+/// request leaves `mc_pairs` unset. Sized so the reported standard error is small
+/// relative to the price for typical structured-note specs.
+const DEFAULT_CLIQUET_MC_PAIRS: usize = 200_000;
 
 /// Shock a market context's spot multiplicatively.
 fn bump_spot(m: &WireMarketContext, rel: f64) -> WireMarketContext {
@@ -453,6 +465,7 @@ pub fn price_instrument(
                 greeks: acc,
                 resolved_strike: head_strike,
                 vol: head_vol,
+                std_error: None,
             })
         }
         instrument::Product::SingleBarrier(b) => {
@@ -507,6 +520,7 @@ pub fn price_instrument(
                 greeks,
                 resolved_strike: strike,
                 vol: market.vol,
+                std_error: None,
             })
         }
         instrument::Product::DoubleBarrier(b) => {
@@ -559,6 +573,7 @@ pub fn price_instrument(
                 greeks,
                 resolved_strike: strike,
                 vol: market.vol,
+                std_error: None,
             })
         }
         instrument::Product::Digital(d) => {
@@ -586,6 +601,7 @@ pub fn price_instrument(
                 greeks,
                 resolved_strike: strike,
                 vol: market.vol,
+                std_error: None,
             })
         }
         instrument::Product::Touch(t) => {
@@ -666,6 +682,7 @@ pub fn price_instrument(
                 greeks,
                 resolved_strike: lower,
                 vol: market.vol,
+                std_error: None,
             })
         }
         instrument::Product::VarianceSwap(_vs) => {
@@ -690,6 +707,7 @@ pub fn price_instrument(
                 greeks,
                 resolved_strike: fair_var,
                 vol: fair_var.max(0.0).sqrt(),
+                std_error: None,
             })
         }
         instrument::Product::VolatilitySwap(_vs) => {
@@ -711,6 +729,7 @@ pub fn price_instrument(
                 greeks,
                 resolved_strike: fair_vol,
                 vol: fair_vol,
+                std_error: None,
             })
         }
         instrument::Product::AsianOption(a) => {
@@ -781,6 +800,184 @@ pub fn price_instrument(
                 greeks,
                 resolved_strike: strike,
                 vol: market.vol,
+                std_error: None,
+            })
+        }
+        instrument::Product::ForwardStart(fs) => {
+            let option = decode_option_type(fs.option_type)?;
+            if !(fs.reset >= 0.0 && expiry >= fs.reset) {
+                return Err(PriceError::Domain(
+                    "forward-start reset must satisfy 0 ≤ reset ≤ expiry",
+                ));
+            }
+            let moneyness = fs.moneyness;
+            let reset = fs.reset;
+            // Closed-form FX dual-carry forward-start (Rubinstein). The strike is
+            // reset-determined, so `inputs.strike` is unused by the pricer; the
+            // resolved strike echoed is the ATM-forward reset level `m·F(t₁)`
+            // (informational — the contract strikes at `reset`). The full Greek
+            // strip is FD over the closed form.
+            let price = move |m: &WireMarketContext| -> f64 {
+                let inputs = inputs_at(m, expiry, m.spot, m.vol);
+                forward_start_price(
+                    &inputs,
+                    ForwardStart {
+                        option,
+                        moneyness,
+                        reset,
+                        expiry,
+                    },
+                )
+            };
+            let price_at = move |t: f64, m: &WireMarketContext| -> f64 {
+                let inputs = inputs_at(m, t, m.spot, m.vol);
+                forward_start_price(
+                    &inputs,
+                    ForwardStart {
+                        option,
+                        // Clamp the reset to the (bumped) residual maturity so the
+                        // time-Greek FD never produces reset > expiry.
+                        moneyness,
+                        reset: reset.min(t),
+                        expiry: t,
+                    },
+                )
+            };
+            let greeks = exotic_greeks(&price, &price_at, market, expiry);
+            // The strike fixes at `reset` to `m·S(reset)`; echo the forward reset
+            // level `m·F(t₁) = m·S₀·e^{(r_d−r_f)·t₁}` as the informational strike.
+            let reset_strike =
+                moneyness * market.spot * ((market.r_dom - market.r_for) * reset).exp();
+            Ok(Priced {
+                greeks,
+                resolved_strike: reset_strike,
+                vol: market.vol,
+                std_error: None,
+            })
+        }
+        instrument::Product::Cliquet(c) => {
+            let option = decode_option_type(c.option_type)?;
+            if c.periods < 1 {
+                return Err(PriceError::Domain("cliquet needs at least one period"));
+            }
+            let moneyness = c.moneyness;
+            let periods = c.periods as usize;
+            let build = move |m: &WireMarketContext, t: f64| -> (VanillaInputs, Cliquet) {
+                let inputs = inputs_at(m, t, m.spot, m.vol);
+                let spec = Cliquet {
+                    option,
+                    moneyness,
+                    schedule: CliquetSchedule::equal(periods, t),
+                    local_floor: c.local_floor,
+                    local_cap: c.local_cap,
+                    global_floor: c.global_floor,
+                    global_cap: c.global_cap,
+                };
+                (inputs, spec)
+            };
+            let is_plain = build(market, expiry).1.is_plain();
+            if is_plain {
+                // Plain (unclamped) ratchet: exact closed form (Σ forward-start
+                // legs). Full Greek strip via FD over the closed form.
+                let price = move |m: &WireMarketContext| -> f64 {
+                    let (inputs, spec) = build(m, expiry);
+                    cliquet_price_plain(&inputs, &spec)
+                };
+                let price_at = move |t: f64, m: &WireMarketContext| -> f64 {
+                    let (inputs, spec) = build(m, t);
+                    cliquet_price_plain(&inputs, &spec)
+                };
+                let greeks = exotic_greeks(&price, &price_at, market, expiry);
+                Ok(Priced {
+                    greeks,
+                    resolved_strike: moneyness,
+                    vol: market.vol,
+                    std_error: None,
+                })
+            } else {
+                // Clamped (locally-capped/floored or globally-bounded) cliquet:
+                // priced by Monte-Carlo, honestly carrying its standard error. The
+                // MC estimator is bit-reproducible from (seed, path), so the FD
+                // Greek strip is a deterministic function of the market context
+                // and the same seed — the differences are real, not RNG jitter.
+                let pairs = if c.mc_pairs == 0 {
+                    DEFAULT_CLIQUET_MC_PAIRS
+                } else {
+                    c.mc_pairs as usize
+                };
+                let cfg = CliquetMcConfig {
+                    pairs,
+                    seed: c.mc_seed,
+                };
+                let price = move |m: &WireMarketContext| -> f64 {
+                    let (inputs, spec) = build(m, expiry);
+                    cliquet_price_capped_mc(&inputs, &spec, cfg).price
+                };
+                let price_at = move |t: f64, m: &WireMarketContext| -> f64 {
+                    let (inputs, spec) = build(m, t);
+                    cliquet_price_capped_mc(&inputs, &spec, cfg).price
+                };
+                let greeks = exotic_greeks(&price, &price_at, market, expiry);
+                // The headline standard error is the base-context MC estimate's
+                // std-error, surfaced honestly on the wire.
+                let (inputs, spec) = build(market, expiry);
+                let estimate = cliquet_price_capped_mc(&inputs, &spec, cfg);
+                Ok(Priced {
+                    greeks,
+                    resolved_strike: moneyness,
+                    vol: market.vol,
+                    std_error: Some(estimate.std_error),
+                })
+            }
+        }
+        instrument::Product::Quanto(q) => {
+            let payoff = celnet_proto::QuantoPayoff::try_from(q.payoff).map_err(|_| {
+                PriceError::UnknownEnum {
+                    kind: "QuantoPayoff",
+                    tag: q.payoff,
+                }
+            })?;
+            let option = decode_option_type(q.option_type)?;
+            if !(-1.0..=1.0).contains(&q.correlation) {
+                return Err(PriceError::Domain("quanto correlation must lie in [-1, 1]"));
+            }
+            if q.conversion_vol < 0.0 {
+                return Err(PriceError::Domain(
+                    "quanto conversion vol must be non-negative",
+                ));
+            }
+            let strike = q.strike;
+            let params = QuantoParams::new(q.conversion_vol, q.correlation);
+            // Closed-form quanto-drift-adjusted vanilla / cash-or-nothing digital.
+            // Full Greek strip via FD over the closed form.
+            let price = move |m: &WireMarketContext| -> f64 {
+                let inputs = inputs_at(m, expiry, strike, m.vol);
+                match payoff {
+                    celnet_proto::QuantoPayoff::Vanilla => {
+                        quanto_vanilla_price(option, &inputs, params)
+                    }
+                    celnet_proto::QuantoPayoff::Digital => {
+                        quanto_digital_price(option, &inputs, params)
+                    }
+                }
+            };
+            let price_at = move |t: f64, m: &WireMarketContext| -> f64 {
+                let inputs = inputs_at(m, t, strike, m.vol);
+                match payoff {
+                    celnet_proto::QuantoPayoff::Vanilla => {
+                        quanto_vanilla_price(option, &inputs, params)
+                    }
+                    celnet_proto::QuantoPayoff::Digital => {
+                        quanto_digital_price(option, &inputs, params)
+                    }
+                }
+            };
+            let greeks = exotic_greeks(&price, &price_at, market, expiry);
+            Ok(Priced {
+                greeks,
+                resolved_strike: strike,
+                vol: market.vol,
+                std_error: None,
             })
         }
     }
@@ -1262,6 +1459,324 @@ mod tests {
             method: celnet_proto::AsianMethod::Curran as i32,
             elapsed_avg: 0.0,
             elapsed_weight: 0.0,
+        }));
+        assert!(matches!(
+            price_instrument(&instr, &m, &conv_set()),
+            Err(PriceError::Domain(_))
+        ));
+    }
+
+    // ====================================================================
+    // Wave-2 products: forward-start vanilla / cliquet (plain closed form +
+    // clamped MC) / quanto (vanilla + digital). Each gate proves the SERVER
+    // pricer == the celnet-exotics closed form (the independent oracle), plus a
+    // closed-form limit oracle; the clamped cliquet is checked against the
+    // independent celnet-exotics MC and surfaces its standard error honestly.
+    // ====================================================================
+
+    #[test]
+    fn forward_start_matches_exotics_closed_form() {
+        use celnet_exotics::{ForwardStart, forward_start_price};
+        let m = market();
+        let instr = base_instrument(Product::ForwardStart(celnet_proto::ForwardStart {
+            option_type: celnet_proto::OptionType::Call as i32,
+            moneyness: 1.0,
+            reset: 0.25,
+        }));
+        let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+        let inputs = VanillaInputs::new(m.spot, m.spot, m.vol, 1.0, m.r_dom, m.r_for);
+        let oracle = forward_start_price(
+            &inputs,
+            ForwardStart {
+                option: OptionType::Call,
+                moneyness: 1.0,
+                reset: 0.25,
+                expiry: 1.0,
+            },
+        );
+        assert!(
+            is_close(priced.greeks.price, oracle, 1e-9, 1e-12),
+            "server forward-start {} vs oracle {}",
+            priced.greeks.price,
+            oracle
+        );
+        assert!(priced.std_error.is_none());
+        assert!(priced.greeks.price > 0.0 && priced.greeks.vega > 0.0);
+    }
+
+    #[test]
+    fn forward_start_t1_to_zero_recovers_gk_vanilla() {
+        // Closed-form limit oracle: as the reset t₁ → 0 the forward-start strike
+        // fixes immediately at m·S₀, so the value collapses to the plain GK
+        // vanilla struck at m·S₀ over the full maturity.
+        let m = market();
+        let moneyness = 1.0;
+        let instr = base_instrument(Product::ForwardStart(celnet_proto::ForwardStart {
+            option_type: celnet_proto::OptionType::Call as i32,
+            moneyness,
+            reset: 0.0,
+        }));
+        let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+        let gk = celnet_vanilla::price(
+            OptionType::Call,
+            &VanillaInputs::new(m.spot, moneyness * m.spot, m.vol, 1.0, m.r_dom, m.r_for),
+        );
+        assert!(
+            is_close(priced.greeks.price, gk, 1e-9, 1e-12),
+            "forward-start t1→0 {} vs GK vanilla {}",
+            priced.greeks.price,
+            gk
+        );
+    }
+
+    #[test]
+    fn plain_cliquet_matches_sum_of_forward_start_legs() {
+        use celnet_exotics::{ForwardStart, forward_start_price};
+        let m = market();
+        let periods = 4u32;
+        let moneyness = 1.0;
+        let instr = base_instrument(Product::Cliquet(celnet_proto::Cliquet {
+            option_type: celnet_proto::OptionType::Call as i32,
+            moneyness,
+            periods,
+            local_floor: None,
+            local_cap: None,
+            global_floor: None,
+            global_cap: None,
+            mc_pairs: 0,
+            mc_seed: 0,
+        }));
+        let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+        // Independent oracle: the exact Σ forward-start legs over [0, 1].
+        let inputs = VanillaInputs::new(m.spot, m.spot, m.vol, 1.0, m.r_dom, m.r_for);
+        let mut sum = 0.0;
+        for k in 1..=periods {
+            let reset = (k - 1) as f64 / periods as f64;
+            let expiry = k as f64 / periods as f64;
+            sum += forward_start_price(
+                &inputs,
+                ForwardStart {
+                    option: OptionType::Call,
+                    moneyness,
+                    reset,
+                    expiry,
+                },
+            );
+        }
+        assert!(
+            is_close(priced.greeks.price, sum, 1e-10, 1e-12),
+            "plain cliquet {} vs Σ legs {}",
+            priced.greeks.price,
+            sum
+        );
+        assert!(priced.std_error.is_none());
+    }
+
+    #[test]
+    fn capped_cliquet_matches_exotics_mc_and_carries_std_error() {
+        use celnet_exotics::{Cliquet, CliquetMcConfig, CliquetSchedule, cliquet_price_capped_mc};
+        let m = market();
+        let periods = 4u32;
+        let moneyness = 1.0;
+        let cap = 0.03;
+        let pairs = 50_000u32;
+        let seed = 0xCABC_1190_u64;
+        let instr = base_instrument(Product::Cliquet(celnet_proto::Cliquet {
+            option_type: celnet_proto::OptionType::Call as i32,
+            moneyness,
+            periods,
+            local_floor: Some(0.0),
+            local_cap: Some(cap),
+            global_floor: None,
+            global_cap: None,
+            mc_pairs: pairs,
+            mc_seed: seed,
+        }));
+        let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+        // Independent oracle: the celnet-exotics clamped MC with the SAME (seed,
+        // pairs), so the estimator is bit-reproducible and the prices match
+        // exactly (the server arm calls the same function).
+        let inputs = VanillaInputs::new(m.spot, m.spot, m.vol, 1.0, m.r_dom, m.r_for);
+        let spec = Cliquet {
+            option: OptionType::Call,
+            moneyness,
+            schedule: CliquetSchedule::equal(periods as usize, 1.0),
+            local_floor: Some(0.0),
+            local_cap: Some(cap),
+            global_floor: None,
+            global_cap: None,
+        };
+        let oracle = cliquet_price_capped_mc(
+            &inputs,
+            &spec,
+            CliquetMcConfig {
+                pairs: pairs as usize,
+                seed,
+            },
+        );
+        // Server price == the independent MC mean within its reported std-error
+        // (here exactly, same seed) and the std-error is surfaced honestly.
+        assert!(
+            is_close(
+                priced.greeks.price,
+                oracle.price,
+                oracle.std_error.max(1e-12),
+                1e-12
+            ),
+            "capped cliquet {} vs exotics MC {} (stderr {})",
+            priced.greeks.price,
+            oracle.price,
+            oracle.std_error
+        );
+        let stderr = priced
+            .std_error
+            .expect("clamped cliquet must carry std-error");
+        assert!(
+            is_close(stderr, oracle.std_error, 1e-12, 1e-12),
+            "surfaced stderr {} vs oracle {}",
+            stderr,
+            oracle.std_error
+        );
+        assert!(stderr > 0.0, "MC std-error must be positive");
+        // A capped leg return is bounded above by the plain leg ⇒ the capped
+        // cliquet is worth strictly less than the plain ratchet (structural).
+        let plain = base_instrument(Product::Cliquet(celnet_proto::Cliquet {
+            option_type: celnet_proto::OptionType::Call as i32,
+            moneyness,
+            periods,
+            local_floor: None,
+            local_cap: None,
+            global_floor: None,
+            global_cap: None,
+            mc_pairs: 0,
+            mc_seed: 0,
+        }));
+        let plain_priced = price_instrument(&plain, &m, &conv_set()).unwrap();
+        assert!(
+            priced.greeks.price < plain_priced.greeks.price,
+            "capped {} should be < plain {}",
+            priced.greeks.price,
+            plain_priced.greeks.price
+        );
+    }
+
+    #[test]
+    fn quanto_vanilla_matches_exotics_closed_form() {
+        use celnet_exotics::{QuantoParams, quanto_vanilla_price};
+        let m = market();
+        let strike = 1.10;
+        let instr = base_instrument(Product::Quanto(celnet_proto::Quanto {
+            payoff: celnet_proto::QuantoPayoff::Vanilla as i32,
+            option_type: celnet_proto::OptionType::Call as i32,
+            strike,
+            conversion_vol: 0.09,
+            correlation: -0.3,
+        }));
+        let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+        let inputs = VanillaInputs::new(m.spot, strike, m.vol, 1.0, m.r_dom, m.r_for);
+        let oracle = quanto_vanilla_price(OptionType::Call, &inputs, QuantoParams::new(0.09, -0.3));
+        assert!(
+            is_close(priced.greeks.price, oracle, 1e-9, 1e-12),
+            "server quanto vanilla {} vs oracle {}",
+            priced.greeks.price,
+            oracle
+        );
+        assert!(is_close(priced.resolved_strike, strike, 1e-14, 1e-14));
+    }
+
+    #[test]
+    fn quanto_digital_matches_exotics_closed_form() {
+        use celnet_exotics::{QuantoParams, quanto_digital_price};
+        let m = market();
+        let strike = 1.12;
+        let instr = base_instrument(Product::Quanto(celnet_proto::Quanto {
+            payoff: celnet_proto::QuantoPayoff::Digital as i32,
+            option_type: celnet_proto::OptionType::Put as i32,
+            strike,
+            conversion_vol: 0.07,
+            correlation: 0.4,
+        }));
+        let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+        let inputs = VanillaInputs::new(m.spot, strike, m.vol, 1.0, m.r_dom, m.r_for);
+        let oracle = quanto_digital_price(OptionType::Put, &inputs, QuantoParams::new(0.07, 0.4));
+        assert!(
+            is_close(priced.greeks.price, oracle, 1e-9, 1e-12),
+            "server quanto digital {} vs oracle {}",
+            priced.greeks.price,
+            oracle
+        );
+    }
+
+    #[test]
+    fn quanto_zero_correlation_recovers_plain_vanilla() {
+        // The drift-adjustment is −ρ·σ_S·σ_Z, so at ρ = 0 the quanto correction
+        // vanishes and the price collapses to the plain GK vanilla — a genuinely
+        // independent closed-form limit that pins the sign/scale of the adjustment.
+        let m = market();
+        let strike = 1.10;
+        let instr = base_instrument(Product::Quanto(celnet_proto::Quanto {
+            payoff: celnet_proto::QuantoPayoff::Vanilla as i32,
+            option_type: celnet_proto::OptionType::Call as i32,
+            strike,
+            conversion_vol: 0.09,
+            correlation: 0.0,
+        }));
+        let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+        let gk = celnet_vanilla::price(
+            OptionType::Call,
+            &VanillaInputs::new(m.spot, strike, m.vol, 1.0, m.r_dom, m.r_for),
+        );
+        assert!(
+            is_close(priced.greeks.price, gk, 1e-12, 1e-12),
+            "quanto ρ=0 {} vs plain GK {}",
+            priced.greeks.price,
+            gk
+        );
+        // And the quanto-drift sign: a positive correlation lowers a call's value
+        // (carry shifted down), a negative correlation raises it.
+        let mk = |rho: f64| {
+            let i = base_instrument(Product::Quanto(celnet_proto::Quanto {
+                payoff: celnet_proto::QuantoPayoff::Vanilla as i32,
+                option_type: celnet_proto::OptionType::Call as i32,
+                strike,
+                conversion_vol: 0.09,
+                correlation: rho,
+            }));
+            price_instrument(&i, &m, &conv_set()).unwrap().greeks.price
+        };
+        assert!(mk(0.5) < gk, "positive ρ should lower a quanto call");
+        assert!(mk(-0.5) > gk, "negative ρ should raise a quanto call");
+    }
+
+    #[test]
+    fn cliquet_rejects_zero_periods() {
+        let m = market();
+        let instr = base_instrument(Product::Cliquet(celnet_proto::Cliquet {
+            option_type: celnet_proto::OptionType::Call as i32,
+            moneyness: 1.0,
+            periods: 0,
+            local_floor: None,
+            local_cap: None,
+            global_floor: None,
+            global_cap: None,
+            mc_pairs: 0,
+            mc_seed: 0,
+        }));
+        assert!(matches!(
+            price_instrument(&instr, &m, &conv_set()),
+            Err(PriceError::Domain(_))
+        ));
+    }
+
+    #[test]
+    fn quanto_rejects_out_of_range_correlation() {
+        let m = market();
+        let instr = base_instrument(Product::Quanto(celnet_proto::Quanto {
+            payoff: celnet_proto::QuantoPayoff::Vanilla as i32,
+            option_type: celnet_proto::OptionType::Call as i32,
+            strike: 1.10,
+            conversion_vol: 0.09,
+            correlation: 1.5,
         }));
         assert!(matches!(
             price_instrument(&instr, &m, &conv_set()),

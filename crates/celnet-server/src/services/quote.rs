@@ -366,6 +366,10 @@ impl QuoteService for QuoteEdge {
             // requesting seat, when supplied, becomes the `held_by`. So the flow is
             // attributable request→quote→booking and never anonymous.
             attribution: Some(super::attribution::resolve(req.attribution.as_ref())),
+            // MC standard error for an MC-priced product (clamped cliquet); `None`
+            // for closed-form products. Surfaced on the Quote so the WS/SDK quote
+            // path discloses the same uncertainty the gRPC PriceResponse does.
+            price_std_error: priced.std_error,
         };
 
         // Store under both keys (id always; idempotency key when present).

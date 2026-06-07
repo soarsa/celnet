@@ -26,6 +26,7 @@ import type {
   MarketObservable,
   OptionType,
   PremiumStyle,
+  QuantoPayoff,
   RagStatus,
   RiskDimension,
   Settlement,
@@ -132,6 +133,12 @@ export const averagingStyle = enumCodec<AveragingStyle>(["DISCRETE", "CONTINUOUS
  * (ASIAN_METHOD_CURRAN=0, ASIAN_METHOD_TURNBULL_WAKEMAN=1).
  */
 export const asianMethod = enumCodec<AsianMethod>(["CURRAN", "TURNBULL_WAKEMAN"]);
+
+/**
+ * `QuantoPayoff` ↔ proto `QuantoPayoff`
+ * (QUANTO_PAYOFF_VANILLA=0, QUANTO_PAYOFF_DIGITAL=1).
+ */
+export const quantoPayoff = enumCodec<QuantoPayoff>(["VANILLA", "DIGITAL"]);
 
 /**
  * `SmileModel` ↔ proto `SmileModel` (MARKET_HEDGE=0, STOCHASTIC_VOL=1,

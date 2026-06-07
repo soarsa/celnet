@@ -174,6 +174,17 @@ enum AsianMethod {
   ASIAN_METHOD_TURNBULL_WAKEMAN = 1;
 }
 
+// The underlying single payoff a quanto wraps: a plain vanilla, or a
+// cash-or-nothing digital that pays a fixed unit of the settlement currency.
+enum QuantoPayoff {
+  // A quanto vanilla: the ordinary call/put payoff cash-settled at unit
+  // conversion in the fixed settlement currency.
+  QUANTO_PAYOFF_VANILLA = 0;
+  // A quanto cash-or-nothing digital: pays one unit of settlement currency
+  // when in the money (call if `S_T > strike`, put if `S_T < strike`).
+  QUANTO_PAYOFF_DIGITAL = 1;
+}
+
 // A recognized multi-leg vol strategy template — mirrors the `Strategy`
 // instrument leg sets the desk books as a single contract.
 enum StrategyKind {
@@ -581,6 +592,75 @@ message AsianOption {
   double elapsed_weight = 7;
 }
 
+// A forward-start vanilla: the strike is fixed at the reset date `reset` to
+// `moneyness · S(reset)` and the option pays the vanilla payoff at expiry.
+// Priced by the FX dual-carry forward-start closed form
+// `V = e^{−r_f·t₁}·S₀·u(m, T−t₁)` (`u` the unit-spot vanilla over the residual
+// maturity). The expiry `T` is the enclosing `Instrument.expiry_years`; the
+// reset must satisfy `0 ≤ reset ≤ T`.
+message ForwardStart {
+  // Call or put.
+  OptionType option_type = 1;
+  // Strike-reset multiple `m`: at `reset` the strike becomes `m·S(reset)`
+  // (`m = 1` is the at-the-money-forward reset).
+  double moneyness = 2;
+  // Reset (strike-fixing) date `t₁` in years, with `0 ≤ reset ≤ expiry_years`.
+  double reset = 3;
+}
+
+// A cliquet (ratchet): a strip of consecutive forward-start vanillas over an
+// evenly-spaced reset schedule, with optional per-period local floor/cap on each
+// leg's option return and an optional global floor/cap on the accumulated
+// payoff. The plain (unclamped) ratchet prices in closed form as the exact sum
+// of forward-start legs; any local/global clamp switches the pricer to a
+// Monte-Carlo estimator that reports `price` plus its standard error
+// (`PriceResponse.price_std_error`). The expiry `T` is the enclosing
+// `Instrument.expiry_years`.
+message Cliquet {
+  // Call (`+1`) or put (`−1`) per-period payoff direction.
+  OptionType option_type = 1;
+  // Per-period strike-reset multiple `m` (applied to every leg).
+  double moneyness = 2;
+  // Number of evenly-spaced ratchet periods over `[0, expiry_years]`; `≥ 1`.
+  uint32 periods = 3;
+  // Optional per-period local floor on each clamped period option return.
+  // Presence-tracked: an unset floor is unconstrained.
+  optional double local_floor = 4;
+  // Optional per-period local cap on each clamped period option return.
+  // Presence-tracked: an unset cap is unconstrained.
+  optional double local_cap = 5;
+  // Optional global floor on the accumulated (summed) payoff. Presence-tracked.
+  optional double global_floor = 6;
+  // Optional global cap on the accumulated (summed) payoff. Presence-tracked.
+  optional double global_cap = 7;
+  // Number of antithetic Monte-Carlo path pairs for the clamped variant; `0`
+  // selects a server default. Ignored for a plain (unclamped) ratchet, which is
+  // priced exactly in closed form.
+  uint32 mc_pairs = 8;
+  // Counter-RNG seed for the clamped Monte-Carlo estimator (identical seeds
+  // reproduce results bit-for-bit). Ignored for a plain ratchet.
+  uint64 mc_seed = 9;
+}
+
+// A quanto option: a vanilla or cash-or-nothing digital whose natural payoff is
+// converted into a fixed settlement currency at a fixed rate. Priced by the
+// closed-form quanto-drift adjustment `−ρ·σ_S·σ_Z` to the underlying carry
+// under the settlement-currency measure; at `correlation = 0` the adjustment
+// vanishes and the price collapses to the plain (un-converted) vanilla/digital.
+message Quanto {
+  // Whether the wrapped payoff is a vanilla or a cash-or-nothing digital.
+  QuantoPayoff payoff = 1;
+  // Call or put.
+  OptionType option_type = 2;
+  // The strike `K` (quote per 1 unit of base).
+  double strike = 3;
+  // Annualised volatility `σ_Z` of the settlement-conversion rate.
+  double conversion_vol = 4;
+  // Instantaneous correlation `ρ ∈ [−1, 1]` between the underlying spot and the
+  // settlement-conversion rate.
+  double correlation = 5;
+}
+
 // The unified instrument every Celnet workflow speaks. Exactly one variant is
 // set. Pricing, RFQ, RFS, and scenario all carry an `Instrument`, so adding a
 // product type is a single additive change here.
@@ -618,6 +698,13 @@ message Instrument {
     VolatilitySwap volatility_swap = 14;
     // A fixed-strike arithmetic-average-rate Asian option.
     AsianOption asian_option = 15;
+    // A forward-start vanilla (strike reset at a future date).
+    ForwardStart forward_start = 16;
+    // A cliquet / ratchet (strip of forward-start legs; plain closed-form or
+    // clamped Monte-Carlo).
+    Cliquet cliquet = 17;
+    // A quanto option (vanilla or digital, settlement-currency converted).
+    Quanto quanto = 18;
   }
 }
 
@@ -735,6 +822,11 @@ message Quote {
   // the attribution chain keying the who's-trading risk roll-up. Absent ⇒
   // unattributed.
   optional AttributionRecord attribution = 11;
+  // Monte-Carlo standard error of the quoted premium (presence-tracked): set
+  // ONLY for MC-priced products (e.g. a clamped/floored cliquet), absent for
+  // closed-form products. Surfaced so every client (gRPC, WS, SDK) discloses the
+  // MC uncertainty of the quote and never presents an MC price as exact.
+  optional double price_std_error = 12;
 }
 
 // A client acceptance of a previously issued `Quote`.
@@ -1952,6 +2044,11 @@ message PriceResponse {
   // the requested `PriceRequest.surface_version` if one was supplied, else the
   // live mark the engine resolved. A *data* field, not an API version.
   optional uint64 surface_version = 6;
+  // For a Monte-Carlo-priced product (e.g. a clamped cliquet), the standard
+  // error of the mean of the `greeks.price` estimate (presence-tracked; absent
+  // for the closed-form products whose price is exact). Reported honestly so a
+  // client never mistakes an MC estimate for closed-form precision.
+  optional double price_std_error = 7;
 }
 
 // ===========================================================================

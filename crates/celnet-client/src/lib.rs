@@ -110,8 +110,9 @@ pub use surface_vocab::{
 };
 pub use vocab::{
     AsianMethod, AsianTerms, Attribution, AveragingStyle, BarrierKind, BarrierSide, BookId,
-    Calibration, Conventions, DigitalStyle, Execution, InstrumentSpec, Leg, PricedLine, Product,
-    Quantity, Quote, RejectAck, Seat, Side, StrategyKind, StrikeSpec, TouchKind, TwoWay,
+    Calibration, CliquetTerms, Conventions, DigitalStyle, Execution, ForwardStartTerms,
+    InstrumentSpec, Leg, PricedLine, Product, Quantity, QuantoPayoff, QuantoTerms, Quote,
+    RejectAck, Seat, Side, StrategyKind, StrikeSpec, TouchKind, TwoWay,
 };
 
 use celnet_proto::pricing_service_client::PricingServiceClient;
@@ -231,6 +232,7 @@ impl Client {
             greeks,
             resolved_strike: resp.resolved_strike,
             conventions,
+            price_std_error: resp.price_std_error,
         })
     }
 

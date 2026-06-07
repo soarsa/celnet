@@ -111,3 +111,64 @@ describe("TicketWorkspace — wave-1 products in the selector", () => {
     expect(screen.queryByLabelText("observations")).not.toBeInTheDocument();
   });
 });
+
+describe("TicketWorkspace — wave-2 products in the selector", () => {
+  it("offers forward-start / cliquet / quanto alongside the wave-1 products", async () => {
+    await renderTicket();
+    const options = within(structureSelect())
+      .getAllByRole("option")
+      .map((o) => (o as HTMLOptionElement).value);
+    expect(options).toContain("FORWARD_START");
+    expect(options).toContain("CLIQUET");
+    expect(options).toContain("QUANTO");
+    // The pre-existing products are untouched (additive, zero-legacy).
+    expect(options).toContain("ASIAN");
+    expect(options).toContain("VANILLA");
+  });
+
+  it("shows the reset-moneyness and reset-date inputs for a forward start", async () => {
+    await renderTicket();
+    act(() => {
+      fireEvent.change(structureSelect(), { target: { value: "FORWARD_START" } });
+    });
+    expect(screen.getByLabelText("moneyness")).toBeInTheDocument();
+    expect(screen.getByLabelText("reset")).toBeInTheDocument();
+    // No option legs are rendered for a forward start.
+    expect(screen.queryByText(/^LEG 1$/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Forward-start vanilla/)).toBeInTheDocument();
+  });
+
+  it("shows the cliquet schedule + clamp toggles; MC-pairs appears only when clamped", async () => {
+    await renderTicket();
+    act(() => {
+      fireEvent.change(structureSelect(), { target: { value: "CLIQUET" } });
+    });
+    expect(screen.getByLabelText("periods")).toBeInTheDocument();
+    expect(screen.getByLabelText("use local cap")).toBeInTheDocument();
+    expect(screen.getByLabelText("use local floor")).toBeInTheDocument();
+    // A plain ratchet (no clamp) hides the MC controls and labels itself closed-form.
+    expect(screen.queryByLabelText("mc pairs")).not.toBeInTheDocument();
+    expect(screen.getByText(/Plain ratchet/)).toBeInTheDocument();
+    // Enabling the local cap switches to the Monte-Carlo path (MC-pairs + note).
+    act(() => {
+      fireEvent.click(screen.getByLabelText("use local cap"));
+    });
+    expect(screen.getByLabelText("mc pairs")).toBeInTheDocument();
+    expect(screen.getByText(/Clamped cliquet/)).toBeInTheDocument();
+  });
+
+  it("shows the payoff toggle, conversion vol and correlation for a quanto", async () => {
+    await renderTicket();
+    act(() => {
+      fireEvent.change(structureSelect(), { target: { value: "QUANTO" } });
+    });
+    const payoff = screen.getByRole("tablist", { name: "payoff" });
+    expect(within(payoff).getByText("Vanilla")).toBeInTheDocument();
+    expect(within(payoff).getByText("Digital")).toBeInTheDocument();
+    expect(screen.getByLabelText("conversion vol")).toBeInTheDocument();
+    expect(screen.getByLabelText("correlation")).toBeInTheDocument();
+    // The product note describes the quanto-drift adjustment (distinct from the
+    // "Quanto" selector option label, which also contains the word).
+    expect(screen.getByText(/quanto-drift adjustment/)).toBeInTheDocument();
+  });
+});

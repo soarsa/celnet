@@ -18,6 +18,7 @@ import type {
   Leg,
   MarketContext,
   OptionType,
+  QuantoPayoff,
   Quote,
   StrategyKind,
   Tenor,
@@ -30,12 +31,19 @@ import { GreeksStrip } from "../components/GreeksStrip";
 import { ConventionRow } from "../components/ConventionChip";
 import {
   asianInstrument,
+  cliquetInstrument,
+  forwardStartInstrument,
+  isPlainCliquet,
+  quantoInstrument,
   strategyInstrument,
   vanillaInstrument,
   varianceSwapInstrument,
   volatilitySwapInstrument,
   tenorYearsToTenor,
   type AsianTerms,
+  type CliquetTerms,
+  type ForwardStartTerms,
+  type QuantoTerms,
 } from "../data/seed";
 import { forward as forwardRate, strikeFromDelta } from "../data/pricing";
 import { impliedVolForInstrument, sampleSurface } from "../data/surface";
@@ -59,11 +67,21 @@ type Structure =
   | StrategyKind
   | "VARIANCE_SWAP"
   | "VOLATILITY_SWAP"
-  | "ASIAN";
+  | "ASIAN"
+  | "FORWARD_START"
+  | "CLIQUET"
+  | "QUANTO";
 
-/** True for the products that carry no option legs (the swaps + the Asian). */
+/** True for the products that carry no enumerable option legs. */
 function isLegless(s: Structure): boolean {
-  return s === "VARIANCE_SWAP" || s === "VOLATILITY_SWAP" || s === "ASIAN";
+  return (
+    s === "VARIANCE_SWAP" ||
+    s === "VOLATILITY_SWAP" ||
+    s === "ASIAN" ||
+    s === "FORWARD_START" ||
+    s === "CLIQUET" ||
+    s === "QUANTO"
+  );
 }
 
 /** True for the variance/volatility swaps (priced as a fair strike, not a premium). */
@@ -112,6 +130,9 @@ const STRUCTURES: { id: Structure; label: string }[] = [
   { id: "VARIANCE_SWAP", label: "Variance Swap" },
   { id: "VOLATILITY_SWAP", label: "Volatility Swap" },
   { id: "ASIAN", label: "Asian" },
+  { id: "FORWARD_START", label: "Forward Start" },
+  { id: "CLIQUET", label: "Cliquet" },
+  { id: "QUANTO", label: "Quanto" },
 ];
 
 /** The Asian-specific ticket inputs (option type / strike / schedule / method). */
@@ -143,6 +164,103 @@ function asianTerms(a: AsianInputs): AsianTerms {
     method: a.method,
     elapsedAvg: 0,
     elapsedWeight: 0,
+  };
+}
+
+/** The forward-start ticket inputs (option type / reset-moneyness / reset date). */
+interface ForwardStartInputs {
+  optionType: OptionType;
+  /** Strike-reset multiple `m` (`m = 1` is the ATM-forward reset). */
+  moneyness: number;
+  /** Reset (strike-fixing) date `t₁` in years (clamped to `[0, expiry]` at build). */
+  reset: number;
+}
+
+const DEFAULT_FORWARD_START: ForwardStartInputs = {
+  optionType: "CALL",
+  moneyness: 1,
+  reset: 0.25,
+};
+
+/** Build `ForwardStartTerms` from the inputs, clamping reset into `[0, expiry]`. */
+function forwardStartTerms(f: ForwardStartInputs, expiryYears: number): ForwardStartTerms {
+  return {
+    optionType: f.optionType,
+    moneyness: f.moneyness,
+    reset: Math.min(Math.max(f.reset, 0), expiryYears),
+  };
+}
+
+/**
+ * The cliquet ticket inputs. The local cap/floor are presence-tracked via
+ * `useCap`/`useFloor` toggles; any clamp on switches the pricer to Monte-Carlo
+ * (the build surfaces the standard error). `mcPairs`/`mcSeed` tune the clamped MC
+ * and are ignored for a plain (unclamped) ratchet.
+ */
+interface CliquetInputs {
+  optionType: OptionType;
+  moneyness: number;
+  periods: number;
+  useLocalCap: boolean;
+  localCap: number;
+  useLocalFloor: boolean;
+  localFloor: number;
+  mcPairs: number;
+  mcSeed: bigint;
+}
+
+const DEFAULT_CLIQUET: CliquetInputs = {
+  optionType: "CALL",
+  moneyness: 1,
+  periods: 4,
+  useLocalCap: false,
+  localCap: 0.05,
+  useLocalFloor: false,
+  localFloor: 0,
+  mcPairs: 0,
+  mcSeed: 0xc11_c0e7n,
+};
+
+/** Build `CliquetTerms` from the inputs (clamps omitted unless their toggle is on). */
+function cliquetTerms(c: CliquetInputs): CliquetTerms {
+  const terms: CliquetTerms = {
+    optionType: c.optionType,
+    moneyness: c.moneyness,
+    periods: Math.max(1, Math.trunc(c.periods)),
+    mcPairs: Math.max(0, Math.trunc(c.mcPairs)),
+    mcSeed: c.mcSeed,
+  };
+  if (c.useLocalCap) terms.localCap = c.localCap;
+  if (c.useLocalFloor) terms.localFloor = c.localFloor;
+  return terms;
+}
+
+/** The quanto ticket inputs (payoff kind / option type / strike / σ_Z / ρ). */
+interface QuantoInputs {
+  payoff: QuantoPayoff;
+  optionType: OptionType;
+  /** Strike as an absolute level; defaults to ATM-forward when first shown. */
+  strike: number;
+  conversionVol: number;
+  correlation: number;
+}
+
+const DEFAULT_QUANTO: QuantoInputs = {
+  payoff: "VANILLA",
+  optionType: "CALL",
+  strike: 0,
+  conversionVol: 0.1,
+  correlation: 0.3,
+};
+
+/** Build `QuantoTerms` from the inputs (strike falls back to ATM-forward). */
+function quantoTerms(q: QuantoInputs, atmForward: number): QuantoTerms {
+  return {
+    payoff: q.payoff,
+    optionType: q.optionType,
+    strike: q.strike > 0 ? q.strike : atmForward,
+    conversionVol: Math.max(0, q.conversionVol),
+    correlation: Math.min(1, Math.max(-1, q.correlation)),
   };
 }
 
@@ -183,6 +301,12 @@ interface BuildExtras {
   swapStrikeVol: number;
   /** Asian inputs (option type / strike / schedule / method). */
   asian: AsianInputs;
+  /** Forward-start inputs (option type / reset-moneyness / reset date). */
+  forwardStart: ForwardStartInputs;
+  /** Cliquet inputs (option type / moneyness / periods / clamps / MC). */
+  cliquet: CliquetInputs;
+  /** Quanto terms (payoff / option type / strike / σ_Z / ρ), strike ATMF-defaulted. */
+  quanto: QuantoTerms;
 }
 
 function buildInstrument(
@@ -206,6 +330,20 @@ function buildInstrument(
       break;
     case "ASIAN":
       base = asianInstrument(pair, tenorYears, notionalMm, asianTerms(extras.asian));
+      break;
+    case "FORWARD_START":
+      base = forwardStartInstrument(
+        pair,
+        tenorYears,
+        notionalMm,
+        forwardStartTerms(extras.forwardStart, tenorYears),
+      );
+      break;
+    case "CLIQUET":
+      base = cliquetInstrument(pair, tenorYears, notionalMm, cliquetTerms(extras.cliquet));
+      break;
+    case "QUANTO":
+      base = quantoInstrument(pair, tenorYears, notionalMm, extras.quanto);
       break;
     default:
       base = strategyInstrument(pair, tenorYears, structure, notionalMm);
@@ -233,6 +371,12 @@ export function TicketWorkspace(): React.ReactElement {
   // Asian inputs (option type / strike / schedule / method). Strike 0 ⇒ default to
   // the ATM-forward level on first build so the ticket prices a sensible default.
   const [asianInputs, setAsianInputs] = useState<AsianInputs>(DEFAULT_ASIAN);
+  // Wave-2 product inputs: forward-start (reset), cliquet (schedule/clamps/MC),
+  // quanto (payoff/σ_Z/ρ; strike ATMF-defaulted like the Asian).
+  const [forwardStartInputs, setForwardStartInputs] =
+    useState<ForwardStartInputs>(DEFAULT_FORWARD_START);
+  const [cliquetInputs, setCliquetInputs] = useState<CliquetInputs>(DEFAULT_CLIQUET);
+  const [quantoInputs, setQuantoInputs] = useState<QuantoInputs>(DEFAULT_QUANTO);
 
   const today = useMemo(() => todayUtc(), []);
   // Selectable broken-date window: from spot (~2 calendar days) out to ~3 years.
@@ -278,8 +422,11 @@ export function TicketWorkspace(): React.ReactElement {
         ...asianInputs,
         strike: asianInputs.strike > 0 ? asianInputs.strike : atmForward,
       },
+      forwardStart: forwardStartInputs,
+      cliquet: cliquetInputs,
+      quanto: quantoTerms(quantoInputs, atmForward),
     }),
-    [swapStrikeVol, asianInputs, atmForward],
+    [swapStrikeVol, asianInputs, forwardStartInputs, cliquetInputs, quantoInputs, atmForward],
   );
 
   const instrument = buildInstrument(
@@ -546,6 +693,21 @@ export function TicketWorkspace(): React.ReactElement {
               setAsianInputs(next);
               setQuote(null);
             }}
+            forwardStart={forwardStartInputs}
+            onForwardStart={(next) => {
+              setForwardStartInputs(next);
+              setQuote(null);
+            }}
+            cliquet={cliquetInputs}
+            onCliquet={(next) => {
+              setCliquetInputs(next);
+              setQuote(null);
+            }}
+            quanto={quantoInputs}
+            onQuanto={(next) => {
+              setQuantoInputs(next);
+              setQuote(null);
+            }}
           />
         ) : (
           <div className={styles.legs}>
@@ -590,6 +752,15 @@ export function TicketWorkspace(): React.ReactElement {
             <span className={styles.unit}>
               {structure === "ASIAN" ? `% ${app.pairCtx.pair.base} prem (avg-rate)` : `% ${app.pairCtx.pair.base} prem`}
             </span>
+            {quote.priceStdError !== undefined && (
+              <span className={`num ${styles.stdError}`} aria-label="price std error">
+                Monte-Carlo · std error ±{(quote.priceStdError * 100).toFixed(4)} (
+                {quote.greeks.price !== 0
+                  ? `${((quote.priceStdError / Math.abs(quote.greeks.price)) * 100).toFixed(2)}% of PV`
+                  : "—"}
+                )
+              </span>
+            )}
           </div>
         ) : (
           <div className={styles.market}>
@@ -724,8 +895,11 @@ function describeLegs(
     case "varianceSwap":
     case "volatilitySwap":
     case "asianOption":
-      // Vol-strip / average-rate products carry no option legs to enumerate; the
-      // ticket renders their own input block instead of a leg ladder.
+    case "forwardStart":
+    case "cliquet":
+    case "quanto":
+      // Vol-strip / average-rate / reset / converted products carry no enumerable
+      // option legs; the ticket renders their own input block instead of a ladder.
       return [];
   }
 }
@@ -748,16 +922,48 @@ function structureLabel(s: Structure): string {
       return "vol swap";
     case "ASIAN":
       return "Asian";
+    case "FORWARD_START":
+      return "fwd-start";
+    case "CLIQUET":
+      return "cliquet";
+    case "QUANTO":
+      return "quanto";
   }
 }
 
+/** A keyboard-reachable Call/Put toggle reused across the product input blocks. */
+function OptionToggle(props: {
+  value: OptionType;
+  onChange: (next: OptionType) => void;
+}): React.ReactElement {
+  return (
+    <div className={styles.toggleGroup} role="tablist" aria-label="option type">
+      {(["CALL", "PUT"] as OptionType[]).map((ot) => (
+        <button
+          key={ot}
+          role="tab"
+          aria-selected={props.value === ot}
+          className={`${styles.modeTab} ${props.value === ot ? styles.modeActive : ""}`}
+          onClick={() => props.onChange(ot)}
+        >
+          {ot === "CALL" ? "Call" : "Put"}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /**
- * The product-specific input block for the legless volatility products. A
+ * The product-specific input block for the legless products. A
  * variance/volatility swap takes a single strike in VOL terms (0 ⇒ price the
  * fair strike); an Asian takes its option type, strike, averaging schedule
- * (discrete fixings count or continuous) and the analytic method. Every control
- * is keyboard-reachable and resets the live quote on change (the parent clears
- * it) so a stale price is never shown against changed terms.
+ * (discrete fixings count or continuous) and the analytic method; a forward-start
+ * takes its option type, reset-moneyness and reset date; a cliquet takes its
+ * direction, per-period moneyness, period count and optional local cap/floor (any
+ * clamp switches pricing to Monte-Carlo, surfacing a standard error); a quanto
+ * takes its payoff kind, option type, strike, conversion vol and correlation.
+ * Every control is keyboard-reachable and resets the live quote on change (the
+ * parent clears it) so a stale price is never shown against changed terms.
  */
 function ProductInputs(props: {
   structure: Structure;
@@ -767,9 +973,28 @@ function ProductInputs(props: {
   atmForward: number;
   pipDecimals: number;
   onAsian: (next: AsianInputs) => void;
+  forwardStart: ForwardStartInputs;
+  onForwardStart: (next: ForwardStartInputs) => void;
+  cliquet: CliquetInputs;
+  onCliquet: (next: CliquetInputs) => void;
+  quanto: QuantoInputs;
+  onQuanto: (next: QuantoInputs) => void;
 }): React.ReactElement {
-  const { structure, swapStrikeVol, onSwapStrikeVol, asian, atmForward, pipDecimals, onAsian } =
-    props;
+  const {
+    structure,
+    swapStrikeVol,
+    onSwapStrikeVol,
+    asian,
+    atmForward,
+    pipDecimals,
+    onAsian,
+    forwardStart,
+    onForwardStart,
+    cliquet,
+    onCliquet,
+    quanto,
+    onQuanto,
+  } = props;
 
   if (structure === "VARIANCE_SWAP" || structure === "VOLATILITY_SWAP") {
     const isVar = structure === "VARIANCE_SWAP";
@@ -794,6 +1019,247 @@ function ProductInputs(props: {
           {isVar
             ? "Fair variance strike K_var = strike_vol². Leave 0 to price the fair strike (log-contract static replication, server-side)."
             : "Fair volatility strike K_vol (convexity-adjusted). Leave 0 to price the fair strike server-side."}
+        </p>
+      </div>
+    );
+  }
+
+  if (structure === "FORWARD_START") {
+    return (
+      <div className={styles.product}>
+        <div className={styles.productRow}>
+          <span className={styles.productLabel}>Option</span>
+          <OptionToggle
+            value={forwardStart.optionType}
+            onChange={(ot) => onForwardStart({ ...forwardStart, optionType: ot })}
+          />
+          <label className={styles.productField}>
+            <span>Reset m</span>
+            <input
+              className="num"
+              type="number"
+              min={0}
+              step={0.01}
+              value={forwardStart.moneyness}
+              aria-label="moneyness"
+              onChange={(ev) =>
+                onForwardStart({ ...forwardStart, moneyness: Math.max(0, Number(ev.target.value)) })
+              }
+            />
+            <span>×S(t₁)</span>
+          </label>
+          <label className={styles.productField}>
+            <span>Reset t₁</span>
+            <input
+              className="num"
+              type="number"
+              min={0}
+              step={0.05}
+              value={forwardStart.reset}
+              aria-label="reset"
+              onChange={(ev) =>
+                onForwardStart({ ...forwardStart, reset: Math.max(0, Number(ev.target.value)) })
+              }
+            />
+            <span>y</span>
+          </label>
+        </div>
+        <p className={styles.productNote}>
+          Forward-start vanilla: the strike fixes at t₁ to m·S(t₁). Priced by the FX dual-carry
+          closed form V = e^(−r_f·t₁)·S₀·u(m, T−t₁); at t₁→0 it is a plain vanilla struck at m·S₀.
+        </p>
+      </div>
+    );
+  }
+
+  if (structure === "CLIQUET") {
+    const plain = isPlainCliquet(cliquetTerms(cliquet));
+    return (
+      <div className={styles.product}>
+        <div className={styles.productRow}>
+          <span className={styles.productLabel}>Option</span>
+          <OptionToggle
+            value={cliquet.optionType}
+            onChange={(ot) => onCliquet({ ...cliquet, optionType: ot })}
+          />
+          <label className={styles.productField}>
+            <span>Per-period m</span>
+            <input
+              className="num"
+              type="number"
+              min={0}
+              step={0.01}
+              value={cliquet.moneyness}
+              aria-label="moneyness"
+              onChange={(ev) =>
+                onCliquet({ ...cliquet, moneyness: Math.max(0, Number(ev.target.value)) })
+              }
+            />
+          </label>
+          <label className={styles.productField}>
+            <span>Periods</span>
+            <input
+              className="num"
+              type="number"
+              min={1}
+              step={1}
+              value={cliquet.periods}
+              aria-label="periods"
+              onChange={(ev) =>
+                onCliquet({ ...cliquet, periods: Math.max(1, Math.trunc(Number(ev.target.value))) })
+              }
+            />
+          </label>
+        </div>
+        <div className={styles.productRow}>
+          <span className={styles.productLabel}>Local clamp</span>
+          <label className={styles.productField}>
+            <input
+              type="checkbox"
+              checked={cliquet.useLocalCap}
+              aria-label="use local cap"
+              onChange={(ev) => onCliquet({ ...cliquet, useLocalCap: ev.target.checked })}
+            />
+            <span>Cap</span>
+            <input
+              className="num"
+              type="number"
+              min={0}
+              step={0.005}
+              value={cliquet.localCap}
+              disabled={!cliquet.useLocalCap}
+              aria-label="local cap"
+              onChange={(ev) =>
+                onCliquet({ ...cliquet, localCap: Math.max(0, Number(ev.target.value)) })
+              }
+            />
+          </label>
+          <label className={styles.productField}>
+            <input
+              type="checkbox"
+              checked={cliquet.useLocalFloor}
+              aria-label="use local floor"
+              onChange={(ev) => onCliquet({ ...cliquet, useLocalFloor: ev.target.checked })}
+            />
+            <span>Floor</span>
+            <input
+              className="num"
+              type="number"
+              min={0}
+              step={0.005}
+              value={cliquet.localFloor}
+              disabled={!cliquet.useLocalFloor}
+              aria-label="local floor"
+              onChange={(ev) =>
+                onCliquet({ ...cliquet, localFloor: Math.max(0, Number(ev.target.value)) })
+              }
+            />
+          </label>
+        </div>
+        {!plain && (
+          <div className={styles.productRow}>
+            <span className={styles.productLabel}>MC pairs</span>
+            <label className={styles.productField}>
+              <input
+                className="num"
+                type="number"
+                min={0}
+                step={1000}
+                value={cliquet.mcPairs}
+                aria-label="mc pairs"
+                onChange={(ev) =>
+                  onCliquet({ ...cliquet, mcPairs: Math.max(0, Math.trunc(Number(ev.target.value))) })
+                }
+              />
+              <span>{cliquet.mcPairs > 0 ? "pairs" : "default"}</span>
+            </label>
+          </div>
+        )}
+        <p className={styles.productNote}>
+          {plain
+            ? "Plain ratchet: priced in closed form as the exact sum of forward-start legs (no Monte-Carlo error)."
+            : "Clamped cliquet: a local cap/floor has no closed form, so it is priced by antithetic Monte-Carlo and reports a standard error alongside the price."}
+        </p>
+      </div>
+    );
+  }
+
+  if (structure === "QUANTO") {
+    return (
+      <div className={styles.product}>
+        <div className={styles.productRow}>
+          <span className={styles.productLabel}>Payoff</span>
+          <div className={styles.toggleGroup} role="tablist" aria-label="payoff">
+            {(["VANILLA", "DIGITAL"] as QuantoPayoff[]).map((p) => (
+              <button
+                key={p}
+                role="tab"
+                aria-selected={quanto.payoff === p}
+                className={`${styles.modeTab} ${quanto.payoff === p ? styles.modeActive : ""}`}
+                onClick={() => onQuanto({ ...quanto, payoff: p })}
+              >
+                {p === "VANILLA" ? "Vanilla" : "Digital"}
+              </button>
+            ))}
+          </div>
+          <OptionToggle
+            value={quanto.optionType}
+            onChange={(ot) => onQuanto({ ...quanto, optionType: ot })}
+          />
+        </div>
+        <div className={styles.productRow}>
+          <label className={styles.productField}>
+            <span>Strike</span>
+            <input
+              className="num"
+              type="number"
+              min={0}
+              step={Math.pow(10, -pipDecimals)}
+              value={quanto.strike}
+              aria-label="strike"
+              placeholder={atmForward.toFixed(pipDecimals)}
+              onChange={(ev) => onQuanto({ ...quanto, strike: Math.max(0, Number(ev.target.value)) })}
+            />
+            <span>{quanto.strike > 0 ? "" : `ATMF ${fmtRate(atmForward, pipDecimals)}`}</span>
+          </label>
+          <label className={styles.productField}>
+            <span>Conv vol σ_Z</span>
+            <input
+              className="num"
+              type="number"
+              min={0}
+              step={0.005}
+              value={quanto.conversionVol}
+              aria-label="conversion vol"
+              onChange={(ev) =>
+                onQuanto({ ...quanto, conversionVol: Math.max(0, Number(ev.target.value)) })
+              }
+            />
+            <span>{fmtVol(quanto.conversionVol)}</span>
+          </label>
+          <label className={styles.productField}>
+            <span>Corr ρ</span>
+            <input
+              className="num"
+              type="number"
+              min={-1}
+              max={1}
+              step={0.05}
+              value={quanto.correlation}
+              aria-label="correlation"
+              onChange={(ev) =>
+                onQuanto({
+                  ...quanto,
+                  correlation: Math.min(1, Math.max(-1, Number(ev.target.value))),
+                })
+              }
+            />
+          </label>
+        </div>
+        <p className={styles.productNote}>
+          Quanto {quanto.payoff === "VANILLA" ? "vanilla" : "cash-or-nothing digital"}: the payoff is
+          settlement-currency converted with the quanto-drift adjustment −ρ·σ_S·σ_Z; at ρ=0 it
+          collapses to the plain {quanto.payoff === "VANILLA" ? "vanilla" : "digital"}.
         </p>
       </div>
     );

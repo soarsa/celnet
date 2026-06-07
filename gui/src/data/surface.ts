@@ -260,6 +260,9 @@ function legsOf(instrument: Instrument): { strikeSpec: StrikeOrDelta; isCall: bo
     case "varianceSwap":
     case "volatilitySwap":
     case "asianOption":
+    case "forwardStart":
+    case "cliquet":
+    case "quanto":
       return [];
   }
 }

@@ -138,6 +138,7 @@ impl PricingService for PricingEdge {
             conventions: Some(wire_conv),
             correlation_id: req.correlation_id,
             surface_version: echo_version,
+            price_std_error: priced.std_error,
         }))
     }
 }

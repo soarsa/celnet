@@ -19,12 +19,14 @@ import type {
   AsianMethod,
   AveragingStyle,
   CcyPair,
+  Cliquet,
   Conventions,
   Greeks,
   Instrument,
   MarketObservable,
   OptionType,
   Product,
+  QuantoPayoff,
   Side,
   SmileModel,
   StrikeOrDelta,
@@ -616,6 +618,231 @@ export function shapeAsianOption(args: AsianArgs): Instrument {
 }
 
 // ---------------------------------------------------------------------------
+// forward-start / cliquet / quanto shaping (structured products)
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse a quanto-payoff selector. Accepts `VANILLA`/`V`/`OPT` (the standard
+ * call/put intrinsic) or `DIGITAL`/`DIG`/`D` (a fixed cash-or-nothing payoff),
+ * case-insensitive. Empty/absent ⇒ `VANILLA` (the proto3 zero value).
+ */
+export function parseQuantoPayoff(raw: string | undefined): QuantoPayoff {
+  const s = (raw ?? "").trim().toUpperCase();
+  switch (s) {
+    case "":
+    case "VANILLA":
+    case "V":
+    case "OPT":
+      return "VANILLA";
+    case "DIGITAL":
+    case "DIG":
+    case "D":
+      return "DIGITAL";
+    default:
+      throw new ShapingError(
+        `invalid quanto payoff \`${raw}\` (expected VANILLA or DIGITAL)`,
+      );
+  }
+}
+
+/** Validate a strictly-positive proportional strike multiplier (moneyness). */
+function shapeMoneyness(raw: number): number {
+  if (!Number.isFinite(raw) || raw <= 0) {
+    throw new ShapingError(`invalid moneyness \`${raw}\` (proportional strike > 0, e.g. 1.0)`);
+  }
+  return raw;
+}
+
+/** The fully-parsed inputs the CELNET.FORWARDSTART function shapes into a request. */
+export interface ForwardStartArgs {
+  readonly pair: string;
+  readonly tenor: string;
+  readonly callPut: string;
+  readonly moneyness: number;
+  /** The reset (strike-fixing) date as a year fraction `∈ [0, expiryYears]`. */
+  readonly reset: number;
+  readonly notional: number;
+}
+
+/**
+ * Shape a forward-start vanilla instrument from the cell arguments. The strike is
+ * proportional (`moneyness × S(reset)`) — no delta-quoted strike applies — and the
+ * reset `t₁` must lie in `[0, expiryYears]` (the contract's domain). `side` is
+ * TWO_WAY (the cell reads a two-way market); the notional is in the base ccy.
+ */
+export function shapeForwardStart(args: ForwardStartArgs): Instrument {
+  const { pair, tenor, expiryYears } = shapeSwapBase(args);
+  const moneyness = shapeMoneyness(args.moneyness);
+  const reset = args.reset;
+  if (!Number.isFinite(reset) || reset < 0 || reset > expiryYears) {
+    throw new ShapingError(
+      `reset \`${reset}\` out of range (expected 0 ≤ t₁ ≤ expiry ${expiryYears})`,
+    );
+  }
+  return {
+    pair,
+    tenor,
+    expiryYears,
+    quantity: { notional: args.notional, baseCcy: true },
+    side: "TWO_WAY" as Side,
+    product: {
+      kind: "forwardStart",
+      forwardStart: { optionType: parseOptionType(args.callPut), moneyness, reset },
+    },
+  };
+}
+
+/** The fully-parsed inputs the CELNET.CLIQUET function shapes into a request. */
+export interface CliquetArgs {
+  readonly pair: string;
+  readonly tenor: string;
+  readonly callPut: string;
+  readonly moneyness: number;
+  readonly periods: number;
+  readonly notional: number;
+  readonly localFloor?: number | undefined;
+  readonly localCap?: number | undefined;
+  readonly globalFloor?: number | undefined;
+  readonly globalCap?: number | undefined;
+  readonly mcPairs?: number | undefined;
+  readonly mcSeed?: number | undefined;
+}
+
+/** Validate an optional presence-tracked clamp (floor/cap); absent ⇒ undefined. */
+function shapeClamp(raw: number | undefined, what: string): number | undefined {
+  if (raw === undefined) return undefined;
+  if (!Number.isFinite(raw)) {
+    throw new ShapingError(`invalid ${what} \`${raw}\` (must be a finite number)`);
+  }
+  return raw;
+}
+
+/**
+ * Shape a cliquet (ratchet) instrument from the cell arguments. A *plain* ratchet
+ * (no local/global floor or cap supplied) is the exact sum of forward-start legs
+ * (closed form); supplying any clamp makes it a *clamped* cliquet priced by Monte
+ * Carlo (its premium carries a standard error, surfaced honestly in the spill).
+ * The four clamps are presence-tracked — an omitted clamp is unconstrained on that
+ * side, never sent as `0`. A floor strictly above its cap is rejected. The
+ * `mcPairs`/`mcSeed` knobs tune the clamped MC (`mcPairs 0` ⇒ the server default);
+ * they are ignored by a plain ratchet.
+ */
+export function shapeCliquet(args: CliquetArgs): Instrument {
+  const { pair, tenor, expiryYears } = shapeSwapBase(args);
+  const moneyness = shapeMoneyness(args.moneyness);
+  const periods = args.periods;
+  if (!Number.isFinite(periods) || !Number.isInteger(periods) || periods < 1) {
+    throw new ShapingError(`cliquet periods must be an integer ≥ 1; got \`${args.periods}\``);
+  }
+  const localFloor = shapeClamp(args.localFloor, "local floor");
+  const localCap = shapeClamp(args.localCap, "local cap");
+  const globalFloor = shapeClamp(args.globalFloor, "global floor");
+  const globalCap = shapeClamp(args.globalCap, "global cap");
+  if (localFloor !== undefined && localCap !== undefined && localFloor > localCap) {
+    throw new ShapingError(`local floor \`${localFloor}\` exceeds local cap \`${localCap}\``);
+  }
+  if (globalFloor !== undefined && globalCap !== undefined && globalFloor > globalCap) {
+    throw new ShapingError(`global floor \`${globalFloor}\` exceeds global cap \`${globalCap}\``);
+  }
+  const mcPairs = args.mcPairs ?? 0;
+  if (!Number.isFinite(mcPairs) || !Number.isInteger(mcPairs) || mcPairs < 0) {
+    throw new ShapingError(`mc pairs must be a non-negative integer; got \`${args.mcPairs}\``);
+  }
+  const mcSeedRaw = args.mcSeed ?? 0;
+  if (!Number.isFinite(mcSeedRaw) || !Number.isInteger(mcSeedRaw) || mcSeedRaw < 0) {
+    throw new ShapingError(`mc seed must be a non-negative integer; got \`${args.mcSeed}\``);
+  }
+  const cliquet: Cliquet = {
+    optionType: parseOptionType(args.callPut),
+    moneyness,
+    periods,
+    mcPairs,
+    mcSeed: BigInt(mcSeedRaw),
+  };
+  // Presence-tracked: attach a clamp only when supplied (mirrors the proto
+  // `optional double` / the server's `opt_f64`), so the absent side is genuinely
+  // unconstrained rather than floored/capped at zero.
+  if (localFloor !== undefined) cliquet.localFloor = localFloor;
+  if (localCap !== undefined) cliquet.localCap = localCap;
+  if (globalFloor !== undefined) cliquet.globalFloor = globalFloor;
+  if (globalCap !== undefined) cliquet.globalCap = globalCap;
+  return {
+    pair,
+    tenor,
+    expiryYears,
+    quantity: { notional: args.notional, baseCcy: true },
+    side: "TWO_WAY" as Side,
+    product: { kind: "cliquet", cliquet },
+  };
+}
+
+/** True iff a cliquet carries any clamp ⇒ it is priced by Monte Carlo (carries a std-error). */
+export function cliquetIsMonteCarlo(c: Cliquet): boolean {
+  return (
+    c.localFloor !== undefined ||
+    c.localCap !== undefined ||
+    c.globalFloor !== undefined ||
+    c.globalCap !== undefined
+  );
+}
+
+/** The fully-parsed inputs the CELNET.QUANTO function shapes into a request. */
+export interface QuantoArgs {
+  readonly pair: string;
+  readonly tenor: string;
+  readonly callPut: string;
+  readonly strike: string | number;
+  readonly notional: number;
+  readonly conversionVol: number;
+  readonly correlation: number;
+  readonly payoff?: string | undefined;
+}
+
+/**
+ * Shape a quanto-option instrument from the cell arguments. The strike must be an
+ * absolute level (a quanto is struck in the underlying's quote terms, not a delta).
+ * The conversion vol is the settlement-FX volatility (`≥ 0`) and the correlation
+ * is the underlying↔settlement-FX correlation `∈ [-1, 1]` driving the quanto drift
+ * adjustment. `payoff` selects VANILLA (default) or DIGITAL.
+ */
+export function shapeQuanto(args: QuantoArgs): Instrument {
+  const { pair, tenor, expiryYears } = shapeSwapBase(args);
+  const strike = parseStrikeOrDelta(args.strike);
+  if (strike.kind !== "strike") {
+    throw new ShapingError(
+      `quanto strike must be an absolute level (e.g. 1.10), not a delta \`${args.strike}\``,
+    );
+  }
+  const conversionVol = args.conversionVol;
+  if (!Number.isFinite(conversionVol) || conversionVol < 0 || conversionVol >= 5) {
+    throw new ShapingError(
+      `conversion vol \`${conversionVol}\` out of range (absolute vol ≥ 0, e.g. 0.09)`,
+    );
+  }
+  const correlation = args.correlation;
+  if (!Number.isFinite(correlation) || correlation < -1 || correlation > 1) {
+    throw new ShapingError(`correlation \`${correlation}\` out of range (expected -1 ≤ ρ ≤ 1)`);
+  }
+  return {
+    pair,
+    tenor,
+    expiryYears,
+    quantity: { notional: args.notional, baseCcy: true },
+    side: "TWO_WAY" as Side,
+    product: {
+      kind: "quanto",
+      quanto: {
+        payoff: parseQuantoPayoff(args.payoff),
+        optionType: parseOptionType(args.callPut),
+        strike: strike.strike,
+        conversionVol,
+        correlation,
+      },
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // dynamic-array formatting (spill geometries)
 // ---------------------------------------------------------------------------
 
@@ -823,6 +1050,84 @@ export interface AsianResult {
  * Greek set (unlike the swaps, whose headline is a fair strike).
  */
 export function formatAsianSpill(r: AsianResult): SpillMatrix {
+  const rows: SpillMatrix = [["premium", r.premium]];
+  for (const g of GREEK_ROWS) rows.push([g.label, r.greeks[g.key]]);
+  rows.push([conventionFooter(r.conventions, r.surfaceVersion, r.epochNanos)]);
+  return rows;
+}
+
+/** The decoded fields a CELNET.FORWARDSTART spill renders (discounted PV + Greeks). */
+export interface ForwardStartResult {
+  /** The discounted forward-start premium (the server's `greeks.price`). */
+  readonly premium: number;
+  readonly greeks: Greeks;
+  readonly conventions: Conventions;
+  readonly surfaceVersion: bigint | undefined;
+  readonly epochNanos: bigint;
+}
+
+/**
+ * Format CELNET.FORWARDSTART as a labelled spill: `["premium", PV]`, then the 13
+ * risk Greeks the server returns (the same set/order as CELNET.GREEKS), then a
+ * convention footer. The forward-start is a closed-form (dual-carry strike-reset)
+ * price — exact, so no standard-error row.
+ */
+export function formatForwardStartSpill(r: ForwardStartResult): SpillMatrix {
+  const rows: SpillMatrix = [["premium", r.premium]];
+  for (const g of GREEK_ROWS) rows.push([g.label, r.greeks[g.key]]);
+  rows.push([conventionFooter(r.conventions, r.surfaceVersion, r.epochNanos)]);
+  return rows;
+}
+
+/** The decoded fields a CELNET.CLIQUET spill renders (discounted PV + optional MC stderr + Greeks). */
+export interface CliquetResult {
+  /** The discounted cliquet premium (the server's `greeks.price`). */
+  readonly premium: number;
+  /**
+   * The Monte-Carlo standard error of the premium (the server's `price_std_error`),
+   * present ONLY for a clamped cliquet (MC-priced); `undefined` for a plain ratchet
+   * (exact closed-form sum of legs). Surfaced honestly so a clamped premium is never
+   * mistaken for closed-form precision.
+   */
+  readonly stdError: number | undefined;
+  readonly greeks: Greeks;
+  readonly conventions: Conventions;
+  readonly surfaceVersion: bigint | undefined;
+  readonly epochNanos: bigint;
+}
+
+/**
+ * Format CELNET.CLIQUET as a labelled spill: `["premium", PV]`, then — ONLY when
+ * the server returned a Monte-Carlo standard error (a clamped cliquet) — a
+ * `["std_error", σ̄]` row, then the 13 risk Greeks, then a convention footer. A
+ * plain ratchet (closed-form, exact) omits the std-error row entirely, so the
+ * geometry is honest about whether the headline carries MC noise.
+ */
+export function formatCliquetSpill(r: CliquetResult): SpillMatrix {
+  const rows: SpillMatrix = [["premium", r.premium]];
+  if (r.stdError !== undefined) rows.push(["std_error", r.stdError]);
+  for (const g of GREEK_ROWS) rows.push([g.label, r.greeks[g.key]]);
+  rows.push([conventionFooter(r.conventions, r.surfaceVersion, r.epochNanos)]);
+  return rows;
+}
+
+/** The decoded fields a CELNET.QUANTO spill renders (discounted PV + Greeks). */
+export interface QuantoResult {
+  /** The discounted quanto-option premium (the server's `greeks.price`). */
+  readonly premium: number;
+  readonly greeks: Greeks;
+  readonly conventions: Conventions;
+  readonly surfaceVersion: bigint | undefined;
+  readonly epochNanos: bigint;
+}
+
+/**
+ * Format CELNET.QUANTO as a labelled spill: `["premium", PV]`, then the 13 risk
+ * Greeks the server returns (the same set/order as CELNET.GREEKS), then a
+ * convention footer. The quanto is a closed-form (quanto-adjusted) price — exact,
+ * so no standard-error row.
+ */
+export function formatQuantoSpill(r: QuantoResult): SpillMatrix {
   const rows: SpillMatrix = [["premium", r.premium]];
   for (const g of GREEK_ROWS) rows.push([g.label, r.greeks[g.key]]);
   rows.push([conventionFooter(r.conventions, r.surfaceVersion, r.epochNanos)]);
@@ -1108,6 +1413,36 @@ function canonicalProduct(p: Product): unknown {
         m: p.asianOption.method,
         ea: p.asianOption.elapsedAvg,
         ew: p.asianOption.elapsedWeight,
+      };
+    case "forwardStart":
+      return {
+        k: "fwds",
+        ot: p.forwardStart.optionType,
+        m: p.forwardStart.moneyness,
+        r: p.forwardStart.reset,
+      };
+    case "cliquet":
+      return {
+        k: "clq",
+        ot: p.cliquet.optionType,
+        m: p.cliquet.moneyness,
+        np: p.cliquet.periods,
+        lf: p.cliquet.localFloor ?? null,
+        lc: p.cliquet.localCap ?? null,
+        gf: p.cliquet.globalFloor ?? null,
+        gc: p.cliquet.globalCap ?? null,
+        mcp: p.cliquet.mcPairs,
+        // The MC seed is a bigint; stringify so the coalescing key is JSON-serialisable.
+        mcs: p.cliquet.mcSeed.toString(),
+      };
+    case "quanto":
+      return {
+        k: "qto",
+        py: p.quanto.payoff,
+        ot: p.quanto.optionType,
+        strike: p.quanto.strike,
+        cv: p.quanto.conversionVol,
+        rho: p.quanto.correlation,
       };
   }
 }

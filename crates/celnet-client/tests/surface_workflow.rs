@@ -337,3 +337,265 @@ async fn wave1_swaps_and_asian_price_through_sdk() {
     .await
     .expect("test must not hang");
 }
+
+/// Wave-2 products through the SDK: a forward-start vanilla, a plain cliquet, a
+/// clamped (capped) cliquet that carries an honest standard error, and a quanto
+/// vanilla/digital — each priced end-to-end via `Client::price` and equal to the
+/// `celnet-exotics` closed forms / MC (the independent oracle) at the live
+/// market. The api-first parity proof for the W2 wire products.
+#[tokio::test]
+async fn wave2_forward_start_cliquet_quanto_price_through_sdk() {
+    use celnet_client::{CliquetTerms, ForwardStartTerms, QuantoPayoff, QuantoTerms};
+    use celnet_exotics::{
+        Cliquet, CliquetMcConfig, CliquetSchedule, ForwardStart, QuantoParams,
+        cliquet_price_capped_mc, cliquet_price_plain, forward_start_price, quanto_digital_price,
+        quanto_vanilla_price,
+    };
+
+    tokio::time::timeout(TEST_DEADLINE, async {
+        let (edge, client) = start_edge_and_client().await;
+        let market = live_market();
+        let inputs = VanillaInputs::new(
+            market.spot,
+            market.spot,
+            market.vol,
+            1.0,
+            market.r_dom,
+            market.r_for,
+        );
+
+        // Forward-start vanilla (reset at 3m, ATM-forward reset).
+        let fs_spec = InstrumentSpec::forward_start(
+            eurusd(),
+            celnet_types::Tenor::Years(1),
+            1.0,
+            Quantity::base(1_000_000.0),
+            Side::Buy,
+            ForwardStartTerms::new(OptionType::Call, 1.0, 0.25),
+        );
+        let fs_priced =
+            tokio::time::timeout(STEP_DEADLINE, client.price(&fs_spec, market, conventions()))
+                .await
+                .expect("forward-start price returns")
+                .expect("forward-start price succeeds");
+        let fs_oracle = forward_start_price(
+            &inputs,
+            ForwardStart {
+                option: OptionType::Call,
+                moneyness: 1.0,
+                reset: 0.25,
+                expiry: 1.0,
+            },
+        );
+        assert!(
+            is_close(fs_priced.greeks.price, fs_oracle, 1e-9, 1e-12),
+            "SDK forward-start {} != oracle {}",
+            fs_priced.greeks.price,
+            fs_oracle
+        );
+        assert!(fs_priced.price_std_error.is_none());
+
+        // Plain (unclamped) cliquet == Σ forward-start legs (closed form).
+        let periods = 4u32;
+        let plain_spec = InstrumentSpec::cliquet(
+            eurusd(),
+            celnet_types::Tenor::Years(1),
+            1.0,
+            Quantity::base(1_000_000.0),
+            Side::Buy,
+            CliquetTerms::plain(OptionType::Call, 1.0, periods),
+        );
+        let plain_priced = tokio::time::timeout(
+            STEP_DEADLINE,
+            client.price(&plain_spec, market, conventions()),
+        )
+        .await
+        .expect("plain cliquet price returns")
+        .expect("plain cliquet price succeeds");
+        let plain_oracle = cliquet_price_plain(
+            &inputs,
+            &Cliquet {
+                option: OptionType::Call,
+                moneyness: 1.0,
+                schedule: CliquetSchedule::equal(periods as usize, 1.0),
+                local_floor: None,
+                local_cap: None,
+                global_floor: None,
+                global_cap: None,
+            },
+        );
+        assert!(
+            is_close(plain_priced.greeks.price, plain_oracle, 1e-10, 1e-12),
+            "SDK plain cliquet {} != oracle {}",
+            plain_priced.greeks.price,
+            plain_oracle
+        );
+        assert!(plain_priced.price_std_error.is_none());
+
+        // Capped cliquet: MC price == the celnet-exotics MC with the SAME seed,
+        // and the SDK surfaces the standard error honestly.
+        let cap = 0.03;
+        let pairs = 20_000u32;
+        let seed = 0xC0FFEE_u64;
+        let capped_spec = InstrumentSpec::cliquet(
+            eurusd(),
+            celnet_types::Tenor::Years(1),
+            1.0,
+            Quantity::base(1_000_000.0),
+            Side::Buy,
+            CliquetTerms::plain(OptionType::Call, 1.0, periods)
+                .local(Some(0.0), Some(cap))
+                .monte_carlo(pairs, seed),
+        );
+        let capped_priced = tokio::time::timeout(
+            STEP_DEADLINE,
+            client.price(&capped_spec, market, conventions()),
+        )
+        .await
+        .expect("capped cliquet price returns")
+        .expect("capped cliquet price succeeds");
+        let capped_oracle = cliquet_price_capped_mc(
+            &inputs,
+            &Cliquet {
+                option: OptionType::Call,
+                moneyness: 1.0,
+                schedule: CliquetSchedule::equal(periods as usize, 1.0),
+                local_floor: Some(0.0),
+                local_cap: Some(cap),
+                global_floor: None,
+                global_cap: None,
+            },
+            CliquetMcConfig {
+                pairs: pairs as usize,
+                seed,
+            },
+        );
+        assert!(
+            is_close(
+                capped_priced.greeks.price,
+                capped_oracle.price,
+                1e-12,
+                1e-12
+            ),
+            "SDK capped cliquet {} != oracle MC {}",
+            capped_priced.greeks.price,
+            capped_oracle.price
+        );
+        let stderr = capped_priced
+            .price_std_error
+            .expect("clamped cliquet must surface std-error through the SDK");
+        assert!(
+            is_close(stderr, capped_oracle.std_error, 1e-12, 1e-12) && stderr > 0.0,
+            "SDK std-error {} != oracle {}",
+            stderr,
+            capped_oracle.std_error
+        );
+
+        // MC-honesty across the QUOTE path (the path the GUI live-WS and Excel use,
+        // not just the one-shot price): a clamped-cliquet `Quote` MUST carry
+        // `price_std_error`, and a closed-form product's quote MUST NOT. This gates
+        // the wire fix that the Quote message + WS quote codec carry the std-error.
+        let capped_quote = tokio::time::timeout(
+            STEP_DEADLINE,
+            client
+                .request_quote(capped_spec.clone(), conventions())
+                .request(),
+        )
+        .await
+        .expect("capped cliquet quote returns")
+        .expect("capped cliquet quote succeeds");
+        let quote_stderr = capped_quote
+            .price_std_error
+            .expect("clamped cliquet QUOTE must surface std-error (WS/SDK quote path)");
+        assert!(quote_stderr > 0.0, "quote std-error must be positive");
+        let plain_quote = tokio::time::timeout(
+            STEP_DEADLINE,
+            client
+                .request_quote(plain_spec.clone(), conventions())
+                .request(),
+        )
+        .await
+        .expect("plain cliquet quote returns")
+        .expect("plain cliquet quote succeeds");
+        assert!(
+            plain_quote.price_std_error.is_none(),
+            "a closed-form (plain cliquet) quote must NOT carry a std-error"
+        );
+
+        // Quanto vanilla and digital.
+        let quanto_strike = 1.10;
+        let qv_spec = InstrumentSpec::quanto(
+            eurusd(),
+            celnet_types::Tenor::Years(1),
+            1.0,
+            Quantity::base(1_000_000.0),
+            Side::Buy,
+            QuantoTerms::new(
+                QuantoPayoff::Vanilla,
+                OptionType::Call,
+                quanto_strike,
+                0.09,
+                -0.3,
+            ),
+        );
+        let qv_priced =
+            tokio::time::timeout(STEP_DEADLINE, client.price(&qv_spec, market, conventions()))
+                .await
+                .expect("quanto vanilla price returns")
+                .expect("quanto vanilla price succeeds");
+        let qv_oracle = quanto_vanilla_price(
+            OptionType::Call,
+            &VanillaInputs::new(
+                market.spot,
+                quanto_strike,
+                market.vol,
+                1.0,
+                market.r_dom,
+                market.r_for,
+            ),
+            QuantoParams::new(0.09, -0.3),
+        );
+        assert!(
+            is_close(qv_priced.greeks.price, qv_oracle, 1e-9, 1e-12),
+            "SDK quanto vanilla {} != oracle {}",
+            qv_priced.greeks.price,
+            qv_oracle
+        );
+
+        let qd_spec = InstrumentSpec::quanto(
+            eurusd(),
+            celnet_types::Tenor::Years(1),
+            1.0,
+            Quantity::base(1_000_000.0),
+            Side::Buy,
+            QuantoTerms::new(QuantoPayoff::Digital, OptionType::Put, 1.12, 0.07, 0.4),
+        );
+        let qd_priced =
+            tokio::time::timeout(STEP_DEADLINE, client.price(&qd_spec, market, conventions()))
+                .await
+                .expect("quanto digital price returns")
+                .expect("quanto digital price succeeds");
+        let qd_oracle = quanto_digital_price(
+            OptionType::Put,
+            &VanillaInputs::new(
+                market.spot,
+                1.12,
+                market.vol,
+                1.0,
+                market.r_dom,
+                market.r_for,
+            ),
+            QuantoParams::new(0.07, 0.4),
+        );
+        assert!(
+            is_close(qd_priced.greeks.price, qd_oracle, 1e-9, 1e-12),
+            "SDK quanto digital {} != oracle {}",
+            qd_priced.greeks.price,
+            qd_oracle
+        );
+
+        edge.shutdown(Duration::from_secs(5)).await;
+    })
+    .await
+    .expect("test must not hang");
+}

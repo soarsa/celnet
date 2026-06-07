@@ -217,6 +217,7 @@ mod tests {
             conventions: Some(sample_conventions()),
             correlation_id: Some(0x0102_0304),
             surface_version: Some(11),
+            price_std_error: Some(2.5e-4),
         };
         round_trip(&resp);
     }
@@ -383,6 +384,62 @@ mod tests {
     }
 
     #[test]
+    fn round_trip_forward_start_cliquet_quanto_instruments() {
+        let forward_start = Instrument {
+            pair: Some(sample_pair()),
+            tenor: Some(sample_tenor()),
+            expiry_years: 1.0,
+            quantity: Some(sample_quantity()),
+            side: Side::Buy as i32,
+            solve: None,
+            product: Some(instrument::Product::ForwardStart(ForwardStart {
+                option_type: OptionType::Call as i32,
+                moneyness: 1.0,
+                reset: 0.25,
+            })),
+        };
+        round_trip(&forward_start);
+
+        let cliquet = Instrument {
+            pair: Some(sample_pair()),
+            tenor: Some(sample_tenor()),
+            expiry_years: 1.0,
+            quantity: Some(sample_quantity()),
+            side: Side::Buy as i32,
+            solve: None,
+            product: Some(instrument::Product::Cliquet(Cliquet {
+                option_type: OptionType::Call as i32,
+                moneyness: 1.0,
+                periods: 4,
+                local_floor: Some(0.0),
+                local_cap: Some(0.05),
+                global_floor: None,
+                global_cap: None,
+                mc_pairs: 4096,
+                mc_seed: 0xC119_0E70,
+            })),
+        };
+        round_trip(&cliquet);
+
+        let quanto = Instrument {
+            pair: Some(sample_pair()),
+            tenor: Some(sample_tenor()),
+            expiry_years: 0.75,
+            quantity: Some(sample_quantity()),
+            side: Side::Sell as i32,
+            solve: None,
+            product: Some(instrument::Product::Quanto(Quanto {
+                payoff: QuantoPayoff::Vanilla as i32,
+                option_type: OptionType::Put as i32,
+                strike: 1.12,
+                conversion_vol: 0.09,
+                correlation: -0.3,
+            })),
+        };
+        round_trip(&quanto);
+    }
+
+    #[test]
     fn round_trip_rfq_lifecycle() {
         let request = QuoteRequest {
             idempotency_key: "5f0c1b2e-2a4d-4f8a-9c1e-7b6a5d4c3b2a".to_owned(),
@@ -421,6 +478,7 @@ mod tests {
             correlation_id: Some(0xCAFE_F00D),
             surface_version: Some(42),
             attribution: Some(sample_attribution()),
+            price_std_error: Some(1.7e-4),
         };
         round_trip(&quote);
 

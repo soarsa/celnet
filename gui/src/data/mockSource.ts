@@ -473,16 +473,21 @@ export class MockTransport implements CelnetTransport {
     market: MarketContext,
     conventions: Conventions,
   ): Promise<PriceResult> {
-    const { greeks, resolvedStrike } = priceInstrument(instrument, market);
+    const { greeks, resolvedStrike, priceStdError } = priceInstrument(instrument, market);
     const midPct = Math.abs(greeks.price / market.spot) * 100;
     const spread = Math.max(0.004, Math.abs(greeks.vega) * 0.06 + instrument.expiryYears * 0.02);
-    return {
+    const result: PriceResult = {
       greeks,
       resolvedStrike,
       conventions,
       twoWay: twoWayAround(midPct, spread),
       surfaceVersion: this.surfaceVersion,
     };
+    // Surface the MC standard error for an MC-priced product (a clamped cliquet)
+    // exactly as the live server does (`PriceResponse.price_std_error`); a
+    // closed-form product carries no stderr.
+    if (priceStdError !== undefined) result.priceStdError = priceStdError;
+    return result;
   }
 
   async requestQuote(
@@ -506,6 +511,9 @@ export class MockTransport implements CelnetTransport {
       validUntilNanos: now + 8_000n * NS_PER_MS, // 8s RFQ last-look
       surfaceVersion: this.surfaceVersion,
     };
+    // Carry the MC standard error onto the quote for an MC-priced product (a
+    // clamped cliquet); a closed-form product leaves it undefined.
+    if (result.priceStdError !== undefined) quote.priceStdError = result.priceStdError;
     this.quotes.set(quote.quoteId, { quote, instrument });
     this.idempotency.set(idempotencyKey, quote);
     return quote;
@@ -843,8 +851,12 @@ function freezeStrikes(instrument: Instrument, m: MarketContext): Instrument {
     case "varianceSwap":
     case "volatilitySwap":
     case "asianOption":
-      // The vol-strip swaps carry no strike to freeze; the Asian's fixed strike is
-      // already absolute (not a delta). Scenario shocks move them through the
+    case "forwardStart":
+    case "cliquet":
+    case "quanto":
+      // These products carry no delta-specified strike to freeze (the swaps have
+      // none; the Asian/quanto strikes are absolute; the forward-start/cliquet
+      // strikes reset off the spot path). Scenario shocks move them through the
       // market alone, so return the instrument unchanged.
       return instrument;
   }

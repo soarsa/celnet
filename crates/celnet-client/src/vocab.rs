@@ -547,6 +547,153 @@ impl AsianTerms {
     }
 }
 
+/// The single payoff a quanto wraps: a plain vanilla or a cash-or-nothing
+/// digital that pays a fixed unit of the settlement currency.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuantoPayoff {
+    /// A quanto vanilla (call/put on the underlying, settlement-currency cash).
+    Vanilla,
+    /// A quanto cash-or-nothing digital (pays one settlement-currency unit ITM).
+    Digital,
+}
+
+/// The payoff terms of a forward-start vanilla: the option direction, the
+/// strike-reset multiple, and the reset date. Built via [`ForwardStartTerms::new`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ForwardStartTerms {
+    /// Call or put.
+    pub option: OptionType,
+    /// Strike-reset multiple `m` (`m = 1` is the ATM-forward reset).
+    pub moneyness: f64,
+    /// Reset (strike-fixing) date `t₁` in years, with `0 ≤ reset ≤ expiry`.
+    pub reset: f64,
+}
+
+impl ForwardStartTerms {
+    /// A forward-start vanilla resetting at `reset` to `moneyness·S(reset)`.
+    #[must_use]
+    pub fn new(option: OptionType, moneyness: f64, reset: f64) -> Self {
+        Self {
+            option,
+            moneyness,
+            reset,
+        }
+    }
+}
+
+/// The terms of a cliquet (ratchet) strip: the per-period option direction and
+/// reset multiple, the period count, optional local/global floor/cap clamps, and
+/// the Monte-Carlo knobs used only when a clamp is present (a plain ratchet is
+/// priced exactly in closed form, so the MC knobs are ignored). Built fluently
+/// via [`CliquetTerms::plain`] then optionally [`CliquetTerms::local`] /
+/// [`CliquetTerms::global`] / [`CliquetTerms::monte_carlo`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CliquetTerms {
+    /// Call (`+1`) or put (`−1`) per-period payoff direction.
+    pub option: OptionType,
+    /// Per-period strike-reset multiple `m` (applied to every leg).
+    pub moneyness: f64,
+    /// Number of evenly-spaced ratchet periods over `[0, expiry]`; `≥ 1`.
+    pub periods: u32,
+    /// Optional per-period local floor on each clamped period option return.
+    pub local_floor: Option<f64>,
+    /// Optional per-period local cap on each clamped period option return.
+    pub local_cap: Option<f64>,
+    /// Optional global floor on the accumulated (summed) payoff.
+    pub global_floor: Option<f64>,
+    /// Optional global cap on the accumulated (summed) payoff.
+    pub global_cap: Option<f64>,
+    /// Antithetic Monte-Carlo path pairs for the clamped variant; `0` ⇒ server
+    /// default. Ignored for a plain ratchet.
+    pub mc_pairs: u32,
+    /// Counter-RNG seed for the clamped Monte-Carlo estimator (bit-reproducible).
+    pub mc_seed: u64,
+}
+
+impl CliquetTerms {
+    /// A plain (unclamped) ratchet over `periods` evenly-spaced periods, priced
+    /// exactly in closed form as the sum of forward-start legs.
+    #[must_use]
+    pub fn plain(option: OptionType, moneyness: f64, periods: u32) -> Self {
+        Self {
+            option,
+            moneyness,
+            periods,
+            local_floor: None,
+            local_cap: None,
+            global_floor: None,
+            global_cap: None,
+            mc_pairs: 0,
+            mc_seed: 0,
+        }
+    }
+
+    /// Add per-period local floor/cap clamps (switches the pricer to the honest
+    /// Monte-Carlo estimator that reports a standard error).
+    #[must_use]
+    pub fn local(mut self, floor: Option<f64>, cap: Option<f64>) -> Self {
+        self.local_floor = floor;
+        self.local_cap = cap;
+        self
+    }
+
+    /// Add a global floor/cap on the accumulated payoff (switches to the Monte-
+    /// Carlo estimator).
+    #[must_use]
+    pub fn global(mut self, floor: Option<f64>, cap: Option<f64>) -> Self {
+        self.global_floor = floor;
+        self.global_cap = cap;
+        self
+    }
+
+    /// Configure the Monte-Carlo path pairs and seed used for a clamped cliquet.
+    #[must_use]
+    pub fn monte_carlo(mut self, pairs: u32, seed: u64) -> Self {
+        self.mc_pairs = pairs;
+        self.mc_seed = seed;
+        self
+    }
+}
+
+/// The market data a quanto needs beyond the underlying's own inputs: the
+/// settlement-conversion-rate volatility and its correlation with the underlying.
+/// Built via [`QuantoTerms::new`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct QuantoTerms {
+    /// Whether the wrapped payoff is a vanilla or a cash-or-nothing digital.
+    pub payoff: QuantoPayoff,
+    /// Call or put.
+    pub option: OptionType,
+    /// The strike `K` (absolute level).
+    pub strike: f64,
+    /// Annualised volatility `σ_Z` of the settlement-conversion rate.
+    pub conversion_vol: f64,
+    /// Instantaneous correlation `ρ ∈ [−1, 1]` between the underlying and the
+    /// settlement-conversion rate.
+    pub correlation: f64,
+}
+
+impl QuantoTerms {
+    /// A quanto on the given payoff/option/strike with the conversion-rate vol
+    /// and correlation.
+    #[must_use]
+    pub fn new(
+        payoff: QuantoPayoff,
+        option: OptionType,
+        strike: f64,
+        conversion_vol: f64,
+        correlation: f64,
+    ) -> Self {
+        Self {
+            payoff,
+            option,
+            strike,
+            conversion_vol,
+            correlation,
+        }
+    }
+}
+
 /// The product payoff of an instrument — the typed form of the wire `Instrument`
 /// `product` oneof. Exactly one variant is built per instrument.
 #[derive(Debug, Clone, PartialEq)]
@@ -648,6 +795,54 @@ pub enum Product {
         /// Fraction `∈ [0, 1)` of the total average weight already accumulated by
         /// the fixed observations; `0` ⇒ a fresh average.
         elapsed_weight: f64,
+    },
+    /// A forward-start vanilla: the strike fixes at `reset` to `moneyness·S(reset)`
+    /// and pays the vanilla payoff at expiry.
+    ForwardStart {
+        /// Call or put.
+        option: OptionType,
+        /// Strike-reset multiple `m` (`m = 1` is the ATM-forward reset).
+        moneyness: f64,
+        /// Reset (strike-fixing) date `t₁` in years, with `0 ≤ reset ≤ expiry`.
+        reset: f64,
+    },
+    /// A cliquet (ratchet): a strip of forward-start legs. The plain (unclamped)
+    /// ratchet prices in closed form; any clamp switches to a Monte-Carlo
+    /// estimator whose standard error is surfaced on [`PricedLine::price_std_error`].
+    Cliquet {
+        /// Call or put per-period payoff direction.
+        option: OptionType,
+        /// Per-period strike-reset multiple `m`.
+        moneyness: f64,
+        /// Number of evenly-spaced ratchet periods over `[0, expiry]`.
+        periods: u32,
+        /// Optional per-period local floor on each clamped period option return.
+        local_floor: Option<f64>,
+        /// Optional per-period local cap on each clamped period option return.
+        local_cap: Option<f64>,
+        /// Optional global floor on the accumulated payoff.
+        global_floor: Option<f64>,
+        /// Optional global cap on the accumulated payoff.
+        global_cap: Option<f64>,
+        /// Antithetic Monte-Carlo path pairs for the clamped variant (`0` ⇒
+        /// server default); ignored for a plain ratchet.
+        mc_pairs: u32,
+        /// Counter-RNG seed for the clamped Monte-Carlo estimator.
+        mc_seed: u64,
+    },
+    /// A quanto option (vanilla or cash-or-nothing digital), settlement-currency
+    /// converted at a fixed rate via the quanto-drift adjustment.
+    Quanto {
+        /// Whether the wrapped payoff is a vanilla or a digital.
+        payoff: QuantoPayoff,
+        /// Call or put.
+        option: OptionType,
+        /// The strike `K` (absolute level).
+        strike: f64,
+        /// Annualised volatility `σ_Z` of the settlement-conversion rate.
+        conversion_vol: f64,
+        /// Correlation `ρ ∈ [−1, 1]` between the underlying and the conversion rate.
+        correlation: f64,
     },
 }
 
@@ -779,6 +974,52 @@ impl Product {
                     elapsed_weight: *elapsed_weight,
                 })
             }
+            Product::ForwardStart {
+                option,
+                moneyness,
+                reset,
+            } => instrument::Product::ForwardStart(celnet_proto::ForwardStart {
+                option_type: celnet_proto::OptionType::from(*option) as i32,
+                moneyness: *moneyness,
+                reset: *reset,
+            }),
+            Product::Cliquet {
+                option,
+                moneyness,
+                periods,
+                local_floor,
+                local_cap,
+                global_floor,
+                global_cap,
+                mc_pairs,
+                mc_seed,
+            } => instrument::Product::Cliquet(celnet_proto::Cliquet {
+                option_type: celnet_proto::OptionType::from(*option) as i32,
+                moneyness: *moneyness,
+                periods: *periods,
+                local_floor: *local_floor,
+                local_cap: *local_cap,
+                global_floor: *global_floor,
+                global_cap: *global_cap,
+                mc_pairs: *mc_pairs,
+                mc_seed: *mc_seed,
+            }),
+            Product::Quanto {
+                payoff,
+                option,
+                strike,
+                conversion_vol,
+                correlation,
+            } => instrument::Product::Quanto(celnet_proto::Quanto {
+                payoff: match payoff {
+                    QuantoPayoff::Vanilla => celnet_proto::QuantoPayoff::Vanilla,
+                    QuantoPayoff::Digital => celnet_proto::QuantoPayoff::Digital,
+                } as i32,
+                option_type: celnet_proto::OptionType::from(*option) as i32,
+                strike: *strike,
+                conversion_vol: *conversion_vol,
+                correlation: *correlation,
+            }),
         }
     }
 }
@@ -942,6 +1183,92 @@ impl InstrumentSpec {
         }
     }
 
+    /// A forward-start vanilla on the given pair / tenor / expiry / notional,
+    /// carrying a [`ForwardStartTerms`] spec: the strike fixes at `reset` to
+    /// `moneyness·S(reset)` and pays at expiry.
+    #[must_use]
+    pub fn forward_start(
+        pair: CcyPair,
+        tenor: Tenor,
+        expiry_years: f64,
+        quantity: Quantity,
+        side: Side,
+        terms: ForwardStartTerms,
+    ) -> Self {
+        Self {
+            pair,
+            tenor,
+            expiry_years,
+            quantity,
+            side,
+            product: Product::ForwardStart {
+                option: terms.option,
+                moneyness: terms.moneyness,
+                reset: terms.reset,
+            },
+        }
+    }
+
+    /// A cliquet (ratchet) on the given pair / tenor / expiry / notional, carrying
+    /// a [`CliquetTerms`] spec (period count, optional clamps, MC knobs). A plain
+    /// (unclamped) ratchet prices in closed form; any clamp is priced by Monte-
+    /// Carlo and the standard error is surfaced on [`PricedLine::price_std_error`].
+    #[must_use]
+    pub fn cliquet(
+        pair: CcyPair,
+        tenor: Tenor,
+        expiry_years: f64,
+        quantity: Quantity,
+        side: Side,
+        terms: CliquetTerms,
+    ) -> Self {
+        Self {
+            pair,
+            tenor,
+            expiry_years,
+            quantity,
+            side,
+            product: Product::Cliquet {
+                option: terms.option,
+                moneyness: terms.moneyness,
+                periods: terms.periods,
+                local_floor: terms.local_floor,
+                local_cap: terms.local_cap,
+                global_floor: terms.global_floor,
+                global_cap: terms.global_cap,
+                mc_pairs: terms.mc_pairs,
+                mc_seed: terms.mc_seed,
+            },
+        }
+    }
+
+    /// A quanto option (vanilla or cash-or-nothing digital) on the given pair /
+    /// tenor / expiry / notional, carrying a [`QuantoTerms`] spec.
+    #[must_use]
+    pub fn quanto(
+        pair: CcyPair,
+        tenor: Tenor,
+        expiry_years: f64,
+        quantity: Quantity,
+        side: Side,
+        terms: QuantoTerms,
+    ) -> Self {
+        Self {
+            pair,
+            tenor,
+            expiry_years,
+            quantity,
+            side,
+            product: Product::Quanto {
+                payoff: terms.payoff,
+                option: terms.option,
+                strike: terms.strike,
+                conversion_vol: terms.conversion_vol,
+                correlation: terms.correlation,
+            },
+        }
+    }
+
     /// Encode to the wire instrument message. `solve` is left unset (the SDK
     /// exposes solve via a dedicated future iteration; the explicit strikes the
     /// caller supplies are used as given).
@@ -1022,6 +1349,11 @@ pub struct Quote {
     /// any: who quoted it (the maker), and — once known — who holds/won it. Present
     /// iff the server attributed the line.
     pub attribution: Option<Attribution>,
+    /// Monte-Carlo standard error of the quoted premium: `Some` for an MC-priced
+    /// product (e.g. a clamped/floored cliquet), `None` for closed-form products.
+    /// Surfaced so an SDK quote discloses the same MC uncertainty as a one-shot
+    /// price ([`PricedLine::price_std_error`]) and never presents MC as exact.
+    pub price_std_error: Option<f64>,
 }
 
 impl Quote {
@@ -1057,6 +1389,7 @@ impl Quote {
             valid_until_nanos: w.valid_until_nanos,
             surface_version: w.surface_version,
             attribution,
+            price_std_error: w.price_std_error,
         })
     }
 }
@@ -1137,4 +1470,9 @@ pub struct PricedLine {
     pub resolved_strike: f64,
     /// The conventions the result is expressed under.
     pub conventions: Conventions,
+    /// For a Monte-Carlo-priced product (e.g. a clamped cliquet), the standard
+    /// error of the mean of `greeks.price`; `None` for the closed-form products
+    /// whose price is exact. Surfaced honestly so a caller never mistakes an MC
+    /// estimate for closed-form precision.
+    pub price_std_error: Option<f64>,
 }

@@ -20,12 +20,16 @@
 import {
   DEFAULT_CONVENTIONS,
   ShapingError,
+  cliquetIsMonteCarlo,
   formatAsianSpill,
   formatCalibratedSmileSpill,
+  formatCliquetSpill,
+  formatForwardStartSpill,
   formatGreeksSpill,
   formatLimitsSpill,
   formatMarkStatusSpill,
   formatPositionsSpill,
+  formatQuantoSpill,
   formatRfqSpill,
   formatRiskSpill,
   formatSeriesCell,
@@ -40,6 +44,9 @@ import {
   parseTenor,
   shapeAsianOption,
   shapeCalibration,
+  shapeCliquet,
+  shapeForwardStart,
+  shapeQuanto,
   shapeReportingNumeraire,
   shapeVanillaInstrument,
   shapeVarianceSwap,
@@ -436,6 +443,182 @@ export async function ASIAN(
 }
 
 /**
+ * Price a forward-start vanilla: a spill of `["premium", PV]`, the 13 risk Greeks,
+ * and a convention footer. The strike is fixed at the future reset to
+ * `moneyness × S(reset)` and the option runs to the tenor; the premium is the
+ * server's discounted dual-carry strike-reset closed form (the same
+ * `celnet-exotics` value the SDK/CLI read). The reset must lie in `[0, expiry]`.
+ * @customfunction FORWARDSTART
+ * @param pair Currency pair, e.g. "EURUSD".
+ * @param tenor Tenor, e.g. "1Y".
+ * @param callPut "C" for call, "P" for put.
+ * @param moneyness Proportional strike multiplier on the reset-date spot (e.g. 1.0 = ATM-at-reset).
+ * @param reset Reset (strike-fixing) date as a year fraction in [0, expiry], e.g. 0.25.
+ * @param notional Trade notional in the base currency.
+ * @returns A spill: premium, the 13 Greeks, and a convention footer.
+ */
+export async function FORWARDSTART(
+  pair: string,
+  tenor: string,
+  callPut: string,
+  moneyness: number,
+  reset: number,
+  notional: number,
+): Promise<SpillMatrix> {
+  try {
+    const instrument = shapeForwardStart({ pair, tenor, callPut, moneyness, reset, notional });
+    const quote = await getConnection().requestQuote(
+      instrument,
+      DEFAULT_CONVENTIONS,
+      `fwdstart:${pair}:${tenor}:${callPut}:${moneyness}:${reset}:${notional}`,
+    );
+    return formatForwardStartSpill({
+      premium: quote.greeks.price,
+      greeks: quote.greeks,
+      conventions: quote.conventions,
+      surfaceVersion: quote.surfaceVersion,
+      epochNanos: quote.epochNanos,
+    });
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
+/**
+ * Price a cliquet (ratchet): a spill of `["premium", PV]`, then — ONLY for a
+ * clamped cliquet, which is Monte-Carlo-priced — an honest `["std_error", σ̄]` row,
+ * then the 13 risk Greeks and a convention footer. A *plain* ratchet (no clamp
+ * supplied) is the exact closed-form sum of forward-start legs and carries NO
+ * std-error row; supplying any local/global floor or cap makes it MC-priced. The
+ * four clamps are presence-tracked — an omitted clamp is unconstrained on that
+ * side (never floored/capped at zero). `mcPairs` (0 ⇒ the server default) and
+ * `mcSeed` tune the clamped MC and are ignored by a plain ratchet.
+ * @customfunction CLIQUET
+ * @param pair Currency pair, e.g. "EURUSD".
+ * @param tenor Tenor, e.g. "1Y".
+ * @param callPut "C" for call, "P" for put.
+ * @param moneyness Proportional strike multiplier for each period's leg (e.g. 1.0).
+ * @param periods Number of equal ratchet sub-periods (≥ 1).
+ * @param notional Trade notional in the base currency.
+ * @param localFloor Optional per-period return floor (omit ⇒ unconstrained).
+ * @param localCap Optional per-period return cap (omit ⇒ unconstrained).
+ * @param globalFloor Optional summed-payoff floor (omit ⇒ unconstrained).
+ * @param globalCap Optional summed-payoff cap (omit ⇒ unconstrained).
+ * @param mcPairs Optional Monte-Carlo antithetic pairs for the clamped case (0 ⇒ server default).
+ * @param mcSeed Optional Monte-Carlo seed for the clamped case (bit-reproducible).
+ * @returns A spill: premium, (std_error if MC), the 13 Greeks, and a convention footer.
+ */
+export async function CLIQUET(
+  pair: string,
+  tenor: string,
+  callPut: string,
+  moneyness: number,
+  periods: number,
+  notional: number,
+  localFloor?: number,
+  localCap?: number,
+  globalFloor?: number,
+  globalCap?: number,
+  mcPairs?: number,
+  mcSeed?: number,
+): Promise<SpillMatrix> {
+  try {
+    const instrument = shapeCliquet({
+      pair,
+      tenor,
+      callPut,
+      moneyness,
+      periods,
+      notional,
+      localFloor,
+      localCap,
+      globalFloor,
+      globalCap,
+      mcPairs,
+      mcSeed,
+    });
+    const quote = await getConnection().requestQuote(
+      instrument,
+      DEFAULT_CONVENTIONS,
+      `cliquet:${pair}:${tenor}:${callPut}:${moneyness}:${periods}:${notional}:${localFloor ?? ""}:${localCap ?? ""}:${globalFloor ?? ""}:${globalCap ?? ""}:${mcPairs ?? ""}:${mcSeed ?? ""}`,
+    );
+    // The std-error is surfaced ONLY when this cliquet is MC-priced (clamped) AND
+    // the server stamped `price_std_error` on the reply. A plain ratchet (closed
+    // form) carries none, so the spill honestly omits the row — a cell never reads
+    // a precision claim the price doesn't have. `cliquetIsMonteCarlo` gates on the
+    // shaped product so we never surface a stray non-MC std-error.
+    const isMc =
+      instrument.product.kind === "cliquet" && cliquetIsMonteCarlo(instrument.product.cliquet);
+    return formatCliquetSpill({
+      premium: quote.greeks.price,
+      stdError: isMc ? quote.priceStdError : undefined,
+      greeks: quote.greeks,
+      conventions: quote.conventions,
+      surfaceVersion: quote.surfaceVersion,
+      epochNanos: quote.epochNanos,
+    });
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
+/**
+ * Price a quanto option: a spill of `["premium", PV]`, the 13 risk Greeks, and a
+ * convention footer. The payoff is computed on the foreign underlying but settled
+ * in the fixed (domestic) currency, with a drift adjustment from the
+ * underlying↔settlement-FX correlation; the premium is the server's closed-form
+ * quanto-adjusted value (the same `celnet-exotics` value the SDK/CLI read). The
+ * strike is an absolute level. `payoff` selects VANILLA (default) or DIGITAL.
+ * @customfunction QUANTO
+ * @param pair Currency pair, e.g. "EURUSD".
+ * @param tenor Tenor, e.g. "1Y".
+ * @param callPut "C" for call, "P" for put.
+ * @param strike Absolute strike level, e.g. 1.10.
+ * @param notional Trade notional in the base currency.
+ * @param conversionVol Volatility of the settlement-FX conversion rate (absolute, e.g. 0.09).
+ * @param correlation Correlation in [-1, 1] between the underlying and the settlement-FX rate.
+ * @param payoff Optional payoff: VANILLA (default) or DIGITAL.
+ * @returns A spill: premium, the 13 Greeks, and a convention footer.
+ */
+export async function QUANTO(
+  pair: string,
+  tenor: string,
+  callPut: string,
+  strike: number,
+  notional: number,
+  conversionVol: number,
+  correlation: number,
+  payoff?: string,
+): Promise<SpillMatrix> {
+  try {
+    const instrument = shapeQuanto({
+      pair,
+      tenor,
+      callPut,
+      strike,
+      notional,
+      conversionVol,
+      correlation,
+      payoff,
+    });
+    const quote = await getConnection().requestQuote(
+      instrument,
+      DEFAULT_CONVENTIONS,
+      `quanto:${pair}:${tenor}:${callPut}:${strike}:${notional}:${conversionVol}:${correlation}:${payoff ?? ""}`,
+    );
+    return formatQuantoSpill({
+      premium: quote.greeks.price,
+      greeks: quote.greeks,
+      conventions: quote.conventions,
+      surfaceVersion: quote.surfaceVersion,
+      epochNanos: quote.epochNanos,
+    });
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
+/**
  * Stream a live two-way for a structure, multiplexed on the single session and
  * coalesced with identical-argument cells. Re-emits on every Update; flips to a
  * stale state on a heartbeat gap rather than freezing as live (docs §5).
@@ -709,6 +892,9 @@ function registerAll(): void {
   cf.associate("VARSWAP", VARSWAP as (...a: never[]) => unknown);
   cf.associate("VOLSWAP", VOLSWAP as (...a: never[]) => unknown);
   cf.associate("ASIAN", ASIAN as (...a: never[]) => unknown);
+  cf.associate("FORWARDSTART", FORWARDSTART as (...a: never[]) => unknown);
+  cf.associate("CLIQUET", CLIQUET as (...a: never[]) => unknown);
+  cf.associate("QUANTO", QUANTO as (...a: never[]) => unknown);
   cf.associate("SUBSCRIBE", SUBSCRIBE as (...a: never[]) => unknown);
   cf.associate("SERIES", SERIES as (...a: never[]) => unknown);
   cf.associate("MARK", MARK as (...a: never[]) => unknown);
