@@ -117,8 +117,17 @@ mutants-gate-vanilla:
 # below the committed floor (see docs/HARDENING.md). `--fail-under-lines` /
 # `--fail-under-regions` make llvm-cov exit non-zero below the threshold.
 coverage-gate-vanilla:
-    timeout 600 {{_cargo}} llvm-cov nextest -p celnet-vanilla \
+    source "$HOME/.cargo/env" && timeout 600 cargo llvm-cov nextest -p celnet-vanilla \
         --fail-under-lines 95 --fail-under-regions 95 --summary-only
+
+# Coverage GATE on the celnet-surface calibration crate: fail if region/line
+# coverage drops below the committed 90% floor (see docs/HARDENING.md §3). Closes
+# the standing surface-lane backlog (strangle/stochvol/market_hedge) recorded in
+# the post-completion audit (PC-SURFACE-COV); the measured baseline clears it
+# with headroom (line 96.1% / region 96.4%), so a regression fails the build.
+coverage-gate-surface:
+    source "$HOME/.cargo/env" && timeout 600 cargo llvm-cov nextest -p celnet-surface \
+        --fail-under-lines 90 --fail-under-regions 90 --summary-only
 
 # Coverage summary for the core pricing crates (region/function/line %).
 coverage-core:

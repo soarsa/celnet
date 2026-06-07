@@ -692,4 +692,193 @@ mod tests {
             "core band [{lo},{hi}] must straddle F"
         );
     }
+
+    /// The `params()` accessor returns exactly the calibrated slice the smile was
+    /// constructed from (the read-back the surface layer uses to recover the
+    /// underlying SABR parameters).
+    #[test]
+    fn params_accessor_round_trips() {
+        let p = slice();
+        let s = StochasticVolSmile::new(p);
+        assert_eq!(s.params(), p);
+    }
+
+    /// The risk-neutral density is identically zero for a non-positive strike
+    /// (out of the forward's positive support) — the guard clause at the top of
+    /// `risk_neutral_density`.
+    #[test]
+    fn density_is_zero_at_non_positive_strike() {
+        let p = slice();
+        assert_eq!(p.risk_neutral_density(0.0), 0.0);
+        assert_eq!(p.risk_neutral_density(-1.0), 0.0);
+    }
+
+    /// In the `ν → 0` (no vol-of-vol) limit the density reduces to the pure
+    /// transformed-Gaussian small-ν branch: u = y, du/dy = 1, so the density is
+    /// `φ(y/√t)·(1/√t)·(1/(α Kᵝ))`. INDEPENDENT ORACLE: re-derive that closed
+    /// form in-test (no call back into `risk_neutral_density`) and require an
+    /// exact match. This pins the small-ν branch (`nu < 1e-10`).
+    #[test]
+    fn small_nu_density_matches_transformed_gaussian_oracle() {
+        // ν below the 1e-10 switch → small-ν branch.
+        let p = StochasticVolParams::new(0.12, 1.0, -0.2, 1e-12, 1.10, 1.0);
+        for &k in &[0.7, 0.95, 1.10, 1.30, 1.6] {
+            let got = p.risk_neutral_density(k);
+            // y(K) for β = 1: ln(K/F)/α.
+            let y = (k / p.forward).ln() / p.alpha;
+            let std = p.t.sqrt();
+            let phi = norm_pdf(y / std) / std;
+            let dy_dk = 1.0 / (p.alpha * powf(k, p.beta));
+            let expect = phi * 1.0 * dy_dk; // du_dy = 1 in the small-ν branch
+            assert!(
+                is_close(got, expect, 0.0, 0.0),
+                "small-ν density {got} at K={k} must equal the Gaussian oracle {expect} exactly"
+            );
+        }
+    }
+
+    /// A SABR slice whose asymptotic expansion turns arbitrageable on BOTH wings
+    /// produces a finite two-sided core band, and outside it the smile switches
+    /// to the arbitrage-free density-implied vol. This exercises the wing branch
+    /// of `implied_vol`, `density_implied_vol`, and `find_density_floor`'s
+    /// negative-density crossover. INDEPENDENT CHECKS: (1) the band is genuinely
+    /// finite and two-sided (a crossover was found in each direction, not the
+    /// far-wing fallback); (2) inside the band the smile equals the raw
+    /// asymptotic Black vol; (3) outside the band it equals the density-implied
+    /// vol — which differs from the asymptotic vol there (the wing actually
+    /// switches model); (4) the density-implied wing vol is finite and positive.
+    #[test]
+    fn wing_switches_to_density_implied_vol_outside_the_core_band() {
+        // Strong curvature, long tenor: the asymptotic density goes negative on
+        // both wings within scan range, so both crossovers are finite.
+        let p = StochasticVolParams::new(0.25, 1.0, 0.0, 2.5, 1.10, 2.0);
+        let s = StochasticVolSmile::new(p);
+        let (lo, hi) = s.core_band();
+        // (1) finite two-sided band well inside the far-wing fallbacks (F*1e-3, F*1e3).
+        assert!(
+            lo > p.forward * 1e-3 && hi < p.forward * 1e3 && lo < p.forward && hi > p.forward,
+            "expected a finite two-sided crossover band, got [{lo},{hi}]"
+        );
+
+        // (2) inside the band → asymptotic Black vol exactly.
+        let k_core = p.forward;
+        assert!(is_close(
+            s.implied_vol(k_core, p.forward, p.t).0,
+            p.black_vol(k_core),
+            0.0,
+            0.0
+        ));
+
+        // (3) below the lower crossover → density-implied vol, which differs from
+        // the asymptotic vol there (the wing genuinely switches model).
+        let k_put = lo * 0.85;
+        let wing_vol = s.implied_vol(k_put, p.forward, p.t).0;
+        let asym_vol = p.black_vol(k_put);
+        assert!(
+            wing_vol.is_finite() && wing_vol > 0.0,
+            "wing vol must be sane"
+        );
+        assert!(
+            (wing_vol - asym_vol).abs() > 1e-6,
+            "below the crossover the density-implied vol {wing_vol} must differ \
+             from the asymptotic vol {asym_vol}"
+        );
+
+        // (4) above the upper crossover → density-implied vol, finite/positive.
+        let k_call = hi * 1.15;
+        let up_vol = s.implied_vol(k_call, p.forward, p.t).0;
+        assert!(
+            up_vol.is_finite() && up_vol > 0.0,
+            "upper wing vol must be sane"
+        );
+    }
+
+    /// `implied_black_vol` is the bisection inverse of the undiscounted forward
+    /// Black call. INDEPENDENT ORACLE: forward-price a call at a KNOWN vol, invert
+    /// it, and require the recovered vol to round-trip; then re-price at the
+    /// recovered vol and require it to reproduce the target call. Also pins the
+    /// three no-arbitrage rejections (`None`): call ≤ intrinsic, call ≥ forward,
+    /// and an unreachable-by-vol target above `price(hi)`.
+    #[test]
+    fn implied_black_vol_inverts_the_forward_call_oracle() {
+        let f = 1.10_f64;
+        let k = 1.25_f64;
+        let t = 0.8_f64;
+        let true_vol = 0.27_f64;
+        // Independent forward Black call at the known vol.
+        let fwd_call = |vol: f64| {
+            let vsqt = vol * t.sqrt();
+            let d1 = ((f / k).ln() + 0.5 * vol * vol * t) / vsqt;
+            let d2 = d1 - vsqt;
+            f * norm_cdf(d1) - k * norm_cdf(d2)
+        };
+        let target = fwd_call(true_vol);
+
+        let recovered = implied_black_vol(target, f, k, t).expect("call is in-bounds");
+        assert!(
+            is_close(recovered, true_vol, 1e-6, 1e-8),
+            "recovered vol {recovered} must round-trip to {true_vol}"
+        );
+        // Re-price at the recovered vol → reproduces the target call.
+        assert!(
+            is_close(fwd_call(recovered), target, 1e-9, 1e-11),
+            "re-priced call {} must reproduce target {target}",
+            fwd_call(recovered)
+        );
+
+        // No-arbitrage rejections (all return None):
+        let intrinsic = (f - k).max(0.0); // = 0 here (OTM call)
+        // call ≤ intrinsic + 1e-15.
+        assert!(implied_black_vol(intrinsic, f, k, t).is_none());
+        // call ≥ forward.
+        assert!(implied_black_vol(f, f, k, t).is_none());
+        assert!(implied_black_vol(f + 0.01, f, k, t).is_none());
+        // A target between price(hi=5.0) and forward is unreachable by any vol
+        // ≤ 5.0 → None via the `price(hi) < call` guard. For an ITM-ish strike,
+        // price(5.0) saturates below F; pick a call just under F but above it.
+        let k_itm = 0.90;
+        let cap = {
+            // price(hi) for the inverter's hi = 5.0
+            let vol = 5.0;
+            let vsqt = vol * t.sqrt();
+            let d1 = ((f / k_itm).ln() + 0.5 * vol * vol * t) / vsqt;
+            let d2 = d1 - vsqt;
+            f * norm_cdf(d1) - k_itm * norm_cdf(d2)
+        };
+        // A target strictly between price(hi) and the forward is unreachable.
+        let unreachable = 0.5 * (cap + f);
+        if cap < f {
+            assert!(
+                implied_black_vol(unreachable, f, k_itm, t).is_none(),
+                "a call above price(vol=5) but below F must be unreachable (None)"
+            );
+        }
+    }
+
+    /// When the asymptotic density never goes negative on the upward scan, the
+    /// crossover finder returns the far-wing fallback (F·1000), so the smile uses
+    /// the asymptotic vol throughout any practical upper strike range — the
+    /// arbitrage-free-asymptotic case. This pins the no-negative fallback line in
+    /// `find_density_floor`. (A mild, low-vol-of-vol slice keeps the upper
+    /// asymptotic density positive across the whole 400-step scan.)
+    #[test]
+    fn benign_slice_pushes_upper_crossover_to_far_wing() {
+        // Mild slice with small vol-of-vol: no negative density upward within scan.
+        let p = StochasticVolParams::new(0.10, 1.0, -0.05, 0.10, 1.10, 1.0);
+        let s = StochasticVolSmile::new(p);
+        let (_lo, hi) = s.core_band();
+        assert!(
+            is_close(hi, p.forward * 1_000.0, 0.0, 0.0),
+            "benign slice should push the upper crossover to the far-wing fallback \
+             F·1000, got {hi}"
+        );
+        // A practical upper-wing strike is inside the (huge) band → asymptotic vol.
+        let k = 1.5;
+        assert!(is_close(
+            s.implied_vol(k, p.forward, p.t).0,
+            p.black_vol(k),
+            0.0,
+            0.0
+        ));
+    }
 }
