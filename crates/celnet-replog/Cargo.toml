@@ -20,3 +20,10 @@ workspace = true
 
 [dependencies]
 celnet-journal.workspace = true
+
+[dev-dependencies]
+# Property-based adversarial-bytes test of the untrusted decoders (LogEntry /
+# Snapshot / BookState / BookUpdate / Message): the same no-panic / Ok-or-typed-
+# Err contract the nightly cargo-fuzz targets assert, but gated in `just check`
+# (the fuzz crate is nightly-only and excluded from the workspace gate).
+proptest.workspace = true
