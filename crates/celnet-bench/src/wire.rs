@@ -224,6 +224,7 @@ pub fn vanilla_call(strike: f64) -> Instrument {
         }),
         side: Side::TwoWay as i32,
         solve: None,
+        pricing_model: celnet_proto::PricingModel::Default as i32,
         product: Some(instrument::Product::Vanilla(Vanilla {
             option_type: OptionType::Call as i32,
             strike: Some(StrikeOrDelta {

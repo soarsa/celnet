@@ -33,6 +33,7 @@ import type {
   MonitoringStyle,
   OptionType,
   PremiumStyle,
+  PricingModel,
   QuantoPayoff,
   RagStatus,
   RiskDimension,
@@ -73,6 +74,13 @@ function enumCodec<T extends string>(membersInWireOrder: readonly T[]): EnumCode
 
 /** `OptionType` ↔ proto `OptionType` (CALL=0, PUT=1). */
 export const optionType = enumCodec<OptionType>(["CALL", "PUT"]);
+
+/**
+ * `PricingModel` ↔ proto `PricingModel`
+ * (PRICING_MODEL_DEFAULT=0, PRICING_MODEL_LOCAL_STOCH_VOL=1). Default
+ * (decode-zero) = DEFAULT (the per-product closed-form engine).
+ */
+export const pricingModel = enumCodec<PricingModel>(["DEFAULT", "LOCAL_STOCH_VOL"]);
 
 /** `Side` ↔ proto `Side` (BUY=0, SELL=1, TWO_WAY=2). */
 export const side = enumCodec<Side>(["BUY", "SELL", "TWO_WAY"]);

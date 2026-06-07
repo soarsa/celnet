@@ -98,6 +98,37 @@
   color: var(--brand);
   font-weight: var(--weight-emphasis);
 }
+.modeTab:disabled {
+  cursor: default;
+  opacity: 0.85;
+}
+
+/* --- booking / pricing model selector (Default / Local-Stoch-Vol) ---------- */
+
+.modelBlock {
+  padding: var(--space-4) var(--space-6) 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.modelRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.modelLabel {
+  font-family: var(--font-brand);
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+}
+.modelNote {
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+  line-height: var(--type-body-lh);
+  margin: 0;
+}
 
 .dateRow {
   display: flex;

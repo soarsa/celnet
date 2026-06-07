@@ -293,6 +293,19 @@ pub(crate) struct SurfaceArgs {
     pub(crate) arb_tol: f64,
 }
 
+/// The booking / pricing model on the command line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, Default)]
+pub(crate) enum CliPricingModel {
+    /// The default analytic / closed-form engine.
+    #[default]
+    Analytic,
+    /// The local-stochastic-volatility booking model (LSV: particle-calibrated
+    /// leverage over a stochastic-variance backbone, ADI-PDE / Monte-Carlo).
+    /// Supported only for `vanilla`, `barrier` (continuous knock-out/in) and
+    /// `window-barrier`; any other product is rejected.
+    Lsv,
+}
+
 /// Arguments to `exotic`.
 #[derive(Debug, Args)]
 pub(crate) struct ExoticArgs {
@@ -302,6 +315,11 @@ pub(crate) struct ExoticArgs {
     /// Strike (used by `digital` and `single-barrier`; ignored by touches).
     #[arg(long, default_value_t = 0.0)]
     pub(crate) strike: f64,
+    /// The booking / pricing model. `analytic` (default) uses the product's
+    /// closed form; `lsv` routes the supported products (vanilla, barrier,
+    /// window-barrier) through the local-stochastic-volatility engine.
+    #[arg(long, value_enum, default_value = "analytic")]
+    pub(crate) model: CliPricingModel,
     /// Which exotic to price.
     #[command(subcommand)]
     pub(crate) kind: ExoticKind,
@@ -310,6 +328,13 @@ pub(crate) struct ExoticArgs {
 /// The exotic variant to price.
 #[derive(Debug, Subcommand)]
 pub(crate) enum ExoticKind {
+    /// A vanilla European option priced under the selected `--model` (use with
+    /// `--model lsv` to price a vanilla on the LSV engine).
+    Vanilla {
+        /// Call or put.
+        #[arg(long, value_enum)]
+        option: CliOptionType,
+    },
     /// A European cash-or-nothing digital.
     Digital {
         /// Digital direction.
@@ -354,6 +379,36 @@ pub(crate) enum ExoticKind {
         /// Rebate paid on the terminating event (domestic).
         #[arg(long, default_value_t = 0.0)]
         rebate: f64,
+    },
+    /// A window knock-out barrier (active only inside a calendar window). Priced
+    /// only under `--model lsv`; the ADI-PDE engine by default, or Monte-Carlo
+    /// (with a std-error) when `--mc-pairs > 0`.
+    WindowBarrier {
+        /// Underlying option type.
+        #[arg(long, value_enum)]
+        option: CliOptionType,
+        /// Barrier level `H`.
+        #[arg(long)]
+        barrier: f64,
+        /// `true` for up-and-out (barrier above spot), `false` for down-and-out.
+        #[arg(long, default_value_t = true)]
+        up: bool,
+        /// Window start in years from inception.
+        #[arg(long)]
+        window_start: f64,
+        /// Window end in years from inception.
+        #[arg(long)]
+        window_end: f64,
+        /// Antithetic Monte-Carlo path pairs (`0` ⇒ exact ADI PDE; `> 0` ⇒
+        /// Monte-Carlo with a std-error).
+        #[arg(long, default_value_t = 0)]
+        mc_pairs: usize,
+        /// Monte-Carlo time steps (ignored when `--mc-pairs 0`; `0` ⇒ default).
+        #[arg(long, default_value_t = 0)]
+        mc_steps: usize,
+        /// Counter-RNG seed for the Monte-Carlo estimator.
+        #[arg(long, default_value_t = 0)]
+        mc_seed: u64,
     },
     /// A variance swap: print the fair variance strike `K_var` and `√K_var`.
     VarSwap,
@@ -643,6 +698,9 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
         Command::Exotic(a) => {
             let inputs = a.market.to_market().inputs(a.strike);
             let spec = match a.kind {
+                ExoticKind::Vanilla { option } => exotic::ExoticSpec::Vanilla {
+                    option: option.into(),
+                },
                 ExoticKind::Digital { kind } => exotic::ExoticSpec::Digital(kind.into()),
                 ExoticKind::OneTouch {
                     barrier,
@@ -681,6 +739,38 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
                     barrier,
                     rebate,
                 },
+                ExoticKind::WindowBarrier {
+                    option,
+                    barrier,
+                    up,
+                    window_start,
+                    window_end,
+                    mc_pairs,
+                    mc_steps,
+                    mc_seed,
+                } => {
+                    if barrier <= 0.0 {
+                        return Err(DispatchError::Invalid(
+                            "window-barrier --barrier must be positive".to_owned(),
+                        ));
+                    }
+                    if window_start < 0.0 || window_start >= window_end {
+                        return Err(DispatchError::Invalid(
+                            "window-barrier needs 0 <= --window-start < --window-end".to_owned(),
+                        ));
+                    }
+                    exotic::ExoticSpec::WindowBarrier {
+                        option: option.into(),
+                        strike: a.strike,
+                        barrier,
+                        up,
+                        start: window_start,
+                        end: window_end,
+                        mc_pairs,
+                        mc_steps,
+                        mc_seed,
+                    }
+                }
                 ExoticKind::VarSwap => exotic::ExoticSpec::VarianceSwap,
                 ExoticKind::VolSwap => exotic::ExoticSpec::VolatilitySwap,
                 ExoticKind::Asian {
@@ -887,7 +977,21 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
                     }
                 }
             };
-            let r = exotic::run(spec, &inputs);
+            let r = match a.model {
+                CliPricingModel::Analytic => {
+                    if matches!(spec, exotic::ExoticSpec::WindowBarrier { .. }) {
+                        return Err(DispatchError::Invalid(
+                            "the window-barrier product is priced only under --model lsv \
+                             (it has no closed form)"
+                                .to_owned(),
+                        ));
+                    }
+                    exotic::run(spec, &inputs)
+                }
+                CliPricingModel::Lsv => {
+                    exotic::lsv_run(spec, &inputs).map_err(DispatchError::Invalid)?
+                }
+            };
             write!(out, "{}", exotic::format_report(spec, &r)).ok();
             Ok(())
         }

@@ -260,6 +260,12 @@ describe("wave-3 products — lookback closed-form limits & structure", () => {
     expect(lb).toBeGreaterThan(vanilla);
   });
 
+  // This row runs a deliberately heavy Monte-Carlo (60k pairs × 250 observations)
+  // — ~3.1s standalone. Under the full parallel suite the wall clock inflates with
+  // CPU contention and can brush the default 5s vitest timeout (a measurement-under-
+  // contention effect, exactly the Wave-2 lesson — NOT a correctness regression; the
+  // assertions below are unchanged). Give this one known-slow MC row explicit
+  // headroom so a contended wall clock never masquerades as a failure.
   it("a discrete lookback APPROACHES the continuous one as observations refine", () => {
     const cont = priceInstrument(
       lookbackInstrument(PAIR, EXPIRY, 10, lookback({ monitoring: "CONTINUOUS" })),
@@ -281,7 +287,7 @@ describe("wave-3 products — lookback closed-form limits & structure", () => {
     expect(disc.greeks.price).toBeLessThan(cont);
     expect(disc.greeks.price).toBeGreaterThan(0.8 * cont);
     expect(disc.priceStdError).toBeDefined();
-  });
+  }, 30_000);
 });
 
 describe("wave-3 products — TARF structure (gap-risk premium, reproducibility)", () => {

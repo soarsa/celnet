@@ -112,8 +112,8 @@ pub use vocab::{
     AccumulatorMonitoring, AccumulatorTerms, AsianMethod, AsianTerms, Attribution, AveragingStyle,
     BarrierKind, BarrierSide, BarrierTerms, BookId, Calibration, CliquetTerms, Conventions,
     DigitalStyle, DigitalTerms, DoubleBarrierTerms, Execution, ForwardStartTerms, InstrumentSpec,
-    Leg, LookbackMonitoring, LookbackStyle, LookbackTerms, PricedLine, Product, Quantity,
-    QuantoPayoff, QuantoTerms, Quote, RejectAck, Seat, Side, StrategyKind, StrikeSpec,
+    Leg, LookbackMonitoring, LookbackStyle, LookbackTerms, PricedLine, PricingModel, Product,
+    Quantity, QuantoPayoff, QuantoTerms, Quote, RejectAck, Seat, Side, StrategyKind, StrikeSpec,
     TarfRedemption, TarfTerms, TouchKind, TouchTerms, TwoWay,
 };
 

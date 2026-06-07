@@ -621,6 +621,7 @@ impl ToWirePub for InstrumentSpec {
             }),
             side: celnet_proto::Side::TwoWay as i32,
             solve: None,
+            pricing_model: celnet_proto::PricingModel::Default as i32,
             product: Some(celnet_proto::instrument::Product::Vanilla(
                 celnet_proto::Vanilla {
                     option_type: celnet_proto::OptionType::Call as i32,

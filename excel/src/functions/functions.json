@@ -257,6 +257,89 @@
           "description": "Optional CONTINUOUS (default) or DISCRETE crossing.",
           "type": "string",
           "optional": true
+        },
+        {
+          "name": "model",
+          "description": "Optional booking model: ANALYTIC (default, closed-form) or LSV (local-stoch-vol; single-barrier only).",
+          "type": "string",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "id": "WINDOWBARRIER",
+      "name": "WINDOWBARRIER",
+      "description": "Price a window (partial-time) barrier under the LOCAL_STOCH_VOL model: premium + (std_error if MC) + 13 Greeks + footer.",
+      "result": {
+        "dimensionality": "matrix",
+        "type": "any"
+      },
+      "parameters": [
+        {
+          "name": "pair",
+          "description": "Currency pair, e.g. EURUSD.",
+          "type": "string"
+        },
+        {
+          "name": "tenor",
+          "description": "Tenor, e.g. 1Y.",
+          "type": "string"
+        },
+        {
+          "name": "strikeOrDelta",
+          "description": "Absolute strike or delta (25dP, ATM) of the vanilla payoff.",
+          "type": "string"
+        },
+        {
+          "name": "callPut",
+          "description": "C for call, P for put.",
+          "type": "string"
+        },
+        {
+          "name": "notional",
+          "description": "Trade notional in the base currency.",
+          "type": "number"
+        },
+        {
+          "name": "barrier",
+          "description": "Knock-out barrier level (quote per 1 unit of base), e.g. 1.30.",
+          "type": "number"
+        },
+        {
+          "name": "side",
+          "description": "Optional UP (default, up-and-out) or DOWN (down-and-out).",
+          "type": "string",
+          "optional": true
+        },
+        {
+          "name": "windowStart",
+          "description": "Optional active-window start in years (>= 0; default 0 => front partial).",
+          "type": "number",
+          "optional": true
+        },
+        {
+          "name": "windowEnd",
+          "description": "Optional active-window end in years (> windowStart, <= expiry; default expiry => back partial).",
+          "type": "number",
+          "optional": true
+        },
+        {
+          "name": "mcPairs",
+          "description": "Optional Monte-Carlo antithetic pairs (0 => exact ADI-PDE, no std-error).",
+          "type": "number",
+          "optional": true
+        },
+        {
+          "name": "mcSteps",
+          "description": "Optional Monte-Carlo time steps (ignored when mcPairs = 0; 0 => server default).",
+          "type": "number",
+          "optional": true
+        },
+        {
+          "name": "mcSeed",
+          "description": "Optional Monte-Carlo seed (bit-reproducible; ignored when mcPairs = 0).",
+          "type": "number",
+          "optional": true
         }
       ]
     },

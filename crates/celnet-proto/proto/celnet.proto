@@ -185,6 +185,33 @@ enum QuantoPayoff {
   QUANTO_PAYOFF_DIGITAL = 1;
 }
 
+// The booking / pricing model an instrument is priced under. This selects the
+// numerical engine that produces the price and Greeks; it is a *pricing
+// directive*, not an API version (CLAUDE.md rule 9) — the same instrument prices
+// identically under the same model on every transport. It travels on the
+// `Instrument` so it reaches the price, quote (RFQ), stream (RFS) and scenario
+// flows uniformly, exactly like the `Solve` directive.
+//
+// Method provenance (doc comments only): the local-stochastic-volatility engine
+// builds a particle-calibrated leverage surface over a mean-reverting
+// square-root variance backbone and prices on a 2-D ADI PDE (and a counter-based
+// Monte-Carlo engine where a standard error is reported). See
+// `celnet-exotics::lsv`.
+enum PricingModel {
+  // The default analytic / closed-form engine for the product (Garman-Kohlhagen
+  // and the product's native closed form). This is the behaviour when the field
+  // is unset, so an absent or `DEFAULT` model is byte-identical to the contract
+  // before this field existed — there is no behaviour change for existing flows.
+  PRICING_MODEL_DEFAULT = 0;
+  // The local-stochastic-volatility booking model: a particle-calibrated
+  // leverage surface over a stochastic-variance backbone, priced on a 2-D ADI
+  // PDE (and Monte-Carlo where a standard error applies). Supported only for the
+  // products the engine prices — vanilla, single-barrier (continuously-monitored
+  // knock-out), and window-barrier. Selecting it for any other product is a hard
+  // `INVALID_ARGUMENT` error, never a silent fallback to the default engine.
+  PRICING_MODEL_LOCAL_STOCH_VOL = 1;
+}
+
 // How the redeeming (target-breaching) fixing of a TARF settles — the gap-risk
 // convention. The spread between the two is the explicit gap-risk premium.
 enum TarfRedemption {
@@ -543,6 +570,42 @@ message SingleBarrier {
   MonitoringStyle monitoring = 6;
 }
 
+// A second-generation **window knock-out** barrier: a continuously-monitored
+// single barrier that is *active only* during the calendar window
+// `[window_start, window_end] ⊆ [0, T]` (years), where `T` is the enclosing
+// `Instrument.expiry_years`. Outside the window a touch is harmless; inside it
+// extinguishes the option. A "front" partial barrier sets `window_start = 0`; a
+// "back" partial barrier sets `window_end = T`. This product is priced only
+// under `PRICING_MODEL_LOCAL_STOCH_VOL` (the LSV ADI-PDE engine, with the
+// counter-based Monte-Carlo engine available as the std-error-carrying
+// alternative); it has no closed form, so selecting the default model is an
+// `INVALID_ARGUMENT` error.
+message WindowBarrier {
+  // The underlying terminal vanilla payoff (call/put + strike).
+  Vanilla vanilla = 1;
+  // The barrier level `H` (quote per 1 unit of base).
+  double barrier = 2;
+  // `true` if the barrier sits above spot at inception (up-and-out), else
+  // down-and-out. (A window barrier is always a knock-out.)
+  BarrierSide side = 3;
+  // The start of the active window, in years from inception (`>= 0`).
+  double window_start = 4;
+  // The end of the active window, in years from inception
+  // (`window_start < window_end <= expiry_years`).
+  double window_end = 5;
+  // The number of antithetic Monte-Carlo path pairs when the request is priced
+  // on the LSV Monte-Carlo engine; `0` selects the ADI-PDE engine (the exact
+  // grid price, no standard error). When non-zero the price is Monte-Carlo and
+  // carries a standard error (`PriceResponse.price_std_error` / `Quote`).
+  uint32 mc_pairs = 6;
+  // The number of Monte-Carlo time steps (ignored when `mc_pairs == 0`); `0`
+  // selects a server default.
+  uint32 mc_steps = 7;
+  // The counter-RNG seed for the Monte-Carlo estimator (identical seeds
+  // reproduce results bit-for-bit; ignored when `mc_pairs == 0`).
+  uint64 mc_seed = 8;
+}
+
 // A double-barrier option bounded by a lower and an upper barrier.
 message DoubleBarrier {
   // The underlying vanilla payoff (call/put + strike).
@@ -807,6 +870,13 @@ message Instrument {
   Side side = 5;
   // Optional solve directive (e.g. solve strike for zero premium).
   Solve solve = 6;
+  // The booking / pricing model the instrument is priced under. Absent or
+  // `PRICING_MODEL_DEFAULT` selects the product's default analytic engine
+  // (byte-identical to the contract before this field existed);
+  // `PRICING_MODEL_LOCAL_STOCH_VOL` routes the supported products (vanilla,
+  // single-barrier knock-out, window-barrier) through the LSV engine. Travels on
+  // the instrument so it reaches price/quote/stream/scenario uniformly.
+  PricingModel pricing_model = 22;
   // The product payoff: exactly one variant is set.
   oneof product {
     // A vanilla European option.
@@ -843,6 +913,9 @@ message Instrument {
     // A lookback option (floating/fixed strike; continuous closed-form or
     // discrete Monte-Carlo, the latter carrying a price standard error).
     Lookback lookback = 21;
+    // A window knock-out barrier (active only inside a calendar window). Priced
+    // only under `PRICING_MODEL_LOCAL_STOCH_VOL`; no closed form.
+    WindowBarrier window_barrier = 23;
   }
 }
 

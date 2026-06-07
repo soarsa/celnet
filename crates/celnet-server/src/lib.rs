@@ -71,6 +71,7 @@
 
 pub mod clock;
 pub mod core_link;
+pub mod lsv_pricer;
 pub mod pricer;
 pub mod readiness;
 pub mod services;

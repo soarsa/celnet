@@ -60,6 +60,7 @@ import type {
   TwoWayPrice,
   Update,
   VegaBucket,
+  WindowBarrier,
 } from "./contract";
 import * as e from "./enums";
 
@@ -231,6 +232,27 @@ function touchToWire(t: Touch): WireObject {
   };
 }
 
+/**
+ * Encode a window-barrier body (proto field 23). The terminal vanilla payoff
+ * nests under `vanilla`; `side` is the numeric `BarrierSide`; `window_start`/
+ * `window_end` are plain year fractions; `mc_pairs`/`mc_steps` are plain integers
+ * and `mc_seed` follows the codec's 64-bit-as-JSON-number convention (server reads
+ * with `u64_or_zero`). The EXACT shape `window_barrier_from_json` decodes. A
+ * window barrier is LSV-only — the instrument's `pricing_model` carries that.
+ */
+function windowBarrierToWire(w: WindowBarrier): WireObject {
+  return {
+    vanilla: vanillaToWire(w.vanilla),
+    barrier: w.barrier,
+    side: e.barrierSide.toWire(w.side),
+    window_start: w.windowStart,
+    window_end: w.windowEnd,
+    mc_pairs: w.mcPairs,
+    mc_steps: w.mcSteps,
+    mc_seed: Number(w.mcSeed),
+  };
+}
+
 export function instrumentToWire(i: Instrument): WireObject {
   const base: WireObject = {
     pair: ccyPairToWire(i.pair),
@@ -240,12 +262,20 @@ export function instrumentToWire(i: Instrument): WireObject {
     side: e.side.toWire(i.side),
   };
   if (i.solve) base["solve"] = solveToWire(i.solve);
+  // The pricing-model selector (proto `Instrument.pricing_model`, field 22). Emit
+  // it ONLY when non-DEFAULT: a DEFAULT/absent model is the proto3 zero value, so
+  // omitting it keeps the wire frame byte-identical to the contract before this
+  // field existed (the server's `enum_or_zero(o, "pricing_model")` reads an absent
+  // key as DEFAULT). A non-DEFAULT model is carried as its numeric proto tag.
+  if (i.pricingModel !== undefined && i.pricingModel !== "DEFAULT") {
+    base["pricing_model"] = e.pricingModel.toWire(i.pricingModel);
+  }
   // The product oneof: nest the body under its own key (the proto field name) with
   // the proto field number it occupies — vanilla=7, strategy=8, single_barrier=9,
   // double_barrier=10, digital=11, touch=12, variance_swap=13, volatility_swap=14,
   // asian_option=15, forward_start=16, cliquet=17, quanto=18, tarf=19,
-  // accumulator=20, lookback=21. The WS JSON mirror keys by name, exactly like
-  // `crates/celnet-server/src/ws/codec.rs` decodes.
+  // accumulator=20, lookback=21, window_barrier=23. The WS JSON mirror keys by
+  // name, exactly like `crates/celnet-server/src/ws/codec.rs` decodes.
   switch (i.product.kind) {
     case "vanilla":
       base["vanilla"] = vanillaToWire(i.product.vanilla);
@@ -312,6 +342,9 @@ export function instrumentToWire(i: Instrument): WireObject {
       break;
     case "lookback":
       base["lookback"] = lookbackToWire(i.product.lookback);
+      break;
+    case "windowBarrier":
+      base["window_barrier"] = windowBarrierToWire(i.product.windowBarrier);
       break;
   }
   return base;

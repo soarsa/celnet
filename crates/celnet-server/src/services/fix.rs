@@ -584,6 +584,7 @@ fn instrument_from_descriptor(desc: &OptionDescriptor, expiry_years: f64) -> Ins
         }),
         side: Side::TwoWay as i32,
         solve: None,
+        pricing_model: celnet_proto::PricingModel::Default as i32,
         product: Some(instrument::Product::Vanilla(Vanilla {
             option_type: match desc.option_type {
                 OptionType::Call => celnet_proto::OptionType::Call as i32,

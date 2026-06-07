@@ -33,6 +33,7 @@ import type {
   MonitoringStyle,
   OptionType,
   PremiumStyle,
+  PricingModel,
   QuantoPayoff,
   Settlement,
   ShockFactor,
@@ -160,6 +161,21 @@ export const SMILE_MODEL_MEMBERS: readonly SmileModel[] = [
 ];
 
 export const smileModel = enumCodec<SmileModel>(SMILE_MODEL_MEMBERS);
+
+/**
+ * The canonical `PricingModel` members in wire order (index === proto enum
+ * number: `PRICING_MODEL_DEFAULT = 0`, `PRICING_MODEL_LOCAL_STOCH_VOL = 1`).
+ * Exported as the single source of truth so the codec AND the human-facing
+ * accepted-list message (`parsePricingModel`) derive from one list and cannot
+ * drift apart when a model is appended.
+ */
+export const PRICING_MODEL_MEMBERS: readonly PricingModel[] = [
+  "DEFAULT",
+  "LOCAL_STOCH_VOL",
+];
+
+/** `PricingModel` ↔ proto `PricingModel` (DEFAULT=0, LOCAL_STOCH_VOL=1). */
+export const pricingModel = enumCodec<PricingModel>(PRICING_MODEL_MEMBERS);
 
 /** `MarketObservable` ↔ proto `MarketObservable` (ATM_VOL=0, SPOT=1, RR=2, BF=3, FORWARD=4). */
 export const marketObservable = enumCodec<MarketObservable>([

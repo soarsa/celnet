@@ -331,6 +331,17 @@ export function priceInstrument(
       return priceAccumulator(instrument.product.accumulator, m, t);
     case "lookback":
       return priceLookback(instrument.product.lookback, m, t);
+    case "windowBarrier":
+      // The window barrier has NO closed form — it is priced ONLY by the server's
+      // local-stochastic-volatility ADI-PDE / Monte-Carlo engine (pricing model
+      // LOCAL_STOCH_VOL). The offline mock deliberately does NOT fabricate an LSV
+      // number (CLAUDE.md: no mocks/placeholders/overclaim). The TicketWorkspace
+      // gates the window barrier to the live transport and never requests an
+      // offline price for it, so this arm is unreachable offline; if some caller
+      // does reach it, fail LOUDLY rather than invent a value.
+      throw new Error(
+        "window-barrier pricing is server-side only (LOCAL_STOCH_VOL); the offline mock does not price it",
+      );
     case "vanilla":
     case "strategy": {
       const legs: LegInputs[] =

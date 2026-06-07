@@ -427,6 +427,31 @@ pub enum BarrierKind {
     KnockOut,
 }
 
+/// The booking / pricing model an instrument is priced under — the typed form of
+/// the wire `PricingModel`. A *pricing directive* (not an API version): the same
+/// instrument prices identically under the same model on every transport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PricingModel {
+    /// The default analytic / closed-form engine. Byte-identical to the contract
+    /// before this directive existed; the default when unset.
+    #[default]
+    Default,
+    /// The local-stochastic-volatility booking model (particle-calibrated
+    /// leverage over a stochastic-variance backbone, ADI-PDE / Monte-Carlo).
+    /// Supported only for vanilla, single-barrier knock-out, and window-barrier;
+    /// any other product is a hard `INVALID_ARGUMENT`.
+    LocalStochVol,
+}
+
+impl PricingModel {
+    fn to_wire(self) -> celnet_proto::PricingModel {
+        match self {
+            PricingModel::Default => celnet_proto::PricingModel::Default,
+            PricingModel::LocalStochVol => celnet_proto::PricingModel::LocalStochVol,
+        }
+    }
+}
+
 /// Where a single barrier sits relative to spot at inception.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BarrierSide {
@@ -1357,6 +1382,33 @@ pub enum Product {
         /// continuous monitoring).
         mc_seed: u64,
     },
+    /// A window knock-out barrier (continuously monitored only inside a calendar
+    /// window). Priced only under [`PricingModel::LocalStochVol`]; the ADI-PDE
+    /// engine when `mc_pairs == 0` (exact, no std-error), the Monte-Carlo engine
+    /// when `mc_pairs > 0` (surfaces a std-error on [`PricedLine::price_std_error`]).
+    WindowBarrier {
+        /// Call or put for the underlying terminal payoff.
+        option: OptionType,
+        /// The strike `K` (absolute).
+        strike: f64,
+        /// The barrier level `H`.
+        barrier: f64,
+        /// Barrier above (up-and-out) or below (down-and-out) spot at inception.
+        side: BarrierSide,
+        /// The start of the active window in years from inception.
+        window_start: f64,
+        /// The end of the active window in years from inception.
+        window_end: f64,
+        /// Antithetic Monte-Carlo path pairs (`0` ⇒ ADI PDE, exact; `> 0` ⇒
+        /// Monte-Carlo with a std-error).
+        mc_pairs: u32,
+        /// Monte-Carlo time steps (`0` ⇒ server default; ignored when
+        /// `mc_pairs == 0`).
+        mc_steps: u32,
+        /// Counter-RNG seed for the Monte-Carlo estimator (ignored when
+        /// `mc_pairs == 0`).
+        mc_seed: u64,
+    },
 }
 
 impl Product {
@@ -1610,6 +1662,34 @@ impl Product {
                 mc_pairs: *mc_pairs,
                 mc_seed: *mc_seed,
             }),
+            Product::WindowBarrier {
+                option,
+                strike,
+                barrier,
+                side,
+                window_start,
+                window_end,
+                mc_pairs,
+                mc_steps,
+                mc_seed,
+            } => instrument::Product::WindowBarrier(celnet_proto::WindowBarrier {
+                vanilla: Some(celnet_proto::Vanilla {
+                    option_type: celnet_proto::OptionType::from(*option) as i32,
+                    strike: Some(celnet_proto::StrikeOrDelta {
+                        spec: Some(celnet_proto::strike_or_delta::Spec::Strike(*strike)),
+                    }),
+                }),
+                barrier: *barrier,
+                side: match side {
+                    BarrierSide::Up => celnet_proto::BarrierSide::Up,
+                    BarrierSide::Down => celnet_proto::BarrierSide::Down,
+                } as i32,
+                window_start: *window_start,
+                window_end: *window_end,
+                mc_pairs: *mc_pairs,
+                mc_steps: *mc_steps,
+                mc_seed: *mc_seed,
+            }),
         }
     }
 }
@@ -1642,6 +1722,10 @@ pub struct InstrumentSpec {
     pub quantity: Quantity,
     /// The top-level side (or `TwoWay` to request a two-way market).
     pub side: Side,
+    /// The booking / pricing model the instrument is priced under. Defaults to
+    /// [`PricingModel::Default`] (the analytic engine); set via
+    /// [`InstrumentSpec::pricing_model`] / [`InstrumentSpec::with_lsv`].
+    pub pricing_model: PricingModel,
     /// The product payoff.
     pub product: Product,
 }
@@ -1669,6 +1753,69 @@ impl Quantity {
 }
 
 impl InstrumentSpec {
+    /// Set the booking / pricing model this instrument is priced under (a pricing
+    /// directive, not an API version). Returns `self` for fluent chaining.
+    #[must_use]
+    pub fn pricing_model(mut self, model: PricingModel) -> Self {
+        self.pricing_model = model;
+        self
+    }
+
+    /// Route this instrument through the local-stochastic-volatility engine — a
+    /// convenience for `.pricing_model(PricingModel::LocalStochVol)`. Only the
+    /// LSV-supported products (vanilla, single-barrier knock-out, window-barrier)
+    /// will price; any other product is rejected by the server with
+    /// `INVALID_ARGUMENT`.
+    #[must_use]
+    pub fn with_lsv(self) -> Self {
+        self.pricing_model(PricingModel::LocalStochVol)
+    }
+
+    /// A window knock-out barrier (active only inside the calendar window
+    /// `[window_start, window_end] ⊆ [0, expiry_years]`). This product has no
+    /// closed form and is priced **only** under the LSV model, so the spec is
+    /// constructed with [`PricingModel::LocalStochVol`] already selected. Set
+    /// `mc_pairs = 0` for the exact ADI-PDE price (no std-error) or `mc_pairs > 0`
+    /// for the Monte-Carlo engine (which surfaces a std-error).
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn window_barrier(
+        pair: CcyPair,
+        tenor: Tenor,
+        expiry_years: f64,
+        quantity: Quantity,
+        side: Side,
+        option: OptionType,
+        strike: f64,
+        barrier: f64,
+        barrier_side: BarrierSide,
+        window_start: f64,
+        window_end: f64,
+        mc_pairs: u32,
+        mc_steps: u32,
+        mc_seed: u64,
+    ) -> Self {
+        Self {
+            pair,
+            tenor,
+            expiry_years,
+            quantity,
+            side,
+            pricing_model: PricingModel::LocalStochVol,
+            product: Product::WindowBarrier {
+                option,
+                strike,
+                barrier,
+                side: barrier_side,
+                window_start,
+                window_end,
+                mc_pairs,
+                mc_steps,
+                mc_seed,
+            },
+        }
+    }
+
     /// A vanilla European option of the given pair / tenor / expiry / notional.
     #[must_use]
     pub fn vanilla(
@@ -1686,6 +1833,7 @@ impl InstrumentSpec {
             expiry_years,
             quantity,
             side,
+            pricing_model: PricingModel::Default,
             product: Product::Vanilla { option, strike },
         }
     }
@@ -1707,6 +1855,7 @@ impl InstrumentSpec {
             expiry_years,
             quantity,
             side,
+            pricing_model: PricingModel::Default,
             product: Product::Strategy { kind, legs },
         }
     }
@@ -1731,6 +1880,7 @@ impl InstrumentSpec {
             expiry_years,
             quantity,
             side,
+            pricing_model: PricingModel::Default,
             product: Product::SingleBarrier {
                 option: terms.option,
                 strike: terms.strike,
@@ -1761,6 +1911,7 @@ impl InstrumentSpec {
             expiry_years,
             quantity,
             side,
+            pricing_model: PricingModel::Default,
             product: Product::DoubleBarrier {
                 option: terms.option,
                 strike: terms.strike,
@@ -1791,6 +1942,7 @@ impl InstrumentSpec {
             expiry_years,
             quantity,
             side,
+            pricing_model: PricingModel::Default,
             product: Product::Digital {
                 option: terms.option,
                 strike: terms.strike,
@@ -1819,6 +1971,7 @@ impl InstrumentSpec {
             expiry_years,
             quantity,
             side,
+            pricing_model: PricingModel::Default,
             product: Product::Touch {
                 kind: terms.kind,
                 lower: terms.lower,
@@ -1919,6 +2072,7 @@ impl InstrumentSpec {
             expiry_years,
             quantity,
             side,
+            pricing_model: PricingModel::Default,
             product: Product::VarianceSwap { strike_vol },
         }
     }
@@ -1940,6 +2094,7 @@ impl InstrumentSpec {
             expiry_years,
             quantity,
             side,
+            pricing_model: PricingModel::Default,
             product: Product::VolatilitySwap { strike_vol },
         }
     }
@@ -1962,6 +2117,7 @@ impl InstrumentSpec {
             expiry_years,
             quantity,
             side,
+            pricing_model: PricingModel::Default,
             product: Product::AsianOption {
                 option: terms.option,
                 strike: terms.strike,
@@ -1991,6 +2147,7 @@ impl InstrumentSpec {
             expiry_years,
             quantity,
             side,
+            pricing_model: PricingModel::Default,
             product: Product::ForwardStart {
                 option: terms.option,
                 moneyness: terms.moneyness,
@@ -2018,6 +2175,7 @@ impl InstrumentSpec {
             expiry_years,
             quantity,
             side,
+            pricing_model: PricingModel::Default,
             product: Product::Cliquet {
                 option: terms.option,
                 moneyness: terms.moneyness,
@@ -2049,6 +2207,7 @@ impl InstrumentSpec {
             expiry_years,
             quantity,
             side,
+            pricing_model: PricingModel::Default,
             product: Product::Quanto {
                 payoff: terms.payoff,
                 option: terms.option,
@@ -2077,6 +2236,7 @@ impl InstrumentSpec {
             expiry_years,
             quantity,
             side,
+            pricing_model: PricingModel::Default,
             product: Product::Tarf {
                 option: terms.option,
                 strike: terms.strike,
@@ -2109,6 +2269,7 @@ impl InstrumentSpec {
             expiry_years,
             quantity,
             side,
+            pricing_model: PricingModel::Default,
             product: Product::Accumulator {
                 pivot: terms.pivot,
                 barrier: terms.barrier,
@@ -2141,6 +2302,7 @@ impl InstrumentSpec {
             expiry_years,
             quantity,
             side,
+            pricing_model: PricingModel::Default,
             product: Product::Lookback {
                 style: terms.style,
                 option: terms.option,
@@ -2168,6 +2330,7 @@ impl InstrumentSpec {
             }),
             side: self.side.to_wire() as i32,
             solve: None,
+            pricing_model: self.pricing_model.to_wire() as i32,
             product: Some(self.product.to_wire()),
         }
     }
