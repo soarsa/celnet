@@ -36,3 +36,6 @@ lcov.info
 
 # GUI incremental TS build info (regenerable)
 gui/**/*.tsbuildinfo
+
+# Workflow worktree-isolation checkouts (transient)
+.claude/worktrees/
