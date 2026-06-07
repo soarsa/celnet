@@ -34,8 +34,15 @@ as a failing test rather than a silently-mutated reference.
 | `digital_gk.csv` | 192 | analytic digital prices over both styles (cash-/asset-or-nothing) × call/put |
 | `touch_gk.csv` | 1224 | one-touch / no-touch / double-no-touch / double-touch (at-expiry rebate) over corridor/barrier × vol × maturity × rate-pair |
 | `double_barrier_gk.csv` | 432 | double-barrier knock-out (and knock-in complement) of a vanilla over corridor × strike × vol × maturity × rate-pair × {call,put} |
+| `heston_fo.csv` | 4 | Heston stochastic-vol European-vanilla **published** reference prices (Fang–Oosterlee 2008 §5.3, Tables 4/5), `T ∈ {1, 10}` × {call, put} |
 
-All five tables are actively gated against the Celnet pricers:
+The first five tables are QuantLib-sourced. The sixth (`heston_fo.csv`) is
+**hand-pinned from the published literature**, because QuantLib is not available
+in this build environment (see "Heston: published-literature oracle" below) —
+narrowed honestly to authoritative published constants rather than a fabricated
+oracle.
+
+All six tables are actively gated against the Celnet pricers:
 
 - `vanilla_gk.csv` → `celnet-vanilla` (`tests/vanilla_grid.rs`).
 - `barrier_gk.csv` → `celnet-exotics::single_barrier_price` (`tests/barrier_grid.rs`).
@@ -58,8 +65,43 @@ All five tables are actively gated against the Celnet pricers:
   independent oracle for the Ikeda-Kunitomo image series (it caught a put-leg sign
   bug that the in-crate call-only Monte-Carlo check missed).
 
+- `heston_fo.csv` → `celnet-heston::{carr_madan, cos}` (`tests/heston_grid.rs`).
+  See below.
+
 Each table additionally carries a structural self-check (well-formed, finite,
 sane bounds) in `src/table.rs`.
+
+### Heston: published-literature oracle (no QuantLib in this environment)
+
+QuantLib (whose `AnalyticHestonEngine` would be the natural oracle) is **not
+available** in this build environment, so the Heston golden is *narrowed
+honestly*: rather than fabricate an oracle, it pins authoritative **published**
+reference prices from
+
+> Fang & Oosterlee (2008), *A Novel Pricing Method for European Options Based on
+> Fourier-Cosine Series Expansions*, SIAM J. Sci. Comput. 31(2):826–848 (MPRA
+> preprint 8914), §5.3.
+
+The pinned figures are the paper's own **"Reference val."** entries from its
+Tables 4 and 5 — produced by the **Carr-Madan method at `N = 2^17`**, an oracle
+independent of Celnet:
+
+- `T = 1`:  `5.785155450…`
+- `T = 10`: `22.318945791…`
+
+over eq. (53) `S0 = K = 100, r = q = 0, κ = 1.5768, σ = 0.5751, θ = 0.0398,
+v0 = 0.0175, ρ = −0.5711`. Put rows are the published call under exact put-call
+parity (`r = q = 0, S0 = K` ⇒ parity term is `0`, so put `=` call).
+
+This is the *independent external* oracle the `celnet-heston` crate's own
+Carr-Madan-vs-COS cross-check cannot be: two transforms of one mis-derived
+characteristic function could agree on a wrong value, but a third-party published
+price cannot. **Carr-Madan** is gated on every row (it reproduces `T = 10` to
+~`1.5e-10`); **COS** is gated only inside its documented `≤3y` validity (the
+`cos_valid` column), and a negative-control test pins that COS legitimately
+diverges past the Fourier precision wall at `T = 10` so the boundary cannot
+silently move. Tolerance `abs/rel = 1e-6`, set to the published precision (nine
+decimals), met with ~2 orders of margin.
 
 ### QuantLib → Celnet convention mapping (verified identical units & signs)
 

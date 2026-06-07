@@ -171,6 +171,55 @@ pub struct DoubleBarrierRecord {
     pub price: f64,
 }
 
+/// One frozen Heston (1993) stochastic-volatility European-vanilla reference,
+/// **hand-pinned from the published literature** (Fang & Oosterlee 2008, §5.3,
+/// eq. (53); the per-maturity "Reference val." figures of their Tables 4 and 5,
+/// which the authors compute by the Carr-Madan method at `N = 2^17` — an oracle
+/// independent of Celnet's code). See `data/heston_fo.csv` for full provenance.
+///
+/// This is the *independent* oracle the `celnet-heston` crate's own
+/// Carr-Madan-vs-COS cross-check cannot be: that cross-check proves the two
+/// transforms *agree*, but two transforms of the same (possibly mis-derived)
+/// characteristic function could agree on a wrong value. A published external
+/// price — produced by a third party with a third implementation — catches a
+/// shared CF / quadrature / discounting error that the internal cross-check
+/// cannot.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HestonRecord {
+    /// Call or put. Put rows are the published call under exact put-call parity
+    /// (`C − P = S·e^{−qT} − K·e^{−rT}`, which is `0` for the `S=K=100, r=q=0`
+    /// published inputs), so the put reference equals the published call.
+    pub option_type: OptionType,
+    /// Spot FX rate.
+    pub spot: f64,
+    /// Strike.
+    pub strike: f64,
+    /// Time to expiry in years.
+    pub t: f64,
+    /// Continuously-compounded domestic (quote) rate (`r` in the paper).
+    pub r_dom: f64,
+    /// Continuously-compounded foreign (base) rate (`q` in the paper).
+    pub r_for: f64,
+    /// Mean-reversion speed `κ` (the paper's `λ`).
+    pub kappa: f64,
+    /// Long-run variance `θ` (the paper's `ū`).
+    pub theta: f64,
+    /// Vol-of-vol `σ` (the paper's `η`).
+    pub vol_of_vol: f64,
+    /// Spot/variance correlation `ρ`.
+    pub rho: f64,
+    /// Initial variance `v₀` (the paper's `u₀`).
+    pub v0: f64,
+    /// Published reference present value.
+    pub price: f64,
+    /// Whether the Celnet COS transform's *documented* validity covers this row.
+    /// `true` for the `≤3y` FX-vanilla regime; `false` past the Fourier-COS
+    /// precision wall (e.g. `T = 10`), where only the Carr-Madan transform is
+    /// gated to the oracle (and the oracle there *catches* the COS wall). The
+    /// Carr-Madan transform is gated against the oracle on every row regardless.
+    pub cos_valid: bool,
+}
+
 /// Corridor knock kind in the frozen double-barrier table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DoubleBarrierKind {
@@ -398,6 +447,49 @@ pub fn load_double_barrier() -> Result<Vec<DoubleBarrierRecord>, CsvError> {
     Ok(out)
 }
 
+/// Parse a `0`/`1` boolean flag column.
+fn parse_flag(s: &str, column: &str) -> Result<bool, CsvError> {
+    match s {
+        "0" => Ok(false),
+        "1" => Ok(true),
+        other => Err(CsvError::Parse {
+            row: 0,
+            column: column.to_owned(),
+            value: other.to_owned(),
+        }),
+    }
+}
+
+/// Load the frozen Heston reference table (`data/heston_fo.csv`).
+///
+/// The rows are hand-pinned published reference prices (Fang & Oosterlee 2008,
+/// §5.3) — see [`HestonRecord`] and the CSV header for provenance.
+///
+/// # Errors
+/// Propagates any [`CsvError`] from reading or parsing the table.
+pub fn load_heston() -> Result<Vec<HestonRecord>, CsvError> {
+    let t = CsvTable::load(data_path("heston_fo.csv"))?;
+    let mut out = Vec::with_capacity(t.len());
+    for row in 0..t.len() {
+        out.push(HestonRecord {
+            option_type: parse_option_type(t.get(row, "option_type")?)?,
+            spot: t.get_f64(row, "spot")?,
+            strike: t.get_f64(row, "strike")?,
+            t: t.get_f64(row, "t")?,
+            r_dom: t.get_f64(row, "r_dom")?,
+            r_for: t.get_f64(row, "r_for")?,
+            kappa: t.get_f64(row, "kappa")?,
+            theta: t.get_f64(row, "theta")?,
+            vol_of_vol: t.get_f64(row, "vol_of_vol")?,
+            rho: t.get_f64(row, "rho")?,
+            v0: t.get_f64(row, "v0")?,
+            price: t.get_f64(row, "price")?,
+            cos_valid: parse_flag(t.get(row, "cos_valid")?, "cos_valid")?,
+        });
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -483,6 +575,59 @@ mod tests {
             }
             assert!(r.spot > 0.0 && r.strike > 0.0 && r.vol > 0.0 && r.t > 0.0);
         }
+    }
+
+    #[test]
+    fn heston_table_loads_and_is_well_formed() {
+        let recs = load_heston().expect("heston table loads");
+        assert!(!recs.is_empty(), "heston grid must be non-empty");
+        let mut saw_call = false;
+        let mut saw_put = false;
+        let mut saw_cos_invalid = false;
+        for r in &recs {
+            for v in [
+                r.spot,
+                r.strike,
+                r.t,
+                r.r_dom,
+                r.r_for,
+                r.kappa,
+                r.theta,
+                r.vol_of_vol,
+                r.rho,
+                r.v0,
+                r.price,
+            ] {
+                assert!(v.is_finite(), "non-finite heston field: {v}");
+            }
+            // Model well-posedness and sane bounds.
+            assert!(r.spot > 0.0 && r.strike > 0.0 && r.t > 0.0);
+            assert!(r.kappa > 0.0 && r.theta > 0.0 && r.vol_of_vol > 0.0 && r.v0 >= 0.0);
+            assert!(
+                (-1.0..=1.0).contains(&r.rho),
+                "rho out of [-1,1]: {}",
+                r.rho
+            );
+            // A European option value is non-negative and (under r=0, q=0) at
+            // most the spot/strike scale.
+            assert!(r.price >= 0.0, "heston price must be non-negative");
+            assert!(
+                r.price <= r.spot.max(r.strike) + 1e-9,
+                "heston price exceeds spot/strike scale: {}",
+                r.price
+            );
+            match r.option_type {
+                OptionType::Call => saw_call = true,
+                OptionType::Put => saw_put = true,
+            }
+            saw_cos_invalid |= !r.cos_valid;
+        }
+        assert!(saw_call && saw_put, "grid must exercise both call and put");
+        assert!(
+            saw_cos_invalid,
+            "grid must include at least one row past the COS validity wall \
+             (so the Carr-Madan-only gate is exercised)"
+        );
     }
 
     #[test]
