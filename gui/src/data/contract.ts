@@ -637,6 +637,55 @@ export type ExerciseStyle = "AMERICAN" | "BERMUDAN";
  * `bermudanDates` (year-fractions in `(0, expiryYears]`; expiry always
  * exercisable). Scope: American/Bermudan VANILLA.
  */
+/**
+ * How the per-leg terminal levels of a correlated multi-asset option combine
+ * into the option underlying (mirrors `celnet_proto::BasketKind`).
+ */
+export type BasketKind = "BASKET" | "BEST_OF" | "WORST_OF";
+
+/** One leg of a correlated multi-asset option (proto `BasketLeg`). */
+export interface BasketLeg {
+  /** The currency pair of this leg (identifies the underlying). */
+  pair: CcyPair;
+  /** The leg weight `w_a` (may be negative for a short leg). */
+  weight: number;
+  /** The leg spot FX level `S_a(0)`. */
+  spot: number;
+  /** The leg annualised lognormal volatility `σ_a`. */
+  vol: number;
+  /** The leg continuously-compounded foreign (base) rate `r_f,a`. */
+  rFor: number;
+}
+
+/**
+ * A correlated multi-asset FX option (proto `BasketOption`, product field 25): a
+ * weighted BASKET, or a BEST_OF / WORST_OF (rainbow) over N currency-pair legs.
+ * Priced by Cholesky-correlated multi-asset GBM Monte-Carlo, so the price carries
+ * a `priceStdError`. Multi-asset Greeks are deferred (the strip is zeroed). The
+ * enclosing `Instrument.pair` is the settlement / numeraire pair; the underlyings
+ * are the per-leg pairs and the shared domestic rate is the request market
+ * context's `rDom`.
+ */
+export interface BasketOption {
+  /** The legs (one FX underlying each); at least one. */
+  legs: BasketLeg[];
+  /** The row-major N×N correlation matrix (length N²); SPD required. */
+  correlations: number[];
+  optionType: OptionType;
+  /** The strike `K` on the aggregated underlying. */
+  strike: number;
+  /** The aggregation kind. */
+  kind: BasketKind;
+  /** Scrambled-Sobol points per replication (`0` ⇒ server default). */
+  mcPaths: number;
+  /** Independent randomized scrambles (`0` ⇒ server default; `≥ 2`). */
+  mcReplications: number;
+  /** Time steps per path (`0` ⇒ server default). */
+  mcSteps: number;
+  /** The base scramble seed (reproducible). */
+  mcSeed: bigint;
+}
+
 export interface AmericanOption {
   optionType: OptionType;
   /** The strike `K` (absolute level, quote per 1 unit of base). */
@@ -671,7 +720,8 @@ export type Product =
   | { kind: "accumulator"; accumulator: Accumulator }
   | { kind: "lookback"; lookback: Lookback }
   | { kind: "windowBarrier"; windowBarrier: WindowBarrier }
-  | { kind: "american"; american: AmericanOption };
+  | { kind: "american"; american: AmericanOption }
+  | { kind: "basket"; basket: BasketOption };
 
 /** Solve directive: solve a free parameter to hit a target (e.g. zero premium). */
 export interface Solve {

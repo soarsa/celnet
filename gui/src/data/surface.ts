@@ -320,6 +320,9 @@ function legsOf(instrument: Instrument): { strikeSpec: StrikeOrDelta; isCall: bo
     case "tarf":
     case "accumulator":
     case "lookback":
+    case "basket":
+      // A correlated multi-asset basket has no single representative smile read on
+      // the settlement pair (its legs are distinct underlyings) ⇒ ATM face vol.
       return [];
   }
 }

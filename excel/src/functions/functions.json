@@ -1024,6 +1024,84 @@
       ]
     },
     {
+      "id": "BASKET",
+      "name": "BASKET",
+      "description": "Price a correlated multi-asset basket / best-of / worst-of option: premium + MC std_error + 13 Greeks (deferred => 0) + footer.",
+      "result": {
+        "dimensionality": "matrix",
+        "type": "any"
+      },
+      "parameters": [
+        {
+          "name": "pair",
+          "description": "Settlement / numeraire currency pair, e.g. EURUSD.",
+          "type": "string"
+        },
+        {
+          "name": "tenor",
+          "description": "Tenor, e.g. 1Y.",
+          "type": "string"
+        },
+        {
+          "name": "callPut",
+          "description": "C for call, P for put on the aggregated underlying.",
+          "type": "string"
+        },
+        {
+          "name": "strike",
+          "description": "Absolute strike level on the aggregated underlying, e.g. 1.18.",
+          "type": "number"
+        },
+        {
+          "name": "notional",
+          "description": "Trade notional in the base currency.",
+          "type": "number"
+        },
+        {
+          "name": "legs",
+          "description": "The legs as a range, one row per leg: [pair, weight, spot, vol, rFor].",
+          "type": "any",
+          "dimensionality": "matrix"
+        },
+        {
+          "name": "correlations",
+          "description": "The N x N correlation matrix as a range (row-major), for the N legs.",
+          "type": "number",
+          "dimensionality": "matrix"
+        },
+        {
+          "name": "kind",
+          "description": "Optional aggregation: BASKET (default, weighted sum), BEST_OF (max) or WORST_OF (min).",
+          "type": "string",
+          "optional": true
+        },
+        {
+          "name": "mcPaths",
+          "description": "Optional scrambled-Sobol points per replication (0 => server default).",
+          "type": "number",
+          "optional": true
+        },
+        {
+          "name": "mcReplications",
+          "description": "Optional independent randomized scrambles (0 => server default).",
+          "type": "number",
+          "optional": true
+        },
+        {
+          "name": "mcSteps",
+          "description": "Optional time steps per path (0 => server default).",
+          "type": "number",
+          "optional": true
+        },
+        {
+          "name": "mcSeed",
+          "description": "Optional base scramble seed (bit-reproducible; 0 => default).",
+          "type": "number",
+          "optional": true
+        }
+      ]
+    },
+    {
       "id": "SUBSCRIBE",
       "name": "SUBSCRIBE",
       "description": "Stream a live two-way for a structure (multiplexed, coalesced, stale-aware).",

@@ -23,6 +23,9 @@ import type {
   AveragingStyle,
   BarrierKind,
   BarrierSide,
+  BasketKind,
+  BasketLeg,
+  BasketOption,
   CcyPair,
   Cliquet,
   Conventions,
@@ -950,6 +953,148 @@ function shapeMcSeed(raw: number | undefined): bigint {
     throw new ShapingError(`mc seed must be a non-negative integer; got \`${raw}\``);
   }
   return BigInt(v);
+}
+
+/** Parse a basket aggregation-kind selector (case-insensitive, with aliases). */
+export function parseBasketKind(raw: string | undefined): BasketKind {
+  const s = (raw ?? "BASKET").trim().toUpperCase();
+  switch (s) {
+    case "":
+    case "BASKET":
+    case "WEIGHTED":
+    case "SUM":
+      return "BASKET";
+    case "BEST_OF":
+    case "BEST-OF":
+    case "BESTOF":
+    case "BEST":
+    case "MAX":
+      return "BEST_OF";
+    case "WORST_OF":
+    case "WORST-OF":
+    case "WORSTOF":
+    case "WORST":
+    case "MIN":
+      return "WORST_OF";
+    default:
+      throw new ShapingError(`unknown basket kind \`${raw}\` (BASKET / BEST_OF / WORST_OF)`);
+  }
+}
+
+/** Arguments to shape a correlated multi-asset basket from worksheet cells. */
+export interface BasketArgs {
+  /** The settlement / numeraire pair (the top-level instrument pair). */
+  readonly pair: string;
+  readonly tenor: string;
+  readonly notional: number;
+  /** Call or put on the aggregated underlying. */
+  readonly callPut: string;
+  /** The strike `K` on the aggregated underlying. */
+  readonly strike: number;
+  /** The aggregation kind (BASKET / BEST_OF / WORST_OF; default BASKET). */
+  readonly kind?: string | undefined;
+  /**
+   * The legs as a row-per-leg matrix `[pair, weight, spot, vol, rFor]` (an Excel
+   * range). `pair` is a string like "EURUSD"; the rest are numbers.
+   */
+  readonly legs: ReadonlyArray<ReadonlyArray<string | number>>;
+  /**
+   * The N×N correlation matrix as a range (row-major), flattened to row-major on
+   * the wire. Must be N×N for the N legs.
+   */
+  readonly correlations: ReadonlyArray<ReadonlyArray<number>>;
+  /** Scrambled-Sobol points per replication (`0`/absent ⇒ server default). */
+  readonly mcPaths?: number | undefined;
+  /** Independent randomized scrambles (`0`/absent ⇒ server default). */
+  readonly mcReplications?: number | undefined;
+  /** Time steps per path (`0`/absent ⇒ server default). */
+  readonly mcSteps?: number | undefined;
+  /** The base scramble seed (`0`/absent ⇒ default). */
+  readonly mcSeed?: number | undefined;
+}
+
+/**
+ * Shape a correlated multi-asset basket from the cell arguments. Each leg row is
+ * `[pair, weight, spot, vol, rFor]`; the correlation range is the N×N matrix,
+ * flattened ROW-MAJOR for the wire `correlations` array the server decodes. The
+ * shaper validates the leg/correlation shapes locally; the SPD check is the
+ * server's (a non-PSD matrix is rejected `INVALID_ARGUMENT`). `side` is TWO_WAY.
+ */
+export function shapeBasket(args: BasketArgs): Instrument {
+  const { pair, tenor, expiryYears } = shapeSwapBase(args);
+  if (!Array.isArray(args.legs) || args.legs.length < 1) {
+    throw new ShapingError("a basket needs at least one leg row [pair, weight, spot, vol, rFor]");
+  }
+  const legs: BasketLeg[] = args.legs.map((row, i) => {
+    if (!Array.isArray(row) || row.length < 5) {
+      throw new ShapingError(
+        `basket leg ${i + 1} must be [pair, weight, spot, vol, rFor]; got ${JSON.stringify(row)}`,
+      );
+    }
+    const legPair = parsePair(String(row[0]));
+    const num = (v: string | number, name: string): number => {
+      const n = typeof v === "number" ? v : Number(v);
+      if (!Number.isFinite(n)) {
+        throw new ShapingError(`basket leg ${i + 1} ${name} \`${v}\` is not a number`);
+      }
+      return n;
+    };
+    const spot = num(row[2], "spot");
+    const vol = num(row[3], "vol");
+    if (!(spot > 0)) {
+      throw new ShapingError(`basket leg ${i + 1} spot must be positive`);
+    }
+    if (!(vol >= 0)) {
+      throw new ShapingError(`basket leg ${i + 1} vol must be non-negative`);
+    }
+    return {
+      pair: legPair,
+      weight: num(row[1], "weight"),
+      spot,
+      vol,
+      rFor: num(row[4], "rFor"),
+    };
+  });
+  const n = legs.length;
+  if (!Array.isArray(args.correlations) || args.correlations.length !== n) {
+    throw new ShapingError(`correlation matrix must be ${n}×${n} for ${n} legs`);
+  }
+  const correlations: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const row = args.correlations[i];
+    if (!Array.isArray(row) || row.length !== n) {
+      throw new ShapingError(`correlation matrix row ${i + 1} must have ${n} entries`);
+    }
+    for (let j = 0; j < n; j++) {
+      const v = Number(row[j]);
+      if (!Number.isFinite(v)) {
+        throw new ShapingError(`correlation entry (${i + 1},${j + 1}) is not a number`);
+      }
+      correlations.push(v);
+    }
+  }
+  if (!(args.strike > 0)) {
+    throw new ShapingError("basket strike must be a positive absolute level");
+  }
+  const basket: BasketOption = {
+    legs,
+    correlations,
+    optionType: parseOptionType(args.callPut),
+    strike: args.strike,
+    kind: parseBasketKind(args.kind),
+    mcPaths: shapeMcPairs(args.mcPaths),
+    mcReplications: shapeMcPairs(args.mcReplications),
+    mcSteps: shapeMcPairs(args.mcSteps),
+    mcSeed: shapeMcSeed(args.mcSeed),
+  };
+  return {
+    pair,
+    tenor,
+    expiryYears,
+    quantity: { notional: args.notional, baseCcy: true },
+    side: "TWO_WAY" as Side,
+    product: { kind: "basket", basket },
+  };
 }
 
 /** Validate a non-negative per-fixing notional (`0`/absent ⇒ the unit leg, 1.0). */
@@ -2679,6 +2824,19 @@ function canonicalProduct(p: Product): unknown {
         lp: p.american.lsmPaths,
         led: p.american.lsmExerciseDates,
         ls: p.american.lsmSeed.toString(),
+      };
+    case "basket":
+      return {
+        k: "bskt",
+        ot: p.basket.optionType,
+        strike: p.basket.strike,
+        bk: p.basket.kind,
+        legs: p.basket.legs.map((l) => [l.pair.base, l.pair.quote, l.weight, l.spot, l.vol, l.rFor]),
+        cor: [...p.basket.correlations],
+        mcp: p.basket.mcPaths,
+        mcr: p.basket.mcReplications,
+        mst: p.basket.mcSteps,
+        mcs: p.basket.mcSeed.toString(),
       };
   }
 }

@@ -16,7 +16,9 @@ import type {
   AveragingStyle,
   BarrierKind,
   BarrierSide,
+  BasketKind,
   BrokenDate,
+  CcyPair,
   DigitalStyle,
   ExerciseStyle,
   Instrument,
@@ -41,9 +43,11 @@ import { TwoWayQuote } from "../components/TwoWayQuote";
 import { GreeksStrip } from "../components/GreeksStrip";
 import { ConventionRow } from "../components/ConventionChip";
 import {
+  PAIRS,
   accumulatorInstrument,
   americanInstrument,
   asianInstrument,
+  basketInstrument,
   cliquetInstrument,
   digitalInstrument,
   doubleBarrierInstrument,
@@ -66,6 +70,7 @@ import {
   type AccumulatorTerms,
   type AmericanTerms,
   type AsianTerms,
+  type BasketTerms,
   type CliquetTerms,
   type DigitalTerms,
   type DoubleBarrierTerms,
@@ -86,7 +91,7 @@ import {
   sideVerb,
 } from "../lib/format";
 import { nowNanos } from "../hooks/useClock";
-import { samePair } from "../lib/universe";
+import { pairLabel, samePair } from "../lib/universe";
 import styles from "./TicketWorkspace.module.css";
 
 /**
@@ -111,7 +116,8 @@ type Structure =
   | "ACCUMULATOR"
   | "LOOKBACK"
   | "WINDOW_BARRIER"
-  | "AMERICAN";
+  | "AMERICAN"
+  | "BASKET";
 
 /**
  * True for the products that render their own input block instead of the vanilla/
@@ -134,7 +140,8 @@ function isLegless(s: Structure): boolean {
     s === "ACCUMULATOR" ||
     s === "LOOKBACK" ||
     s === "WINDOW_BARRIER" ||
-    s === "AMERICAN"
+    s === "AMERICAN" ||
+    s === "BASKET"
   );
 }
 
@@ -182,6 +189,8 @@ function productKindFor(s: Structure): Product["kind"] {
       return "windowBarrier";
     case "AMERICAN":
       return "american";
+    case "BASKET":
+      return "basket";
   }
 }
 
@@ -248,6 +257,7 @@ const STRUCTURES: { id: Structure; label: string }[] = [
   { id: "LOOKBACK", label: "Lookback" },
   { id: "WINDOW_BARRIER", label: "Window Barrier" },
   { id: "AMERICAN", label: "American / Bermudan" },
+  { id: "BASKET", label: "Basket / Best-of / Worst-of" },
 ];
 
 /** The Asian-specific ticket inputs (option type / strike / schedule / method). */
@@ -826,6 +836,149 @@ function americanTerms(a: AmericanInputs, atmForward: number, expiryYears: numbe
   };
 }
 
+/**
+ * The correlated multi-asset basket ticket inputs. The trader builds 2–3 legs
+ * (each a currency pair + weight + its own spot / vol / foreign rate), a single
+ * off-diagonal correlation `ρ` (the matrix is symmetric with unit diagonal — for
+ * 2 legs that one `ρ`; for 3 legs `ρ` populates all three off-diagonals, an
+ * equicorrelation matrix), the aggregation kind (BASKET / BEST_OF / WORST_OF),
+ * the call/put and the strike `K` on the aggregated underlying (`0` ⇒ default to
+ * the inception aggregate level at build). The Monte-Carlo controls (`mcPaths` /
+ * `mcReplications` / `mcSteps` / `mcSeed`) tune the server estimator; the basket
+ * is always Monte-Carlo, so the build surfaces a standard error.
+ */
+interface BasketLegInput {
+  pair: CcyPair;
+  weight: number;
+  spot: number;
+  vol: number;
+  rFor: number;
+}
+
+interface BasketInputs {
+  legs: BasketLegInput[];
+  /** The single off-diagonal correlation `ρ` shared by every leg pair. */
+  correlation: number;
+  optionType: OptionType;
+  /** Strike on the aggregated underlying; `0` ⇒ default to the inception aggregate. */
+  strike: number;
+  kind: BasketKind;
+  mcPaths: number;
+  mcReplications: number;
+  mcSteps: number;
+  mcSeed: bigint;
+}
+
+/** The minimum and maximum legs the basket builder allows (2–3 legs). */
+const BASKET_MIN_LEGS = 2;
+const BASKET_MAX_LEGS = 3;
+
+/** A default basket leg seeded from a pair in the universe (spot/vol/rFor off its market). */
+function defaultBasketLeg(index: number): BasketLegInput {
+  const ctx = PAIRS[index % PAIRS.length]!;
+  return {
+    pair: ctx.pair,
+    weight: 0.5,
+    spot: ctx.market.spot,
+    vol: ctx.market.vol,
+    rFor: ctx.market.rFor,
+  };
+}
+
+const DEFAULT_BASKET: BasketInputs = {
+  legs: [defaultBasketLeg(0), defaultBasketLeg(1)],
+  correlation: 0.4,
+  optionType: "CALL",
+  strike: 0,
+  kind: "WORST_OF",
+  mcPaths: 8192,
+  mcReplications: 16,
+  mcSteps: 1,
+  mcSeed: 0xba_5en,
+};
+
+/**
+ * The inception aggregate level `Σ wₐ Sₐ(0)` (BASKET) / `max` (BEST_OF) /
+ * `min` (WORST_OF) of the weighted leg spots — the natural strike default so the
+ * basket prices roughly at-the-money on first build.
+ */
+function basketInceptionAggregate(inputs: BasketInputs): number {
+  const weighted = inputs.legs.map((l) => l.weight * l.spot);
+  if (weighted.length === 0) return 0;
+  if (inputs.kind === "BEST_OF") return Math.max(...weighted);
+  if (inputs.kind === "WORST_OF") return Math.min(...weighted);
+  return weighted.reduce((a, b) => a + b, 0);
+}
+
+/**
+ * Build the row-major N×N correlation matrix from the single off-diagonal `ρ`:
+ * unit diagonal, `ρ` on every off-diagonal (an equicorrelation matrix, the
+ * symmetric / unit-diagonal shape the server's Cholesky validates as SPD when
+ * `−1/(N−1) < ρ < 1`).
+ */
+function basketCorrelationMatrix(n: number, rho: number): number[] {
+  const m = new Array<number>(n * n).fill(0);
+  for (let i = 0; i < n; i += 1) {
+    for (let j = 0; j < n; j += 1) {
+      m[i * n + j] = i === j ? 1 : rho;
+    }
+  }
+  return m;
+}
+
+/**
+ * True iff the row-major N×N correlation matrix is symmetric-positive-definite (a
+ * successful Cholesky with positive pivots) — the exact admissibility the server's
+ * `cholesky` enforces. Used to warn in the ticket before a non-SPD request reaches
+ * the pricer (which rejects it as `NotPositiveDefinite`). Provenance documented
+ * here only, never in an identifier (CLAUDE.md rule 8).
+ */
+function choleskyLowerOk(rowMajor: number[], n: number): boolean {
+  const l: number[][] = Array.from({ length: n }, () => new Array<number>(n).fill(0));
+  for (let i = 0; i < n; i += 1) {
+    for (let j = 0; j <= i; j += 1) {
+      if (Math.abs(rowMajor[i * n + j]! - rowMajor[j * n + i]!) > 1e-9) return false;
+      let dot = 0;
+      for (let k = 0; k < j; k += 1) dot += l[i]![k]! * l[j]![k]!;
+      if (i === j) {
+        const diag = rowMajor[i * n + i]! - dot;
+        if (diag <= 0) return false;
+        l[i]![j] = Math.sqrt(diag);
+      } else {
+        l[i]![j] = (rowMajor[i * n + j]! - dot) / l[j]![j]!;
+      }
+    }
+  }
+  return true;
+}
+
+/**
+ * Build `BasketTerms` from the inputs: the equicorrelation matrix from `ρ` and the
+ * strike defaulted to the inception aggregate when left `0`. The MC controls pass
+ * through (the server clamps `0` to its defaults).
+ */
+function basketTerms(inputs: BasketInputs): BasketTerms {
+  const n = inputs.legs.length;
+  const strike = inputs.strike > 0 ? inputs.strike : basketInceptionAggregate(inputs);
+  return {
+    legs: inputs.legs.map((l) => ({
+      pair: l.pair,
+      weight: l.weight,
+      spot: l.spot,
+      vol: l.vol,
+      rFor: l.rFor,
+    })),
+    correlations: basketCorrelationMatrix(n, inputs.correlation),
+    optionType: inputs.optionType,
+    strike,
+    kind: inputs.kind,
+    mcPaths: Math.max(0, Math.trunc(inputs.mcPaths)),
+    mcReplications: Math.max(0, Math.trunc(inputs.mcReplications)),
+    mcSteps: Math.max(0, Math.trunc(inputs.mcSteps)),
+    mcSeed: inputs.mcSeed,
+  };
+}
+
 /** Today (UTC, calendar-only) as a `BrokenDate` — the trade date for date math. */
 function todayUtc(): BrokenDate {
   const d = new Date();
@@ -887,6 +1040,8 @@ interface BuildExtras {
   windowBarrier: WindowBarrierTerms;
   /** American / Bermudan terms (option / strike / exercise style / dates / LSM). */
   american: AmericanTerms;
+  /** Correlated multi-asset basket / best-of / worst-of terms (legs / ρ / kind / MC). */
+  basket: BasketTerms;
 }
 
 function buildInstrument(
@@ -955,6 +1110,9 @@ function buildInstrument(
     case "AMERICAN":
       base = americanInstrument(pair, tenorYears, notionalMm, extras.american);
       break;
+    case "BASKET":
+      base = basketInstrument(pair, tenorYears, notionalMm, extras.basket);
+      break;
     default:
       base = strategyInstrument(pair, tenorYears, structure, notionalMm);
       break;
@@ -1020,6 +1178,10 @@ export function TicketWorkspace(): React.ReactElement {
   // offline build prices it with a genuine binomial tree; the live server prices
   // the exact free-boundary FD (lsmPaths 0) or Longstaff-Schwartz LSM (lsmPaths > 0).
   const [americanInputs, setAmericanInputs] = useState<AmericanInputs>(DEFAULT_AMERICAN);
+  // Correlated multi-asset basket / best-of / worst-of (proto product field 25).
+  // Always Monte-Carlo (Cholesky-correlated GBM): the build surfaces a standard
+  // error. The offline mock prices a genuine antithetic correlated terminal MC.
+  const [basketInputs, setBasketInputs] = useState<BasketInputs>(DEFAULT_BASKET);
   // The selected booking/pricing model (`Instrument.pricing_model`). DEFAULT (the
   // per-product closed-form engine) unless the trader picks Local-Stoch-Vol for a
   // supported product; the window barrier locks it to LOCAL_STOCH_VOL.
@@ -1082,6 +1244,7 @@ export function TicketWorkspace(): React.ReactElement {
       lookback: lookbackTerms(lookbackInputs, atmForward),
       windowBarrier: windowBarrierTerms(windowBarrierInputs, atmForward, spot, tenorYears),
       american: americanTerms(americanInputs, atmForward, tenorYears),
+      basket: basketTerms(basketInputs),
     }),
     [
       singleBarrierInputs,
@@ -1098,6 +1261,7 @@ export function TicketWorkspace(): React.ReactElement {
       lookbackInputs,
       windowBarrierInputs,
       americanInputs,
+      basketInputs,
       atmForward,
       spot,
       tenorYears,
@@ -1504,6 +1668,11 @@ export function TicketWorkspace(): React.ReactElement {
               setAmericanInputs(next);
               setQuote(null);
             }}
+            basket={basketInputs}
+            onBasket={(next) => {
+              setBasketInputs(next);
+              setQuote(null);
+            }}
           />
         ) : (
           <div className={styles.legs}>
@@ -1705,9 +1874,11 @@ function describeLegs(
     case "lookback":
     case "windowBarrier":
     case "american":
+    case "basket":
       // Barrier / digital / touch / vol-strip / average-rate / reset / converted /
-      // path-dependent / early-exercise products carry no enumerable option legs;
-      // the ticket renders their own input block instead of a leg ladder.
+      // path-dependent / early-exercise / multi-asset products carry no enumerable
+      // option legs; the ticket renders their own input block instead of a leg
+      // ladder (the basket renders a multi-leg correlated builder).
       return [];
   }
 }
@@ -1754,6 +1925,8 @@ function structureLabel(s: Structure): string {
       return "window barrier";
     case "AMERICAN":
       return "American";
+    case "BASKET":
+      return "basket";
   }
 }
 
@@ -1824,6 +1997,8 @@ function ProductInputs(props: {
   onWindowBarrier: (next: WindowBarrierInputs) => void;
   american: AmericanInputs;
   onAmerican: (next: AmericanInputs) => void;
+  basket: BasketInputs;
+  onBasket: (next: BasketInputs) => void;
 }): React.ReactElement {
   const {
     structure,
@@ -1858,6 +2033,8 @@ function ProductInputs(props: {
     onWindowBarrier,
     american,
     onAmerican,
+    basket,
+    onBasket,
   } = props;
 
   if (structure === "SINGLE_BARRIER") {
@@ -3072,6 +3249,235 @@ function ProductInputs(props: {
             ? "the Longstaff-Schwartz regression Monte-Carlo (reports a standard error)"
             : "the exact projected-SOR free-boundary finite difference (no standard error)"}
           .
+        </p>
+      </div>
+    );
+  }
+
+  if (structure === "BASKET") {
+    const n = basket.legs.length;
+    const inceptionAggregate = basketInceptionAggregate(basket);
+    const matrix = basketCorrelationMatrix(n, basket.correlation);
+    const isSpd = choleskyLowerOk(matrix, n);
+    // The equicorrelation SPD bound for N equal-correlated legs: ρ ∈ (−1/(N−1), 1).
+    const rhoFloor = -1 / (n - 1);
+    const updateLeg = (i: number, patch: Partial<BasketLegInput>): void => {
+      const legs = basket.legs.map((l, k) => (k === i ? { ...l, ...patch } : l));
+      onBasket({ ...basket, legs });
+    };
+    const setLegPair = (i: number, key: string): void => {
+      const ctx = PAIRS.find((p) => pairLabel(p.pair) === key);
+      if (!ctx) return;
+      // Seed the leg's market data off the chosen pair (the trader can override).
+      updateLeg(i, { pair: ctx.pair, spot: ctx.market.spot, vol: ctx.market.vol, rFor: ctx.market.rFor });
+    };
+    const addLeg = (): void => {
+      if (n >= BASKET_MAX_LEGS) return;
+      onBasket({ ...basket, legs: [...basket.legs, defaultBasketLeg(n)] });
+    };
+    const removeLeg = (i: number): void => {
+      if (n <= BASKET_MIN_LEGS) return;
+      onBasket({ ...basket, legs: basket.legs.filter((_, k) => k !== i) });
+    };
+    return (
+      <div className={styles.product}>
+        <div className={styles.productRow}>
+          <span className={styles.productLabel}>Aggregation</span>
+          <div className={styles.toggleGroup} role="tablist" aria-label="basket kind">
+            {(["BASKET", "BEST_OF", "WORST_OF"] as BasketKind[]).map((bk) => (
+              <button
+                key={bk}
+                role="tab"
+                aria-selected={basket.kind === bk}
+                className={`${styles.modeTab} ${basket.kind === bk ? styles.modeActive : ""}`}
+                onClick={() => onBasket({ ...basket, kind: bk })}
+              >
+                {bk === "BASKET" ? "Basket" : bk === "BEST_OF" ? "Best-of" : "Worst-of"}
+              </button>
+            ))}
+          </div>
+          <OptionToggle
+            value={basket.optionType}
+            onChange={(ot) => onBasket({ ...basket, optionType: ot })}
+          />
+        </div>
+        {basket.legs.map((leg, i) => (
+          <div className={styles.basketLeg} key={i}>
+            <span className={styles.basketLegNo}>Leg {i + 1}</span>
+            <label className={styles.productField}>
+              <span>Pair</span>
+              <select
+                value={pairLabel(leg.pair)}
+                aria-label={`leg ${i + 1} pair`}
+                onChange={(ev) => setLegPair(i, ev.target.value)}
+              >
+                {PAIRS.map((p) => (
+                  <option key={pairLabel(p.pair)} value={pairLabel(p.pair)}>
+                    {pairLabel(p.pair)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className={styles.productField}>
+              <span>Weight</span>
+              <input
+                className="num"
+                type="number"
+                step={0.05}
+                value={leg.weight}
+                aria-label={`leg ${i + 1} weight`}
+                onChange={(ev) => updateLeg(i, { weight: Number(ev.target.value) })}
+              />
+            </label>
+            <label className={styles.productField}>
+              <span>Spot</span>
+              <input
+                className="num"
+                type="number"
+                min={0}
+                step={0.0001}
+                value={leg.spot}
+                aria-label={`leg ${i + 1} spot`}
+                onChange={(ev) => updateLeg(i, { spot: Math.max(0, Number(ev.target.value)) })}
+              />
+            </label>
+            <label className={styles.productField}>
+              <span>Vol</span>
+              <input
+                className="num"
+                type="number"
+                min={0}
+                step={0.005}
+                value={leg.vol}
+                aria-label={`leg ${i + 1} vol`}
+                onChange={(ev) => updateLeg(i, { vol: Math.max(0, Number(ev.target.value)) })}
+              />
+            </label>
+            <label className={styles.productField}>
+              <span>r_for</span>
+              <input
+                className="num"
+                type="number"
+                step={0.001}
+                value={leg.rFor}
+                aria-label={`leg ${i + 1} r_for`}
+                onChange={(ev) => updateLeg(i, { rFor: Number(ev.target.value) })}
+              />
+            </label>
+            <button
+              className={styles.basketLegRemove}
+              aria-label={`remove leg ${i + 1}`}
+              disabled={n <= BASKET_MIN_LEGS}
+              onClick={() => removeLeg(i)}
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+        <button
+          className={styles.basketAddLeg}
+          aria-label="add leg"
+          disabled={n >= BASKET_MAX_LEGS}
+          onClick={addLeg}
+        >
+          + Add leg
+        </button>
+        <div className={styles.productRow}>
+          <span className={styles.productLabel}>Correlation</span>
+          <label className={styles.productField}>
+            <span>ρ</span>
+            <input
+              className="num"
+              type="number"
+              min={-1}
+              max={1}
+              step={0.05}
+              value={basket.correlation}
+              aria-label="correlation"
+              onChange={(ev) =>
+                onBasket({ ...basket, correlation: Math.max(-1, Math.min(1, Number(ev.target.value))) })
+              }
+            />
+            <span>{isSpd ? "" : `not positive-definite — need ρ > ${rhoFloor.toFixed(2)}`}</span>
+          </label>
+          <label className={styles.productField}>
+            <span>Strike</span>
+            <input
+              className="num"
+              type="number"
+              min={0}
+              step={0.0001}
+              value={basket.strike}
+              aria-label="strike"
+              placeholder={inceptionAggregate.toFixed(4)}
+              onChange={(ev) =>
+                onBasket({ ...basket, strike: Math.max(0, Number(ev.target.value)) })
+              }
+            />
+            <span>{basket.strike > 0 ? "" : `aggregate ${inceptionAggregate.toFixed(4)}`}</span>
+          </label>
+        </div>
+        <div className={styles.productRow}>
+          <span className={styles.productLabel}>Engine</span>
+          <label className={styles.productField}>
+            <span>MC paths</span>
+            <input
+              className="num"
+              type="number"
+              min={0}
+              step={1024}
+              value={basket.mcPaths}
+              aria-label="mc paths"
+              onChange={(ev) =>
+                onBasket({ ...basket, mcPaths: Math.max(0, Math.trunc(Number(ev.target.value))) })
+              }
+            />
+          </label>
+          <label className={styles.productField}>
+            <span>Scrambles</span>
+            <input
+              className="num"
+              type="number"
+              min={0}
+              step={1}
+              value={basket.mcReplications}
+              aria-label="mc replications"
+              onChange={(ev) =>
+                onBasket({
+                  ...basket,
+                  mcReplications: Math.max(0, Math.trunc(Number(ev.target.value))),
+                })
+              }
+            />
+          </label>
+          <label className={styles.productField}>
+            <span>Steps</span>
+            <input
+              className="num"
+              type="number"
+              min={0}
+              step={1}
+              value={basket.mcSteps}
+              aria-label="mc steps"
+              onChange={(ev) =>
+                onBasket({ ...basket, mcSteps: Math.max(0, Math.trunc(Number(ev.target.value))) })
+              }
+            />
+          </label>
+        </div>
+        <p className={styles.productNote}>
+          {basket.kind === "BASKET"
+            ? "Weighted basket"
+            : basket.kind === "BEST_OF"
+              ? "Best-of (rainbow max)"
+              : "Worst-of (rainbow min)"}{" "}
+          {basket.optionType === "CALL" ? "call" : "put"} over {n} correlated currency-pair legs.
+          Each leg carries its own spot / vol / foreign rate; the enclosing pair is the
+          settlement / numeraire pair and the shared domestic rate is the market context&rsquo;s.
+          Priced by Cholesky-correlated multi-asset Monte-Carlo (always — there is no closed form),
+          so it reports a standard error. Multi-asset Greeks are deferred (the strip is zeroed). The
+          offline build prices a genuine antithetic correlated terminal Monte-Carlo; a non
+          positive-definite correlation is rejected, never regularised.
         </p>
       </div>
     );

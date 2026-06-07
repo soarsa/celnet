@@ -11,6 +11,8 @@ import type {
   AveragingStyle,
   BarrierKind,
   BarrierSide,
+  BasketKind,
+  BasketLeg,
   BrokerQuoteSet,
   CcyPair,
   Conventions,
@@ -644,6 +646,54 @@ function americanInstrument(
   };
 }
 
+/** The terms of a correlated multi-asset basket / best-of / worst-of option. */
+export interface BasketTerms {
+  legs: BasketLeg[];
+  /** The row-major N×N correlation matrix (length N²). */
+  correlations: number[];
+  optionType: OptionType;
+  strike: number;
+  kind: BasketKind;
+  mcPaths: number;
+  mcReplications: number;
+  mcSteps: number;
+  mcSeed: bigint;
+}
+
+/**
+ * A correlated multi-asset basket / best-of / worst-of instrument
+ * (`product.basket`, proto field 25). The `pair` is the settlement / numeraire
+ * pair; the underlyings are the per-leg pairs, each carrying its own market data.
+ */
+function basketInstrument(
+  pair: CcyPair,
+  tenorYears: number,
+  notionalMm: number,
+  terms: BasketTerms,
+): Instrument {
+  return {
+    pair,
+    tenor: tenorYearsToTenor(tenorYears),
+    expiryYears: tenorYears,
+    quantity: { notional: notionalMm * 1e6, baseCcy: true },
+    side: "TWO_WAY",
+    product: {
+      kind: "basket",
+      basket: {
+        legs: terms.legs.map((l) => ({ ...l })),
+        correlations: [...terms.correlations],
+        optionType: terms.optionType,
+        strike: terms.strike,
+        kind: terms.kind,
+        mcPaths: terms.mcPaths,
+        mcReplications: terms.mcReplications,
+        mcSteps: terms.mcSteps,
+        mcSeed: terms.mcSeed,
+      },
+    },
+  };
+}
+
 /**
  * The set of products the LOCAL_STOCH_VOL booking model prices (mirrors the
  * server's `lsv_pricer` supported list): vanilla, single (continuous) barrier and
@@ -736,4 +786,5 @@ export {
   lookbackInstrument,
   windowBarrierInstrument,
   americanInstrument,
+  basketInstrument,
 };

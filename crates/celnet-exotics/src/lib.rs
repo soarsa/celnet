@@ -132,6 +132,7 @@ pub mod lookback;
 pub mod lsv;
 pub mod market_hedge_overlay;
 pub mod mc;
+pub mod multiasset;
 pub mod normal;
 pub mod particle;
 pub mod payoff;
@@ -177,6 +178,10 @@ pub use market_hedge_overlay::{
 pub use mc::{
     BGK_BETA, McConfig, McEstimate, geometric_asian_price, price_asian, price_barrier,
     price_barrier_bgk_shifted,
+};
+pub use multiasset::{
+    BasketEstimate, BasketKind, BasketLeg, BasketMcConfig, BasketSpec, CholeskyFactor,
+    CorrelationError, cholesky, price_basket,
 };
 pub use normal::{gaussian_pair_from_uniforms, inverse_cdf};
 pub use particle::{CalibrationResult, ParticleConfig, calibrate_leverage};

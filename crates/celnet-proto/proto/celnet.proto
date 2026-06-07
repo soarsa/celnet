@@ -254,6 +254,18 @@ enum LookbackMonitoring {
   LOOKBACK_MONITORING_DISCRETE = 1;
 }
 
+// How the per-leg terminal levels of a correlated multi-asset option combine
+// into the option's underlying.
+enum BasketKind {
+  // Weighted arithmetic basket: the underlying is `Σ_a w_a · S_a(T)`; the
+  // payoff is a vanilla call/put on that weighted sum against the strike.
+  BASKET_KIND_BASKET = 0;
+  // Best-of-N (rainbow max): the underlying is `max_a w_a · S_a(T)`.
+  BASKET_KIND_BEST_OF = 1;
+  // Worst-of-N (rainbow min): the underlying is `min_a w_a · S_a(T)`.
+  BASKET_KIND_WORST_OF = 2;
+}
+
 // The early-exercise style of an option: whether the holder may exercise
 // continuously up to expiry, or only on a discrete set of permitted dates.
 enum ExerciseStyle {
@@ -910,6 +922,72 @@ message AmericanOption {
   uint64 lsm_seed = 7;
 }
 
+// One leg of a correlated multi-asset (basket / best-of / worst-of) option: an
+// FX underlying with its own market data and basket weight.
+//
+// Per-leg market data travels IN the leg (not in the request's single-pair
+// `MarketContext`): a multi-asset instrument has N underlyings each with its own
+// spot, vol and foreign rate, which the one top-level `MarketContext` cannot
+// carry. The shared domestic (numeraire / settlement-currency) rate is taken
+// from the request `MarketContext.r_dom`; the leg's `r_for` is its own.
+message BasketLeg {
+  // The currency pair of this leg (e.g. EURUSD). Identifies the underlying for
+  // attribution and display; the numerics use the explicit market data below.
+  CcyPair pair = 1;
+  // The leg weight `w_a` applied to `S_a(T)` in the basket / rainbow
+  // aggregation. May be negative (a short basket leg).
+  double weight = 2;
+  // The leg spot FX level `S_a(0)` (quote per unit base).
+  double spot = 3;
+  // The leg annualised lognormal volatility `σ_a` (absolute, e.g. 0.10 = 10 vol).
+  double vol = 4;
+  // The leg continuously-compounded foreign (base) rate `r_f,a`.
+  double r_for = 5;
+}
+
+// A correlated multi-asset FX option over N currency-pair legs: a weighted
+// arithmetic BASKET, or a BEST_OF / WORST_OF (rainbow) on the per-leg weighted
+// terminal levels. Priced by a Cholesky-correlated multi-asset geometric-
+// Brownian-motion Monte-Carlo over the scrambled-Sobol / Brownian-bridge QMC
+// engine, so the reported `price` carries a standard error
+// (`PriceResponse.price_std_error`). The expiry `T` is the enclosing
+// `Instrument.expiry_years`; the shared domestic (settlement) rate is the
+// request `MarketContext.r_dom`.
+//
+// Greek scope: multi-asset basket Greeks are a distinct larger increment (a
+// per-leg N×{spot,vol} Jacobian plus cross-gammas) and are intentionally NOT
+// returned by this product — the price and its standard error are reported and
+// the Greek strip is zeroed rather than faked with a single-underlying bump.
+// `Instrument.pair` plays the role of the SETTLEMENT / numeraire pair only (the
+// underlyings are the per-leg `BasketLeg.pair`s).
+message BasketOption {
+  // The legs (one FX underlying each); at least one. A single weight-1 leg
+  // collapses to a vanilla on that leg (used as the degenerate parity oracle).
+  repeated BasketLeg legs = 1;
+  // The N×N instantaneous correlation matrix in ROW-MAJOR order (length N²):
+  // entry `(i,j)` is `correlations[i*N + j]`. Must be symmetric with unit
+  // diagonal and positive-definite; a non-SPD matrix is rejected
+  // (`INVALID_ARGUMENT`) rather than silently regularised.
+  repeated double correlations = 2;
+  // Call or put on the aggregated underlying.
+  OptionType option_type = 3;
+  // The strike `K` on the aggregated underlying.
+  double strike = 4;
+  // The aggregation kind (basket / best-of / worst-of).
+  BasketKind kind = 5;
+  // Scrambled-Sobol points per replication (paths per scramble); `0` selects a
+  // server default.
+  uint32 mc_paths = 6;
+  // Independent randomized scrambles (`≥ 2` for a finite standard error); `0`
+  // selects a server default.
+  uint32 mc_replications = 7;
+  // Time steps per path; `0` selects a server default (terminal-only `1` step
+  // suffices for these European payoffs).
+  uint32 mc_steps = 8;
+  // The base scramble seed (identical seeds reproduce results bit-for-bit).
+  uint64 mc_seed = 9;
+}
+
 // The unified instrument every Celnet workflow speaks. Exactly one variant is
 // set. Pricing, RFQ, RFS, and scenario all carry an `Instrument`, so adding a
 // product type is a single additive change here.
@@ -977,6 +1055,10 @@ message Instrument {
     // free-boundary finite difference (default) or the Longstaff-Schwartz
     // regression Monte-Carlo (when `lsm_paths > 0`, carrying a std-error).
     AmericanOption american = 24;
+    // A correlated multi-asset FX option (weighted basket / best-of / worst-of)
+    // over N currency-pair legs. Cholesky-correlated multi-asset GBM Monte-Carlo
+    // over the scrambled-Sobol / Brownian-bridge engine, carrying a std-error.
+    BasketOption basket = 25;
   }
 }
 

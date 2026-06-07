@@ -1055,6 +1055,140 @@ impl AmericanTerms {
     }
 }
 
+/// How the per-leg terminal levels of a correlated multi-asset option combine
+/// into the option underlying.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BasketKind {
+    /// Weighted arithmetic basket: the underlying is `Σ_a w_a · S_a(T)`.
+    Basket,
+    /// Best-of-N (rainbow max): the underlying is `max_a w_a · S_a(T)`.
+    BestOf,
+    /// Worst-of-N (rainbow min): the underlying is `min_a w_a · S_a(T)`.
+    WorstOf,
+}
+
+impl BasketKind {
+    fn to_wire(self) -> celnet_proto::BasketKind {
+        match self {
+            BasketKind::Basket => celnet_proto::BasketKind::Basket,
+            BasketKind::BestOf => celnet_proto::BasketKind::BestOf,
+            BasketKind::WorstOf => celnet_proto::BasketKind::WorstOf,
+        }
+    }
+}
+
+/// One leg of a correlated multi-asset (basket / best-of / worst-of) option: an
+/// FX underlying with its own market data and basket weight. A multi-asset
+/// instrument carries its per-leg market data IN the leg (the single-pair
+/// request market context cannot hold N underlyings); the shared domestic
+/// (settlement) rate comes from the request market context.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BasketLegTerms {
+    /// The currency pair of this leg (identifies the underlying).
+    pub pair: CcyPair,
+    /// The leg weight `w_a` applied to `S_a(T)` (may be negative for a short leg).
+    pub weight: f64,
+    /// The leg spot FX level `S_a(0)`.
+    pub spot: f64,
+    /// The leg annualised lognormal volatility `σ_a`.
+    pub vol: f64,
+    /// The leg continuously-compounded foreign (base) rate `r_f,a`.
+    pub r_for: f64,
+}
+
+impl BasketLegTerms {
+    /// Convenience constructor.
+    #[must_use]
+    pub fn new(pair: CcyPair, weight: f64, spot: f64, vol: f64, r_for: f64) -> Self {
+        Self {
+            pair,
+            weight,
+            spot,
+            vol,
+            r_for,
+        }
+    }
+}
+
+/// The terms of a correlated multi-asset FX option over N currency-pair legs: a
+/// weighted [`BasketKind::Basket`], or a [`BasketKind::BestOf`] /
+/// [`BasketKind::WorstOf`] rainbow on the per-leg weighted terminal levels.
+/// Priced by a Cholesky-correlated multi-asset GBM Monte-Carlo over the
+/// scrambled-Sobol / Brownian-bridge engine, so it surfaces a standard error on
+/// [`PricedLine::price_std_error`]. Multi-asset Greeks are a distinct larger
+/// increment and are not returned (the strip is zeroed). Built via
+/// [`BasketTerms::new`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct BasketTerms {
+    /// The legs (one FX underlying each); at least one. A single weight-1 leg
+    /// collapses to a vanilla on that leg.
+    pub legs: Vec<BasketLegTerms>,
+    /// The N×N instantaneous correlation matrix in ROW-MAJOR order (length N²):
+    /// `(i, j)` is `correlations[i*N + j]`. Must be symmetric, unit-diagonal and
+    /// positive-definite; a non-SPD matrix is rejected by the server.
+    pub correlations: Vec<f64>,
+    /// Call or put on the aggregated underlying.
+    pub option: OptionType,
+    /// The strike `K` on the aggregated underlying.
+    pub strike: f64,
+    /// The aggregation kind.
+    pub kind: BasketKind,
+    /// Scrambled-Sobol points per replication (`0` ⇒ server default).
+    pub mc_paths: u32,
+    /// Independent randomized scrambles (`0` ⇒ server default; `≥ 2` for a
+    /// finite std-error).
+    pub mc_replications: u32,
+    /// Time steps per path (`0` ⇒ server default; `1` suffices for these
+    /// European payoffs).
+    pub mc_steps: u32,
+    /// The base scramble seed (identical seeds reproduce results bit-for-bit).
+    pub mc_seed: u64,
+}
+
+impl BasketTerms {
+    /// A correlated multi-asset option over `legs` with the given row-major
+    /// `correlations` matrix (length `legs.len()²`), aggregation `kind`, option
+    /// direction and strike. The Monte-Carlo knobs default to the server defaults
+    /// (`0`); refine them with [`BasketTerms::monte_carlo`].
+    #[must_use]
+    pub fn new(
+        legs: Vec<BasketLegTerms>,
+        correlations: Vec<f64>,
+        kind: BasketKind,
+        option: OptionType,
+        strike: f64,
+    ) -> Self {
+        Self {
+            legs,
+            correlations,
+            option,
+            strike,
+            kind,
+            mc_paths: 0,
+            mc_replications: 0,
+            mc_steps: 0,
+            mc_seed: 0,
+        }
+    }
+
+    /// Refine the Monte-Carlo configuration (Sobol points per scramble, scramble
+    /// count, time steps and base seed). A `0` selects the server default.
+    #[must_use]
+    pub fn monte_carlo(
+        mut self,
+        mc_paths: u32,
+        mc_replications: u32,
+        mc_steps: u32,
+        mc_seed: u64,
+    ) -> Self {
+        self.mc_paths = mc_paths;
+        self.mc_replications = mc_replications;
+        self.mc_steps = mc_steps;
+        self.mc_seed = mc_seed;
+        self
+    }
+}
+
 /// The terms of a Target-Redemption Forward: the favourable-side direction, the
 /// strike, the cumulative knock-out target, the adverse-leg gearing, the gap-risk
 /// settlement convention, the fixing schedule (count + per-fixing notional), and
@@ -1522,6 +1656,30 @@ pub enum Product {
         /// Sobol scramble seed for the LSM engine (ignored for FD).
         lsm_seed: u64,
     },
+    /// A correlated multi-asset FX option (weighted basket / best-of / worst-of)
+    /// over N currency-pair legs. Priced by Cholesky-correlated multi-asset GBM
+    /// Monte-Carlo (surfaces a std-error on [`PricedLine::price_std_error`]);
+    /// multi-asset Greeks are deferred (the strip is zeroed).
+    Basket {
+        /// The legs (one FX underlying each), each with its own market data.
+        legs: Vec<BasketLegTerms>,
+        /// The row-major N×N correlation matrix (length N²).
+        correlations: Vec<f64>,
+        /// Call or put on the aggregated underlying.
+        option: OptionType,
+        /// The strike `K` on the aggregated underlying.
+        strike: f64,
+        /// The aggregation kind.
+        kind: BasketKind,
+        /// Scrambled-Sobol points per replication (`0` ⇒ server default).
+        mc_paths: u32,
+        /// Independent randomized scrambles (`0` ⇒ server default).
+        mc_replications: u32,
+        /// Time steps per path (`0` ⇒ server default).
+        mc_steps: u32,
+        /// The base scramble seed.
+        mc_seed: u64,
+    },
 }
 
 impl Product {
@@ -1827,6 +1985,36 @@ impl Product {
                     lsm_seed: *lsm_seed,
                 })
             }
+            Product::Basket {
+                legs,
+                correlations,
+                option,
+                strike,
+                kind,
+                mc_paths,
+                mc_replications,
+                mc_steps,
+                mc_seed,
+            } => instrument::Product::Basket(celnet_proto::BasketOption {
+                legs: legs
+                    .iter()
+                    .map(|l| celnet_proto::BasketLeg {
+                        pair: Some(celnet_proto::CcyPair::from(l.pair)),
+                        weight: l.weight,
+                        spot: l.spot,
+                        vol: l.vol,
+                        r_for: l.r_for,
+                    })
+                    .collect(),
+                correlations: correlations.clone(),
+                option_type: celnet_proto::OptionType::from(*option) as i32,
+                strike: *strike,
+                kind: kind.to_wire() as i32,
+                mc_paths: *mc_paths,
+                mc_replications: *mc_replications,
+                mc_steps: *mc_steps,
+                mc_seed: *mc_seed,
+            }),
         }
     }
 }
@@ -2483,6 +2671,43 @@ impl InstrumentSpec {
         }
     }
 
+    /// A correlated multi-asset FX option (weighted basket / best-of / worst-of)
+    /// over N currency-pair legs, carrying a [`BasketTerms`] spec. Priced by
+    /// Cholesky-correlated multi-asset GBM Monte-Carlo, so it surfaces a standard
+    /// error on [`PricedLine::price_std_error`]; multi-asset Greeks are deferred
+    /// (the strip is zeroed). The top-level `pair` is the settlement / numeraire
+    /// pair (the underlyings are the per-leg pairs); the shared domestic rate is
+    /// the request market context's `r_dom`.
+    #[must_use]
+    pub fn basket(
+        pair: CcyPair,
+        tenor: Tenor,
+        expiry_years: f64,
+        quantity: Quantity,
+        side: Side,
+        terms: BasketTerms,
+    ) -> Self {
+        Self {
+            pair,
+            tenor,
+            expiry_years,
+            quantity,
+            side,
+            pricing_model: PricingModel::Default,
+            product: Product::Basket {
+                legs: terms.legs,
+                correlations: terms.correlations,
+                option: terms.option,
+                strike: terms.strike,
+                kind: terms.kind,
+                mc_paths: terms.mc_paths,
+                mc_replications: terms.mc_replications,
+                mc_steps: terms.mc_steps,
+                mc_seed: terms.mc_seed,
+            },
+        }
+    }
+
     /// Encode to the wire instrument message. `solve` is left unset (the SDK
     /// exposes solve via a dedicated future iteration; the explicit strikes the
     /// caller supplies are used as given).
@@ -2746,6 +2971,50 @@ mod tests {
                 assert_eq!(a.lsm_seed, 0xABCD);
             }
             other => panic!("expected american, got {other:?}"),
+        }
+    }
+
+    /// `InstrumentSpec::basket` encodes to the wire `BasketOption` arm (product
+    /// field 25) with the per-leg market data, the row-major correlation array,
+    /// the BasketKind/option tags and the MC knobs — the SDK half of the
+    /// five-surface api-first parity.
+    #[test]
+    fn basket_terms_encode_to_the_wire_arm() {
+        let eurusd = CcyPair::parse("EURUSD").unwrap();
+        let gbpusd = CcyPair::parse("GBPUSD").unwrap();
+        let terms = BasketTerms::new(
+            vec![
+                BasketLegTerms::new(eurusd, 0.5, 1.10, 0.11, 0.015),
+                BasketLegTerms::new(gbpusd, 0.5, 1.27, 0.13, 0.02),
+            ],
+            vec![1.0, 0.4, 0.4, 1.0],
+            BasketKind::WorstOf,
+            OptionType::Call,
+            1.18,
+        )
+        .monte_carlo(8192, 16, 1, 0xC0FFEE);
+        let spec = InstrumentSpec::basket(
+            eurusd,
+            Tenor::Years(1),
+            1.0,
+            Quantity::base(1_000_000.0),
+            Side::Buy,
+            terms,
+        );
+        match spec.to_wire().product {
+            Some(instrument::Product::Basket(b)) => {
+                assert_eq!(b.legs.len(), 2);
+                assert_eq!(b.legs[0].spot.to_bits(), 1.10_f64.to_bits());
+                assert_eq!(b.legs[1].vol.to_bits(), 0.13_f64.to_bits());
+                assert_eq!(b.correlations, vec![1.0, 0.4, 0.4, 1.0]);
+                assert_eq!(b.kind, celnet_proto::BasketKind::WorstOf as i32);
+                assert_eq!(b.option_type, celnet_proto::OptionType::Call as i32);
+                assert_eq!(b.strike.to_bits(), 1.18_f64.to_bits());
+                assert_eq!(b.mc_paths, 8192);
+                assert_eq!(b.mc_replications, 16);
+                assert_eq!(b.mc_seed, 0xC0FFEE);
+            }
+            other => panic!("expected basket, got {other:?}"),
         }
     }
 }

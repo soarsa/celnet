@@ -14,6 +14,7 @@ import type {
   Accumulator,
   AmericanOption,
   AsianOption,
+  BasketOption,
   Cliquet,
   Digital,
   DoubleBarrier,
@@ -334,6 +335,8 @@ export function priceInstrument(
       return priceLookback(instrument.product.lookback, m, t);
     case "american":
       return priceAmerican(instrument.product.american, m, t);
+    case "basket":
+      return priceBasket(instrument.product.basket, m, t);
     case "windowBarrier":
       // The window barrier has NO closed form — it is priced ONLY by the server's
       // local-stochastic-volatility ADI-PDE / Monte-Carlo engine (pricing model
@@ -1777,4 +1780,135 @@ function priceAmerican(spec: AmericanOption, m: MarketContext, t: number): Price
   greeks.vega = (value(bump({ vol: m.vol + hV })) - value(bump({ vol: m.vol - hV }))) / (2 * hV);
 
   return { greeks, resolvedStrike: spec.strike };
+}
+
+// ---------------------------------------------------------------------------
+// correlated multi-asset basket / best-of / worst-of — Cholesky-correlated GBM
+// terminal Monte-Carlo (matches the server's `price_basket` model)
+// ---------------------------------------------------------------------------
+//
+// Under the shared domestic numeraire each leg `a` evolves as a lognormal GBM
+// with its OWN spot `S_a(0)`, vol `σ_a` and foreign rate `r_f,a`, sharing the
+// domestic rate `r_d` and the correlation `dW_a·dW_b = ρ_ab dt`:
+//
+//   S_a(T) = S_a(0) · exp[(r_d − r_f,a − ½σ_a²) T + σ_a W_a(T)],
+//
+// with `W(T)` a correlated Gaussian vector of covariance `ρ·T`. A correlated
+// draw is `√T · L · z` for `z` iid standard normal and `L` the lower-Cholesky
+// factor of `ρ` (`L·Lᵀ = ρ`). The aggregate underlying is `Σ w_a S_a(T)`
+// (BASKET), `max_a w_a S_a(T)` (BEST_OF) or `min_a w_a S_a(T)` (WORST_OF); the
+// payoff is a vanilla call/put on that aggregate against `K`, discounted at
+// `e^{−r_d T}`. The product is genuinely multi-asset and path-INDEPENDENT, so a
+// single terminal step reproduces the exact terminal law — this is an HONEST
+// approximation of the server's scrambled-Sobol + Brownian-bridge estimator (the
+// bridge matters only for path-dependence), NOT a placeholder. The estimator is
+// antithetic with a Welford standard error of the mean, mirroring the live
+// `Quote.priceStdError`. A non-SPD correlation matrix fails LOUDLY (the server
+// rejects it as `NotPositiveDefinite`); we never silently regularise it.
+//
+// The provenance (Cholesky factorisation) is documented here only, never in an
+// API identifier (CLAUDE.md rule 8).
+
+/** Default antithetic path-pairs for a basket when the trader leaves `mcPaths = 0`. */
+const BASKET_DEFAULT_PAIRS = 16_384;
+
+/**
+ * Lower-triangular Cholesky factor `L` (`L·Lᵀ = ρ`) of a row-major N×N
+ * correlation matrix, or `null` when the matrix is not symmetric-positive-
+ * definite (a non-positive pivot). Mirrors the server's `cholesky`.
+ */
+function choleskyLower(rowMajor: number[], n: number): number[][] | null {
+  const sym = 1e-9;
+  const l: number[][] = Array.from({ length: n }, () => new Array<number>(n).fill(0));
+  for (let i = 0; i < n; i += 1) {
+    for (let j = 0; j <= i; j += 1) {
+      // Symmetry check against the transposed entry (loud rejection upstream).
+      if (Math.abs(rowMajor[i * n + j]! - rowMajor[j * n + i]!) > sym) return null;
+      let dot = 0;
+      for (let k = 0; k < j; k += 1) dot += l[i]![k]! * l[j]![k]!;
+      if (i === j) {
+        const diag = rowMajor[i * n + i]! - dot;
+        if (diag <= 0) return null; // non-positive pivot ⇒ not SPD.
+        l[i]![j] = Math.sqrt(diag);
+      } else {
+        l[i]![j] = (rowMajor[i * n + j]! - dot) / l[j]![j]!;
+      }
+    }
+  }
+  return l;
+}
+
+/** One antithetic terminal aggregate level for a basket given iid normals `z`. */
+function basketAggregate(
+  spec: BasketOption,
+  l: number[][],
+  z: number[],
+  sign: number,
+  sqrtT: number,
+  drift: number[],
+): number {
+  const n = spec.legs.length;
+  let basketSum = 0;
+  let extreme = 0;
+  for (let a = 0; a < n; a += 1) {
+    // Correlated terminal Brownian increment W_a(T) = √T · (L·z)_a.
+    let lz = 0;
+    for (let k = 0; k <= a; k += 1) lz += l[a]![k]! * sign * z[k]!;
+    const leg = spec.legs[a]!;
+    const terminal = leg.spot * Math.exp(drift[a]! + leg.vol * sqrtT * lz);
+    const weighted = leg.weight * terminal;
+    basketSum += weighted;
+    if (a === 0) extreme = weighted;
+    else if (spec.kind === "BEST_OF") extreme = Math.max(extreme, weighted);
+    else if (spec.kind === "WORST_OF") extreme = Math.min(extreme, weighted);
+  }
+  return spec.kind === "BASKET" ? basketSum : extreme;
+}
+
+/**
+ * Price a correlated multi-asset basket / best-of / worst-of by antithetic
+ * Cholesky-correlated GBM terminal Monte-Carlo, reporting the discounted price
+ * AND its standard error (a multi-asset MC has no closed form). The shared
+ * domestic rate is `m.rDom` (the settlement-pair numeraire); each leg carries its
+ * own spot / vol / foreign rate / weight. A non-SPD correlation matrix throws
+ * (the server's `NotPositiveDefinite`) rather than inventing a value.
+ *
+ * Multi-asset Greeks (the per-leg `N×{spot,vol}` Jacobian + cross-gammas) are a
+ * distinct larger increment and are deferred — the strip is zeroed and only the
+ * price + std-error are reported (mirroring the server's `Greeks::price_only`).
+ */
+function priceBasket(spec: BasketOption, m: MarketContext, t: number): PriceOutcome {
+  const n = spec.legs.length;
+  if (n === 0) throw new Error("basket requires at least one leg");
+  if (spec.correlations.length !== n * n) {
+    throw new Error(`basket correlation matrix must be ${n}×${n} (got ${spec.correlations.length})`);
+  }
+  const l = choleskyLower(spec.correlations, n);
+  if (l === null) {
+    throw new Error("basket correlation matrix is not positive-definite");
+  }
+
+  const isCall = spec.optionType === "CALL";
+  const sqrtT = Math.sqrt(t);
+  const df = Math.exp(-m.rDom * t);
+  // Per-leg deterministic terminal drift (r_d − r_f,a − ½σ_a²)·T.
+  const drift = spec.legs.map((leg) => (m.rDom - leg.rFor - 0.5 * leg.vol * leg.vol) * t);
+
+  const pairs = spec.mcPaths > 0 ? Math.trunc(spec.mcPaths) : BASKET_DEFAULT_PAIRS;
+  const rng = new Rng(spec.mcSeed === 0n ? 0xba_5e_7a_5cn : spec.mcSeed);
+
+  const acc = new McAccumulator();
+  const z = new Array<number>(n).fill(0);
+  for (let p = 0; p < pairs; p += 1) {
+    for (let k = 0; k < n; k += 1) z[k] = rng.normal();
+    const up = basketAggregate(spec, l, z, 1, sqrtT, drift);
+    const dn = basketAggregate(spec, l, z, -1, sqrtT, drift);
+    const payoffUp = Math.max(isCall ? up - spec.strike : spec.strike - up, 0);
+    const payoffDn = Math.max(isCall ? dn - spec.strike : spec.strike - dn, 0);
+    acc.push(df * 0.5 * (payoffUp + payoffDn));
+  }
+
+  const greeks = zeroGreeks();
+  greeks.price = acc.value;
+  return { greeks, resolvedStrike: spec.strike, priceStdError: acc.stdError };
 }

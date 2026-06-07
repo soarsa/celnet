@@ -396,3 +396,101 @@ describe("TicketWorkspace — American / Bermudan early-exercise vanilla", () =>
     expect((request as HTMLButtonElement).disabled).toBe(false);
   });
 });
+
+describe("TicketWorkspace — correlated multi-asset basket / best-of / worst-of", () => {
+  it("offers the basket builder in the structure selector (additive, zero-legacy)", async () => {
+    await renderTicket();
+    const options = within(structureSelect())
+      .getAllByRole("option")
+      .map((o) => (o as HTMLOptionElement).value);
+    expect(options).toContain("BASKET");
+    // The pre-existing products are untouched.
+    expect(options).toContain("VANILLA");
+    expect(options).toContain("AMERICAN");
+  });
+
+  it("renders the leg builder (aggregation / two legs / correlation / strike / MC)", async () => {
+    await renderTicket();
+    act(() => {
+      fireEvent.change(structureSelect(), { target: { value: "BASKET" } });
+    });
+    expect(screen.getByRole("tablist", { name: "basket kind" })).toBeInTheDocument();
+    // The default basket has two legs, each with its own pair + market data.
+    expect(screen.getByLabelText("leg 1 pair")).toBeInTheDocument();
+    expect(screen.getByLabelText("leg 1 weight")).toBeInTheDocument();
+    expect(screen.getByLabelText("leg 1 vol")).toBeInTheDocument();
+    expect(screen.getByLabelText("leg 2 pair")).toBeInTheDocument();
+    expect(screen.getByLabelText("correlation")).toBeInTheDocument();
+    expect(screen.getByLabelText("mc paths")).toBeInTheDocument();
+    // No option-leg ladder is rendered for a multi-asset product.
+    expect(screen.queryByText(/^LEG 1$/)).not.toBeInTheDocument();
+    expect(screen.getByText(/correlated currency-pair legs/)).toBeInTheDocument();
+  });
+
+  it("adds and removes a third leg within the 2–3 leg bounds", async () => {
+    await renderTicket();
+    act(() => {
+      fireEvent.change(structureSelect(), { target: { value: "BASKET" } });
+    });
+    // Two legs by default; Remove is disabled at the 2-leg floor.
+    expect(screen.queryByLabelText("leg 3 pair")).not.toBeInTheDocument();
+    expect((screen.getByLabelText("remove leg 1") as HTMLButtonElement).disabled).toBe(true);
+    // Add a third leg.
+    act(() => {
+      fireEvent.click(screen.getByLabelText("add leg"));
+    });
+    expect(screen.getByLabelText("leg 3 pair")).toBeInTheDocument();
+    // At the 3-leg ceiling Add is disabled and Remove is enabled.
+    expect((screen.getByLabelText("add leg") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByLabelText("remove leg 1") as HTMLButtonElement).disabled).toBe(false);
+    // Remove it again.
+    act(() => {
+      fireEvent.click(screen.getByLabelText("remove leg 3"));
+    });
+    expect(screen.queryByLabelText("leg 3 pair")).not.toBeInTheDocument();
+  });
+
+  it("warns when the correlation makes the matrix non positive-definite", async () => {
+    await renderTicket();
+    act(() => {
+      fireEvent.change(structureSelect(), { target: { value: "BASKET" } });
+    });
+    // A correlation at the +1 boundary is singular (not strictly positive-definite).
+    act(() => {
+      fireEvent.change(screen.getByLabelText("correlation"), { target: { value: "1" } });
+    });
+    expect(screen.getByText(/not positive-definite/)).toBeInTheDocument();
+  });
+
+  it("switches aggregation kind across basket / best-of / worst-of", async () => {
+    await renderTicket();
+    act(() => {
+      fireEvent.change(structureSelect(), { target: { value: "BASKET" } });
+    });
+    const kind = screen.getByRole("tablist", { name: "basket kind" });
+    act(() => {
+      fireEvent.click(within(kind).getByText("Best-of"));
+    });
+    expect(screen.getByText(/Best-of \(rainbow max\)/)).toBeInTheDocument();
+    act(() => {
+      fireEvent.click(within(kind).getByText("Worst-of"));
+    });
+    expect(screen.getByText(/Worst-of \(rainbow min\)/)).toBeInTheDocument();
+  });
+
+  it("prices a basket offline through the real transport, surfacing a std-error", async () => {
+    await renderTicket();
+    act(() => {
+      fireEvent.change(structureSelect(), { target: { value: "BASKET" } });
+    });
+    // The offline correlated MC prices it (no LSV gate) ⇒ Request is enabled.
+    const request = screen.getByRole("button", { name: /Request quote/ });
+    expect((request as HTMLButtonElement).disabled).toBe(false);
+    await act(async () => {
+      fireEvent.click(request);
+    });
+    // The basket is always Monte-Carlo ⇒ the honest std-error is shown.
+    expect(await screen.findByLabelText("price std error")).toBeInTheDocument();
+    expect(screen.getByText(/Monte-Carlo · std error/)).toBeInTheDocument();
+  });
+});

@@ -34,7 +34,8 @@ use celnet_types::{
 use celnet_core::FlatSmile;
 use celnet_exotics::{
     Accumulator as ExAccumulator, AccumulatorMcConfig, AmericanGrid, AmericanOption as ExAmerican,
-    AnalyticAsian, AveragingSchedule, BarrierKind as ExBarrierKind, BarrierStyle, Cliquet,
+    AnalyticAsian, AveragingSchedule, BarrierKind as ExBarrierKind, BarrierStyle,
+    BasketKind as ExBasketKind, BasketLeg as ExBasketLeg, BasketMcConfig, BasketSpec, Cliquet,
     CliquetMcConfig, CliquetSchedule, DigitalKind, DoubleBarrierKnockOut, DoubleNoTouch,
     ExerciseStyle as ExExerciseStyle, ForwardStart, Lookback as ExLookback, LookbackMcConfig,
     LookbackStyle as ExLookbackStyle, LsmConfig, Monitoring as ExMonitoring, QuantoParams,
@@ -43,8 +44,8 @@ use celnet_exotics::{
     american_lsm, cliquet_price_capped_mc, cliquet_price_plain, curran_price, digital_price,
     double_knock_out_price, double_no_touch_price, double_touch_price, fair_variance,
     fair_volatility, fixed_lookback_price, floating_lookback_price, forward_start_price,
-    lookback_mc, no_touch_price, one_touch_price, quanto_digital_price, quanto_vanilla_price,
-    single_barrier_price, tarf_price, turnbull_wakeman_price,
+    lookback_mc, no_touch_price, one_touch_price, price_basket, quanto_digital_price,
+    quanto_vanilla_price, single_barrier_price, tarf_price, turnbull_wakeman_price,
 };
 
 /// A failure pricing a wire instrument: a malformed / unsupported message.
@@ -288,6 +289,16 @@ const DEFAULT_LOOKBACK_MC_PAIRS: usize = 200_000;
 /// Default monitoring observations for a discrete lookback when the wire request
 /// leaves `observations` unset.
 const DEFAULT_LOOKBACK_OBSERVATIONS: usize = 64;
+/// Default scrambled-Sobol points per replication for a multi-asset basket when
+/// the wire request leaves `mc_paths` unset.
+const DEFAULT_BASKET_MC_PATHS: usize = 16_384;
+/// Default independent randomized scrambles for a multi-asset basket when the
+/// wire request leaves `mc_replications` unset (`≥ 2` for a finite std-error).
+const DEFAULT_BASKET_MC_REPLICATIONS: usize = 24;
+/// Default time steps for a multi-asset basket when the wire request leaves
+/// `mc_steps` unset (terminal-only `1` step suffices for these European
+/// payoffs).
+const DEFAULT_BASKET_MC_STEPS: usize = 1;
 
 /// Shock a market context's spot multiplicatively.
 fn bump_spot(m: &WireMarketContext, rel: f64) -> WireMarketContext {
@@ -1343,6 +1354,103 @@ pub fn price_instrument(
                 })
             }
         }
+        instrument::Product::Basket(b) => {
+            let option_type = decode_option_type(b.option_type)?;
+            let kind = match celnet_proto::BasketKind::try_from(b.kind) {
+                Ok(celnet_proto::BasketKind::Basket) => ExBasketKind::Basket,
+                Ok(celnet_proto::BasketKind::BestOf) => ExBasketKind::BestOf,
+                Ok(celnet_proto::BasketKind::WorstOf) => ExBasketKind::WorstOf,
+                Err(_) => {
+                    return Err(PriceError::UnknownEnum {
+                        kind: "BasketKind",
+                        tag: b.kind,
+                    });
+                }
+            };
+            let n = b.legs.len();
+            if n < 1 {
+                return Err(PriceError::Domain("basket needs at least one leg"));
+            }
+            if !(b.strike.is_finite() && b.strike > 0.0) {
+                return Err(PriceError::Domain("basket strike must be positive"));
+            }
+            // Decode per-leg market data (carried IN the leg — the single-pair
+            // MarketContext cannot hold N underlyings; the shared domestic rate
+            // comes from MarketContext.r_dom).
+            let mut legs = Vec::with_capacity(n);
+            for leg in &b.legs {
+                if !(leg.spot.is_finite() && leg.spot > 0.0) {
+                    return Err(PriceError::Domain("basket leg spot must be positive"));
+                }
+                if !(leg.vol.is_finite() && leg.vol >= 0.0) {
+                    return Err(PriceError::Domain("basket leg vol must be non-negative"));
+                }
+                if !leg.weight.is_finite() {
+                    return Err(PriceError::Domain("basket leg weight must be finite"));
+                }
+                if !leg.r_for.is_finite() {
+                    return Err(PriceError::Domain("basket leg r_for must be finite"));
+                }
+                legs.push(ExBasketLeg::new(leg.spot, leg.vol, leg.r_for, leg.weight));
+            }
+            // The correlation array is the row-major N×N matrix.
+            if b.correlations.len() != n * n {
+                return Err(PriceError::Domain(
+                    "basket correlations length must be exactly legs²",
+                ));
+            }
+            if b.correlations.iter().any(|c| !c.is_finite()) {
+                return Err(PriceError::Domain("basket correlations must be finite"));
+            }
+            let correlation: Vec<Vec<f64>> = (0..n)
+                .map(|i| b.correlations[i * n..i * n + n].to_vec())
+                .collect();
+
+            let spec = BasketSpec {
+                legs,
+                correlation,
+                option_type,
+                strike: b.strike,
+                kind,
+            };
+            let cfg = BasketMcConfig {
+                budget: if b.mc_paths == 0 {
+                    DEFAULT_BASKET_MC_PATHS
+                } else {
+                    b.mc_paths as usize
+                },
+                replications: if b.mc_replications == 0 {
+                    DEFAULT_BASKET_MC_REPLICATIONS
+                } else {
+                    (b.mc_replications as usize).max(2)
+                },
+                steps: if b.mc_steps == 0 {
+                    DEFAULT_BASKET_MC_STEPS
+                } else {
+                    b.mc_steps as usize
+                },
+                seed: b.mc_seed,
+            };
+            // The shared domestic (numeraire / settlement-currency) rate is the
+            // request market context's r_dom; the SPD-correlation check rejects a
+            // non-PSD matrix as INVALID_ARGUMENT rather than regularising it.
+            let estimate = price_basket(&spec, market.r_dom, expiry, cfg)
+                .map_err(|_| PriceError::Domain("basket correlation matrix is not valid SPD"))?;
+            // Greek deferral: multi-asset basket sensitivities are a distinct
+            // larger increment (per-leg N×{spot,vol} Jacobian + cross-gammas).
+            // Report the price + its measured MC std-error with an honest zero
+            // strip rather than a fabricated single-underlying bump.
+            // A multi-asset basket has no single headline Black vol (each leg
+            // carries its own); report 0.0 for the scalar headline-vol field
+            // rather than an arbitrary/misleading single value. The per-leg vols
+            // live in the instrument's legs.
+            Ok(Priced {
+                greeks: Greeks::price_only(estimate.price),
+                resolved_strike: b.strike,
+                vol: 0.0,
+                std_error: Some(estimate.std_error),
+            })
+        }
         instrument::Product::WindowBarrier(_) => {
             // A window barrier has no closed form: it is priced only under the LSV
             // model (handled above). Selecting the default model for it is a clear
@@ -1404,6 +1512,7 @@ fn product_name(product: &instrument::Product) -> &'static str {
         instrument::Product::Lookback(_) => "lookback",
         instrument::Product::WindowBarrier(_) => "window_barrier",
         instrument::Product::American(_) => "american",
+        instrument::Product::Basket(_) => "basket",
     }
 }
 
@@ -2803,6 +2912,139 @@ mod tests {
             Vec::new(),
             0,
             0,
+        );
+        assert!(matches!(
+            price_instrument(&instr, &m, &conv_set()),
+            Err(PriceError::Domain(_))
+        ));
+    }
+
+    /// Build a wire basket instrument.
+    fn basket_instrument(
+        legs: Vec<celnet_proto::BasketLeg>,
+        correlations: Vec<f64>,
+        option: celnet_proto::OptionType,
+        strike: f64,
+        kind: celnet_proto::BasketKind,
+        expiry: f64,
+    ) -> Instrument {
+        Instrument {
+            pair: None,
+            tenor: None,
+            expiry_years: expiry,
+            quantity: None,
+            side: celnet_proto::Side::Buy as i32,
+            solve: None,
+            pricing_model: celnet_proto::PricingModel::Default as i32,
+            product: Some(Product::Basket(celnet_proto::BasketOption {
+                legs,
+                correlations,
+                option_type: option as i32,
+                strike,
+                kind: kind as i32,
+                mc_paths: 16_384,
+                mc_replications: 24,
+                mc_steps: 1,
+                mc_seed: 0xBA5_3E7,
+            })),
+        }
+    }
+
+    /// Gate: a one-leg, weight-1 basket priced on the wire equals the independent
+    /// Garman-Kohlhagen vanilla within the reported MC standard error, using the
+    /// request market context's `r_dom` as the shared domestic (settlement) rate
+    /// and the leg's own spot/vol/r_for. Also asserts the Greek strip is the
+    /// honest zeroed (deferred) set and the std-error is carried.
+    #[test]
+    fn degenerate_basket_matches_vanilla_on_the_wire() {
+        let m = market();
+        let spot = 1.12;
+        let vol = 0.13;
+        let r_for = 0.012;
+        let strike = 1.10;
+        for option in [
+            celnet_proto::OptionType::Call,
+            celnet_proto::OptionType::Put,
+        ] {
+            let instr = basket_instrument(
+                vec![celnet_proto::BasketLeg {
+                    pair: None,
+                    weight: 1.0,
+                    spot,
+                    vol,
+                    r_for,
+                }],
+                vec![1.0],
+                option,
+                strike,
+                celnet_proto::BasketKind::Basket,
+                1.0,
+            );
+            let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+            let gk = celnet_vanilla::price(
+                option.into(),
+                &VanillaInputs::new(spot, strike, vol, 1.0, m.r_dom, r_for),
+            );
+            let se = priced.std_error.expect("MC basket carries a std-error");
+            assert!(
+                (priced.greeks.price - gk).abs() <= 4.0 * se + 1e-9,
+                "{option:?}: wire basket {} vs GK {} (4·se {})",
+                priced.greeks.price,
+                gk,
+                4.0 * se
+            );
+            // The Greek strip is the honest deferred zero (price-only).
+            assert_eq!(priced.greeks.delta_spot, 0.0);
+            assert_eq!(priced.greeks.vega, 0.0);
+            assert_eq!(priced.greeks.gamma, 0.0);
+        }
+    }
+
+    /// Gate: a non-PSD correlation matrix on the wire is a clear domain error,
+    /// never silently regularised.
+    #[test]
+    fn non_psd_basket_correlation_is_a_domain_error() {
+        let m = market();
+        let leg = |spot| celnet_proto::BasketLeg {
+            pair: None,
+            weight: 0.5,
+            spot,
+            vol: 0.12,
+            r_for: 0.01,
+        };
+        let instr = basket_instrument(
+            vec![leg(1.10), leg(1.27)],
+            // ρ = 1.01 > 1 ⇒ indefinite.
+            vec![1.0, 1.01, 1.01, 1.0],
+            celnet_proto::OptionType::Call,
+            1.18,
+            celnet_proto::BasketKind::Basket,
+            1.0,
+        );
+        assert!(matches!(
+            price_instrument(&instr, &m, &conv_set()),
+            Err(PriceError::Domain(_))
+        ));
+    }
+
+    /// Gate: a wrong-length correlation array (not legs²) is a clear domain error.
+    #[test]
+    fn basket_wrong_correlation_length_is_a_domain_error() {
+        let m = market();
+        let leg = |spot| celnet_proto::BasketLeg {
+            pair: None,
+            weight: 0.5,
+            spot,
+            vol: 0.12,
+            r_for: 0.01,
+        };
+        let instr = basket_instrument(
+            vec![leg(1.10), leg(1.27)],
+            vec![1.0, 0.4], // should be 4 entries for 2 legs
+            celnet_proto::OptionType::Call,
+            1.18,
+            celnet_proto::BasketKind::Basket,
+            1.0,
         );
         assert!(matches!(
             price_instrument(&instr, &m, &conv_set()),
