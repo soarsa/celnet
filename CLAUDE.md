@@ -123,6 +123,21 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-06-07 — **COMPLETION-PROGRAM W9 + W11-A DONE (commits `676dc47` W9, `77fee13`/`919c1d3` W11-A;
+  pushed; `just check` 1216/1216).** **W9 — celnet-fanout under the async edge:** replaced N-per-subscription
+  spot tickers with ONE `BroadcastRing<PriceTick>` producer per pair (Copy POD `{MarketContext, tick_seq}`;
+  rich Update derived per-subscriber), producer off-runtime, consumers drain `try_recv` in `select!`;
+  control/lifecycle msgs stay per-session. Conflation parity preserved (conflate-to-latest, ≤1 Update/pass
+  at seq+1 — an early one-per-tick version broke click-to-trade, fixed forward, no gate lowered);
+  non-circular oracle. Zero-legacy (`SpotTick` deleted). **§1.2 unregressed (my SOLO re-measure):** core_load
+  p50 250ns/p99 625ns/p99.9 3001ns (8–16× margin); bench_gate all arms; fleet_slo green; zero-alloc intact.
+  Contract UNCHANGED. **W11-A — exotic risk-cube:** exotic legs contribute real Greeks to roll-up + VaR/ES/
+  FRTB-curvature (`FactMeasure.exotic`/`NodeAggregate.exotic_legs`); fan-out==single-node proven INCLUDING
+  exotics (~1e-12/~1e-9); non-exclusion gated. Ran W9 SOLO ∥ W11-A in a WORKTREE; merged clean. **Integration
+  re-gate caught a real break** (`919c1d3`): W11-A's new shared-type fields broke 2 downstream consumers
+  (`celnet-limits`/`celnet-entitlements` fixtures) it didn't gate in-worktree — fixed forward. **Only W12
+  (capstone polish: GUI Playwright e2e + axe, observability surfacing, journal compaction, docs) remains.**
+
 - 2026-06-06 — **COMPLETION-PROGRAM: Arc I CLOSED (W6) + 4 disjoint waves landed via PARALLEL worktrees
   (W7/W8/W10/W11-B) — integrated to `f29aaee`/`c2189bd`; pushed; `just check` 1198/1198.** After Arc I's
   forced-sequential waves (all share the contract), I fanned out the crate-disjoint Arc-II/III waves on
