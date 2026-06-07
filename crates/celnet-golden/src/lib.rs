@@ -46,6 +46,17 @@
 //!   QuantLib's `AnalyticDoubleBarrierEngine` — an oracle independent of Celnet's
 //!   Ikeda-Kunitomo image series — and asserted against
 //!   [`celnet_exotics::double_knock_out_price`].
+//! * `data/heston_fo.csv` — Heston (1993) stochastic-volatility European-vanilla
+//!   reference prices, **hand-pinned from the published literature** (Fang &
+//!   Oosterlee 2008, §5.3, the "Reference val." figures of Tables 4 and 5, which
+//!   the authors produce by the Carr-Madan method at `N = 2^17`) rather than from
+//!   QuantLib — QuantLib is **not** available in this build environment, so this
+//!   table is narrowed honestly to authoritative published constants instead of
+//!   fabricating an oracle. It is the *independent* oracle the `celnet-heston`
+//!   crate's own Carr-Madan-vs-COS cross-check cannot be (two transforms of the
+//!   same mis-derived CF could agree on a wrong value; a third-party published
+//!   price cannot). Asserted against `celnet_heston::carr_madan` (every row) and
+//!   `celnet_heston::cos` (rows within its documented `≤3y` validity).
 //!
 //! Each table additionally carries a structural self-check (well-formed, finite,
 //! sane bounds) so it cannot rot independently of the pricing assertions.
@@ -60,8 +71,8 @@ pub mod table;
 pub use csv::{CsvError, CsvTable};
 pub use table::{
     BarrierRecord, BarrierType, DigitalRecord, DigitalSettlement, DoubleBarrierKind,
-    DoubleBarrierRecord, TouchKind, TouchRecord, VanillaRecord, load_barrier, load_digital,
-    load_double_barrier, load_touch, load_vanilla,
+    DoubleBarrierRecord, HestonRecord, TouchKind, TouchRecord, VanillaRecord, load_barrier,
+    load_digital, load_double_barrier, load_heston, load_touch, load_vanilla,
 };
 
 /// Directory holding the frozen reference tables, relative to the crate root.
