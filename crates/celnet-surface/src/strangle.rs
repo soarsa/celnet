@@ -627,6 +627,184 @@ mod tests {
         }
     }
 
+    /// `market_strangle` propagates a strike-inversion failure as
+    /// `StrikeInversion`. We force the inner delta→strike solver to fail by
+    /// asking for a strangle vol so enormous that no finite strike attains the
+    /// pillar delta in the convention. The error must surface cleanly (no panic),
+    /// and `calibrate_pillar` (which calls `market_strangle` first) must surface
+    /// the same variant. This pins the `?`-propagation arms of both functions.
+    #[test]
+    fn unreachable_pillar_delta_surfaces_strike_inversion() {
+        let c = ctx(1.30, 0.02, 0.01);
+        // A pathological butterfly drives strangle_vol = atm + bf astronomically
+        // high; the premium-adjusted/forward delta of any strike then cannot
+        // reach the 25Δ pillar, so the solver reports the delta unreachable.
+        let q = MarketQuotes::three_point(0.10, 0.0, 1.0e6);
+        match market_strangle(&c, q.atm_vol, q.inner) {
+            Err(CalibrationError::StrikeInversion) => {}
+            other => panic!("expected StrikeInversion, got {other:?}"),
+        }
+        match calibrate_pillar(&c, q.atm_vol, q.inner) {
+            Err(CalibrationError::StrikeInversion) => {}
+            other => panic!("calibrate_pillar should propagate StrikeInversion, got {other:?}"),
+        }
+    }
+
+    /// A quote whose arithmetic-butterfly SEED already sits on/below the
+    /// admissible smile-strangle floor (`σ_ss ≤ ½|RR| − σ_ATM + 1e-4`) is
+    /// rejected immediately as `DegenerateQuote` — before any residual evaluation.
+    /// This pins the early-seed degeneracy guard (`x0 <= ss_min`). The construction
+    /// uses |RR| just under 2·ATM with a tiny butterfly so the seed `bf` is below
+    /// the floor `½|RR| − σ_ATM`.
+    #[test]
+    fn seed_below_floor_is_rejected_immediately() {
+        let c = ctx(1.30, 0.02, 0.01);
+        // atm = 0.10, |RR| = 0.19 → floor = 0.095 − 0.10 = -0.005, ss_min ≈ -0.0049.
+        // bf must be ≤ ss_min to trip the early guard, which needs a *negative*
+        // floor; instead push |RR| above 2·ATM so the floor is positive and a
+        // small bf is below it. |RR| = 0.205, atm = 0.10 → floor = 0.1025 − 0.10
+        // = 0.0025, ss_min ≈ 0.0026; bf = 0.001 < ss_min → immediate reject.
+        let q = MarketQuotes::three_point(0.10, 0.205, 0.001);
+        assert_eq!(
+            calibrate_pillar(&c, q.atm_vol, q.inner),
+            Err(CalibrationError::DegenerateQuote),
+            "a seed below the admissible floor must be rejected immediately"
+        );
+    }
+
+    /// A quote whose admissible SEED sits above the floor (so it passes the
+    /// immediate guard) but whose reprice root lies in the non-positive-wing
+    /// region BELOW the floor is rejected as `DegenerateQuote` only after the
+    /// geometric bracket-expansion drives the downward probe into the floor with
+    /// the residual still one-signed (`down_blocked_by_floor && f0 > 0.0`). This
+    /// is distinct from `seed_below_floor_is_rejected_immediately`: here the seed
+    /// is admissible and the expansion `else` block does the work. The contract is
+    /// a clean `Err`, never a panic, never an `Ok` with a non-positive wing.
+    ///
+    /// The state (spot 0.5, t = 3, atm 0.10, tiny RR, tiny BF) is a confirmed
+    /// floor-blocked-expansion case: the broker strangle's reprice convexity sits
+    /// below the admissible σ_ss floor, so no well-posed smile exists.
+    #[test]
+    fn expansion_floor_blocked_quote_is_degenerate() {
+        let c = MarketContext::new(0.5, 0.02, 0.01, 3.0, {
+            resolve(CcyPair::parse("EURUSD").unwrap(), Tenor::Years(1)).record
+        });
+        // atm = 0.10, |RR| = 0.001 → floor ½|RR| − atm + 1e-4 ≈ −0.0994, seed
+        // bf = 0.0005 is far above it (immediate guard passes), but the reprice
+        // root is below the floor → degenerate via the expansion path.
+        let q = MarketQuotes::three_point(0.10, 0.001, 0.0005);
+        // Seed is admissible (above floor) — confirm we are NOT in the immediate
+        // guard: ss_min < bf.
+        let ss_min = 0.5 * q.inner.risk_reversal.abs() - q.atm_vol + 1e-4;
+        assert!(
+            q.inner.butterfly > ss_min,
+            "seed must be admissible so the expansion path (not the immediate \
+             guard) discovers the degeneracy: bf={} ss_min={ss_min}",
+            q.inner.butterfly
+        );
+        assert_eq!(
+            calibrate_pillar(&c, q.atm_vol, q.inner),
+            Err(CalibrationError::DegenerateQuote),
+            "a floor-blocked reprice root must be rejected as DegenerateQuote \
+             through the expansion path"
+        );
+    }
+
+    /// A quote whose reprice root cannot be bracketed within the expansion budget
+    /// on the upward side (and is not floor-blocked) surfaces as `NoConvergence` —
+    /// the other expansion-exhaustion exit (`None` arm with no floor block). This
+    /// pins the non-degenerate failure path of the geometric expansion. The state
+    /// (spot 0.5, atm 0.10, high +RR, tiny BF, t = 1) is a confirmed NoConvergence
+    /// case from the outcome scan. Contract: a clean `Err`, never a panic.
+    #[test]
+    fn unbracketable_quote_surfaces_no_convergence() {
+        let c = ctx(0.5, 0.02, 0.01); // t = 1
+        let q = MarketQuotes::three_point(0.10, 0.9 * 0.10, 0.0005);
+        assert_eq!(
+            calibrate_pillar(&c, q.atm_vol, q.inner),
+            Err(CalibrationError::NoConvergence),
+            "an unbracketable (non-floor-blocked) quote must surface NoConvergence"
+        );
+    }
+
+    /// When the arithmetic-butterfly seed and its secant neighbour fall on the
+    /// SAME side of the reprice root (no immediate sign-change bracket), the root
+    /// finder enters the geometric **bracket-expansion** `else` block and steps
+    /// outward — DOWN when the seed lies above the root, UP when below — until it
+    /// straddles the root, then converges. These two confirmed states (short-/
+    /// long-dated, low-vol, skewed, spot 0.5) drive the seed above and below the
+    /// root respectively, exercising both expansion directions on the SUCCESS
+    /// path. INDEPENDENT CHECK per case: the returned smile, evaluated at the
+    /// broker strikes (NOT smile pillars), reprices the market strangle, and the
+    /// risk-reversal is reproduced — the two defining invariants, here for an
+    /// expansion-path solve; and the calibrated convexity genuinely differs from
+    /// the seed (the expansion moved off the arithmetic butterfly).
+    #[test]
+    fn bracket_expansion_solves_both_step_directions() {
+        // (atm, rr, bf, t): the first seed lies ABOVE the root (residual > 0 at
+        // the seed AND its secant neighbour → step DOWN expansion: high-vol
+        // strongly-skewed very-short-tenor quote, σ_ss falls from 0.30 to ≈0.262);
+        // the second lies BELOW the root (residual < 0 at both → step UP
+        // expansion: tiny butterfly seed with a large true convexity, σ_ss rises
+        // from 0.001 to ≈0.017, a 17× correction). Both states were confirmed to
+        // enter the geometric-expansion `else` block (f0·f1 > 0).
+        let cases: [(f64, f64, f64, f64); 2] = [
+            (0.30, 0.24, 0.30, 0.05),  // step-DOWN expansion (seed above root)
+            (0.20, 0.16, 0.001, 0.02), // step-UP expansion (seed below root)
+        ];
+        for (atm, rr, bf, t) in cases {
+            let c = ctx(1.0, 0.02, 0.01);
+            let c = MarketContext::new(c.spot, c.r_dom, c.r_for, t, c.conventions);
+            let q = MarketQuotes::three_point(atm, rr, bf);
+            let cal = calibrate_pillar(&c, q.atm_vol, q.inner).unwrap_or_else(|e| {
+                panic!("expansion case (atm={atm},rr={rr},bf={bf},t={t}) failed: {e:?}")
+            });
+            let ms = market_strangle(&c, q.atm_vol, q.inner).unwrap();
+
+            // RR reproduced exactly by construction.
+            assert!(is_close(cal.call_vol - cal.put_vol, rr, 1e-10, 1e-12));
+
+            // NON-VACUOUS reprice at the broker strikes (interpolated, not echoed).
+            let atm_strike = c.atm_strike(q.atm_vol);
+            let smile = MarketHedgeSmile::new(
+                [cal.put_strike, atm_strike, cal.call_strike],
+                [cal.put_vol, q.atm_vol, cal.call_vol],
+                c.forward(),
+                c.t,
+            );
+            let f = c.forward();
+            let vc = smile.implied_vol(ms.call_strike, f, c.t).0;
+            let vp = smile.implied_vol(ms.put_strike, f, c.t).0;
+            let call = price(OptionType::Call, &c.template(ms.call_strike, vc));
+            let put = price(OptionType::Put, &c.template(ms.put_strike, vp));
+            assert!(
+                is_close(call + put, cal.market_strangle_price, 1e-7, 1e-11),
+                "expansion-path smile @ broker strikes {} must reprice market strangle {} \
+                 (atm={atm},rr={rr},bf={bf},t={t})",
+                call + put,
+                cal.market_strangle_price
+            );
+            // The calibrated convexity must differ from the seed: the expansion
+            // genuinely corrected the arithmetic butterfly (broker ≠ smile
+            // strangle for a skewed quote).
+            assert!(
+                (cal.smile_strangle - q.inner.butterfly).abs() > 1e-6,
+                "expansion should move σ_ss {} off the seed BF {} (atm={atm},rr={rr},bf={bf},t={t})",
+                cal.smile_strangle,
+                q.inner.butterfly
+            );
+        }
+    }
+
+    /// The free `atm_std_dev(σ, t) = σ√t` helper (exposed for callers sizing their
+    /// own tolerances) returns the unsigned ATM standard deviation. Pins the
+    /// public helper against its closed form.
+    #[test]
+    fn atm_std_dev_is_sigma_root_t() {
+        assert!(is_close(atm_std_dev(0.20, 4.0), 0.40, 1e-15, 1e-15));
+        assert!(is_close(atm_std_dev(0.10, 0.25), 0.05, 1e-15, 1e-15));
+    }
+
     proptest::proptest! {
         #![proptest_config(proptest::prelude::ProptestConfig::with_cases(192))]
         /// Across a broad band of market states and mild-to-strong quotes, the
