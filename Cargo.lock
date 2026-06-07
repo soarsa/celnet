@@ -603,6 +603,9 @@ dependencies = [
  "celnet-qmc",
  "celnet-replog",
  "celnet-risk-cube",
+ "celnet-risk-fleet",
+ "celnet-risk-normalize",
+ "celnet-router",
  "celnet-surface",
  "celnet-testkit",
  "celnet-types",
@@ -665,6 +668,7 @@ name = "celnet-risk-cube"
 version = "0.0.0"
 dependencies = [
  "celnet-core",
+ "celnet-exotics",
  "celnet-gpu",
  "celnet-risk-normalize",
  "celnet-types",

@@ -732,6 +732,7 @@ pub fn fan_out_aggregate_over(
             net_greeks: additive.net_greeks,
             vega_ladder: additive.vega_ladder,
             positions: firm.positions,
+            exotic_legs: firm.exotic_legs,
             leaves: firm.leaves,
         },
         var_es,
@@ -799,6 +800,7 @@ mod tests {
             measure: FactMeasure {
                 leaf: canonicalize(&position),
                 position,
+                exotic: None,
             },
             surface_version: 1,
         }

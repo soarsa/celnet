@@ -513,6 +513,7 @@ fn empty_node(group: u64) -> NodeAggregate {
         net_greeks: NetGreeks::zero(),
         vega_ladder: VegaLadder::new(),
         positions: Vec::new(),
+        exotic_legs: Vec::new(),
         leaves: Vec::new(),
     }
 }
@@ -576,6 +577,11 @@ fn numeraire_expressed_node(
         net_greeks: net,
         vega_ladder: ladder,
         positions: node.positions.clone(),
+        // Carried through unchanged: this additive numeraire view feeds the limit
+        // layer (which reads the additive measures); the exotic legs travel with the
+        // node so it stays complete/reconcilable. Numeraire-correct exotic
+        // re-pricing for VaR/ES is done in `aggregate` via scaled legs.
+        exotic_legs: node.exotic_legs.clone(),
         leaves,
     })
 }

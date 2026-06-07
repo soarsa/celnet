@@ -148,18 +148,40 @@ impl FactKey {
 /// the non-additive reducers need.
 ///
 /// The additive part is the [`CanonicalLeaf`](celnet_risk_normalize::CanonicalLeaf)
-/// — it sums directly. The non-additive reducers (`docs/RISK-HIERARCHY.md` §2.5)
-/// cannot be summed; they must be **re-derived from the underlying position**, so
-/// the fact also carries the original [`PositionRisk`](celnet_risk_normalize::PositionRisk)
-/// (its pricing inputs, option type, notional). The cube re-prices the position
-/// under shocks via `celnet-vanilla` to produce VaR/ES and FRTB curvature.
+/// — it sums directly, **regardless of whether the leaf came from a vanilla or an
+/// exotic leg** (the canonicalization unifies them at the leaf level). The
+/// non-additive reducers (`docs/RISK-HIERARCHY.md` §2.5) cannot be summed; they must
+/// be **re-derived from the underlying instrument** under shocks, and a vanilla and
+/// an exotic re-price through different pricers — so the fact records which one it is:
+///
+/// - **vanilla fact** — `exotic == None`. The re-derivation source is `position`,
+///   the original [`PositionRisk`](celnet_risk_normalize::PositionRisk) re-priced
+///   under shocks via `celnet-vanilla`.
+/// - **exotic fact** — `exotic == Some(leg)`. The re-derivation source is the
+///   [`ExoticLeg`](crate::exotic::ExoticLeg), re-priced under shocks via the real
+///   closed-form exotic pricer (a barrier's gamma sign flip, a digital's pin risk —
+///   never a vanilla proxy). The `leaf` is the exotic's REAL Greek set, so an exotic
+///   contributes correctly to the additive roll-up. `position` still carries the
+///   exotic's **underlying-vanilla metadata** (same pair/option/notional/inputs) so
+///   the vega-pillar bucketing has a `(tenor × delta)` to map onto; it is **never
+///   priced** for an exotic fact (the exotic pricer is used instead).
+///
+/// This split is what lets a booked exotic stop being silently excluded from
+/// firm/desk/book risk: its Greeks roll up additively, and its non-additive
+/// contribution re-prices the true exotic payoff.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FactMeasure {
-    /// The convention-free canonical leaf (the additive measure carrier).
+    /// The convention-free canonical leaf (the additive measure carrier; the real
+    /// exotic Greeks for an exotic fact).
     pub leaf: celnet_risk_normalize::CanonicalLeaf,
-    /// The originating position (the re-derivation source for non-additive
-    /// measures — re-priced under shocks, never summed).
+    /// The originating vanilla position (the re-derivation source for a **vanilla**
+    /// fact; underlying-vanilla bucketing metadata for an **exotic** fact, never
+    /// priced when `exotic` is `Some`).
     pub position: celnet_risk_normalize::PositionRisk,
+    /// The exotic re-derivation source when this fact is an exotic leg (`None` for a
+    /// vanilla fact). When `Some`, the non-additive reducers re-price THIS leg, not
+    /// `position`.
+    pub exotic: Option<crate::exotic::ExoticLeg>,
 }
 
 /// One immutable row of the fact table: a position's org placement + its risk

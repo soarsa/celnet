@@ -90,6 +90,7 @@
 pub mod additive;
 pub mod cube;
 pub mod dimension;
+pub mod exotic;
 pub mod frtb;
 pub mod nonadditive;
 pub mod scenario_grid;
@@ -100,6 +101,7 @@ pub use dimension::{
     BookId, DeskId, DimensionId, EntityId, FactKey, FactMeasure, Hierarchy, LocationId, PositionId,
     RiskFact, TraderId,
 };
+pub use exotic::{ExoticKind, ExoticLeg, exotic_curvature_legs, exotic_node_pnl};
 pub use frtb::{
     CorrelationScenario, CurvatureBucket, FrtbCapital, ResidualInstrument, ResidualKind,
     RiskBucket, SbmCharge, SbmParams, assemble_capital, curvature_class, curvature_legs,
@@ -108,7 +110,8 @@ pub use frtb::{
 };
 pub use nonadditive::{
     PositionSensitivity, Scenario, VarEs, correlation_weighted_vega, historical_var_es, node_pnl,
-    node_sensitivities, position_pnl, sbm_curvature_spot, sensitivity_var_es,
+    node_sensitivities, node_var_es_combined, node_var_es_sensitivity_combined, position_pnl,
+    sbm_curvature_spot, sbm_curvature_spot_combined, sensitivity_var_es, vanilla_curvature_legs,
 };
 pub use scenario_grid::{NodeScenarioGrid, analytic_pv_grid, gpu_pv_grid};
 
@@ -173,6 +176,7 @@ mod tests {
             measure: FactMeasure {
                 leaf: canonicalize(&position),
                 position,
+                exotic: None,
             },
             surface_version: 1,
         }
