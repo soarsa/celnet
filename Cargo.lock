@@ -524,7 +524,6 @@ version = "0.0.0"
 dependencies = [
  "bytemuck",
  "celnet-core",
- "celnet-qmc",
  "celnet-types",
  "celnet-vanilla",
  "libm",
@@ -598,7 +597,6 @@ dependencies = [
  "celnet-core",
  "celnet-exotics",
  "celnet-golden",
- "celnet-gpu",
  "celnet-heston",
  "celnet-qmc",
  "celnet-replog",
@@ -607,10 +605,8 @@ dependencies = [
  "celnet-testkit",
  "celnet-types",
  "celnet-vanilla",
- "libm",
- "pollster",
+ "celnet-xva",
  "proptest",
- "wgpu",
 ]
 
 [[package]]
@@ -772,6 +768,16 @@ dependencies = [
  "celnet-core",
  "celnet-types",
  "proptest",
+]
+
+[[package]]
+name = "celnet-xva"
+version = "0.0.0"
+dependencies = [
+ "celnet-qmc",
+ "celnet-types",
+ "celnet-vanilla",
+ "libm",
 ]
 
 [[package]]
