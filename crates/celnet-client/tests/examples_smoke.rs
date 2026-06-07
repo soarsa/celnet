@@ -29,7 +29,16 @@ use celnet_client::{
 };
 use celnet_types::{OptionType, Tenor};
 
-use common::{STEP_DEADLINE, TEST_DEADLINE, conventions, eurusd, start_edge_and_client};
+use common::{conventions, eurusd, start_edge_and_client};
+
+// These smoke tests each boot a fresh REAL edge AND price compute-heavy products
+// (e.g. the American PSOR free-boundary FD). Under full-suite parallel-nextest
+// contention (1300+ tests, all cores saturated) those round-trips run far slower
+// than uncontended, so these are GENEROUS LIVENESS guards — a real hang/regression
+// still trips them, but CPU starvation does not. They are NOT performance gates:
+// the §1.2 pricing latency is gated uncontended by celnet-bench `bench_gate`.
+const SMOKE_STEP: std::time::Duration = std::time::Duration::from_secs(30);
+const SMOKE_TEST: std::time::Duration = std::time::Duration::from_secs(90);
 
 /// The market context the `price_exotic` example prices against (kept in lockstep
 /// with the example so the gate exercises identical inputs).
@@ -47,7 +56,7 @@ fn example_market() -> MarketContext {
 /// example exits non-zero on.
 #[tokio::test]
 async fn example_quote_and_trade_path_quotes_and_books() {
-    tokio::time::timeout(TEST_DEADLINE, async {
+    tokio::time::timeout(SMOKE_TEST, async {
         let (edge, client) = start_edge_and_client().await;
 
         let instrument = InstrumentSpec::vanilla(
@@ -61,7 +70,7 @@ async fn example_quote_and_trade_path_quotes_and_books() {
         );
         let rfq = client.request_quote(instrument, Conventions::major_default());
 
-        let quote = tokio::time::timeout(STEP_DEADLINE, rfq.request())
+        let quote = tokio::time::timeout(SMOKE_STEP, rfq.request())
             .await
             .expect("quote in time")
             .expect("quote ok");
@@ -73,7 +82,7 @@ async fn example_quote_and_trade_path_quotes_and_books() {
             quote.price.offer
         );
 
-        let execution = tokio::time::timeout(STEP_DEADLINE, rfq.accept(&quote, Side::Buy))
+        let execution = tokio::time::timeout(SMOKE_STEP, rfq.accept(&quote, Side::Buy))
             .await
             .expect("accept in time")
             .expect("accept ok");
@@ -92,11 +101,11 @@ async fn example_quote_and_trade_path_quotes_and_books() {
 /// real, moving blotter — the same guard the example exits non-zero on.
 #[tokio::test]
 async fn example_stream_blotter_path_streams_moving_lines() {
-    tokio::time::timeout(TEST_DEADLINE, async {
+    tokio::time::timeout(SMOKE_TEST, async {
         let (edge, client) = start_edge_and_client().await;
 
         let strikes = [1.08_f64, 1.12, 1.16];
-        let session = tokio::time::timeout(STEP_DEADLINE, client.open_session())
+        let session = tokio::time::timeout(SMOKE_STEP, client.open_session())
             .await
             .expect("session opens in time")
             .expect("session opens");
@@ -113,7 +122,7 @@ async fn example_stream_blotter_path_streams_moving_lines() {
                 StrikeSpec::Absolute(k),
             );
             let sub = tokio::time::timeout(
-                STEP_DEADLINE,
+                SMOKE_STEP,
                 session.subscribe(instrument, conventions(), Some(1000 + i as u64), None),
             )
             .await
@@ -166,7 +175,7 @@ async fn example_stream_blotter_path_streams_moving_lines() {
 /// European of the same strike — the same guards the example exits non-zero on.
 #[tokio::test]
 async fn example_price_exotic_path_prices_asian_and_american() {
-    tokio::time::timeout(TEST_DEADLINE, async {
+    tokio::time::timeout(SMOKE_TEST, async {
         let (edge, client) = start_edge_and_client().await;
         let market = example_market();
         let conv = Conventions::major_default();
@@ -180,7 +189,7 @@ async fn example_price_exotic_path_prices_asian_and_american() {
             Side::TwoWay,
             AsianTerms::fresh_discrete(OptionType::Call, 1.10, 12),
         );
-        let priced_asian = tokio::time::timeout(STEP_DEADLINE, client.price(&asian, market, conv))
+        let priced_asian = tokio::time::timeout(SMOKE_STEP, client.price(&asian, market, conv))
             .await
             .expect("asian price in time")
             .expect("asian price ok");
@@ -204,7 +213,7 @@ async fn example_price_exotic_path_prices_asian_and_american() {
             AmericanTerms::american(OptionType::Put, 1.10),
         );
         let priced_american =
-            tokio::time::timeout(STEP_DEADLINE, client.price(&american, market, conv))
+            tokio::time::timeout(SMOKE_STEP, client.price(&american, market, conv))
                 .await
                 .expect("american price in time")
                 .expect("american price ok");
@@ -219,7 +228,7 @@ async fn example_price_exotic_path_prices_asian_and_american() {
             StrikeSpec::Absolute(1.10),
         );
         let priced_european =
-            tokio::time::timeout(STEP_DEADLINE, client.price(&european, market, conv))
+            tokio::time::timeout(SMOKE_STEP, client.price(&european, market, conv))
                 .await
                 .expect("european price in time")
                 .expect("european price ok");
@@ -239,7 +248,7 @@ async fn example_price_exotic_path_prices_asian_and_american() {
 
 /// Await the next event on a subscription within the step deadline.
 async fn next_event(sub: &mut Subscription) -> StreamEvent {
-    tokio::time::timeout(STEP_DEADLINE, sub.next_event())
+    tokio::time::timeout(SMOKE_STEP, sub.next_event())
         .await
         .expect("a stream event arrives before the deadline")
         .expect("the stream stays open")

@@ -19,6 +19,17 @@ ignore = [
     # narrowest available action is to ignore this one ID with this justification.
     # Re-evaluate when iai-callgrind migrates off bincode (tracked upstream).
     "RUSTSEC-2025-0141",
+    # RUSTSEC-2026-0173 — proc-macro-error2 2.0.1 "unmaintained" (NOT a
+    # vulnerability). Informational advisory: the author confirmed the crate (a
+    # fork of the also-unmaintained proc-macro-error) is no longer maintained — no
+    # CVE, no memory-safety/correctness defect. In this workspace it appears SOLELY
+    # as a transitive **dev-dependency** of `iai-callgrind` (via iai-callgrind-macros,
+    # the instruction-count bench's proc-macro), exactly like the bincode case above:
+    # never in any runtime/shipped artifact, never on a pricing/wire/data path, never
+    # in the hot core. cargo-deny has no `dev-only` advisory scope, so the narrowest
+    # action is to ignore this one ID with this justification. Re-evaluate when
+    # iai-callgrind drops proc-macro-error2 (tracked upstream).
+    "RUSTSEC-2026-0173",
 ]
 
 [bans]

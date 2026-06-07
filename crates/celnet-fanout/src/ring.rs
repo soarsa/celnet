@@ -324,6 +324,18 @@ impl<T: Copy + Default + Send> Consumer<T> {
             // SAFETY: in-bounds index; `Copy` read guarded by the seqlock stamps.
             let value = unsafe { *slot.value.get() };
 
+            // Seqlock reader barrier (canonical form): an Acquire fence between the
+            // plain payload copy and the post-stamp re-check. Without it, on a
+            // weakly-ordered architecture (e.g. aarch64) the payload read above is
+            // a plain load that the CPU may reorder PAST the `stamp_after` load —
+            // letting a concurrent producer overwrite of this slot land inside the
+            // copy window yet still be validated by a stale-but-equal `stamp_after`,
+            // i.e. an undetected torn read. The fence pins the payload read before
+            // the re-check so any overlapping write is always observed as a stamp
+            // change and the read is retried. (Surfaced once under 16x full-suite
+            // CPU oversubscription by the conflation stress test; the two-Acquire-
+            // load form alone left this reorder window open.)
+            std::sync::atomic::fence(Ordering::Acquire);
             let stamp_after = slot.stamp.load(Ordering::Acquire);
             if stamp_after != want {
                 // Producer began (or finished) overwriting this slot while we
