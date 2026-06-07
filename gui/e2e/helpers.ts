@@ -53,6 +53,36 @@ export async function gotoWorkspace(
 }
 
 /**
+ * Open the vol-cube heatmap: the cube is a SIBLING pivot inside the Surface
+ * workspace (a "Surface | Cube" view toggle), not a top-level rail view. Go to
+ * Surface, flip to the Cube chip, and wait for a real cube table to render. The
+ * cube self-loads its own per-pair surfaces, so it renders regardless of the
+ * marking-surface state.
+ */
+export async function gotoCube(page: Page): Promise<Locator> {
+  const pane = await gotoWorkspace(page, "surface");
+  // The "Cube" view chip lives in the surface view-toggle group.
+  await pane.getByRole("button", { name: "Cube", exact: true }).click();
+  // Wait for the actual heat grid (the smile pivot's tenor×delta table).
+  const cube = page.getByRole("table", { name: "tenor by delta vol cube" });
+  await expect(cube).toBeVisible();
+  return pane;
+}
+
+/**
+ * Open the pair-universe navigator overlay (the virtualised, searchable listbox)
+ * via its title-bar "Pairs" button, and wait for the listbox to render. This is
+ * the data-dense overlay where listbox/option a11y issues hide.
+ */
+export async function openUniverseNavigator(page: Page): Promise<Locator> {
+  await page.getByRole("button", { name: "browse the pair universe" }).click();
+  const dialog = page.getByRole("dialog", { name: "Pairs" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("listbox", { name: "currency pairs" })).toBeVisible();
+  return dialog;
+}
+
+/**
  * Run axe on the current page and assert ZERO serious/critical violations. We
  * scan the WCAG 2.1 A/AA tags. Moderate/minor findings are reported (logged) but
  * do not fail the gate — the bar the task sets is serious/critical = 0.
