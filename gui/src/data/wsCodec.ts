@@ -363,6 +363,47 @@ export function instrumentToWire(i: Instrument): WireObject {
       };
       break;
     }
+    // Wave-2 products, appended additively at the next field numbers:
+    // forward_start=16, cliquet=17, quanto=18 (one current contract, no
+    // schema_version, no renumber; CLAUDE.md rule 9). The cliquet's local/global
+    // clamps are presence-tracked — an absent clamp is OMITTED from the wire
+    // object (proto3 optional), matching the server codec's `opt_f64` reader.
+    case "forwardStart": {
+      const f = i.product.forwardStart;
+      base["forward_start"] = {
+        option_type: e.optionType.toWire(f.optionType),
+        moneyness: f.moneyness,
+        reset: f.reset,
+      };
+      break;
+    }
+    case "cliquet": {
+      const c = i.product.cliquet;
+      const body: WireObject = {
+        option_type: e.optionType.toWire(c.optionType),
+        moneyness: c.moneyness,
+        periods: c.periods,
+        mc_pairs: c.mcPairs,
+        mc_seed: c.mcSeed,
+      };
+      if (c.localFloor !== undefined) body["local_floor"] = c.localFloor;
+      if (c.localCap !== undefined) body["local_cap"] = c.localCap;
+      if (c.globalFloor !== undefined) body["global_floor"] = c.globalFloor;
+      if (c.globalCap !== undefined) body["global_cap"] = c.globalCap;
+      base["cliquet"] = body;
+      break;
+    }
+    case "quanto": {
+      const q = i.product.quanto;
+      base["quanto"] = {
+        payoff: e.quantoPayoff.toWire(q.payoff),
+        option_type: e.optionType.toWire(q.optionType),
+        strike: q.strike,
+        conversion_vol: q.conversionVol,
+        correlation: q.correlation,
+      };
+      break;
+    }
   }
   return base;
 }
@@ -514,6 +555,11 @@ export function quoteFromWire(o: WireObject): Quote {
   if (surf !== undefined) q.surfaceVersion = surf;
   const attribution = attributionFromWire(o);
   if (attribution !== undefined) q.attribution = attribution;
+  // The Monte-Carlo standard error of an MC-priced product (`PriceResponse
+  // .price_std_error`, field 7). Presence-tracked: absent/null for every
+  // closed-form product, set only for a clamped cliquet.
+  const stdErr = optNum(o, "price_std_error");
+  if (stdErr !== undefined) q.priceStdError = stdErr;
   return q;
 }
 

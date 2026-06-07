@@ -24,6 +24,7 @@ import type {
   BrokerQuoteSet,
   BucketedRisk,
   CcyPair,
+  Cliquet,
   Conventions,
   CrossGamma,
   Executed,
@@ -78,6 +79,12 @@ function numToBigInt(o: WireObject, key: string): bigint {
     }
   }
   return 0n;
+}
+
+/** An optional presence-tracked finite number (`null`/absent/non-number ⇒ undefined). */
+function optNum(o: WireObject, key: string): number | undefined {
+  const v = o[key];
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
 }
 
 /** An optional presence-tracked 64-bit integer (`null`/absent ⇒ undefined). */
@@ -160,8 +167,9 @@ export function instrumentToWire(i: Instrument): WireObject {
   if (i.solve) base["solve"] = solveToWire(i.solve);
   // The product oneof: nest the body under its own key (the proto field name) with
   // the proto field number it occupies — vanilla=7, strategy=8, … variance_swap=13,
-  // volatility_swap=14, asian_option=15. The WS JSON mirror keys by name, exactly
-  // like `crates/celnet-server/src/ws/codec.rs` decodes.
+  // volatility_swap=14, asian_option=15, forward_start=16, cliquet=17, quanto=18.
+  // The WS JSON mirror keys by name, exactly like
+  // `crates/celnet-server/src/ws/codec.rs` decodes.
   switch (i.product.kind) {
     case "vanilla":
       base["vanilla"] = {
@@ -192,8 +200,53 @@ export function instrumentToWire(i: Instrument): WireObject {
         elapsed_weight: i.product.asianOption.elapsedWeight,
       };
       break;
+    case "forwardStart":
+      base["forward_start"] = {
+        option_type: e.optionType.toWire(i.product.forwardStart.optionType),
+        moneyness: i.product.forwardStart.moneyness,
+        reset: i.product.forwardStart.reset,
+      };
+      break;
+    case "cliquet":
+      base["cliquet"] = cliquetToWire(i.product.cliquet);
+      break;
+    case "quanto":
+      base["quanto"] = {
+        payoff: e.quantoPayoff.toWire(i.product.quanto.payoff),
+        option_type: e.optionType.toWire(i.product.quanto.optionType),
+        strike: i.product.quanto.strike,
+        conversion_vol: i.product.quanto.conversionVol,
+        correlation: i.product.quanto.correlation,
+      };
+      break;
   }
   return base;
+}
+
+/**
+ * Encode a cliquet body. The four clamp fields are presence-tracked exactly like
+ * the proto `optional double` / the server's `opt_f64` decoder: a `localFloor`
+ * (etc.) left undefined is OMITTED from the JSON (⇒ unconstrained on that side),
+ * never sent as a `0` that would mean "floor at zero". `mc_pairs`/`mc_seed` are
+ * always present (`0` ⇒ the server's MC default; ignored for a plain ratchet).
+ */
+function cliquetToWire(c: Cliquet): WireObject {
+  const body: WireObject = {
+    option_type: e.optionType.toWire(c.optionType),
+    moneyness: c.moneyness,
+    periods: c.periods,
+    mc_pairs: c.mcPairs,
+    // 64-bit `mc_seed` is carried as a plain JSON number, exactly like every other
+    // 64-bit wire field in this codec (token/ids/nanos) — the server reads it with
+    // `u64_or_zero`. (A bigint would not JSON-serialise; seeds stay within the
+    // JS safe-integer range.)
+    mc_seed: Number(c.mcSeed),
+  };
+  if (c.localFloor !== undefined) body["local_floor"] = c.localFloor;
+  if (c.localCap !== undefined) body["local_cap"] = c.localCap;
+  if (c.globalFloor !== undefined) body["global_floor"] = c.globalFloor;
+  if (c.globalCap !== undefined) body["global_cap"] = c.globalCap;
+  return body;
 }
 
 // ---------------------------------------------------------------------------
@@ -274,6 +327,12 @@ export function quoteFromWire(o: WireObject): Quote {
   if (corr !== undefined) q.correlationId = corr;
   const surf = optBigInt(o, "surface_version");
   if (surf !== undefined) q.surfaceVersion = surf;
+  // The MC standard error (proto `price_std_error`, presence-tracked): set ONLY
+  // for a Monte-Carlo-priced product (the clamped cliquet); absent for the
+  // closed-form products whose price is exact. Decoded as `undefined` when the
+  // server omits it, so the spill never fabricates a precision claim.
+  const stdErr = optNum(o, "price_std_error");
+  if (stdErr !== undefined) q.priceStdError = stdErr;
   return q;
 }
 

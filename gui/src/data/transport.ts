@@ -55,6 +55,12 @@ export interface PriceResult {
   conventions: Conventions;
   twoWay: TwoWayPrice;
   surfaceVersion: bigint;
+  /**
+   * The Monte-Carlo standard error of the priced value (`PriceResponse
+   * .price_std_error`). Set ONLY for an MC-priced product (a clamped cliquet),
+   * `undefined` for every closed-form product.
+   */
+  priceStdError?: number;
 }
 
 /** Events the multiplexed stream session emits to the client (server→client). */

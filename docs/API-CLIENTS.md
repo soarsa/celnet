@@ -64,15 +64,24 @@ Instrument = Vanilla
            | VarianceSwap     // fair-variance-strike replication (K_var)
            | VolatilitySwap   // convexity-adjusted fair-vol strike (K_vol)
            | AsianOption      // fixed-strike arithmetic-average-rate (Curran / Turnbull-Wakeman)
+           | ForwardStart     // strike resets at t1 to m·S(reset) (Rubinstein dual-carry)
+           | Cliquet          // ratchet strip: plain closed-form, or clamped Monte-Carlo
+           | Quanto           // vanilla / cash-or-nothing digital, settlement-ccy converted
 ```
 
 The wire field numbers are append-only (no renumber, no `schema_version`): `vanilla=7 …
-touch=12`, then `variance_swap=13`, `volatility_swap=14`, `asian_option=15`. Variance/vol
-swaps echo the fair strike in the priced `resolved_strike` (and the server's `vol` field
-carries `√K_var` for the variance swap); the arithmetic Asian carries a genuine discounted
-option price with the full FD Greek set. SDK builders: `InstrumentSpec::variance_swap`,
-`::volatility_swap`, `::asian_option(.., AsianTerms)`; CLI: `exotic var-swap`,
-`exotic vol-swap`, `exotic asian`.
+touch=12`, then `variance_swap=13`, `volatility_swap=14`, `asian_option=15`,
+`forward_start=16`, `cliquet=17`, `quanto=18`. Variance/vol swaps echo the fair strike in the
+priced `resolved_strike` (and the server's `vol` field carries `√K_var` for the variance
+swap); the arithmetic Asian, forward-start, plain cliquet and quanto vanilla/digital carry a
+genuine discounted option price with the full FD Greek set. The **clamped (locally-capped /
+-floored or globally-bounded) cliquet is priced by Monte-Carlo**: it reports an honest
+standard error on the new append-only `PriceResponse.price_std_error` (`=7`, presence-tracked
+— absent for the closed-form products), surfaced as `PricedLine.price_std_error` (SDK) and a
+`std_error` line (CLI). SDK builders: `InstrumentSpec::variance_swap`, `::volatility_swap`,
+`::asian_option(.., AsianTerms)`, `::forward_start(.., ForwardStartTerms)`,
+`::cliquet(.., CliquetTerms)`, `::quanto(.., QuantoTerms)`; CLI: `exotic var-swap`,
+`exotic vol-swap`, `exotic asian`, `exotic forward-start`, `exotic cliquet`, `exotic quanto`.
 
 Supporting messages: `Quantity` (notional + which leg-ccy), `Solve` (solve strike or premium
 so a leg/structure is zero-cost), `StrikeOrDelta` (`oneof spec` — quote by strike or by

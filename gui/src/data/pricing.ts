@@ -12,13 +12,30 @@
 
 import type {
   AsianOption,
+  Cliquet,
+  ForwardStart,
   Greeks,
   Instrument,
   Leg,
   MarketContext,
+  Quanto,
   VarianceSwap,
   VolatilitySwap,
 } from "./contract";
+import { Rng } from "./rng";
+
+/**
+ * A priced result: the aggregated 14-Greek set, the resolved strike, and — for a
+ * Monte-Carlo-priced product only (a clamped cliquet) — the standard error of the
+ * priced value. `priceStdError` is `undefined` for every closed-form product, so
+ * a caller renders an honest precision band for MC and never claims a stderr for a
+ * closed form (mirrors `PriceResponse.price_std_error`, field 7).
+ */
+export interface PriceOutcome {
+  greeks: Greeks;
+  resolvedStrike: number;
+  priceStdError?: number;
+}
 
 const INV_SQRT_2PI = 0.398_942_280_401_432_7;
 
@@ -277,7 +294,7 @@ function addScaled(acc: Greeks, g: Greeks, w: number): Greeks {
 export function priceInstrument(
   instrument: Instrument,
   m: MarketContext,
-): { greeks: Greeks; resolvedStrike: number } {
+): PriceOutcome {
   const t = instrument.expiryYears;
   switch (instrument.product.kind) {
     case "varianceSwap":
@@ -286,6 +303,12 @@ export function priceInstrument(
       return priceVolatilitySwap(instrument.product.volatilitySwap, m);
     case "asianOption":
       return priceAsian(instrument.product.asianOption, m, t);
+    case "forwardStart":
+      return priceForwardStart(instrument.product.forwardStart, m, t);
+    case "cliquet":
+      return priceCliquet(instrument.product.cliquet, m, t);
+    case "quanto":
+      return priceQuanto(instrument.product.quanto, m, t);
     case "vanilla":
     case "strategy": {
       const legs: LegInputs[] =
@@ -336,10 +359,7 @@ export function priceInstrument(
  * server pricer, which echoes `K_var` in both); the sensitivities are the
  * sensitivity of `K_var` to the market (only vol moves it: `dK_var/dσ = 2σ`).
  */
-function priceVarianceSwap(
-  _spec: VarianceSwap,
-  m: MarketContext,
-): { greeks: Greeks; resolvedStrike: number } {
+function priceVarianceSwap(_spec: VarianceSwap, m: MarketContext): PriceOutcome {
   const kVar = m.vol * m.vol;
   const greeks = zeroGreeks();
   greeks.price = kVar;
@@ -352,10 +372,7 @@ function priceVarianceSwap(
  * convexity correction for a flat vol). The headline `price`/`resolvedStrike`
  * carry `K_vol`; `dK_vol/dσ = 1`.
  */
-function priceVolatilitySwap(
-  _spec: VolatilitySwap,
-  m: MarketContext,
-): { greeks: Greeks; resolvedStrike: number } {
+function priceVolatilitySwap(_spec: VolatilitySwap, m: MarketContext): PriceOutcome {
   const kVol = m.vol;
   const greeks = zeroGreeks();
   greeks.price = kVol;
@@ -478,11 +495,7 @@ function blackOnAverage(
  * central finite difference on the same closed form (so the ticket's Greek strip
  * is populated honestly rather than zeroed).
  */
-function priceAsian(
-  spec: AsianOption,
-  m: MarketContext,
-  t: number,
-): { greeks: Greeks; resolvedStrike: number } {
+function priceAsian(spec: AsianOption, m: MarketContext, t: number): PriceOutcome {
   const value = (mk: MarketContext): number => asianValue(spec, mk, t);
 
   const greeks = zeroGreeks();
@@ -521,4 +534,256 @@ function asianValue(spec: AsianOption, m: MarketContext, t: number): number {
   const df = Math.exp(-m.rDom * t);
   const kEff = spec.strike - fixed;
   return blackOnAverage(spec.optionType === "CALL", ex, ex2, kEff, df);
+}
+
+// ---------------------------------------------------------------------------
+// forward-start vanilla — FX dual-carry closed form
+// ---------------------------------------------------------------------------
+//
+// The strike resets at t₁ to m·S(t₁); under GBM the value scales out the random
+// reset spot, giving V = e^{−r_f·t₁}·S₀·u(m, T−t₁), where u is a UNIT-spot GK
+// vanilla (spot 1, strike m) over the residual maturity T−t₁ (Rubinstein 1990;
+// provenance in docs only). This mirrors celnet-exotics `forward_start_price`
+// field-for-field on the same GK math the mock already uses, so the offline price
+// is a genuine closed form — exact, and at t₁→0 it collapses to a plain GK
+// vanilla struck at m·S₀ (the documented limit). Greeks are by central FD on the
+// closed form so the ticket's strip is populated honestly.
+
+/** Value of a unit-spot GK vanilla (spot 1, strike `moneyness`) over `residual`. */
+function unitSpotVanilla(
+  isCall: boolean,
+  moneyness: number,
+  m: MarketContext,
+  residual: number,
+): number {
+  if (residual <= 0) {
+    // Degenerate residual maturity ⇒ the (undiscounted) unit forward intrinsic.
+    const sign = isCall ? 1 : -1;
+    return Math.max(0, sign * (1 - moneyness));
+  }
+  return vanillaGreeks(isCall, moneyness, { ...m, spot: 1 }, residual).price;
+}
+
+/** The discounted forward-start value at a market/horizon (no Greeks). */
+function forwardStartValue(spec: ForwardStart, m: MarketContext, t: number): number {
+  const reset = Math.min(Math.max(spec.reset, 0), t);
+  const residual = t - reset;
+  const unit = unitSpotVanilla(spec.optionType === "CALL", spec.moneyness, m, residual);
+  return Math.exp(-m.rFor * reset) * m.spot * unit;
+}
+
+/**
+ * Price a forward-start vanilla by the FX dual-carry closed form, with the
+ * resolved strike reported as the ATM-forward strike the reset would set today
+ * (`m · S₀`) for the ticket's display. Greeks by central finite difference.
+ */
+function priceForwardStart(spec: ForwardStart, m: MarketContext, t: number): PriceOutcome {
+  const value = (mk: MarketContext): number => forwardStartValue(spec, mk, t);
+  const greeks = zeroGreeks();
+  greeks.price = value(m);
+
+  const hS = m.spot * 1e-4;
+  const hV = 1e-4;
+  const bump = (over: Partial<MarketContext>): MarketContext => ({ ...m, ...over });
+  greeks.deltaSpot =
+    (value(bump({ spot: m.spot + hS })) - value(bump({ spot: m.spot - hS }))) / (2 * hS);
+  greeks.gamma =
+    (value(bump({ spot: m.spot + hS })) - 2 * greeks.price + value(bump({ spot: m.spot - hS }))) /
+    (hS * hS);
+  greeks.vega = (value(bump({ vol: m.vol + hV })) - value(bump({ vol: m.vol - hV }))) / (2 * hV);
+
+  return { greeks, resolvedStrike: spec.moneyness * m.spot };
+}
+
+// ---------------------------------------------------------------------------
+// cliquet / ratchet — plain = Σ forward-start legs; clamped = Monte-Carlo
+// ---------------------------------------------------------------------------
+//
+// A cliquet is a strip of consecutive forward-start vanillas over an evenly-spaced
+// reset schedule. The PLAIN (unclamped) ratchet is EXACTLY the sum of the
+// forward-start legs (closed form, mirrors celnet-exotics `cliquet_price_plain`).
+// ANY local/global clamp makes the per-period payoff a non-linear clamp of the
+// period return, which has no closed form ⇒ a Monte-Carlo estimator that reports
+// the price AND its standard error (mirrors `cliquet_price_capped_mc`). The MC
+// uses the deterministic seeded Rng (so a fixed seed reproduces bit-for-bit) and
+// terminal-settles each opening-spot-scaled clamped leg, exactly like the server's
+// path payoff. The live WS transport prices the genuine server MC; offline this is
+// an honest MC with a real stderr — never a closed-form claim for the clamped case.
+
+/** `true` iff a cliquet carries no local/global clamp (the plain ratchet). */
+function cliquetIsPlain(spec: Cliquet): boolean {
+  return (
+    spec.localFloor === undefined &&
+    spec.localCap === undefined &&
+    spec.globalFloor === undefined &&
+    spec.globalCap === undefined
+  );
+}
+
+/** The discounted value of one PLAIN forward-start leg (reset→expiry). */
+function cliquetPlainValue(spec: Cliquet, m: MarketContext, t: number): number {
+  const n = Math.max(1, Math.trunc(spec.periods));
+  let total = 0;
+  for (let k = 1; k <= n; k += 1) {
+    const reset = (t * (k - 1)) / n;
+    const expiry = (t * k) / n;
+    total += forwardStartValue(
+      { optionType: spec.optionType, moneyness: spec.moneyness, reset },
+      m,
+      expiry,
+    );
+  }
+  return total;
+}
+
+/** One period's per-unit clamped option return `clamp(φ·(ratio − m); [floor,cap])`. */
+function clampedReturn(spec: Cliquet, phi: number, ratio: number): number {
+  let ret = Math.max(0, phi * (ratio - spec.moneyness));
+  if (spec.localFloor !== undefined) ret = Math.max(ret, spec.localFloor);
+  if (spec.localCap !== undefined) ret = Math.min(ret, spec.localCap);
+  return ret;
+}
+
+/**
+ * One cliquet path's accumulated (undiscounted) terminal payoff for antithetic
+ * sign `s`. `z` carries one standard-normal increment per period; `dtYears` is the
+ * (equal) period length in years. The log-ratio over period `k` is GK-distributed
+ * `N((r_d − r_f − ½σ²)Δt, σ²Δt)`, exactly the server's path simulation.
+ */
+function cliquetPathPayoff(
+  spec: Cliquet,
+  m: MarketContext,
+  z: number[],
+  s: number,
+  dtYears: number,
+): number {
+  const n = Math.max(1, Math.trunc(spec.periods));
+  const phi = spec.optionType === "CALL" ? 1 : -1;
+  const drift = (m.rDom - m.rFor - 0.5 * m.vol * m.vol) * dtYears;
+  const diffusionScale = m.vol * Math.sqrt(dtYears);
+  let spot = m.spot;
+  let acc = 0;
+  for (let k = 1; k <= n; k += 1) {
+    const ratio = Math.exp(drift + diffusionScale * s * z[k - 1]!);
+    acc += spot * clampedReturn(spec, phi, ratio);
+    spot *= ratio;
+  }
+  if (spec.globalFloor !== undefined) acc = Math.max(acc, spec.globalFloor);
+  if (spec.globalCap !== undefined) acc = Math.min(acc, spec.globalCap);
+  return acc;
+}
+
+/** Default antithetic path-pairs for a clamped cliquet when the trader leaves 0. */
+const CLIQUET_DEFAULT_PAIRS = 20_000;
+
+/**
+ * Price a cliquet. A plain ratchet is the exact Σ of forward-start legs (closed
+ * form, no stderr). A clamped cliquet is priced by an antithetic Monte-Carlo over
+ * the period-return path, scaled by the period drift/diffusion at `t`; it reports
+ * the discounted mean AND its standard error (Welford), so the ticket shows an
+ * honest precision band — never a closed-form claim.
+ */
+function priceCliquet(spec: Cliquet, m: MarketContext, t: number): PriceOutcome {
+  if (cliquetIsPlain(spec)) {
+    const value = (mk: MarketContext): number => cliquetPlainValue(spec, mk, t);
+    const greeks = zeroGreeks();
+    greeks.price = value(m);
+    const hS = m.spot * 1e-4;
+    const hV = 1e-4;
+    const bump = (over: Partial<MarketContext>): MarketContext => ({ ...m, ...over });
+    greeks.deltaSpot =
+      (value(bump({ spot: m.spot + hS })) - value(bump({ spot: m.spot - hS }))) / (2 * hS);
+    greeks.vega = (value(bump({ vol: m.vol + hV })) - value(bump({ vol: m.vol - hV }))) / (2 * hV);
+    return { greeks, resolvedStrike: spec.moneyness * m.spot };
+  }
+
+  const n = Math.max(1, Math.trunc(spec.periods));
+  const dtYears = t / n;
+  const pairs = spec.mcPairs > 0 ? Math.trunc(spec.mcPairs) : CLIQUET_DEFAULT_PAIRS;
+  const rng = new Rng(spec.mcSeed === 0n ? 0xc11_c0e7n : spec.mcSeed);
+  const df = Math.exp(-m.rDom * t);
+
+  let count = 0;
+  let mean = 0;
+  let m2 = 0;
+  const push = (x: number): void => {
+    count += 1;
+    const d = x - mean;
+    mean += d / count;
+    m2 += d * (x - mean);
+  };
+
+  // Draw one standard normal per period; build both antithetic legs from the same
+  // normals (the path function applies the period drift/diffusion at dtYears).
+  const z = new Array<number>(n).fill(0);
+  for (let p = 0; p < pairs; p += 1) {
+    for (let k = 0; k < n; k += 1) z[k] = rng.normal();
+    const up = df * cliquetPathPayoff(spec, m, z, 1, dtYears);
+    const dn = df * cliquetPathPayoff(spec, m, z, -1, dtYears);
+    push(0.5 * (up + dn)); // antithetic pair mean is one sample of the estimator
+  }
+  const stdError = count >= 2 ? Math.sqrt(m2 / (count - 1) / count) : 0;
+
+  const greeks = zeroGreeks();
+  greeks.price = mean;
+  return { greeks, resolvedStrike: spec.moneyness * m.spot, priceStdError: stdError };
+}
+
+// ---------------------------------------------------------------------------
+// quanto — closed-form drift adjustment under the settlement-currency measure
+// ---------------------------------------------------------------------------
+//
+// A quanto pays its natural payoff converted into a fixed settlement currency at a
+// fixed rate. Under the settlement measure the underlying's carry shifts by the
+// quanto-drift adjustment −ρ·σ_S·σ_Z; the price is then the ordinary GK vanilla
+// (or a cash-or-nothing digital) at the adjusted carry, discounted by r_dom. At
+// ρ=0 the adjustment vanishes and the price collapses to the plain vanilla/digital
+// (the documented limit). Mirrors celnet-exotics `quanto_vanilla_price` /
+// `quanto_digital_price` field-for-field on the same GK math.
+
+/** The carry-adjusted market for a quanto (`r_for' = r_for − (−ρ·σ_S·σ_Z)`). */
+function quantoAdjustedMarket(spec: Quanto, m: MarketContext): MarketContext {
+  const adjustment = -spec.correlation * m.vol * spec.conversionVol;
+  // carry_new = carry_old + adjustment ⇒ r_for_new = r_for − adjustment.
+  return { ...m, rFor: m.rFor - adjustment };
+}
+
+/** The discounted quanto value at a market/horizon (no Greeks). */
+function quantoValue(spec: Quanto, m: MarketContext, t: number): number {
+  const adj = quantoAdjustedMarket(spec, m);
+  const isCall = spec.optionType === "CALL";
+  if (spec.payoff === "VANILLA") {
+    return vanillaGreeks(isCall, spec.strike, adj, t).price;
+  }
+  // Cash-or-nothing digital: e^{−r_dom·t}·Φ(±d₂) at the adjusted carry.
+  const sqrtT = Math.sqrt(t);
+  const d1 =
+    (Math.log(adj.spot / spec.strike) + (adj.rDom - adj.rFor + 0.5 * adj.vol * adj.vol) * t) /
+    (adj.vol * sqrtT);
+  const d2 = d1 - adj.vol * sqrtT;
+  const df = Math.exp(-adj.rDom * t);
+  return isCall ? df * normCdf(d2) : df * normCdf(-d2);
+}
+
+/**
+ * Price a quanto (vanilla or cash-or-nothing digital) by the closed-form drift
+ * adjustment. Greeks by central finite difference on the closed form so the
+ * ticket's strip is populated honestly.
+ */
+function priceQuanto(spec: Quanto, m: MarketContext, t: number): PriceOutcome {
+  const value = (mk: MarketContext): number => quantoValue(spec, mk, t);
+  const greeks = zeroGreeks();
+  greeks.price = value(m);
+
+  const hS = m.spot * 1e-4;
+  const hV = 1e-4;
+  const bump = (over: Partial<MarketContext>): MarketContext => ({ ...m, ...over });
+  greeks.deltaSpot =
+    (value(bump({ spot: m.spot + hS })) - value(bump({ spot: m.spot - hS }))) / (2 * hS);
+  greeks.gamma =
+    (value(bump({ spot: m.spot + hS })) - 2 * greeks.price + value(bump({ spot: m.spot - hS }))) /
+    (hS * hS);
+  greeks.vega = (value(bump({ vol: m.vol + hV })) - value(bump({ vol: m.vol - hV }))) / (2 * hV);
+
+  return { greeks, resolvedStrike: spec.strike };
 }

@@ -16,18 +16,18 @@ use serde_json::{Map, Value, json};
 
 use celnet_proto::{
     AdditiveRisk, AggregateRiskRequest, AggregateRiskResponse, ArbReport, AsianOption,
-    BrokerQuoteSet, BucketedRisk, CcyExposureLeg, CcyPair, Conventions, CrossGamma, Digital,
-    DoubleBarrier, DrillRiskRequest, DrillRiskResponse, EntitlementPrincipal, EntitlementRule,
-    Execute, Executed, Execution, GetSmileRequest, Greeks, Instrument, Leg, LimitStatusRequest,
-    LimitStatusResponse, LimitUtilization, ListPositionsRequest, ListPositionsResponse,
-    MarkSurfaceRequest, MarkSurfaceResponse, MarketContext, Modify, NonAdditiveRisk, NumeraireRate,
-    OrgKey, PriceRequest, PriceResponse, Quantity, Quote, QuoteAccept, QuoteReject, QuoteRequest,
-    RejectAck, ReportingNumeraire, Resync, RiskBucketRequest, RiskNode, RiskPosition, RiskScope,
-    ScenarioPoint, ScenarioRequest, ScenarioResponse, ShockAxis, SingleBarrier, Smile, SmilePoint,
-    Snapshot, Solve, Strategy, StrategyKind, StreamEnd, StreamReject, StrikeOrDelta, Subscribe,
-    SubscriptionId, Tenor, Touch, TradableToken, TwoWayPrice, Unsubscribe, Update, Vanilla,
-    VanillaInputs, VarianceSwap, VegaLadderBucket, VegaPillar, VolatilitySwap, instrument,
-    shock_axis, strike_or_delta, tenor,
+    BrokerQuoteSet, BucketedRisk, CcyExposureLeg, CcyPair, Cliquet, Conventions, CrossGamma,
+    Digital, DoubleBarrier, DrillRiskRequest, DrillRiskResponse, EntitlementPrincipal,
+    EntitlementRule, Execute, Executed, Execution, ForwardStart, GetSmileRequest, Greeks,
+    Instrument, Leg, LimitStatusRequest, LimitStatusResponse, LimitUtilization,
+    ListPositionsRequest, ListPositionsResponse, MarkSurfaceRequest, MarkSurfaceResponse,
+    MarketContext, Modify, NonAdditiveRisk, NumeraireRate, OrgKey, PriceRequest, PriceResponse,
+    Quantity, Quanto, Quote, QuoteAccept, QuoteReject, QuoteRequest, RejectAck, ReportingNumeraire,
+    Resync, RiskBucketRequest, RiskNode, RiskPosition, RiskScope, ScenarioPoint, ScenarioRequest,
+    ScenarioResponse, ShockAxis, SingleBarrier, Smile, SmilePoint, Snapshot, Solve, Strategy,
+    StrategyKind, StreamEnd, StreamReject, StrikeOrDelta, Subscribe, SubscriptionId, Tenor, Touch,
+    TradableToken, TwoWayPrice, Unsubscribe, Update, Vanilla, VanillaInputs, VarianceSwap,
+    VegaLadderBucket, VegaPillar, VolatilitySwap, instrument, shock_axis, strike_or_delta, tenor,
 };
 
 /// A codec error: a malformed or out-of-contract JSON message. Carries a
@@ -89,6 +89,14 @@ fn opt_u64(o: &Map<String, Value>, key: &str) -> Option<u64> {
     match o.get(key) {
         None | Some(Value::Null) => None,
         Some(v) => v.as_u64(),
+    }
+}
+
+/// An optional presence-tracked `f64` field (`null`/absent ⇒ `None`).
+fn opt_f64(o: &Map<String, Value>, key: &str) -> Option<f64> {
+    match o.get(key) {
+        None | Some(Value::Null) => None,
+        Some(v) => v.as_f64(),
     }
 }
 
@@ -397,10 +405,49 @@ fn asian_option_from_json(v: &Value) -> Result<AsianOption> {
     })
 }
 
+fn forward_start_from_json(v: &Value) -> Result<ForwardStart> {
+    let o = obj(v, "forward_start")?;
+    Ok(ForwardStart {
+        option_type: enum_or_zero(o, "option_type"),
+        moneyness: f64_field(o, "moneyness")?,
+        reset: f64_field(o, "reset")?,
+    })
+}
+
+fn cliquet_from_json(v: &Value) -> Result<Cliquet> {
+    let o = obj(v, "cliquet")?;
+    let periods = u32::try_from(u64_or_zero(o, "periods"))
+        .map_err(|_| err("cliquet.periods out of range"))?;
+    let mc_pairs = u32::try_from(u64_or_zero(o, "mc_pairs"))
+        .map_err(|_| err("cliquet.mc_pairs out of range"))?;
+    Ok(Cliquet {
+        option_type: enum_or_zero(o, "option_type"),
+        moneyness: f64_field(o, "moneyness")?,
+        periods,
+        local_floor: opt_f64(o, "local_floor"),
+        local_cap: opt_f64(o, "local_cap"),
+        global_floor: opt_f64(o, "global_floor"),
+        global_cap: opt_f64(o, "global_cap"),
+        mc_pairs,
+        mc_seed: u64_or_zero(o, "mc_seed"),
+    })
+}
+
+fn quanto_from_json(v: &Value) -> Result<Quanto> {
+    let o = obj(v, "quanto")?;
+    Ok(Quanto {
+        payoff: enum_or_zero(o, "payoff"),
+        option_type: enum_or_zero(o, "option_type"),
+        strike: f64_field(o, "strike")?,
+        conversion_vol: f64_or_zero(o, "conversion_vol"),
+        correlation: f64_or_zero(o, "correlation"),
+    })
+}
+
 /// Decode the instrument `product` oneof. The JSON carries exactly one of the
 /// product keys (`vanilla`, `strategy`, `single_barrier`, `double_barrier`,
-/// `digital`, `touch`, `variance_swap`, `volatility_swap`, `asian_option`) — the
-/// same shape as the proto oneof.
+/// `digital`, `touch`, `variance_swap`, `volatility_swap`, `asian_option`,
+/// `forward_start`, `cliquet`, `quanto`) — the same shape as the proto oneof.
 fn product_from_json(o: &Map<String, Value>) -> Result<instrument::Product> {
     // Each product variant nests its body under its own key (mirroring the proto
     // oneof field names); descend into that body before decoding.
@@ -430,11 +477,19 @@ fn product_from_json(o: &Map<String, Value>) -> Result<instrument::Product> {
         ))
     } else if let Some(v) = o.get("asian_option") {
         Ok(instrument::Product::AsianOption(asian_option_from_json(v)?))
+    } else if let Some(v) = o.get("forward_start") {
+        Ok(instrument::Product::ForwardStart(forward_start_from_json(
+            v,
+        )?))
+    } else if let Some(v) = o.get("cliquet") {
+        Ok(instrument::Product::Cliquet(cliquet_from_json(v)?))
+    } else if let Some(v) = o.get("quanto") {
+        Ok(instrument::Product::Quanto(quanto_from_json(v)?))
     } else {
         Err(err(
             "instrument needs exactly one product (vanilla / strategy / \
              single_barrier / double_barrier / digital / touch / variance_swap / \
-             volatility_swap / asian_option)",
+             volatility_swap / asian_option / forward_start / cliquet / quanto)",
         ))
     }
 }
@@ -580,6 +635,9 @@ pub(super) fn quote_to_json(q: &Quote) -> Value {
         "correlation_id": q.correlation_id,
         "surface_version": q.surface_version,
         "attribution": q.attribution.as_ref().map(attribution_to_json),
+        // Presence-tracked MC standard error (set only for MC-priced products);
+        // the WS quote path must carry it so GUI/Excel disclose MC uncertainty.
+        "price_std_error": q.price_std_error,
     })
 }
 
@@ -621,6 +679,9 @@ pub(super) fn price_response_to_json(r: &PriceResponse) -> Value {
         "conventions": r.conventions.as_ref().map(conventions_to_json),
         "correlation_id": r.correlation_id,
         "surface_version": r.surface_version,
+        // Presence-tracked MC standard error (set only for MC-priced products) so
+        // the WS one-shot price path matches the gRPC PriceResponse disclosure.
+        "price_std_error": r.price_std_error,
     })
 }
 
@@ -1403,6 +1464,33 @@ mod tests {
         }
     }
 
+    /// MC-honesty on the WS wire: a `Quote` carrying a Monte-Carlo standard error
+    /// (set only for MC-priced products like a clamped cliquet) MUST serialize
+    /// `price_std_error` onto the JSON the browser/Excel client reads; a closed-form
+    /// quote MUST serialize it as JSON null. This gates the wire fix that the WS
+    /// quote path no longer silently drops the MC uncertainty.
+    #[test]
+    fn quote_json_carries_mc_std_error_presence() {
+        let mc = Quote {
+            quote_id: 7,
+            price_std_error: Some(1.7e-4),
+            ..Default::default()
+        };
+        let j = quote_to_json(&mc);
+        assert_eq!(j["price_std_error"].as_f64(), Some(1.7e-4));
+
+        let closed = Quote {
+            quote_id: 8,
+            price_std_error: None,
+            ..Default::default()
+        };
+        let j2 = quote_to_json(&closed);
+        assert!(
+            j2["price_std_error"].is_null(),
+            "a closed-form quote must serialize price_std_error as null"
+        );
+    }
+
     /// The Wave-1 products decode from the JSON a browser client sends, into the
     /// correct `product` oneof arms with their fields carried by snake_case name
     /// and enums by their canonical proto numbers.
@@ -1456,6 +1544,84 @@ mod tests {
                 assert_eq!(a.elapsed_weight.to_bits(), 0.25_f64.to_bits());
             }
             other => panic!("expected asian_option, got {other:?}"),
+        }
+    }
+
+    /// The Wave-2 products decode from a browser client's JSON into the correct
+    /// `product` oneof arms — including the presence-tracked optional clamps on
+    /// the cliquet (absent ⇒ `None`, present ⇒ `Some`).
+    #[test]
+    fn wave2_products_decode_from_json() {
+        let base = |product: Value| {
+            let mut m = serde_json::Map::new();
+            m.insert("expiry_years".to_owned(), json!(1.0));
+            if let Value::Object(p) = product {
+                for (k, v) in p {
+                    m.insert(k, v);
+                }
+            }
+            Value::Object(m)
+        };
+
+        let fs = instrument_from_json(&base(json!({
+            "forward_start": { "option_type": 0, "moneyness": 1.0, "reset": 0.25 }
+        })))
+        .expect("decode forward_start");
+        match fs.product {
+            Some(instrument::Product::ForwardStart(f)) => {
+                assert_eq!(f.moneyness.to_bits(), 1.0_f64.to_bits());
+                assert_eq!(f.reset.to_bits(), 0.25_f64.to_bits());
+            }
+            other => panic!("expected forward_start, got {other:?}"),
+        }
+
+        // Plain ratchet: no clamp keys ⇒ every optional bound is None.
+        let plain = instrument_from_json(&base(json!({
+            "cliquet": { "option_type": 0, "moneyness": 1.0, "periods": 4 }
+        })))
+        .expect("decode plain cliquet");
+        match plain.product {
+            Some(instrument::Product::Cliquet(c)) => {
+                assert_eq!(c.periods, 4);
+                assert!(c.local_floor.is_none() && c.local_cap.is_none());
+                assert!(c.global_floor.is_none() && c.global_cap.is_none());
+            }
+            other => panic!("expected cliquet, got {other:?}"),
+        }
+
+        // Clamped cliquet: presence-tracked floor/cap + MC knobs round-trip.
+        let clamped = instrument_from_json(&base(json!({
+            "cliquet": {
+                "option_type": 0, "moneyness": 1.0, "periods": 6,
+                "local_floor": 0.0, "local_cap": 0.03,
+                "mc_pairs": 50000, "mc_seed": 12345
+            }
+        })))
+        .expect("decode clamped cliquet");
+        match clamped.product {
+            Some(instrument::Product::Cliquet(c)) => {
+                assert_eq!(c.local_floor, Some(0.0));
+                assert_eq!(c.local_cap, Some(0.03));
+                assert_eq!(c.mc_pairs, 50_000);
+                assert_eq!(c.mc_seed, 12_345);
+            }
+            other => panic!("expected cliquet, got {other:?}"),
+        }
+
+        let quanto = instrument_from_json(&base(json!({
+            "quanto": {
+                "payoff": 1, "option_type": 1, "strike": 1.12,
+                "conversion_vol": 0.09, "correlation": -0.3
+            }
+        })))
+        .expect("decode quanto");
+        match quanto.product {
+            Some(instrument::Product::Quanto(q)) => {
+                assert_eq!(q.payoff, celnet_proto::QuantoPayoff::Digital as i32);
+                assert_eq!(q.strike.to_bits(), 1.12_f64.to_bits());
+                assert_eq!(q.correlation.to_bits(), (-0.3_f64).to_bits());
+            }
+            other => panic!("expected quanto, got {other:?}"),
         }
     }
 

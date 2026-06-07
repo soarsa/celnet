@@ -98,6 +98,15 @@ export type AveragingStyle = "DISCRETE" | "CONTINUOUS";
  */
 export type AsianMethod = "CURRAN" | "TURNBULL_WAKEMAN";
 
+/**
+ * The payoff a quanto option settles (proto `QuantoPayoff`). VANILLA pays the
+ * standard call/put intrinsic in the (fixed) settlement currency; DIGITAL pays a
+ * fixed cash amount on finishing in-the-money. Vendor/method-neutral names
+ * mirroring `celnet_proto::QuantoPayoff`
+ * (QUANTO_PAYOFF_VANILLA=0, QUANTO_PAYOFF_DIGITAL=1).
+ */
+export type QuantoPayoff = "VANILLA" | "DIGITAL";
+
 // --- value messages ---------------------------------------------------------
 
 /** An FX currency pair BASE/QUOTE (market form CCY1CCY2), e.g. EUR/USD. */
@@ -251,13 +260,77 @@ export interface AsianOption {
   elapsedWeight: number;
 }
 
+/**
+ * A forward-start vanilla (proto `ForwardStart`). The strike is fixed at a future
+ * reset date `reset` to `moneyness × S(reset)` (a proportional strike), and the
+ * option then runs to the instrument's `expiryYears`. Priced by the dual-carry
+ * strike-reset closed form. Vendor/method-neutral; provenance is doc-only.
+ */
+export interface ForwardStart {
+  optionType: OptionType;
+  /** Proportional strike multiplier applied to the spot fixed at the reset (e.g. 1.0 = ATM-at-reset). */
+  moneyness: number;
+  /** The reset (strike-fixing) date as a year fraction `∈ [0, expiryYears]`. */
+  reset: number;
+}
+
+/**
+ * A cliquet (ratchet) option (proto `Cliquet`): a sum of `periods` consecutive
+ * forward-start legs over equal sub-periods. A *plain* ratchet (no per-period
+ * clamps) is the exact sum of forward-start legs (closed form); supplying any
+ * local/global floor or cap makes it a *clamped* cliquet, priced by Monte Carlo
+ * (its `greeks.price` carries a standard error). All four clamp fields are
+ * presence-tracked: absent ⇒ that side is unconstrained.
+ */
+export interface Cliquet {
+  optionType: OptionType;
+  /** Proportional strike multiplier for each period's forward-start leg (e.g. 1.0). */
+  moneyness: number;
+  /** Number of equal ratchet sub-periods (`≥ 1`). */
+  periods: number;
+  /** Per-period return floor (absent ⇒ no floor). */
+  localFloor?: number;
+  /** Per-period return cap (absent ⇒ no cap). */
+  localCap?: number;
+  /** Global (summed) payoff floor (absent ⇒ no floor). */
+  globalFloor?: number;
+  /** Global (summed) payoff cap (absent ⇒ no cap). */
+  globalCap?: number;
+  /** Monte-Carlo antithetic pairs for the clamped case (`0` ⇒ server default); ignored for a plain ratchet. */
+  mcPairs: number;
+  /** Monte-Carlo seed for the clamped case (bit-reproducible); ignored for a plain ratchet. */
+  mcSeed: bigint;
+}
+
+/**
+ * A quanto option (proto `Quanto`): an option whose payoff is computed on a
+ * foreign-denominated underlying but settled in a fixed (domestic) currency at a
+ * pre-agreed conversion, carrying a drift adjustment from the underlying↔FX
+ * correlation. Priced by the closed-form quanto-adjusted estimator. Vendor/
+ * method-neutral; provenance is doc-only.
+ */
+export interface Quanto {
+  /** Whether the payoff is a vanilla intrinsic or a fixed-cash digital. */
+  payoff: QuantoPayoff;
+  optionType: OptionType;
+  /** The strike `K` (absolute level in the underlying's quote terms). */
+  strike: number;
+  /** The volatility of the settlement-FX conversion rate (absolute, e.g. 0.09). */
+  conversionVol: number;
+  /** The correlation `∈ [-1, 1]` between the underlying and the settlement-FX rate. */
+  correlation: number;
+}
+
 /** The product payoff carried by an Instrument (the proto `product` oneof). */
 export type Product =
   | { kind: "vanilla"; vanilla: Vanilla }
   | { kind: "strategy"; strategy: Strategy }
   | { kind: "varianceSwap"; varianceSwap: VarianceSwap }
   | { kind: "volatilitySwap"; volatilitySwap: VolatilitySwap }
-  | { kind: "asianOption"; asianOption: AsianOption };
+  | { kind: "asianOption"; asianOption: AsianOption }
+  | { kind: "forwardStart"; forwardStart: ForwardStart }
+  | { kind: "cliquet"; cliquet: Cliquet }
+  | { kind: "quanto"; quanto: Quanto };
 
 /** Solve directive: solve a free parameter to hit a target (e.g. zero premium). */
 export interface Solve {
@@ -291,6 +364,14 @@ export interface Quote {
   validUntilNanos: bigint;
   correlationId?: bigint;
   surfaceVersion?: bigint;
+  /**
+   * For a Monte-Carlo-priced product (e.g. a clamped cliquet), the standard error
+   * of the mean of the `greeks.price` estimate (proto `price_std_error`, field 7;
+   * presence-tracked — absent for the closed-form products whose price is exact).
+   * Surfaced honestly so a cell never mistakes an MC estimate for closed-form
+   * precision; the same field the SDK reads as `PricedLine::price_std_error`.
+   */
+  priceStdError?: number;
 }
 
 export interface Execution {

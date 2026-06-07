@@ -59,6 +59,13 @@ export type AveragingStyle = "DISCRETE" | "CONTINUOUS";
  */
 export type AsianMethod = "CURRAN" | "TURNBULL_WAKEMAN";
 
+/**
+ * The single payoff a quanto wraps (`celnet.wire.QuantoPayoff`): a plain
+ * `VANILLA` call/put, or a cash-or-nothing `DIGITAL` that pays one unit of the
+ * fixed settlement currency when in the money. Purpose-named, vendor/method-neutral.
+ */
+export type QuantoPayoff = "VANILLA" | "DIGITAL";
+
 export type TenorUnit =
   | "OVERNIGHT"
   | "WEEKS"
@@ -255,13 +262,76 @@ export interface AsianOption {
   elapsedWeight: number;
 }
 
+/**
+ * A forward-start vanilla (`celnet.wire.ForwardStart`): the strike is fixed at
+ * the reset date `reset` to `moneyness · S(reset)` and the option pays the
+ * vanilla payoff at the enclosing `Instrument.expiryYears`. Priced by the FX
+ * dual-carry forward-start closed form `V = e^{−r_f·t₁}·S₀·u(m, T−t₁)` (with
+ * `u` the unit-spot vanilla over the residual maturity); requires `0 ≤ reset ≤ T`.
+ */
+export interface ForwardStart {
+  optionType: OptionType;
+  /** Strike-reset multiple `m` (`m = 1` is the at-the-money-forward reset). */
+  moneyness: number;
+  /** Reset (strike-fixing) date `t₁` in years, with `0 ≤ reset ≤ expiryYears`. */
+  reset: number;
+}
+
+/**
+ * A cliquet / ratchet (`celnet.wire.Cliquet`): a strip of consecutive
+ * forward-start vanillas over an evenly-spaced reset schedule, with optional
+ * per-period local floor/cap on each leg's option return and an optional global
+ * floor/cap on the accumulated payoff. A PLAIN (unclamped) ratchet prices in
+ * closed form as the exact sum of forward-start legs; ANY local/global clamp
+ * switches the pricer to a Monte-Carlo estimator that reports `price` plus its
+ * standard error (`Quote.priceStdError`). `0` `mcPairs` ⇒ a server default;
+ * `mcPairs`/`mcSeed` are ignored for a plain ratchet. Each clamp is
+ * presence-tracked — `undefined` ⇒ unconstrained.
+ */
+export interface Cliquet {
+  optionType: OptionType;
+  /** Per-period strike-reset multiple `m` (applied to every leg). */
+  moneyness: number;
+  /** Number of evenly-spaced ratchet periods over `[0, expiryYears]`; `≥ 1`. */
+  periods: number;
+  localFloor?: number;
+  localCap?: number;
+  globalFloor?: number;
+  globalCap?: number;
+  /** Antithetic Monte-Carlo path pairs for the clamped variant; `0` ⇒ default. */
+  mcPairs: number;
+  /** Counter-RNG seed for the clamped Monte-Carlo estimator (reproducible). */
+  mcSeed: bigint;
+}
+
+/**
+ * A quanto option (`celnet.wire.Quanto`): a vanilla or cash-or-nothing digital
+ * whose natural payoff is converted into a fixed settlement currency at a fixed
+ * rate. Priced by the closed-form quanto-drift adjustment `−ρ·σ_S·σ_Z` to the
+ * underlying carry under the settlement-currency measure; at `correlation = 0`
+ * the adjustment vanishes and the price collapses to the plain vanilla/digital.
+ */
+export interface Quanto {
+  payoff: QuantoPayoff;
+  optionType: OptionType;
+  /** The strike `K` (quote per 1 unit of base). */
+  strike: number;
+  /** Annualised volatility `σ_Z` of the settlement-conversion rate (`≥ 0`). */
+  conversionVol: number;
+  /** Correlation `ρ ∈ [−1, 1]` between the spot and the conversion rate. */
+  correlation: number;
+}
+
 /** The product payoff carried by an Instrument (the proto `product` oneof). */
 export type Product =
   | { kind: "vanilla"; vanilla: Vanilla }
   | { kind: "strategy"; strategy: Strategy }
   | { kind: "varianceSwap"; varianceSwap: VarianceSwap }
   | { kind: "volatilitySwap"; volatilitySwap: VolatilitySwap }
-  | { kind: "asianOption"; asianOption: AsianOption };
+  | { kind: "asianOption"; asianOption: AsianOption }
+  | { kind: "forwardStart"; forwardStart: ForwardStart }
+  | { kind: "cliquet"; cliquet: Cliquet }
+  | { kind: "quanto"; quanto: Quanto };
 
 /** Solve directive: solve a free parameter to hit a target (e.g. zero premium). */
 export interface Solve {
@@ -297,6 +367,14 @@ export interface Quote {
   surfaceVersion?: bigint;
   /** Who quoted/holds this line (maker auto-pricer / requesting seat), if emitted. */
   attribution?: AttributionRecord;
+  /**
+   * The Monte-Carlo standard error of the priced `price` (`PriceResponse
+   * .price_std_error`, field 7). Presence-tracked: set ONLY for an MC-priced
+   * product (a clamped cliquet), `undefined` for every closed-form product — so
+   * the GUI shows an honest precision band for MC and never claims a stderr for
+   * a closed form.
+   */
+  priceStdError?: number;
 }
 
 export interface Execution {

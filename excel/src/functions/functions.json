@@ -320,6 +320,176 @@
       ]
     },
     {
+      "id": "FORWARDSTART",
+      "name": "FORWARDSTART",
+      "description": "Price a forward-start vanilla: spill [premium, PV], the 13 Greeks, + convention footer.",
+      "result": {
+        "dimensionality": "matrix",
+        "type": "any"
+      },
+      "parameters": [
+        {
+          "name": "pair",
+          "description": "Currency pair, e.g. EURUSD.",
+          "type": "string"
+        },
+        {
+          "name": "tenor",
+          "description": "Tenor, e.g. 1Y.",
+          "type": "string"
+        },
+        {
+          "name": "callPut",
+          "description": "C for call, P for put.",
+          "type": "string"
+        },
+        {
+          "name": "moneyness",
+          "description": "Proportional strike multiplier on the reset-date spot (e.g. 1.0).",
+          "type": "number"
+        },
+        {
+          "name": "reset",
+          "description": "Reset (strike-fixing) date as a year fraction in [0, expiry], e.g. 0.25.",
+          "type": "number"
+        },
+        {
+          "name": "notional",
+          "description": "Trade notional in the base currency.",
+          "type": "number"
+        }
+      ]
+    },
+    {
+      "id": "CLIQUET",
+      "name": "CLIQUET",
+      "description": "Price a cliquet (ratchet): spill [premium, PV], (std_error if MC-priced/clamped), the 13 Greeks, + footer.",
+      "result": {
+        "dimensionality": "matrix",
+        "type": "any"
+      },
+      "parameters": [
+        {
+          "name": "pair",
+          "description": "Currency pair, e.g. EURUSD.",
+          "type": "string"
+        },
+        {
+          "name": "tenor",
+          "description": "Tenor, e.g. 1Y.",
+          "type": "string"
+        },
+        {
+          "name": "callPut",
+          "description": "C for call, P for put.",
+          "type": "string"
+        },
+        {
+          "name": "moneyness",
+          "description": "Proportional strike multiplier for each period leg (e.g. 1.0).",
+          "type": "number"
+        },
+        {
+          "name": "periods",
+          "description": "Number of equal ratchet sub-periods (>= 1).",
+          "type": "number"
+        },
+        {
+          "name": "notional",
+          "description": "Trade notional in the base currency.",
+          "type": "number"
+        },
+        {
+          "name": "localFloor",
+          "description": "Optional per-period return floor (omit => unconstrained).",
+          "type": "number",
+          "optional": true
+        },
+        {
+          "name": "localCap",
+          "description": "Optional per-period return cap (omit => unconstrained).",
+          "type": "number",
+          "optional": true
+        },
+        {
+          "name": "globalFloor",
+          "description": "Optional summed-payoff floor (omit => unconstrained).",
+          "type": "number",
+          "optional": true
+        },
+        {
+          "name": "globalCap",
+          "description": "Optional summed-payoff cap (omit => unconstrained).",
+          "type": "number",
+          "optional": true
+        },
+        {
+          "name": "mcPairs",
+          "description": "Optional Monte-Carlo antithetic pairs for the clamped case (0 => server default).",
+          "type": "number",
+          "optional": true
+        },
+        {
+          "name": "mcSeed",
+          "description": "Optional Monte-Carlo seed for the clamped case (bit-reproducible).",
+          "type": "number",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "id": "QUANTO",
+      "name": "QUANTO",
+      "description": "Price a quanto option: spill [premium, PV], the 13 Greeks, + convention footer.",
+      "result": {
+        "dimensionality": "matrix",
+        "type": "any"
+      },
+      "parameters": [
+        {
+          "name": "pair",
+          "description": "Currency pair, e.g. EURUSD.",
+          "type": "string"
+        },
+        {
+          "name": "tenor",
+          "description": "Tenor, e.g. 1Y.",
+          "type": "string"
+        },
+        {
+          "name": "callPut",
+          "description": "C for call, P for put.",
+          "type": "string"
+        },
+        {
+          "name": "strike",
+          "description": "Absolute strike level, e.g. 1.10.",
+          "type": "number"
+        },
+        {
+          "name": "notional",
+          "description": "Trade notional in the base currency.",
+          "type": "number"
+        },
+        {
+          "name": "conversionVol",
+          "description": "Volatility of the settlement-FX conversion rate (absolute, e.g. 0.09).",
+          "type": "number"
+        },
+        {
+          "name": "correlation",
+          "description": "Correlation in [-1, 1] between the underlying and the settlement-FX rate.",
+          "type": "number"
+        },
+        {
+          "name": "payoff",
+          "description": "Optional payoff: VANILLA (default) or DIGITAL.",
+          "type": "string",
+          "optional": true
+        }
+      ]
+    },
+    {
       "id": "SUBSCRIBE",
       "name": "SUBSCRIBE",
       "description": "Stream a live two-way for a structure (multiplexed, coalesced, stale-aware).",

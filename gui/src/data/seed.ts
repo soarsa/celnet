@@ -15,6 +15,7 @@ import type {
   Leg,
   MarketContext,
   OptionType,
+  QuantoPayoff,
   StrategyKind,
 } from "./contract";
 
@@ -196,6 +197,103 @@ function asianInstrument(
   };
 }
 
+/** The inputs for a forward-start vanilla (`product.forwardStart`). */
+export interface ForwardStartTerms {
+  optionType: OptionType;
+  /** Strike-reset multiple `m` (`m = 1` is the ATM-forward reset). */
+  moneyness: number;
+  /** Reset (strike-fixing) date in years, with `0 ≤ reset ≤ expiryYears`. */
+  reset: number;
+}
+
+/** A forward-start-vanilla instrument (`product.forwardStart`). */
+function forwardStartInstrument(
+  pair: CcyPair,
+  tenorYears: number,
+  notionalMm: number,
+  terms: ForwardStartTerms,
+): Instrument {
+  return {
+    pair,
+    tenor: tenorYearsToTenor(tenorYears),
+    expiryYears: tenorYears,
+    quantity: { notional: notionalMm * 1e6, baseCcy: true },
+    side: "TWO_WAY",
+    product: { kind: "forwardStart", forwardStart: { ...terms } },
+  };
+}
+
+/**
+ * The inputs for a cliquet / ratchet (`product.cliquet`). Any local/global clamp
+ * (`localFloor`/`localCap`/`globalFloor`/`globalCap` set) switches the pricer to
+ * the Monte-Carlo estimator that reports a standard error; `mcPairs`/`mcSeed`
+ * tune it (`0` pairs ⇒ a server default) and are ignored for a plain ratchet.
+ */
+export interface CliquetTerms {
+  optionType: OptionType;
+  moneyness: number;
+  periods: number;
+  localFloor?: number;
+  localCap?: number;
+  globalFloor?: number;
+  globalCap?: number;
+  mcPairs: number;
+  mcSeed: bigint;
+}
+
+/** `true` iff a cliquet carries no local/global clamp (the plain ratchet). */
+export function isPlainCliquet(c: CliquetTerms): boolean {
+  return (
+    c.localFloor === undefined &&
+    c.localCap === undefined &&
+    c.globalFloor === undefined &&
+    c.globalCap === undefined
+  );
+}
+
+/** A cliquet / ratchet instrument (`product.cliquet`). */
+function cliquetInstrument(
+  pair: CcyPair,
+  tenorYears: number,
+  notionalMm: number,
+  terms: CliquetTerms,
+): Instrument {
+  return {
+    pair,
+    tenor: tenorYearsToTenor(tenorYears),
+    expiryYears: tenorYears,
+    quantity: { notional: notionalMm * 1e6, baseCcy: true },
+    side: "TWO_WAY",
+    product: { kind: "cliquet", cliquet: { ...terms } },
+  };
+}
+
+/** The inputs for a quanto option (`product.quanto`). */
+export interface QuantoTerms {
+  payoff: QuantoPayoff;
+  optionType: OptionType;
+  strike: number;
+  conversionVol: number;
+  correlation: number;
+}
+
+/** A quanto-option instrument (`product.quanto`). */
+function quantoInstrument(
+  pair: CcyPair,
+  tenorYears: number,
+  notionalMm: number,
+  terms: QuantoTerms,
+): Instrument {
+  return {
+    pair,
+    tenor: tenorYearsToTenor(tenorYears),
+    expiryYears: tenorYears,
+    quantity: { notional: notionalMm * 1e6, baseCcy: true },
+    side: "TWO_WAY",
+    product: { kind: "quanto", quanto: { ...terms } },
+  };
+}
+
 function strategyLegs(kind: StrategyKind): Leg[] {
   switch (kind) {
     case "RISK_REVERSAL":
@@ -252,4 +350,7 @@ export {
   varianceSwapInstrument,
   volatilitySwapInstrument,
   asianInstrument,
+  forwardStartInstrument,
+  cliquetInstrument,
+  quantoInstrument,
 };

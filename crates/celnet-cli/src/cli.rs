@@ -380,6 +380,64 @@ pub(crate) enum ExoticKind {
         #[arg(long, default_value_t = 0.0)]
         elapsed_weight: f64,
     },
+    /// A forward-start vanilla (strike resets at a future date to m·S(reset)).
+    ForwardStart {
+        /// Call or put.
+        #[arg(long, value_enum)]
+        option: CliOptionType,
+        /// Strike-reset multiple `m` (`1.0` is the ATM-forward reset).
+        #[arg(long, default_value_t = 1.0)]
+        moneyness: f64,
+        /// Reset (strike-fixing) date `t₁` in years (`0 ≤ reset ≤ expiry`).
+        #[arg(long)]
+        reset: f64,
+    },
+    /// A cliquet / ratchet (plain closed-form, or clamped Monte-Carlo with a
+    /// reported standard error).
+    Cliquet {
+        /// Call or put per-period payoff direction.
+        #[arg(long, value_enum)]
+        option: CliOptionType,
+        /// Per-period strike-reset multiple `m`.
+        #[arg(long, default_value_t = 1.0)]
+        moneyness: f64,
+        /// Number of evenly-spaced ratchet periods over `[0, expiry]`.
+        #[arg(long, default_value_t = 4)]
+        periods: u32,
+        /// Per-period local floor on each clamped period return (omit ⇒ none).
+        #[arg(long)]
+        local_floor: Option<f64>,
+        /// Per-period local cap on each clamped period return (omit ⇒ none).
+        #[arg(long)]
+        local_cap: Option<f64>,
+        /// Global floor on the accumulated payoff (omit ⇒ none).
+        #[arg(long)]
+        global_floor: Option<f64>,
+        /// Global cap on the accumulated payoff (omit ⇒ none).
+        #[arg(long)]
+        global_cap: Option<f64>,
+        /// Antithetic Monte-Carlo path pairs for the clamped variant.
+        #[arg(long, default_value_t = 200_000)]
+        mc_pairs: usize,
+        /// Counter-RNG seed for the clamped Monte-Carlo estimator.
+        #[arg(long, default_value_t = 0)]
+        mc_seed: u64,
+    },
+    /// A quanto option (vanilla or digital), settlement-currency converted.
+    Quanto {
+        /// Call or put.
+        #[arg(long, value_enum)]
+        option: CliOptionType,
+        /// Price the cash-or-nothing digital instead of the vanilla.
+        #[arg(long, default_value_t = false)]
+        digital: bool,
+        /// Annualised volatility `σ_Z` of the settlement-conversion rate.
+        #[arg(long)]
+        conversion_vol: f64,
+        /// Correlation `ρ ∈ [−1, 1]` between the underlying and the conversion rate.
+        #[arg(long)]
+        correlation: f64,
+    },
 }
 
 /// Arguments to `convention`.
@@ -571,6 +629,74 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
                         strike: a.strike,
                         elapsed_avg,
                         elapsed_weight,
+                    }
+                }
+                ExoticKind::ForwardStart {
+                    option,
+                    moneyness,
+                    reset,
+                } => {
+                    if !(reset >= 0.0 && inputs.t >= reset) {
+                        return Err(DispatchError::Invalid(
+                            "forward-start --reset must satisfy 0 ≤ reset ≤ expiry".to_owned(),
+                        ));
+                    }
+                    exotic::ExoticSpec::ForwardStart {
+                        option: option.into(),
+                        moneyness,
+                        reset,
+                    }
+                }
+                ExoticKind::Cliquet {
+                    option,
+                    moneyness,
+                    periods,
+                    local_floor,
+                    local_cap,
+                    global_floor,
+                    global_cap,
+                    mc_pairs,
+                    mc_seed,
+                } => {
+                    if periods < 1 {
+                        return Err(DispatchError::Invalid(
+                            "cliquet --periods must be ≥ 1".to_owned(),
+                        ));
+                    }
+                    exotic::ExoticSpec::Cliquet {
+                        option: option.into(),
+                        moneyness,
+                        periods,
+                        local_floor,
+                        local_cap,
+                        global_floor,
+                        global_cap,
+                        mc_pairs,
+                        mc_seed,
+                    }
+                }
+                ExoticKind::Quanto {
+                    option,
+                    digital,
+                    conversion_vol,
+                    correlation,
+                } => {
+                    if !(-1.0..=1.0).contains(&correlation) {
+                        return Err(DispatchError::Invalid(
+                            "quanto --correlation must lie in [-1, 1]".to_owned(),
+                        ));
+                    }
+                    if conversion_vol < 0.0 {
+                        return Err(DispatchError::Invalid(
+                            "quanto --conversion-vol must be non-negative".to_owned(),
+                        ));
+                    }
+                    exotic::ExoticSpec::Quanto {
+                        option: option.into(),
+                        digital,
+                        strike: a.strike,
+                        conversion_vol,
+                        correlation,
                     }
                 }
             };

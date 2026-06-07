@@ -378,3 +378,13 @@
   font-size: var(--type-caption);
   color: var(--text-secondary);
 }
+
+/* --- Monte-Carlo standard-error band (clamped cliquet) --------------------- */
+
+.stdError {
+  display: block;
+  margin-top: var(--space-1);
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+  letter-spacing: 0.02em;
+}
