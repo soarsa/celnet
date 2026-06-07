@@ -45,6 +45,7 @@ fn dnt(lower: f64, upper: f64, rebate: f64) -> InstrumentSpec {
         expiry_years: 1.0,
         quantity: Quantity::base(1_000_000.0),
         side: Side::TwoWay,
+        pricing_model: celnet_client::PricingModel::Default,
         product: Product::Touch {
             kind: TouchKind::DoubleNoTouch,
             lower,

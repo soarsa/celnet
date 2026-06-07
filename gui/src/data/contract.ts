@@ -141,6 +141,21 @@ export type LookbackStyle = "FLOATING" | "FIXED";
  */
 export type LookbackMonitoring = "CONTINUOUS" | "DISCRETE";
 
+/**
+ * The pricing/booking model an instrument is priced under
+ * (`celnet.wire.PricingModel`). Purpose-named, vendor/method-neutral (CLAUDE.md
+ * rule 8) — the mathematical family lives in the server's doc comments, never in
+ * this identifier:
+ *  - `DEFAULT`          — the per-product closed-form / analytic engine (proto 0)
+ *  - `LOCAL_STOCH_VOL`  — a particle-calibrated local-stochastic-volatility model
+ *                         priced on an ADI-PDE (+ Monte-Carlo) engine (proto 1)
+ *
+ * Carried on the `Instrument` (proto field 22, ALONGSIDE `solve` at field 6) so it
+ * reaches every flow — price / quote / stream / scenario — uniformly, exactly like
+ * the `Solve` directive. Absent ⇒ `DEFAULT` ⇒ byte-identical to the legacy path.
+ */
+export type PricingModel = "DEFAULT" | "LOCAL_STOCH_VOL";
+
 export type TenorUnit =
   | "OVERNIGHT"
   | "WEEKS"
@@ -573,6 +588,39 @@ export interface Lookback {
   mcSeed: bigint;
 }
 
+/**
+ * A window-barrier option (`celnet.wire.WindowBarrier`, proto field 23 in the
+ * product oneof): a vanilla payoff that knocks OUT only if the
+ * continuously-monitored spot breaches `barrier` DURING the active window
+ * `[windowStart, windowEnd]` (a partial-time / window barrier); outside the window
+ * the barrier is dormant. It has NO closed form, so it is LOCAL_STOCH_VOL-only —
+ * an `Instrument` carrying a window barrier MUST select `pricingModel:
+ * "LOCAL_STOCH_VOL"` (the DEFAULT model rejects it server-side). Priced server-side
+ * on the LSV ADI-PDE (`mcPairs = 0`, no std-error) or by Monte-Carlo (`mcPairs >
+ * 0`, carries `Quote.priceStdError`).
+ */
+export interface WindowBarrier {
+  /** The underlying vanilla payoff (call/put + strike or delta). */
+  vanilla: Vanilla;
+  /** The barrier level `H` (quote per 1 unit of base). */
+  barrier: number;
+  /** Where the barrier sits relative to spot (`UP` = up-and-out, `DOWN` = down-and-out). */
+  side: BarrierSide;
+  /** Window open in years (`0 ≤ windowStart < windowEnd ≤ expiryYears`). */
+  windowStart: number;
+  /** Window close in years. */
+  windowEnd: number;
+  /**
+   * Antithetic Monte-Carlo path pairs: `0` ⇒ the exact ADI PDE (no std-error);
+   * `> 0` ⇒ Monte-Carlo on the LSV engine (reports `Quote.priceStdError`).
+   */
+  mcPairs: number;
+  /** Monitoring time steps for the PDE/MC engine; `0` ⇒ a server default. */
+  mcSteps: number;
+  /** Counter-RNG seed for the Monte-Carlo estimator (reproducible). */
+  mcSeed: bigint;
+}
+
 /** The product payoff carried by an Instrument (the proto `product` oneof). */
 export type Product =
   | { kind: "vanilla"; vanilla: Vanilla }
@@ -589,7 +637,8 @@ export type Product =
   | { kind: "quanto"; quanto: Quanto }
   | { kind: "tarf"; tarf: Tarf }
   | { kind: "accumulator"; accumulator: Accumulator }
-  | { kind: "lookback"; lookback: Lookback };
+  | { kind: "lookback"; lookback: Lookback }
+  | { kind: "windowBarrier"; windowBarrier: WindowBarrier };
 
 /** Solve directive: solve a free parameter to hit a target (e.g. zero premium). */
 export interface Solve {
@@ -606,6 +655,14 @@ export interface Instrument {
   quantity: Quantity;
   side: Side;
   solve?: Solve;
+  /**
+   * The pricing/booking model the instrument is priced under (`Instrument
+   * .pricing_model`, proto field 22). Presence-tracked: absent/`DEFAULT` ⇒ the
+   * per-product closed-form engine (byte-identical to the legacy path);
+   * `LOCAL_STOCH_VOL` routes the supported products (vanilla / single barrier /
+   * window barrier) through the server's local-stochastic-volatility engine.
+   */
+  pricingModel?: PricingModel;
   product: Product;
 }
 

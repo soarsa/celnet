@@ -24,6 +24,11 @@ celnet-exotics.workspace = true
 celnet-risk-cube.workspace = true
 celnet-testkit.workspace = true
 proptest.workspace = true
+# Correctly-rounded, cross-platform-identical transcendentals for the standalone
+# Garman-Kohlhagen oracle in tests/lsv.rs (its own `erf`-based normal CDF, sharing
+# no code with celnet-vanilla or the LSV solver — keeps that row's oracle
+# genuinely independent and platform-deterministic).
+libm.workspace = true
 # The QuantLib-sourced golden reference tables are the independent oracle for the
 # exotics parity rows (rows 12–14). Not in the workspace dependency table (it is
 # itself a leaf test-data crate), so referenced by path here in the parity lane.

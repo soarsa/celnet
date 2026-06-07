@@ -65,6 +65,15 @@ pub enum PriceError {
     /// An input was outside the domain the analytics can price (e.g. a
     /// non-positive corridor, or a non-positive expiry).
     Domain(&'static str),
+    /// A pricing model was selected for a product it cannot price. The caller
+    /// must either pick a supported product or the default model — never a silent
+    /// fallback. Mapped to `INVALID_ARGUMENT` at the service boundary.
+    UnsupportedModel {
+        /// The selected pricing model (e.g. `"LOCAL_STOCH_VOL"`).
+        model: &'static str,
+        /// The product the model does not support (e.g. `"asian_option"`).
+        product: &'static str,
+    },
 }
 
 impl core::fmt::Display for PriceError {
@@ -75,6 +84,11 @@ impl core::fmt::Display for PriceError {
             PriceError::EmptyProduct => write!(f, "instrument carried no product variant"),
             PriceError::DeltaSolve(e) => write!(f, "delta→strike inversion failed: {e:?}"),
             PriceError::Domain(why) => write!(f, "input out of pricing domain: {why}"),
+            PriceError::UnsupportedModel { model, product } => write!(
+                f,
+                "pricing model {model} does not support product {product}; \
+                 select a supported product or the default model"
+            ),
         }
     }
 }
@@ -430,6 +444,20 @@ pub fn price_instrument(
         .product
         .as_ref()
         .ok_or(PriceError::EmptyProduct)?;
+
+    // Booking-model selector (CLAUDE.md rule 9: a pricing directive, not an API
+    // version). An absent or DEFAULT model takes the analytic path below
+    // byte-identically; LOCAL_STOCH_VOL routes the supported products through the
+    // LSV engine and rejects every other product clearly.
+    let model = celnet_proto::PricingModel::try_from(instrument.pricing_model).map_err(|_| {
+        PriceError::UnknownEnum {
+            kind: "PricingModel",
+            tag: instrument.pricing_model,
+        }
+    })?;
+    if matches!(model, celnet_proto::PricingModel::LocalStochVol) {
+        return price_instrument_lsv(product, market, expiry);
+    }
 
     match product {
         instrument::Product::Vanilla(v) => {
@@ -1231,6 +1259,66 @@ pub fn price_instrument(
                 }
             }
         }
+        instrument::Product::WindowBarrier(_) => {
+            // A window barrier has no closed form: it is priced only under the LSV
+            // model (handled above). Selecting the default model for it is a clear
+            // error, never a silent fallback.
+            Err(PriceError::UnsupportedModel {
+                model: "DEFAULT",
+                product: "window_barrier",
+            })
+        }
+    }
+}
+
+/// Dispatch an instrument selected for the LSV booking model to the
+/// [`crate::lsv_pricer`] route. Supports vanilla, single-barrier (continuous
+/// knock-out / knock-in) and window-barrier; every other product is a clear
+/// [`PriceError::UnsupportedModel`] (`INVALID_ARGUMENT` at the boundary), never a
+/// silent fallback to the analytic engine.
+fn price_instrument_lsv(
+    product: &instrument::Product,
+    market: &WireMarketContext,
+    expiry: f64,
+) -> Result<Priced, PriceError> {
+    let grids = crate::lsv_pricer::LsvGrids::default();
+    match product {
+        instrument::Product::Vanilla(v) => {
+            crate::lsv_pricer::price_vanilla_lsv(v, market, expiry, &grids)
+        }
+        instrument::Product::SingleBarrier(b) => {
+            crate::lsv_pricer::price_single_barrier_lsv(b, market, expiry, &grids)
+        }
+        instrument::Product::WindowBarrier(w) => {
+            crate::lsv_pricer::price_window_barrier_lsv(w, market, expiry, &grids)
+        }
+        other => Err(PriceError::UnsupportedModel {
+            model: "LOCAL_STOCH_VOL",
+            product: product_name(other),
+        }),
+    }
+}
+
+/// A stable, purpose-named label for a product oneof variant (for clear error
+/// messages when an unsupported model is selected).
+fn product_name(product: &instrument::Product) -> &'static str {
+    match product {
+        instrument::Product::Vanilla(_) => "vanilla",
+        instrument::Product::Strategy(_) => "strategy",
+        instrument::Product::SingleBarrier(_) => "single_barrier",
+        instrument::Product::DoubleBarrier(_) => "double_barrier",
+        instrument::Product::Digital(_) => "digital",
+        instrument::Product::Touch(_) => "touch",
+        instrument::Product::VarianceSwap(_) => "variance_swap",
+        instrument::Product::VolatilitySwap(_) => "volatility_swap",
+        instrument::Product::AsianOption(_) => "asian_option",
+        instrument::Product::ForwardStart(_) => "forward_start",
+        instrument::Product::Cliquet(_) => "cliquet",
+        instrument::Product::Quanto(_) => "quanto",
+        instrument::Product::Tarf(_) => "tarf",
+        instrument::Product::Accumulator(_) => "accumulator",
+        instrument::Product::Lookback(_) => "lookback",
+        instrument::Product::WindowBarrier(_) => "window_barrier",
     }
 }
 
@@ -1321,6 +1409,7 @@ mod tests {
             quantity: None,
             side: celnet_proto::Side::Buy as i32,
             solve: None,
+            pricing_model: celnet_proto::PricingModel::Default as i32,
             product: Some(Product::Vanilla(Vanilla {
                 option_type: celnet_proto::OptionType::Call as i32,
                 strike: Some(StrikeOrDelta {
@@ -1382,6 +1471,7 @@ mod tests {
             quantity: None,
             side: celnet_proto::Side::Buy as i32,
             solve: None,
+            pricing_model: celnet_proto::PricingModel::Default as i32,
             product: Some(Product::SingleBarrier(celnet_proto::SingleBarrier {
                 vanilla: Some(Vanilla {
                     option_type: celnet_proto::OptionType::Call as i32,
@@ -1446,6 +1536,7 @@ mod tests {
             quantity: None,
             side: celnet_proto::Side::Buy as i32,
             solve: None,
+            pricing_model: celnet_proto::PricingModel::Default as i32,
             product: Some(Product::Strategy(celnet_proto::Strategy {
                 kind: celnet_proto::StrategyKind::RiskReversal as i32,
                 legs: vec![
@@ -1499,6 +1590,7 @@ mod tests {
             quantity: None,
             side: celnet_proto::Side::Buy as i32,
             solve: None,
+            pricing_model: celnet_proto::PricingModel::Default as i32,
             product: Some(product),
         }
     }

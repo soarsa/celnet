@@ -23,12 +23,14 @@ import type {
   MarketContext,
   MonitoringStyle,
   OptionType,
+  Product,
   QuantoPayoff,
   StrategyKind,
   StrikeOrDelta,
   TarfRedemption,
   TouchKind,
 } from "./contract";
+import type { PricingModel } from "./contract";
 
 export const DEFAULT_CONVENTIONS: Conventions = {
   deltaConvention: "SPOT_PREMIUM_ADJUSTED",
@@ -553,6 +555,79 @@ function lookbackInstrument(
   };
 }
 
+/** The inputs for a window-barrier option (`product.windowBarrier`). */
+export interface WindowBarrierTerms {
+  optionType: OptionType;
+  /** Strike as an absolute level or a signed convention delta. */
+  strike: StrikeOrDelta;
+  barrier: number;
+  side: BarrierSide;
+  windowStart: number;
+  windowEnd: number;
+  mcPairs: number;
+  mcSteps: number;
+  mcSeed: bigint;
+}
+
+/**
+ * A window-barrier instrument (`product.windowBarrier`). The window barrier has no
+ * closed form, so it is LOCAL_STOCH_VOL-only — this builder PRE-SELECTS
+ * `pricingModel: "LOCAL_STOCH_VOL"` on the instrument (the server rejects the
+ * DEFAULT model for it), mirroring the SDK's `window_barrier(...)` constructor.
+ */
+function windowBarrierInstrument(
+  pair: CcyPair,
+  tenorYears: number,
+  notionalMm: number,
+  terms: WindowBarrierTerms,
+): Instrument {
+  return {
+    pair,
+    tenor: tenorYearsToTenor(tenorYears),
+    expiryYears: tenorYears,
+    quantity: { notional: notionalMm * 1e6, baseCcy: true },
+    side: "TWO_WAY",
+    pricingModel: "LOCAL_STOCH_VOL",
+    product: {
+      kind: "windowBarrier",
+      windowBarrier: {
+        vanilla: { optionType: terms.optionType, strike: terms.strike },
+        barrier: terms.barrier,
+        side: terms.side,
+        windowStart: terms.windowStart,
+        windowEnd: terms.windowEnd,
+        mcPairs: terms.mcPairs,
+        mcSteps: terms.mcSteps,
+        mcSeed: terms.mcSeed,
+      },
+    },
+  };
+}
+
+/**
+ * The set of products the LOCAL_STOCH_VOL booking model prices (mirrors the
+ * server's `lsv_pricer` supported list): vanilla, single (continuous) barrier and
+ * the window barrier. Every other product carries no LSV engine route, so the
+ * model selector is disabled for it (selecting LSV would be rejected server-side
+ * with `UnsupportedModel` — we never offer it). The product oneof `kind`s here are
+ * the GUI-side discriminants in `Product`.
+ */
+export const LSV_SUPPORTED_PRODUCT_KINDS: ReadonlySet<Product["kind"]> = new Set<
+  Product["kind"]
+>(["vanilla", "singleBarrier", "windowBarrier"]);
+
+/**
+ * The booking models a given product may be priced under: every product supports
+ * the DEFAULT (closed-form) model; the `LSV_SUPPORTED_PRODUCT_KINDS` additionally
+ * support LOCAL_STOCH_VOL. The window barrier supports ONLY LOCAL_STOCH_VOL (it has
+ * no closed form), so DEFAULT is omitted for it.
+ */
+export function bookingModelsFor(kind: Product["kind"]): readonly PricingModel[] {
+  if (kind === "windowBarrier") return ["LOCAL_STOCH_VOL"];
+  if (LSV_SUPPORTED_PRODUCT_KINDS.has(kind)) return ["DEFAULT", "LOCAL_STOCH_VOL"];
+  return ["DEFAULT"];
+}
+
 function strategyLegs(kind: StrategyKind): Leg[] {
   switch (kind) {
     case "RISK_REVERSAL":
@@ -619,4 +694,5 @@ export {
   tarfInstrument,
   accumulatorInstrument,
   lookbackInstrument,
+  windowBarrierInstrument,
 };

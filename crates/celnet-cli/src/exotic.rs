@@ -24,6 +24,12 @@ use crate::args::CliBarrier;
 /// Which exotic to price and its variant-specific parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum ExoticSpec {
+    /// A vanilla European option (Garman-Kohlhagen under `--model analytic`, the
+    /// LSV ADI PDE under `--model lsv`). The strike is `inputs.strike`.
+    Vanilla {
+        /// Call or put.
+        option: OptionType,
+    },
     /// A European cash-or-nothing digital (pays 1 domestic in the money).
     Digital(DigitalKind),
     /// A one-touch paying `rebate` (domestic) if `barrier` is touched before `T`.
@@ -57,6 +63,28 @@ pub(crate) enum ExoticSpec {
         barrier: f64,
         /// Rebate paid on the terminating event (domestic).
         rebate: f64,
+    },
+    /// A window knock-out barrier — active only inside `[start, end] ⊆ [0, T]`.
+    /// Priced only under the LSV engine (no closed form).
+    WindowBarrier {
+        /// Underlying option type.
+        option: OptionType,
+        /// Strike of the underlying vanilla.
+        strike: f64,
+        /// Barrier level `H`.
+        barrier: f64,
+        /// `true` for up-and-out, else down-and-out.
+        up: bool,
+        /// Window start in years.
+        start: f64,
+        /// Window end in years.
+        end: f64,
+        /// Antithetic Monte-Carlo path pairs (`0` ⇒ ADI PDE; `> 0` ⇒ MC).
+        mc_pairs: usize,
+        /// Monte-Carlo time steps (`0` ⇒ default; ignored when `mc_pairs == 0`).
+        mc_steps: usize,
+        /// Counter-RNG seed for the Monte-Carlo estimator.
+        mc_seed: u64,
     },
     /// A variance swap — the result `price` carries the fair *variance* strike
     /// `K_var` (so a flat σ returns σ²).
@@ -355,6 +383,7 @@ pub(crate) fn run(spec: ExoticSpec, inputs: &VanillaInputs) -> ExoticResult {
         _ => {}
     }
     let price = match spec {
+        ExoticSpec::Vanilla { option } => celnet_vanilla::price(option, inputs),
         ExoticSpec::Digital(kind) => digital_price(kind, inputs),
         ExoticSpec::OneTouch {
             barrier,
@@ -482,6 +511,11 @@ pub(crate) fn run(spec: ExoticSpec, inputs: &VanillaInputs) -> ExoticResult {
         | ExoticSpec::Lookback { discrete: true, .. } => {
             unreachable!("Monte-Carlo exotics are handled before this match")
         }
+        // A window barrier has no closed form: it is LSV-only and is dispatched to
+        // `lsv_run`, never to the analytic `run`.
+        ExoticSpec::WindowBarrier { .. } => {
+            unreachable!("the window barrier is LSV-only and is dispatched to lsv_run")
+        }
     };
     ExoticResult {
         price,
@@ -493,6 +527,7 @@ pub(crate) fn run(spec: ExoticSpec, inputs: &VanillaInputs) -> ExoticResult {
 #[must_use]
 pub(crate) fn format_report(spec: ExoticSpec, r: &ExoticResult) -> String {
     let label = match spec {
+        ExoticSpec::Vanilla { .. } => "vanilla",
         ExoticSpec::Digital(_) => "digital",
         ExoticSpec::OneTouch { .. } => "one-touch",
         ExoticSpec::DoubleNoTouch { .. } => "double-no-touch",
@@ -510,6 +545,7 @@ pub(crate) fn format_report(spec: ExoticSpec, r: &ExoticResult) -> String {
             discrete: false, ..
         } => "lookback-continuous",
         ExoticSpec::Lookback { discrete: true, .. } => "lookback-discrete",
+        ExoticSpec::WindowBarrier { .. } => "window-barrier-lsv",
     };
     // The variance swap's headline figure is a fair *variance* strike `K_var`;
     // echo its realised-vol equivalent `√K_var` so the desk reads both.
@@ -532,6 +568,194 @@ pub(crate) fn format_report(spec: ExoticSpec, r: &ExoticResult) -> String {
         );
     }
     format!("{label}\n  price           {:.10}\n", r.price)
+}
+
+// ---------------------------------------------------------------------------
+// Local-stochastic-volatility (LSV) pricing route (`--model lsv`)
+// ---------------------------------------------------------------------------
+
+use celnet_exotics::{
+    AdiGrid, ImpliedVolSurface, LsvModel, McConfig, ParticleConfig, VarianceParams,
+    WindowBarrier as ExWindowBarrier,
+};
+
+/// A flat implied-vol surface anchored at the market vol — the LSV calibration
+/// target the CLI's single-vol market inputs expose (mirrors the server route).
+struct CliFlatIv {
+    sigma: f64,
+    spot: f64,
+    carry: f64,
+}
+impl ImpliedVolSurface for CliFlatIv {
+    fn implied_vol(&self, _k: f64, _t: f64) -> f64 {
+        self.sigma
+    }
+    fn forward(&self, t: f64) -> f64 {
+        self.spot * celnet_core::math::exp(self.carry * t)
+    }
+}
+
+/// Calibrate the LSV model for the CLI's market inputs (same canonical
+/// stochastic-variance parameters and particle budget as the server route).
+fn lsv_model(inputs: &VanillaInputs) -> LsvModel {
+    let sigma = inputs.vol;
+    let v = sigma * sigma;
+    // Canonical server LSV params (kept in lockstep with celnet-server's
+    // lsv_pricer): mean-reversion 2.0, vol-of-var 0.18 (Feller at σ=10%),
+    // spot/variance correlation −0.30.
+    let var = VarianceParams::new(v, 2.0, v, 0.18, -0.30);
+    let carry = inputs.r_dom - inputs.r_for;
+    let iv = CliFlatIv {
+        sigma,
+        spot: inputs.spot,
+        carry,
+    };
+    let n = 41usize;
+    let spot_grid: Vec<f64> = (0..n)
+        .map(|k| {
+            let x = -0.6 + 1.2 * (k as f64) / ((n - 1) as f64);
+            inputs.spot * celnet_core::math::exp(x)
+        })
+        .collect();
+    let particle = ParticleConfig {
+        particles: 30_000,
+        steps: 40,
+        seed: 0x0001_0CA1,
+        ..ParticleConfig::default()
+    };
+    LsvModel::calibrate(*inputs, var, &iv, &spot_grid, particle)
+}
+
+/// The fine ADI grid for the LSV headline price (matches the server default).
+fn lsv_price_grid() -> AdiGrid {
+    AdiGrid {
+        x_steps: 160,
+        v_steps: 48,
+        time_steps: 100,
+        ..AdiGrid::default()
+    }
+}
+
+/// Price an LSV-supported exotic (`--model lsv`): vanilla, single-barrier
+/// (continuous knock-out/in) and window-barrier. Returns an error string for any
+/// other product (mapped to a CLI invalid-argument), never a silent fallback to
+/// the analytic engine.
+///
+/// `inputs.strike` is the underlying strike for the vanilla / barrier legs; the
+/// touch / swap / fixing products are not LSV products.
+pub(crate) fn lsv_run(spec: ExoticSpec, inputs: &VanillaInputs) -> Result<ExoticResult, String> {
+    match spec {
+        ExoticSpec::Vanilla { option } => Ok(lsv_vanilla(option, inputs)),
+        ExoticSpec::SingleBarrier {
+            option,
+            topology,
+            strike,
+            barrier,
+            rebate,
+        } => {
+            if rebate != 0.0 {
+                return Err(
+                    "the LSV barrier route does not price a rebate; use rebate 0".to_owned(),
+                );
+            }
+            if !(barrier.is_finite() && barrier > 0.0) {
+                return Err("barrier must be positive and finite".to_owned());
+            }
+            let (up, knock_in) = match topology {
+                CliBarrier::UpAndOut => (true, false),
+                CliBarrier::DownAndOut => (false, false),
+                CliBarrier::UpAndIn => (true, true),
+                CliBarrier::DownAndIn => (false, true),
+            };
+            let model = lsv_model(inputs);
+            let grid = lsv_price_grid();
+            let ko = model.price_barrier_pde(option, strike, barrier, up, grid);
+            let price = if knock_in {
+                // In-out parity under the same model: KI = vanilla − KO.
+                model.price_european_pde(option, strike, grid) - ko
+            } else {
+                ko
+            };
+            Ok(ExoticResult {
+                price,
+                std_error: None,
+            })
+        }
+        ExoticSpec::WindowBarrier {
+            option,
+            strike,
+            barrier,
+            up,
+            start,
+            end,
+            mc_pairs,
+            mc_steps,
+            mc_seed,
+        } => {
+            if !(barrier.is_finite() && barrier > 0.0) {
+                return Err("barrier must be positive and finite".to_owned());
+            }
+            if !(start >= 0.0 && start < end && end <= inputs.t) {
+                return Err("window must satisfy 0 <= window-start < window-end <= t".to_owned());
+            }
+            let model = lsv_model(inputs);
+            let wspec = ExWindowBarrier {
+                option,
+                strike,
+                barrier,
+                up,
+                start,
+                end,
+            };
+            if mc_pairs > 0 {
+                let cfg = McConfig {
+                    pairs: mc_pairs,
+                    steps: if mc_steps > 0 { mc_steps } else { 96 },
+                    seed: mc_seed,
+                };
+                let est = model.price_window_barrier_mc(wspec, cfg);
+                Ok(ExoticResult {
+                    price: est.price,
+                    std_error: Some(est.std_error),
+                })
+            } else {
+                let price = model.price_window_barrier_pde(wspec, lsv_price_grid());
+                Ok(ExoticResult {
+                    price,
+                    std_error: None,
+                })
+            }
+        }
+        // The LSV engine does not price these products — reject clearly.
+        ExoticSpec::Digital(_) => Err(lsv_unsupported("digital")),
+        ExoticSpec::OneTouch { .. } => Err(lsv_unsupported("one-touch")),
+        ExoticSpec::DoubleNoTouch { .. } => Err(lsv_unsupported("double-no-touch")),
+        ExoticSpec::VarianceSwap => Err(lsv_unsupported("variance-swap")),
+        ExoticSpec::VolatilitySwap => Err(lsv_unsupported("volatility-swap")),
+        ExoticSpec::Asian { .. } => Err(lsv_unsupported("asian")),
+        ExoticSpec::ForwardStart { .. } => Err(lsv_unsupported("forward-start")),
+        ExoticSpec::Cliquet { .. } => Err(lsv_unsupported("cliquet")),
+        ExoticSpec::Quanto { .. } => Err(lsv_unsupported("quanto")),
+        ExoticSpec::Tarf { .. } => Err(lsv_unsupported("tarf")),
+        ExoticSpec::Accumulator { .. } => Err(lsv_unsupported("accumulator")),
+        ExoticSpec::Lookback { .. } => Err(lsv_unsupported("lookback")),
+    }
+}
+
+/// Price a plain vanilla under the LSV engine (the European ADI PDE).
+pub(crate) fn lsv_vanilla(option: OptionType, inputs: &VanillaInputs) -> ExoticResult {
+    let model = lsv_model(inputs);
+    ExoticResult {
+        price: model.price_european_pde(option, inputs.strike, lsv_price_grid()),
+        std_error: None,
+    }
+}
+
+fn lsv_unsupported(product: &str) -> String {
+    format!(
+        "pricing model LOCAL_STOCH_VOL does not support product {product}; \
+         select a supported product (vanilla, barrier, window-barrier) or --model analytic"
+    )
 }
 
 #[cfg(test)]
@@ -989,5 +1213,70 @@ mod tests {
         );
         assert!(is_close(r.price, direct.price, 1e-12, 1e-12));
         assert!(r.std_error.expect("discrete lookback (MC) std-error") > 0.0);
+    }
+
+    #[test]
+    fn lsv_window_barrier_matches_direct_lsv_reprice() {
+        let i = VanillaInputs::new(1.30, 1.30, 0.10, 1.0, 0.03, 0.01);
+        let spec = ExoticSpec::WindowBarrier {
+            option: OptionType::Call,
+            strike: 1.30,
+            barrier: 1.50,
+            up: true,
+            start: 0.5,
+            end: 1.0,
+            mc_pairs: 0,
+            mc_steps: 0,
+            mc_seed: 0,
+        };
+        let r = lsv_run(spec, &i).expect("LSV window barrier prices");
+        assert!(r.std_error.is_none(), "PDE LSV window carries no std-error");
+
+        // Independent reprice on the SAME engine, set up by hand (the lsv_model
+        // helper is shared, but the window spec / grid here are spelled out).
+        let model = lsv_model(&i);
+        let direct = model.price_window_barrier_pde(
+            ExWindowBarrier {
+                option: OptionType::Call,
+                strike: 1.30,
+                barrier: 1.50,
+                up: true,
+                start: 0.5,
+                end: 1.0,
+            },
+            lsv_price_grid(),
+        );
+        assert!(
+            (r.price - direct).abs() < 1e-9,
+            "lsv_run {} vs direct {}",
+            r.price,
+            direct
+        );
+    }
+
+    #[test]
+    fn lsv_on_unsupported_product_errors() {
+        let i = VanillaInputs::new(1.10, 1.10, 0.10, 1.0, 0.02, 0.01);
+        let err = lsv_run(ExoticSpec::VarianceSwap, &i)
+            .expect_err("LSV must reject an unsupported product");
+        assert!(
+            err.contains("LOCAL_STOCH_VOL") && err.contains("variance-swap"),
+            "clear unsupported-product error: {err}"
+        );
+    }
+
+    #[test]
+    fn lsv_vanilla_differs_from_analytic_for_a_skewed_barrier() {
+        // The LSV vanilla reprices the flat smile, so it should be close to GK;
+        // the barrier under LSV picks up skew/stoch-vol the flat GK barrier lacks.
+        let i = VanillaInputs::new(1.30, 1.20, 0.10, 1.0, 0.03, 0.01);
+        let lsv = lsv_vanilla(OptionType::Call, &i);
+        let gk = celnet_vanilla::price(OptionType::Call, &i);
+        assert!(
+            (lsv.price - gk).abs() < 5e-3,
+            "LSV vanilla {} reprices flat GK {}",
+            lsv.price,
+            gk
+        );
     }
 }

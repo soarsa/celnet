@@ -245,3 +245,83 @@ describe("TicketWorkspace — wave-2 products in the selector", () => {
     expect(screen.getByText(/quanto-drift adjustment/)).toBeInTheDocument();
   });
 });
+
+describe("TicketWorkspace — wave-6 window barrier + booking-model selector", () => {
+  it("offers a window barrier in the structure selector (additive, zero-legacy)", async () => {
+    await renderTicket();
+    const options = within(structureSelect())
+      .getAllByRole("option")
+      .map((o) => (o as HTMLOptionElement).value);
+    expect(options).toContain("WINDOW_BARRIER");
+    // The pre-existing products are untouched.
+    expect(options).toContain("VANILLA");
+    expect(options).toContain("SINGLE_BARRIER");
+  });
+
+  it("shows the booking-model selector with Default + Local-Stoch-Vol for a vanilla", async () => {
+    await renderTicket();
+    act(() => {
+      fireEvent.change(structureSelect(), { target: { value: "VANILLA" } });
+    });
+    const model = screen.getByRole("tablist", { name: "booking model" });
+    expect(within(model).getByText("Default")).toBeInTheDocument();
+    expect(within(model).getByText("Local-Stoch-Vol")).toBeInTheDocument();
+  });
+
+  it("hides the booking-model selector for an LSV-unsupported product (digital)", async () => {
+    await renderTicket();
+    act(() => {
+      fireEvent.change(structureSelect(), { target: { value: "DIGITAL" } });
+    });
+    // A digital has no LSV route ⇒ no booking-model choice is offered.
+    expect(screen.queryByRole("tablist", { name: "booking model" })).not.toBeInTheDocument();
+  });
+
+  it("locks the window barrier to Local-Stoch-Vol (the only model) and shows its inputs", async () => {
+    await renderTicket();
+    act(() => {
+      fireEvent.change(structureSelect(), { target: { value: "WINDOW_BARRIER" } });
+    });
+    // The booking model is shown but locked to Local-Stoch-Vol (no Default option).
+    const model = screen.getByRole("tablist", { name: "booking model" });
+    expect(within(model).getByText("Local-Stoch-Vol")).toBeInTheDocument();
+    expect(within(model).queryByText("Default")).not.toBeInTheDocument();
+    expect((within(model).getByText("Local-Stoch-Vol") as HTMLButtonElement).disabled).toBe(true);
+    // The window-barrier inputs render (option / side / barrier / window / MC).
+    expect(screen.getByRole("tablist", { name: "option type" })).toBeInTheDocument();
+    expect(screen.getByRole("tablist", { name: "barrier side" })).toBeInTheDocument();
+    expect(screen.getByLabelText("barrier")).toBeInTheDocument();
+    expect(screen.getByLabelText("window start")).toBeInTheDocument();
+    expect(screen.getByLabelText("window end")).toBeInTheDocument();
+    // No option legs are rendered for a window barrier.
+    expect(screen.queryByText(/^LEG 1$/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Window barrier:/)).toBeInTheDocument();
+  });
+
+  it("gates Local-Stoch-Vol pricing to the live server when offline (no faked LSV)", async () => {
+    await renderTicket(); // ?mock ⇒ the offline in-app transport
+    act(() => {
+      fireEvent.change(structureSelect(), { target: { value: "WINDOW_BARRIER" } });
+    });
+    // Offline, the LSV engine is unavailable: the Request button is disabled and
+    // labelled honestly (the mock never fabricates an LSV number).
+    const request = screen.getByRole("button", { name: /LSV — live server only/ });
+    expect((request as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/server-side only/)).toBeInTheDocument();
+  });
+
+  it("toggling Local-Stoch-Vol on a vanilla offline disables Request quote honestly", async () => {
+    await renderTicket();
+    act(() => {
+      fireEvent.change(structureSelect(), { target: { value: "VANILLA" } });
+    });
+    // Default ⇒ pricing works (offline analytic path is intact).
+    expect(screen.getByRole("button", { name: /Request quote/ })).toBeInTheDocument();
+    // Selecting Local-Stoch-Vol offline gates pricing to the live server.
+    const model = screen.getByRole("tablist", { name: "booking model" });
+    act(() => {
+      fireEvent.click(within(model).getByText("Local-Stoch-Vol"));
+    });
+    expect(screen.getByRole("button", { name: /LSV — live server only/ })).toBeInTheDocument();
+  });
+});

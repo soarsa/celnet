@@ -279,6 +279,15 @@ function legsOf(instrument: Instrument): { strikeSpec: StrikeOrDelta; isCall: bo
           isCall: instrument.product.doubleBarrier.vanilla.optionType === "CALL",
         },
       ];
+    case "windowBarrier":
+      // The window barrier's underlying vanilla strike is its representative smile
+      // leg (the face vol is a display read; the LSV engine prices it server-side).
+      return [
+        {
+          strikeSpec: instrument.product.windowBarrier.vanilla.strike,
+          isCall: instrument.product.windowBarrier.vanilla.optionType === "CALL",
+        },
+      ];
     case "digital":
       // A digital's strike is its representative smile leg.
       return [

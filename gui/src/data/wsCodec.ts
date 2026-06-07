@@ -327,6 +327,16 @@ export function instrumentToWire(i: Instrument): WireObject {
     side: e.side.toWire(i.side),
   };
   if (i.solve) base["solve"] = solveToWire(i.solve);
+  // The pricing/booking model (`Instrument.pricing_model`, proto field 22). It
+  // travels uniformly through every flow (price/quote/stream/scenario), exactly
+  // like the `Solve` directive — appended additively, no schema_version, no
+  // renumber (CLAUDE.md rule 9). Proto3 default-0 (DEFAULT) is OMITTED from the
+  // wire object so an analytic instrument is byte-identical to the legacy frame;
+  // only LOCAL_STOCH_VOL is emitted. The server's `opt_pricing_model` reads the
+  // numeric tag (absent ⇒ DEFAULT).
+  if (i.pricingModel !== undefined && i.pricingModel !== "DEFAULT") {
+    base["pricing_model"] = e.pricingModel.toWire(i.pricingModel);
+  }
   // The product oneof: nest the body under its own key, exactly like the proto.
   // The wire field numbers are: vanilla=7, strategy=8, …, digital=11, touch=12,
   // variance_swap=13, volatility_swap=14, asian_option=15 (appended additively —
@@ -506,6 +516,30 @@ export function instrumentToWire(i: Instrument): WireObject {
         observations: l.observations,
         mc_pairs: l.mcPairs,
         mc_seed: l.mcSeed,
+      };
+      break;
+    }
+    // The window barrier, appended additively at the next field number
+    // window_barrier=23 (one current contract, no schema_version, no renumber;
+    // CLAUDE.md rule 9). It REUSES the same nested `vanilla` message (option_type +
+    // strike-or-delta), exactly like the single/double barrier. Fields match the
+    // server WS codec's `window_barrier_from_json` (vanilla=1, barrier=2, side=3,
+    // window_start=4, window_end=5, mc_pairs=6, mc_steps=7, mc_seed=8). It is
+    // LOCAL_STOCH_VOL-only; the model rides on the instrument's `pricing_model`.
+    case "windowBarrier": {
+      const wb = i.product.windowBarrier;
+      base["window_barrier"] = {
+        vanilla: {
+          option_type: e.optionType.toWire(wb.vanilla.optionType),
+          strike: strikeOrDeltaToWire(wb.vanilla.strike),
+        },
+        barrier: wb.barrier,
+        side: e.barrierSide.toWire(wb.side),
+        window_start: wb.windowStart,
+        window_end: wb.windowEnd,
+        mc_pairs: wb.mcPairs,
+        mc_steps: wb.mcSteps,
+        mc_seed: wb.mcSeed,
       };
       break;
     }

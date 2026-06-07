@@ -71,6 +71,26 @@ export type SmileModel =
   | "EXTENDED_SURFACE";
 
 /**
+ * The booking / pricing model a request is priced under (proto `PricingModel`):
+ * a *pricing directive*, NOT an API version. DEFAULT is the product's native
+ * analytic / closed-form engine (Garman-Kohlhagen and the product's own closed
+ * form); LOCAL_STOCH_VOL routes the supported products (vanilla, continuously-
+ * monitored single-barrier knock-out, window-barrier) through the
+ * local-stochastic-volatility engine — a particle-calibrated leverage surface
+ * over a mean-reverting square-root variance backbone, priced on a 2-D ADI PDE
+ * (and a counter-based Monte-Carlo engine where a standard error is reported).
+ * Provenance of the method is in this doc comment only — the wire/trader-facing
+ * name is the purpose-named "Local-Stoch-Vol" (`celnet_proto::PricingModel`).
+ *
+ * An absent / DEFAULT model is byte-identical to the contract before this field
+ * existed (proto3 zero value), so every existing flow is unchanged. Selecting
+ * LOCAL_STOCH_VOL for a product the engine does not price is a hard server
+ * `INVALID_ARGUMENT`, never a silent fallback; a window-barrier MUST carry
+ * LOCAL_STOCH_VOL (it has no closed form, so DEFAULT on it is rejected).
+ */
+export type PricingModel = "DEFAULT" | "LOCAL_STOCH_VOL";
+
+/**
  * A streamable market observable (proto `MarketObservable`). The market-series
  * feed (`market_series_subscribe`) streams one of these as a scalar time series:
  * ATM_VOL/RISK_REVERSAL/BUTTERFLY are vols, SPOT/FORWARD are rates. RR/BF require
@@ -560,6 +580,39 @@ export interface Touch {
   monitoring: MonitoringStyle;
 }
 
+/**
+ * A window (partial-time) barrier (proto `WindowBarrier`, product field 23): a
+ * terminal vanilla payoff that knocks out only while spot crosses the barrier
+ * INSIDE the active window `[windowStart, windowEnd] ⊆ [0, expiryYears]` — a
+ * "front" partial barrier sets `windowStart = 0`, a "back" partial barrier sets
+ * `windowEnd = expiryYears`. A window barrier is always a knock-out and has NO
+ * closed form, so it is priced only under `PricingModel` LOCAL_STOCH_VOL (the
+ * LSV ADI-PDE engine, or the counter-based Monte-Carlo engine when `mcPairs > 0`,
+ * which then carries a `priceStdError`); selecting DEFAULT for it is rejected.
+ */
+export interface WindowBarrier {
+  /** The terminal vanilla payoff (call/put + strike). */
+  vanilla: Vanilla;
+  /** The barrier level `H` (quote per 1 unit of base). */
+  barrier: number;
+  /** UP (barrier above spot at inception, up-and-out) or DOWN (down-and-out). */
+  side: BarrierSide;
+  /** The start of the active window, in years from inception (`>= 0`). */
+  windowStart: number;
+  /** The end of the active window, in years (`windowStart < windowEnd <= expiryYears`). */
+  windowEnd: number;
+  /**
+   * Antithetic Monte-Carlo path pairs: `0` selects the exact ADI-PDE engine (no
+   * std-error); `> 0` selects the Monte-Carlo engine (the reply carries a
+   * `priceStdError`).
+   */
+  mcPairs: number;
+  /** Monte-Carlo time steps (ignored when `mcPairs == 0`; `0` ⇒ server default). */
+  mcSteps: number;
+  /** Counter-RNG seed (bit-reproducible; ignored when `mcPairs == 0`). */
+  mcSeed: bigint;
+}
+
 /** The product payoff carried by an Instrument (the proto `product` oneof). */
 export type Product =
   | { kind: "vanilla"; vanilla: Vanilla }
@@ -576,7 +629,8 @@ export type Product =
   | { kind: "quanto"; quanto: Quanto }
   | { kind: "tarf"; tarf: Tarf }
   | { kind: "accumulator"; accumulator: Accumulator }
-  | { kind: "lookback"; lookback: Lookback };
+  | { kind: "lookback"; lookback: Lookback }
+  | { kind: "windowBarrier"; windowBarrier: WindowBarrier };
 
 /** Solve directive: solve a free parameter to hit a target (e.g. zero premium). */
 export interface Solve {
@@ -593,6 +647,14 @@ export interface Instrument {
   quantity: Quantity;
   side: Side;
   solve?: Solve;
+  /**
+   * The booking / pricing model the request is priced under (proto
+   * `Instrument.pricing_model`, field 22). Absent ⇒ DEFAULT (the product's native
+   * analytic engine), byte-identical to the contract before this field existed.
+   * Carried uniformly on the Instrument, so it reaches every flow
+   * (price/quote/stream/scenario) exactly like the `solve` directive.
+   */
+  pricingModel?: PricingModel;
   product: Product;
 }
 

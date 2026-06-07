@@ -27,7 +27,8 @@ use celnet_proto::{
     ScenarioResponse, ShockAxis, SingleBarrier, Smile, SmilePoint, Snapshot, Solve, Strategy,
     StrategyKind, StreamEnd, StreamReject, StrikeOrDelta, Subscribe, SubscriptionId, Tarf, Tenor,
     Touch, TradableToken, TwoWayPrice, Unsubscribe, Update, Vanilla, VanillaInputs, VarianceSwap,
-    VegaLadderBucket, VegaPillar, VolatilitySwap, instrument, shock_axis, strike_or_delta, tenor,
+    VegaLadderBucket, VegaPillar, VolatilitySwap, WindowBarrier, instrument, shock_axis,
+    strike_or_delta, tenor,
 };
 
 /// A codec error: a malformed or out-of-contract JSON message. Carries a
@@ -510,6 +511,24 @@ fn lookback_from_json(v: &Value) -> Result<Lookback> {
     })
 }
 
+fn window_barrier_from_json(v: &Value) -> Result<WindowBarrier> {
+    let o = obj(v, "window_barrier")?;
+    let mc_pairs = u32::try_from(u64_or_zero(o, "mc_pairs"))
+        .map_err(|_| err("window_barrier.mc_pairs out of range"))?;
+    let mc_steps = u32::try_from(u64_or_zero(o, "mc_steps"))
+        .map_err(|_| err("window_barrier.mc_steps out of range"))?;
+    Ok(WindowBarrier {
+        vanilla: Some(nested(o, "vanilla", vanilla_from_json)?),
+        barrier: f64_field(o, "barrier")?,
+        side: enum_or_zero(o, "side"),
+        window_start: f64_field(o, "window_start")?,
+        window_end: f64_field(o, "window_end")?,
+        mc_pairs,
+        mc_steps,
+        mc_seed: u64_or_zero(o, "mc_seed"),
+    })
+}
+
 /// Decode the instrument `product` oneof. The JSON carries exactly one of the
 /// product keys (`vanilla`, `strategy`, `single_barrier`, `double_barrier`,
 /// `digital`, `touch`, `variance_swap`, `volatility_swap`, `asian_option`,
@@ -558,12 +577,16 @@ fn product_from_json(o: &Map<String, Value>) -> Result<instrument::Product> {
         Ok(instrument::Product::Accumulator(accumulator_from_json(v)?))
     } else if let Some(v) = o.get("lookback") {
         Ok(instrument::Product::Lookback(lookback_from_json(v)?))
+    } else if let Some(v) = o.get("window_barrier") {
+        Ok(instrument::Product::WindowBarrier(
+            window_barrier_from_json(v)?,
+        ))
     } else {
         Err(err(
             "instrument needs exactly one product (vanilla / strategy / \
              single_barrier / double_barrier / digital / touch / variance_swap / \
              volatility_swap / asian_option / forward_start / cliquet / quanto / \
-             tarf / accumulator / lookback)",
+             tarf / accumulator / lookback / window_barrier)",
         ))
     }
 }
@@ -577,6 +600,9 @@ pub(super) fn instrument_from_json(v: &Value) -> Result<Instrument> {
         quantity: opt_nested(o, "quantity", quantity_from_json)?,
         side: enum_or_zero(o, "side"),
         solve: opt_nested(o, "solve", solve_from_json)?,
+        // The booking-model selector (absent ⇒ 0 ⇒ PRICING_MODEL_DEFAULT, so the
+        // analytic path is unchanged for existing browser requests).
+        pricing_model: enum_or_zero(o, "pricing_model"),
         product: Some(product_from_json(o)?),
     })
 }
@@ -1800,6 +1826,62 @@ mod tests {
             }
             other => panic!("expected lookback, got {other:?}"),
         }
+    }
+
+    /// The window-barrier product and the booking-model selector decode from the
+    /// browser JSON path (the GUI/Excel transport). The exact wire shape: a
+    /// `window_barrier` product key carrying a nested `vanilla`, `barrier`,
+    /// `side`, `window_start`, `window_end`, optional `mc_pairs`/`mc_steps`/
+    /// `mc_seed`; and a top-level `pricing_model` integer on the instrument
+    /// (0 = DEFAULT, 1 = LOCAL_STOCH_VOL).
+    #[test]
+    fn window_barrier_and_pricing_model_decode_from_json() {
+        let instr = instrument_from_json(&json!({
+            "expiry_years": 1.0,
+            "pricing_model": 1,
+            "window_barrier": {
+                "vanilla": { "option_type": 0, "strike": { "strike": 1.10 } },
+                "barrier": 1.30,
+                "side": 0,
+                "window_start": 0.25,
+                "window_end": 0.75,
+                "mc_pairs": 8000,
+                "mc_steps": 64,
+                "mc_seed": 42
+            }
+        }))
+        .expect("decode window barrier");
+        assert_eq!(
+            instr.pricing_model,
+            celnet_proto::PricingModel::LocalStochVol as i32,
+            "the top-level pricing_model selector decodes"
+        );
+        match instr.product {
+            Some(instrument::Product::WindowBarrier(w)) => {
+                let v = w.vanilla.expect("window barrier carries a vanilla");
+                assert_eq!(v.option_type, celnet_proto::OptionType::Call as i32);
+                assert_eq!(w.barrier.to_bits(), 1.30_f64.to_bits());
+                assert_eq!(w.side, celnet_proto::BarrierSide::Up as i32);
+                assert_eq!(w.window_start.to_bits(), 0.25_f64.to_bits());
+                assert_eq!(w.window_end.to_bits(), 0.75_f64.to_bits());
+                assert_eq!(w.mc_pairs, 8000);
+                assert_eq!(w.mc_steps, 64);
+                assert_eq!(w.mc_seed, 42);
+            }
+            other => panic!("expected window_barrier, got {other:?}"),
+        }
+
+        // An absent pricing_model decodes to DEFAULT (proto3 zero) — existing
+        // browser requests are unchanged.
+        let plain = instrument_from_json(&json!({
+            "expiry_years": 1.0,
+            "vanilla": { "option_type": 0, "strike": { "strike": 1.10 } }
+        }))
+        .expect("decode plain vanilla");
+        assert_eq!(
+            plain.pricing_model,
+            celnet_proto::PricingModel::Default as i32
+        );
     }
 
     /// A delta-specified strike decodes to the `delta` oneof arm.

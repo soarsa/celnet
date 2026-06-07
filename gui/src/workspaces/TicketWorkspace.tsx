@@ -24,6 +24,8 @@ import type {
   LookbackStyle,
   MarketContext,
   OptionType,
+  PricingModel,
+  Product,
   QuantoPayoff,
   Quote,
   StrategyKind,
@@ -51,11 +53,13 @@ import {
   quantoInstrument,
   singleBarrierInstrument,
   strategyInstrument,
+  bookingModelsFor,
   tarfInstrument,
   touchInstrument,
   vanillaInstrument,
   varianceSwapInstrument,
   volatilitySwapInstrument,
+  windowBarrierInstrument,
   tenorYearsToTenor,
   type AccumulatorTerms,
   type AsianTerms,
@@ -68,6 +72,7 @@ import {
   type SingleBarrierTerms,
   type TarfTerms,
   type TouchTerms,
+  type WindowBarrierTerms,
 } from "../data/seed";
 import { forward as forwardRate, strikeFromDelta } from "../data/pricing";
 import { impliedVolForInstrument, sampleSurface } from "../data/surface";
@@ -101,7 +106,8 @@ type Structure =
   | "QUANTO"
   | "TARF"
   | "ACCUMULATOR"
-  | "LOOKBACK";
+  | "LOOKBACK"
+  | "WINDOW_BARRIER";
 
 /**
  * True for the products that render their own input block instead of the vanilla/
@@ -122,8 +128,59 @@ function isLegless(s: Structure): boolean {
     s === "QUANTO" ||
     s === "TARF" ||
     s === "ACCUMULATOR" ||
-    s === "LOOKBACK"
+    s === "LOOKBACK" ||
+    s === "WINDOW_BARRIER"
   );
+}
+
+/**
+ * The GUI product-oneof `kind` a structure builds — used to resolve which booking
+ * models the structure may be priced under (`bookingModelsFor`). The strategies
+ * map to `strategy`; everything else maps to its own oneof arm.
+ */
+function productKindFor(s: Structure): Product["kind"] {
+  switch (s) {
+    case "VANILLA":
+      return "vanilla";
+    case "RISK_REVERSAL":
+    case "STRANGLE":
+    case "STRADDLE":
+    case "SEAGULL":
+      return "strategy";
+    case "SINGLE_BARRIER":
+      return "singleBarrier";
+    case "DOUBLE_BARRIER":
+      return "doubleBarrier";
+    case "DIGITAL":
+      return "digital";
+    case "TOUCH":
+      return "touch";
+    case "VARIANCE_SWAP":
+      return "varianceSwap";
+    case "VOLATILITY_SWAP":
+      return "volatilitySwap";
+    case "ASIAN":
+      return "asianOption";
+    case "FORWARD_START":
+      return "forwardStart";
+    case "CLIQUET":
+      return "cliquet";
+    case "QUANTO":
+      return "quanto";
+    case "TARF":
+      return "tarf";
+    case "ACCUMULATOR":
+      return "accumulator";
+    case "LOOKBACK":
+      return "lookback";
+    case "WINDOW_BARRIER":
+      return "windowBarrier";
+  }
+}
+
+/** A trader-facing label for a booking model (purpose-named; provenance in docs only). */
+function pricingModelLabel(m: PricingModel): string {
+  return m === "LOCAL_STOCH_VOL" ? "Local-Stoch-Vol" : "Default";
 }
 
 /** True for the variance/volatility swaps (priced as a fair strike, not a premium). */
@@ -182,6 +239,7 @@ const STRUCTURES: { id: Structure; label: string }[] = [
   { id: "TARF", label: "TARF" },
   { id: "ACCUMULATOR", label: "Accumulator" },
   { id: "LOOKBACK", label: "Lookback" },
+  { id: "WINDOW_BARRIER", label: "Window Barrier" },
 ];
 
 /** The Asian-specific ticket inputs (option type / strike / schedule / method). */
@@ -628,6 +686,79 @@ function lookbackTerms(l: LookbackInputs, atmForward: number): LookbackTerms {
   };
 }
 
+/**
+ * The window-barrier ticket inputs (option / strike / barrier / side / active
+ * window / MC). The window barrier has no closed form, so it is priced ONLY by the
+ * server's local-stochastic-volatility engine (the booking model is locked to
+ * LOCAL_STOCH_VOL for it). `strike` 0 ⇒ default to the ATM-forward level; the
+ * barrier defaults off spot on the chosen side; the active window defaults to the
+ * middle half of the option's life. `mcPairs` 0 ⇒ the exact ADI PDE (no
+ * std-error); `mcPairs > 0` ⇒ Monte-Carlo (surfaces a stderr).
+ */
+interface WindowBarrierInputs {
+  optionType: OptionType;
+  /** Strike as an absolute level; `0` ⇒ default to the ATM-forward level. */
+  strike: number;
+  side: BarrierSide;
+  /** The barrier level (absolute quote); `0` ⇒ a sensible default off spot. */
+  barrier: number;
+  /** Active-window open as a FRACTION of the option's life (`0 ≤ start < end ≤ 1`). */
+  windowStartFrac: number;
+  /** Active-window close as a fraction of the option's life. */
+  windowEndFrac: number;
+  mcPairs: number;
+  mcSteps: number;
+  mcSeed: bigint;
+}
+
+const DEFAULT_WINDOW_BARRIER: WindowBarrierInputs = {
+  optionType: "CALL",
+  strike: 0,
+  side: "UP",
+  barrier: 0,
+  windowStartFrac: 0.25,
+  windowEndFrac: 0.75,
+  mcPairs: 0,
+  mcSteps: 64,
+  mcSeed: 0x42n,
+};
+
+/**
+ * Build `WindowBarrierTerms` from the inputs. The strike defaults to the
+ * ATM-forward level; the barrier defaults off spot on the chosen side; the active
+ * window fractions are clamped well-ordered (`0 ≤ start < end ≤ 1`) and scaled by
+ * the expiry to absolute year fractions.
+ */
+function windowBarrierTerms(
+  w: WindowBarrierInputs,
+  atmForward: number,
+  spot: number,
+  expiryYears: number,
+): WindowBarrierTerms {
+  const strike = w.strike > 0 ? w.strike : atmForward;
+  const defaultBarrier = w.side === "UP" ? spot * 1.05 : spot * 0.95;
+  const barrier = w.barrier > 0 ? w.barrier : defaultBarrier;
+  let startFrac = Math.min(Math.max(w.windowStartFrac, 0), 1);
+  let endFrac = Math.min(Math.max(w.windowEndFrac, 0), 1);
+  // Keep the window strictly well-ordered (0 ≤ start < end ≤ 1) so the engine is
+  // in domain; fall back to the middle half if the trader inverted them.
+  if (startFrac >= endFrac) {
+    startFrac = 0.25;
+    endFrac = 0.75;
+  }
+  return {
+    optionType: w.optionType,
+    strike: { kind: "strike", strike },
+    barrier,
+    side: w.side,
+    windowStart: startFrac * expiryYears,
+    windowEnd: endFrac * expiryYears,
+    mcPairs: Math.max(0, Math.trunc(w.mcPairs)),
+    mcSteps: Math.max(0, Math.trunc(w.mcSteps)),
+    mcSeed: w.mcSeed,
+  };
+}
+
 /** Today (UTC, calendar-only) as a `BrokenDate` — the trade date for date math. */
 function todayUtc(): BrokenDate {
   const d = new Date();
@@ -685,6 +816,8 @@ interface BuildExtras {
   accumulator: AccumulatorTerms;
   /** Lookback terms (style / option / monitoring / strike / observations / MC). */
   lookback: LookbackTerms;
+  /** Window-barrier terms (option / strike / barrier / side / active window / MC). */
+  windowBarrier: WindowBarrierTerms;
 }
 
 function buildInstrument(
@@ -694,6 +827,7 @@ function buildInstrument(
   tenorYears: number,
   notionalMm: number,
   extras: BuildExtras,
+  pricingModel: PricingModel,
 ): Instrument {
   let base: Instrument;
   switch (structure) {
@@ -744,13 +878,27 @@ function buildInstrument(
     case "LOOKBACK":
       base = lookbackInstrument(pair, tenorYears, notionalMm, extras.lookback);
       break;
+    case "WINDOW_BARRIER":
+      // The window-barrier builder pre-selects LOCAL_STOCH_VOL (it has no closed
+      // form); the explicit stamp below keeps it locked there regardless.
+      base = windowBarrierInstrument(pair, tenorYears, notionalMm, extras.windowBarrier);
+      break;
     default:
       base = strategyInstrument(pair, tenorYears, structure, notionalMm);
       break;
   }
   // Stamp the trader-facing tenor (ON/TN/SN/IMM/BROKEN_DATE) onto the instrument;
   // `expiryYears` stays authoritative for pricing (see celnet.proto Instrument).
-  return { ...base, tenor };
+  // Stamp the selected booking model (`Instrument.pricing_model`, proto field 22):
+  // for the window barrier it is locked to LOCAL_STOCH_VOL (no closed form);
+  // otherwise it is the trader's selection (DEFAULT for the unsupported products).
+  // DEFAULT is presence-omitted on the wire so an analytic instrument is
+  // byte-identical to the legacy frame (see wsCodec.instrumentToWire).
+  const resolvedModel: PricingModel =
+    structure === "WINDOW_BARRIER" ? "LOCAL_STOCH_VOL" : pricingModel;
+  const instrument: Instrument = { ...base, tenor };
+  if (resolvedModel !== "DEFAULT") instrument.pricingModel = resolvedModel;
+  return instrument;
 }
 
 export function TicketWorkspace(): React.ReactElement {
@@ -793,6 +941,13 @@ export function TicketWorkspace(): React.ReactElement {
   const [accumulatorInputs, setAccumulatorInputs] =
     useState<AccumulatorInputs>(DEFAULT_ACCUMULATOR);
   const [lookbackInputs, setLookbackInputs] = useState<LookbackInputs>(DEFAULT_LOOKBACK);
+  // Wave-6 product input: window barrier (LOCAL_STOCH_VOL-only — no closed form).
+  const [windowBarrierInputs, setWindowBarrierInputs] =
+    useState<WindowBarrierInputs>(DEFAULT_WINDOW_BARRIER);
+  // The selected booking/pricing model (`Instrument.pricing_model`). DEFAULT (the
+  // per-product closed-form engine) unless the trader picks Local-Stoch-Vol for a
+  // supported product; the window barrier locks it to LOCAL_STOCH_VOL.
+  const [pricingModel, setPricingModel] = useState<PricingModel>("DEFAULT");
 
   const today = useMemo(() => todayUtc(), []);
   // Selectable broken-date window: from spot (~2 calendar days) out to ~3 years.
@@ -849,6 +1004,7 @@ export function TicketWorkspace(): React.ReactElement {
       tarf: tarfTerms(tarfInputs, atmForward, tenorYears),
       accumulator: accumulatorTerms(accumulatorInputs, atmForward, tenorYears),
       lookback: lookbackTerms(lookbackInputs, atmForward),
+      windowBarrier: windowBarrierTerms(windowBarrierInputs, atmForward, spot, tenorYears),
     }),
     [
       singleBarrierInputs,
@@ -863,11 +1019,34 @@ export function TicketWorkspace(): React.ReactElement {
       tarfInputs,
       accumulatorInputs,
       lookbackInputs,
+      windowBarrierInputs,
       atmForward,
       spot,
       tenorYears,
     ],
   );
+
+  // The booking models the active structure may be priced under (every product
+  // supports DEFAULT; the LSV-supported ones add LOCAL_STOCH_VOL; the window
+  // barrier supports ONLY LOCAL_STOCH_VOL). The model selector is shown only when
+  // there is a real choice (≥2 models). The EFFECTIVE model is the trader's
+  // selection clamped into the structure's allowed set — so switching to a product
+  // that does not support LSV silently falls back to DEFAULT (never sends a model
+  // the server would reject with `UnsupportedModel`).
+  const allowedModels = useMemo(
+    () => bookingModelsFor(productKindFor(structure)),
+    [structure],
+  );
+  const effectiveModel: PricingModel = allowedModels.includes(pricingModel)
+    ? pricingModel
+    : allowedModels[0]!;
+
+  // Offline (the in-app mock) the LSV engine is NOT available — it is a server-side
+  // model (CLAUDE.md: no faked LSV numbers). Detect offline via the documented
+  // transport label ("mock/replay"; the live transport's label starts with "live").
+  // When LSV is the effective model offline, pricing is gated to the live server.
+  const isOffline = !app.transport.label.startsWith("live");
+  const lsvUnavailableOffline = isOffline && effectiveModel === "LOCAL_STOCH_VOL";
 
   const instrument = buildInstrument(
     structure,
@@ -876,6 +1055,7 @@ export function TicketWorkspace(): React.ReactElement {
     tenorYears,
     notionalMm,
     extras,
+    effectiveModel,
   );
 
   // Total-variance interpolation in time of the marked surface's ATM term
@@ -925,6 +1105,13 @@ export function TicketWorkspace(): React.ReactElement {
     : app.pairCtx.market.vol;
 
   const requestQuote = useCallback(async () => {
+    // The LSV engine is server-side: do not request a price offline for an
+    // LSV-priced instrument (the mock would have to fake it). Surface the honest
+    // gate instead of dialling a price.
+    if (lsvUnavailableOffline) {
+      setFill("Local-Stoch-Vol pricing is server-side — run against the live server.");
+      return;
+    }
     setBusy(true);
     setFill(null);
     const inst = buildInstrument(
@@ -934,6 +1121,7 @@ export function TicketWorkspace(): React.ReactElement {
       tenorYears,
       notionalMm,
       extras,
+      effectiveModel,
     );
     const q = await app.transport.requestQuote(
       inst,
@@ -942,7 +1130,16 @@ export function TicketWorkspace(): React.ReactElement {
     );
     setQuote(q);
     setBusy(false);
-  }, [app, structure, resolved.tenor, tenorYears, notionalMm, extras]);
+  }, [
+    app,
+    structure,
+    resolved.tenor,
+    tenorYears,
+    notionalMm,
+    extras,
+    effectiveModel,
+    lsvUnavailableOffline,
+  ]);
 
   const accept = useCallback(
     async (side: "BUY" | "SELL") => {
@@ -1021,6 +1218,41 @@ export function TicketWorkspace(): React.ReactElement {
             </label>
           </div>
         </div>
+
+        {allowedModels.length > 1 || structure === "WINDOW_BARRIER" ? (
+          <div className={styles.modelBlock}>
+            <div className={styles.modelRow}>
+              <span className={styles.modelLabel}>Booking model</span>
+              <div className={styles.modeToggle} role="tablist" aria-label="booking model">
+                {allowedModels.map((m) => (
+                  <button
+                    key={m}
+                    role="tab"
+                    aria-selected={effectiveModel === m}
+                    className={`${styles.modeTab} ${effectiveModel === m ? styles.modeActive : ""}`}
+                    disabled={allowedModels.length === 1}
+                    onClick={() => {
+                      setPricingModel(m);
+                      setQuote(null);
+                    }}
+                  >
+                    {pricingModelLabel(m)}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {effectiveModel === "LOCAL_STOCH_VOL" && (
+              <p className={styles.modelNote}>
+                {structure === "WINDOW_BARRIER"
+                  ? "The window barrier has no closed form — it is priced only by the server's local-stochastic-volatility engine (ADI-PDE, or Monte-Carlo when MC pairs > 0)."
+                  : "Priced by the server's local-stochastic-volatility engine (particle-calibrated to the live surface) instead of the closed-form default."}
+                {lsvUnavailableOffline
+                  ? " Offline preview: this model is server-side only — run against the live server to price it."
+                  : ""}
+              </p>
+            )}
+          </div>
+        ) : null}
 
         <div className={styles.expiryBlock}>
           <div className={styles.expiryModeRow}>
@@ -1184,6 +1416,11 @@ export function TicketWorkspace(): React.ReactElement {
               setLookbackInputs(next);
               setQuote(null);
             }}
+            windowBarrier={windowBarrierInputs}
+            onWindowBarrier={(next) => {
+              setWindowBarrierInputs(next);
+              setQuote(null);
+            }}
           />
         ) : (
           <div className={styles.legs}>
@@ -1279,15 +1516,17 @@ export function TicketWorkspace(): React.ReactElement {
             size="lg"
             onClick={requestQuote}
             kbd="⏎"
-            disabled={busy || !expiryReady}
+            disabled={busy || !expiryReady || lsvUnavailableOffline}
           >
             {busy
               ? "Pricing…"
               : !expiryReady
                 ? "Pick a date"
-                : quote
-                  ? "Re-request"
-                  : "Request quote"}
+                : lsvUnavailableOffline
+                  ? "LSV — live server only"
+                  : quote
+                    ? "Re-request"
+                    : "Request quote"}
           </Button>
           {quote && (
             <>
@@ -1381,6 +1620,7 @@ function describeLegs(
     case "tarf":
     case "accumulator":
     case "lookback":
+    case "windowBarrier":
       // Barrier / digital / touch / vol-strip / average-rate / reset / converted /
       // path-dependent products carry no enumerable option legs; the ticket renders
       // their own input block instead of a leg ladder.
@@ -1426,6 +1666,8 @@ function structureLabel(s: Structure): string {
       return "accumulator";
     case "LOOKBACK":
       return "lookback";
+    case "WINDOW_BARRIER":
+      return "window barrier";
   }
 }
 
@@ -1492,6 +1734,8 @@ function ProductInputs(props: {
   onAccumulator: (next: AccumulatorInputs) => void;
   lookback: LookbackInputs;
   onLookback: (next: LookbackInputs) => void;
+  windowBarrier: WindowBarrierInputs;
+  onWindowBarrier: (next: WindowBarrierInputs) => void;
 }): React.ReactElement {
   const {
     structure,
@@ -1522,6 +1766,8 @@ function ProductInputs(props: {
     onAccumulator,
     lookback,
     onLookback,
+    windowBarrier,
+    onWindowBarrier,
   } = props;
 
   if (structure === "SINGLE_BARRIER") {
@@ -2482,6 +2728,143 @@ function ProductInputs(props: {
           {isDiscrete
             ? "Discrete-monitored lookback: the extremum is sampled on a finite observation grid, so it is priced by antithetic Monte-Carlo and reports a standard error."
             : "Continuous-monitored lookback: priced by the exact closed form on the running path extremum (no Monte-Carlo error)."}
+        </p>
+      </div>
+    );
+  }
+
+  if (structure === "WINDOW_BARRIER") {
+    const step = Math.pow(10, -pipDecimals);
+    return (
+      <div className={styles.product}>
+        <div className={styles.productRow}>
+          <span className={styles.productLabel}>Option</span>
+          <OptionToggle
+            value={windowBarrier.optionType}
+            onChange={(ot) => onWindowBarrier({ ...windowBarrier, optionType: ot })}
+          />
+          <label className={styles.productField}>
+            <span>Strike</span>
+            <input
+              className="num"
+              type="number"
+              min={0}
+              step={step}
+              value={windowBarrier.strike}
+              aria-label="strike"
+              placeholder={atmForward.toFixed(pipDecimals)}
+              onChange={(ev) =>
+                onWindowBarrier({ ...windowBarrier, strike: Math.max(0, Number(ev.target.value)) })
+              }
+            />
+            <span>{windowBarrier.strike > 0 ? "" : `ATMF ${fmtRate(atmForward, pipDecimals)}`}</span>
+          </label>
+        </div>
+        <div className={styles.productRow}>
+          <span className={styles.productLabel}>Knock-out</span>
+          <div className={styles.toggleGroup} role="tablist" aria-label="barrier side">
+            {(["UP", "DOWN"] as BarrierSide[]).map((bs) => (
+              <button
+                key={bs}
+                role="tab"
+                aria-selected={windowBarrier.side === bs}
+                className={`${styles.modeTab} ${windowBarrier.side === bs ? styles.modeActive : ""}`}
+                onClick={() => onWindowBarrier({ ...windowBarrier, side: bs })}
+              >
+                {bs === "UP" ? "Up" : "Down"}
+              </button>
+            ))}
+          </div>
+          <label className={styles.productField}>
+            <span>Barrier</span>
+            <input
+              className="num"
+              type="number"
+              min={0}
+              step={step}
+              value={windowBarrier.barrier}
+              aria-label="barrier"
+              placeholder={(windowBarrier.side === "UP" ? spot * 1.05 : spot * 0.95).toFixed(
+                pipDecimals,
+              )}
+              onChange={(ev) =>
+                onWindowBarrier({ ...windowBarrier, barrier: Math.max(0, Number(ev.target.value)) })
+              }
+            />
+            <span>
+              {windowBarrier.barrier > 0
+                ? ""
+                : fmtRate(windowBarrier.side === "UP" ? spot * 1.05 : spot * 0.95, pipDecimals)}
+            </span>
+          </label>
+        </div>
+        <div className={styles.productRow}>
+          <label className={styles.productField}>
+            <span>Window start</span>
+            <input
+              className="num"
+              type="number"
+              min={0}
+              max={1}
+              step={0.05}
+              value={windowBarrier.windowStartFrac}
+              aria-label="window start"
+              onChange={(ev) =>
+                onWindowBarrier({
+                  ...windowBarrier,
+                  windowStartFrac: Math.min(1, Math.max(0, Number(ev.target.value))),
+                })
+              }
+            />
+            <span>·T</span>
+          </label>
+          <label className={styles.productField}>
+            <span>Window end</span>
+            <input
+              className="num"
+              type="number"
+              min={0}
+              max={1}
+              step={0.05}
+              value={windowBarrier.windowEndFrac}
+              aria-label="window end"
+              onChange={(ev) =>
+                onWindowBarrier({
+                  ...windowBarrier,
+                  windowEndFrac: Math.min(1, Math.max(0, Number(ev.target.value))),
+                })
+              }
+            />
+            <span>·T</span>
+          </label>
+          <label className={styles.productField}>
+            <span>MC pairs</span>
+            <input
+              className="num"
+              type="number"
+              min={0}
+              step={1000}
+              value={windowBarrier.mcPairs}
+              aria-label="mc pairs"
+              onChange={(ev) =>
+                onWindowBarrier({
+                  ...windowBarrier,
+                  mcPairs: Math.max(0, Math.trunc(Number(ev.target.value))),
+                })
+              }
+            />
+            <span>{windowBarrier.mcPairs > 0 ? "pairs" : "PDE"}</span>
+          </label>
+        </div>
+        <p className={styles.productNote}>
+          Window barrier: a {windowBarrier.side === "UP" ? "up" : "down"}-and-out{" "}
+          {windowBarrier.optionType === "CALL" ? "call" : "put"} whose barrier is active only during
+          the window [{windowBarrier.windowStartFrac.toFixed(2)}·T, {windowBarrier.windowEndFrac.toFixed(2)}·T].
+          No closed form — priced server-side on the local-stochastic-volatility engine:{" "}
+          {windowBarrier.mcPairs > 0
+            ? "Monte-Carlo (reports a standard error)"
+            : "the exact ADI PDE (no standard error)"}
+          .
         </p>
       </div>
     );

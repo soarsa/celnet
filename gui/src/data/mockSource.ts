@@ -874,6 +874,21 @@ function freezeStrikes(instrument: Instrument, m: MarketContext): Instrument {
         },
       };
     }
+    case "windowBarrier": {
+      // Like the single/double barrier, the window barrier wraps a delta-able
+      // vanilla strike — freeze it so a scenario shock moves a real position.
+      const b = instrument.product.windowBarrier;
+      return {
+        ...instrument,
+        product: {
+          kind: "windowBarrier",
+          windowBarrier: {
+            ...b,
+            vanilla: { ...b.vanilla, strike: freezeStrike(b.vanilla.strike) },
+          },
+        },
+      };
+    }
     case "digital":
     case "touch":
     case "varianceSwap":

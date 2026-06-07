@@ -37,6 +37,7 @@ import type {
   MarketObservable,
   MonitoringStyle,
   OptionType,
+  PricingModel,
   Product,
   QuantoPayoff,
   Side,
@@ -49,6 +50,7 @@ import type {
   TenorUnit,
   Touch,
   TouchKind,
+  WindowBarrier,
 } from "../contract/contract";
 import type {
   AdditiveRisk,
@@ -60,7 +62,7 @@ import type {
   RiskPosition,
   RiskScope,
 } from "../contract/riskCodec";
-import { SMILE_MODEL_MEMBERS } from "../contract/enums";
+import { PRICING_MODEL_MEMBERS, SMILE_MODEL_MEMBERS } from "../contract/enums";
 
 /** The canonical desk default convention (spot-unadjusted Δ / ATM-forward / …),
  * matching the server fixture (`crates/celnet-server/tests/common` wire_conventions).
@@ -206,6 +208,40 @@ export function parseSmileModel(raw: string | undefined): SmileModel {
       throw new ShapingError(
         `invalid smile model \`${raw}\` (expected one of: ${SMILE_MODEL_MEMBERS.join(", ")}; ` +
           `or the trader short names VV, SABR, SVI, SSVI, ESSVI)`,
+      );
+  }
+}
+
+/**
+ * Parse a booking / pricing-model selector string into the contract
+ * `PricingModel`. Accepts the trader-facing short name (`LSV`) and the canonical
+ * contract names (`DEFAULT`/`ANALYTIC`, `LOCAL_STOCH_VOL`/`LOCAL-STOCH-VOL`),
+ * case-insensitive. Empty/absent ⇒ `DEFAULT` (the product's native analytic
+ * engine), so an omitted argument is the unchanged current behaviour. The
+ * rejection message lists the canonical members straight from
+ * `PRICING_MODEL_MEMBERS` (the same list the wire codec is built from) so it can
+ * never drift from the supported set. Method provenance (the local-stochastic-
+ * volatility / leverage-surface construction) stays in doc comments only; the
+ * trader-facing name is the purpose-named `LOCAL_STOCH_VOL`.
+ */
+export function parsePricingModel(raw: string | undefined): PricingModel {
+  const s = (raw ?? "").trim().toUpperCase();
+  switch (s) {
+    case "":
+    case "DEFAULT":
+    case "ANALYTIC":
+    case "CLOSED_FORM":
+    case "CLOSED-FORM":
+      return "DEFAULT";
+    case "LSV":
+    case "LOCAL_STOCH_VOL":
+    case "LOCAL-STOCH-VOL":
+    case "LOCAL_STOCHASTIC_VOLATILITY":
+      return "LOCAL_STOCH_VOL";
+    default:
+      throw new ShapingError(
+        `invalid pricing model \`${raw}\` (expected one of: ${PRICING_MODEL_MEMBERS.join(", ")}; ` +
+          `or the trader short names ANALYTIC, LSV)`,
       );
   }
 }
@@ -1390,6 +1426,15 @@ export interface BarrierArgs {
   readonly side?: string | undefined;
   readonly rebate?: number | undefined;
   readonly monitoring?: string | undefined;
+  /**
+   * Optional booking model: `ANALYTIC`/`DEFAULT` (closed-form, the default) or
+   * `LSV`/`LOCAL_STOCH_VOL` (the local-stochastic-volatility ADI-PDE engine). The
+   * server prices a single-barrier (continuously-monitored knock-out) under LSV;
+   * selecting LSV for a DOUBLE barrier is a server `INVALID_ARGUMENT` (the LSV
+   * engine prices single-barrier and window-barrier knock-outs only) — surfaced
+   * honestly to the cell, never a silent fallback.
+   */
+  readonly model?: string | undefined;
 }
 
 /**
@@ -1410,12 +1455,18 @@ export function shapeBarrier(args: BarrierArgs): Instrument {
   const kind = parseBarrierKind(args.kind);
   const rebate = shapeRebate(args.rebate);
   const monitoring = parseMonitoringStyle(args.monitoring);
+  // The booking model travels uniformly on the instrument (proto field 22), so a
+  // single- OR double-barrier ticket can be quoted under LSV (the server prices
+  // single-barrier KO under LSV and rejects a double barrier with INVALID_ARGUMENT —
+  // surfaced honestly, never silently). DEFAULT keeps the wire byte-identical.
+  const pricingModel = parsePricingModel(args.model);
   const base = {
     pair,
     tenor,
     expiryYears,
     quantity: { notional: args.notional, baseCcy: true },
     side: "TWO_WAY" as Side,
+    pricingModel,
   };
   if (args.upperBarrier !== undefined) {
     // Double-barrier: `barrier` is the lower, `upperBarrier` the upper; reject a
@@ -1451,6 +1502,87 @@ export function shapeBarrier(args: BarrierArgs): Instrument {
     monitoring,
   };
   return { ...base, product: { kind: "singleBarrier", singleBarrier } };
+}
+
+/** The fully-parsed inputs the CELNET.WINDOWBARRIER function shapes into a request. */
+export interface WindowBarrierArgs {
+  readonly pair: string;
+  readonly tenor: string;
+  readonly strikeOrDelta: string | number;
+  readonly callPut: string;
+  readonly notional: number;
+  /** The knock-out barrier level (quote per 1 unit of base). */
+  readonly barrier: number;
+  /** UP (up-and-out, default) or DOWN (down-and-out) — a window barrier is always KO. */
+  readonly side?: string | undefined;
+  /** The start of the active window, in years (`>= 0`, default 0 — a "front" partial). */
+  readonly windowStart?: number | undefined;
+  /** The end of the active window, in years (`> windowStart`, `<= expiry`; default expiry — a "back" partial). */
+  readonly windowEnd?: number | undefined;
+  /** Optional MC antithetic pairs: `0`/absent ⇒ the exact ADI-PDE engine (no std-error). */
+  readonly mcPairs?: number | undefined;
+  /** Optional MC time steps (ignored when mcPairs == 0; `0` ⇒ server default). */
+  readonly mcSteps?: number | undefined;
+  /** Optional MC seed (bit-reproducible; ignored when mcPairs == 0). */
+  readonly mcSeed?: number | undefined;
+}
+
+/** Validate a window endpoint in years (finite, non-negative). */
+function shapeWindowYears(raw: number, what: string): number {
+  if (!Number.isFinite(raw) || raw < 0) {
+    throw new ShapingError(`${what} \`${raw}\` must be a finite, non-negative year fraction`);
+  }
+  return raw;
+}
+
+/**
+ * Shape a window (partial-time) barrier from the cell arguments. A window barrier
+ * is ALWAYS a knock-out that is active only inside `[windowStart, windowEnd] ⊆
+ * [0, expiry]` and has no closed form, so it is shaped with `pricingModel`
+ * LOCAL_STOCH_VOL already selected (the server rejects DEFAULT for it). The window
+ * defaults to the full life (`[0, expiry]`); supplying only `windowStart` makes a
+ * "back" partial, only `windowEnd` a "front" partial. `mcPairs > 0` selects the
+ * Monte-Carlo engine (the reply then carries a `priceStdError`); `0` selects the
+ * exact ADI-PDE engine. `side` on the instrument is TWO_WAY (the cell reads a
+ * market). The function pre-selects LSV so the trader needs no separate model arg.
+ */
+export function shapeWindowBarrier(args: WindowBarrierArgs): Instrument {
+  const { pair, tenor, expiryYears } = shapeSwapBase(args);
+  const vanilla = {
+    optionType: parseOptionType(args.callPut),
+    strike: parseStrikeOrDelta(args.strikeOrDelta),
+  };
+  const windowStart = shapeWindowYears(args.windowStart ?? 0, "window start");
+  const windowEnd = shapeWindowYears(args.windowEnd ?? expiryYears, "window end");
+  if (windowEnd <= windowStart) {
+    throw new ShapingError(
+      `window end \`${windowEnd}\` must be strictly after window start \`${windowStart}\``,
+    );
+  }
+  if (windowEnd > expiryYears) {
+    throw new ShapingError(
+      `window end \`${windowEnd}\` must not exceed the expiry \`${expiryYears}\` years`,
+    );
+  }
+  const windowBarrier: WindowBarrier = {
+    vanilla,
+    barrier: shapeBarrierLevel(args.barrier, "barrier"),
+    side: parseBarrierSide(args.side),
+    windowStart,
+    windowEnd,
+    mcPairs: shapeMcPairs(args.mcPairs),
+    mcSteps: shapeMcPairs(args.mcSteps),
+    mcSeed: shapeMcSeed(args.mcSeed),
+  };
+  return {
+    pair,
+    tenor,
+    expiryYears,
+    quantity: { notional: args.notional, baseCcy: true },
+    side: "TWO_WAY" as Side,
+    pricingModel: "LOCAL_STOCH_VOL",
+    product: { kind: "windowBarrier", windowBarrier },
+  };
 }
 
 /** The fully-parsed inputs the CELNET.DIGITAL function shapes into a request. */
@@ -2181,6 +2313,10 @@ function canonicalInstrument(i: Instrument): unknown {
     n: i.quantity.notional,
     bc: i.quantity.baseCcy,
     side: i.side,
+    // The booking model materially changes the priced value (LSV vs analytic for
+    // the supported products), so two cells that differ only in model must NOT
+    // coalesce onto one subscription. Absent ⇒ DEFAULT (the canonical default).
+    pm: i.pricingModel ?? "DEFAULT",
     product,
   };
 }
@@ -2312,6 +2448,19 @@ function canonicalProduct(p: Product): unknown {
         obs: p.lookback.observations,
         mcp: p.lookback.mcPairs,
         mcs: p.lookback.mcSeed.toString(),
+      };
+    case "windowBarrier":
+      return {
+        k: "wbar",
+        ot: p.windowBarrier.vanilla.optionType,
+        strike: canonicalStrike(p.windowBarrier.vanilla.strike),
+        bar: p.windowBarrier.barrier,
+        bs: p.windowBarrier.side,
+        ws: p.windowBarrier.windowStart,
+        we: p.windowBarrier.windowEnd,
+        mcp: p.windowBarrier.mcPairs,
+        mst: p.windowBarrier.mcSteps,
+        mcs: p.windowBarrier.mcSeed.toString(),
       };
   }
 }

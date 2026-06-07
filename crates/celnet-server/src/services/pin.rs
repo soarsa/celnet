@@ -112,6 +112,7 @@ mod tests {
             quantity: None,
             side: celnet_proto::Side::TwoWay as i32,
             solve: None,
+            pricing_model: celnet_proto::PricingModel::Default as i32,
             product: Some(instrument::Product::Vanilla(Vanilla {
                 option_type: celnet_proto::OptionType::Call as i32,
                 strike: Some(StrikeOrDelta {

@@ -158,6 +158,7 @@ mod tests {
                 target: solve::Target::None as i32,
                 target_premium: 0.0,
             }),
+            pricing_model: PricingModel::Default as i32,
             product: Some(instrument::Product::Vanilla(Vanilla {
                 option_type: OptionType::Call as i32,
                 strike: Some(StrikeOrDelta {
@@ -242,6 +243,7 @@ mod tests {
                 target: solve::Target::Strike as i32,
                 target_premium: 0.0,
             }),
+            pricing_model: PricingModel::Default as i32,
             product: Some(instrument::Product::Strategy(Strategy {
                 kind: StrategyKind::RiskReversal as i32,
                 legs: vec![
@@ -262,6 +264,7 @@ mod tests {
             quantity: Some(sample_quantity()),
             side: Side::Buy as i32,
             solve: None,
+            pricing_model: PricingModel::Default as i32,
             product: Some(instrument::Product::SingleBarrier(SingleBarrier {
                 vanilla: Some(Vanilla {
                     option_type: OptionType::Call as i32,
@@ -285,6 +288,7 @@ mod tests {
             quantity: Some(sample_quantity()),
             side: Side::Buy as i32,
             solve: None,
+            pricing_model: PricingModel::Default as i32,
             product: Some(instrument::Product::DoubleBarrier(DoubleBarrier {
                 vanilla: Some(Vanilla {
                     option_type: OptionType::Put as i32,
@@ -308,6 +312,7 @@ mod tests {
             quantity: Some(sample_quantity()),
             side: Side::Sell as i32,
             solve: None,
+            pricing_model: PricingModel::Default as i32,
             product: Some(instrument::Product::Digital(Digital {
                 option_type: OptionType::Call as i32,
                 strike: 1.12,
@@ -324,6 +329,7 @@ mod tests {
             quantity: Some(sample_quantity()),
             side: Side::Buy as i32,
             solve: None,
+            pricing_model: PricingModel::Default as i32,
             product: Some(instrument::Product::Touch(Touch {
                 kind: TouchKind::DoubleNoTouch as i32,
                 lower_barrier: 1.05,
@@ -344,6 +350,7 @@ mod tests {
             quantity: Some(sample_quantity()),
             side: Side::Buy as i32,
             solve: None,
+            pricing_model: PricingModel::Default as i32,
             product: Some(instrument::Product::VarianceSwap(VarianceSwap {
                 strike_vol: 0.11,
             })),
@@ -357,6 +364,7 @@ mod tests {
             quantity: Some(sample_quantity()),
             side: Side::Sell as i32,
             solve: None,
+            pricing_model: PricingModel::Default as i32,
             product: Some(instrument::Product::VolatilitySwap(VolatilitySwap {
                 strike_vol: 0.0,
             })),
@@ -370,6 +378,7 @@ mod tests {
             quantity: Some(sample_quantity()),
             side: Side::Buy as i32,
             solve: None,
+            pricing_model: PricingModel::Default as i32,
             product: Some(instrument::Product::AsianOption(AsianOption {
                 option_type: OptionType::Call as i32,
                 strike: 1.10,
@@ -392,6 +401,7 @@ mod tests {
             quantity: Some(sample_quantity()),
             side: Side::Buy as i32,
             solve: None,
+            pricing_model: PricingModel::Default as i32,
             product: Some(instrument::Product::ForwardStart(ForwardStart {
                 option_type: OptionType::Call as i32,
                 moneyness: 1.0,
@@ -407,6 +417,7 @@ mod tests {
             quantity: Some(sample_quantity()),
             side: Side::Buy as i32,
             solve: None,
+            pricing_model: PricingModel::Default as i32,
             product: Some(instrument::Product::Cliquet(Cliquet {
                 option_type: OptionType::Call as i32,
                 moneyness: 1.0,
@@ -428,6 +439,7 @@ mod tests {
             quantity: Some(sample_quantity()),
             side: Side::Sell as i32,
             solve: None,
+            pricing_model: PricingModel::Default as i32,
             product: Some(instrument::Product::Quanto(Quanto {
                 payoff: QuantoPayoff::Vanilla as i32,
                 option_type: OptionType::Put as i32,
@@ -448,6 +460,7 @@ mod tests {
             quantity: Some(sample_quantity()),
             side: Side::Sell as i32,
             solve: None,
+            pricing_model: PricingModel::Default as i32,
             product: Some(instrument::Product::Tarf(Tarf {
                 option_type: OptionType::Put as i32,
                 strike: 1.10,
@@ -471,6 +484,7 @@ mod tests {
             quantity: Some(sample_quantity()),
             side: Side::Buy as i32,
             solve: None,
+            pricing_model: PricingModel::Default as i32,
             product: Some(instrument::Product::Accumulator(Accumulator {
                 pivot: 1.10,
                 barrier: 1.16,
@@ -493,6 +507,7 @@ mod tests {
             quantity: Some(sample_quantity()),
             side: Side::Buy as i32,
             solve: None,
+            pricing_model: PricingModel::Default as i32,
             product: Some(instrument::Product::Lookback(Lookback {
                 style: LookbackStyle::Fixed as i32,
                 option_type: OptionType::Call as i32,
@@ -504,6 +519,44 @@ mod tests {
             })),
         };
         round_trip(&lookback);
+    }
+
+    #[test]
+    fn round_trip_window_barrier_and_pricing_model() {
+        // The window-barrier product (LSV-only) round-trips, including the
+        // pricing-model selector carried on the instrument.
+        let window = Instrument {
+            pair: Some(sample_pair()),
+            tenor: Some(sample_tenor()),
+            expiry_years: 1.0,
+            quantity: Some(sample_quantity()),
+            side: Side::Sell as i32,
+            solve: None,
+            pricing_model: PricingModel::LocalStochVol as i32,
+            product: Some(instrument::Product::WindowBarrier(WindowBarrier {
+                vanilla: Some(Vanilla {
+                    option_type: OptionType::Call as i32,
+                    strike: Some(StrikeOrDelta {
+                        spec: Some(strike_or_delta::Spec::Strike(1.10)),
+                    }),
+                }),
+                barrier: 1.30,
+                side: BarrierSide::Up as i32,
+                window_start: 0.25,
+                window_end: 0.75,
+                mc_pairs: 4096,
+                mc_steps: 96,
+                mc_seed: 0x00C0_FFEE,
+            })),
+        };
+        round_trip(&window);
+
+        // The pricing-model selector also round-trips on a plain vanilla, and the
+        // proto3 zero value is the DEFAULT model (so an unset field is DEFAULT).
+        assert_eq!(PricingModel::Default as i32, 0);
+        let mut v = vanilla_instrument();
+        v.pricing_model = PricingModel::LocalStochVol as i32;
+        round_trip(&v);
     }
 
     #[test]

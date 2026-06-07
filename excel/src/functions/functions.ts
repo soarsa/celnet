@@ -58,6 +58,7 @@ import {
   shapeTarf,
   shapeTouch,
   shapeVanillaInstrument,
+  shapeWindowBarrier,
   shapeVarianceSwap,
   shapeVolatilitySwap,
   type SpillMatrix,
@@ -333,7 +334,8 @@ export async function RFQ(
  * @param upperBarrier Optional upper barrier; supplying it makes the ticket a DOUBLE barrier.
  * @param rebate Optional rebate paid on the barrier event (omit => 0).
  * @param monitoring Optional CONTINUOUS (default) or DISCRETE crossing.
- * @returns A spill: premium, the 13 Greeks, and a convention footer.
+ * @param model Optional booking model: ANALYTIC (default, closed-form) or LSV (local-stoch-vol ADI PDE; single-barrier only — a double barrier under LSV is rejected).
+ * @returns A spill: premium, (std_error if LSV-MC), the 13 Greeks, and a convention footer.
  */
 export async function BARRIER(
   pair: string,
@@ -347,6 +349,7 @@ export async function BARRIER(
   upperBarrier?: number,
   rebate?: number,
   monitoring?: string,
+  model?: string,
 ): Promise<SpillMatrix> {
   try {
     const instrument = shapeBarrier({
@@ -361,14 +364,94 @@ export async function BARRIER(
       upperBarrier,
       rebate,
       monitoring,
+      model,
     });
     const quote = await getConnection().requestQuote(
       instrument,
       DEFAULT_CONVENTIONS,
-      `barrier:${pair}:${tenor}:${strikeOrDelta}:${callPut}:${notional}:${barrier}:${kind ?? ""}:${side ?? ""}:${upperBarrier ?? ""}:${rebate ?? ""}:${monitoring ?? ""}`,
+      `barrier:${pair}:${tenor}:${strikeOrDelta}:${callPut}:${notional}:${barrier}:${kind ?? ""}:${side ?? ""}:${upperBarrier ?? ""}:${rebate ?? ""}:${monitoring ?? ""}:${model ?? ""}`,
     );
-    return formatExoticPremiumSpill({
+    // The closed-form (ANALYTIC) barrier is exact (no std-error); the LSV
+    // Monte-Carlo route may carry one — surface it honestly when present.
+    return formatPathDependentSpill({
       premium: quote.greeks.price,
+      stdError: quote.priceStdError,
+      greeks: quote.greeks,
+      conventions: quote.conventions,
+      surfaceVersion: quote.surfaceVersion,
+      epochNanos: quote.epochNanos,
+    });
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
+/**
+ * Price a window (partial-time) barrier as a labelled spill of `["premium", PV]`,
+ * then — ONLY for the Monte-Carlo route — an honest `["std_error", σ̄]` row, then
+ * the 13 risk Greeks and a convention footer. The premium is the server's
+ * `celnet-exotics` value (the same the SDK/CLI read). A window barrier is always a
+ * knock-out that is active ONLY inside `[windowStart, windowEnd] ⊆ [0, expiry]`,
+ * and has NO closed form — it is priced under the LOCAL_STOCH_VOL booking model
+ * (the function selects it; no `model` argument is needed). The window defaults to
+ * the full life `[0, expiry]`; supply `windowStart` for a "back" partial barrier,
+ * `windowEnd` for a "front" partial. `mcPairs > 0` selects the Monte-Carlo engine
+ * (the headline then carries a std-error row); `0` (default) selects the exact
+ * ADI-PDE engine (no std-error).
+ * @customfunction WINDOWBARRIER
+ * @param pair Currency pair, e.g. EURUSD.
+ * @param tenor Tenor, e.g. 1Y.
+ * @param strikeOrDelta Absolute strike (1.12) or delta (25dP, ATM) of the vanilla payoff.
+ * @param callPut C for call, P for put.
+ * @param notional Trade notional in the base currency.
+ * @param barrier Knock-out barrier level (quote per 1 unit of base), e.g. 1.30.
+ * @param side Optional UP (default, up-and-out) or DOWN (down-and-out).
+ * @param windowStart Optional active-window start in years (>= 0; default 0 => front partial).
+ * @param windowEnd Optional active-window end in years (> windowStart, <= expiry; default expiry => back partial).
+ * @param mcPairs Optional Monte-Carlo antithetic pairs (0 => exact ADI-PDE, no std-error).
+ * @param mcSteps Optional Monte-Carlo time steps (ignored when mcPairs = 0; 0 => server default).
+ * @param mcSeed Optional Monte-Carlo seed (bit-reproducible; ignored when mcPairs = 0).
+ * @returns A spill: premium, (std_error if MC), the 13 Greeks, and a convention footer.
+ */
+export async function WINDOWBARRIER(
+  pair: string,
+  tenor: string,
+  strikeOrDelta: string,
+  callPut: string,
+  notional: number,
+  barrier: number,
+  side?: string,
+  windowStart?: number,
+  windowEnd?: number,
+  mcPairs?: number,
+  mcSteps?: number,
+  mcSeed?: number,
+): Promise<SpillMatrix> {
+  try {
+    const instrument = shapeWindowBarrier({
+      pair,
+      tenor,
+      strikeOrDelta,
+      callPut,
+      notional,
+      barrier,
+      side,
+      windowStart,
+      windowEnd,
+      mcPairs,
+      mcSteps,
+      mcSeed,
+    });
+    const quote = await getConnection().requestQuote(
+      instrument,
+      DEFAULT_CONVENTIONS,
+      `window-barrier:${pair}:${tenor}:${strikeOrDelta}:${callPut}:${notional}:${barrier}:${side ?? ""}:${windowStart ?? ""}:${windowEnd ?? ""}:${mcPairs ?? ""}:${mcSteps ?? ""}:${mcSeed ?? ""}`,
+    );
+    // The exact ADI-PDE route carries no std-error; the MC route may — surface it
+    // honestly when present so an MC premium is never mistaken for an exact one.
+    return formatPathDependentSpill({
+      premium: quote.greeks.price,
+      stdError: quote.priceStdError,
       greeks: quote.greeks,
       conventions: quote.conventions,
       surfaceVersion: quote.surfaceVersion,
@@ -1280,6 +1363,7 @@ function registerAll(): void {
   cf.associate("MARKSURFACE", MARKSURFACE as (...a: never[]) => unknown);
   cf.associate("RFQ", RFQ as (...a: never[]) => unknown);
   cf.associate("BARRIER", BARRIER as (...a: never[]) => unknown);
+  cf.associate("WINDOWBARRIER", WINDOWBARRIER as (...a: never[]) => unknown);
   cf.associate("DIGITAL", DIGITAL as (...a: never[]) => unknown);
   cf.associate("TOUCH", TOUCH as (...a: never[]) => unknown);
   cf.associate("VARSWAP", VARSWAP as (...a: never[]) => unknown);
