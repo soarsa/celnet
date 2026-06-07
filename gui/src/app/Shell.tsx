@@ -5,9 +5,10 @@
  * switches cross-fade with a small parallax (depth cue, §3.4).
  */
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useApp, type WorkspaceId } from "./AppContext";
 import { CommandPalette, type Command } from "../components/CommandPalette";
+import { ShortcutsOverlay } from "../components/ShortcutsOverlay";
 import { useAppearance } from "../design/appearance";
 import { TicketWorkspace } from "../workspaces/TicketWorkspace";
 import { StreamWorkspace } from "../workspaces/StreamWorkspace";
@@ -43,8 +44,12 @@ const RAIL: { id: WorkspaceId; glyph: string; label: string; kbd: string }[] = [
 export function Shell(): React.ReactElement {
   const app = useApp();
   const { appearance, contrast, toggleAppearance, toggleContrast } = useAppearance();
+  // The keyboard-shortcut cheatsheet overlay (bound to `?`). Shell-local UI: it
+  // reads the shared `src/lib/shortcuts.ts` grammar, so nothing else needs it.
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
-  // Global keyboard grammar: ⌘K palette, ⌘1..4 workspaces, ⌘P pair switch.
+  // Global keyboard grammar (single source: src/lib/shortcuts.ts): ⌘K/⌘P palette,
+  // ⌘1..5 workspaces, ⌘B pair navigator, ? shortcuts cheatsheet.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const meta = e.metaKey || e.ctrlKey;
@@ -61,6 +66,13 @@ export function Shell(): React.ReactElement {
         // ⌘B — open the pair-universe navigator (browse the universe).
         e.preventDefault();
         app.setNavigatorOpen(true);
+      } else if (!meta && e.key === "?") {
+        // `?` — toggle the keyboard cheatsheet, unless the user is typing into a
+        // text field (where `?` is a literal character, not a command).
+        const tag = (e.target as HTMLElement | null)?.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA") return;
+        e.preventDefault();
+        setShortcutsOpen((o) => !o);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -137,6 +149,13 @@ export function Shell(): React.ReactElement {
       run: () => app.setWorkspace("risk"),
     },
     {
+      id: "shortcuts",
+      title: "Keyboard shortcuts",
+      hint: "?",
+      group: "Action",
+      run: () => setShortcutsOpen(true),
+    },
+    {
       id: "toggle-appearance",
       title: appearance === "dark" ? "Switch to Light" : "Switch to Dark",
       group: "Action",
@@ -173,10 +192,23 @@ export function Shell(): React.ReactElement {
         <div className={styles.railFoot}>
           <button
             className={styles.railBtn}
+            onClick={() => setShortcutsOpen(true)}
+            title="Keyboard shortcuts (?)"
+            aria-label="show keyboard shortcuts"
+          >
+            <span className={styles.railGlyph} aria-hidden>
+              ?
+            </span>
+          </button>
+          <button
+            className={styles.railBtn}
             onClick={toggleAppearance}
             title="Toggle light/dark"
+            aria-label="toggle light or dark appearance"
           >
-            <span className={styles.railGlyph}>{appearance === "dark" ? "☾" : "☀"}</span>
+            <span className={styles.railGlyph} aria-hidden>
+              {appearance === "dark" ? "☾" : "☀"}
+            </span>
           </button>
         </div>
       </aside>
@@ -215,6 +247,7 @@ export function Shell(): React.ReactElement {
         onClose={() => app.setPaletteOpen(false)}
       />
       <UniverseNavigator />
+      <ShortcutsOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
     </div>
   );
 }

@@ -61,8 +61,16 @@ export function UniverseNavigator(): React.ReactElement | null {
   const [cursor, setCursor] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
-  const rowRefs = useRef<Map<string, HTMLButtonElement | null>>(new Map());
+  const rowRefs = useRef<Map<string, HTMLDivElement | null>>(new Map());
   const titleId = useId();
+  const listId = useId();
+  // Stable per-option id base for `aria-activedescendant` — the listbox's active
+  // option is announced via the search input that owns it (the standard combobox/
+  // listbox roving pattern), so the rows themselves are NOT separately tabbable
+  // native buttons (which would nest the favourite <button> = a `nested-interactive`
+  // a11y violation). Each row is a `role="option"` container; the only native
+  // interactive descendant is the favourite star button.
+  const optId = useCallback((key: string): string => `${listId}-${key.replace(/[^\w-]/g, "_")}`, [listId]);
 
   // Reset transient state each time the overlay opens; focus the search box.
   useEffect(() => {
@@ -193,12 +201,21 @@ export function UniverseNavigator(): React.ReactElement | null {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search pairs — EUR, usdjpy, jpy…"
             aria-label="search currency pairs"
+            // The input owns the listbox below (combobox/listbox roving pattern):
+            // arrow keys move a virtual highlight whose active option is announced
+            // via `aria-activedescendant`, so the rows are not separately tabbable.
+            role="combobox"
+            aria-expanded="true"
+            aria-controls={listId}
+            aria-activedescendant={
+              pairItems[cursor] ? optId(pairItems[cursor]!.key) : undefined
+            }
             spellCheck={false}
             autoComplete="off"
           />
         </header>
 
-        <div className={styles.list} ref={listRef} role="listbox" aria-label="currency pairs">
+        <div className={styles.list} ref={listRef} id={listId} role="listbox" aria-label="currency pairs">
           {pairItems.length === 0 ? (
             <p className={styles.empty}>No pair matches “{query.trim()}”.</p>
           ) : (
@@ -217,14 +234,26 @@ export function UniverseNavigator(): React.ReactElement | null {
               const flatIndex = pairItems.indexOf(item);
               const isCursor = flatIndex === cursor;
               return (
-                <button
+                // The row is a single `role="option"` (an ARIA-interactive role)
+                // with NO focusable descendants — that is the `nested-interactive`
+                // contract for a listbox option. The listbox is driven by the
+                // search input's roving cursor + Enter (`aria-activedescendant`); a
+                // pointer click activates the pair. The favourite toggle is NOT a
+                // nested focusable control: it's a pointer-affordance span whose
+                // keyboard path is ⌘D (documented in the footer), and the favourite
+                // STATE is folded into the option's accessible name so a screen
+                // reader announces it on the option itself.
+                <div
                   key={item.key}
+                  id={optId(item.key)}
                   ref={(el) => {
                     rowRefs.current.set(item.key, el);
                   }}
-                  type="button"
                   role="option"
                   aria-selected={isCursor}
+                  aria-label={`${u.label}${isFav ? " (favourite)" : ""} — set active pair, ⌘D to ${
+                    isFav ? "unfavourite" : "favourite"
+                  }`}
                   className={[
                     styles.row,
                     isActive ? styles.rowActive : "",
@@ -232,20 +261,18 @@ export function UniverseNavigator(): React.ReactElement | null {
                   ].join(" ")}
                   onClick={() => activate(u)}
                   onMouseMove={() => setCursor(flatIndex)}
-                  title={`${u.label} — set active pair`}
                 >
-                  <button
-                    type="button"
+                  <span
                     className={`${styles.star} ${isFav ? styles.starOn : ""}`}
-                    aria-label={isFav ? `unfavourite ${u.label}` : `favourite ${u.label}`}
-                    aria-pressed={isFav}
+                    aria-hidden="true"
+                    title={isFav ? `Unfavourite ${u.label} (⌘D)` : `Favourite ${u.label} (⌘D)`}
                     onClick={(e) => {
                       e.stopPropagation();
                       app.toggleFavourite(u.pair);
                     }}
                   >
                     {isFav ? "★" : "☆"}
-                  </button>
+                  </span>
                   <span className={styles.rowPair}>
                     <Highlighted text={u.label} indices={item.indices} />
                   </span>
@@ -253,7 +280,7 @@ export function UniverseNavigator(): React.ReactElement | null {
                     {u.market.spot.toFixed(u.pipDecimals)}
                   </span>
                   {isActive && <span className={styles.activeDot} aria-hidden="true" />}
-                </button>
+                </div>
               );
             })
           )}
