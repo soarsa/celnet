@@ -1,0 +1,26 @@
+[package]
+name = "celnet-rfq"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet multi-dealer RFQ aggregation engine — concurrent panel fan-out, best-bid/offer ranking, deterministic tie-break, timeout/last-look, plus a loopback FIX LP adapter."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+celnet-types.workspace = true
+celnet-proto.workspace = true
+celnet-fix.workspace = true
+# Concurrent panel fan-out (the `federate.rs` precedent) + per-source deadlines.
+tokio = { workspace = true, features = ["io-util"] }
+futures-util.workspace = true
+
+[dev-dependencies]
+# The synthetic FIX LP responder boots a real `celnet-fix` acceptor that prices
+# off the injected snapshot via the golden-gated `celnet-vanilla` engine.
+celnet-vanilla.workspace = true
+proptest.workspace = true
