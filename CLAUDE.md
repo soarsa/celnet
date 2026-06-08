@@ -123,6 +123,25 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-06-08 — **Capabilities documentation REVITALISED + interlinked + responsive (commits `4b7d527`,
+  `8777cef`; pushed).** Planned via a fan-out review (`docs/CAPABILITIES-REVITALISATION-PLAN.md`), executed
+  as gated workflows, orchestrator-fixed + re-verified. All 14 chapters (`docs/celnet-capabilities/01-14`)
+  + hub + 13 branded figures re-authored to the COMPLETE platform (full exotic catalogue + American/basket/
+  LSV/eSSVI/XVA/GPU-G3-G6/full-Raft/SPMC/FRTB/observability), competitive-advantage-led, every claim
+  code-grounded (34 crates, 19 wire products, 5 services, 5 smile models, 27 `CELNET.*` functions). ch09
+  details every gRPC service/RPC + WS mirror + all 19 products + SDK + CLI; ch10 details all 27 Excel
+  functions. NEW: committed reproducible figure renderer (`tools/render-capability-figures.mjs` +
+  `just render-figures`, Playwright — closes the guardrail-#10 ad-hoc-PNG gap); standalone self-contained
+  HTML showcase (`docs/celnet-capabilities.html`, Celer-branded, full API+Excel reference + honest boundary);
+  hub-as-canonical-index + uniform per-chapter nav + bidirectional cross-references (chapters ↔ showcase);
+  responsive/scroll (showcase + figure pages, zero horizontal overflow 375→1920); committed link +
+  responsive checkers (`tools/check-doc-links.mjs`, `tools/check-html-responsive.mjs` + `just check-docs`/
+  `check-html-responsive`). **Adversarial verify caught + fixed a real factual error** ("six gRPC services"
+  → FIVE; "six surfaces" correct, preserved) and the two known overclaims (plugin Tier-1/3 → DESIGNED-ONLY;
+  live JVM Celer estate → deploy-gated). Honest boundary held verbatim throughout. Docs-only; `just check`
+  unaffected. **Lesson: this shell is ZSH — unquoted scalar `$var` does NOT word-split; use arrays (a sed/
+  perl batch silently no-op'd on `$files` until switched to a zsh array).**
+
 - 2026-06-07 — **▶▶ POST-COMPLETION-AUDIT BACKLOG COMPLETE — all 13 items landed & pushed (final commit
   `970fb27`; `just check` 1306/1306, "All gates passed.").** After the 12-wave program, an honest fan-out
   gap-audit (`docs/POST-COMPLETION-AUDIT.md`) found the platform **materially complete** (no P0/P1
