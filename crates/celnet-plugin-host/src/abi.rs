@@ -68,6 +68,9 @@ pub const GREEKS_BYTES: usize =
 /// Discriminant for the FX underlying asset class.
 pub const UNDERLYING_CLASS_FX: i32 = 0;
 
+/// Discriminant for the precious-metal underlying asset class.
+pub const UNDERLYING_CLASS_METAL: i32 = 1;
+
 /// Discriminant for [`Carry::FxRates`] (`carry_field_0 = r_dom`, `_1 = r_for`).
 pub const CARRY_KIND_FX_RATES: i32 = 0;
 /// Discriminant for [`Carry::CostOfCarry`] (`carry_field_0 = r`, `_1 = b`).
@@ -114,6 +117,7 @@ pub const fn opt_from_abi(raw: i32) -> Option<OptionType> {
 pub const fn underlying_to_abi(u: Underlying) -> i32 {
     match u {
         Underlying::Fx(_) => UNDERLYING_CLASS_FX,
+        Underlying::Metal(_) => UNDERLYING_CLASS_METAL,
     }
 }
 

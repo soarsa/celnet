@@ -175,21 +175,26 @@ pub trait CarryPricer {
     ) -> Result<CarryGreeks, CarryPriceError>;
 }
 
-/// Lower an FX [`CarryInputs`] (an `Fx` underlying carried by [`Carry::FxRates`])
-/// to the FX leaf's [`VanillaInputs`].
+/// Lower an FX [`CarryInputs`] (an `Fx` or `Metal` underlying carried by
+/// [`Carry::FxRates`]) to the FX leaf's [`VanillaInputs`].
 ///
-/// Returns [`CarryPriceError`] for a non-FX underlying or a non-`FxRates` carry, so
-/// an FX leaf can reject what it is not the correct pricer for. The mapping is a
-/// pure field copy of `(r_dom, r_for)` — so the resulting `forward`/`df_dom`/
-/// `df_for` are byte-identical to the generalized [`CarryInputs::forward`]/
-/// [`CarryInputs::discount_df`] (proved in [`fx_carry_inputs_byte_identical`]).
+/// Both FX and precious-metal underlyings price through this leaf: a metal's
+/// lease rate is modelled as the FX foreign rate (`Carry::FxRates.r_for`), so the
+/// XAU/XAG/XPT/XPD-vs-fiat forward/discount arithmetic is the identical FX
+/// two-rate path (ADR-0008 §metals byte-identity). Returns [`CarryPriceError`]
+/// for a non-`FxRates` carry (the equity/commodity cost-of-carry arms route to
+/// their own leaves). The mapping is a pure field copy of `(r_dom, r_for)` — so
+/// the resulting `forward`/`df_dom`/`df_for` are byte-identical to the
+/// generalized [`CarryInputs::forward`]/[`CarryInputs::discount_df`] (proved in
+/// [`fx_carry_inputs_byte_identical`]).
 ///
 /// # Errors
-/// Returns [`CarryPriceError::UnsupportedUnderlying`] for a non-FX underlying and
-/// [`CarryPriceError::UnsupportedCarry`] for a non-`FxRates` carry.
+/// Returns [`CarryPriceError::UnsupportedCarry`] for a non-`FxRates` carry.
 pub fn fx_vanilla_inputs(inputs: &CarryInputs) -> Result<VanillaInputs, CarryPriceError> {
     match inputs.underlying {
-        Underlying::Fx(_) => {}
+        // FX and metals both lower through the FX two-rate path (metal lease rate
+        // modelled as the foreign rate).
+        Underlying::Fx(_) | Underlying::Metal(_) => {}
     }
     let (r_dom, r_for) = match inputs.carry {
         Carry::FxRates { r_dom, r_for } => (r_dom, r_for),

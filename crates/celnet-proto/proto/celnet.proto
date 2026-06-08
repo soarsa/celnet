@@ -109,6 +109,41 @@ enum Settlement {
   SETTLEMENT_NON_DELIVERABLE = 1;
 }
 
+// A precious metal traded as the asset (base) leg of a metal pair — mirrors
+// `celnet_types::Metal`. The four LBMA/LPPM precious metals; each projects to an
+// ISO-4217 "X"-prefixed asset code (XAU/XAG/XPT/XPD) so a `MetalPair` overlaps
+// the FX `CcyPair` encoding byte-for-byte on the metal leg.
+enum Metal {
+  // proto3 zero default. Gold (XAU).
+  METAL_GOLD = 0;
+  // Silver (XAG).
+  METAL_SILVER = 1;
+  // Platinum (XPT).
+  METAL_PLATINUM = 2;
+  // Palladium (XPD).
+  METAL_PALLADIUM = 3;
+}
+
+// The published settlement-rate option an NDF (or non-deliverable structure)
+// references — mirrors `celnet_types::FixingSource`. This names *which* published
+// rate the contract settles against (each EMTA / 2005-2018 ISDA per-currency
+// template names one); it is convention identity, NOT a market-data input — the
+// live fixing VALUES remain an estate-gated feed and are never sourced in-repo.
+enum FixingSource {
+  // proto3 zero default. Korea — KFTC18 (EMTA "KRW KFTC18").
+  FIXING_SOURCE_KRW_KFTC18 = 0;
+  // Taiwan — Taipei Forex / TFEMA USD/TWD (EMTA "TWD Taipei").
+  FIXING_SOURCE_TWD_TAIPEI = 1;
+  // India — RBI USD/INR reference rate (EMTA "INR RBIB").
+  FIXING_SOURCE_INR_RBI_REF = 2;
+  // Brazil — BCB PTAX USD/BRL (EMTA "BRL PTAX", BRL09).
+  FIXING_SOURCE_BRL_PTAX = 3;
+  // Chile — Banco Central "Dólar Observado" USD/CLP (EMTA "CLP DOLAR OBS").
+  FIXING_SOURCE_CLP_DOLAR_OBS = 4;
+  // Colombia — TRM USD/COP (EMTA "COP TRM", COP04).
+  FIXING_SOURCE_COP_TRM = 5;
+}
+
 // Barrier crossing semantics for a single barrier level.
 enum BarrierKind {
   // Knock-in: the option activates if the barrier is touched.
@@ -322,10 +357,27 @@ message Underlying {
   oneof ref {
     // An FX currency pair (the W1 first-class arm), e.g. EURUSD.
     CcyPair fx = 1;
+    // A precious-metal pair (the W2 arm), e.g. XAUUSD — metal as the base/asset
+    // leg vs a fiat quote. Projects byte-identically onto the metal-base
+    // `CcyPair` the convention/calendar registries key on.
+    MetalPair metal = 3;
   }
   // The settlement / numeraire currency (a 3-letter code). For FX this is the
-  // pair's quote (domestic) currency.
+  // pair's quote (domestic) currency; for a metal it is the metal pair's fiat
+  // quote leg.
   string settlement_ccy = 2;
+}
+
+// A precious-metal pair — mirrors `celnet_types::MetalPair`. The `metal` is the
+// base/asset leg; `quote` is the fiat numeraire currency (a 3-letter code,
+// matching `CcyPair`'s leg encoding). The codec projects this losslessly to/from
+// a metal-base `CcyPair` (`base` = the metal's ISO-4217 asset code), keeping the
+// `CcyPair`-keyed registries untouched and the projection byte-identical.
+message MetalPair {
+  // The precious metal (the base/asset leg).
+  Metal metal = 1;
+  // The fiat quote (numeraire) currency, e.g. "USD", "EUR", "JPY".
+  string quote = 2;
 }
 
 // FX two-rate carry: the continuously-compounded domestic (quote) and foreign
@@ -1153,7 +1205,69 @@ message Instrument {
     // over N currency-pair legs. Cholesky-correlated multi-asset GBM Monte-Carlo
     // over the scrambled-Sobol / Brownian-bridge engine, carrying a std-error.
     BasketOption basket = 25;
+    // An outright forward (deliverable): PV of a discounted cashflow at a
+    // contract rate. Linear in spot, closed-form, exact (no std-error). Valid
+    // for a deliverable underlying (FX or metal); an NDF underlying is rejected.
+    FxForward fx_forward = 26;
+    // An FX swap: a near leg + a far leg (two outright forwards, opposite sides).
+    // PV is the sum of the two leg PVs. Deliverable underlying only.
+    FxSwap fx_swap = 27;
+    // A non-deliverable forward (NDF): cash-settled in the convertible
+    // (settlement) currency at a named fixing. Valid ONLY for a non-deliverable
+    // underlying; an NDF on a deliverable pair is rejected as INVALID_ARGUMENT.
+    Ndf ndf = 28;
   }
+}
+
+// An outright forward — mirrors the `celnet-linear` forward leaf. A linear,
+// closed-form discounted-cashflow product (NOT an option payoff): its PV is
+// `side · notional · discount_df(t) · (forward_rate − contract_rate)` where
+// `forward_rate = spot · forward_factor(t)` is produced by the instrument's
+// carry. Asset-class-agnostic: a forward on an FX or metal underlying uses the
+// identical engine. Exact ⇒ the `PriceResponse.price_std_error` is absent.
+message FxForward {
+  // The agreed contract (delivery) rate `K` in quote per 1 unit of base/asset.
+  double contract_rate = 1;
+  // The notional amount (always positive; direction is carried by `side`).
+  double notional = 2;
+  // The direction taken (BUY = long the base/asset forward; SELL = short).
+  Side side = 3;
+}
+
+// An FX swap — a near leg and a far leg, each an outright `FxForward`. By market
+// convention the two legs trade in opposite directions (`far.side` is the
+// opposite of `near.side`); the swap PV is the independent sum of the two leg
+// PVs. The instrument's single expiry/tenor anchors the near leg; the far leg's
+// settlement is the longer-dated one (carried out of band on the legs' terms).
+message FxSwap {
+  // The near (shorter-dated) leg.
+  FxForward near = 1;
+  // The far (longer-dated) leg; by convention the opposite side to `near`.
+  FxForward far = 2;
+}
+
+// A non-deliverable forward (NDF) — mirrors the `celnet-linear` NDF leaf. The
+// risk-neutral PV is identical to a deliverable forward of equal terms
+// (`side · notional · discount_df(t) · (forward_rate − contract_rate)`,
+// discounted in the convertible/settlement currency); non-deliverability changes
+// only the settlement mechanics, not the PV. Valid ONLY for a non-deliverable
+// underlying. The `fixing` names the published settlement-rate option; the live
+// fixing VALUE is an estate-gated feed, never sourced in-repo (only the identity
+// is on the wire).
+message Ndf {
+  // The agreed contract (forward) rate `K` in settlement-ccy per 1 unit of base.
+  double contract_rate = 1;
+  // The notional amount (always positive; direction is carried by `side`).
+  double notional = 2;
+  // The direction taken (BUY = long the base/asset forward; SELL = short).
+  Side side = 3;
+  // The published settlement-rate option the contract fixes against (identity
+  // only — the live fixing value is an estate-gated feed, never in-repo).
+  FixingSource fixing = 4;
+  // The convertible (settlement) currency the net cash settlement is paid in (a
+  // 3-letter code). The PV is discounted at the convertible-leg (settlement-ccy)
+  // rate, not the restricted leg's.
+  string settlement_ccy = 5;
 }
 
 // ===========================================================================

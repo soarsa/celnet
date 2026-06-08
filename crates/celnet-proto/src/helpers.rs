@@ -12,8 +12,8 @@
 //! introduced; this is pure (de)structuring of the wire message.
 
 use crate::{
-    CarryModel, CcyPair, FxRates, Greeks, MarketContext, RateSensitivities, Underlying,
-    VanillaInputs, carry_model, rate_sensitivities, underlying,
+    CarryModel, CcyPair, FxRates, Greeks, MarketContext, Metal, MetalPair, RateSensitivities,
+    Underlying, VanillaInputs, carry_model, rate_sensitivities, underlying,
 };
 
 impl Underlying {
@@ -28,12 +28,43 @@ impl Underlying {
         }
     }
 
+    /// A metal underlying for `pair`, stamping the settlement (numeraire)
+    /// currency as the metal pair's fiat quote leg.
+    #[must_use]
+    pub fn metal(pair: MetalPair) -> Self {
+        let settlement_ccy = pair.quote.clone();
+        Underlying {
+            r#ref: Some(underlying::Ref::Metal(pair)),
+            settlement_ccy,
+        }
+    }
+
     /// The FX pair if this underlying is the FX arm, else `None`.
     #[must_use]
     pub fn as_fx(&self) -> Option<&CcyPair> {
         match &self.r#ref {
             Some(underlying::Ref::Fx(p)) => Some(p),
-            None => None,
+            Some(underlying::Ref::Metal(_)) | None => None,
+        }
+    }
+
+    /// The metal pair if this underlying is the metal arm, else `None`.
+    #[must_use]
+    pub fn as_metal(&self) -> Option<&MetalPair> {
+        match &self.r#ref {
+            Some(underlying::Ref::Metal(m)) => Some(m),
+            Some(underlying::Ref::Fx(_)) | None => None,
+        }
+    }
+}
+
+impl MetalPair {
+    /// A metal pair from a domain [`Metal`] and its fiat quote leg code.
+    #[must_use]
+    pub fn new(metal: Metal, quote: impl Into<String>) -> Self {
+        MetalPair {
+            metal: metal as i32,
+            quote: quote.into(),
         }
     }
 }
