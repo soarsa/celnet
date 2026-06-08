@@ -434,6 +434,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "celnet-commodity-vanilla"
+version = "0.0.0"
+dependencies = [
+ "celnet-core",
+ "celnet-types",
+]
+
+[[package]]
 name = "celnet-conventions"
 version = "0.0.0"
 dependencies = [

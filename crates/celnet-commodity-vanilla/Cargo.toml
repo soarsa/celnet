@@ -1,0 +1,16 @@
+[package]
+name = "celnet-commodity-vanilla"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet Black-76 commodity-option pricing (futures-measure + cost-of-carry) and the full Greek set."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+celnet-types.workspace = true
+celnet-core.workspace = true
