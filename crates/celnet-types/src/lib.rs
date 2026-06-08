@@ -152,6 +152,45 @@ impl fmt::Display for CcyPair {
     }
 }
 
+/// The instrument's underlying — the asset-class discriminator that lets one
+/// unversioned contract name FX (and, in later waves, metals, digital assets,
+/// equities and listed futures).
+///
+/// This type answers only *what is the underlying*; pricing carry and settlement
+/// specifics live in [`Carry`] and the per-arm references. W1 ships the FX arm
+/// (the platform's origin asset class); further arms are added by their
+/// asset-class wave as additive enum growth (one current contract — no
+/// versioning, no placeholder arms).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Underlying {
+    /// An FX currency pair (e.g. `EURUSD`).
+    Fx(CcyPair),
+}
+
+impl Underlying {
+    /// The FX pair if this underlying is FX, else `None`.
+    #[must_use]
+    pub const fn as_fx(&self) -> Option<CcyPair> {
+        match self {
+            Underlying::Fx(p) => Some(*p),
+        }
+    }
+}
+
+impl From<CcyPair> for Underlying {
+    fn from(p: CcyPair) -> Self {
+        Underlying::Fx(p)
+    }
+}
+
+impl fmt::Display for Underlying {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Underlying::Fx(p) => write!(f, "{p}"),
+        }
+    }
+}
+
 /// A civil (Gregorian) calendar date, as a self-contained POD triple.
 ///
 /// `celnet-types` is the dependency-graph root and stays free of the `time`
@@ -492,6 +531,68 @@ impl VanillaInputs {
     }
 }
 
+/// The cost-of-carry model behind an option's forward and discounting.
+///
+/// FX carries two continuously-compounded rates (`r_dom`, `r_for`); other asset
+/// classes carry a single discount rate `r` and a net carry `b` (equity
+/// `b = r − q`; commodity `b = r − convenience`; digital-asset `b = r − funding`).
+/// Both reduce to the generalized-Black-Scholes forward `F = S·e^{b·t}` and
+/// discount `e^{−r·t}` — for FX, `r = r_dom` and `b = r_dom − r_for`.
+///
+/// [`Carry::FxRates`] preserves the *exact* FX two-rate arithmetic
+/// (`forward_factor`/`discount_df` reproduce [`VanillaInputs::forward`]/
+/// [`VanillaInputs::df_dom`] bit-for-bit); [`Carry::CostOfCarry`] serves the
+/// other asset classes.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum Carry {
+    /// FX two-rate carry: domestic (quote) `r_dom`, foreign (base) `r_for`.
+    FxRates {
+        /// Continuously-compounded domestic (quote) rate — the discount rate.
+        r_dom: f64,
+        /// Continuously-compounded foreign (base) rate.
+        r_for: f64,
+    },
+    /// Generalized cost-of-carry: discount rate `r`, net carry `b`.
+    CostOfCarry {
+        /// Continuously-compounded discount (numeraire) rate `r`.
+        r: f64,
+        /// Net cost-of-carry `b` in `F = S·e^{b·t}`.
+        b: f64,
+    },
+}
+
+impl Carry {
+    /// The discount (numeraire) rate `r` for `e^{−r·t}`. For FX this is `r_dom`.
+    #[must_use]
+    pub const fn discount_rate(&self) -> f64 {
+        match self {
+            Carry::FxRates { r_dom, .. } => *r_dom,
+            Carry::CostOfCarry { r, .. } => *r,
+        }
+    }
+
+    /// The net carry `b` in `F = S·e^{b·t}`. For FX this is `r_dom − r_for`.
+    #[must_use]
+    pub fn carry_rate(&self) -> f64 {
+        match self {
+            Carry::FxRates { r_dom, r_for } => r_dom - r_for,
+            Carry::CostOfCarry { b, .. } => *b,
+        }
+    }
+
+    /// Discount factor `e^{−r·t}`.
+    #[must_use]
+    pub fn discount_df(&self, t: f64) -> f64 {
+        libm::exp(-self.discount_rate() * t)
+    }
+
+    /// Outright forward factor `e^{b·t}` (multiply by spot for `F`).
+    #[must_use]
+    pub fn forward_factor(&self, t: f64) -> f64 {
+        libm::exp(self.carry_rate() * t)
+    }
+}
+
 /// The full FX-options Greek set produced by the vanilla engine.
 ///
 /// All sensitivities are *raw* (per unit of the underlying quantity): vega and
@@ -563,6 +664,31 @@ impl Greeks {
     }
 }
 
+/// Carry-tagged rate sensitivities — the asset-class-appropriate rate Greeks.
+///
+/// FX reports the two rate rhos (`rho_dom`, `rho_for`); other asset classes report
+/// a discount-rho `∂V/∂r` and a carry-rho `∂V/∂b` (equity dividend-rho, commodity
+/// carry-rho). The two are related for FX by `rho_dom = discount_rho + carry_rho`
+/// and `rho_for = −carry_rho` (since `r = r_dom`, `b = r_dom − r_for`). The
+/// [`RateSensitivities::Fx`] arm is exactly today's two flat rhos (byte-identical).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum RateSensitivities {
+    /// FX: `∂V/∂r_dom`, `∂V/∂r_for`.
+    Fx {
+        /// Rho domestic: `∂V/∂r_dom`.
+        rho_dom: f64,
+        /// Rho foreign: `∂V/∂r_for`.
+        rho_for: f64,
+    },
+    /// Generalized: `∂V/∂r` (discount), `∂V/∂b` (carry).
+    Carry {
+        /// Discount rho: `∂V/∂r`.
+        discount_rho: f64,
+        /// Carry rho: `∂V/∂b` (equity dividend-rho, commodity carry-rho).
+        carry_rho: f64,
+    },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -589,6 +715,83 @@ mod tests {
         assert_eq!(OptionType::Call.sign(), 1.0);
         assert_eq!(OptionType::Put.sign(), -1.0);
         assert_eq!(OptionType::Call.flip(), OptionType::Put);
+    }
+
+    #[test]
+    fn underlying_fx_roundtrip() {
+        let p = CcyPair::parse("EURUSD").unwrap();
+        let u: Underlying = p.into();
+        assert_eq!(u.as_fx(), Some(p));
+        assert_eq!(u.to_string(), "EURUSD");
+        assert_eq!(u, Underlying::Fx(p));
+    }
+
+    // The FX projection of the generalized `Carry` reproduces the FX two-rate
+    // forward and discount factor BIT-FOR-BIT — the W1 no-regression invariant
+    // (same operations, same order, so `to_bits` must match exactly).
+    #[test]
+    fn carry_fxrates_byte_identical_to_vanilla_inputs() {
+        for &(spot, r_dom, r_for, t) in &[
+            (1.10, 0.02, 0.015, 1.0),
+            (100.0, 0.05, 0.0, 0.25),
+            (0.85, -0.004, 0.031, 2.5),
+        ] {
+            let i = VanillaInputs::new(spot, 1.0, 0.1, t, r_dom, r_for);
+            let carry = Carry::FxRates { r_dom, r_for };
+            assert_eq!(
+                (spot * carry.forward_factor(t)).to_bits(),
+                i.forward().to_bits(),
+                "forward must be byte-identical via Carry::FxRates"
+            );
+            assert_eq!(
+                carry.discount_df(t).to_bits(),
+                i.df_dom().to_bits(),
+                "domestic discount must be byte-identical via Carry::FxRates"
+            );
+            assert_eq!(carry.discount_rate(), r_dom);
+            assert_eq!(carry.carry_rate(), r_dom - r_for);
+        }
+    }
+
+    #[test]
+    fn carry_cost_of_carry_generalized() {
+        // Equity with dividend yield q ⇒ r = 0.04, b = r − q = 0.04 − 0.03.
+        let (r, b, t, spot) = (0.04, 0.04 - 0.03, 1.0, 50.0);
+        let carry = Carry::CostOfCarry { r, b };
+        assert_eq!(carry.discount_rate(), r);
+        assert_eq!(carry.carry_rate(), b);
+        assert_eq!(carry.discount_df(t), libm::exp(-r * t));
+        assert_eq!(spot * carry.forward_factor(t), spot * libm::exp(b * t));
+    }
+
+    #[test]
+    fn rate_sensitivities_arms() {
+        let fx = RateSensitivities::Fx {
+            rho_dom: 0.42,
+            rho_for: -0.17,
+        };
+        match fx {
+            RateSensitivities::Fx { rho_dom, rho_for } => {
+                assert_eq!(rho_dom, 0.42);
+                assert_eq!(rho_for, -0.17);
+            }
+            RateSensitivities::Carry { .. } => panic!("expected the Fx arm"),
+        }
+        // The FX↔carry relation documented on the type: rho_dom = discount_rho +
+        // carry_rho, rho_for = −carry_rho. (Binary-exact constants so the equality
+        // is exact, not FP-approximate.)
+        let (discount_rho, carry_rho) = (0.25_f64, 0.125_f64);
+        let derived = RateSensitivities::Fx {
+            rho_dom: discount_rho + carry_rho,
+            rho_for: -carry_rho,
+        };
+        assert_eq!(
+            derived,
+            RateSensitivities::Fx {
+                rho_dom: 0.375,
+                rho_for: -0.125
+            }
+        );
     }
 
     #[test]
