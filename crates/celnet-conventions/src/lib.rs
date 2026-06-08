@@ -22,16 +22,24 @@
 //! # Coverage
 //!
 //! Bespoke profiles encode real OTC market practice for a documented pair
-//! universe. The **EXACT covered set** is:
+//! universe — a **superset exceeding the 75-pair interbank panel**. The covered
+//! set (the `registry::COVERED_PAIRS` table is the single source of truth) is:
 //!
-//! * **G10 majors:** EURUSD, USDJPY, GBPUSD, AUDUSD, USDCHF, USDCAD, NZDUSD.
-//! * **EM deliverable crosses:** USDMXN, USDZAR, USDNOK, USDSEK (T+2, USD
-//!   premium-adjusted, NY cut).
+//! * **Fiat G10 + Scandi matrix:** the full C(10,2) = 45 canonical crosses over
+//!   {USD, EUR, JPY, GBP, CHF, AUD, CAD, NZD, NOK, SEK}. The seven USD majors
+//!   carry their documented per-pair premium style (e.g. EURUSD premium in EUR,
+//!   GBPUSD premium in USD); every other cross uses the standard interbank cross
+//!   convention (DNS, premium in the quote/DOM ccy unadjusted, NY cut — Tokyo for
+//!   a JPY quote).
+//! * **EM deliverable:** USDMXN, USDZAR, EURMXN, EURZAR, GBPZAR.
 //! * **EM non-deliverable (NDF/NDO):** USDKRW (KFTC18), USDTWD (Taipei),
 //!   USDINR (RBI ref), USDBRL (PTAX), USDCLP (Dólar Observado), USDCOP (TRM) —
 //!   each cash-settled in **USD** at its published fixing.
-//! * **Precious metals:** XAUUSD, XAGUSD (metal as base, USD premium, T+2
-//!   loco-London).
+//! * **Precious metals vs USD:** XAUUSD, XAGUSD, XPTUSD, XPDUSD (metal as base,
+//!   USD premium, T+2 loco-London, with an explicit lease-rate-bearing metal leg).
+//! * **Metal crosses:** gold/silver/platinum/palladium vs a fiat quote (XAUEUR,
+//!   XAUJPY, XAGEUR, XPTEUR, …) — metal base, loco-London, premium in the fiat
+//!   quote.
 //!
 //! Each pair's full universe metadata (spot lag, premium currency, ATM/delta
 //! convention, cut, settlement style, NDF fixing source + settlement currency,
@@ -216,17 +224,29 @@ mod tests {
 
     #[test]
     fn region_fallback_for_uncovered_pair() {
-        // EURGBP has no bespoke profile → region default (NY, quote = GBP).
-        let resolved = resolve(pair("EURGBP"), Tenor::Months(3));
+        // EURPLN has no bespoke profile (PLN is outside the panel) → region
+        // default (NY, quote = PLN).
+        let resolved = resolve(pair("EURPLN"), Tenor::Months(3));
         assert_eq!(resolved.source, ResolutionSource::RegionDefault);
         assert_eq!(resolved.record.cut, Cut::NewYork1000);
         assert!(resolved.record.is_consistent());
 
-        // A JPY-quoted uncovered pair (EURJPY) → Tokyo region default.
-        let jpy = resolve(pair("EURJPY"), Tenor::Months(3));
+        // A JPY-quoted uncovered pair (PLNJPY) → Tokyo region default.
+        let jpy = resolve(pair("PLNJPY"), Tenor::Months(3));
         assert_eq!(jpy.source, ResolutionSource::RegionDefault);
         assert_eq!(jpy.record.cut, Cut::Tokyo1500);
         assert!(jpy.record.is_consistent());
+
+        // EURGBP / EURJPY are now bespoke covered crosses (G10 matrix), not the
+        // region default — confirm the panel growth reached them.
+        assert_eq!(
+            resolve(pair("EURGBP"), Tenor::Months(3)).source,
+            ResolutionSource::PairProfile
+        );
+        assert_eq!(
+            resolve(pair("EURJPY"), Tenor::Months(3)).source,
+            ResolutionSource::PairProfile
+        );
     }
 
     #[test]

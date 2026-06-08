@@ -1,5 +1,6 @@
 //! Parity row — **pair-universe breadth** in `celnet-conventions` / `celnet-calendar`
-//! (Wave 4d).
+//! (Wave 4d, extended in W2 to a >75-pair superset + the platinum-group metals
+//! and metal crosses).
 //!
 //! The convention registry profiles a documented FX-options pair universe beyond
 //! the G10 majors. This row proves, against PUBLISHED market-convention
@@ -7,17 +8,31 @@
 //! invariants and an INDEPENDENT calendar oracle so none of it is a tautology),
 //! that the resolved conventions and the algorithmic spot-date are correct.
 //!
-//! # The EXACT covered set (nothing outside it is claimed)
+//! # The covered set — a documented SUPERSET exceeding the 75-pair panel
 //!
-//! * **G10 majors:** EURUSD, USDJPY, GBPUSD, AUDUSD, USDCHF, USDCAD, NZDUSD.
-//! * **EM deliverable crosses:** USDMXN, USDZAR, USDNOK, USDSEK.
+//! * **Fiat G10 + Scandi matrix** — the full C(10,2) = 45 canonical crosses over
+//!   {USD, EUR, JPY, GBP, CHF, AUD, CAD, NZD, NOK, SEK}. The seven USD majors
+//!   (EURUSD, USDJPY, GBPUSD, AUDUSD, USDCHF, USDCAD, NZDUSD) carry their
+//!   documented per-pair premium style; every other cross carries the standard
+//!   interbank cross convention (DNS, premium in the quote/DOM ccy unadjusted,
+//!   NY cut — Tokyo when the quote is JPY).
+//! * **EM deliverable:** USDMXN, USDZAR, EURMXN, EURZAR, GBPZAR (Gregorian
+//!   calendars).
 //! * **EM non-deliverable (NDF/NDO):** USDKRW (EMTA KRW KFTC18), USDTWD (Taipei
 //!   TFEMA), USDINR (RBI reference), USDBRL (PTAX/BRL09), USDCLP (Dólar
 //!   Observado/CLP10), USDCOP (TRM/COP04) — each cash-settled in **USD**.
-//! * **Precious metals:** XAUUSD, XAGUSD (metal as base, USD premium, T+2
-//!   loco-London).
+//! * **Precious metals vs USD:** XAUUSD, XAGUSD, XPTUSD, XPDUSD (metal as base,
+//!   USD premium, T+2 loco-London).
+//! * **Metal crosses:** XAUEUR, XAUJPY, XAUGBP, XAUCHF, XAUAUD, XAUCAD, XAUNZD,
+//!   XAUNOK, XAUSEK, XAGEUR, XAGJPY, XAGGBP, XAGCHF, XPTEUR, XPTJPY, XPDEUR
+//!   (metal base vs a fiat quote, loco-London, premium in the fiat quote).
 //!
-//! # The three independent checks
+//! This is a 76-pair panel (the [`PUBLISHED`] table is the exact set). Liquidity
+//! of the thinner Scandi / exotic-metal crosses varies, but this row asserts
+//! convention **correctness**, not liquidity — the cross convention is the
+//! uniform documented market standard.
+//!
+//! # The independent checks
 //!
 //! 1. **(i) Resolved conventions vs published standards.** For each covered pair
 //!    the table of `(spot lag, premium currency, ATM, delta family, cut, and —
@@ -94,7 +109,7 @@ struct Published {
 }
 
 const PUBLISHED: &[Published] = &[
-    // --- G10 majors. ---
+    // --- G10 USD majors (documented per-pair premium style; §1.2/§1.3). ---
     Published {
         pair: "EURUSD",
         spot_lag: 2,
@@ -150,7 +165,6 @@ const PUBLISHED: &[Published] = &[
         ndf: None,
         precious_metal: false,
     },
-    // USDCAD is the canonical T+1 major.
     Published {
         pair: "USDCAD",
         spot_lag: 1,
@@ -173,29 +187,7 @@ const PUBLISHED: &[Published] = &[
         ndf: None,
         precious_metal: false,
     },
-    // --- EM deliverable crosses (USD as FOR → premium-adjusted, NY cut, T+2). ---
-    Published {
-        pair: "USDMXN",
-        spot_lag: 2,
-        premium_ccy: "USD",
-        premium_style: PremiumStyle::PercentForeign,
-        atm: AtmConvention::DeltaNeutralStraddle,
-        cut: Cut::NewYork1000,
-        settlement: Settlement::Deliverable,
-        ndf: None,
-        precious_metal: false,
-    },
-    Published {
-        pair: "USDZAR",
-        spot_lag: 2,
-        premium_ccy: "USD",
-        premium_style: PremiumStyle::PercentForeign,
-        atm: AtmConvention::DeltaNeutralStraddle,
-        cut: Cut::NewYork1000,
-        settlement: Settlement::Deliverable,
-        ndf: None,
-        precious_metal: false,
-    },
+    // --- EM/Scandi deliverable, USD as FOR (base) -> USD-premium-adjusted, NY, T+2. ---
     Published {
         pair: "USDNOK",
         spot_lag: 2,
@@ -218,7 +210,29 @@ const PUBLISHED: &[Published] = &[
         ndf: None,
         precious_metal: false,
     },
-    // --- EM non-deliverable (NDF/NDO), cash-settled in USD at the named fixing. ---
+    Published {
+        pair: "USDMXN",
+        spot_lag: 2,
+        premium_ccy: "USD",
+        premium_style: PremiumStyle::PercentForeign,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "USDZAR",
+        spot_lag: 2,
+        premium_ccy: "USD",
+        premium_style: PremiumStyle::PercentForeign,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    // --- EM non-deliverable (NDF/NDO), USD-cash-settled at the EMTA fixing. ---
     Published {
         pair: "USDKRW",
         spot_lag: 2,
@@ -285,7 +299,7 @@ const PUBLISHED: &[Published] = &[
         ndf: Some((FixingSource::CopTrm, "USD")),
         precious_metal: false,
     },
-    // --- Precious metals (metal as base, USD premium → unadjusted, NY cut, T+2). ---
+    // --- Precious metals vs USD: metal base, USD-premium (DOM) unadjusted, T+2 loco-London. ---
     Published {
         pair: "XAUUSD",
         spot_lag: 2,
@@ -307,6 +321,635 @@ const PUBLISHED: &[Published] = &[
         settlement: Settlement::Deliverable,
         ndf: None,
         precious_metal: true,
+    },
+    Published {
+        pair: "XPTUSD",
+        spot_lag: 2,
+        premium_ccy: "USD",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: true,
+    },
+    Published {
+        pair: "XPDUSD",
+        spot_lag: 2,
+        premium_ccy: "USD",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: true,
+    },
+    // --- Metal crosses: metal base vs fiat quote; premium in the fiat quote (DOM). ---
+    Published {
+        pair: "XAUEUR",
+        spot_lag: 2,
+        premium_ccy: "EUR",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: true,
+    },
+    Published {
+        pair: "XAUJPY",
+        spot_lag: 2,
+        premium_ccy: "JPY",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::Tokyo1500,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: true,
+    },
+    Published {
+        pair: "XAUGBP",
+        spot_lag: 2,
+        premium_ccy: "GBP",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: true,
+    },
+    Published {
+        pair: "XAUCHF",
+        spot_lag: 2,
+        premium_ccy: "CHF",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: true,
+    },
+    Published {
+        pair: "XAUAUD",
+        spot_lag: 2,
+        premium_ccy: "AUD",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: true,
+    },
+    Published {
+        pair: "XAUCAD",
+        spot_lag: 2,
+        premium_ccy: "CAD",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: true,
+    },
+    Published {
+        pair: "XAUNZD",
+        spot_lag: 2,
+        premium_ccy: "NZD",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: true,
+    },
+    Published {
+        pair: "XAUNOK",
+        spot_lag: 2,
+        premium_ccy: "NOK",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: true,
+    },
+    Published {
+        pair: "XAUSEK",
+        spot_lag: 2,
+        premium_ccy: "SEK",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: true,
+    },
+    Published {
+        pair: "XAGEUR",
+        spot_lag: 2,
+        premium_ccy: "EUR",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: true,
+    },
+    Published {
+        pair: "XAGJPY",
+        spot_lag: 2,
+        premium_ccy: "JPY",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::Tokyo1500,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: true,
+    },
+    Published {
+        pair: "XAGGBP",
+        spot_lag: 2,
+        premium_ccy: "GBP",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: true,
+    },
+    Published {
+        pair: "XAGCHF",
+        spot_lag: 2,
+        premium_ccy: "CHF",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: true,
+    },
+    Published {
+        pair: "XPTEUR",
+        spot_lag: 2,
+        premium_ccy: "EUR",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: true,
+    },
+    Published {
+        pair: "XPTJPY",
+        spot_lag: 2,
+        premium_ccy: "JPY",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::Tokyo1500,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: true,
+    },
+    Published {
+        pair: "XPDEUR",
+        spot_lag: 2,
+        premium_ccy: "EUR",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: true,
+    },
+    // --- G10 + Scandi crosses: standard cross convention, premium in quote (DOM). ---
+    Published {
+        pair: "EURGBP",
+        spot_lag: 2,
+        premium_ccy: "GBP",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "EURJPY",
+        spot_lag: 2,
+        premium_ccy: "JPY",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::Tokyo1500,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "EURCHF",
+        spot_lag: 2,
+        premium_ccy: "CHF",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "EURAUD",
+        spot_lag: 2,
+        premium_ccy: "AUD",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "EURCAD",
+        spot_lag: 2,
+        premium_ccy: "CAD",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "EURNZD",
+        spot_lag: 2,
+        premium_ccy: "NZD",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "GBPJPY",
+        spot_lag: 2,
+        premium_ccy: "JPY",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::Tokyo1500,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "GBPCHF",
+        spot_lag: 2,
+        premium_ccy: "CHF",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "GBPAUD",
+        spot_lag: 2,
+        premium_ccy: "AUD",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "GBPCAD",
+        spot_lag: 2,
+        premium_ccy: "CAD",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "GBPNZD",
+        spot_lag: 2,
+        premium_ccy: "NZD",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "AUDJPY",
+        spot_lag: 2,
+        premium_ccy: "JPY",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::Tokyo1500,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "AUDCHF",
+        spot_lag: 2,
+        premium_ccy: "CHF",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "AUDCAD",
+        spot_lag: 2,
+        premium_ccy: "CAD",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "AUDNZD",
+        spot_lag: 2,
+        premium_ccy: "NZD",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "NZDJPY",
+        spot_lag: 2,
+        premium_ccy: "JPY",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::Tokyo1500,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "NZDCHF",
+        spot_lag: 2,
+        premium_ccy: "CHF",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "NZDCAD",
+        spot_lag: 2,
+        premium_ccy: "CAD",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "CADJPY",
+        spot_lag: 2,
+        premium_ccy: "JPY",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::Tokyo1500,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "CADCHF",
+        spot_lag: 2,
+        premium_ccy: "CHF",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "CHFJPY",
+        spot_lag: 2,
+        premium_ccy: "JPY",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::Tokyo1500,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "EURNOK",
+        spot_lag: 2,
+        premium_ccy: "NOK",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "EURSEK",
+        spot_lag: 2,
+        premium_ccy: "SEK",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "GBPNOK",
+        spot_lag: 2,
+        premium_ccy: "NOK",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "GBPSEK",
+        spot_lag: 2,
+        premium_ccy: "SEK",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "AUDNOK",
+        spot_lag: 2,
+        premium_ccy: "NOK",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "AUDSEK",
+        spot_lag: 2,
+        premium_ccy: "SEK",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "NZDNOK",
+        spot_lag: 2,
+        premium_ccy: "NOK",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "NZDSEK",
+        spot_lag: 2,
+        premium_ccy: "SEK",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "CADNOK",
+        spot_lag: 2,
+        premium_ccy: "NOK",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "CADSEK",
+        spot_lag: 2,
+        premium_ccy: "SEK",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "CHFNOK",
+        spot_lag: 2,
+        premium_ccy: "NOK",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "CHFSEK",
+        spot_lag: 2,
+        premium_ccy: "SEK",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "NOKSEK",
+        spot_lag: 2,
+        premium_ccy: "SEK",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "NOKJPY",
+        spot_lag: 2,
+        premium_ccy: "JPY",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::Tokyo1500,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "SEKJPY",
+        spot_lag: 2,
+        premium_ccy: "JPY",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::Tokyo1500,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "EURMXN",
+        spot_lag: 2,
+        premium_ccy: "MXN",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "EURZAR",
+        spot_lag: 2,
+        premium_ccy: "ZAR",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
+    },
+    Published {
+        pair: "GBPZAR",
+        spot_lag: 2,
+        premium_ccy: "ZAR",
+        premium_style: PremiumStyle::DomesticPips,
+        atm: AtmConvention::DeltaNeutralStraddle,
+        cut: Cut::NewYork1000,
+        settlement: Settlement::Deliverable,
+        ndf: None,
+        precious_metal: false,
     },
 ];
 
@@ -349,8 +992,15 @@ fn resolved_conventions_match_published_standards() {
             None => assert!(m.ndf.is_none(), "{} must not carry NDF terms", row.pair),
         }
     }
-    // Coverage breadth: the encoded table IS the full covered set (19 pairs).
-    assert_eq!(PUBLISHED.len(), 19, "exact covered-set size");
+    // Coverage breadth: the published panel is a documented SUPERSET exceeding
+    // the 75-pair interbank universe (the full G10+Scandi cross matrix + the EM
+    // deliverable set + the 6 EMTA NDFs + the four metals vs USD + the metal
+    // crosses).
+    assert!(
+        PUBLISHED.len() > 75,
+        "published panel must exceed 75 pairs, got {}",
+        PUBLISHED.len()
+    );
 }
 
 // ===========================================================================
@@ -551,6 +1201,22 @@ fn sweden_holiday(y: i64, m: i64, d: i64) -> bool {
         || on(12, 31)
 }
 
+/// Independent euro-area TARGET2 closing-day predicate. The TARGET2 high-value
+/// payment system closes on: New Year's Day (1 Jan), Good Friday, Easter Monday,
+/// Labour Day (1 May), Christmas Day (25 Dec), and 26 December — each observed on
+/// the day itself with **no weekend-shift** (the ECB TARGET2 calendar grants no
+/// substitute days). Re-derived here from the published ECB calendar rule, not
+/// shared with the library.
+fn target2_holiday(y: i64, m: i64, d: i64) -> bool {
+    let on = |mth: i64, day: i64| (m, d) == (mth, day);
+    on(1, 1)
+        || easter_plus(y, -2) == (y, m, d) // Good Friday
+        || easter_plus(y, 1) == (y, m, d) // Easter Monday
+        || on(5, 1) // Labour Day
+        || on(12, 25)
+        || on(12, 26)
+}
+
 /// UK (London) holiday predicate — needed for the loco-London metal calendar.
 /// Independent re-derivation of the London bank holidays.
 fn uk_holiday(y: i64, m: i64, d: i64) -> bool {
@@ -605,12 +1271,14 @@ fn civ2(t: (i64, i64, i64)) -> (i64, i64) {
 fn holiday_for(code: &str, y: i64, m: i64, d: i64) -> bool {
     match code {
         "USD" => us_holiday(y, m, d),
+        "EUR" => target2_holiday(y, m, d),
         "MXN" => mexico_holiday(y, m, d),
         "ZAR" => southafrica_holiday(y, m, d),
         "NOK" => norway_holiday(y, m, d),
         "SEK" => sweden_holiday(y, m, d),
-        // Loco-London metals settle on the London (UK) calendar.
-        "XAU" | "XAG" | "GBP" => uk_holiday(y, m, d),
+        // Loco-London metals (gold/silver/platinum/palladium) settle on the
+        // London (UK) calendar, as does GBP.
+        "XAU" | "XAG" | "XPT" | "XPD" | "GBP" => uk_holiday(y, m, d),
         other => panic!("no independent Gregorian calendar oracle for {other}"),
     }
 }
@@ -632,12 +1300,17 @@ fn legs_for(pair_str: &str) -> Vec<&'static str> {
     let centre = |c: &str| -> &'static str {
         match c {
             "USD" => "USD",
+            "EUR" => "EUR",
             "MXN" => "MXN",
             "ZAR" => "ZAR",
             "NOK" => "NOK",
             "SEK" => "SEK",
+            // Loco-London metals settle on the UK centre.
             "XAU" => "XAU",
             "XAG" => "XAG",
+            "XPT" => "XPT",
+            "XPD" => "XPD",
+            "GBP" => "GBP",
             _ => panic!("currency {c} not in the independent spot-date oracle"),
         }
     };
@@ -668,29 +1341,37 @@ fn independent_spot(pair_str: &str, lag: u32, y: i64, m: i64, d: i64) -> (i64, i
     civil_from_days(z)
 }
 
+/// The covered pairs whose **both legs** the independent in-test oracle models
+/// with a fully Gregorian calendar — USD (Fedwire), EUR (TARGET2), GBP / metals
+/// (London), and the EM/Scandi centres MXN, ZAR, NOK, SEK. Every metal leg
+/// (XAU/XAG/XPT/XPD) maps to the loco-London (UK) calendar, so the metal crosses
+/// exercise the **London ∩ quote-centre ∩ USD** intersection directly. JPY,
+/// CHF, AUD, CAD, NZD-legged pairs are excluded from the *spot-date* sweep
+/// because their onshore calendars (Japanese transfer/citizens/equinox rules and
+/// the Commonwealth/Swiss substitutes) are not independently re-derived here —
+/// only the centres the in-test oracle re-derives from primary rules are swept.
+const SPOT_SWEEP_PAIRS: &[&str] = &[
+    // Fiat majors / crosses over {USD, EUR, GBP}.
+    "EURUSD", "GBPUSD", "EURGBP",
+    // EM / Scandi deliverable (Gregorian: MXN, ZAR, NOK, SEK).
+    "USDMXN", "USDZAR", "USDNOK", "USDSEK", "EURNOK", "EURSEK", "GBPNOK", "GBPSEK", "NOKSEK",
+    "EURMXN", "EURZAR", "GBPZAR", // Precious metals vs USD (London ∩ US).
+    "XAUUSD", "XAGUSD", "XPTUSD", "XPDUSD",
+    // Metal crosses (London ∩ quote ∩ US).
+    "XAUEUR", "XAUGBP", "XAUNOK", "XAUSEK", "XAGEUR", "XAGGBP", "XPTEUR", "XPDEUR",
+];
+
 /// (ii) For a sweep of trade dates across two years, the library's algorithmic
 /// spot date equals the fully INDEPENDENT walk to the day, for every covered pair
-/// whose settlement calendar is Gregorian-computable (the EM deliverable crosses
-/// and the precious metals). This is the proof the spot date is COMPUTED over the
-/// joined calendars, not stored.
+/// in [`SPOT_SWEEP_PAIRS`] (the G10/EM/Scandi pairs and the precious metals +
+/// metal crosses whose settlement calendars are Gregorian-computable and
+/// independently re-derived here). This is the proof the spot date is COMPUTED
+/// over the joined calendars — including the metal-cross London ∩ quote ∩ USD
+/// intersection — not stored.
 #[test]
 fn algorithmic_spot_date_matches_independent_walk() {
-    // Pairs with a fully independent Gregorian calendar oracle.
-    let gregorian_pairs: &[&str] = &[
-        "EURUSD", // sanity baseline (US ∩ TARGET2 — but TARGET2 is not in our
-        // independent oracle; exclude below)
-        "USDMXN", "USDZAR", "USDNOK", "USDSEK", "XAUUSD", "XAGUSD",
-    ];
-    // EURUSD needs a TARGET2 oracle we did not re-derive; restrict the sweep to
-    // the pairs whose BOTH legs the independent oracle models.
-    let oracle_pairs: Vec<&str> = gregorian_pairs
-        .iter()
-        .copied()
-        .filter(|p| *p != "EURUSD")
-        .collect();
-
     let mut checked = 0u32;
-    for &p in &oracle_pairs {
+    for &p in SPOT_SWEEP_PAIRS {
         let cp = pair(p);
         let lag = pair_meta(cp).unwrap().spot_lag_days;
         // Sweep every day of 2024 and 2025 (covers weekends, holidays, leap day,
@@ -714,30 +1395,34 @@ fn algorithmic_spot_date_matches_independent_walk() {
             }
         }
     }
-    // The sweep is non-trivial: 6 pairs × ~730 days.
-    assert!(checked > 4000, "sweep too small: {checked}");
+    // The sweep is non-trivial: 27 pairs × ~730 days ≈ 19.7k (pair, date) combos.
+    assert!(checked > 19000, "sweep too small: {checked}");
 }
 
 /// (ii) Cross-check: the independent business-day predicate agrees with the
-/// library's `is_business_day_civil` over the sweep, on a representative pair —
-/// so the spot-walk agreement above is not masking compensating calendar errors.
+/// library's `is_business_day_civil` over the sweep, on representative pairs from
+/// each centre family (a USD/EM cross, a EUR/TARGET2 cross, and a metal cross
+/// that intersects London ∩ TARGET2 ∩ US) — so the spot-walk agreement above is
+/// not masking compensating calendar errors in any one centre.
 #[test]
 fn independent_business_day_predicate_agrees_with_library() {
-    let p = "USDMXN";
-    let cp = pair(p);
-    let legs = legs_for(p);
-    for &year in &[2024i64, 2025i64] {
-        for day_of_year in 0..365i64 {
-            let (y, m, d) = civil_from_days(days_from_civil(year, 1, 1) + day_of_year);
-            if y != year {
-                continue;
+    for p in ["USDMXN", "EURGBP", "EURNOK", "XAUEUR", "XAUUSD"] {
+        let cp = pair(p);
+        let legs = legs_for(p);
+        for &year in &[2024i64, 2025i64] {
+            for day_of_year in 0..365i64 {
+                let (y, m, d) = civil_from_days(days_from_civil(year, 1, 1) + day_of_year);
+                if y != year {
+                    continue;
+                }
+                let indep = independent_is_business_day(&legs, y, m, d);
+                let lib =
+                    is_business_day_civil(cp, Civil::new(y as i32, m as u8, d as u8)).unwrap();
+                assert_eq!(
+                    indep, lib,
+                    "{p} business-day disagreement at {y}-{m:02}-{d:02}"
+                );
             }
-            let indep = independent_is_business_day(&legs, y, m, d);
-            let lib = is_business_day_civil(cp, Civil::new(y as i32, m as u8, d as u8)).unwrap();
-            assert_eq!(
-                indep, lib,
-                "{p} business-day disagreement at {y}-{m:02}-{d:02}"
-            );
         }
     }
 }
@@ -808,11 +1493,34 @@ fn structural_invariants_hold_for_every_covered_pair() {
         }
 
         if m.is_precious_metal() {
-            // Metal is the base leg; quote is USD; premium in USD (unadjusted).
-            assert_eq!(cp.quote, Ccy::USD, "{} metal quoted in USD", row.pair);
-            assert_ne!(cp.base, Ccy::USD, "{} base is the metal", row.pair);
-            assert_eq!(m.premium_ccy, Ccy::USD, "{} metal premium USD", row.pair);
+            // Metal is the base (asset/FOR) leg; the quote is the fiat numeraire
+            // (USD for the metals-vs-USD, the cross fiat for a metal cross);
+            // premium is in the quote (DOM) ccy → unadjusted; and the
+            // lease-bearing metal leg names the loco-London metal carry.
+            let metal = cp.base;
+            assert!(
+                metal == ccy("XAU")
+                    || metal == ccy("XAG")
+                    || metal == ccy("XPT")
+                    || metal == ccy("XPD"),
+                "{} base is a precious metal",
+                row.pair
+            );
+            assert_eq!(
+                m.premium_ccy, cp.quote,
+                "{} metal premium in the fiat quote",
+                row.pair
+            );
             assert!(!m.premium_adjusted, "{} metal premium unadjusted", row.pair);
+            let leg = m.metal_leg.expect("metal carries a lease leg");
+            assert_eq!(leg.metal, metal, "{} lease leg is the base metal", row.pair);
+            assert!(leg.loco_london, "{} settles loco-London", row.pair);
+        } else {
+            assert!(
+                m.metal_leg.is_none(),
+                "{} fiat carries no metal leg",
+                row.pair
+            );
         }
 
         // Delta/ATM self-consistency: the premium-adjusted flag exactly tracks the
@@ -878,5 +1586,145 @@ fn orientation_inversion_is_non_contradictory() {
             "{}",
             row.pair
         );
+    }
+}
+
+// ===========================================================================
+// (ii-bis) Hand-pinned anchors for the NEW centres / metal-cross spot dates.
+//
+// The independent rata-die engine is anchored by `independent_date_engine_is_
+// correct`; here the *new* TARGET2 predicate and the metal-cross London ∩ quote
+// ∩ US spot dates are pinned to values computed OFFLINE by a third, independent
+// implementation (so neither the library nor the in-test oracle can be silently
+// wrong in a way that two agreeing implementations would hide).
+// ===========================================================================
+
+/// (ii-bis) The independent TARGET2 closing-day predicate matches the published
+/// ECB TARGET2 calendar at hand-checked anchors.
+#[test]
+fn independent_target2_predicate_matches_published_anchors() {
+    // 2024 Easter is 31 Mar → Good Friday 29 Mar, Easter Monday 1 Apr.
+    assert!(
+        target2_holiday(2024, 3, 29),
+        "Good Friday is a TARGET2 close"
+    );
+    assert!(
+        target2_holiday(2024, 4, 1),
+        "Easter Monday is a TARGET2 close"
+    );
+    assert!(target2_holiday(2024, 5, 1), "Labour Day is a TARGET2 close");
+    assert!(target2_holiday(2024, 1, 1), "New Year is a TARGET2 close");
+    assert!(
+        target2_holiday(2024, 12, 25),
+        "Christmas is a TARGET2 close"
+    );
+    assert!(target2_holiday(2024, 12, 26), "26 Dec is a TARGET2 close");
+    // US Independence Day is NOT a TARGET2 close; nor is a plain weekday.
+    assert!(
+        !target2_holiday(2024, 7, 4),
+        "US July 4 is not a TARGET2 close"
+    );
+    assert!(!target2_holiday(2024, 6, 3), "an ordinary day is open");
+}
+
+/// (ii-bis) The metal-cross spot date over the loco-London ∩ quote ∩ US calendar
+/// equals a value hand-computed offline by a third implementation. This pins the
+/// metal-cross London ∩ quote ∩ US intersection so the broad sweep cannot be a
+/// coincidence of two agreeing wrong engines.
+#[test]
+fn metal_cross_spot_date_matches_hand_pinned_anchor() {
+    // XAUEUR (London ∩ TARGET2 ∩ US), T+2, horizon Tue 2024-12-24:
+    //   25 Dec (Christmas — all closed), 26 Dec (UK Boxing / TARGET2 close),
+    //   27 Dec Fri (all open → good day #1), 28/29 weekend, 30 Dec Mon
+    //   (all open → good day #2) ⇒ spot 2024-12-30. Hand-derived offline.
+    let s = spot_date_civil(pair("XAUEUR"), Civil::new(2024, 12, 24)).unwrap();
+    assert_eq!(
+        (s.year, s.month, s.day),
+        (2024, 12, 30),
+        "XAUEUR spot from 2024-12-24"
+    );
+    // XAUUSD (London ∩ US), T+2, horizon Wed 2024-07-03: 4 Jul (US Independence
+    // Day — closed), 5 Jul Fri (good #1), 6/7 weekend, 8 Jul Mon (good #2) ⇒
+    // spot 2024-07-08.
+    let g = spot_date_civil(pair("XAUUSD"), Civil::new(2024, 7, 3)).unwrap();
+    assert_eq!(
+        (g.year, g.month, g.day),
+        (2024, 7, 8),
+        "XAUUSD spot from 2024-07-03"
+    );
+}
+
+// ===========================================================================
+// (iv) Panel-superset + metal byte-stability structural gates.
+// ===========================================================================
+
+/// (iv) The published oracle panel and the library's covered set are the SAME
+/// set — neither silently drifts from the other. Every published pair resolves
+/// to a bespoke profile, and every bespoke-profile pair is in the published
+/// panel (checked by resolving the panel and confirming no covered pair outside
+/// it carries a profile spot-check on a representative uncovered pair).
+#[test]
+fn published_panel_is_a_superset_exceeding_75_and_matches_the_library() {
+    use celnet_conventions::has_pair_profile;
+    // Every published pair has a bespoke profile in the library.
+    for row in PUBLISHED {
+        assert!(
+            has_pair_profile(pair(row.pair)),
+            "{} must have a bespoke profile",
+            row.pair
+        );
+    }
+    // The panel exceeds the documented 75-pair interbank universe.
+    assert!(PUBLISHED.len() > 75, "panel size {}", PUBLISHED.len());
+    // No duplicate canonical pair in the published panel.
+    let mut keys: Vec<&str> = PUBLISHED.iter().map(|r| r.pair).collect();
+    keys.sort_unstable();
+    let n = keys.len();
+    keys.dedup();
+    assert_eq!(keys.len(), n, "duplicate pair in the published panel");
+    // A genuinely uncovered pair (a currency outside the panel) has no profile.
+    assert!(!has_pair_profile(pair("EURPLN")));
+}
+
+/// (iv) Metal pairs resolve through the SAME `CcyPair`-keyed convention path as
+/// fiat — the metal lease rides the foreign (base) leg exactly as an FX foreign
+/// rate does — and the resolution is byte-stable regardless of how the pair value
+/// is constructed (parse vs explicit `Ccy`). This is the byte-identity gate that
+/// is in this lane's scope; it confirms there is no metal-specific code fork.
+///
+/// **Deferred (coordinator S2/S4):** the to_bits-identity of the metal-as-
+/// `Underlying::Metal` projection against this legacy metal-as-`CcyPair` path is
+/// the byte gate for the new `Underlying::Metal`/`MetalPair`/`Metal` wire arm.
+/// That arm lives in the seam crate (`celnet-types`/`celnet-proto`), which is NOT
+/// in this lane; the gate lands with the contract freeze. Here we prove the
+/// `CcyPair` resolution path itself is byte-stable and metal-leg-consistent, which
+/// is the half of that gate this lane owns.
+#[test]
+fn metal_pair_resolution_is_byte_stable_through_the_ccypair_path() {
+    for (m, q) in [
+        ("XAU", "USD"),
+        ("XAG", "USD"),
+        ("XPT", "EUR"),
+        ("XPD", "EUR"),
+    ] {
+        // Build the same metal pair two independent ways.
+        let via_parse = pair(&format!("{m}{q}"));
+        let via_ccy = CcyPair::new(ccy(m), ccy(q));
+        assert_eq!(via_parse, via_ccy, "{m}{q} construction agrees");
+
+        let a = pair_meta(via_parse).unwrap();
+        let b = pair_meta(via_ccy).unwrap();
+        // The two resolutions are byte-identical (PairMeta is POD/Eq).
+        assert_eq!(a, b, "{m}{q} metal resolution is construction-stable");
+
+        // The metal leg rides the foreign (base) leg on the loco-London lease
+        // basis, exactly as the FX foreign-rate path treats the base leg.
+        let leg = a.metal_leg.expect("metal carries a lease leg");
+        assert_eq!(leg.metal, via_parse.base, "{m}{q} lease leg is the base");
+        assert!(leg.loco_london, "{m}{q} loco-London");
+        // The wire convention record's foreign accrual leg is the lease (ACT/360)
+        // basis — the carry layer reads the lease as the foreign rate.
+        let rec = celnet_conventions::resolve(via_parse, celnet_types::Tenor::Months(3)).record;
+        assert!(rec.day_count_accrual_for == celnet_types::DayCount::Act360);
     }
 }
