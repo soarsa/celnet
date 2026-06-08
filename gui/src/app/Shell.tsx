@@ -1,13 +1,20 @@
 /**
  * Shell — the single-window, multi-pane workspace (GUI-DESIGN §2): a persistent
  * left rail of workspaces, a title + command bar, the active workspace canvas,
- * and a slim status ribbon carrying stream health + the global clock. Workspace
- * switches cross-fade with a small parallax (depth cue, §3.4).
+ * and a slim status ribbon carrying stream health + the global clock.
+ *
+ * GW1: the rail and the keyboard grammar are now DATA-DRIVEN from the single
+ * command registry (`lib/commands.ts`): the rail iterates `RAIL`, the `⌘N` jumps
+ * are derived (`⌘1..n`, uncapping the old `⌘1-5`), and the global key handler is a
+ * registry dispatcher (`resolveChord`) so the honoured grammar IS the registry. The
+ * scope/underlier is the ONE `ScopeControl` breadcrumb (its leaf is `ScopeSwitcher`),
+ * replacing the four redundant pair affordances. Saved views (scope × view ×
+ * analytics) are URL-encoded + localStorage-persisted (`SavedViewsMenu`).
  */
 
 import { useEffect, useState } from "react";
-import { useApp, type WorkspaceId } from "./AppContext";
-import { CommandPalette, type Command } from "../components/CommandPalette";
+import { useApp } from "./AppContext";
+import { CommandPalette } from "../components/CommandPalette";
 import { ShortcutsOverlay } from "../components/ShortcutsOverlay";
 import { useAppearance } from "../design/appearance";
 import { TicketWorkspace } from "../workspaces/TicketWorkspace";
@@ -17,157 +24,78 @@ import { RiskWorkspace } from "../workspaces/RiskWorkspace";
 import { BookWorkspace } from "../workspaces/BookWorkspace";
 import { StatusRibbon } from "./StatusRibbon";
 import { CelerMark, CelnetWordmark } from "../components/CelerMark";
-import { PairStrip } from "../components/PairStrip";
-import { PairMenu } from "../components/PairMenu";
-import { UniverseNavigator } from "../components/UniverseNavigator";
-import { ScopeBreadcrumb } from "../components/ScopeBreadcrumb";
-import { PAIRS, strategyInstrument } from "../data/seed";
+import { ScopeControl } from "../components/ScopeControl";
+import { ScopeSwitcher } from "../components/ScopeSwitcher";
+import { SavedViewsMenu } from "../components/SavedViewsMenu";
+import { buildCommands, RAIL, railChord, resolveChord, type WorkspaceId } from "../lib/commands";
+import { isTerminal } from "../lib/scope";
 import styles from "./Shell.module.css";
 
-/** The workspace components, in rail order, for the persistent-mount canvas. */
-const WORKSPACE_VIEWS: { id: WorkspaceId; View: () => React.ReactElement }[] = [
-  { id: "ticket", View: TicketWorkspace },
-  { id: "stream", View: StreamWorkspace },
-  { id: "surface", View: SurfaceWorkspace },
-  { id: "risk", View: RiskWorkspace },
-  { id: "book", View: BookWorkspace },
-];
-
-const RAIL: { id: WorkspaceId; glyph: string; label: string; kbd: string }[] = [
-  { id: "ticket", glyph: "⌁", label: "Ticket", kbd: "⌘1" },
-  { id: "stream", glyph: "≋", label: "Stream", kbd: "⌘2" },
-  { id: "surface", glyph: "◷", label: "Surface", kbd: "⌘3" },
-  { id: "risk", glyph: "⊞", label: "Risk", kbd: "⌘4" },
-  { id: "book", glyph: "Σ", label: "Book", kbd: "⌘5" },
-];
+/** The workspace components, keyed by id, for the persistent-mount canvas. */
+const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
+  ticket: TicketWorkspace,
+  stream: StreamWorkspace,
+  surface: SurfaceWorkspace,
+  risk: RiskWorkspace,
+  book: BookWorkspace,
+};
 
 export function Shell(): React.ReactElement {
   const app = useApp();
-  const { appearance, contrast, toggleAppearance, toggleContrast } = useAppearance();
-  // The keyboard-shortcut cheatsheet overlay (bound to `?`). Shell-local UI: it
-  // reads the shared `src/lib/shortcuts.ts` grammar, so nothing else needs it.
+  const { appearance, toggleAppearance, toggleContrast } = useAppearance();
+  // The keyboard-shortcut cheatsheet overlay (bound to `?`). Shell-local UI.
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
-  // Global keyboard grammar (single source: src/lib/shortcuts.ts): ⌘K/⌘P palette,
-  // ⌘1..5 workspaces, ⌘B pair navigator, ? shortcuts cheatsheet.
+  // The runnable commands, bound to live app actions — the SINGLE source the
+  // palette renders and the Shell dispatches from.
+  const commands = buildCommands({
+    setWorkspace: app.setWorkspace,
+    openPalette: () => app.setPaletteOpen(true),
+    openScopeSwitcher: () => app.setScopeSwitcherOpen(true),
+    showShortcuts: () => setShortcutsOpen(true),
+    drillScopeDown: () => app.setScopeSwitcherOpen(true),
+    resetScope: app.resetScope,
+    markSurface: () => {
+      app.setWorkspace("surface");
+      void app.remarkSurface();
+    },
+    openRiskScenario: () => app.setWorkspace("risk"),
+    saveView: () => app.setScopeSwitcherOpen(false),
+    toggleDensity: app.toggleDensity,
+    toggleAppearance,
+    toggleContrast,
+    canDrillScope: !isTerminal(app.scope),
+  });
+
+  // Global keyboard grammar (single source: lib/commands.ts). The Shell resolves a
+  // keydown against the registry and dispatches the matched command, so what the
+  // product HONOURS is exactly what the cheatsheet ADVERTISES.
   useEffect(() => {
+    const byId = new Map(commands.map((c) => [c.id, c]));
     const onKey = (e: KeyboardEvent) => {
       const meta = e.metaKey || e.ctrlKey;
-      if (meta && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        app.setPaletteOpen(true);
-      } else if (meta && e.key >= "1" && e.key <= "5") {
-        e.preventDefault();
-        app.setWorkspace(RAIL[Number(e.key) - 1]!.id);
-      } else if (meta && e.key.toLowerCase() === "p") {
-        e.preventDefault();
-        app.setPaletteOpen(true);
-      } else if (meta && e.key.toLowerCase() === "b") {
-        // ⌘B — open the pair-universe navigator (browse the universe).
-        e.preventDefault();
-        app.setNavigatorOpen(true);
-      } else if (!meta && e.key === "?") {
-        // `?` — toggle the keyboard cheatsheet, unless the user is typing into a
-        // text field (where `?` is a literal character, not a command).
+      // `?` is a literal character inside a text field — never a command there.
+      if (!meta && e.key === "?") {
         const tag = (e.target as HTMLElement | null)?.tagName;
         if (tag === "INPUT" || tag === "TEXTAREA") return;
+      }
+      const hit = resolveChord({ key: e.key, meta }, RAIL.length);
+      if (!hit) return;
+      // `?` toggles the cheatsheet (the only toggling chord); everything else runs.
+      if (hit.id === "help") {
         e.preventDefault();
         setShortcutsOpen((o) => !o);
+        return;
+      }
+      const cmd = byId.get(hit.id);
+      if (cmd) {
+        e.preventDefault();
+        cmd.run();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [app]);
-
-  const commands: Command[] = [
-    ...RAIL.map((r) => ({
-      id: `ws-${r.id}`,
-      title: `Go to ${r.label}`,
-      hint: r.kbd,
-      group: "Workspace",
-      run: () => app.setWorkspace(r.id),
-    })),
-    ...PAIRS.map((p) => ({
-      id: `pair-${p.pair.base}${p.pair.quote}`,
-      title: `${p.pair.base}/${p.pair.quote}`,
-      hint: `spot ${p.market.spot}`,
-      group: "Pair",
-      run: () => app.setPair(p.pair),
-    })),
-    {
-      id: "browse-pairs",
-      title: "Browse pair universe",
-      hint: "⌘B",
-      group: "Action",
-      run: () => app.setNavigatorOpen(true),
-    },
-    {
-      id: "mark-surface",
-      title: "Mark surface",
-      hint: "recalibrate",
-      group: "Action",
-      run: () => {
-        app.setWorkspace("surface");
-        void app.remarkSurface();
-      },
-    },
-    {
-      id: "stream-rr",
-      title: `Stream ${app.pairCtx.pair.base}/${app.pairCtx.pair.quote} 1M 25Δ RR`,
-      hint: "add to blotter",
-      group: "Action",
-      run: () => {
-        // Promotes a structure into the live RFS blotter — the exact runtime
-        // subscription path. The new line materializes and ticks immediately.
-        app.stream.subscribe(
-          strategyInstrument(app.pairCtx.pair, 30 / 365, "RISK_REVERSAL", 10),
-          app.conventions,
-          `${app.pairCtx.pair.base}/${app.pairCtx.pair.quote} 25Δ RR`,
-        );
-        app.setWorkspace("stream");
-      },
-    },
-    {
-      id: "stream-strangle",
-      title: `Stream ${app.pairCtx.pair.base}/${app.pairCtx.pair.quote} 2M 10Δ strangle`,
-      hint: "add to blotter",
-      group: "Action",
-      run: () => {
-        app.stream.subscribe(
-          strategyInstrument(app.pairCtx.pair, 60 / 365, "STRANGLE", 10),
-          app.conventions,
-          `${app.pairCtx.pair.base}/${app.pairCtx.pair.quote} 10Δ strangle`,
-        );
-        app.setWorkspace("stream");
-      },
-    },
-    {
-      id: "risk-scenario",
-      title: "Open risk scenario",
-      hint: "spot × vol shock grid",
-      group: "Action",
-      run: () => app.setWorkspace("risk"),
-    },
-    {
-      id: "shortcuts",
-      title: "Keyboard shortcuts",
-      hint: "?",
-      group: "Action",
-      run: () => setShortcutsOpen(true),
-    },
-    {
-      id: "toggle-appearance",
-      title: appearance === "dark" ? "Switch to Light" : "Switch to Dark",
-      group: "Action",
-      run: toggleAppearance,
-    },
-    {
-      id: "toggle-contrast",
-      title: contrast === "high" ? "Normal contrast" : "Increase contrast",
-      group: "Action",
-      run: toggleContrast,
-    },
-  ];
+  }, [commands]);
 
   return (
     <div className={styles.shell}>
@@ -176,18 +104,21 @@ export function Shell(): React.ReactElement {
           <CelerMark size={30} className={styles.mark} title="Celnet — a Celer Technologies product" />
         </div>
         <nav className={styles.nav}>
-          {RAIL.map((r) => (
-            <button
-              key={r.id}
-              className={`${styles.railBtn} ${app.workspace === r.id ? styles.railActive : ""}`}
-              onClick={() => app.setWorkspace(r.id)}
-              title={`${r.label} (${r.kbd})`}
-              aria-current={app.workspace === r.id}
-            >
-              <span className={styles.railGlyph}>{r.glyph}</span>
-              <span className={styles.railLabel}>{r.label}</span>
-            </button>
-          ))}
+          {RAIL.map((r, i) => {
+            const kbd = railChord(i).join("");
+            return (
+              <button
+                key={r.id}
+                className={`${styles.railBtn} ${app.workspace === r.id ? styles.railActive : ""}`}
+                onClick={() => app.setWorkspace(r.id)}
+                title={`${r.label} (${kbd})`}
+                aria-current={app.workspace === r.id}
+              >
+                <span className={styles.railGlyph}>{r.glyph}</span>
+                <span className={styles.railLabel}>{r.label}</span>
+              </button>
+            );
+          })}
         </nav>
         <div className={styles.railFoot}>
           <button
@@ -215,20 +146,18 @@ export function Shell(): React.ReactElement {
 
       <div className={styles.main}>
         <TitleBar />
-        <PairStrip />
         {/*
          * P0-11: every workspace stays MOUNTED; we toggle visibility rather than
          * conditionally rendering. Switching no longer remounts (no lost Risk/Book
-         * in-progress state, no re-fired heavy effects). The active pane animates
-         * in via a key on the visible layer only, preserving the cross-fade feel
-         * without a destructive remount of the workspace subtree.
+         * in-progress state, no re-fired heavy effects).
          */}
         <div className={styles.canvas}>
-          {WORKSPACE_VIEWS.map(({ id, View }) => {
-            const active = app.workspace === id;
+          {RAIL.map((r) => {
+            const View = WORKSPACE_VIEW[r.id];
+            const active = app.workspace === r.id;
             return (
               <div
-                key={id}
+                key={r.id}
                 className={`${styles.pane} ${active ? styles.paneActive : styles.paneHidden}`}
                 aria-hidden={!active}
                 inert={!active}
@@ -246,7 +175,7 @@ export function Shell(): React.ReactElement {
         commands={commands}
         onClose={() => app.setPaletteOpen(false)}
       />
-      <UniverseNavigator />
+      <ScopeSwitcher />
       <ShortcutsOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
     </div>
   );
@@ -260,23 +189,9 @@ function TitleBar(): React.ReactElement {
       <span className={styles.divider} aria-hidden>
         ·
       </span>
-      {/* P0-6: "what slice of the firm" sits between identity and the pair. */}
-      <ScopeBreadcrumb />
-      <span className={styles.divider} aria-hidden>
-        ·
-      </span>
-      <PairMenu />
-      <button
-        className={styles.navigatorBtn}
-        onClick={() => app.setNavigatorOpen(true)}
-        title="Browse the pair universe (⌘B)"
-        aria-label="browse the pair universe"
-      >
-        <span className={styles.navigatorGlyph} aria-hidden>
-          ⊞
-        </span>
-        <span className={styles.navigatorLabel}>Pairs</span>
-      </button>
+      {/* The ONE scope control: "what slice of the firm", terminal = underlier. */}
+      <ScopeControl />
+      <SavedViewsMenu />
       <button
         className={styles.search}
         onClick={() => app.setPaletteOpen(true)}

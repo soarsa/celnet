@@ -1,0 +1,31 @@
+.provenance {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--type-caption);
+  line-height: var(--type-caption-lh);
+  color: var(--text-tertiary);
+}
+
+.segment {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.sep {
+  color: var(--text-tertiary);
+  opacity: 0.6;
+}
+
+.label {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+}
+
+.value {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}

@@ -1,0 +1,5 @@
+.empty {
+  color: var(--text-tertiary);
+  /* The dash sits where a number would, so it aligns in numeric columns. */
+  font-variant-numeric: tabular-nums;
+}
