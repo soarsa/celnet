@@ -1,0 +1,16 @@
+[package]
+name = "celnet-linear"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet linear FX book — outright forward, FX swap (near+far legs) and non-deliverable forward as first-class discounted-cashflow priced products over the asset-class-agnostic carry seam. Closed-form, exact; no new pricing model."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+celnet-core.workspace = true
+celnet-types.workspace = true
