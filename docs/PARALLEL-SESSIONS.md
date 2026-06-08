@@ -74,13 +74,28 @@ identifiers (#8); zero-alloc hot core stays alloc/lock/log-free (#11); push **on
 | **W2-B-BREADTH** | `celnet-conventions`, `celnet-calendar` (>75 pairs + XPT/XPD + metal crosses) | W1 `Underlying::Metal` | EMTA/ISDA/LBMA tables + independent rata-die walk | IN-PROGRESS | session-B (W2 integrator) / main |
 | **W3-CRYPTO** | NEW `celnet-crypto-vanilla` (+ crypto surface leaf — deferred) | W1 contract | GK-funding + independent inverse closed-form + code-disjoint MC; Deribit specs | **DONE (pricing leaf)** | coordinator / `lane/w3-crypto` |
 | **W4-A-PIVOT** | `celnet-exotics/src/pivot.rs` + new payoff arms | W1 + coordinator proto | code-disjoint MC oracle + degenerate→TARF limit | OPEN | — |
-| **W4-B-RFQ** | NEW `celnet-rfq` (multi-dealer aggregation) | W1 + coordinator proto | ≥3 synthetic LP loopback; best-price/tie-break/last-look | **CLAIMED** | coordinator / `lane/w4-b-rfq` (new-crate engine + loopback FIX now; proto QuoteService/clients deferred until W2 frees the proto window) |
+| **W4-B-RFQ** | NEW `celnet-rfq` (multi-dealer aggregation) | W1 + coordinator proto | ≥3 synthetic LP loopback; best-price/tie-break/last-look | **DONE (engine)** | coordinator / `lane/w4-b-rfq` |
 | **W5-A-XRISK** | `celnet-risk-normalize`, `celnet-risk-cube` (cross-asset fact + FRTB buckets) | W1 + W5-B leaves | longhand recomputation; FX firm_aggregate==single-node 1e-12 stays green | OPEN | — |
 | **W5-B-LEAVES** | NEW `celnet-equity-vanilla`, `celnet-commodity-vanilla` | W1 contract | QuantLib AnalyticEuropean (div) + Black-76 golden | **DONE** | coordinator / `lane/w5-b-leaves` |
 | **GW2-STRUCTURING** | `gui/src/products/*` (Ticket→ProductSpec registry) + tests | GW0/GW1 merge | vitest per-ProductSpec round-trip + Playwright e2e + axe | **DONE** | coordinator / `lane/gw2-structuring` |
 
 ## 6. Coordinator state (updated by the coordinator each milestone)
 
+- **▶ DONE (2026-06-08): W4-B-RFQ engine landed (coordinator lane `lane/w4-b-rfq`).** NEW disjoint crate
+  **`celnet-rfq`** — a `MultiDealerEngine` fanning one `QuoteRequest` to N `QuoteSource`s concurrently
+  (`join_all` + per-source `tokio::time::timeout`), ranking best-bid (max) / best-offer (min), deterministic
+  tie-break (earlier `epoch_nanos` → smallest `lp_id`), timeout-drop (excluded from `lp_count`) + last-look
+  promotion (winner past `valid_until_nanos` rejected, next-best promoted), with the `lp_won ⊆ responders`
+  consistency invariant. A **real `FixLpAdapter`** runs a genuine celnet-fix 4.4 Logon→QuoteRequest→Quote
+  session over an ephemeral 127.0.0.1 loopback socket (priced by the golden-gated `celnet-vanilla`), proven
+  non-vacuous by a closed-port negative control. Build → adversarial-verify (ACCEPT on all six axes:
+  oracle-independent injected-ladder ground truth, real-loopback-not-mock, ranking/tie-break/last-look
+  re-derived, no workarounds, honest boundary, re-gate). **No proto / no root `Cargo.toml`** (deps are
+  registered; auto-join). **Gate:** `workspace-deps` OK · `check-crate celnet-rfq` 20/20. **Deferred
+  (batched in `POST-W2-INTEGRATION-MANIFEST.md`):** `QuoteService.RequestMultiDealerQuote` +
+  `MultiDealerQuote`/`DealerQuote` proto + `AcceptQuote(quote_id, lp_id)` + server `InternalPricerSource`
+  wiring + 5-client ranked-panel surfacing. **Honest boundary:** live LP-panel WAN connectivity +
+  regulated-venue/MAS-RMO status are ENV (`CELNET_LP_PANEL`, default synthetic in-repo panel).
 - **▶ MESH STATUS (2026-06-08, for session-B): see `docs/POST-W2-INTEGRATION-MANIFEST.md`.** The
   `celnet.proto` window is the single critical path; it now holds W2's `fx_forward/swap/ndf` + `metal`.
   **All deferred wire integration for the five landed/in-flight new crates (`celnet-{equity,commodity,
