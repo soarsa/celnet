@@ -1,0 +1,126 @@
+[
+  {
+    "id": "asian-eurusd-1y-call-atm-12obs",
+    "family": "asian_option",
+    "underlying": "EURUSD",
+    "tenor": "1Y",
+    "market": {
+      "spot": 1.1,
+      "vol": 0.105,
+      "r_dom": 0.02,
+      "r_for": 0.01
+    },
+    "terms": {
+      "averaging": "DISCRETE",
+      "elapsed_avg": 0.0,
+      "elapsed_weight": 0.0,
+      "expiry_years": 1.0,
+      "method": "CURRAN",
+      "observations": 12,
+      "option_type": "CALL",
+      "strike": 1.1
+    },
+    "expected": {
+      "price": 0.03077125210611178,
+      "price_std_error": 0.00003601287314747819,
+      "oracle": "code-disjoint splitmix64 arithmetic-average GBM Monte-Carlo"
+    },
+    "tolerance": {
+      "rel": 0.05,
+      "abs": 0.005
+    }
+  },
+  {
+    "id": "asian-eurusd-1y-put-atm-12obs",
+    "family": "asian_option",
+    "underlying": "EURUSD",
+    "tenor": "1Y",
+    "market": {
+      "spot": 1.1,
+      "vol": 0.105,
+      "r_dom": 0.02,
+      "r_for": 0.01
+    },
+    "terms": {
+      "averaging": "DISCRETE",
+      "elapsed_avg": 0.0,
+      "elapsed_weight": 0.0,
+      "expiry_years": 1.0,
+      "method": "CURRAN",
+      "observations": 12,
+      "option_type": "PUT",
+      "strike": 1.1
+    },
+    "expected": {
+      "price": 0.024994947438668813,
+      "price_std_error": 0.000030625472673728675,
+      "oracle": "code-disjoint splitmix64 arithmetic-average GBM Monte-Carlo"
+    },
+    "tolerance": {
+      "rel": 0.05,
+      "abs": 0.005
+    }
+  },
+  {
+    "id": "asian-eurusd-6m-call-otm-6obs",
+    "family": "asian_option",
+    "underlying": "EURUSD",
+    "tenor": "6M",
+    "market": {
+      "spot": 1.1,
+      "vol": 0.12,
+      "r_dom": 0.03,
+      "r_for": 0.01
+    },
+    "terms": {
+      "averaging": "DISCRETE",
+      "elapsed_avg": 0.0,
+      "elapsed_weight": 0.0,
+      "expiry_years": 0.5,
+      "method": "CURRAN",
+      "observations": 6,
+      "option_type": "CALL",
+      "strike": 1.16
+    },
+    "expected": {
+      "price": 0.006720860435205579,
+      "price_std_error": 0.000020283261143316487,
+      "oracle": "code-disjoint splitmix64 arithmetic-average GBM Monte-Carlo"
+    },
+    "tolerance": {
+      "rel": 0.05,
+      "abs": 0.005
+    }
+  },
+  {
+    "id": "asian-usdjpy-1y-call-atm-4obs",
+    "family": "asian_option",
+    "underlying": "USDJPY",
+    "tenor": "1Y",
+    "market": {
+      "spot": 150.0,
+      "vol": 0.1,
+      "r_dom": 0.04,
+      "r_for": 0.005
+    },
+    "terms": {
+      "averaging": "DISCRETE",
+      "elapsed_avg": 0.0,
+      "elapsed_weight": 0.0,
+      "expiry_years": 1.0,
+      "method": "CURRAN",
+      "observations": 4,
+      "option_type": "CALL",
+      "strike": 150.0
+    },
+    "expected": {
+      "price": 5.781832465928418,
+      "price_std_error": 0.004973052149554507,
+      "oracle": "code-disjoint splitmix64 arithmetic-average GBM Monte-Carlo"
+    },
+    "tolerance": {
+      "rel": 0.05,
+      "abs": 0.005
+    }
+  }
+]

@@ -1,0 +1,234 @@
+[
+  {
+    "id": "touch-0-NO_TOUCH",
+    "family": "touch",
+    "underlying": "EURUSD",
+    "tenor": "1M",
+    "market": {
+      "spot": 100.0,
+      "vol": 0.08,
+      "r_dom": 0.05,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 0.0821917808219178,
+      "kind": "NO_TOUCH",
+      "lower_barrier": 105.0,
+      "monitoring": "CONTINUOUS",
+      "rebate": 1.0,
+      "upper_barrier": 0.0
+    },
+    "expected": {
+      "price": 0.9521611509500132,
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 touch_gk.csv row 0 (at-expiry)"
+    },
+    "tolerance": {
+      "rel": 0.00001,
+      "abs": 1e-7
+    }
+  },
+  {
+    "id": "touch-1-ONE_TOUCH",
+    "family": "touch",
+    "underlying": "EURUSD",
+    "tenor": "1M",
+    "market": {
+      "spot": 100.0,
+      "vol": 0.08,
+      "r_dom": 0.05,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 0.0821917808219178,
+      "kind": "ONE_TOUCH",
+      "lower_barrier": 105.0,
+      "monitoring": "CONTINUOUS",
+      "rebate": 1.0,
+      "upper_barrier": 0.0
+    },
+    "expected": {
+      "price": 0.0561744592212154,
+      "price_std_error": null,
+      "oracle": "Reiner-Rubinstein at-hit one-touch closed form (independent)"
+    },
+    "tolerance": {
+      "rel": 1e-6,
+      "abs": 1e-8
+    }
+  },
+  {
+    "id": "touch-2-NO_TOUCH",
+    "family": "touch",
+    "underlying": "EURUSD",
+    "tenor": "1M",
+    "market": {
+      "spot": 100.0,
+      "vol": 0.08,
+      "r_dom": 0.05,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 0.0821917808219178,
+      "kind": "NO_TOUCH",
+      "lower_barrier": 110.0,
+      "monitoring": "CONTINUOUS",
+      "rebate": 1.0,
+      "upper_barrier": 0.0
+    },
+    "expected": {
+      "price": 0.9958433944614206,
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 touch_gk.csv row 2 (at-expiry)"
+    },
+    "tolerance": {
+      "rel": 0.00001,
+      "abs": 1e-7
+    }
+  },
+  {
+    "id": "touch-20-DOUBLE_NO_TOUCH",
+    "family": "touch",
+    "underlying": "EURUSD",
+    "tenor": "1M",
+    "market": {
+      "spot": 100.0,
+      "vol": 0.08,
+      "r_dom": 0.05,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 0.0821917808219178,
+      "kind": "DOUBLE_NO_TOUCH",
+      "lower_barrier": 95.0,
+      "monitoring": "CONTINUOUS",
+      "rebate": 1.0,
+      "upper_barrier": 106.0
+    },
+    "expected": {
+      "price": 0.961947681720262,
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 touch_gk.csv row 20 (at-expiry)"
+    },
+    "tolerance": {
+      "rel": 0.00001,
+      "abs": 1e-7
+    }
+  },
+  {
+    "id": "touch-21-DOUBLE_ONE_TOUCH",
+    "family": "touch",
+    "underlying": "EURUSD",
+    "tenor": "1M",
+    "market": {
+      "spot": 100.0,
+      "vol": 0.08,
+      "r_dom": 0.05,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 0.0821917808219178,
+      "kind": "DOUBLE_ONE_TOUCH",
+      "lower_barrier": 95.0,
+      "monitoring": "CONTINUOUS",
+      "rebate": 1.0,
+      "upper_barrier": 106.0
+    },
+    "expected": {
+      "price": 0.03395116204394244,
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 touch_gk.csv row 21 (at-expiry)"
+    },
+    "tolerance": {
+      "rel": 0.00001,
+      "abs": 1e-7
+    }
+  },
+  {
+    "id": "touch-22-DOUBLE_NO_TOUCH",
+    "family": "touch",
+    "underlying": "EURUSD",
+    "tenor": "1M",
+    "market": {
+      "spot": 100.0,
+      "vol": 0.08,
+      "r_dom": 0.05,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 0.0821917808219178,
+      "kind": "DOUBLE_NO_TOUCH",
+      "lower_barrier": 90.0,
+      "monitoring": "CONTINUOUS",
+      "rebate": 1.0,
+      "upper_barrier": 112.0
+    },
+    "expected": {
+      "price": 0.9958950263943558,
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 touch_gk.csv row 22 (at-expiry)"
+    },
+    "tolerance": {
+      "rel": 0.00001,
+      "abs": 1e-7
+    }
+  },
+  {
+    "id": "touch-23-DOUBLE_ONE_TOUCH",
+    "family": "touch",
+    "underlying": "EURUSD",
+    "tenor": "1M",
+    "market": {
+      "spot": 100.0,
+      "vol": 0.08,
+      "r_dom": 0.05,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 0.0821917808219178,
+      "kind": "DOUBLE_ONE_TOUCH",
+      "lower_barrier": 90.0,
+      "monitoring": "CONTINUOUS",
+      "rebate": 1.0,
+      "upper_barrier": 112.0
+    },
+    "expected": {
+      "price": 3.817369848668761e-6,
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 touch_gk.csv row 23 (at-expiry)"
+    },
+    "tolerance": {
+      "rel": 0.00001,
+      "abs": 1e-7
+    }
+  },
+  {
+    "id": "touch-3-ONE_TOUCH",
+    "family": "touch",
+    "underlying": "EURUSD",
+    "tenor": "1M",
+    "market": {
+      "spot": 100.0,
+      "vol": 0.08,
+      "r_dom": 0.05,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 0.0821917808219178,
+      "kind": "ONE_TOUCH",
+      "lower_barrier": 110.0,
+      "monitoring": "CONTINUOUS",
+      "rebate": 1.0,
+      "upper_barrier": 0.0
+    },
+    "expected": {
+      "price": 0.00011562220480909844,
+      "price_std_error": null,
+      "oracle": "Reiner-Rubinstein at-hit one-touch closed form (independent)"
+    },
+    "tolerance": {
+      "rel": 1e-6,
+      "abs": 1e-8
+    }
+  }
+]

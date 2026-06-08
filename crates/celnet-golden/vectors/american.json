@@ -1,0 +1,62 @@
+[
+  {
+    "id": "american-call-no-dividend-equals-european",
+    "family": "american",
+    "underlying": "EURUSD",
+    "tenor": "1Y",
+    "market": {
+      "spot": 100.0,
+      "vol": 0.2,
+      "r_dom": 0.05,
+      "r_for": 0.0
+    },
+    "terms": {
+      "expiry_years": 1.0,
+      "lsm_exercise_dates": 0,
+      "lsm_paths": 0,
+      "lsm_seed": 0,
+      "option_type": "CALL",
+      "strike": 100.0,
+      "style": "AMERICAN"
+    },
+    "expected": {
+      "price": 10.450583572185565,
+      "price_std_error": null,
+      "oracle": "American call, r_f=0 ⇒ never exercise early ⇒ = European GK (closed form)"
+    },
+    "tolerance": {
+      "rel": 0.005,
+      "abs": 0.005
+    }
+  },
+  {
+    "id": "american-ls2001-table1-put",
+    "family": "american",
+    "underlying": "EURUSD",
+    "tenor": "1Y",
+    "market": {
+      "spot": 40.0,
+      "vol": 0.2,
+      "r_dom": 0.06,
+      "r_for": 0.0
+    },
+    "terms": {
+      "expiry_years": 1.0,
+      "lsm_exercise_dates": 0,
+      "lsm_paths": 0,
+      "lsm_seed": 0,
+      "option_type": "PUT",
+      "strike": 40.0,
+      "style": "AMERICAN"
+    },
+    "expected": {
+      "price": 2.314,
+      "price_std_error": null,
+      "oracle": "hand-pinned: Longstaff-Schwartz (2001) Table 1, American put, FD ref 2.314"
+    },
+    "tolerance": {
+      "rel": 0.01,
+      "abs": 0.02
+    }
+  }
+]

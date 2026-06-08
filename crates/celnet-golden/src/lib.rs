@@ -66,13 +66,19 @@
 #![forbid(unsafe_code)]
 
 pub mod csv;
+pub mod oracle;
 pub mod table;
+pub mod vectors;
 
 pub use csv::{CsvError, CsvTable};
 pub use table::{
     BarrierRecord, BarrierType, DigitalRecord, DigitalSettlement, DoubleBarrierKind,
     DoubleBarrierRecord, HestonRecord, TouchKind, TouchRecord, VanillaRecord, load_barrier,
     load_digital, load_double_barrier, load_heston, load_touch, load_vanilla,
+};
+pub use vectors::{
+    Expected, FAMILIES, GoldenVector, MC_FAMILIES, Market, Tolerance, VECTORS_DIR, VectorError,
+    load_vectors, vectors_file,
 };
 
 /// Directory holding the frozen reference tables, relative to the crate root.

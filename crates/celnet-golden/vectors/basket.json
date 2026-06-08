@@ -1,0 +1,173 @@
+[
+  {
+    "id": "basket-2leg-call-rho0.5",
+    "family": "basket",
+    "underlying": "EURUSD",
+    "tenor": "1Y",
+    "market": {
+      "spot": 1.2,
+      "vol": 0.1,
+      "r_dom": 0.02,
+      "r_for": 0.0
+    },
+    "terms": {
+      "correlations": [
+        1.0,
+        0.5,
+        0.5,
+        1.0
+      ],
+      "expiry_years": 1.0,
+      "kind": "BASKET",
+      "legs": [
+        {
+          "pair": "EURUSD",
+          "r_for": 0.01,
+          "spot": 1.1,
+          "vol": 0.105,
+          "weight": 0.5
+        },
+        {
+          "pair": "EURUSD",
+          "r_for": 0.008,
+          "spot": 1.3,
+          "vol": 0.12,
+          "weight": 0.5
+        }
+      ],
+      "mc_paths": 0,
+      "mc_replications": 0,
+      "mc_seed": 0,
+      "mc_steps": 0,
+      "option_type": "CALL",
+      "strike": 1.2
+    },
+    "expected": {
+      "price": 0.053293581536791874,
+      "price_std_error": 0.000050586011793349114,
+      "oracle": "code-disjoint splitmix64 Cholesky-correlated GBM basket Monte-Carlo"
+    },
+    "tolerance": {
+      "rel": 0.05,
+      "abs": 0.005
+    }
+  },
+  {
+    "id": "basket-2leg-worstof-put-rho0.3",
+    "family": "basket",
+    "underlying": "EURUSD",
+    "tenor": "1Y",
+    "market": {
+      "spot": 1.2,
+      "vol": 0.1,
+      "r_dom": 0.02,
+      "r_for": 0.0
+    },
+    "terms": {
+      "correlations": [
+        1.0,
+        0.3,
+        0.3,
+        1.0
+      ],
+      "expiry_years": 1.0,
+      "kind": "WORST_OF",
+      "legs": [
+        {
+          "pair": "EURUSD",
+          "r_for": 0.01,
+          "spot": 1.1,
+          "vol": 0.105,
+          "weight": 0.5
+        },
+        {
+          "pair": "EURUSD",
+          "r_for": 0.008,
+          "spot": 1.3,
+          "vol": 0.12,
+          "weight": 0.5
+        }
+      ],
+      "mc_paths": 0,
+      "mc_replications": 0,
+      "mc_seed": 0,
+      "mc_steps": 0,
+      "option_type": "PUT",
+      "strike": 1.1
+    },
+    "expected": {
+      "price": 0.5375670718749265,
+      "price_std_error": 0.0000130513675073423,
+      "oracle": "code-disjoint splitmix64 Cholesky-correlated GBM basket Monte-Carlo"
+    },
+    "tolerance": {
+      "rel": 0.05,
+      "abs": 0.005
+    }
+  },
+  {
+    "id": "basket-3leg-bestof-call",
+    "family": "basket",
+    "underlying": "EURUSD",
+    "tenor": "1Y",
+    "market": {
+      "spot": 1.2,
+      "vol": 0.1,
+      "r_dom": 0.02,
+      "r_for": 0.0
+    },
+    "terms": {
+      "correlations": [
+        1.0,
+        0.4,
+        0.3,
+        0.4,
+        1.0,
+        0.35,
+        0.3,
+        0.35,
+        1.0
+      ],
+      "expiry_years": 1.0,
+      "kind": "BEST_OF",
+      "legs": [
+        {
+          "pair": "EURUSD",
+          "r_for": 0.01,
+          "spot": 1.1,
+          "vol": 0.105,
+          "weight": 0.3333333333333333
+        },
+        {
+          "pair": "EURUSD",
+          "r_for": 0.008,
+          "spot": 1.3,
+          "vol": 0.12,
+          "weight": 0.3333333333333333
+        },
+        {
+          "pair": "EURUSD",
+          "r_for": 0.012,
+          "spot": 1.25,
+          "vol": 0.11,
+          "weight": 0.3333333333333333
+        }
+      ],
+      "mc_paths": 0,
+      "mc_replications": 0,
+      "mc_seed": 0,
+      "mc_steps": 0,
+      "option_type": "CALL",
+      "strike": 0.42
+    },
+    "expected": {
+      "price": 0.038655958706671115,
+      "price_std_error": 0.000023543631869634725,
+      "oracle": "code-disjoint splitmix64 Cholesky-correlated GBM basket Monte-Carlo"
+    },
+    "tolerance": {
+      "rel": 0.05,
+      "abs": 0.005
+    }
+  }
+]

@@ -1,0 +1,134 @@
+[
+  {
+    "id": "cliquet-eurusd-1y-capped-4p",
+    "family": "cliquet",
+    "underlying": "EURUSD",
+    "tenor": "1Y",
+    "market": {
+      "spot": 1.1,
+      "vol": 0.105,
+      "r_dom": 0.02,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 1.0,
+      "global_cap": null,
+      "global_floor": null,
+      "local_cap": 0.04,
+      "local_floor": null,
+      "mc_pairs": 20000,
+      "mc_seed": 99,
+      "moneyness": 1.0,
+      "option_type": "CALL",
+      "periods": 4
+    },
+    "expected": {
+      "price": 0.06314009425020956,
+      "price_std_error": 0.000022566658647239258,
+      "oracle": "code-disjoint splitmix64 clamped-cliquet Monte-Carlo"
+    },
+    "tolerance": {
+      "rel": 0.05,
+      "abs": 0.005
+    }
+  },
+  {
+    "id": "cliquet-eurusd-1y-plain-4p",
+    "family": "cliquet",
+    "underlying": "EURUSD",
+    "tenor": "1Y",
+    "market": {
+      "spot": 1.1,
+      "vol": 0.105,
+      "r_dom": 0.02,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 1.0,
+      "global_cap": null,
+      "global_floor": null,
+      "local_cap": null,
+      "local_floor": null,
+      "mc_pairs": 0,
+      "mc_seed": 0,
+      "moneyness": 1.0,
+      "option_type": "CALL",
+      "periods": 4
+    },
+    "expected": {
+      "price": 0.09701958638312924,
+      "price_std_error": null,
+      "oracle": "plain ratchet = Σ forward-start legs (closed form)"
+    },
+    "tolerance": {
+      "rel": 1e-7,
+      "abs": 1e-9
+    }
+  },
+  {
+    "id": "cliquet-eurusd-1y-plain-put-4p",
+    "family": "cliquet",
+    "underlying": "EURUSD",
+    "tenor": "1Y",
+    "market": {
+      "spot": 1.1,
+      "vol": 0.1,
+      "r_dom": 0.02,
+      "r_for": 0.015
+    },
+    "terms": {
+      "expiry_years": 1.0,
+      "global_cap": null,
+      "global_floor": null,
+      "local_cap": null,
+      "local_floor": null,
+      "mc_pairs": 0,
+      "mc_seed": 0,
+      "moneyness": 1.0,
+      "option_type": "PUT",
+      "periods": 4
+    },
+    "expected": {
+      "price": 0.08419021601152074,
+      "price_std_error": null,
+      "oracle": "plain ratchet = Σ forward-start legs (closed form)"
+    },
+    "tolerance": {
+      "rel": 1e-7,
+      "abs": 1e-9
+    }
+  },
+  {
+    "id": "cliquet-eurusd-2y-plain-8p",
+    "family": "cliquet",
+    "underlying": "EURUSD",
+    "tenor": "2Y",
+    "market": {
+      "spot": 1.1,
+      "vol": 0.11,
+      "r_dom": 0.025,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 2.0,
+      "global_cap": null,
+      "global_floor": null,
+      "local_cap": null,
+      "local_floor": null,
+      "mc_pairs": 0,
+      "mc_seed": 0,
+      "moneyness": 1.0,
+      "option_type": "CALL",
+      "periods": 8
+    },
+    "expected": {
+      "price": 0.20727754121621375,
+      "price_std_error": null,
+      "oracle": "plain ratchet = Σ forward-start legs (closed form)"
+    },
+    "tolerance": {
+      "rel": 1e-7,
+      "abs": 1e-9
+    }
+  }
+]

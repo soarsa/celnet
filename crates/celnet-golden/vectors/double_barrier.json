@@ -1,0 +1,188 @@
+[
+  {
+    "id": "double-barrier-0-CALL",
+    "family": "double_barrier",
+    "underlying": "EURUSD",
+    "tenor": "3M",
+    "market": {
+      "spot": 100.0,
+      "vol": 0.1,
+      "r_dom": 0.05,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 0.2493150684931507,
+      "kind": "KNOCK_OUT",
+      "lower_barrier": 85.0,
+      "monitoring": "CONTINUOUS",
+      "option_type": "CALL",
+      "rebate": 0.0,
+      "strike": 90.0,
+      "upper_barrier": 120.0
+    },
+    "expected": {
+      "price": 10.86817404924459,
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 double_barrier_gk.csv row 0"
+    },
+    "tolerance": {
+      "rel": 0.00001,
+      "abs": 1e-7
+    }
+  },
+  {
+    "id": "double-barrier-10-PUT",
+    "family": "double_barrier",
+    "underlying": "EURUSD",
+    "tenor": "3M",
+    "market": {
+      "spot": 100.0,
+      "vol": 0.1,
+      "r_dom": 0.05,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 0.2493150684931507,
+      "kind": "KNOCK_OUT",
+      "lower_barrier": 85.0,
+      "monitoring": "CONTINUOUS",
+      "option_type": "PUT",
+      "rebate": 0.0,
+      "strike": 110.0,
+      "upper_barrier": 120.0
+    },
+    "expected": {
+      "price": 8.963650470474146,
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 double_barrier_gk.csv row 10"
+    },
+    "tolerance": {
+      "rel": 0.00001,
+      "abs": 1e-7
+    }
+  },
+  {
+    "id": "double-barrier-2-CALL",
+    "family": "double_barrier",
+    "underlying": "EURUSD",
+    "tenor": "3M",
+    "market": {
+      "spot": 100.0,
+      "vol": 0.1,
+      "r_dom": 0.05,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 0.2493150684931507,
+      "kind": "KNOCK_OUT",
+      "lower_barrier": 85.0,
+      "monitoring": "CONTINUOUS",
+      "option_type": "CALL",
+      "rebate": 0.0,
+      "strike": 100.0,
+      "upper_barrier": 120.0
+    },
+    "expected": {
+      "price": 2.501477092599009,
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 double_barrier_gk.csv row 2"
+    },
+    "tolerance": {
+      "rel": 0.00001,
+      "abs": 1e-7
+    }
+  },
+  {
+    "id": "double-barrier-4-CALL",
+    "family": "double_barrier",
+    "underlying": "EURUSD",
+    "tenor": "3M",
+    "market": {
+      "spot": 100.0,
+      "vol": 0.1,
+      "r_dom": 0.05,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 0.2493150684931507,
+      "kind": "KNOCK_OUT",
+      "lower_barrier": 85.0,
+      "monitoring": "CONTINUOUS",
+      "option_type": "CALL",
+      "rebate": 0.0,
+      "strike": 110.0,
+      "upper_barrier": 120.0
+    },
+    "expected": {
+      "price": 0.08807400377833836,
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 double_barrier_gk.csv row 4"
+    },
+    "tolerance": {
+      "rel": 0.00001,
+      "abs": 1e-7
+    }
+  },
+  {
+    "id": "double-barrier-6-PUT",
+    "family": "double_barrier",
+    "underlying": "EURUSD",
+    "tenor": "3M",
+    "market": {
+      "spot": 100.0,
+      "vol": 0.1,
+      "r_dom": 0.05,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 0.2493150684931507,
+      "kind": "KNOCK_OUT",
+      "lower_barrier": 85.0,
+      "monitoring": "CONTINUOUS",
+      "option_type": "PUT",
+      "rebate": 0.0,
+      "strike": 90.0,
+      "upper_barrier": 120.0
+    },
+    "expected": {
+      "price": 0.013659017659984547,
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 double_barrier_gk.csv row 6"
+    },
+    "tolerance": {
+      "rel": 0.00001,
+      "abs": 1e-7
+    }
+  },
+  {
+    "id": "double-barrier-8-PUT",
+    "family": "double_barrier",
+    "underlying": "EURUSD",
+    "tenor": "3M",
+    "market": {
+      "spot": 100.0,
+      "vol": 0.1,
+      "r_dom": 0.05,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 0.2493150684931507,
+      "kind": "KNOCK_OUT",
+      "lower_barrier": 85.0,
+      "monitoring": "CONTINUOUS",
+      "option_type": "PUT",
+      "rebate": 0.0,
+      "strike": 100.0,
+      "upper_barrier": 120.0
+    },
+    "expected": {
+      "price": 1.512007810154613,
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 double_barrier_gk.csv row 8"
+    },
+    "tolerance": {
+      "rel": 0.00001,
+      "abs": 1e-7
+    }
+  }
+]
