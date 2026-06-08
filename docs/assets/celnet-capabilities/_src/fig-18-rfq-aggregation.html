@@ -66,7 +66,7 @@ body>*{flex:0 0 auto}
     </div>
     <div class="box brand">
       <div class="t">FIX LP adapters · 1 … N</div>
-      <div class="d">External liquidity-provider sessions over the celnet-fix 4.4 engine in initiator role — QuoteRequest → Quote, each translated through the FX dialect into a Celnet two-way.</div>
+      <div class="d">External liquidity-provider sessions over the built-in FIX 4.4 engine in initiator role — QuoteRequest → Quote, each translated through the FX dialect into a Celnet two-way.</div>
       <div style="margin-top:7px">
         <span class="chip">LP-A</span><span class="chip">LP-B</span><span class="chip">LP-C</span><span class="chip">…</span>
       </div>
@@ -123,7 +123,7 @@ body>*{flex:0 0 auto}
 </div>
 
 <div class="note" style="margin-top:15px">One ranked panel, seen identically across GUI, SDK, CLI and Excel — best bid / best offer highlighted, the per-LP ladder and the won-by attribution are bit-identical on every surface. This is the multi-bank venue answer to a single-dealer incumbent.</div>
-<div class="note dash" style="margin-top:7px;font-size:11px"><b style="color:var(--brand-deep);font-style:normal">The multi-bank venue answer to a single-dealer incumbent</b> — the aggregation, ranking, deterministic tie-break and last-look algorithm plus the celnet-fix 4.4 framing and FX dialect are gated against an injected ground-truth ladder over an initiator/acceptor pair. Celnet's implementation program connects the live LP panel (real bank sessions over WAN FIX) and the regulated-venue / MAS-RMO status through the same ADR'd seam as a uniform deploy.</div>
+<div class="note dash" style="margin-top:7px;font-size:11px"><b style="color:var(--brand-deep);font-style:normal">The multi-bank venue answer to a single-dealer incumbent</b> — the aggregation, ranking, deterministic tie-break and last-look algorithm plus the FIX 4.4 framing and FX dialect are gated against an injected ground-truth ladder over an initiator/acceptor pair. Celnet's implementation program connects the live LP panel (real bank sessions over WAN FIX) and the regulated-venue / MAS-RMO status through the same ADR'd seam as a uniform deploy.</div>
 
 </div>
 <div class="foot">Celnet — a <b>Celer Technologies</b> product</div>

@@ -45,7 +45,7 @@ body>*{flex:0 0 auto}
     <div class="box accent" style="flex:1.6">
       <div class="t">Open Quant SDK — frozen trait contract</div>
       <div class="d">One clean, unversioned set of SDK traits every model implements. Author a pricer once; the host runs it everywhere, at every tier, with no fork of Celnet.</div>
-      <span class="chip k">PricingModel</span><span class="chip k">SmileModel</span><span class="chip k">Calibration</span>
+      <span class="chip k">pricing model</span><span class="chip k">smile model</span><span class="chip k">calibration</span>
     </div>
     <div class="arrow">+</div>
     <div class="box" style="flex:1.1">
@@ -103,7 +103,7 @@ body>*{flex:0 0 auto}
     </div>
 
   </div>
-  <div class="note">Tier-0 native and Tier-2 wasmi sandbox are <b style="color:var(--green);font-style:normal">shipped &amp; gated</b> (celnet-plugin-host: native.rs, wasm.rs); Tier-1 signed shared-object (stabby) and Tier-3 Landlock/seccomp are <span style="font-style:normal">seamed behind the same frozen contract and delivered through Celnet's implementation program</span> (PLUGIN-HOST-ALT.md).</div>
+  <div class="note">Tier-0 native and Tier-2 WebAssembly sandbox are <b style="color:var(--green);font-style:normal">shipped &amp; gated</b>; Tier-1 signed shared-object and Tier-3 OS-sandbox (Landlock / seccomp) are <span style="font-style:normal">seamed behind the same frozen contract and delivered through Celnet's implementation program</span>.</div>
 
   <!-- ============ capability boundary ============ -->
   <div class="row" style="margin-top:15px;align-items:stretch">
