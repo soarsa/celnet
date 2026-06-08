@@ -23,7 +23,7 @@ body{background:#fff}
 .note{font-size:11.5px;color:var(--muted);font-style:italic;margin-top:9px}
 .foot{position:absolute;left:34px;bottom:13px;font-size:11px;color:var(--muted)}.foot b{color:var(--brand-deep)}
 </style></head><body>
-<div class="canvas" style="width:1560px;height:860px">
+<div class="canvas" style="width:1560px;height:1020px">
 <div class="rail"></div>
 <div class="hd">
 <svg class="mk" viewBox="0 0 501 500"><path fill="#ff7357" d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg>
@@ -65,9 +65,10 @@ body{background:#fff}
       <div class="d">Monotonically sequenced deltas stream live off the baseline.</div>
     </div>
     <div class="arrow">→</div>
-    <div class="box" style="flex:1">
-      <div class="t">Heartbeat</div>
-      <div class="d">Liveness keeps the channel proven healthy between ticks.</div>
+    <div class="box" style="flex:1.4">
+      <div class="t">Heartbeat <span style="font-weight:600;color:var(--muted);font-size:12px">(+ observability)</span></div>
+      <div class="d">Liveness keeps the channel proven healthy between ticks — and the beat carries honest, off-hot-path server telemetry so a consumer reconciles its own state.</div>
+      <div style="margin-top:7px"><span class="chip">conflation drops</span><span class="chip">price p50 / p99 / p99.9</span><span class="chip">surface_version</span></div>
     </div>
   </div>
 
@@ -93,12 +94,35 @@ body{background:#fff}
     </div>
   </div>
 
+  <div class="section-label" style="margin-top:20px">Market-series multiplex — historical observables on the same session, independently sequenced</div>
+  <div class="row" style="align-items:stretch">
+    <div class="box accent" style="flex:1">
+      <div class="t">Series Subscribe</div>
+      <div class="d">Open an observable for a (pair, tenor) in the same id space as price streams — interleaved over the one connection.</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="box" style="flex:1.1">
+      <div class="t">Series Snapshot <span style="font-weight:600;color:var(--muted);font-size:12px">(window)</span></div>
+      <div class="d">A bounded back-window of points establishes its own sequence floor, distinct from every price subscription.</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="box" style="flex:1.1">
+      <div class="t">Series Point <span style="font-weight:600;color:var(--muted);font-size:12px">(seq)</span></div>
+      <div class="d">New observations advance the series sequence live; a Series Unsubscribe closes it without touching the channel.</div>
+    </div>
+    <div style="width:24px"></div>
+    <div class="box brandfill" style="width:300px;display:flex;flex-direction:column;justify-content:center">
+      <div class="t">Observables</div>
+      <div style="margin-top:7px"><span class="tag">ATM vol</span><span class="tag">Spot</span><span class="tag">Risk reversal</span><span class="tag">Butterfly</span><span class="tag">Forward</span></div>
+    </div>
+  </div>
+
   <div class="section-label" style="margin-top:20px">Click-to-Trade — from a streamed price to a confirmed fill, on the same channel</div>
   <div class="row" style="align-items:stretch">
     <div class="box brandfill" style="width:300px">
       <div class="t">Server mints a tradable token</div>
       <div class="d">On the live two-way, the server issues an <b>unguessable keyed-MAC</b> token — <b>sell-at-bid / buy-at-offer</b> — cryptographically bound to that exact line and price. It cannot be forged or replayed onto another quote.</div>
-      <div style="margin-top:8px"><span class="chip k">Sell @ bid</span><span class="chip k">Buy @ offer</span><span class="chip">line-bound</span></div>
+      <div style="margin-top:8px"><span class="chip k">Sell @ bid</span><span class="chip k">Buy @ offer</span><span class="chip">line-bound</span><span class="chip">same mint as FIX lift</span></div>
     </div>
     <div class="arrow">→</div>
     <div class="box accent" style="flex:1">

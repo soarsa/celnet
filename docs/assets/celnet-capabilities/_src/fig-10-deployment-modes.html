@@ -4,23 +4,23 @@
 body{background:#fff}
 .canvas{position:relative;background:linear-gradient(180deg,#ffffff,#f4f6fb);overflow:hidden}
 .rail{position:absolute;left:0;top:0;bottom:0;width:8px;background:linear-gradient(180deg,var(--brand),var(--accent))}
-.hd{display:flex;align-items:center;gap:12px;padding:22px 34px 10px}
+.hd{display:flex;align-items:center;gap:12px;padding:10px 34px 4px}
 .hd .mk{width:26px;height:26px}.hd h1{font-size:24px;font-weight:800;color:var(--navy);letter-spacing:.2px}
 .hd .sub{margin-left:auto;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:1.5px}
-.wrap{padding:8px 34px 30px}
-.box{border-radius:12px;border:1.5px solid var(--line);background:#fff;padding:12px 15px;box-shadow:0 1px 2px rgba(20,30,60,.05)}
+.wrap{padding:3px 34px 2px}
+.box{border-radius:12px;border:1.5px solid var(--line);background:#fff;padding:10px 14px;box-shadow:0 1px 2px rgba(20,30,60,.05)}
 .box .t{font-weight:800;color:var(--navy);font-size:14.5px;display:flex;align-items:center;gap:8px}
-.box .d{color:#5b6376;font-size:12px;margin-top:5px;line-height:1.45}
+.box .d{color:#5b6376;font-size:12px;margin-top:4px;line-height:1.4}
 .box.brand{border-color:var(--brand);box-shadow:0 4px 18px rgba(255,115,87,.18)}
 .box.brandfill{background:var(--navy);border-color:var(--navy)}.box.brandfill .t{color:#fff}.box.brandfill .d{color:#c4c9dc}
 .box.accent{border-color:var(--accent)}.box.tint{background:#fbfcff}
-.row{display:flex;gap:15px}.col{display:flex;flex-direction:column;gap:15px}.grid{display:grid;gap:15px}
+.row{display:flex;gap:13px}.col{display:flex;flex-direction:column;gap:6px}.grid{display:grid;gap:13px}
 .arrow{align-self:center;color:var(--brand);font-size:24px;font-weight:800;padding:0 2px}
 .tag{display:inline-block;font-size:11px;font-weight:700;color:var(--accent);background:rgba(107,107,245,.1);border-radius:6px;padding:2px 8px;margin:3px 4px 0 0}
 .chip{display:inline-block;font-size:11.5px;color:var(--ink);background:#eef1f8;border:1px solid var(--line);border-radius:6px;padding:3px 9px;margin:3px 4px 0 0}
 .chip.k{background:rgba(255,115,87,.1);border-color:rgba(255,115,87,.35);color:var(--brand-deep);font-weight:700}
-.section-label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);margin:2px 0 7px}
-.note{font-size:11.5px;color:var(--muted);font-style:italic;margin-top:9px}
+.section-label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);margin:1px 0 3px}
+.note{font-size:11.5px;color:var(--muted);font-style:italic;margin-top:6px;line-height:1.35}
 .foot{position:absolute;left:34px;bottom:13px;font-size:11px;color:var(--muted)}.foot b{color:var(--brand-deep)}
 </style></head><body>
 <div class="canvas" style="width:1620px;height:820px">
@@ -37,12 +37,12 @@ body{background:#fff}
 
 <div class="box brandfill" style="flex:1.05">
 <div class="t">Celnet core — the FX-options pricing system-of-record</div>
-<div class="d">One pinned, zero-allocation pricing engine in every mode: Garman-Kohlhagen vanilla off the outright forward, the full FX desk Greek set in one pass, the four delta conventions and a branch-aware strike&harr;delta solver, the VV / SABR / SVI / SSVI smile-surface engine with broker-strangle calibration and arbitrage gates, and the first-generation exotics catalogue. In-core pricing is so fast that the network, not the maths, is the latency floor.</div>
+<div class="d">One pinned, zero-allocation pricing engine in every mode: Garman-Kohlhagen vanilla off the outright forward, the full FX desk Greek set in one pass, the four delta conventions and a branch-aware strike&harr;delta solver, the five-family VV / SABR / SVI / SSVI / eSSVI smile-surface engine with broker-strangle calibration and arbitrage gates, and the full 19-product exotic catalogue — digitals, touches, eight barriers, var/vol &amp; Asian, forward-start/cliquet, quanto, TARF, accumulator, lookback, American/Bermudan and correlated baskets — plus an LSV booking model. In-core pricing is so fast that the network, not the maths, is the latency floor.</div>
 <div>
 <span class="chip k">unversioned contract</span>
 <span class="chip" style="background:#282C3E;border-color:#3a3f55;color:#c4c9dc">full Greek set in one pass</span>
-<span class="chip" style="background:#282C3E;border-color:#3a3f55;color:#c4c9dc">smile / surface engine</span>
-<span class="chip" style="background:#282C3E;border-color:#3a3f55;color:#c4c9dc">first-gen exotics</span>
+<span class="chip" style="background:#282C3E;border-color:#3a3f55;color:#c4c9dc">5-family smile / surface engine</span>
+<span class="chip" style="background:#282C3E;border-color:#3a3f55;color:#c4c9dc">19-product exotics + LSV</span>
 </div>
 </div>
 
@@ -51,7 +51,7 @@ body{background:#fff}
 <div class="box brand" style="flex:0.95">
 <div class="t">Three seam traits — the only thing that changes</div>
 <div class="d">The mode is chosen by binding three adapter seams. The same core sits behind all three, so a migration is a reversible adapter swap, never a rewrite.</div>
-<div class="row" style="margin-top:9px;gap:10px">
+<div class="row" style="margin-top:7px;gap:10px">
 <div class="box tint" style="flex:1;padding:9px 10px;text-align:center"><div class="t" style="justify-content:center;font-size:12px">Market-data source</div></div>
 <div class="box tint" style="flex:1;padding:9px 10px;text-align:center"><div class="t" style="justify-content:center;font-size:12px">Price sink</div></div>
 <div class="box tint" style="flex:1;padding:9px 10px;text-align:center"><div class="t" style="justify-content:center;font-size:12px">Order &amp; exec adapter</div></div>
@@ -60,7 +60,7 @@ body{background:#fff}
 
 </div>
 
-<div class="arrow" style="font-size:34px;align-self:center;display:block;text-align:center;width:100%">↓</div>
+<div class="arrow" style="font-size:20px;align-self:center;display:block;text-align:center;width:100%;padding:0">↓</div>
 
 <!-- THREE MODE COLUMNS -->
 <div class="row" style="align-items:stretch">
@@ -71,21 +71,21 @@ body{background:#fff}
 <div class="box accent" style="flex:1">
 <div class="t">Self-contained, end to end</div>
 <div class="d">Celnet runs the whole FX-options price path on its own — self-contained feed handlers in, its own price sinks out, its own order and execution path. No estate required.</div>
-<div style="margin-top:8px">
-<div class="box tint" style="padding:8px 11px;margin-bottom:7px">
+<div style="margin-top:6px">
+<div class="box tint" style="padding:7px 11px;margin-bottom:5px">
 <div class="t" style="font-size:12.5px">Market-data → <span style="color:var(--accent)">self-contained feed handlers</span></div>
 <div class="d" style="margin-top:3px">A resilient subscriber with vendor-feed normalization, blend and divergence checks.</div>
 </div>
-<div class="box tint" style="padding:8px 11px;margin-bottom:7px">
+<div class="box tint" style="padding:7px 11px;margin-bottom:5px">
 <div class="t" style="font-size:12.5px">Price sink → <span style="color:var(--accent)">native edge</span></div>
 <div class="d" style="margin-top:3px">gRPC, the byte-identical WebSocket JSON mirror and a real FIX 4.4 engine.</div>
 </div>
-<div class="box tint" style="padding:8px 11px">
+<div class="box tint" style="padding:7px 11px">
 <div class="t" style="font-size:12.5px">Order &amp; exec → <span style="color:var(--accent)">built-in</span></div>
 <div class="d" style="margin-top:3px">Click-to-trade with keyed-MAC tradable tokens and idempotent execution.</div>
 </div>
 </div>
-<div style="margin-top:8px">
+<div style="margin-top:6px">
 <span class="chip">vendor-feed normalization</span>
 <span class="chip k">Fenics · Bloomberg · Refinitiv · EBS</span>
 </div>
@@ -100,21 +100,21 @@ body{background:#fff}
 <div class="box accent" style="flex:1">
 <div class="t">Celnet + estate, mixed</div>
 <div class="d">Mix and match seam by seam — take market data from the estate while sinking prices natively, or price natively while routing orders through the estate. Each adapter binds independently.</div>
-<div style="margin-top:8px">
-<div class="box tint" style="padding:8px 11px;margin-bottom:7px">
+<div style="margin-top:6px">
+<div class="box tint" style="padding:7px 11px;margin-bottom:5px">
 <div class="t" style="font-size:12.5px">Market-data → <span style="color:var(--accent)">mixed</span></div>
 <div class="d" style="margin-top:3px">Native feed handlers or the estate distributor — per-seam, per-deployment.</div>
 </div>
-<div class="box tint" style="padding:8px 11px;margin-bottom:7px">
+<div class="box tint" style="padding:7px 11px;margin-bottom:5px">
 <div class="t" style="font-size:12.5px">Price sink → <span style="color:var(--accent)">mixed</span></div>
 <div class="d" style="margin-top:3px">Native edge alongside the estate distributor — whichever the desk needs.</div>
 </div>
-<div class="box tint" style="padding:8px 11px">
+<div class="box tint" style="padding:7px 11px">
 <div class="t" style="font-size:12.5px">Order &amp; exec → <span style="color:var(--accent)">mixed</span></div>
 <div class="d" style="margin-top:3px">Built-in execution or the estate order-routing hub.</div>
 </div>
 </div>
-<div style="margin-top:8px">
+<div style="margin-top:6px">
 <span class="chip k">independent per-seam binding</span>
 <span class="chip">graduated migration</span>
 </div>
@@ -125,30 +125,30 @@ body{background:#fff}
 
 <!-- CELERINTEGRATED -->
 <div class="col" style="flex:1.18">
-<div class="section-label">Mode 3 · CelerIntegrated</div>
+<div class="section-label">Mode 3 · CelerIntegrated <span style="color:var(--brand-deep);font-weight:800">· designed estate-native binding</span></div>
 <div class="box brand" style="flex:1">
-<div class="t">Wired into the Celer trade lifecycle</div>
-<div class="d">Celnet injects FX-option price, Greeks and surface into the Celer price path and option risk into the risk and position path — the pricing system-of-record inside the estate.</div>
-<div style="margin-top:8px">
-<div class="box tint" style="padding:8px 11px;margin-bottom:7px">
+<div class="t">Bound into the Celer trade lifecycle</div>
+<div class="d">Celnet injects FX-option price, Greeks and surface into the Celer price path and option risk into the risk and position path — the pricing system-of-record inside the estate. The Celnet-side adapters are built; the JVM-estate binding is designed-and-seamed, proven at deploy.</div>
+<div style="margin-top:6px">
+<div class="box tint" style="padding:7px 11px;margin-bottom:5px">
 <div class="t" style="font-size:12.5px">Market-data → <span style="color:var(--brand-deep)">estate distributor</span></div>
-<div class="d" style="margin-top:3px">JVM distributor sidecar handshake, mailbox calibration and live quote-feed entitlement.</div>
+<div class="d" style="margin-top:3px">JVM distributor sidecar handshake, mailbox calibration and entitled quote-feed seam — Celnet-side adapter built, estate binding designed.</div>
 <div style="margin-top:5px">
 <span class="tag">sidecar handshake</span>
 <span class="tag">mailbox calibration</span>
 <span class="tag">entitled quote feed</span>
 </div>
 </div>
-<div class="box tint" style="padding:8px 11px;margin-bottom:7px">
+<div class="box tint" style="padding:7px 11px;margin-bottom:5px">
 <div class="t" style="font-size:12.5px">Price sink → <span style="color:var(--brand-deep)">Celer price path</span></div>
 <div class="d" style="margin-top:3px">Quote assembly → distributor → WebSocket → the Celer Trader React front-end.</div>
 </div>
-<div class="box tint" style="padding:8px 11px">
+<div class="box tint" style="padding:7px 11px">
 <div class="t" style="font-size:12.5px">Order &amp; exec → <span style="color:var(--brand-deep)">estate</span></div>
 <div class="d" style="margin-top:3px">Order-routing hub → pre-trade credit/limit risk → venue destination → clearing → position-manager truth source.</div>
 </div>
 </div>
-<div style="margin-top:8px">
+<div style="margin-top:6px">
 <span class="chip k">price · Greeks · surface in</span>
 <span class="chip k">option risk in</span>
 </div>
@@ -158,15 +158,15 @@ body{background:#fff}
 </div>
 
 <!-- EGRESS GOVERNOR -->
-<div class="row" style="align-items:center;margin-top:15px">
+<div class="row" style="align-items:center;margin-top:7px">
 <div class="box brandfill" style="flex:1">
-<div class="t">Egress governor — between the pricer and the estate distributor</div>
-<div class="d">Continuous prices pass through a conflating governor before fan-out: it collapses superseded quotes to the freshest, paces the stream with a token bucket, and when a consumer is full it skips rather than blocks — every skipped update counted, never silently lost. The pricer is never back-pressured by a slow downstream.</div>
+<div class="t">Egress governor + SPMC fan-out ring — between the pricer and the estate distributor</div>
+<div class="d">Continuous prices pass through a conflating governor before fan-out: it collapses superseded quotes to the freshest, paces the stream with a token bucket, and when a consumer is full it skips rather than blocks — every skipped update counted, never silently lost — then broadcasts over a lock-free single-producer/multi-consumer ring with exact per-pair conflation accounting. The pricer is never back-pressured by a slow downstream.</div>
 <div>
 <span class="chip k">conflate to freshest</span>
 <span class="chip" style="background:#282C3E;border-color:#3a3f55;color:#c4c9dc">token-bucket pacing</span>
-<span class="chip" style="background:#282C3E;border-color:#3a3f55;color:#c4c9dc">skip-while-full</span>
-<span class="chip" style="background:#282C3E;border-color:#3a3f55;color:#c4c9dc">counted drops</span>
+<span class="chip" style="background:#282C3E;border-color:#3a3f55;color:#c4c9dc">SPMC fan-out ring</span>
+<span class="chip" style="background:#282C3E;border-color:#3a3f55;color:#c4c9dc">skip-while-full · counted drops</span>
 </div>
 </div>
 <div class="arrow" style="font-size:28px">→</div>
@@ -176,9 +176,10 @@ body{background:#fff}
 </div>
 </div>
 
-<div class="note">Pricer → egress governor → distributor: the same path serves every mode. Migration Standalone &harr; Hybrid &harr; Integrated is reversible adapter swaps on the three seam traits — Celnet remains the FX-options pricing system-of-record in all three, with one large multi-crate Rust workspace under an extensive automated test suite proving value parity across every surface.</div>
+<div class="note">Pricer → egress governor → SPMC ring → distributor: the same path serves every mode, with the fleet sharded over a rendezvous partition map atop a Raft-replicated log and hot-standby takeover. Migration Standalone &harr; Hybrid &harr; Integrated is reversible adapter swaps on the three seam traits — Celnet stays the FX-options pricing system-of-record in all three, proven across every client surface by an extensive automated test suite.</div>
+
+<div class="note" style="font-style:normal;color:var(--brand-deep);font-weight:700;margin-top:3px">Honest boundary — the live JVM Celer-estate lifecycle is the integration target: the Celnet-side seams (governor, distributor adapter, sidecar client, FIX dialect, proto projections) are built and the CelerIntegrated binding is designed-and-seamed, proven at deploy — not exercised against the live estate in-repo. Standalone is the fully self-contained, here-and-now provable mode. <span style="float:right;color:var(--muted);font-weight:400;font-style:italic">Celnet — a <b style="color:var(--brand-deep);font-style:normal">Celer Technologies</b> product</span></div>
 
 </div>
-<div class="foot">Celnet — a <b>Celer Technologies</b> product</div>
 </div>
 </body></html>

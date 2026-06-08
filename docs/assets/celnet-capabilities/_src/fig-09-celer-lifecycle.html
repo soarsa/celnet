@@ -23,7 +23,7 @@ body{background:#fff}
 .note{font-size:11.5px;color:var(--muted);font-style:italic;margin-top:9px}
 .foot{position:absolute;left:34px;bottom:13px;font-size:11px;color:var(--muted)}.foot b{color:var(--brand-deep)}
 </style></head><body>
-<div class="canvas" style="width:1720px;height:1000px">
+<div class="canvas" style="width:1720px;height:1120px">
 <div class="rail"></div>
 <div class="hd">
 <svg class="mk" viewBox="0 0 501 500"><path fill="#ff7357" d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg>
@@ -116,7 +116,7 @@ body{background:#fff}
   <div class="box brandfill" style="width:430px">
     <div class="t"><svg width="15" height="15" viewBox="0 0 501 500"><path fill="#ff7357" d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg> Celnet pricing core</div>
     <div class="d">A pinned, allocation-free hot core joined to the edge by wait-free single-producer rings. In-core pricing is so fast that network framing, not the maths, is the only meaningful latency — with zero-cost tail-percentile observability and regression-gated benchmarks.</div>
-    <div><span class="tag">Vanilla + full FX Greek set in one pass</span><span class="tag">4 delta conventions + strike↔delta solver</span><span class="tag">ATMF / DNS</span><span class="tag">VV · SABR · SVI · SSVI surface</span><span class="tag">broker-strangle calibration</span><span class="tag">arbitrage gates + arb-free term structure</span><span class="tag">first-gen exotics: digitals · touches · DNT · barriers</span><span class="tag">analytic · CN/Rannacher PDE · Philox MC</span><span class="tag">validated to machine precision vs an independent reference</span></div>
+    <div><span class="tag">Vanilla + price &amp; 13 Greeks in one pass</span><span class="tag">4 delta conventions + strike↔delta solver</span><span class="tag">ATMF / DNS</span><span class="tag">5 smile families: VV · SABR · SVI · SSVI · eSSVI</span><span class="tag">broker-strangle calibration</span><span class="tag">arbitrage gates + arb-free term structure</span><span class="tag">full 19-product exotic Instrument: digitals · touches · DNT · 8 barriers · window · var/vol swap · Asian · fwd-start/cliquet · quanto · TARF · accumulator · lookback</span><span class="tag">American/Bermudan (PSOR-FD + LSM) · basket/best-of/worst-of (Cholesky MC)</span><span class="tag">LSV booking model + standalone Heston</span><span class="tag">analytic · CN/Rannacher PDE · Philox &amp; Sobol-QMC MC · VV overlay</span><span class="tag">~26 parity rows vs independent oracles + frozen QuantLib golden (vanilla/digital/barrier/Heston); MC products carry a price std-error</span></div>
   </div>
   <div class="arrow">→</div>
   <div class="box accent" style="width:355px">
@@ -138,11 +138,12 @@ body{background:#fff}
     <div class="t">Three deployment modes · one seam</div>
     <div class="d">Adapter swaps on the market-data / price-sink / order-exec seam traits move Celnet between
     <span class="chip">Standalone</span><span class="chip">Hybrid</span><span class="chip">CelerIntegrated</span>
-    — reversible swaps, never a rewrite. A conflating egress governor, a resilient market-data subscriber, vendor-feed normalisation and an intra-fleet partition map carry node-local speed into horizontal scale-out and fan-out to many counterparties. The same seam ingests external products and feeds as integration targets.</div>
+    — reversible swaps, never a rewrite. The Standalone adapters are real and fully tested in-repo; <span class="chip">CelerIntegrated</span> is the <b>designed estate-native binding</b> — the live JVM/WebSocket distributor wiring is the deploy-bound adapter behind the same seam traits. A conflating egress governor, a resilient market-data subscriber, vendor-feed normalisation and an intra-fleet partition map carry node-local speed into horizontal scale-out and fan-out to many counterparties. The same seam ingests external products and feeds as integration targets.</div>
   </div>
 </div>
 
 <div class="note">Celnet is the FX-options pricing system-of-record in the Celer trade lifecycle — pricing, Greeks and the surface flow into the price path; option risk flows into the risk and position path.</div>
+<div class="note" style="font-style:normal;color:#5b6376;border-top:1px dashed var(--line);padding-top:8px">Honest boundary — the surrounding <span class="chip" style="margin:0">celertech-*</span> estate components are shown as the integration map: the Celer integration is <b>designed and seamed</b> via the DeployMode market-data / price-sink / order-exec adapter traits, with the Standalone path real and tested in-repo. The full live JVM Celer estate lifecycle (distributor sidecar handshake, FX_OPTION mailbox calibration, inferred hops, tenant overlays, live quote-feed entitlement) is deploy/live-gated and proven at deploy against the running estate — not exercised in-repo.</div>
 
 </div>
 <div class="foot">Celnet — a <b>Celer Technologies</b> product</div>

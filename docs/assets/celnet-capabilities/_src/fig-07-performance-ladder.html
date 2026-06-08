@@ -9,7 +9,7 @@ body{background:#fff}
 .hd .sub{margin-left:auto;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:1.5px}
 .wrap{padding:8px 34px 30px}
 .box{border-radius:12px;border:1.5px solid var(--line);background:#fff;padding:12px 15px;box-shadow:0 1px 2px rgba(20,30,60,.05)}
-.box .t{font-weight:800;color:var(--navy);font-size:14.5px;display:flex;align-items:center;gap:8px}
+.box .t{font-weight:800;color:var(--navy);font-size:14.5px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .box .d{color:#5b6376;font-size:12px;margin-top:5px;line-height:1.45}
 .box.brand{border-color:var(--brand);box-shadow:0 4px 18px rgba(255,115,87,.18)}
 .box.brandfill{background:var(--navy);border-color:var(--navy)}.box.brandfill .t{color:#fff}.box.brandfill .d{color:#c4c9dc}
@@ -19,8 +19,12 @@ body{background:#fff}
 .tag{display:inline-block;font-size:11px;font-weight:700;color:var(--accent);background:rgba(107,107,245,.1);border-radius:6px;padding:2px 8px;margin:3px 4px 0 0}
 .chip{display:inline-block;font-size:11.5px;color:var(--ink);background:#eef1f8;border:1px solid var(--line);border-radius:6px;padding:3px 9px;margin:3px 4px 0 0}
 .chip.k{background:rgba(255,115,87,.1);border-color:rgba(255,115,87,.35);color:var(--brand-deep);font-weight:700}
+.chip.m{background:rgba(28,140,90,.1);border-color:rgba(28,140,90,.35);color:var(--green);font-weight:700}
+.meas{font-size:11px;font-weight:800;color:var(--brand-deep);background:rgba(255,115,87,.12);border:1px solid rgba(255,115,87,.3);border-radius:6px;padding:1px 7px;white-space:nowrap}
 .section-label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);margin:2px 0 7px}
 .note{font-size:11.5px;color:var(--muted);font-style:italic;margin-top:9px}
+.bound{font-size:11px;color:#6a7088;background:#eef1f8;border:1px dashed #b7bed4;border-radius:8px;padding:8px 12px;margin-top:11px;line-height:1.5}
+.bound b{color:var(--brand-deep);font-style:normal}
 .foot{position:absolute;left:34px;bottom:13px;font-size:11px;color:var(--muted)}.foot b{color:var(--brand-deep)}
 </style></head><body>
 <div class="canvas" style="width:1500px;height:820px">
@@ -39,17 +43,17 @@ body{background:#fff}
 
         <!-- Step 1 -->
         <div class="box brand" style="width:18%;min-width:215px">
-          <div class="t">In-core vanilla price</div>
-          <div class="d">A single pinned, allocation-free hot core prices a vanilla off the outright forward — nanosecond-scale.</div>
+          <div class="t">In-core vanilla price <span class="meas">p50 ~42 ns · M4</span></div>
+          <div class="d">A single pinned, allocation-free hot core prices a vanilla off the outright forward — measured, in-core, on the M4 dev host.</div>
         </div>
         <div class="box brand" style="width:24%;min-width:280px">
-          <div class="t">+ the full Greek set, one pass</div>
-          <div class="d">Price plus every FX desk sensitivity — delta, gamma, vega, theta, both rhos, vanna, volga, charm, speed, zomma, color — computed together, still nanosecond-scale.</div>
+          <div class="t">+ the 13-Greek set, one pass <span class="meas">p99 ~125 ns · M4</span></div>
+          <div class="d">Price plus every FX desk sensitivity — delta, gamma, vega, theta, both rhos, vanna, volga, charm, speed, zomma, color — computed together, still nanosecond-scale. Gated absolutely to §1.2: p50≤2 µs / p99≤10 µs / p99.9≤25 µs (24–80× margin).</div>
         </div>
         <!-- Step 3 -->
         <div class="box brand" style="width:40%;min-width:460px">
           <div class="t">Large strike batch, priced with Greeks</div>
-          <div class="d">A full strike batch repriced across the smile with the complete Greek vector lands at microsecond-scale — vectorised over the pinned cores.</div>
+          <div class="d">A full strike batch repriced across the smile with the complete Greek vector lands at microsecond-scale — vectorised over the pinned cores. A single GPU dispatch prices a large vanilla batch by closed-form Garman-Kohlhagen, reconciled GPU-f32 ≈ CPU-f64 ≈ golden node-by-node (max f32 round-off rel err 3.11e-7).</div>
         </div>
         <!-- Step 4 -->
         <div class="box accent" style="width:62%;min-width:700px;background:#fbfcff">
@@ -58,11 +62,16 @@ body{background:#fff}
         </div>
         <!-- Step 5: the dominator -->
         <div class="box brandfill" style="width:100%">
-          <div class="t" style="font-size:16px">Network round-trip · wire framing &nbsp;<span class="tag" style="color:#fff;background:rgba(255,115,87,.28)">the only meaningful latency</span></div>
-          <div class="d" style="font-size:12.5px">Across gRPC, the byte-identical WebSocket JSON mirror, or FIX, the counterparty round-trip and wire framing dominate every in-process step to its left. <b style="color:#ff9d88">In-core pricing is so fast that the network, not the maths, is the latency floor</b> — pricing is never the bottleneck.</div>
+          <div class="t" style="font-size:16px">Network round-trip · wire framing &nbsp;<span class="tag" style="color:#fff;background:rgba(255,115,87,.28)">the only meaningful latency floor</span></div>
+          <div class="d" style="font-size:12.5px">Across gRPC, the byte-identical WebSocket JSON mirror, or FIX, the counterparty round-trip and wire framing dominate every in-process step to its left. <b style="color:#ff9d88">In-core pricing is so fast that the network framing, not the maths, is the latency floor</b> — pricing is never the bottleneck.</div>
         </div>
 
         <div class="note">Bar widths are illustrative of relative scale only — pricing sits far to the fast end; the wire owns the budget.</div>
+
+        <!-- HONEST BOUNDARY banner -->
+        <div class="bound">
+          <b>Honest boundary.</b> In-repo proofs are the §1.2 in-core truth-gate (measured, host-local, single-core, M4), the loopback fleet-SLO benches, and GPU/CPU <i>ratios</i> only. <b>Absolute cross-host wire p99, kernel-bypass NIC and §11 absolute wire SLOs are deploy-gated</b>; <b>NVIDIA absolute GPU throughput, ≤50 ms exotic and Workload-A/B absolutes are deploy-gated</b> — the M4's Metal backend lacks f64, so the GPU path proves correctness + ratios, never an absolute number, in-repo.
+        </div>
 
         <div class="row" style="margin-top:4px">
           <div class="box tint" style="flex:1">
@@ -94,15 +103,19 @@ body{background:#fff}
 
         <div class="box">
           <div class="t">Regression-gated benchmarks</div>
-          <div class="d">Every release is measured against the last; a speed regression fails the gate before it ships. The fast path stays fast by construction, not by hope.</div>
+          <div class="d">Every release is measured against the last; a speed regression fails the gate before it ships. An instruction-count gate (iai-callgrind, Linux CI) and a GPU/CPU dispatch-amortization curve back it up — measured 0.68× at 4k paths rising to ~53× at 1M paths on the M4 (host-local ratio; absolute NVIDIA throughput deploy-gated).</div>
+          <div style="margin-top:6px">
+            <span class="chip">iai-callgrind instruction gate</span>
+            <span class="chip k">GPU/CPU ratio up to ~53× · M4</span>
+          </div>
         </div>
 
         <div class="box">
-          <div class="t">Validated to machine precision</div>
-          <div class="d">Vanillas, every Greek by finite-difference cross-check, and the exotics catalogue are validated against an independent reference library — agreement to machine precision, continuously.</div>
+          <div class="t">Validated per class, honestly</div>
+          <div class="d">Vanillas, every Greek by finite-difference cross-check, digitals, barriers and Heston are validated to machine precision against frozen QuantLib golden tables. The structured / Monte-Carlo / American / basket / LSV catalogue is validated to a reported price std-error — never overstated as machine precision.</div>
           <div style="margin-top:6px">
-            <span class="chip k">analytic ≈ PDE ≈ Monte-Carlo</span>
-            <span class="chip k">machine-precision oracle</span>
+            <span class="chip k">analytic ≈ PDE ≈ golden</span>
+            <span class="chip m">MC carries a price std-error</span>
           </div>
         </div>
 
@@ -118,8 +131,13 @@ body{background:#fff}
 
         <div class="box brand tint">
           <div class="t">Scales out, stays fast</div>
-          <div class="d">The node-local hot substrate fans out horizontally — a highest-random-weight partition map shards the universe and streams prices to many counterparties at once, with no central choke.</div>
+          <div class="d">The node-local hot substrate fans out horizontally — a highest-random-weight partition map shards the universe onto a Raft-replicated log (bit-identical replay), and a lock-free SPMC broadcast ring streams each pair's prices to many counterparties at once, with no central choke.</div>
+          <div style="margin-top:6px">
+            <span class="chip">Raft-replicated log</span>
+            <span class="chip">lock-free SPMC fan-out ring</span>
+          </div>
         </div>
+
       </div>
 
     </div>

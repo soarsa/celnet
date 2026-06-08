@@ -84,11 +84,11 @@ body{background:#fff}
 <div class="grid" style="grid-template-columns:1fr 1fr">
 <div class="box brandfill">
 <div class="t">MD-ingest + surface</div>
-<div class="d">Resilient market-data subscriber feeds the smile/surface engine — VV/SABR/SVI/SSVI with arbitrage gates and an arb-free term structure.</div>
+<div class="d">Resilient market-data subscriber feeds the smile/surface engine — VV/SABR/SVI/SSVI/eSSVI with arbitrage gates, an arb-free term structure, Dupire local-vol and an LSV booking model.</div>
 </div>
 <div class="box brandfill">
 <div class="t">Pricer + Greek set</div>
-<div class="d">Garman-Kohlhagen vanilla and the first-generation exotics catalogue; the full FX desk Greek set in one pass.</div>
+<div class="d">Garman-Kohlhagen vanilla through the full exotic &amp; structured catalogue — barriers, digitals, touches, Asian, lookback, var/vol swaps, TARF, accumulator, quanto, American/Bermudan and correlated baskets — with the full FX desk Greek set in one pass.</div>
 </div>
 <div class="box brandfill">
 <div class="t">Book-shaped risk</div>
@@ -96,7 +96,7 @@ body{background:#fff}
 </div>
 <div class="box brandfill">
 <div class="t">GPU + telemetry</div>
-<div class="d">Cross-platform GPU backend reconciled to a high-precision CPU oracle; latency histograms offloaded off the hot path.</div>
+<div class="d">Cross-platform GPU batch backend (closed-form f32) reconciled node-by-node to the f64 CPU oracle and the golden; latency histograms offloaded off the hot path.</div>
 </div>
 </div>
 <div class="box brand" style="margin-top:0">
@@ -113,6 +113,8 @@ body{background:#fff}
 
 </div>
 
+<div class="note" style="margin-top:14px">Honest boundary: in-repo proofs cover the §1.2 in-core latency truth-gate, loopback/localhost-multiprocess Raft &amp; SPMC correctness, and a host-local GPU/CPU ratio (M4 Metal ⇒ f32, correctness + ratios only). Absolute cross-host wire p99 / §11 wire SLOs and absolute NVIDIA GPU throughput are deploy-gated, never claimed here.</div>
+
 <!-- BOTTOM BAND -->
 <div class="row" style="margin-top:16px;align-items:stretch">
 <div class="box" style="flex:1;border-color:var(--accent)">
@@ -126,8 +128,8 @@ body{background:#fff}
 </div>
 <div class="arrow">→</div>
 <div class="box" style="flex:1;border-color:var(--brand)">
-<div class="t"><span style="color:var(--brand-deep)">⬡</span> Horizontal scale-out</div>
-<div class="d">A node-local hot substrate fans out across a fleet via a highest-random-weight partition map — many cores, many counterparties, one contract.</div>
+<div class="t"><span style="color:var(--brand-deep)">⬡</span> Raft-replicated scale-out + SPMC fan-out</div>
+<div class="d">The node-local hot substrate fans out across a fleet via a highest-random-weight partition map and a Raft-replicated log (election · log-matching · conflicting-tail truncation · compaction/InstallSnapshot · hot-standby takeover); per-pair quotes broadcast over a lock-free SPMC fan-out ring with exact conflation accounting — many cores, many counterparties, one contract.</div>
 </div>
 </div>
 

@@ -41,17 +41,31 @@ The **pair menu** in the title bar is a real anchored dropdown: clicking the `�
 
 `⌘K` (or `⌘P`) opens the palette — the universal escape hatch and the keyboard-first spine of the GUI. It fuzzy-matches across three families at once: **pairs** (jump to any currency pair, with its spot as a hint), **workspaces** (go to any of the five lanes), and **actions** (mark the surface, open a risk scenario, toggle light/dark or contrast, and *promote a structure straight into the live blotter* — e.g. "Stream EUR/USD 1M 25Δ RR", which subscribes the exact instrument and lands you on the blotter ticking). It is fully driven from the keyboard, honours Escape, and renders on a thick-blur material that owns focus while open. No function codes, no command syntax to memorise.
 
+#### The keyboard cheatsheet (?)
+
+Because the GUI is keyboard-first, every chord is discoverable: pressing `?` (or selecting it from the command palette) opens a modal **shortcuts overlay** that enumerates the *same* binding grammar the shell and the overlays actually honour. It is read from one `src/lib/shortcuts.ts` source of truth and rendered as grouped definition lists, so the advertised bindings can never drift from the real ones. It is a focus-trapping dialog — focus moves into it on open, Escape and a scrim click close it — and carries an accessible name and grouped sections (`gui/src/components/ShortcutsOverlay.tsx`).
+
 ### 11.2 Ticket (⌘1) — the analytics surface that is also the executable
 
 ![The Ticket card — structure, tenor, legs, a live two-way, the full Greek set, and conventions on the face.](../assets/celnet-capabilities/shot-02-ticket-structuring.png)
 *Figure 11-4 — Ticket (⌘1): one card that is both the analytics surface and the executable.*
 
-The Ticket is one card that is simultaneously the analytics view and the order — build a structure, see its live two-way and full Greek vector and conventions on the face, and hit it without changing screens. Walking the card top to bottom:
+The Ticket is one card that is simultaneously the analytics view and the order — build *any* product in the platform's catalogue, see its live two-way and full Greek vector and conventions on the face, and hit it without changing screens. The same card reaches the **entire on-wire instrument set** — not just vanilla strategies — selectable from one **structure selector** (`gui/src/workspaces/TicketWorkspace.tsx`, the `STRUCTURES` list):
 
-- **Header** — the active pair, a **structure selector** (Vanilla, Risk Reversal, Strangle, Straddle, Seagull), and a **notional** input in millions, labelled with the correct currency leg.
-- **Tenor strip** — a row of tenor pills (overnight through one year) that name each tenor identically to the Stream lane, from a single shared formatter.
-- **Legs** — one row per leg: side (buy/sell, colour-coded), call/put, the delta handle (e.g. `25Δ`), and the resolved strike at the active pair's *real* market (spot/vol/both rates) — never a stale constant. Multi-leg structures carry a **Solve: zero-cost** chip that calibrates the structure to a zero-premium strike inline.
-- **The two-way** — `Request quote` (or `⏎`) returns a live **BID / MID / OFFER** in the conventions' premium units, with a visible **depleting last-look ring** counting down the quote's validity. `Sell` / `Buy` buttons hit the bid or lift the offer (`⌘⏎` accepts the offered side); an expired quote refuses and prompts a re-request. Fills report the traded premium and an execution id.
+- **Vanilla & multi-leg strategies** — Vanilla, Risk Reversal, Strangle, Straddle, Seagull (the leg-ladder family below).
+- **First-generation exotics** — Single Barrier, Double Barrier, Digital, Touch, Window Barrier (each with its own typed input block: knock kind/side, barrier level(s), corridor, settlement style, payout, active window).
+- **Structured & path-dependent** — Variance Swap, Volatility Swap, Asian (discrete/continuous averaging, Turnbull-Wakeman / Curran method), Forward Start, Cliquet, Quanto, Lookback.
+- **Monte-Carlo structured** — TARF, Accumulator (geared fixing schedules), and the basket family below.
+- **Early exercise** — **American / Bermudan** (continuous or a discrete exercise-date set), priced by the server's exact free-boundary FD engine or the Longstaff-Schwartz LSM path engine.
+- **Correlated multi-asset** — **Basket / Best-of / Worst-of**, a 2–3-leg builder with per-leg weight/spot/vol/foreign-rate and a single off-diagonal correlation that the ticket validates as a symmetric-positive-definite (Cholesky-admissible) matrix before it ever reaches the pricer.
+
+Walking the card top to bottom:
+
+- **Header** — the active pair, the structure selector above, and a **notional** input in millions, labelled with the correct currency leg.
+- **Tenor strip** — a row of tenor pills (overnight through one year, plus IMM and an arbitrary broken date via the date picker) that name each tenor identically to the Stream lane, from a single shared formatter.
+- **Legs / product block** — for vanilla and the multi-leg strategies, one row per leg: side (buy/sell, colour-coded), call/put, the delta handle (e.g. `25Δ`), and the resolved strike at the active pair's *real* market (spot/vol/both rates) — never a stale constant. Multi-leg structures carry a **Solve: zero-cost** chip that calibrates the structure to a zero-premium strike inline. The exotic and path-dependent products replace the leg ladder with their own typed input block (barrier levels, schedules, leverage, exercise style, basket legs and ρ), with strikes and barriers defaulting sensibly off the active pair's live ATM-forward and spot.
+- **Booking model** — where a product supports it, a model chip routes the choice into `Instrument.pricing_model`: **Default** (the per-product analytic/PDE engine) or **Local-Stoch-Vol** (the particle-calibrated LSV booking engine); the window barrier, which has no closed form, is locked to Local-Stoch-Vol. The selector appears only when there is a real choice, and an unsupported selection silently falls back to Default rather than sending a model the server would reject.
+- **The two-way** — `Request quote` (or `⏎`) returns a live **BID / MID / OFFER** in the conventions' premium units, with a visible **depleting last-look ring** counting down the quote's validity. `Sell` / `Buy` buttons hit the bid or lift the offer (`⌘⏎` accepts the offered side); an expired quote refuses and prompts a re-request. Fills report the traded premium and an execution id. For the Monte-Carlo-priced products (TARF, accumulator, discrete lookback, basket/best-of/worst-of, American via LSM), the quote carries an honest **price standard error** alongside the premium — never dressed up as machine precision; the variance/volatility swaps quote a fair strike rather than a premium.
 - **The Greek strip** — once quoted, the full FX desk Greek set for the structure renders beneath the two-way: every sensitivity in one pass.
 - **Conventions on the face** — the delta convention, ATM rule, and premium currency are shown inline before quoting; the trading vol (the real smile vol the structure trades on at its strikes, vega-weighted across legs) is shown alongside the quote — not a flat ATM.
 - **Promote, never re-key** — `Stream this ≋` drops the *exact same* instrument into the blotter; `Add to risk ⊞` drops it into the scenario grid. The same instrument object flows across lanes with no re-typing.
@@ -82,7 +96,7 @@ The Surface workspace is the "show me why" lane — three linked views of one ma
 Three controls govern the mark:
 
 - **The arb gate** — an arb banner shows the selected smile's butterfly / calendar / vertical status; **Publish is disabled unless the *whole* surface is arbitrage-free** (every tenor's butterfly *and* the cross-tenor calendar check), not merely the selected smile.
-- **The model selector** — Market hedge, Stochastic vol, Parametric, and Parametric-surface chips route the choice into the contract's mark request; selecting a family re-marks the live surface under it and bumps the surface version. The family the server *actually* calibrated under is read back from each smile's provenance channel and shown as "marked as …" — honest provenance, not the requested label.
+- **The model selector** — **five** model chips — Market hedge, Stochastic vol, Parametric, Parametric-surface, and **eSSVI** (the extended whole-surface fit with a maturity-dependent skew) — route the choice into the contract's `MarkSurfaceRequest.smile_model` field (`SMILE_MODELS` in `gui/src/workspaces/SurfaceWorkspace.tsx`, the `EXTENDED_SURFACE` arm); selecting a family re-marks the live surface under it and bumps the surface version. The family the server *actually* calibrated under is read back from each smile's **typed** `arbitrage.model` provenance field and shown as "marked as …" — honest provenance, not the requested label.
 - **Reset / Publish** — `Reset to live` discards unpublished edits; `Publish vN` transmits the edited marks through the *same* mark API the SDK and Excel use and deposits them under a fresh surface version (with the marking timestamp and handle count disclosed). Pricing, RFQ, and RFS paths then pin against that version.
 
 ### 11.5 Risk (⌘4) — the scenario grid
@@ -115,7 +129,7 @@ The Book is candid about its own numeraire: cross-pair totals are summed in each
 
 ### 11.7 One contract, every surface
 
-Light and dark themes, a high-contrast mode, the trend modes, the scope breadcrumb, and the pair navigator are all conveniences layered over the *same* API that the Rust SDK, the CLI, and the Excel `CELNET.*` add-in consume. A value priced in the Ticket, streamed in the blotter, marked in the Surface, shocked in Risk, or aggregated in the Book is the engine's value — identical across every client. The GUI is the desk's richest window onto Celnet, not a parallel implementation of it.
+Light and dark themes, a high-contrast mode, the keyboard cheatsheet, the trend modes, the scope breadcrumb, and the pair navigator are all conveniences layered over the *same* API that the Rust SDK, the CLI, and the Excel `CELNET.*` add-in consume. A value priced in the Ticket — across the full catalogue from vanilla through American/Bermudan and correlated baskets — streamed in the blotter, marked in the Surface under any of the five smile families, shocked in Risk, or aggregated in the Book is the engine's value — identical across every client. The GUI is the desk's richest window onto Celnet, not a parallel implementation of it. (Its keyboard-first behaviour and accessibility are themselves under test — see the Playwright end-to-end and axe accessibility suites covered in the *Engineering Rigor & Assurance* chapter.)
 
 ---
 <sub>[← Excel Integration](10-excel-integration.md)  ·  **[Contents](../CELNET-CAPABILITIES.md)**  ·  [Celer Trader & Estate Integration →](12-celer-integration.md)</sub>
