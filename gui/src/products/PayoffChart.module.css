@@ -1,0 +1,68 @@
+/* PayoffChart — inline-SVG payoff-at-expiry mini-chart (GW2). */
+
+.chart {
+  display: block;
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+}
+
+.frame {
+  fill: none;
+  stroke: var(--hairline);
+  stroke-width: 1;
+}
+
+.zeroLine {
+  stroke: var(--grid-line);
+  stroke-width: 1;
+}
+
+.strikeLine {
+  stroke: var(--text-tertiary);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.spotLine {
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+  opacity: 0.8;
+}
+
+.curve {
+  fill: none;
+  stroke: var(--bid);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+/* Honest empty state for path-dependent structures. */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  min-height: 120px;
+  padding: var(--space-3);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+  text-align: center;
+}
+
+.dash {
+  color: var(--text-tertiary);
+  font-size: var(--type-title);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.reason {
+  color: var(--text-tertiary);
+  font-size: var(--type-caption);
+  line-height: var(--type-caption-lh);
+  max-width: 22ch;
+}
