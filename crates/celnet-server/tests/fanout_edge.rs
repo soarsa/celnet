@@ -101,7 +101,7 @@ fn match_update_to_tick(u: &Update, strike: f64, base_spot: f64, from: u64, wind
         let spot = oracle_spot(k, base_spot);
         let direct = celnet_vanilla::price(
             OptionType::Call,
-            &VanillaInputs::new(spot, strike, u.vol, 1.0, m.r_dom, m.r_for),
+            &VanillaInputs::new(spot, strike, u.vol, 1.0, m.r_dom(), m.r_for()),
         );
         // The streamed mid is the spread-model two-way around `direct`; for a deep,
         // in-the-money-ish call the bid can floor at zero, so compare the offer-side

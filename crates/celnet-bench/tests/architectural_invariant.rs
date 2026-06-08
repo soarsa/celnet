@@ -51,12 +51,7 @@ async fn in_process_price_resolves_locally_without_any_router() {
         let req = PriceRequest {
             request_id: 1,
             instrument: Some(vanilla_call(1.10)),
-            market: Some(MarketContext {
-                spot: 1.10,
-                vol: 0.095,
-                r_dom: 0.025,
-                r_for: 0.015,
-            }),
+            market: Some(MarketContext::fx(1.10, 0.095, 0.025, 0.015)),
             conventions: Some(wire_conventions()),
             correlation_id: None,
             surface_version: None,

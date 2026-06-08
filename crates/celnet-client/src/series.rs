@@ -280,7 +280,7 @@ mod tests {
         let snap = MarketSeriesSnapshot {
             subscription: Some(celnet_proto::SubscriptionId { value: 3 }),
             sequence: 1,
-            pair: None,
+            underlying: None,
             observable: WireObservable::AtmVol as i32,
             points: vec![
                 MarketSeriesPoint {

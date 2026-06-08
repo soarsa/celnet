@@ -106,12 +106,7 @@ pub struct PriceTick {
 impl Default for PriceTick {
     fn default() -> Self {
         Self {
-            market: MarketContext {
-                spot: 0.0,
-                vol: 0.0,
-                r_dom: 0.0,
-                r_for: 0.0,
-            },
+            market: MarketContext::fx(0.0, 0.0, 0.0, 0.0),
             tick_seq: 0,
         }
     }
@@ -321,12 +316,7 @@ mod tests {
     }
 
     fn base_market(spot: f64) -> MarketContext {
-        MarketContext {
-            spot,
-            vol: 0.10,
-            r_dom: 0.02,
-            r_for: 0.01,
-        }
+        MarketContext::fx(spot, 0.10, 0.02, 0.01)
     }
 
     /// The per-pair seed is stable and pair-specific: the same pair always seeds

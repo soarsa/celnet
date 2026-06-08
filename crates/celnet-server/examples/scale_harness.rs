@@ -571,12 +571,7 @@ async fn drive_all(edge_url: &str) -> Observations {
 // `price` does not expose surface_version pinning).
 fn wire_market() -> celnet_proto::MarketContext {
     let m = market();
-    celnet_proto::MarketContext {
-        spot: m.spot,
-        vol: m.vol,
-        r_dom: m.r_dom,
-        r_for: m.r_for,
-    }
+    celnet_proto::MarketContext::fx(m.spot, m.vol, m.r_dom, m.r_for)
 }
 fn wire_conv() -> celnet_proto::Conventions {
     celnet_proto::Conventions {
@@ -605,10 +600,10 @@ impl ToWirePub for InstrumentSpec {
             _ => strike_for(self.pair),
         };
         celnet_proto::Instrument {
-            pair: Some(celnet_proto::CcyPair {
+            underlying: Some(celnet_proto::Underlying::fx(celnet_proto::CcyPair {
                 base: self.pair.base.as_str().to_owned(),
                 quote: self.pair.quote.as_str().to_owned(),
-            }),
+            })),
             tenor: Some(celnet_proto::Tenor {
                 unit: celnet_proto::tenor::Unit::Years as i32,
                 count: 1,

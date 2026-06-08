@@ -180,7 +180,7 @@ fn calibrate_leverage_for(
     expiry: f64,
     grids: &LsvGrids,
 ) -> (VanillaInputs, VarianceParams, LeverageSurface) {
-    let carry = market.r_dom - market.r_for;
+    let carry = market.r_dom() - market.r_for();
     let iv = FlatIv {
         sigma: market.vol,
         spot: market.spot,
@@ -194,8 +194,8 @@ fn calibrate_leverage_for(
         market.spot,
         market.vol,
         expiry,
-        market.r_dom,
-        market.r_for,
+        market.r_dom(),
+        market.r_for(),
     );
     let spot_grid = leverage_spot_grid(market.spot, grids.leverage_nodes);
     let model = LsvModel::calibrate(inputs, var, &iv, &spot_grid, grids.particle);
@@ -272,8 +272,8 @@ fn reprice(
         market.spot,
         market.vol,
         expiry,
-        market.r_dom,
-        market.r_for,
+        market.r_dom(),
+        market.r_for(),
     );
     let model = LsvModel::from_leverage(inputs, var, leverage.clone());
     match *payoff {
@@ -378,37 +378,13 @@ fn lsv_greeks(
     // Rate Greeks.
     let h_r = FD_RATE_ABS;
     let rho_dom = {
-        let up = p(
-            &WireMarketContext {
-                r_dom: market.r_dom + h_r,
-                ..*market
-            },
-            expiry,
-        );
-        let dn = p(
-            &WireMarketContext {
-                r_dom: market.r_dom - h_r,
-                ..*market
-            },
-            expiry,
-        );
+        let up = p(&market.with_r_dom(market.r_dom() + h_r), expiry);
+        let dn = p(&market.with_r_dom(market.r_dom() - h_r), expiry);
         (up - dn) / (2.0 * h_r)
     };
     let rho_for = {
-        let up = p(
-            &WireMarketContext {
-                r_for: market.r_for + h_r,
-                ..*market
-            },
-            expiry,
-        );
-        let dn = p(
-            &WireMarketContext {
-                r_for: market.r_for - h_r,
-                ..*market
-            },
-            expiry,
-        );
+        let up = p(&market.with_r_for(market.r_for() + h_r), expiry);
+        let dn = p(&market.with_r_for(market.r_for() - h_r), expiry);
         (up - dn) / (2.0 * h_r)
     };
 
@@ -428,7 +404,7 @@ fn lsv_greeks(
         (g_up - g_dn) / (2.0 * h_t)
     };
 
-    let delta_forward = delta_spot * celnet_core::math::exp(market.r_for * expiry);
+    let delta_forward = delta_spot * celnet_core::math::exp(market.r_for() * expiry);
 
     Greeks {
         price: headline_price,

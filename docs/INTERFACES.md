@@ -162,12 +162,12 @@ celnet-golden, celnet-testkit, celnet-bench  →  test/validation/bench only
 
 - **`enum MarketObservable { …ATM_VOL=0, …SPOT=1, …RISK_REVERSAL=2, …BUTTERFLY=3, …FORWARD=4 }`**
   — labelled, unit-bearing observables (no abstract index).
-- **`MarketSeriesSubscribe`** `{ SubscriptionId subscription; CcyPair pair; MarketObservable
-  observable; optional Tenor tenor; optional double delta; uint64 throttle_nanos; uint32
-  history_limit }` (tenor required for ATM_VOL/RR/BF/FORWARD; delta required for RR/BF).
-  **`MarketSeriesUnsubscribe`** `{ SubscriptionId subscription }`.
+- **`MarketSeriesSubscribe`** `{ SubscriptionId subscription; Underlying underlying;
+  MarketObservable observable; optional Tenor tenor; optional double delta; uint64
+  throttle_nanos; uint32 history_limit }` (tenor required for ATM_VOL/RR/BF/FORWARD; delta
+  required for RR/BF). **`MarketSeriesUnsubscribe`** `{ SubscriptionId subscription }`.
 - **`MarketSeriesPoint`** `{ SubscriptionId subscription; uint64 sequence; double value; int64
-  epoch_nanos }`. **`MarketSeriesSnapshot`** `{ subscription; sequence; CcyPair pair;
+  epoch_nanos }`. **`MarketSeriesSnapshot`** `{ subscription; sequence; Underlying underlying;
   MarketObservable observable; repeated MarketSeriesPoint points; epoch_nanos }`.
 - Wired as new `oneof` arms: `ClientStreamMessage.market_series_subscribe=7` /
   `market_series_unsubscribe=8`; `ServerStreamMessage.market_series_snapshot=7` /
@@ -468,8 +468,8 @@ RH §2.1 — the server maps a trade's wire `AttributionRecord` book/owner onto 
 ### Messages, fields, types, defaults
 
 **`RiskDimension`** (enum, mirrors `celnet_risk_cube::DimensionId` + the firm apex; ORTHOGONAL axes):
-`FIRM=0` (apex; the cube `firm_aggregate`, default), `TRADER=1`, `BOOK=2`, `DESK=3`, `CCY_PAIR=4`,
-`LOCATION=5`, `ENTITY=6`.
+`FIRM=0` (apex; the cube `firm_aggregate`, default), `TRADER=1`, `BOOK=2`, `DESK=3`, `UNDERLYING=4`
+(the asset axis; for FX the currency pair), `LOCATION=5`, `ENTITY=6`.
 
 **`OrgKey`** (mirrors `celnet_risk_cube::FactKey`): `trader:u32`, `book:u32`, `desk:u32` (0 ⇒ resolve
 from the book's `Book→Desk` parent pointer), `ccy_pair:CcyPair`, `location:u32`, `entity:u32` (0 ⇒
@@ -552,8 +552,8 @@ JSON object keys (symmetric in/out, by proto field name): `dimension`, `group`, 
 `node`, `child_dimension`, `principal` (`{grant_all, grants:[{scopes:[{dimension,value}]}], denies:[…]}`),
 `numeraire` (`{numeraire, rates:[{ccy, rate}]}`), `vega_pillars`/`vega_pillar`/`pillar`
 (`{tenor_days, delta_bp}`), `var_spot_shocks`, `var_alpha`, `curvature_risk_weight`, `positions`/
-`position` (`{position_id, org:{trader,book,desk,ccy_pair,location,entity}, option_type, notional_base,
-inputs:{spot,strike,vol,t,r_dom,r_for}, quoted_delta, premium_style, surface_version, attribution}`),
+`position` (`{position_id, org:{trader,book,desk,underlying,location,entity}, option_type, notional_base,
+inputs:{spot,strike,vol,t,discount_rate,carry}, quoted_delta, premium_style, surface_version, attribution}`),
 `org`, `inputs`, `additive` (`{delta_numeraire, delta_vector:[{ccy,amount}], gamma, vega_numeraire,
 theta, vanna, volga, charm, speed, zomma, color, premium_numeraire, vega_ladder:[{pillar,vega}]}`),
 `nonadditive` (`{var, es, var_alpha, curvature_spot}` — `null` when absent), `position_count`,

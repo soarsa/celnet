@@ -37,12 +37,14 @@ pub mod adjoint;
 pub mod atm;
 pub mod delta;
 pub mod premium;
+pub mod pricer;
 pub mod solver;
 
 pub use adjoint::adjoint_greeks;
 pub use atm::{atm_strike, atm_strike_from_inputs};
 pub use delta::{delta as convention_delta, delta_d_strike, premium_adjusted_call_delta_max};
 pub use premium::{premium, premium_from_domestic_pips};
+pub use pricer::FxPricer;
 pub use solver::{DeltaSolveError, strike_from_delta};
 
 /// Intermediate quantities shared by price and Greeks.

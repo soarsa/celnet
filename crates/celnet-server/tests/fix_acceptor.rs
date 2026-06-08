@@ -68,7 +68,7 @@ fn init_cfg() -> SessionConfig {
 /// computes (absolute-strike vanilla priced at the live ATM vol).
 fn reference_offer(strike: f64, expiry_years: f64) -> f64 {
     let m = live_market();
-    let inputs = VanillaInputs::new(m.spot, strike, m.vol, expiry_years, m.r_dom, m.r_for);
+    let inputs = VanillaInputs::new(m.spot, strike, m.vol, expiry_years, m.r_dom(), m.r_for());
     let greeks = celnet_vanilla::greeks(OptionType::Call, &inputs);
     SpreadModel::default().two_way(greeks.price, &greeks).offer
 }

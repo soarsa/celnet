@@ -40,7 +40,7 @@ use crate::clock::Clock;
 use crate::core_link::CoreLink;
 use crate::pricer::{ConventionSet, price_instrument};
 use crate::readiness::ReadinessGate;
-use crate::services::forward::{Serve, route_pair, serve_mode};
+use crate::services::forward::{Serve, route_pair, route_underlying, serve_mode};
 use crate::services::risk::federate::Fleet;
 use crate::surface_book::SurfaceBook;
 
@@ -163,8 +163,8 @@ fn calibrate(
     let record = convention_record(conv);
     let ctx = SurfaceContext::new(
         market.spot,
-        market.r_dom,
-        market.r_for,
+        market.r_dom(),
+        market.r_for(),
         broker.tenor_years,
         record,
     );
@@ -253,7 +253,7 @@ fn smile_to_wire(
     let forward = smile.forward();
     let t = broker.tenor_years;
     let record = convention_record(conv);
-    let ctx = SurfaceContext::new(market.spot, market.r_dom, market.r_for, t, record);
+    let ctx = SurfaceContext::new(market.spot, market.r_dom(), market.r_for(), t, record);
 
     // Map each report delta to its strike (via the convention inversion) and read
     // the calibrated vol there.
@@ -269,8 +269,8 @@ fn smile_to_wire(
             forward,
             broker.atm_vol,
             t,
-            market.r_dom,
-            market.r_for,
+            market.r_dom(),
+            market.r_for(),
         );
         // The 0.50 entry in `REPORT_DELTAS` is the ATM pillar (priced at the
         // forward, no delta inversion). Detect it via `celnet_core::is_close` with
@@ -366,8 +366,8 @@ fn apply_shock(
     match factor {
         shock_axis::Factor::Spot => m.spot = adjust(m.spot),
         shock_axis::Factor::Vol => m.vol = adjust(m.vol),
-        shock_axis::Factor::RateDom => m.r_dom = adjust(m.r_dom),
-        shock_axis::Factor::RateFor => m.r_for = adjust(m.r_for),
+        shock_axis::Factor::RateDom => m = m.with_r_dom(adjust(m.r_dom())),
+        shock_axis::Factor::RateFor => m = m.with_r_for(adjust(m.r_for())),
         // The theta-roll axis rolls expiry, not the market context.
         shock_axis::Factor::Time => {}
     }
@@ -409,11 +409,11 @@ fn bump_factor(
             CROSS_VOL_ABS
         }
         shock_axis::Factor::RateDom => {
-            out.r_dom += sign * CROSS_RATE_ABS;
+            out = out.with_r_dom(out.r_dom() + sign * CROSS_RATE_ABS);
             CROSS_RATE_ABS
         }
         shock_axis::Factor::RateFor => {
-            out.r_for += sign * CROSS_RATE_ABS;
+            out = out.with_r_for(out.r_for() + sign * CROSS_RATE_ABS);
             CROSS_RATE_ABS
         }
         // Time is rolled on expiry, not the market; the cross-gamma loop handles a
@@ -455,12 +455,7 @@ impl SurfaceService for SurfaceEdge {
             .market_snapshot()
             .await
             .map_err(|e| Status::unavailable(e.to_string()))?;
-        let market = WireMarketContext {
-            spot: snap.spot,
-            vol: snap.atm_vol,
-            r_dom: snap.r_dom,
-            r_for: snap.r_for,
-        };
+        let market = WireMarketContext::fx(snap.spot, snap.atm_vol, snap.r_dom, snap.r_for);
         let broker = BrokerQuoteSet {
             tenor_years: req.tenor_years,
             atm_vol: snap.atm_vol,
@@ -520,12 +515,7 @@ impl SurfaceService for SurfaceEdge {
             .market_snapshot()
             .await
             .map_err(|e| Status::unavailable(e.to_string()))?;
-        let market = WireMarketContext {
-            spot: snap.spot,
-            vol: snap.atm_vol,
-            r_dom: snap.r_dom,
-            r_for: snap.r_for,
-        };
+        let market = WireMarketContext::fx(snap.spot, snap.atm_vol, snap.r_dom, snap.r_for);
 
         // Stamp one fresh version for this whole mark and deposit every calibrated
         // tenor slice under it, so a later request can pin this exact surface.
@@ -584,7 +574,7 @@ impl SurfaceService for SurfaceEdge {
                 .instrument
                 .as_ref()
                 .ok_or_else(|| Status::invalid_argument("missing `instrument`"))?;
-            let pair = route_pair(instrument.pair.as_ref())?;
+            let pair = route_underlying(instrument.underlying.as_ref())?;
             let (_replica, client) = fleet.owner_of_pair(pair)?;
             let mut svc =
                 celnet_proto::surface_service_client::SurfaceServiceClient::new(client.channel());
@@ -728,14 +718,8 @@ fn bucketed_risk(
         // on a single-expiry structure priced off a flat scenario vol.
         let vega = if celnet_core::is_close(pillar.tenor_years, base_expiry, 1e-9, 1e-9) {
             let h = VEGA_BUCKET_BUMP;
-            let up = WireMarketContext {
-                vol: base.vol + h,
-                ..*base
-            };
-            let dn = WireMarketContext {
-                vol: base.vol - h,
-                ..*base
-            };
+            let up = base.with_vol(base.vol + h);
+            let dn = base.with_vol(base.vol - h);
             let v_up = price_value_at(instrument, &up, base_expiry, conv)?;
             let v_dn = price_value_at(instrument, &dn, base_expiry, conv)?;
             (v_up - v_dn) / (2.0 * h)
@@ -918,12 +902,7 @@ mod tests {
     }
 
     fn major_market() -> WireMarketContext {
-        WireMarketContext {
-            spot: 1.10,
-            vol: 0.10,
-            r_dom: 0.03,
-            r_for: 0.01,
-        }
+        WireMarketContext::fx(1.10, 0.10, 0.03, 0.01)
     }
 
     /// **Independent oracle** (hand-pinned to the wire enum constants, Lesson c):

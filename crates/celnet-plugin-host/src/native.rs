@@ -12,8 +12,9 @@
 //! *same* model verdict whether the model ran native or in the interpreter — the
 //! basis of the Tier-0 == Tier-2 interchangeability gate.
 
+use celnet_core::{CarryGreeks, CarryInputs};
 use celnet_plugin_api::{ModelDescriptor, PricingModel};
-use celnet_types::{Greeks, OptionType, VanillaInputs};
+use celnet_types::OptionType;
 
 use crate::error::HostResult;
 use crate::model::HostModel;
@@ -45,11 +46,11 @@ impl<M: PricingModel> HostModel for NativeModel<M> {
         self.model.descriptor()
     }
 
-    fn price(&self, opt: OptionType, inputs: &VanillaInputs) -> HostResult<f64> {
+    fn price(&self, opt: OptionType, inputs: &CarryInputs) -> HostResult<f64> {
         Ok(self.model.price(opt, inputs)?)
     }
 
-    fn price_and_greeks(&self, opt: OptionType, inputs: &VanillaInputs) -> HostResult<Greeks> {
+    fn price_and_greeks(&self, opt: OptionType, inputs: &CarryInputs) -> HostResult<CarryGreeks> {
         Ok(self.model.price_and_greeks(opt, inputs)?)
     }
 }

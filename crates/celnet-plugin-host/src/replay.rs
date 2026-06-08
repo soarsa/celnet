@@ -19,12 +19,13 @@
 //! fuel accounting: the same fuel budget interrupts at the same instruction, so a
 //! near-budget model replays identically too.
 
-use celnet_types::{Greeks, OptionType, VanillaInputs};
+use celnet_core::{CarryGreeks, CarryInputs};
+use celnet_types::{OptionType, RateSensitivities};
 
 use crate::error::HostError;
 use crate::model::HostModel;
 
-/// A fixed market snapshot to replay: an option type and its [`VanillaInputs`].
+/// A fixed market snapshot to replay: an option type and its [`CarryInputs`].
 ///
 /// Deliberately `Copy` and self-contained so a snapshot can be checked into a
 /// golden file and replayed unchanged across releases.
@@ -33,13 +34,13 @@ pub struct Snapshot {
     /// The option type to price.
     pub opt: OptionType,
     /// The market inputs.
-    pub inputs: VanillaInputs,
+    pub inputs: CarryInputs,
 }
 
 impl Snapshot {
     /// Construct a replay snapshot.
     #[must_use]
-    pub const fn new(opt: OptionType, inputs: VanillaInputs) -> Self {
+    pub const fn new(opt: OptionType, inputs: CarryInputs) -> Self {
         Self { opt, inputs }
     }
 }
@@ -54,10 +55,25 @@ pub fn bits_eq(a: f64, b: f64) -> bool {
     a.to_bits() == b.to_bits()
 }
 
-/// Whether two [`Greeks`] are bit-identical field-for-field.
+/// The asset-class tag (`0 = Fx`, `1 = Carry`) and the two rate scalars of a
+/// [`RateSensitivities`], so the rate block can be compared bit-for-bit *and* by
+/// its discriminant (a same-value-but-different-arm result must not compare
+/// equal).
+const fn rate_parts(r: RateSensitivities) -> (u8, f64, f64) {
+    match r {
+        RateSensitivities::Fx { rho_dom, rho_for } => (0, rho_dom, rho_for),
+        RateSensitivities::Carry {
+            discount_rho,
+            carry_rho,
+        } => (1, discount_rho, carry_rho),
+    }
+}
+
+/// Whether two [`CarryGreeks`] are bit-identical field-for-field, including the
+/// carry-tagged rate block (both its discriminant and its two scalars).
 #[must_use]
-pub fn greeks_bits_eq(a: &Greeks, b: &Greeks) -> bool {
-    let fields = |g: &Greeks| {
+pub fn greeks_bits_eq(a: &CarryGreeks, b: &CarryGreeks) -> bool {
+    let neutral = |g: &CarryGreeks| {
         [
             g.price,
             g.delta_spot,
@@ -65,8 +81,6 @@ pub fn greeks_bits_eq(a: &Greeks, b: &Greeks) -> bool {
             g.gamma,
             g.vega,
             g.theta,
-            g.rho_dom,
-            g.rho_for,
             g.vanna,
             g.volga,
             g.charm,
@@ -75,8 +89,11 @@ pub fn greeks_bits_eq(a: &Greeks, b: &Greeks) -> bool {
             g.color,
         ]
     };
-    let (fa, fb) = (fields(a), fields(b));
-    fa.iter().zip(fb.iter()).all(|(x, y)| bits_eq(*x, *y))
+    let (fa, fb) = (neutral(a), neutral(b));
+    let neutral_eq = fa.iter().zip(fb.iter()).all(|(x, y)| bits_eq(*x, *y));
+    let (ta, r0a, r1a) = rate_parts(a.rates);
+    let (tb, r0b, r1b) = rate_parts(b.rates);
+    neutral_eq && ta == tb && bits_eq(r0a, r0b) && bits_eq(r1a, r1b)
 }
 
 /// The outcome of a replay: the canonical first-run output plus how many runs
@@ -86,7 +103,7 @@ pub struct ReplayOutcome {
     /// The price from the first run; every subsequent run matched it `to_bits`.
     pub price: f64,
     /// The Greeks from the first run; every subsequent run matched them `to_bits`.
-    pub greeks: Greeks,
+    pub greeks: CarryGreeks,
     /// Number of replay runs performed (all bit-identical to the first).
     pub runs: usize,
 }

@@ -83,8 +83,8 @@ async fn scenario_shock_reprices_correctly() {
                     1.12,
                     shocked.vol,
                     1.0,
-                    shocked.r_dom,
-                    shocked.r_for,
+                    shocked.r_dom(),
+                    shocked.r_for(),
                 ),
             );
             assert!(
@@ -104,7 +104,7 @@ async fn scenario_shock_reprices_correctly() {
             .expect("the (0,0) node exists");
         let base_direct = celnet_vanilla::price(
             OptionType::Call,
-            &VanillaInputs::new(base.spot, 1.12, base.vol, 1.0, base.r_dom, base.r_for),
+            &VanillaInputs::new(base.spot, 1.12, base.vol, 1.0, base.r_dom(), base.r_for()),
         );
         assert!(is_close(
             base_node.greeks.unwrap().price,
@@ -441,7 +441,7 @@ async fn scenario_book_shaped_risk_theta_roll_buckets_and_cross_gamma() {
         assert_eq!(risk.roll_horizons_years.len(), 2);
         let base_value = celnet_vanilla::price(
             OptionType::Call,
-            &VanillaInputs::new(base.spot, 1.12, base.vol, 1.0, base.r_dom, base.r_for),
+            &VanillaInputs::new(base.spot, 1.12, base.vol, 1.0, base.r_dom(), base.r_for()),
         );
         for &rolled_value in &risk.theta_roll {
             assert!(rolled_value.is_finite());

@@ -82,7 +82,7 @@ impl OrgDimension {
             OrgDimension::Trader => celnet_proto::RiskDimension::Trader,
             OrgDimension::Book => celnet_proto::RiskDimension::Book,
             OrgDimension::Desk => celnet_proto::RiskDimension::Desk,
-            OrgDimension::CcyPair => celnet_proto::RiskDimension::CcyPair,
+            OrgDimension::CcyPair => celnet_proto::RiskDimension::Underlying,
             OrgDimension::Location => celnet_proto::RiskDimension::Location,
             OrgDimension::Entity => celnet_proto::RiskDimension::Entity,
         }
@@ -103,7 +103,7 @@ impl OrgDimension {
             celnet_proto::RiskDimension::Trader => OrgDimension::Trader,
             celnet_proto::RiskDimension::Book => OrgDimension::Book,
             celnet_proto::RiskDimension::Desk => OrgDimension::Desk,
-            celnet_proto::RiskDimension::CcyPair => OrgDimension::CcyPair,
+            celnet_proto::RiskDimension::Underlying => OrgDimension::CcyPair,
             celnet_proto::RiskDimension::Location => OrgDimension::Location,
             celnet_proto::RiskDimension::Entity => OrgDimension::Entity,
         })
@@ -375,10 +375,14 @@ pub struct OrgKey {
 impl OrgKey {
     fn from_wire(w: &celnet_proto::OrgKey) -> ClientResult<Self> {
         let ccy_pair = w
-            .ccy_pair
+            .underlying
             .as_ref()
-            .ok_or(ClientError::MissingField("OrgKey.ccy_pair"))
-            .and_then(|p| CcyPair::try_from(p.clone()).map_err(ClientError::Wire))?;
+            .ok_or(ClientError::MissingField("OrgKey.underlying"))
+            .and_then(|u| {
+                celnet_proto::convert::validate_fx_underlying(u).map_err(ClientError::Wire)
+            })?
+            .as_fx()
+            .ok_or(ClientError::MissingField("OrgKey.underlying.fx"))?;
         Ok(Self {
             trader: w.trader,
             book: w.book,

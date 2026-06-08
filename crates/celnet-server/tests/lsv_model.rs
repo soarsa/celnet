@@ -36,12 +36,7 @@ use celnet_types::{OptionType, VanillaInputs};
 // --- shared market / conventions -------------------------------------------
 
 fn market() -> MarketContext {
-    MarketContext {
-        spot: 1.30,
-        vol: 0.10,
-        r_dom: 0.03,
-        r_for: 0.01,
-    }
+    MarketContext::fx(1.30, 0.10, 0.03, 0.01)
 }
 
 fn conv() -> ConventionSet {
@@ -60,7 +55,7 @@ const EXPIRY: f64 = 1.0;
 
 fn vanilla_call(strike: f64, model: celnet_proto::PricingModel) -> Instrument {
     Instrument {
-        pair: None,
+        underlying: None,
         tenor: None,
         expiry_years: EXPIRY,
         quantity: None,
@@ -78,7 +73,7 @@ fn vanilla_call(strike: f64, model: celnet_proto::PricingModel) -> Instrument {
 
 fn down_out_call(strike: f64, barrier: f64, model: celnet_proto::PricingModel) -> Instrument {
     Instrument {
-        pair: None,
+        underlying: None,
         tenor: None,
         expiry_years: EXPIRY,
         quantity: None,
@@ -129,7 +124,7 @@ fn oracle_model(m: &MarketContext) -> LsvModel {
     let sigma = m.vol;
     let v = sigma * sigma;
     let var = VarianceParams::new(v, ORACLE_KAPPA, v, ORACLE_XI, ORACLE_RHO);
-    let carry = m.r_dom - m.r_for;
+    let carry = m.r_dom() - m.r_for();
     let iv = OracleFlatIv {
         sigma,
         spot: m.spot,
@@ -142,7 +137,7 @@ fn oracle_model(m: &MarketContext) -> LsvModel {
             m.spot * x.exp()
         })
         .collect();
-    let inputs = VanillaInputs::new(m.spot, m.spot, sigma, EXPIRY, m.r_dom, m.r_for);
+    let inputs = VanillaInputs::new(m.spot, m.spot, sigma, EXPIRY, m.r_dom(), m.r_for());
     let particle = ParticleConfig {
         particles: 30_000,
         steps: 40,
@@ -170,7 +165,7 @@ fn default_path_is_byte_identical_to_analytic_vanilla() {
     // the analytic Garman-Kohlhagen price bit-for-bit.
     let analytic = celnet_vanilla::price(
         OptionType::Call,
-        &VanillaInputs::new(m.spot, 1.30, m.vol, EXPIRY, m.r_dom, m.r_for),
+        &VanillaInputs::new(m.spot, 1.30, m.vol, EXPIRY, m.r_dom(), m.r_for()),
     );
 
     let unset = price_instrument(
@@ -204,7 +199,7 @@ fn default_path_is_byte_identical_to_analytic_barrier() {
         rebate: 0.0,
     };
     let analytic = celnet_exotics::single_barrier_price(
-        &VanillaInputs::new(m.spot, 1.30, m.vol, EXPIRY, m.r_dom, m.r_for),
+        &VanillaInputs::new(m.spot, 1.30, m.vol, EXPIRY, m.r_dom(), m.r_for()),
         spec,
     );
     assert_eq!(
@@ -267,7 +262,7 @@ fn lsv_barrier_matches_direct_exotics_reprice() {
     // barrier (otherwise the selector would be a no-op). The LSV model carries
     // skew/stoch-vol the flat-GK barrier does not.
     let analytic = celnet_exotics::single_barrier_price(
-        &VanillaInputs::new(m.spot, 1.30, m.vol, EXPIRY, m.r_dom, m.r_for),
+        &VanillaInputs::new(m.spot, 1.30, m.vol, EXPIRY, m.r_dom(), m.r_for()),
         celnet_exotics::SingleBarrier {
             kind: celnet_exotics::BarrierKind {
                 up: false,
@@ -291,7 +286,7 @@ fn lsv_barrier_matches_direct_exotics_reprice() {
 fn lsv_window_barrier_matches_direct_exotics_reprice() {
     let m = market();
     let instr = Instrument {
-        pair: None,
+        underlying: None,
         tenor: None,
         expiry_years: EXPIRY,
         quantity: None,
@@ -340,7 +335,7 @@ fn lsv_window_barrier_matches_direct_exotics_reprice() {
 fn lsv_window_barrier_mc_carries_std_error() {
     let m = market();
     let instr = Instrument {
-        pair: None,
+        underlying: None,
         tenor: None,
         expiry_years: EXPIRY,
         quantity: None,
@@ -380,7 +375,7 @@ fn lsv_on_unsupported_product_errors_clearly() {
     let m = market();
     // An Asian option: a product the LSV engine does not price.
     let instr = Instrument {
-        pair: None,
+        underlying: None,
         tenor: None,
         expiry_years: EXPIRY,
         quantity: None,
@@ -416,7 +411,7 @@ fn default_model_on_window_barrier_errors_clearly() {
     // error, never a silent fallback to (a non-existent) analytic engine.
     let m = market();
     let instr = Instrument {
-        pair: None,
+        underlying: None,
         tenor: None,
         expiry_years: EXPIRY,
         quantity: None,

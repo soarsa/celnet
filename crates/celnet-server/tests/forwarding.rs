@@ -67,7 +67,7 @@ fn wire_pair(p: CcyPair) -> celnet_proto::CcyPair {
 /// A vanilla call on `pair` at an absolute strike (reuses the common 1Y builder).
 fn call_on(pair: CcyPair, strike: f64) -> celnet_proto::Instrument {
     let mut inst = vanilla_call(strike);
-    inst.pair = Some(wire_pair(pair));
+    inst.underlying = Some(celnet_proto::Underlying::fx(wire_pair(pair)));
     inst
 }
 

@@ -36,20 +36,15 @@ pub struct MarketContext {
 
 impl MarketContext {
     pub(crate) fn to_wire(self) -> celnet_proto::MarketContext {
-        celnet_proto::MarketContext {
-            spot: self.spot,
-            vol: self.vol,
-            r_dom: self.r_dom,
-            r_for: self.r_for,
-        }
+        celnet_proto::MarketContext::fx(self.spot, self.vol, self.r_dom, self.r_for)
     }
 
     pub(crate) fn from_wire(w: &celnet_proto::MarketContext) -> Self {
         Self {
             spot: w.spot,
             vol: w.vol,
-            r_dom: w.r_dom,
-            r_for: w.r_for,
+            r_dom: w.r_dom(),
+            r_for: w.r_for(),
         }
     }
 }

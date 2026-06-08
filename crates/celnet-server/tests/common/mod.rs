@@ -82,7 +82,7 @@ pub fn eurusd_pair() -> celnet_proto::CcyPair {
 #[must_use]
 pub fn vanilla_call(strike: f64) -> celnet_proto::Instrument {
     celnet_proto::Instrument {
-        pair: Some(eurusd_pair()),
+        underlying: Some(celnet_proto::Underlying::fx(eurusd_pair())),
         tenor: Some(celnet_proto::Tenor {
             unit: celnet_proto::tenor::Unit::Years as i32,
             count: 1,
@@ -115,10 +115,5 @@ pub fn live_market() -> celnet_proto::MarketContext {
     let state = make_state(1.10, eurusd_conv());
     let forward = state.forward();
     let atm_vol = celnet_core::Smile::implied_vol(&state.smile, forward, forward, state.t).0;
-    celnet_proto::MarketContext {
-        spot: state.spot,
-        vol: atm_vol,
-        r_dom: state.r_dom,
-        r_for: state.r_for,
-    }
+    celnet_proto::MarketContext::fx(state.spot, atm_vol, state.r_dom, state.r_for)
 }

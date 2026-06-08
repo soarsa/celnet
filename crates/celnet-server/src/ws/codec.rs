@@ -174,6 +174,19 @@ fn ccy_pair_to_json(p: &CcyPair) -> Value {
     json!({ "base": p.base, "quote": p.quote })
 }
 
+/// Decode a JSON `{base, quote}` pair object into an FX [`Underlying`]. The WS
+/// JSON mirror keeps the `pair` key (the GUI/Excel contract is unchanged); the
+/// generalized wire `underlying` is its FX projection.
+fn underlying_from_json(v: &Value) -> Result<celnet_proto::Underlying> {
+    Ok(celnet_proto::Underlying::fx(ccy_pair_from_json(v)?))
+}
+
+/// Encode an FX [`Underlying`] back to the JSON `{base, quote}` pair object (the
+/// FX arm only; a non-FX underlying never reaches this FX-only WS surface).
+fn underlying_to_json(u: &celnet_proto::Underlying) -> Value {
+    u.as_fx().map_or_else(|| json!(null), ccy_pair_to_json)
+}
+
 fn tenor_from_json(v: &Value) -> Result<Tenor> {
     let o = obj(v, "tenor")?;
     Ok(Tenor {
@@ -222,16 +235,19 @@ fn conventions_to_json(c: &Conventions) -> Value {
 
 fn market_context_from_json(v: &Value) -> Result<MarketContext> {
     let o = obj(v, "market")?;
-    Ok(MarketContext {
-        spot: f64_field(o, "spot")?,
-        vol: f64_field(o, "vol")?,
-        r_dom: f64_or_zero(o, "r_dom"),
-        r_for: f64_or_zero(o, "r_for"),
-    })
+    // The WS JSON mirror keeps the FX `r_dom`/`r_for` keys (the GUI/Excel contract
+    // is unchanged); the FX projection of the generalized `{discount_rate, carry}`
+    // wire form is built via the byte-identical `fx` constructor.
+    Ok(MarketContext::fx(
+        f64_field(o, "spot")?,
+        f64_field(o, "vol")?,
+        f64_or_zero(o, "r_dom"),
+        f64_or_zero(o, "r_for"),
+    ))
 }
 
 fn market_context_to_json(m: &MarketContext) -> Value {
-    json!({ "spot": m.spot, "vol": m.vol, "r_dom": m.r_dom, "r_for": m.r_for })
+    json!({ "spot": m.spot, "vol": m.vol, "r_dom": m.r_dom(), "r_for": m.r_for() })
 }
 
 fn quantity_from_json(v: &Value) -> Result<Quantity> {
@@ -258,8 +274,8 @@ fn greeks_to_json(g: &Greeks) -> Value {
         "gamma": g.gamma,
         "vega": g.vega,
         "theta": g.theta,
-        "rho_dom": g.rho_dom,
-        "rho_for": g.rho_for,
+        "rho_dom": g.rho_dom(),
+        "rho_for": g.rho_for(),
         "vanna": g.vanna,
         "volga": g.volga,
         "charm": g.charm,
@@ -532,7 +548,7 @@ fn window_barrier_from_json(v: &Value) -> Result<WindowBarrier> {
 fn basket_leg_from_json(v: &Value) -> Result<BasketLeg> {
     let o = obj(v, "basket leg")?;
     Ok(BasketLeg {
-        pair: opt_nested(o, "pair", ccy_pair_from_json)?,
+        underlying: opt_nested(o, "pair", underlying_from_json)?,
         weight: f64_field(o, "weight")?,
         spot: f64_field(o, "spot")?,
         vol: f64_field(o, "vol")?,
@@ -670,7 +686,7 @@ fn product_from_json(o: &Map<String, Value>) -> Result<instrument::Product> {
 pub(super) fn instrument_from_json(v: &Value) -> Result<Instrument> {
     let o = obj(v, "instrument")?;
     Ok(Instrument {
-        pair: opt_nested(o, "pair", ccy_pair_from_json)?,
+        underlying: opt_nested(o, "pair", underlying_from_json)?,
         tenor: opt_nested(o, "tenor", tenor_from_json)?,
         expiry_years: f64_field(o, "expiry_years")?,
         quantity: opt_nested(o, "quantity", quantity_from_json)?,
@@ -930,7 +946,7 @@ pub(super) fn market_series_subscribe_from_json(
         .ok_or_else(|| CodecError("market_series_subscribe missing `observable`".to_owned()))?;
     Ok(celnet_proto::MarketSeriesSubscribe {
         subscription: Some(nested(o, "subscription", subscription_id_from_json)?),
-        pair: Some(nested(o, "pair", ccy_pair_from_json)?),
+        underlying: Some(nested(o, "pair", underlying_from_json)?),
         observable,
         tenor: opt_nested(o, "tenor", tenor_from_json)?,
         delta: o.get("delta").and_then(Value::as_f64),
@@ -1067,7 +1083,7 @@ fn market_series_snapshot_to_json(s: &celnet_proto::MarketSeriesSnapshot) -> Val
     json!({
         "subscription": s.subscription.as_ref().map(subscription_id_to_json),
         "sequence": s.sequence,
-        "pair": s.pair.as_ref().map(ccy_pair_to_json),
+        "pair": s.underlying.as_ref().map(underlying_to_json),
         "observable": s.observable,
         "points": s.points.iter().map(market_series_point_to_json).collect::<Vec<_>>(),
         "epoch_nanos": s.epoch_nanos,
@@ -1324,14 +1340,14 @@ pub(super) fn scenario_response_to_json(r: &ScenarioResponse) -> Value {
 fn vanilla_inputs_to_json(i: &VanillaInputs) -> Value {
     json!({
         "spot": i.spot, "strike": i.strike, "vol": i.vol,
-        "t": i.t, "r_dom": i.r_dom, "r_for": i.r_for,
+        "t": i.t, "r_dom": i.r_dom(), "r_for": i.r_for(),
     })
 }
 
 fn org_key_to_json(k: &OrgKey) -> Value {
     json!({
         "trader": k.trader, "book": k.book, "desk": k.desk,
-        "ccy_pair": k.ccy_pair.as_ref().map(ccy_pair_to_json),
+        "ccy_pair": k.underlying.as_ref().map(underlying_to_json),
         "location": k.location, "entity": k.entity,
     })
 }
@@ -1702,7 +1718,10 @@ mod tests {
                 assert_eq!(b.legs.len(), 2);
                 assert_eq!(b.legs[0].spot.to_bits(), 1.10_f64.to_bits());
                 assert_eq!(b.legs[1].vol.to_bits(), 0.13_f64.to_bits());
-                assert_eq!(b.legs[0].pair.as_ref().unwrap().base, "EUR");
+                assert_eq!(
+                    b.legs[0].underlying.as_ref().unwrap().as_fx().unwrap().base,
+                    "EUR"
+                );
                 assert_eq!(b.correlations, vec![1.0, 0.4, 0.4, 1.0]);
                 assert_eq!(b.kind, celnet_proto::BasketKind::WorstOf as i32);
                 assert_eq!(b.strike.to_bits(), 1.18_f64.to_bits());

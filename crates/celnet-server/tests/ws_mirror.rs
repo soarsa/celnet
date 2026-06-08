@@ -131,7 +131,7 @@ async fn ws_rfq_quote_matches_direct_price() {
         let m = live_market();
         let direct = celnet_vanilla::price(
             OptionType::Call,
-            &VanillaInputs::new(m.spot, strike, m.vol, 1.0, m.r_dom, m.r_for),
+            &VanillaInputs::new(m.spot, strike, m.vol, 1.0, m.r_dom(), m.r_for()),
         );
         let bid = quote["price"]["bid"].as_f64().unwrap();
         let offer = quote["price"]["offer"].as_f64().unwrap();
