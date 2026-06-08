@@ -17,7 +17,7 @@ celnet-types.workspace = true
 # Scrambled-Sobol / Brownian-bridge QMC engine drives the exposure simulation
 # (low-discrepancy spot paths → far lower exposure-profile variance than plain MC
 # at the same path budget). Referenced via the central workspace table.
-celnet-qmc = { path = "../celnet-qmc" }
+celnet-qmc.workspace = true
 # Correctly-rounded, cross-platform-identical exp/sqrt/ln for the survival curve,
 # the GBM exposure simulation, and the discount arithmetic — the same OSS software
 # libm the rest of the stack pins (celnet-types itself uses it directly). Not a

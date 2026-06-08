@@ -41,6 +41,11 @@ celnet-entitlements = { path = "crates/celnet-entitlements" }
 celnet-limits = { path = "crates/celnet-limits" }
 celnet-risk-fleet = { path = "crates/celnet-risk-fleet" }
 celnet-fanout = { path = "crates/celnet-fanout" }
+celnet-golden = { path = "crates/celnet-golden" }
+celnet-qmc = { path = "crates/celnet-qmc" }
+celnet-heston = { path = "crates/celnet-heston" }
+celnet-replog = { path = "crates/celnet-replog" }
+celnet-xva = { path = "crates/celnet-xva" }
 # External — pinned once, used everywhere (OSS / permissively licensed only)
 libm = "0.2"                                   # rust-lang/libm: correctly-rounded, cross-platform-identical transcendentals
 serde = { version = "1", features = ["derive"] }

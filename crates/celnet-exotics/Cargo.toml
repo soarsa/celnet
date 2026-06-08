@@ -19,7 +19,7 @@ celnet-surface.workspace = true
 # Sobol low-discrepancy sequence + Brownian bridge for the Longstaff-Schwartz
 # regression Monte-Carlo cross-check of the PSOR finite-difference American /
 # Bermudan early-exercise pricer.
-celnet-qmc = { path = "../celnet-qmc" }
+celnet-qmc.workspace = true
 # Deterministic software trig (sin/cos) for the Box-Muller normal route, on the
 # same `rust-lang/libm` path celnet-core's math uses — keeps every transcendental
 # bit-identical across platforms (celnet-core re-exports exp/ln/sqrt but not trig).

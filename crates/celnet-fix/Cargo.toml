@@ -22,5 +22,5 @@ tokio = { workspace = true, features = ["io-util"] }
 [dev-dependencies]
 celnet-vanilla.workspace = true
 # golden reference tables (leaf test-data crate; not in the central dep table)
-celnet-golden = { path = "../celnet-golden" }
+celnet-golden.workspace = true
 proptest.workspace = true

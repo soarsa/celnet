@@ -31,7 +31,7 @@ host-local ratio. These are excluded from the convergence dry-round count.
 
 ## 1. Target asset-class + product SUPERSET (concrete)
 
-Celnet already exceeds SynOption on FX-option breadth: 19 on-wire product families
+Celnet already exceeds SynOption on FX-option breadth: 18 on-wire product families
 (vanilla, strategy, single/double/window barrier, digital, touch, var/vol swap, Asian,
 forward-start/cliquet, quanto, TARF, accumulator, lookback, American/Bermudan,
 basket/best-of/worst-of), 5 smile families (VV/SABR/SVI/SSVI/eSSVI), LSV + Heston, GPU,
@@ -78,7 +78,7 @@ concentrated in three load-bearing seams that run through *every* layer:
 1. `celnet-types::VanillaInputs`/`Greeks` — the Garman-Kohlhagen shape (spot/strike/vol/t +
    `r_dom`/`r_for`, two-rho, spot/forward-delta) baked into the Layer-0 interface crate.
 2. `celnet-proto` `Instrument`/`MarketContext`/`CcyPair` — no asset-class discriminator;
-   `{spot,vol,r_dom,r_for}` hardwired; all 19 arms FX. `Ccy([u8;3])` cannot name BTC/ETH/USDT.
+   `{spot,vol,r_dom,r_for}` hardwired; all 18 arms FX. `Ccy([u8;3])` cannot name BTC/ETH/USDT.
 3. `celnet-plugin-api::PricingModel` — signature literally `price(OptionType, &VanillaInputs)
    -> Greeks`; the headline "user-extensible asset classes" differentiator cannot express a
    non-FX model.
