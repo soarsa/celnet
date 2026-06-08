@@ -1,0 +1,95 @@
+[
+  {
+    "id": "lookback-eurusd-1y-fixed-call-disc",
+    "family": "lookback",
+    "underlying": "EURUSD",
+    "tenor": "1Y",
+    "market": {
+      "spot": 1.1,
+      "vol": 0.11,
+      "r_dom": 0.025,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 1.0,
+      "mc_pairs": 20000,
+      "mc_seed": 99,
+      "monitoring": "DISCRETE",
+      "observations": 16,
+      "option_type": "CALL",
+      "strike": 1.1,
+      "style": "FIXED"
+    },
+    "expected": {
+      "price": 0.10666278898303326,
+      "price_std_error": 0.00013182085210767288,
+      "oracle": "code-disjoint splitmix64 discrete-monitoring lookback Monte-Carlo"
+    },
+    "tolerance": {
+      "rel": 0.05,
+      "abs": 0.005
+    }
+  },
+  {
+    "id": "lookback-eurusd-1y-floating-call-disc",
+    "family": "lookback",
+    "underlying": "EURUSD",
+    "tenor": "1Y",
+    "market": {
+      "spot": 1.1,
+      "vol": 0.105,
+      "r_dom": 0.02,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 1.0,
+      "mc_pairs": 20000,
+      "mc_seed": 99,
+      "monitoring": "DISCRETE",
+      "observations": 16,
+      "option_type": "CALL",
+      "strike": 1.1,
+      "style": "FLOATING"
+    },
+    "expected": {
+      "price": 0.09356527181340799,
+      "price_std_error": 0.00011986592795974956,
+      "oracle": "code-disjoint splitmix64 discrete-monitoring lookback Monte-Carlo"
+    },
+    "tolerance": {
+      "rel": 0.05,
+      "abs": 0.005
+    }
+  },
+  {
+    "id": "lookback-eurusd-1y-floating-put-disc",
+    "family": "lookback",
+    "underlying": "EURUSD",
+    "tenor": "1Y",
+    "market": {
+      "spot": 1.1,
+      "vol": 0.105,
+      "r_dom": 0.02,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 1.0,
+      "mc_pairs": 20000,
+      "mc_seed": 99,
+      "monitoring": "DISCRETE",
+      "observations": 16,
+      "option_type": "PUT",
+      "strike": 1.1,
+      "style": "FLOATING"
+    },
+    "expected": {
+      "price": 0.08874809423713027,
+      "price_std_error": 0.00009949497006031533,
+      "oracle": "code-disjoint splitmix64 discrete-monitoring lookback Monte-Carlo"
+    },
+    "tolerance": {
+      "rel": 0.05,
+      "abs": 0.005
+    }
+  }
+]

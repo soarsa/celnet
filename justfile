@@ -93,8 +93,19 @@ check-changed:
 
 # Full cross-crate integration gate: fmt, lint, test, supply-chain (whole workspace).
 # Run before committing a milestone; per-iteration use `check-changed` / `check-crate`.
-check: workspace-deps fmt-check lint test deny
+check: workspace-deps verification-coverage fmt-check lint test deny
     @echo "All gates passed."
+
+# Verification-contract coverage lint (docs/VERIFICATION-CONTRACT.md gates (b)/(a)+(c)):
+# parse the `oneof product` arms in crates/celnet-proto/proto/celnet.proto and assert
+# EVERY product family has BOTH a frozen cross-client golden vector
+# (crates/celnet-golden/vectors/<family>.json) AND an independent-oracle celnet-parity
+# row (crates/celnet-parity/tests/). Exits non-zero listing any arm missing either, so
+# a new proto product arm cannot ship without its vector + parity row. Never weakened.
+verification-coverage:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    node tools/check-verification-coverage.mjs
 
 # Lint: NO internal crate may depend on another by a relative `path = "../celnet-*"`.
 # All internal deps go through the central [workspace.dependencies] registry in the

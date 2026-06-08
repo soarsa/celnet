@@ -123,6 +123,32 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the ledger be
 
 > Append-only status log. Newest first. One line per meaningful unit of progress.
 
+- 2026-06-08 — **MASTER-EVOLUTION-PROGRAM launched (exceed SynOption, multi-asset, no-legacy) + W0
+  foundation COMPLETE.** Two read-only design workflows synthesized `docs/MASTER-EVOLUTION-PROGRAM.md`
+  (8 waves W0–W7 + 7-lens convergence loop to 2 dry rounds) + `docs/WORLD-CLASS-BACKLOG.md` (single live
+  backlog) + `docs/GUI-EXPERIENCE-DESIGN.md` (GW0–GW7). Then executed **W0 (verification & hygiene
+  foundation)**: (1) **hygiene** (commit `7c40aaf`) — registered the 5 unregistered internal crates
+  (golden/qmc/heston/replog/xva) in the central `[workspace.dependencies]`, migrated all 11 internal
+  path-deps to `.workspace = true`, added a `workspace-deps` lint to `just check`. (2) **verification
+  foundation** (this commit) via a gated workflow (Rust foundation → GUI∥Excel∥docs fan-out →
+  adversarial-verify) + my independent re-gate: a **golden-vector corpus** (84 vectors / ALL 18 product
+  families in `crates/celnet-golden/vectors/*.json` + generator `gen_vectors.rs` + `vectors_selfcheck.rs`,
+  every expected value from an INDEPENDENT oracle — QuantLib CSVs / closed-form / code-disjoint MC, verifier
+  confirmed NO circular oracle), **cross-client conformance** (SDK `celnet-client/tests/conformance.rs` 18
+  families, CLI 9, GUI `gui/test/conformance.test.ts` 16, and a **NEW Excel real-edge suite** `excel/e2e/`
+  that boots a real `demo_edge` over a real `ws` socket — closes the FakeSocket-only gap), `docs/
+  VERIFICATION-CONTRACT.md`, and a **`verification-coverage` lint** (parses the 18 proto arms, asserts each
+  has a golden vector AND a celnet-parity row — now 18/18; wired into `just check`). The corpus build
+  surfaced + root-caused two real defects (one-touch at-hit vs at-expiry; lookback Brownian-bridge
+  extremum under-sampling). Adversarial-verify REJECTED on 3 wiring issues → all fixed forward by me:
+  the two golden deps → `.workspace = true`; **two NEW independent-oracle parity rows** written to reach
+  18/18 (`celnet-parity/tests/american.rs` — no-carry European limit + published Longstaff-Schwartz 2001
+  Table-1 + premium≥0; `strategy.rs` — model-free put-call-parity synthetic forward + ATM-fwd symmetry +
+  butterfly convexity + independent GK leg-sum); GUI conformance documented as in-process-pricer-validated
+  (wire path proven by SDK + Excel real-edge). Independently re-gated: full `just check` **"All gates
+  passed."**, celnet-parity 127/127, GUI vitest 335/335, Excel real-edge e2e 81/81. **Next: W1 multi-asset
+  CORE** (the highest-risk wave — generalize the FX-only Layer-0 seams, FX byte-identical).
+
 - 2026-06-08 — **Capabilities documentation REVITALISED + interlinked + responsive (commits `4b7d527`,
   `8777cef`; pushed).** Planned via a fan-out review (`docs/CAPABILITIES-REVITALISATION-PLAN.md`), executed
   as gated workflows, orchestrator-fixed + re-verified. All 14 chapters (`docs/celnet-capabilities/01-14`)

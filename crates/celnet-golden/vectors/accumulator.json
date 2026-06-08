@@ -1,0 +1,98 @@
+[
+  {
+    "id": "accumulator-eurusd-1y-disc-12f",
+    "family": "accumulator",
+    "underlying": "EURUSD",
+    "tenor": "1Y",
+    "market": {
+      "spot": 1.1,
+      "vol": 0.105,
+      "r_dom": 0.02,
+      "r_for": 0.01
+    },
+    "terms": {
+      "barrier": 1.18,
+      "expiry_years": 1.0,
+      "fixing_notional": 1.0,
+      "fixings": 12,
+      "leverage": 2.0,
+      "mc_pairs": 20000,
+      "mc_seed": 99,
+      "monitoring": "DISCRETE",
+      "pivot": 1.08
+    },
+    "expected": {
+      "price": -0.3020537050413404,
+      "price_std_error": 0.0007349225301719636,
+      "oracle": "code-disjoint splitmix64 accumulator client-PV Monte-Carlo (discrete)"
+    },
+    "tolerance": {
+      "rel": 0.05,
+      "abs": 0.005
+    }
+  },
+  {
+    "id": "accumulator-eurusd-6m-disc-6f",
+    "family": "accumulator",
+    "underlying": "EURUSD",
+    "tenor": "6M",
+    "market": {
+      "spot": 1.1,
+      "vol": 0.12,
+      "r_dom": 0.03,
+      "r_for": 0.01
+    },
+    "terms": {
+      "barrier": 1.15,
+      "expiry_years": 0.5,
+      "fixing_notional": 1.0,
+      "fixings": 6,
+      "leverage": 1.5,
+      "mc_pairs": 20000,
+      "mc_seed": 99,
+      "monitoring": "DISCRETE",
+      "pivot": 1.09
+    },
+    "expected": {
+      "price": -0.12780766524090373,
+      "price_std_error": 0.0002452591040275693,
+      "oracle": "code-disjoint splitmix64 accumulator client-PV Monte-Carlo (discrete)"
+    },
+    "tolerance": {
+      "rel": 0.05,
+      "abs": 0.005
+    }
+  },
+  {
+    "id": "accumulator-usdjpy-1y-disc-12f",
+    "family": "accumulator",
+    "underlying": "USDJPY",
+    "tenor": "1Y",
+    "market": {
+      "spot": 150.0,
+      "vol": 0.1,
+      "r_dom": 0.04,
+      "r_for": 0.005
+    },
+    "terms": {
+      "barrier": 160.0,
+      "expiry_years": 1.0,
+      "fixing_notional": 1.0,
+      "fixings": 12,
+      "leverage": 2.0,
+      "mc_pairs": 20000,
+      "mc_seed": 99,
+      "monitoring": "DISCRETE",
+      "pivot": 148.0
+    },
+    "expected": {
+      "price": -29.345297650111494,
+      "price_std_error": 0.09092710192379508,
+      "oracle": "code-disjoint splitmix64 accumulator client-PV Monte-Carlo (discrete)"
+    },
+    "tolerance": {
+      "rel": 0.05,
+      "abs": 0.005
+    }
+  }
+]

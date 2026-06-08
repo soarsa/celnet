@@ -27,3 +27,6 @@ celnet-exotics.workspace = true
 celnet-conventions.workspace = true
 celnet-limits.workspace = true
 celnet-risk-cube.workspace = true
+# The frozen golden-vector corpus is the cross-client conformance oracle.
+celnet-golden.workspace = true
+serde_json.workspace = true

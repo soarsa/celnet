@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "dev": "vite",
     "test": "vitest run",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "verify:headless": "node --import tsx scripts/verifyHeadless.ts"
   },
   "devDependencies": {

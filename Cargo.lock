@@ -400,6 +400,7 @@ dependencies = [
  "celnet-core",
  "celnet-engine",
  "celnet-exotics",
+ "celnet-golden",
  "celnet-limits",
  "celnet-proto",
  "celnet-risk-cube",
@@ -419,6 +420,7 @@ dependencies = [
  "celnet-core",
  "celnet-engine",
  "celnet-exotics",
+ "celnet-golden",
  "celnet-limits",
  "celnet-proto",
  "celnet-risk-cube",
@@ -426,6 +428,7 @@ dependencies = [
  "celnet-types",
  "celnet-vanilla",
  "futures-util",
+ "serde_json",
  "tokio",
  "tonic",
 ]
@@ -518,6 +521,8 @@ dependencies = [
  "celnet-heston",
  "celnet-types",
  "celnet-vanilla",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

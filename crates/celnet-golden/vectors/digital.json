@@ -1,0 +1,170 @@
+[
+  {
+    "id": "digital-0-CALL",
+    "family": "digital",
+    "underlying": "EURUSD",
+    "tenor": "3M",
+    "market": {
+      "spot": 1.0,
+      "vol": 0.1,
+      "r_dom": 0.05,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 0.2493150684931507,
+      "option_type": "CALL",
+      "payout": 1.0,
+      "strike": 0.95,
+      "style": "CASH_OR_NOTHING"
+    },
+    "expected": {
+      "price": 0.8743571197816571,
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 digital_gk.csv row 0"
+    },
+    "tolerance": {
+      "rel": 1e-6,
+      "abs": 1e-8
+    }
+  },
+  {
+    "id": "digital-1-PUT",
+    "family": "digital",
+    "underlying": "EURUSD",
+    "tenor": "3M",
+    "market": {
+      "spot": 1.0,
+      "vol": 0.1,
+      "r_dom": 0.05,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 0.2493150684931507,
+      "option_type": "PUT",
+      "payout": 1.0,
+      "strike": 0.95,
+      "style": "CASH_OR_NOTHING"
+    },
+    "expected": {
+      "price": 0.11325450244891158,
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 digital_gk.csv row 1"
+    },
+    "tolerance": {
+      "rel": 1e-6,
+      "abs": 1e-8
+    }
+  },
+  {
+    "id": "digital-4-CALL",
+    "family": "digital",
+    "underlying": "EURUSD",
+    "tenor": "3M",
+    "market": {
+      "spot": 1.0,
+      "vol": 0.1,
+      "r_dom": 0.01,
+      "r_for": 0.02
+    },
+    "terms": {
+      "expiry_years": 0.2493150684931507,
+      "option_type": "CALL",
+      "payout": 1.0,
+      "strike": 0.95,
+      "style": "CASH_OR_NOTHING"
+    },
+    "expected": {
+      "price": 0.8274814519302935,
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 digital_gk.csv row 4"
+    },
+    "tolerance": {
+      "rel": 1e-6,
+      "abs": 1e-8
+    }
+  },
+  {
+    "id": "digital-5-PUT",
+    "family": "digital",
+    "underlying": "EURUSD",
+    "tenor": "3M",
+    "market": {
+      "spot": 1.0,
+      "vol": 0.1,
+      "r_dom": 0.01,
+      "r_for": 0.02
+    },
+    "terms": {
+      "expiry_years": 0.2493150684931507,
+      "option_type": "PUT",
+      "payout": 1.0,
+      "strike": 0.95,
+      "style": "CASH_OR_NOTHING"
+    },
+    "expected": {
+      "price": 0.1700285027037316,
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 digital_gk.csv row 5"
+    },
+    "tolerance": {
+      "rel": 1e-6,
+      "abs": 1e-8
+    }
+  },
+  {
+    "id": "digital-8-CALL",
+    "family": "digital",
+    "underlying": "EURUSD",
+    "tenor": "1Y",
+    "market": {
+      "spot": 1.0,
+      "vol": 0.1,
+      "r_dom": 0.05,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 1.0,
+      "option_type": "CALL",
+      "payout": 1.0,
+      "strike": 0.95,
+      "style": "CASH_OR_NOTHING"
+    },
+    "expected": {
+      "price": 0.7666079991963447,
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 digital_gk.csv row 8"
+    },
+    "tolerance": {
+      "rel": 1e-6,
+      "abs": 1e-8
+    }
+  },
+  {
+    "id": "digital-9-PUT",
+    "family": "digital",
+    "underlying": "EURUSD",
+    "tenor": "1Y",
+    "market": {
+      "spot": 1.0,
+      "vol": 0.1,
+      "r_dom": 0.05,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 1.0,
+      "option_type": "PUT",
+      "payout": 1.0,
+      "strike": 0.95,
+      "style": "CASH_OR_NOTHING"
+    },
+    "expected": {
+      "price": 0.18462142530436917,
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 digital_gk.csv row 9"
+    },
+    "tolerance": {
+      "rel": 1e-6,
+      "abs": 1e-8
+    }
+  }
+]

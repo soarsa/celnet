@@ -1,0 +1,203 @@
+[
+  {
+    "id": "strategy-eurusd-1y-risk-reversal",
+    "family": "strategy",
+    "underlying": "EURUSD",
+    "tenor": "1Y",
+    "market": {
+      "spot": 1.1,
+      "vol": 0.1,
+      "r_dom": 0.02,
+      "r_for": 0.015
+    },
+    "terms": {
+      "expiry_years": 1.0,
+      "kind": "RISK_REVERSAL",
+      "legs": [
+        {
+          "option_type": "CALL",
+          "ratio": 1.0,
+          "side": "BUY",
+          "strike": 1.18
+        },
+        {
+          "option_type": "PUT",
+          "ratio": 1.0,
+          "side": "SELL",
+          "strike": 1.02
+        }
+      ]
+    },
+    "expected": {
+      "price": 0.004932296340613929,
+      "price_std_error": null,
+      "oracle": "independent Σ side·ratio·GK(leg) of the vanilla closed form"
+    },
+    "tolerance": {
+      "rel": 1e-7,
+      "abs": 1e-9
+    }
+  },
+  {
+    "id": "strategy-eurusd-1y-seagull",
+    "family": "strategy",
+    "underlying": "EURUSD",
+    "tenor": "1Y",
+    "market": {
+      "spot": 1.1,
+      "vol": 0.105,
+      "r_dom": 0.02,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 1.0,
+      "kind": "SEAGULL",
+      "legs": [
+        {
+          "option_type": "CALL",
+          "ratio": 1.0,
+          "side": "BUY",
+          "strike": 1.12
+        },
+        {
+          "option_type": "CALL",
+          "ratio": 1.0,
+          "side": "SELL",
+          "strike": 1.22
+        },
+        {
+          "option_type": "PUT",
+          "ratio": 1.0,
+          "side": "SELL",
+          "strike": 1.0
+        }
+      ]
+    },
+    "expected": {
+      "price": 0.02032469849418775,
+      "price_std_error": null,
+      "oracle": "independent Σ side·ratio·GK(leg) of the vanilla closed form"
+    },
+    "tolerance": {
+      "rel": 1e-7,
+      "abs": 1e-9
+    }
+  },
+  {
+    "id": "strategy-eurusd-1y-straddle",
+    "family": "strategy",
+    "underlying": "EURUSD",
+    "tenor": "1Y",
+    "market": {
+      "spot": 1.1,
+      "vol": 0.105,
+      "r_dom": 0.02,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 1.0,
+      "kind": "STRADDLE",
+      "legs": [
+        {
+          "option_type": "CALL",
+          "ratio": 1.0,
+          "side": "BUY",
+          "strike": 1.11
+        },
+        {
+          "option_type": "PUT",
+          "ratio": 1.0,
+          "side": "BUY",
+          "strike": 1.11
+        }
+      ]
+    },
+    "expected": {
+      "price": 0.09115723042900536,
+      "price_std_error": null,
+      "oracle": "independent Σ side·ratio·GK(leg) of the vanilla closed form"
+    },
+    "tolerance": {
+      "rel": 1e-7,
+      "abs": 1e-9
+    }
+  },
+  {
+    "id": "strategy-eurusd-2y-straddle",
+    "family": "strategy",
+    "underlying": "EURUSD",
+    "tenor": "2Y",
+    "market": {
+      "spot": 1.1,
+      "vol": 0.11,
+      "r_dom": 0.025,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 2.0,
+      "kind": "STRADDLE",
+      "legs": [
+        {
+          "option_type": "CALL",
+          "ratio": 1.0,
+          "side": "BUY",
+          "strike": 1.13
+        },
+        {
+          "option_type": "PUT",
+          "ratio": 1.0,
+          "side": "BUY",
+          "strike": 1.13
+        }
+      ]
+    },
+    "expected": {
+      "price": 0.1335154169982647,
+      "price_std_error": null,
+      "oracle": "independent Σ side·ratio·GK(leg) of the vanilla closed form"
+    },
+    "tolerance": {
+      "rel": 1e-7,
+      "abs": 1e-9
+    }
+  },
+  {
+    "id": "strategy-eurusd-6m-strangle",
+    "family": "strategy",
+    "underlying": "EURUSD",
+    "tenor": "6M",
+    "market": {
+      "spot": 1.1,
+      "vol": 0.12,
+      "r_dom": 0.02,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 0.5,
+      "kind": "STRANGLE",
+      "legs": [
+        {
+          "option_type": "CALL",
+          "ratio": 1.0,
+          "side": "BUY",
+          "strike": 1.16
+        },
+        {
+          "option_type": "PUT",
+          "ratio": 1.0,
+          "side": "BUY",
+          "strike": 1.04
+        }
+      ]
+    },
+    "expected": {
+      "price": 0.02935214662216265,
+      "price_std_error": null,
+      "oracle": "independent Σ side·ratio·GK(leg) of the vanilla closed form"
+    },
+    "tolerance": {
+      "rel": 1e-7,
+      "abs": 1e-9
+    }
+  }
+]

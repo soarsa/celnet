@@ -664,6 +664,9 @@ export class Connection {
     greeks: ReturnType<typeof greeksFromWire>;
     resolvedStrike: number;
     surfaceVersion: bigint;
+    /** The MC standard error (proto `price_std_error`), present ONLY for a
+     * Monte-Carlo-priced product; `undefined` for an exact closed form. */
+    priceStdError?: number;
   }> {
     const reply = await this.request(
       "price",
@@ -674,11 +677,22 @@ export class Connection {
       },
       "price_response",
     );
-    return {
+    const out: {
+      greeks: ReturnType<typeof greeksFromWire>;
+      resolvedStrike: number;
+      surfaceVersion: bigint;
+      priceStdError?: number;
+    } = {
       greeks: greeksFromWire(asChild(reply, "greeks")),
       resolvedStrike: numField(reply, "resolved_strike"),
       surfaceVersion: bigField(reply, "surface_version"),
     };
+    // Presence-tracked: surface the server's MC stderr only when present (the same
+    // honest contract `quoteFromWire` follows), so a closed-form price never
+    // fabricates a precision claim and the MC conformance band can combine it.
+    const stdErr = optNumField(reply, "price_std_error");
+    if (stdErr !== undefined) out.priceStdError = stdErr;
+    return out;
   }
 
   async requestQuote(
@@ -755,6 +769,12 @@ export class Connection {
 function asChild(o: WireObject, key: string): WireObject {
   const v = o[key];
   return v && typeof v === "object" ? (v as WireObject) : {};
+}
+
+/** Read an optional finite number field; absent / null / non-finite ⇒ undefined. */
+function optNumField(o: WireObject, key: string): number | undefined {
+  const v = o[key];
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
 }
 
 function numField(o: WireObject, key: string): number {

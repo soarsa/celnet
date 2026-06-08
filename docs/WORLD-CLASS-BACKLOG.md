@@ -14,6 +14,11 @@ Status legend: OPEN / IN-PROGRESS / DONE / ENV (deploy-bound, not a gap). Each i
 
 ## Convergence ledger
 - Round 0 (seed): initial gap list below, distilled from the five lenses. Dry-round counter: 0/2.
+- **W0 foundation CLOSED (2026-06-08):** all four W0 items DONE + the cross-client parity-matrix
+  gate IN-PROGRESS (FX seed green). Executable verification floor now exists (golden-vector
+  corpus + 5-client conformance + Excel real-edge + coverage lint). Next: **W1 multi-asset CORE**
+  (generalize the FX-only Layer-0 seams: `Underlying`/`Carry`/`Sensitivities` + proto + plugin-api,
+  FX byte-identical) — the single highest-risk wave; build as ONE coordinated wave per §2 sequencing.
 
 ## P0 — Foundation & core (must precede asset-class fan-out)
 
@@ -21,20 +26,32 @@ Status legend: OPEN / IN-PROGRESS / DONE / ENV (deploy-bound, not a gap). Each i
   server==SDK==CLI==Excel==GUI is a doc claim today, not a gate. Build
   `crates/celnet-golden/vectors/*.json` (engine-generated, each value cross-checked by its
   parity oracle) + a per-client conformance harness booting the real edge.
-  Oracle: per-product parity re-derives each vector. Parity: all 5. Effort L. **OPEN.**
+  Oracle: per-product parity re-derives each vector. Parity: all 5. Effort L. **DONE**
+  (commit pending; 84 vectors / all 18 families in `crates/celnet-golden/vectors/*.json` +
+  generator `src/bin/gen_vectors.rs` + `tests/vectors_selfcheck.rs`; conformance:
+  `celnet-client/tests/conformance.rs` (SDK, 18 families) + `celnet-cli/tests/conformance.rs`
+  (9 local-compute) + `gui/test/conformance.test.ts` (in-process pricer, 16) + Excel real-edge
+  e2e. No circular oracle — verifier-confirmed. Surfaced + fixed two real defects: one-touch
+  at-hit vs at-expiry, lookback Brownian-bridge extremum.)
 - **[W0] verify/excel-real-edge** — Excel never dials the real edge (only in-process
   `FakeSocket`); its wire conformance is unproven e2e. Add an Excel real-edge suite mirroring
-  `gui/e2e/`. Oracle: shared golden vectors. Parity: Excel==GUI==SDK. Effort M. **OPEN.**
+  `gui/e2e/`. Oracle: shared golden vectors. Parity: Excel==GUI==SDK. Effort M. **DONE**
+  (commit pending; `excel/e2e/` boots a real `demo_edge` over a real `ws` socket; 81 tests
+  green across 17 Excel-exposed families — closes the FakeSocket-only gap).
 - **[W0] verify/verification-contract-doc** — No written/enforced per-asset-class verification
   contract; the FX recipe is tribal. Write `docs/VERIFICATION-CONTRACT.md` (independent +
   model-disjoint oracle, golden table, cross-client vector, e2e, perf, fuzz, honesty stmt) +
   a CI lint: new proto product arm ⇒ matching parity row + golden vector. Oracle: the lint.
-  Effort M. **OPEN.**
+  Effort M. **DONE** (commit pending; `docs/VERIFICATION-CONTRACT.md` + the
+  `tools/check-verification-coverage.mjs` lint wired into `just check` — parses the proto's
+  18 product arms and asserts each has BOTH a golden vector AND a celnet-parity row; now 18/18.
+  Added two new independent-oracle parity rows to reach 18/18: `american.rs`, `strategy.rs`.)
 - **[W0] arch/workspace-dep-registry** — `celnet-xva`/`-heston`/`-qmc` bypass
   `[workspace.dependencies]` (11 internal path-deps). Register them + switch to
   `.workspace = true` + a lint banning internal path-deps outside the registry. Do BEFORE the
   crate explosion. Oracle: `grep '{ path = "../celnet-'` returns only registry; `just check`
-  green. Effort S. **OPEN.**
+  green. Effort S. **DONE** (commit `7c40aaf`; 5 crates registered, 11 path-deps migrated,
+  `just workspace-deps` lint wired into `just check`).
 - **[W1] arch/underlying-abstraction** — `Ccy([u8;3])`/`CcyPair` cannot name crypto/equity/
   listed; keystone for every non-FX class. `celnet-types::Underlying` enum + `Symbol` newtype.
   Oracle: `to_bits` byte-identity for the FX (rename-only) projection. Parity: all 5. Effort L.
@@ -140,7 +157,9 @@ Status legend: OPEN / IN-PROGRESS / DONE / ENV (deploy-bound, not a gap). Each i
 - **[W0+] clients/cross-client-parity-matrix-gate** — api-first parity asserted piecemeal, not
   as one matrix gate over (asset-class × product × client). Executable matrix gate seeded with
   FX (green now), one row per new (class,product) before "done". Oracle: the golden-vector
-  corpus. Effort M. **OPEN.**
+  corpus. Effort M. **IN-PROGRESS** (the executable gate now exists: golden-vector corpus +
+  per-client conformance + the `verification-coverage` lint, all seeded green for the 18 FX
+  families; remaining = add a row per new (asset-class, product) as W1+ lands).
 
 ## P2/P3 — Rigor & depth
 

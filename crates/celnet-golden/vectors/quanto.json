@@ -1,0 +1,118 @@
+[
+  {
+    "id": "quanto-eurusd-1y-digital-call",
+    "family": "quanto",
+    "underlying": "EURUSD",
+    "tenor": "1Y",
+    "market": {
+      "spot": 1.1,
+      "vol": 0.105,
+      "r_dom": 0.02,
+      "r_for": 0.01
+    },
+    "terms": {
+      "conversion_vol": 0.09,
+      "correlation": 0.3,
+      "expiry_years": 1.0,
+      "option_type": "CALL",
+      "payoff": "DIGITAL",
+      "strike": 1.12
+    },
+    "expected": {
+      "price": 0.42939469131925856,
+      "price_std_error": null,
+      "oracle": "closed-form quanto-drift-adjusted GK (independent re-derivation)"
+    },
+    "tolerance": {
+      "rel": 1e-7,
+      "abs": 1e-9
+    }
+  },
+  {
+    "id": "quanto-eurusd-1y-vanilla-call-rho0",
+    "family": "quanto",
+    "underlying": "EURUSD",
+    "tenor": "1Y",
+    "market": {
+      "spot": 1.1,
+      "vol": 0.105,
+      "r_dom": 0.02,
+      "r_for": 0.01
+    },
+    "terms": {
+      "conversion_vol": 0.08,
+      "correlation": 0.0,
+      "expiry_years": 1.0,
+      "option_type": "CALL",
+      "payoff": "VANILLA",
+      "strike": 1.1
+    },
+    "expected": {
+      "price": 0.0509951062420988,
+      "price_std_error": null,
+      "oracle": "closed-form quanto-drift-adjusted GK (independent re-derivation)"
+    },
+    "tolerance": {
+      "rel": 1e-7,
+      "abs": 1e-9
+    }
+  },
+  {
+    "id": "quanto-eurusd-1y-vanilla-call-rhopos",
+    "family": "quanto",
+    "underlying": "EURUSD",
+    "tenor": "1Y",
+    "market": {
+      "spot": 1.1,
+      "vol": 0.105,
+      "r_dom": 0.02,
+      "r_for": 0.01
+    },
+    "terms": {
+      "conversion_vol": 0.09,
+      "correlation": 0.4,
+      "expiry_years": 1.0,
+      "option_type": "CALL",
+      "payoff": "VANILLA",
+      "strike": 1.12
+    },
+    "expected": {
+      "price": 0.03954557174023626,
+      "price_std_error": null,
+      "oracle": "closed-form quanto-drift-adjusted GK (independent re-derivation)"
+    },
+    "tolerance": {
+      "rel": 1e-7,
+      "abs": 1e-9
+    }
+  },
+  {
+    "id": "quanto-eurusd-1y-vanilla-put-rhoneg",
+    "family": "quanto",
+    "underlying": "EURUSD",
+    "tenor": "1Y",
+    "market": {
+      "spot": 1.1,
+      "vol": 0.11,
+      "r_dom": 0.025,
+      "r_for": 0.01
+    },
+    "terms": {
+      "conversion_vol": 0.1,
+      "correlation": -0.3,
+      "expiry_years": 1.0,
+      "option_type": "PUT",
+      "payoff": "VANILLA",
+      "strike": 1.08
+    },
+    "expected": {
+      "price": 0.029988484904354462,
+      "price_std_error": null,
+      "oracle": "closed-form quanto-drift-adjusted GK (independent re-derivation)"
+    },
+    "tolerance": {
+      "rel": 1e-7,
+      "abs": 1e-9
+    }
+  }
+]

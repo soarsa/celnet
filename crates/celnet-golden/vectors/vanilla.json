@@ -1,0 +1,274 @@
+[
+  {
+    "id": "vanilla-120-k0.6400000000000001-t2-CALL",
+    "family": "vanilla",
+    "underlying": "EURUSD",
+    "tenor": "2Y",
+    "market": {
+      "spot": 0.8,
+      "vol": 0.35,
+      "r_dom": 0.05,
+      "r_for": 0.0
+    },
+    "terms": {
+      "expiry_years": 2.0,
+      "option_type": "CALL",
+      "strike": 0.6400000000000001
+    },
+    "expected": {
+      "price": 0.27212920775367955,
+      "greeks": {
+        "delta_spot": 0.8160292483946049,
+        "gamma": 0.671763560221239,
+        "rho_dom": 0.761388381924009,
+        "rho_for": -1.3056467974313681,
+        "theta": -0.0453678411087728,
+        "vega": 0.30095007497911525
+      },
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 vanilla_gk.csv row 120"
+    },
+    "tolerance": {
+      "rel": 1e-7,
+      "abs": 1e-9
+    }
+  },
+  {
+    "id": "vanilla-1330-k1.1-t1-CALL",
+    "family": "vanilla",
+    "underlying": "EURUSD",
+    "tenor": "1Y",
+    "market": {
+      "spot": 1.0,
+      "vol": 0.1,
+      "r_dom": 0.02,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 1.0,
+      "option_type": "CALL",
+      "strike": 1.1
+    },
+    "expected": {
+      "price": 0.011290500277196837,
+      "greeks": {
+        "delta_spot": 0.20885888260776,
+        "gamma": 2.860968805860945,
+        "rho_dom": 0.19756838233056317,
+        "rho_for": -0.20885888260776,
+        "theta": -0.01616762284983837,
+        "vega": 0.28609688058609445
+      },
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 vanilla_gk.csv row 1330"
+    },
+    "tolerance": {
+      "rel": 1e-7,
+      "abs": 1e-9
+    }
+  },
+  {
+    "id": "vanilla-1755-k0.9876-t2-PUT",
+    "family": "vanilla",
+    "underlying": "EURUSD",
+    "tenor": "2Y",
+    "market": {
+      "spot": 1.2345,
+      "vol": 0.6,
+      "r_dom": 0.02,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 2.0,
+      "option_type": "PUT",
+      "strike": 0.9876
+    },
+    "expected": {
+      "price": 0.23768584829191755,
+      "greeks": {
+        "delta_spot": -0.2338759221389482,
+        "gamma": 0.2899696495920013,
+        "rho_dom": -1.0528113483448982,
+        "rho_for": 0.5774396517610632,
+        "theta": -0.07190305015469908,
+        "vega": 0.5302931025289517
+      },
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 vanilla_gk.csv row 1755"
+    },
+    "tolerance": {
+      "rel": 1e-7,
+      "abs": 1e-9
+    }
+  },
+  {
+    "id": "vanilla-2180-k1.35795-t0.0273972602739726-CALL",
+    "family": "vanilla",
+    "underlying": "EURUSD",
+    "tenor": "0M",
+    "market": {
+      "spot": 1.2345,
+      "vol": 0.35,
+      "r_dom": 0.01,
+      "r_for": 0.03
+    },
+    "terms": {
+      "expiry_years": 0.0273972602739726,
+      "option_type": "CALL",
+      "strike": 1.35795
+    },
+    "expected": {
+      "price": 0.0015294401074242216,
+      "greeks": {
+        "delta_spot": 0.05196526486282574,
+        "gamma": 1.4867917381565419,
+        "rho_dom": 0.0017156624483762688,
+        "rho_for": -0.001757564917072823,
+        "theta": -0.13748537011424372,
+        "vega": 0.021727387382353303
+      },
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 vanilla_gk.csv row 2180"
+    },
+    "tolerance": {
+      "rel": 1e-7,
+      "abs": 1e-9
+    }
+  },
+  {
+    "id": "vanilla-2605-k90-t0.2493150684931507-PUT",
+    "family": "vanilla",
+    "underlying": "EURUSD",
+    "tenor": "3M",
+    "market": {
+      "spot": 100.0,
+      "vol": 0.1,
+      "r_dom": 0.01,
+      "r_for": 0.03
+    },
+    "terms": {
+      "expiry_years": 0.2493150684931507,
+      "option_type": "PUT",
+      "strike": 90.0
+    },
+    "expected": {
+      "price": 0.03892535839594288,
+      "greeks": {
+        "delta_spot": -0.020759242144605467,
+        "gamma": 0.009996550561226598,
+        "rho_dom": -0.5272638661094259,
+        "rho_for": 0.5175591877148209,
+        "theta": -0.5409567587665802,
+        "vega": 2.4922906878674316
+      },
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 vanilla_gk.csv row 2605"
+    },
+    "tolerance": {
+      "rel": 1e-7,
+      "abs": 1e-9
+    }
+  },
+  {
+    "id": "vanilla-3050-k125-t0.2493150684931507-CALL",
+    "family": "vanilla",
+    "underlying": "EURUSD",
+    "tenor": "3M",
+    "market": {
+      "spot": 100.0,
+      "vol": 0.05,
+      "r_dom": 0.02,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 0.2493150684931507,
+      "option_type": "CALL",
+      "strike": 125.0
+    },
+    "expected": {
+      "price": 1.4942197138642747e-19,
+      "greeks": {
+        "delta_spot": 5.427817731149006e-19,
+        "gamma": 1.942829347654028e-18,
+        "rho_dom": 1.3495114345066117e-17,
+        "rho_for": -1.3532367494096706e-17,
+        "theta": -2.4825160179362546e-17,
+        "vega": 2.4218831594043925e-16
+      },
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 vanilla_gk.csv row 3050"
+    },
+    "tolerance": {
+      "rel": 1e-7,
+      "abs": 1e-9
+    }
+  },
+  {
+    "id": "vanilla-480-k0.8800000000000001-t0.0273972602739726-CALL",
+    "family": "vanilla",
+    "underlying": "EURUSD",
+    "tenor": "0M",
+    "market": {
+      "spot": 0.8,
+      "vol": 0.05,
+      "r_dom": 0.05,
+      "r_for": 0.0
+    },
+    "terms": {
+      "expiry_years": 0.0273972602739726,
+      "option_type": "CALL",
+      "strike": 0.8800000000000001
+    },
+    "expected": {
+      "price": 2.2113760937696758e-33,
+      "greeks": {
+        "delta_spot": 3.8501386356003584e-30,
+        "gamma": 6.64879584853695e-27,
+        "rho_dom": 8.432601458593386e-32,
+        "rho_for": -8.438660023233851e-32,
+        "theta": -5.472931655448896e-30,
+        "vega": 5.829081291868321e-30
+      },
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 vanilla_gk.csv row 480"
+    },
+    "tolerance": {
+      "rel": 1e-7,
+      "abs": 1e-9
+    }
+  },
+  {
+    "id": "vanilla-905-k0.8-t0.2493150684931507-PUT",
+    "family": "vanilla",
+    "underlying": "EURUSD",
+    "tenor": "3M",
+    "market": {
+      "spot": 1.0,
+      "vol": 0.35,
+      "r_dom": 0.05,
+      "r_for": 0.0
+    },
+    "terms": {
+      "expiry_years": 0.2493150684931507,
+      "option_type": "PUT",
+      "strike": 0.8
+    },
+    "expected": {
+      "price": 0.006360944036140222,
+      "greeks": {
+        "delta_spot": -0.07556278999781585,
+        "gamma": 0.8146278919668873,
+        "rho_dom": -0.02042482136189042,
+        "rho_for": 0.01883894216383902,
+        "theta": -0.04579977168127405,
+        "vega": 0.07108465303875428
+      },
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 vanilla_gk.csv row 905"
+    },
+    "tolerance": {
+      "rel": 1e-7,
+      "abs": 1e-9
+    }
+  }
+]

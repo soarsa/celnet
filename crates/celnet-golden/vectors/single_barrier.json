@@ -1,0 +1,250 @@
+[
+  {
+    "id": "single-barrier-0-DownOut-CALL",
+    "family": "single_barrier",
+    "underlying": "EURUSD",
+    "tenor": "3M",
+    "market": {
+      "spot": 100.0,
+      "vol": 0.1,
+      "r_dom": 0.05,
+      "r_for": 0.01
+    },
+    "terms": {
+      "barrier": 85.0,
+      "expiry_years": 0.2493150684931507,
+      "kind": "KNOCK_OUT",
+      "monitoring": "CONTINUOUS",
+      "option_type": "CALL",
+      "rebate": 0.0,
+      "side": "LOWER",
+      "strike": 90.0
+    },
+    "expected": {
+      "price": 10.882667687143753,
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 barrier_gk.csv row 0"
+    },
+    "tolerance": {
+      "rel": 1e-6,
+      "abs": 1e-8
+    }
+  },
+  {
+    "id": "single-barrier-1-DownIn-CALL",
+    "family": "single_barrier",
+    "underlying": "EURUSD",
+    "tenor": "3M",
+    "market": {
+      "spot": 100.0,
+      "vol": 0.1,
+      "r_dom": 0.05,
+      "r_for": 0.01
+    },
+    "terms": {
+      "barrier": 85.0,
+      "expiry_years": 0.2493150684931507,
+      "kind": "KNOCK_IN",
+      "monitoring": "CONTINUOUS",
+      "option_type": "CALL",
+      "rebate": 0.0,
+      "side": "LOWER",
+      "strike": 90.0
+    },
+    "expected": {
+      "price": 3.7051665588539877e-6,
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 barrier_gk.csv row 1"
+    },
+    "tolerance": {
+      "rel": 1e-6,
+      "abs": 1e-8
+    }
+  },
+  {
+    "id": "single-barrier-2-UpOut-CALL",
+    "family": "single_barrier",
+    "underlying": "EURUSD",
+    "tenor": "3M",
+    "market": {
+      "spot": 100.0,
+      "vol": 0.1,
+      "r_dom": 0.05,
+      "r_for": 0.01
+    },
+    "terms": {
+      "barrier": 115.0,
+      "expiry_years": 0.2493150684931507,
+      "kind": "KNOCK_OUT",
+      "monitoring": "CONTINUOUS",
+      "option_type": "CALL",
+      "rebate": 0.0,
+      "side": "UPPER",
+      "strike": 90.0
+    },
+    "expected": {
+      "price": 10.677352034403228,
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 barrier_gk.csv row 2"
+    },
+    "tolerance": {
+      "rel": 1e-6,
+      "abs": 1e-8
+    }
+  },
+  {
+    "id": "single-barrier-3-UpIn-CALL",
+    "family": "single_barrier",
+    "underlying": "EURUSD",
+    "tenor": "3M",
+    "market": {
+      "spot": 100.0,
+      "vol": 0.1,
+      "r_dom": 0.05,
+      "r_for": 0.01
+    },
+    "terms": {
+      "barrier": 115.0,
+      "expiry_years": 0.2493150684931507,
+      "kind": "KNOCK_IN",
+      "monitoring": "CONTINUOUS",
+      "option_type": "CALL",
+      "rebate": 0.0,
+      "side": "UPPER",
+      "strike": 90.0
+    },
+    "expected": {
+      "price": 0.2053193579070843,
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 barrier_gk.csv row 3"
+    },
+    "tolerance": {
+      "rel": 1e-6,
+      "abs": 1e-8
+    }
+  },
+  {
+    "id": "single-barrier-4-DownOut-CALL",
+    "family": "single_barrier",
+    "underlying": "EURUSD",
+    "tenor": "3M",
+    "market": {
+      "spot": 100.0,
+      "vol": 0.1,
+      "r_dom": 0.05,
+      "r_for": 0.01
+    },
+    "terms": {
+      "barrier": 85.0,
+      "expiry_years": 0.2493150684931507,
+      "kind": "KNOCK_OUT",
+      "monitoring": "CONTINUOUS",
+      "option_type": "CALL",
+      "rebate": 0.0,
+      "side": "LOWER",
+      "strike": 100.0
+    },
+    "expected": {
+      "price": 2.5111611640063978,
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 barrier_gk.csv row 4"
+    },
+    "tolerance": {
+      "rel": 1e-6,
+      "abs": 1e-8
+    }
+  },
+  {
+    "id": "single-barrier-5-DownIn-CALL",
+    "family": "single_barrier",
+    "underlying": "EURUSD",
+    "tenor": "3M",
+    "market": {
+      "spot": 100.0,
+      "vol": 0.1,
+      "r_dom": 0.05,
+      "r_for": 0.01
+    },
+    "terms": {
+      "barrier": 85.0,
+      "expiry_years": 0.2493150684931507,
+      "kind": "KNOCK_IN",
+      "monitoring": "CONTINUOUS",
+      "option_type": "CALL",
+      "rebate": 0.0,
+      "side": "LOWER",
+      "strike": 100.0
+    },
+    "expected": {
+      "price": 2.8519201799275377e-11,
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 barrier_gk.csv row 5"
+    },
+    "tolerance": {
+      "rel": 1e-6,
+      "abs": 1e-8
+    }
+  },
+  {
+    "id": "single-barrier-6-UpOut-CALL",
+    "family": "single_barrier",
+    "underlying": "EURUSD",
+    "tenor": "3M",
+    "market": {
+      "spot": 100.0,
+      "vol": 0.1,
+      "r_dom": 0.05,
+      "r_for": 0.01
+    },
+    "terms": {
+      "barrier": 115.0,
+      "expiry_years": 0.2493150684931507,
+      "kind": "KNOCK_OUT",
+      "monitoring": "CONTINUOUS",
+      "option_type": "CALL",
+      "rebate": 0.0,
+      "side": "UPPER",
+      "strike": 100.0
+    },
+    "expected": {
+      "price": 2.3873469419861433,
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 barrier_gk.csv row 6"
+    },
+    "tolerance": {
+      "rel": 1e-6,
+      "abs": 1e-8
+    }
+  },
+  {
+    "id": "single-barrier-7-UpIn-CALL",
+    "family": "single_barrier",
+    "underlying": "EURUSD",
+    "tenor": "3M",
+    "market": {
+      "spot": 100.0,
+      "vol": 0.1,
+      "r_dom": 0.05,
+      "r_for": 0.01
+    },
+    "terms": {
+      "barrier": 115.0,
+      "expiry_years": 0.2493150684931507,
+      "kind": "KNOCK_IN",
+      "monitoring": "CONTINUOUS",
+      "option_type": "CALL",
+      "rebate": 0.0,
+      "side": "UPPER",
+      "strike": 100.0
+    },
+    "expected": {
+      "price": 0.12381422204877375,
+      "price_std_error": null,
+      "oracle": "quantlib-1.42.1 barrier_gk.csv row 7"
+    },
+    "tolerance": {
+      "rel": 1e-6,
+      "abs": 1e-8
+    }
+  }
+]

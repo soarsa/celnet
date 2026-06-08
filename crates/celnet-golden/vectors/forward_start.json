@@ -1,0 +1,110 @@
+[
+  {
+    "id": "forwardstart-eurusd-1y-atm-reset3m",
+    "family": "forward_start",
+    "underlying": "EURUSD",
+    "tenor": "1Y",
+    "market": {
+      "spot": 1.1,
+      "vol": 0.105,
+      "r_dom": 0.02,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 1.0,
+      "moneyness": 1.0,
+      "option_type": "CALL",
+      "reset": 0.25
+    },
+    "expected": {
+      "price": 0.04354870296504731,
+      "price_std_error": null,
+      "oracle": "Rubinstein 1990 FX dual-carry forward-start closed form"
+    },
+    "tolerance": {
+      "rel": 1e-7,
+      "abs": 1e-9
+    }
+  },
+  {
+    "id": "forwardstart-eurusd-1y-put-atm-reset6m",
+    "family": "forward_start",
+    "underlying": "EURUSD",
+    "tenor": "1Y",
+    "market": {
+      "spot": 1.1,
+      "vol": 0.11,
+      "r_dom": 0.025,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 1.0,
+      "moneyness": 1.0,
+      "option_type": "PUT",
+      "reset": 0.5
+    },
+    "expected": {
+      "price": 0.02974669143366373,
+      "price_std_error": null,
+      "oracle": "Rubinstein 1990 FX dual-carry forward-start closed form"
+    },
+    "tolerance": {
+      "rel": 1e-7,
+      "abs": 1e-9
+    }
+  },
+  {
+    "id": "forwardstart-eurusd-2y-otm-reset1y",
+    "family": "forward_start",
+    "underlying": "EURUSD",
+    "tenor": "2Y",
+    "market": {
+      "spot": 1.1,
+      "vol": 0.1,
+      "r_dom": 0.02,
+      "r_for": 0.015
+    },
+    "terms": {
+      "expiry_years": 2.0,
+      "moneyness": 1.05,
+      "option_type": "CALL",
+      "reset": 1.0
+    },
+    "expected": {
+      "price": 0.023732781650217822,
+      "price_std_error": null,
+      "oracle": "Rubinstein 1990 FX dual-carry forward-start closed form"
+    },
+    "tolerance": {
+      "rel": 1e-7,
+      "abs": 1e-9
+    }
+  },
+  {
+    "id": "forwardstart-usdjpy-1y-call-reset3m",
+    "family": "forward_start",
+    "underlying": "USDJPY",
+    "tenor": "1Y",
+    "market": {
+      "spot": 150.0,
+      "vol": 0.12,
+      "r_dom": 0.04,
+      "r_for": 0.005
+    },
+    "terms": {
+      "expiry_years": 1.0,
+      "moneyness": 0.98,
+      "option_type": "CALL",
+      "reset": 0.25
+    },
+    "expected": {
+      "price": 10.025363016236788,
+      "price_std_error": null,
+      "oracle": "Rubinstein 1990 FX dual-carry forward-start closed form"
+    },
+    "tolerance": {
+      "rel": 1e-7,
+      "abs": 1e-9
+    }
+  }
+]
