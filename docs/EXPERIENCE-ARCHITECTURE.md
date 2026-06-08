@@ -215,10 +215,11 @@ seeded by the Surface domain's in-grid model selector + per-mark provenance patt
   provenance line. Selecting a model is selecting a registry entry, so "which analytics"
   scales to user-authored analytics with zero UI special-casing.
 
-> **[built]** `celnet-surface` ships VV/SABR/SVI/SSVI; the engine ships bucketed
-> vega/cross-gamma/theta-roll. **[gap]** VaR/ES, FRTB-SA buckets, vanna/volga *limits*,
-> and the firm-level non-additive re-derivations are not built (RISK-HIERARCHY §3.2) — the
-> selector exposes only what the engine actually supports, and greys the rest as "not yet
+> **[built]** `celnet-surface` ships VV/SABR/SVI/SSVI/**eSSVI** (5 families); the engine ships
+> bucketed vega/cross-gamma/theta-roll, and the firm-level **non-additive re-derivations
+> (VaR/ES, curvature) + FRTB-SA SbM capital** are now built and served via `RiskService`
+> (`celnet-risk-cube/{nonadditive,frtb}.rs`). **[gap]** vanna/volga *limits* remain unbuilt —
+> the selector exposes only what the engine actually supports, and greys the rest as "not yet
 > available," never faking it.
 
 ---
@@ -238,8 +239,9 @@ flash-on-change, click-a-side via short-lived `TradableToken`, typed reject toas
 - **Groupable** by pair / desk / tenor; **configurable columns + saved views**
   (TRADING-UNIVERSE-SCALE §5.1/§5.2). **[GUI-only]** for grouping over current rows.
 - **Attribution column**: book / owner (human seat OR auto-pricer, uniformly), LP-in-
-  competition, `surface_version` quoted against. **[needs Rust]** (`AttributionRecord`,
-  identity feed — SCALE §3/#12).
+  competition, `surface_version` quoted against. **[served]** `AttributionRecord` is on the wire
+  and mapped onto the cube's org dimensions; **[gap]** only the live identity feed (real
+  seat/auto-pricer values) remains (SCALE §3/#12).
 - **Labelled configurable TrendMode** replacing the unlabelled premium sparkline (§7).
   **[GUI-only]** for the Premium default; other modes gated on the market-series feed.
 - **Fix the Σ/"Mid" ambiguity:** label "Mid" as *premium mid* with its unit; reserve "Σ"
@@ -292,8 +294,8 @@ cross-gamma stencil, theta-roll, honest empty-states, perceptual diverging ramp
 - **Consume the drilled-in instrument/scope** instead of a hardcoded 25Δ RR (audit §1
   Risk) — Risk analyses what the user actually selected (§4). **[GUI-only]**
 - **Analytics/axis selection** via the inspector strip: shock axes (abs/rel), measure
-  tabs, and the **vanna/volga ladder** alongside vega. **[GUI for axes; needs Rust for
-  vanna/volga ladder + VaR/ES/FRTB]**
+  tabs, and the **vanna/volga ladder** alongside vega. **[GUI for axes; VaR/ES/FRTB-SA now
+  served via `RiskService`/`celnet-risk-cube`; needs Rust only for the vanna/volga ladder]**
 - **Limits overlay** (utilization / RAG / soft-breach) sits on the same tenor×delta
   pillars. **[served]** `celnet-limits` is built and exposed via `RiskService.LimitStatus`
   (per-limit `cap`/`exposure`/`ratio`/`status`/`headroom` + `hard_breach`); GUI lane renders it.
@@ -367,9 +369,11 @@ abstract index. **Target default = `ATM_VOL`** for the pair strip, *only after* 
 transport streams ATM-vol history (else it draws an empty line → stays "Premium" until
 then).
 
-> **[gap]** Every non-Premium mode is gated on the **streamed market-series feed**
-> (SCALE #11, `celnet-proto`+`celnet-server`) — the hard dependency. SPOT additionally
-> needs a brand-new spot feed (none in the transport today; PairStrip shows spot
+> **[partly served / gap]** The **market-series contract + server frames are built** — the
+> `StreamSession` carries `MarketSeriesSubscribe` (`celnet-proto`/`celnet-server`); every
+> non-Premium mode now gates only on the **live market-series VALUES feed** (SCALE #11), not the
+> wire. SPOT additionally needs a brand-new spot feed (none in the transport today; PairStrip
+> shows spot
 > statically by its own comment).
 
 ---
@@ -442,15 +446,20 @@ source. **(Does not edit ROADMAP — the orchestrator merges backlogs.)**
    `CELNET.*` functions — full API-first parity, no client-side position-loop-and-sum anywhere.
    Backend deferrals (only): AAD/GPU non-additive reval + cross-shard fleet (RH §3.3/§3.4).
 
-2. **Scale-out tier is designed-only.** `celnet-router` HRW partition map / cross-shard
-   reducer is target architecture, not shipped (RH §3.4); blue-green handoff *is* built.
-   Firm-wide cross-shard roll-up (P2-4/P2-5) cannot be demonstrated today.
+2. **Scale-out tier: algebra built, absolute cross-host wire deploy-gated.** `celnet-router`
+   HRW partition map (`map.rs`/`hash.rs`) and the `celnet-risk-fleet` cross-shard reducer
+   **are built** — firm-wide fan-out is proven **== single-node aggregate to 1e-12** in-process
+   / on localhost multi-process, and blue-green handoff *is* built. The honest residual is the
+   **absolute cross-host wire p99 / cross-DC transport**, which stays deploy-gated (the in-repo
+   proof is correctness/quorum/framing on loopback only).
 
-3. **Throughput depends on AAD / batched-GPU.** The hierarchical-scale claim is hollow if
-   it rests on bump-and-revalue (RH §3.3, top technical risk). The what-if/scenario/VaR
-   UX must assume a **recompute-trigger cadence**, not instant per-tick reval — the UI
-   must signal additive (instant) vs non-additive (recompute-on-demand) measures. P2-9
-   is the substrate that makes the firm-scale story honest.
+3. **Throughput substrate (AAD / batched-GPU) is built.** The hierarchical-scale claim would be
+   hollow if it rested on bump-and-revalue (RH §3.3, the original top technical risk); that
+   substrate now exists — reverse-mode **AAD adjoint Greeks** (`celnet-vanilla/adjoint.rs`,
+   risk-cube sensitivity-based VaR/ES lens) and the **GPU batch closed-form / scenario kernels**
+   (`celnet-gpu`, ratios only on M4 — NVIDIA absolutes deploy-gated). The what-if/scenario/VaR
+   UX should still signal additive (instant) vs non-additive (recompute-on-demand) measures so
+   the cadence stays honest.
 
 4. **No portfolio-roll-up latency number exists.** Celnet must publish its **own** budget
    (target low-single-digit µs for the additive-Greek limit path); the ~4µs figure is a

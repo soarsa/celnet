@@ -15,7 +15,8 @@
 > **Single contract.** A product is added by **appending** to the `Instrument`
 > oneof / the relevant service in `celnet.proto` (never renumbering, never a
 > version field); the clients then surface it. The wire types under `Instrument`
-> (`crates/celnet-proto/proto/celnet.proto:859`) are the authoritative product set.
+> (`crates/celnet-proto/proto/celnet.proto`, `message Instrument` / `oneof product`) are the
+> authoritative product set.
 
 ## Surfaces
 
@@ -61,12 +62,14 @@ Each row is **Built** with a gated `celnet-parity` row (cited in
 | Arithmetic / geometric Asian | `celnet-exotics::asian` / `asian.rs` | ✅ | ✅ | ✅ `exotic asian` | ✅ `CELNET.ASIAN` | ✅ TicketWorkspace (asianInstrument) |
 | Forward-start vanilla | `celnet-exotics::forward_start` / `forward_start.rs` | ✅ | ✅ | ✅ `exotic forward-start` | ✅ `CELNET.FORWARDSTART` | ✅ TicketWorkspace (forwardStartInstrument) |
 | Cliquet (plain / capped) | `celnet-exotics::forward_start` (cliquet legs) / `forward_start.rs` | ✅ | ✅ | ✅ `exotic cliquet` | ✅ `CELNET.CLIQUET` | ✅ TicketWorkspace (cliquetInstrument) |
-| Quanto vanilla / digital | `celnet-exotics::quanto` / `structured.rs` (row 16) | ✅ | ✅ | ✅ `exotic quanto` | ✅ `CELNET.QUANTO` | ✅ TicketWorkspace (quantoInstrument) |
-| Lookback (floating / fixed) | `celnet-exotics::lookback` / `structured.rs` (row 17) | ✅ | ✅ | ✅ `exotic lookback` | ✅ `CELNET.LOOKBACK` | ✅ TicketWorkspace (lookbackInstrument) |
-| TARF | `celnet-exotics::tarf` / `structured.rs` (row 18) | ✅ | ✅ | ✅ `exotic tarf` | ✅ `CELNET.TARF` | ✅ TicketWorkspace (tarfInstrument) |
-| Accumulator / decumulator | `celnet-exotics::accumulator` / `structured.rs` (row 19) | ✅ | ✅ | ✅ `exotic accumulator` | ✅ `CELNET.ACCUMULATOR` | ✅ TicketWorkspace (accumulatorInstrument) |
+| Quanto vanilla / digital | `celnet-exotics::quanto` / `quanto.rs` | ✅ | ✅ | ✅ `exotic quanto` | ✅ `CELNET.QUANTO` | ✅ TicketWorkspace (quantoInstrument) |
+| Lookback (floating / fixed) | `celnet-exotics::lookback` / `lookback.rs` | ✅ | ✅ | ✅ `exotic lookback` | ✅ `CELNET.LOOKBACK` | ✅ TicketWorkspace (lookbackInstrument) |
+| TARF | `celnet-exotics::tarf` / `tarf.rs` | ✅ | ✅ | ✅ `exotic tarf` | ✅ `CELNET.TARF` | ✅ TicketWorkspace (tarfInstrument) |
+| Accumulator / decumulator | `celnet-exotics::accumulator` / `accumulator.rs` | ✅ | ✅ | ✅ `exotic accumulator` | ✅ `CELNET.ACCUMULATOR` | ✅ TicketWorkspace (accumulatorInstrument) |
 | Variance swap | `celnet-exotics::var_swap` / `var_vol_swap.rs` | ✅ | ✅ | ✅ `exotic var-swap` | ✅ `CELNET.VARSWAP` | ✅ TicketWorkspace (varianceSwapInstrument) |
 | Volatility swap | `celnet-exotics::vol_swap` / `var_vol_swap.rs` | ✅ | ✅ | ✅ `exotic vol-swap` | ✅ `CELNET.VOLSWAP` | ✅ TicketWorkspace (volatilitySwapInstrument) |
+| American / Bermudan (free-boundary FD or LSM-MC) | `celnet-exotics::american` / `american.rs` | ✅ | ✅ | ✅ `exotic american` | ✅ `CELNET.AMERICAN` | ✅ TicketWorkspace (americanInstrument) |
+| Correlated basket / best-of / worst-of (multi-asset MC) | `celnet-exotics::price_basket` / `multiasset.rs` | ✅ | ✅ | ✅ `basket` | ✅ `CELNET.BASKET` | ✅ TicketWorkspace (basketInstrument) |
 | LSV booking model (calibration + ADI PDE) | `celnet-exotics::lsv` / `lsv.rs` | ✅ (booking/Greeks engine) | ✅ (via the priced instrument / `--model lsv`) | ✅ `exotic … --model lsv` | n/a (Excel exposes priced products, not raw calibration) | n/a (GUI prices via the model the server selects) |
 
 > The SDK exposes the catalogue through the single `price(Instrument)` entry point

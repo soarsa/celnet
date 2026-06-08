@@ -16,16 +16,63 @@ commercial add-in SDK).
 
 ## Worksheet functions (`CELNET.*`)
 
+There are **27** custom functions (the manifest is `src/functions/functions.json`,
+the registered set is `src/functions/functions.ts`), grouped below by purpose.
+Every one shapes a request in the single `celnet.wire` contract and renders the
+server's typed result — the add-in adds no pricing.
+
+### Vanilla pricing & quoting
+
 | Function | Shape | Contract path |
 |---|---|---|
 | `=CELNET.PRICE(pair, tenor, strikeOrDelta, callPut, notional)` | scalar premium (two-way mid) | `request_quote` |
 | `=CELNET.GREEKS(pair, tenor, strikeOrDelta, callPut, notional)` | 13×2 spill `[name, value]` + convention footer | `request_quote` (Greeks) |
+| `=CELNET.RFQ(pair, tenor, strikeOrDelta, callPut, notional)` | 1×4 spill `[bid, offer, quoteId, validUntil]` + footer | `request_quote` |
+
+### Exotics & structured products (the `Product` oneof)
+
+Each exotic spills `[premium, PV]`, the 13 Greeks, and a convention footer; the
+Monte-Carlo–priced products additionally spill a `std_error` row (a price
+standard error, never a "machine-precision" claim). All route over the single
+`request_quote` contract path carrying the structure's `Product` arm.
+
+| Function | Shape |
+|---|---|
+| `=CELNET.BARRIER(pair, tenor, strikeOrDelta, callPut, notional, barrier, [kind], [side], [upperBarrier], [rebate], [monitoring], [model])` | single **or** double barrier (supply `upperBarrier` ⇒ double); `model` = `ANALYTIC` (default) or `LSV` (local-stoch-vol, single-barrier) |
+| `=CELNET.WINDOWBARRIER(pair, tenor, strikeOrDelta, callPut, notional, barrier, [side], [windowStart], [windowEnd], [mcPairs], [mcSteps], [mcSeed])` | window (partial-time) knock-out under LSV; exact ADI-PDE (`mcPairs=0`) or MC (`std_error`) |
+| `=CELNET.DIGITAL(pair, tenor, strike, callPut, notional, [style], [payout])` | digital (binary); `style` = `CASH_OR_NOTHING` (default) or `ASSET_OR_NOTHING` |
+| `=CELNET.TOUCH(pair, tenor, kind, barrier, notional, [rebate], [upperBarrier], [monitoring])` | touch family: `OT`/`NT`/`DNT`/`DOT` (`upperBarrier` required for `DNT`/`DOT`) |
+| `=CELNET.ASIAN(pair, tenor, strike, callPut, notional, [averaging], [observations], [method], [elapsedAvg], [elapsedWeight])` | arithmetic-average-rate Asian; `method` = `CURRAN` (default) or `TW`; seasoning via `elapsedAvg`/`elapsedWeight` |
+| `=CELNET.LOOKBACK(pair, tenor, callPut, notional, [style], [monitoring], [strike], [observations], [mcPairs], [mcSeed])` | lookback; `style` = `FLOATING` (default) or `FIXED`; `CONTINUOUS` closed-form or `DISCRETE` MC |
+| `=CELNET.FORWARDSTART(pair, tenor, callPut, moneyness, reset, notional)` | forward-start vanilla (strike fixes at `reset`, proportional `moneyness`) |
+| `=CELNET.CLIQUET(pair, tenor, callPut, moneyness, periods, notional, [localFloor], [localCap], [globalFloor], [globalCap], [mcPairs], [mcSeed])` | cliquet / ratchet; clamped variants priced by MC (`std_error`) |
+| `=CELNET.VARSWAP(pair, tenor, notional, [strikeVol])` | variance swap: spill `[fair_variance, K_var]` / `[fair_vol, √K_var]` |
+| `=CELNET.VOLSWAP(pair, tenor, notional, [strikeVol])` | volatility swap (convexity-adjusted `K_vol`) |
+| `=CELNET.AMERICAN(pair, tenor, strike, callPut, notional, [style], [bermudanSteps], [lsmPaths], [lsmExerciseDates], [lsmSeed])` | American / Bermudan early-exercise; exact FD or Longstaff-Schwartz MC (`std_error`) |
+| `=CELNET.QUANTO(pair, tenor, callPut, strike, notional, conversionVol, correlation, [payoff])` | quanto; `payoff` = `VANILLA` (default) or `DIGITAL` |
+| `=CELNET.TARF(pair, tenor, callPut, strike, target, leverage, fixings, notional, [redemption], [fixingNotional], [mcPairs], [mcSeed])` | Target-Redemption Forward (MC); `redemption` = `FULL_GAIN` (default) or `CAPPED_GAIN` |
+| `=CELNET.ACCUMULATOR(pair, tenor, pivot, barrier, leverage, fixings, notional, [monitoring], [fixingNotional], [mcPairs], [mcSeed])` | accumulator with an up-and-out knock-out (MC) |
+| `=CELNET.BASKET(pair, tenor, callPut, strike, notional, legs, correlations, [kind], [mcPaths], [mcReplications], [mcSteps], [mcSeed])` | correlated basket / best-of / worst-of (scrambled-Sobol MC); `legs` = `[pair, weight, spot, vol, rFor]` rows, `correlations` = N×N matrix; `kind` = `BASKET` (default) / `BEST_OF` / `WORST_OF` |
+
+### Surface (marking & smile)
+
+| Function | Shape | Contract path |
+|---|---|---|
 | `=CELNET.SURFACE(pair, tenor, [model])` | smile spill (delta pillars × vol) + arb/model/convention footer | `get_smile` |
 | `=CELNET.MARKSURFACE(pair, tenor, model, atmVol, rr25, bf25, [rr10], [bf10])` | calibrate a surface under a model (VV/SABR/SVI/SSVI); spill the calibrated smile + `surface_version`/model footer | `mark_surface` (`smile_model`) |
-| `=CELNET.RFQ(pair, tenor, strikeOrDelta, callPut, notional)` | 1×4 spill `[bid, offer, quoteId, validUntil]` + footer | `request_quote` |
+| `=CELNET.MARK(pair, tenor, pillar, vol, [model], [comment])` | status spill `[status, version, detail]` — **two-phase, idempotent**; commits via the task pane | `mark_surface` (`smile_model`, on confirm) |
+
+### Streaming
+
+| Function | Shape | Contract path |
+|---|---|---|
 | `=CELNET.SUBSCRIBE(pair, tenor, strikeOrDelta, callPut, notional)` | **streaming** live two-way; re-ticks; stale-aware | `subscribe`/`update` (multiplexed) |
 | `=CELNET.SERIES(pair, observable, [tenor], [delta])` | **streaming** live market-observable trend (ATM/SPOT/RR/BF/FWD); re-ticks | `market_series_subscribe`/`…_point` (multiplexed) |
-| `=CELNET.MARK(pair, tenor, pillar, vol, [model], [comment])` | status spill `[status, version, detail]` — **two-phase, idempotent**; commits via the task pane | `mark_surface` (`smile_model`, on confirm) |
+
+### Hierarchical risk & operations (`RiskService` + observability)
+
+| Function | Shape | Contract path |
+|---|---|---|
 | `=CELNET.RISK(dimension, numeraire, [rates], [scope])` | hierarchical risk node grid (one row per rolled-up node) + reporting-numeraire footer — **server-side aggregation** | `aggregate_risk` |
 | `=CELNET.POSITIONS([scope])` | the entitled open-position leaf grid (org placement + attribution) + count/empty footer | `list_positions` |
 | `=CELNET.LIMITS(scope, numeraire, [rates])` | limit-tree utilization/RAG grid + worst-RAG / hard-breach footer | `limit_status` |
@@ -35,6 +82,10 @@ commercial add-in SDK).
 `10dC`), or `ATM`/`DNS`. `callPut` is `C`/`P`. `model` accepts `VV` (market
 hedge / Vanna-Volga, the default), `SABR`, `SVI` or `SSVI` (the contract
 `smile_model` selector). `observable` accepts `ATM`, `SPOT`, `RR`, `BF`, `FWD`.
+The optional Monte-Carlo controls on the MC-priced exotics (`mcPairs`/`mcPaths`,
+`mcReplications`, `mcSteps`, `mcSeed`) are **bit-reproducible**: a fixed seed
+reproduces the same path set and price (with its `std_error`) exactly; `0` selects
+the server default.
 `CELNET.MARK` never writes on a recalc: it **stages** under a deterministic
 idempotency key and the trader confirms in the task pane (or the server four-eyes
 it) — so a thousand recalcs produce at most one mark. `CELNET.MARKSURFACE` is the

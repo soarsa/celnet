@@ -76,8 +76,8 @@ pinned zero-alloc hot core (`celnet-engine`) is mode-agnostic; modes are an **ed
 | Seam | Trait (celnet-side) | Standalone impl | Hybrid impl | Integrated impl |
 |---|---|---|---|---|
 | **`MarketDataSource`** (ingress: spot, fwd pts, NDF fixings, **vol surface** ATM/RR/BF, curves) | `celnet-integration::MarketDataSource` | direct external vol/FX feed adapter (FMD-FXO-style WS/stream client) + synthetic/file curves | external vol feed **+** a *read* subscription to Celer `marketdata`/`MarketMerchantPriceService` for spot/fwd | Celer `marketdata` distributor subscription (via JVM sidecar) as primary; external vol feed where the estate has no vol |
-| **`PriceSink`** (egress: option prices/quotes, full Greek set, surface, risk/PnL) | `celnet-server` native edge (gRPC-over-WS + FIX acceptor) to **Celnet's own clients** | native edge **+** Celer egress for the subset of consumers that opt in | Celer egress (`marketmerchant` quote stream + distributor) as primary; native edge retained for direct/desk clients |
-| **order+exec path** (RFQ/RFS → quote → order → ExecutionReport; delta-hedge initiator) | `celnet-fix` acceptor+initiator to Celnet's own/counterparty FIX | `celnet-fix` acceptor for option RFQ; hedge via `celnet-fix` initiator to venues directly | option order routed through Celer `orderrouting`→`destination`→`clearing`→`positionmanager` with `FX_OPTION` product type |
+| **`PriceSink`** (egress: option prices/quotes, full Greek set, surface, risk/PnL) | `celnet-integration::PriceSink` | `celnet-server` native edge (gRPC-over-WS + FIX acceptor) to **Celnet's own clients** | native edge **+** Celer egress for the subset of consumers that opt in | Celer egress (`marketmerchant` quote stream + distributor) as primary; native edge retained for direct/desk clients |
+| **order+exec path** (RFQ/RFS → quote → order → ExecutionReport; delta-hedge initiator) | `celnet-fix` acceptor+initiator engine | `celnet-fix` acceptor+initiator to Celnet's own/counterparty FIX | `celnet-fix` acceptor for option RFQ; hedge via `celnet-fix` initiator to venues directly | option order routed through Celer `orderrouting`→`destination`→`clearing`→`positionmanager` with `FX_OPTION` product type |
 
 These three traits are the **only** things that vary by mode. The `DistributorEgress` trait and
 `EgressGovernor` (bounded conflating governor, `docs/CELER-FIX-INTEGRATION-PLAN.md` §2.3) are the
@@ -98,9 +98,13 @@ kind of deploy-time-bound seam (`docs/SCALE-OUT.md` §0). A single config knob �
 
 The engine, the wire contract, and every client are **mode-agnostic** (a client cannot tell which
 topology served it) — exactly the §1 invariant, one layer up. In-process is the safe default;
-out-of-process is opt-in for deployments where a single process is not enough. Cross-**DC**
-transport hardening, the replicated log, and hot-standby pre-warm remain the deferred tier
-(`docs/SCALE-OUT.md` §12).
+out-of-process is opt-in for deployments where a single process is not enough. The **replicated
+log is now built** — `celnet-replog` provides full Raft consensus (leader election, AppendEntries
+§5.3 log-matching + durable conflicting-tail truncation, §5.4.2 commitment, §7 log compaction +
+snapshot + InstallSnapshot RPC) over real loopback sockets, with bit-identical (`to_bits`) replay
+and crash-recovery (see `docs/SCALE-OUT.md`). What remains deferred: Raft §6 **dynamic membership
+change** (the one documented next increment), cross-**DC** transport hardening, hot-standby
+pre-warm, and the absolute cross-host wire SLOs — these stay deploy-gated (`docs/SCALE-OUT.md`).
 
 ---
 

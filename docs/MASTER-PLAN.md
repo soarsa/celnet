@@ -1,8 +1,18 @@
 # Celnet — Master End-to-End Plan (exceed every competitor, close every gap)
 
+> **SUPERSEDED — historical record (2026-05-30).** This was the GA-era consolidated plan
+> (rev 2: 21 crates, 555 tests). Its Gap→closure map (G-A…G-G) is now fully closed and its
+> live-status numbers are stale; it is retained as a record of intent, not as current state.
+> The live source of truth is: **`docs/POST-GA-ROADMAP.md`** (which explicitly supersedes the
+> Gap→closure map for post-GA scope — see its §7), the **`docs/COMPLETION-PROGRAM.md`** 12-wave
+> program, the **`docs/POST-COMPLETION-AUDIT.md`** gap audit, and the `CLAUDE.md` ledger for
+> day-to-day status. Celnet is now functionally complete in-repo (34 crates; `just check`
+> 1306/1306). Do not treat the "Where we are" / sequencing below as current.
+
 > The single consolidated execution plan from GA-readiness (rev 2) to a full production GA
 > that **out-functions, out-intuits, and out-performs** the incumbents — especially SynOption.
-> Source of truth for remaining work; each item has an owner crate, a dependency gate, and the
+> Source of truth for remaining work *(as of 2026-05-30 — now superseded; see banner above)*;
+> each item has an owner crate, a dependency gate, and the
 > **validation that proves it done**. Updated as items land (zero-legacy).
 
 ## Where we are (verified, 2026-05-30)

@@ -43,12 +43,23 @@ This document specifies that layer. Scope:
   scenario, P&L-explain).
 - **§7** — the **competitive critique** with citations and confidence flags.
 
-Out of scope (explicitly scoped out so the omission is honest, not silent): **XVA / SA-CVA**
-sensitivities (their own delta/vega buckets distinct from market-risk SbM), **FX settlement /
-Herstatt / CLS PvP** risk as a capital line, and **Default Risk Charge (DRC)** beyond noting it is
-immaterial for vanilla FX (FX has no issuer-default leg unless a credit-linked or EM-sovereign
-wrapper is present — see §2.4). These are flagged as future workstreams in `docs/ROADMAP.md`, not
-quietly dropped.
+Out of scope **of the cube/SbM market-risk layer** (explicitly scoped out so the omission is
+honest, not silent): **XVA / SA-CVA** sensitivities (their own delta/vega buckets distinct from
+market-risk SbM), **FX settlement / Herstatt / CLS PvP** risk as a capital line, and **Default Risk
+Charge (DRC)** beyond noting it is immaterial for vanilla FX (FX has no issuer-default leg unless a
+credit-linked or EM-sovereign wrapper is present — see §2.4).
+
+> **Status update (2026-06).** XVA is no longer a future workstream only: a standalone
+> **`celnet-xva`** crate is now **built** — discrete unilateral **CVA**/**DVA**/**FVA** over
+> *synthetic* netting sets of vanilla FX options (Sobol-driven GBM exposure simulation → EPE/ENE
+> profiles, a piecewise-constant hazard survival curve, the standard Basel/ISDA discretization;
+> see `crates/celnet-xva`). **Honest boundary (preserve):** this is **internal-only and not on the
+> wire** — there is no XVA `celnet-proto` service — and it operates on **synthetic** netting sets
+> under a self-contained risk-neutral GBM model; it deliberately does **not** model live
+> CSAs/collateral/margin, wrong-way risk, or the live credit/funding-curve estate, and it is **not**
+> the regulatory SA-CVA *capital* charge. The SA-CVA capital line, CLS PvP settlement capital, and
+> DRC beyond the documented FX zero (§2.11) remain future workstreams in `docs/ROADMAP.md`, not
+> quietly dropped.
 
 > **Implementation status (2026-05-31).** The single-node layer this document specifies is **shipped
 > and served end-to-end**, no longer proposal-only. The four crates of §3.2 are **built and gated
@@ -68,8 +79,11 @@ quietly dropped.
 > prices a whole spot×vol ladder in one dispatch. Both are validated against the bump-and-revalue /
 > closed-form oracle, which is **retained** as the reference (not removed). Measured (M4 Metal,
 > `celnet-bench`): AAD first-order block ~42 ns vs ~129 ns bump-and-revalue (~3.0×, O(1) vs O(factors));
-> batched-GPU scenario grid ~13 ms vs ~165 ms unbatched per-node MC (~12.7×). **Still deferred (target
-> architecture, not shipped):** the cross-shard / HRW-router fleet tier (§3.4 — single-node only). The client lanes (GUI Book, `celnet-client` SDK,
+> batched-GPU scenario grid ~13 ms vs ~165 ms unbatched per-node MC (~12.7×). **Now also built
+> (§3.4):** the cross-shard / HRW-router fleet tier — `celnet-router` (HRW partition map),
+> `celnet-risk-fleet` (fan-out == single-node aggregate, additive 1e-12), `celnet-replog` (full Raft
+> replicated log + hot-standby) — proven in-process / over loopback; the **absolute cross-host wire
+> p99 and cross-DC SLOs stay DEPLOY-GATED** (§2.9), never claimed in-repo. The client lanes (GUI Book, `celnet-client` SDK,
 > Excel `CELNET.*`) **all now consume the served contract in lockstep** — the GUI Book's client-side
 > roll-up is **deleted** (`gui/src/data/portfolioRisk.ts` removed; the Book drives `AggregateRisk`/
 > `LimitStatus`/`DrillRisk` server-side), the SDK exposes the four calls as typed `Client` methods, and
@@ -304,11 +318,26 @@ Celnet's relevant primitives, **stated honestly by build status**:
 
 - **Blue-green handoff** (`celnet-engine`) — **BUILT** per `docs/SCALE-OUT.md`. This is the
   state-preserving cutover primitive that makes "the book continues across an engine swing" real.
-- **HRW (rendezvous-hash) partition map / router tier / replicated log** (`celnet-router`) —
-  **DESIGNED ONLY, not built** per `docs/SCALE-OUT.md` §8. This document does **not** present the
-  fleet/router layer as shipped; it is the target for the scale-out aggregation work in §3.
+- **HRW (rendezvous-hash) partition map / router tier** (`celnet-router`) — **BUILT**: a
+  `PartitionMap` shards work by `PartitionKey` across health-tracked replicas via highest-random-weight
+  (rendezvous) hashing, with HRW-ordered failover (`route` / `ranked_into` / `natural_owner`).
+- **Replicated log + hot-standby** (`celnet-replog`) — **BUILT**: a leader-replicated event log with
+  full Raft (election, conflicting-tail truncation, log compaction / `InstallSnapshot`) over real
+  loopback TCP, committing on quorum with bit-identical follower replay; plus the SPMC broadcast ring
+  (`celnet-fanout`) for fan-out, now sitting under the streaming edge.
+- **Cross-shard risk aggregation** (`celnet-risk-fleet`) — **BUILT**: partitions `RiskFact`s by
+  `(legal_entity, ccy_pair)` through the router HRW map, rolls up shard-local, and reconciles
+  fan-out == single-node `firm_aggregate` (additive 1e-12; non-additive VaR/ES re-gathered).
 
-*(SCALE-OUT.md — high; the build-status distinction is load-bearing for honesty.)*
+> **Honest boundary (preserve verbatim — deploy/live-gated, NEVER in-repo-proven).** The fleet
+> tier above is proven **in-process and over 127.0.0.1 loopback** (correctness of the aggregation
+> algebra, HRW partitioning, quorum/replay, and relative regression). The **absolute cross-host wire
+> p99, kernel-bypass NIC, cross-DC / inter-region SLOs, and real network-partition behaviour stay
+> DEPLOY-GATED and are never claimed here.** Loopback puts an *upper* bound on compute and a *lower*
+> bound on the wire; the §3.5 latency budget is the in-repo additive-Greek path, not a cross-host SLO.
+
+*(SCALE-OUT.md + `crates/celnet-{router,replog,fanout,risk-fleet}` — high; the build-status and the
+deploy-gated boundary are load-bearing for honesty.)*
 
 ### 2.10 The risk dimensions carried on each node
 
@@ -460,13 +489,20 @@ Celnet's answer is three-fold:
 
 ### 3.4 Scale-out
 
-Horizontal scale-out reuses the (designed-only) `celnet-router` HRW partition map: positions
+Horizontal scale-out reuses the **`celnet-router` HRW partition map (now built)**: positions
 partition by a stable key (e.g. `(legal_entity, ccy_pair)`), each shard owns its slice of the fact
 table and rolls it up locally; a **cross-shard reducer** combines shard-level additive measures
 directly and re-derives non-additive firm-level measures from shard contributions where the measure
-permits, or gathers constituent facts where it does not. IPV / joint-portfolio runs execute off the
-hot shard, per `docs/SCALE-OUT.md`. **Build-status honesty: the router/HRW tier is designed, not
-built** — §3.4 is the target architecture, not a shipped capability.
+permits, or gathers constituent facts where it does not. This is the **`celnet-risk-fleet`** crate:
+its `firm_aggregate` fan-out is gated **bit-equal to the single-node aggregate** (additive 1e-12;
+non-additive VaR/ES/curvature re-gathered and re-derived), and the `celnet-server` edge federates
+across N backend processes over real gRPC (`tests/risk_federation.rs`). The replicated event log and
+hot-standby takeover are the **`celnet-replog`** crate (full Raft; bit-identical replay). IPV /
+joint-portfolio runs execute off the hot shard, per `docs/SCALE-OUT.md`.
+
+**Honest boundary (preserve):** the partitioning/reducer/federation correctness and the replicated-log
+quorum/replay are proven **in-process and over loopback**; the **absolute cross-host wire p99,
+cross-DC datapath, and real-partition SLOs remain DEPLOY-GATED**, never claimed in-repo (§2.9).
 
 ### 3.5 Latency budget — set a Celnet-specific number, don't borrow the FIX figure
 
@@ -727,8 +763,10 @@ material — defensible.)*
 **Internal (Celnet docs):**
 
 - `docs/CONVENTIONS.md` — `DeltaConvention` / `AtmConvention` / `PremiumStyle` enums (verbatim).
-- `docs/SCALE-OUT.md` — blue-green handoff **BUILT**; router / HRW partition map / replicated log
-  **DESIGNED ONLY**; IPV runs off the hot shard.
+- `docs/SCALE-OUT.md` — blue-green handoff **BUILT**; router / HRW partition map (`celnet-router`),
+  cross-shard fan-out (`celnet-risk-fleet`), replicated log + hot-standby (`celnet-replog`, full
+  Raft) **BUILT** and proven in-process / over loopback (absolute cross-host wire p99 / cross-DC SLOs
+  stay deploy-gated); IPV runs off the hot shard.
 - `docs/GUI-DESIGN.md` — flash-as-signal, perceptual diverging ramp, WebGPU surface, virtualized
   blotter, SynOption-Optimus framing.
 - `docs/ARCHITECTURE.md` §1.2 — latency/throughput budgets; `celnet-engine` `BucketedRisk`.
@@ -744,4 +782,7 @@ material — defensible.)*
 > bump-and-revalue — **now built and benched** (§3.3: genuine reverse-mode AAD as the additive leaf +
 > sensitivity-VaR engine, ~3.0× vs bumps; batched-GPU scenario grid, ~12.7× vs unbatched MC; the
 > bump/closed-form oracle is retained as the validation reference); (2) the router/HRW scale-out tier
-> is **designed, not built** (§2.9/§3.4) — the one remaining throughput frontier.
+> is **now built** (`celnet-router` HRW map + `celnet-risk-fleet` fan-out == single-node aggregate +
+> `celnet-replog` full-Raft replicated log/hot-standby), but proven **in-process / over loopback** —
+> the **absolute cross-host wire p99, cross-DC datapath, and real-partition SLOs remain DEPLOY-GATED**
+> (§2.9), never claimed in-repo.

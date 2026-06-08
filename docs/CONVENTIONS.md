@@ -14,7 +14,7 @@ configuration (never global defaults — convention errors dwarf model error).
 | Day count | `DayCount` | `Act365Fixed`, `Act360` | Vol-time ACT/365 kept distinct from MM accrual basis. |
 | Settlement | `Settlement` | `Deliverable`, `NonDeliverable` | NDO cash-settles at a published fixing (EMTA/WMR). |
 | Tenor | `Tenor` | `Overnight`, `TomNext`, `SpotNext`, `Weeks`, `Months`, `Years`, `Imm(u8)`, `BrokenDate(BrokenDate)` | See **Tenor resolution** below — the pre-spot short end (ON/TN/SN) is anchored on **today (horizon)**, not spot. `BrokenDate{year,month,day}` is a POD triple (keeps `celnet-types` free of `time`). |
-| Smile model | `SmileModel` | `MarketHedge`, `StochasticVol`, `Parametric`, `ParametricSurface` (`Default=MarketHedge`) | Calibration family selected per `MarkSurface`; vendor/method-neutral names mirror `celnet_surface::SmileModel` (vanna-volga / SABR / SVI / SSVI provenance lives in `ANALYTICS-SPEC.md` §3, never in identifiers). |
+| Smile model | `SmileModel` | `MarketHedge`, `StochasticVol`, `Parametric`, `ParametricSurface`, `ExtendedSurface` (`Default=MarketHedge`) | Calibration family selected per `MarkSurface`; vendor/method-neutral names mirror `celnet_surface::SmileModel` (vanna-volga / SABR / SVI / SSVI / eSSVI provenance lives in `ANALYTICS-SPEC.md` §3, never in identifiers). |
 
 **Tenor resolution (`celnet-calendar::fx`, fixes ON-resolves-as-SN).** Resolution takes both the
 `horizon` (today/trade date) and the `spot` date so the short end is anchored correctly:

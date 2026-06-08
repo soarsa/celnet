@@ -295,8 +295,12 @@ recompute the O(10⁴–10⁵) materialised layer lazily.
 - **Conflation**: the edge already conflates (the blotter footer says "Conflated 60Hz"); at universe
   scale, fan-out must conflate per-subscription so a slow counterparty cannot back-pressure the core,
   and coalesce deltas (already `Snapshot`/`Update` + resync in the contract).
-- **Many→many fan-out**: today the edge uses tokio broadcast (depth 256); `docs/SCALE-OUT.md`
-  designs an in-proc LMAX-disruptor SPMC ring + a replicated log + router tier (designed, not built).
+- **Many→many fan-out**: the in-proc LMAX-disruptor SPMC ring (`celnet-fanout`), the replicated
+  log + full Raft consensus (`celnet-replog`), and the HRW router tier (`celnet-router`) that
+  `docs/SCALE-OUT.md` specifies are now **built** — the SPMC ring is wired under the edge so the
+  per-pair price path fans out through one producer/pair → N session consumers (the per-session
+  tokio channel now carries only control/lifecycle frames). What remains designed-only is the
+  cross-DC datapath hardening and the absolute cross-host fan-out SLO (deploy-gated).
   A cross-fleet multicast tree (the research literature's **Jasper**, arXiv:2402.09527, SIGCOMM'24,
   reports median ~129 µs to 100 receivers / ~238 µs to 1000, with Huygens clock-sync + hold-and-
   release fairness) is a **proposal**, and those are **Jasper's published *cloud-multicast*
@@ -412,7 +416,19 @@ the server stream rate, not aspirational.
 **All `gui/` findings below are verified against source this session.** Cleanly separating verified
 facts from proposal:
 
-| Dimension | Celnet GUI today (verified) | SOTA target (proposal) | Incumbents (cited / confidence) |
+> **Reconciliation note (status update — this critique is a point-in-time record).** Several of
+> the "Celnet GUI today" gaps in the table below have since been **closed** and are preserved here
+> only as the original critique record, not as current state: the static 5-tile strip → a
+> **UniverseNavigator** (⌘B, searchable/grouped/favourites); the not-virtualised blotter →
+> **virtualised** windowing; per-pair-surface-only → a **vol-cube pivot/heatmap**; no broken-date
+> picker → a **broken/IMM/event-aware ticket**; the unlabelled premium-blend sparkline → a
+> labelled, configurable **`TrendMode`** with one consistent direction (commit `547b7bd`). The
+> **Tenor enum has also been overhauled** (now `Overnight`/`TomNext`/`SpotNext`/`Imm`/`BrokenDate`
+> + Weeks/Months/Years) and the **ON-resolves-as-SN bug is fixed** (ON = next good business day
+> after the horizon) — so the "Depth (date axis)" row's enum/bug claim is **no longer true**. The
+> SOTA-target and incumbent columns remain the standing design reference.
+
+| Dimension | Celnet GUI today (verified — see reconciliation note above; several rows now superseded) | SOTA target (proposal) | Incumbents (cited / confidence) |
 |---|---|---|---|
 | **Breadth** | single global active pair (`AppContext.pairCtx`); static 5-pair seed (`seed.ts PAIRS`); no search/virtualisation/region tree | hundreds of pairs; watchlist/favourites + region/liquidity tree + ⌘K search; tier-driven cadence; ND/metals first-class | Tradition 140+ surfaces [high]; Fenics FXO 2.0 300+ pairs/27 metals [high]; Digital Vega 60+ pairs [high] |
 | **Depth (date axis)** | fixed 8-tenor ladder (`seed.ts TENOR_LADDER`); blotter shows ON/W/M/Y only; **no broken-date/IMM/event picker**; Tenor enum has only Overnight/Weeks/Months/Years (and **ON resolves as SN — T+3** — a real bug-class) | continuous expiry line; broken/IMM/EOM/event dates; total-variance day-weighted interp; cut-as-fixing | Murex what-if **date shifts** [high]; broken-date pricing is standard FX practice [Clark / high] |
@@ -551,7 +567,9 @@ the verified turn-liquidity (forward-points) phenomenon.
 **Streaming the universe**
 9. **Conflated multi-pair fan-out at scale.** Per-subscription conflation + delta coalescing across
    the pair universe so a slow counterparty cannot back-pressure the core; tie to the SCALE-OUT SPMC
-   ring / router tier (designed). · `celnet-server` + `celnet-engine` (+ `celnet-router`) · dep: SCALE-OUT.
+   ring / router tier (**now built** — `celnet-fanout` wired under the edge + `celnet-router`; this
+   task is the universe-wide conflation/coalescing layer on top). · `celnet-server` + `celnet-engine`
+   (+ `celnet-router`) · dep: SCALE-OUT.
 10. **Cross-fleet fan-out bench (gate the latency headline).** A Celnet-measured many→many fan-out
     bench under the §1.2 budgets; record the deployment assumption (colo vs cloud) before adopting any
     multicast-tree transport. · `celnet-bench` + `celnet-server` · dep: #9.

@@ -22,7 +22,7 @@
   `StreamService.StreamSession`; `RiskService.{ListPositions, AggregateRisk, DrillRisk,
   LimitStatus}`; `SurfaceService.{GetSmile, MarkSurface, Scenario}`. Plus the **byte-identical
   WebSocket JSON mirror** of the same contract (`crates/celnet-server/src/lib.rs:31,177,359`).
-- **19 product oneof arms** on the unified `Instrument` (`celnet.proto:1016-1062`, field numbers
+- **18-product oneof arms** on the unified `Instrument` (`celnet.proto:1016-1062`, field numbers
   7-25 with 22 unused): vanilla(7), strategy(8), single_barrier(9), double_barrier(10),
   digital(11), touch(12), variance_swap(13), volatility_swap(14), asian_option(15),
   forward_start(16), cliquet(17), quanto(18), tarf(19), accumulator(20), lookback(21),
@@ -106,7 +106,7 @@ The thesis explicitly does **not** assert any deploy-gated absolute (see §6).
 - **Rewrite brief:** Lead with the §1 thesis sentence. Refresh the figure-index captions for
   Fig 3 / Fig 5 / Fig 8 / Fig 12 to match the re-authored figures (delete "first-generation",
   add catalogue tiers to Fig 3, label Tier-1/3 designed in Fig 5, name Raft/SPMC in Fig 8).
-  Add the verbatim honest-boundary block (§6) as a footer section. Add an "all 19 products × 5
+  Add the verbatim honest-boundary block (§6) as a footer section. Add an "all 18-products × 5
   surfaces, proven by CLIENT-PARITY-MATRIX.md" line.
 - **Must cover:** thesis; 34 crates; figure index synced to re-rendered figures; boundary footer.
 - **Parallel-safe:** YES, but author **last** (its captions must match the final figure content).
@@ -238,10 +238,10 @@ The thesis explicitly does **not** assert any deploy-gated absolute (see §6).
   Heartbeat observability (conflation_drops + server_price_p50/p99/p999_nanos HdrHistogram +
   surface_version + correlation_id), plus StreamEnd/StreamReject typed reasons. §9.5 — document the
   SDK as a typed method list grouped by service family (~20 methods), the InstrumentSpec builder
-  (all 19 products + pricing_model/with_lsv), the StreamSession/series async iterators, and the
+  (all 18-products + pricing_model/with_lsv), the StreamSession/series async iterators, and the
   three runnable examples; document the CLI subcommand tree (7 top-level: price/surface/exotic/
   basket/convention/risk/stream; ~14 exotic sub-variants; 4 risk sub-subcommands). §9.6 — cite
-  CLIENT-PARITY-MATRIX.md as executable proof; state the exhaustive truth (all 19 products × 6
+  CLIENT-PARITY-MATRIX.md as executable proof; state the exhaustive truth (all 18-products × 6
   service families reachable from all 5 surfaces, with honest exceptions e.g. basket Greeks
   deliberately zeroed). Note the WS mirror is byte-identical across ALL services.
 - **Must cover:** every service/RPC; every product arm + field number + engine + stderr flag; WS
@@ -325,7 +325,7 @@ The thesis explicitly does **not** assert any deploy-gated absolute (see §6).
 
 - **fig-01 system-architecture-adaptability** — OPTIONAL touch. Structurally accurate. Optionally
   reword "partition-map scale-out" → "Raft-replicated scale-out". Low effort.
-- **fig-02 api-first-parity** — Add "Unified exotic Instrument (19 products)" + "RiskService roll-up
+- **fig-02 api-first-parity** — Add "Unified exotic Instrument (18-products)" + "RiskService roll-up
   + limits" to the contract-carries panel. Smile-selector → "VV·SABR·SVI·SSVI·eSSVI". Expand the
   Excel tile from 8 to ~14-16 chips (exotic fns + RISK/POSITIONS/LIMITS/STATUS) or add a
   "+ exotic & risk fns" tag. Replace "first-generation exotics catalogue" → "full exotic & structured
@@ -446,8 +446,8 @@ honest boundary, openable with zero build step.
 7. **Extensibility** — fig-05 (re-rendered, Tier-1/3 designed) + built/designed tier table.
 8. **Performance** — fig-07 (re-rendered, measured M4 numbers + boundary banner).
 9. **Scale-out** — fig-08 (re-rendered, Raft + SPMC + cross-fleet + boundary).
-10. **API & client parity** — fig-02, fig-11 + a compact CLIENT-PARITY-MATRIX table (19 products ×
-    5 surfaces) + the **6-service / 19-product / WS-mirror reference table** and the **client-surface
+10. **API & client parity** — fig-02, fig-11 + a compact CLIENT-PARITY-MATRIX table (18-products ×
+    5 surfaces) + the **6-service / 18-product / WS-mirror reference table** and the **client-surface
     reference (27 Excel functions, ~20 SDK methods, 7 CLI commands)**.
 11. **Excel reference** — excel-grid + shot-09/shot-10 + the full 27-function list with signatures.
 12. **Celer integration** — fig-09, fig-10 (CelerIntegrated = designed estate-native binding).

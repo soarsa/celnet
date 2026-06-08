@@ -49,7 +49,7 @@ hand-pinned published constants / honest MC std-error bands).
 >    first-generation exotics → structured & path-dependent (var/vol swaps, Asians,
 >    forward-start/cliquet, quanto, TARF, accumulator, lookback) → American/Bermudan early exercise
 >    → correlated multi-asset basket/best-of/worst-of → a particle-calibrated LSV booking model +
->    standalone Heston — all on the **one wire** (`celnet.proto` `Instrument` oneof, 19 product
+>    standalone Heston — all on the **one wire** (`celnet.proto` `Instrument` oneof, 18-product
 >    arms), parity-gated (`celnet-parity`), reachable from **all five clients**. This is the breadth
 >    Murex MX.3 / Numerix CrossAsset / Fenics kACE charge for, delivered open and microsecond-class.
 > 2. **Edges the deep-catalogue incumbents structurally lack:** an open quant SDK (run private IP
@@ -147,10 +147,10 @@ hand-pinned published constants / honest MC std-error bands).
   `wire_load.rs`, `fleet_slo.rs` — only).
 
 ### API, clients, integration, observability
-- ✅ **One unversioned trader-shaped wire contract** — `celnet.proto`, **6 gRPC services**
+- ✅ **One unversioned trader-shaped wire contract** — `celnet.proto`, **5 gRPC services**
   (PricingService.Price; QuoteService.{RequestQuote, AcceptQuote, RejectQuote};
   StreamService.StreamSession; RiskService.{ListPositions, AggregateRisk, DrillRisk, LimitStatus};
-  SurfaceService.{GetSmile, MarkSurface, Scenario}) over a **unified `Instrument` (19 product arms)**
+  SurfaceService.{GetSmile, MarkSurface, Scenario}) over a **unified `Instrument` (18-product arms)**
   + a **byte-identical WebSocket JSON mirror** of the same contract (`celnet-server`). Each MC
   product reports `price_std_error`. Multiplexed RFS `StreamSession` (snapshot + sequenced deltas +
   heartbeat + exactly-once resync + lag recovery + click-to-trade keyed-MAC tokens), market-series
@@ -225,7 +225,7 @@ hand-pinned published constants / honest MC std-error bands).
 | Sobol + Brownian-bridge QMC | ✅ ~38×/88× measured variance reduction | ⚠️ | ⚠️ | ⚠️ | ✅ |
 | GPU-accelerated MC/PDE/Greeks as a service | ✅ wgpu + CPU reconcile (ratios; abs. deploy-gated) | ❌ | ❌ | ❌ | ❌ |
 | Microsecond pricing, **published in-core numbers** | ✅ ~42ns p50 / 125ns p99 price+13-Greeks (M4, in-core; §1.2 gate) | ❌ none | ❌ snapshot feed | ❌ terminal | ❌ batch/EOD |
-| One unversioned typed gRPC + WS-mirror contract | ✅ 6 services, byte-identical WS | ❌ FIX/UI | ❌ data feed | ❌ BLPAPI/terminal | ❌ |
+| One unversioned typed gRPC + WS-mirror contract | ✅ 5 services, byte-identical WS | ❌ FIX/UI | ❌ data feed | ❌ BLPAPI/terminal | ❌ |
 | RFQ lifecycle + caller idempotency | ✅ | ✅ venue | ⚠️ | ⚠️ | ✅ |
 | Quote-accept → execution booking | ✅ idempotent | ✅ venue | ⚠️ | ⚠️ | ✅ |
 | Multiplexed RFS streaming + resync + click-to-trade | ✅ | ⚠️ indicative | ❌ | ❌ | ❌ |
@@ -282,7 +282,7 @@ hand-pinned published constants / honest MC std-error bands).
   test against a code-disjoint oracle, not a self-check.
 - **Mutation + fuzz + the CLIENT-PARITY-MATRIX** — mutation kill-rate gates span vanilla + exotics +
   surface + risk-cube + xva (`.config/mutants-*.toml`); a multi-target fuzz estate (`fuzz/`);
-  client parity proven executable by `docs/CLIENT-PARITY-MATRIX.md` (all 19 products × the service
+  client parity proven executable by `docs/CLIENT-PARITY-MATRIX.md` (all 18-products × the service
   families reachable from all five surfaces, with honest exceptions e.g. basket Greeks deliberately
   zeroed).
 - **Adversarial review every gate** — has caught and forced fixes for real defects (a sign-inverted

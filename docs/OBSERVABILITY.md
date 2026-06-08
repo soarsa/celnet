@@ -41,9 +41,18 @@ The **implemented** stack (verified against `crates/celnet-observability/Cargo.t
 | Structured events & spans | `tracing` + `tracing-subscriber` (`time` feature) | edge + drain only — **never** the hot core |
 | Latency distributions | `hdrhistogram` (p50/p99/p99.9, coordinated-omission aware) | drain thread |
 | Counters / gauges / histograms facade | `metrics` 0.24 | drain + edge |
-| Micro-benchmark / latency proof | `divan` (`celnet-bench`) | CI / offline |
+| Wall-clock micro-benchmark / latency proof | `divan` (`celnet-bench`) | CI / offline |
+| Jitter-free instruction-count regression gate | `iai-callgrind` (`celnet-bench` `benches/iai_instructions.rs`) | CI Linux/Valgrind lane (`iai-instructions`) |
 | False-sharing-free hot counters | atomics padded to a cache line | hot core |
 | Hot→drain transport | bounded wait-free SPSC ring (`rtrb`) | core→drain |
+
+The `iai-callgrind` instruction-count gate (deferred when this doc was first
+written, now **built** — `celnet-bench/Cargo.toml` dep + `benches/iai_instructions.rs`,
+runner `iai-callgrind-runner` on the CI `iai-instructions` Linux/Valgrind lane)
+complements `divan`: `divan` reports wall-clock medians (jitter-prone), while
+Callgrind counts retired instructions deterministically, so a code-level
+regression (an extra branch, a lost inlining, an accidental allocation on the hot
+path) is caught the moment it lands rather than hiding under measurement noise.
 
 **Deferred (not yet a dependency — do not claim as built):**
 
@@ -51,9 +60,6 @@ The **implemented** stack (verified against `crates/celnet-observability/Cargo.t
   and *tracing-export* is still pre-release; an OTLP bridge from the `metrics`/`tracing`
   layer is on the roadmap but not wired today.
 - **USDT probes** (`usdt`) — free when disabled, but not yet attached.
-- **`iai-callgrind`** instruction-count regression gate — `divan` is the only bench
-  harness currently committed; a deterministic instruction-count gate is planned for the
-  hardening (WS-T) wave.
 
 These are listed so no consumer over-reads the observability posture; promote them to the
 implemented table only when they appear in the manifest with passing tests.

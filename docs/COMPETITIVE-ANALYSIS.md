@@ -33,7 +33,7 @@ Celnet competes on three axes:
 
 - It **out-functions** incumbents on quant flexibility (user-extensible models via a
   sandboxed, deterministic SDK) *and* on raw catalogue breadth — the on-wire `Instrument`
-  carries **19 product families** (`crates/celnet-proto/proto/celnet.proto:1016-1062`), each
+  carries **18-product families** (`crates/celnet-proto/proto/celnet.proto:1016-1062`), each
   parity-gated against an independent oracle in `crates/celnet-parity/tests/`.
 - It **out-intuits** them on surface and workflow transparency: configurable, arbitrage-checked,
   auditable analytics across **five smile families** (VV / SABR / SVI / SSVI / **eSSVI**,
@@ -278,7 +278,7 @@ GPU + a full FX-exotic catalogue behind one contract.
 | **GPU acceleration** | GPU as live service (**wgpu → Metal/Vulkan/DX12/GLES + WGSL**, CPU fallback): multi-step path kernel, pathwise/LR Greeks, batch closed-form, Sobol-QMC-on-GPU; f32 GPU reconciled to f64 CPU oracle | None published | None (analytics is CPU desktop/OMS) | None exposed as service |
 | **Distributed correctness** | Leader-replicated log + **full Raft** (election/Pre-Vote/truncation/compaction/InstallSnapshot) with bit-identical (`f64::to_bits`) replay; lock-free SPMC fan-out ring under the edge; cross-shard risk fan-out (fan-out == single-node to 1e-12) | n/a | n/a | n/a |
 | **Celer-native integration** | Native: shared data model + in-process bus across capture, RFQ/RFS, booking, Greeks, hedging, lifecycle (in-repo: traits + adapter swap + FIX 4.4 loopback; live JVM estate lifecycle deploy/live-gated) | Stitched estate (Optimus+Orion+Primus+Omega) glued by FIX hops | Data/analytics/execution loosely-coupled silos (FMD/kACE/FMX, FIX 4.4) | Pricing island; MARS API/Python but feed-oriented |
-| **Openness / APIs** | Open: **6 gRPC services + byte-identical WebSocket JSON mirror**, one unversioned contract reachable identically from GUI/SDK/CLI/Excel/WS with bit-identical values; 27 `CELNET.*` Excel functions; multi-source surface ingestion | FIX + UI + thin STP API; no public dev portal | Enterprise data license; vague public docs; dated FIX 4.4 on execution | Closed, seat-priced; B-PIPE/SAPI feed access |
+| **Openness / APIs** | Open: **5 gRPC services + byte-identical WebSocket JSON mirror**, one unversioned contract reachable identically from GUI/SDK/CLI/Excel/WS with bit-identical values; 27 `CELNET.*` Excel functions; multi-source surface ingestion | FIX + UI + thin STP API; no public dev portal | Enterprise data license; vague public docs; dated FIX 4.4 on execution | Closed, seat-priced; B-PIPE/SAPI feed access |
 
 *Note: latency, throughput and architecture claims about competitors reflect the absence of
 published figures and the documented RFQ/EOD/batch architectures in public material; they are
@@ -312,5 +312,3 @@ only.
 - **MC-priced products** (TARF, accumulator, discrete lookback, basket/best-of/worst-of, American
   via LSM) carry a **price std-error** — never labelled "machine-precision"; that bar is reserved
   for analytic/PDE/golden-gated products.
-</content>
-</invoke>

@@ -25,8 +25,10 @@ Desks operate around five workflow loops:
 
 The earlier broadcast WebSocket edge (one hard-coded reference strike fanned to all
 subscribers, an echoed `uint64` correlation id) was a latency/lifecycle skeleton but not
-trader-shaped. The current contract models loops 1–4 directly; loop 5 (position/P&L) is
-designed but not yet on the wire (§7).
+trader-shaped. The current contract models loops 1–4 directly; loop 5 (position/P&L) is on the wire too —
+the position book and hierarchical risk roll-up are served as `RiskService`
+(`ListPositions`/`AggregateRisk`/`DrillRisk`/`LimitStatus`, §4), with only the per-mark
+**P&L-explain** decomposition still designed-only (§7).
 
 ---
 
@@ -60,38 +62,58 @@ Instrument = Vanilla
            | SingleBarrier
            | DoubleBarrier
            | Digital
-           | Touch            // one-touch / no-touch / double-no-touch
+           | Touch            // one-touch / no-touch / double-no-touch / double-one-touch
            | VarianceSwap     // fair-variance-strike replication (K_var)
            | VolatilitySwap   // convexity-adjusted fair-vol strike (K_vol)
            | AsianOption      // fixed-strike arithmetic-average-rate (Curran / Turnbull-Wakeman)
            | ForwardStart     // strike resets at t1 to m·S(reset) (Rubinstein dual-carry)
            | Cliquet          // ratchet strip: plain closed-form, or clamped Monte-Carlo
            | Quanto           // vanilla / cash-or-nothing digital, settlement-ccy converted
+           | Tarf             // target-redemption forward: geared fixing strip + KO target (MC)
+           | Accumulator      // periodic pivot accumulation + up-and-out barrier (MC)
+           | Lookback         // floating / fixed strike (closed-form or discrete MC)
+           | WindowBarrier    // knock-out active only inside a calendar window (LSV PDE)
+           | AmericanOption   // American / Bermudan early-exercise (free-boundary FD or LSM-MC)
+           | BasketOption     // correlated multi-asset basket / best-of / worst-of (MC)
 ```
 
 The wire field numbers are append-only (no renumber, no `schema_version`): `vanilla=7 …
 touch=12`, then `variance_swap=13`, `volatility_swap=14`, `asian_option=15`,
-`forward_start=16`, `cliquet=17`, `quanto=18`. Variance/vol swaps echo the fair strike in the
-priced `resolved_strike` (and the server's `vol` field carries `√K_var` for the variance
-swap); the arithmetic Asian, forward-start, plain cliquet and quanto vanilla/digital carry a
-genuine discounted option price with the full FD Greek set. The **clamped (locally-capped /
--floored or globally-bounded) cliquet is priced by Monte-Carlo**: it reports an honest
-standard error on the new append-only `PriceResponse.price_std_error` (`=7`, presence-tracked
-— absent for the closed-form products), surfaced as `PricedLine.price_std_error` (SDK) and a
-`std_error` line (CLI). SDK builders: `InstrumentSpec::variance_swap`, `::volatility_swap`,
-`::asian_option(.., AsianTerms)`, `::forward_start(.., ForwardStartTerms)`,
-`::cliquet(.., CliquetTerms)`, `::quanto(.., QuantoTerms)`; CLI: `exotic var-swap`,
-`exotic vol-swap`, `exotic asian`, `exotic forward-start`, `exotic cliquet`, `exotic quanto`.
+`forward_start=16`, `cliquet=17`, `quanto=18`, `tarf=19`, `accumulator=20`, `lookback=21`,
+`window_barrier=23`, `american=24`, `basket=25` (field `22` is the non-product
+`pricing_model` selector — product tags never get renumbered, so a gap is left rather than
+reused). This is the full **18-arm** product `oneof` (`crates/celnet-proto/proto/celnet.proto`
+`oneof product`). Variance/vol swaps echo the fair strike in the priced `resolved_strike` (and
+the server's `vol` field carries `√K_var` for the variance swap); the arithmetic Asian,
+forward-start, plain cliquet, quanto vanilla/digital, continuous lookback and the
+free-boundary-FD American carry a genuine discounted option price with the full FD Greek set.
+The **Monte-Carlo products** — the clamped (locally-capped / -floored or globally-bounded)
+cliquet, the TARF, the accumulator, the discrete lookback, the LSM American (`lsm_paths > 0`),
+and the correlated basket — report an honest **price standard error** on the append-only
+`PriceResponse.price_std_error` (`=7`, presence-tracked — absent for the closed-form
+products), surfaced as `PricedLine.price_std_error` (SDK) and a `std_error` line (CLI); these
+prices are MC estimates carrying that stderr, never "machine precision". SDK builders:
+`InstrumentSpec::variance_swap`, `::volatility_swap`, `::asian_option(.., AsianTerms)`,
+`::forward_start(.., ForwardStartTerms)`, `::cliquet(.., CliquetTerms)`,
+`::quanto(.., QuantoTerms)`, `::tarf(..)`, `::accumulator(..)`, `::lookback(..)`,
+`::window_barrier(..)`, `::american(..)`, `::basket(..)`
+(`crates/celnet-client/src/vocab.rs`); CLI: `exotic var-swap`, `exotic vol-swap`,
+`exotic asian`, `exotic forward-start`, `exotic cliquet`, `exotic quanto`, `exotic tarf`,
+`exotic accumulator`, `exotic lookback`, `exotic window-barrier`, `exotic american`, and the
+top-level `basket` subcommand (`crates/celnet-cli/src/cli.rs`).
 
 Supporting messages: `Quantity` (notional + which leg-ccy), `Solve` (solve strike or premium
 so a leg/structure is zero-cost), `StrikeOrDelta` (`oneof spec` — quote by strike or by
 delta in the configured convention), `Conventions` and `MarketContext` carried so a price is
 fully self-describing, `FixingSchedule` for path/fixing structures, `Greeks`, `TwoWayPrice`.
 
-**Deferred (do not claim as built):** `Tarf` and `Accumulator` variants. The underlying
-`celnet-exotics` engine prices the components, but the wire model for fixing-schedule +
-target-redemption + gearing is a deliberate later coordinated interface change (a thin
-under-specified message here would be a placeholder, banned by rule 2).
+**Now shipped (previously deferred here):** the `Tarf` (target-redemption forward, field 19)
+and `Accumulator` (field 20) variants — both with their full fixing-schedule +
+target-redemption / pivot-accumulation wire models — are now on the contract and priced by
+Monte-Carlo with a `price_std_error`, alongside `Lookback` (21), `WindowBarrier` (23, LSV
+PDE), `AmericanOption` (24, free-boundary FD or LSM-MC) and `BasketOption` (25, correlated
+multi-asset MC). The product `oneof` is complete against the in-repo `celnet-exotics`
+catalogue; there are no instrument variants the engine prices that the wire cannot carry.
 
 ---
 
@@ -220,13 +242,21 @@ touch raw tonic. Implemented surface:
 - `subscribe(...) → RFS stream` with `next_event() → StreamEvent`, internally managing the
   `SubscriptionId`, applying snapshot+updates into a current two-way state, auto-heartbeat,
   and reconnect + `Resync` from `last_seq` on disconnect.
-- `get_smile(...)`, `mark_surface(...)` (optional `SmileModel` selector → `surface_version`),
-  `scenario(...)`.
+- `get_smile(...)`, `mark_surface(...)` / `mark_surface_with(...)` (optional `SmileModel`
+  selector → `surface_version`), `scenario(...)` / `scenario_with_model(...)` /
+  `scenario_with_risk(...)` / `scenario_with_risk_and_model(...)`.
+- `list_positions(...)`, `aggregate_risk(...)`, `drill_risk(...)`, `limit_status(...)` — the
+  typed `RiskService` surface (the SDK builders `Scope`, `Entitlements`, `Numeraire`,
+  `AggregateQuery`, `DrillQuery`, `LimitQuery` live in `crates/celnet-client/src/risk.rs`).
+- `open_session() → StreamSession` with `subscribe(...)` / `subscribe_attributed(...)` for RFS
+  and **`subscribe_series(...)` for the typed market-series (TrendMode) feed** — yielding a
+  `MarketSeries` stream with `next_event() → SeriesEvent` (`crates/celnet-client/src/series.rs`).
 - New request fields (`smile_model`, `attribution`) default to `None` when unset, preserving the
-  pre-Phase-1 call sites unchanged. Market-series server frames are part of the wire contract; the
-  ergonomic SDK helper that surfaces them as a typed `MarketSeries` stream is the next SDK-surface
-  increment — the frames are honoured by the server today over both gRPC and the WS mirror.
-- Ergonomic builders: `InstrumentSpec::vanilla/strategy/unit`, `Conventions::major_default()
+  pre-Phase-1 call sites unchanged.
+- Ergonomic builders: `InstrumentSpec::vanilla/strategy/unit`, the full exotic builder set
+  (`single_barrier`/`double_barrier`/`digital`/`touch`/`variance_swap`/`volatility_swap`/
+  `asian_option`/`forward_start`/`cliquet`/`quanto`/`tarf`/`accumulator`/`lookback`/
+  `window_barrier`/`american`/`basket`), `Conventions::major_default()
   .with_delta/.with_atm/.with_premium`, `Quantity::base`, `StrikeSpec`, `BrokerQuoteSet::
   three_point/five_point`, `Smile::vol_at_delta/atm_vol/is_arbitrage_free`,
   `ShockAxis::relative/absolute`.
@@ -263,7 +293,6 @@ per-subscription RFS with resync, and a callable arb-free surface object.
   identity** that keys the roll-up already on the wire (§4). What remains designed-only here is the
   per-mark **P&L-explain** decomposition (a distinct attribution report over two surface marks); the
   position book itself is queryable today via `ListPositions`.
-- **`Tarf` / `Accumulator`** instrument variants (§3).
 - **`SmileModel`-dependent `Scenario`** — `Scenario` validates the selector but reprices off
   the supplied flat `base_market.vol`; a model-dependent shock grid needs a skewed surface
   marked first via `MarkSurface` + a pinned `surface_version` (the flat-base limitation is
@@ -271,14 +300,14 @@ per-subscription RFS with resync, and a callable arb-free surface object.
 - **Durable market-series history** — the market-series snapshot (§4) carries one live
   observation; a durable observation store that replays a real recent window is a future
   enhancement (the server does not fabricate backfill).
-- **Typed `MarketSeries` SDK helper** — the frames are on the wire and server-honoured; the
-  ergonomic `celnet-client` stream wrapper is the next SDK increment (§5).
 
 These are tracked as the continuing API-evolution wave; they are listed here so the contract's
 scope is not over-read. **Now shipped (previously listed here):** the **market-series feed**
-(§4), **smile-model selection** on `MarkSurface` (§4), **attribution identity** across the
-RFQ/RFS lifecycle (§4), in-place RFS **`Modify`** (§4), and the **WebSocket JSON-mirror** for
-these frames (§2).
+(§4) and its **typed `subscribe_series` SDK helper** (§5), **smile-model selection** on
+`MarkSurface` (§4), **attribution identity** across the RFQ/RFS lifecycle (§4), in-place RFS
+**`Modify`** (§4), the **WebSocket JSON-mirror** for these frames (§2), and the full exotic /
+structured / multi-asset product catalogue on the `Instrument` `oneof` — including the
+**`Tarf`** and **`Accumulator`** variants once deferred here (§3).
 
 ---
 

@@ -156,7 +156,7 @@ vendor/method-neutral enum; the §3.1–3.3 provenance is documentation only):
 | `ParametricSurface` | SSVI (§3.3) | θ pinned to ATM total variance; (ρ, φ) under the closed-form butterfly conditions. |
 | `ExtendedSurface` | eSSVI (§3.3) | θ pinned to ATM total variance; (ρ, ψ) under the closed-form (θ,ρ,ψ) butterfly conditions; maturity-dependent ρ across slices, SSVI byte-recovered at constant ρ. |
 
-All four are deterministic (libm-only damped Gauss-Newton in `(log-moneyness, total-variance)`
+All five are deterministic (libm-only damped Gauss-Newton in `(log-moneyness, total-variance)`
 space) and calibrate to the **same** VV-anchored ATM/25Δ(/10Δ) points, so model selection changes
 the **wings**, never the ATM reprice. `SurfaceService.MarkSurface` routes the choice through
 `celnet_surface::build_model_smile`, deposits the model-tagged `CalibratedSmile` under the returned
@@ -193,6 +193,8 @@ Interpolate **ATM, RR, and BF separately** across tenors in **total-variance / b
 | Quanto vanilla / digital | LV/LSV with FX-asset correlation | Closed-form drift adjustment; MC | Conversion-vol + correlation drift; collapses to the plain price at zero correlation. **Built** — `celnet-exotics::quanto` (`quanto_vanilla_price`/`quanto_digital_price` closed forms + `quanto_vanilla_mc`/`quanto_digital_mc`); gated in `celnet-parity/tests/structured.rs` (row 16): closed form == independent MC within stderr and the zero-correlation collapse to the non-quanto price. |
 | Variance swap | Model-free static replication | **Log-contract**: continuum of OTM puts+calls weighted `1/K^2` + dynamic `1/S_t` position | Strike = model-free integral of OTM option prices. **Built** — `celnet-exotics::var_swap` (`fair_variance`): adaptive-wing, fixed-`u`-resolution Simpson strip of OTM **forward** values off any arbitrage-free `Smile`. Recovers `sigma^2` exactly for a flat smile; gated in `celnet-parity/tests/var_vol_swap.rs` against an independent adaptive-Simpson quadrature (~1e-6) and the flat closed form (~1e-6). |
 | Volatility swap | **Not** statically replicable | Explicit **convexity adjustment** (Carr-Lee robust replication) or LSV-model expectation | Never set vol-swap strike = sqrt(var-swap strike). **Built** — `celnet-exotics::vol_swap` (`fair_volatility`): `K_vol = sqrt(K_var) - Var(v)/(8*K_var^{3/2})`, the Carr-Lee/Brockhaus-Long convexity (Jensen) adjustment from the log-contract-weighted variance-of-variance. Strictly `< sqrt(K_var)` for any non-degenerate smile; gated in the same parity row (strict bound + Var(v) monotone in butterfly). |
+| American / Bermudan | GK dynamics; free-boundary early exercise | Projected-SOR (PSOR) free-boundary **Crank-Nicolson FD**; **Longstaff-Schwartz LSM** Monte Carlo | Early-exercise premium driven by the foreign rate (FX dividend yield). **Built** — `celnet-exotics::american`: `american_price` (default PSOR free-boundary FD) + `american_price_lsm` (Longstaff-Schwartz regression MC, emits `price_std_error`). Gated in `celnet-exotics/src/american.rs`: American ≥ European; no-foreign-rate ⇒ American call == European call; PSOR-FD == LSM-MC within reported stderr. |
+| Basket / best-of / worst-of | Correlated multi-asset GBM | **Cholesky-correlated GBM MC** over scrambled-Sobol' / Brownian-bridge variates (`celnet-qmc`) | Rainbow optionality on a correlated FX basket. **Built** — `celnet-exotics` basket pricer (uses `BasketKind`; emits `price_std_error`). Gated in `celnet-parity/tests/basket.rs`: a two-asset basket matches the **Lévy** moment-matched band; the `worst ≤ single-name ≤ best` price sandwich holds; and the basket collapses to the single-name value as ρ → 1. |
 
 **Continuously-monitored barriers in MC** require a discrete-monitoring bias correction: (a) **Broadie-Glasserman-Kou** barrier shift by `~0.5826 sigma sqrt(dt)`, or (b) **Brownian-bridge** exit-probability between steps. Digital/barrier payoffs are discontinuous -> **Rannacher smoothing** in PDE and barrier-aligned grid nodes.
 
@@ -236,7 +238,7 @@ Gated in `celnet-parity/tests/heston.rs`: (i) **Carr-Madan == COS** to `|diff| <
 
 ## 6. Prioritized Implementation Order (P0 / P1 / P2) by Workspace Crate
 
-Crate homes in the **implemented** 19-crate tree (this section was written against an early
+Crate homes in the **implemented** 34-crate tree (this section was written against an early
 all-in-`celnet-core` sketch; the real homes are): pure math primitives (libm-routed
 transcendentals, `is_close`, `Smile` trait) in **`celnet-core`**; POD/convention/config types
 in **`celnet-types`**; the **calendar/date engine** in **`celnet-calendar`**; the convention
@@ -299,6 +301,8 @@ deterministic; wasmtime rejected for advisories — see `docs/PLUGIN-HOST-ALT.md
 | Lookbacks, forward-start / cliquet (LSV via MC/PDE) | `celnet-core` |
 | TARF / accumulator / decumulator: MC under LV/LSV, explicit gap/digital-risk modelling + reserves | `celnet-core` |
 | Variance swap (log-contract `1/K^2` replication); volatility swap (Carr-Lee convexity adjustment) | `celnet-core` |
+| American / Bermudan early exercise (PSOR free-boundary Crank-Nicolson FD; Longstaff-Schwartz LSM MC) | `celnet-exotics` |
+| Correlated basket / best-of / worst-of (Cholesky GBM MC over scrambled-Sobol' / Brownian bridge) | `celnet-exotics` + `celnet-qmc` |
 | GPU exotics back-end: **wgpu/WGSL** kernels (Metal/Vulkan/GLES/DX12), f32 GPU numerics with f64 CPU reconciliation, Philox-4x32-10 counter-based RNG. **Sobol' direction numbers + Brownian bridge are Built (CPU-first) in `celnet-qmc`** (parity row `celnet-parity/tests/qmc.rs`), with the integer Sobol/scramble core exposed for on-device reuse | `celnet-gpu` `PricingBackend` impls (wgpu GPU / CPU); `celnet-qmc` |
 
 ### Cross-cutting validation (all phases)

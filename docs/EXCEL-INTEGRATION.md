@@ -6,8 +6,9 @@
 >
 > **Position in the estate.** Excel is an *edge consumer*, exactly like the React/WebGPU
 > trader GUI and the typed SDK. It rides the **ONE current contract** in
-> `crates/celnet-proto/proto/celnet.proto` (`PricingService`, `QuoteService`,
-> `StreamService`, `SurfaceService`) — no fork, no `schema_version`, no Excel-specific RPCs
+> `crates/celnet-proto/proto/celnet.proto` (the five gRPC services: `PricingService`,
+> `QuoteService`, `StreamService`, `SurfaceService`, `RiskService`) — no fork, no
+> `schema_version`, no Excel-specific RPCs
 > (guardrail #9). It never touches the pinned zero-alloc hot core (guardrail #11): all
 > compute happens server-side; the workbook only renders results that already exist for the
 > GUI and SDK. Determinism is inherited end-to-end — the server runs the libm core, so a
@@ -34,17 +35,17 @@ a bolted-on terminal.
 
 | # | Desk workflow (read/write) | Excel surface | Contract RPC reused |
 |---|---|---|---|
-| W1 | Live price + two-way for one structure on a blotter row | **Streaming custom function** `=CELNET.PRICE(...)` / `=CELNET.RFS(...)` (one cell, auto-updates) | `StreamService.StreamSession` (snapshot+delta) |
+| W1 | Live price + two-way for one structure on a blotter row | **Streaming custom function** `=CELNET.SUBSCRIBE(...)` (one cell, auto-updates) | `StreamService.StreamSession` (snapshot+delta) |
 | W2 | Full Greek vector for a position | **Dynamic-array spill** `=CELNET.GREEKS(...)` → labelled 13-Greek column/row | `PricingService.Price` (`Greeks`) |
 | W3 | Marked smile / vol grid for a pair-tenor (or a surface cube) | **Dynamic-array spill** `=CELNET.SURFACE(...)` → strikes × pillars grid | `SurfaceService.GetSmile` |
 | W4 | RFQ for a bespoke structure, two-way + token | `=CELNET.RFQ(...)` spill (bid/offer/token/valid-until) + **task-pane ticket** | `QuoteService.RequestQuote` |
 | W5 | Watch many structures (a book) ticking live | `=CELNET.SUBSCRIBE(...)` streaming, one session multiplexed across all cells | `StreamService.StreamSession` (multiplex) |
 | W6 | Click-to-trade off a live streamed price | **Task-pane** "Trade" button bound to the cell's live `TradableToken` | `StreamService` `Execute`/`Executed` |
-| W7 | Risk scenario / bucketed vega ladder | Dynamic-array spill `=CELNET.SCENARIO(...)` / `=CELNET.RISK(...)` | `SurfaceService.Scenario`, `RiskBucketRequest` |
+| W7 | Risk roll-up / book / limits | Dynamic-array spill `=CELNET.RISK(...)` / `=CELNET.POSITIONS(...)` / `=CELNET.LIMITS(...)` | `RiskService.{AggregateRisk,ListPositions,LimitStatus}` |
 | W8 | **Contribute a mark / manual vol** back to the marked surface, choosing the calibration model | `=CELNET.MARK(...)` write-function (optional `smileModel`) + task-pane "Contribute" confirm | `SurfaceService.MarkSurface` (optional `SmileModel`) |
-| W9 | Convention/audit transparency for any cell | per-cell **convention annotation** + task-pane provenance panel | echoed `Conventions` + `surface_version` (+ `model=` note) on every response |
-| W10 | Live market-series spark/history for a pair (ATM-vol/spot/RR/BF/forward) | **Streaming** `=CELNET.TREND(...)` (one cell or a spill of recent points) | `StreamService.StreamSession` (`MarketSeriesSubscribe`/`…Point`) |
-| W11 | Who quoted / holds / won a streamed or RFQ line | attribution columns on the `CELNET.RFS`/`CELNET.RFQ` spill + `=CELNET.WHO(cellRef)` | `AttributionRecord` echoed on `Snapshot`/`Quote`/`Executed`/`Execution` |
+| W9 | Convention/audit transparency for any cell | per-cell **convention/model footer** + task-pane provenance panel + `=CELNET.STATUS()` | echoed `Conventions` + `surface_version` (+ `model=` note) on every response |
+| W10 | Live market-series spark/history for a pair (ATM-vol/spot/RR/BF/forward) | **Streaming** `=CELNET.SERIES(...)` (one cell or a spill of recent points) | `StreamService.StreamSession` (`MarketSeriesSubscribe`/`…Point`) |
+| W11 | Who quoted / holds / won a streamed or RFQ line | attribution columns on the `CELNET.SUBSCRIBE`/`CELNET.RFQ` footer | `AttributionRecord` echoed on `Snapshot`/`Quote`/`Executed`/`Execution` |
 
 The deliberate split: **read** is dominated by streaming/spill functions (zero clicks, the
 sheet stays alive); **write** always goes through a task-pane confirmation step (W4/W6/W8)
@@ -88,12 +89,16 @@ because contribution and trading are entitlement-gated, audited, and (optionally
   the same tonic server) for request/response (W2/W3/W4/W7/W8). Both carry the *same* proto
   messages — the WS codec frames the identical `ClientStreamMessage`/`ServerStreamMessage`,
   and gRPC-web carries the identical unary messages. There is no Excel-specific endpoint.
-- **Typed shapes, no hand-rolled JSON.** TS interfaces for `VanillaInputs`, `Greeks`,
-  `Quote`, `Snapshot`, `Update`, `Smile`, `Conventions`, `TradableToken`, … are **generated
-  from `celnet.proto`** (e.g. `ts-proto`/`protobuf-es`, both MIT) into
-  `addins/celnet-excel/src/gen/`. These mirror the `celnet-client` Rust shapes one-for-one,
-  so the workbook, the GUI, and the SDK share one vocabulary. Regenerating on a proto change
-  is a CI step — the contract stays single and current (guardrail #9/#10).
+- **Typed shapes, one contract, no fork.** TS interfaces for `VanillaInputs`, `Greeks`,
+  `Quote`, `Snapshot`, `Update`, `Smile`, `Conventions`, `TradableToken`, … live in
+  `excel/src/contract/` as a **minimal, semantics-identical projection of
+  `gui/src/data/{contract,enums,wsCodec}.ts`** (the add-in is a separate Vite project outside
+  the GUI package and the cargo workspace, so it cannot import across that boundary; rather
+  than fork the wire semantics it duplicates the *definitions* unchanged — see
+  `excel/src/contract/contract.ts`). These mirror the `celnet-client` Rust shapes and the GUI
+  one-for-one, so the workbook, the GUI, and the SDK share one vocabulary; the headless e2e
+  round-trips fixtures through the WS codec against a live `celnet-server` so the projection
+  cannot drift from the contract (guardrail #9/#10).
 - **Why primary.** Zero desktop install footprint (centrally deployed manifest), the same
   code as the React GUI's data layer, and the broadest reach. It is the default for the
   whole desk.
@@ -119,9 +124,10 @@ because contribution and trading are entitlement-gated, audited, and (optionally
 
 ### Where these sit
 
-Both `celnet-excel` (add-in project) and `celnet-xll` (crate) are **edge consumers** under a
-new `addins/` tree and the workspace, dependency arrows pointing *into* `celnet-client` /
-`celnet-proto` only (one-way, per `docs/INTERFACES.md`). Neither is a dependency of the
+Both the **shipped Path-A add-in (top-level `excel/`, a standalone Vite/TypeScript project
+outside the cargo workspace)** and the **designed-only Path-B `celnet-xll` crate** are **edge
+consumers**, dependency arrows pointing *into* `celnet-client` / `celnet-proto` /
+the WS-mirror contract only (one-way, per `docs/INTERFACES.md`). Neither is a dependency of the
 engine, the core, or any pricing crate. The hot core stays log/lock/alloc-free; Excel adds
 load only as another network client of the edge (guardrail #11).
 
@@ -131,61 +137,73 @@ load only as another network client of the edge (guardrail #11).
 
 All functions are `celnet`-logical and vendor-neutral. Signatures are shown in the Office.js
 metadata sense; the XLL exports the same names and argument order. Every result-bearing
-function attaches **convention transparency** (see §3.4).
+function attaches **convention transparency** (see §3.4). The **27** shipped functions
+(`excel/src/functions/functions.json`; see also `excel/README.md`) are grouped below into
+request/response reads (§3.1), streaming reads (§3.2), the exotic/structured catalogue (§3.3),
+risk/book reads (§3.4), and the write / observability surface (§3.5). All compute is
+server-side; a cell renders, it never prices.
 
 ### 3.1 Read — request/response (dynamic-array spill)
 
 ```
 =CELNET.PRICE(pair, tenor, strikeOrDelta, callPut, notional, [conv], [surfaceVersion])
-    → scalar price (premium, in the convention's premium ccy/style)
+    → scalar premium (two-way mid, in the convention's premium ccy/style)
 
 =CELNET.GREEKS(pair, tenor, strikeOrDelta, callPut, notional, [conv], [surfaceVersion])
     → 13×2 vertical spill: [GreekName, Value] for the full Greek vector
       (delta, gamma, vega, theta, rho_dom, rho_for, vanna, volga, charm,
        speed, zomma, vomma/ultima, … exactly the celnet-vanilla 13-Greek set)
+       + a convention footer
 
-=CELNET.SURFACE(pair, [tenor], [axis], [surfaceVersion])
-    → dynamic-array grid. tenor omitted ⇒ full cube (tenor × delta-pillar);
-      tenor given ⇒ one smile row (strike/delta × vol), arb-status flag in a footer cell.
-      Backed by SurfaceService.GetSmile (per-tenor) fanned over the term structure.
+=CELNET.SURFACE(pair, tenor, [model], [surfaceVersion])
+    → smile spill for the (pair, tenor): delta pillars × vol, with an arb-status /
+      model / convention footer. Backed by SurfaceService.GetSmile.
 
-=CELNET.SCENARIO(pair, tenor, struct…, shockAxis, points, [surfaceVersion])
-    → spill ladder of [shock, price, pnl] (SurfaceService.Scenario / ShockAxis)
+=CELNET.MARKSURFACE(pair, tenor, model, atmVol, rr25, bf25, [rr10], [bf10])
+    → calibrate & deposit a surface under a chosen smile model (VV/SABR/SVI/SSVI),
+      spilling the calibrated smile + a surface_version / model footer
+      (SurfaceService.MarkSurface with the SmileModel selector). This is the
+      single-cell calibrate-and-pin function; CELNET.MARK (§3.5) is the two-phase
+      manual-vol contribution.
 
-=CELNET.RISK(pair, book…, [surfaceVersion])
-    → bucketed-vega / cross-gamma spill (RiskBucketRequest → BucketedRisk/VegaBucket)
+=CELNET.RFQ(pair, tenor, strikeOrDelta, callPut, notional, [conv])
+    → 1×4 spill [bid, offer, quoteId, validUntil] + convention footer
+      (QuoteService.RequestQuote). The task-pane ticket resolves the quote for
+      accept/click-to-trade (W4/W6).
 ```
 
 `strikeOrDelta` accepts either an absolute strike or a delta-string (e.g. `"25dP"`,
 `"ATM"`, `"DNS"`) and resolves through the `StrikeOrDelta` contract message — the same
 strike↔delta solver the GUI uses. `callPut` is `"C"`/`"P"`. `conv` is an optional override
 object/range; omitted ⇒ the canonical convention for the `(pair, tenor)` is resolved
-server-side (the desk almost never overrides it).
+server-side (the desk almost never overrides it). `model ∈ {VV, SABR, SVI, SSVI, eSSVI}`
+(the five shipped smile families; `SurfaceService` echoes the model in the footer).
 
 `tenor` uses the same shorthand the CLI/GUI/SDK speak (one `Tenor` contract message): `ON`,
 `TN`, `SN`, `<n>W`/`<n>M`/`<n>Y`, `<n>IMM` (the `n`-th 3rd-Wednesday IMM date), or a
 `YYYY-MM-DD` broken date. The pre-spot short end (ON/TN/SN) is anchored on **today**, not spot
 (the ON-resolves-as-SN bug is fixed; see `docs/CONVENTIONS.md` / `ANALYTICS-SPEC.md` §1.5).
 
+> **Scenario / what-if** is not a standalone `CELNET.*` function: the shock-grid path
+> (`SurfaceService.Scenario`) is exercised by the GUI CubeWorkspace and the SDK
+> `scenario*` helpers; the Excel surface composes the same view from `CELNET.PRICE` /
+> `CELNET.GREEKS` re-evaluated over a strike/shock ladder and from `CELNET.RISK` (§3.4).
+
 ### 3.2 Read — streaming (`@streaming`, RTD-equivalent)
 
 ```
-=CELNET.PRICE.LIVE(pair, tenor, strikeOrDelta, callPut, notional, [conv], [surfaceVersion])
-    → streaming scalar; re-emits on every Update for that instrument
+=CELNET.SUBSCRIBE(pair, tenor, strikeOrDelta, callPut, notional, [conv])
+    → streaming live two-way for the structure; re-ticks on every Update;
+      stale-aware; multiplexed and coalesced across identical-arg cells
+      (StreamService.StreamSession snapshot+delta). This is the blotter RFS cell;
+      the task-pane Trade button resolves its live TradableToken for click-to-trade (W6),
+      and the AttributionRecord seats (quotedBy/heldBy) ride the snapshot (W11).
 
-=CELNET.RFS(pair, tenor, struct…, [conv])
-    → streaming 1×6 spill: [bid, offer, tradableTokenHandle, validUntil, quotedBy, heldBy]
-      tradableTokenHandle is an opaque handle (NOT the raw token) the task-pane Trade
-      button resolves for click-to-trade (W6); quotedBy/heldBy are the AttributionRecord
-      seats echoed on the Snapshot (W11) — quotedBy is the maker auto-pricer by default
-
-=CELNET.SUBSCRIBE(pair, tenor, struct…, [conv])  ≡ alias of CELNET.RFS for blotters
-
-=CELNET.TREND(pair, observable, [tenor], [delta], [throttleMs], [historyLimit])
-    → streaming market-series for the GUI's TrendMode (W10), over one StreamSession:
-      observable ∈ {ATM_VOL, SPOT, RR, BF, FORWARD}; tenor required for
-      ATM_VOL/RR/BF/FORWARD, delta required for RR/BF. A scalar cell streams the latest
-      value; a spill returns the recent [epoch, value] points (snapshot + appended points).
+=CELNET.SERIES(pair, observable, [tenor], [delta], [throttleMs], [historyLimit])
+    → streaming live market-observable trend for the GUI's TrendMode (W10), over one
+      StreamSession: observable ∈ {ATM, SPOT, RR, BF, FWD}; tenor required for
+      ATM/RR/BF/FWD, delta required for RR/BF. A scalar cell streams the latest value;
+      a spill returns the recent [epoch, value] points (snapshot + appended points).
       Every value is derived server-side on the core thread from the live MarketState
       (never a fabricated proxy); an underivable point is skipped, a lagging cell drops a
       conflatable point — the contract matches the GUI/SDK exactly (API-first parity).
@@ -201,15 +219,87 @@ same mapping uses Excel's RTD topic model: one topic per `(instrument, conv)` ke
 acting as the RTD server fed by the `StreamSession`. Snapshot → first value; Update → cell
 refresh; Resync → silent re-snapshot (no flicker); StreamEnd → see §5.
 
-### 3.3 Write — contribution / trade
+### 3.3 Read — the exotic / structured / multi-asset catalogue (dynamic-array spill)
+
+Every product on the `Instrument` `oneof` (`docs/API-CLIENTS.md` §3) has a dedicated read
+function — the same vocabulary as the SDK builders and the CLI `exotic` subcommands, so a cell
+prices exactly the structure the GUI TicketWorkspace prices. Each returns the premium / PV, the
+13-Greek vector where it exists in closed form, and a convention footer; the **Monte-Carlo
+products carry a `std_error` line in the spill** (never "machine precision" — these are MC
+estimates).
 
 ```
-=CELNET.MARK(pair, tenor, pillar, vol, [conv], [comment], [smileModel])
-    → contributes a manual vol/mark; returns a status spill
-      [status, surfaceVersionAfter, auditId, model]  — NEVER auto-fires on recalc (see below)
-      smileModel ∈ {MarketHedge (default), StochasticVol, Parametric, ParametricSurface};
-      selects the calibration family (ANALYTICS-SPEC §3.4a), tagged on the deposited surface
-      version and echoed back as `model` (provenance from Smile.arbitrage.note `model=<family>`)
+=CELNET.BARRIER(pair, tenor, strikeOrDelta, callPut, notional, barrier(s), kind, …)
+    → single OR double barrier (selected by params): premium + 13 Greeks + footer
+=CELNET.WINDOWBARRIER(pair, tenor, …, windowStart, windowEnd, …)
+    → window (partial-time) KO barrier under PRICING_MODEL_LOCAL_STOCH_VOL (LSV PDE):
+      premium + (std_error) + footer
+=CELNET.DIGITAL(pair, tenor, strikeOrDelta, callPut, notional, style)
+    → digital (binary) option: premium + 13 Greeks + footer
+=CELNET.TOUCH(pair, tenor, level(s), kind)
+    → one-/no-/double-no-/double-one-touch: premium + Greeks + footer
+=CELNET.ASIAN(pair, tenor, strike, callPut, notional, fixings…)
+    → arithmetic-average-rate Asian: spill [premium, PV] + 13 Greeks + footer
+=CELNET.FORWARDSTART(pair, tenor, resetT, moneyness, callPut, notional)
+    → forward-start vanilla: spill [premium, PV] + 13 Greeks + footer
+=CELNET.CLIQUET(pair, tenor, resets…, [cap], [floor])
+    → cliquet / ratchet: spill [premium, PV], (std_error if clamped/MC), 13 Greeks + footer
+=CELNET.QUANTO(pair, tenor, strikeOrDelta, callPut, notional, quantoFx)
+    → quanto vanilla / digital: spill [premium, PV] + 13 Greeks + footer
+=CELNET.TARF(pair, tenor, fixings…, target, gearing, …)
+    → target-redemption forward (Monte-Carlo): spill [premium, PV], [std_error], 13 Greeks + footer
+=CELNET.ACCUMULATOR(pair, tenor, fixings…, pivot, barrier, …)
+    → accumulator (Monte-Carlo): spill [premium, PV], [std_error], 13 Greeks + footer
+=CELNET.LOOKBACK(pair, tenor, kind, callPut, notional, [fixings])
+    → lookback (floating/fixed): spill [premium, PV], (std_error if discrete/MC), 13 Greeks + footer
+=CELNET.AMERICAN(pair, tenor, strike, callPut, notional, [lsmPaths])
+    → American / Bermudan early-exercise: premium + (std_error if LSM/MC) + 13 Greeks + footer
+=CELNET.VARSWAP(pair, tenor, …)
+    → variance swap: spill [fair_variance, K_var] / [fair_vol, √K_var] + convention footer
+=CELNET.VOLSWAP(pair, tenor, …)
+    → volatility swap: spill [fair_vol, K_vol] (convexity-adjusted) + convention footer
+=CELNET.BASKET(legs…, weights, correlation, callPut, kind)
+    → correlated multi-asset basket / best-of / worst-of: premium + MC std_error + footer
+```
+
+These map one-to-one onto the `Instrument` `oneof` arms and the parity rows in
+`docs/CLIENT-PARITY-MATRIX.md`. (LSV is exposed only as a *priced product* — e.g. the window
+barrier — never as raw calibration, exactly as the parity matrix records for the GUI/Excel.)
+
+### 3.4 Read — risk, book & observability (dynamic-array spill)
+
+```
+=CELNET.RISK(dimension, numeraire, [rates], [scope])
+    → server-side hierarchical risk aggregate over the org cube: one row per rolled-up
+      node + a reporting-numeraire footer (RiskService.AggregateRisk / DrillRisk by scope)
+=CELNET.POSITIONS([scope])
+    → the entitled open-position leaf grid (org placement + attribution) + a count/empty
+      footer (RiskService.ListPositions)
+=CELNET.LIMITS(scope, numeraire, [rates])
+    → limit-tree utilization + RAG grid + a worst-RAG / hard-breach footer
+      (RiskService.LimitStatus)
+=CELNET.STATUS()
+    → live server observability spill: connection state, drain-side price latency
+      (p50/p99/p99.9), ring conflation drops, and surface/correlation provenance
+      (from the live heartbeat — the same telemetry the ops view reads)
+```
+
+`CELNET.RISK` / `CELNET.POSITIONS` / `CELNET.LIMITS` are the **server-side aggregation**
+functions: a workbook never loops positions and sums — it asks `RiskService` for the rolled-up
+node tree, scope- and principal-pruned, in the reporting numeraire (the same contract the GUI
+Book/Risk views and the CLI `risk` subcommands consume). `scope` is an org `DIM:VALUE`; no
+scope ⇒ the grant-all (show-all-now) default.
+
+### 3.5 Write — contribution / trade
+
+```
+=CELNET.MARK(pair, tenor, pillar, vol, [model], [comment])
+    → stages a manual vol/mark contribution; returns a status spill
+      [status, surfaceVersionAfter, detail]  — NEVER auto-fires on recalc (see below)
+      model ∈ {VV (default), SABR, SVI, SSVI, eSSVI}; selects the calibration family
+      (ANALYTICS-SPEC §3.4a), tagged on the deposited surface version and echoed back
+      (provenance from Smile.arbitrage.note `model=<family>`).
+      (For the one-shot calibrate-and-pin path, use CELNET.MARKSURFACE in §3.1.)
 
 (task-pane only) Trade        → Execute against a live RFS TradableToken (W6)
 (task-pane only) Contribute   → confirm/stage a CELNET.MARK batch (W8)
@@ -221,28 +311,28 @@ function *stages* a contribution keyed by a deterministic idempotency key
 (`hash(pair,tenor,pillar,vol,conv,sessionEpoch)` — reusing the `celnet-client`
 `idempotency` discipline) and renders a `PENDING` status; the actual
 `SurfaceService.MarkSurface` write is committed only when the trader confirms in the
-task-pane "Contribute" panel (or, for power users, when an explicit
-`=CELNET.COMMIT(stagingId)` is invoked). A recalc with unchanged args re-stages under the
+task-pane "Contribute" panel. A recalc with unchanged args re-stages under the
 same key → the server dedupes → **no double-mark** (guardrail: determinism + idempotency).
 Trading (`Execute`) is *only* ever a task-pane button, never a function — a cell never trades.
 
-### 3.4 Convention-on-every-cell transparency
+### 3.6 Convention-on-every-cell transparency
 
 Every read function attaches the resolved `Conventions` (delta type, ATM convention,
 premium-adjusted flag, day-count, spot/forward basis) and the `surface_version` that
 produced the number. Surfaces:
 
-- **Cell comment / spill footer.** `CELNET.GREEKS`/`CELNET.SURFACE` spills include a footer
-  row `[conv: 25Δ premium-adj, ATM=DNS, ACT/365F | surface v#1284 | t=12:04:07.114Z]`.
-- **Companion functions.** `=CELNET.CONV(cellRef)` and `=CELNET.PROVENANCE(cellRef)` return
-  the convention record and the surface_version/timestamp/source for any Celnet cell, so a
-  trader can audit *why* a number is what it is without leaving the grid. `=CELNET.PROVENANCE`
-  also surfaces the **smile model** the pinned surface was marked with (read from the
-  `Smile.arbitrage.note` `model=<family>` provenance, ANALYTICS-SPEC §3.4a). `=CELNET.WHO(cellRef)`
-  returns the `AttributionRecord` for a streamed/RFQ line (`quotedBy` / `heldBy` / `won` /
-  `lp_count`, W11) — the same who's-trading chain the GUI shows.
+- **Cell comment / spill footer.** Every result-bearing function (`CELNET.GREEKS`,
+  `CELNET.SURFACE`, `CELNET.MARKSURFACE`, the whole exotic catalogue, …) carries a footer row
+  with the resolved convention, the `surface_version`, the **smile model** the pinned surface
+  was marked with (read from the `Smile.arbitrage.note` `model=<family>` provenance,
+  ANALYTICS-SPEC §3.4a), and the timestamp — e.g.
+  `[conv: 25Δ premium-adj, ATM=DNS, ACT/365F | surface v#1284 | model=SSVI | t=12:04:07.114Z]`.
+  The streaming RFS/series footers additionally carry the `AttributionRecord` seats
+  (`quotedBy`/`heldBy`/`won`/`lp_count`, W11) — the same who's-trading chain the GUI shows.
 - **Task-pane provenance panel.** Selecting a Celnet cell shows the full
-  convention + surface_version + upstream source lineage (W9).
+  convention + surface_version + smile model + upstream source lineage (W9).
+- **`CELNET.STATUS`.** The live observability spill (§3.4) surfaces connection/latency/drop
+  and surface/correlation provenance for the workbook's session as a whole.
 
 This is a direct out-intuit of incumbents, which print a number with **no** convention
 context — the desk's #1 source of FX-options mismarks is silent delta/ATM/premium-adjust
@@ -341,6 +431,17 @@ contribution and click-to-trade surface, audited and four-eyed, not a read-only 
 ---
 
 ## 7. Phased build plan & validation gates
+
+> **Status (records the original plan; reconciled to what shipped).** Path A
+> (`excel/`, Office.js) is **shipped**: phases X0–X3 and X5 are realized in the top-level
+> `excel/` project — the **27** `CELNET.*` functions of §3, the task-pane ticket/contribution
+> flow, the headless e2e (`cd excel && npm run verify:headless`, asserted against a live
+> `celnet-server`), and the vitest suites under `excel/test/`. Two refinements vs the original
+> plan below: the scaffold lives at top-level **`excel/`** (a standalone Vite project outside
+> the cargo workspace), and the TS contract is a **hand-maintained projection** of the GUI's
+> `gui/src/data` (`excel/src/contract/`) rather than `ts-proto`-generated shapes — the
+> headless e2e against the live WS codec is what guarantees it cannot drift (§2). Phase X4
+> (native `celnet-xll`) remains **designed-only** — no `celnet-xll` crate has been built.
 
 Each phase distinguishes the **in-repo build/test gate** (what is buildable and testable
 headless in CI today) from the **deployment gate** (what requires an installed Excel host,
