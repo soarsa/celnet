@@ -1,40 +1,30 @@
 /**
  * TicketWorkspace — THE differentiator (GUI-DESIGN §4.1). One card that is the
- * analytics surface AND the executable: build a structure (vanilla or multi-leg
- * strategy), see a live two-way + the full 14-Greek set + the conventions on the
- * FACE, and hit it without changing screens. Solve (zero-cost) is inline; the
- * last-look window is a visible depleting ring; "Stream this" promotes the exact
- * Instrument into the blotter and "Add to risk" drops it in the scenario grid —
- * the same Instrument object, no re-keying.
+ * analytics surface AND the executable: build a structure (vanilla, a multi-leg
+ * strategy, or any exotic family), see a live two-way + the full 14-Greek set +
+ * the conventions on the FACE, and hit it without changing screens. Solve
+ * (zero-cost) is inline; the last-look window is a visible depleting ring; "Stream
+ * this" promotes the exact Instrument into the blotter and "Add to risk" drops it
+ * in the scenario grid — the same Instrument object, no re-keying.
+ *
+ * GW2: the structurable catalogue lives in the {@link PRODUCT_REGISTRY}, not in
+ * this shell. The shell owns the market/contract context (pair, tenor, expiry,
+ * notional), the per-family input STATE map, and the quote/execute/promote
+ * lifecycle; each product family contributes its own `toInstrument` + `InputBlock`
+ * + `allowedModels` as a registry entry. Adding a product is a new spec, never a
+ * shell edit — which is what lets the catalogue (and the multi-asset future) scale
+ * without the former 3606-line monolith.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useApp } from "../app/AppContext";
 import type {
-  AccumulatorMonitoring,
-  AsianMethod,
-  AveragingStyle,
-  BarrierKind,
-  BarrierSide,
-  BasketKind,
   BrokenDate,
-  CcyPair,
-  DigitalStyle,
-  ExerciseStyle,
   Instrument,
   Leg,
-  LookbackMonitoring,
-  LookbackStyle,
-  MarketContext,
-  OptionType,
   PricingModel,
-  Product,
-  QuantoPayoff,
   Quote,
-  StrategyKind,
-  TarfRedemption,
   Tenor,
-  TouchKind,
 } from "../data/contract";
 import { Panel } from "../components/Panel";
 import { Button } from "../components/Button";
@@ -43,156 +33,24 @@ import { TwoWayQuote } from "../components/TwoWayQuote";
 import { GreeksStrip } from "../components/GreeksStrip";
 import { ConventionRow } from "../components/ConventionChip";
 import {
-  PAIRS,
-  accumulatorInstrument,
-  americanInstrument,
-  asianInstrument,
-  basketInstrument,
-  cliquetInstrument,
-  digitalInstrument,
-  doubleBarrierInstrument,
-  equalFixingSchedule,
-  forwardStartInstrument,
-  isDoubleTouch,
-  isPlainCliquet,
-  lookbackInstrument,
-  quantoInstrument,
-  singleBarrierInstrument,
-  strategyInstrument,
-  bookingModelsFor,
-  tarfInstrument,
-  touchInstrument,
-  vanillaInstrument,
-  varianceSwapInstrument,
-  volatilitySwapInstrument,
-  windowBarrierInstrument,
-  tenorYearsToTenor,
-  type AccumulatorTerms,
-  type AmericanTerms,
-  type AsianTerms,
-  type BasketTerms,
-  type CliquetTerms,
-  type DigitalTerms,
-  type DoubleBarrierTerms,
-  type ForwardStartTerms,
-  type LookbackTerms,
-  type QuantoTerms,
-  type SingleBarrierTerms,
-  type TarfTerms,
-  type TouchTerms,
-  type WindowBarrierTerms,
-} from "../data/seed";
-import { forward as forwardRate, strikeFromDelta } from "../data/pricing";
+  PRODUCT_REGISTRY,
+  specById,
+  StructureGallery,
+  PayoffChart,
+  NetStructureStrip,
+  type NetStructureLeg,
+  type ProductBuildCtx,
+} from "../products";
+import { forward as forwardRate } from "../data/pricing";
 import { impliedVolForInstrument, sampleSurface } from "../data/surface";
 import {
   fmtPremiumPct,
-  fmtRate,
   fmtVol,
   sideVerb,
 } from "../lib/format";
 import { nowNanos } from "../hooks/useClock";
-import { pairLabel, samePair } from "../lib/universe";
+import { samePair } from "../lib/universe";
 import styles from "./TicketWorkspace.module.css";
-
-/**
- * The product the ticket builds: a vanilla, one of the multi-leg strategies, or
- * one of the volatility products newly on the contract (variance / volatility
- * swap, arithmetic-average-rate Asian). Purpose-named, vendor/method-neutral.
- */
-type Structure =
-  | "VANILLA"
-  | StrategyKind
-  | "SINGLE_BARRIER"
-  | "DOUBLE_BARRIER"
-  | "DIGITAL"
-  | "TOUCH"
-  | "VARIANCE_SWAP"
-  | "VOLATILITY_SWAP"
-  | "ASIAN"
-  | "FORWARD_START"
-  | "CLIQUET"
-  | "QUANTO"
-  | "TARF"
-  | "ACCUMULATOR"
-  | "LOOKBACK"
-  | "WINDOW_BARRIER"
-  | "AMERICAN"
-  | "BASKET";
-
-/**
- * True for the products that render their own input block instead of the vanilla/
- * strategy leg ladder (the barrier/digital/touch structures and the
- * volatility/path-dependent products).
- */
-function isLegless(s: Structure): boolean {
-  return (
-    s === "SINGLE_BARRIER" ||
-    s === "DOUBLE_BARRIER" ||
-    s === "DIGITAL" ||
-    s === "TOUCH" ||
-    s === "VARIANCE_SWAP" ||
-    s === "VOLATILITY_SWAP" ||
-    s === "ASIAN" ||
-    s === "FORWARD_START" ||
-    s === "CLIQUET" ||
-    s === "QUANTO" ||
-    s === "TARF" ||
-    s === "ACCUMULATOR" ||
-    s === "LOOKBACK" ||
-    s === "WINDOW_BARRIER" ||
-    s === "AMERICAN" ||
-    s === "BASKET"
-  );
-}
-
-/**
- * The GUI product-oneof `kind` a structure builds — used to resolve which booking
- * models the structure may be priced under (`bookingModelsFor`). The strategies
- * map to `strategy`; everything else maps to its own oneof arm.
- */
-function productKindFor(s: Structure): Product["kind"] {
-  switch (s) {
-    case "VANILLA":
-      return "vanilla";
-    case "RISK_REVERSAL":
-    case "STRANGLE":
-    case "STRADDLE":
-    case "SEAGULL":
-      return "strategy";
-    case "SINGLE_BARRIER":
-      return "singleBarrier";
-    case "DOUBLE_BARRIER":
-      return "doubleBarrier";
-    case "DIGITAL":
-      return "digital";
-    case "TOUCH":
-      return "touch";
-    case "VARIANCE_SWAP":
-      return "varianceSwap";
-    case "VOLATILITY_SWAP":
-      return "volatilitySwap";
-    case "ASIAN":
-      return "asianOption";
-    case "FORWARD_START":
-      return "forwardStart";
-    case "CLIQUET":
-      return "cliquet";
-    case "QUANTO":
-      return "quanto";
-    case "TARF":
-      return "tarf";
-    case "ACCUMULATOR":
-      return "accumulator";
-    case "LOOKBACK":
-      return "lookback";
-    case "WINDOW_BARRIER":
-      return "windowBarrier";
-    case "AMERICAN":
-      return "american";
-    case "BASKET":
-      return "basket";
-  }
-}
 
 /** A trader-facing label for a booking model (purpose-named; provenance in docs only). */
 function pricingModelLabel(m: PricingModel): string {
@@ -200,8 +58,8 @@ function pricingModelLabel(m: PricingModel): string {
 }
 
 /** True for the variance/volatility swaps (priced as a fair strike, not a premium). */
-function isSwap(s: Structure): boolean {
-  return s === "VARIANCE_SWAP" || s === "VOLATILITY_SWAP";
+function isSwap(structure: string): boolean {
+  return structure === "VARIANCE_SWAP" || structure === "VOLATILITY_SWAP";
 }
 
 /** Which expiry input the trader is using: a standard tenor or an arbitrary date. */
@@ -236,749 +94,6 @@ const TENOR_CHOICES: readonly TenorChoice[] = [
   { label: "IMM1", tenor: { unit: "IMM", count: 1 }, years: 0.25 },
 ];
 
-const STRUCTURES: { id: Structure; label: string }[] = [
-  { id: "VANILLA", label: "Vanilla" },
-  { id: "RISK_REVERSAL", label: "Risk Reversal" },
-  { id: "STRANGLE", label: "Strangle" },
-  { id: "STRADDLE", label: "Straddle" },
-  { id: "SEAGULL", label: "Seagull" },
-  { id: "SINGLE_BARRIER", label: "Single Barrier" },
-  { id: "DOUBLE_BARRIER", label: "Double Barrier" },
-  { id: "DIGITAL", label: "Digital" },
-  { id: "TOUCH", label: "Touch" },
-  { id: "VARIANCE_SWAP", label: "Variance Swap" },
-  { id: "VOLATILITY_SWAP", label: "Volatility Swap" },
-  { id: "ASIAN", label: "Asian" },
-  { id: "FORWARD_START", label: "Forward Start" },
-  { id: "CLIQUET", label: "Cliquet" },
-  { id: "QUANTO", label: "Quanto" },
-  { id: "TARF", label: "TARF" },
-  { id: "ACCUMULATOR", label: "Accumulator" },
-  { id: "LOOKBACK", label: "Lookback" },
-  { id: "WINDOW_BARRIER", label: "Window Barrier" },
-  { id: "AMERICAN", label: "American / Bermudan" },
-  { id: "BASKET", label: "Basket / Best-of / Worst-of" },
-];
-
-/** The Asian-specific ticket inputs (option type / strike / schedule / method). */
-interface AsianInputs {
-  optionType: OptionType;
-  /** Strike as an absolute level; defaults to ATM-forward when first shown. */
-  strike: number;
-  averaging: AveragingStyle;
-  observations: number;
-  method: AsianMethod;
-}
-
-/** The default Asian inputs at first render (a fresh, discrete, ATM-ish call). */
-const DEFAULT_ASIAN: AsianInputs = {
-  optionType: "CALL",
-  strike: 0,
-  averaging: "DISCRETE",
-  observations: 12,
-  method: "CURRAN",
-};
-
-/** Build the Asian `AsianTerms` from the ticket inputs (fresh — no seasoning). */
-function asianTerms(a: AsianInputs): AsianTerms {
-  return {
-    optionType: a.optionType,
-    strike: a.strike,
-    averaging: a.averaging,
-    observations: a.observations,
-    method: a.method,
-    elapsedAvg: 0,
-    elapsedWeight: 0,
-  };
-}
-
-/**
- * The single-barrier ticket inputs. The barrier is entered as a level (absolute
- * quote); the strike is entered as a level too (`0` ⇒ default to the ATM-forward
- * level). The trader picks the underlying call/put, the knock kind (in/out), the
- * barrier side (up/down), and an optional rebate.
- */
-interface SingleBarrierInputs {
-  optionType: OptionType;
-  /** Strike as an absolute level; `0` ⇒ default to the ATM-forward level. */
-  strike: number;
-  kind: BarrierKind;
-  side: BarrierSide;
-  /** The barrier level (absolute quote). */
-  barrier: number;
-  rebate: number;
-}
-
-const DEFAULT_SINGLE_BARRIER: SingleBarrierInputs = {
-  optionType: "CALL",
-  strike: 0,
-  kind: "KNOCK_OUT",
-  side: "UP",
-  barrier: 0,
-  rebate: 0,
-};
-
-/**
- * Build `SingleBarrierTerms` from the inputs. The strike defaults to the
- * ATM-forward level; the barrier defaults to a sensible offset from spot on the
- * chosen side (so the ticket prices a live barrier before the trader types one).
- * Continuous monitoring is the closed-form regime (the only one priced
- * client-side; the server prices the same continuous closed form).
- */
-function singleBarrierTerms(
-  s: SingleBarrierInputs,
-  atmForward: number,
-  spot: number,
-): SingleBarrierTerms {
-  const strike = s.strike > 0 ? s.strike : atmForward;
-  const defaultBarrier = s.side === "UP" ? spot * 1.05 : spot * 0.95;
-  const barrier = s.barrier > 0 ? s.barrier : defaultBarrier;
-  return {
-    optionType: s.optionType,
-    strike: { kind: "strike", strike },
-    kind: s.kind,
-    side: s.side,
-    barrier,
-    rebate: Math.max(0, s.rebate),
-    monitoring: "CONTINUOUS",
-  };
-}
-
-/**
- * The double-barrier ticket inputs. Both barriers are entered as levels
- * (`0` ⇒ default to a symmetric corridor around spot); the strike is entered as a
- * level (`0` ⇒ ATM-forward). The corridor is held well-ordered (`0 < L < U`) at
- * build.
- */
-interface DoubleBarrierInputs {
-  optionType: OptionType;
-  /** Strike as an absolute level; `0` ⇒ default to the ATM-forward level. */
-  strike: number;
-  kind: BarrierKind;
-  lowerBarrier: number;
-  upperBarrier: number;
-  rebate: number;
-}
-
-const DEFAULT_DOUBLE_BARRIER: DoubleBarrierInputs = {
-  optionType: "CALL",
-  strike: 0,
-  kind: "KNOCK_OUT",
-  lowerBarrier: 0,
-  upperBarrier: 0,
-  rebate: 0,
-};
-
-/**
- * Build `DoubleBarrierTerms` from the inputs (strike ATMF-defaulted; a symmetric
- * ±10% corridor when a level is left blank; the corridor forced well-ordered).
- */
-function doubleBarrierTerms(
-  d: DoubleBarrierInputs,
-  atmForward: number,
-  spot: number,
-): DoubleBarrierTerms {
-  const strike = d.strike > 0 ? d.strike : atmForward;
-  let lower = d.lowerBarrier > 0 ? d.lowerBarrier : spot * 0.9;
-  let upper = d.upperBarrier > 0 ? d.upperBarrier : spot * 1.1;
-  // Keep the corridor strictly well-ordered (0 < L < U) so the pricer is in domain.
-  if (lower >= upper) {
-    lower = spot * 0.9;
-    upper = spot * 1.1;
-  }
-  return {
-    optionType: d.optionType,
-    strike: { kind: "strike", strike },
-    kind: d.kind,
-    lowerBarrier: lower,
-    upperBarrier: upper,
-    rebate: Math.max(0, d.rebate),
-    monitoring: "CONTINUOUS",
-  };
-}
-
-/**
- * The digital ticket inputs (call/put / strike / cash-or-asset settlement /
- * payout). `strike` `0` ⇒ ATM-forward.
- */
-interface DigitalInputs {
-  optionType: OptionType;
-  strike: number;
-  style: DigitalStyle;
-  payout: number;
-}
-
-const DEFAULT_DIGITAL: DigitalInputs = {
-  optionType: "CALL",
-  strike: 0,
-  style: "CASH_OR_NOTHING",
-  payout: 1,
-};
-
-/** Build `DigitalTerms` from the inputs (strike ATMF-defaulted; payout ≥ 0). */
-function digitalTerms(d: DigitalInputs, atmForward: number): DigitalTerms {
-  return {
-    optionType: d.optionType,
-    strike: d.strike > 0 ? d.strike : atmForward,
-    style: d.style,
-    payout: Math.max(0, d.payout),
-  };
-}
-
-/**
- * The touch ticket inputs (kind / barrier level(s) / rebate). The single-barrier
- * kinds (one-/no-touch) use only `lowerBarrier`; the double kinds use both. Levels
- * `0` ⇒ a sensible default around spot at build.
- */
-interface TouchInputs {
-  kind: TouchKind;
-  /** The (lower / sole) barrier level (absolute quote). */
-  lowerBarrier: number;
-  /** The upper barrier level for the double structures (absolute quote). */
-  upperBarrier: number;
-  rebate: number;
-}
-
-const DEFAULT_TOUCH: TouchInputs = {
-  kind: "ONE_TOUCH",
-  lowerBarrier: 0,
-  upperBarrier: 0,
-  rebate: 1,
-};
-
-/**
- * Build `TouchTerms` from the inputs. A single-barrier touch defaults its sole
- * barrier 5% above spot; a double structure defaults a symmetric ±5% corridor,
- * forced well-ordered. Continuous monitoring is the closed-form regime.
- */
-function touchTerms(t: TouchInputs, spot: number): TouchTerms {
-  const double = isDoubleTouch(t.kind);
-  if (double) {
-    let lower = t.lowerBarrier > 0 ? t.lowerBarrier : spot * 0.95;
-    let upper = t.upperBarrier > 0 ? t.upperBarrier : spot * 1.05;
-    if (lower >= upper) {
-      lower = spot * 0.95;
-      upper = spot * 1.05;
-    }
-    return {
-      kind: t.kind,
-      lowerBarrier: lower,
-      upperBarrier: upper,
-      rebate: Math.max(0, t.rebate),
-      monitoring: "CONTINUOUS",
-    };
-  }
-  const lower = t.lowerBarrier > 0 ? t.lowerBarrier : spot * 1.05;
-  return {
-    kind: t.kind,
-    lowerBarrier: lower,
-    upperBarrier: 0,
-    rebate: Math.max(0, t.rebate),
-    monitoring: "CONTINUOUS",
-  };
-}
-
-/** The forward-start ticket inputs (option type / reset-moneyness / reset date). */
-interface ForwardStartInputs {
-  optionType: OptionType;
-  /** Strike-reset multiple `m` (`m = 1` is the ATM-forward reset). */
-  moneyness: number;
-  /** Reset (strike-fixing) date `t₁` in years (clamped to `[0, expiry]` at build). */
-  reset: number;
-}
-
-const DEFAULT_FORWARD_START: ForwardStartInputs = {
-  optionType: "CALL",
-  moneyness: 1,
-  reset: 0.25,
-};
-
-/** Build `ForwardStartTerms` from the inputs, clamping reset into `[0, expiry]`. */
-function forwardStartTerms(f: ForwardStartInputs, expiryYears: number): ForwardStartTerms {
-  return {
-    optionType: f.optionType,
-    moneyness: f.moneyness,
-    reset: Math.min(Math.max(f.reset, 0), expiryYears),
-  };
-}
-
-/**
- * The cliquet ticket inputs. The local cap/floor are presence-tracked via
- * `useCap`/`useFloor` toggles; any clamp on switches the pricer to Monte-Carlo
- * (the build surfaces the standard error). `mcPairs`/`mcSeed` tune the clamped MC
- * and are ignored for a plain (unclamped) ratchet.
- */
-interface CliquetInputs {
-  optionType: OptionType;
-  moneyness: number;
-  periods: number;
-  useLocalCap: boolean;
-  localCap: number;
-  useLocalFloor: boolean;
-  localFloor: number;
-  mcPairs: number;
-  mcSeed: bigint;
-}
-
-const DEFAULT_CLIQUET: CliquetInputs = {
-  optionType: "CALL",
-  moneyness: 1,
-  periods: 4,
-  useLocalCap: false,
-  localCap: 0.05,
-  useLocalFloor: false,
-  localFloor: 0,
-  mcPairs: 0,
-  mcSeed: 0xc11_c0e7n,
-};
-
-/** Build `CliquetTerms` from the inputs (clamps omitted unless their toggle is on). */
-function cliquetTerms(c: CliquetInputs): CliquetTerms {
-  const terms: CliquetTerms = {
-    optionType: c.optionType,
-    moneyness: c.moneyness,
-    periods: Math.max(1, Math.trunc(c.periods)),
-    mcPairs: Math.max(0, Math.trunc(c.mcPairs)),
-    mcSeed: c.mcSeed,
-  };
-  if (c.useLocalCap) terms.localCap = c.localCap;
-  if (c.useLocalFloor) terms.localFloor = c.localFloor;
-  return terms;
-}
-
-/** The quanto ticket inputs (payoff kind / option type / strike / σ_Z / ρ). */
-interface QuantoInputs {
-  payoff: QuantoPayoff;
-  optionType: OptionType;
-  /** Strike as an absolute level; defaults to ATM-forward when first shown. */
-  strike: number;
-  conversionVol: number;
-  correlation: number;
-}
-
-const DEFAULT_QUANTO: QuantoInputs = {
-  payoff: "VANILLA",
-  optionType: "CALL",
-  strike: 0,
-  conversionVol: 0.1,
-  correlation: 0.3,
-};
-
-/** Build `QuantoTerms` from the inputs (strike falls back to ATM-forward). */
-function quantoTerms(q: QuantoInputs, atmForward: number): QuantoTerms {
-  return {
-    payoff: q.payoff,
-    optionType: q.optionType,
-    strike: q.strike > 0 ? q.strike : atmForward,
-    conversionVol: Math.max(0, q.conversionVol),
-    correlation: Math.min(1, Math.max(-1, q.correlation)),
-  };
-}
-
-/**
- * The TARF ticket inputs (favourable side / strike / target / leverage / gap-risk
- * redemption / fixing count / MC). A TARF is always Monte-Carlo, so the build
- * always surfaces a standard error. `strike` 0 ⇒ default to the ATM-forward level.
- */
-interface TarfInputs {
-  optionType: OptionType;
-  strike: number;
-  target: number;
-  leverage: number;
-  redemption: TarfRedemption;
-  fixings: number;
-  mcPairs: number;
-  mcSeed: bigint;
-}
-
-const DEFAULT_TARF: TarfInputs = {
-  optionType: "PUT",
-  strike: 0,
-  target: 0.1,
-  leverage: 2,
-  redemption: "FULL_GAIN",
-  fixings: 12,
-  mcPairs: 0,
-  mcSeed: 0x7a_2fn,
-};
-
-/** Build `TarfTerms` from the inputs (equally-spaced schedule; strike ATMF-defaulted). */
-function tarfTerms(t: TarfInputs, atmForward: number, expiryYears: number): TarfTerms {
-  const fixings = Math.max(1, Math.trunc(t.fixings));
-  return {
-    optionType: t.optionType,
-    strike: t.strike > 0 ? t.strike : atmForward,
-    target: Math.max(0, t.target),
-    leverage: Math.max(0, t.leverage),
-    redemption: t.redemption,
-    schedule: equalFixingSchedule(fixings, expiryYears, 1),
-    mcPairs: Math.max(0, Math.trunc(t.mcPairs)),
-    mcSeed: t.mcSeed,
-  };
-}
-
-/**
- * The accumulator ticket inputs (pivot / knock-out barrier / leverage / monitoring
- * / fixing count / MC). Always Monte-Carlo. `pivot` 0 ⇒ default to the ATM-forward
- * level; the barrier is held strictly above the pivot at build.
- */
-interface AccumulatorInputs {
-  pivot: number;
-  barrierOffset: number;
-  leverage: number;
-  monitoring: AccumulatorMonitoring;
-  fixings: number;
-  mcPairs: number;
-  mcSeed: bigint;
-}
-
-const DEFAULT_ACCUMULATOR: AccumulatorInputs = {
-  pivot: 0,
-  barrierOffset: 0.05,
-  leverage: 2,
-  monitoring: "DISCRETE",
-  fixings: 12,
-  mcPairs: 0,
-  mcSeed: 0xacc_1en,
-};
-
-/**
- * Build `AccumulatorTerms` (pivot ATMF-defaulted; barrier = pivot·(1+offset), kept
- * strictly above the pivot; equally-spaced schedule).
- */
-function accumulatorTerms(
-  a: AccumulatorInputs,
-  atmForward: number,
-  expiryYears: number,
-): AccumulatorTerms {
-  const pivot = a.pivot > 0 ? a.pivot : atmForward;
-  const offset = Math.max(1e-4, a.barrierOffset);
-  const fixings = Math.max(1, Math.trunc(a.fixings));
-  return {
-    pivot,
-    barrier: pivot * (1 + offset),
-    leverage: Math.max(0, a.leverage),
-    monitoring: a.monitoring,
-    schedule: equalFixingSchedule(fixings, expiryYears, 1),
-    mcPairs: Math.max(0, Math.trunc(a.mcPairs)),
-    mcSeed: a.mcSeed,
-  };
-}
-
-/**
- * The lookback ticket inputs (style floating|fixed / option / monitoring
- * continuous|discrete / strike / observations / MC). CONTINUOUS prices by exact
- * closed form (no std-error); DISCRETE prices by Monte-Carlo (surfaces a stderr).
- * `strike` 0 ⇒ default to the ATM-forward level (FIXED family only).
- */
-interface LookbackInputs {
-  style: LookbackStyle;
-  optionType: OptionType;
-  monitoring: LookbackMonitoring;
-  strike: number;
-  observations: number;
-  mcPairs: number;
-  mcSeed: bigint;
-}
-
-const DEFAULT_LOOKBACK: LookbackInputs = {
-  style: "FLOATING",
-  optionType: "CALL",
-  monitoring: "CONTINUOUS",
-  strike: 0,
-  observations: 52,
-  mcPairs: 0,
-  mcSeed: 0x100_b_acen,
-};
-
-/** Build `LookbackTerms` from the inputs (strike ATMF-defaulted for the FIXED family). */
-function lookbackTerms(l: LookbackInputs, atmForward: number): LookbackTerms {
-  return {
-    style: l.style,
-    optionType: l.optionType,
-    monitoring: l.monitoring,
-    strike: l.strike > 0 ? l.strike : atmForward,
-    observations: Math.max(0, Math.trunc(l.observations)),
-    mcPairs: Math.max(0, Math.trunc(l.mcPairs)),
-    mcSeed: l.mcSeed,
-  };
-}
-
-/**
- * The window-barrier ticket inputs (option / strike / barrier / side / active
- * window / MC). The window barrier has no closed form, so it is priced ONLY by the
- * server's local-stochastic-volatility engine (the booking model is locked to
- * LOCAL_STOCH_VOL for it). `strike` 0 ⇒ default to the ATM-forward level; the
- * barrier defaults off spot on the chosen side; the active window defaults to the
- * middle half of the option's life. `mcPairs` 0 ⇒ the exact ADI PDE (no
- * std-error); `mcPairs > 0` ⇒ Monte-Carlo (surfaces a stderr).
- */
-interface WindowBarrierInputs {
-  optionType: OptionType;
-  /** Strike as an absolute level; `0` ⇒ default to the ATM-forward level. */
-  strike: number;
-  side: BarrierSide;
-  /** The barrier level (absolute quote); `0` ⇒ a sensible default off spot. */
-  barrier: number;
-  /** Active-window open as a FRACTION of the option's life (`0 ≤ start < end ≤ 1`). */
-  windowStartFrac: number;
-  /** Active-window close as a fraction of the option's life. */
-  windowEndFrac: number;
-  mcPairs: number;
-  mcSteps: number;
-  mcSeed: bigint;
-}
-
-const DEFAULT_WINDOW_BARRIER: WindowBarrierInputs = {
-  optionType: "CALL",
-  strike: 0,
-  side: "UP",
-  barrier: 0,
-  windowStartFrac: 0.25,
-  windowEndFrac: 0.75,
-  mcPairs: 0,
-  mcSteps: 64,
-  mcSeed: 0x42n,
-};
-
-/**
- * Build `WindowBarrierTerms` from the inputs. The strike defaults to the
- * ATM-forward level; the barrier defaults off spot on the chosen side; the active
- * window fractions are clamped well-ordered (`0 ≤ start < end ≤ 1`) and scaled by
- * the expiry to absolute year fractions.
- */
-function windowBarrierTerms(
-  w: WindowBarrierInputs,
-  atmForward: number,
-  spot: number,
-  expiryYears: number,
-): WindowBarrierTerms {
-  const strike = w.strike > 0 ? w.strike : atmForward;
-  const defaultBarrier = w.side === "UP" ? spot * 1.05 : spot * 0.95;
-  const barrier = w.barrier > 0 ? w.barrier : defaultBarrier;
-  let startFrac = Math.min(Math.max(w.windowStartFrac, 0), 1);
-  let endFrac = Math.min(Math.max(w.windowEndFrac, 0), 1);
-  // Keep the window strictly well-ordered (0 ≤ start < end ≤ 1) so the engine is
-  // in domain; fall back to the middle half if the trader inverted them.
-  if (startFrac >= endFrac) {
-    startFrac = 0.25;
-    endFrac = 0.75;
-  }
-  return {
-    optionType: w.optionType,
-    strike: { kind: "strike", strike },
-    barrier,
-    side: w.side,
-    windowStart: startFrac * expiryYears,
-    windowEnd: endFrac * expiryYears,
-    mcPairs: Math.max(0, Math.trunc(w.mcPairs)),
-    mcSteps: Math.max(0, Math.trunc(w.mcSteps)),
-    mcSeed: w.mcSeed,
-  };
-}
-
-/**
- * The American / Bermudan ticket inputs. The trader picks the call/put, a strike
- * (`0` ⇒ default to the ATM-forward level at build), the exercise style
- * (AMERICAN = continuous up to expiry, BERMUDAN = a discrete set of dates), and —
- * for BERMUDAN — the number of equally-spaced exercise dates over `(0, T]`
- * (expiry always exercisable). `lsmPaths` `0` ⇒ the server's exact free-boundary
- * FD engine; `> 0` ⇒ the Longstaff-Schwartz Monte-Carlo engine (which carries a
- * standard error); `lsmSeed` makes the LSM reproducible. The offline build prices
- * a genuine binomial tree (FD-class, no MC error) for BOTH styles.
- */
-interface AmericanInputs {
-  optionType: OptionType;
-  /** Strike as an absolute level; `0` ⇒ default to the ATM-forward level. */
-  strike: number;
-  exerciseStyle: ExerciseStyle;
-  /** Number of equally-spaced BERMUDAN exercise dates over `(0, T]`; `≥ 1`. */
-  bermudanDates: number;
-  /** Longstaff-Schwartz path count: `0` ⇒ the exact FD engine; `> 0` ⇒ LSM. */
-  lsmPaths: number;
-  /** Sobol scramble seed for the LSM engine (reproducible; ignored for FD). */
-  lsmSeed: bigint;
-}
-
-const DEFAULT_AMERICAN: AmericanInputs = {
-  optionType: "PUT",
-  strike: 0,
-  exerciseStyle: "AMERICAN",
-  bermudanDates: 4,
-  lsmPaths: 0,
-  lsmSeed: 0xa3_e1n,
-};
-
-/**
- * Build `AmericanTerms` from the inputs (strike ATMF-defaulted). For BERMUDAN the
- * `bermudanDates` count becomes an equally-spaced schedule `t_k = k·T/n` over
- * `(0, T]` (expiry inclusive — `k = n` lands on `T`); for AMERICAN the date set is
- * empty (continuous exercise). `lsmExerciseDates` is left `0` (the server default
- * resolution) — the AMERICAN exercise opportunities are an engine concern, not a
- * trader input here.
- */
-function americanTerms(a: AmericanInputs, atmForward: number, expiryYears: number): AmericanTerms {
-  const strike = a.strike > 0 ? a.strike : atmForward;
-  let bermudanDates: number[] = [];
-  if (a.exerciseStyle === "BERMUDAN") {
-    const n = Math.max(1, Math.trunc(a.bermudanDates));
-    bermudanDates = [];
-    for (let k = 1; k <= n; k += 1) bermudanDates.push((expiryYears * k) / n);
-  }
-  return {
-    optionType: a.optionType,
-    strike,
-    exerciseStyle: a.exerciseStyle,
-    bermudanDates,
-    lsmPaths: Math.max(0, Math.trunc(a.lsmPaths)),
-    lsmExerciseDates: 0,
-    lsmSeed: a.lsmSeed,
-  };
-}
-
-/**
- * The correlated multi-asset basket ticket inputs. The trader builds 2–3 legs
- * (each a currency pair + weight + its own spot / vol / foreign rate), a single
- * off-diagonal correlation `ρ` (the matrix is symmetric with unit diagonal — for
- * 2 legs that one `ρ`; for 3 legs `ρ` populates all three off-diagonals, an
- * equicorrelation matrix), the aggregation kind (BASKET / BEST_OF / WORST_OF),
- * the call/put and the strike `K` on the aggregated underlying (`0` ⇒ default to
- * the inception aggregate level at build). The Monte-Carlo controls (`mcPaths` /
- * `mcReplications` / `mcSteps` / `mcSeed`) tune the server estimator; the basket
- * is always Monte-Carlo, so the build surfaces a standard error.
- */
-interface BasketLegInput {
-  pair: CcyPair;
-  weight: number;
-  spot: number;
-  vol: number;
-  rFor: number;
-}
-
-interface BasketInputs {
-  legs: BasketLegInput[];
-  /** The single off-diagonal correlation `ρ` shared by every leg pair. */
-  correlation: number;
-  optionType: OptionType;
-  /** Strike on the aggregated underlying; `0` ⇒ default to the inception aggregate. */
-  strike: number;
-  kind: BasketKind;
-  mcPaths: number;
-  mcReplications: number;
-  mcSteps: number;
-  mcSeed: bigint;
-}
-
-/** The minimum and maximum legs the basket builder allows (2–3 legs). */
-const BASKET_MIN_LEGS = 2;
-const BASKET_MAX_LEGS = 3;
-
-/** A default basket leg seeded from a pair in the universe (spot/vol/rFor off its market). */
-function defaultBasketLeg(index: number): BasketLegInput {
-  const ctx = PAIRS[index % PAIRS.length]!;
-  return {
-    pair: ctx.pair,
-    weight: 0.5,
-    spot: ctx.market.spot,
-    vol: ctx.market.vol,
-    rFor: ctx.market.rFor,
-  };
-}
-
-const DEFAULT_BASKET: BasketInputs = {
-  legs: [defaultBasketLeg(0), defaultBasketLeg(1)],
-  correlation: 0.4,
-  optionType: "CALL",
-  strike: 0,
-  kind: "WORST_OF",
-  mcPaths: 8192,
-  mcReplications: 16,
-  mcSteps: 1,
-  mcSeed: 0xba_5en,
-};
-
-/**
- * The inception aggregate level `Σ wₐ Sₐ(0)` (BASKET) / `max` (BEST_OF) /
- * `min` (WORST_OF) of the weighted leg spots — the natural strike default so the
- * basket prices roughly at-the-money on first build.
- */
-function basketInceptionAggregate(inputs: BasketInputs): number {
-  const weighted = inputs.legs.map((l) => l.weight * l.spot);
-  if (weighted.length === 0) return 0;
-  if (inputs.kind === "BEST_OF") return Math.max(...weighted);
-  if (inputs.kind === "WORST_OF") return Math.min(...weighted);
-  return weighted.reduce((a, b) => a + b, 0);
-}
-
-/**
- * Build the row-major N×N correlation matrix from the single off-diagonal `ρ`:
- * unit diagonal, `ρ` on every off-diagonal (an equicorrelation matrix, the
- * symmetric / unit-diagonal shape the server's Cholesky validates as SPD when
- * `−1/(N−1) < ρ < 1`).
- */
-function basketCorrelationMatrix(n: number, rho: number): number[] {
-  const m = new Array<number>(n * n).fill(0);
-  for (let i = 0; i < n; i += 1) {
-    for (let j = 0; j < n; j += 1) {
-      m[i * n + j] = i === j ? 1 : rho;
-    }
-  }
-  return m;
-}
-
-/**
- * True iff the row-major N×N correlation matrix is symmetric-positive-definite (a
- * successful Cholesky with positive pivots) — the exact admissibility the server's
- * `cholesky` enforces. Used to warn in the ticket before a non-SPD request reaches
- * the pricer (which rejects it as `NotPositiveDefinite`). Provenance documented
- * here only, never in an identifier (CLAUDE.md rule 8).
- */
-function choleskyLowerOk(rowMajor: number[], n: number): boolean {
-  const l: number[][] = Array.from({ length: n }, () => new Array<number>(n).fill(0));
-  for (let i = 0; i < n; i += 1) {
-    for (let j = 0; j <= i; j += 1) {
-      if (Math.abs(rowMajor[i * n + j]! - rowMajor[j * n + i]!) > 1e-9) return false;
-      let dot = 0;
-      for (let k = 0; k < j; k += 1) dot += l[i]![k]! * l[j]![k]!;
-      if (i === j) {
-        const diag = rowMajor[i * n + i]! - dot;
-        if (diag <= 0) return false;
-        l[i]![j] = Math.sqrt(diag);
-      } else {
-        l[i]![j] = (rowMajor[i * n + j]! - dot) / l[j]![j]!;
-      }
-    }
-  }
-  return true;
-}
-
-/**
- * Build `BasketTerms` from the inputs: the equicorrelation matrix from `ρ` and the
- * strike defaulted to the inception aggregate when left `0`. The MC controls pass
- * through (the server clamps `0` to its defaults).
- */
-function basketTerms(inputs: BasketInputs): BasketTerms {
-  const n = inputs.legs.length;
-  const strike = inputs.strike > 0 ? inputs.strike : basketInceptionAggregate(inputs);
-  return {
-    legs: inputs.legs.map((l) => ({
-      pair: l.pair,
-      weight: l.weight,
-      spot: l.spot,
-      vol: l.vol,
-      rFor: l.rFor,
-    })),
-    correlations: basketCorrelationMatrix(n, inputs.correlation),
-    optionType: inputs.optionType,
-    strike,
-    kind: inputs.kind,
-    mcPaths: Math.max(0, Math.trunc(inputs.mcPaths)),
-    mcReplications: Math.max(0, Math.trunc(inputs.mcReplications)),
-    mcSteps: Math.max(0, Math.trunc(inputs.mcSteps)),
-    mcSeed: inputs.mcSeed,
-  };
-}
-
 /** Today (UTC, calendar-only) as a `BrokenDate` — the trade date for date math. */
 function todayUtc(): BrokenDate {
   const d = new Date();
@@ -1010,130 +125,92 @@ function expiryYearsForDate(today: BrokenDate, expiry: BrokenDate, basis: number
   return Math.max(ONE_BIZ_DAY_YEARS, daysBetween(today, expiry) / basis);
 }
 
-/** The non-structural build inputs the volatility products need. */
-interface BuildExtras {
-  /** Single-barrier terms (option / strike / kind / side / barrier / rebate). */
-  singleBarrier: SingleBarrierTerms;
-  /** Double-barrier terms (option / strike / kind / corridor / rebate). */
-  doubleBarrier: DoubleBarrierTerms;
-  /** Digital terms (option / strike / settlement style / payout). */
-  digital: DigitalTerms;
-  /** Touch terms (kind / barrier level(s) / rebate). */
-  touch: TouchTerms;
-  /** Variance/volatility swap strike in vol terms (0 ⇒ price the fair strike). */
-  swapStrikeVol: number;
-  /** Asian inputs (option type / strike / schedule / method). */
-  asian: AsianInputs;
-  /** Forward-start inputs (option type / reset-moneyness / reset date). */
-  forwardStart: ForwardStartInputs;
-  /** Cliquet inputs (option type / moneyness / periods / clamps / MC). */
-  cliquet: CliquetInputs;
-  /** Quanto terms (payoff / option type / strike / σ_Z / ρ), strike ATMF-defaulted. */
-  quanto: QuantoTerms;
-  /** TARF terms (favourable side / strike / target / leverage / redemption / MC). */
-  tarf: TarfTerms;
-  /** Accumulator terms (pivot / barrier / leverage / monitoring / MC). */
-  accumulator: AccumulatorTerms;
-  /** Lookback terms (style / option / monitoring / strike / observations / MC). */
-  lookback: LookbackTerms;
-  /** Window-barrier terms (option / strike / barrier / side / active window / MC). */
-  windowBarrier: WindowBarrierTerms;
-  /** American / Bermudan terms (option / strike / exercise style / dates / LSM). */
-  american: AmericanTerms;
-  /** Correlated multi-asset basket / best-of / worst-of terms (legs / ρ / kind / MC). */
-  basket: BasketTerms;
-}
-
-function buildInstrument(
-  structure: Structure,
-  pair: { base: string; quote: string },
-  tenor: Tenor,
-  tenorYears: number,
-  notionalMm: number,
-  extras: BuildExtras,
-  pricingModel: PricingModel,
-): Instrument {
-  let base: Instrument;
+/** A short trader-facing label for the promote (stream / risk-drill) annotations. */
+function structureLabel(structure: string): string {
   switch (structure) {
     case "VANILLA":
-      base = vanillaInstrument(pair, tenorYears, "CALL", 0.25, notionalMm);
-      break;
+      return "25Δ call";
+    case "RISK_REVERSAL":
+      return "25Δ RR";
+    case "STRANGLE":
+      return "10Δ strangle";
+    case "STRADDLE":
+      return "ATM straddle";
+    case "SEAGULL":
+      return "seagull";
     case "SINGLE_BARRIER":
-      base = singleBarrierInstrument(pair, tenorYears, notionalMm, extras.singleBarrier);
-      break;
+      return "barrier";
     case "DOUBLE_BARRIER":
-      base = doubleBarrierInstrument(pair, tenorYears, notionalMm, extras.doubleBarrier);
-      break;
+      return "dbl barrier";
     case "DIGITAL":
-      base = digitalInstrument(pair, tenorYears, notionalMm, extras.digital);
-      break;
+      return "digital";
     case "TOUCH":
-      base = touchInstrument(pair, tenorYears, notionalMm, extras.touch);
-      break;
+      return "touch";
     case "VARIANCE_SWAP":
-      base = varianceSwapInstrument(pair, tenorYears, notionalMm, extras.swapStrikeVol);
-      break;
+      return "var swap";
     case "VOLATILITY_SWAP":
-      base = volatilitySwapInstrument(pair, tenorYears, notionalMm, extras.swapStrikeVol);
-      break;
+      return "vol swap";
     case "ASIAN":
-      base = asianInstrument(pair, tenorYears, notionalMm, asianTerms(extras.asian));
-      break;
+      return "Asian";
     case "FORWARD_START":
-      base = forwardStartInstrument(
-        pair,
-        tenorYears,
-        notionalMm,
-        forwardStartTerms(extras.forwardStart, tenorYears),
-      );
-      break;
+      return "fwd-start";
     case "CLIQUET":
-      base = cliquetInstrument(pair, tenorYears, notionalMm, cliquetTerms(extras.cliquet));
-      break;
+      return "cliquet";
     case "QUANTO":
-      base = quantoInstrument(pair, tenorYears, notionalMm, extras.quanto);
-      break;
+      return "quanto";
     case "TARF":
-      base = tarfInstrument(pair, tenorYears, notionalMm, extras.tarf);
-      break;
+      return "TARF";
     case "ACCUMULATOR":
-      base = accumulatorInstrument(pair, tenorYears, notionalMm, extras.accumulator);
-      break;
+      return "accumulator";
     case "LOOKBACK":
-      base = lookbackInstrument(pair, tenorYears, notionalMm, extras.lookback);
-      break;
+      return "lookback";
     case "WINDOW_BARRIER":
-      // The window-barrier builder pre-selects LOCAL_STOCH_VOL (it has no closed
-      // form); the explicit stamp below keeps it locked there regardless.
-      base = windowBarrierInstrument(pair, tenorYears, notionalMm, extras.windowBarrier);
-      break;
+      return "window barrier";
     case "AMERICAN":
-      base = americanInstrument(pair, tenorYears, notionalMm, extras.american);
-      break;
+      return "American";
     case "BASKET":
-      base = basketInstrument(pair, tenorYears, notionalMm, extras.basket);
-      break;
+      return "basket";
     default:
-      base = strategyInstrument(pair, tenorYears, structure, notionalMm);
-      break;
+      return specById(structure)?.label ?? structure;
   }
-  // Stamp the trader-facing tenor (ON/TN/SN/IMM/BROKEN_DATE) onto the instrument;
-  // `expiryYears` stays authoritative for pricing (see celnet.proto Instrument).
-  // Stamp the selected booking model (`Instrument.pricing_model`, proto field 22):
-  // for the window barrier it is locked to LOCAL_STOCH_VOL (no closed form);
-  // otherwise it is the trader's selection (DEFAULT for the unsupported products).
-  // DEFAULT is presence-omitted on the wire so an analytic instrument is
-  // byte-identical to the legacy frame (see wsCodec.instrumentToWire).
-  const resolvedModel: PricingModel =
-    structure === "WINDOW_BARRIER" ? "LOCAL_STOCH_VOL" : pricingModel;
-  const instrument: Instrument = { ...base, tenor };
-  if (resolvedModel !== "DEFAULT") instrument.pricingModel = resolvedModel;
-  return instrument;
+}
+
+/**
+ * The legs a multi-leg structure carries, as the {@link NetStructureStrip} needs
+ * them — the ratio and side per leg (genuinely available off the built
+ * instrument's leg ladder). The premium / Greeks are deliberately LEFT ABSENT
+ * (the strip then renders an honest "—" rather than a fabricated net) because a
+ * client-side priced-per-leg breakdown is not available here — the marked-surface
+ * leg pricing resolves server-side. Vanilla and the legless exotics carry no
+ * enumerable option legs, so the strip is not shown for them.
+ */
+function netStructureLegs(instrument: Instrument): NetStructureLeg[] {
+  if (instrument.product.kind !== "strategy") return [];
+  return instrument.product.strategy.legs.map((leg: Leg) => ({
+    ratio: leg.ratio,
+    side: leg.side === "SELL" ? "SELL" : "BUY",
+  }));
+}
+
+/**
+ * The primary strike a {@link PayoffChart} draws its kink at. The type-erased
+ * registry inputs are not statically known here, so we read a numeric `strike`
+ * field if the active family exposes one (the vanilla/strategy and most exotic
+ * families do, with `0` ⇒ "default to ATMF"), and fall back to the ATM-forward
+ * level otherwise. This is a faithful payoff SHAPE preview (kink location), not a
+ * priced P&L — the chart's accessible label says so.
+ */
+function previewStrike(inputs: unknown, atmForward: number): number {
+  if (inputs && typeof inputs === "object" && "strike" in inputs) {
+    const k = (inputs as { strike?: unknown }).strike;
+    if (typeof k === "number" && k > 0) return k;
+  }
+  return atmForward;
 }
 
 export function TicketWorkspace(): React.ReactElement {
   const app = useApp();
-  const [structure, setStructure] = useState<Structure>("RISK_REVERSAL");
+  const [structure, setStructure] = useState<string>("RISK_REVERSAL");
   const [expiryMode, setExpiryMode] = useState<ExpiryMode>("TENOR");
   // Standard-tenor selection (index into TENOR_CHOICES); default 1M.
   const [tenorIdx, setTenorIdx] = useState(5);
@@ -1142,49 +219,18 @@ export function TicketWorkspace(): React.ReactElement {
   const [quote, setQuote] = useState<Quote | null>(null);
   const [busy, setBusy] = useState(false);
   const [fill, setFill] = useState<string | null>(null);
-  // Wave-4 product inputs: the already-contracted barrier/digital/touch structures
-  // (proto field numbers single_barrier=9, double_barrier=10, digital=11,
-  // touch=12 — already priced server-side; now buildable from the ticket). Strike/
-  // barrier levels left at 0 default sensibly off spot/ATMF at build.
-  const [singleBarrierInputs, setSingleBarrierInputs] =
-    useState<SingleBarrierInputs>(DEFAULT_SINGLE_BARRIER);
-  const [doubleBarrierInputs, setDoubleBarrierInputs] =
-    useState<DoubleBarrierInputs>(DEFAULT_DOUBLE_BARRIER);
-  const [digitalInputs, setDigitalInputs] = useState<DigitalInputs>(DEFAULT_DIGITAL);
-  const [touchInputs, setTouchInputs] = useState<TouchInputs>(DEFAULT_TOUCH);
-  // Variance/volatility-swap strike in VOL terms; 0 ⇒ request the fair strike off
-  // the priced reply (the server echoes K_var/K_vol in `resolved_strike`).
-  const [swapStrikeVol, setSwapStrikeVol] = useState(0);
-  // Asian inputs (option type / strike / schedule / method). Strike 0 ⇒ default to
-  // the ATM-forward level on first build so the ticket prices a sensible default.
-  const [asianInputs, setAsianInputs] = useState<AsianInputs>(DEFAULT_ASIAN);
-  // Wave-2 product inputs: forward-start (reset), cliquet (schedule/clamps/MC),
-  // quanto (payoff/σ_Z/ρ; strike ATMF-defaulted like the Asian).
-  const [forwardStartInputs, setForwardStartInputs] =
-    useState<ForwardStartInputs>(DEFAULT_FORWARD_START);
-  const [cliquetInputs, setCliquetInputs] = useState<CliquetInputs>(DEFAULT_CLIQUET);
-  const [quantoInputs, setQuantoInputs] = useState<QuantoInputs>(DEFAULT_QUANTO);
-  // Wave-3 product inputs: TARF + accumulator (geared fixings, always MC), lookback
-  // (continuous closed-form OR discrete MC). Strike/pivot ATMF-defaulted like the
-  // Asian; the equally-spaced schedule is derived from the fixing count at build.
-  const [tarfInputs, setTarfInputs] = useState<TarfInputs>(DEFAULT_TARF);
-  const [accumulatorInputs, setAccumulatorInputs] =
-    useState<AccumulatorInputs>(DEFAULT_ACCUMULATOR);
-  const [lookbackInputs, setLookbackInputs] = useState<LookbackInputs>(DEFAULT_LOOKBACK);
-  // Wave-6 product input: window barrier (LOCAL_STOCH_VOL-only — no closed form).
-  const [windowBarrierInputs, setWindowBarrierInputs] =
-    useState<WindowBarrierInputs>(DEFAULT_WINDOW_BARRIER);
-  // American / Bermudan early-exercise vanilla (proto product field 24). The
-  // offline build prices it with a genuine binomial tree; the live server prices
-  // the exact free-boundary FD (lsmPaths 0) or Longstaff-Schwartz LSM (lsmPaths > 0).
-  const [americanInputs, setAmericanInputs] = useState<AmericanInputs>(DEFAULT_AMERICAN);
-  // Correlated multi-asset basket / best-of / worst-of (proto product field 25).
-  // Always Monte-Carlo (Cholesky-correlated GBM): the build surfaces a standard
-  // error. The offline mock prices a genuine antithetic correlated terminal MC.
-  const [basketInputs, setBasketInputs] = useState<BasketInputs>(DEFAULT_BASKET);
+  // The per-family input state, keyed by structure id and seeded from each spec's
+  // declared defaults (the registry owns the shape; the shell owns the live value).
+  // The active family's inputs are `inputsByStructure[structure]`; an edit replaces
+  // just that family's slot. This single map retires the former ~16 per-family
+  // useState hooks + the BuildExtras memo (one registry seam, not a monolith).
+  const [inputsByStructure, setInputsByStructure] = useState<Record<string, unknown>>(() =>
+    Object.fromEntries(PRODUCT_REGISTRY.map((s) => [s.id, s.defaults])),
+  );
   // The selected booking/pricing model (`Instrument.pricing_model`). DEFAULT (the
   // per-product closed-form engine) unless the trader picks Local-Stoch-Vol for a
-  // supported product; the window barrier locks it to LOCAL_STOCH_VOL.
+  // supported product; the window barrier locks it to LOCAL_STOCH_VOL inside its
+  // own `toInstrument`.
   const [pricingModel, setPricingModel] = useState<PricingModel>("DEFAULT");
 
   const today = useMemo(() => todayUtc(), []);
@@ -1219,69 +265,48 @@ export function TicketWorkspace(): React.ReactElement {
   // In DATE mode the trader must pick a date before there is a horizon to price.
   const expiryReady = expiryMode === "TENOR" || brokenDate !== null;
 
-  // The Asian strike defaults to the ATM-forward level when the trader has not
-  // typed one (strike 0), so the ticket prices a sensible at-the-money average by
-  // default; an explicit strike overrides it. The forward uses the active pair's
-  // real market (spot/rDom/rFor) at the selected horizon.
+  // The market/contract context every spec reads to build its wire instrument and
+  // render its input block. The forward uses the active pair's real market
+  // (spot/rDom/rFor) at the selected horizon; strikes that default to ATMF read it.
   const atmForward = forwardRate(app.pairCtx.market, tenorYears);
   const spot = app.pairCtx.market.spot;
-  const extras = useMemo<BuildExtras>(
+  const pipDecimals = app.pairCtx.pipDecimals;
+  const ctx = useMemo<ProductBuildCtx>(
     () => ({
-      singleBarrier: singleBarrierTerms(singleBarrierInputs, atmForward, spot),
-      doubleBarrier: doubleBarrierTerms(doubleBarrierInputs, atmForward, spot),
-      digital: digitalTerms(digitalInputs, atmForward),
-      touch: touchTerms(touchInputs, spot),
-      swapStrikeVol,
-      asian: {
-        ...asianInputs,
-        strike: asianInputs.strike > 0 ? asianInputs.strike : atmForward,
-      },
-      forwardStart: forwardStartInputs,
-      cliquet: cliquetInputs,
-      quanto: quantoTerms(quantoInputs, atmForward),
-      tarf: tarfTerms(tarfInputs, atmForward, tenorYears),
-      accumulator: accumulatorTerms(accumulatorInputs, atmForward, tenorYears),
-      lookback: lookbackTerms(lookbackInputs, atmForward),
-      windowBarrier: windowBarrierTerms(windowBarrierInputs, atmForward, spot, tenorYears),
-      american: americanTerms(americanInputs, atmForward, tenorYears),
-      basket: basketTerms(basketInputs),
-    }),
-    [
-      singleBarrierInputs,
-      doubleBarrierInputs,
-      digitalInputs,
-      touchInputs,
-      swapStrikeVol,
-      asianInputs,
-      forwardStartInputs,
-      cliquetInputs,
-      quantoInputs,
-      tarfInputs,
-      accumulatorInputs,
-      lookbackInputs,
-      windowBarrierInputs,
-      americanInputs,
-      basketInputs,
+      pair: app.pairCtx.pair,
+      tenor: resolved.tenor,
+      tenorYears,
+      notionalMm,
+      pricingModel,
       atmForward,
       spot,
+      pipDecimals,
+      today,
+    }),
+    [
+      app.pairCtx.pair,
+      resolved.tenor,
       tenorYears,
+      notionalMm,
+      pricingModel,
+      atmForward,
+      spot,
+      pipDecimals,
+      today,
     ],
   );
 
-  // The booking models the active structure may be priced under (every product
-  // supports DEFAULT; the LSV-supported ones add LOCAL_STOCH_VOL; the window
-  // barrier supports ONLY LOCAL_STOCH_VOL). The model selector is shown only when
-  // there is a real choice (≥2 models). The EFFECTIVE model is the trader's
-  // selection clamped into the structure's allowed set — so switching to a product
-  // that does not support LSV silently falls back to DEFAULT (never sends a model
-  // the server would reject with `UnsupportedModel`).
-  const allowedModels = useMemo(
-    () => bookingModelsFor(productKindFor(structure)),
-    [structure],
-  );
+  // The active product family and its current inputs. `effectiveCtx` clamps the
+  // trader's booking-model selection into the family's allowed set, so switching
+  // to a product that does not support LSV silently falls back to DEFAULT (never
+  // sends a model the server would reject with `UnsupportedModel`).
+  const spec = specById(structure)!;
+  const inputs = inputsByStructure[structure];
+  const allowedModels = spec.allowedModels;
   const effectiveModel: PricingModel = allowedModels.includes(pricingModel)
     ? pricingModel
     : allowedModels[0]!;
+  const effectiveCtx: ProductBuildCtx = { ...ctx, pricingModel: effectiveModel };
 
   // Offline (the in-app mock) the LSV engine is NOT available — it is a server-side
   // model (CLAUDE.md: no faked LSV numbers). Detect offline via the documented
@@ -1290,15 +315,7 @@ export function TicketWorkspace(): React.ReactElement {
   const isOffline = !app.transport.label.startsWith("live");
   const lsvUnavailableOffline = isOffline && effectiveModel === "LOCAL_STOCH_VOL";
 
-  const instrument = buildInstrument(
-    structure,
-    app.pairCtx.pair,
-    resolved.tenor,
-    tenorYears,
-    notionalMm,
-    extras,
-    effectiveModel,
-  );
+  const instrument = spec.toInstrument(inputs as never, effectiveCtx);
 
   // Total-variance interpolation in time of the marked surface's ATM term
   // structure at the (broken) expiry — σ²(t)·t linear in t, the standard
@@ -1356,15 +373,7 @@ export function TicketWorkspace(): React.ReactElement {
     }
     setBusy(true);
     setFill(null);
-    const inst = buildInstrument(
-      structure,
-      app.pairCtx.pair,
-      resolved.tenor,
-      tenorYears,
-      notionalMm,
-      extras,
-      effectiveModel,
-    );
+    const inst = spec.toInstrument(inputs as never, effectiveCtx);
     const q = await app.transport.requestQuote(
       inst,
       app.conventions,
@@ -1372,16 +381,7 @@ export function TicketWorkspace(): React.ReactElement {
     );
     setQuote(q);
     setBusy(false);
-  }, [
-    app,
-    structure,
-    resolved.tenor,
-    tenorYears,
-    notionalMm,
-    extras,
-    effectiveModel,
-    lsvUnavailableOffline,
-  ]);
+  }, [app, spec, inputs, effectiveCtx, lsvUnavailableOffline]);
 
   const accept = useCallback(
     async (side: "BUY" | "SELL") => {
@@ -1417,11 +417,17 @@ export function TicketWorkspace(): React.ReactElement {
     return () => window.removeEventListener("keydown", onKey);
   }, [accept, requestQuote, app.paletteOpen, expiryReady]);
 
-  // P0-10: strikes (and any delta→strike resolution) are computed off the
-  // ACTIVE pair's real market (spot/vol/rDom/rFor) — never the old hardcoded
-  // rDom 0.04 / rFor 0.02 constants — so the displayed legs reprice with the
-  // pair the trader is actually looking at.
-  const legs = describeLegs(instrument, app.pairCtx.market, tenorYears);
+  /** Replace the active family's inputs and clear any stale quote against them. */
+  const updateInputs = useCallback(
+    (next: unknown) => {
+      setInputsByStructure((m) => ({ ...m, [structure]: next }));
+      setQuote(null);
+    },
+    [structure],
+  );
+
+  const strikePreview = previewStrike(inputs, atmForward);
+  const netLegs = netStructureLegs(instrument);
 
   return (
     <div className={styles.wrap}>
@@ -1431,21 +437,7 @@ export function TicketWorkspace(): React.ReactElement {
             {app.pairCtx.pair.base}/{app.pairCtx.pair.quote}
           </span>
           <span className={styles.dot}>·</span>
-          <select
-            className={styles.structureSelect}
-            value={structure}
-            onChange={(e) => {
-              setStructure(e.target.value as Structure);
-              setQuote(null);
-            }}
-            aria-label="structure"
-          >
-            {STRUCTURES.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.label}
-              </option>
-            ))}
-          </select>
+          <span className={styles.headStructure}>{spec.label}</span>
           <div className={styles.headRight}>
             <label className={styles.notional}>
               <span>notional</span>
@@ -1460,6 +452,14 @@ export function TicketWorkspace(): React.ReactElement {
             </label>
           </div>
         </div>
+
+        <StructureGallery
+          value={structure}
+          onSelect={(id) => {
+            setStructure(id);
+            setQuote(null);
+          }}
+        />
 
         {allowedModels.length > 1 || structure === "WINDOW_BARRIER" ? (
           <div className={styles.modelBlock}>
@@ -1592,113 +592,18 @@ export function TicketWorkspace(): React.ReactElement {
           )}
         </div>
 
-        {isLegless(structure) ? (
-          <ProductInputs
-            structure={structure}
-            spot={spot}
-            singleBarrier={singleBarrierInputs}
-            onSingleBarrier={(next) => {
-              setSingleBarrierInputs(next);
-              setQuote(null);
-            }}
-            doubleBarrier={doubleBarrierInputs}
-            onDoubleBarrier={(next) => {
-              setDoubleBarrierInputs(next);
-              setQuote(null);
-            }}
-            digital={digitalInputs}
-            onDigital={(next) => {
-              setDigitalInputs(next);
-              setQuote(null);
-            }}
-            touch={touchInputs}
-            onTouch={(next) => {
-              setTouchInputs(next);
-              setQuote(null);
-            }}
-            swapStrikeVol={swapStrikeVol}
-            onSwapStrikeVol={(v) => {
-              setSwapStrikeVol(v);
-              setQuote(null);
-            }}
-            asian={asianInputs}
-            atmForward={atmForward}
-            pipDecimals={app.pairCtx.pipDecimals}
-            onAsian={(next) => {
-              setAsianInputs(next);
-              setQuote(null);
-            }}
-            forwardStart={forwardStartInputs}
-            onForwardStart={(next) => {
-              setForwardStartInputs(next);
-              setQuote(null);
-            }}
-            cliquet={cliquetInputs}
-            onCliquet={(next) => {
-              setCliquetInputs(next);
-              setQuote(null);
-            }}
-            quanto={quantoInputs}
-            onQuanto={(next) => {
-              setQuantoInputs(next);
-              setQuote(null);
-            }}
-            tarf={tarfInputs}
-            onTarf={(next) => {
-              setTarfInputs(next);
-              setQuote(null);
-            }}
-            accumulator={accumulatorInputs}
-            onAccumulator={(next) => {
-              setAccumulatorInputs(next);
-              setQuote(null);
-            }}
-            lookback={lookbackInputs}
-            onLookback={(next) => {
-              setLookbackInputs(next);
-              setQuote(null);
-            }}
-            windowBarrier={windowBarrierInputs}
-            onWindowBarrier={(next) => {
-              setWindowBarrierInputs(next);
-              setQuote(null);
-            }}
-            american={americanInputs}
-            onAmerican={(next) => {
-              setAmericanInputs(next);
-              setQuote(null);
-            }}
-            basket={basketInputs}
-            onBasket={(next) => {
-              setBasketInputs(next);
-              setQuote(null);
-            }}
+        <spec.InputBlock value={inputs as never} onChange={updateInputs} ctx={effectiveCtx} />
+
+        <div className={styles.payoffPreview}>
+          <PayoffChart structureId={structure} strike={strikePreview} spot={spot} />
+        </div>
+
+        {netLegs.length > 0 && (
+          <NetStructureStrip
+            legs={netLegs}
+            quoteCcy={app.pairCtx.pair.quote}
+            baseCcy={app.pairCtx.pair.base}
           />
-        ) : (
-          <div className={styles.legs}>
-            {legs.map((leg, i) => (
-              <div className={styles.leg} key={i}>
-                <span className={styles.legNo}>LEG {i + 1}</span>
-                <span className={`${styles.legSide} ${leg.side === "BUY" ? styles.buy : styles.sell}`}>
-                  {leg.side}
-                </span>
-                <span className={styles.legType}>{leg.type}</span>
-                <span className={`num ${styles.legDelta}`}>{leg.deltaLabel}</span>
-                <span className={styles.legArrow}>▸</span>
-                <span className={`num ${styles.legStrike}`}>K {fmtRate(leg.strike, app.pairCtx.pipDecimals)}</span>
-              </div>
-            ))}
-            {structure !== "VANILLA" && (
-              <button
-                className={styles.solveChip}
-                onClick={requestQuote}
-                disabled={!expiryReady}
-                title="Solve zero-cost strike inline"
-              >
-                Solve: zero-cost
-              </button>
-            )}
-          </div>
         )}
 
         {quote && isSwap(structure) ? (
@@ -1824,1755 +729,6 @@ export function TicketWorkspace(): React.ReactElement {
   );
 }
 
-interface LegView {
-  side: "BUY" | "SELL";
-  type: string;
-  deltaLabel: string;
-  strike: number;
-}
-
-function describeLegs(
-  instrument: Instrument,
-  market: MarketContext,
-  t: number,
-): LegView[] {
-  const toView = (leg: Leg): LegView => {
-    const strike =
-      leg.strike.kind === "strike"
-        ? leg.strike.strike
-        : strikeFromDelta(leg.strike.delta, market, t);
-    const deltaLabel =
-      leg.strike.kind === "delta"
-        ? `${Math.round(Math.abs(leg.strike.delta) * 100)}Δ`
-        : "abs";
-    return {
-      side: leg.side === "SELL" ? "SELL" : "BUY",
-      type: leg.optionType === "CALL" ? "Call" : "Put",
-      deltaLabel,
-      strike,
-    };
-  };
-  switch (instrument.product.kind) {
-    case "vanilla": {
-      const v = instrument.product.vanilla;
-      return [toView({ optionType: v.optionType, strike: v.strike, side: "BUY", ratio: 1 })];
-    }
-    case "strategy":
-      return instrument.product.strategy.legs.map(toView);
-    case "singleBarrier":
-    case "doubleBarrier":
-    case "digital":
-    case "touch":
-    case "varianceSwap":
-    case "volatilitySwap":
-    case "asianOption":
-    case "forwardStart":
-    case "cliquet":
-    case "quanto":
-    case "tarf":
-    case "accumulator":
-    case "lookback":
-    case "windowBarrier":
-    case "american":
-    case "basket":
-      // Barrier / digital / touch / vol-strip / average-rate / reset / converted /
-      // path-dependent / early-exercise / multi-asset products carry no enumerable
-      // option legs; the ticket renders their own input block instead of a leg
-      // ladder (the basket renders a multi-leg correlated builder).
-      return [];
-  }
-}
-
-function structureLabel(s: Structure): string {
-  switch (s) {
-    case "VANILLA":
-      return "25Δ call";
-    case "RISK_REVERSAL":
-      return "25Δ RR";
-    case "STRANGLE":
-      return "10Δ strangle";
-    case "STRADDLE":
-      return "ATM straddle";
-    case "SEAGULL":
-      return "seagull";
-    case "SINGLE_BARRIER":
-      return "barrier";
-    case "DOUBLE_BARRIER":
-      return "dbl barrier";
-    case "DIGITAL":
-      return "digital";
-    case "TOUCH":
-      return "touch";
-    case "VARIANCE_SWAP":
-      return "var swap";
-    case "VOLATILITY_SWAP":
-      return "vol swap";
-    case "ASIAN":
-      return "Asian";
-    case "FORWARD_START":
-      return "fwd-start";
-    case "CLIQUET":
-      return "cliquet";
-    case "QUANTO":
-      return "quanto";
-    case "TARF":
-      return "TARF";
-    case "ACCUMULATOR":
-      return "accumulator";
-    case "LOOKBACK":
-      return "lookback";
-    case "WINDOW_BARRIER":
-      return "window barrier";
-    case "AMERICAN":
-      return "American";
-    case "BASKET":
-      return "basket";
-  }
-}
-
-/** A keyboard-reachable Call/Put toggle reused across the product input blocks. */
-function OptionToggle(props: {
-  value: OptionType;
-  onChange: (next: OptionType) => void;
-}): React.ReactElement {
-  return (
-    <div className={styles.toggleGroup} role="tablist" aria-label="option type">
-      {(["CALL", "PUT"] as OptionType[]).map((ot) => (
-        <button
-          key={ot}
-          role="tab"
-          aria-selected={props.value === ot}
-          className={`${styles.modeTab} ${props.value === ot ? styles.modeActive : ""}`}
-          onClick={() => props.onChange(ot)}
-        >
-          {ot === "CALL" ? "Call" : "Put"}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-/**
- * The product-specific input block for the legless products. A
- * variance/volatility swap takes a single strike in VOL terms (0 ⇒ price the
- * fair strike); an Asian takes its option type, strike, averaging schedule
- * (discrete fixings count or continuous) and the analytic method; a forward-start
- * takes its option type, reset-moneyness and reset date; a cliquet takes its
- * direction, per-period moneyness, period count and optional local cap/floor (any
- * clamp switches pricing to Monte-Carlo, surfacing a standard error); a quanto
- * takes its payoff kind, option type, strike, conversion vol and correlation.
- * Every control is keyboard-reachable and resets the live quote on change (the
- * parent clears it) so a stale price is never shown against changed terms.
- */
-function ProductInputs(props: {
-  structure: Structure;
-  spot: number;
-  singleBarrier: SingleBarrierInputs;
-  onSingleBarrier: (next: SingleBarrierInputs) => void;
-  doubleBarrier: DoubleBarrierInputs;
-  onDoubleBarrier: (next: DoubleBarrierInputs) => void;
-  digital: DigitalInputs;
-  onDigital: (next: DigitalInputs) => void;
-  touch: TouchInputs;
-  onTouch: (next: TouchInputs) => void;
-  swapStrikeVol: number;
-  onSwapStrikeVol: (v: number) => void;
-  asian: AsianInputs;
-  atmForward: number;
-  pipDecimals: number;
-  onAsian: (next: AsianInputs) => void;
-  forwardStart: ForwardStartInputs;
-  onForwardStart: (next: ForwardStartInputs) => void;
-  cliquet: CliquetInputs;
-  onCliquet: (next: CliquetInputs) => void;
-  quanto: QuantoInputs;
-  onQuanto: (next: QuantoInputs) => void;
-  tarf: TarfInputs;
-  onTarf: (next: TarfInputs) => void;
-  accumulator: AccumulatorInputs;
-  onAccumulator: (next: AccumulatorInputs) => void;
-  lookback: LookbackInputs;
-  onLookback: (next: LookbackInputs) => void;
-  windowBarrier: WindowBarrierInputs;
-  onWindowBarrier: (next: WindowBarrierInputs) => void;
-  american: AmericanInputs;
-  onAmerican: (next: AmericanInputs) => void;
-  basket: BasketInputs;
-  onBasket: (next: BasketInputs) => void;
-}): React.ReactElement {
-  const {
-    structure,
-    spot,
-    singleBarrier,
-    onSingleBarrier,
-    doubleBarrier,
-    onDoubleBarrier,
-    digital,
-    onDigital,
-    touch,
-    onTouch,
-    swapStrikeVol,
-    onSwapStrikeVol,
-    asian,
-    atmForward,
-    pipDecimals,
-    onAsian,
-    forwardStart,
-    onForwardStart,
-    cliquet,
-    onCliquet,
-    quanto,
-    onQuanto,
-    tarf,
-    onTarf,
-    accumulator,
-    onAccumulator,
-    lookback,
-    onLookback,
-    windowBarrier,
-    onWindowBarrier,
-    american,
-    onAmerican,
-    basket,
-    onBasket,
-  } = props;
-
-  if (structure === "SINGLE_BARRIER") {
-    const step = Math.pow(10, -pipDecimals);
-    return (
-      <div className={styles.product}>
-        <div className={styles.productRow}>
-          <span className={styles.productLabel}>Option</span>
-          <OptionToggle
-            value={singleBarrier.optionType}
-            onChange={(ot) => onSingleBarrier({ ...singleBarrier, optionType: ot })}
-          />
-          <label className={styles.productField}>
-            <span>Strike</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={step}
-              value={singleBarrier.strike}
-              aria-label="strike"
-              placeholder={atmForward.toFixed(pipDecimals)}
-              onChange={(ev) =>
-                onSingleBarrier({ ...singleBarrier, strike: Math.max(0, Number(ev.target.value)) })
-              }
-            />
-            <span>{singleBarrier.strike > 0 ? "" : `ATMF ${fmtRate(atmForward, pipDecimals)}`}</span>
-          </label>
-        </div>
-        <div className={styles.productRow}>
-          <span className={styles.productLabel}>Knock</span>
-          <div className={styles.toggleGroup} role="tablist" aria-label="barrier kind">
-            {(["KNOCK_IN", "KNOCK_OUT"] as BarrierKind[]).map((bk) => (
-              <button
-                key={bk}
-                role="tab"
-                aria-selected={singleBarrier.kind === bk}
-                className={`${styles.modeTab} ${singleBarrier.kind === bk ? styles.modeActive : ""}`}
-                onClick={() => onSingleBarrier({ ...singleBarrier, kind: bk })}
-              >
-                {bk === "KNOCK_IN" ? "Knock-in" : "Knock-out"}
-              </button>
-            ))}
-          </div>
-          <div className={styles.toggleGroup} role="tablist" aria-label="barrier side">
-            {(["UP", "DOWN"] as BarrierSide[]).map((bs) => (
-              <button
-                key={bs}
-                role="tab"
-                aria-selected={singleBarrier.side === bs}
-                className={`${styles.modeTab} ${singleBarrier.side === bs ? styles.modeActive : ""}`}
-                onClick={() => onSingleBarrier({ ...singleBarrier, side: bs })}
-              >
-                {bs === "UP" ? "Up" : "Down"}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className={styles.productRow}>
-          <label className={styles.productField}>
-            <span>Barrier</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={step}
-              value={singleBarrier.barrier}
-              aria-label="barrier"
-              placeholder={(singleBarrier.side === "UP" ? spot * 1.05 : spot * 0.95).toFixed(
-                pipDecimals,
-              )}
-              onChange={(ev) =>
-                onSingleBarrier({ ...singleBarrier, barrier: Math.max(0, Number(ev.target.value)) })
-              }
-            />
-            <span>
-              {singleBarrier.barrier > 0
-                ? ""
-                : fmtRate(singleBarrier.side === "UP" ? spot * 1.05 : spot * 0.95, pipDecimals)}
-            </span>
-          </label>
-          <label className={styles.productField}>
-            <span>Rebate</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={0.005}
-              value={singleBarrier.rebate}
-              aria-label="rebate"
-              onChange={(ev) =>
-                onSingleBarrier({ ...singleBarrier, rebate: Math.max(0, Number(ev.target.value)) })
-              }
-            />
-          </label>
-        </div>
-        <p className={styles.productNote}>
-          Single-barrier {singleBarrier.side === "UP" ? "up" : "down"}-and-
-          {singleBarrier.kind === "KNOCK_IN" ? "in" : "out"} {singleBarrier.optionType === "CALL" ? "call" : "put"}:
-          a vanilla that {singleBarrier.kind === "KNOCK_IN" ? "activates" : "extinguishes"} when the
-          continuously-monitored spot touches the barrier. Priced by the reflection-principle closed
-          form; in/out parity (knock-in + knock-out = vanilla) holds by construction.
-        </p>
-      </div>
-    );
-  }
-
-  if (structure === "DOUBLE_BARRIER") {
-    const step = Math.pow(10, -pipDecimals);
-    return (
-      <div className={styles.product}>
-        <div className={styles.productRow}>
-          <span className={styles.productLabel}>Option</span>
-          <OptionToggle
-            value={doubleBarrier.optionType}
-            onChange={(ot) => onDoubleBarrier({ ...doubleBarrier, optionType: ot })}
-          />
-          <label className={styles.productField}>
-            <span>Strike</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={step}
-              value={doubleBarrier.strike}
-              aria-label="strike"
-              placeholder={atmForward.toFixed(pipDecimals)}
-              onChange={(ev) =>
-                onDoubleBarrier({ ...doubleBarrier, strike: Math.max(0, Number(ev.target.value)) })
-              }
-            />
-            <span>{doubleBarrier.strike > 0 ? "" : `ATMF ${fmtRate(atmForward, pipDecimals)}`}</span>
-          </label>
-        </div>
-        <div className={styles.productRow}>
-          <span className={styles.productLabel}>Knock</span>
-          <div className={styles.toggleGroup} role="tablist" aria-label="barrier kind">
-            {(["KNOCK_IN", "KNOCK_OUT"] as BarrierKind[]).map((bk) => (
-              <button
-                key={bk}
-                role="tab"
-                aria-selected={doubleBarrier.kind === bk}
-                className={`${styles.modeTab} ${doubleBarrier.kind === bk ? styles.modeActive : ""}`}
-                onClick={() => onDoubleBarrier({ ...doubleBarrier, kind: bk })}
-              >
-                {bk === "KNOCK_IN" ? "Knock-in" : "Knock-out"}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className={styles.productRow}>
-          <label className={styles.productField}>
-            <span>Lower</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={step}
-              value={doubleBarrier.lowerBarrier}
-              aria-label="lower barrier"
-              placeholder={(spot * 0.9).toFixed(pipDecimals)}
-              onChange={(ev) =>
-                onDoubleBarrier({
-                  ...doubleBarrier,
-                  lowerBarrier: Math.max(0, Number(ev.target.value)),
-                })
-              }
-            />
-            <span>{doubleBarrier.lowerBarrier > 0 ? "" : fmtRate(spot * 0.9, pipDecimals)}</span>
-          </label>
-          <label className={styles.productField}>
-            <span>Upper</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={step}
-              value={doubleBarrier.upperBarrier}
-              aria-label="upper barrier"
-              placeholder={(spot * 1.1).toFixed(pipDecimals)}
-              onChange={(ev) =>
-                onDoubleBarrier({
-                  ...doubleBarrier,
-                  upperBarrier: Math.max(0, Number(ev.target.value)),
-                })
-              }
-            />
-            <span>{doubleBarrier.upperBarrier > 0 ? "" : fmtRate(spot * 1.1, pipDecimals)}</span>
-          </label>
-          <label className={styles.productField}>
-            <span>Rebate</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={0.005}
-              value={doubleBarrier.rebate}
-              aria-label="rebate"
-              onChange={(ev) =>
-                onDoubleBarrier({ ...doubleBarrier, rebate: Math.max(0, Number(ev.target.value)) })
-              }
-            />
-          </label>
-        </div>
-        <p className={styles.productNote}>
-          Double-barrier {doubleBarrier.kind === "KNOCK_IN" ? "knock-in" : "knock-out"}: a vanilla
-          bounded by a lower and upper barrier (0 &lt; L &lt; U). Priced by the method-of-images
-          corridor series; a knock-in is priced by parity (KI = vanilla − KO).
-        </p>
-      </div>
-    );
-  }
-
-  if (structure === "DIGITAL") {
-    const step = Math.pow(10, -pipDecimals);
-    return (
-      <div className={styles.product}>
-        <div className={styles.productRow}>
-          <span className={styles.productLabel}>Option</span>
-          <OptionToggle
-            value={digital.optionType}
-            onChange={(ot) => onDigital({ ...digital, optionType: ot })}
-          />
-          <label className={styles.productField}>
-            <span>Strike</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={step}
-              value={digital.strike}
-              aria-label="strike"
-              placeholder={atmForward.toFixed(pipDecimals)}
-              onChange={(ev) => onDigital({ ...digital, strike: Math.max(0, Number(ev.target.value)) })}
-            />
-            <span>{digital.strike > 0 ? "" : `ATMF ${fmtRate(atmForward, pipDecimals)}`}</span>
-          </label>
-        </div>
-        <div className={styles.productRow}>
-          <span className={styles.productLabel}>Settles</span>
-          <div className={styles.toggleGroup} role="tablist" aria-label="digital style">
-            {(["CASH_OR_NOTHING", "ASSET_OR_NOTHING"] as DigitalStyle[]).map((ds) => (
-              <button
-                key={ds}
-                role="tab"
-                aria-selected={digital.style === ds}
-                className={`${styles.modeTab} ${digital.style === ds ? styles.modeActive : ""}`}
-                onClick={() => onDigital({ ...digital, style: ds })}
-              >
-                {ds === "CASH_OR_NOTHING" ? "Cash" : "Asset"}
-              </button>
-            ))}
-          </div>
-          <label className={styles.productField}>
-            <span>Payout</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={0.5}
-              value={digital.payout}
-              aria-label="payout"
-              onChange={(ev) => onDigital({ ...digital, payout: Math.max(0, Number(ev.target.value)) })}
-            />
-          </label>
-        </div>
-        <p className={styles.productNote}>
-          {digital.style === "CASH_OR_NOTHING" ? "Cash-or-nothing" : "Asset-or-nothing"} digital{" "}
-          {digital.optionType === "CALL" ? "call" : "put"}: pays the fixed payout if it finishes{" "}
-          {digital.optionType === "CALL" ? "above" : "below"} the strike at expiry. The
-          cash-or-nothing call is exactly the tight call-spread limit −∂C/∂K of the vanilla.
-        </p>
-      </div>
-    );
-  }
-
-  if (structure === "TOUCH") {
-    const step = Math.pow(10, -pipDecimals);
-    const double = isDoubleTouch(touch.kind);
-    return (
-      <div className={styles.product}>
-        <div className={styles.productRow}>
-          <span className={styles.productLabel}>Kind</span>
-          <div className={styles.toggleGroup} role="tablist" aria-label="touch kind">
-            {(
-              [
-                ["ONE_TOUCH", "One-touch"],
-                ["NO_TOUCH", "No-touch"],
-                ["DOUBLE_NO_TOUCH", "Double-no-touch"],
-                ["DOUBLE_ONE_TOUCH", "Double-one-touch"],
-              ] as [TouchKind, string][]
-            ).map(([tk, label]) => (
-              <button
-                key={tk}
-                role="tab"
-                aria-selected={touch.kind === tk}
-                className={`${styles.modeTab} ${touch.kind === tk ? styles.modeActive : ""}`}
-                onClick={() => onTouch({ ...touch, kind: tk })}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className={styles.productRow}>
-          <label className={styles.productField}>
-            <span>{double ? "Lower" : "Barrier"}</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={step}
-              value={touch.lowerBarrier}
-              aria-label={double ? "lower barrier" : "barrier"}
-              placeholder={(double ? spot * 0.95 : spot * 1.05).toFixed(pipDecimals)}
-              onChange={(ev) =>
-                onTouch({ ...touch, lowerBarrier: Math.max(0, Number(ev.target.value)) })
-              }
-            />
-            <span>
-              {touch.lowerBarrier > 0 ? "" : fmtRate(double ? spot * 0.95 : spot * 1.05, pipDecimals)}
-            </span>
-          </label>
-          {double && (
-            <label className={styles.productField}>
-              <span>Upper</span>
-              <input
-                className="num"
-                type="number"
-                min={0}
-                step={step}
-                value={touch.upperBarrier}
-                aria-label="upper barrier"
-                placeholder={(spot * 1.05).toFixed(pipDecimals)}
-                onChange={(ev) =>
-                  onTouch({ ...touch, upperBarrier: Math.max(0, Number(ev.target.value)) })
-                }
-              />
-              <span>{touch.upperBarrier > 0 ? "" : fmtRate(spot * 1.05, pipDecimals)}</span>
-            </label>
-          )}
-          <label className={styles.productField}>
-            <span>Rebate</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={0.005}
-              value={touch.rebate}
-              aria-label="rebate"
-              onChange={(ev) => onTouch({ ...touch, rebate: Math.max(0, Number(ev.target.value)) })}
-            />
-          </label>
-        </div>
-        <p className={styles.productNote}>
-          {touch.kind === "ONE_TOUCH"
-            ? "One-touch: pays the rebate (at hit) if the barrier IS touched before expiry."
-            : touch.kind === "NO_TOUCH"
-              ? "No-touch: pays the rebate at expiry if the barrier is NOT touched."
-              : touch.kind === "DOUBLE_NO_TOUCH"
-                ? "Double-no-touch: pays the rebate at expiry if NEITHER corridor barrier is touched."
-                : "Double-one-touch: pays the rebate if EITHER corridor barrier is touched."}{" "}
-          Priced by the reflection-principle first-passage / corridor-survival closed forms; one-touch
-          + no-touch = the discounted rebate.
-        </p>
-      </div>
-    );
-  }
-
-  if (structure === "VARIANCE_SWAP" || structure === "VOLATILITY_SWAP") {
-    const isVar = structure === "VARIANCE_SWAP";
-    return (
-      <div className={styles.product}>
-        <div className={styles.productRow}>
-          <span className={styles.productLabel}>Strike vol</span>
-          <label className={styles.productField}>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={0.005}
-              value={swapStrikeVol}
-              aria-label="strike vol"
-              onChange={(ev) => onSwapStrikeVol(Math.max(0, Number(ev.target.value)))}
-            />
-            <span>vol{swapStrikeVol > 0 ? ` = ${fmtVol(swapStrikeVol)}` : ""}</span>
-          </label>
-        </div>
-        <p className={styles.productNote}>
-          {isVar
-            ? "Fair variance strike K_var = strike_vol². Leave 0 to price the fair strike (log-contract static replication, server-side)."
-            : "Fair volatility strike K_vol (convexity-adjusted). Leave 0 to price the fair strike server-side."}
-        </p>
-      </div>
-    );
-  }
-
-  if (structure === "FORWARD_START") {
-    return (
-      <div className={styles.product}>
-        <div className={styles.productRow}>
-          <span className={styles.productLabel}>Option</span>
-          <OptionToggle
-            value={forwardStart.optionType}
-            onChange={(ot) => onForwardStart({ ...forwardStart, optionType: ot })}
-          />
-          <label className={styles.productField}>
-            <span>Reset m</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={0.01}
-              value={forwardStart.moneyness}
-              aria-label="moneyness"
-              onChange={(ev) =>
-                onForwardStart({ ...forwardStart, moneyness: Math.max(0, Number(ev.target.value)) })
-              }
-            />
-            <span>×S(t₁)</span>
-          </label>
-          <label className={styles.productField}>
-            <span>Reset t₁</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={0.05}
-              value={forwardStart.reset}
-              aria-label="reset"
-              onChange={(ev) =>
-                onForwardStart({ ...forwardStart, reset: Math.max(0, Number(ev.target.value)) })
-              }
-            />
-            <span>y</span>
-          </label>
-        </div>
-        <p className={styles.productNote}>
-          Forward-start vanilla: the strike fixes at t₁ to m·S(t₁). Priced by the FX dual-carry
-          closed form V = e^(−r_f·t₁)·S₀·u(m, T−t₁); at t₁→0 it is a plain vanilla struck at m·S₀.
-        </p>
-      </div>
-    );
-  }
-
-  if (structure === "CLIQUET") {
-    const plain = isPlainCliquet(cliquetTerms(cliquet));
-    return (
-      <div className={styles.product}>
-        <div className={styles.productRow}>
-          <span className={styles.productLabel}>Option</span>
-          <OptionToggle
-            value={cliquet.optionType}
-            onChange={(ot) => onCliquet({ ...cliquet, optionType: ot })}
-          />
-          <label className={styles.productField}>
-            <span>Per-period m</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={0.01}
-              value={cliquet.moneyness}
-              aria-label="moneyness"
-              onChange={(ev) =>
-                onCliquet({ ...cliquet, moneyness: Math.max(0, Number(ev.target.value)) })
-              }
-            />
-          </label>
-          <label className={styles.productField}>
-            <span>Periods</span>
-            <input
-              className="num"
-              type="number"
-              min={1}
-              step={1}
-              value={cliquet.periods}
-              aria-label="periods"
-              onChange={(ev) =>
-                onCliquet({ ...cliquet, periods: Math.max(1, Math.trunc(Number(ev.target.value))) })
-              }
-            />
-          </label>
-        </div>
-        <div className={styles.productRow}>
-          <span className={styles.productLabel}>Local clamp</span>
-          <label className={styles.productField}>
-            <input
-              type="checkbox"
-              checked={cliquet.useLocalCap}
-              aria-label="use local cap"
-              onChange={(ev) => onCliquet({ ...cliquet, useLocalCap: ev.target.checked })}
-            />
-            <span>Cap</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={0.005}
-              value={cliquet.localCap}
-              disabled={!cliquet.useLocalCap}
-              aria-label="local cap"
-              onChange={(ev) =>
-                onCliquet({ ...cliquet, localCap: Math.max(0, Number(ev.target.value)) })
-              }
-            />
-          </label>
-          <label className={styles.productField}>
-            <input
-              type="checkbox"
-              checked={cliquet.useLocalFloor}
-              aria-label="use local floor"
-              onChange={(ev) => onCliquet({ ...cliquet, useLocalFloor: ev.target.checked })}
-            />
-            <span>Floor</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={0.005}
-              value={cliquet.localFloor}
-              disabled={!cliquet.useLocalFloor}
-              aria-label="local floor"
-              onChange={(ev) =>
-                onCliquet({ ...cliquet, localFloor: Math.max(0, Number(ev.target.value)) })
-              }
-            />
-          </label>
-        </div>
-        {!plain && (
-          <div className={styles.productRow}>
-            <span className={styles.productLabel}>MC pairs</span>
-            <label className={styles.productField}>
-              <input
-                className="num"
-                type="number"
-                min={0}
-                step={1000}
-                value={cliquet.mcPairs}
-                aria-label="mc pairs"
-                onChange={(ev) =>
-                  onCliquet({ ...cliquet, mcPairs: Math.max(0, Math.trunc(Number(ev.target.value))) })
-                }
-              />
-              <span>{cliquet.mcPairs > 0 ? "pairs" : "default"}</span>
-            </label>
-          </div>
-        )}
-        <p className={styles.productNote}>
-          {plain
-            ? "Plain ratchet: priced in closed form as the exact sum of forward-start legs (no Monte-Carlo error)."
-            : "Clamped cliquet: a local cap/floor has no closed form, so it is priced by antithetic Monte-Carlo and reports a standard error alongside the price."}
-        </p>
-      </div>
-    );
-  }
-
-  if (structure === "QUANTO") {
-    return (
-      <div className={styles.product}>
-        <div className={styles.productRow}>
-          <span className={styles.productLabel}>Payoff</span>
-          <div className={styles.toggleGroup} role="tablist" aria-label="payoff">
-            {(["VANILLA", "DIGITAL"] as QuantoPayoff[]).map((p) => (
-              <button
-                key={p}
-                role="tab"
-                aria-selected={quanto.payoff === p}
-                className={`${styles.modeTab} ${quanto.payoff === p ? styles.modeActive : ""}`}
-                onClick={() => onQuanto({ ...quanto, payoff: p })}
-              >
-                {p === "VANILLA" ? "Vanilla" : "Digital"}
-              </button>
-            ))}
-          </div>
-          <OptionToggle
-            value={quanto.optionType}
-            onChange={(ot) => onQuanto({ ...quanto, optionType: ot })}
-          />
-        </div>
-        <div className={styles.productRow}>
-          <label className={styles.productField}>
-            <span>Strike</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={Math.pow(10, -pipDecimals)}
-              value={quanto.strike}
-              aria-label="strike"
-              placeholder={atmForward.toFixed(pipDecimals)}
-              onChange={(ev) => onQuanto({ ...quanto, strike: Math.max(0, Number(ev.target.value)) })}
-            />
-            <span>{quanto.strike > 0 ? "" : `ATMF ${fmtRate(atmForward, pipDecimals)}`}</span>
-          </label>
-          <label className={styles.productField}>
-            <span>Conv vol σ_Z</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={0.005}
-              value={quanto.conversionVol}
-              aria-label="conversion vol"
-              onChange={(ev) =>
-                onQuanto({ ...quanto, conversionVol: Math.max(0, Number(ev.target.value)) })
-              }
-            />
-            <span>{fmtVol(quanto.conversionVol)}</span>
-          </label>
-          <label className={styles.productField}>
-            <span>Corr ρ</span>
-            <input
-              className="num"
-              type="number"
-              min={-1}
-              max={1}
-              step={0.05}
-              value={quanto.correlation}
-              aria-label="correlation"
-              onChange={(ev) =>
-                onQuanto({
-                  ...quanto,
-                  correlation: Math.min(1, Math.max(-1, Number(ev.target.value))),
-                })
-              }
-            />
-          </label>
-        </div>
-        <p className={styles.productNote}>
-          Quanto {quanto.payoff === "VANILLA" ? "vanilla" : "cash-or-nothing digital"}: the payoff is
-          settlement-currency converted with the quanto-drift adjustment −ρ·σ_S·σ_Z; at ρ=0 it
-          collapses to the plain {quanto.payoff === "VANILLA" ? "vanilla" : "digital"}.
-        </p>
-      </div>
-    );
-  }
-
-  if (structure === "TARF") {
-    return (
-      <div className={styles.product}>
-        <div className={styles.productRow}>
-          <span className={styles.productLabel}>Gain side</span>
-          <OptionToggle
-            value={tarf.optionType}
-            onChange={(ot) => onTarf({ ...tarf, optionType: ot })}
-          />
-          <label className={styles.productField}>
-            <span>Strike</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={Math.pow(10, -pipDecimals)}
-              value={tarf.strike}
-              aria-label="strike"
-              placeholder={atmForward.toFixed(pipDecimals)}
-              onChange={(ev) => onTarf({ ...tarf, strike: Math.max(0, Number(ev.target.value)) })}
-            />
-            <span>{tarf.strike > 0 ? "" : `ATMF ${fmtRate(atmForward, pipDecimals)}`}</span>
-          </label>
-        </div>
-        <div className={styles.productRow}>
-          <label className={styles.productField}>
-            <span>Target</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={0.01}
-              value={tarf.target}
-              aria-label="target"
-              onChange={(ev) => onTarf({ ...tarf, target: Math.max(0, Number(ev.target.value)) })}
-            />
-          </label>
-          <label className={styles.productField}>
-            <span>Leverage</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={0.5}
-              value={tarf.leverage}
-              aria-label="leverage"
-              onChange={(ev) => onTarf({ ...tarf, leverage: Math.max(0, Number(ev.target.value)) })}
-            />
-            <span>×</span>
-          </label>
-          <label className={styles.productField}>
-            <span>Fixings</span>
-            <input
-              className="num"
-              type="number"
-              min={1}
-              step={1}
-              value={tarf.fixings}
-              aria-label="fixings"
-              onChange={(ev) =>
-                onTarf({ ...tarf, fixings: Math.max(1, Math.trunc(Number(ev.target.value))) })
-              }
-            />
-          </label>
-        </div>
-        <div className={styles.productRow}>
-          <span className={styles.productLabel}>Redemption</span>
-          <div className={styles.toggleGroup} role="tablist" aria-label="redemption">
-            {(["FULL_GAIN", "CAPPED_GAIN"] as TarfRedemption[]).map((r) => (
-              <button
-                key={r}
-                role="tab"
-                aria-selected={tarf.redemption === r}
-                className={`${styles.modeTab} ${tarf.redemption === r ? styles.modeActive : ""}`}
-                onClick={() => onTarf({ ...tarf, redemption: r })}
-              >
-                {r === "FULL_GAIN" ? "Full gain" : "Capped gain"}
-              </button>
-            ))}
-          </div>
-          <label className={styles.productField}>
-            <span>MC pairs</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={1000}
-              value={tarf.mcPairs}
-              aria-label="mc pairs"
-              onChange={(ev) =>
-                onTarf({ ...tarf, mcPairs: Math.max(0, Math.trunc(Number(ev.target.value))) })
-              }
-            />
-            <span>{tarf.mcPairs > 0 ? "pairs" : "default"}</span>
-          </label>
-        </div>
-        <p className={styles.productNote}>
-          Target-Redemption Forward: a strip of geared fixings accruing client gains until the
-          cumulative target redeems the structure (full-gain carries the gap risk, capped-gain does
-          not). Priced by antithetic Monte-Carlo (bank present value) — it reports a standard error.
-        </p>
-      </div>
-    );
-  }
-
-  if (structure === "ACCUMULATOR") {
-    return (
-      <div className={styles.product}>
-        <div className={styles.productRow}>
-          <label className={styles.productField}>
-            <span>Pivot</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={Math.pow(10, -pipDecimals)}
-              value={accumulator.pivot}
-              aria-label="pivot"
-              placeholder={atmForward.toFixed(pipDecimals)}
-              onChange={(ev) =>
-                onAccumulator({ ...accumulator, pivot: Math.max(0, Number(ev.target.value)) })
-              }
-            />
-            <span>{accumulator.pivot > 0 ? "" : `ATMF ${fmtRate(atmForward, pipDecimals)}`}</span>
-          </label>
-          <label className={styles.productField}>
-            <span>KO +</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={0.005}
-              value={accumulator.barrierOffset}
-              aria-label="barrier offset"
-              onChange={(ev) =>
-                onAccumulator({
-                  ...accumulator,
-                  barrierOffset: Math.max(1e-4, Number(ev.target.value)),
-                })
-              }
-            />
-            <span>·pivot</span>
-          </label>
-          <label className={styles.productField}>
-            <span>Leverage</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={0.5}
-              value={accumulator.leverage}
-              aria-label="leverage"
-              onChange={(ev) =>
-                onAccumulator({ ...accumulator, leverage: Math.max(0, Number(ev.target.value)) })
-              }
-            />
-            <span>×</span>
-          </label>
-        </div>
-        <div className={styles.productRow}>
-          <span className={styles.productLabel}>Knock-out</span>
-          <div className={styles.toggleGroup} role="tablist" aria-label="monitoring">
-            {(["DISCRETE", "CONTINUOUS"] as AccumulatorMonitoring[]).map((mon) => (
-              <button
-                key={mon}
-                role="tab"
-                aria-selected={accumulator.monitoring === mon}
-                className={`${styles.modeTab} ${accumulator.monitoring === mon ? styles.modeActive : ""}`}
-                onClick={() => onAccumulator({ ...accumulator, monitoring: mon })}
-              >
-                {mon === "DISCRETE" ? "At fixings" : "Continuous"}
-              </button>
-            ))}
-          </div>
-          <label className={styles.productField}>
-            <span>Fixings</span>
-            <input
-              className="num"
-              type="number"
-              min={1}
-              step={1}
-              value={accumulator.fixings}
-              aria-label="fixings"
-              onChange={(ev) =>
-                onAccumulator({
-                  ...accumulator,
-                  fixings: Math.max(1, Math.trunc(Number(ev.target.value))),
-                })
-              }
-            />
-          </label>
-          <label className={styles.productField}>
-            <span>MC pairs</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={1000}
-              value={accumulator.mcPairs}
-              aria-label="mc pairs"
-              onChange={(ev) =>
-                onAccumulator({
-                  ...accumulator,
-                  mcPairs: Math.max(0, Math.trunc(Number(ev.target.value))),
-                })
-              }
-            />
-            <span>{accumulator.mcPairs > 0 ? "pairs" : "default"}</span>
-          </label>
-        </div>
-        <p className={styles.productNote}>
-          Accumulator: periodic accrual at the pivot with an up-and-out knock-out barrier and geared
-          downside. Priced by antithetic Monte-Carlo (client present value) — it reports a standard
-          error; continuous monitoring knocks out more often than at-fixings.
-        </p>
-      </div>
-    );
-  }
-
-  if (structure === "LOOKBACK") {
-    const isFixed = lookback.style === "FIXED";
-    const isDiscrete = lookback.monitoring === "DISCRETE";
-    return (
-      <div className={styles.product}>
-        <div className={styles.productRow}>
-          <span className={styles.productLabel}>Strike</span>
-          <div className={styles.toggleGroup} role="tablist" aria-label="style">
-            {(["FLOATING", "FIXED"] as LookbackStyle[]).map((st) => (
-              <button
-                key={st}
-                role="tab"
-                aria-selected={lookback.style === st}
-                className={`${styles.modeTab} ${lookback.style === st ? styles.modeActive : ""}`}
-                onClick={() => onLookback({ ...lookback, style: st })}
-              >
-                {st === "FLOATING" ? "Floating" : "Fixed"}
-              </button>
-            ))}
-          </div>
-          <OptionToggle
-            value={lookback.optionType}
-            onChange={(ot) => onLookback({ ...lookback, optionType: ot })}
-          />
-        </div>
-        <div className={styles.productRow}>
-          <span className={styles.productLabel}>Monitoring</span>
-          <div className={styles.toggleGroup} role="tablist" aria-label="monitoring">
-            {(["CONTINUOUS", "DISCRETE"] as LookbackMonitoring[]).map((mon) => (
-              <button
-                key={mon}
-                role="tab"
-                aria-selected={lookback.monitoring === mon}
-                className={`${styles.modeTab} ${lookback.monitoring === mon ? styles.modeActive : ""}`}
-                onClick={() => onLookback({ ...lookback, monitoring: mon })}
-              >
-                {mon === "CONTINUOUS" ? "Continuous" : "Discrete"}
-              </button>
-            ))}
-          </div>
-          {isFixed && (
-            <label className={styles.productField}>
-              <span>Strike K</span>
-              <input
-                className="num"
-                type="number"
-                min={0}
-                step={Math.pow(10, -pipDecimals)}
-                value={lookback.strike}
-                aria-label="strike"
-                placeholder={atmForward.toFixed(pipDecimals)}
-                onChange={(ev) =>
-                  onLookback({ ...lookback, strike: Math.max(0, Number(ev.target.value)) })
-                }
-              />
-              <span>{lookback.strike > 0 ? "" : `ATMF ${fmtRate(atmForward, pipDecimals)}`}</span>
-            </label>
-          )}
-        </div>
-        {isDiscrete && (
-          <div className={styles.productRow}>
-            <label className={styles.productField}>
-              <span>Observations</span>
-              <input
-                className="num"
-                type="number"
-                min={0}
-                step={1}
-                value={lookback.observations}
-                aria-label="observations"
-                onChange={(ev) =>
-                  onLookback({
-                    ...lookback,
-                    observations: Math.max(0, Math.trunc(Number(ev.target.value))),
-                  })
-                }
-              />
-              <span>{lookback.observations > 0 ? "" : "default"}</span>
-            </label>
-            <label className={styles.productField}>
-              <span>MC pairs</span>
-              <input
-                className="num"
-                type="number"
-                min={0}
-                step={1000}
-                value={lookback.mcPairs}
-                aria-label="mc pairs"
-                onChange={(ev) =>
-                  onLookback({
-                    ...lookback,
-                    mcPairs: Math.max(0, Math.trunc(Number(ev.target.value))),
-                  })
-                }
-              />
-              <span>{lookback.mcPairs > 0 ? "pairs" : "default"}</span>
-            </label>
-          </div>
-        )}
-        <p className={styles.productNote}>
-          {isDiscrete
-            ? "Discrete-monitored lookback: the extremum is sampled on a finite observation grid, so it is priced by antithetic Monte-Carlo and reports a standard error."
-            : "Continuous-monitored lookback: priced by the exact closed form on the running path extremum (no Monte-Carlo error)."}
-        </p>
-      </div>
-    );
-  }
-
-  if (structure === "WINDOW_BARRIER") {
-    const step = Math.pow(10, -pipDecimals);
-    return (
-      <div className={styles.product}>
-        <div className={styles.productRow}>
-          <span className={styles.productLabel}>Option</span>
-          <OptionToggle
-            value={windowBarrier.optionType}
-            onChange={(ot) => onWindowBarrier({ ...windowBarrier, optionType: ot })}
-          />
-          <label className={styles.productField}>
-            <span>Strike</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={step}
-              value={windowBarrier.strike}
-              aria-label="strike"
-              placeholder={atmForward.toFixed(pipDecimals)}
-              onChange={(ev) =>
-                onWindowBarrier({ ...windowBarrier, strike: Math.max(0, Number(ev.target.value)) })
-              }
-            />
-            <span>{windowBarrier.strike > 0 ? "" : `ATMF ${fmtRate(atmForward, pipDecimals)}`}</span>
-          </label>
-        </div>
-        <div className={styles.productRow}>
-          <span className={styles.productLabel}>Knock-out</span>
-          <div className={styles.toggleGroup} role="tablist" aria-label="barrier side">
-            {(["UP", "DOWN"] as BarrierSide[]).map((bs) => (
-              <button
-                key={bs}
-                role="tab"
-                aria-selected={windowBarrier.side === bs}
-                className={`${styles.modeTab} ${windowBarrier.side === bs ? styles.modeActive : ""}`}
-                onClick={() => onWindowBarrier({ ...windowBarrier, side: bs })}
-              >
-                {bs === "UP" ? "Up" : "Down"}
-              </button>
-            ))}
-          </div>
-          <label className={styles.productField}>
-            <span>Barrier</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={step}
-              value={windowBarrier.barrier}
-              aria-label="barrier"
-              placeholder={(windowBarrier.side === "UP" ? spot * 1.05 : spot * 0.95).toFixed(
-                pipDecimals,
-              )}
-              onChange={(ev) =>
-                onWindowBarrier({ ...windowBarrier, barrier: Math.max(0, Number(ev.target.value)) })
-              }
-            />
-            <span>
-              {windowBarrier.barrier > 0
-                ? ""
-                : fmtRate(windowBarrier.side === "UP" ? spot * 1.05 : spot * 0.95, pipDecimals)}
-            </span>
-          </label>
-        </div>
-        <div className={styles.productRow}>
-          <label className={styles.productField}>
-            <span>Window start</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              max={1}
-              step={0.05}
-              value={windowBarrier.windowStartFrac}
-              aria-label="window start"
-              onChange={(ev) =>
-                onWindowBarrier({
-                  ...windowBarrier,
-                  windowStartFrac: Math.min(1, Math.max(0, Number(ev.target.value))),
-                })
-              }
-            />
-            <span>·T</span>
-          </label>
-          <label className={styles.productField}>
-            <span>Window end</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              max={1}
-              step={0.05}
-              value={windowBarrier.windowEndFrac}
-              aria-label="window end"
-              onChange={(ev) =>
-                onWindowBarrier({
-                  ...windowBarrier,
-                  windowEndFrac: Math.min(1, Math.max(0, Number(ev.target.value))),
-                })
-              }
-            />
-            <span>·T</span>
-          </label>
-          <label className={styles.productField}>
-            <span>MC pairs</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={1000}
-              value={windowBarrier.mcPairs}
-              aria-label="mc pairs"
-              onChange={(ev) =>
-                onWindowBarrier({
-                  ...windowBarrier,
-                  mcPairs: Math.max(0, Math.trunc(Number(ev.target.value))),
-                })
-              }
-            />
-            <span>{windowBarrier.mcPairs > 0 ? "pairs" : "PDE"}</span>
-          </label>
-        </div>
-        <p className={styles.productNote}>
-          Window barrier: a {windowBarrier.side === "UP" ? "up" : "down"}-and-out{" "}
-          {windowBarrier.optionType === "CALL" ? "call" : "put"} whose barrier is active only during
-          the window [{windowBarrier.windowStartFrac.toFixed(2)}·T, {windowBarrier.windowEndFrac.toFixed(2)}·T].
-          No closed form — priced server-side on the local-stochastic-volatility engine:{" "}
-          {windowBarrier.mcPairs > 0
-            ? "Monte-Carlo (reports a standard error)"
-            : "the exact ADI PDE (no standard error)"}
-          .
-        </p>
-      </div>
-    );
-  }
-
-  if (structure === "AMERICAN") {
-    const step = Math.pow(10, -pipDecimals);
-    const isLsm = american.lsmPaths > 0;
-    return (
-      <div className={styles.product}>
-        <div className={styles.productRow}>
-          <span className={styles.productLabel}>Option</span>
-          <OptionToggle
-            value={american.optionType}
-            onChange={(ot) => onAmerican({ ...american, optionType: ot })}
-          />
-          <label className={styles.productField}>
-            <span>Strike</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={step}
-              value={american.strike}
-              aria-label="strike"
-              placeholder={atmForward.toFixed(pipDecimals)}
-              onChange={(ev) =>
-                onAmerican({ ...american, strike: Math.max(0, Number(ev.target.value)) })
-              }
-            />
-            <span>{american.strike > 0 ? "" : `ATMF ${fmtRate(atmForward, pipDecimals)}`}</span>
-          </label>
-        </div>
-        <div className={styles.productRow}>
-          <span className={styles.productLabel}>Exercise</span>
-          <div className={styles.toggleGroup} role="tablist" aria-label="exercise style">
-            {(["AMERICAN", "BERMUDAN"] as ExerciseStyle[]).map((es) => (
-              <button
-                key={es}
-                role="tab"
-                aria-selected={american.exerciseStyle === es}
-                className={`${styles.modeTab} ${american.exerciseStyle === es ? styles.modeActive : ""}`}
-                onClick={() => onAmerican({ ...american, exerciseStyle: es })}
-              >
-                {es === "AMERICAN" ? "American" : "Bermudan"}
-              </button>
-            ))}
-          </div>
-          {american.exerciseStyle === "BERMUDAN" && (
-            <label className={styles.productField}>
-              <span>Exercise dates</span>
-              <input
-                className="num"
-                type="number"
-                min={1}
-                step={1}
-                value={american.bermudanDates}
-                aria-label="bermudan dates"
-                onChange={(ev) =>
-                  onAmerican({
-                    ...american,
-                    bermudanDates: Math.max(1, Math.trunc(Number(ev.target.value))),
-                  })
-                }
-              />
-              <span>over (0, T]</span>
-            </label>
-          )}
-        </div>
-        <div className={styles.productRow}>
-          <span className={styles.productLabel}>Engine</span>
-          <label className={styles.productField}>
-            <span>LSM paths</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={1000}
-              value={american.lsmPaths}
-              aria-label="lsm paths"
-              onChange={(ev) =>
-                onAmerican({ ...american, lsmPaths: Math.max(0, Math.trunc(Number(ev.target.value))) })
-              }
-            />
-            <span>{isLsm ? "Longstaff-Schwartz MC" : "exact FD"}</span>
-          </label>
-          {isLsm && (
-            <label className={styles.productField}>
-              <span>LSM seed</span>
-              <input
-                className="num"
-                type="number"
-                min={0}
-                step={1}
-                value={Number(american.lsmSeed)}
-                aria-label="lsm seed"
-                onChange={(ev) =>
-                  onAmerican({
-                    ...american,
-                    lsmSeed: BigInt(Math.max(0, Math.trunc(Number(ev.target.value)))),
-                  })
-                }
-              />
-            </label>
-          )}
-        </div>
-        <p className={styles.productNote}>
-          {american.exerciseStyle === "AMERICAN" ? "American" : "Bermudan"}{" "}
-          {american.optionType === "CALL" ? "call" : "put"}: an early-exercise vanilla
-          {american.exerciseStyle === "AMERICAN"
-            ? " exercisable continuously up to expiry"
-            : ` exercisable on ${Math.max(1, Math.trunc(american.bermudanDates))} equally-spaced dates (expiry inclusive)`}
-          . The offline build prices a genuine binomial tree; the server prices{" "}
-          {isLsm
-            ? "the Longstaff-Schwartz regression Monte-Carlo (reports a standard error)"
-            : "the exact projected-SOR free-boundary finite difference (no standard error)"}
-          .
-        </p>
-      </div>
-    );
-  }
-
-  if (structure === "BASKET") {
-    const n = basket.legs.length;
-    const inceptionAggregate = basketInceptionAggregate(basket);
-    const matrix = basketCorrelationMatrix(n, basket.correlation);
-    const isSpd = choleskyLowerOk(matrix, n);
-    // The equicorrelation SPD bound for N equal-correlated legs: ρ ∈ (−1/(N−1), 1).
-    const rhoFloor = -1 / (n - 1);
-    const updateLeg = (i: number, patch: Partial<BasketLegInput>): void => {
-      const legs = basket.legs.map((l, k) => (k === i ? { ...l, ...patch } : l));
-      onBasket({ ...basket, legs });
-    };
-    const setLegPair = (i: number, key: string): void => {
-      const ctx = PAIRS.find((p) => pairLabel(p.pair) === key);
-      if (!ctx) return;
-      // Seed the leg's market data off the chosen pair (the trader can override).
-      updateLeg(i, { pair: ctx.pair, spot: ctx.market.spot, vol: ctx.market.vol, rFor: ctx.market.rFor });
-    };
-    const addLeg = (): void => {
-      if (n >= BASKET_MAX_LEGS) return;
-      onBasket({ ...basket, legs: [...basket.legs, defaultBasketLeg(n)] });
-    };
-    const removeLeg = (i: number): void => {
-      if (n <= BASKET_MIN_LEGS) return;
-      onBasket({ ...basket, legs: basket.legs.filter((_, k) => k !== i) });
-    };
-    return (
-      <div className={styles.product}>
-        <div className={styles.productRow}>
-          <span className={styles.productLabel}>Aggregation</span>
-          <div className={styles.toggleGroup} role="tablist" aria-label="basket kind">
-            {(["BASKET", "BEST_OF", "WORST_OF"] as BasketKind[]).map((bk) => (
-              <button
-                key={bk}
-                role="tab"
-                aria-selected={basket.kind === bk}
-                className={`${styles.modeTab} ${basket.kind === bk ? styles.modeActive : ""}`}
-                onClick={() => onBasket({ ...basket, kind: bk })}
-              >
-                {bk === "BASKET" ? "Basket" : bk === "BEST_OF" ? "Best-of" : "Worst-of"}
-              </button>
-            ))}
-          </div>
-          <OptionToggle
-            value={basket.optionType}
-            onChange={(ot) => onBasket({ ...basket, optionType: ot })}
-          />
-        </div>
-        {basket.legs.map((leg, i) => (
-          <div className={styles.basketLeg} key={i}>
-            <span className={styles.basketLegNo}>Leg {i + 1}</span>
-            <label className={styles.productField}>
-              <span>Pair</span>
-              <select
-                value={pairLabel(leg.pair)}
-                aria-label={`leg ${i + 1} pair`}
-                onChange={(ev) => setLegPair(i, ev.target.value)}
-              >
-                {PAIRS.map((p) => (
-                  <option key={pairLabel(p.pair)} value={pairLabel(p.pair)}>
-                    {pairLabel(p.pair)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className={styles.productField}>
-              <span>Weight</span>
-              <input
-                className="num"
-                type="number"
-                step={0.05}
-                value={leg.weight}
-                aria-label={`leg ${i + 1} weight`}
-                onChange={(ev) => updateLeg(i, { weight: Number(ev.target.value) })}
-              />
-            </label>
-            <label className={styles.productField}>
-              <span>Spot</span>
-              <input
-                className="num"
-                type="number"
-                min={0}
-                step={0.0001}
-                value={leg.spot}
-                aria-label={`leg ${i + 1} spot`}
-                onChange={(ev) => updateLeg(i, { spot: Math.max(0, Number(ev.target.value)) })}
-              />
-            </label>
-            <label className={styles.productField}>
-              <span>Vol</span>
-              <input
-                className="num"
-                type="number"
-                min={0}
-                step={0.005}
-                value={leg.vol}
-                aria-label={`leg ${i + 1} vol`}
-                onChange={(ev) => updateLeg(i, { vol: Math.max(0, Number(ev.target.value)) })}
-              />
-            </label>
-            <label className={styles.productField}>
-              <span>r_for</span>
-              <input
-                className="num"
-                type="number"
-                step={0.001}
-                value={leg.rFor}
-                aria-label={`leg ${i + 1} r_for`}
-                onChange={(ev) => updateLeg(i, { rFor: Number(ev.target.value) })}
-              />
-            </label>
-            <button
-              className={styles.basketLegRemove}
-              aria-label={`remove leg ${i + 1}`}
-              disabled={n <= BASKET_MIN_LEGS}
-              onClick={() => removeLeg(i)}
-            >
-              Remove
-            </button>
-          </div>
-        ))}
-        <button
-          className={styles.basketAddLeg}
-          aria-label="add leg"
-          disabled={n >= BASKET_MAX_LEGS}
-          onClick={addLeg}
-        >
-          + Add leg
-        </button>
-        <div className={styles.productRow}>
-          <span className={styles.productLabel}>Correlation</span>
-          <label className={styles.productField}>
-            <span>ρ</span>
-            <input
-              className="num"
-              type="number"
-              min={-1}
-              max={1}
-              step={0.05}
-              value={basket.correlation}
-              aria-label="correlation"
-              onChange={(ev) =>
-                onBasket({ ...basket, correlation: Math.max(-1, Math.min(1, Number(ev.target.value))) })
-              }
-            />
-            <span>{isSpd ? "" : `not positive-definite — need ρ > ${rhoFloor.toFixed(2)}`}</span>
-          </label>
-          <label className={styles.productField}>
-            <span>Strike</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={0.0001}
-              value={basket.strike}
-              aria-label="strike"
-              placeholder={inceptionAggregate.toFixed(4)}
-              onChange={(ev) =>
-                onBasket({ ...basket, strike: Math.max(0, Number(ev.target.value)) })
-              }
-            />
-            <span>{basket.strike > 0 ? "" : `aggregate ${inceptionAggregate.toFixed(4)}`}</span>
-          </label>
-        </div>
-        <div className={styles.productRow}>
-          <span className={styles.productLabel}>Engine</span>
-          <label className={styles.productField}>
-            <span>MC paths</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={1024}
-              value={basket.mcPaths}
-              aria-label="mc paths"
-              onChange={(ev) =>
-                onBasket({ ...basket, mcPaths: Math.max(0, Math.trunc(Number(ev.target.value))) })
-              }
-            />
-          </label>
-          <label className={styles.productField}>
-            <span>Scrambles</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={1}
-              value={basket.mcReplications}
-              aria-label="mc replications"
-              onChange={(ev) =>
-                onBasket({
-                  ...basket,
-                  mcReplications: Math.max(0, Math.trunc(Number(ev.target.value))),
-                })
-              }
-            />
-          </label>
-          <label className={styles.productField}>
-            <span>Steps</span>
-            <input
-              className="num"
-              type="number"
-              min={0}
-              step={1}
-              value={basket.mcSteps}
-              aria-label="mc steps"
-              onChange={(ev) =>
-                onBasket({ ...basket, mcSteps: Math.max(0, Math.trunc(Number(ev.target.value))) })
-              }
-            />
-          </label>
-        </div>
-        <p className={styles.productNote}>
-          {basket.kind === "BASKET"
-            ? "Weighted basket"
-            : basket.kind === "BEST_OF"
-              ? "Best-of (rainbow max)"
-              : "Worst-of (rainbow min)"}{" "}
-          {basket.optionType === "CALL" ? "call" : "put"} over {n} correlated currency-pair legs.
-          Each leg carries its own spot / vol / foreign rate; the enclosing pair is the
-          settlement / numeraire pair and the shared domestic rate is the market context&rsquo;s.
-          Priced by Cholesky-correlated multi-asset Monte-Carlo (always — there is no closed form),
-          so it reports a standard error. Multi-asset Greeks are deferred (the strip is zeroed). The
-          offline build prices a genuine antithetic correlated terminal Monte-Carlo; a non
-          positive-definite correlation is rejected, never regularised.
-        </p>
-      </div>
-    );
-  }
-
-  // Asian.
-  return (
-    <div className={styles.product}>
-      <div className={styles.productRow}>
-        <span className={styles.productLabel}>Option</span>
-        <div className={styles.toggleGroup} role="tablist" aria-label="option type">
-          {(["CALL", "PUT"] as OptionType[]).map((ot) => (
-            <button
-              key={ot}
-              role="tab"
-              aria-selected={asian.optionType === ot}
-              className={`${styles.modeTab} ${asian.optionType === ot ? styles.modeActive : ""}`}
-              onClick={() => onAsian({ ...asian, optionType: ot })}
-            >
-              {ot === "CALL" ? "Call" : "Put"}
-            </button>
-          ))}
-        </div>
-        <label className={styles.productField}>
-          <span>Strike</span>
-          <input
-            className="num"
-            type="number"
-            min={0}
-            step={Math.pow(10, -pipDecimals)}
-            value={asian.strike}
-            aria-label="strike"
-            placeholder={atmForward.toFixed(pipDecimals)}
-            onChange={(ev) => onAsian({ ...asian, strike: Math.max(0, Number(ev.target.value)) })}
-          />
-          <span>{asian.strike > 0 ? "" : `ATMF ${fmtRate(atmForward, pipDecimals)}`}</span>
-        </label>
-      </div>
-      <div className={styles.productRow}>
-        <span className={styles.productLabel}>Averaging</span>
-        <div className={styles.toggleGroup} role="tablist" aria-label="averaging">
-          {(["DISCRETE", "CONTINUOUS"] as AveragingStyle[]).map((av) => (
-            <button
-              key={av}
-              role="tab"
-              aria-selected={asian.averaging === av}
-              className={`${styles.modeTab} ${asian.averaging === av ? styles.modeActive : ""}`}
-              onClick={() => onAsian({ ...asian, averaging: av })}
-            >
-              {av === "DISCRETE" ? "Discrete" : "Continuous"}
-            </button>
-          ))}
-        </div>
-        {asian.averaging === "DISCRETE" && (
-          <label className={styles.productField}>
-            <span>Fixings</span>
-            <input
-              className="num"
-              type="number"
-              min={1}
-              step={1}
-              value={asian.observations}
-              aria-label="observations"
-              onChange={(ev) =>
-                onAsian({ ...asian, observations: Math.max(1, Math.trunc(Number(ev.target.value))) })
-              }
-            />
-          </label>
-        )}
-      </div>
-      <div className={styles.productRow}>
-        <span className={styles.productLabel}>Method</span>
-        <div className={styles.toggleGroup} role="tablist" aria-label="method">
-          {(["CURRAN", "TURNBULL_WAKEMAN"] as AsianMethod[]).map((mm) => (
-            <button
-              key={mm}
-              role="tab"
-              aria-selected={asian.method === mm}
-              className={`${styles.modeTab} ${asian.method === mm ? styles.modeActive : ""}`}
-              onClick={() => onAsian({ ...asian, method: mm })}
-            >
-              {mm === "CURRAN" ? "Curran" : "Turnbull-Wakeman"}
-            </button>
-          ))}
-        </div>
-      </div>
-      <p className={styles.productNote}>
-        Arithmetic-average-rate Asian. The selected analytic method is priced server-side; the
-        standalone build prices a two-moment closed form (exact in the single-fixing / zero-vol
-        limits).
-      </p>
-    </div>
-  );
-}
-
 /**
  * The variance/volatility-swap result panel: the priced FAIR STRIKE (not a
  * premium two-way). For a variance swap the headline is the fair variance strike
@@ -3580,7 +736,7 @@ function ProductInputs(props: {
  * fair vol strike `K_vol`. The server (and the standalone build) echo the fair
  * strike in the quote's `resolvedStrike` (and `greeks.price`).
  */
-function SwapResult(props: { structure: Structure; quote: Quote }): React.ReactElement {
+function SwapResult(props: { structure: string; quote: Quote }): React.ReactElement {
   const { structure, quote } = props;
   const fair = quote.resolvedStrike;
   if (structure === "VARIANCE_SWAP") {
@@ -3601,6 +757,3 @@ function SwapResult(props: { structure: Structure; quote: Quote }): React.ReactE
     </div>
   );
 }
-
-// Re-export to satisfy tree-shaking honesty of the tenor helper used elsewhere.
-void tenorYearsToTenor;

@@ -3,9 +3,15 @@
  * Renders the REAL `TicketWorkspace` inside the REAL `AppProvider` (forced to the
  * offline in-app mock via `?mock`, so no server is dialled) and drives it through
  * the DOM exactly as a trader would: it asserts the new products appear in the
- * structure selector and that selecting each surfaces the right inputs (the swap
+ * structure gallery and that selecting each surfaces the right inputs (the swap
  * strike-vol field; the Asian option-type / averaging / fixings / method
  * controls). This exercises the genuine build/encode wiring, not a mock of it.
+ *
+ * GW2: structure selection is the {@link StructureGallery} (a `role="listbox"` of
+ * `role="option"` cards labelled by the spec label) — NOT the former flat
+ * `<select>`. The input-filling steps (aria-labels) are unchanged: the per-family
+ * InputBlocks were extracted verbatim into the product registry, so the controls
+ * the trader fills are identical.
  */
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -13,6 +19,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 
 import { AppProvider } from "../src/app/AppContext";
 import { TicketWorkspace } from "../src/workspaces/TicketWorkspace";
+import { specById } from "../src/products";
 
 /**
  * Force the offline mock transport (no WebSocket dialled in jsdom). The mock
@@ -39,20 +46,94 @@ async function renderTicket(): Promise<void> {
   // session emits its baseline snapshot). Awaiting a findBy* drains those state
   // updates inside React Testing Library's own act(...) wrapper, so the render is
   // fully settled before we assert and no update escapes an act boundary.
-  await screen.findByLabelText("structure");
+  await screen.findByRole("listbox", { name: "Structure catalogue" });
 }
 
-/** The structure <select> the ticket builds a product from. */
-function structureSelect(): HTMLSelectElement {
-  return screen.getByLabelText("structure") as HTMLSelectElement;
+/** The structure gallery listbox the ticket builds a product from. */
+function structureGallery(): HTMLElement {
+  return screen.getByRole("listbox", { name: "Structure catalogue" });
 }
+
+/** The structure ids the gallery currently offers (mapped back from card labels). */
+function structureOptionIds(): string[] {
+  return within(structureGallery())
+    .getAllByRole("option")
+    .map((card) => {
+      // Each card's primary text is the spec label; recover its id via the registry.
+      const label = (card.textContent ?? "").trim();
+      const spec = SPEC_BY_LABEL.get(stripLabel(label));
+      return spec?.id ?? label;
+    });
+}
+
+/** The card-label prefix (the spec label precedes the asset-class chip + summary). */
+function stripLabel(text: string): string {
+  // Card text is "<label><chip><summary>"; match the longest known label prefix.
+  for (const [lbl] of SPEC_BY_LABEL) {
+    if (text.startsWith(lbl)) return lbl;
+  }
+  return text;
+}
+
+/** Select a structure by its id (click the gallery card with the spec's label). */
+function selectStructure(id: string): void {
+  const spec = specById(id)!;
+  const card = within(structureGallery())
+    .getAllByRole("option")
+    .find((c) => (c.textContent ?? "").startsWith(spec.label));
+  if (!card) throw new Error(`no gallery card for structure ${id} (label "${spec.label}")`);
+  act(() => {
+    fireEvent.click(card);
+  });
+}
+
+/**
+ * The active InputBlock's product NOTE paragraph matching `re`. The gallery card
+ * summaries (`<span>`) can share wording with a family's note (`<p>`), so we scope
+ * to the paragraph element — asserting the SAME thing the old flat-select test did
+ * (the note renders) without the now-ambiguous whole-screen text match.
+ */
+function productNote(re: RegExp): HTMLElement {
+  const note = screen.getAllByText(re).find((el) => el.tagName === "P");
+  if (!note) throw new Error(`no product-note paragraph matching ${re}`);
+  return note;
+}
+
+/** Registry label → spec, for recovering an id from a gallery card's text. */
+const SPEC_BY_LABEL = new Map<string, ReturnType<typeof specById>>(
+  [
+    "VANILLA",
+    "RISK_REVERSAL",
+    "STRANGLE",
+    "STRADDLE",
+    "SEAGULL",
+    "SINGLE_BARRIER",
+    "DOUBLE_BARRIER",
+    "DIGITAL",
+    "TOUCH",
+    "VARIANCE_SWAP",
+    "VOLATILITY_SWAP",
+    "ASIAN",
+    "FORWARD_START",
+    "CLIQUET",
+    "QUANTO",
+    "TARF",
+    "ACCUMULATOR",
+    "LOOKBACK",
+    "WINDOW_BARRIER",
+    "AMERICAN",
+    "BASKET",
+  ]
+    .map((id) => specById(id))
+    .filter((s): s is NonNullable<ReturnType<typeof specById>> => s !== undefined)
+    .sort((a, b) => b.label.length - a.label.length) // longest-label-first prefix match
+    .map((s) => [s.label, s] as const),
+);
 
 describe("TicketWorkspace — wave-1 products in the selector", () => {
   it("offers variance swap / volatility swap / Asian alongside vanilla", async () => {
     await renderTicket();
-    const options = within(structureSelect())
-      .getAllByRole("option")
-      .map((o) => (o as HTMLOptionElement).value);
+    const options = structureOptionIds();
     expect(options).toContain("VARIANCE_SWAP");
     expect(options).toContain("VOLATILITY_SWAP");
     expect(options).toContain("ASIAN");
@@ -64,7 +145,7 @@ describe("TicketWorkspace — wave-1 products in the selector", () => {
   it("shows the strike-vol input when a variance swap is selected", async () => {
     await renderTicket();
     act(() => {
-      fireEvent.change(structureSelect(), { target: { value: "VARIANCE_SWAP" } });
+      selectStructure("VARIANCE_SWAP");
     });
     expect(screen.getByLabelText("strike vol")).toBeInTheDocument();
     // No option legs are rendered for a swap.
@@ -75,7 +156,7 @@ describe("TicketWorkspace — wave-1 products in the selector", () => {
   it("shows the strike-vol input when a volatility swap is selected", async () => {
     await renderTicket();
     act(() => {
-      fireEvent.change(structureSelect(), { target: { value: "VOLATILITY_SWAP" } });
+      selectStructure("VOLATILITY_SWAP");
     });
     expect(screen.getByLabelText("strike vol")).toBeInTheDocument();
     expect(screen.getByText(/Fair volatility strike K_vol/)).toBeInTheDocument();
@@ -84,7 +165,7 @@ describe("TicketWorkspace — wave-1 products in the selector", () => {
   it("shows option type, averaging, fixings and method for an Asian", async () => {
     await renderTicket();
     act(() => {
-      fireEvent.change(structureSelect(), { target: { value: "ASIAN" } });
+      selectStructure("ASIAN");
     });
     // Option-type toggle (Call/Put), averaging toggle, method toggle, fixings field.
     expect(screen.getByRole("tablist", { name: "option type" })).toBeInTheDocument();
@@ -100,7 +181,7 @@ describe("TicketWorkspace — wave-1 products in the selector", () => {
   it("hides the discrete fixings field when continuous averaging is chosen", async () => {
     await renderTicket();
     act(() => {
-      fireEvent.change(structureSelect(), { target: { value: "ASIAN" } });
+      selectStructure("ASIAN");
     });
     expect(screen.getByLabelText("observations")).toBeInTheDocument();
     const averaging = screen.getByRole("tablist", { name: "averaging" });
@@ -115,9 +196,7 @@ describe("TicketWorkspace — wave-1 products in the selector", () => {
 describe("TicketWorkspace — wave-4 barrier/digital/touch in the selector", () => {
   it("offers single barrier / double barrier / digital / touch", async () => {
     await renderTicket();
-    const options = within(structureSelect())
-      .getAllByRole("option")
-      .map((o) => (o as HTMLOptionElement).value);
+    const options = structureOptionIds();
     expect(options).toContain("SINGLE_BARRIER");
     expect(options).toContain("DOUBLE_BARRIER");
     expect(options).toContain("DIGITAL");
@@ -130,7 +209,7 @@ describe("TicketWorkspace — wave-4 barrier/digital/touch in the selector", () 
   it("shows the strike, knock kind/side, barrier and rebate for a single barrier", async () => {
     await renderTicket();
     act(() => {
-      fireEvent.change(structureSelect(), { target: { value: "SINGLE_BARRIER" } });
+      selectStructure("SINGLE_BARRIER");
     });
     expect(screen.getByRole("tablist", { name: "option type" })).toBeInTheDocument();
     expect(screen.getByRole("tablist", { name: "barrier kind" })).toBeInTheDocument();
@@ -145,7 +224,7 @@ describe("TicketWorkspace — wave-4 barrier/digital/touch in the selector", () 
   it("shows lower/upper barriers and the knock kind for a double barrier", async () => {
     await renderTicket();
     act(() => {
-      fireEvent.change(structureSelect(), { target: { value: "DOUBLE_BARRIER" } });
+      selectStructure("DOUBLE_BARRIER");
     });
     expect(screen.getByLabelText("lower barrier")).toBeInTheDocument();
     expect(screen.getByLabelText("upper barrier")).toBeInTheDocument();
@@ -156,19 +235,19 @@ describe("TicketWorkspace — wave-4 barrier/digital/touch in the selector", () 
   it("shows the settlement-style toggle and payout for a digital", async () => {
     await renderTicket();
     act(() => {
-      fireEvent.change(structureSelect(), { target: { value: "DIGITAL" } });
+      selectStructure("DIGITAL");
     });
     const style = screen.getByRole("tablist", { name: "digital style" });
     expect(within(style).getByText("Cash")).toBeInTheDocument();
     expect(within(style).getByText("Asset")).toBeInTheDocument();
     expect(screen.getByLabelText("payout")).toBeInTheDocument();
-    expect(screen.getByText(/digital/)).toBeInTheDocument();
+    expect(productNote(/digital/)).toBeInTheDocument();
   });
 
   it("shows the touch-kind toggle and reveals the upper barrier only for double kinds", async () => {
     await renderTicket();
     act(() => {
-      fireEvent.change(structureSelect(), { target: { value: "TOUCH" } });
+      selectStructure("TOUCH");
     });
     const kind = screen.getByRole("tablist", { name: "touch kind" });
     expect(within(kind).getByText("One-touch")).toBeInTheDocument();
@@ -188,9 +267,7 @@ describe("TicketWorkspace — wave-4 barrier/digital/touch in the selector", () 
 describe("TicketWorkspace — wave-2 products in the selector", () => {
   it("offers forward-start / cliquet / quanto alongside the wave-1 products", async () => {
     await renderTicket();
-    const options = within(structureSelect())
-      .getAllByRole("option")
-      .map((o) => (o as HTMLOptionElement).value);
+    const options = structureOptionIds();
     expect(options).toContain("FORWARD_START");
     expect(options).toContain("CLIQUET");
     expect(options).toContain("QUANTO");
@@ -202,19 +279,19 @@ describe("TicketWorkspace — wave-2 products in the selector", () => {
   it("shows the reset-moneyness and reset-date inputs for a forward start", async () => {
     await renderTicket();
     act(() => {
-      fireEvent.change(structureSelect(), { target: { value: "FORWARD_START" } });
+      selectStructure("FORWARD_START");
     });
     expect(screen.getByLabelText("moneyness")).toBeInTheDocument();
     expect(screen.getByLabelText("reset")).toBeInTheDocument();
     // No option legs are rendered for a forward start.
     expect(screen.queryByText(/^LEG 1$/)).not.toBeInTheDocument();
-    expect(screen.getByText(/Forward-start vanilla/)).toBeInTheDocument();
+    expect(productNote(/Forward-start vanilla/)).toBeInTheDocument();
   });
 
   it("shows the cliquet schedule + clamp toggles; MC-pairs appears only when clamped", async () => {
     await renderTicket();
     act(() => {
-      fireEvent.change(structureSelect(), { target: { value: "CLIQUET" } });
+      selectStructure("CLIQUET");
     });
     expect(screen.getByLabelText("periods")).toBeInTheDocument();
     expect(screen.getByLabelText("use local cap")).toBeInTheDocument();
@@ -233,7 +310,7 @@ describe("TicketWorkspace — wave-2 products in the selector", () => {
   it("shows the payoff toggle, conversion vol and correlation for a quanto", async () => {
     await renderTicket();
     act(() => {
-      fireEvent.change(structureSelect(), { target: { value: "QUANTO" } });
+      selectStructure("QUANTO");
     });
     const payoff = screen.getByRole("tablist", { name: "payoff" });
     expect(within(payoff).getByText("Vanilla")).toBeInTheDocument();
@@ -249,9 +326,7 @@ describe("TicketWorkspace — wave-2 products in the selector", () => {
 describe("TicketWorkspace — wave-6 window barrier + booking-model selector", () => {
   it("offers a window barrier in the structure selector (additive, zero-legacy)", async () => {
     await renderTicket();
-    const options = within(structureSelect())
-      .getAllByRole("option")
-      .map((o) => (o as HTMLOptionElement).value);
+    const options = structureOptionIds();
     expect(options).toContain("WINDOW_BARRIER");
     // The pre-existing products are untouched.
     expect(options).toContain("VANILLA");
@@ -261,7 +336,7 @@ describe("TicketWorkspace — wave-6 window barrier + booking-model selector", (
   it("shows the booking-model selector with Default + Local-Stoch-Vol for a vanilla", async () => {
     await renderTicket();
     act(() => {
-      fireEvent.change(structureSelect(), { target: { value: "VANILLA" } });
+      selectStructure("VANILLA");
     });
     const model = screen.getByRole("tablist", { name: "booking model" });
     expect(within(model).getByText("Default")).toBeInTheDocument();
@@ -271,7 +346,7 @@ describe("TicketWorkspace — wave-6 window barrier + booking-model selector", (
   it("hides the booking-model selector for an LSV-unsupported product (digital)", async () => {
     await renderTicket();
     act(() => {
-      fireEvent.change(structureSelect(), { target: { value: "DIGITAL" } });
+      selectStructure("DIGITAL");
     });
     // A digital has no LSV route ⇒ no booking-model choice is offered.
     expect(screen.queryByRole("tablist", { name: "booking model" })).not.toBeInTheDocument();
@@ -280,7 +355,7 @@ describe("TicketWorkspace — wave-6 window barrier + booking-model selector", (
   it("locks the window barrier to Local-Stoch-Vol (the only model) and shows its inputs", async () => {
     await renderTicket();
     act(() => {
-      fireEvent.change(structureSelect(), { target: { value: "WINDOW_BARRIER" } });
+      selectStructure("WINDOW_BARRIER");
     });
     // The booking model is shown but locked to Local-Stoch-Vol (no Default option).
     const model = screen.getByRole("tablist", { name: "booking model" });
@@ -301,7 +376,7 @@ describe("TicketWorkspace — wave-6 window barrier + booking-model selector", (
   it("gates Local-Stoch-Vol pricing to the live server when offline (no faked LSV)", async () => {
     await renderTicket(); // ?mock ⇒ the offline in-app transport
     act(() => {
-      fireEvent.change(structureSelect(), { target: { value: "WINDOW_BARRIER" } });
+      selectStructure("WINDOW_BARRIER");
     });
     // Offline, the LSV engine is unavailable: the Request button is disabled and
     // labelled honestly (the mock never fabricates an LSV number).
@@ -313,7 +388,7 @@ describe("TicketWorkspace — wave-6 window barrier + booking-model selector", (
   it("toggling Local-Stoch-Vol on a vanilla offline disables Request quote honestly", async () => {
     await renderTicket();
     act(() => {
-      fireEvent.change(structureSelect(), { target: { value: "VANILLA" } });
+      selectStructure("VANILLA");
     });
     // Default ⇒ pricing works (offline analytic path is intact).
     expect(screen.getByRole("button", { name: /Request quote/ })).toBeInTheDocument();
@@ -329,9 +404,7 @@ describe("TicketWorkspace — wave-6 window barrier + booking-model selector", (
 describe("TicketWorkspace — American / Bermudan early-exercise vanilla", () => {
   it("offers American / Bermudan in the structure selector (additive, zero-legacy)", async () => {
     await renderTicket();
-    const options = within(structureSelect())
-      .getAllByRole("option")
-      .map((o) => (o as HTMLOptionElement).value);
+    const options = structureOptionIds();
     expect(options).toContain("AMERICAN");
     // The pre-existing products are untouched.
     expect(options).toContain("VANILLA");
@@ -341,7 +414,7 @@ describe("TicketWorkspace — American / Bermudan early-exercise vanilla", () =>
   it("shows option / strike / exercise-style for an American (no Bermudan dates field)", async () => {
     await renderTicket();
     act(() => {
-      fireEvent.change(structureSelect(), { target: { value: "AMERICAN" } });
+      selectStructure("AMERICAN");
     });
     expect(screen.getByRole("tablist", { name: "option type" })).toBeInTheDocument();
     expect(screen.getByRole("tablist", { name: "exercise style" })).toBeInTheDocument();
@@ -356,7 +429,7 @@ describe("TicketWorkspace — American / Bermudan early-exercise vanilla", () =>
   it("reveals the exercise-date count only when Bermudan is selected", async () => {
     await renderTicket();
     act(() => {
-      fireEvent.change(structureSelect(), { target: { value: "AMERICAN" } });
+      selectStructure("AMERICAN");
     });
     const style = screen.getByRole("tablist", { name: "exercise style" });
     act(() => {
@@ -373,7 +446,7 @@ describe("TicketWorkspace — American / Bermudan early-exercise vanilla", () =>
   it("reveals the LSM seed only when LSM paths > 0 (the Monte-Carlo engine)", async () => {
     await renderTicket();
     act(() => {
-      fireEvent.change(structureSelect(), { target: { value: "AMERICAN" } });
+      selectStructure("AMERICAN");
     });
     // FD engine by default (paths 0) ⇒ no seed field, labelled "exact FD".
     expect(screen.queryByLabelText("lsm seed")).not.toBeInTheDocument();
@@ -389,7 +462,7 @@ describe("TicketWorkspace — American / Bermudan early-exercise vanilla", () =>
   it("prices an American put offline (the binomial path is wired and reachable)", async () => {
     await renderTicket();
     act(() => {
-      fireEvent.change(structureSelect(), { target: { value: "AMERICAN" } });
+      selectStructure("AMERICAN");
     });
     // The offline binomial engine prices it (no LSV gate) ⇒ Request is enabled.
     const request = screen.getByRole("button", { name: /Request quote/ });
@@ -400,9 +473,7 @@ describe("TicketWorkspace — American / Bermudan early-exercise vanilla", () =>
 describe("TicketWorkspace — correlated multi-asset basket / best-of / worst-of", () => {
   it("offers the basket builder in the structure selector (additive, zero-legacy)", async () => {
     await renderTicket();
-    const options = within(structureSelect())
-      .getAllByRole("option")
-      .map((o) => (o as HTMLOptionElement).value);
+    const options = structureOptionIds();
     expect(options).toContain("BASKET");
     // The pre-existing products are untouched.
     expect(options).toContain("VANILLA");
@@ -412,7 +483,7 @@ describe("TicketWorkspace — correlated multi-asset basket / best-of / worst-of
   it("renders the leg builder (aggregation / two legs / correlation / strike / MC)", async () => {
     await renderTicket();
     act(() => {
-      fireEvent.change(structureSelect(), { target: { value: "BASKET" } });
+      selectStructure("BASKET");
     });
     expect(screen.getByRole("tablist", { name: "basket kind" })).toBeInTheDocument();
     // The default basket has two legs, each with its own pair + market data.
@@ -430,7 +501,7 @@ describe("TicketWorkspace — correlated multi-asset basket / best-of / worst-of
   it("adds and removes a third leg within the 2–3 leg bounds", async () => {
     await renderTicket();
     act(() => {
-      fireEvent.change(structureSelect(), { target: { value: "BASKET" } });
+      selectStructure("BASKET");
     });
     // Two legs by default; Remove is disabled at the 2-leg floor.
     expect(screen.queryByLabelText("leg 3 pair")).not.toBeInTheDocument();
@@ -453,7 +524,7 @@ describe("TicketWorkspace — correlated multi-asset basket / best-of / worst-of
   it("warns when the correlation makes the matrix non positive-definite", async () => {
     await renderTicket();
     act(() => {
-      fireEvent.change(structureSelect(), { target: { value: "BASKET" } });
+      selectStructure("BASKET");
     });
     // A correlation at the +1 boundary is singular (not strictly positive-definite).
     act(() => {
@@ -465,7 +536,7 @@ describe("TicketWorkspace — correlated multi-asset basket / best-of / worst-of
   it("switches aggregation kind across basket / best-of / worst-of", async () => {
     await renderTicket();
     act(() => {
-      fireEvent.change(structureSelect(), { target: { value: "BASKET" } });
+      selectStructure("BASKET");
     });
     const kind = screen.getByRole("tablist", { name: "basket kind" });
     act(() => {
@@ -481,7 +552,7 @@ describe("TicketWorkspace — correlated multi-asset basket / best-of / worst-of
   it("prices a basket offline through the real transport, surfacing a std-error", async () => {
     await renderTicket();
     act(() => {
-      fireEvent.change(structureSelect(), { target: { value: "BASKET" } });
+      selectStructure("BASKET");
     });
     // The offline correlated MC prices it (no LSV gate) ⇒ Request is enabled.
     const request = screen.getByRole("button", { name: /Request quote/ });

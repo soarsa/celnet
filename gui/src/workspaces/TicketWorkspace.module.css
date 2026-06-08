@@ -28,18 +28,19 @@
 .dot {
   color: var(--text-tertiary);
 }
-.structureSelect {
+.headStructure {
   font-family: var(--font-ui);
   font-size: var(--type-headline);
   font-weight: var(--weight-emphasis);
   color: var(--text-primary);
-  background: var(--bg-inset);
-  border: var(--hairline);
-  border-radius: var(--r-sm);
-  padding: var(--space-2) var(--space-3);
 }
 .headRight {
   margin-left: auto;
+}
+.payoffPreview {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-3) var(--space-6) var(--space-2);
 }
 .notional {
   display: inline-flex;
