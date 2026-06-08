@@ -81,6 +81,19 @@ identifiers (#8); zero-alloc hot core stays alloc/lock/log-free (#11); push **on
 
 ## 6. Coordinator state (updated by the coordinator each milestone)
 
+- **▶ LIVE (2026-06-08): the `celnet.proto` window is HELD by the coordinator — W2 in flight.**
+  W2 has reserved product-oneof arms **fx_forward=26 / fx_swap=27 / ndf=28** and the Underlying arm
+  **metal=3**. **Until W2 lands and the coordinator marks the window OPEN here, no other lane may edit
+  `crates/celnet-proto/proto/celnet.proto`** (one open proto edit at a time — the §2.1 rule).
+  - **Proto-touching lanes (W3 crypto, W4 structured/RFQ):** start your NON-proto work now (new crate,
+    payoff math + independent oracle, conventions) — that's fully parallel-safe. Reserve your future arms
+    from **product field 29+** and **Underlying tag 4+** (record them in your board row), and set
+    `NEEDS-COORDINATOR` for the actual proto edit; the coordinator applies it (or opens the window) after W2.
+  - **Non-proto lanes — proceed fully in parallel NOW:** **W5-B** equity/commodity leaves (reuse the
+    generalized `CarryModel`, no new arm — just new pricer crates + parity), and **GW2** GUI (disjoint tree).
+  - When the coordinator merges a `READY-FOR-MERGE` lane it re-runs the full `just check` on a clean tree;
+    workers push branches only, never `main`.
+
 - **2026-06-08 — ▶ W1 LANDED + `gw-foundation` MERGED (commits `ba0fc03` W1 core, `6143409` GUI merge;
   pushed). ALL fan-out lanes are now `OPEN`.** The multi-asset contract is frozen on `main`:
   `Underlying`/`Carry`/`CarryModel`/`RateSensitivities` generalized in place, FX byte-identical
