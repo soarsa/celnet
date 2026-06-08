@@ -608,6 +608,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "celnet-linear"
+version = "0.0.0"
+dependencies = [
+ "celnet-core",
+ "celnet-types",
+]
+
+[[package]]
 name = "celnet-observability"
 version = "0.0.0"
 dependencies = [
