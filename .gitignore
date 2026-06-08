@@ -39,3 +39,6 @@ gui/**/*.tsbuildinfo
 
 # Workflow worktree-isolation checkouts (transient)
 .claude/worktrees/
+
+# Transient Playwright-MCP browser-debug console logs (not source)
+.playwright-mcp/
