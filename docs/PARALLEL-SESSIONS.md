@@ -72,7 +72,7 @@ identifiers (#8); zero-alloc hot core stays alloc/lock/log-free (#11); push **on
 | **W6-RIGOR-INFRA** | `celnet-journal`, `celnet-replog`, `celnet-fanout`, `celnet-router` (+ their `fuzz/` + `.config/mutants-*.toml`) — fully disjoint from W1 | — | per-crate mutation ≥90% kill + a fuzz target/decoder + `check-crate` green | **OPEN** | — |
 | **W2-A-LINEAR** | NEW `celnet-linear` (forward/swap/NDF) + its parity/golden rows | W1 contract | QuantLib FxForward + closed-form DF + structural; conformance row | OPEN | — |
 | **W2-B-BREADTH** | `celnet-conventions`, `celnet-calendar` (>75 pairs + XPT/XPD + metal crosses) | W1 `Underlying::Metal` | EMTA/ISDA/LBMA tables + independent rata-die walk | OPEN | — |
-| **W3-CRYPTO** | NEW `celnet-crypto-vanilla` + crypto surface leaf | W1 contract | GK-funding + independent inverse closed-form + code-disjoint MC; Deribit specs | **CLAIMED** | coordinator / `lane/w3-crypto` (new-crate pricing leaf now; proto/surface-leaf/surfacing deferred until W2 frees the proto window) |
+| **W3-CRYPTO** | NEW `celnet-crypto-vanilla` (+ crypto surface leaf — deferred) | W1 contract | GK-funding + independent inverse closed-form + code-disjoint MC; Deribit specs | **DONE (pricing leaf)** | coordinator / `lane/w3-crypto` |
 | **W4-A-PIVOT** | `celnet-exotics/src/pivot.rs` + new payoff arms | W1 + coordinator proto | code-disjoint MC oracle + degenerate→TARF limit | OPEN | — |
 | **W4-B-RFQ** | NEW `celnet-rfq` (multi-dealer aggregation) | W1 + coordinator proto | ≥3 synthetic LP loopback; best-price/tie-break/last-look | OPEN | — |
 | **W5-A-XRISK** | `celnet-risk-normalize`, `celnet-risk-cube` (cross-asset fact + FRTB buckets) | W1 + W5-B leaves | longhand recomputation; FX firm_aggregate==single-node 1e-12 stays green | OPEN | — |
@@ -81,6 +81,25 @@ identifiers (#8); zero-alloc hot core stays alloc/lock/log-free (#11); push **on
 
 ## 6. Coordinator state (updated by the coordinator each milestone)
 
+- **▶ DONE (2026-06-08): W3-CRYPTO pricing leaf landed (coordinator lane `lane/w3-crypto`).** NEW disjoint
+  crate **`celnet-crypto-vanilla`** on the W1 carry seam (ADR-0008 — no `match carry`): the LINEAR path is
+  generalized-BSM with funding carry (`b = r − funding`); the INVERSE/coin-margined path is the genuinely
+  new `1/S_T` payoff with the exact share/coin-measure closed form
+  `V_coin = φ·df·[Φ(φd2) − (K/F)·e^{σ²t}·Φ(φd3)]`, `d3 = d1 − 2σ√t` (the `e^{σ²t}`/`d3` drift correction —
+  the naive `V_lin/S_0` is materially WRONG). Built by a build→DUAL-adversarial-verify workflow; the
+  inverse crux (the FRTB-0.75ρ-class trap) is gated THREE independent ways — code-disjoint splitmix64 MC
+  (the disagree-capable guard) + a literal-`1/S_T` midpoint quadrature + a SIGNED convexity sandwich
+  (call `coin·S0 < V_lin`, put `coin·S0 > V_lin`). The workflow **caught + fixed two plan errors**: the
+  plan's unconditional `V_inverse·S_0 > V_linear` sandwich is wrong for calls (the correct law is signed by
+  `Cov(1/S_T, payoff)`), and Gauss-Hermite under-resolves the `1/S_T` fat tail at crypto vols. A mutation to
+  the naive rescale fails all three oracles, proving non-circularity. Deribit specs (European, coin
+  settlement, 08:00 UTC cut, index fixing, tick) hand-pinned + cited; live fixing VALUES are ENV. **No root
+  `Cargo.toml` edit** (auto-join + registered `celnet-core`/`celnet-types` + dev-dep on the golden FX
+  `celnet-vanilla`; `just workspace-deps` OK) ⇒ ZERO overlap with the parallel session's W2. **Gate:**
+  `workspace-deps` OK · `check-crate celnet-crypto-vanilla` 18/18. **Deferred to the coordinator (serialized
+  after the W2 proto window frees):** the `Underlying::DigitalAsset`/`CryptoPair` wire arm + `CryptoPricer`
+  `CarryPricer` impl + the strike/log-moneyness crypto surface leaf (in `celnet-surface`) + proto +
+  `celnet-golden`/`celnet-parity` rows + 5-client surfacing.
 - **▶ DONE (2026-06-08): W5-B-LEAVES landed (coordinator lane `lane/w5-b-leaves`).** Two NEW disjoint leaf
   crates on the W1 carry seam, asset-class-agnostic (ADR-0008 — NO `match carry`/`match underlying`):
   **`celnet-equity-vanilla`** (generalized-BSM via `Carry::CostOfCarry{r, b=r−q}`, full Greeks,
