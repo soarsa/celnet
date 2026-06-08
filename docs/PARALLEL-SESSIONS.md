@@ -74,7 +74,7 @@ identifiers (#8); zero-alloc hot core stays alloc/lock/log-free (#11); push **on
 | **W2-B-BREADTH** | `celnet-conventions`, `celnet-calendar` (>75 pairs + XPT/XPD + metal crosses) | W1 `Underlying::Metal` | EMTA/ISDA/LBMA tables + independent rata-die walk | OPEN | — |
 | **W3-CRYPTO** | NEW `celnet-crypto-vanilla` (+ crypto surface leaf — deferred) | W1 contract | GK-funding + independent inverse closed-form + code-disjoint MC; Deribit specs | **DONE (pricing leaf)** | coordinator / `lane/w3-crypto` |
 | **W4-A-PIVOT** | `celnet-exotics/src/pivot.rs` + new payoff arms | W1 + coordinator proto | code-disjoint MC oracle + degenerate→TARF limit | OPEN | — |
-| **W4-B-RFQ** | NEW `celnet-rfq` (multi-dealer aggregation) | W1 + coordinator proto | ≥3 synthetic LP loopback; best-price/tie-break/last-look | OPEN | — |
+| **W4-B-RFQ** | NEW `celnet-rfq` (multi-dealer aggregation) | W1 + coordinator proto | ≥3 synthetic LP loopback; best-price/tie-break/last-look | **CLAIMED** | coordinator / `lane/w4-b-rfq` (new-crate engine + loopback FIX now; proto QuoteService/clients deferred until W2 frees the proto window) |
 | **W5-A-XRISK** | `celnet-risk-normalize`, `celnet-risk-cube` (cross-asset fact + FRTB buckets) | W1 + W5-B leaves | longhand recomputation; FX firm_aggregate==single-node 1e-12 stays green | OPEN | — |
 | **W5-B-LEAVES** | NEW `celnet-equity-vanilla`, `celnet-commodity-vanilla` | W1 contract | QuantLib AnalyticEuropean (div) + Black-76 golden | **DONE** | coordinator / `lane/w5-b-leaves` |
 | **GW2-STRUCTURING** | `gui/src/products/*` (Ticket→ProductSpec registry) + tests | GW0/GW1 merge | vitest per-ProductSpec round-trip + Playwright e2e + axe | **DONE** | coordinator / `lane/gw2-structuring` |
