@@ -195,7 +195,8 @@ Status legend: OPEN / IN-PROGRESS / DONE / ENV (deploy-bound, not a gap). Each i
   self-contained HTML, (c) **operator review** of the HTML. Oracle: visual proof — every section
   + every visual present, no clipping, professional print layout; the committed
   `tools/check-figures-uncut.mjs` + `check-html-responsive.mjs` green on the source.
-  Effort S. **OPEN** (gated on operator review of the HTML — see the capabilities lane).
+  Effort S. **DONE** (`tools/render-capabilities-pdf.mjs` + `just capabilities-pdf` →
+  `docs/celnet-capabilities.pdf`, 3.2 MiB, A4, per-section page breaks, all 30 visuals embedded).
 - Cross-host wire p99 / inter-DC SLO (loopback proves compute+framing+quorum only).
 - Live LP-panel connectivity + regulated-venue / MAS-RMO status (multi-dealer RFQ workflow).
 - Live crypto/metal NDF fixing VALUES (only fixing identity + convention are in-repo).
