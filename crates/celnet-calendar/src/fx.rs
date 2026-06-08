@@ -58,7 +58,9 @@ impl std::error::Error for TenorError {}
 /// eight G10 majors (USD, EUR, GBP, JPY, CHF, AUD, CAD, NZD) plus four EM
 /// deliverable currencies whose national holiday schedule is **fully
 /// Gregorian-computable** — MXN (Mexico), ZAR (South Africa), NOK (Norway), SEK
-/// (Sweden). Currencies with lunisolar banking holidays (KRW/TWD/HKD/INR/BRL/…)
+/// (Sweden) — and the four precious metals (XAU/XAG/XPT/XPD), which settle
+/// loco-London and so map to the London (UK) centre. Currencies with lunisolar
+/// banking holidays (KRW/TWD/HKD/INR/BRL/…)
 /// are deliberately not given a settlement centre here (see
 /// [`crate::holiday::CentreId`]); their conventions still resolve in
 /// `celnet-conventions`, but the engine never silently substitutes a wrong
@@ -90,13 +92,16 @@ fn centre_for_em(ccy: Ccy) -> Option<CentreId> {
         "ZAR" => CentreId::SouthAfrica,
         "NOK" => CentreId::Norway,
         "SEK" => CentreId::Sweden,
-        // Precious metals trade as FX pairs (XAUUSD/XAGUSD) and settle T+2
-        // **loco-London** against USD: a good metal settlement day is one open in
-        // both London (the bullion clearing centre, LBMA) and New York. Mapping
-        // the metal leg to the London (UK) centre composes the correct
-        // London ∩ US calendar via the standard cross-leg intersection.
-        // (Source: LBMA loco-London good-business-day convention.)
-        "XAU" | "XAG" => CentreId::UnitedKingdom,
+        // Precious metals trade as FX pairs (XAUUSD/XAGUSD/XPTUSD/XPDUSD) and
+        // settle T+2 **loco-London** against USD: a good metal settlement day is
+        // one open in both London (the bullion clearing centre — LBMA for
+        // gold/silver, LPPM for platinum/palladium) and New York. Mapping the
+        // metal leg to the London (UK) centre composes the correct London ∩ US
+        // calendar via the standard cross-leg intersection. Metal crosses (e.g.
+        // XAUEUR) compose London ∩ quote-centre ∩ US the same way.
+        // (Sources: LBMA loco-London good-business-day convention; LPPM for the
+        // platinum-group metals.)
+        "XAU" | "XAG" | "XPT" | "XPD" => CentreId::UnitedKingdom,
         _ => return None,
     })
 }
