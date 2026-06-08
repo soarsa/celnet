@@ -382,5 +382,3 @@ graduates ⛔/🟡 → ✅ for each epic only when the gate is green.
 *Note: competitor architecture/latency characterisations are positioning inferences from the
 absence of published figures and documented RFQ/EOD/batch architectures, not vendor-confirmed
 benchmarks — consistent with the disclaimer in `docs/COMPETITIVE-ANALYSIS.md`.*
-</parameter>
-</invoke>

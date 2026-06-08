@@ -109,7 +109,7 @@ The contract is served over a high-performance binary gRPC transport for native 
 
 It returns **typed errors** (a rejected stale token, an unknown surface version, or a typed `ExecuteOutcome::{Expired, UnknownToken, AlreadyConsumed}` surface as specific, matchable variants — never strings) and has built-in **reconnect-liveness**: across a blue-green cutover or a dropped link the SDK auto-resyncs subscriptions on the same session and drains every pending click-to-trade waiter with a typed outcome, so a client never hangs on a lost connection.
 
-**The `InstrumentSpec` builder** (`src/vocab.rs`) constructs every one of the 19 product arms with a fluent, typed constructor — `vanilla`, `strategy`, `single_barrier`, `double_barrier`, `digital`, `touch` (+ `one_touch` / `no_touch` / `double_no_touch` / `double_one_touch`), `variance_swap`, `volatility_swap`, `asian_option`, `forward_start`, `cliquet`, `quanto`, `tarf`, `accumulator`, `lookback`, `window_barrier`, `american` (+ `bermudan`), `basket` — plus the booking-model directive `.pricing_model(model)` and the `.with_lsv()` convenience. Three runnable examples ship: `price_exotic.rs`, `quote_and_trade.rs`, `stream_blotter.rs`.
+**The `InstrumentSpec` builder** (`src/vocab.rs`) constructs every one of the 18-product arms with a fluent, typed constructor — `vanilla`, `strategy`, `single_barrier`, `double_barrier`, `digital`, `touch` (+ `one_touch` / `no_touch` / `double_no_touch` / `double_one_touch`), `variance_swap`, `volatility_swap`, `asian_option`, `forward_start`, `cliquet`, `quanto`, `tarf`, `accumulator`, `lookback`, `window_barrier`, `american` (+ `bermudan`), `basket` — plus the booking-model directive `.pricing_model(model)` and the `.with_lsv()` convenience. Three runnable examples ship: `price_exotic.rs`, `quote_and_trade.rs`, `stream_blotter.rs`.
 
 **The admin CLI** (`crates/celnet-cli`) drives the same contract through the SDK — no separate control API to learn. Seven top-level subcommands (`src/cli.rs`):
 
@@ -125,7 +125,7 @@ It returns **typed errors** (a rejected stale token, an unknown surface version,
 
 ### 9.6 API-first client parity in practice
 
-Because there is exactly one contract and every client is a peer over it, parity is **structural rather than aspirational**, and it is proven by an executable matrix (`docs/CLIENT-PARITY-MATRIX.md`): all 19 products × the five service families are reachable from all five surfaces, with honest, stated exceptions:
+Because there is exactly one contract and every client is a peer over it, parity is **structural rather than aspirational**, and it is proven by an executable matrix (`docs/CLIENT-PARITY-MATRIX.md`): all 18-products × the five service families are reachable from all five surfaces, with honest, stated exceptions:
 
 - The **GUI** (React + WebGPU, live-WebSocket-by-default) drives Pricing, Quote, StreamSession, Surface, and Risk — the same families, no shortcuts; the Ticket prices the full exotic catalogue, the surface workspace exposes all five smile chips (incl. eSSVI).
 - The **Rust SDK** and **CLI** call the identical service families with typed semantics, the SDK from typed code and the CLI from the shell.

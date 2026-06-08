@@ -191,9 +191,11 @@ per price:
   always attributable to an exact surface version (deterministic replay).
 - This reuses Celnet's existing `arc-swap` hot model-swap mechanism (the same primitive that
   publishes a new model set during a hot upgrade).
-- **Fleet distribution of the log feeding these node-local snapshots is the designed-only
-  part** (§0): today the snapshot is fed in-process by `celnet-integration`'s aggregator,
-  not by a cross-node replicated log.
+- **The replicated log itself is built** (`celnet-replog`, full Raft — §0), but **using it as
+  the cross-node feed for these node-local surface snapshots is not yet wired**: today the
+  snapshot is fed in-process by `celnet-integration`'s aggregator. Routing the authoritative
+  surface/curve event stream through the built `celnet-replog` consensus to fan out to per-shard
+  node-local caches is the drop-in that closes this, behind the now-built seam.
 
 **Staleness vs throughput:** aggressive conflation lowers load but can serve a quote against a
 slightly stale surface during a fast move. Mitigation: bound and measure publish-to-snapshot
@@ -204,12 +206,13 @@ update used for booking.
 
 ## 5. Market-data fan-out & counterparty streaming
 
-- **In-process SPMC fan-out per shard** (LMAX-Disruptor pattern, *designed*): one producer
-  (the pricing core) publishes every event; many consumer threads (one per counterparty
-  session group) read the ring with batch consumption and no per-consumer queue contention.
-  Mature Rust implementations exist (`disruptor`-style SPMC, broadcast rings). Note: a simple
-  `crossbeam` SPSC/MPSC can beat the disruptor for trivial cases — the disruptor's win is
-  multi-consumer fan-out with batch publish, which is exactly the quoting use case.
+- **In-process SPMC fan-out per shard** (LMAX-Disruptor pattern, **built AND wired**, see the
+  `celnet-fanout` bullet below): one producer (the pricing core) publishes every event; many
+  consumer threads (one per counterparty session group) read the ring with batch consumption
+  and no per-consumer queue contention. Mature Rust implementations exist (`disruptor`-style
+  SPMC, broadcast rings). Note: a simple `crossbeam` SPSC/MPSC can beat the disruptor for
+  trivial cases — the disruptor's win is multi-consumer fan-out with batch publish, which is
+  exactly the quoting use case.
   **What is built today** (§0): the hot path is the `rtrb` **SPSC** core→edge ring; the async
   edge keeps per-session control/lifecycle frames (snapshot / modify / resync / executed /
   reject / heartbeat / stream-end / market-series) on a bounded tokio `mpsc`, and fans the
@@ -296,6 +299,13 @@ this replaces the superseded N/N-1 wire-compat model).
 
 ## 8. Consistency, failover & replay
 
+> **Status:** the consensus layer described here is **built** (`celnet-replog`, full Raft —
+> election, log-matching, durable conflicting-tail truncation, quorum commit, deterministic
+> `to_bits` replay, crash-recovery, §7 compaction/snapshot/InstallSnapshot), validated
+> multi-node over real loopback sockets (§0). What stays a design target is *wiring it as the
+> authoritative MD/lifecycle feed across the fleet* and the **absolute** cross-host failover
+> SLO (deploy-gated). Raft §6 dynamic membership is the one remaining consensus increment.
+
 A **thin** Raft-style replicated event log (Aeron-Cluster pattern) carries only the
 must-order, durable events (authoritative market-data updates and the quote/trade lifecycle);
 pricing math stays **off** consensus and replays from the log asynchronously. This yields:
@@ -374,15 +384,26 @@ built — not before, to avoid documenting unmeasured targets as guarantees.
 
 ---
 
-## 12. Build now vs defer
+## 12. Built vs defer
 
-- **Build now** (planned next — *none of these exist in the tree yet*, see §0; the only piece
-  already built is the per-shard node-local `arc-swap`/seqlock snapshot substrate): HRW
-  partitioner + versioned partition map; stateless shard router; the **replicated MD log**
-  feeding the (already-built) node-local snapshot; in-proc SPMC fan-out with conflation;
-  hot-standby shard + deterministic replay from the log.
+This section originally listed an all-design "build now" set; most of it is now **built**
+(see §0 for the authoritative status, mechanism by mechanism). The current split:
+
+- **Built** (see §0): the per-shard node-local `arc-swap`/seqlock snapshot substrate; the
+  HRW partitioner + versioned partition map (`celnet-router`); the stateless shard router
+  primitives; the cross-shard risk-aggregation algebra + configurable fleet topology
+  (`celnet-risk-fleet`); cross-node gRPC serving/federation across N backend processes; the
+  in-proc SPMC fan-out ring with conflation (`celnet-fanout`), now wired under the async edge
+  (Wave 9); and the **replicated log + full Raft consensus** (`celnet-replog`: leader election +
+  log-matching + durable conflicting-tail truncation + quorum commit + deterministic `to_bits`
+  replay + crash-recovery + §7 log compaction/snapshot/InstallSnapshot), validated multi-node
+  over real loopback sockets.
+- **Designed only / next increment:** Raft **§6 dynamic cluster membership change** (fixed
+  membership is complete today); the cross-DC transport hardening (TLS, kernel-bypass datapath,
+  the §11 absolute cross-host latency SLOs — these stay deploy-gated, never claimed in-repo).
 - **Defer (gate on measured single-shard limits):** full DPDK multicast tier; RDMA cross-node
-  fabric; dynamic cluster membership; any cross-node distribution of a single option's pricing.
+  fabric; the Jasper-style many-counterparty multicast tree; any cross-node distribution of a
+  single option's pricing (disqualifying on the hot path).
 
 ---
 
@@ -410,9 +431,11 @@ built — not before, to avoid documenting unmeasured targets as guarantees.
 *Sources — internal: `docs/_research/api-obs-scale.json` (scaling topic);
 `docs/ARCHITECTURE.md` §1.2/§5; `docs/OBSERVABILITY.md`; `docs/API-CLIENTS.md`; and a
 read-only audit of the tree (`celnet-engine` `rt`/`core`/`handoff`, `celnet-server`
-`core_link`/`services/stream`, `celnet-integration`) to fix overclaims — §0 now separates
-built vs. designed, the §7 handoff is corrected from `rkyv` to the built little-endian codec,
-and the §5 fan-out notes the built tokio-broadcast reality vs. the designed disruptor SPMC.
+`core_link`/`services/stream`/`services/pricefanout`, `celnet-fanout`, `celnet-replog`,
+`celnet-integration`) to keep claims current — §0 separates built vs. designed, the §7 handoff
+is the built little-endian codec (not `rkyv`), and the §5 fan-out records the built-AND-wired
+`celnet-fanout` SPMC ring under the edge (Wave 9) — the per-pair price path no longer rides
+tokio-broadcast, which now carries only per-session control/lifecycle frames.
 External (2026): rendezvous/HRW sharding for shard-key→node assignment (chaotic.land,
 *Data Sharding Algorithms*); DPDK vs io_uring vs Linux-stack packet-processing comparison
 (Linköping Univ., diva2:1789103) and io_uring "hybrid bypass" trajectory; Jasper — scalable

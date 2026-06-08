@@ -7,49 +7,69 @@ updating this file, and announcing it in the `CLAUDE.md` ledger. Within a parall
 window the interface crates are treated as **stable** so streams don't churn; a deliberate
 interface change coordinates all affected crates at once (see `docs/ROADMAP.md` §3).
 
-## The 28-crate workspace
+## The 34-crate workspace
 
-The implemented flat workspace is **28 crates** (`ls crates`):
+The implemented flat workspace is **34 crates** (`ls crates`):
 
 ```
 celnet-types  celnet-core  celnet-conventions  celnet-calendar  celnet-vanilla
-celnet-surface  celnet-exotics  celnet-gpu  celnet-engine  celnet-integration
+celnet-surface  celnet-exotics  celnet-heston  celnet-qmc  celnet-gpu
+celnet-engine  celnet-journal  celnet-replog  celnet-fanout  celnet-integration
 celnet-server  celnet-cli  celnet-client  celnet-proto  celnet-plugin-api
 celnet-plugin-host  celnet-observability  celnet-golden  celnet-testkit  celnet-bench
-celnet-router  celnet-fix  celnet-journal  celnet-parity  celnet-risk-normalize
-celnet-risk-cube  celnet-limits  celnet-entitlements
+celnet-router  celnet-fix  celnet-parity  celnet-risk-normalize  celnet-risk-cube
+celnet-risk-fleet  celnet-limits  celnet-entitlements  celnet-xva
 ```
 
 Several domains the early design split across many crates were **consolidated**:
-`celnet-surface` holds VV/SABR/SVI/SSVI + arbitrage gates + term structure;
-`celnet-exotics` holds LSV + PDE + MC + the shared numerics; `celnet-golden` is the
-QuantLib oracle/generator; `celnet-observability` owns telemetry rings/histograms;
-`celnet-gpu` is the wgpu backend + f64 CPU reconciliation. `celnet-plugin-host` is **built**:
-the tiered host (Tier-0 native registry + Tier-2 **wasmi** fuel-metered sandbox + replay
-harness) behind the frozen `celnet-plugin-api` contract — wasmtime was rejected for open
-RustSec advisories (see `docs/PLUGIN-HOST-ALT.md`).
+`celnet-surface` holds VV/SABR/SVI/SSVI/eSSVI + arbitrage gates + term structure;
+`celnet-exotics` holds LSV + PDE + MC + American/Bermudan + correlated basket + the shared
+numerics; `celnet-golden` is the QuantLib oracle/generator; `celnet-observability` owns
+telemetry rings/histograms; `celnet-gpu` is the wgpu backend + f64 CPU reconciliation. Later
+scale/correctness/catalogue waves added disjoint leaf crates: `celnet-heston` (standalone
+Heston European vanilla via two independent CF transforms), `celnet-qmc` (scrambled Joe-Kuo
+Sobol' + Owen scramble + Brownian-bridge), `celnet-replog` (leader-replicated deterministic-
+replay log over loopback sockets + full Raft) and `celnet-fanout` (lock-free SPMC broadcast
+ring) under the engine, `celnet-risk-fleet` (cross-shard risk fan-out algebra over the
+`celnet-router` HRW map), and `celnet-xva` (internal-only EPE/ENE + CVA/DVA/FVA over synthetic
+netting sets — no wire surface). `celnet-plugin-host` is **built**: the tiered host (Tier-0
+native registry + Tier-2 **wasmi** fuel-metered sandbox + replay harness) behind the frozen
+`celnet-plugin-api` contract — wasmtime was rejected for open RustSec advisories (see
+`docs/PLUGIN-HOST-ALT.md`).
 
 ## Dependency direction (must never invert)
 
 ```
 celnet-types  ←  celnet-core  ←  { celnet-conventions, celnet-calendar, celnet-vanilla,
-                                   celnet-surface, celnet-exotics, celnet-gpu }  ←  celnet-engine
-                                   ←  { celnet-server, celnet-cli }
+                                   celnet-surface, celnet-exotics, celnet-heston, celnet-qmc,
+                                   celnet-gpu }  ←  celnet-engine  ←  { celnet-server, celnet-cli }
 celnet-proto      →  depends only on celnet-types
 celnet-plugin-api →  depends only on celnet-types (+ celnet-core traits)
 celnet-client     →  depends on celnet-proto (typed SDK over tonic)
 celnet-observability →  telemetry seam; celnet-engine stays free of its deps
+celnet-heston     →  standalone Heston European vanilla over celnet-core/-types/libm (no IO)
+celnet-qmc        →  Sobol'/scramble/Brownian-bridge variate source over celnet-core (no IO);
+                     consumed by celnet-exotics/-xva and the celnet-gpu path/greeks kernels
+celnet-journal    →  dependency-free fsync'd append-only log + crash recovery; under celnet-engine
+celnet-replog     →  leader-replicated deterministic-replay log over loopback sockets (→ celnet-journal)
+celnet-fanout     →  lock-free SPMC broadcast ring (reuses crossbeam-utils CachePadded only)
 celnet-integration   →  Celer estate + vendor MD adapters, over celnet-surface/-types
 celnet-risk-normalize →  pure leaf transform over celnet-vanilla/-core/-types (no IO);
                          the convention/numeraire boundary the risk cube sits on
 celnet-risk-cube      →  single-node OLAP cube over celnet-risk-normalize (+ -vanilla
                          for bump-and-revalue, -core, -types); no IO/market-data
+celnet-risk-fleet     →  cross-shard risk fan-out ALGEBRA over celnet-risk-cube + celnet-router
+                         (HRW map) + -types; fan-out == single-node (transport designed-only)
+celnet-router         →  shard-by-pair/tenant HRW partition map over celnet-types; no IO
 celnet-entitlements   →  pure pre-aggregation pruning predicate over celnet-risk-cube
                          (FactKey/Hierarchy/DimensionId) + -types; no IO; sits beside the
                          cube, upstream of its group-by
 celnet-limits         →  pure limit framework over celnet-risk-cube (NodeAggregate /
                          dimension keys / Hierarchy) + celnet-risk-normalize (CanonicalLeaf)
                          + -types; no IO; sits above the cube, downstream of its group-by
+celnet-xva            →  internal-only XVA engine (EPE/ENE + CVA/DVA/FVA) over a hazard-rate
+                         survival curve + the celnet-qmc Sobol/bridge variates; synthetic
+                         netting sets, no wire surface
 celnet-golden, celnet-testkit, celnet-bench  →  test/validation/bench only
 ```
 
@@ -57,7 +77,7 @@ celnet-golden, celnet-testkit, celnet-bench  →  test/validation/bench only
 
 | Crate | Version | Frozen? | Surface |
 |-------|---------|---------|---------|
-| `celnet-types` | 0.0.0 | **freeze-candidate** | `OptionType`, `Ccy`, `CcyPair`, `Tenor` (now `Overnight`/`TomNext`/`SpotNext`/`Weeks`/`Months`/`Years`/`Imm(u8)`/`BrokenDate(BrokenDate)`), `BrokenDate{year:i32,month:u8,day:u8}`, `SmileModel` (`MarketHedge`/`StochasticVol`/`Parametric`/`ParametricSurface`, `Default=MarketHedge`); newtypes `Vol`/`Strike`/`Rate`/`Delta`/`Df`/`Time`; convention enums `DeltaConvention`/`AtmConvention`/`PremiumStyle`/`Cut`/`DayCount`/`Settlement`; DTOs `VanillaInputs`, `Greeks`. POD/`Copy`, `serde`. (No `time` dep — a broken date is the POD triple.) |
+| `celnet-types` | 0.0.0 | **freeze-candidate** | `OptionType`, `Ccy`, `CcyPair`, `Tenor` (now `Overnight`/`TomNext`/`SpotNext`/`Weeks`/`Months`/`Years`/`Imm(u8)`/`BrokenDate(BrokenDate)`), `BrokenDate{year:i32,month:u8,day:u8}`, `SmileModel` (`MarketHedge`/`StochasticVol`/`Parametric`/`ParametricSurface`/`ExtendedSurface`, `Default=MarketHedge`; the five mirror VV / SABR / SVI / SSVI / eSSVI); newtypes `Vol`/`Strike`/`Rate`/`Delta`/`Df`/`Time`; convention enums `DeltaConvention`/`AtmConvention`/`PremiumStyle`/`Cut`/`DayCount`/`Settlement`; DTOs `VanillaInputs`, `Greeks`. POD/`Copy`, `serde`. (No `time` dep — a broken date is the POD triple.) |
 | `celnet-core` | 0.0.0 | **freeze-candidate** | `math` (`norm_cdf`, `norm_pdf`, `exp`/`ln`/`sqrt` via `libm`); `is_close` + `assert_close!` (ULP/rel/abs); trait `Smile` + `FlatSmile`. Zero IO. |
 | `celnet-proto` | 0.0.0 | **freeze-candidate** | single current wire contract (`prost 0.13` / `tonic 0.12`); `celnet.proto` services `PricingService`/`QuoteService`/`StreamService`/`SurfaceService`; `Instrument` oneof; **no** version field / negotiation. Phase-1 additions: `Tenor` short-end/IMM/`BrokenDate` units; `SmileModel` enum on `MarkSurfaceRequest`/`ScenarioRequest`; market-series feed (`MarketObservable`, `MarketSeriesSubscribe`/`Unsubscribe`/`Point`/`Snapshot`) multiplexed on `StreamSession`; attribution identity (`BookId`/`Owner`/`AttributionRecord`) on the quote/trade lifecycle. Phase-2 addition: `RiskService` (`ListPositions`/`AggregateRisk`/`DrillRisk`/`LimitStatus`) — server-side hierarchical risk over the org cube. api-first catalogue (W1–W6) additions: `Instrument.product` exotic arms `variance_swap=13`…`basket=25`, supporting enums (`AsianMethod`/`QuantoPayoff`/`TarfRedemption`/`AccumulatorMonitoring`/`LookbackStyle`/`BasketKind`/`ExerciseStyle`), `PricingModel pricing_model=22` booking selector, `SMILE_MODEL_EXTENDED_SURFACE=4`, `PriceResponse.price_std_error=7`/`Quote.price_std_error=12`, `ArbReport.smile_model=5` typed provenance. See §"Phase-1 contract extensions", §"Phase-2 contract: `RiskService`", and §"Exotic catalogue + booking-model + provenance". |
 | `celnet-plugin-api` | 0.0.0 | **freeze-candidate** | SDK traits (`PricingModel`/`PricingBackend`) + WIT world. |

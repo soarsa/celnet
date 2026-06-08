@@ -9,7 +9,7 @@ Celnet is not a thin challenger closing gaps — it is a functionally complete, 
 
 ### 2.1 Pricing & analytics — the full catalogue
 
-Celnet prices the complete FX-options book a real desk trades: vanilla through the full first-generation exotics catalogue, the structured and path-dependent products, American/Bermudan early exercise, correlated multi-asset baskets, and a particle-calibrated LSV booking model — **all on the one wire (19 product arms on the unified `Instrument`, `celnet.proto:1016-1062`), each parity-gated against an independent oracle and reachable from all five clients.** Vanilla pricing is Garman-Kohlhagen off the outright forward with separate domestic and foreign discount factors. The smile and surface engine carries five market-standard parametrisations and calibrates them from broker quotes behind arbitrage gates. The Open Quant SDK *extends* this already-deep catalogue with private-IP models; it is not the route to depth, because the depth ships in core.
+Celnet prices the complete FX-options book a real desk trades: vanilla through the full first-generation exotics catalogue, the structured and path-dependent products, American/Bermudan early exercise, correlated multi-asset baskets, and a particle-calibrated LSV booking model — **all on the one wire (18-product arms on the unified `Instrument`, `celnet.proto:1016-1062`), each parity-gated against an independent oracle and reachable from all five clients.** Vanilla pricing is Garman-Kohlhagen off the outright forward with separate domestic and foreign discount factors. The smile and surface engine carries five market-standard parametrisations and calibrates them from broker quotes behind arbitrage gates. The Open Quant SDK *extends* this already-deep catalogue with private-IP models; it is not the route to depth, because the depth ships in core.
 
 | Capability | What it delivers |
 |---|---|
@@ -90,7 +90,7 @@ One clean, unversioned contract carries everything across **five gRPC services**
 | Capability | What it delivers |
 |---|---|
 | Service families — **5 gRPC services** | `PricingService.Price`; `QuoteService.{RequestQuote, AcceptQuote, RejectQuote}`; the multiplex `StreamService.StreamSession`; `RiskService.{ListPositions, AggregateRisk, DrillRisk, LimitStatus}`; `SurfaceService.{GetSmile, MarkSurface, Scenario}` (`celnet.proto:2447-2504`) |
-| Unified instrument | A single `Instrument` type with **19 product arms** and surface-version pinning; each MC product carries `price_std_error` |
+| Unified instrument | A single `Instrument` type with **18-product arms** and surface-version pinning; each MC product carries `price_std_error` |
 | Streaming | One bidirectional channel, many subscriptions: Subscribe → Snapshot → Update(seq) → Heartbeat, gap → Resync, in-place Modify re-baseline |
 | Click-to-trade | Unguessable keyed-MAC tradable token (sell-at-bid / buy-at-offer) bound to the line, with last-look validity and idempotent execution — stale / forged / already-consumed are rejected |
 | WebSocket mirror | Byte-identical WebSocket JSON mirror of the **entire** contract — all five services (`celnet-server/src/lib.rs:31,177,359`) |
@@ -100,7 +100,7 @@ One clean, unversioned contract carries everything across **five gRPC services**
 | Fleet sharding | Intra-fleet highest-random-weight partition map for horizontal scale-out |
 | Series & attribution | A market-series feed (ATM vol / SPOT / RR / BF / FORWARD observables) multiplexed on the same StreamSession, a smile-model selector (5 families), and a book/owner attribution dimension |
 
-**API-first parity.** Every capability lives in the one contract. The GUI, the Rust SDK, the CLI, and the Excel add-in all consume that same contract — the front-end has no privileged path — so a value is bit-identical across every surface, proven continuously by `CLIENT-PARITY-MATRIX.md` (all 19 products × the service families reachable from all five surfaces, with honest exceptions, e.g. basket Greeks deliberately zeroed).
+**API-first parity.** Every capability lives in the one contract. The GUI, the Rust SDK, the CLI, and the Excel add-in all consume that same contract — the front-end has no privileged path — so a value is bit-identical across every surface, proven continuously by `CLIENT-PARITY-MATRIX.md` (all 18-products × the service families reachable from all five surfaces, with honest exceptions, e.g. basket Greeks deliberately zeroed).
 
 ### 2.6 Clients — GUI, Excel, SDK, CLI
 
@@ -108,7 +108,7 @@ One clean, unversioned contract carries everything across **five gRPC services**
 |---|---|
 | GUI (React + WebGPU) | Live-WebSocket-by-default, single-window five-workspace shell — Ticket / Stream / Surface / Risk / Book (Cmd-1..5) — on the Celer Technologies brand, with a Firm/desk/book scope breadcrumb, a pair navigator, a Cmd-K command palette, a `?` keyboard-shortcuts overlay, light/dark, and trend modes. The Ticket prices the full exotic catalogue (incl. American/Bermudan and basket/best-of/worst-of); the Surface workspace carries **5 model chips incl. eSSVI** |
 | Excel add-in (Office.js) | **27 `CELNET.*` functions** — pricing (PRICE, GREEKS), exotics (BARRIER, WINDOWBARRIER, DIGITAL, TOUCH, VARSWAP, VOLSWAP, ASIAN, FORWARDSTART, CLIQUET, QUANTO, TARF, ACCUMULATOR, LOOKBACK, AMERICAN, BASKET), surface (SURFACE, MARKSURFACE, MARK), stream (RFQ, SUBSCRIBE, SERIES), and server-side risk (RISK, POSITIONS, LIMITS, STATUS) — no pricing in the cell; every number is the server's value, bit-identical to the GUI, with per-cell convention/surface-version transparency, MC std-error disclosure, and typed #CELNET_* errors |
-| Rust SDK | Typed client with reconnect-liveness and typed errors; an InstrumentSpec builder for all 19 products and the LSV pricing-model directive |
+| Rust SDK | Typed client with reconnect-liveness and typed errors; an InstrumentSpec builder for all 18-products and the LSV pricing-model directive |
 | Admin CLI | Operational control over the same contract (price / surface / exotic / basket / convention / risk / stream) |
 
 ![The live multiplex RFS blotter — click-to-trade with last-look and a trend selector.](../assets/celnet-capabilities/shot-01-stream-blotter.png)

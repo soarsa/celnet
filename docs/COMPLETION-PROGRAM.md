@@ -1,5 +1,13 @@
 # COMPLETION-PROGRAM — Celnet to fully-complete, SOTA, polished
 
+> **STATUS — ALL 12 WAVES LANDED (record).** This program is complete: W1–W12 below all
+> shipped and are parity-gated (HEAD on `main`; `just check` 1306/1306). Only W9 is marked
+> `✅ DONE` inline in the §3 table; the rest landed subsequently and are confirmed built by
+> `docs/POST-COMPLETION-AUDIT.md` (Class B "already done"). The document is retained as the
+> program record of intent and verification strategy; treat the wave table as executed. For
+> the post-completion gap tail (honesty/rigor/onboarding bar-raisers, none P0/P1-functional)
+> see `docs/POST-COMPLETION-AUDIT.md`.
+
 > Operator-ready, dependency-ordered program that takes Celnet from "five leadership
 > waves + Full-Raft (election/truncation/compaction) complete" to a **fully-complete,
 > SOTA, intuitive, polished** state: integrated architecture, full functionality,

@@ -23,8 +23,9 @@ The product owner judged the current Surface workspace "illogical and not intuit
 (1) establishes the **canonical FX vol-surface marking workflow** a desk/book trader actually
 runs, grounded in cited sources; (2) **critiques** the current Celnet Surface against it and
 against incumbents; and (3) specifies the **optimal redesign**, mapped onto Celnet's existing
-`celnet-surface` capabilities (Vanna-Volga, SABR, SVI, SSVI, arbitrage-free term structure,
-broker→smile-strangle calibration) and the `surface_version` marking seam.
+`celnet-surface` capabilities (Vanna-Volga, SABR, SVI, SSVI, **eSSVI** — five smile models,
+arbitrage-free term structure, broker→smile-strangle calibration) and the `surface_version`
+marking seam.
 
 The single load-bearing fact behind everything below: **FX volatility is marked in delta space,
 not strike space — per tenor, as a small set of broker handles (ATM + 25Δ/10Δ risk-reversal and
@@ -111,7 +112,7 @@ The end-to-end loop, in the order a trader runs it:
 
 2. **Calibrate.** For each (pair, tenor), run the **market-strangle → smile-strangle**
    fixed-point so the calibrated smile reprices the broker strangle exactly, then build the
-   continuous slice (VV / SABR / SVI / SSVI per the chosen model). This is
+   continuous slice (VV / SABR / SVI / SSVI / eSSVI per the chosen model). This is
    `celnet-surface/src/strangle.rs` + the smile models; the GUI consumes the result via the
    `MarkSurface` seam. The grid must show **both** the quoted broker BF and the calibrated smile
    strangle when they diverge. [calibration mandatory — CONVENTIONS.md; high]
@@ -246,9 +247,12 @@ The workspace must let the trader specify expiry either as a **tenor string** ("
 T+2 default; T+1 for USDCAD and some EM; EOM and IMM rules; both-currency + USD calendar
 intersection). [OVDV/MX.3 expose both tenor and expiry as capabilities — Bloomberg/QuantNet,
 Murex spotlights, high; the *bidirectional-live-round-trip UI* is an inferred design pattern,
-medium.] **IMM dates** (third Wednesday of Mar/Jun/Sep/Dec) are a turn concentration point and
-are currently **not** resolved in `celnet-calendar` (gap, §8/§10). [IMM = 3rd Wed — CME/Wikipedia,
-high; absence verified in code, high]
+medium.] **IMM dates** (third Wednesday of Mar/Jun/Sep/Dec) are a turn concentration point and are
+**now resolved in `celnet-calendar`** — `Tenor::Imm(n)` selects the `n`-th IMM expiry strictly after
+the horizon (`crates/celnet-calendar/src/fx.rs`, "Exchange-defined IMM date"; `Tenor::Imm` in
+`celnet-types`), closing the earlier gap; what the *GUI* still needs is the dual-mode tenor⇄date
+control that round-trips through it (§7/§10). [IMM = 3rd Wed — CME/Wikipedia, high; resolver verified
+in code, high]
 
 ### 5.2 Two clocks: vol time vs. discount time
 
@@ -339,9 +343,11 @@ Concretely, `SurfaceWorkspace.tsx` is reorganised around the marking grid:
    keyboard-navigable, with vol-convention nudge steps. Backed by `celnet-surface` calibration via
    `MarkSurface`. Shows quoted-BF vs. smile-strangle when they diverge.
 2. **RR / BF / ATM handle model + live recalibrate.** Editing any handle re-runs the
-   market→smile-strangle fixed-point (`strangle.rs`) and rebuilds the slice (VV/SABR/SVI/SSVI),
+   market→smile-strangle fixed-point (`strangle.rs`) and rebuilds the slice (VV/SABR/SVI/SSVI/eSSVI),
    with a visible **model selector** + per-mark **model provenance** (which model calibrated this
-   mark), since Celnet ships four smile models. [model-choice surfacing is a real desk need;
+   mark), since Celnet ships **five** smile models (the fifth, eSSVI, is the wire
+   `SMILE_MODEL_EXTENDED_SURFACE` selector — maturity-dependent ρ, closed-form arbitrage-free).
+   [model-choice surfacing is a real desk need;
    medium]
 3. **No-arb surfacing (per-slice + cross-tenor).** Replace the hardcoded
    `calendarArbitrageFree: true` with the **real surface-wide check** Celnet already computes
@@ -396,7 +402,7 @@ The wire/`gui` contract `MarkedSurface` / `Smile` / `BrokerQuoteSet` / `ArbRepor
 | 6 | **No compare / overlay / history.** `SmileChart` plots one smile; no reference curve. | Traders mark *relative* to broker/history/consensus. | code [high] |
 | 7 | **No term-structure curves.** Only mesh + single smile. | ATM/RR/BF-vs-tenor curves are core to marking; sticky-delta never named/simulated. | code [high] |
 | 8 | **No broken-date / value-date pricer; linear-in-vol calendar-time interpolation** (`surface.ts:184–201`: `vLo + (vHi−vLo)·w`, `w` linear in calendar `tenorYears`). | Wrong on two counts: interpolate **variance** not vol, in **business** not calendar time → can manufacture calendar arb. ~51% of forward flow is broken-dated. | code; Gatheral-Jacquier; LSEG [high] |
-| 9 | **No concrete `EventClock`.** `BusinessClock` trait + `with_clock` exist server-side; only identity `CalendarClock`. No IMM resolver in `celnet-calendar`. | Event/turn structure (the most-traded broken dates) cannot be priced. | `termstructure.rs`; `celnet-calendar` [high] |
+| 9 | **No concrete `EventClock`.** `BusinessClock` trait + `with_clock` exist server-side; only the identity `CalendarClock` is implemented. *(The IMM resolver gap is now closed — `Tenor::Imm` resolves third-Wednesday IMM dates in `celnet-calendar`; the remaining gap is the `EventClock` itself.)* | Event/turn structure (the most-traded broken dates) cannot yet be priced through an event-weighted clock. | `termstructure.rs` [high]; IMM resolver verified built in `celnet-calendar/src/fx.rs` |
 | 10 | **Provenance thin**: shows only "5-pt/3-pt broker" + clock + version (`:136–143`); no delta/ATM/strangle convention; no working-vs-official role; no model. | Marks are role- and convention-laden; hiding it invites silent mismarks. | code [high] |
 | 11 | **Fragile float-equality selection** at four sites, two tolerances (`SurfaceWorkspace.tsx:58,102,160`; `SmileChart.tsx:96` — `<1e-9` and `<1e-6`); two cursors; no keyboard nav. Smile chart y-axis **auto-fits** slice min/max (`SmileChart.tsx:50–58`), exaggerating tiny moves. Mesh uses a **9-pt** `DELTA_AXIS` vs. the **5-pt** `DELTA_PILLARS` (`SurfaceMesh.tsx:28` vs `surface.ts:27`). | Brittle interaction + misleading scaling + axis mismatch. | code [high] |
 
@@ -425,7 +431,7 @@ in the same stroke).
 | Compare / overlay vs. broker / history / consensus | **proposed** | LP-aggregation / overlay common (e.g. IBKR Vol Lab, vendor composites); month-end consensus = Totem (S&P Global, ~30 submitters, monthly) | medium overlay; high Totem cadence |
 | Broken-date + event-aware pricing | **proposed** (EventClock + IMM gap) | OVDV/MX.3 expose tenor + explicit expiry; MX.3 real-time book mgmt | high capability; UI round-trip inferred |
 | Multi-pair desk surface monitor | **proposed** | JPM multi-currency vol grids; LSEG FENICS 340+ pairs coverage; BVOL 200+ | high coverage figures |
-| Smile-model choice (VV/SABR/SVI/SSVI) + provenance | **engine ready**; UI provenance thin → **model selector + per-mark provenance** | Murex ships SLV (GPU-accel) as a marking-model choice; advanced vol marking | high (SLV); IPV tight-coupling = **inference, medium** |
+| Smile-model choice (VV/SABR/SVI/SSVI/**eSSVI**) + provenance | **engine + wire ready** (five models; eSSVI = `SMILE_MODEL_EXTENDED_SURFACE`); UI provenance thin → **model selector + per-mark provenance** | Murex ships SLV (GPU-accel) as a marking-model choice; advanced vol marking | high (SLV); IPV tight-coupling = **inference, medium** |
 | Immutable versioned marks + version-diff attribution | **DONE** (`surface_version` / `surface_book`) → expose diff | Vendors version marks; "diff your own mark vs. your own position" = Celnet **positioning**, not a verified competitor gap | medium engine; positioning low |
 | Per-pair surface viz analog | mesh + smile | LSEG **FXVE** (FX Volatility Explorer) is the closest single-pair viz analog | medium |
 
@@ -527,7 +533,8 @@ viz/SmileChart.tsx,viz/SurfaceMesh.tsx,data/surface.ts,data/contract.ts}`.
    **QuantLib/reference validation** (gate #5); open/free event-calendar source. *Area:*
    `celnet-surface` (+ `celnet-calendar`). *Dep:* none new; research/validation item.
 9. **IMM resolver in `celnet-calendar`** — third-Wednesday IMM dates (turn concentration). *Area:*
-   `celnet-calendar`. *Dep:* none.
+   `celnet-calendar`. *Dep:* none. **— DONE** (shipped as `Tenor::Imm(n)`, `celnet-calendar/src/fx.rs`);
+   what remains is wiring the dual-mode tenor⇄date GUI control to it under item #10.
 10. **Broken-date, event-aware pricer + dual-mode expiry (tenor⇄date) + two clocks** — total-
     variance interpolation on the event clock; ACT/365 vol vs. MM-basis discount; mark-to-impact
     to the ticket. *Area:* `gui/` + `celnet-server` + `celnet-surface`. *Dep:* #8, #9; contract

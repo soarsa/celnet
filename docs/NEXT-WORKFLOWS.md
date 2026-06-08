@@ -3,6 +3,19 @@
 > Read this, then launch the next two-disjoint-track Workflow from §4. Append-only intent;
 > keep in sync with the CLAUDE.md ledger after every commit.
 
+> **STATUS-RECONCILED (post-2026-06-07): the §4 backlog below is now BUILT — this section is a
+> historical snapshot.** After the §1 snapshot, the full 12-wave `docs/COMPLETION-PROGRAM.md`
+> and the 13-item `docs/POST-COMPLETION-AUDIT.md` landed (HEAD advanced well past `9d26c0d`;
+> `just check` 1306/1306). Every §4 deepening spec has since shipped & is parity-gated: **(i)**
+> full Raft (election/Pre-Vote/truncation/compaction/InstallSnapshot — `celnet-replog`); **(ii)**
+> GPU G3 path kernel + G6 pathwise/LR Greeks + QMC-on-GPU KAT (`celnet-gpu`); **(iii)**
+> `celnet-fanout` SPMC ring wired under the edge (`celnet-server/services/pricefanout.rs`);
+> **(iv)** eSSVI hardening, `celnet-xva` (CVA/DVA/FVA on synthetic netting), Sobol higher-dim
+> (`qmc_highdim.rs`). The **§2 recipe and §3 lessons remain current and correct** — use them for
+> any new workflow. Treat §1/§4 as the record of what *was* next, not what *is* next; for live
+> status see the `CLAUDE.md` ledger, `docs/POST-COMPLETION-AUDIT.md`, and
+> `docs/CAPABILITIES-REVITALISATION-PLAN.md`.
+
 ## 1. STATUS
 
 The Celnet leadership program is **materially COMPLETE**. All FIVE in-repo waves (1–5) are

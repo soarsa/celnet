@@ -84,12 +84,13 @@ no option FIX mapping), and (b) be able to act as a **FIX counterparty** in two 
 - **Initiator (price taker / hedge):** Celnet sends orders out for delta hedging via the same
   dialect `destination` will eventually map.
 
-`celnet-fix` is a **new leaf crate** consumed only by `celnet-server` (the async edge), never by
-`celnet-engine`. `docs/ARCHITECTURE.md` §2 already reserves this: *"the native `.so`/FIX/IPC
-crates the early design sketched (`celnet-fix`, …) are not separate crates today; FIX/IPC framing
-is integration-wave work."* This wave creates it. Dependency arrow stays one-way:
-`celnet-server → celnet-fix → celnet-proto/celnet-types`; nothing on the pinned hot path touches
-a socket or a parser.
+`celnet-fix` is a **leaf crate** consumed only by `celnet-server` (the async edge), never by
+`celnet-engine`. **Status: this crate is now built** — `crates/celnet-fix` (zero-copy FIX 4.4
+framing, FIXT/4.4 session FSM, FX-options dialect, acceptor + initiator), loopback-tested and
+wired into `celnet-server`; `docs/ARCHITECTURE.md` §2 records it as built. (The wave this plan
+describes has landed for the *here-buildable* scope; live-venue wiring stays LIVE-GATED per §7.)
+Dependency arrow stays one-way: `celnet-server → celnet-fix → celnet-proto/celnet-types`; nothing
+on the pinned hot path touches a socket or a parser.
 
 ### 1.2 The FX-options FIX dialect (concrete tag set)
 

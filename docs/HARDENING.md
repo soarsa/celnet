@@ -263,30 +263,110 @@ table) carries `cargo-fuzz` / libFuzzer targets. It is deliberately excluded
 from `cargo build --workspace` and the stable gate so the cross-platform matrix
 never pulls the nightly-only sanitizer runtime.
 
-| Target           | Under test                            | Contract asserted                                        |
-|------------------|---------------------------------------|----------------------------------------------------------|
-| `vanilla_inputs` | `celnet_vanilla::price` + `::greeks`  | no panic; premium ≥ 0 and finite; all 13 Greeks finite.  |
+Two classes of input are fuzzed: the **numerical pricing domain** (one target)
+and the **untrusted-bytes decode/recovery boundaries** (five targets — the
+durable-log and wire-contract surfaces that ingest attacker-controllable bytes,
+where a panic/OOM/torn-state would be a denial-of-service or a corruption bug,
+not just a wrong price):
+
+| Target               | Under test                                          | Contract asserted                                                        |
+|----------------------|-----------------------------------------------------|--------------------------------------------------------------------------|
+| `vanilla_inputs`     | `celnet_vanilla::price` + `::greeks`                | no panic; premium ≥ 0 and finite; all 13 Greeks finite.                  |
+| `replog_log_entry`   | `celnet-replog` log-entry codec (`entry`/`log`)     | decode of arbitrary bytes never panics; round-trips when it decodes.     |
+| `replog_snapshot`    | `celnet-replog` §7 snapshot codec (CRC'd snapshot)  | corrupt/truncated snapshot bytes are rejected, never silently accepted.  |
+| `replog_wire_message`| `celnet-replog` Raft RPC wire framing (`wire`)      | length-prefixed RPC decode of arbitrary bytes never panics.             |
+| `journal_recover`    | `celnet-journal` torn-tail recovery over a real temp file | crash-mid-append heals to last good record; interior corruption surfaced, bounded alloc. |
+| `proto_convert`      | `celnet-proto` prost decode + `convert.rs` `TryFrom` | decode of arbitrary wire bytes + the typed-conversion layer never panics. |
 
 `vanilla_inputs` folds raw fuzzer bytes (via `arbitrary`) into a
 valid-but-adversarial `VanillaInputs` in the Garman-Kohlhagen domain (strictly
 positive spot/strike/vol/time, finite bounded rates), so the budget is spent on
 in-domain corners — deep ITM/OTM, near-zero / century expiries, micro / macro
-vols, large rate spreads — rather than trivially-rejected garbage.
+vols, large rate spreads — rather than trivially-rejected garbage. The decode
+targets instead feed the **raw** fuzzer bytes straight at the decoder, since the
+whole point is that the byte boundary must be panic-free on arbitrary input. The
+decode targets are mirrored as deterministic in-tree corpus-replay tests
+(`celnet-replog/tests/decode_fuzz.rs`, `celnet-journal/tests/decode_fuzz.rs`) so
+the boundary stays covered inside the stable `just check` gate even without the
+nightly sanitizer runtime.
 
-It runs as a dedicated **Linux-nightly** CI job — the `fuzz` job in
-`.github/workflows/ci.yml` — which installs `cargo-fuzz` on nightly and runs the
-`vanilla_inputs` target time-boxed (a 60 s smoke budget) on every push/PR; a
-panic or contract break fails the job. It is deliberately not part of the stable
-cross-platform gate. Locally (or for a longer campaign) run it via:
+They run as a dedicated **Linux-nightly** CI job — the `fuzz` job in
+`.github/workflows/ci.yml` — which installs `cargo-fuzz` on nightly and runs
+**all six** targets time-boxed on every push/PR (`vanilla_inputs` a 60 s smoke
+budget, each decode target a 30 s smoke budget); a panic or contract break fails
+the job. It is deliberately not part of the stable cross-platform gate. Locally
+(or for a longer campaign) run a target via:
 
 ```
 rustup toolchain install nightly && cargo install cargo-fuzz
 just fuzz-vanilla 120         # cd fuzz && cargo +nightly fuzz run vanilla_inputs -- -max_total_time=120
+cd fuzz && cargo +nightly fuzz run replog_snapshot -- -max_total_time=120   # any decode target
 ```
 
 ## 5. Golden / reference parity
 
-Numerical correctness is anchored to published prices and the open-source
-QuantLib oracle (guardrail #5/#7). The parity fixtures and harness live in
-`celnet-parity` / `celnet-golden` (owned by the parity lane); this document
-covers the structural hardening gates that wrap them.
+Numerical correctness is anchored to **published prices** and the open-source
+**QuantLib** oracle (guardrail #5/#7): numerical code is validated against an
+*independent* reference, never merely asserted plausible. The fixtures and
+harness live in two crates owned by the parity lane — `celnet-golden` (frozen
+reference tables + the loaders/gating that read them) and `celnet-parity`
+(executable parity rows that drive a Celnet engine against an independent
+in-test re-derivation or a `celnet-golden` table). This document covers the
+**structural** hardening gates (mutation/coverage/fuzz above) that wrap them and
+records the golden surface so no consumer over-reads it.
+
+### 5.1 Frozen reference tables (`celnet-golden`)
+
+Each table is a committed CSV with full provenance, loaded by a typed record and
+gated by a `tests/*_grid.rs` row to a stated tolerance. The closed-form/QuantLib
+families are gated near the last bit (~1e-10); the Heston family is gated to the
+*published* precision of its third-party oracle (not a last-bit claim — see
+below).
+
+| Table (`data/`)          | Family                                   | Gate (`tests/`)          | Oracle / provenance                                                      |
+|--------------------------|------------------------------------------|--------------------------|-------------------------------------------------------------------------|
+| `vanilla_gk.csv`         | Garman-Kohlhagen vanilla + Greeks        | `vanilla_grid.rs`        | QuantLib 1.42.1 frozen table, ~1e-10                                     |
+| `barrier_gk.csv`         | single barriers (all 8 in/out × up/down) | `barrier_grid.rs`        | QuantLib 1.42.1, ~1e-10                                                  |
+| `double_barrier_gk.csv`  | double-knockout barriers                 | `double_barrier_grid.rs` | QuantLib 1.42.1, ~1e-10                                                  |
+| `digital_gk.csv`         | cash-or-nothing / asset-or-nothing       | `digital_grid.rs`        | QuantLib 1.42.1, ~1e-10                                                  |
+| `touch_gk.csv`           | one-touch / no-touch                      | `touch_grid.rs`          | QuantLib 1.42.1, ~1e-10                                                  |
+| `heston_fo.csv`          | Heston stochastic-vol European           | `heston_grid.rs`         | **Fang & Oosterlee (2008)** published "Reference val." (Carr-Madan `N=2¹⁷`) |
+
+**Heston golden — the independent-third-implementation gate.** The
+`celnet-heston` crate's own gate proves its two transforms (Carr-Madan damped-
+integral quadrature and the Fang-Oosterlee COS expansion) **agree**, but two
+transforms of one possibly mis-derived characteristic function could agree on a
+*wrong* value — a shared CF / quadrature / carry / discounting error is invisible
+to a cross-check between them. `heston_grid.rs` closes that gap with a *third*
+implementation: the published Fang & Oosterlee (2008, *SIAM J. Sci. Comput.*
+31(2):826–848, §5.3) "Reference val." figures, computed by the authors with the
+Carr-Madan method at `N = 2¹⁷` points — `5.785155450…` (`T=1`, Table 4) and
+`22.318945791…` (`T=10`, Table 5) over their eq. (53) parameter set. QuantLib's
+`AnalyticHestonEngine` is unavailable in this build environment, so rather than
+fabricate an oracle the table is **narrowed honestly** to those authoritative
+published constants. Carr-Madan is gated on **every** row (it reproduces `T=10`
+to ~1.5e-10); **COS is gated only on rows whose `cos_valid` flag is set** — the
+`≤3y` FX-vanilla regime the crate documents — because past the Fourier-COS
+precision wall (`T=10`) the cosine method legitimately diverges, and the table
+deliberately does **not** assert COS there so a regression that quietly "fixed"
+COS to match would surface as a new, separately-reviewed claim. Tolerance
+`abs/rel 1e-6` is set to the published nine-decimal granularity (honestly *not* a
+last-bit claim); celnet meets it with ~2 orders of margin (worst deviation
+≈ 1.6e-8).
+
+### 5.2 Executable parity rows (`celnet-parity`)
+
+Beyond the frozen tables, `celnet-parity` carries ~30 executable rows that drive
+a Celnet engine against an **independent** oracle per row — either a from-scratch
+in-test re-derivation (a second, deliberately-disjoint implementation) or a
+`celnet-golden` table — covering the full shipped catalogue: vanilla Greeks,
+exotics + exotic risk-cube, Asians, baskets/best-of/worst-of (`basket.rs`,
+`structured.rs`), LSV, eSSVI (+ `essvi_hardening.rs`), variance/vol swaps,
+forward-start/cliquet, Heston (`heston.rs`), FRTB-SA (`frtb.rs`), XVA, conventions
++ pair-universe, broker→smile + surface, QMC (+ high-dim RQMC), the GPU path/Greeks
+kernels (`gpu_path.rs`/`gpu_greeks.rs`), and the Raft consensus correctness rows
+(`raft_election.rs`/`raft_compaction.rs`/`raft_snapshot.rs`). Each row is a real
+gate, not a smoke test: it fails the build if the engine diverges from the
+independent reference beyond the stated tolerance (closed-form/golden families
+near the last bit; Monte-Carlo families within a reported **price std-error** band,
+never a "machine precision" claim).

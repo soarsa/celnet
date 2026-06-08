@@ -255,7 +255,7 @@
 
   <div class="cards">
     <div class="card"><h4>Catalogue depth</h4>
-      <p><span class="big">19 products</span>Vanilla through American/Bermudan and correlated baskets,
+      <p><span class="big">18-products</span>Vanilla through American/Bermudan and correlated baskets,
       plus an LSV booking engine — the breadth deep-catalogue incumbents charge for, delivered open
       and microsecond-class. <code>celnet-exotics</code>, <code>celnet.proto:1016-1062</code>.</p></div>
     <div class="card"><h4>One contract, five clients</h4>
@@ -285,9 +285,9 @@
   <h2><span class="kicker">Capability Map</span>The whole platform at a glance</h2>
   <a class="chapter-link" href="celnet-capabilities/02-capability-map.md">Chapter 02 — Capability Map</a>
   <figure>
-    <img src="assets/celnet-capabilities/fig-12-capability-landscape.png" alt="One-page vendor-neutral capability map: a navy Celnet core ringed by six clusters — pricing &amp; analytics (vanilla, five smile families incl. eSSVI, the complete 19-product catalogue through first-gen exotics, structured/path-dependent, American/Bermudan, correlated baskets and LSV booking), risk (book-shaped scenario risk, firm-wide cube, FRTB-SA, internal-only XVA over synthetic netting), the real-time edge, extensibility (Tier-0 native and Tier-2 wasmi shipped, Tier-1/3 designed), five clients on one contract, and a platform substrate scaling out over a Raft-replicated log, SPMC fan-out ring and cross-fleet risk fan-out — all over the Celer trade lifecycle with a verbatim honest boundary.">
+    <img src="assets/celnet-capabilities/fig-12-capability-landscape.png" alt="One-page vendor-neutral capability map: a navy Celnet core ringed by six clusters — pricing &amp; analytics (vanilla, five smile families incl. eSSVI, the complete 18-product catalogue through first-gen exotics, structured/path-dependent, American/Bermudan, correlated baskets and LSV booking), risk (book-shaped scenario risk, firm-wide cube, FRTB-SA, internal-only XVA over synthetic netting), the real-time edge, extensibility (Tier-0 native and Tier-2 wasmi shipped, Tier-1/3 designed), five clients on one contract, and a platform substrate scaling out over a Raft-replicated log, SPMC fan-out ring and cross-fleet risk fan-out — all over the Celer trade lifecycle with a verbatim honest boundary.">
     <figcaption><b>Fig 12 — Capability landscape.</b> Six clusters around the navy pricing core:
-    pricing &amp; analytics (vanilla, five smile families incl. eSSVI, the complete 19-product
+    pricing &amp; analytics (vanilla, five smile families incl. eSSVI, the complete 18-product
     catalogue through first-gen exotics, structured/path-dependent, American/Bermudan, correlated
     baskets and an LSV booking model); risk (book-shaped scenario, the firm-wide cube, FRTB-SA and
     internal-only XVA over synthetic netting sets); the real-time edge; extensibility (Tier-0 native
@@ -389,7 +389,7 @@
   <h2><span class="kicker">Architecture &amp; Engine</span>One contract over a pinned zero-alloc core</h2>
   <a class="chapter-link" href="celnet-capabilities/03-system-architecture.md">Chapter 03 — System Architecture</a>
   <figure>
-    <img src="assets/celnet-capabilities/fig-01-system-architecture-adaptability.png" alt="Architecture diagram: inbound vendor and Celer feeds enter via a market-data seam into a navy Celnet core framed by the single celnet-proto contract; the quant-engine band names five smile families including eSSVI and the full 19-product exotic catalogue; the plugin band shows Tier-0 native and Tier-2 wasmi as shipped and Tier-1/3 as designed and deploy-gated; bit-identical client surfaces on the right; a scale-out band names the Raft-replicated log, SPMC fan-out ring and cross-fleet risk fan-out; Standalone/Hybrid/CelerIntegrated deployment modes and an egress governor run along the bottom over a verbatim honest-boundary footnote.">
+    <img src="assets/celnet-capabilities/fig-01-system-architecture-adaptability.png" alt="Architecture diagram: inbound vendor and Celer feeds enter via a market-data seam into a navy Celnet core framed by the single celnet-proto contract; the quant-engine band names five smile families including eSSVI and the full 18-product exotic catalogue; the plugin band shows Tier-0 native and Tier-2 wasmi as shipped and Tier-1/3 as designed and deploy-gated; bit-identical client surfaces on the right; a scale-out band names the Raft-replicated log, SPMC fan-out ring and cross-fleet risk fan-out; Standalone/Hybrid/CelerIntegrated deployment modes and an egress governor run along the bottom over a verbatim honest-boundary footnote.">
     <figcaption><b>Fig 01 — Adaptable architecture.</b> 34 one-way-acyclic crates: pluggable
     market-data and product adapters flow into one <code>celnet-proto</code> contract wrapping a
     pinned zero-allocation hot core that prices the full catalogue, emits bit-identical surfaces
@@ -522,9 +522,9 @@
   <h2><span class="kicker">API &amp; Client Parity</span>One unversioned contract, five service families</h2>
   <a class="chapter-link" href="celnet-capabilities/09-api-contract-parity.md">Chapter 09 — API Contract &amp; Parity</a>
   <figure>
-    <img src="assets/celnet-capabilities/fig-02-api-first-parity.png" alt="Architecture diagram showing a central coral-marked Celnet contract hub fanning out to six client surfaces (gRPC, byte-identical WebSocket mirror, Rust SDK, CLI, 27-function Excel add-in, React/WebGPU GUI), each labelled same contract and value bit-identical, with the contract carrying pricing, quote/RFQ, multiplex stream, the unified 19-product Instrument, surface marking with the VV/SABR/SVI/SSVI/eSSVI smile-model selector, the market-series feed, the RiskService roll-up plus limits, and attribution identity, and a footnote that Monte-Carlo products carry a price standard error.">
+    <img src="assets/celnet-capabilities/fig-02-api-first-parity.png" alt="Architecture diagram showing a central coral-marked Celnet contract hub fanning out to six client surfaces (gRPC, byte-identical WebSocket mirror, Rust SDK, CLI, 27-function Excel add-in, React/WebGPU GUI), each labelled same contract and value bit-identical, with the contract carrying pricing, quote/RFQ, multiplex stream, the unified 18-product Instrument, surface marking with the VV/SABR/SVI/SSVI/eSSVI smile-model selector, the market-series feed, the RiskService roll-up plus limits, and attribution identity, and a footnote that Monte-Carlo products carry a price standard error.">
     <figcaption><b>Fig 02 — API-first parity.</b> One clean, unversioned contract served by the
-    Celnet server and fanned out to six surfaces, carrying a unified 19-product Instrument, the
+    Celnet server and fanned out to six surfaces, carrying a unified 18-product Instrument, the
     VV/SABR/SVI/SSVI/eSSVI smile-model selector, surface marking and the RiskService roll-up with
     limits — every value bit-identical (Monte-Carlo products returning a price standard error).</figcaption>
   </figure>
@@ -554,7 +554,7 @@
   Smile selection is one of five models; the <code>PricingModel</code> directive (analytic vs
   <b>LSV</b> booking) is field 22 on <code>Instrument</code>. Standardise on <b>price + 13 Greeks</b>.</p>
 
-  <h3>The unified 19-product <code>Instrument</code> oneof</h3>
+  <h3>The unified 18-product <code>Instrument</code> oneof</h3>
   <div class="tbl-wrap">
   <table>
     <thead><tr><th>#</th><th>Product</th><th>Engine / method</th><th>Std-err</th></tr></thead>
@@ -605,7 +605,7 @@
       <div class="pill-list">
         <span class="pill"><b>price</b></span>
         <span class="pill"><b>surface</b></span>
-        <span class="pill"><b>exotic</b> · ~14 sub-variants (vanilla, digital, one-touch, dnt, barrier, window-barrier, varswap, volswap, asian, forward-start, cliquet, quanto, tarf, accumulator, lookback, american)</span>
+        <span class="pill"><b>exotic</b> · 16 sub-variants (vanilla, digital, one-touch, dnt, barrier, window-barrier, varswap, volswap, asian, forward-start, cliquet, quanto, tarf, accumulator, lookback, american)</span>
         <span class="pill"><b>basket</b></span>
         <span class="pill"><b>convention</b></span>
         <span class="pill"><b>risk</b> · aggregate · drill · positions · limits</span>
@@ -613,7 +613,7 @@
       </div>
     </div>
   </div>
-  <div class="note"><b>Executable proof:</b> all 19 products × 5 service families are reachable from
+  <div class="note"><b>Executable proof:</b> all 18-products × 5 service families are reachable from
   all 5 surfaces — recorded cell-by-cell in <code>CLIENT-PARITY-MATRIX.md</code>, with honest
   exceptions stated (e.g. basket Greeks deliberately zeroed; CLI market-series via the one-shot
   stream subcommand). A ✅ means the surface actually exercises the wire contract, not a placeholder.</div>
@@ -766,7 +766,7 @@
     <figure><img src="assets/celnet-capabilities/shot-04-risk-scenario.png" alt="Risk scenario grid."><figcaption><b>Shot 04</b> — Book-shaped scenario risk.</figcaption></figure>
     <figure><img src="assets/celnet-capabilities/shot-05-book-aggregate.png" alt="Aggregated book view."><figcaption><b>Shot 05</b> — Server-aggregated Book / Risk.</figcaption></figure>
     <figure><img src="assets/celnet-capabilities/shot-06-pair-navigator.png" alt="Pair universe navigator."><figcaption><b>Shot 06</b> — Pair-universe navigator.</figcaption></figure>
-    <figure><img src="assets/celnet-capabilities/shot-07-command-palette.png" alt="Command palette."><figcaption><b>Shot 07</b> — Command palette (⌘B) &amp; <code>?</code> shortcuts overlay.</figcaption></figure>
+    <figure><img src="assets/celnet-capabilities/shot-07-command-palette.png" alt="Command palette."><figcaption><b>Shot 07</b> — Command palette (⌘K) &amp; <code>?</code> shortcuts overlay.</figcaption></figure>
     <figure><img src="assets/celnet-capabilities/shot-08-clicktrade-lastlook.png" alt="Click-to-trade last-look."><figcaption><b>Shot 08</b> — Click-to-trade, keyed-MAC last-look.</figcaption></figure>
   </div>
 </section>
