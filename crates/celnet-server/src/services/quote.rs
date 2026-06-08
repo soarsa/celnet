@@ -73,7 +73,7 @@ use crate::clock::Clock;
 use crate::core_link::CoreLink;
 use crate::pricer::{ConventionSet, price_instrument};
 use crate::readiness::ReadinessGate;
-use crate::services::forward::{Serve, route_pair, serve_mode};
+use crate::services::forward::{Serve, route_underlying, serve_mode};
 use crate::services::pin::{PinnedVol, resolve_pinned_vol};
 use crate::services::risk::federate::Fleet;
 use crate::spread::SpreadModel;
@@ -226,12 +226,12 @@ impl QuoteEdge {
             .market_snapshot()
             .await
             .map_err(|e| Status::unavailable(e.to_string()))?;
-        Ok(MarketContext {
-            spot: snap.spot,
-            vol: snap.atm_vol,
-            r_dom: snap.r_dom,
-            r_for: snap.r_for,
-        })
+        Ok(MarketContext::fx(
+            snap.spot,
+            snap.atm_vol,
+            snap.r_dom,
+            snap.r_for,
+        ))
     }
 }
 
@@ -287,7 +287,7 @@ impl QuoteService for QuoteEdge {
                 .instrument
                 .as_ref()
                 .ok_or_else(|| Status::invalid_argument("missing `instrument`"))?;
-            let pair = route_pair(instrument.pair.as_ref())?;
+            let pair = route_underlying(instrument.underlying.as_ref())?;
             let (replica, client) = fleet.owner_of_pair(pair)?;
             let mut svc =
                 celnet_proto::quote_service_client::QuoteServiceClient::new(client.channel());

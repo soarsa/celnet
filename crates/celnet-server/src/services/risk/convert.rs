@@ -40,7 +40,7 @@ pub fn dimension_of(dim: i32) -> Result<Option<DimensionId>, Status> {
         RiskDimension::Trader => Some(DimensionId::Trader),
         RiskDimension::Book => Some(DimensionId::Book),
         RiskDimension::Desk => Some(DimensionId::Desk),
-        RiskDimension::CcyPair => Some(DimensionId::CcyPair),
+        RiskDimension::Underlying => Some(DimensionId::CcyPair),
         RiskDimension::Location => Some(DimensionId::Location),
         RiskDimension::Entity => Some(DimensionId::Entity),
     })
@@ -54,7 +54,7 @@ pub fn dimension_to_wire(dim: DimensionId) -> i32 {
         DimensionId::Trader => RiskDimension::Trader,
         DimensionId::Book => RiskDimension::Book,
         DimensionId::Desk => RiskDimension::Desk,
-        DimensionId::CcyPair => RiskDimension::CcyPair,
+        DimensionId::CcyPair => RiskDimension::Underlying,
         DimensionId::Location => RiskDimension::Location,
         DimensionId::Entity => RiskDimension::Entity,
     };
@@ -207,13 +207,14 @@ pub fn position_to_fact(p: &RiskPosition) -> Result<RiskFact, Status> {
         .org
         .as_ref()
         .ok_or_else(|| Status::invalid_argument("RiskPosition missing `org`"))?;
-    let wire_pair = org
-        .ccy_pair
-        .clone()
-        .ok_or_else(|| Status::invalid_argument("OrgKey missing `ccy_pair`"))?;
-    let pair: CcyPair = wire_pair
-        .try_into()
-        .map_err(|e: WireError| Status::invalid_argument(e.to_string()))?;
+    let wire_underlying = org
+        .underlying
+        .as_ref()
+        .ok_or_else(|| Status::invalid_argument("OrgKey missing `underlying`"))?;
+    let pair: CcyPair = celnet_proto::convert::validate_fx_underlying(wire_underlying)
+        .map_err(|e: WireError| Status::invalid_argument(e.to_string()))?
+        .as_fx()
+        .ok_or_else(|| Status::invalid_argument("OrgKey underlying is not an FX pair"))?;
     let inputs: VanillaInputs = p
         .inputs
         .ok_or_else(|| Status::invalid_argument("RiskPosition missing `inputs`"))?
@@ -283,7 +284,7 @@ pub fn fact_to_position(
             trader: fact.key.trader.0,
             book: fact.key.book.0,
             desk: fact.key.desk.0,
-            ccy_pair: Some(wire_pair),
+            underlying: Some(celnet_proto::Underlying::fx(wire_pair)),
             location: fact.key.location.0,
             entity: fact.key.entity.0,
         }),

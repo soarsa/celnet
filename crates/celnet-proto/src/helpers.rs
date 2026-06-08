@@ -1,0 +1,203 @@
+//! Ergonomic constructors and accessors over the generalized wire vocabulary.
+//!
+//! W1 generalized the contract from FX-only scalars (`r_dom`/`r_for`,
+//! `rho_dom`/`rho_for`, a bare `CcyPair pair`) to asset-class-tagged messages
+//! ([`Underlying`], [`CarryModel`], [`RateSensitivities`]). The FX arm is still
+//! the overwhelmingly common case, so these helpers let the many FX call sites
+//! (server pricers, the SDK, the CLI, benches) build and read the FX projection
+//! with one call — and, crucially, **bit-for-bit identically** to the former
+//! flat-scalar form: [`MarketContext::r_dom`] returns the very `f64` that used to
+//! live in the `r_dom` field, [`MarketContext::r_for`] the former `r_for`, and
+//! the FX constructors round-trip those exact bits. No new arithmetic is
+//! introduced; this is pure (de)structuring of the wire message.
+
+use crate::{
+    CarryModel, CcyPair, FxRates, Greeks, MarketContext, RateSensitivities, Underlying,
+    VanillaInputs, carry_model, rate_sensitivities, underlying,
+};
+
+impl Underlying {
+    /// An FX underlying for `pair`, stamping the settlement (numeraire) currency
+    /// as the pair's quote (domestic) leg — the FX convention.
+    #[must_use]
+    pub fn fx(pair: CcyPair) -> Self {
+        let settlement_ccy = pair.quote.clone();
+        Underlying {
+            r#ref: Some(underlying::Ref::Fx(pair)),
+            settlement_ccy,
+        }
+    }
+
+    /// The FX pair if this underlying is the FX arm, else `None`.
+    #[must_use]
+    pub fn as_fx(&self) -> Option<&CcyPair> {
+        match &self.r#ref {
+            Some(underlying::Ref::Fx(p)) => Some(p),
+            None => None,
+        }
+    }
+}
+
+impl CarryModel {
+    /// The FX two-rate carry arm carrying the foreign (base) rate `r_for`.
+    #[must_use]
+    pub fn fx(r_for: f64) -> Self {
+        CarryModel {
+            model: Some(carry_model::Model::Fx(FxRates { r_for })),
+        }
+    }
+
+    /// The foreign (base) rate if this is the FX carry arm, else `None`.
+    #[must_use]
+    pub fn fx_r_for(&self) -> Option<f64> {
+        match &self.model {
+            Some(carry_model::Model::Fx(fx)) => Some(fx.r_for),
+            _ => None,
+        }
+    }
+}
+
+impl MarketContext {
+    /// Build an FX market context from spot, vol and the two FX rates — the FX
+    /// projection of the generalized `{discount_rate, carry}` form. `discount_rate`
+    /// is set to `r_dom` and `carry` to the FX arm carrying `r_for`, so
+    /// [`MarketContext::r_dom`]/[`MarketContext::r_for`] return these exact bits.
+    #[must_use]
+    pub fn fx(spot: f64, vol: f64, r_dom: f64, r_for: f64) -> Self {
+        MarketContext {
+            spot,
+            vol,
+            discount_rate: r_dom,
+            carry: Some(CarryModel::fx(r_for)),
+        }
+    }
+
+    /// The domestic (quote) rate `r_dom` — exactly the `discount_rate` field. For
+    /// FX the discount rate *is* `r_dom`, so this is the former flat scalar.
+    #[must_use]
+    pub fn r_dom(&self) -> f64 {
+        self.discount_rate
+    }
+
+    /// The foreign (base) rate `r_for` — the FX carry arm's `r_for`, or `0.0` if
+    /// the carry is absent / not the FX arm (a non-FX context never reaches the
+    /// FX leaf; the validity guard rejects that before pricing).
+    #[must_use]
+    pub fn r_for(&self) -> f64 {
+        self.carry
+            .as_ref()
+            .and_then(CarryModel::fx_r_for)
+            .unwrap_or(0.0)
+    }
+
+    /// This context with `spot` replaced (used by finite-difference spot bumps);
+    /// the carry/vol/discount are cloned unchanged.
+    #[must_use]
+    pub fn with_spot(&self, spot: f64) -> Self {
+        MarketContext { spot, ..*self }
+    }
+
+    /// This context with `vol` replaced (used by finite-difference vega bumps).
+    #[must_use]
+    pub fn with_vol(&self, vol: f64) -> Self {
+        MarketContext { vol, ..*self }
+    }
+
+    /// This context with the domestic rate `r_dom` (the `discount_rate`) replaced
+    /// (used by finite-difference rho-domestic bumps); the carry is unchanged.
+    #[must_use]
+    pub fn with_r_dom(&self, r_dom: f64) -> Self {
+        MarketContext {
+            discount_rate: r_dom,
+            ..*self
+        }
+    }
+
+    /// This context with the foreign rate `r_for` replaced in the FX carry arm
+    /// (used by finite-difference rho-foreign bumps); spot/vol/discount unchanged.
+    #[must_use]
+    pub fn with_r_for(&self, r_for: f64) -> Self {
+        MarketContext {
+            carry: Some(CarryModel::fx(r_for)),
+            ..*self
+        }
+    }
+}
+
+impl VanillaInputs {
+    /// Build FX vanilla inputs — the FX projection of the generalized
+    /// `{discount_rate, carry}` form (`discount_rate = r_dom`, `carry.fx.r_for =
+    /// r_for`). Round-trips the two rates' exact bits via [`VanillaInputs::r_dom`]/
+    /// [`VanillaInputs::r_for`].
+    #[must_use]
+    pub fn fx(spot: f64, strike: f64, vol: f64, t: f64, r_dom: f64, r_for: f64) -> Self {
+        VanillaInputs {
+            spot,
+            strike,
+            vol,
+            t,
+            discount_rate: r_dom,
+            carry: Some(CarryModel::fx(r_for)),
+        }
+    }
+
+    /// The domestic (quote) rate `r_dom` — exactly the `discount_rate` field.
+    #[must_use]
+    pub fn r_dom(&self) -> f64 {
+        self.discount_rate
+    }
+
+    /// The foreign (base) rate `r_for` — the FX carry arm's `r_for`, or `0.0` if
+    /// the carry is absent / not the FX arm.
+    #[must_use]
+    pub fn r_for(&self) -> f64 {
+        self.carry
+            .as_ref()
+            .and_then(CarryModel::fx_r_for)
+            .unwrap_or(0.0)
+    }
+}
+
+impl RateSensitivities {
+    /// The FX two-rho arm (`rho_dom`, `rho_for`) — the FX projection of the
+    /// generalized rate Greeks; round-trips both rhos' exact bits.
+    #[must_use]
+    pub fn fx(rho_dom: f64, rho_for: f64) -> Self {
+        RateSensitivities {
+            sensitivities: Some(rate_sensitivities::Sensitivities::Fx(
+                rate_sensitivities::FxRho { rho_dom, rho_for },
+            )),
+        }
+    }
+
+    /// The FX rhos `(rho_dom, rho_for)` if this is the FX arm, else `None`.
+    #[must_use]
+    pub fn fx_rhos(&self) -> Option<(f64, f64)> {
+        match &self.sensitivities {
+            Some(rate_sensitivities::Sensitivities::Fx(fx)) => Some((fx.rho_dom, fx.rho_for)),
+            _ => None,
+        }
+    }
+}
+
+impl Greeks {
+    /// The domestic rho if these Greeks carry the FX rate-sensitivity arm, else
+    /// `0.0` (the price-only / non-FX strip).
+    #[must_use]
+    pub fn rho_dom(&self) -> f64 {
+        self.rate_sensitivities
+            .as_ref()
+            .and_then(RateSensitivities::fx_rhos)
+            .map_or(0.0, |(d, _)| d)
+    }
+
+    /// The foreign rho if these Greeks carry the FX rate-sensitivity arm, else
+    /// `0.0`.
+    #[must_use]
+    pub fn rho_for(&self) -> f64 {
+        self.rate_sensitivities
+            .as_ref()
+            .and_then(RateSensitivities::fx_rhos)
+            .map_or(0.0, |(_, f)| f)
+    }
+}

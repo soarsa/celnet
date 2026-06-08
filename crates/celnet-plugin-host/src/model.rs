@@ -9,8 +9,9 @@
 //! [`crate::ModelRegistry`] exposes. Whether a call is served by a compiled-in
 //! `dyn PricingModel` or by a fuel-metered wasmi interpreter is invisible here.
 
+use celnet_core::{CarryGreeks, CarryInputs};
 use celnet_plugin_api::ModelDescriptor;
-use celnet_types::{Greeks, OptionType, VanillaInputs};
+use celnet_types::OptionType;
 
 use crate::error::HostResult;
 
@@ -31,19 +32,19 @@ pub trait HostModel {
     /// Self-description used by the registry to route work to this model.
     fn descriptor(&self) -> ModelDescriptor;
 
-    /// Present value in domestic currency, per 1 unit of base notional.
+    /// Present value in the numeraire currency, per 1 unit of base notional.
     ///
     /// # Errors
     /// Returns [`crate::HostError::Model`] for a model-domain failure, or a
     /// sandbox failure ([`crate::HostError::Trapped`],
     /// [`crate::HostError::FuelExhausted`], …) for a Tier-2 model.
-    fn price(&self, opt: OptionType, inputs: &VanillaInputs) -> HostResult<f64>;
+    fn price(&self, opt: OptionType, inputs: &CarryInputs) -> HostResult<f64>;
 
-    /// Price together with the full Celnet Greek set in a single pass.
+    /// Price together with the full carry-tagged Greek strip in a single pass.
     ///
     /// # Errors
     /// As [`HostModel::price`], plus [`crate::HostError::Model`] wrapping
     /// [`celnet_plugin_api::PluginError::Unsupported`] if the model advertises no
     /// Greek support.
-    fn price_and_greeks(&self, opt: OptionType, inputs: &VanillaInputs) -> HostResult<Greeks>;
+    fn price_and_greeks(&self, opt: OptionType, inputs: &CarryInputs) -> HostResult<CarryGreeks>;
 }

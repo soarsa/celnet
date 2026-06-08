@@ -9,16 +9,19 @@
 //! ever drifting apart.
 
 use celnet_types::{
-    AtmConvention, BrokenDate, Ccy, CcyPair, Cut, DayCount, DeltaConvention, Greeks, OptionType,
-    PremiumStyle, Settlement, SmileModel, Tenor, VanillaInputs,
+    AtmConvention, BrokenDate, Carry, Ccy, CcyPair, Cut, DayCount, DeltaConvention, Greeks,
+    OptionType, PremiumStyle, RateSensitivities, Settlement, SmileModel, Tenor, Underlying,
+    VanillaInputs,
 };
 
 use crate::{
-    AtmConvention as WireAtmConvention, BrokenDate as WireBrokenDate, CcyPair as WireCcyPair,
-    Cut as WireCut, DayCount as WireDayCount, DeltaConvention as WireDeltaConvention,
-    Greeks as WireGreeks, OptionType as WireOptionType, PremiumStyle as WirePremiumStyle,
+    AtmConvention as WireAtmConvention, BrokenDate as WireBrokenDate, CarryModel as WireCarryModel,
+    CcyPair as WireCcyPair, Cut as WireCut, DayCount as WireDayCount,
+    DeltaConvention as WireDeltaConvention, Greeks as WireGreeks, OptionType as WireOptionType,
+    PremiumStyle as WirePremiumStyle, RateSensitivities as WireRateSensitivities,
     Settlement as WireSettlement, SmileModel as WireSmileModel, Tenor as WireTenor,
-    VanillaInputs as WireVanillaInputs, tenor,
+    Underlying as WireUnderlying, VanillaInputs as WireVanillaInputs, carry_model,
+    rate_sensitivities, tenor, underlying,
 };
 
 /// A decode-side mapping failure: the wire carried a value the domain type
@@ -372,30 +375,143 @@ impl TryFrom<WireCcyPair> for CcyPair {
     }
 }
 
-// ---- VanillaInputs ---------------------------------------------------------
+// ---- product × underlying validity -----------------------------------------
 
-impl From<VanillaInputs> for WireVanillaInputs {
-    fn from(value: VanillaInputs) -> Self {
-        WireVanillaInputs {
-            spot: value.spot,
-            strike: value.strike,
-            vol: value.vol,
-            t: value.t,
-            r_dom: value.r_dom,
-            r_for: value.r_for,
+/// The asset-class validity guard: confirm an instrument's `underlying` is one
+/// the product family can actually price, decoding it to a domain [`Underlying`].
+///
+/// W1 ships exactly one asset-class arm — FX — and every one of the 18 product
+/// `oneof` arms is an FX product. So the rule is simply: the underlying must be
+/// present and FX; a missing or non-FX underlying for an FX product is rejected
+/// as `INVALID_ARGUMENT` rather than silently coerced (mirrors the
+/// `PricingModel` guard's no-silent-fallback contract). Later asset-class waves
+/// extend this to a genuine product×underlying matrix; today the matrix has one
+/// valid cell.
+///
+/// # Errors
+///
+/// [`WireError::MissingField`] if `underlying.ref` is absent;
+/// [`WireError::InvalidCcy`] if the FX pair's legs are malformed. (A future
+/// non-FX arm reaching an FX-only product would surface as an
+/// [`WireError::UnknownEnum`]-style rejection here.)
+pub fn validate_fx_underlying(underlying: &WireUnderlying) -> Result<Underlying, WireError> {
+    match &underlying.r#ref {
+        Some(underlying::Ref::Fx(pair)) => Ok(Underlying::Fx(CcyPair::try_from(pair.clone())?)),
+        None => Err(WireError::MissingField {
+            field: "Instrument.underlying",
+        }),
+    }
+}
+
+// ---- Underlying ------------------------------------------------------------
+
+impl From<Underlying> for WireUnderlying {
+    fn from(value: Underlying) -> Self {
+        match value {
+            Underlying::Fx(pair) => WireUnderlying::fx(WireCcyPair::from(pair)),
         }
     }
 }
 
-impl From<WireVanillaInputs> for VanillaInputs {
-    fn from(value: WireVanillaInputs) -> Self {
-        VanillaInputs::new(
+impl TryFrom<WireUnderlying> for Underlying {
+    type Error = WireError;
+
+    fn try_from(value: WireUnderlying) -> Result<Self, Self::Error> {
+        match value.r#ref {
+            Some(underlying::Ref::Fx(pair)) => Ok(Underlying::Fx(CcyPair::try_from(pair)?)),
+            None => Err(WireError::MissingField {
+                field: "Underlying.ref",
+            }),
+        }
+    }
+}
+
+// ---- Carry -----------------------------------------------------------------
+
+impl From<Carry> for WireCarryModel {
+    fn from(value: Carry) -> Self {
+        match value {
+            // FX: the foreign rate travels in the FX carry arm; the discount rate
+            // (`r_dom`) lives out of band on `MarketContext`/`VanillaInputs`.
+            Carry::FxRates { r_for, .. } => WireCarryModel::fx(r_for),
+            Carry::CostOfCarry { b, .. } => WireCarryModel {
+                model: Some(carry_model::Model::Generalized(crate::CostOfCarry { b })),
+            },
+        }
+    }
+}
+
+// ---- RateSensitivities -----------------------------------------------------
+
+impl From<RateSensitivities> for WireRateSensitivities {
+    fn from(value: RateSensitivities) -> Self {
+        match value {
+            RateSensitivities::Fx { rho_dom, rho_for } => {
+                WireRateSensitivities::fx(rho_dom, rho_for)
+            }
+            RateSensitivities::Carry {
+                discount_rho,
+                carry_rho,
+            } => WireRateSensitivities {
+                sensitivities: Some(rate_sensitivities::Sensitivities::Carry(
+                    rate_sensitivities::CarryRho {
+                        discount_rho,
+                        carry_rho,
+                    },
+                )),
+            },
+        }
+    }
+}
+
+impl TryFrom<WireRateSensitivities> for RateSensitivities {
+    type Error = WireError;
+
+    fn try_from(value: WireRateSensitivities) -> Result<Self, Self::Error> {
+        match value.sensitivities {
+            Some(rate_sensitivities::Sensitivities::Fx(fx)) => Ok(RateSensitivities::Fx {
+                rho_dom: fx.rho_dom,
+                rho_for: fx.rho_for,
+            }),
+            Some(rate_sensitivities::Sensitivities::Carry(c)) => Ok(RateSensitivities::Carry {
+                discount_rho: c.discount_rho,
+                carry_rho: c.carry_rho,
+            }),
+            None => Err(WireError::MissingField {
+                field: "RateSensitivities.sensitivities",
+            }),
+        }
+    }
+}
+
+// ---- VanillaInputs ---------------------------------------------------------
+
+impl From<VanillaInputs> for WireVanillaInputs {
+    fn from(value: VanillaInputs) -> Self {
+        // The FX projection: `discount_rate = r_dom`, `carry.fx.r_for = r_for`.
+        // `fx` round-trips both rates' exact bits.
+        WireVanillaInputs::fx(
             value.spot,
             value.strike,
             value.vol,
             value.t,
             value.r_dom,
             value.r_for,
+        )
+    }
+}
+
+impl From<WireVanillaInputs> for VanillaInputs {
+    fn from(value: WireVanillaInputs) -> Self {
+        // The two FX rates are the `discount_rate` and the FX carry arm's `r_for`
+        // (bit-identical to the former flat scalars).
+        VanillaInputs::new(
+            value.spot,
+            value.strike,
+            value.vol,
+            value.t,
+            value.r_dom(),
+            value.r_for(),
         )
     }
 }
@@ -411,8 +527,8 @@ impl From<Greeks> for WireGreeks {
             gamma: value.gamma,
             vega: value.vega,
             theta: value.theta,
-            rho_dom: value.rho_dom,
-            rho_for: value.rho_for,
+            // The FX rate-sensitivity arm carries the two flat rhos bit-for-bit.
+            rate_sensitivities: Some(WireRateSensitivities::fx(value.rho_dom, value.rho_for)),
             vanna: value.vanna,
             volga: value.volga,
             charm: value.charm,
@@ -432,8 +548,10 @@ impl From<WireGreeks> for Greeks {
             gamma: value.gamma,
             vega: value.vega,
             theta: value.theta,
-            rho_dom: value.rho_dom,
-            rho_for: value.rho_for,
+            // The FX rhos are read back from the FX rate-sensitivity arm
+            // (bit-identical to the former flat scalars; 0.0 for a non-FX strip).
+            rho_dom: value.rho_dom(),
+            rho_for: value.rho_for(),
             vanna: value.vanna,
             volga: value.volga,
             charm: value.charm,
@@ -627,6 +745,128 @@ mod tests {
         assert_close!(back.t, inputs.t);
         assert_close!(back.r_dom, inputs.r_dom);
         assert_close!(back.r_for, inputs.r_for);
+    }
+
+    #[test]
+    fn underlying_round_trips_fx() {
+        let u = Underlying::Fx(CcyPair::new(Ccy::EUR, Ccy::USD));
+        let wire = WireUnderlying::from(u);
+        // The settlement currency is stamped as the FX quote (domestic) leg.
+        assert_eq!(wire.settlement_ccy, "USD");
+        assert_eq!(Underlying::try_from(wire).unwrap(), u);
+    }
+
+    #[test]
+    fn underlying_rejects_missing_ref() {
+        let wire = WireUnderlying {
+            r#ref: None,
+            settlement_ccy: "USD".to_owned(),
+        };
+        assert_eq!(
+            Underlying::try_from(wire),
+            Err(WireError::MissingField {
+                field: "Underlying.ref",
+            })
+        );
+    }
+
+    #[test]
+    fn validate_fx_underlying_accepts_fx_rejects_absent() {
+        let ok = WireUnderlying::fx(WireCcyPair::from(CcyPair::new(Ccy::GBP, Ccy::USD)));
+        assert_eq!(
+            super::validate_fx_underlying(&ok).unwrap(),
+            Underlying::Fx(CcyPair::new(Ccy::GBP, Ccy::USD))
+        );
+        let absent = WireUnderlying {
+            r#ref: None,
+            settlement_ccy: String::new(),
+        };
+        assert_eq!(
+            super::validate_fx_underlying(&absent),
+            Err(WireError::MissingField {
+                field: "Instrument.underlying",
+            })
+        );
+    }
+
+    #[test]
+    fn carry_fx_maps_r_for_only() {
+        // The FX carry arm carries `r_for`; the discount (`r_dom`) is out of band.
+        let wire = WireCarryModel::from(Carry::FxRates {
+            r_dom: 0.045,
+            r_for: 0.03,
+        });
+        assert_eq!(wire.fx_r_for(), Some(0.03));
+    }
+
+    #[test]
+    fn rate_sensitivities_round_trips_both_arms() {
+        let fx = RateSensitivities::Fx {
+            rho_dom: 0.06,
+            rho_for: -0.058,
+        };
+        assert_eq!(
+            RateSensitivities::try_from(WireRateSensitivities::from(fx)).unwrap(),
+            fx
+        );
+        let carry = RateSensitivities::Carry {
+            discount_rho: 0.25,
+            carry_rho: 0.125,
+        };
+        assert_eq!(
+            RateSensitivities::try_from(WireRateSensitivities::from(carry)).unwrap(),
+            carry
+        );
+    }
+
+    #[test]
+    fn fx_vanilla_inputs_byte_identical_round_trip() {
+        use prost::Message;
+        // The FX projection of VanillaInputs must round-trip bit-for-bit through
+        // the generalized {discount_rate, carry} wire form. Use rates whose bits
+        // must be preserved exactly (0.1 + 0.2 is not representable as 0.3).
+        let inputs = VanillaInputs::new(1.1, 1.105, 0.0825, 0.5, 0.1 + 0.2, 0.3);
+        let wire = WireVanillaInputs::from(inputs);
+        // discount_rate IS r_dom, bit-for-bit; carry.fx.r_for IS r_for.
+        assert_eq!(wire.discount_rate.to_bits(), inputs.r_dom.to_bits());
+        assert_eq!(wire.r_for().to_bits(), inputs.r_for.to_bits());
+        // Encode → decode the proto bytes and confirm the domain rates survive
+        // to_bits-identically through the wire codec.
+        let bytes = wire.encode_to_vec();
+        let decoded = WireVanillaInputs::decode(bytes.as_slice()).unwrap();
+        let back = VanillaInputs::from(decoded);
+        assert_eq!(back.spot.to_bits(), inputs.spot.to_bits());
+        assert_eq!(back.strike.to_bits(), inputs.strike.to_bits());
+        assert_eq!(back.vol.to_bits(), inputs.vol.to_bits());
+        assert_eq!(back.t.to_bits(), inputs.t.to_bits());
+        assert_eq!(back.r_dom.to_bits(), inputs.r_dom.to_bits());
+        assert_eq!(back.r_for.to_bits(), inputs.r_for.to_bits());
+    }
+
+    #[test]
+    fn fx_greeks_rho_byte_identical_round_trip() {
+        use prost::Message;
+        let g = Greeks {
+            price: 0.0123,
+            delta_spot: 0.48,
+            delta_forward: 0.49,
+            gamma: 2.1,
+            vega: 0.3,
+            theta: -0.018,
+            rho_dom: 0.1 + 0.2,
+            rho_for: -0.058,
+            vanna: -0.072,
+            volga: 0.144,
+            charm: 0.0009,
+            speed: -1.21,
+            zomma: 0.33,
+            color: 0.0004,
+        };
+        let wire = WireGreeks::from(g);
+        let bytes = wire.encode_to_vec();
+        let back = Greeks::from(WireGreeks::decode(bytes.as_slice()).unwrap());
+        assert_eq!(back.rho_dom.to_bits(), g.rho_dom.to_bits());
+        assert_eq!(back.rho_for.to_bits(), g.rho_for.to_bits());
     }
 
     #[test]

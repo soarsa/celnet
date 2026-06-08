@@ -14,27 +14,28 @@
 //! A conformant guest exports:
 //! - `memory` — its linear memory.
 //! - `celnet_scratch_in: () -> i32` — pointer to a guest buffer at least
-//!   [`crate::abi::INPUT_BYTES`] long the host serializes [`VanillaInputs`] into.
+//!   [`crate::abi::INPUT_BYTES`] long the host serializes [`CarryInputs`] into
+//!   (the six `f64` numeric words then the two `i32` discriminant words).
 //! - `celnet_scratch_out: () -> i32` — pointer to a guest buffer at least
-//!   [`crate::abi::GREEKS_BYTES`] long the host reads [`Greeks`] back from.
+//!   [`crate::abi::GREEKS_BYTES`] long the host reads [`CarryGreeks`] back from
+//!   (the [`crate::abi::GREEKS_FIELDS`] `f64` words then the `i32` `rate_kind`).
 //! - `celnet_price: (opt: i32, in_ptr: i32, in_len: i32) -> f64` — the price.
 //! - `celnet_price_greeks: (opt: i32, in_ptr: i32, in_len: i32, out_ptr: i32,
 //!   out_len: i32) -> i32` — writes the [`crate::abi::GREEKS_FIELDS`] greek words
-//!   to `out_ptr` and returns `0` on success or a negative
-//!   [`AbiStatus`] code on a model-domain rejection.
+//!   plus the trailing `rate_kind` `i32` to `out_ptr` and returns `0` on success
+//!   or a negative [`AbiStatus`] code on a model-domain rejection.
 //!
 //! `describe` metadata travels out-of-band as the [`ModelDescriptor`] supplied at
 //! load time (the host owns identity/routing), keeping the guest ABI minimal.
 
 use core::cell::RefCell;
 
+use celnet_core::{CarryGreeks, CarryInputs};
 use celnet_plugin_api::{ModelDescriptor, PluginError};
-use celnet_types::{Greeks, OptionType, VanillaInputs};
+use celnet_types::OptionType;
 use wasmi::{Config, Engine, Instance, Linker, Memory, Module, Store, TypedFunc};
 
-use crate::abi::{
-    GREEKS_BYTES, GREEKS_FIELDS, INPUT_BYTES, greeks_from_words, input_to_bytes, opt_to_abi,
-};
+use crate::abi::{GREEKS_BYTES, INPUT_BYTES, input_to_bytes, opt_to_abi};
 use crate::error::{HostError, HostResult};
 use crate::host::{self, GuestState, is_granted};
 use crate::model::HostModel;
@@ -252,7 +253,7 @@ impl WasmModel {
 
     /// Serialize `inputs` into the guest's input scratch buffer, returning the
     /// `(ptr, len)` the host passes to the guest entry point.
-    fn marshal_inputs(live: &mut Live, inputs: &VanillaInputs) -> HostResult<(i32, i32)> {
+    fn marshal_inputs(live: &mut Live, inputs: &CarryInputs) -> HostResult<(i32, i32)> {
         let ptr = live
             .exports
             .scratch_in
@@ -269,7 +270,7 @@ impl HostModel for WasmModel {
         self.descriptor
     }
 
-    fn price(&self, opt: OptionType, inputs: &VanillaInputs) -> HostResult<f64> {
+    fn price(&self, opt: OptionType, inputs: &CarryInputs) -> HostResult<f64> {
         let mut guard = self.live.borrow_mut();
         let live = &mut *guard;
         Self::refuel(live, self.fuel_budget)?;
@@ -282,7 +283,7 @@ impl HostModel for WasmModel {
         Ok(crate::abi::canonicalize(raw))
     }
 
-    fn price_and_greeks(&self, opt: OptionType, inputs: &VanillaInputs) -> HostResult<Greeks> {
+    fn price_and_greeks(&self, opt: OptionType, inputs: &CarryInputs) -> HostResult<CarryGreeks> {
         let mut guard = self.live.borrow_mut();
         let live = &mut *guard;
         Self::refuel(live, self.fuel_budget)?;
@@ -310,13 +311,8 @@ impl HostModel for WasmModel {
 
         let mut buf = [0u8; GREEKS_BYTES];
         read_guest(&live.exports.memory, &live.store, out_ptr, &mut buf)?;
-        let mut words = [0.0_f64; GREEKS_FIELDS];
-        for (i, w) in words.iter_mut().enumerate() {
-            let mut le = [0u8; 8];
-            le.copy_from_slice(&buf[i * 8..i * 8 + 8]);
-            *w = f64::from_bits(u64::from_le_bytes(le));
-        }
-        Ok(greeks_from_words(&words))
+        crate::abi::greeks_from_bytes(&buf)
+            .ok_or_else(|| HostError::AbiViolation("greeks buffer length mismatch".into()))
     }
 }
 

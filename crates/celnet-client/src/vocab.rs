@@ -1999,7 +1999,9 @@ impl Product {
                 legs: legs
                     .iter()
                     .map(|l| celnet_proto::BasketLeg {
-                        pair: Some(celnet_proto::CcyPair::from(l.pair)),
+                        underlying: Some(celnet_proto::Underlying::fx(
+                            celnet_proto::CcyPair::from(l.pair),
+                        )),
                         weight: l.weight,
                         spot: l.spot,
                         vol: l.vol,
@@ -2714,7 +2716,9 @@ impl InstrumentSpec {
     #[must_use]
     pub(crate) fn to_wire(&self) -> celnet_proto::Instrument {
         celnet_proto::Instrument {
-            pair: Some(celnet_proto::CcyPair::from(self.pair)),
+            underlying: Some(celnet_proto::Underlying::fx(celnet_proto::CcyPair::from(
+                self.pair,
+            ))),
             tenor: Some(celnet_proto::Tenor::from(self.tenor)),
             expiry_years: self.expiry_years,
             quantity: Some(celnet_proto::Quantity {

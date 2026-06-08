@@ -579,11 +579,14 @@ impl StreamEdge {
 /// unsubscribe / resync / execute / heartbeat) do not, so a session is routed off the
 /// FIRST pair-bearing message.
 fn pair_of_client_message(msg: &ClientStreamMessage) -> Option<&celnet_proto::CcyPair> {
-    match msg.message.as_ref()? {
-        client_stream_message::Message::Subscribe(s) => s.instrument.as_ref()?.pair.as_ref(),
-        client_stream_message::Message::MarketSeriesSubscribe(s) => s.pair.as_ref(),
-        _ => None,
-    }
+    let underlying = match msg.message.as_ref()? {
+        client_stream_message::Message::Subscribe(s) => {
+            s.instrument.as_ref()?.underlying.as_ref()?
+        }
+        client_stream_message::Message::MarketSeriesSubscribe(s) => s.underlying.as_ref()?,
+        _ => return None,
+    };
+    underlying.as_fx()
 }
 
 /// **Relay one client `StreamSession` to its owning backend** (the distributed
@@ -766,11 +769,16 @@ fn record_booked_position(
     };
     let option = celnet_types::OptionType::from(option);
 
-    // The pair the line trades.
-    let Some(wire_pair) = sub.instrument.pair.clone() else {
+    // The pair the line trades (the FX arm of the instrument's underlying).
+    let Some(wire_underlying) = sub.instrument.underlying.as_ref() else {
         return;
     };
-    let Ok(pair) = celnet_types::CcyPair::try_from(wire_pair) else {
+    let Ok(pair) =
+        celnet_proto::convert::validate_fx_underlying(wire_underlying).map(|u| u.as_fx())
+    else {
+        return;
+    };
+    let Some(pair) = pair else {
         return;
     };
 
@@ -784,8 +792,8 @@ fn record_booked_position(
         priced.resolved_strike,
         priced.vol,
         sub.instrument.expiry_years,
-        sub.base_market.r_dom,
-        sub.base_market.r_for,
+        sub.base_market.r_dom(),
+        sub.base_market.r_for(),
     );
 
     // The signed base-currency notional: BUY = long (+), SELL = short (−). A
@@ -858,12 +866,7 @@ impl Session {
             .market_snapshot()
             .await
             .map_err(|e| Status::unavailable(e.to_string()))?;
-        let market = MarketContext {
-            spot: snap.spot,
-            vol: snap.atm_vol,
-            r_dom: snap.r_dom,
-            r_for: snap.r_for,
-        };
+        let market = MarketContext::fx(snap.spot, snap.atm_vol, snap.r_dom, snap.r_for);
         resolve_pinned_vol(&self.surface_book, surface_version, instrument, &market)
     }
 
@@ -958,7 +961,7 @@ impl Session {
         // lazily on first subscribe, seeded from this baseline market. An instrument
         // without a pair cannot be fanned out — a hard subscribe error (better than
         // opening a line that can never tick), never a fabricated stream.
-        let tick = match instrument.pair.as_ref() {
+        let tick = match instrument.underlying.as_ref().and_then(|u| u.as_fx()) {
             Some(wire_pair) => match self.fanout.subscribe(wire_pair, market) {
                 Some(consumer) => consumer,
                 None => {
@@ -1074,7 +1077,7 @@ impl Session {
         // subscription borrow (avoids a double borrow of `self`). The modified
         // structure may name a different pair, so the line follows that pair's tick
         // stream from now on.
-        let tick = match instrument.pair.as_ref() {
+        let tick = match instrument.underlying.as_ref().and_then(|u| u.as_fx()) {
             Some(wire_pair) => match self.fanout.subscribe(wire_pair, market) {
                 Some(consumer) => consumer,
                 None => {
@@ -1306,10 +1309,10 @@ impl Session {
         let Some(id) = s.subscription else {
             return true;
         };
-        let Some(pair) = s.pair.clone() else {
+        let Some(underlying) = s.underlying.clone() else {
             let _ = out_tx
                 .send(Err(Status::invalid_argument(
-                    "market-series subscribe requires a `pair`",
+                    "market-series subscribe requires an `underlying`",
                 )))
                 .await;
             return true;
@@ -1357,7 +1360,7 @@ impl Session {
                 MarketSeriesSnapshot {
                     subscription: Some(id),
                     sequence: 1,
-                    pair: Some(pair),
+                    underlying: Some(underlying),
                     observable: s.observable,
                     points: vec![first],
                     epoch_nanos: now,
@@ -1618,10 +1621,10 @@ mod tests {
 
     fn vanilla_call(strike: f64) -> Instrument {
         Instrument {
-            pair: Some(celnet_proto::CcyPair {
+            underlying: Some(celnet_proto::Underlying::fx(celnet_proto::CcyPair {
                 base: "EUR".to_owned(),
                 quote: "USD".to_owned(),
-            }),
+            })),
             tenor: Some(celnet_proto::Tenor {
                 unit: celnet_proto::tenor::Unit::Years as i32,
                 count: 1,
@@ -1650,12 +1653,7 @@ mod tests {
     /// (baseline snapshot at sequence 1 already retained + delivered), ready to be
     /// driven by `drive_tick` and to receive `Execute`s.
     fn make_session(clock: Clock) -> Session {
-        let market = MarketContext {
-            spot: 1.10,
-            vol: 0.10,
-            r_dom: 0.02,
-            r_for: 0.01,
-        };
+        let market = MarketContext::fx(1.10, 0.10, 0.02, 0.01);
         let conv = ConventionSet::decode(&wire_conv()).expect("conventions decode");
         let link = CoreLink::start(
             celnet_engine::testing::make_state(
@@ -1751,12 +1749,7 @@ mod tests {
 
             let clock = Clock::manual(1_000_000_000);
             let mut session = make_session(clock.clone());
-            let market = MarketContext {
-                spot: 1.10,
-                vol: 0.10,
-                r_dom: 0.02,
-                r_for: 0.01,
-            };
+            let market = MarketContext::fx(1.10, 0.10, 0.02, 0.01);
 
             // A bounded ring with a tiny capacity, its own producer + the consumer the
             // subscription will drain. (A power-of-two capacity is required.)
@@ -1777,10 +1770,7 @@ mod tests {
             let produced = 100u64;
             for i in 0..produced {
                 let tick = PriceTick {
-                    market: MarketContext {
-                        spot: 1.10 + f64::from(u32::try_from(i).unwrap()) * 1e-6,
-                        ..market
-                    },
+                    market: market.with_spot(1.10 + f64::from(u32::try_from(i).unwrap()) * 1e-6),
                     tick_seq: i,
                 };
                 producer.publish(tick);
@@ -1845,12 +1835,7 @@ mod tests {
             }
 
             // Time several updates so the per-subscription histogram is populated.
-            let market = MarketContext {
-                spot: 1.10,
-                vol: 0.10,
-                r_dom: 0.02,
-                r_for: 0.01,
-            };
+            let market = MarketContext::fx(1.10, 0.10, 0.02, 0.01);
             let spread = SpreadModel::default();
             let minter = TokenMinter::new();
             {
@@ -2020,12 +2005,7 @@ mod tests {
             let upd = make_update(
                 session.subs.get_mut(&1).unwrap(),
                 2,
-                &MarketContext {
-                    spot: 1.101,
-                    vol: 0.10,
-                    r_dom: 0.02,
-                    r_for: 0.01,
-                },
+                &MarketContext::fx(1.101, 0.10, 0.02, 0.01),
                 &session.spread,
                 &session.minter,
                 &clock,
@@ -2172,12 +2152,7 @@ mod tests {
                 let upd = make_update(
                     session.subs.get_mut(&1).unwrap(),
                     seq,
-                    &MarketContext {
-                        spot: 1.10 + 0.0001 * seq as f64,
-                        vol: 0.10,
-                        r_dom: 0.02,
-                        r_for: 0.01,
-                    },
+                    &MarketContext::fx(1.10 + 0.0001 * seq as f64, 0.10, 0.02, 0.01),
                     &session.spread,
                     &session.minter,
                     &clock,

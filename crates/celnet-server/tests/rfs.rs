@@ -99,7 +99,7 @@ async fn rfs_snapshot_then_sequenced_deltas() {
         let m = live_market();
         let direct = celnet_vanilla::price(
             OptionType::Call,
-            &VanillaInputs::new(m.spot, 1.12, snap.vol, 1.0, m.r_dom, m.r_for),
+            &VanillaInputs::new(m.spot, 1.12, snap.vol, 1.0, m.r_dom(), m.r_for()),
         );
         let snap_price = snap.price.expect("snapshot two-way present");
         let snap_mid = 0.5 * (snap_price.bid + snap_price.offer);
@@ -125,7 +125,7 @@ async fn rfs_snapshot_then_sequenced_deltas() {
                     // The streamed line stays self-consistent at the streamed spot/vol.
                     let up_direct = celnet_vanilla::price(
                         OptionType::Call,
-                        &VanillaInputs::new(m.spot, 1.12, u.vol, 1.0, m.r_dom, m.r_for),
+                        &VanillaInputs::new(m.spot, 1.12, u.vol, 1.0, m.r_dom(), m.r_for()),
                     );
                     let up_mid = {
                         let p = u.price.expect("update two-way present");
@@ -274,7 +274,7 @@ async fn rfs_market_series_emits_real_observed_points() {
             message: Some(client_stream_message::Message::MarketSeriesSubscribe(
                 MarketSeriesSubscribe {
                     subscription: Some(sub_id),
-                    pair: Some(common::eurusd_pair()),
+                    underlying: Some(celnet_proto::Underlying::fx(common::eurusd_pair())),
                     observable: MarketObservable::AtmVol as i32,
                     tenor: None,
                     delta: None,

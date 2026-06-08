@@ -82,6 +82,26 @@ pub(crate) fn route_pair(pair: Option<&celnet_proto::CcyPair>) -> Result<CcyPair
         .map_err(|e| Status::invalid_argument(format!("invalid routing pair: {e}")))
 }
 
+/// Decode a wire [`celnet_proto::Underlying`] (the routing key on an
+/// [`celnet_proto::Instrument`]) into the typed [`CcyPair`] forwarding routes on.
+/// Mirrors [`route_pair`] for the generalized underlying: the underlying must be
+/// present and FX (the only asset class W1 prices); an absent or non-FX underlying
+/// is a client error (`invalid_argument`) — never a silent fallback.
+///
+/// # Errors
+/// [`Status::invalid_argument`] if the underlying is absent or not a valid FX pair.
+pub(crate) fn route_underlying(
+    underlying: Option<&celnet_proto::Underlying>,
+) -> Result<CcyPair, Status> {
+    let wire = underlying
+        .ok_or_else(|| Status::invalid_argument("request carries no `underlying` to route on"))?;
+    let decoded = celnet_proto::convert::validate_fx_underlying(wire)
+        .map_err(|e| Status::invalid_argument(format!("invalid routing underlying: {e}")))?;
+    decoded
+        .as_fx()
+        .ok_or_else(|| Status::invalid_argument("routing underlying is not an FX pair"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

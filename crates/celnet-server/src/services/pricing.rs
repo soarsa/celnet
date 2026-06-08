@@ -19,7 +19,7 @@ use tonic::{Request, Response, Status};
 
 use crate::pricer::{ConventionSet, price_instrument};
 use crate::readiness::ReadinessGate;
-use crate::services::forward::{Serve, route_pair, serve_mode};
+use crate::services::forward::{Serve, route_underlying, serve_mode};
 use crate::services::pin::{PinnedVol, resolve_pinned_vol};
 use crate::services::risk::federate::Fleet;
 use crate::surface_book::SurfaceBook;
@@ -96,7 +96,7 @@ impl PricingService for PricingEdge {
                 .instrument
                 .as_ref()
                 .ok_or_else(|| Status::invalid_argument("missing `instrument`"))?;
-            let pair = route_pair(instrument.pair.as_ref())?;
+            let pair = route_underlying(instrument.underlying.as_ref())?;
             let (_replica, client) = fleet.owner_of_pair(pair)?;
             let mut svc =
                 celnet_proto::pricing_service_client::PricingServiceClient::new(client.channel());

@@ -29,7 +29,8 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use celnet_core::math;
+use celnet_core::math::{self, exp, ln, norm_cdf, sqrt};
+use celnet_core::{CarryGreeks, CarryInputs};
 use celnet_plugin_api::{
     GreekSupport, ModelDescriptor, ModelId, ModelKind, ModelRegistry as _, PluginError,
     PricingModel,
@@ -38,7 +39,7 @@ use celnet_plugin_host::{
     FuelBudget, HostError, HostModel, ModelRegistry, Snapshot, WasmModel, abi, assert_agree, host,
     replay,
 };
-use celnet_types::{Greeks, OptionType, VanillaInputs};
+use celnet_types::{Carry, CcyPair, OptionType, RateSensitivities, Underlying};
 
 // ---------------------------------------------------------------------------
 // WAT guest fixtures (real core-Wasm modules built at test time).
@@ -105,6 +106,78 @@ const FWD_PRICER_WAT: &str = r#"
     (f64.store offset=88  (local.get $out) (f64.const 0))
     (f64.store offset=96  (local.get $out) (f64.const 0))
     (f64.store offset=104 (local.get $out) (f64.const 0))
+    ;; rate_kind discriminant: 0 = Fx (rho_dom @48, rho_for @56).
+    (i32.store offset=112 (local.get $out) (i32.const 0))
+    (i32.const 0)))
+"#;
+
+/// A NON-FX equity-dividend pricer over the GENERALIZED carry vocabulary. It
+/// reads the cost-of-carry fields `r = carry_0` (offset 32) and `b = carry_1`
+/// (offset 40) — *not* an FX two-rate carry — and prices the generalized
+/// Black-Scholes call/put:
+///   d1 = (ln(S/K) + (b + 0.5·σ²)·t) / (σ·√t),  d2 = d1 − σ·√t
+///   call = S·e^{(b−r)t}·N(d1) − K·e^{−r·t}·N(d2),   put by the carry parity.
+/// It imports only the granted `celnet_math` `ln`/`sqrt`/`exp`/`norm_cdf`, so it
+/// is bit-reproducible. `price_greeks` writes the price plus the carry-tagged
+/// rate kind (1 = Carry) so the host reconstructs `RateSensitivities::Carry`.
+/// This guest proves a user can author a non-FX model against the SAME contract.
+const EQUITY_CARRY_PRICER_WAT: &str = r#"
+(module
+  (import "celnet_math" "ln"       (func $ln       (param f64) (result f64)))
+  (import "celnet_math" "sqrt"     (func $sqrt     (param f64) (result f64)))
+  (import "celnet_math" "exp"      (func $exp      (param f64) (result f64)))
+  (import "celnet_math" "norm_cdf" (func $ncdf     (param f64) (result f64)))
+  (memory (export "memory") 1)
+  (func (export "celnet_scratch_in") (result i32) (i32.const 1024))
+  (func (export "celnet_scratch_out") (result i32) (i32.const 2048))
+  ;; Generalized-BSM signed price. sign = +1 for a call, -1 for a put.
+  (func $gbs (param $opt i32) (param $in i32) (result f64)
+    (local $s f64) (local $k f64) (local $vol f64) (local $t f64)
+    (local $r f64) (local $b f64)
+    (local $sqt f64) (local $vsqt f64) (local $d1 f64) (local $d2 f64)
+    (local $s_disc f64) (local $k_disc f64) (local $sign f64)
+    (local.set $s   (f64.load          (local.get $in)))
+    (local.set $k   (f64.load offset=8  (local.get $in)))
+    (local.set $vol (f64.load offset=16 (local.get $in)))
+    (local.set $t   (f64.load offset=24 (local.get $in)))
+    (local.set $r   (f64.load offset=32 (local.get $in)))
+    (local.set $b   (f64.load offset=40 (local.get $in)))
+    (local.set $sqt  (call $sqrt (local.get $t)))
+    (local.set $vsqt (f64.mul (local.get $vol) (local.get $sqt)))
+    ;; d1 = (ln(S/K) + (b + 0.5*vol*vol)*t) / vsqt
+    (local.set $d1
+      (f64.div
+        (f64.add
+          (call $ln (f64.div (local.get $s) (local.get $k)))
+          (f64.mul
+            (f64.add (local.get $b)
+                     (f64.mul (f64.const 0.5) (f64.mul (local.get $vol) (local.get $vol))))
+            (local.get $t)))
+        (local.get $vsqt)))
+    (local.set $d2 (f64.sub (local.get $d1) (local.get $vsqt)))
+    ;; s_disc = S*e^{(b-r)t}; k_disc = K*e^{-r t}
+    (local.set $s_disc
+      (f64.mul (local.get $s)
+        (call $exp (f64.mul (f64.sub (local.get $b) (local.get $r)) (local.get $t)))))
+    (local.set $k_disc
+      (f64.mul (local.get $k)
+        (call $exp (f64.mul (f64.neg (local.get $r)) (local.get $t)))))
+    (local.set $sign (if (result f64) (i32.eqz (local.get $opt))
+      (then (f64.const 1)) (else (f64.const -1))))
+    ;; sign*(s_disc*N(sign*d1) - k_disc*N(sign*d2))
+    (f64.mul (local.get $sign)
+      (f64.sub
+        (f64.mul (local.get $s_disc) (call $ncdf (f64.mul (local.get $sign) (local.get $d1))))
+        (f64.mul (local.get $k_disc) (call $ncdf (f64.mul (local.get $sign) (local.get $d2)))))))
+  (func (export "celnet_price") (param $opt i32) (param $in i32) (param $len i32) (result f64)
+    (call $gbs (local.get $opt) (local.get $in)))
+  (func (export "celnet_price_greeks")
+        (param $opt i32) (param $in i32) (param $inlen i32) (param $out i32) (param $outlen i32)
+        (result i32)
+    ;; price in field 0; carry-tagged rate kind (1 = Carry) so the host builds
+    ;; RateSensitivities::Carry. The remaining greek words stay zero.
+    (f64.store (local.get $out) (call $gbs (local.get $opt) (local.get $in)))
+    (i32.store offset=112 (local.get $out) (i32.const 1))
     (i32.const 0)))
 "#;
 
@@ -248,15 +321,32 @@ const INFINITE_START_WAT: &str = r#"
 
 const FWD_ID: ModelId = ModelId("celnet.test.discounted-forward");
 
+/// The FX underlying used across the host fixtures.
+fn eurusd() -> Underlying {
+    Underlying::Fx(CcyPair::parse("EURUSD").unwrap())
+}
+
+/// The FX domestic/foreign rates of an `FxRates`-carried input (the host
+/// fixtures are all FX, carried by `Carry::FxRates`, matching the WAT layout
+/// which reads `r_dom`/`r_for` at the carry-field offsets 32/40).
+fn fx_rates(i: &CarryInputs) -> (f64, f64) {
+    match i.carry {
+        Carry::FxRates { r_dom, r_for } => (r_dom, r_for),
+        Carry::CostOfCarry { .. } => unreachable!("host fixtures are FX"),
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct TrivialForward;
 
 impl TrivialForward {
-    fn df_dom(i: &VanillaInputs) -> f64 {
-        math::exp(-i.r_dom * i.t)
+    fn df_dom(i: &CarryInputs) -> f64 {
+        let (r_dom, _) = fx_rates(i);
+        math::exp(-r_dom * i.t)
     }
-    fn df_for(i: &VanillaInputs) -> f64 {
-        math::exp(-i.r_for * i.t)
+    fn df_for(i: &CarryInputs) -> f64 {
+        let (_, r_for) = fx_rates(i);
+        math::exp(-r_for * i.t)
     }
 }
 
@@ -265,7 +355,7 @@ impl PricingModel for TrivialForward {
         ModelDescriptor::new(FWD_ID, ModelKind::Pricing, GreekSupport::FULL)
     }
 
-    fn price(&self, opt: OptionType, i: &VanillaInputs) -> Result<f64, PluginError> {
+    fn price(&self, opt: OptionType, i: &CarryInputs) -> Result<f64, PluginError> {
         // Mirrors `celnet_price`: s_disc, k_disc, then branch.
         let s_disc = i.spot * Self::df_for(i);
         let k_disc = i.strike * Self::df_dom(i);
@@ -275,9 +365,15 @@ impl PricingModel for TrivialForward {
         })
     }
 
-    fn price_and_greeks(&self, opt: OptionType, i: &VanillaInputs) -> Result<Greeks, PluginError> {
+    fn price_and_greeks(
+        &self,
+        opt: OptionType,
+        i: &CarryInputs,
+    ) -> Result<CarryGreeks, PluginError> {
         // Mirrors `celnet_price_greeks`: sign*(s*dff - k*dfd) and the analytic
-        // sensitivities of that payoff.
+        // sensitivities of that payoff. r_dom/r_for read from the FX carry,
+        // exactly the carry-field words the WAT reads at offsets 32/40.
+        let (r_dom, r_for) = fx_rates(i);
         let dfd = Self::df_dom(i);
         let dff = Self::df_for(i);
         let sign = match opt {
@@ -285,15 +381,17 @@ impl PricingModel for TrivialForward {
             OptionType::Put => -1.0_f64,
         };
         let price = sign * (i.spot * dff - i.strike * dfd);
-        Ok(Greeks {
+        Ok(CarryGreeks {
             price,
             delta_spot: sign * dff,
             delta_forward: sign,
             gamma: 0.0,
             vega: 0.0,
-            theta: sign * (i.r_dom * i.strike * dfd - i.r_for * i.spot * dff),
-            rho_dom: sign * (i.strike * i.t * dfd),
-            rho_for: sign * (-(i.spot * i.t) * dff),
+            theta: sign * (r_dom * i.strike * dfd - r_for * i.spot * dff),
+            rates: RateSensitivities::Fx {
+                rho_dom: sign * (i.strike * i.t * dfd),
+                rho_for: sign * (-(i.spot * i.t) * dff),
+            },
             vanna: 0.0,
             volga: 0.0,
             charm: 0.0,
@@ -308,8 +406,20 @@ fn fwd_descriptor() -> ModelDescriptor {
     ModelDescriptor::new(FWD_ID, ModelKind::Pricing, GreekSupport::FULL)
 }
 
-fn market() -> VanillaInputs {
-    VanillaInputs::new(1.2150, 1.2000, 0.11, 0.75, 0.043, 0.011)
+fn market() -> CarryInputs {
+    fx_market(1.2150, 1.2000, 0.11, 0.75, 0.043, 0.011)
+}
+
+/// Build an FX `CarryInputs` (an `Fx` underlying carried by `FxRates`).
+fn fx_market(spot: f64, strike: f64, vol: f64, t: f64, r_dom: f64, r_for: f64) -> CarryInputs {
+    CarryInputs::new(
+        spot,
+        strike,
+        vol,
+        t,
+        eurusd(),
+        Carry::FxRates { r_dom, r_for },
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -565,9 +675,9 @@ fn native_and_wasm_twins_agree_through_one_registry() {
     // bit-identically through the unified registry.
     let markets = [
         market(),
-        VanillaInputs::new(100.0, 95.0, 0.2, 1.0, 0.05, 0.0),
-        VanillaInputs::new(1.35, 1.40, 0.08, 2.0, 0.02, 0.018),
-        VanillaInputs::new(0.85, 0.90, 0.3, 0.25, 0.01, 0.03),
+        fx_market(100.0, 95.0, 0.2, 1.0, 0.05, 0.0),
+        fx_market(1.35, 1.40, 0.08, 2.0, 0.02, 0.018),
+        fx_market(0.85, 0.90, 0.3, 0.25, 0.01, 0.03),
     ];
     for m in markets {
         for opt in [OptionType::Call, OptionType::Put] {
@@ -575,6 +685,107 @@ fn native_and_wasm_twins_agree_through_one_registry() {
                 .unwrap_or_else(|e| panic!("tier-0 vs tier-2 disagreed for {opt:?} {m:?}: {e}"));
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Gate 5 — the carry generalization is REAL: a NON-FX equity-dividend model
+// (Carry::CostOfCarry{ r, b = r − q }) priced through the wasmi ABI reconciles
+// to an INDEPENDENT from-scratch generalized-Black-Scholes closed form.
+//
+// The oracle is computed here in the test from first principles — it never calls
+// the production pricing path or the SDK example — so agreement to ~1e-12 proves
+// the carry discriminant + fields cross the boundary correctly and are priced as
+// a genuine cost-of-carry, not an FX input reshaped under FX two-rate arithmetic.
+// ---------------------------------------------------------------------------
+
+/// Independent generalized-Black-Scholes price (discount rate `r`, net carry
+/// `b`), coded from scratch in the test as the cross-check oracle. For a call:
+/// `S·e^{(b−r)t}·N(d1) − K·e^{−rt}·N(d2)`; the put follows by sign symmetry.
+fn gbs_oracle(opt: OptionType, s: f64, k: f64, vol: f64, t: f64, r: f64, b: f64) -> f64 {
+    let sqt = sqrt(t);
+    let vsqt = vol * sqt;
+    let d1 = (ln(s / k) + (b + 0.5 * vol * vol) * t) / vsqt;
+    let d2 = d1 - vsqt;
+    let s_disc = s * exp((b - r) * t);
+    let k_disc = k * exp(-r * t);
+    let sign = match opt {
+        OptionType::Call => 1.0_f64,
+        OptionType::Put => -1.0_f64,
+    };
+    sign * (s_disc * norm_cdf(sign * d1) - k_disc * norm_cdf(sign * d2))
+}
+
+#[test]
+fn equity_cost_of_carry_model_reconciles_to_independent_oracle() {
+    let bytes = wasm(EQUITY_CARRY_PRICER_WAT);
+    let model = WasmModel::load_default(
+        ModelDescriptor::new(
+            ModelId("celnet.test.equity-cost-of-carry"),
+            ModelKind::Pricing,
+            GreekSupport::PRICE_ONLY,
+        ),
+        &bytes,
+    )
+    .expect("the equity carry guest loads (imports only granted math)");
+
+    // A battery of equity regimes: spot, strike, vol, t, discount r, dividend q.
+    // The net carry is b = r − q (an equity index with a continuous dividend
+    // yield), which is NOT expressible as an FX two-rate carry the FX leaf would
+    // accept — it is genuinely the cost-of-carry arm.
+    let regimes = [
+        (100.0, 100.0, 0.20, 1.00, 0.05, 0.03),
+        (100.0, 110.0, 0.25, 0.50, 0.04, 0.015),
+        (42.0, 40.0, 0.35, 2.00, 0.03, 0.00),
+        (1500.0, 1450.0, 0.18, 0.25, 0.045, 0.022),
+        (8.0, 9.0, 0.55, 1.50, 0.02, 0.07), // q > r ⇒ negative carry
+    ];
+    for (s, k, vol, t, r, q) in regimes {
+        let b = r - q;
+        let inputs = CarryInputs::new(s, k, vol, t, eurusd(), Carry::CostOfCarry { r, b });
+        for opt in [OptionType::Call, OptionType::Put] {
+            let got = model
+                .price(opt, &inputs)
+                .expect("equity carry guest prices");
+            let want = gbs_oracle(opt, s, k, vol, t, r, b);
+            let rel = (got - want).abs() / want.abs().max(1.0);
+            assert!(
+                rel <= 1e-12,
+                "carry price must match the independent GBS oracle: {opt:?} \
+                 (s={s}, k={k}, vol={vol}, t={t}, r={r}, q={q}) got {got}, want {want}, rel {rel}"
+            );
+        }
+    }
+
+    // The greeks path round-trips the carry tag: the host must reconstruct
+    // RateSensitivities::Carry (not Fx) from the guest's rate_kind = 1, and its
+    // price field must equal the standalone price() and the oracle.
+    let inputs = CarryInputs::new(
+        100.0,
+        100.0,
+        0.20,
+        1.0,
+        eurusd(),
+        Carry::CostOfCarry { r: 0.05, b: 0.02 },
+    );
+    let g = model
+        .price_and_greeks(OptionType::Call, &inputs)
+        .expect("greeks path");
+    match g.rates {
+        RateSensitivities::Carry { .. } => {}
+        RateSensitivities::Fx { .. } => {
+            panic!("a cost-of-carry input must reconstruct as RateSensitivities::Carry")
+        }
+    }
+    let want = gbs_oracle(OptionType::Call, 100.0, 100.0, 0.20, 1.0, 0.05, 0.02);
+    assert!(
+        (g.price - want).abs() / want <= 1e-12,
+        "greeks price vs oracle"
+    );
+
+    // Replay stays bit-identical for the non-FX guest too.
+    let snap = Snapshot::new(OptionType::Put, inputs);
+    let outcome = replay::replay(&model, snap, 8).expect("non-FX replay is bit-identical");
+    assert_eq!(outcome.runs, 8);
 }
 
 /// Wraps a native model under a chosen id (so two registry entries from the same
@@ -589,10 +800,14 @@ impl PricingModel for NativeIdShim {
     fn descriptor(&self) -> ModelDescriptor {
         ModelDescriptor::new(self.id, ModelKind::Pricing, GreekSupport::FULL)
     }
-    fn price(&self, opt: OptionType, i: &VanillaInputs) -> Result<f64, PluginError> {
+    fn price(&self, opt: OptionType, i: &CarryInputs) -> Result<f64, PluginError> {
         self.inner.price(opt, i)
     }
-    fn price_and_greeks(&self, opt: OptionType, i: &VanillaInputs) -> Result<Greeks, PluginError> {
+    fn price_and_greeks(
+        &self,
+        opt: OptionType,
+        i: &CarryInputs,
+    ) -> Result<CarryGreeks, PluginError> {
         self.inner.price_and_greeks(opt, i)
     }
 }

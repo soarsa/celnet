@@ -208,10 +208,10 @@ pub fn wire_conventions() -> Conventions {
 /// EUR/USD pair this harness streams/quotes.
 pub fn vanilla_call(strike: f64) -> Instrument {
     Instrument {
-        pair: Some(CcyPair {
+        underlying: Some(celnet_proto::Underlying::fx(CcyPair {
             base: "EUR".to_owned(),
             quote: "USD".to_owned(),
-        }),
+        })),
         tenor: Some(Tenor {
             unit: tenor_mod::Unit::Years as i32,
             count: 1,

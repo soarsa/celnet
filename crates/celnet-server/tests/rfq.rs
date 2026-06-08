@@ -62,7 +62,7 @@ async fn rfq_quote_accept_matches_direct_price() {
         let m = live_market();
         let direct = celnet_vanilla::price(
             OptionType::Call,
-            &VanillaInputs::new(m.spot, strike, m.vol, 1.0, m.r_dom, m.r_for),
+            &VanillaInputs::new(m.spot, strike, m.vol, 1.0, m.r_dom(), m.r_for()),
         );
         let price = quote.price.expect("two-way present");
         assert!(price.bid < price.offer, "two-way is bid < offer");

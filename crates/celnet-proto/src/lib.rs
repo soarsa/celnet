@@ -90,6 +90,7 @@ mod generated {
 pub use generated::*;
 
 pub mod convert;
+pub mod helpers;
 
 #[cfg(test)]
 mod tests {
@@ -101,6 +102,10 @@ mod tests {
             base: "EUR".to_owned(),
             quote: "USD".to_owned(),
         }
+    }
+
+    fn sample_underlying() -> Underlying {
+        Underlying::fx(sample_pair())
     }
 
     fn sample_conventions() -> Conventions {
@@ -122,8 +127,7 @@ mod tests {
             gamma: 2.118,
             vega: 0.305,
             theta: -0.018,
-            rho_dom: 0.061,
-            rho_for: -0.058,
+            rate_sensitivities: Some(RateSensitivities::fx(0.061, -0.058)),
             vanna: -0.072,
             volga: 0.144,
             charm: 0.0009,
@@ -150,7 +154,7 @@ mod tests {
 
     fn vanilla_instrument() -> Instrument {
         Instrument {
-            pair: Some(sample_pair()),
+            underlying: Some(sample_underlying()),
             tenor: Some(sample_tenor()),
             expiry_years: 0.25,
             quantity: Some(sample_quantity()),
@@ -184,12 +188,7 @@ mod tests {
         let req = PriceRequest {
             request_id: 0xDEAD_BEEF,
             instrument: Some(vanilla_instrument()),
-            market: Some(MarketContext {
-                spot: 1.10,
-                vol: 0.0825,
-                r_dom: 0.045,
-                r_for: 0.030,
-            }),
+            market: Some(MarketContext::fx(1.10, 0.0825, 0.045, 0.030)),
             conventions: Some(sample_conventions()),
             correlation_id: Some(0x0102_0304),
             surface_version: Some(11),
@@ -200,12 +199,7 @@ mod tests {
         let req_no_optionals = PriceRequest {
             request_id: 7,
             instrument: Some(vanilla_instrument()),
-            market: Some(MarketContext {
-                spot: 1.10,
-                vol: 0.0825,
-                r_dom: 0.045,
-                r_for: 0.030,
-            }),
+            market: Some(MarketContext::fx(1.10, 0.0825, 0.045, 0.030)),
             conventions: Some(sample_conventions()),
             correlation_id: None,
             surface_version: None,
@@ -235,7 +229,7 @@ mod tests {
             ratio: 1.0,
         };
         let instr = Instrument {
-            pair: Some(sample_pair()),
+            underlying: Some(sample_underlying()),
             tenor: Some(sample_tenor()),
             expiry_years: 0.25,
             quantity: Some(sample_quantity()),
@@ -259,7 +253,7 @@ mod tests {
     #[test]
     fn round_trip_barrier_digital_touch_instruments() {
         let barrier = Instrument {
-            pair: Some(sample_pair()),
+            underlying: Some(sample_underlying()),
             tenor: Some(sample_tenor()),
             expiry_years: 1.0,
             quantity: Some(sample_quantity()),
@@ -283,7 +277,7 @@ mod tests {
         round_trip(&barrier);
 
         let double = Instrument {
-            pair: Some(sample_pair()),
+            underlying: Some(sample_underlying()),
             tenor: Some(sample_tenor()),
             expiry_years: 0.5,
             quantity: Some(sample_quantity()),
@@ -307,7 +301,7 @@ mod tests {
         round_trip(&double);
 
         let digital = Instrument {
-            pair: Some(sample_pair()),
+            underlying: Some(sample_underlying()),
             tenor: Some(sample_tenor()),
             expiry_years: 0.25,
             quantity: Some(sample_quantity()),
@@ -324,7 +318,7 @@ mod tests {
         round_trip(&digital);
 
         let touch = Instrument {
-            pair: Some(sample_pair()),
+            underlying: Some(sample_underlying()),
             tenor: Some(sample_tenor()),
             expiry_years: 0.75,
             quantity: Some(sample_quantity()),
@@ -345,7 +339,7 @@ mod tests {
     #[test]
     fn round_trip_swap_and_asian_instruments() {
         let var_swap = Instrument {
-            pair: Some(sample_pair()),
+            underlying: Some(sample_underlying()),
             tenor: Some(sample_tenor()),
             expiry_years: 1.0,
             quantity: Some(sample_quantity()),
@@ -359,7 +353,7 @@ mod tests {
         round_trip(&var_swap);
 
         let vol_swap = Instrument {
-            pair: Some(sample_pair()),
+            underlying: Some(sample_underlying()),
             tenor: Some(sample_tenor()),
             expiry_years: 0.5,
             quantity: Some(sample_quantity()),
@@ -373,7 +367,7 @@ mod tests {
         round_trip(&vol_swap);
 
         let asian = Instrument {
-            pair: Some(sample_pair()),
+            underlying: Some(sample_underlying()),
             tenor: Some(sample_tenor()),
             expiry_years: 1.0,
             quantity: Some(sample_quantity()),
@@ -396,7 +390,7 @@ mod tests {
     #[test]
     fn round_trip_forward_start_cliquet_quanto_instruments() {
         let forward_start = Instrument {
-            pair: Some(sample_pair()),
+            underlying: Some(sample_underlying()),
             tenor: Some(sample_tenor()),
             expiry_years: 1.0,
             quantity: Some(sample_quantity()),
@@ -412,7 +406,7 @@ mod tests {
         round_trip(&forward_start);
 
         let cliquet = Instrument {
-            pair: Some(sample_pair()),
+            underlying: Some(sample_underlying()),
             tenor: Some(sample_tenor()),
             expiry_years: 1.0,
             quantity: Some(sample_quantity()),
@@ -434,7 +428,7 @@ mod tests {
         round_trip(&cliquet);
 
         let quanto = Instrument {
-            pair: Some(sample_pair()),
+            underlying: Some(sample_underlying()),
             tenor: Some(sample_tenor()),
             expiry_years: 0.75,
             quantity: Some(sample_quantity()),
@@ -455,7 +449,7 @@ mod tests {
     #[test]
     fn round_trip_tarf_accumulator_lookback_instruments() {
         let tarf = Instrument {
-            pair: Some(sample_pair()),
+            underlying: Some(sample_underlying()),
             tenor: Some(sample_tenor()),
             expiry_years: 1.0,
             quantity: Some(sample_quantity()),
@@ -479,7 +473,7 @@ mod tests {
         round_trip(&tarf);
 
         let accumulator = Instrument {
-            pair: Some(sample_pair()),
+            underlying: Some(sample_underlying()),
             tenor: Some(sample_tenor()),
             expiry_years: 1.0,
             quantity: Some(sample_quantity()),
@@ -502,7 +496,7 @@ mod tests {
         round_trip(&accumulator);
 
         let lookback = Instrument {
-            pair: Some(sample_pair()),
+            underlying: Some(sample_underlying()),
             tenor: Some(sample_tenor()),
             expiry_years: 1.0,
             quantity: Some(sample_quantity()),
@@ -527,7 +521,7 @@ mod tests {
         // The window-barrier product (LSV-only) round-trips, including the
         // pricing-model selector carried on the instrument.
         let window = Instrument {
-            pair: Some(sample_pair()),
+            underlying: Some(sample_underlying()),
             tenor: Some(sample_tenor()),
             expiry_years: 1.0,
             quantity: Some(sample_quantity()),
@@ -565,7 +559,7 @@ mod tests {
         // The American early-exercise vanilla (oneof field 24) round-trips on the
         // default model, including the LSM knobs.
         let american = Instrument {
-            pair: Some(sample_pair()),
+            underlying: Some(sample_underlying()),
             tenor: Some(sample_tenor()),
             expiry_years: 1.0,
             quantity: Some(sample_quantity()),
@@ -588,7 +582,7 @@ mod tests {
         // LSM engine knobs; the proto3 zero of `ExerciseStyle` is AMERICAN.
         assert_eq!(ExerciseStyle::American as i32, 0);
         let bermudan = Instrument {
-            pair: Some(sample_pair()),
+            underlying: Some(sample_underlying()),
             tenor: Some(sample_tenor()),
             expiry_years: 1.0,
             quantity: Some(sample_quantity()),
@@ -613,7 +607,7 @@ mod tests {
         // The correlated multi-asset basket (oneof field 25) round-trips with its
         // per-leg market data and the row-major correlation array.
         let basket = Instrument {
-            pair: Some(sample_pair()),
+            underlying: Some(sample_underlying()),
             tenor: Some(sample_tenor()),
             expiry_years: 1.0,
             quantity: Some(sample_quantity()),
@@ -623,20 +617,20 @@ mod tests {
             product: Some(instrument::Product::Basket(BasketOption {
                 legs: vec![
                     BasketLeg {
-                        pair: Some(CcyPair {
+                        underlying: Some(Underlying::fx(CcyPair {
                             base: "EUR".to_owned(),
                             quote: "USD".to_owned(),
-                        }),
+                        })),
                         weight: 0.5,
                         spot: 1.10,
                         vol: 0.11,
                         r_for: 0.015,
                     },
                     BasketLeg {
-                        pair: Some(CcyPair {
+                        underlying: Some(Underlying::fx(CcyPair {
                             base: "GBP".to_owned(),
                             quote: "USD".to_owned(),
-                        }),
+                        })),
                         weight: 0.5,
                         spot: 1.27,
                         vol: 0.13,
@@ -1006,12 +1000,7 @@ mod tests {
     fn round_trip_scenario_grid() {
         let req = ScenarioRequest {
             instrument: Some(vanilla_instrument()),
-            base_market: Some(MarketContext {
-                spot: 1.10,
-                vol: 0.0825,
-                r_dom: 0.045,
-                r_for: 0.030,
-            }),
+            base_market: Some(MarketContext::fx(1.10, 0.0825, 0.045, 0.030)),
             conventions: Some(sample_conventions()),
             axes: vec![
                 ShockAxis {
@@ -1064,12 +1053,7 @@ mod tests {
         // Scenario request without the book-shaped risk decomposition.
         let req_grid_only = ScenarioRequest {
             instrument: Some(vanilla_instrument()),
-            base_market: Some(MarketContext {
-                spot: 1.10,
-                vol: 0.0825,
-                r_dom: 0.045,
-                r_for: 0.030,
-            }),
+            base_market: Some(MarketContext::fx(1.10, 0.0825, 0.045, 0.030)),
             conventions: Some(sample_conventions()),
             axes: vec![ShockAxis {
                 factor: shock_axis::Factor::Spot as i32,
@@ -1085,12 +1069,7 @@ mod tests {
         let resp = ScenarioResponse {
             points: vec![ScenarioPoint {
                 applied_shocks: vec![-0.20, 0.0, 1.0 / 365.0],
-                shocked_market: Some(MarketContext {
-                    spot: 0.88,
-                    vol: 0.0825,
-                    r_dom: 0.045,
-                    r_for: 0.030,
-                }),
+                shocked_market: Some(MarketContext::fx(0.88, 0.0825, 0.045, 0.030)),
                 greeks: Some(sample_greeks()),
                 expiry_years: 0.25 - 1.0 / 365.0,
             }],
@@ -1218,7 +1197,7 @@ mod tests {
             message: Some(client_stream_message::Message::MarketSeriesSubscribe(
                 MarketSeriesSubscribe {
                     subscription: Some(sub),
-                    pair: Some(sample_pair()),
+                    underlying: Some(sample_underlying()),
                     observable: MarketObservable::AtmVol as i32,
                     tenor: Some(sample_tenor()),
                     delta: None,
@@ -1234,7 +1213,7 @@ mod tests {
             message: Some(client_stream_message::Message::MarketSeriesSubscribe(
                 MarketSeriesSubscribe {
                     subscription: Some(sub),
-                    pair: Some(sample_pair()),
+                    underlying: Some(sample_underlying()),
                     observable: MarketObservable::RiskReversal as i32,
                     tenor: Some(sample_tenor()),
                     delta: Some(0.25),
@@ -1265,7 +1244,7 @@ mod tests {
                 MarketSeriesSnapshot {
                     subscription: Some(sub),
                     sequence: 1,
-                    pair: Some(sample_pair()),
+                    underlying: Some(sample_underlying()),
                     observable: MarketObservable::AtmVol as i32,
                     points: vec![point],
                     epoch_nanos: 1_717_000_000_000_000_000,

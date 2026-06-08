@@ -38,27 +38,59 @@ interface types {
         put,
     }
 
-    // VanillaInputs (celnet_types::VanillaInputs). Continuously-compounded
-    // rates; `t` is a vol-time year fraction; `vol` is absolute (0.10 = 10 vol).
-    record vanilla-inputs {
+    // Underlying asset class (celnet_types::Underlying). The asset-class
+    // discriminator; the FX arm carries no extra payload here (the currency-pair
+    // identity does not enter the carry/forward math — it travels out-of-band).
+    // Further asset classes are added by their wave as additive cases.
+    variant underlying {
+        // An FX currency pair.
+        fx,
+    }
+
+    // Cost-of-carry model (celnet_types::Carry). FX carries two rates; other
+    // asset classes carry a single discount rate `r` and net carry `b`. Both
+    // reduce to forward `F = S·e^{b·t}` and discount `e^{−r·t}`; for FX,
+    // `r = r-dom` and `b = r-dom − r-for`.
+    variant carry {
+        // FX two-rate carry: domestic (quote) `r-dom`, foreign (base) `r-for`.
+        fx-rates(tuple<f64, f64>),
+        // Generalized cost-of-carry: discount rate `r`, net carry `b`.
+        cost-of-carry(tuple<f64, f64>),
+    }
+
+    // CarryInputs (celnet_core::CarryInputs). The generalized, carry-tagged
+    // pricing input. `t` is a vol-time year fraction; `vol` is absolute
+    // (0.10 = 10 vol); rates are continuously-compounded.
+    record carry-inputs {
         spot: f64,
         strike: f64,
         vol: f64,
         t: f64,
-        r-dom: f64,
-        r-for: f64,
+        underlying: underlying,
+        carry: carry,
     }
 
-    // Greeks (celnet_types::Greeks) — the full Celnet sensitivity set, raw units.
-    record greeks {
+    // Carry-tagged rate sensitivities (celnet_types::RateSensitivities). FX
+    // reports the two rate rhos; other asset classes report a discount-rho
+    // `∂V/∂r` and a carry-rho `∂V/∂b`.
+    variant rate-sensitivities {
+        // FX: (rho-dom = ∂V/∂r-dom, rho-for = ∂V/∂r-for).
+        fx(tuple<f64, f64>),
+        // Generalized: (discount-rho = ∂V/∂r, carry-rho = ∂V/∂b).
+        carry(tuple<f64, f64>),
+    }
+
+    // CarryGreeks (celnet_core::CarryGreeks) — the generalized sensitivity strip,
+    // raw units. The carry-neutral block mirrors the FX Greek set; the rate block
+    // is carry-tagged.
+    record carry-greeks {
         price: f64,
         delta-spot: f64,
         delta-forward: f64,
         gamma: f64,
         vega: f64,
         theta: f64,
-        rho-dom: f64,
-        rho-for: f64,
+        rates: rate-sensitivities,
         vanna: f64,
         volga: f64,
         charm: f64,
@@ -139,17 +171,20 @@ interface calibration-types {
 // admits it to the matching registry slot by its declared `model-kind`.
 // ---------------------------------------------------------------------------
 
-// PricingModel (crate::PricingModel).
+// PricingModel (crate::PricingModel). Generalized over the carry-tagged
+// vocabulary, so a guest may price any asset class (FX or cost-of-carry), not
+// only FX.
 interface pricing-model {
-    use types.{option-type, vanilla-inputs, greeks};
+    use types.{option-type, carry-inputs, carry-greeks};
     use diagnostics.{plugin-error};
 
-    // Present value in domestic currency, per 1 unit of base notional.
-    price: func(opt: option-type, inputs: vanilla-inputs) -> result<f64, plugin-error>;
+    // Present value in the numeraire currency, per 1 unit of base notional.
+    price: func(opt: option-type, inputs: carry-inputs) -> result<f64, plugin-error>;
 
-    // Price plus the full Greek set in one pass (Unsupported if not provided).
-    price-and-greeks: func(opt: option-type, inputs: vanilla-inputs)
-        -> result<greeks, plugin-error>;
+    // Price plus the full carry-tagged Greek strip in one pass (Unsupported if
+    // not provided).
+    price-and-greeks: func(opt: option-type, inputs: carry-inputs)
+        -> result<carry-greeks, plugin-error>;
 }
 
 // SmileModel (crate::SmileModel : celnet_core::Smile).

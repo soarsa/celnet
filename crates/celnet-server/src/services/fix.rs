@@ -181,12 +181,12 @@ impl FixContext {
             .market_snapshot()
             .await
             .map_err(|e| e.to_string())?;
-        Ok(MarketContext {
-            spot: snap.spot,
-            vol: snap.atm_vol,
-            r_dom: snap.r_dom,
-            r_for: snap.r_for,
-        })
+        Ok(MarketContext::fx(
+            snap.spot,
+            snap.atm_vol,
+            snap.r_dom,
+            snap.r_for,
+        ))
     }
 }
 
@@ -572,10 +572,10 @@ struct PricedLine {
 /// carried vol-time. A FX vanilla call/put at an absolute strike, base-notional 1mm.
 fn instrument_from_descriptor(desc: &OptionDescriptor, expiry_years: f64) -> Instrument {
     Instrument {
-        pair: Some(CcyPair {
+        underlying: Some(celnet_proto::Underlying::fx(CcyPair {
             base: desc.pair.base.as_str().to_owned(),
             quote: desc.pair.quote.as_str().to_owned(),
-        }),
+        })),
         tenor: None,
         expiry_years,
         quantity: Some(Quantity {

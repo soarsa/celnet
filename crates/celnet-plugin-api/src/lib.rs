@@ -13,8 +13,9 @@
 //!
 //! # The three model seams
 //!
-//! - [`PricingModel`] — price (and optionally Greeks) for a vanilla FX option
-//!   given [`celnet_types::VanillaInputs`].
+//! - [`PricingModel`] — price (and optionally the carry-tagged Greek strip) for
+//!   an option given the generalized [`celnet_core::CarryInputs`], so a model can
+//!   price any asset class (FX, or a cost-of-carry equity/commodity), not only FX.
 //! - [`SmileModel`] — a volatility smile/surface; extends [`celnet_core::Smile`]
 //!   and adds an arbitrage self-check.
 //! - [`Calibration`] — fits a model's parameters to market targets, producing a
@@ -60,8 +61,8 @@ pub use smile::SmileModel;
 
 #[cfg(test)]
 mod tests {
-    use celnet_core::{Smile, assert_close};
-    use celnet_types::{OptionType, VanillaInputs};
+    use celnet_core::{CarryInputs, Smile, assert_close};
+    use celnet_types::{Carry, CcyPair, OptionType, Underlying};
 
     use crate::example::{
         FLAT_CALIBRATION_ID, FLAT_PRICER_ID, FlatSmileCalibration, FlatSmilePricer, reference_call,
@@ -71,10 +72,51 @@ mod tests {
         ModelRegistry, PluginError, PricingModel, SmileModel,
     };
 
+    /// The FX underlying used across the example tests.
+    fn eurusd() -> Underlying {
+        Underlying::Fx(CcyPair::parse("EURUSD").unwrap())
+    }
+
+    /// Build an FX `CarryInputs` (an `Fx` underlying carried by `FxRates`).
+    fn fx(spot: f64, strike: f64, vol: f64, t: f64, r_dom: f64, r_for: f64) -> CarryInputs {
+        CarryInputs::new(
+            spot,
+            strike,
+            vol,
+            t,
+            eurusd(),
+            Carry::FxRates { r_dom, r_for },
+        )
+    }
+
+    /// The FX domestic/foreign rates of an `FxRates`-carried input.
+    fn fx_rates(i: &CarryInputs) -> (f64, f64) {
+        match i.carry {
+            Carry::FxRates { r_dom, r_for } => (r_dom, r_for),
+            Carry::CostOfCarry { .. } => unreachable!("test inputs are FX"),
+        }
+    }
+
+    /// Copy `i`, replacing one field via the mutator; keeps the FX carry tag.
+    fn bump(i: &CarryInputs, f: impl FnOnce(&mut CarryInputs)) -> CarryInputs {
+        let mut out = *i;
+        f(&mut out);
+        out
+    }
+
+    /// `df_dom = e^{−r_dom·t}` / `df_for = e^{−r_for·t}` for an FX input.
+    fn fx_dfs(i: &CarryInputs) -> (f64, f64) {
+        let (r_dom, r_for) = fx_rates(i);
+        (
+            celnet_core::math::exp(-r_dom * i.t),
+            celnet_core::math::exp(-r_for * i.t),
+        )
+    }
+
     // A textbook Black-Scholes benchmark: S=K=100, σ=20%, T=1, r_d=5%, r_f=0.
     // The call price is the canonical 10.4506 (matches `celnet-vanilla`).
-    fn bench_inputs() -> VanillaInputs {
-        VanillaInputs::new(100.0, 100.0, 0.20, 1.0, 0.05, 0.0)
+    fn bench_inputs() -> CarryInputs {
+        fx(100.0, 100.0, 0.20, 1.0, 0.05, 0.0)
     }
 
     #[test]
@@ -95,7 +137,8 @@ mod tests {
         let c = model.price(OptionType::Call, &i).unwrap();
         let p = model.price(OptionType::Put, &i).unwrap();
         // C - P = S·e^{-r_f T} - K·e^{-r_d T}.
-        let parity = i.spot * i.df_for() - i.strike * i.df_dom();
+        let (df_dom, df_for) = fx_dfs(&i);
+        let parity = i.spot * df_for - i.strike * df_dom;
         assert_close!(c - p, parity, 1e-12, 1e-12);
     }
 
@@ -117,14 +160,8 @@ mod tests {
         let i = bench_inputs();
         let g = model.price_and_greeks(OptionType::Call, &i).unwrap();
         let h = 1e-5 * i.spot;
-        let up = VanillaInputs {
-            spot: i.spot + h,
-            ..i
-        };
-        let dn = VanillaInputs {
-            spot: i.spot - h,
-            ..i
-        };
+        let up = bump(&i, |x| x.spot += h);
+        let dn = bump(&i, |x| x.spot -= h);
         let fd = (model.price(OptionType::Call, &up).unwrap()
             - model.price(OptionType::Call, &dn).unwrap())
             / (2.0 * h);
@@ -137,14 +174,8 @@ mod tests {
         let i = bench_inputs();
         let g = model.price_and_greeks(OptionType::Call, &i).unwrap();
         let h = 1e-6;
-        let up = VanillaInputs {
-            vol: i.vol + h,
-            ..i
-        };
-        let dn = VanillaInputs {
-            vol: i.vol - h,
-            ..i
-        };
+        let up = bump(&i, |x| x.vol += h);
+        let dn = bump(&i, |x| x.vol -= h);
         let fd = (model.price(OptionType::Call, &up).unwrap()
             - model.price(OptionType::Call, &dn).unwrap())
             / (2.0 * h);
@@ -160,19 +191,24 @@ mod tests {
     #[allow(clippy::similar_names)]
     fn full_greek_set_against_finite_difference() {
         // Central difference of `f` between the up/down bumps of one input field.
-        fn cd(
-            f: impl Fn(&VanillaInputs) -> f64,
-            up: &VanillaInputs,
-            dn: &VanillaInputs,
-            h: f64,
-        ) -> f64 {
+        fn cd(f: impl Fn(&CarryInputs) -> f64, up: &CarryInputs, dn: &CarryInputs, h: f64) -> f64 {
             (f(up) - f(dn)) / (2.0 * h)
         }
+        // Mutate one FX rate of an `FxRates`-carried input by `dr`.
+        fn bump_rate(i: &CarryInputs, dom: f64, fr: f64) -> CarryInputs {
+            let (r_dom, r_for) = fx_rates(i);
+            bump(i, |x| {
+                x.carry = Carry::FxRates {
+                    r_dom: r_dom + dom,
+                    r_for: r_for + fr,
+                };
+            })
+        }
         let regimes = [
-            VanillaInputs::new(100.0, 100.0, 0.20, 1.0, 0.05, 0.0),
-            VanillaInputs::new(1.10, 1.25, 0.09, 0.5, 0.02, 0.01),
-            VanillaInputs::new(1.35, 1.20, 0.14, 2.0, 0.04, 0.015),
-            VanillaInputs::new(110.0, 95.0, 0.30, 0.25, 0.01, 0.03),
+            fx(100.0, 100.0, 0.20, 1.0, 0.05, 0.0),
+            fx(1.10, 1.25, 0.09, 0.5, 0.02, 0.01),
+            fx(1.35, 1.20, 0.14, 2.0, 0.04, 0.015),
+            fx(110.0, 95.0, 0.30, 0.25, 0.01, 0.03),
         ];
         for i in regimes {
             // The model's flat vol equals the regime vol, so it reproduces the
@@ -180,53 +216,35 @@ mod tests {
             let model = FlatSmilePricer::new(i.vol);
             for opt in [OptionType::Call, OptionType::Put] {
                 let g = model.price_and_greeks(opt, &i).unwrap();
-                let price = |x: &VanillaInputs| model.price(opt, x).unwrap();
-                let delta = |x: &VanillaInputs| model.price_and_greeks(opt, x).unwrap().delta_spot;
-                let gamma_of = |x: &VanillaInputs| model.price_and_greeks(opt, x).unwrap().gamma;
-                let vega_of = |x: &VanillaInputs| model.price_and_greeks(opt, x).unwrap().vega;
+                let (rho_dom, rho_for) = match g.rates {
+                    celnet_types::RateSensitivities::Fx { rho_dom, rho_for } => (rho_dom, rho_for),
+                    celnet_types::RateSensitivities::Carry { .. } => {
+                        panic!("FX input must yield FX rate sensitivities")
+                    }
+                };
+                let price = |x: &CarryInputs| model.price(opt, x).unwrap();
+                let delta = |x: &CarryInputs| model.price_and_greeks(opt, x).unwrap().delta_spot;
+                let gamma_of = |x: &CarryInputs| model.price_and_greeks(opt, x).unwrap().gamma;
+                let vega_of = |x: &CarryInputs| model.price_and_greeks(opt, x).unwrap().vega;
 
                 let (hs, hv, ht, hr) = (1e-4 * i.spot, 1e-5, 1e-5, 1e-6);
-                let s_up = VanillaInputs {
-                    spot: i.spot + hs,
-                    ..i
-                };
-                let s_dn = VanillaInputs {
-                    spot: i.spot - hs,
-                    ..i
-                };
-                let v_up = VanillaInputs {
-                    vol: i.vol + hv,
-                    ..i
-                };
-                let v_dn = VanillaInputs {
-                    vol: i.vol - hv,
-                    ..i
-                };
-                let t_up = VanillaInputs { t: i.t + ht, ..i };
-                let t_dn = VanillaInputs { t: i.t - ht, ..i };
-                let rd_up = VanillaInputs {
-                    r_dom: i.r_dom + hr,
-                    ..i
-                };
-                let rd_dn = VanillaInputs {
-                    r_dom: i.r_dom - hr,
-                    ..i
-                };
-                let rf_up = VanillaInputs {
-                    r_for: i.r_for + hr,
-                    ..i
-                };
-                let rf_dn = VanillaInputs {
-                    r_for: i.r_for - hr,
-                    ..i
-                };
+                let s_up = bump(&i, |x| x.spot += hs);
+                let s_dn = bump(&i, |x| x.spot -= hs);
+                let v_up = bump(&i, |x| x.vol += hv);
+                let v_dn = bump(&i, |x| x.vol -= hv);
+                let t_up = bump(&i, |x| x.t += ht);
+                let t_dn = bump(&i, |x| x.t -= ht);
+                let rd_up = bump_rate(&i, hr, 0.0);
+                let rd_dn = bump_rate(&i, -hr, 0.0);
+                let rf_up = bump_rate(&i, 0.0, hr);
+                let rf_dn = bump_rate(&i, 0.0, -hr);
 
                 // First order.
                 assert_close!(g.delta_spot, cd(price, &s_up, &s_dn, hs), 1e-4, 1e-7);
                 assert_close!(g.vega, cd(price, &v_up, &v_dn, hv), 1e-4, 1e-7);
                 assert_close!(g.theta, -cd(price, &t_up, &t_dn, ht), 5e-4, 1e-6);
-                assert_close!(g.rho_dom, cd(price, &rd_up, &rd_dn, hr), 1e-4, 1e-7);
-                assert_close!(g.rho_for, cd(price, &rf_up, &rf_dn, hr), 1e-4, 1e-7);
+                assert_close!(rho_dom, cd(price, &rd_up, &rd_dn, hr), 1e-4, 1e-7);
+                assert_close!(rho_for, cd(price, &rf_up, &rf_dn, hr), 1e-4, 1e-7);
                 // Second order (difference the relevant first-order Greek).
                 assert_close!(g.gamma, cd(delta, &s_up, &s_dn, hs), 1e-3, 1e-6);
                 assert_close!(g.vanna, cd(delta, &v_up, &v_dn, hv), 1e-3, 1e-6);
@@ -242,10 +260,52 @@ mod tests {
     #[test]
     fn invalid_inputs_are_rejected() {
         let model = FlatSmilePricer::new(0.20);
-        let bad = VanillaInputs::new(-1.0, 100.0, 0.2, 1.0, 0.05, 0.0);
+        let bad = fx(-1.0, 100.0, 0.2, 1.0, 0.05, 0.0);
         assert_eq!(
             model.price(OptionType::Call, &bad),
             Err(PluginError::InvalidInput("spot must be positive"))
+        );
+    }
+
+    /// The generalization is real: the reference model prices an **equity option
+    /// under a cost-of-carry** (`b = r − q`) and the result carries the
+    /// discount/carry rho pair — and it reduces to the FX form when `b = r_dom −
+    /// r_for`, `r = r_dom`, proving the two arms are the same closed form.
+    #[test]
+    fn cost_of_carry_arm_prices_and_tags_rates() {
+        use celnet_types::RateSensitivities;
+        let model = FlatSmilePricer::new(0.25);
+        // Equity: r = 4%, dividend yield q = 1.5% ⇒ net carry b = r − q = 2.5%.
+        let (r, q) = (0.04, 0.015);
+        let equity = CarryInputs::new(
+            100.0,
+            105.0,
+            0.25,
+            0.75,
+            eurusd(),
+            Carry::CostOfCarry { r, b: r - q },
+        );
+        let g = model.price_and_greeks(OptionType::Call, &equity).unwrap();
+        // The price field agrees with the standalone price() entry point.
+        assert_close!(
+            g.price,
+            model.price(OptionType::Call, &equity).unwrap(),
+            1e-12,
+            1e-12
+        );
+        // A cost-of-carry input yields the carry-tagged rate sensitivities.
+        match g.rates {
+            RateSensitivities::Carry { .. } => {}
+            RateSensitivities::Fx { .. } => panic!("cost-of-carry input must tag as Carry"),
+        }
+        // The same parameters expressed as the FX two-rate carry (r_dom = r,
+        // r_for = q) price IDENTICALLY — the arms are one closed form.
+        let as_fx = fx(100.0, 105.0, 0.25, 0.75, r, q);
+        assert_close!(
+            g.price,
+            model.price(OptionType::Call, &as_fx).unwrap(),
+            1e-12,
+            1e-12
         );
     }
 

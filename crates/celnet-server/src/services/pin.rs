@@ -20,7 +20,7 @@
 
 #![allow(clippy::result_large_err)]
 
-use celnet_proto::{CcyPair, Instrument, MarketContext};
+use celnet_proto::{Instrument, MarketContext};
 use tonic::Status;
 
 use crate::surface_book::{PinError, SurfaceBook};
@@ -28,7 +28,7 @@ use crate::surface_book::{PinError, SurfaceBook};
 /// The result of resolving a request's `surface_version`: the (possibly
 /// vol-overridden) market context to price against, and the surface version to
 /// echo on the reply.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct PinnedVol {
     /// The market context to price the request against. Equal to the input market
     /// when unpinned; carries the marked at-forward vol when pinned.
@@ -41,7 +41,7 @@ pub(crate) struct PinnedVol {
 /// The continuously-compounded forward `F = S · e^{(r_dom − r_for)·T}` the marked
 /// smile is anchored on. Uses `celnet_core::math::exp` for determinism.
 fn forward(market: &MarketContext, expiry_years: f64) -> f64 {
-    market.spot * celnet_core::math::exp((market.r_dom - market.r_for) * expiry_years)
+    market.spot * celnet_core::math::exp((market.r_dom() - market.r_for()) * expiry_years)
 }
 
 /// Resolve an optional pinned `surface_version` for an `instrument` against a
@@ -72,16 +72,21 @@ pub(crate) fn resolve_pinned_vol(
         });
     };
 
-    // A pin must name a pair (the marked surface is keyed per pair).
-    let CcyPair { base, quote } = instrument
-        .pair
+    // A pin must name a pair (the marked surface is keyed per the FX pair of the
+    // instrument's underlying).
+    let pair = instrument
+        .underlying
         .as_ref()
-        .ok_or_else(|| Status::invalid_argument("a pinned surface_version requires a `pair`"))?;
+        .and_then(celnet_proto::Underlying::as_fx)
+        .ok_or_else(|| {
+            Status::invalid_argument("a pinned surface_version requires an FX `underlying`")
+        })?;
+    let (base, quote) = (&pair.base, &pair.quote);
 
     let f = forward(market, instrument.expiry_years);
     match book.pinned_vol(version, base, quote, instrument.expiry_years, f) {
         Ok(Some(vol)) => Ok(PinnedVol {
-            market: MarketContext { vol, ..*market },
+            market: market.with_vol(vol),
             echo_version: Some(version),
         }),
         // The version exists but did not mark this pair: honour the (valid) pin
@@ -99,14 +104,14 @@ pub(crate) fn resolve_pinned_vol(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use celnet_proto::{StrikeOrDelta, Vanilla, instrument, strike_or_delta};
+    use celnet_proto::{CcyPair, StrikeOrDelta, Vanilla, instrument, strike_or_delta};
 
     fn instrument(strike: f64) -> Instrument {
         Instrument {
-            pair: Some(CcyPair {
+            underlying: Some(celnet_proto::Underlying::fx(CcyPair {
                 base: "EUR".to_owned(),
                 quote: "USD".to_owned(),
-            }),
+            })),
             tenor: None,
             expiry_years: 1.0,
             quantity: None,
@@ -123,12 +128,7 @@ mod tests {
     }
 
     fn market() -> MarketContext {
-        MarketContext {
-            spot: 1.10,
-            vol: 0.20,
-            r_dom: 0.02,
-            r_for: 0.01,
-        }
+        MarketContext::fx(1.10, 0.20, 0.02, 0.01)
     }
 
     #[test]

@@ -90,7 +90,7 @@ fn eurusd_msg(atm_pct: f64, seq: u64) -> VendorSmileMessage {
 /// edge computes.
 fn reference_price() -> f64 {
     let m = live_market();
-    let inputs = VanillaInputs::new(m.spot, 1.10, m.vol, 1.0, m.r_dom, m.r_for);
+    let inputs = VanillaInputs::new(m.spot, 1.10, m.vol, 1.0, m.r_dom(), m.r_for());
     celnet_vanilla::greeks(OptionType::Call, &inputs).price
 }
 

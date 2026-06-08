@@ -521,7 +521,9 @@ impl StreamSession {
             message: Some(client_stream_message::Message::MarketSeriesSubscribe(
                 MarketSeriesSubscribe {
                     subscription: Some(SubscriptionId { value: sub_id }),
-                    pair: Some(celnet_proto::CcyPair::from(pair)),
+                    underlying: Some(celnet_proto::Underlying::fx(celnet_proto::CcyPair::from(
+                        pair,
+                    ))),
                     observable: observable.wire_tag(),
                     tenor: tenor.map(celnet_proto::Tenor::from),
                     delta: observable.wing_delta(),

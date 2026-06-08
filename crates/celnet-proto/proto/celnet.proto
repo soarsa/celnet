@@ -307,6 +307,88 @@ message CcyPair {
   string quote = 2;
 }
 
+// The instrument's underlying — the asset-class discriminator that lets the one
+// unversioned contract name FX (and, in later waves, metals, digital assets,
+// equities and listed futures) without a versioned API. Mirrors
+// `celnet_types::Underlying`. Exactly one `ref` arm is set. W1 ships the FX arm
+// (the platform's origin asset class); further arms are appended by their
+// asset-class wave as additive `oneof` growth — never a placeholder arm, never a
+// `schema_version`. `settlement_ccy` is the numeraire / settlement currency code
+// (a 3-letter ISO-4217-style string, matching `CcyPair`'s leg encoding); for FX
+// it is the pair's quote (domestic) currency and is informational at the codec
+// boundary (the FX pricing path derives everything it needs from the pair).
+message Underlying {
+  // The underlying reference. Exactly one arm is set.
+  oneof ref {
+    // An FX currency pair (the W1 first-class arm), e.g. EURUSD.
+    CcyPair fx = 1;
+  }
+  // The settlement / numeraire currency (a 3-letter code). For FX this is the
+  // pair's quote (domestic) currency.
+  string settlement_ccy = 2;
+}
+
+// FX two-rate carry: the continuously-compounded domestic (quote) and foreign
+// (base) rates. Mirrors the `celnet_types::Carry::FxRates` arm. The discount
+// rate is carried out of band on `MarketContext`/`VanillaInputs`
+// (`discount_rate` == `r_dom`); this message carries the foreign rate so the FX
+// forward/discount arithmetic is reproduced bit-for-bit.
+message FxRates {
+  // Continuously-compounded foreign (base) interest rate `r_for`.
+  double r_for = 1;
+}
+
+// Generalized cost-of-carry: a single net carry `b` in `F = S·e^{b·t}` against
+// the out-of-band discount rate `r`. Mirrors the `celnet_types::Carry::
+// CostOfCarry` arm (the `r` lives in `discount_rate`). Reserved for the
+// non-FX asset-class arms added in later waves.
+message CostOfCarry {
+  // Net cost-of-carry `b` in `F = S·e^{b·t}`.
+  double b = 1;
+}
+
+// The carry model an instrument is priced under — the asset-class-appropriate
+// way to turn the spot into a forward. Mirrors `celnet_types::Carry` (paired
+// with the out-of-band `discount_rate`). Exactly one arm is set; FX uses
+// `fx`, where `fx.r_for` is the foreign rate and `discount_rate` is `r_dom`.
+message CarryModel {
+  // The carry parameterisation. Exactly one arm is set.
+  oneof model {
+    // FX two-rate carry (the W1 first-class arm).
+    FxRates fx = 1;
+    // Generalized cost-of-carry (later asset-class arms).
+    CostOfCarry generalized = 2;
+  }
+}
+
+// Carry-tagged rate sensitivities — the asset-class-appropriate rate Greeks.
+// Mirrors `celnet_types::RateSensitivities`. FX reports the two rate rhos
+// (`rho_dom`, `rho_for`); other asset classes report a discount-rho `∂V/∂r` and
+// a carry-rho `∂V/∂b`. Exactly one arm is set.
+message RateSensitivities {
+  // FX rate rhos: `∂V/∂r_dom`, `∂V/∂r_for`.
+  message FxRho {
+    // Rho domestic: `∂V/∂r_dom`.
+    double rho_dom = 1;
+    // Rho foreign: `∂V/∂r_for`.
+    double rho_for = 2;
+  }
+  // Generalized discount/carry rhos: `∂V/∂r`, `∂V/∂b`.
+  message CarryRho {
+    // Discount rho: `∂V/∂r`.
+    double discount_rho = 1;
+    // Carry rho: `∂V/∂b` (equity dividend-rho, commodity carry-rho).
+    double carry_rho = 2;
+  }
+  // The rate-sensitivity parameterisation. Exactly one arm is set.
+  oneof sensitivities {
+    // FX two-rho sensitivities (the W1 first-class arm).
+    FxRho fx = 1;
+    // Generalized discount/carry sensitivities (later asset-class arms).
+    CarryRho carry = 2;
+  }
+}
+
 // An FX-options tenor — mirrors `celnet_types::Tenor`. Most units are measured
 // from the spot date; the short end (ON/TN/SN) is anchored on the trade date,
 // and the off-the-ladder cases carry an exchange-defined or explicit date. The
@@ -407,10 +489,13 @@ message MarketContext {
   double spot = 1;
   // Annualized volatility (absolute, e.g. 0.10 = 10 vol).
   double vol = 2;
-  // Continuously-compounded domestic (quote) interest rate.
-  double r_dom = 3;
-  // Continuously-compounded foreign (base) interest rate.
-  double r_for = 4;
+  // The discount (numeraire) rate `r` for `e^{−r·t}`. For FX this is `r_dom`
+  // (the continuously-compounded domestic / quote rate).
+  double discount_rate = 3;
+  // The carry model. For FX this is `CarryModel.fx` with `fx.r_for` the
+  // continuously-compounded foreign (base) rate; the forward/discount arithmetic
+  // is reproduced bit-for-bit from `(discount_rate, carry.fx.r_for)`.
+  CarryModel carry = 4;
 }
 
 // Inputs to the vanilla (Garman-Kohlhagen) model — mirrors
@@ -425,10 +510,13 @@ message VanillaInputs {
   double vol = 3;
   // Time to expiry in years (vol-time).
   double t = 4;
-  // Continuously-compounded domestic (quote) interest rate.
-  double r_dom = 5;
-  // Continuously-compounded foreign (base) interest rate.
-  double r_for = 6;
+  // The discount (numeraire) rate `r` for `e^{−r·t}`. For FX this is `r_dom`
+  // (the continuously-compounded domestic / quote rate).
+  double discount_rate = 5;
+  // The carry model. For FX this is `CarryModel.fx` with `fx.r_for` the
+  // continuously-compounded foreign (base) rate; the forward and discount
+  // factors are derived from `(discount_rate, carry.fx.r_for)`, never sent.
+  CarryModel carry = 6;
 }
 
 // A trade notional and the currency leg it is denominated in.
@@ -471,6 +559,11 @@ message FixingSchedule {
 // The full FX-options Greek set — mirrors `celnet_types::Greeks` field-for-field.
 // All sensitivities are raw (per unit of the underlying quantity).
 message Greeks {
+  // The flat `rho_dom`/`rho_for` scalars were generalized into the carry-tagged
+  // `rate_sensitivities` (field 15); their numbers/names are retired (single
+  // unversioned contract — full cutover, never reused).
+  reserved 7, 8;
+  reserved "rho_dom", "rho_for";
   // Present value (premium) in domestic currency, per 1 unit of base notional.
   double price = 1;
   // Spot delta (premium-unadjusted).
@@ -483,10 +576,11 @@ message Greeks {
   double vega = 5;
   // Theta: dV/dt per year (-dV/dT).
   double theta = 6;
-  // Rho domestic: dV/dr_dom.
-  double rho_dom = 7;
-  // Rho foreign: dV/dr_for.
-  double rho_for = 8;
+  // The carry-tagged rate sensitivities (FX: rho_dom/rho_for). Replaces the two
+  // flat `rho_dom`/`rho_for` scalars (field numbers 7/8, reserved below) so the
+  // contract carries the asset-class-appropriate rate Greeks; the FX arm is
+  // exactly the former two rhos.
+  RateSensitivities rate_sensitivities = 15;
   // Vanna: d2V/dS dsigma.
   double vanna = 9;
   // Volga / vomma: d2V/dsigma2.
@@ -929,11 +1023,11 @@ message AmericanOption {
 // `MarketContext`): a multi-asset instrument has N underlyings each with its own
 // spot, vol and foreign rate, which the one top-level `MarketContext` cannot
 // carry. The shared domestic (numeraire / settlement-currency) rate is taken
-// from the request `MarketContext.r_dom`; the leg's `r_for` is its own.
+// from the request `MarketContext.discount_rate`; the leg's `r_for` is its own.
 message BasketLeg {
-  // The currency pair of this leg (e.g. EURUSD). Identifies the underlying for
-  // attribution and display; the numerics use the explicit market data below.
-  CcyPair pair = 1;
+  // The underlying of this leg (e.g. EURUSD). Identifies the leg for attribution
+  // and display; the numerics use the explicit market data below.
+  Underlying underlying = 1;
   // The leg weight `w_a` applied to `S_a(T)` in the basket / rainbow
   // aggregation. May be negative (a short basket leg).
   double weight = 2;
@@ -952,14 +1046,14 @@ message BasketLeg {
 // engine, so the reported `price` carries a standard error
 // (`PriceResponse.price_std_error`). The expiry `T` is the enclosing
 // `Instrument.expiry_years`; the shared domestic (settlement) rate is the
-// request `MarketContext.r_dom`.
+// request `MarketContext.discount_rate`.
 //
 // Greek scope: multi-asset basket Greeks are a distinct larger increment (a
 // per-leg N×{spot,vol} Jacobian plus cross-gammas) and are intentionally NOT
 // returned by this product — the price and its standard error are reported and
 // the Greek strip is zeroed rather than faked with a single-underlying bump.
-// `Instrument.pair` plays the role of the SETTLEMENT / numeraire pair only (the
-// underlyings are the per-leg `BasketLeg.pair`s).
+// `Instrument.underlying` plays the role of the SETTLEMENT / numeraire pair only
+// (the underlyings are the per-leg `BasketLeg.underlying`s).
 message BasketOption {
   // The legs (one FX underlying each); at least one. A single weight-1 leg
   // collapses to a vanilla on that leg (used as the degenerate parity oracle).
@@ -992,8 +1086,8 @@ message BasketOption {
 // set. Pricing, RFQ, RFS, and scenario all carry an `Instrument`, so adding a
 // product type is a single additive change here.
 message Instrument {
-  // The currency pair the instrument trades.
-  CcyPair pair = 1;
+  // The underlying the instrument trades (FX is the first-class W1 arm).
+  Underlying underlying = 1;
   // The expiry tenor (mutually informative with `expiry_years`).
   Tenor tenor = 2;
   // The expiry as a year fraction on the surface day-count (authoritative for
@@ -1582,8 +1676,8 @@ enum MarketObservable {
 message MarketSeriesSubscribe {
   // The client-assigned subscription id this series is keyed on.
   SubscriptionId subscription = 1;
-  // The pair the observable is measured for.
-  CcyPair pair = 2;
+  // The underlying the observable is measured for.
+  Underlying underlying = 2;
   // Which observable to stream.
   MarketObservable observable = 3;
   // The pillar tenor for tenor-dependent observables (ATM_VOL/RR/BF/FORWARD).
@@ -1628,8 +1722,8 @@ message MarketSeriesSnapshot {
   SubscriptionId subscription = 1;
   // The starting sequence number; subsequent `MarketSeriesPoint`s advance it.
   uint64 sequence = 2;
-  // The pair the observable is measured for (echoed for labelling).
-  CcyPair pair = 3;
+  // The underlying the observable is measured for (echoed for labelling).
+  Underlying underlying = 3;
   // Which observable this series streams (echoed for labelling).
   MarketObservable observable = 4;
   // The recent history (oldest → newest), at most `history_limit` points.
@@ -1661,8 +1755,9 @@ enum RiskDimension {
   RISK_DIMENSION_BOOK = 2;
   // The desk the book belongs to (an FRTB regulatory unit).
   RISK_DIMENSION_DESK = 3;
-  // The currency pair (the underlying axis — orthogonal to the org axes).
-  RISK_DIMENSION_CCY_PAIR = 4;
+  // The underlying (the asset axis — orthogonal to the org axes). For FX this
+  // is the currency pair.
+  RISK_DIMENSION_UNDERLYING = 4;
   // The booking location (follow-the-sun / country).
   RISK_DIMENSION_LOCATION = 5;
   // The legal entity (the regulatory-capital unit).
@@ -1682,8 +1777,9 @@ message OrgKey {
   uint32 book = 2;
   // Interned handle for the desk (0 ⇒ resolve from the book's parent pointer).
   uint32 desk = 3;
-  // The currency pair underlying the position.
-  CcyPair ccy_pair = 4;
+  // The underlying of the position (the underlying axis — orthogonal to the org
+  // axes).
+  Underlying underlying = 4;
   // Interned handle for the booking location.
   uint32 location = 5;
   // Interned handle for the legal entity (0 ⇒ resolve from the location's

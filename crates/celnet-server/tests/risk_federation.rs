@@ -308,7 +308,7 @@ fn firm_request_with_risk() -> AggregateRiskRequest {
 
 fn ccy_pair_request() -> AggregateRiskRequest {
     AggregateRiskRequest {
-        dimension: RiskDimension::CcyPair as i32,
+        dimension: RiskDimension::Underlying as i32,
         numeraire: Some(usd_numeraire()),
         principal: None,
         scope: None,
@@ -566,7 +566,7 @@ async fn federated_drill_reconciles() {
                 dimension: RiskDimension::Firm as i32,
                 value: 0,
             }),
-            child_dimension: RiskDimension::CcyPair as i32,
+            child_dimension: RiskDimension::Underlying as i32,
             numeraire: Some(usd_numeraire()),
             principal: None,
             vega_pillars: vec![],

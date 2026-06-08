@@ -213,8 +213,8 @@ fn inputs_at(
         strike,
         vol,
         expiry_years,
-        market.r_dom,
-        market.r_for,
+        market.r_dom(),
+        market.r_for(),
     )
 }
 
@@ -302,18 +302,12 @@ const DEFAULT_BASKET_MC_STEPS: usize = 1;
 
 /// Shock a market context's spot multiplicatively.
 fn bump_spot(m: &WireMarketContext, rel: f64) -> WireMarketContext {
-    WireMarketContext {
-        spot: m.spot * (1.0 + rel),
-        ..*m
-    }
+    m.with_spot(m.spot * (1.0 + rel))
 }
 
 /// Shock a market context's vol additively.
 fn bump_vol(m: &WireMarketContext, d: f64) -> WireMarketContext {
-    WireMarketContext {
-        vol: m.vol + d,
-        ..*m
-    }
+    m.with_vol(m.vol + d)
 }
 
 /// Build the full 13-Greek set of an exotic from central finite differences of
@@ -366,25 +360,13 @@ fn exotic_greeks(
     // Rate Greeks (rho_dom / rho_for) via rate bumps.
     let h_r = FD_RATE_ABS;
     let rho_dom = {
-        let up = price(&WireMarketContext {
-            r_dom: market.r_dom + h_r,
-            ..*market
-        });
-        let dn = price(&WireMarketContext {
-            r_dom: market.r_dom - h_r,
-            ..*market
-        });
+        let up = price(&market.with_r_dom(market.r_dom() + h_r));
+        let dn = price(&market.with_r_dom(market.r_dom() - h_r));
         (up - dn) / (2.0 * h_r)
     };
     let rho_for = {
-        let up = price(&WireMarketContext {
-            r_for: market.r_for + h_r,
-            ..*market
-        });
-        let dn = price(&WireMarketContext {
-            r_for: market.r_for - h_r,
-            ..*market
-        });
+        let up = price(&market.with_r_for(market.r_for() + h_r));
+        let dn = price(&market.with_r_for(market.r_for() - h_r));
         (up - dn) / (2.0 * h_r)
     };
 
@@ -414,7 +396,7 @@ fn exotic_greeks(
     // relation the vanilla closed form satisfies (delta_forward = e^{r_for T}·
     // delta_spot for an unadjusted spot delta). This keeps the field meaningful
     // without a second inversion.
-    let delta_forward = delta_spot * celnet_core::math::exp(market.r_for * expiry_years);
+    let delta_forward = delta_spot * celnet_core::math::exp(market.r_for() * expiry_years);
 
     Greeks {
         price: base,
@@ -451,6 +433,20 @@ pub fn price_instrument(
     let expiry = instrument.expiry_years;
     if expiry <= 0.0 || !expiry.is_finite() {
         return Err(PriceError::Domain("expiry_years must be positive"));
+    }
+    // Carry-producing-market architecture (no silent fallback): the FX pricing path
+    // prices the FX two-rate carry only. An explicitly-supplied generalized
+    // (cost-of-carry) carry is refused here with a typed error — never read as FX
+    // with r_for = 0 and a wrong forward. (An absent carry stays the FX default,
+    // exactly as before; this guard also covers the LSV path it dispatches to.)
+    if market
+        .carry
+        .as_ref()
+        .is_some_and(|c| c.fx_r_for().is_none())
+    {
+        return Err(PriceError::Domain(
+            "market carry must be the FX two-rate arm",
+        ));
     }
     let product = instrument
         .product
@@ -903,7 +899,7 @@ pub fn price_instrument(
             // The strike fixes at `reset` to `m·S(reset)`; echo the forward reset
             // level `m·F(t₁) = m·S₀·e^{(r_d−r_f)·t₁}` as the informational strike.
             let reset_strike =
-                moneyness * market.spot * ((market.r_dom - market.r_for) * reset).exp();
+                moneyness * market.spot * ((market.r_dom() - market.r_for()) * reset).exp();
             Ok(Priced {
                 greeks,
                 resolved_strike: reset_strike,
@@ -1434,7 +1430,7 @@ pub fn price_instrument(
             // The shared domestic (numeraire / settlement-currency) rate is the
             // request market context's r_dom; the SPD-correlation check rejects a
             // non-PSD matrix as INVALID_ARGUMENT rather than regularising it.
-            let estimate = price_basket(&spec, market.r_dom, expiry, cfg)
+            let estimate = price_basket(&spec, market.r_dom(), expiry, cfg)
                 .map_err(|_| PriceError::Domain("basket correlation matrix is not valid SPD"))?;
             // Greek deferral: multi-asset basket sensitivities are a distinct
             // larger increment (per-leg N×{spot,vol} Jacobian + cross-gammas).
@@ -1587,17 +1583,12 @@ mod tests {
     }
 
     fn market() -> WM {
-        WM {
-            spot: 1.10,
-            vol: 0.10,
-            r_dom: 0.02,
-            r_for: 0.01,
-        }
+        WM::fx(1.10, 0.10, 0.02, 0.01)
     }
 
     fn vanilla_instrument(strike: f64) -> Instrument {
         Instrument {
-            pair: None,
+            underlying: None,
             tenor: None,
             expiry_years: 1.0,
             quantity: None,
@@ -1659,7 +1650,7 @@ mod tests {
         // coarse manual central difference of the closed-form price.
         let m = market();
         let instr = Instrument {
-            pair: None,
+            underlying: None,
             tenor: None,
             expiry_years: 1.0,
             quantity: None,
@@ -1724,7 +1715,7 @@ mod tests {
             ratio: 1.0,
         };
         let instr = Instrument {
-            pair: None,
+            underlying: None,
             tenor: None,
             expiry_years: 1.0,
             quantity: None,
@@ -1778,7 +1769,7 @@ mod tests {
 
     fn base_instrument(product: Product) -> Instrument {
         Instrument {
-            pair: None,
+            underlying: None,
             tenor: None,
             expiry_years: 1.0,
             quantity: None,
@@ -1799,7 +1790,7 @@ mod tests {
         }));
         let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
         // Independent oracle: the exotics closed form on the same flat smile/ctx.
-        let template = VanillaInputs::new(m.spot, m.spot, m.vol, 1.0, m.r_dom, m.r_for);
+        let template = VanillaInputs::new(m.spot, m.spot, m.vol, 1.0, m.r_dom(), m.r_for());
         let ctx = VarSwapContext::from_inputs(&template);
         let oracle = fair_variance(&FlatSmile::new(m.vol), &ctx);
         assert!(
@@ -1830,12 +1821,7 @@ mod tests {
         // / scale / sign errors in the wire-path replication.
         let conv = conv_set();
         for sigma in [0.05_f64, 0.10, 0.20, 0.35] {
-            let m = WM {
-                spot: 1.30,
-                vol: sigma,
-                r_dom: 0.03,
-                r_for: 0.01,
-            };
+            let m = WM::fx(1.30, sigma, 0.03, 0.01);
             let instr = base_instrument(Product::VarianceSwap(celnet_proto::VarianceSwap {
                 strike_vol: 0.0,
             }));
@@ -1859,7 +1845,7 @@ mod tests {
             strike_vol: 0.0,
         }));
         let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
-        let template = VanillaInputs::new(m.spot, m.spot, m.vol, 1.0, m.r_dom, m.r_for);
+        let template = VanillaInputs::new(m.spot, m.spot, m.vol, 1.0, m.r_dom(), m.r_for());
         let ctx = VarSwapContext::from_inputs(&template);
         let oracle = fair_volatility(&FlatSmile::new(m.vol), &ctx);
         assert!(
@@ -1882,12 +1868,7 @@ mod tests {
         // Flat smile ⇒ zero convexity gap ⇒ K_vol == σ exactly.
         let conv = conv_set();
         for sigma in [0.08_f64, 0.15, 0.25] {
-            let m = WM {
-                spot: 1.30,
-                vol: sigma,
-                r_dom: 0.03,
-                r_for: 0.01,
-            };
+            let m = WM::fx(1.30, sigma, 0.03, 0.01);
             let instr = base_instrument(Product::VolatilitySwap(celnet_proto::VolatilitySwap {
                 strike_vol: 0.0,
             }));
@@ -1915,7 +1896,7 @@ mod tests {
             elapsed_weight: 0.0,
         }));
         let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
-        let inputs = VanillaInputs::new(m.spot, 1.10, m.vol, 1.0, m.r_dom, m.r_for);
+        let inputs = VanillaInputs::new(m.spot, 1.10, m.vol, 1.0, m.r_dom(), m.r_for());
         let spec = AnalyticAsian::fresh_discrete(OptionType::Call, 1.10, 12);
         let oracle = curran_price(&inputs, spec);
         assert!(
@@ -1942,7 +1923,7 @@ mod tests {
             elapsed_weight: 0.0,
         }));
         let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
-        let inputs = VanillaInputs::new(m.spot, 1.12, m.vol, 1.0, m.r_dom, m.r_for);
+        let inputs = VanillaInputs::new(m.spot, 1.12, m.vol, 1.0, m.r_dom(), m.r_for());
         let spec = AnalyticAsian::fresh_continuous(OptionType::Put, 1.12);
         let oracle = turnbull_wakeman_price(&inputs, spec);
         assert!(
@@ -1967,7 +1948,7 @@ mod tests {
             elapsed_weight: 0.25,
         }));
         let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
-        let inputs = VanillaInputs::new(m.spot, 1.08, m.vol, 1.0, m.r_dom, m.r_for);
+        let inputs = VanillaInputs::new(m.spot, 1.08, m.vol, 1.0, m.r_dom(), m.r_for());
         let spec = AnalyticAsian {
             option: OptionType::Call,
             strike: 1.08,
@@ -2021,7 +2002,7 @@ mod tests {
             reset: 0.25,
         }));
         let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
-        let inputs = VanillaInputs::new(m.spot, m.spot, m.vol, 1.0, m.r_dom, m.r_for);
+        let inputs = VanillaInputs::new(m.spot, m.spot, m.vol, 1.0, m.r_dom(), m.r_for());
         let oracle = forward_start_price(
             &inputs,
             ForwardStart {
@@ -2056,7 +2037,7 @@ mod tests {
         let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
         let gk = celnet_vanilla::price(
             OptionType::Call,
-            &VanillaInputs::new(m.spot, moneyness * m.spot, m.vol, 1.0, m.r_dom, m.r_for),
+            &VanillaInputs::new(m.spot, moneyness * m.spot, m.vol, 1.0, m.r_dom(), m.r_for()),
         );
         assert!(
             is_close(priced.greeks.price, gk, 1e-9, 1e-12),
@@ -2085,7 +2066,7 @@ mod tests {
         }));
         let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
         // Independent oracle: the exact Σ forward-start legs over [0, 1].
-        let inputs = VanillaInputs::new(m.spot, m.spot, m.vol, 1.0, m.r_dom, m.r_for);
+        let inputs = VanillaInputs::new(m.spot, m.spot, m.vol, 1.0, m.r_dom(), m.r_for());
         let mut sum = 0.0;
         for k in 1..=periods {
             let reset = (k - 1) as f64 / periods as f64;
@@ -2133,7 +2114,7 @@ mod tests {
         // Independent oracle: the celnet-exotics clamped MC with the SAME (seed,
         // pairs), so the estimator is bit-reproducible and the prices match
         // exactly (the server arm calls the same function).
-        let inputs = VanillaInputs::new(m.spot, m.spot, m.vol, 1.0, m.r_dom, m.r_for);
+        let inputs = VanillaInputs::new(m.spot, m.spot, m.vol, 1.0, m.r_dom(), m.r_for());
         let spec = Cliquet {
             option: OptionType::Call,
             moneyness,
@@ -2210,7 +2191,7 @@ mod tests {
             correlation: -0.3,
         }));
         let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
-        let inputs = VanillaInputs::new(m.spot, strike, m.vol, 1.0, m.r_dom, m.r_for);
+        let inputs = VanillaInputs::new(m.spot, strike, m.vol, 1.0, m.r_dom(), m.r_for());
         let oracle = quanto_vanilla_price(OptionType::Call, &inputs, QuantoParams::new(0.09, -0.3));
         assert!(
             is_close(priced.greeks.price, oracle, 1e-9, 1e-12),
@@ -2234,7 +2215,7 @@ mod tests {
             correlation: 0.4,
         }));
         let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
-        let inputs = VanillaInputs::new(m.spot, strike, m.vol, 1.0, m.r_dom, m.r_for);
+        let inputs = VanillaInputs::new(m.spot, strike, m.vol, 1.0, m.r_dom(), m.r_for());
         let oracle = quanto_digital_price(OptionType::Put, &inputs, QuantoParams::new(0.07, 0.4));
         assert!(
             is_close(priced.greeks.price, oracle, 1e-9, 1e-12),
@@ -2261,7 +2242,7 @@ mod tests {
         let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
         let gk = celnet_vanilla::price(
             OptionType::Call,
-            &VanillaInputs::new(m.spot, strike, m.vol, 1.0, m.r_dom, m.r_for),
+            &VanillaInputs::new(m.spot, strike, m.vol, 1.0, m.r_dom(), m.r_for()),
         );
         assert!(
             is_close(priced.greeks.price, gk, 1e-12, 1e-12),
@@ -2359,7 +2340,7 @@ mod tests {
         let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
         // Independent oracle: the celnet-exotics MC with the SAME (seed, pairs)
         // and the same fixing count ⇒ bit-reproducible ⇒ exact agreement.
-        let inputs = VanillaInputs::new(m.spot, m.spot, m.vol, 1.0, m.r_dom, m.r_for);
+        let inputs = VanillaInputs::new(m.spot, m.spot, m.vol, 1.0, m.r_dom(), m.r_for());
         let oracle = tarf_price(
             &inputs,
             ExTarf {
@@ -2465,7 +2446,7 @@ mod tests {
             mc_seed: seed,
         }));
         let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
-        let inputs = VanillaInputs::new(m.spot, m.spot, m.vol, 1.0, m.r_dom, m.r_for);
+        let inputs = VanillaInputs::new(m.spot, m.spot, m.vol, 1.0, m.r_dom(), m.r_for());
         let oracle = accumulator_price(
             &inputs,
             ExAccumulator {
@@ -2541,7 +2522,7 @@ mod tests {
             mc_seed: 0,
         }));
         let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
-        let inputs = VanillaInputs::new(m.spot, m.spot, m.vol, 1.0, m.r_dom, m.r_for);
+        let inputs = VanillaInputs::new(m.spot, m.spot, m.vol, 1.0, m.r_dom(), m.r_for());
         let oracle = floating_lookback_price(&inputs, OptionType::Call);
         assert!(
             is_close(priced.greeks.price, oracle, 1e-9, 1e-12),
@@ -2574,7 +2555,7 @@ mod tests {
             mc_seed: 0,
         }));
         let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
-        let inputs = VanillaInputs::new(m.spot, strike, m.vol, 1.0, m.r_dom, m.r_for);
+        let inputs = VanillaInputs::new(m.spot, strike, m.vol, 1.0, m.r_dom(), m.r_for());
         let oracle = fixed_lookback_price(&inputs, OptionType::Call);
         assert!(
             is_close(priced.greeks.price, oracle, 1e-9, 1e-12),
@@ -2602,7 +2583,7 @@ mod tests {
             mc_seed: seed,
         }));
         let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
-        let inputs = VanillaInputs::new(m.spot, strike, m.vol, 1.0, m.r_dom, m.r_for);
+        let inputs = VanillaInputs::new(m.spot, strike, m.vol, 1.0, m.r_dom(), m.r_for());
         let oracle = lookback_mc(
             &inputs,
             ExLookback {
@@ -2647,7 +2628,7 @@ mod tests {
         lsm_seed: u64,
     ) -> Instrument {
         Instrument {
-            pair: None,
+            underlying: None,
             tenor: None,
             expiry_years: expiry,
             quantity: None,
@@ -2668,12 +2649,7 @@ mod tests {
 
     fn american_fd_market() -> WM {
         // A 1Y FX market with positive carry both ways so early exercise can bind.
-        WM {
-            spot: 100.0,
-            vol: 0.25,
-            r_dom: 0.08,
-            r_for: 0.0,
-        }
+        WM::fx(100.0, 0.25, 0.08, 0.0)
     }
 
     /// Gate (a): the American value is never below the European value for the same
@@ -2703,7 +2679,7 @@ mod tests {
                     .price;
                 let euro = celnet_vanilla::price(
                     option.into(),
-                    &VanillaInputs::new(m.spot, k, m.vol, 1.0, m.r_dom, m.r_for),
+                    &VanillaInputs::new(m.spot, k, m.vol, 1.0, m.r_dom(), m.r_for()),
                 );
                 // Dominance holds up to the FD discretisation error.
                 assert!(
@@ -2718,14 +2694,33 @@ mod tests {
     /// with `r_for = 0` is never worth exercising early, so the wire-priced
     /// American value equals the independent European Garman-Kohlhagen value to FD
     /// tolerance.
+    /// No silent fallback: an explicitly-supplied generalized (cost-of-carry) carry
+    /// on the FX pricing path is refused with a typed error, never priced as FX with
+    /// r_for = 0. The FX projection (absent / FX-arm carry) is unaffected.
+    #[test]
+    fn generalized_carry_is_rejected_on_the_fx_price_path() {
+        let mut m = WM::fx(100.0, 0.20, 0.05, 0.01);
+        m.carry = Some(celnet_proto::CarryModel {
+            model: Some(celnet_proto::carry_model::Model::Generalized(
+                celnet_proto::CostOfCarry { b: 0.04 },
+            )),
+        });
+        let instr = vanilla_instrument(100.0);
+        assert!(
+            matches!(
+                price_instrument(&instr, &m, &conv_set()),
+                Err(PriceError::Domain(msg)) if msg.contains("carry")
+            ),
+            "an explicit generalized carry must be refused on the FX price path"
+        );
+        // And the FX projection still prices (the guard only refuses the non-FX arm).
+        let fx = WM::fx(100.0, 0.20, 0.05, 0.01);
+        assert!(price_instrument(&vanilla_instrument(100.0), &fx, &conv_set()).is_ok());
+    }
+
     #[test]
     fn american_call_no_foreign_rate_equals_european_on_the_wire() {
-        let m = WM {
-            spot: 100.0,
-            vol: 0.20,
-            r_dom: 0.05,
-            r_for: 0.0,
-        };
+        let m = WM::fx(100.0, 0.20, 0.05, 0.0);
         for k in [80.0, 100.0, 120.0] {
             let instr = american_instrument(
                 celnet_proto::OptionType::Call,
@@ -2742,7 +2737,7 @@ mod tests {
                 .price;
             let euro = celnet_vanilla::price(
                 OptionType::Call,
-                &VanillaInputs::new(m.spot, k, m.vol, 1.0, m.r_dom, m.r_for),
+                &VanillaInputs::new(m.spot, k, m.vol, 1.0, m.r_dom(), m.r_for()),
             );
             assert!(
                 (american - euro).abs() < 5e-3,
@@ -2801,12 +2796,7 @@ mod tests {
     /// reference is `2.314`. The wire FD arm must reproduce it to FD tolerance.
     #[test]
     fn american_matches_published_value_on_the_wire() {
-        let m = WM {
-            spot: 40.0,
-            vol: 0.20,
-            r_dom: 0.06,
-            r_for: 0.0,
-        };
+        let m = WM::fx(40.0, 0.20, 0.06, 0.0);
         let instr = american_instrument(
             celnet_proto::OptionType::Put,
             40.0,
@@ -2829,12 +2819,7 @@ mod tests {
     /// a dense date set approaches (and never exceeds) the American value.
     #[test]
     fn bermudan_endpoints_on_the_wire() {
-        let m = WM {
-            spot: 100.0,
-            vol: 0.30,
-            r_dom: 0.10,
-            r_for: 0.0,
-        };
+        let m = WM::fx(100.0, 0.30, 0.10, 0.0);
         // Single date at expiry ⇒ European.
         let one = american_instrument(
             celnet_proto::OptionType::Put,
@@ -2851,7 +2836,7 @@ mod tests {
             .price;
         let euro = celnet_vanilla::price(
             OptionType::Put,
-            &VanillaInputs::new(m.spot, 110.0, m.vol, 1.0, m.r_dom, m.r_for),
+            &VanillaInputs::new(m.spot, 110.0, m.vol, 1.0, m.r_dom(), m.r_for()),
         );
         assert!(
             (berm_one - euro).abs() < 5e-3,
@@ -2929,7 +2914,7 @@ mod tests {
         expiry: f64,
     ) -> Instrument {
         Instrument {
-            pair: None,
+            underlying: None,
             tenor: None,
             expiry_years: expiry,
             quantity: None,
@@ -2968,7 +2953,7 @@ mod tests {
         ] {
             let instr = basket_instrument(
                 vec![celnet_proto::BasketLeg {
-                    pair: None,
+                    underlying: None,
                     weight: 1.0,
                     spot,
                     vol,
@@ -2983,7 +2968,7 @@ mod tests {
             let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
             let gk = celnet_vanilla::price(
                 option.into(),
-                &VanillaInputs::new(spot, strike, vol, 1.0, m.r_dom, r_for),
+                &VanillaInputs::new(spot, strike, vol, 1.0, m.r_dom(), r_for),
             );
             let se = priced.std_error.expect("MC basket carries a std-error");
             assert!(
@@ -3006,7 +2991,7 @@ mod tests {
     fn non_psd_basket_correlation_is_a_domain_error() {
         let m = market();
         let leg = |spot| celnet_proto::BasketLeg {
-            pair: None,
+            underlying: None,
             weight: 0.5,
             spot,
             vol: 0.12,
@@ -3032,7 +3017,7 @@ mod tests {
     fn basket_wrong_correlation_length_is_a_domain_error() {
         let m = market();
         let leg = |spot| celnet_proto::BasketLeg {
-            pair: None,
+            underlying: None,
             weight: 0.5,
             spot,
             vol: 0.12,
