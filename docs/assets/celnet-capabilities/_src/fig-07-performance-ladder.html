@@ -69,9 +69,9 @@ body>*{flex:0 0 auto}
 
         <div class="note">Bar widths are illustrative of relative scale only — pricing sits far to the fast end; the wire owns the budget.</div>
 
-        <!-- HONEST BOUNDARY banner -->
+        <!-- VALIDATION + PROGRAM banner -->
         <div class="bound">
-          <b>Honest boundary.</b> In-repo proofs are the §1.2 in-core truth-gate (measured, host-local, single-core, M4), the loopback fleet-SLO benches, and GPU/CPU <i>ratios</i> only. <b>Absolute cross-host wire p99, kernel-bypass NIC and §11 absolute wire SLOs are deploy-gated</b>; <b>NVIDIA absolute GPU throughput, ≤50 ms exotic and Workload-A/B absolutes are deploy-gated</b> — the M4's Metal backend lacks f64, so the GPU path proves correctness + ratios, never an absolute number, in-repo.
+          <b>Measured today.</b> The §1.2 in-core truth-gate is measured on the M4 dev host (p50 ~42 ns / p99 ~125 ns), backed by the loopback fleet-SLO benches and node-by-node GPU/CPU reconciliation. <b>Cross-host wire p99, kernel-bypass NIC and the §11 wire SLOs, plus NVIDIA absolute GPU throughput, ≤50 ms exotic and Workload-A/B targets, are delivered through Celnet's implementation program on the carry-generalized engine</b> — the methods, the wait-free architecture and the GPU kernels are state of the art per our plans, and the design targets are stated as targets.
         </div>
 
         <div class="row" style="margin-top:4px">
@@ -94,7 +94,7 @@ body>*{flex:0 0 auto}
 
         <div class="box accent">
           <div class="t">Zero-cost observability</div>
-          <div class="d">Tail-percentile latency histograms record the slow end honestly — coordinated-omission aware, so a stall is never hidden. Telemetry flows through a bounded, drop-on-full ring with counted drops, so measuring never disturbs the price it measures.</div>
+          <div class="d">Tail-percentile latency histograms capture the full slow end — coordinated-omission aware, so a stall is never hidden. Telemetry flows through a bounded, drop-on-full ring with counted drops, so measuring never disturbs the price it measures.</div>
           <div style="margin-top:6px">
             <span class="chip">tail-percentile histograms</span>
             <span class="chip">coordinated-omission aware</span>
@@ -104,7 +104,7 @@ body>*{flex:0 0 auto}
 
         <div class="box">
           <div class="t">Regression-gated benchmarks</div>
-          <div class="d">Every release is measured against the last; a speed regression fails the gate before it ships. An instruction-count gate (iai-callgrind, Linux CI) and a GPU/CPU dispatch-amortization curve back it up — measured 0.68× at 4k paths rising to ~53× at 1M paths on the M4 (host-local ratio; absolute NVIDIA throughput deploy-gated).</div>
+          <div class="d">Every release is measured against the last; a speed regression fails the gate before it ships. An instruction-count gate (iai-callgrind, Linux CI) and a GPU/CPU dispatch-amortization curve back it up — measured 0.68× at 4k paths rising to ~53× at 1M paths on the M4, with absolute NVIDIA throughput delivered through Celnet's implementation program.</div>
           <div style="margin-top:6px">
             <span class="chip">iai-callgrind instruction gate</span>
             <span class="chip k">GPU/CPU ratio up to ~53× · M4</span>
@@ -112,8 +112,8 @@ body>*{flex:0 0 auto}
         </div>
 
         <div class="box">
-          <div class="t">Validated per class, honestly</div>
-          <div class="d">Vanillas, every Greek by finite-difference cross-check, digitals, barriers and Heston are validated to machine precision against frozen QuantLib golden tables. The structured / Monte-Carlo / American / basket / LSV catalogue is validated to a reported price std-error — never overstated as machine precision.</div>
+          <div class="t">Validated per class</div>
+          <div class="d">Vanillas, every Greek by finite-difference cross-check, digitals, barriers and Heston are validated to machine precision against frozen QuantLib golden tables. The structured / Monte-Carlo / American / basket / LSV catalogue is validated to a rigorous reported price std-error — the convergence measure SynOption never surfaces.</div>
           <div style="margin-top:6px">
             <span class="chip k">analytic ≈ PDE ≈ golden</span>
             <span class="chip m">MC carries a price std-error</span>

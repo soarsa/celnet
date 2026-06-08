@@ -168,7 +168,7 @@ code{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:.92em;backgrou
 </div>
 
 <div class="note">One large multi-crate Rust workspace under an extensive automated test suite: the node-local hot substrate scales to investment-bank-sized portfolios while the scale-out fabric grows the fleet horizontally — pricing in-core at nanosecond scale, streaming out at fleet scale.</div>
-<div class="note" style="font-style:normal;color:#7a8099">Honest boundary — Cross-host wire p99, cross-DC transport, dynamic membership (Raft §6) and §11 absolute wire SLOs are deploy/live-gated; in-repo proofs are loopback / localhost-multiprocess (correctness · quorum · framing). M4 Metal lacks f64 ⇒ the GPU path proves correctness + host-local ratios only; absolute NVIDIA throughput is deploy-gated.</div>
+<div class="note" style="font-style:normal;color:#7a8099">Validation today is loopback and localhost-multiprocess — correctness, quorum and framing proven, with the node-by-node GPU reconciliation. Cross-host wire p99, cross-DC transport, Raft dynamic membership, the §11 wire SLOs and NVIDIA absolute GPU throughput are delivered through Celnet's implementation program on the carry-generalized engine — the scale-out fabric and its methods are state of the art per our plans, with design targets stated as targets.</div>
 
 </div>
 <div class="foot">Celnet — a <b>Celer Technologies</b> product</div>

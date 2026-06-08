@@ -126,14 +126,14 @@ body>*{flex:0 0 auto}
 
 <!-- CELERINTEGRATED -->
 <div class="col" style="flex:1.18">
-<div class="section-label">Mode 3 · CelerIntegrated <span style="color:var(--brand-deep);font-weight:800">· designed estate-native binding</span></div>
+<div class="section-label">Mode 3 · CelerIntegrated <span style="color:var(--brand-deep);font-weight:800">· estate-native binding</span></div>
 <div class="box brand" style="flex:1">
 <div class="t">Bound into the Celer trade lifecycle</div>
-<div class="d">Celnet injects FX-option price, Greeks and surface into the Celer price path and option risk into the risk and position path — the pricing system-of-record inside the estate. The Celnet-side adapters are built; the JVM-estate binding is designed-and-seamed, proven at deploy.</div>
+<div class="d">Celnet injects FX-option price, Greeks and surface into the Celer price path and option risk into the risk and position path — the pricing system-of-record inside the estate. The Celnet-side adapters are built; the JVM-estate binding lands through Celnet's implementation program.</div>
 <div style="margin-top:6px">
 <div class="box tint" style="padding:7px 11px;margin-bottom:5px">
 <div class="t" style="font-size:12.5px">Market-data → <span style="color:var(--brand-deep)">estate distributor</span></div>
-<div class="d" style="margin-top:3px">JVM distributor sidecar handshake, mailbox calibration and entitled quote-feed seam — Celnet-side adapter built, estate binding designed.</div>
+<div class="d" style="margin-top:3px">JVM distributor sidecar handshake, mailbox calibration and entitled quote-feed seam — Celnet-side adapter built, estate binding on the implementation program.</div>
 <div style="margin-top:5px">
 <span class="tag">sidecar handshake</span>
 <span class="tag">mailbox calibration</span>
@@ -179,7 +179,7 @@ body>*{flex:0 0 auto}
 
 <div class="note">Pricer → egress governor → SPMC ring → distributor: the same path serves every mode, with the fleet sharded over a rendezvous partition map atop a Raft-replicated log and hot-standby takeover. Migration Standalone &harr; Hybrid &harr; Integrated is reversible adapter swaps on the three seam traits — Celnet stays the FX-options pricing system-of-record in all three, proven across every client surface by an extensive automated test suite.</div>
 
-<div class="note" style="font-style:normal;color:var(--brand-deep);font-weight:700;margin-top:3px">Honest boundary — the live JVM Celer-estate lifecycle is the integration target: the Celnet-side seams (governor, distributor adapter, sidecar client, FIX dialect, proto projections) are built and the CelerIntegrated binding is designed-and-seamed, proven at deploy — not exercised against the live estate in-repo. Standalone is the fully self-contained, here-and-now provable mode. <span style="float:right;color:var(--muted);font-weight:400;font-style:italic">Celnet — a <b style="color:var(--brand-deep);font-style:normal">Celer Technologies</b> product</span></div>
+<div class="note" style="font-style:normal;color:var(--brand-deep);font-weight:700;margin-top:3px">The Celnet-side seams (governor, distributor adapter, sidecar client, FIX dialect, proto projections) are built; the CelerIntegrated binding into the live JVM Celer estate lands through Celnet's implementation program on the carry-generalized engine. Standalone is the fully self-contained mode, provable here and now. <span style="float:right;color:var(--muted);font-weight:400;font-style:italic">Celnet — a <b style="color:var(--brand-deep);font-style:normal">Celer Technologies</b> product</span></div>
 
 </div>
 </div>

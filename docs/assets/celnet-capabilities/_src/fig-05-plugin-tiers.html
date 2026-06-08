@@ -75,7 +75,7 @@ body>*{flex:0 0 auto}
     <div class="arrow" style="transform:rotate(90deg)">→</div>
   </div>
 
-  <div class="section-label">One model — two shipped tiers + two designed tiers, same contract</div>
+  <div class="section-label">One model — four tiers, one frozen contract — two shipped, two on the implementation program</div>
   <div class="grid" style="grid-template-columns:repeat(4,1fr);align-items:stretch">
 
     <div class="box brand">
@@ -91,19 +91,19 @@ body>*{flex:0 0 auto}
     </div>
 
     <div class="box designed">
-      <div class="t">Signed shared object <span class="badge des">Designed</span></div>
-      <div class="d">Tier-1. Trusted compiled extensions load as signed, verifiable native artifacts inside the same registry and calling convention — speed with provenance. Designed-and-seamed behind the frozen contract; proven at deploy.</div>
-      <span class="tag road">signed</span><span class="tag road">verified</span><span class="tag road">tier-1 · deploy-gated</span>
+      <div class="t">Signed shared object <span class="badge des">Program</span></div>
+      <div class="d">Tier-1. Trusted compiled extensions load as signed, verifiable native artifacts inside the same registry and calling convention — speed with provenance. Seamed behind the frozen contract and delivered through Celnet's implementation program.</div>
+      <span class="tag road">signed</span><span class="tag road">verified</span><span class="tag road">tier-1 · program</span>
     </div>
 
     <div class="box designed">
-      <div class="t">OS sandbox <span class="badge des">Designed</span></div>
-      <div class="d">Tier-3. A kernel-enforced isolation ring (Landlock / seccomp) confines a model to exactly the syscalls it needs — defense in depth, same contract. Designed-and-seamed behind the frozen contract; proven at deploy.</div>
-      <span class="tag road">Landlock</span><span class="tag road">seccomp</span><span class="tag road">tier-3 · deploy-gated</span>
+      <div class="t">OS sandbox <span class="badge des">Program</span></div>
+      <div class="d">Tier-3. A kernel-enforced isolation ring (Landlock / seccomp) confines a model to exactly the syscalls it needs — defense in depth, same contract. Seamed behind the frozen contract and delivered through Celnet's implementation program.</div>
+      <span class="tag road">Landlock</span><span class="tag road">seccomp</span><span class="tag road">tier-3 · program</span>
     </div>
 
   </div>
-  <div class="note">Tier-0 native and Tier-2 wasmi sandbox are <b style="color:var(--green);font-style:normal">shipped &amp; gated</b> (celnet-plugin-host: native.rs, wasm.rs); Tier-1 signed shared-object (stabby) and Tier-3 Landlock/seccomp are <span style="font-style:normal">designed-and-seamed behind the same frozen contract, proven at deploy</span> (PLUGIN-HOST-ALT.md).</div>
+  <div class="note">Tier-0 native and Tier-2 wasmi sandbox are <b style="color:var(--green);font-style:normal">shipped &amp; gated</b> (celnet-plugin-host: native.rs, wasm.rs); Tier-1 signed shared-object (stabby) and Tier-3 Landlock/seccomp are <span style="font-style:normal">seamed behind the same frozen contract and delivered through Celnet's implementation program</span> (PLUGIN-HOST-ALT.md).</div>
 
   <!-- ============ capability boundary ============ -->
   <div class="row" style="margin-top:15px;align-items:stretch">
@@ -154,7 +154,7 @@ body>*{flex:0 0 auto}
         <span class="chip">~26 parity rows vs independent oracles</span>
       </div>
     </div>
-    <div class="note">Sandboxed · deterministic · hot-loadable · capability-scoped — private intellectual property runs in-core, never leaves the boundary, and extends Celnet without touching its source. MC products (TARF, accumulator, basket, American-via-LSM) carry a price std-error; analytic/PDE/golden-gated products are validated to machine precision.</div>
+    <div class="note">Sandboxed · deterministic · hot-loadable · capability-scoped — private intellectual property runs in-core, never leaves the boundary, and extends Celnet without touching its source. MC products (TARF, accumulator, basket, American-via-LSM) carry a rigorous price std-error; analytic/PDE/golden-gated products are validated to machine precision.</div>
   </div>
 
 </div>

@@ -1,0 +1,131 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Anaheim:wght@400..800&display=swap" rel="stylesheet"><style>
+:root{--brand:#ff7357;--brand-deep:#e85d42;--accent:#6b6bf5;--navy:#1B1F2A;--raised:#282C3E;--muted:#979CB7;--ink:#1d2230;--line:#d9deec;--bg:#f4f6fb;--green:#1c8c5a;}
+*{box-sizing:border-box;margin:0;padding:0;font-family:Anaheim,system-ui,"Segoe UI",sans-serif}
+body{background:#fff;margin:0;min-height:100vh;overflow:auto;display:flex;justify-content:safe center;align-items:flex-start}
+body>*{flex:0 0 auto}
+.canvas{position:relative;background:linear-gradient(180deg,#ffffff,#f4f6fb);overflow:hidden}
+.rail{position:absolute;left:0;top:0;bottom:0;width:8px;background:linear-gradient(180deg,var(--brand),var(--accent))}
+.hd{display:flex;align-items:center;gap:12px;padding:22px 34px 10px}
+.hd .mk{width:26px;height:26px}.hd h1{font-size:24px;font-weight:800;color:var(--navy);letter-spacing:.2px}
+.hd .sub{margin-left:auto;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:1.5px}
+.wrap{padding:8px 34px 30px}
+.box{border-radius:12px;border:1.5px solid var(--line);background:#fff;padding:12px 15px;box-shadow:0 1px 2px rgba(20,30,60,.05)}
+.box .t{font-weight:800;color:var(--navy);font-size:14.5px;display:flex;align-items:center;gap:8px}
+.box .d{color:#5b6376;font-size:12px;margin-top:5px;line-height:1.45}
+.box.brand{border-color:var(--brand);box-shadow:0 4px 18px rgba(255,115,87,.18)}
+.box.brandfill{background:var(--navy);border-color:var(--navy)}.box.brandfill .t{color:#fff}.box.brandfill .d{color:#c4c9dc}
+.box.accent{border-color:var(--accent)}.box.tint{background:#fbfcff}
+.box.green{border-color:var(--green)}.box.green .t{color:var(--green)}
+.box.dash{border-style:dashed;border-color:var(--muted);background:#fafbfe}
+.row{display:flex;gap:15px}.col{display:flex;flex-direction:column;gap:15px}.grid{display:grid;gap:15px}
+.arrow{align-self:center;color:var(--brand);font-size:24px;font-weight:800;padding:0 2px}
+.tag{display:inline-block;font-size:11px;font-weight:700;color:var(--accent);background:rgba(107,107,245,.1);border-radius:6px;padding:2px 8px;margin:3px 4px 0 0}
+.chip{display:inline-block;font-size:11.5px;color:var(--ink);background:#eef1f8;border:1px solid var(--line);border-radius:6px;padding:3px 9px;margin:3px 4px 0 0}
+.chip.k{background:rgba(255,115,87,.1);border-color:rgba(255,115,87,.35);color:var(--brand-deep);font-weight:700}
+.chip.g{background:rgba(28,140,90,.1);border-color:rgba(28,140,90,.35);color:var(--green);font-weight:700}
+.section-label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);margin:2px 0 7px}
+.note{font-size:11.5px;color:var(--muted);font-style:italic;margin-top:9px}
+.foot{position:absolute;left:34px;bottom:13px;font-size:11px;color:var(--muted)}.foot b{color:var(--brand-deep)}
+.lp{border-radius:11px;border:1.5px solid var(--line);background:#fff;padding:10px 13px;display:flex;align-items:center;gap:10px}
+.lp .nm{font-weight:800;color:var(--navy);font-size:13px}
+.lp .px{margin-left:auto;font-size:12px;color:#5b6376;font-variant-numeric:tabular-nums;white-space:nowrap}
+.lp .px b{color:var(--navy)}
+.lp.win{border-color:var(--green);background:rgba(28,140,90,.06)}
+.lp.win .nm{color:var(--green)}
+.won{display:inline-block;font-size:10px;font-weight:800;color:#fff;background:var(--green);border-radius:5px;padding:2px 6px;text-transform:uppercase;letter-spacing:.5px}
+.tally{display:flex;gap:10px;flex-wrap:wrap;margin-top:9px}
+.tally .m{background:#fbfcff;border:1px solid var(--line);border-radius:9px;padding:7px 11px;flex:1;min-width:96px}
+.tally .m .v{font-weight:800;color:var(--brand-deep);font-size:17px;font-variant-numeric:tabular-nums}
+.tally .m .l{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-top:1px}
+</style></head><body>
+<div class="canvas" style="width:1620px;height:920px">
+<div class="rail"></div>
+<div class="hd">
+<svg class="mk" viewBox="0 0 501 500"><path fill="#ff7357" d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg>
+<h1>Multi-Dealer RFQ Aggregation — One Request, Many Sources, Best Two-Way</h1>
+<span class="sub">Celnet · Celer Technologies</span>
+</div>
+<div class="wrap">
+
+<!-- BAND 1 -->
+<div class="section-label">Band 1 · One client RFQ fans out concurrently to N quote sources, each returning a two-way</div>
+<div class="row" style="align-items:stretch">
+
+  <div class="box brandfill" style="width:214px;display:flex;flex-direction:column;justify-content:center">
+    <div class="t">Client RFQ</div>
+    <div class="d">One QuoteRequest — instrument, size, side — carrying any underlying on the one unversioned contract. Issued identically from GUI, SDK, CLI and Excel.</div>
+    <div style="margin-top:8px"><span class="tag">QuoteRequest</span><span class="tag">api-first</span></div>
+  </div>
+
+  <div class="arrow">⇉</div>
+
+  <div class="col" style="flex:1">
+    <div class="box brand">
+      <div class="t">Internal pricer source</div>
+      <div class="d">The in-process Celnet pricer — always present, so the panel never has zero dealers. Prices off the pinned hot core: vanilla, five smile families and the full exotic &amp; structured catalogue.</div>
+    </div>
+    <div class="box brand">
+      <div class="t">FIX LP adapters · 1 … N</div>
+      <div class="d">External liquidity-provider sessions over the celnet-fix 4.4 engine in initiator role — QuoteRequest → Quote, each translated through the FX dialect into a Celnet two-way.</div>
+      <div style="margin-top:7px">
+        <span class="chip">LP-A</span><span class="chip">LP-B</span><span class="chip">LP-C</span><span class="chip">…</span>
+      </div>
+    </div>
+    <div class="note" style="margin-top:2px">Concurrent fan-out across the bounded panel — total latency is the slowest responder, not the sum.</div>
+  </div>
+
+  <div class="arrow">→</div>
+
+  <div class="box accent" style="width:236px;display:flex;flex-direction:column;justify-content:center">
+    <div class="t">Two-way replies</div>
+    <div class="d">Each responder returns a quote — bid premium and offer premium with an epoch and a <i>valid_until</i> stamp. Collected into one comparable ladder.</div>
+    <div style="margin-top:6px"><span class="tag">bid / offer</span><span class="tag">valid_until</span><span class="tag">epoch_nanos</span></div>
+  </div>
+
+</div>
+
+<div class="note" style="text-align:center;margin:13px 0 15px">Internal and external sources implement one object-safe QuoteSource trait — the engine ranks them all identically, with no privileged dealer.</div>
+
+<!-- BAND 2 -->
+<div class="section-label">Band 2 · Deterministic ranking → audited winner → consistency accounting</div>
+<div class="row" style="align-items:stretch">
+
+  <div class="box" style="width:300px;display:flex;flex-direction:column;justify-content:center">
+    <div class="t">Rank &amp; resolve</div>
+    <div class="d">Best <b>bid</b> = highest premium; best <b>offer</b> = lowest premium — the client hits the highest bid and lifts the cheapest offer.</div>
+    <div class="d" style="margin-top:7px"><b style="color:var(--navy)">Tie-break</b> is deterministic: earliest epoch, then smallest stable LP id — so the panel is reproducible.</div>
+    <div class="d" style="margin-top:7px"><b style="color:var(--navy)">Timeout</b> drops non-responders (not an error); a <b style="color:var(--navy)">last-look</b> winner past its validity is rejected and the next-best promoted.</div>
+  </div>
+
+  <div class="arrow">→</div>
+
+  <div class="col" style="width:374px">
+    <div class="section-label" style="margin:0 0 1px">Ranked panel</div>
+    <div class="lp win"><span class="nm">LP-B</span><span class="won">best offer</span><span class="px">bid <b>0.01184</b> · ofr <b>0.01207</b></span></div>
+    <div class="lp"><span class="nm">Internal</span><span class="px">bid <b>0.01179</b> · ofr <b>0.01211</b></span></div>
+    <div class="lp win"><span class="nm">LP-A</span><span class="won">best bid</span><span class="px">bid <b>0.01191</b> · ofr <b>0.01215</b></span></div>
+    <div class="lp dash" style="border-style:dashed"><span class="nm" style="color:var(--muted)">LP-C</span><span class="px" style="color:var(--muted)">timed out — excluded</span></div>
+  </div>
+
+  <div class="arrow">→</div>
+
+  <div class="box brand" style="flex:1;display:flex;flex-direction:column;justify-content:center">
+    <div class="t">Audited winner</div>
+    <div class="d">The booked quote is exactly the panel winner, accepted by (quote_id, lp_id) — the same keyed, line-bound token path the click-to-trade and FIX lift use, so the executed price is provably the one ranked.</div>
+    <div class="tally">
+      <div class="m"><div class="v">4</div><div class="l">lp_count · responded</div></div>
+      <div class="m"><div class="v">LP-A</div><div class="l">lp_won · bid</div></div>
+      <div class="m"><div class="v">LP-B</div><div class="l">lp_won · offer</div></div>
+    </div>
+    <div class="note" style="margin-top:8px">Invariant — every lp_won is a real responder; lp_count equals the responder count. Gated over a property sweep against an injected ground-truth ladder.</div>
+  </div>
+
+</div>
+
+<div class="note" style="margin-top:15px">One ranked panel, seen identically across GUI, SDK, CLI and Excel — best bid / best offer highlighted, the per-LP ladder and the won-by attribution are bit-identical on every surface. This is the multi-bank venue answer to a single-dealer incumbent.</div>
+<div class="note dash" style="margin-top:7px;font-size:11px"><b style="color:var(--brand-deep);font-style:normal">The multi-bank venue answer to a single-dealer incumbent</b> — the aggregation, ranking, deterministic tie-break and last-look algorithm plus the celnet-fix 4.4 framing and FX dialect are gated against an injected ground-truth ladder over an initiator/acceptor pair. Celnet's implementation program connects the live LP panel (real bank sessions over WAN FIX) and the regulated-venue / MAS-RMO status through the same ADR'd seam as a uniform deploy.</div>
+
+</div>
+<div class="foot">Celnet — a <b>Celer Technologies</b> product</div>
+</div>
+</body></html>

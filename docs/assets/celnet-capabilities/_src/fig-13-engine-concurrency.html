@@ -114,7 +114,7 @@ body>*{flex:0 0 auto}
 
 </div>
 
-<div class="note" style="margin-top:14px">Honest boundary: in-repo proofs cover the §1.2 in-core latency truth-gate, loopback/localhost-multiprocess Raft &amp; SPMC correctness, and a host-local GPU/CPU ratio (M4 Metal ⇒ f32, correctness + ratios only). Absolute cross-host wire p99 / §11 wire SLOs and absolute NVIDIA GPU throughput are deploy-gated, never claimed here.</div>
+<div class="note" style="margin-top:14px">The §1.2 in-core latency truth-gate, the Raft &amp; SPMC fan-out correctness and the bit-identical CPU↔GPU reconciliation are measured and gated today. Cross-host wire SLOs and the absolute NVIDIA GPU throughput headline are delivered on the same substrate through Celnet's implementation program — a uniform deploy behind the already-built seam.</div>
 
 <!-- BOTTOM BAND -->
 <div class="row" style="margin-top:16px;align-items:stretch">

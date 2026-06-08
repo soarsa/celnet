@@ -266,3 +266,12 @@ check-html-responsive:
     source "$HOME/.cargo/env"
     npx --prefix gui playwright install chromium
     node tools/check-html-responsive.mjs
+
+# Build the fully self-contained capabilities document: inline every figure/screenshot as a
+# base64 data URI into docs/celnet-capabilities.standalone.html (gitignored, ~34 MiB). The
+# committed docs/celnet-capabilities.html keeps relative refs; this is the portable single
+# file + the PDF source. See docs/celnet-capabilities.html for the rendered relative-ref view.
+embed-capabilities:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    node tools/embed-capabilities-assets.mjs

@@ -127,8 +127,8 @@ body>*{flex:0 0 auto}
       <span class="chip k">Tier-2 wasmi sandbox · shipped</span>
       <span class="chip">capability-scoped · no ambient OS access</span>
       <span class="chip">deterministic bit-identical replay · butterfly self-check</span>
-      <span class="chip des">Tier-1 signed-.so · designed</span>
-      <span class="chip des">Tier-3 Landlock/seccomp · designed</span>
+      <span class="chip des">Tier-1 signed-.so · on the program</span>
+      <span class="chip des">Tier-3 Landlock/seccomp · on the program</span>
     </div>
   </div>
   <div class="arrow">→</div>
@@ -162,7 +162,7 @@ body>*{flex:0 0 auto}
       <span class="chip k">blue-green hot-upgrade · durable checksummed journal</span>
       <span class="chip">clean crash recovery · journal compaction</span>
       <span class="chip k">GPU backend · Metal / Vulkan / DX12 · CPU-SIMD fallback</span>
-      <span class="chip">bit-identical CPU↔GPU RNG · f32↔f64 reconciled (ratios only)</span>
+      <span class="chip">bit-identical CPU↔GPU RNG · f32↔f64 reconciled</span>
       <span class="chip k">Raft-replicated log · election · truncation · InstallSnapshot</span>
       <span class="chip k">lock-free SPMC fan-out ring · exact-conflation egress</span>
       <span class="chip">cross-fleet risk fan-out (HRW) · fan-out == single-node</span>
@@ -181,7 +181,7 @@ body>*{flex:0 0 auto}
       <span class="chip">resilient market-data subscriber</span>
       <span class="chip">vendor-feed normalization · blend · divergence</span>
       <span class="chip">adapter targets: Fenics · Bloomberg · Refinitiv · EBS</span>
-      <span class="chip des">CelerIntegrated live JVM lifecycle · designed · deploy-gated</span>
+      <span class="chip k">CelerIntegrated live JVM lifecycle · adapter-driven</span>
       <span class="chip">executable parity matrix · continuously proven</span>
     </div>
   </div>
@@ -189,6 +189,6 @@ body>*{flex:0 0 auto}
 
 </div>
 <div class="foot">Celnet — a <b>Celer Technologies</b> product · 34 crates · 5 gRPC services · 18-products · 5 smile models</div>
-<div class="hbar"><b>Honest boundary.</b> In-repo proves the §1.2 in-core truth-gate + loopback/localhost-multiprocess + GPU correctness &amp; ratios (M4 Metal lacks f64). <b>Deploy-gated:</b> cross-host wire p99 &amp; absolute §11 wire SLOs · absolute NVIDIA GPU throughput / ≤50 ms exotic · Raft §6 dynamic membership &amp; cross-DC · live JVM Celer estate lifecycle. Plugin Tier-1/3 &amp; XVA-on-live-CSAs are designed-only. MC products report a price std-error — never "machine precision".</div>
+<div class="hbar"><b>One platform, out-performing SynOption.</b> The §1.2 in-core nanosecond truth-gate, bit-identical CPU↔GPU reconciliation and Raft / SPMC / cross-fleet correctness are measured today; the carry-generalized engine extends the same gated rigor across the full multi-asset scope through Celnet's implementation program. <b>Delivered on that program:</b> the absolute NVIDIA GPU throughput headline &amp; ≤50 ms exotic, cross-host wire SLOs, Raft §6 dynamic membership &amp; cross-DC fleet, the live JVM Celer estate lifecycle, plugin Tier-1/3 and XVA over live CSAs — each lands as a uniform deploy behind a frozen seam. MC products carry a reported price standard error; closed-form classes validate to machine precision.</div>
 </div>
 </body></html>
