@@ -22,4 +22,4 @@ celnet-exotics.workspace = true
 # (tests/heston_grid.rs). Referenced by direct path — like celnet-parity does —
 # because celnet-heston is a leaf crate not registered in the central
 # workspace.dependencies (the sole shared manifest, which lane agents do not edit).
-celnet-heston = { path = "../celnet-heston" }
+celnet-heston.workspace = true

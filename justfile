@@ -93,8 +93,25 @@ check-changed:
 
 # Full cross-crate integration gate: fmt, lint, test, supply-chain (whole workspace).
 # Run before committing a milestone; per-iteration use `check-changed` / `check-crate`.
-check: fmt-check lint test deny
+check: workspace-deps fmt-check lint test deny
     @echo "All gates passed."
+
+# Lint: NO internal crate may depend on another by a relative `path = "../celnet-*"`.
+# All internal deps go through the central [workspace.dependencies] registry in the
+# root Cargo.toml (`celnet-x.workspace = true`). This keeps the root manifest the sole
+# shared file so parallel "lane" agents never collide on a member manifest, and makes
+# adding a new crate a single-line registry change. Exits non-zero listing offenders.
+workspace-deps:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    offenders=$(grep -rn 'path = "\.\./celnet-' crates/*/Cargo.toml || true)
+    if [ -n "$offenders" ]; then
+        echo "ERROR: internal crates must use the [workspace.dependencies] registry"
+        echo "       (celnet-x.workspace = true), not a relative path-dep:"
+        echo "$offenders"
+        exit 1
+    fi
+    echo "workspace-deps: OK — no internal path-deps outside the registry."
 
 # ---------------------------------------------------------------------------
 # Hardening recipes (WS-T). See docs/HARDENING.md for the gate definitions and
