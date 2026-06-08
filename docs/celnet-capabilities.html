@@ -133,6 +133,63 @@
   .pill-list{display:flex; flex-wrap:wrap; gap:8px; margin:14px 0}
   .pill{background:#fff; border:1px solid var(--line); border-radius:8px; padding:5px 11px; font-size:13px; font-weight:600; color:#3a3f55}
   .pill b{color:var(--brand-deep)}
+  /* ---- deep-link out to the Markdown chapter ---- */
+  .chapter-link{
+    display:inline-flex; align-items:center; gap:6px; margin:4px 0 2px;
+    font-size:13px; font-weight:700; color:var(--accent); text-decoration:none;
+    border:1px solid rgba(107,107,245,.28); background:#f3f4fe;
+    border-radius:999px; padding:4px 12px;
+  }
+  .chapter-link:hover{background:#e9eafd; border-color:rgba(107,107,245,.5)}
+  .chapter-link::before{content:"\1F4D6"; font-size:12px}
+  /* ---- back-to-top affordance ---- */
+  .to-top{
+    position:fixed; right:20px; bottom:20px; z-index:60;
+    width:46px; height:46px; border-radius:50%;
+    background:var(--brand); color:#fff; border:none; cursor:pointer;
+    box-shadow:0 4px 14px rgba(232,93,66,.4); font-size:20px; line-height:1;
+    display:flex; align-items:center; justify-content:center;
+    opacity:0; pointer-events:none; transition:opacity .25s ease;
+  }
+  .to-top.show{opacity:1; pointer-events:auto}
+  .to-top:hover{background:var(--brand-deep)}
+  /* ---- responsive: tablet ---- */
+  @media(max-width:1024px){
+    :root{--rail:64px}
+    header.brand{padding:38px 32px 32px}
+    header.brand h1{font-size:38px}
+    header.brand .tag{font-size:17px}
+    nav.toc{padding:10px 32px}
+    main{padding:0 32px 72px}
+  }
+  /* ---- responsive: phone — rail collapses to a top strip ---- */
+  @media(max-width:680px){
+    :root{--rail:0px}
+    body{font-size:15px}
+    .rail{
+      position:static; width:100%; height:auto; flex-direction:row;
+      align-items:center; justify-content:space-between; padding:10px 18px;
+    }
+    .rail .mark{width:30px; height:30px}
+    .rail .vlabel{
+      margin:0; writing-mode:horizontal-tb; transform:none;
+      letter-spacing:1.5px; font-size:10px;
+    }
+    .page{margin-left:0}
+    header.brand{padding:26px 20px 24px}
+    header.brand h1{font-size:28px}
+    header.brand .tag{font-size:15px}
+    .meta-chips{gap:8px}
+    .chip{font-size:12px; padding:5px 11px}
+    nav.toc{padding:8px 16px; gap:5px 12px; font-size:12px}
+    main{padding:0 16px 64px}
+    section{padding:32px 0 6px}
+    h2{font-size:24px}
+    h3{font-size:17px}
+    .boundary{padding:22px 18px}
+    footer.stamp{padding:22px 18px}
+    .to-top{right:14px; bottom:14px; width:42px; height:42px}
+  }
 </style>
 </head>
 <body>
@@ -148,7 +205,7 @@
 <div class="page">
 
 <!-- BRAND HEADER (mark-less wordmark, no traffic-light dots) -->
-<header class="brand">
+<header class="brand" id="top">
   <div class="wordmark"><b>Celnet</b> &nbsp;/&nbsp; a Celer Technologies product</div>
   <h1>The <span class="g">complete</span> FX-options pricing platform.</h1>
   <p class="tag">Celnet is not a thin challenger closing gaps — it is a functionally complete,
@@ -180,6 +237,7 @@
   <a href="#compete">Competitive</a>
   <a href="#gallery">Screens</a>
   <a href="#boundary">Honest boundary</a>
+  <a href="#top" style="color:var(--brand-deep)">↑ Top</a>
 </nav>
 
 <main>
@@ -187,6 +245,7 @@
 <!-- 2. EXECUTIVE SUMMARY + PROOF CARDS -->
 <section id="summary">
   <h2><span class="kicker">Executive Summary</span>One platform, five clients, zero overclaim</h2>
+  <a class="chapter-link" href="celnet-capabilities/01-executive-summary.md">Chapter 01 — Executive Summary</a>
   <p class="lede">Celnet covers the full FX-options coverage ceiling — vanilla &rarr; the complete
   first-generation exotics &rarr; structured &amp; path-dependent products &rarr; American/Bermudan
   early exercise &rarr; correlated multi-asset baskets &rarr; an LSV booking model + standalone
@@ -224,6 +283,7 @@
 <!-- 3. CAPABILITY MAP -->
 <section id="landscape">
   <h2><span class="kicker">Capability Map</span>The whole platform at a glance</h2>
+  <a class="chapter-link" href="celnet-capabilities/02-capability-map.md">Chapter 02 — Capability Map</a>
   <figure>
     <img src="assets/celnet-capabilities/fig-12-capability-landscape.png" alt="One-page vendor-neutral capability map: a navy Celnet core ringed by six clusters — pricing &amp; analytics (vanilla, five smile families incl. eSSVI, the complete 19-product catalogue through first-gen exotics, structured/path-dependent, American/Bermudan, correlated baskets and LSV booking), risk (book-shaped scenario risk, firm-wide cube, FRTB-SA, internal-only XVA over synthetic netting), the real-time edge, extensibility (Tier-0 native and Tier-2 wasmi shipped, Tier-1/3 designed), five clients on one contract, and a platform substrate scaling out over a Raft-replicated log, SPMC fan-out ring and cross-fleet risk fan-out — all over the Celer trade lifecycle with a verbatim honest boundary.">
     <figcaption><b>Fig 12 — Capability landscape.</b> Six clusters around the navy pricing core:
@@ -240,6 +300,7 @@
 <!-- 4. QUANT & CATALOGUE -->
 <section id="quant">
   <h2><span class="kicker">Quant &amp; Pricing</span>The full catalogue, per-class validated</h2>
+  <a class="chapter-link" href="celnet-capabilities/04-quant-coverage.md">Chapter 04 — Quant Coverage</a>
   <figure>
     <img src="assets/celnet-capabilities/fig-03-quant-coverage.png" alt="Three-column architecture: Vanilla and Greeks; Smile and Surface (five smile models plus Dupire local-vol and LSV booking); and a grouped full catalogue (vanilla family, path-dependent, structured/MC, early-exercise American/Bermudan, and Cholesky multi-asset basket/rainbow) with a method legend and Monte-Carlo standard-error tags, over a validation band noting frozen-golden-table and parity-row validation, an honest MC-standard-error and GPU-ratio footnote, and SDK extensibility.">
     <figcaption><b>Fig 03 — Quant coverage.</b> Garman-Kohlhagen vanilla with the full FX desk Greek
@@ -326,6 +387,7 @@
 <!-- 5. ARCHITECTURE + ENGINE -->
 <section id="arch">
   <h2><span class="kicker">Architecture &amp; Engine</span>One contract over a pinned zero-alloc core</h2>
+  <a class="chapter-link" href="celnet-capabilities/03-system-architecture.md">Chapter 03 — System Architecture</a>
   <figure>
     <img src="assets/celnet-capabilities/fig-01-system-architecture-adaptability.png" alt="Architecture diagram: inbound vendor and Celer feeds enter via a market-data seam into a navy Celnet core framed by the single celnet-proto contract; the quant-engine band names five smile families including eSSVI and the full 19-product exotic catalogue; the plugin band shows Tier-0 native and Tier-2 wasmi as shipped and Tier-1/3 as designed and deploy-gated; bit-identical client surfaces on the right; a scale-out band names the Raft-replicated log, SPMC fan-out ring and cross-fleet risk fan-out; Standalone/Hybrid/CelerIntegrated deployment modes and an egress governor run along the bottom over a verbatim honest-boundary footnote.">
     <figcaption><b>Fig 01 — Adaptable architecture.</b> 34 one-way-acyclic crates: pluggable
@@ -351,6 +413,7 @@
 <!-- 6. RISK -->
 <section id="risk">
   <h2><span class="kicker">Risk · FRTB · XVA</span>Book and Risk are two zooms of one cube</h2>
+  <a class="chapter-link" href="celnet-capabilities/06-risk-management.md">Chapter 06 — Risk Management</a>
   <figure>
     <img src="assets/celnet-capabilities/fig-06-risk-architecture.png" alt="Two-band diagram: book-shaped scenario risk from the pricing hot core into a spot-vol shock grid, bucketed vega, cross-gamma and theta-roll feeding a versioned marked-surface registry (VV/SABR/SVI/SSVI/eSSVI); and a firm-wide eight-dimension position-fact cube fed by a normalized fact stream of vanilla and exotic legs, with additive roll-up plus non-additive VaR/ES and FRTB-SbM curvature, pruned by entitlements and a cascading limit tree, a FRTB-SA and XVA tile (CVA/DVA/FVA, synthetic netting, internal-only), served to GUI, SDK and Excel, with a footnote that XVA is internal over synthetic netting sets and MC exposures carry a price std-error.">
     <figcaption><b>Fig 06 — Risk architecture.</b> Book-shaped scenario risk (real repricing across a
@@ -383,6 +446,7 @@
 <!-- 7. EXTENSIBILITY -->
 <section id="sdk">
   <h2><span class="kicker">Extensibility</span>Open Quant SDK — run private IP in-engine</h2>
+  <a class="chapter-link" href="celnet-capabilities/05-extensibility-plugins.md">Chapter 05 — Extensibility &amp; Plugins</a>
   <figure>
     <img src="assets/celnet-capabilities/fig-05-plugin-tiers.png" alt="Architecture diagram of Celnet's tiered plugin host: a frozen Open Quant SDK contract and self-describing model registry feed a tier-blind registry that fans out to four execution tiers — Native and WebAssembly sandbox marked Built, signed shared-object and OS-sandbox marked Designed/deploy-gated with dashed borders — with a capability boundary admitting only core math primitives, a no-arbitrage self-check, and a desk band listing the full quant catalogue.">
     <figcaption><b>Fig 05 — Plugin tiers.</b> One frozen trait contract and a tier-blind model
@@ -410,6 +474,7 @@
 <!-- 8. PERFORMANCE -->
 <section id="perf">
   <h2><span class="kicker">Performance &amp; Latency</span>Measured, gated, honestly labelled</h2>
+  <a class="chapter-link" href="celnet-capabilities/07-performance-latency.md">Chapter 07 — Performance &amp; Latency</a>
   <figure>
     <img src="assets/celnet-capabilities/fig-07-performance-ladder.png" alt="Stepped latency-ladder diagram with measured nanosecond-scale in-core pricing steps far to the fast end and the network round-trip dominating, a dashed honest-boundary banner noting deploy-gated absolute wire and GPU numbers, plus a side panel of observability, benchmark (iai instruction gate and GPU/CPU ratio), per-class validation, deterministic-build and Raft/SPMC scale-out capabilities.">
     <figcaption><b>Fig 07 — Relative latency ladder.</b> In-core pricing is measured at nanosecond
@@ -434,6 +499,7 @@
 <!-- 9. SCALE-OUT -->
 <section id="scale">
   <h2><span class="kicker">Scalability &amp; Scale-Out</span>Distributed correctness, loopback-proven</h2>
+  <a class="chapter-link" href="celnet-capabilities/08-scalability-scaleout.md">Chapter 08 — Scalability &amp; Scale-Out</a>
   <figure>
     <img src="assets/celnet-capabilities/fig-08-scaleout.png" alt="Two-zone architecture diagram. Zone A, the node-local hot substrate, shows the async edge feeding pinned zero-allocation hot cores over wait-free SPSC rings, lock-free read-mostly state, blue-green handoff with a durable checksummed journal, batched repricing, a cross-platform GPU pricing backend, and zero-cost observability. Zone B, the horizontal scale-out fabric, shows a highest-random-weight rendezvous partition map, Raft-replicated state with election, conflicting-tail truncation, compaction, InstallSnapshot and hot-standby takeover replaying bit-identically, cross-fleet risk fan-out equal to single-node to 1e-12, and a conflating egress governor over a lock-free SPMC broadcast ring. A footnote states the honest boundary.">
     <figcaption><b>Fig 08 — Scale-out.</b> A highest-random-weight partition map shards the book
@@ -454,6 +520,7 @@
 <!-- 10. API & CLIENT PARITY -->
 <section id="api">
   <h2><span class="kicker">API &amp; Client Parity</span>One unversioned contract, five service families</h2>
+  <a class="chapter-link" href="celnet-capabilities/09-api-contract-parity.md">Chapter 09 — API Contract &amp; Parity</a>
   <figure>
     <img src="assets/celnet-capabilities/fig-02-api-first-parity.png" alt="Architecture diagram showing a central coral-marked Celnet contract hub fanning out to six client surfaces (gRPC, byte-identical WebSocket mirror, Rust SDK, CLI, 27-function Excel add-in, React/WebGPU GUI), each labelled same contract and value bit-identical, with the contract carrying pricing, quote/RFQ, multiplex stream, the unified 19-product Instrument, surface marking with the VV/SABR/SVI/SSVI/eSSVI smile-model selector, the market-series feed, the RiskService roll-up plus limits, and attribution identity, and a footnote that Monte-Carlo products carry a price standard error.">
     <figcaption><b>Fig 02 — API-first parity.</b> One clean, unversioned contract served by the
@@ -565,6 +632,7 @@
 <!-- 11. EXCEL -->
 <section id="excel">
   <h2><span class="kicker">Excel Integration</span>27 <code>CELNET.*</code> functions, one contract</h2>
+  <a class="chapter-link" href="celnet-capabilities/10-excel-integration.md">Chapter 10 — Excel Integration</a>
   <p>Three design principles, verbatim: <b>read = zero click</b> (a <code>CELNET.*</code> formula is
   a live read), <b>write = two-phase</b> (mark/recalibrate is explicit), and <b>no pricing in the
   cell</b> — every value comes from the server over the same contract, with per-cell convention +
@@ -623,6 +691,7 @@
 <!-- 12. CELER INTEGRATION -->
 <section id="celer">
   <h2><span class="kicker">Celer Integration</span>Designed estate-native binding, deploy-gated lifecycle</h2>
+  <a class="chapter-link" href="celnet-capabilities/12-celer-integration.md">Chapter 12 — Celer Integration</a>
   <figure>
     <img src="assets/celnet-capabilities/fig-09-celer-lifecycle.png" alt="Two-swimlane diagram of the Celer trade lifecycle: a price path from venues (Fenics/Bloomberg/Refinitiv/EBS as integration targets) through FIX-in, celertech-marketdata, celertech-marketmerchant, distributor and a byte-identical WebSocket mirror to Celer Trader, and an order path through celertech-orderrouting, celertech-risk, celertech-destination, celertech-clearing and celertech-positionmanager, with coral Celnet callouts injecting price/surface and option risk, a navy Celnet pricing-core panel, a book-and-risk cube, a one-contract panel, a three-deployment-mode seam, and a dashed honest-boundary footnote.">
     <figcaption><b>Fig 09 — Celer lifecycle.</b> Celnet sits as the FX-options pricing
@@ -650,6 +719,7 @@
 <!-- 13. COMPETITIVE -->
 <section id="compete">
   <h2><span class="kicker">Competitive Positioning</span>A functional superset, proven openly</h2>
+  <a class="chapter-link" href="celnet-capabilities/13-competitive-positioning.md">Chapter 13 — Competitive Positioning</a>
   <p class="lede">Celnet now matches Murex MX.3 / Numerix CrossAsset / Fenics kACE on
   structured/path-dependent breadth <b>while retaining the open-SDK, microsecond, one-contract,
   deterministic edges they structurally lack</b>. Network framing — not computation — is the only
@@ -688,6 +758,7 @@
 <!-- 14. SCREEN GALLERY -->
 <section id="gallery">
   <h2><span class="kicker">Trader GUI</span>Screen gallery</h2>
+  <a class="chapter-link" href="celnet-capabilities/11-trader-gui.md">Chapter 11 — Trader GUI</a>
   <div class="gallery">
     <figure><img src="assets/celnet-capabilities/shot-01-stream-blotter.png" alt="Virtualised streaming blotter."><figcaption><b>Shot 01</b> — Streaming blotter (virtualised, group/collapse).</figcaption></figure>
     <figure><img src="assets/celnet-capabilities/shot-02-ticket-structuring.png" alt="Exotic ticket structuring across the full catalogue."><figcaption><b>Shot 02</b> — Ticket: full exotic catalogue incl. American &amp; basket.</figcaption></figure>
@@ -706,6 +777,7 @@
     <h2><span class="kicker">Verbatim — carry everywhere</span>Honest boundary</h2>
     <p style="color:#cfd4e8; max-width:980px">These canonical lines (from <code style="background:#353a50;color:#e9ecf7">COMPLETION-PROGRAM.md</code>
     §4 / POST-COMPLETION-AUDIT class C) are quoted verbatim. None of these is claimed as in-repo-proven.</p>
+    <a class="chapter-link" href="celnet-capabilities/14-engineering-rigor.md" style="background:#353a50; color:#fff; border-color:#4a5070; margin-top:6px">Chapter 14 — Engineering Rigor</a>
     <ul>
       <li><b>Cross-host wire p99 / kernel-bypass NIC latency</b> — deploy-gated; in-repo proves the in-core §1.2 truth-gate + loopback benches only.</li>
       <li><b>CUDA/NVIDIA absolute GPU throughput + ≤50 ms exotic + Workload-A/B absolute numbers</b> — deploy-gated. M4 Metal lacks f64 ⇒ in-repo proves <b>correctness + RATIOS only</b> (M4/Lavapipe). Never claim f64 on Metal.</li>
@@ -728,5 +800,19 @@
 </footer>
 
 </div>
+
+<a class="to-top" id="toTop" href="#top" aria-label="Back to top" title="Back to top">↑</a>
+<script>
+  (function(){
+    var btn=document.getElementById('toTop');
+    if(!btn) return;
+    function update(){
+      if(window.scrollY>520){ btn.classList.add('show'); }
+      else{ btn.classList.remove('show'); }
+    }
+    window.addEventListener('scroll', update, {passive:true});
+    update();
+  })();
+</script>
 </body>
 </html>

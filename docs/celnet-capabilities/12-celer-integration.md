@@ -1,4 +1,4 @@
-<sub>**[Celnet Capabilities](../CELNET-CAPABILITIES.md)** › Celer Trader & Estate Integration</sub>
+<sub>[← Prev: The Trader GUI](11-trader-gui.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: Competitive Positioning →](13-competitive-positioning.md) · [Showcase ↗](../celnet-capabilities.html)</sub>
 
 # 12. Celer Trader & Estate Integration
 
@@ -7,7 +7,7 @@ Celnet is the **FX-options pricing system-of-record** inside the Celer trade lif
 The integration is built as **traits and adapters, exercised in-repo against real loopback servers and sinks**; the live binding to the running JVM estate is a deployment gate, proven at deploy, never asserted as live in-repo (see §12.5).
 
 ![The Celer trade lifecycle with Celnet as the FX-options pricing system-of-record](../assets/celnet-capabilities/fig-09-celer-lifecycle.png)
-*Figure 9 — Celnet in the Celer trade lifecycle. Celnet supplies price, Greeks and surface into the price path and option risk into the risk/position path; the surrounding Celer services own routing, credit, execution, clearing and the net-position truth source. The estate hops shown are the designed integration map; in-repo the seams are exercised against loopback adapters.*
+*Figure 9 ([index](../CELNET-CAPABILITIES.md#figure-index)) — Celnet in the Celer trade lifecycle. Celnet supplies price, Greeks and surface into the price path and option risk into the risk/position path; the surrounding Celer services own routing, credit, execution, clearing and the net-position truth source. The estate hops shown are the designed integration map; in-repo the seams are exercised against loopback adapters.*
 
 ### 12.1 Where Celnet plugs in
 
@@ -42,7 +42,7 @@ Celnet meets the estate through a small, well-defined set of connectors, every o
 Integration depth is a configuration choice, not a fork. Three seam traits — the **market-data source** (`MarketDataSource`), the **price sink** (`PriceSink` / `DistributorEgress`), and the order/execution adapter — are swapped to move Celnet along a spectrum from fully self-contained to fully estate-native. The engine core never names a transport: it is handed an `impl MarketDataSource` and an `impl PriceSink`, and the `EdgeBuilder` picks the concrete adapters for the chosen `DeploymentMode` (`celnet-integration/src/deployment.rs`). Migration between modes is a reversible adapter swap, never a rewrite.
 
 ![The three Celnet deployment modes and the adapter seams that distinguish them](../assets/celnet-capabilities/fig-10-deployment-modes.png)
-*Figure 10 — Standalone, Hybrid and CelerIntegrated deployment modes. The same engine and the same contract sit behind three adapter configurations on the market-data / price-sink / order-and-execution seams. CelerIntegrated is the designed estate-native binding; the live JVM/WS wiring is the deployment gate.*
+*Figure 10 ([index](../CELNET-CAPABILITIES.md#figure-index)) — Standalone, Hybrid and CelerIntegrated deployment modes. The same engine and the same contract sit behind three adapter configurations on the market-data / price-sink / order-and-execution seams. CelerIntegrated is the designed estate-native binding; the live JVM/WS wiring is the deployment gate.*
 
 | Mode | Market-data source | Price & order seams | Use |
 |---|---|---|---|
@@ -62,5 +62,7 @@ The throughline across all of this is the platform's single principle: one clean
 
 The **entire live JVM Celer estate lifecycle** — the distributor sidecar / FX_OPTION mailbox / inferred estate hops / tenant overlays — is **deploy/live-gated; in-repo has the seams and adapters only.** What is proven in-repo is the seam contract itself: the `DeploymentMode` adapter swap, the FIX 4.4 acceptor/initiator over a loopback socket, the governed egress conflation, the resilient resync, and the vendor normalization/blend/divergence **algorithm**. The live estate binding (sidecar handshake, mailbox calibration, quote-feed entitlement) and **live multi-vendor quote values** are integration/deploy targets, proven against the running estate at deploy — never asserted as live in this repository.
 
+**See also:** [§3 System Architecture](03-system-architecture.md) is the adapter-seam model that makes the three deployment modes a configuration choice; [§9 API & Client Parity](09-api-contract-parity.md) is the one contract every mode preserves.
+
 ---
-<sub>[← The Trader GUI](11-trader-gui.md)  ·  **[Contents](../CELNET-CAPABILITIES.md)**  ·  [Competitive Positioning →](13-competitive-positioning.md)</sub>
+<sub>[← Prev: The Trader GUI](11-trader-gui.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: Competitive Positioning →](13-competitive-positioning.md) · [Showcase ↗](../celnet-capabilities.html)</sub>

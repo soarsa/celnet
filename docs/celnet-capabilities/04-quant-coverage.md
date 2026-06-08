@@ -1,11 +1,11 @@
-<sub>**[Celnet Capabilities](../CELNET-CAPABILITIES.md)** › Quant & Pricing Methodology Coverage</sub>
+<sub>[← Prev: System Architecture](03-system-architecture.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: Extensibility →](05-extensibility-plugins.md) · [Showcase ↗](../celnet-capabilities.html)</sub>
 
 # 4. Quant & Pricing Methodology Coverage
 
 Celnet is not a thin challenger closing gaps — it is a functionally complete, evidence-backed superset of the quant catalogue a derivatives desk stitches together today, proven by a runnable parity matrix against independent oracles and reachable identically from five clients. Every price, every Greek, every smile and every exotic is computed by the **same in-core engine** that powers the live pricing edge — so the number a trader sees in the ticket, the number that streams over the wire, and the number a quant pulls into a spreadsheet are one and the same. This section maps the analytics surface end to end: from a single vanilla through the full Greek set and the four delta conventions, the five-model smile/surface engine, the **full exotic and structured catalogue** — first-generation barriers/digitals/touches, closed-form structured products, Monte-Carlo path-dependents, American/Bermudan early exercise, correlated multi-asset baskets, and an LSV booking engine with a standalone Heston backbone — to the per-product-class validation regime and the SDK seam that extends Celnet without forking it.
 
 ![Quant coverage map — vanilla, Greeks, conventions, smile/surface, the full exotic & structured catalogue, and the SDK extension seam](../assets/celnet-capabilities/fig-03-quant-coverage.png)
-*Figure 3 — The Celnet quant coverage map: a single in-core library spanning vanilla pricing, the full FX desk Greek set, the four delta conventions, the five-model smile/surface engine, and the full exotic & structured catalogue (vanilla-family · path-dependent · structured/MC · American–Bermudan · correlated basket · LSV booking), validated by ~26 parity rows against independent oracles plus frozen QuantLib golden tables, with the Open Quant SDK as the extension seam to bespoke products.*
+*Figure 3 ([index](../CELNET-CAPABILITIES.md#figure-index)) — The Celnet quant coverage map: a single in-core library spanning vanilla pricing, the full FX desk Greek set, the four delta conventions, the five-model smile/surface engine, and the full exotic & structured catalogue (vanilla-family · path-dependent · structured/MC · American–Bermudan · correlated basket · LSV booking), validated by ~26 parity rows against independent oracles plus frozen QuantLib golden tables, with the Open Quant SDK as the extension seam to bespoke products.*
 
 ### 4.1 Vanilla pricing and the full FX desk Greek set in one pass
 
@@ -31,7 +31,7 @@ Celnet marks volatility with a full smile-and-surface engine rather than a singl
 No-arbitrage is enforced, not assumed. **Arbitrage gates** check butterfly density non-negativity (no negative implied densities, via pointwise Breeden–Litzenberger re-pricing), vertical-spread monotonicity, and calendar total-variance monotonicity across tenors. The eSSVI surface carries the closed-form static no-arbitrage conditions (per-slice butterfly + consecutive-slice calendar). The term structure is assembled **arbitrage-free, interpolated in total variance**, so volatility between pillar tenors is consistent and free of calendar arbitrage by construction. For the exotic and LSV engines below, the smile is converted to a **Dupire local-volatility** surface (`celnet-exotics/src/leverage.rs`).
 
 ![Surface pipeline — broker quotes through calibration, arbitrage gates, model selection, and the arb-free term structure](../assets/celnet-capabilities/fig-04-surface-pipeline.png)
-*Figure 4 — The surface pipeline: broker (market) strangle quotes enter a smile-strangle fixed-point calibration, pass butterfly / vertical / calendar arbitrage gates, are marked under a selectable smile model (VV / SABR / SVI / SSVI / eSSVI), and are woven into an arbitrage-free term structure interpolated in total variance.*
+*Figure 4 ([index](../CELNET-CAPABILITIES.md#figure-index)) — The surface pipeline: broker (market) strangle quotes enter a smile-strangle fixed-point calibration, pass butterfly / vertical / calendar arbitrage gates, are marked under a selectable smile model (VV / SABR / SVI / SSVI / eSSVI), and are woven into an arbitrage-free term structure interpolated in total variance.*
 
 | Stage | What the engine does |
 |---|---|
@@ -130,5 +130,7 @@ The Ticket workspace is where this breadth becomes a workflow: a structure selec
 - **CUDA/NVIDIA absolute GPU throughput, ≤50ms exotic and Workload-A/B absolute numbers are deploy-gated.** M4 Metal lacks f64, so in-repo GPU proofs are **correctness + ratios only** (M4/Lavapipe). Never claim f64 on Metal.
 - **Multi-source surface aggregation** — the blend/staleness/divergence algorithm is built and gated; live multi-vendor quote *values* are an integration/deploy target, not in-repo data.
 
+**See also:** [§9 API & Client Parity](09-api-contract-parity.md) carries the full catalogue on the one wire (the 19-arm `Instrument`); [§5 Extensibility](05-extensibility-plugins.md) shows how the Open Quant SDK extends this catalogue without a fork.
+
 ---
-<sub>[← System Architecture](03-system-architecture.md)  ·  **[Contents](../CELNET-CAPABILITIES.md)**  ·  [Extensibility →](05-extensibility-plugins.md)</sub>
+<sub>[← Prev: System Architecture](03-system-architecture.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: Extensibility →](05-extensibility-plugins.md) · [Showcase ↗](../celnet-capabilities.html)</sub>

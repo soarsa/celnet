@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Celnet for Excel — branded brochure render</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -25,6 +26,8 @@
   }
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{font-family:Anaheim, "Segoe UI", system-ui, sans-serif; color:var(--ink); background:#dfe3ee;}
+  body{margin:0; min-height:100vh; overflow:auto; display:flex; justify-content:safe center; align-items:flex-start;}
+  body>*{flex:0 0 auto;}
   .app{width:1680px; height:1000px; display:flex; flex-direction:column; overflow:hidden; background:#fff;}
 
   /* ---- Title bar (Celer brand) ---- */

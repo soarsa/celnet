@@ -1,4 +1,4 @@
-<sub>**[Celnet Capabilities](../CELNET-CAPABILITIES.md)** › Executive Summary — Celnet at a Glance</sub>
+<sub>[Index](../CELNET-CAPABILITIES.md) · [Next: Capability Map →](02-capability-map.md) · [Showcase ↗](../celnet-capabilities.html)</sub>
 
 # 1. Executive Summary — Celnet at a Glance
 
@@ -19,9 +19,11 @@ The platform is built as a 34-crate one-way-acyclic Rust workspace with an exten
 This brochure walks each of these in turn, supported by a figure index of system, architecture, and workflow diagrams (`fig-01` … `fig-13`) and live screenshots of the running platform (`shot-01` … `shot-10`). The capability landscape below maps the whole surface area at a glance.
 
 ![Celnet capability landscape](../assets/celnet-capabilities/fig-12-capability-landscape.png)
-*Figure 1 — The Celnet capability landscape: full-catalogue quant coverage, engine and performance, firm-wide risk + regulatory capital, the Open Quant SDK, the API-first edge, the client suite, and Celer-lifecycle integration, unified behind a single contract.*
+*Figure 1 ([index](../CELNET-CAPABILITIES.md#figure-index)) — The Celnet capability landscape: full-catalogue quant coverage, engine and performance, firm-wide risk + regulatory capital, the Open Quant SDK, the API-first edge, the client suite, and Celer-lifecycle integration, unified behind a single contract.*
 
 > **Honest boundary.** Deploy-gated absolutes are never claimed in-repo: cross-host wire p99 / kernel-bypass NIC latency / the §11 absolute wire-latency SLOs (in-repo proves the in-core §1.2 truth-gate + loopback only); CUDA/NVIDIA absolute GPU throughput / ≤50ms exotic / Workload-A/B absolutes (M4 Metal lacks f64 ⇒ in-repo proves correctness + ratios only); the live JVM Celer estate lifecycle (seams + adapters only); Raft §6 dynamic membership / cross-DC transport / real partitions (localhost multi-process only); plugin Tier-1 signed-.so + Tier-3 Landlock/seccomp (designed-only; Tier-0 native + Tier-2 wasmi shipped); XVA (internal-only, no wire surface, synthetic netting sets). MC-priced products carry a price std-error, never "machine precision".
 
+**See also:** [§2 Capability Map](02-capability-map.md) expands each headline into a scannable inventory; [§13 Competitive Positioning](13-competitive-positioning.md) frames these capabilities against the incumbent archetypes.
+
 ---
-<sub>[← Overview](../CELNET-CAPABILITIES.md)  ·  **[Contents](../CELNET-CAPABILITIES.md)**  ·  [Capability Map →](02-capability-map.md)</sub>
+<sub>[Index](../CELNET-CAPABILITIES.md) · [Next: Capability Map →](02-capability-map.md) · [Showcase ↗](../celnet-capabilities.html)</sub>

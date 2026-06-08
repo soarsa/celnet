@@ -1,11 +1,11 @@
-<sub>**[Celnet Capabilities](../CELNET-CAPABILITIES.md)** › Risk Management</sub>
+<sub>[← Prev: Extensibility](05-extensibility-plugins.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: Performance & Latency →](07-performance-latency.md) · [Showcase ↗](../celnet-capabilities.html)</sub>
 
 # 6. Risk Management
 
 Celnet treats risk as a single, integrated capability that spans two altitudes at once: the *micro* view of an individual position's behaviour under shocks, and the *macro* view of the firm's entire option book netted, rolled up, and policed against limits. Both are two zooms of one underlying truth — a position-fact cube — so a trader and a board-level risk officer are always looking at the same numbers, never a reconciliation of two systems.
 
 ![Risk architecture: book-shaped scenario risk and the firm-wide position-fact cube as two zooms of one fact model](../assets/celnet-capabilities/fig-06-risk-architecture.png)
-*Figure 6 — Risk architecture. A versioned marked-surface registry feeds book-shaped scenario risk (the desk's working view) and a convention-canonicalized OLAP position-fact cube (the firm-wide view) that aggregates vanilla **and exotic** legs. Normalize → cube → limits ∥ entitlements: one fact model, drilled at every altitude, extended to FRTB-SA regulatory capital and (internal) XVA.*
+*Figure 6 ([index](../CELNET-CAPABILITIES.md#figure-index)) — Risk architecture. A versioned marked-surface registry feeds book-shaped scenario risk (the desk's working view) and a convention-canonicalized OLAP position-fact cube (the firm-wide view) that aggregates vanilla **and exotic** legs. Normalize → cube → limits ∥ entitlements: one fact model, drilled at every altitude, extended to FRTB-SA regulatory capital and (internal) XVA.*
 
 ### 6.1 Book-shaped scenario risk
 
@@ -89,5 +89,7 @@ Celnet computes the counterparty-risk valuation adjustments — **CVA** (credit)
 - **Cross-fleet risk fan-out** — the additive-merge / non-additive-re-gather **algebra** is built and reconciled fan-out == single-node to ~1e-12 on localhost multi-process; **physical cross-node risk transport, cross-host wire p99 and cross-DC** are deploy-gated.
 - **MC-priced exotic legs** (Asian, TARF, accumulator, discrete lookback) carry a **price std-error** on their cube Greeks — never "machine-precision"; that bar is reserved for the analytic/closed-form (barrier, digital) and golden-gated products.
 
+**See also:** [§8 Scalability & Scale-Out](08-scalability-scaleout.md) shows the cross-fleet risk fan-out reconciling to the single-node aggregate; [§9 API & Client Parity](09-api-contract-parity.md) is the RiskService contract these roll-ups are served over.
+
 ---
-<sub>[← Extensibility](05-extensibility-plugins.md)  ·  **[Contents](../CELNET-CAPABILITIES.md)**  ·  [Performance & Latency →](07-performance-latency.md)</sub>
+<sub>[← Prev: Extensibility](05-extensibility-plugins.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: Performance & Latency →](07-performance-latency.md) · [Showcase ↗](../celnet-capabilities.html)</sub>

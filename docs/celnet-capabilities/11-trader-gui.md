@@ -1,4 +1,4 @@
-<sub>**[Celnet Capabilities](../CELNET-CAPABILITIES.md)** › The Trader GUI</sub>
+<sub>[← Prev: Excel Integration](10-excel-integration.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: Celer Integration →](12-celer-integration.md) · [Showcase ↗](../celnet-capabilities.html)</sub>
 
 # 11. The Trader GUI
 
@@ -7,7 +7,7 @@ The Celnet trader GUI is a single-window desk application built on React with a 
 The whole desk lives behind **one window and five workspaces** — Ticket, Stream, Surface, Risk, Book — reachable from a persistent left rail or by keyboard (`⌘1`…`⌘5`). Workspaces never unmount as you switch: an in-progress scenario, a half-marked surface, or a pinned comparison survives every flip between lanes, and the active pane cross-fades in over the others. Everything else a trader needs to navigate — *what slice of the firm, which pair, and any action at all* — sits in the title bar and a global command palette.
 
 ![The live Stream blotter — multiplexed RFS two-ways with click-to-trade and the trend selector.](../assets/celnet-capabilities/shot-01-stream-blotter.png)
-*Figure 11-1 — Stream (⌘2): the resting state of the desk. A living blotter of streaming two-way markets, click a side to trade.*
+*Figure 11-1 ([index](../CELNET-CAPABILITIES.md#figure-index)) — Stream (⌘2): the resting state of the desk. A living blotter of streaming two-way markets, click a side to trade.*
 
 ### 11.1 The shell — one window, five workspaces
 
@@ -30,14 +30,14 @@ The breadcrumb renders the current slice of the firm as a clickable path — **F
 Two complementary affordances move the desk between currency pairs. The **watchlist strip** pins one tile per watched pair across the top of every workspace: the pair label, its live spot at the pair's pip precision, a tick-direction cue, and an inline sparkline of that pair's most-active streamed line. The active pair is raised onto a brighter material and marked in brand coral with a subtle live pulse; the rest stay quiet. Tiles are fully keyboard-navigable (arrow across, Enter/Space to select).
 
 ![The pair dropdown and watchlist — the desk's two ways to move between currency pairs.](../assets/celnet-capabilities/shot-06-pair-navigator.png)
-*Figure 11-2 — the pair menu: a click-to-open popover of watched pairs with live spot, the active pair in coral, and a footer that escalates to the full-universe search.*
+*Figure 11-2 ([index](../CELNET-CAPABILITIES.md#figure-index)) — the pair menu: a click-to-open popover of watched pairs with live spot, the active pair in coral, and a footer that escalates to the full-universe search.*
 
 The **pair menu** in the title bar is a real anchored dropdown: clicking the `▾` caret opens a compact popover of the watched pairs (label + live spot, active in coral); selecting one re-targets the global pair everywhere. Its footer row escalates to the command palette for searching the entire universe when the watchlist is too long to eyeball — the right tool when a desk runs hundreds of pairs.
 
 #### The command palette (⌘K)
 
 ![The command palette — fuzzy search over pairs, workspaces, and actions.](../assets/celnet-capabilities/shot-07-command-palette.png)
-*Figure 11-3 — `⌘K`: the keyboard-first spine. Type a pair, a workspace, or an action; arrow + Enter to run.*
+*Figure 11-3 ([index](../CELNET-CAPABILITIES.md#figure-index)) — `⌘K`: the keyboard-first spine. Type a pair, a workspace, or an action; arrow + Enter to run.*
 
 `⌘K` (or `⌘P`) opens the palette — the universal escape hatch and the keyboard-first spine of the GUI. It fuzzy-matches across three families at once: **pairs** (jump to any currency pair, with its spot as a hint), **workspaces** (go to any of the five lanes), and **actions** (mark the surface, open a risk scenario, toggle light/dark or contrast, and *promote a structure straight into the live blotter* — e.g. "Stream EUR/USD 1M 25Δ RR", which subscribes the exact instrument and lands you on the blotter ticking). It is fully driven from the keyboard, honours Escape, and renders on a thick-blur material that owns focus while open. No function codes, no command syntax to memorise.
 
@@ -48,7 +48,7 @@ Because the GUI is keyboard-first, every chord is discoverable: pressing `?` (or
 ### 11.2 Ticket (⌘1) — the analytics surface that is also the executable
 
 ![The Ticket card — structure, tenor, legs, a live two-way, the full Greek set, and conventions on the face.](../assets/celnet-capabilities/shot-02-ticket-structuring.png)
-*Figure 11-4 — Ticket (⌘1): one card that is both the analytics surface and the executable.*
+*Figure 11-4 ([index](../CELNET-CAPABILITIES.md#figure-index)) — Ticket (⌘1): one card that is both the analytics surface and the executable.*
 
 The Ticket is one card that is simultaneously the analytics view and the order — build *any* product in the platform's catalogue, see its live two-way and full Greek vector and conventions on the face, and hit it without changing screens. The same card reaches the **entire on-wire instrument set** — not just vanilla strategies — selectable from one **structure selector** (`gui/src/workspaces/TicketWorkspace.tsx`, the `STRUCTURES` list):
 
@@ -77,7 +77,7 @@ The Stream blotter is the desk's resting state: a living table of streaming two-
 - **Click-to-trade** — when a row is healthy and its maker token is still valid, the bid and offer cells are live buttons: clicking hits the bid (sell) or lifts the offer (buy), sending an `Execute` against the row's short-lived, line-bound tradable token. Outcomes surface as typed toasts (executed, or a typed reject for a stale/forged/already-consumed token).
 
 ![Click-to-trade last-look — the maker's short-lived token resolves to a typed outcome.](../assets/celnet-capabilities/shot-08-clicktrade-lastlook.png)
-*Figure 11-5 — the last-look response to a click-to-trade hit: a typed Executed/Reject outcome, never a silent failure.*
+*Figure 11-5 ([index](../CELNET-CAPABILITIES.md#figure-index)) — the last-look response to a click-to-trade hit: a typed Executed/Reject outcome, never a silent failure.*
 
 - **The trend selector** — a row of mode chips re-plots every row's trend column from a **real streamed observable**: Premium (the row's own streamed premium-mid history), ATM vol, 25Δ RR, 25Δ BF, Spot, and Forward — each served from the contract's market-series feed. The selected mode's label and unit annotate the column header and each tile; the sparkline tint and the up/down glyph share one direction truth.
 - **Subscribe** — `+ Subscribe (⌘K)` opens the palette to add a line; the blotter footer notes the conflation cadence and the number of LPs in competition.
@@ -85,7 +85,7 @@ The Stream blotter is the desk's resting state: a living table of streaming two-
 ### 11.4 Surface (⌘3) — mark and recalibrate
 
 ![The Surface workspace — smile chart, the broker marking grid, the arb gate, model selector, and surface version.](../assets/celnet-capabilities/shot-03-surface-marking.png)
-*Figure 11-6 — Surface (⌘3): three linked views of one marked surface, with live recalibration and an arbitrage gate.*
+*Figure 11-6 ([index](../CELNET-CAPABILITIES.md#figure-index)) — Surface (⌘3): three linked views of one marked surface, with live recalibration and an arbitrage gate.*
 
 The Surface workspace is the "show me why" lane — three linked views of one marked surface:
 
@@ -102,7 +102,7 @@ Three controls govern the mark:
 ### 11.5 Risk (⌘4) — the scenario grid
 
 ![The Risk workspace — a spot×vol reprice grid with swappable axes, metric tabs, a vega ladder, cross-gamma, and theta-roll.](../assets/celnet-capabilities/shot-04-risk-scenario.png)
-*Figure 11-7 — Risk (⌘4): a real-reprice shock grid for the selected structure, with the book-shaped decomposition as a disclosure.*
+*Figure 11-7 ([index](../CELNET-CAPABILITIES.md#figure-index)) — Risk (⌘4): a real-reprice shock grid for the selected structure, with the book-shaped decomposition as a disclosure.*
 
 The Risk workspace analyses one structure under a two-axis shock grid, every cell a **real reprice** via the surface scenario service — never a Taylor approximation:
 
@@ -117,7 +117,7 @@ When you arrive here by drilling from the Book, a `‹ Book` affordance in the t
 ### 11.6 Book (⌘5) — desk-wide aggregated risk
 
 ![The Book workspace — net P&L/Vega/Gamma/Theta cards, a per-pair breakdown that drills to Risk, and an aggregate vega ladder.](../assets/celnet-capabilities/shot-05-book-aggregate.png)
-*Figure 11-8 — Book (⌘5): the desk-wide aggregated picture, one click from any position's scenario risk.*
+*Figure 11-8 ([index](../CELNET-CAPABILITIES.md#figure-index)) — Book (⌘5): the desk-wide aggregated picture, one click from any position's scenario risk.*
 
 The Book sums the **real** per-position risk across every open position across every pair into one desk-level picture — each position repriced at its own pair's market and scaled by its signed notional (long +, short −):
 
@@ -131,5 +131,7 @@ The Book is candid about its own numeraire: cross-pair totals are summed in each
 
 Light and dark themes, a high-contrast mode, the keyboard cheatsheet, the trend modes, the scope breadcrumb, and the pair navigator are all conveniences layered over the *same* API that the Rust SDK, the CLI, and the Excel `CELNET.*` add-in consume. A value priced in the Ticket — across the full catalogue from vanilla through American/Bermudan and correlated baskets — streamed in the blotter, marked in the Surface under any of the five smile families, shocked in Risk, or aggregated in the Book is the engine's value — identical across every client. The GUI is the desk's richest window onto Celnet, not a parallel implementation of it. (Its keyboard-first behaviour and accessibility are themselves under test — see the Playwright end-to-end and axe accessibility suites covered in the *Engineering Rigor & Assurance* chapter.)
 
+**See also:** [§9 API & Client Parity](09-api-contract-parity.md) is the contract the GUI consumes as a peer; [§6 Risk Management](06-risk-management.md) is the cube behind the Book↔Risk drill; [§4 Quant Coverage](04-quant-coverage.md) is the catalogue the Ticket prices.
+
 ---
-<sub>[← Excel Integration](10-excel-integration.md)  ·  **[Contents](../CELNET-CAPABILITIES.md)**  ·  [Celer Trader & Estate Integration →](12-celer-integration.md)</sub>
+<sub>[← Prev: Excel Integration](10-excel-integration.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: Celer Integration →](12-celer-integration.md) · [Showcase ↗](../celnet-capabilities.html)</sub>

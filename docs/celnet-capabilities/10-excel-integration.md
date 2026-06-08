@@ -1,4 +1,4 @@
-<sub>**[Celnet Capabilities](../CELNET-CAPABILITIES.md)** › Excel Integration</sub>
+<sub>[← Prev: API & Wire Contract + API-First Client Parity](09-api-contract-parity.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: The Trader GUI →](11-trader-gui.md) · [Showcase ↗](../celnet-capabilities.html)</sub>
 
 # 10. Excel Integration
 
@@ -98,5 +98,7 @@ Because the add-in rides the same contract as every other client, real desk work
 
 Because there is exactly one contract and one pricing path, the spreadsheet is never a fork. A value computed in a cell, shown in the GUI, returned to the Rust SDK, or carried over FIX is the same value — Excel is simply another window onto the one engine.
 
+**See also:** [§9 API & Client Parity](09-api-contract-parity.md) is the one contract these `CELNET.*` functions call; [§6 Risk Management](06-risk-management.md) is the server-side risk cube behind `CELNET.RISK`/`POSITIONS`/`LIMITS`.
+
 ---
-<sub>[← API & Wire Contract + API-First Client Parity](09-api-contract-parity.md)  ·  **[Contents](../CELNET-CAPABILITIES.md)**  ·  [The Trader GUI →](11-trader-gui.md)</sub>
+<sub>[← Prev: API & Wire Contract + API-First Client Parity](09-api-contract-parity.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: The Trader GUI →](11-trader-gui.md) · [Showcase ↗](../celnet-capabilities.html)</sub>

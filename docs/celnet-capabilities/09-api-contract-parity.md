@@ -1,4 +1,4 @@
-<sub>**[Celnet Capabilities](../CELNET-CAPABILITIES.md)** › API & Wire Contract + API-First Client Parity</sub>
+<sub>[← Prev: Scalability & Scale-Out](08-scalability-scaleout.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: Excel Integration →](10-excel-integration.md) · [Showcase ↗](../celnet-capabilities.html)</sub>
 
 # 9. API & Wire Contract + API-First Client Parity
 
@@ -7,7 +7,7 @@ Celnet is not a thin challenger closing gaps — it is a functionally complete, 
 What runs over that contract is the *full* product catalogue — vanilla, the complete first-generation exotics, structured and path-dependent products, American/Bermudan early exercise, correlated multi-asset baskets, and an LSV booking model — all on the one wire, reachable from all five surfaces, with bit-identical values proven by `docs/CLIENT-PARITY-MATRIX.md`.
 
 ![API-first client parity: one contract, every surface](../assets/celnet-capabilities/fig-02-api-first-parity.png)
-*Figure 9.1 — One contract, every surface. The GUI, Rust SDK, CLI, and Excel add-in are peers over the same five service families (Pricing / Quote / StreamSession / Risk / Surface); a value is identical wherever it is read, across both the binary gRPC edge and the byte-identical WebSocket JSON mirror.*
+*Figure 9.1 ([index](../CELNET-CAPABILITIES.md#figure-index)) — One contract, every surface. The GUI, Rust SDK, CLI, and Excel add-in are peers over the same five service families (Pricing / Quote / StreamSession / Risk / Surface); a value is identical wherever it is read, across both the binary gRPC edge and the byte-identical WebSocket JSON mirror.*
 
 ### 9.1 The five service families
 
@@ -87,12 +87,12 @@ The StreamSession is a single bidirectional channel that fans out to many subscr
 - **Idempotent** — a token is single-use; a duplicate or already-consumed Execute is rejected (`REASON_ALREADY_CONSUMED`), so a retransmit can never double-deal.
 
 ![StreamSession lifecycle and click-to-trade token flow](../assets/celnet-capabilities/fig-11-streamsession-clicktrade.png)
-*Figure 9.2 — The multiplex StreamSession: many price + market-series subscriptions over one channel, sequence-gap Resync, in-place Modify, Heartbeat observability (conflation drops + p50/p99/p99.9), and the keyed-MAC click-to-trade token with last-look and idempotent Execute.*
+*Figure 9.2 ([index](../CELNET-CAPABILITIES.md#figure-index)) — The multiplex StreamSession: many price + market-series subscriptions over one channel, sequence-gap Resync, in-place Modify, Heartbeat observability (conflation drops + p50/p99/p99.9), and the keyed-MAC click-to-trade token with last-look and idempotent Execute.*
 
 The trader sees this as a single confident gesture: click a streamed price, get a last-look response, and have the deal confirmed — or cleanly declined — with no ambiguity about which market was dealt.
 
 ![Click-to-trade last-look response in the live stream blotter](../assets/celnet-capabilities/shot-08-clicktrade-lastlook.png)
-*Figure 9.3 — Click-to-trade in the live blotter: a lifted line returns a last-look response bound to the exact streamed price.*
+*Figure 9.3 ([index](../CELNET-CAPABILITIES.md#figure-index)) — Click-to-trade in the live blotter: a lifted line returns a last-look response bound to the exact streamed price.*
 
 ### 9.4 The byte-identical WebSocket mirror
 
@@ -136,5 +136,7 @@ A capability ships once, in the contract, and every surface gains it in lockstep
 
 > **Honest boundary.** This chapter describes the in-repo contract and its clients. Absolute cross-host wire p99 / kernel-bypass NIC latency and the §11 absolute wire-latency SLOs are **deploy-gated** — in-repo proof is the §1.2 in-core truth-gate plus loopback benches only. The WebSocket-mirror and parity guarantees are proven on localhost; cross-host transport is a deploy target. **XVA (CVA/DVA/FVA) is internal-only with no client or wire surface** (synthetic netting sets; live CSAs / collateral / wrong-way risk are deploy-gated). MC-priced products (TARF, accumulator, discrete lookback, clamped cliquet, basket, LSM American) carry a `price_std_error` and are never labelled machine-precision — that bar is reserved for analytic / PDE / golden-gated products.
 
+**See also:** [§10 Excel Integration](10-excel-integration.md) is the same contract rendered as worksheet functions; [§4 Quant Coverage](04-quant-coverage.md) is the catalogue carried by the 19-arm `Instrument`; [§11 The Trader GUI](11-trader-gui.md) is the richest client of this contract.
+
 ---
-<sub>[← Scalability & Scale-Out](08-scalability-scaleout.md)  ·  **[Contents](../CELNET-CAPABILITIES.md)**  ·  [Excel Integration →](10-excel-integration.md)</sub>
+<sub>[← Prev: Scalability & Scale-Out](08-scalability-scaleout.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: Excel Integration →](10-excel-integration.md) · [Showcase ↗](../celnet-capabilities.html)</sub>

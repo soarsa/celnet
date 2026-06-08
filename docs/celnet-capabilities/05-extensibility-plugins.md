@@ -1,4 +1,4 @@
-<sub>**[Celnet Capabilities](../CELNET-CAPABILITIES.md)** › Extensibility — The Open Quant SDK & Plugin Host</sub>
+<sub>[← Prev: Quant & Pricing Methodology Coverage](04-quant-coverage.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: Risk Management →](06-risk-management.md) · [Showcase ↗](../celnet-capabilities.html)</sub>
 
 # 5. Extensibility — The Open Quant SDK & Plugin Host
 
@@ -7,7 +7,7 @@ A pricing platform is only as good as the models a desk can put inside it. Celne
 This is the edge the deep-catalogue incumbents structurally lack: a desk extends an already-deep catalogue with private code that is sandboxed, deterministic and hot-loadable, behind exactly one current contract.
 
 ![Tiered plugin host — one frozen contract; the native and WebAssembly tiers ship today, with signed-shared-object and OS-sandbox tiers designed to slot in behind the same contract.](../assets/celnet-capabilities/fig-05-plugin-tiers.png)
-*The Open Quant SDK is a single frozen contract; the host routes a registered model to the tier its trust level warrants. The native (Tier-0) and WebAssembly-sandbox (Tier-2) tiers are shipped and gated today; the signed-shared-object and OS-sandbox tiers are designed and seamed behind the identical contract, proven at deploy.*
+*Fig 5 ([index](../CELNET-CAPABILITIES.md#figure-index)) — The Open Quant SDK is a single frozen contract; the host routes a registered model to the tier its trust level warrants. The native (Tier-0) and WebAssembly-sandbox (Tier-2) tiers are shipped and gated today; the signed-shared-object and OS-sandbox tiers are designed and seamed behind the identical contract, proven at deploy.*
 
 ### 5.1 The Open Quant SDK — one contract, any model
 
@@ -67,5 +67,7 @@ A smile model loaded through the SDK is held to the same standard as the built-i
 
 This is one of Celnet's sharpest lines of differentiation. A closed terminal gives a desk the vendor's models; a modern library gives a desk code but not an engine. Celnet gives both — the desk's own models, running at native speed where they are trusted and under hard, deterministic isolation where they are not, all through one clean, frozen contract — layered over a catalogue that already matches what the front-to-back platforms charge for.
 
+**See also:** [§4 Quant Coverage](04-quant-coverage.md) is the shipped catalogue the SDK extends; [§14 Engineering Rigor](14-engineering-rigor.md) details the deterministic-replay and arbitrage self-check guarantees behind the plugin tiers.
+
 ---
-<sub>[← Quant & Pricing Methodology Coverage](04-quant-coverage.md)  ·  **[Contents](../CELNET-CAPABILITIES.md)**  ·  [Risk Management →](06-risk-management.md)</sub>
+<sub>[← Prev: Quant & Pricing Methodology Coverage](04-quant-coverage.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: Risk Management →](06-risk-management.md) · [Showcase ↗](../celnet-capabilities.html)</sub>
