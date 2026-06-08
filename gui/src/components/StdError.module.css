@@ -1,0 +1,6 @@
+.stdError {
+  display: inline-block;
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+  letter-spacing: 0.02em;
+}

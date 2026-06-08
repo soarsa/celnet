@@ -46,15 +46,15 @@ test.describe("Celnet GUI — axe a11y (zero serious/critical)", () => {
     await expectNoSeriousA11y(page, "Cube heatmap view");
   });
 
-  test("Universe navigator (virtualised listbox) has no serious/critical a11y violations", async ({
+  test("Scope switcher pair-universe leaf (virtualised listbox) has no serious/critical a11y violations", async ({
     page,
   }) => {
     await openLive(page);
     await openUniverseNavigator(page);
-    // The overlay renders synchronously off the in-memory universe; a short
+    // The leaf view renders synchronously off the in-memory universe; a short
     // settle lets the listbox rows lay out before the scan.
     await page.waitForTimeout(500);
-    await expectNoSeriousA11y(page, "Universe navigator");
+    await expectNoSeriousA11y(page, "Scope switcher pair leaf");
   });
 
   test("Keyboard shortcuts overlay has no serious/critical a11y violations", async ({ page }) => {

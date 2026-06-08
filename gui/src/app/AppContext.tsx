@@ -7,6 +7,7 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -31,8 +32,34 @@ import {
 } from "../data/seed";
 import { buildUniverse, pairId, type Universe } from "../lib/universe";
 import { useStreamSession, type StreamApi } from "../hooks/useStreamSession";
+import {
+  currentLevel,
+  FIRM_SCOPE_ROOT,
+  INITIAL_SCOPE,
+  scopeReducer,
+  type ScopeGroupBy,
+  type ScopeLevel,
+  type ScopeNode,
+  type ScopeState,
+} from "../lib/scope";
+import {
+  decodeView,
+  encodeView,
+  loadSavedViews,
+  storeSavedViews,
+  type AnalyticsSelection,
+  type SavedView,
+  type ViewState,
+} from "../lib/savedViews";
+import type { Density } from "../design/density";
 
 export type WorkspaceId = "ticket" | "stream" | "surface" | "risk" | "book";
+
+// Re-export the scope vocabulary from its owning module so existing consumers
+// (riskView, riskScope tests) import it from AppContext unchanged — the types now
+// have ONE definition in `lib/scope.ts` (zero legacy: no parallel scope type).
+export type { ScopeLevel, ScopeNode, ScopeGroupBy };
+export { FIRM_SCOPE_ROOT };
 
 export interface TicketSeed {
   pair: CcyPair;
@@ -43,24 +70,14 @@ export interface TicketSeed {
 
 // --- scope (P0-6: entitlement-ready "what slice of the firm" seam) ----------
 
-/** The organizational level a scope crumb sits at, firm-down. */
-export type ScopeLevel = "firm" | "desk" | "book" | "pair";
-
-/** One node on the scope path (a breadcrumb crumb). */
-export interface ScopeNode {
-  level: ScopeLevel;
-  label: string;
-}
-
-/** A secondary grouping dimension for scoped views (book/blotter aggregation). */
-export type ScopeGroupBy = "none" | "desk" | "book" | "pair";
-
 /**
  * The active scope: WHO is looking (principal) and WHAT slice (path + groupBy).
  * Today `principal` is the literal `"grant-all"` — the scope filters NOTHING, but
  * every data path flows through it so a real entitlement predicate slots in later
  * with zero rework. The root path is always `[{level:"firm"}]` meaning "all desks
- * · all books · all pairs"; drilling appends desk/book/pair crumbs.
+ * · all books · all pairs"; drilling appends desk/book/pair crumbs. The path +
+ * groupBy algebra lives in `lib/scope.ts` (the pure reducer); this wraps it with
+ * the entitlement principal so downstream readers see one `ScopeContext`.
  */
 export interface ScopeContext {
   /** Entitlement principal. `"grant-all"` today (no filtering); a real predicate later. */
@@ -71,8 +88,19 @@ export interface ScopeContext {
   groupBy: ScopeGroupBy;
 }
 
-/** The firm root — "all desks · all books · all pairs". */
-export const FIRM_SCOPE_ROOT: ScopeNode = { level: "firm", label: "Firm" };
+/** The smile-model ids a saved view may carry (guards the URL-recall path). */
+const SMILE_MODELS: readonly SmileModel[] = [
+  "MARKET_HEDGE",
+  "STOCHASTIC_VOL",
+  "PARAMETRIC",
+  "PARAMETRIC_SURFACE",
+  "EXTENDED_SURFACE",
+];
+
+/** Type guard: is `s` a known smile model (so a recalled snapshot is honoured)? */
+function isSmileModel(s: string): s is SmileModel {
+  return (SMILE_MODELS as readonly string[]).includes(s);
+}
 
 /** A shared selection: the instrument under focus and a human label for it. */
 export interface Selection {
@@ -105,9 +133,16 @@ interface AppState {
    * "where I was", not "where I am".
    */
   recents: readonly string[];
-  /** The pair-universe navigator overlay open state (toolbar-launched). */
-  navigatorOpen: boolean;
-  setNavigatorOpen: (open: boolean) => void;
+  /**
+   * The scope/underlier switcher open state. GW1-S3 absorbed the four redundant
+   * pair affordances (PairMenu · the "Pairs" button · the ⌘K pair list · PairStrip
+   * · the UniverseNavigator overlay) into ONE breadcrumb-scope control whose
+   * TERMINAL case is underlier selection — opening this switcher is the leaf drill
+   * (a re-homed UniverseNavigator, no longer a parallel toolbar overlay). Bound to
+   * ⌘P (distinct from ⌘K's command index) and to clicking the pair crumb.
+   */
+  scopeSwitcherOpen: boolean;
+  setScopeSwitcherOpen: (open: boolean) => void;
   stream: StreamApi;
   surface: MarkedSurface | null;
   /**
@@ -126,12 +161,45 @@ interface AppState {
   paletteOpen: boolean;
   setPaletteOpen: (open: boolean) => void;
   /**
+   * The active density (GW0 axis). Read-only VALUE provided by the boot wiring
+   * (`App.tsx` owns the density hook) so components consume the value through
+   * context WITHOUT importing the hook — the cascade-disjointness contract: only
+   * the attribute + tokens move in CSS, and the single JS touch-point is the boot.
+   */
+  density: Density;
+  /** Toggle the density axis (the boot-owned setter, threaded through context). */
+  toggleDensity: () => void;
+  /**
    * The active scope (P0-6). Entitlement-ready: `grant-all` today, so it filters
-   * nothing, but data flows through it. Default path = `[Firm]`.
+   * nothing, but data flows through it. Default path = `[Firm]`. The `groupBy` is
+   * now REAL (driven by the scope reducer), no longer hardwired `"none"`.
    */
   scope: ScopeContext;
-  /** Set the scope drill path (e.g. truncate to an ancestor crumb). */
-  setScopePath: (path: ScopeNode[]) => void;
+  /** Drill DOWN one ladder level, appending `label` as the new tail crumb. */
+  drillScopeDown: (label: string) => void;
+  /** Drill UP to the ancestor at `depth` crumbs (1 = firm root). */
+  drillScopeUp: (depth: number) => void;
+  /** Reset the scope to the firm root (and clear group-by). */
+  resetScope: () => void;
+  /** Pin the secondary group-by axis (order-independent; never touches the path). */
+  setScopeGroupBy: (groupBy: ScopeGroupBy) => void;
+  // --- saved views (GW1-S4) -------------------------------------------------
+  /** The persisted named views (localStorage-mirrored). */
+  savedViews: readonly SavedView[];
+  /** Capture the current (workspace, scope, analytics) triple under a name. */
+  saveView: (name: string) => void;
+  /** Recall a saved view by id (restores workspace + scope + analytics). */
+  recallView: (id: string) => void;
+  /** Delete a saved view by id. */
+  deleteView: (id: string) => void;
+  /** The current reproducible view state (the triple a save/URL captures). */
+  viewState: ViewState;
+  /** Apply a decoded view state (used by the URL-recall path). */
+  applyViewState: (state: ViewState) => void;
+  /** The analytics selection the inspector strips capture into a saved view. */
+  analytics: AnalyticsSelection;
+  /** Merge a partial analytics selection (a lane setting its own axis). */
+  setAnalytics: (patch: AnalyticsSelection) => void;
   /**
    * The shared selection (P0-5): the instrument the Risk workspace analyses,
    * driven by the Book/Ticket lanes. `null` until something is selected — Risk
@@ -152,7 +220,24 @@ export function useApp(): AppState {
   return v;
 }
 
-export function AppProvider({ children }: { children: React.ReactNode }): React.ReactElement {
+const NOOP = (): void => {};
+
+export function AppProvider({
+  children,
+  // The density value + setter are OWNED by `App.tsx`'s boot hook (the one JS
+  // touch-point for the cascade axis) and threaded in. They default to the
+  // comfortable resting state + a no-op so a test/embedding can mount the provider
+  // without re-owning the density hook — the provider itself never reads density
+  // in JS (the cascade-disjointness contract).
+  density = "comfortable",
+  toggleDensity = NOOP,
+}: {
+  children: React.ReactNode;
+  /** The active density, owned by `App.tsx`'s boot hook (the one JS touch-point). */
+  density?: Density;
+  /** Toggle the density axis (the boot-owned setter). */
+  toggleDensity?: () => void;
+}): React.ReactElement {
   // The transport is selected once at the app root: the LIVE WebSocket mirror
   // against celnet-server by default (every number is the server's), or the
   // explicit offline in-app mock when `?mock` is set (src/data/transportConfig.ts).
@@ -163,7 +248,7 @@ export function AppProvider({ children }: { children: React.ReactNode }): React.
   const [workspace, setWorkspace] = useState<WorkspaceId>("stream");
   const [pairIndex, setPairIndex] = useState(0);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [navigatorOpen, setNavigatorOpen] = useState(false);
+  const [scopeSwitcherOpen, setScopeSwitcherOpen] = useState(false);
   // Favourites + recents are persisted in-memory for the session (no fake
   // backend store — an honest client-side preference until a server prefs
   // service exists). `recents` is most-recent-first, excluding the active pair.
@@ -173,8 +258,14 @@ export function AppProvider({ children }: { children: React.ReactNode }): React.
   // The smile-calibration model the surface is marked under (default = the desk's
   // market-hedge construction; the server's default when the field is absent).
   const [surfaceModel, setSurfaceModelState] = useState<SmileModel>("MARKET_HEDGE");
-  // Scope (P0-6): default to the firm root — "all desks · all books · all pairs".
-  const [scopePath, setScopePath] = useState<ScopeNode[]>([FIRM_SCOPE_ROOT]);
+  // Scope (P0-6): the pure drill path + group-by state, owned by `lib/scope.ts`'s
+  // reducer. Default = the firm root, no secondary grouping.
+  const [scopeState, setScopeState] = useState<ScopeState>(INITIAL_SCOPE);
+  // The analytics selection the inspector strips capture (per-lane axes). A flat
+  // bag merged by `setAnalytics`; restored verbatim by a recalled/URL view.
+  const [analytics, setAnalyticsState] = useState<AnalyticsSelection>({});
+  // The persisted named views (localStorage-mirrored via savedViews.ts).
+  const [savedViews, setSavedViews] = useState<readonly SavedView[]>(() => loadSavedViews());
   // Shared selection (P0-5): null until a lane selects/drills; Risk falls back to
   // its seeded default so first load still renders a structure.
   const [selected, setSelected] = useState<Selection | null>(null);
@@ -273,6 +364,17 @@ export function AppProvider({ children }: { children: React.ReactNode }): React.
     const leaving = pairId(pairCtx.pair);
     setRecents((prev) => [leaving, ...prev.filter((id) => id !== leaving)].slice(0, 6));
     setPairIndex(idx);
+    // FX terminal == active pair: when the scope is drilled to a pair crumb, keep
+    // that crumb in lock-step with the active underlier (the round-trip invariant
+    // the path algebra asserts). When the scope is above the pair level, leave the
+    // path alone — selecting a pair from the watchlist doesn't force a drill.
+    setScopeState((s) => {
+      if (currentLevel(s) !== "pair") return s;
+      const label = `${pair.base}/${pair.quote}`;
+      const path = [...s.path];
+      path[path.length - 1] = { level: "pair", label };
+      return { path, groupBy: s.groupBy };
+    });
   };
 
   const toggleFavourite = (pair: CcyPair) => {
@@ -285,10 +387,126 @@ export function AppProvider({ children }: { children: React.ReactNode }): React.
     });
   };
 
+  // The active scope: the reducer's path + group-by, wrapped with the (grant-all)
+  // entitlement principal. `groupBy` is now REAL — driven by the scope reducer.
   const scope: ScopeContext = useMemo(
-    () => ({ principal: "grant-all", path: scopePath, groupBy: "none" }),
-    [scopePath],
+    () => ({ principal: "grant-all", path: scopeState.path, groupBy: scopeState.groupBy }),
+    [scopeState],
   );
+
+  // Scope drill API — thin dispatchers over the pure `scopeReducer`.
+  const drillScopeDown = useCallback(
+    (label: string) => setScopeState((s) => scopeReducer(s, { type: "drillDown", label })),
+    [],
+  );
+  const drillScopeUp = useCallback(
+    (depth: number) => setScopeState((s) => scopeReducer(s, { type: "drillUp", depth })),
+    [],
+  );
+  const resetScope = useCallback(() => setScopeState((s) => scopeReducer(s, { type: "reset" })), []);
+  const setScopeGroupBy = useCallback(
+    (groupBy: ScopeGroupBy) => setScopeState((s) => scopeReducer(s, { type: "setGroupBy", groupBy })),
+    [],
+  );
+
+  const setAnalytics = useCallback(
+    (patch: AnalyticsSelection) => setAnalyticsState((a) => ({ ...a, ...patch })),
+    [],
+  );
+
+  // The reproducible view triple a save / URL captures: where + scope + analytics.
+  // The active smile model is folded into the analytics snapshot so a saved
+  // Surface/Cube view restores its calibration family too.
+  const viewState: ViewState = useMemo(
+    () => ({
+      workspace,
+      scope: scopeState,
+      analytics: { ...analytics, model: surfaceModel },
+    }),
+    [workspace, scopeState, analytics, surfaceModel],
+  );
+
+  // Apply a decoded view state (URL recall / saved-view recall). Restores the
+  // workspace, the scope path+group-by, and the analytics selection; if the
+  // snapshot carried a model it re-selects it (which re-marks the live surface).
+  const applyViewState = useCallback(
+    (state: ViewState) => {
+      setWorkspace(state.workspace);
+      setScopeState(state.scope);
+      const { model, ...rest } = state.analytics;
+      setAnalyticsState(rest);
+      if (model !== undefined && isSmileModel(model)) setSurfaceModelState(model);
+    },
+    [],
+  );
+
+  const persistViews = useCallback((views: SavedView[]) => {
+    setSavedViews(views);
+    storeSavedViews(views);
+  }, []);
+
+  const saveView = useCallback(
+    (name: string) => {
+      const trimmed = name.trim();
+      if (trimmed.length === 0) return;
+      const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      const entry: SavedView = { id, name: trimmed, state: viewState };
+      persistViews([...savedViews, entry]);
+    },
+    [viewState, savedViews, persistViews],
+  );
+
+  const recallView = useCallback(
+    (id: string) => {
+      const v = savedViews.find((s) => s.id === id);
+      if (v) applyViewState(v.state);
+    },
+    [savedViews, applyViewState],
+  );
+
+  const deleteView = useCallback(
+    (id: string) => persistViews(savedViews.filter((s) => s.id !== id)),
+    [savedViews, persistViews],
+  );
+
+  // URL recall (GW1-S4): on first mount, if the URL carries any saved-view param,
+  // restore that exact (workspace, scope, analytics) triple — a pasted link IS the
+  // view. Runs once (a ref guards re-application on subsequent renders); the
+  // transport params (mock/ws/transport) are untouched.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const hasViewParam =
+      params.has("view") ||
+      params.has("scope") ||
+      params.has("group") ||
+      params.has("model") ||
+      params.has("meas") ||
+      params.has("axes") ||
+      params.has("trend");
+    if (hasViewParam) applyViewState(decodeView(params));
+    // Intentionally mount-only: later URL writes are driven by `viewState` below,
+    // and re-decoding on every render would fight the user's live navigation.
+    // `applyViewState` is a stable useCallback, so an empty dep list is correct.
+  }, [applyViewState]);
+
+  // Live URL mirror (GW1-S4): keep the address bar in sync with the current view
+  // so a bookmark/copy captures the live state. We MERGE the view params over the
+  // existing query (preserving transport params) and `replaceState` (no history
+  // spam). The canonical view query is computed by the shared codec.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const current = new URLSearchParams(window.location.search);
+    // Drop the prior view params, then write the fresh ones — so a field that is
+    // no longer present (e.g. group-by relaxed to none) is removed from the URL.
+    for (const key of ["view", "scope", "group", "model", "meas", "axes", "trend"]) {
+      current.delete(key);
+    }
+    for (const [k, v] of encodeView(viewState)) current.set(k, v);
+    const qs = current.toString();
+    const next = `${window.location.pathname}${qs.length > 0 ? `?${qs}` : ""}${window.location.hash}`;
+    window.history.replaceState(window.history.state, "", next);
+  }, [viewState]);
 
   const drillToRisk = (instrument: Instrument, label: string) => {
     setSelected({ instrument, label });
@@ -307,8 +525,8 @@ export function AppProvider({ children }: { children: React.ReactNode }): React.
     favourites,
     toggleFavourite,
     recents,
-    navigatorOpen,
-    setNavigatorOpen,
+    scopeSwitcherOpen,
+    setScopeSwitcherOpen,
     stream,
     surface,
     remarkSurface,
@@ -316,8 +534,21 @@ export function AppProvider({ children }: { children: React.ReactNode }): React.
     setSurfaceModel,
     paletteOpen,
     setPaletteOpen,
+    density,
+    toggleDensity,
     scope,
-    setScopePath,
+    drillScopeDown,
+    drillScopeUp,
+    resetScope,
+    setScopeGroupBy,
+    savedViews,
+    saveView,
+    recallView,
+    deleteView,
+    viewState,
+    applyViewState,
+    analytics,
+    setAnalytics,
     selected,
     setSelected,
     drillToRisk,

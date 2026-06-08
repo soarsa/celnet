@@ -66,7 +66,7 @@ describe("basket instrument → wire encoding (proto field-25 product contract)"
       vol: 0.11,
       r_for: 0.015,
     });
-    expect(legs[1].r_for).toBe(0.02);
+    expect(legs[1]!.r_for).toBe(0.02);
 
     expect(basket["correlations"]).toEqual([1.0, 0.4, 0.4, 1.0]);
     expect(basket["option_type"]).toBe(e.optionType.toWire("CALL"));
