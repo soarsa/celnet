@@ -173,8 +173,19 @@ Status legend: OPEN / IN-PROGRESS / DONE / ENV (deploy-bound, not a gap). Each i
   independent strip replication; fader vs code-disjoint MC within stderr. Effort XL. **OPEN
   (P3, behind asset-class superset).**
 
-## ENV — deploy-bound (NOT gaps; validated at deploy, seamed + ADR'd in-repo)
-- NVIDIA/CUDA absolute throughput, ≤50ms exotic, Workload-A/B absolute numbers (G8 deploy-gate).
+## Deliverables (operator-facing artifacts)
+
+- **[DOCS] deliverable/capabilities-pdf** — Produce the **perfectly-styled professional PDF**
+  from `docs/celnet-capabilities.html` (the comprehensive capabilities document — full FX +
+  multi-asset + SOTA coverage, all ~30 visual assets base64-embedded). Approach: Playwright
+  print-to-PDF off the document's `@media print` stylesheet (A4 or US-Letter, page breaks per
+  section, `figure { break-inside: avoid }`, embedded webfonts, the Celer-branded cover,
+  no clipped figures or horizontal overflow). Run as a dynamic workflow AFTER: (a) the
+  visual-asset set is complete + rendered + uncut-checked, (b) all assets base64-embedded into a
+  self-contained HTML, (c) **operator review** of the HTML. Oracle: visual proof — every section
+  + every visual present, no clipping, professional print layout; the committed
+  `tools/check-figures-uncut.mjs` + `check-html-responsive.mjs` green on the source.
+  Effort S. **OPEN** (gated on operator review of the HTML — see the capabilities lane).
 - Cross-host wire p99 / inter-DC SLO (loopback proves compute+framing+quorum only).
 - Live LP-panel connectivity + regulated-venue / MAS-RMO status (multi-dealer RFQ workflow).
 - Live crypto/metal NDF fixing VALUES (only fixing identity + convention are in-repo).
