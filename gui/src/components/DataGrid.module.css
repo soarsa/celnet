@@ -1,0 +1,114 @@
+/* DataGrid — the shared accessible virtualised grid (GW0-S2). The visual idiom
+ * mirrors the StreamWorkspace blotter (sticky header + scrolling body, uniform
+ * grid track) but the markup carries a real WAI-ARIA `role=grid` keyboard model.
+ * Row height comes from the density token axis so compact/comfortable cascade. */
+
+.grid {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  outline: none;
+}
+
+/* The vertical scroll container the row virtualiser windows. */
+.body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  position: relative;
+}
+
+/* The horizontal scroll container; column virtualisation pads the off-screen
+ * extent left/right. Header + rows share one inner track so columns align. */
+.viewport {
+  overflow-x: auto;
+}
+
+.headerRow,
+.row,
+.groupRow {
+  display: flex;
+  align-items: center;
+  height: var(--row-h, 30px);
+  box-sizing: border-box;
+}
+
+.headerRow {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-elevated, #1b1d22);
+  border-bottom: var(--hairline);
+  font-size: var(--type-micro);
+  color: var(--text-secondary);
+}
+
+.cell,
+.headerCell {
+  flex: 0 0 auto;
+  padding: 0 var(--space-3, 8px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The active (roving) cell gets a visible focus ring (the only cell with
+ * tabindex=0). High-contrast appearance inherits the token. */
+.cell:focus,
+.headerCell:focus,
+.groupRow:focus {
+  outline: 2px solid var(--accent, #6c7bff);
+  outline-offset: -2px;
+}
+
+.alignLeft {
+  justify-content: flex-start;
+}
+.alignCenter {
+  justify-content: center;
+}
+.alignRight {
+  justify-content: flex-end;
+}
+
+.sortBtn {
+  all: unset;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+}
+
+.unit {
+  color: var(--text-tertiary);
+  margin-left: 4px;
+}
+
+/* Group header row — collapsible; carries aria-expanded. */
+.groupRow {
+  background: var(--bg-inset, #16181d);
+  font-size: var(--type-micro);
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 0 var(--space-3, 8px);
+  gap: 6px;
+}
+
+.groupCount {
+  color: var(--text-tertiary);
+}
+
+.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: var(--space-7, 32px);
+  color: var(--text-tertiary);
+  font-size: var(--type-callout);
+}

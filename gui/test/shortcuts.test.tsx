@@ -58,10 +58,13 @@ describe("shortcuts source-of-truth", () => {
     const byKeys = (keys: string[]): boolean =>
       SHORTCUTS.some((s) => s.keys.join("") === keys.join(""));
     expect(byKeys(["⌘", "K"])).toBe(true); // command palette
-    expect(byKeys(["⌘", "B"])).toBe(true); // pair navigator
+    expect(byKeys(["⌘", "P"])).toBe(true); // scope / underlier switcher (GW1)
     expect(byKeys(["?"])).toBe(true); // this cheatsheet
     expect(byKeys(["⌘", "1"])).toBe(true); // workspace jump
     expect(byKeys(["⌘", "5"])).toBe(true); // workspace jump
+    // GW1 absorbed the pair navigator into the ONE scope control: the dead ⌘B
+    // pair-browse chord is GONE (no advertised-but-unhandled key).
+    expect(byKeys(["⌘", "B"])).toBe(false);
   });
 });
 

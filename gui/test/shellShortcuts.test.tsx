@@ -82,20 +82,22 @@ describe("Shell — `?` keyboard cheatsheet discovery", () => {
     expect(dialog()).not.toBeNull();
   });
 
-  it("the command palette offers a 'Keyboard shortcuts' action that opens it", async () => {
+  it("the command palette offers a cheatsheet action that opens it", async () => {
     await renderShell();
     // ⌘K opens the palette.
     act(() => {
       fireEvent.keyDown(window, { key: "k", metaKey: true });
     });
     // The palette fuzzy-filters to a top-N result list; type to surface the action.
+    // The action is the registry's "help" command, labelled "Show the keyboard
+    // cheatsheet" (GW1: the palette renders the single command registry).
     const palette = await screen.findByRole("dialog", { name: "command palette" });
     const field = palette.querySelector("input");
     expect(field).not.toBeNull();
     act(() => {
-      fireEvent.change(field as HTMLInputElement, { target: { value: "keyboard shortcuts" } });
+      fireEvent.change(field as HTMLInputElement, { target: { value: "cheatsheet" } });
     });
-    const action = await screen.findByText("Keyboard shortcuts");
+    const action = await screen.findByText("Show the keyboard cheatsheet");
     act(() => {
       fireEvent.mouseDown(action);
     });

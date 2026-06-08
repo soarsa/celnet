@@ -383,3 +383,21 @@
 .neg {
   color: var(--offer);
 }
+
+/* The InspectorStrip's density toggle docked in the breakdown panel header. */
+.inspectorBtn {
+  padding: 1px var(--space-2);
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  color: var(--text-secondary);
+  font-size: var(--type-micro);
+  transition: border-color 140ms var(--ease-out), color 140ms var(--ease-out);
+}
+.inspectorBtn:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+.inspectorBtn[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}

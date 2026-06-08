@@ -70,12 +70,26 @@ export async function gotoCube(page: Page): Promise<Locator> {
 }
 
 /**
- * Open the pair-universe navigator overlay (the virtualised, searchable listbox)
- * via its title-bar "Pairs" button, and wait for the listbox to render. This is
- * the data-dense overlay where listbox/option a11y issues hide.
+ * Open the scope switcher's pair-universe LEAF view (the virtualised, searchable
+ * listbox) — GW1 absorbed the standalone "Pairs" overlay into the ONE breadcrumb
+ * scope control. From the firm root the scope drills firm → desk → book → pair;
+ * to reach the pair leaf directly we click the active pair crumb (when present) or
+ * the drill button, then drill down to the pair listbox. The simplest stable path
+ * to the pair-universe listbox is the ⌘P scope/underlier switcher, then drilling
+ * down to the terminal pair level. This is the data-dense listbox where option
+ * a11y issues hide.
  */
 export async function openUniverseNavigator(page: Page): Promise<Locator> {
-  await page.getByRole("button", { name: "browse the pair universe" }).click();
+  // Drill down to the pair (terminal) level: firm → desk → book → pair. Each drill
+  // step opens the switcher and selects the first option, descending one level.
+  for (const level of ["desk", "book"] as const) {
+    await page.getByRole("button", { name: `drill into a ${level}` }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("option").first().click();
+  }
+  // Now the tail is a book → the drill button enters the pair leaf (the universe).
+  await page.getByRole("button", { name: "drill into a pair" }).click();
   const dialog = page.getByRole("dialog", { name: "Pairs" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole("listbox", { name: "currency pairs" })).toBeVisible();

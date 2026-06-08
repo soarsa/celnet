@@ -1,0 +1,97 @@
+.root {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: none;
+}
+
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-brand);
+  font-size: var(--type-callout);
+}
+
+.crumbWrap {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.sep {
+  color: var(--text-tertiary);
+  opacity: 0.6;
+}
+
+.crumb {
+  color: var(--text-secondary);
+  border-radius: var(--r-sm);
+  padding: 1px var(--space-2);
+  transition: color 140ms var(--ease-out), background-color 140ms var(--ease-out);
+}
+.crumb:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.current {
+  color: var(--text-primary);
+  font-weight: var(--weight-emphasis);
+}
+
+.currentButton {
+  border-radius: var(--r-sm);
+  padding: 1px var(--space-2);
+  color: var(--brand);
+  transition: background-color 140ms var(--ease-out);
+}
+.currentButton:hover {
+  background: oklch(from var(--brand) l c h / 0.12);
+}
+
+.drill {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--text-tertiary);
+  border: var(--hairline);
+  border-radius: var(--r-sm);
+  padding: 1px var(--space-2);
+  font-size: var(--type-micro);
+  transition: color 140ms var(--ease-out), border-color 140ms var(--ease-out);
+}
+.drill:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.drillLabel {
+  letter-spacing: 0.02em;
+}
+
+.implied {
+  margin-left: var(--space-2);
+  color: var(--text-tertiary);
+  font-size: var(--type-micro);
+  letter-spacing: 0.02em;
+}
+
+.groupBy {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--type-micro);
+}
+.groupByLabel {
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.groupBySelect {
+  font: inherit;
+  color: var(--text-secondary);
+  background: var(--bg-inset);
+  border: var(--hairline);
+  border-radius: var(--r-sm);
+  padding: 1px var(--space-2);
+}

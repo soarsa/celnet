@@ -1,28 +1,23 @@
 /**
- * shortcuts.ts — the SINGLE source-of-truth for the GUI's keyboard grammar.
+ * shortcuts.ts — the keyboard-cheatsheet PROJECTION of the single command registry.
  *
- * The product is keyboard-first (GUI-DESIGN principle 6): the command palette,
- * workspace jumps, pair browse, and the in-context overlay/dialog grammar all
- * live here so the discoverable cheatsheet (`ShortcutsOverlay`) and the live
- * key handler (`Shell`) read the EXACT same map — no drift between what the app
- * does and what it advertises.
+ * GW1 made `lib/commands.ts` the ONE source-of-truth for the keyboard grammar (the
+ * chords the Shell dispatches AND advertises). This module is now a thin projection
+ * OF that registry for the discoverable `?` cheatsheet (`ShortcutsOverlay`): it maps
+ * the registry's chord-bearing commands into the `Shortcut` rows the overlay renders.
  *
- * Each binding carries the key tokens (rendered as <kbd>s), a human label, and a
- * group for sectioning the cheatsheet. The `keys` are display tokens — `⌘` is the
- * meta/ctrl chord the Shell binds (metaKey || ctrlKey), shown as `⌘` on every
- * platform for a single canonical legend (matching the rail/title-bar hints).
- *
- * Provenance of each binding (so the cheatsheet never overclaims):
- *   • ⌘K / ⌘P / ⌘B / ?  — `Shell.tsx` global key handler.
- *   • ⌘1–5              — `Shell.tsx` (RAIL workspace jumps).
- *   • ↩ / ⌘↩            — `TicketWorkspace.tsx` (request quote / accept side).
- *   • ↑↓ / ↩ / Esc / ⌘D — `CommandPalette.tsx` + `UniverseNavigator.tsx` grammar.
+ * Because the cheatsheet is GENERATED from the registry, the advertised bindings can
+ * never drift from the honoured ones — there is no second list to keep in sync. The
+ * overlay-internal grammar (↑↓ / ↵ / Esc inside the palette & scope switcher) is
+ * documented here too, as those keys are component-local (not global chords).
  */
 
-/** A logical grouping of related shortcuts in the cheatsheet. */
-export type ShortcutGroup = "Global" | "Workspaces" | "Ticket" | "Overlays";
+import { cheatsheet, type CommandGroup } from "./commands";
 
-/** One keyboard binding: the chord tokens, what it does, and its group. */
+/** A logical grouping of related shortcuts in the cheatsheet. */
+export type ShortcutGroup = CommandGroup | "Overlays";
+
+/** One keyboard binding row: the chord tokens, its action label, and its group. */
 export interface Shortcut {
   /** Stable id (test/aria keying). */
   id: string;
@@ -35,39 +30,35 @@ export interface Shortcut {
 }
 
 /**
- * The complete binding grammar, in cheatsheet display order. This mirrors the
- * handlers in `Shell.tsx` (⌘K / ⌘1–5 / ⌘P / ⌘B / ?), the overlay/dialog grammar
- * shared by the CommandPalette + UniverseNavigator (↑↓ / ↵ / Esc / ⌘D), and the
- * ticket's price/confirm chord (⌘↩ / Esc) — every advertised binding is one the
- * product actually honours.
+ * The overlay-LOCAL grammar — keys honoured INSIDE the command palette and the
+ * scope switcher (not global Shell chords, so they aren't in the command registry).
+ * Documented so the cheatsheet is complete; provenance is `CommandPalette.tsx` +
+ * `ScopeSwitcher.tsx`.
  */
-export const SHORTCUTS: readonly Shortcut[] = [
-  // Global.
-  { id: "palette", keys: ["⌘", "K"], label: "Open command palette", group: "Global" },
-  { id: "search", keys: ["⌘", "P"], label: "Search / jump (palette)", group: "Global" },
-  { id: "browse-pairs", keys: ["⌘", "B"], label: "Browse the pair universe", group: "Global" },
-  { id: "help", keys: ["?"], label: "Show this keyboard cheatsheet", group: "Global" },
-  // Workspaces.
-  { id: "ws-ticket", keys: ["⌘", "1"], label: "Go to Ticket", group: "Workspaces" },
-  { id: "ws-stream", keys: ["⌘", "2"], label: "Go to Stream", group: "Workspaces" },
-  { id: "ws-surface", keys: ["⌘", "3"], label: "Go to Surface", group: "Workspaces" },
-  { id: "ws-risk", keys: ["⌘", "4"], label: "Go to Risk", group: "Workspaces" },
-  { id: "ws-book", keys: ["⌘", "5"], label: "Go to Book", group: "Workspaces" },
-  // Ticket.
-  { id: "ticket-request", keys: ["↩"], label: "Request a quote", group: "Ticket" },
-  { id: "ticket-accept", keys: ["⌘", "↩"], label: "Accept the offered side", group: "Ticket" },
-  // Overlays (palette · pair navigator).
+const OVERLAY_SHORTCUTS: readonly Shortcut[] = [
   { id: "ov-move", keys: ["↑", "↓"], label: "Move the highlight", group: "Overlays" },
   { id: "ov-select", keys: ["↩"], label: "Activate the highlight", group: "Overlays" },
-  { id: "ov-fav", keys: ["⌘", "D"], label: "Favourite the pair (navigator)", group: "Overlays" },
+  { id: "ov-fav", keys: ["⌘", "D"], label: "Favourite the pair (switcher)", group: "Overlays" },
   { id: "ov-close", keys: ["Esc"], label: "Close the overlay", group: "Overlays" },
+];
+
+/**
+ * The complete cheatsheet binding list: the global chords PROJECTED from the
+ * command registry, followed by the overlay-local grammar. In display order.
+ */
+export const SHORTCUTS: readonly Shortcut[] = [
+  ...cheatsheet().map(
+    (c): Shortcut => ({ id: c.id, keys: [...c.keys], label: c.label, group: c.group }),
+  ),
+  ...OVERLAY_SHORTCUTS,
 ];
 
 /** The cheatsheet section order (drives the overlay grouping). */
 export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = [
   "Global",
-  "Workspaces",
-  "Ticket",
+  "Workspace",
+  "Scope",
+  "Action",
   "Overlays",
 ];
 

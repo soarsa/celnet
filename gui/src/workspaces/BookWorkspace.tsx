@@ -37,6 +37,8 @@ import {
   REPORTING_CCY,
 } from "../data/riskView";
 import { Panel } from "../components/Panel";
+import { InspectorStrip } from "../components/InspectorStrip";
+import { Provenance } from "../components/Provenance";
 import { fmtPnlAdaptive } from "../lib/format";
 import { tenorLabel } from "../lib/trend";
 import styles from "./BookWorkspace.module.css";
@@ -52,6 +54,7 @@ export function BookWorkspace(): React.ReactElement {
   const [view, setView] = useState<BookView | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const { density, toggleDensity } = app;
   const dimension = useMemo(() => dimensionForScope(app.scope), [app.scope]);
   const limitScope = useMemo(() => limitScopeForScope(app.scope), [app.scope]);
   const principal = useMemo(() => principalForScope(app.scope), [app.scope]);
@@ -199,6 +202,31 @@ export function BookWorkspace(): React.ReactElement {
             dimension,
           )}`}
           className={styles.tablePanel}
+          actions={
+            <InspectorStrip
+              label="Book"
+              segments={[
+                {
+                  id: "density",
+                  label: "density",
+                  content: (
+                    <button
+                      type="button"
+                      className={styles.inspectorBtn}
+                      aria-pressed={density === "compact"}
+                      onClick={toggleDensity}
+                      title="Toggle row density"
+                    >
+                      {density === "compact" ? "Compact" : "Comfortable"}
+                    </button>
+                  ),
+                },
+              ]}
+              provenance={
+                <Provenance source="server-aggregated" model={`numeraire ${numeraire.numeraire}`} />
+              }
+            />
+          }
         >
           <table className={styles.table}>
             <thead>
