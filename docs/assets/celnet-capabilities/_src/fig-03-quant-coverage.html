@@ -4,24 +4,30 @@
 body{background:#fff}
 .canvas{position:relative;background:linear-gradient(180deg,#ffffff,#f4f6fb);overflow:hidden}
 .rail{position:absolute;left:0;top:0;bottom:0;width:8px;background:linear-gradient(180deg,var(--brand),var(--accent))}
-.hd{display:flex;align-items:center;gap:12px;padding:22px 34px 10px}
+.hd{display:flex;align-items:center;gap:12px;padding:22px 34px 8px}
 .hd .mk{width:26px;height:26px}.hd h1{font-size:24px;font-weight:800;color:var(--navy);letter-spacing:.2px}
 .hd .sub{margin-left:auto;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:1.5px}
-.wrap{padding:8px 34px 30px}
-.box{border-radius:12px;border:1.5px solid var(--line);background:#fff;padding:12px 15px;box-shadow:0 1px 2px rgba(20,30,60,.05)}
-.box .t{font-weight:800;color:var(--navy);font-size:14.5px;display:flex;align-items:center;gap:8px}
-.box .d{color:#5b6376;font-size:12px;margin-top:5px;line-height:1.45}
+.wrap{padding:6px 34px 30px}
+.box{border-radius:12px;border:1.5px solid var(--line);background:#fff;padding:11px 14px;box-shadow:0 1px 2px rgba(20,30,60,.05)}
+.box .t{font-weight:800;color:var(--navy);font-size:14px;display:flex;align-items:center;gap:8px}
+.box .d{color:#5b6376;font-size:11.5px;margin-top:4px;line-height:1.42}
 .box.brand{border-color:var(--brand);box-shadow:0 4px 18px rgba(255,115,87,.18)}
 .box.brandfill{background:var(--navy);border-color:var(--navy)}.box.brandfill .t{color:#fff}.box.brandfill .d{color:#c4c9dc}
 .box.accent{border-color:var(--accent)}.box.tint{background:#fbfcff}
-.row{display:flex;gap:15px}.col{display:flex;flex-direction:column;gap:15px}.grid{display:grid;gap:15px}
+.row{display:flex;gap:15px}.col{display:flex;flex-direction:column;gap:13px}.grid{display:grid;gap:15px}
 .arrow{align-self:center;color:var(--brand);font-size:24px;font-weight:800;padding:0 2px}
-.tag{display:inline-block;font-size:11px;font-weight:700;color:var(--accent);background:rgba(107,107,245,.1);border-radius:6px;padding:2px 8px;margin:3px 4px 0 0}
-.chip{display:inline-block;font-size:11.5px;color:var(--ink);background:#eef1f8;border:1px solid var(--line);border-radius:6px;padding:3px 9px;margin:3px 4px 0 0}
+.tag{display:inline-block;font-size:10.5px;font-weight:700;color:var(--accent);background:rgba(107,107,245,.1);border-radius:6px;padding:2px 7px;margin:3px 4px 0 0}
+.chip{display:inline-block;font-size:11px;color:var(--ink);background:#eef1f8;border:1px solid var(--line);border-radius:6px;padding:2px 8px;margin:3px 3px 0 0}
 .chip.k{background:rgba(255,115,87,.1);border-color:rgba(255,115,87,.35);color:var(--brand-deep);font-weight:700}
-.section-label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);margin:2px 0 7px}
-.note{font-size:11.5px;color:var(--muted);font-style:italic;margin-top:9px}
+.chip.mc{background:rgba(107,107,245,.08);border-color:rgba(107,107,245,.3);color:var(--accent)}
+.section-label{font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:1.1px;color:var(--muted);margin:2px 0 6px}
+.note{font-size:11px;color:var(--muted);font-style:italic;margin-top:8px}
+.cat{margin-top:9px}
+.cat .ct{font-size:10.5px;font-weight:800;color:var(--accent);text-transform:uppercase;letter-spacing:.8px;margin:8px 0 1px}
+.cat .ct:first-child{margin-top:0}
 .foot{position:absolute;left:34px;bottom:13px;font-size:11px;color:var(--muted)}.foot b{color:var(--brand-deep)}
+.hb{position:absolute;right:34px;bottom:13px;font-size:10px;color:var(--muted);font-style:italic;max-width:760px;text-align:right;line-height:1.35}
+.mctag{display:inline-block;font-size:9.5px;font-weight:700;color:var(--accent);background:rgba(107,107,245,.12);border-radius:5px;padding:1px 6px;margin-left:5px;vertical-align:middle}
 </style></head><body>
 <div class="canvas" style="width:1680px;height:1000px">
 <div class="rail"></div>
@@ -43,8 +49,8 @@ body{background:#fff}
 
 <div class="box" style="flex:1">
 <div class="section-label">The full FX desk Greek set — one pass</div>
-<div class="d">Every sensitivity the desk marks against, computed together in a single evaluation; each one finite-difference cross-validated against its analytic closed form.</div>
-<div style="margin-top:8px">
+<div class="d">Every sensitivity the desk marks against, computed together in a single evaluation; each one finite-difference cross-validated against its analytic closed form, with reverse-mode AAD adjoints in the risk engine.</div>
+<div style="margin-top:7px">
 <span class="chip k">price</span><span class="chip">spot Δ</span><span class="chip">fwd Δ</span><span class="chip">gamma</span><span class="chip">vega</span><span class="chip">theta</span><span class="chip">rho_dom</span><span class="chip">rho_for</span><span class="chip">vanna</span><span class="chip">volga</span><span class="chip">charm</span><span class="chip">speed</span><span class="chip">zomma</span><span class="chip">color</span>
 </div>
 </div>
@@ -52,7 +58,7 @@ body{background:#fff}
 <div class="box accent">
 <div class="t">Delta conventions &amp; strike solver</div>
 <div class="d">All four market delta conventions — spot and forward, each unadjusted and premium-adjusted — with a branch-aware strike↔delta solver that resolves the premium-adjusted call-delta maximum correctly.</div>
-<div style="margin-top:7px">
+<div style="margin-top:6px">
 <span class="tag">spot · unadjusted</span><span class="tag">spot · premium-adj</span><span class="tag">fwd · unadjusted</span><span class="tag">fwd · premium-adj</span>
 </div>
 </div>
@@ -60,7 +66,7 @@ body{background:#fff}
 <div class="box tint">
 <div class="t">At-the-money rules</div>
 <div class="d">At-the-money-forward and delta-neutral-straddle conventions, sign-correct per delta convention — so the anchor strike matches how the desk actually quotes.</div>
-<div style="margin-top:7px"><span class="chip">ATMF</span><span class="chip">DNS</span></div>
+<div style="margin-top:6px"><span class="chip">ATMF</span><span class="chip">DNS</span></div>
 </div>
 </div>
 
@@ -75,17 +81,20 @@ body{background:#fff}
 
 <div class="box" style="flex:1">
 <div class="section-label">Smile models &amp; selector</div>
-<div class="d">Choose the parameterisation per pillar and recalibrate live; a smile-model selector marks the surface under any of the supported families.</div>
-<div style="margin-top:8px">
-<span class="chip k">Vanna-Volga</span><span class="chip">SABR</span><span class="chip">raw-SVI</span><span class="chip">SSVI</span>
+<div class="d">Choose the parameterisation per pillar and recalibrate live; a smile-model selector marks the surface under any of five supported families, with a Dupire local-vol surface and an LSV booking model behind the structured catalogue.</div>
+<div style="margin-top:7px">
+<span class="chip k">Vanna-Volga</span><span class="chip">SABR</span><span class="chip">raw-SVI</span><span class="chip">SSVI</span><span class="chip k">eSSVI</span>
 </div>
-<div class="d" style="margin-top:9px"><b>Broker-strangle → smile-strangle</b> fixed-point calibration translates quoted market strangles into the consistent smile representation.</div>
+<div style="margin-top:6px">
+<span class="chip">Dupire local-vol</span><span class="chip">LSV booking (leverage · particle)</span>
+</div>
+<div class="d" style="margin-top:8px"><b>Broker-strangle → smile-strangle</b> fixed-point calibration translates quoted market strangles into the consistent smile representation.</div>
 </div>
 
 <div class="box accent">
 <div class="t">Arbitrage gates</div>
-<div class="d">Every marked surface passes hard no-arbitrage checks before it can be used — the desk cannot publish a surface that prices an arbitrage.</div>
-<div style="margin-top:7px">
+<div class="d">Every marked surface passes hard no-arbitrage checks before it can be used — including the eSSVI closed-form butterfly &amp; calendar conditions — the desk cannot publish a surface that prices an arbitrage.</div>
+<div style="margin-top:6px">
 <span class="tag">butterfly density ≥ 0</span><span class="tag">calendar monotonicity</span><span class="tag">vertical</span>
 </div>
 </div>
@@ -93,68 +102,63 @@ body{background:#fff}
 <div class="box tint">
 <div class="t">Arb-free term structure</div>
 <div class="d">Tenors are interpolated in total variance, giving a calendar-arbitrage-free term structure between the marked pillars.</div>
-<div style="margin-top:7px"><span class="chip">total-variance interpolation</span><span class="chip">monotone in T</span></div>
+<div style="margin-top:6px"><span class="chip">total-variance interpolation</span><span class="chip">monotone in T</span></div>
 </div>
 </div>
 
 <div class="arrow">→</div>
 
-<!-- COL 3 — Exotics matrix -->
-<div class="col" style="flex:1.18">
+<!-- COL 3 — Full catalogue × method -->
+<div class="col" style="flex:1.42">
 <div class="box brand">
-<div class="t">Exotics — product × method</div>
-<div class="d">A first-generation exotics catalogue, every product priced by complementary methods and cross-checked (PDE ≈ MC ≈ analytic) so the desk trusts the mark.</div>
+<div class="t">Exotic, structured &amp; multi-asset catalogue</div>
+<div class="d">A full exotic and structured catalogue — each product priced by complementary methods and cross-checked (analytic ≈ PDE ≈ MC) so the desk trusts the mark. Method legend below; <b>MC</b> products carry a Monte-Carlo standard error.</div>
 </div>
 
-<div class="box" style="flex:1;padding:13px 14px">
-<div class="grid" style="grid-template-columns:130px repeat(4,1fr);gap:7px;font-size:10.5px">
-<div></div>
-<div style="font-weight:800;color:var(--accent);text-align:center;line-height:1.25">Analytic<br><span style="color:var(--muted);font-weight:400">reflection</span></div>
-<div style="font-weight:800;color:var(--accent);text-align:center;line-height:1.25">CN+Rannacher<br><span style="color:var(--muted);font-weight:400">PDE</span></div>
-<div style="font-weight:800;color:var(--accent);text-align:center;line-height:1.25">Philox<br><span style="color:var(--muted);font-weight:400">Monte-Carlo</span></div>
-<div style="font-weight:800;color:var(--accent);text-align:center;line-height:1.25">Survival VV<br><span style="color:var(--muted);font-weight:400">overlay</span></div>
-
-<div style="font-weight:700;color:var(--navy);align-self:center">Digital</div>
-<div class="cell">●</div><div class="cell">●</div><div class="cell">●</div><div class="cell">●</div>
-
-<div style="font-weight:700;color:var(--navy);align-self:center">One-touch</div>
-<div class="cell">●</div><div class="cell">●</div><div class="cell">●</div><div class="cell">●</div>
-
-<div style="font-weight:700;color:var(--navy);align-self:center">No-touch</div>
-<div class="cell">●</div><div class="cell">●</div><div class="cell">●</div><div class="cell">●</div>
-
-<div style="font-weight:700;color:var(--navy);align-self:center">Double-no-touch</div>
-<div class="cell">●</div><div class="cell">●</div><div class="cell">●</div><div class="cell">●</div>
-
-<div style="font-weight:700;color:var(--navy);align-self:center">Single barrier</div>
-<div class="cell">●</div><div class="cell">●</div><div class="cell">●</div><div class="cell">●</div>
-
-<div style="font-weight:700;color:var(--navy);align-self:center">Double barrier</div>
-<div class="cell">●</div><div class="cell">●</div><div class="cell">●</div><div class="cell">●</div>
+<div class="box" style="flex:1;padding:11px 14px">
+<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+<span class="tag">Analytic / closed-form</span><span class="tag">Crank-Nicolson + Rannacher PDE</span><span class="tag">PSOR free-boundary FD</span><span class="tag">Philox / LSM Monte-Carlo</span><span class="tag">Survival-weighted VV overlay</span><span class="tag">ADI (2-factor LSV)</span>
 </div>
-<div class="note" style="margin-top:11px">Knock-in / knock-out, double-touch and digital styles all covered; methods agree across the grid.</div>
+<div class="cat">
+<div class="ct">Vanilla family</div>
+<span class="chip">8 single barriers (KI/KO)</span><span class="chip">double barrier</span><span class="chip">digital (cash · asset)</span><span class="chip">one-touch · no-touch</span><span class="chip">double-no-touch</span>
+
+<div class="ct">Path-dependent</div>
+<span class="chip">Asian — arithmetic<span class="mctag">MC + Turnbull-Wakeman / Curran</span></span><span class="chip">Asian — geometric (Kemna-Vorst)</span><span class="chip">lookback (fixed · floating)<span class="mctag">MC discrete</span></span><span class="chip">forward-start (Rubinstein)</span><span class="chip">cliquet / ratchet</span><span class="chip">variance swap</span><span class="chip">volatility swap</span>
+
+<div class="ct">Structured / Monte-Carlo</div>
+<span class="chip mc">TARF<span class="mctag">MC</span></span><span class="chip mc">accumulator / decumulator<span class="mctag">MC</span></span><span class="chip">quanto (closed-form adj.)</span>
+
+<div class="ct">Early-exercise</div>
+<span class="chip">American / Bermudan — PSOR free-boundary FD</span><span class="chip mc">Longstaff-Schwartz LSM<span class="mctag">MC</span></span>
+
+<div class="ct">Multi-asset (Cholesky-correlated)</div>
+<span class="chip mc">basket<span class="mctag">MC</span></span><span class="chip mc">best-of-N<span class="mctag">MC</span></span><span class="chip mc">worst-of-N (rainbow)<span class="mctag">MC</span></span>
+</div>
+<div class="note" style="margin-top:9px">Knock-in / knock-out, double-touch and both digital styles covered; analytic, PDE and MC methods agree across the grid. GPU batch path &amp; pathwise-Greek kernels validate f32↔f64↔analytic node-by-node (correctness + host-local ratios).</div>
 </div>
 
 <div class="box tint">
-<div class="t">Convention &amp; date engine</div>
-<div class="d">A dual-calendar date engine and a per-(currency-pair, tenor) convention registry underpin every price, so day-count, spot lag and roll are correct by construction.</div>
+<div class="t">QMC engine · convention &amp; date engine</div>
+<div class="d">A Sobol' (Joe-Kuo) low-discrepancy generator with Owen-style nested scrambling and principal-bisection Brownian-bridge construction drives the variance-reduced MC paths. A dual-calendar date engine and a per-(currency-pair, tenor) convention registry underpin every price.</div>
+<div style="margin-top:6px"><span class="chip">Sobol' (Joe-Kuo)</span><span class="chip">Owen scramble (RQMC)</span><span class="chip">Brownian bridge</span></div>
 </div>
 </div>
 
 </div>
 
 <!-- BOTTOM BAND -->
-<div class="box brandfill" style="margin-top:16px">
+<div class="box brandfill" style="margin-top:14px">
 <div class="row" style="align-items:center">
-<div style="flex:1.4">
-<div class="t">Validated to machine precision against an independent reference</div>
-<div class="d">Every price and Greek is gated against an independent open-source reference library — agreement to machine precision, not asserted plausibility. The methodology rests on a large multi-crate Rust workspace and an extensive automated test suite.</div>
+<div style="flex:1.5">
+<div class="t">Validated against independent oracles — frozen golden tables &amp; ~26 parity rows</div>
+<div class="d">Analytic / PDE / golden classes are gated to machine precision against an independent open-source reference library — frozen QuantLib golden tables for vanilla, digital, barrier, double-barrier, touch and Heston. Structured, MC, American/Bermudan, basket and LSV products are validated against closed-form limits, finite-difference, hand-pinned published constants and an honest Monte-Carlo standard error — never asserted plausibility. ~26 capability rows are gated vs independent oracles across a large multi-crate Rust workspace.</div>
 </div>
 <div class="arrow" style="color:#fff">→</div>
 <div style="flex:1">
 <div class="section-label" style="color:var(--brand)">Extends to bespoke structured products</div>
-<div class="d" style="color:#c4c9dc">The Open Quant SDK / plugin host lets desks add private pricing and smile models in-engine — sandboxed, deterministic and hot-loadable — extending coverage to bespoke structured products without forking Celnet.</div>
-<div style="margin-top:8px">
+<div class="d" style="color:#c4c9dc">The Open Quant SDK / plugin host lets desks add private pricing and smile models in-engine — sandboxed, deterministic and hot-loadable (native Tier-0 + wasmi Tier-2 shipped) — extending coverage to bespoke structured products without forking Celnet.</div>
+<div style="margin-top:7px">
 <span class="chip k">Open Quant SDK</span><span class="chip" style="background:rgba(107,107,245,.18);border-color:rgba(107,107,245,.4);color:#cfd0ff">PricingModel · SmileModel · Calibration</span>
 </div>
 </div>
@@ -163,6 +167,7 @@ body{background:#fff}
 
 </div>
 <div class="foot">Celnet — a <b>Celer Technologies</b> product</div>
+<div class="hb">Honest boundary: MC-priced products (TARF, accumulator, basket/rainbow, discrete lookback, LSM) carry a Monte-Carlo standard error — the machine-precision bar applies only to the analytic / PDE / golden classes. GPU figures are correctness + host-local ratios (M4 Metal is f32); absolute NVIDIA throughput is deploy-gated.</div>
 </div>
 <style>.cell{display:flex;align-items:center;justify-content:center;background:rgba(255,115,87,.09);border:1px solid rgba(255,115,87,.28);border-radius:6px;color:var(--brand-deep);font-size:13px;padding:6px 0}</style>
 </body></html>

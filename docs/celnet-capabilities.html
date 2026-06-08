@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Celnet — Capabilities Showcase · a Celer Technologies product</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anaheim:wght@400..800&amp;display=swap" rel="stylesheet">
+<style>
+  :root{
+    --brand:#ff7357; --brand-deep:#e85d42; --accent:#6b6bf5;
+    --navy:#1B1F2A; --raised:#282C3E; --muted:#979CB7; --line:#d9deec;
+    --bg:#f4f6fb; --green:#1c8c5a;
+    --ink:#1B1F2A; --soft:#5b6178;
+    --rail:84px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:"Anaheim", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size:16px; line-height:1.55; -webkit-font-smoothing:antialiased;
+  }
+  /* ---- left brand rail (pinwheel mark ONCE) ---- */
+  .rail{
+    position:fixed; top:0; left:0; bottom:0; width:var(--rail);
+    background:linear-gradient(180deg,var(--brand) 0%, var(--brand-deep) 38%, var(--accent) 100%);
+    display:flex; flex-direction:column; align-items:center; padding:22px 0;
+    z-index:50;
+  }
+  .rail .mark{width:40px;height:40px;display:block}
+  .rail .vlabel{
+    margin-top:auto; writing-mode:vertical-rl; transform:rotate(180deg);
+    color:rgba(255,255,255,.92); letter-spacing:2px; text-transform:uppercase;
+    font-size:11px; font-weight:700;
+  }
+  .page{margin-left:var(--rail)}
+  /* ---- header ---- */
+  header.brand{
+    background:var(--navy); color:#fff; padding:46px 56px 40px;
+    border-bottom:3px solid var(--brand);
+  }
+  .wordmark{font-size:13px; letter-spacing:3px; text-transform:uppercase; color:var(--muted); font-weight:700}
+  .wordmark b{color:#fff}
+  header.brand h1{
+    margin:14px 0 8px; font-size:46px; line-height:1.05; font-weight:800;
+    letter-spacing:-.5px;
+  }
+  header.brand h1 .g{
+    background:linear-gradient(90deg,var(--brand),var(--accent));
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+  }
+  header.brand .tag{font-size:19px; color:#cdd2e6; max-width:980px; font-weight:400}
+  .meta-chips{margin-top:22px; display:flex; flex-wrap:wrap; gap:10px}
+  .chip{
+    background:var(--raised); color:#dfe3f3; border:1px solid #3a3f55;
+    border-radius:999px; padding:6px 14px; font-size:13px; font-weight:600;
+  }
+  .chip b{color:var(--brand)}
+  /* ---- nav ---- */
+  nav.toc{
+    position:sticky; top:0; z-index:40; background:rgba(244,246,251,.94);
+    backdrop-filter:blur(8px); border-bottom:1px solid var(--line);
+    padding:10px 56px; display:flex; flex-wrap:wrap; gap:6px 18px;
+    font-size:13px;
+  }
+  nav.toc a{color:var(--soft); text-decoration:none; font-weight:600; white-space:nowrap}
+  nav.toc a:hover{color:var(--brand-deep)}
+  main{padding:0 56px 80px; max-width:1320px}
+  section{padding:46px 0 8px; border-bottom:1px solid var(--line)}
+  section:last-of-type{border-bottom:none}
+  h2{font-size:30px; font-weight:800; margin:0 0 6px; letter-spacing:-.3px}
+  h2 .kicker{display:block; font-size:13px; letter-spacing:2px; text-transform:uppercase; color:var(--brand-deep); font-weight:700; margin-bottom:4px}
+  h3{font-size:19px; font-weight:700; margin:30px 0 10px}
+  p{margin:10px 0; color:#2a2f40}
+  .lede{font-size:18px; color:#33384a; max-width:1000px}
+  a.inline{color:var(--accent); text-decoration:none; border-bottom:1px solid rgba(107,107,245,.3)}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.86em; background:#eceffa; padding:1px 5px; border-radius:4px; color:#3a3f55}
+  /* ---- proof cards ---- */
+  .cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:16px; margin:26px 0}
+  .card{
+    background:#fff; border:1px solid var(--line); border-radius:14px; padding:20px;
+    box-shadow:0 1px 2px rgba(27,31,42,.04); position:relative; overflow:hidden;
+  }
+  .card::before{content:""; position:absolute; left:0; top:0; bottom:0; width:4px; background:linear-gradient(180deg,var(--brand),var(--accent))}
+  .card h4{margin:0 0 6px; font-size:16px; font-weight:800}
+  .card p{margin:0; font-size:14px; color:var(--soft); line-height:1.5}
+  .card .big{font-size:26px; font-weight:800; color:var(--brand-deep); display:block; letter-spacing:-.5px}
+  /* ---- figures ---- */
+  figure{margin:24px 0; background:#fff; border:1px solid var(--line); border-radius:14px; padding:14px; box-shadow:0 1px 2px rgba(27,31,42,.04)}
+  figure img{width:100%; height:auto; display:block; border-radius:8px}
+  figcaption{font-size:13px; color:var(--soft); margin-top:10px; line-height:1.5}
+  figcaption b{color:var(--brand-deep)}
+  .gallery{display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:14px; margin:22px 0}
+  .gallery figure{margin:0}
+  .gallery figcaption{font-size:12px}
+  /* ---- tables ---- */
+  .tbl-wrap{overflow-x:auto; margin:18px 0; border:1px solid var(--line); border-radius:12px}
+  table{border-collapse:collapse; width:100%; font-size:13.5px; background:#fff}
+  th,td{text-align:left; padding:9px 12px; border-bottom:1px solid var(--line); vertical-align:top}
+  thead th{background:var(--navy); color:#eef1fb; font-weight:700; letter-spacing:.3px; position:sticky; top:0; font-size:12.5px; text-transform:uppercase}
+  tbody tr:nth-child(even){background:#fafbfe}
+  td code{font-size:.82em}
+  .ok{color:var(--green); font-weight:700}
+  .na{color:var(--muted)}
+  .badge{display:inline-block; font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px; letter-spacing:.4px; text-transform:uppercase}
+  .b-built{background:#e4f5ec; color:var(--green)}
+  .b-design{background:#efe9f7; color:#6b4fb0}
+  .b-mc{background:#fff0eb; color:var(--brand-deep)}
+  .b-gold{background:#eaf0fb; color:var(--accent)}
+  /* ---- boundary block ---- */
+  .boundary{background:var(--navy); color:#e9ecf7; border-radius:16px; padding:30px 34px; margin:24px 0; border:1px solid #3a3f55}
+  .boundary h2{color:#fff}
+  .boundary h2 .kicker{color:var(--brand)}
+  .boundary ul{list-style:none; padding:0; margin:18px 0 0}
+  .boundary li{padding:12px 0 12px 30px; border-top:1px solid #353a50; position:relative; font-size:14.5px; line-height:1.55; color:#cfd4e8}
+  .boundary li:first-child{border-top:none}
+  .boundary li::before{content:"⛔"; position:absolute; left:0; top:11px; font-size:13px}
+  .boundary li b{color:var(--brand)}
+  /* ---- callout ---- */
+  .note{background:#fff7f4; border:1px solid #ffd9cd; border-left:4px solid var(--brand); border-radius:10px; padding:14px 18px; margin:18px 0; font-size:14px; color:#5b3a30}
+  .note b{color:var(--brand-deep)}
+  .twocol{display:grid; grid-template-columns:1fr 1fr; gap:24px}
+  @media(max-width:900px){.twocol{grid-template-columns:1fr}}
+  footer.stamp{
+    background:var(--navy); color:var(--muted); padding:26px 56px;
+    font-family:ui-monospace,Menlo,monospace; font-size:12px;
+    display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px;
+    border-top:3px solid var(--brand);
+  }
+  footer.stamp b{color:#cdd2e6}
+  .pill-list{display:flex; flex-wrap:wrap; gap:8px; margin:14px 0}
+  .pill{background:#fff; border:1px solid var(--line); border-radius:8px; padding:5px 11px; font-size:13px; font-weight:600; color:#3a3f55}
+  .pill b{color:var(--brand-deep)}
+</style>
+</head>
+<body>
+
+<!-- LEFT BRAND RAIL — pinwheel mark ONCE -->
+<div class="rail" aria-hidden="true">
+  <svg class="mark" viewBox="0 0 501 500" role="img" aria-label="Celer pinwheel mark">
+    <path fill="#ffffff" d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/>
+  </svg>
+  <div class="vlabel">Celer Technologies</div>
+</div>
+
+<div class="page">
+
+<!-- BRAND HEADER (mark-less wordmark, no traffic-light dots) -->
+<header class="brand">
+  <div class="wordmark"><b>Celnet</b> &nbsp;/&nbsp; a Celer Technologies product</div>
+  <h1>The <span class="g">complete</span> FX-options pricing platform.</h1>
+  <p class="tag">Celnet is not a thin challenger closing gaps — it is a functionally complete,
+  evidence-backed superset of what a derivatives desk stitches together today, proven by a runnable
+  parity matrix against independent oracles, behind one unversioned contract reachable identically
+  from five clients.</p>
+  <div class="meta-chips">
+    <span class="chip"><b>34</b> one-way-acyclic Rust crates</span>
+    <span class="chip"><b>19</b> on-wire products</span>
+    <span class="chip"><b>5</b> smile families · incl. eSSVI</span>
+    <span class="chip"><b>5</b> gRPC services + byte-identical WS mirror</span>
+    <span class="chip"><b>5</b> bit-identical clients</span>
+    <span class="chip"><b>~26</b> parity rows vs independent oracles</span>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Sections">
+  <a href="#summary">Summary</a>
+  <a href="#landscape">Capability map</a>
+  <a href="#quant">Quant &amp; catalogue</a>
+  <a href="#arch">Architecture</a>
+  <a href="#risk">Risk · FRTB · XVA</a>
+  <a href="#sdk">Plugin SDK</a>
+  <a href="#perf">Performance</a>
+  <a href="#scale">Scale-out · Raft</a>
+  <a href="#api">API &amp; parity</a>
+  <a href="#excel">Excel</a>
+  <a href="#celer">Celer integration</a>
+  <a href="#compete">Competitive</a>
+  <a href="#gallery">Screens</a>
+  <a href="#boundary">Honest boundary</a>
+</nav>
+
+<main>
+
+<!-- 2. EXECUTIVE SUMMARY + PROOF CARDS -->
+<section id="summary">
+  <h2><span class="kicker">Executive Summary</span>One platform, five clients, zero overclaim</h2>
+  <p class="lede">Celnet covers the full FX-options coverage ceiling — vanilla &rarr; the complete
+  first-generation exotics &rarr; structured &amp; path-dependent products &rarr; American/Bermudan
+  early exercise &rarr; correlated multi-asset baskets &rarr; an LSV booking model + standalone
+  Heston — all on the <b>one unversioned <code>celnet-proto</code> contract</b>, parity-gated, and
+  reachable from the GUI, Rust SDK, CLI, the 27-function Excel add-in and the byte-identical
+  WebSocket mirror. Three grounded pillars:</p>
+
+  <div class="cards">
+    <div class="card"><h4>Catalogue depth</h4>
+      <p><span class="big">19 products</span>Vanilla through American/Bermudan and correlated baskets,
+      plus an LSV booking engine — the breadth deep-catalogue incumbents charge for, delivered open
+      and microsecond-class. <code>celnet-exotics</code>, <code>celnet.proto:1016-1062</code>.</p></div>
+    <div class="card"><h4>One contract, five clients</h4>
+      <p><span class="big">bit-identical</span>Values match across GUI / SDK / CLI / Excel / WS — no
+      versioning, no N/N-1 shims. Proven by <code>CLIENT-PARITY-MATRIX.md</code>.</p></div>
+    <div class="card"><h4>Nanosecond core</h4>
+      <p><span class="big">~42&nbsp;ns&nbsp;p50</span>Pinned zero-alloc hot core, price + 13 Greeks,
+      measured M4 in-core, gated absolutely to the §1.2 budget. <code>celnet-bench/core_load.rs</code>.</p></div>
+    <div class="card"><h4>Server-side firm risk</h4>
+      <p><span class="big">no loop-and-sum</span>Hierarchical roll-up, FRTB-SA capital and internal
+      XVA computed server-side; clients read aggregates. <code>RiskService</code>, <code>celnet-risk-cube</code>.</p></div>
+    <div class="card"><h4>Open quant SDK</h4>
+      <p><span class="big">run private IP</span>Custom models in-engine, sandboxed &amp; deterministic —
+      Tier-0 native + Tier-2 wasmi shipped. <code>celnet-plugin-host</code>.</p></div>
+    <div class="card"><h4>Honest evidence trail</h4>
+      <p><span class="big">labelled proof</span>Every figure tagged in-core / M4 / loopback; MC
+      products carry a price std-error; deploy-gated absolutes are never claimed in-repo.</p></div>
+  </div>
+
+  <p>The thesis explicitly does <b>not</b> assert any deploy-gated absolute. See the
+  <a class="inline" href="#boundary">Honest Boundary</a> section, carried verbatim from
+  <code>COMPLETION-PROGRAM.md</code> §4.</p>
+</section>
+
+<!-- 3. CAPABILITY MAP -->
+<section id="landscape">
+  <h2><span class="kicker">Capability Map</span>The whole platform at a glance</h2>
+  <figure>
+    <img src="assets/celnet-capabilities/fig-12-capability-landscape.png" alt="One-page vendor-neutral capability map: a navy Celnet core ringed by six clusters — pricing &amp; analytics (vanilla, five smile families incl. eSSVI, the complete 19-product catalogue through first-gen exotics, structured/path-dependent, American/Bermudan, correlated baskets and LSV booking), risk (book-shaped scenario risk, firm-wide cube, FRTB-SA, internal-only XVA over synthetic netting), the real-time edge, extensibility (Tier-0 native and Tier-2 wasmi shipped, Tier-1/3 designed), five clients on one contract, and a platform substrate scaling out over a Raft-replicated log, SPMC fan-out ring and cross-fleet risk fan-out — all over the Celer trade lifecycle with a verbatim honest boundary.">
+    <figcaption><b>Fig 12 — Capability landscape.</b> Six clusters around the navy pricing core:
+    pricing &amp; analytics (vanilla, five smile families incl. eSSVI, the complete 19-product
+    catalogue through first-gen exotics, structured/path-dependent, American/Bermudan, correlated
+    baskets and an LSV booking model); risk (book-shaped scenario, the firm-wide cube, FRTB-SA and
+    internal-only XVA over synthetic netting sets); the real-time edge; extensibility (Tier-0 native
+    + Tier-2 wasmi shipped, Tier-1/3 designed); five clients on one contract; and a substrate scaling
+    over a Raft-replicated log, a lock-free SPMC fan-out ring and cross-fleet risk fan-out — with a
+    verbatim honest boundary on deploy-gated absolutes.</figcaption>
+  </figure>
+</section>
+
+<!-- 4. QUANT & CATALOGUE -->
+<section id="quant">
+  <h2><span class="kicker">Quant &amp; Pricing</span>The full catalogue, per-class validated</h2>
+  <figure>
+    <img src="assets/celnet-capabilities/fig-03-quant-coverage.png" alt="Three-column architecture: Vanilla and Greeks; Smile and Surface (five smile models plus Dupire local-vol and LSV booking); and a grouped full catalogue (vanilla family, path-dependent, structured/MC, early-exercise American/Bermudan, and Cholesky multi-asset basket/rainbow) with a method legend and Monte-Carlo standard-error tags, over a validation band noting frozen-golden-table and parity-row validation, an honest MC-standard-error and GPU-ratio footnote, and SDK extensibility.">
+    <figcaption><b>Fig 03 — Quant coverage.</b> Garman-Kohlhagen vanilla with the full FX desk Greek
+    set (FD- and AAD-validated); the arbitrage-free surface engine (VV, SABR, SVI, SSVI, eSSVI + a
+    Dupire local-vol surface and LSV booking model); and a full exotic, structured and multi-asset
+    catalogue priced by complementary analytic / PDE / Monte-Carlo / survival-VV methods over a
+    Sobol&prime;/Brownian-bridge QMC engine. Analytic, PDE and golden classes are machine-precision
+    against frozen QuantLib golden tables (vanilla, digital, barrier, double-barrier, touch, Heston);
+    structured / MC / American / basket / LSV products carry an honest Monte-Carlo standard error and
+    are checked against closed-form limits and <b>~26 parity rows vs independent oracles</b>.</figcaption>
+  </figure>
+
+  <h3>The tiered catalogue (every arm on the one wire)</h3>
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>Tier</th><th>Products</th><th>Engine / method</th><th>Validation</th><th>Std-err?</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><b>Vanilla &amp; Greeks</b></td>
+        <td>European vanilla; multi-leg strategy (RR/strangle/straddle/seagull)</td>
+        <td>Garman-Kohlhagen closed form; 13 Greeks (analytic + AAD adjoint)</td>
+        <td><span class="badge b-gold">QuantLib golden</span> + FD</td>
+        <td class="na">—</td>
+      </tr>
+      <tr>
+        <td><b>First-generation exotics</b></td>
+        <td>Digital (both styles); one-/no-/double-touch &amp; DNT; all 8 single + double barriers; window-barrier</td>
+        <td>Analytic + Crank-Nicolson/Rannacher PDE + Philox MC + survival-VV overlay</td>
+        <td><span class="badge b-gold">QuantLib golden</span> (digital/barrier/touch)</td>
+        <td class="na">— / MC</td>
+      </tr>
+      <tr>
+        <td><b>Closed-form structured</b></td>
+        <td>Variance &amp; volatility swap; Asian; forward-start / cliquet; quanto; lookback (continuous)</td>
+        <td>Log-contract replication &amp; Carr-Lee; Turnbull-Wakeman / Curran; Rubinstein; closed-form</td>
+        <td>Closed-form limits + parity rows</td>
+        <td class="na">—</td>
+      </tr>
+      <tr>
+        <td><b>Path-dependent MC</b></td>
+        <td>TARF; accumulator; discrete lookback; basket / best-of / worst-of</td>
+        <td>Cholesky-correlated GBM MC over scrambled-Sobol / Brownian bridge</td>
+        <td>Parity vs independent MC; convergence checks</td>
+        <td><span class="badge b-mc">price std-error</span></td>
+      </tr>
+      <tr>
+        <td><b>Early exercise</b></td>
+        <td>American / Bermudan</td>
+        <td>PSOR free-boundary finite difference (default) + Longstaff-Schwartz LSM (<code>lsm_paths&gt;0</code>)</td>
+        <td>Parity vs FD/LSM cross-check</td>
+        <td><span class="badge b-mc">std-error (LSM)</span></td>
+      </tr>
+      <tr>
+        <td><b>Booking model</b></td>
+        <td>LSV booking engine; standalone Heston</td>
+        <td>Heston backbone + Dupire leverage, particle calibration, ADI PDE; Carr-Madan + Fang-Oosterlee COS</td>
+        <td><span class="badge b-gold">Heston golden</span> + parity</td>
+        <td class="na">—</td>
+      </tr>
+      <tr>
+        <td><b>Smile / surface</b></td>
+        <td>VV, SABR, SVI, SSVI, <b>eSSVI</b>; Dupire local-vol</td>
+        <td>Market-to-smile calibration; butterfly + calendar + vertical no-arb gates; versioned marked surface</td>
+        <td>Breeden-Litzenberger density &amp; calendar parity</td>
+        <td class="na">—</td>
+      </tr>
+      <tr>
+        <td><b>QMC engine</b></td>
+        <td>Sobol&prime; + Brownian bridge variance reduction</td>
+        <td>Joe-Kuo Sobol, Owen scramble, principal-bisection bridge</td>
+        <td>KAT + measured <b>~38× / ~88×</b> variance reduction</td>
+        <td class="na">—</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="note"><b>Honesty split.</b> "Machine precision vs QuantLib" applies <b>only</b> to
+  the analytic/PDE/golden classes (vanilla, digital, barrier, double-barrier, touch, Heston). The
+  structured/MC/American/basket/LSV set is validated against closed-form limits, FD, hand-pinned
+  published constants and honest Monte-Carlo standard-error bands — never blanket-labelled
+  "machine precision".</div>
+</section>
+
+<!-- 5. ARCHITECTURE + ENGINE -->
+<section id="arch">
+  <h2><span class="kicker">Architecture &amp; Engine</span>One contract over a pinned zero-alloc core</h2>
+  <figure>
+    <img src="assets/celnet-capabilities/fig-01-system-architecture-adaptability.png" alt="Architecture diagram: inbound vendor and Celer feeds enter via a market-data seam into a navy Celnet core framed by the single celnet-proto contract; the quant-engine band names five smile families including eSSVI and the full 19-product exotic catalogue; the plugin band shows Tier-0 native and Tier-2 wasmi as shipped and Tier-1/3 as designed and deploy-gated; bit-identical client surfaces on the right; a scale-out band names the Raft-replicated log, SPMC fan-out ring and cross-fleet risk fan-out; Standalone/Hybrid/CelerIntegrated deployment modes and an egress governor run along the bottom over a verbatim honest-boundary footnote.">
+    <figcaption><b>Fig 01 — Adaptable architecture.</b> 34 one-way-acyclic crates: pluggable
+    market-data and product adapters flow into one <code>celnet-proto</code> contract wrapping a
+    pinned zero-allocation hot core that prices the full catalogue, emits bit-identical surfaces
+    across GUI / Excel / SDK / CLI / WebSocket / FIX / Celer Trader, scales out over a
+    Raft-replicated log and SPMC fan-out ring, and deploys three ways through reversible adapter
+    swaps behind a conflating egress governor.</figcaption>
+  </figure>
+  <figure>
+    <img src="assets/celnet-capabilities/fig-13-engine-concurrency.png" alt="Architecture diagram showing an async edge (gRPC service families, byte-identical WebSocket JSON mirror, FIX 4.4 engine) feeding pinned zero-allocation hot cores through wait-free single-producer/single-consumer request and response rings, lock-free read-mostly publication via an atomically-swapped market-state snapshot, single-writer seqlock top-of-book and cache-padded counters, blue-green zero-downtime handoff, a durable per-record-CRC journal that replays bit-identically, and Raft-replicated scale-out with a lock-free SPMC fan-out ring, over a muted honest-boundary footnote.">
+    <figcaption><b>Fig 13 — Engine concurrency.</b> A concurrency-rich async edge (gRPC, byte-identical
+    WS mirror, FIX) joins pinned zero-allocation hot cores through wait-free SPSC request/response
+    rings; market state publishes lock-free via an atomically-swapped snapshot, a single-writer
+    seqlock top-of-book and cache-padded counters; with blue-green zero-downtime handoff, a durable
+    checksummed journal (now with compaction), and Raft-replicated scale-out plus a lock-free SPMC
+    fan-out ring. <b>In-repo proofs are the §1.2 in-core truth-gate, loopback/localhost Raft &amp;
+    SPMC correctness and host-local GPU ratios; absolute cross-host wire SLOs and absolute NVIDIA
+    GPU throughput are deploy-gated.</b></figcaption>
+  </figure>
+</section>
+
+<!-- 6. RISK -->
+<section id="risk">
+  <h2><span class="kicker">Risk · FRTB · XVA</span>Book and Risk are two zooms of one cube</h2>
+  <figure>
+    <img src="assets/celnet-capabilities/fig-06-risk-architecture.png" alt="Two-band diagram: book-shaped scenario risk from the pricing hot core into a spot-vol shock grid, bucketed vega, cross-gamma and theta-roll feeding a versioned marked-surface registry (VV/SABR/SVI/SSVI/eSSVI); and a firm-wide eight-dimension position-fact cube fed by a normalized fact stream of vanilla and exotic legs, with additive roll-up plus non-additive VaR/ES and FRTB-SbM curvature, pruned by entitlements and a cascading limit tree, a FRTB-SA and XVA tile (CVA/DVA/FVA, synthetic netting, internal-only), served to GUI, SDK and Excel, with a footnote that XVA is internal over synthetic netting sets and MC exposures carry a price std-error.">
+    <figcaption><b>Fig 06 — Risk architecture.</b> Book-shaped scenario risk (real repricing across a
+    spot-vol shock grid, bucketed vega, cross-gamma and theta-roll horizons against versioned
+    surfaces) and a firm-wide OLAP position-fact cube where <b>vanilla and exotic legs</b> roll up
+    over eight axes with convention-canonicalized netting, non-additive VaR/ES and FRTB-SA curvature,
+    cascading limits and entitlement pruning. Book and Risk are two zooms of one cube, exposed
+    identically to GUI / SDK / Excel.</figcaption>
+  </figure>
+  <div class="twocol">
+    <div>
+      <h3>Regulatory capital — FRTB-SA</h3>
+      <p>Standardised-Approach Sensitivities-based Method: within-bucket K<sub>b</sub> and
+      cross-bucket aggregation, the <b>three correlation scenarios &rarr; max</b> with the
+      MAR21.6(2) <code>0.75ρ</code> low-correlation floor (hand-pinned BCBS constants — defended by a
+      transform unit test against a circular-oracle defect), curvature K<sub>b</sub><sup>±</sup>, and
+      RRAO, with an honest <b>DRC = 0</b> for deliverable FX (no issuer JTD). <code>celnet-risk-cube/frtb.rs</code>.</p>
+    </div>
+    <div>
+      <h3>Counterparty valuation — XVA</h3>
+      <p>CVA / DVA / FVA over EPE/ENE exposure profiles, with closed-form CVA parity.
+      <code>celnet-xva</code> (cva, exposure, netting, survival).</p>
+      <div class="note" style="margin-top:8px"><b>Boundary:</b> XVA is <b>internal-only — no client
+      or wire surface — over synthetic netting sets only</b>. Live CSAs, collateral and wrong-way
+      risk are deploy-gated.</div>
+    </div>
+  </div>
+</section>
+
+<!-- 7. EXTENSIBILITY -->
+<section id="sdk">
+  <h2><span class="kicker">Extensibility</span>Open Quant SDK — run private IP in-engine</h2>
+  <figure>
+    <img src="assets/celnet-capabilities/fig-05-plugin-tiers.png" alt="Architecture diagram of Celnet's tiered plugin host: a frozen Open Quant SDK contract and self-describing model registry feed a tier-blind registry that fans out to four execution tiers — Native and WebAssembly sandbox marked Built, signed shared-object and OS-sandbox marked Designed/deploy-gated with dashed borders — with a capability boundary admitting only core math primitives, a no-arbitrage self-check, and a desk band listing the full quant catalogue.">
+    <figcaption><b>Fig 05 — Plugin tiers.</b> One frozen trait contract and a tier-blind model
+    registry route every model through the same calling convention; only the core math primitives
+    cross a zero-ambient-authority capability boundary, plus a built-in butterfly no-arbitrage
+    self-check. Desks run private-IP custom models in-engine, <b>extending an already-complete
+    catalogue</b> — not the sole route beyond first-gen — without forking Celnet.</figcaption>
+  </figure>
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>Tier</th><th>Mechanism</th><th>Isolation</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td><b>Tier-0 Native</b></td><td><code>dyn PricingModel</code> via the tier-blind <code>HostModel</code> seam</td><td>In-process, trusted</td><td><span class="badge b-built">Shipped</span> · 14 tests, 4 WS-G gates</td></tr>
+      <tr><td><b>Tier-2 WebAssembly</b></td><td>wasmi fuel-metered, no-WASI; only <code>exp/ln/sqrt/norm_pdf/norm_cdf</code> exposed</td><td>Deterministic sandbox, capability-denied</td><td><span class="badge b-built">Shipped</span> · replay bit-identity gate</td></tr>
+      <tr><td><b>Tier-1 Signed .so</b></td><td>stabby ABI-stable signed shared object</td><td>Process-level, signature-verified</td><td><span class="badge b-design">Designed · deploy-gated</span></td></tr>
+      <tr><td><b>Tier-3 OS sandbox</b></td><td>Landlock / seccomp ring</td><td>Kernel-enforced</td><td><span class="badge b-design">Designed · deploy-gated</span></td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="note">The in-repo host ships the <b>Native and WebAssembly</b> tiers; the
+  <b>signed-shared-object (Tier-1) and OS-sandbox (Tier-3)</b> tiers are designed to slot in behind
+  the same frozen contract and are proven at deploy. <code>celnet-plugin-host/src/{native,wasm}.rs</code>.</div>
+</section>
+
+<!-- 8. PERFORMANCE -->
+<section id="perf">
+  <h2><span class="kicker">Performance &amp; Latency</span>Measured, gated, honestly labelled</h2>
+  <figure>
+    <img src="assets/celnet-capabilities/fig-07-performance-ladder.png" alt="Stepped latency-ladder diagram with measured nanosecond-scale in-core pricing steps far to the fast end and the network round-trip dominating, a dashed honest-boundary banner noting deploy-gated absolute wire and GPU numbers, plus a side panel of observability, benchmark (iai instruction gate and GPU/CPU ratio), per-class validation, deterministic-build and Raft/SPMC scale-out capabilities.">
+    <figcaption><b>Fig 07 — Relative latency ladder.</b> In-core pricing is measured at nanosecond
+    scale on the M4 dev host (vanilla ~42&nbsp;ns p50, +13 Greeks ~125&nbsp;ns p99, gated absolutely
+    to the §1.2 budgets) while the network round-trip and wire framing dominate — so pricing is never
+    the bottleneck. Network framing, not computation, is the only meaningful latency floor.</figcaption>
+  </figure>
+  <h3>Measured &amp; gated (host-local, single-core)</h3>
+  <div class="pill-list">
+    <span class="pill">§1.2 in-core truth-gate · <b>p50≤2µs · p99≤10µs · p99.9≤25µs</b> absolute</span>
+    <span class="pill">measured M4 · <b>~42 ns / ~125 ns / ~1 µs</b> (24–80× margin)</span>
+    <span class="pill">iai-callgrind instruction-count gate (Linux CI)</span>
+    <span class="pill">GPU dispatch-amortization <b>ratio 0.68×@4k → 53×@1M</b> (M4, ratio only)</span>
+    <span class="pill">loopback fleet_slo benches</span>
+  </div>
+  <div class="note"><b>Boundary (verbatim):</b> absolute cross-host wire p99 / kernel-bypass NIC /
+  §11 absolute wire SLOs and NVIDIA absolute throughput / ≤50 ms exotic / Workload-A/B are
+  <b>deploy-gated</b>; M4 Metal lacks f64 ⇒ the GPU path proves <b>correctness + ratios only</b>
+  (M4 / Lavapipe). <code>celnet-bench/src/bin/core_load.rs</code>.</div>
+</section>
+
+<!-- 9. SCALE-OUT -->
+<section id="scale">
+  <h2><span class="kicker">Scalability &amp; Scale-Out</span>Distributed correctness, loopback-proven</h2>
+  <figure>
+    <img src="assets/celnet-capabilities/fig-08-scaleout.png" alt="Two-zone architecture diagram. Zone A, the node-local hot substrate, shows the async edge feeding pinned zero-allocation hot cores over wait-free SPSC rings, lock-free read-mostly state, blue-green handoff with a durable checksummed journal, batched repricing, a cross-platform GPU pricing backend, and zero-cost observability. Zone B, the horizontal scale-out fabric, shows a highest-random-weight rendezvous partition map, Raft-replicated state with election, conflicting-tail truncation, compaction, InstallSnapshot and hot-standby takeover replaying bit-identically, cross-fleet risk fan-out equal to single-node to 1e-12, and a conflating egress governor over a lock-free SPMC broadcast ring. A footnote states the honest boundary.">
+    <figcaption><b>Fig 08 — Scale-out.</b> A highest-random-weight partition map shards the book
+    across the fleet; a <b>full Raft-replicated log</b> (election + Pre-Vote, conflicting-tail
+    truncation, compaction and <b>InstallSnapshot</b> reseed) gives bit-identical (<code>f64::to_bits</code>)
+    replay and hot-standby takeover; cross-fleet risk <b>fans out to equal the single-node aggregate
+    to 1e-12</b>; and a conflating egress governor over a <b>lock-free SPMC fan-out ring</b> (per-pair,
+    exact conflation accounting <code>received + skipped == produced</code>) streams continuous prices
+    to many counterparties.</figcaption>
+  </figure>
+  <div class="note"><b>Boundary (verbatim):</b> localhost multi-process proves correctness / quorum /
+  framing only. <b>Cross-host wire p99, cross-DC transport, real network partitions, Raft §6 dynamic
+  membership and physical cross-node risk transport are deploy/live-gated.</b>
+  <code>celnet-replog</code>, <code>celnet-fanout</code>, <code>celnet-risk-fleet</code>,
+  <code>celnet-server/services/pricefanout.rs</code>.</div>
+</section>
+
+<!-- 10. API & CLIENT PARITY -->
+<section id="api">
+  <h2><span class="kicker">API &amp; Client Parity</span>One unversioned contract, five service families</h2>
+  <figure>
+    <img src="assets/celnet-capabilities/fig-02-api-first-parity.png" alt="Architecture diagram showing a central coral-marked Celnet contract hub fanning out to six client surfaces (gRPC, byte-identical WebSocket mirror, Rust SDK, CLI, 27-function Excel add-in, React/WebGPU GUI), each labelled same contract and value bit-identical, with the contract carrying pricing, quote/RFQ, multiplex stream, the unified 19-product Instrument, surface marking with the VV/SABR/SVI/SSVI/eSSVI smile-model selector, the market-series feed, the RiskService roll-up plus limits, and attribution identity, and a footnote that Monte-Carlo products carry a price standard error.">
+    <figcaption><b>Fig 02 — API-first parity.</b> One clean, unversioned contract served by the
+    Celnet server and fanned out to six surfaces, carrying a unified 19-product Instrument, the
+    VV/SABR/SVI/SSVI/eSSVI smile-model selector, surface marking and the RiskService roll-up with
+    limits — every value bit-identical (Monte-Carlo products returning a price standard error).</figcaption>
+  </figure>
+
+  <h3>The five gRPC services (+ byte-identical WebSocket JSON mirror)</h3>
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>Service</th><th>RPC</th><th>Request → Response</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td rowspan="1"><b>PricingService</b></td><td><code>Price</code></td><td>PriceRequest → PriceResponse</td><td>Price an instrument; full 13-Greek risk; <b>PriceResponse carries <code>price_std_error</code></b> for MC products.</td></tr>
+      <tr><td rowspan="3"><b>QuoteService</b></td><td><code>RequestQuote</code></td><td>QuoteRequest → Quote</td><td>Tradable two-way quote (idempotent on key); Quote carries std-error.</td></tr>
+      <tr><td><code>AcceptQuote</code></td><td>QuoteAccept → Execution</td><td>Accept &amp; book the resulting execution.</td></tr>
+      <tr><td><code>RejectQuote</code></td><td>QuoteReject → RejectAck</td><td>Decline to trade; typed ack, never books.</td></tr>
+      <tr><td><b>StreamService</b></td><td><code>StreamSession</code></td><td>stream ⇄ stream</td><td>One bidirectional multiplex session: many subscriptions, snapshot/sequenced-update/resync/in-place-modify, market-series feed, heartbeat observability, and click-to-trade Execute.</td></tr>
+      <tr><td rowspan="4"><b>RiskService</b></td><td><code>ListPositions</code></td><td>ListPositionsRequest → ListPositionsResponse</td><td>Scoped + entitlement-pruned positions with attribution.</td></tr>
+      <tr><td><code>AggregateRisk</code></td><td>AggregateRiskRequest → AggregateRiskResponse</td><td>Server-side roll-up over an org dimension: netted additive + re-derived non-additive in a reporting numeraire.</td></tr>
+      <tr><td><code>DrillRisk</code></td><td>DrillRiskRequest → DrillRiskResponse</td><td>The Book → Risk drill, entitlement-pruned.</td></tr>
+      <tr><td><code>LimitStatus</code></td><td>LimitStatusRequest → LimitStatusResponse</td><td>Limit tree + RAG utilization + hard-breach escalation.</td></tr>
+      <tr><td rowspan="3"><b>SurfaceService</b></td><td><code>GetSmile</code></td><td>GetSmileRequest → Smile</td><td>Calibrated smile for one (pair, tenor) on the delta axis.</td></tr>
+      <tr><td><code>MarkSurface</code></td><td>MarkSurfaceRequest → MarkSurfaceResponse</td><td>Mark/recalibrate from broker quotes; selectable smile model (VV/SABR/SVI/SSVI/<b>eSSVI</b>).</td></tr>
+      <tr><td><code>Scenario</code></td><td>ScenarioRequest → ScenarioResponse</td><td>Reprice across a spot/vol/rate shock grid.</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>The <b>WebSocket JSON mirror</b> is byte-identical across <b>all five services</b> over the same
+  <code>CoreLink</code> / <code>SurfaceBook</code> (<code>celnet-server/src/lib.rs:31,177,359</code>).
+  Smile selection is one of five models; the <code>PricingModel</code> directive (analytic vs
+  <b>LSV</b> booking) is field 22 on <code>Instrument</code>. Standardise on <b>price + 13 Greeks</b>.</p>
+
+  <h3>The unified 19-product <code>Instrument</code> oneof</h3>
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>#</th><th>Product</th><th>Engine / method</th><th>Std-err</th></tr></thead>
+    <tbody>
+      <tr><td>7</td><td>Vanilla</td><td>Garman-Kohlhagen closed form</td><td class="na">—</td></tr>
+      <tr><td>8</td><td>Strategy (RR/strangle/straddle/seagull)</td><td>Leg composition over GK</td><td class="na">—</td></tr>
+      <tr><td>9</td><td>SingleBarrier (KO/KI, all 8)</td><td>Analytic / CN-Rannacher PDE / Philox MC + VV overlay</td><td class="na">—</td></tr>
+      <tr><td>10</td><td>DoubleBarrier</td><td>PDE / MC, golden-gated</td><td class="na">—</td></tr>
+      <tr><td>11</td><td>Digital (both styles)</td><td>Analytic, golden-gated</td><td class="na">—</td></tr>
+      <tr><td>12</td><td>Touch (one/no/double-no/double-one)</td><td>Analytic + survival-VV, golden-gated</td><td class="na">—</td></tr>
+      <tr><td>13</td><td>VarianceSwap</td><td>Log-contract 1/K² static replication</td><td class="na">—</td></tr>
+      <tr><td>14</td><td>VolatilitySwap</td><td>Carr-Lee convexity adjustment</td><td class="na">—</td></tr>
+      <tr><td>15</td><td>AsianOption (arithmetic average)</td><td>Turnbull-Wakeman / Curran</td><td class="na">—</td></tr>
+      <tr><td>16</td><td>ForwardStart</td><td>Rubinstein closed form</td><td class="na">—</td></tr>
+      <tr><td>17</td><td>Cliquet / ratchet</td><td>Σ forward-start legs / clamped MC</td><td><span class="badge b-mc">MC (capped)</span></td></tr>
+      <tr><td>18</td><td>Quanto (vanilla / digital)</td><td>Settlement-currency converted closed form</td><td class="na">—</td></tr>
+      <tr><td>19</td><td>Tarf (Target-Redemption Forward)</td><td>Geared-fixing strip MC with KO target</td><td><span class="badge b-mc">price std-error</span></td></tr>
+      <tr><td>20</td><td>Accumulator</td><td>Periodic pivot accumulation, up-and-out MC</td><td><span class="badge b-mc">price std-error</span></td></tr>
+      <tr><td>21</td><td>Lookback (floating/fixed)</td><td>Continuous closed form / discrete MC</td><td><span class="badge b-mc">MC (discrete)</span></td></tr>
+      <tr><td>23</td><td>WindowBarrier</td><td>LSV PDE (no closed form)</td><td class="na">—</td></tr>
+      <tr><td>24</td><td>AmericanOption (American/Bermudan)</td><td>PSOR free-boundary FD / Longstaff-Schwartz LSM</td><td><span class="badge b-mc">std-error (LSM)</span></td></tr>
+      <tr><td>25</td><td>BasketOption (basket/best-of/worst-of)</td><td>Cholesky-correlated multi-asset GBM MC</td><td><span class="badge b-mc">price std-error</span></td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="na" style="font-size:13px">Field numbers 7–25 (22 reserved/unused). Each MC arm carries
+  <code>price_std_error</code> — never labelled machine-precision. <b>XVA is not on the wire</b>
+  (internal-only).</p>
+
+  <h3>Client-surface reference</h3>
+  <div class="twocol">
+    <div>
+      <h4 style="margin:0 0 6px">Rust SDK — <code>celnet-client</code> (~20 typed methods)</h4>
+      <div class="pill-list">
+        <span class="pill">connect · with_channel</span>
+        <span class="pill">price</span>
+        <span class="pill">request_quote → Rfq::{request, accept, reject}</span>
+        <span class="pill">get_smile</span>
+        <span class="pill">mark_surface · mark_surface_with</span>
+        <span class="pill">scenario · scenario_with_model · scenario_with_risk[_and_model]</span>
+        <span class="pill">open_session (StreamSession)</span>
+        <span class="pill">list_positions · aggregate_risk · drill_risk · limit_status</span>
+        <span class="pill">InstrumentSpec builder (all 19 + with_lsv)</span>
+      </div>
+    </div>
+    <div>
+      <h4 style="margin:0 0 6px">CLI — <code>celnet-cli</code> (7 top-level commands)</h4>
+      <div class="pill-list">
+        <span class="pill"><b>price</b></span>
+        <span class="pill"><b>surface</b></span>
+        <span class="pill"><b>exotic</b> · ~14 sub-variants (vanilla, digital, one-touch, dnt, barrier, window-barrier, varswap, volswap, asian, forward-start, cliquet, quanto, tarf, accumulator, lookback, american)</span>
+        <span class="pill"><b>basket</b></span>
+        <span class="pill"><b>convention</b></span>
+        <span class="pill"><b>risk</b> · aggregate · drill · positions · limits</span>
+        <span class="pill"><b>stream</b> (RFS + click-to-trade)</span>
+      </div>
+    </div>
+  </div>
+  <div class="note"><b>Executable proof:</b> all 19 products × 5 service families are reachable from
+  all 5 surfaces — recorded cell-by-cell in <code>CLIENT-PARITY-MATRIX.md</code>, with honest
+  exceptions stated (e.g. basket Greeks deliberately zeroed; CLI market-series via the one-shot
+  stream subcommand). A ✅ means the surface actually exercises the wire contract, not a placeholder.</div>
+  <figure style="margin-top:24px">
+    <img src="assets/celnet-capabilities/fig-11-streamsession-clicktrade.png" alt="Architecture diagram of Celnet's multiplex StreamSession showing the price subscription lifecycle with an observability-bearing heartbeat, resync and in-place modify paths, an interleaved market-series flow over the same session, and server-minted keyed-MAC tradable tokens resolving to an executed fill or a typed reject.">
+    <figcaption><b>Fig 11 — StreamSession &amp; click-to-trade.</b> One bidirectional session
+    multiplexes many subscriptions (Subscribe → Snapshot → sequenced Update → gap-driven Resync →
+    in-place Modify), carries a Heartbeat with off-hot-path server observability (conflation drops,
+    price p50/p99/p99.9, <code>surface_version</code>), interleaves a market-series flow (ATM vol,
+    spot, risk reversal, butterfly, forward), and turns a streamed price into a confirmed fill via an
+    unguessable line-bound keyed-MAC tradable token with last-look validity and idempotent typed
+    execution.</figcaption>
+  </figure>
+</section>
+
+<!-- 11. EXCEL -->
+<section id="excel">
+  <h2><span class="kicker">Excel Integration</span>27 <code>CELNET.*</code> functions, one contract</h2>
+  <p>Three design principles, verbatim: <b>read = zero click</b> (a <code>CELNET.*</code> formula is
+  a live read), <b>write = two-phase</b> (mark/recalibrate is explicit), and <b>no pricing in the
+  cell</b> — every value comes from the server over the same contract, with per-cell convention +
+  surface-version transparency in the spill footer. MC functions disclose <code>price_std_error</code>;
+  BASKET's Greeks are honestly deferred (zeroed); BARRIER accepts <code>model=ANALYTIC|LSV</code>;
+  MARKSURFACE/MARK expose all five smile models incl. <b>eSSVI</b>.</p>
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>Group</th><th>Function</th><th>Signature</th><th>Spill / output</th></tr></thead>
+    <tbody>
+      <tr><td rowspan="5"><b>Pricing</b></td><td><code>CELNET.PRICE</code></td><td>(pair, tenor, strikeOrDelta, callPut, notional)</td><td>scalar mid premium</td></tr>
+      <tr><td><code>CELNET.GREEKS</code></td><td>(pair, tenor, strikeOrDelta, callPut, notional)</td><td>14×2 spill: 13 Greeks + convention footer</td></tr>
+      <tr><td><code>CELNET.RFQ</code></td><td>(pair, tenor, strikeOrDelta, callPut, notional)</td><td>two-way bid/offer + std-error + footer</td></tr>
+      <tr><td><code>CELNET.SUBSCRIBE</code></td><td>(pair, tenor, strikeOrDelta, callPut, notional)</td><td>streaming live price</td></tr>
+      <tr><td><code>CELNET.SERIES</code></td><td>(pair, observable, tenor?, delta?)</td><td>streaming series point (ATM vol/spot/RR/BF/forward)</td></tr>
+      <tr><td rowspan="15"><b>Exotics</b></td><td><code>CELNET.BARRIER</code></td><td>(pair, tenor, strikeOrDelta, callPut, notional, barrier, kind?, side?, upperBarrier?, rebate?, monitoring?, model?)</td><td>premium + Greeks + footer · <code>model=ANALYTIC|LSV</code></td></tr>
+      <tr><td><code>CELNET.WINDOWBARRIER</code></td><td>(…, barrier, side?, windowStart?, windowEnd?, mcPairs?, mcSteps?)</td><td>premium + std-error + footer</td></tr>
+      <tr><td><code>CELNET.DIGITAL</code></td><td>(pair, tenor, strike, callPut, notional, style?, payout?)</td><td>premium + Greeks + footer</td></tr>
+      <tr><td><code>CELNET.TOUCH</code></td><td>(pair, tenor, kind, barrier, notional, rebate?, upperBarrier?, monitoring?)</td><td>premium + footer</td></tr>
+      <tr><td><code>CELNET.VARSWAP</code></td><td>(pair, tenor, notional, strikeVol?)</td><td>fair-variance strike + PV</td></tr>
+      <tr><td><code>CELNET.VOLSWAP</code></td><td>(pair, tenor, notional, strikeVol?)</td><td>convexity-adjusted fair-vol strike + PV</td></tr>
+      <tr><td><code>CELNET.ASIAN</code></td><td>(pair, tenor, strike, callPut, notional, averaging?, observations?, method?, elapsedAvg?, elapsedWeight?)</td><td>premium + footer</td></tr>
+      <tr><td><code>CELNET.FORWARDSTART</code></td><td>(pair, tenor, callPut, moneyness, reset, notional)</td><td>premium + footer</td></tr>
+      <tr><td><code>CELNET.CLIQUET</code></td><td>(…, moneyness, periods, notional, localFloor?, localCap?, globalFloor?, globalCap?, mcPairs?)</td><td>premium (+ std-error if clamped MC)</td></tr>
+      <tr><td><code>CELNET.QUANTO</code></td><td>(pair, tenor, callPut, strike, notional, conversionVol, correlation, payoff?)</td><td>premium + footer</td></tr>
+      <tr><td><code>CELNET.TARF</code></td><td>(…, strike, target, leverage, fixings, notional, redemption?, fixingNotional?, mcPairs?)</td><td>premium + <b>std-error</b> + footer</td></tr>
+      <tr><td><code>CELNET.ACCUMULATOR</code></td><td>(…, pivot, barrier, leverage, fixings, notional, monitoring?, fixingNotional?, mcPairs?, mcSeed?)</td><td>premium + <b>std-error</b> + footer</td></tr>
+      <tr><td><code>CELNET.LOOKBACK</code></td><td>(pair, tenor, callPut, notional, style?, monitoring?, strike?, observations?, mcPairs?, mcSeed?)</td><td>premium (+ std-error if discrete MC)</td></tr>
+      <tr><td><code>CELNET.AMERICAN</code></td><td>(pair, tenor, strike, callPut, notional, style?, bermudanSteps?, lsmPaths?, lsmExerciseDates?, lsmSeed?)</td><td>premium (+ std-error if LSM)</td></tr>
+      <tr><td><code>CELNET.BASKET</code></td><td>(pair, tenor, callPut, strike, notional, legs[][], correlations[][], kind?, mcPaths?, mcReplications?, mcSteps?)</td><td>premium + <b>std-error</b> · Greeks honestly zeroed</td></tr>
+      <tr><td rowspan="3"><b>Surface</b></td><td><code>CELNET.SURFACE</code></td><td>(pair, tenor, model?)</td><td>smile / scenario matrix</td></tr>
+      <tr><td><code>CELNET.MARKSURFACE</code></td><td>(pair, tenor, model, atmVol, rr25, bf25, rr10?, bf10?)</td><td>marked surface version · <b>model ∈ {VV,SABR,SVI,SSVI,eSSVI}</b></td></tr>
+      <tr><td><code>CELNET.MARK</code></td><td>(pair, tenor, pillar, vol, model?, comment?)</td><td>marked pillar · surface version · eSSVI-capable</td></tr>
+      <tr><td rowspan="4"><b>Risk</b></td><td><code>CELNET.RISK</code></td><td>(dimension, numeraire, rates?, scope?)</td><td>server-side hierarchical aggregate (RiskService)</td></tr>
+      <tr><td><code>CELNET.POSITIONS</code></td><td>(scope?)</td><td>entitlement-pruned position list + attribution</td></tr>
+      <tr><td><code>CELNET.LIMITS</code></td><td>(scope, numeraire, rates?)</td><td>limit tree + RAG utilization</td></tr>
+      <tr><td><code>CELNET.STATUS</code></td><td>()</td><td>connection / surface-version status</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="note"><b>Server-side risk readers.</b> <code>RISK</code>/<code>POSITIONS</code>/<code>LIMITS</code>
+  pull the server's hierarchical aggregate (entitlement-pruned, numeraire-converted, bit-identical to
+  the GUI Book/Risk views) — not client-composed Greek grids. <code>excel/src/functions/functions.ts</code>.</div>
+  <div class="gallery" style="margin-top:24px">
+    <figure>
+      <img src="assets/celnet-capabilities/shot-09-excel-taskpane.png" alt="Excel task-pane showing the Celnet add-in with smile-model selection including eSSVI.">
+      <figcaption><b>Shot 09 — Excel task-pane.</b> Smile-model selection (VV/SABR/SVI/SSVI/eSSVI) — Excel exposes eSSVI.</figcaption>
+    </figure>
+    <figure>
+      <img src="assets/celnet-capabilities/shot-10-excel-grid-branded.png" alt="Branded Excel grid showing CELNET.* functions spilling premium, std-error, Greeks and a convention footer.">
+      <figcaption><b>Shot 10 — Branded grid.</b> <code>CELNET.*</code> spills premium, std-error, Greeks and a convention footer.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- 12. CELER INTEGRATION -->
+<section id="celer">
+  <h2><span class="kicker">Celer Integration</span>Designed estate-native binding, deploy-gated lifecycle</h2>
+  <figure>
+    <img src="assets/celnet-capabilities/fig-09-celer-lifecycle.png" alt="Two-swimlane diagram of the Celer trade lifecycle: a price path from venues (Fenics/Bloomberg/Refinitiv/EBS as integration targets) through FIX-in, celertech-marketdata, celertech-marketmerchant, distributor and a byte-identical WebSocket mirror to Celer Trader, and an order path through celertech-orderrouting, celertech-risk, celertech-destination, celertech-clearing and celertech-positionmanager, with coral Celnet callouts injecting price/surface and option risk, a navy Celnet pricing-core panel, a book-and-risk cube, a one-contract panel, a three-deployment-mode seam, and a dashed honest-boundary footnote.">
+    <figcaption><b>Fig 09 — Celer lifecycle.</b> Celnet sits as the FX-options pricing
+    system-of-record inside the Celer trade lifecycle, injecting price, the full FX Greek set and the
+    calibrated surface into the market-data price path and option risk into the pre-trade/position
+    path. The surrounding estate is the <b>designed integration map</b>: the binding is seamed via
+    DeployMode adapter traits (Standalone real and tested in-repo), while the live JVM Celer estate
+    lifecycle is <b>deploy/live-gated, not exercised in-repo</b>.</figcaption>
+  </figure>
+  <figure>
+    <img src="assets/celnet-capabilities/fig-10-deployment-modes.png" alt="Diagram showing the shared zero-allocation Celnet pricing core and three seam traits (market-data source, price sink, order/execution adapter) feeding three deployment-mode columns: Standalone, Hybrid, and CelerIntegrated marked as the designed estate-native binding, with a conflating egress governor over a lock-free SPMC fan-out ring and a Raft-replicated fleet, over a coral honest-boundary footnote.">
+    <figcaption><b>Fig 10 — Deployment modes.</b> One codebase, three modes — Standalone, Hybrid and
+    the <b>designed</b> CelerIntegrated estate-native binding — selected only by binding three adapter
+    seams (market-data source, price sink, order/execution). The in-repo seam (traits + adapter swap
+    + FIX 4.4 loopback) is distinct from the live-estate proof; the JVM distributor sidecar handshake,
+    mailbox calibration and live quote-feed entitlement are <b>deploy/live-gated</b>. Migration is a
+    reversible adapter swap.</figcaption>
+  </figure>
+  <div class="note"><b>Built seams:</b> a real FIX 4.4 engine (acceptor + initiator, loopback-tested),
+  egress governor, resilient subscriber, normalization, and three adapter-bound deployment modes.
+  Vendor feeds (Fenics / Bloomberg / Refinitiv / EBS) are <b>adapter integration targets</b>, not
+  live in-repo connections.</div>
+</section>
+
+<!-- 13. COMPETITIVE -->
+<section id="compete">
+  <h2><span class="kicker">Competitive Positioning</span>A functional superset, proven openly</h2>
+  <p class="lede">Celnet now matches Murex MX.3 / Numerix CrossAsset / Fenics kACE on
+  structured/path-dependent breadth <b>while retaining the open-SDK, microsecond, one-contract,
+  deterministic edges they structurally lack</b>. Network framing — not computation — is the only
+  latency floor; no absolute wire SLO is claimed.</p>
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>Capability</th><th>Celnet</th><th>SynOption</th><th>Fenics (FMD/kACE)</th><th>Bloomberg</th><th>Murex / Numerix</th></tr></thead>
+    <tbody>
+      <tr><td>Vanilla + price + 13 Greeks</td><td class="ok">✅ QuantLib-gated, AAD adjoint</td><td>✅ closed</td><td>✅ closed</td><td>✅ closed</td><td>✅</td></tr>
+      <tr><td>User-selectable smile model (VV/SABR/SVI/SSVI/<b>eSSVI</b>)</td><td class="ok">✅ 5 families</td><td>❌ single</td><td>❌ single</td><td>❌ closed</td><td>❌</td></tr>
+      <tr><td>Auditable arbitrage-free guarantee</td><td class="ok">✅ butterfly+calendar+vertical</td><td>⚠️</td><td>❌ ML fill</td><td>⚠️</td><td>partial</td></tr>
+      <tr><td>First-gen exotics (digital/touch/DNT/barrier/window)</td><td class="ok">✅ QuantLib-gated</td><td>✅ closed</td><td>✅ kACE</td><td>✅</td><td>✅</td></tr>
+      <tr><td>Structured (var/vol swap, Asian, fwd-start/cliquet, quanto, lookback)</td><td class="ok">✅ closed-form, parity-gated</td><td>✅</td><td>✅ kACE</td><td>✅</td><td>✅</td></tr>
+      <tr><td>Path-dependent MC (TARF, accumulator)</td><td class="ok">✅ MC w/ std-error</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td></tr>
+      <tr><td>Correlated multi-asset (basket/best-of/worst-of)</td><td class="ok">✅ Cholesky MC w/ std-error</td><td>⚠️</td><td>⚠️ kACE</td><td>⚠️</td><td>✅</td></tr>
+      <tr><td>American / Bermudan early exercise</td><td class="ok">✅ PSOR FD + LSM</td><td>⚠️</td><td>✅ kACE</td><td>✅</td><td>✅</td></tr>
+      <tr><td>LSV booking model + standalone Heston</td><td class="ok">✅ particle ADI + Heston golden</td><td>⚠️</td><td>⚠️</td><td>⚠️</td><td>✅</td></tr>
+      <tr><td>GPU-accelerated MC/PDE/Greeks (ratios; abs. deploy-gated)</td><td class="ok">✅ wgpu + CPU reconcile</td><td>❌</td><td>❌</td><td>❌</td><td>❌</td></tr>
+      <tr><td>Microsecond pricing, published in-core numbers</td><td class="ok">✅ ~42ns p50 / 125ns p99 (M4, §1.2)</td><td>❌</td><td>❌</td><td>❌</td><td>❌ batch/EOD</td></tr>
+      <tr><td>One unversioned gRPC + byte-identical WS contract</td><td class="ok">✅ 5 services</td><td>❌ FIX/UI</td><td>❌ feed</td><td>❌ terminal</td><td>❌</td></tr>
+      <tr><td>Five-client bit-identical parity</td><td class="ok">✅ parity matrix</td><td>❌</td><td>❌</td><td>❌</td><td>❌</td></tr>
+      <tr><td>Server-side hierarchical firm risk</td><td class="ok">✅ RiskService + cross-shard fan-out</td><td>⚠️</td><td>❌</td><td>⚠️</td><td>✅ batch</td></tr>
+      <tr><td>FRTB-SA (SbM + curvature + RRAO)</td><td class="ok">✅ BCBS-pinned</td><td>❌</td><td>❌</td><td>⚠️ MARS</td><td>✅</td></tr>
+      <tr><td>XVA (CVA/DVA/FVA)</td><td class="ok">✅ internal-only, synthetic netting (no wire)</td><td>❌</td><td>❌</td><td>⚠️</td><td>✅</td></tr>
+      <tr><td>Customer-extensible quant SDK (sandboxed)</td><td class="ok">✅ Tier-0 native + Tier-2 wasmi (Tier-1/3 designed)</td><td>❌</td><td>❌</td><td>❌</td><td>❌</td></tr>
+      <tr><td>Distributed correctness (Raft log + SPMC fan-out)</td><td class="ok">✅ bit-identical replay, loopback-proven</td><td>n/a</td><td>n/a</td><td>n/a</td><td>⚠️</td></tr>
+      <tr><td>Asset-class / pair breadth</td><td>⚠️ 19-pair universe (G10 + EM NDF + XAU/XAG)</td><td>✅ 75 + crypto</td><td>✅ 300+</td><td>✅ 200+</td><td>✅</td></tr>
+      <tr><td>Native Celer trade-lifecycle integration</td><td class="ok">✅ seamed (FIX + DeployMode); ⛔ live JVM deploy-gated</td><td>❌</td><td>❌</td><td>❌</td><td>n/a</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="na" style="font-size:13px">Competitor cells are stated inferences from public material
+  (archetype map, not endorsement); see <code>CAPABILITIES-VS-COMPETITION.md</code>.</p>
+</section>
+
+<!-- 14. SCREEN GALLERY -->
+<section id="gallery">
+  <h2><span class="kicker">Trader GUI</span>Screen gallery</h2>
+  <div class="gallery">
+    <figure><img src="assets/celnet-capabilities/shot-01-stream-blotter.png" alt="Virtualised streaming blotter."><figcaption><b>Shot 01</b> — Streaming blotter (virtualised, group/collapse).</figcaption></figure>
+    <figure><img src="assets/celnet-capabilities/shot-02-ticket-structuring.png" alt="Exotic ticket structuring across the full catalogue."><figcaption><b>Shot 02</b> — Ticket: full exotic catalogue incl. American &amp; basket.</figcaption></figure>
+    <figure><img src="assets/celnet-capabilities/shot-03-surface-marking.png" alt="Surface marking with five model chips including eSSVI."><figcaption><b>Shot 03</b> — Surface marking, 5 model chips (eSSVI).</figcaption></figure>
+    <figure><img src="assets/celnet-capabilities/shot-04-risk-scenario.png" alt="Risk scenario grid."><figcaption><b>Shot 04</b> — Book-shaped scenario risk.</figcaption></figure>
+    <figure><img src="assets/celnet-capabilities/shot-05-book-aggregate.png" alt="Aggregated book view."><figcaption><b>Shot 05</b> — Server-aggregated Book / Risk.</figcaption></figure>
+    <figure><img src="assets/celnet-capabilities/shot-06-pair-navigator.png" alt="Pair universe navigator."><figcaption><b>Shot 06</b> — Pair-universe navigator.</figcaption></figure>
+    <figure><img src="assets/celnet-capabilities/shot-07-command-palette.png" alt="Command palette."><figcaption><b>Shot 07</b> — Command palette (⌘B) &amp; <code>?</code> shortcuts overlay.</figcaption></figure>
+    <figure><img src="assets/celnet-capabilities/shot-08-clicktrade-lastlook.png" alt="Click-to-trade last-look."><figcaption><b>Shot 08</b> — Click-to-trade, keyed-MAC last-look.</figcaption></figure>
+  </div>
+</section>
+
+<!-- 15. HONEST BOUNDARY -->
+<section id="boundary">
+  <div class="boundary">
+    <h2><span class="kicker">Verbatim — carry everywhere</span>Honest boundary</h2>
+    <p style="color:#cfd4e8; max-width:980px">These canonical lines (from <code style="background:#353a50;color:#e9ecf7">COMPLETION-PROGRAM.md</code>
+    §4 / POST-COMPLETION-AUDIT class C) are quoted verbatim. None of these is claimed as in-repo-proven.</p>
+    <ul>
+      <li><b>Cross-host wire p99 / kernel-bypass NIC latency</b> — deploy-gated; in-repo proves the in-core §1.2 truth-gate + loopback benches only.</li>
+      <li><b>CUDA/NVIDIA absolute GPU throughput + ≤50 ms exotic + Workload-A/B absolute numbers</b> — deploy-gated. M4 Metal lacks f64 ⇒ in-repo proves <b>correctness + RATIOS only</b> (M4/Lavapipe). Never claim f64 on Metal.</li>
+      <li><b>The §11 absolute wire-latency SLOs</b> — deploy-gated (in-repo proves the §1.2 truth-gate + loopback only).</li>
+      <li><b>The entire live JVM Celer estate lifecycle</b> (sidecar / FX_OPTION / inferred hops / tenant overlays) — deploy/live-gated; in-repo has the seams + adapters only.</li>
+      <li><b>Raft §6 dynamic membership / cross-DC transport / real network partitions</b> — deploy-gated; in-repo proves correctness/quorum/framing on localhost multi-process only.</li>
+      <li><b>Plugin Tier-1 signed-.so (stabby) + Tier-3 Landlock/seccomp</b> — designed-only; only Tier-0 native + Tier-2 wasmi are shipped.</li>
+      <li><b>XVA (CVA/DVA/FVA, celnet-xva)</b> — internal-only, NO client/wire surface, <b>synthetic netting sets only</b>; live CSAs/collateral/wrong-way risk are deploy-gated.</li>
+      <li><b>Multi-source surface aggregation</b> — the blend/staleness/divergence ALGORITHM is built and gated; live multi-vendor quote VALUES are an integration/deploy target, not in-repo data.</li>
+      <li><b>MC-priced products</b> (TARF, accumulator, discrete lookback, basket/best-of/worst-of, American via LSM) carry a <b>price std-error</b> — never labelled "machine-precision"; that bar is reserved for analytic/PDE/golden-gated products.</li>
+    </ul>
+  </div>
+</section>
+
+</main>
+
+<footer class="stamp">
+  <span><b>Celnet</b> — a Celer Technologies product · capabilities showcase</span>
+  <span>build <b>5773c52</b> · 2026-06-08T06:57:31Z UTC · 34 crates · <code style="color:#979cb7">just check</code> green</span>
+</footer>
+
+</div>
+</body>
+</html>

@@ -204,3 +204,15 @@ fuzz-vanilla DURATION="120":
     source "$HOME/.cargo/env"
     cd fuzz
     cargo +nightly fuzz run vanilla_inputs -- -max_total_time={{DURATION}}
+
+# Re-render ALL capability-doc figures (committed, reproducible) from their authored
+# HTML in docs/assets/celnet-capabilities/_src/ via headless Chromium (Playwright).
+# Reads diagram-meta.json for each figure's exact w×h and screenshots the .canvas
+# element to docs/assets/celnet-capabilities/<figname>.png. Uses the Playwright
+# vendored under gui/node_modules; ensures the Chromium binary is installed first.
+# Pass an optional figure name to render just one (e.g. `just render-figures fig-04-surface-pipeline`).
+render-figures FIG="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    npx --prefix gui playwright install chromium
+    node tools/render-capability-figures.mjs {{FIG}}

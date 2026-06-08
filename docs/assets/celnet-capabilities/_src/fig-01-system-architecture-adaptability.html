@@ -23,7 +23,7 @@ body{background:#fff}
 .note{font-size:11.5px;color:var(--muted);font-style:italic;margin-top:9px}
 .foot{position:absolute;left:34px;bottom:13px;font-size:11px;color:var(--muted)}.foot b{color:var(--brand-deep)}
 </style></head><body>
-<div class="canvas" style="width:1680px;height:1000px">
+<div class="canvas" style="width:1680px;height:1360px">
 <div class="rail"></div>
 <div class="hd">
 <svg class="mk" viewBox="0 0 501 500"><path fill="#ff7357" d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg>
@@ -98,12 +98,16 @@ body{background:#fff}
 <!-- quant + plugin band under core -->
 <div class="row" style="margin-top:2px">
 <div class="box accent" style="flex:1.4">
-<div class="t">Quant engine</div>
-<div class="d">Garman-Kohlhagen vanilla off the outright forward with separate domestic/foreign discount factors; four delta conventions + branch-aware strike↔delta solver; ATMF / delta-neutral straddle; VV · SABR · SVI · SSVI with broker-strangle calibration, arbitrage gates and an arb-free term structure; first-generation exotics (digitals, one-touch/no-touch, double-no-touch/double-touch, single &amp; double barriers) via analytic + Crank-Nicolson/Rannacher PDE + Philox Monte-Carlo + survival-weighted Vanna-Volga overlay. Validated to machine precision against an independent reference.</div>
+<div class="t">Quant engine — full catalogue</div>
+<div class="d">Garman-Kohlhagen vanilla off the outright forward (separate domestic/foreign discounting), four delta conventions + branch-aware strike↔delta solver, ATMF / delta-neutral straddle; five smile families — <b>VV · SABR · SVI · SSVI · eSSVI</b> — with broker-strangle calibration, arbitrage gates and an arb-free term structure. One unified exotic <b>Instrument</b> (19 products):</div>
+<div style="margin-top:5px">
+<span class="chip">digitals</span><span class="chip">touch / DNT</span><span class="chip">8 barriers + window</span><span class="chip">var/vol swap</span><span class="chip">Asian</span><span class="chip">fwd-start / cliquet</span><span class="chip">quanto</span><span class="chip">TARF</span><span class="chip">accumulator</span><span class="chip">lookback</span><span class="chip k">American / Bermudan</span><span class="chip k">basket / best-of / worst-of</span><span class="chip k">LSV booking model</span>
+</div>
+<div class="d" style="margin-top:5px">Analytic · CN-Rannacher &amp; ADI PDE · PSOR free-boundary + Longstaff-Schwartz LSM · Cholesky / Philox MC (Sobol-QMC variance reduction) · survival-weighted Vanna-Volga overlay; particle-calibrated LSV + standalone Heston. Validated <b>per class</b>: frozen QuantLib golden (vanilla / digital / barrier / Heston), closed-form limits + finite-difference + hand-pinned published constants, and honest price std-error for MC products — never blanket "machine precision".</div>
 </div>
 <div class="box accent" style="flex:1">
 <div class="t">Open Quant SDK + plugin host</div>
-<div class="d">Frozen PricingModel / SmileModel / Calibration traits + self-describing registry. Native models at native speed; a capability-scoped, compute-budgeted WebAssembly sandbox with deterministic bit-identical replay; signed shared-object and OS-sandbox tiers. Desks run private custom models in-engine — extensible to bespoke / structured products without forking Celnet.</div>
+<div class="d">Frozen PricingModel / SmileModel / Calibration traits + self-describing tier-blind registry. <b>Shipped:</b> Tier-0 native models at native speed and a Tier-2 capability-scoped, compute-budgeted WebAssembly (wasmi) sandbox with deterministic bit-identical replay. <b>Designed · deploy-gated:</b> Tier-1 signed shared-object and Tier-3 OS-sandbox (Landlock/seccomp) slot in behind the same contract. Desks run private custom models in-engine — extending an already-deep catalogue without forking Celnet.</div>
 </div>
 </div>
 </div>
@@ -124,7 +128,7 @@ body{background:#fff}
 </div>
 <div class="box">
 <div class="t" style="font-size:13px">Excel CELNET.*</div>
-<div class="d">PRICE · GREEKS · SURFACE · MARKSURFACE · RFQ · SUBSCRIBE · SERIES · MARK — no maths in the cell.</div>
+<div class="d">27 functions — PRICE · GREEKS · SURFACE · MARKSURFACE · MARK · RFQ · SUBSCRIBE · SERIES + exotics (BARRIER · ASIAN · TARF · AMERICAN · BASKET · …) + RISK / POSITIONS / LIMITS — no maths in the cell.</div>
 </div>
 <div class="box">
 <div class="t" style="font-size:13px">Rust client SDK</div>
@@ -163,7 +167,7 @@ body{background:#fff}
 </div>
 <div class="box accent" style="flex:1">
 <div class="t">Horizontal scale-out</div>
-<div class="d">Node-local hot substrate plus intra-fleet highest-random-weight partition-map sharding and fan-out to many counterparties. Zero-cost observability with tail-percentile, coordinated-omission-aware histograms and regression-gated benchmarks.</div>
+<div class="d">Node-local hot substrate plus a Raft-replicated event log (election · Pre-Vote · conflicting-tail truncation · compaction · InstallSnapshot, bit-identical replay), a lock-free SPMC fan-out ring under the edge (per-pair tick to every subscriber, exact-skip conflation), HRW partition-map sharding and cross-fleet risk fan-out (additive merge / non-additive re-gather, fan-out == single-node to 1e-12). Zero-cost tail-percentile, coordinated-omission-aware observability and regression-gated benchmarks.</div>
 </div>
 </div>
 
@@ -183,7 +187,7 @@ body{background:#fff}
 <div class="arrow">↔</div>
 <div class="box brand" style="flex:1">
 <div class="t">CelerIntegrated</div>
-<div class="d">System-of-record inside the Celer trade lifecycle — distributor sidecar handshake, mailbox calibration, live quote-feed entitlement; venues→FIX-in→marketdata→marketmerchant→distributor→Celer Trader and order→orderrouting→risk→destination→clearing→positionmanager.</div>
+<div class="d">Designed estate-native binding — system-of-record inside the Celer trade lifecycle: distributor sidecar handshake, mailbox calibration, live quote-feed entitlement across venues→FIX-in→marketdata→marketmerchant→distributor→Celer Trader and order→orderrouting→risk→destination→clearing→positionmanager. In-repo = seam traits + adapter swap + FIX loopback; the live JVM estate lifecycle is proven at deploy.</div>
 </div>
 <div class="arrow">→</div>
 <div class="box accent" style="flex:.9">
@@ -193,7 +197,8 @@ body{background:#fff}
 </div>
 </div>
 
-<div class="note">Pluggable adapters in → one celnet-proto contract → bit-identical surfaces out → deploys three ways. A large multi-crate Rust workspace under an extensive automated test suite; supply-chain-clean and cross-platform deterministic.</div>
+<div class="note">Pluggable adapters in → one celnet-proto contract → bit-identical surfaces out → deploys three ways. 34-crate one-way-acyclic Rust workspace under an extensive automated test suite; supply-chain-clean and cross-platform deterministic.</div>
+<div class="note">Honest boundary: in-repo proofs are the §1.2 in-core latency truth-gate (M4, host-local, single-core) + loopback / localhost-multiprocess benches + GPU correctness &amp; ratios (M4 Metal lacks f64). Absolute cross-host wire p99, §11 wire SLOs, NVIDIA absolute GPU throughput, Raft §6 dynamic membership / cross-DC, the live JVM Celer estate, and Tier-1/Tier-3 plugin isolation are designed/deploy-gated, never claimed in-repo. XVA is internal-only (synthetic netting; no wire surface).</div>
 
 </div>
 <div class="foot">Celnet — a <b>Celer Technologies</b> product</div>

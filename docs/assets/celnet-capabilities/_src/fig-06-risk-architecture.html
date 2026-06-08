@@ -42,7 +42,8 @@ body{background:#fff}
     <div style="margin-top:8px">
       <span class="chip k">vanilla + full Greek set</span>
       <span class="chip k">smile / surface engine</span>
-      <span class="chip k">exotics catalogue</span>
+      <span class="chip k">full exotic & structured catalogue</span>
+      <span class="chip k">American · basket · LSV booking</span>
     </div>
   </div>
 
@@ -71,7 +72,7 @@ body{background:#fff}
 
   <div class="box accent" style="width:222px;display:flex;flex-direction:column;justify-content:center">
     <div class="t">Marked-surface registry</div>
-    <div class="d">Versioned official-vs-live surfaces. Pricing pins to an explicit surface version; an unknown version is rejected rather than silently falling back to the live mark — repeatable, auditable risk.</div>
+    <div class="d">Versioned official-vs-live surfaces — VV · SABR · SVI · SSVI · eSSVI smile models. Pricing pins to an explicit surface version; an unknown version is rejected rather than silently falling back to the live mark — repeatable, auditable risk.</div>
     <div style="margin-top:6px"><span class="tag">surface pinning</span><span class="tag">official vs live</span></div>
   </div>
 
@@ -85,7 +86,7 @@ body{background:#fff}
 
   <div class="box tint" style="width:174px;display:flex;flex-direction:column;justify-content:center">
     <div class="t">Fact stream</div>
-    <div class="d">Live positions and marks flow in continuously from across the estate as immutable facts.</div>
+    <div class="d">Live positions and marks flow in continuously from across the estate as immutable facts — vanilla <i>and exotic</i> legs alike, each carrying its real sensitivities into the roll-up.</div>
   </div>
 
   <div class="arrow">→</div>
@@ -103,12 +104,12 @@ body{background:#fff}
     <div style="margin-top:7px">
       <span class="chip">Trader</span><span class="chip">Book</span><span class="chip">Desk</span><span class="chip">CcyPair</span><span class="chip">Location</span><span class="chip">Entity</span><span class="chip">ValueDate</span><span class="chip">Session</span>
     </div>
-    <div class="d" style="margin-top:9px;color:#c4c9dc"><b style="color:#fff">Additive incremental roll-up</b> for exposures that simply sum, alongside <b style="color:#fff">non-additive per-node re-derivation</b> — VaR, ES and curvature recomputed correctly at each node rather than naively added.</div>
+    <div class="d" style="margin-top:9px;color:#c4c9dc"><b style="color:#fff">Additive incremental roll-up</b> for exposures that simply sum, alongside <b style="color:#fff">non-additive per-node re-derivation</b> — VaR, ES and FRTB-SbM curvature recomputed correctly at each node rather than naively added. <b style="color:#fff">Exotic legs roll up alongside vanilla</b>, each contributing its true non-vanilla payoff risk.</div>
   </div>
 
   <div class="arrow">→</div>
 
-  <div class="col" style="width:236px">
+  <div class="col" style="width:248px">
     <div class="box accent" style="flex:1">
       <div class="t">Entitlements</div>
       <div class="d">Server-side, entitlement-aware pre-aggregation pruning — a viewer only ever rolls up the facts they are cleared to see.</div>
@@ -116,6 +117,10 @@ body{background:#fff}
     <div class="box accent" style="flex:1">
       <div class="t">Limit tree</div>
       <div class="d">A cascading board → entity → desk → book → trader limit hierarchy with pre- and post-trade checks at every tier.</div>
+    </div>
+    <div class="box accent" style="flex:1">
+      <div class="t">FRTB-SA · XVA</div>
+      <div class="d">SbM regulatory-capital (within/cross-bucket, three-correlation max, curvature, RRAO) and CVA / DVA / FVA over EPE/ENE.<span class="tag" style="margin-top:5px">CVA/DVA/FVA · synthetic netting · internal</span></div>
     </div>
   </div>
 
@@ -136,7 +141,8 @@ body{background:#fff}
 
 </div>
 
-<div class="note" style="margin-top:16px">Every surface — GUI, SDK and Excel — consumes the one canonical contract over the same cube; a value is bit-identical across them all. Risk is computed once, at machine precision, and seen everywhere the same way.</div>
+<div class="note" style="margin-top:16px">Every surface — GUI, SDK and Excel — consumes the one canonical contract over the same cube; a value is bit-identical across them all. Risk is computed once and seen everywhere the same way.</div>
+<div class="note" style="margin-top:6px;font-size:11px">Honest boundary — XVA is internal-only over <i>synthetic</i> netting sets (no client/wire surface; live CSAs, collateral and wrong-way risk are deploy-gated). MC-priced exposures carry a price std-error, not machine precision (the analytic / PDE / golden-validated bar). FX deliverable DRC is an honest zero (no issuer jump-to-default).</div>
 
 </div>
 <div class="foot">Celnet — a <b>Celer Technologies</b> product</div>

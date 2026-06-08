@@ -17,6 +17,12 @@ body{background:#fff}
 .row{display:flex;gap:15px}.col{display:flex;flex-direction:column;gap:15px}.grid{display:grid;gap:15px}
 .arrow{align-self:center;color:var(--brand);font-size:24px;font-weight:800;padding:0 2px}
 .tag{display:inline-block;font-size:11px;font-weight:700;color:var(--accent);background:rgba(107,107,245,.1);border-radius:6px;padding:2px 8px;margin:3px 4px 0 0}
+.tag.road{color:#5b6376;background:rgba(151,156,183,.16);border:1px dashed var(--muted)}
+.box.designed{border-style:dashed;border-color:var(--muted);background:#fafbfe}
+.box.designed .t{color:#5b6376}
+.badge{display:inline-block;font-size:10px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;border-radius:5px;padding:2px 7px;margin-left:auto}
+.badge.built{color:#0f6b46;background:rgba(28,140,90,.13);border:1px solid rgba(28,140,90,.4)}
+.badge.des{color:#5b6376;background:rgba(151,156,183,.16);border:1px dashed var(--muted)}
 .chip{display:inline-block;font-size:11.5px;color:var(--ink);background:#eef1f8;border:1px solid var(--line);border-radius:6px;padding:3px 9px;margin:3px 4px 0 0}
 .chip.k{background:rgba(255,115,87,.1);border-color:rgba(255,115,87,.35);color:var(--brand-deep);font-weight:700}
 .section-label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);margin:2px 0 7px}
@@ -68,34 +74,35 @@ body{background:#fff}
     <div class="arrow" style="transform:rotate(90deg)">→</div>
   </div>
 
-  <div class="section-label">One model — four execution tiers, same contract</div>
+  <div class="section-label">One model — two shipped tiers + two designed tiers, same contract</div>
   <div class="grid" style="grid-template-columns:repeat(4,1fr);align-items:stretch">
 
     <div class="box brand">
-      <div class="t">Native</div>
-      <div class="d">First-party and trusted models run on the in-process host seam at full native speed — so an in-core price is bounded by the maths alone.</div>
+      <div class="t">Native <span class="badge built">Built</span></div>
+      <div class="d">Tier-0. First-party and trusted models run on the in-process host seam at full native speed — so an in-core price is bounded by the maths alone. 14 host tests; all four sandbox gates green.</div>
       <span class="tag">host seam</span><span class="tag">native speed</span><span class="tag">tier-0</span>
     </div>
 
     <div class="box accent">
-      <div class="t">WebAssembly sandbox</div>
-      <div class="d">Desk-supplied models run compute-budgeted with no ambient OS access — an errant model fails typed rather than hanging or escaping. Deterministic, bit-identical replay; boundary NaN-canonicalization; a strict marshalling ABI; bounded guest memory.</div>
+      <div class="t">WebAssembly sandbox <span class="badge built">Built</span></div>
+      <div class="d">Tier-2 (wasmi). Desk-supplied models run compute-budgeted with no ambient OS access — an errant model fails typed rather than hanging or escaping. Deterministic, bit-identical replay; boundary NaN-canonicalization; a strict marshalling ABI; bounded guest memory.</div>
       <span class="tag">capability-scoped</span><span class="tag">deterministic replay</span><span class="tag">bounded memory</span>
     </div>
 
-    <div class="box">
-      <div class="t">Signed shared object</div>
-      <div class="d">Trusted compiled extensions load as signed, verifiable native artifacts inside the same registry and calling convention — speed with provenance.</div>
-      <span class="tag">signed</span><span class="tag">verified</span><span class="tag">tier-1</span>
+    <div class="box designed">
+      <div class="t">Signed shared object <span class="badge des">Designed</span></div>
+      <div class="d">Tier-1. Trusted compiled extensions load as signed, verifiable native artifacts inside the same registry and calling convention — speed with provenance. Designed-and-seamed behind the frozen contract; proven at deploy.</div>
+      <span class="tag road">signed</span><span class="tag road">verified</span><span class="tag road">tier-1 · deploy-gated</span>
     </div>
 
-    <div class="box">
-      <div class="t">OS sandbox</div>
-      <div class="d">A kernel-enforced isolation ring (Landlock / seccomp) confines a model to exactly the syscalls it needs — defense in depth, same contract.</div>
-      <span class="tag">Landlock</span><span class="tag">seccomp</span><span class="tag">tier-3</span>
+    <div class="box designed">
+      <div class="t">OS sandbox <span class="badge des">Designed</span></div>
+      <div class="d">Tier-3. A kernel-enforced isolation ring (Landlock / seccomp) confines a model to exactly the syscalls it needs — defense in depth, same contract. Designed-and-seamed behind the frozen contract; proven at deploy.</div>
+      <span class="tag road">Landlock</span><span class="tag road">seccomp</span><span class="tag road">tier-3 · deploy-gated</span>
     </div>
 
   </div>
+  <div class="note">Tier-0 native and Tier-2 wasmi sandbox are <b style="color:var(--green);font-style:normal">shipped &amp; gated</b> (celnet-plugin-host: native.rs, wasm.rs); Tier-1 signed shared-object (stabby) and Tier-3 Landlock/seccomp are <span style="font-style:normal">designed-and-seamed behind the same frozen contract, proven at deploy</span> (PLUGIN-HOST-ALT.md).</div>
 
   <!-- ============ capability boundary ============ -->
   <div class="row" style="margin-top:15px;align-items:stretch">
@@ -119,30 +126,34 @@ body{background:#fff}
   <!-- ============ BOTTOM band: what the desk gets ============ -->
   <div class="box brand" style="margin-top:15px">
     <div class="t">Desks ship private-IP custom models inside the engine — no fork of Celnet</div>
-    <div class="d">Run your own pricer, smile or calibration in-process beside the first-party catalogue — sandboxed, deterministic and hot-loadable, with full coverage to lean on: vanilla and the complete FX desk Greek set in one pass, the four delta conventions and the branch-aware strike↔delta solver, ATMF / delta-neutral straddle, the smile and surface engine, and the first-generation exotics catalogue — and extend it to bespoke and structured products through the same SDK.</div>
+    <div class="d">Run your own pricer, smile or calibration in-process beside the deep first-party catalogue — sandboxed, deterministic and hot-loadable, with full coverage to lean on: vanilla and the complete FX desk Greek set in one pass, the four delta conventions and the branch-aware strike↔delta solver, ATMF / delta-neutral straddle, five smile families, the full exotic &amp; structured catalogue (first-generation through American/Bermudan early exercise and correlated multi-asset baskets), and an LSV booking model — the SDK <em>extends</em> an already-complete platform.</div>
     <div class="row" style="margin-top:9px;gap:10px">
       <div style="flex:1">
         <span class="chip">Vanilla + full Greek set, one pass</span>
         <span class="chip">4 delta conventions + branch-aware solver</span>
-        <span class="chip">ATMF / delta-neutral straddle</span>
+        <span class="chip">VV · SABR · SVI · SSVI · eSSVI</span>
+        <span class="chip">broker-strangle calibration + arb-free surface</span>
       </div>
       <div style="flex:1">
-        <span class="chip">VV · SABR · SVI · SSVI + smile selector</span>
-        <span class="chip">broker-strangle calibration</span>
-        <span class="chip">arbitrage gates + arb-free term structure</span>
+        <span class="chip">digitals · one/no-touch · DNT</span>
+        <span class="chip">single · double · window barriers</span>
+        <span class="chip">var / vol swaps · Asian · lookback</span>
+        <span class="chip">forward-start / cliquet · quanto</span>
       </div>
       <div style="flex:1">
-        <span class="chip">digitals · one-touch / no-touch</span>
-        <span class="chip">double-no-touch / double-touch</span>
-        <span class="chip">single &amp; double barriers</span>
+        <span class="chip k">American / Bermudan (PSOR-FD + LSM)</span>
+        <span class="chip k">basket · best-of / worst-of (Cholesky MC)</span>
+        <span class="chip k">TARF · accumulator (MC, w/ std-error)</span>
+        <span class="chip k">LSV booking model + standalone Heston</span>
       </div>
       <div style="flex:1">
-        <span class="chip">analytic · Crank-Nicolson/Rannacher PDE</span>
-        <span class="chip">Philox Monte-Carlo</span>
+        <span class="chip">analytic · CN/Rannacher · ADI PDE</span>
+        <span class="chip">Philox MC · Sobol QMC + Brownian bridge</span>
         <span class="chip">survival-weighted Vanna-Volga overlay</span>
+        <span class="chip">~26 parity rows vs independent oracles</span>
       </div>
     </div>
-    <div class="note">Sandboxed · deterministic · hot-loadable · capability-scoped — private intellectual property runs in-core, never leaves the boundary, and extends Celnet without touching its source.</div>
+    <div class="note">Sandboxed · deterministic · hot-loadable · capability-scoped — private intellectual property runs in-core, never leaves the boundary, and extends Celnet without touching its source. MC products (TARF, accumulator, basket, American-via-LSM) carry a price std-error; analytic/PDE/golden-gated products are validated to machine precision.</div>
   </div>
 
 </div>
