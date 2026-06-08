@@ -79,6 +79,22 @@ export const PAIRS: PairContext[] = [
   },
 ];
 
+/**
+ * A representative organisational scaffold for the scope breadcrumb's NON-terminal
+ * drill levels (desk → book). The GUI is `grant-all` today and the server owns
+ * aggregation, so this is the entitlement-ready SEAM (P0-6): the desk/book labels
+ * a trader drills through. When a real org/entitlement feed lands it replaces this
+ * map with zero rework downstream (the breadcrumb reads `childScopeOptions`). The
+ * shape mirrors the contract's `RiskDimension` ladder (firm → desk → book →
+ * trader); the terminal scope crumb (`pair`) is driven by the live pair universe,
+ * NOT by this scaffold, so underlier selection is always real market data.
+ */
+export const ORG_SCAFFOLD: { desk: string; books: string[] }[] = [
+  { desk: "G10 Vol", books: ["EUR Vol", "GBP Vol", "JPY Vol"] },
+  { desk: "EM Vol", books: ["LATAM Vol", "ASIA Vol"] },
+  { desk: "Exotics", books: ["Barrier Book", "Structured Book"] },
+];
+
 /** The standard tenor ladder (year fractions) every surface is marked on. */
 export const TENOR_LADDER: { label: string; years: number }[] = [
   { label: "ON", years: 1 / 365 },

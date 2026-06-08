@@ -65,6 +65,19 @@
   --space-7: 32px;
   --space-8: 48px;
 
+  /* --- density axis (GW0) ---
+   * The third orthogonal token axis (data-density on <html>, see density.ts).
+   * `comfortable` (default) is the relaxed dense-pro rhythm; `compact` collapses
+   * grid metrics for IB-cardinality blotters/cubes (thousands of rows on screen).
+   * Components and the <DataGrid> read ONLY these tokens — never the attribute in
+   * JS — so all three axes (appearance/contrast/density) compose in the cascade.
+   */
+  --row-h: 38px; /* grid/blotter row height (StreamWorkspace ROW_HEIGHT origin) */
+  --row-gap: var(--space-1); /* inter-row separation in dense lists */
+  --cell-pad-x: var(--space-4); /* horizontal cell padding */
+  --cell-pad-y: var(--space-3); /* vertical cell padding */
+  --control-h: 28px; /* inspector-strip / inline-control height */
+
   /* --- radius --- */
   --r-sm: 6px;
   --r-md: 10px;
@@ -201,6 +214,17 @@
   --bid: oklch(0.45 0.16 155);
   --offer: oklch(0.45 0.22 27);
   --grid-line: oklch(0 0 0 / 0.18);
+}
+
+/* Compact density: collapse grid metrics for IB-cardinality surfaces. Orthogonal
+ * to appearance + contrast — it only touches the density-scale tokens, so it
+ * composes with every dark/light/high-contrast combination. */
+:root[data-density="compact"] {
+  --row-h: 26px;
+  --row-gap: 0px;
+  --cell-pad-x: var(--space-3);
+  --cell-pad-y: var(--space-2);
+  --control-h: 22px;
 }
 
 @media (prefers-reduced-transparency: reduce) {
