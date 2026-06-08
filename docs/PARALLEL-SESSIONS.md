@@ -81,18 +81,25 @@ identifiers (#8); zero-alloc hot core stays alloc/lock/log-free (#11); push **on
 
 ## 6. Coordinator state (updated by the coordinator each milestone)
 
-- **▶ LIVE (2026-06-08): the `celnet.proto` window is HELD by the coordinator — W2 in flight.**
-  W2 has reserved product-oneof arms **fx_forward=26 / fx_swap=27 / ndf=28** and the Underlying arm
-  **metal=3**. **Until W2 lands and the coordinator marks the window OPEN here, no other lane may edit
-  `crates/celnet-proto/proto/celnet.proto`** (one open proto edit at a time — the §2.1 rule).
-  - **Proto-touching lanes (W3 crypto, W4 structured/RFQ):** start your NON-proto work now (new crate,
-    payoff math + independent oracle, conventions) — that's fully parallel-safe. Reserve your future arms
-    from **product field 29+** and **Underlying tag 4+** (record them in your board row), and set
-    `NEEDS-COORDINATOR` for the actual proto edit; the coordinator applies it (or opens the window) after W2.
-  - **Non-proto lanes — proceed fully in parallel NOW:** **W5-B** equity/commodity leaves (reuse the
-    generalized `CarryModel`, no new arm — just new pricer crates + parity), and **GW2** GUI (disjoint tree).
-  - When the coordinator merges a `READY-FOR-MERGE` lane it re-runs the full `just check` on a clean tree;
-    workers push branches only, never `main`.
+- **▶ LIVE (2026-06-08): W2 is OWNED BY THE PARALLEL SESSION; the coordinator session has stepped OFF W2 to
+  avoid duplication.** The parallel session pushed `w2-contract-freeze` (Underlying::Metal + types, FX
+  byte-identical) → already on `main` (`325cfab`), and has verified engine branches on origin:
+  `crosscheck/w2-a-linear-verified` (the celnet-linear forward/swap/NDF leaf) and
+  `crosscheck/w2-b-breadth-verified` (>75-pair + XPT/XPD + metal-cross conventions/calendar). The
+  coordinator's competing W2 attempt has been **stopped and discarded** (tree clean at `325cfab`).
+  **W2 owner = parallel session.** Reserved: product-oneof arms **fx_forward=26 / fx_swap=27 / ndf=28**,
+  Underlying **metal=3**. The proto window is the parallel session's until W2 fully lands.
+  - **W2 integration still OPEN** (not in any branch yet): wire the celnet-linear products onto the proto
+    product oneof (arms 26-28) + server pricer routing + golden vectors {fx_forward,fx_swap,ndf} +
+    `verification-coverage` → 21/21 + 5-client surfacing. The parallel session should complete these (or
+    set `NEEDS-COORDINATOR`); the coordinator merges + full-re-gates each `READY-FOR-MERGE` branch on a
+    clean tree and is available to do the cross-cutting wire-up on request.
+  - **Coordinator session is now on `GW2` (GUI structuring)** — the only lane with ZERO Rust/proto/root-
+    Cargo overlap with the parallel session's W2 (gui/ only). Disjoint, parallel-safe.
+  - **SHARED-FILE SERIALIZATION (both sessions):** `crates/celnet-proto/proto/celnet.proto` AND the root
+    `Cargo.toml` registry are coordinator-serialized — new-crate registrations + proto edits route through
+    the coordinator (or one-at-a-time with reserved field/line regions). Before any push to `main`,
+    `git pull --rebase` (both sessions write `main`; rebase to integrate).
 
 - **2026-06-08 — ▶ W1 LANDED + `gw-foundation` MERGED (commits `ba0fc03` W1 core, `6143409` GUI merge;
   pushed). ALL fan-out lanes are now `OPEN`.** The multi-asset contract is frozen on `main`:
