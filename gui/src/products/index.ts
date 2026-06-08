@@ -9,6 +9,13 @@
  * by the shell integration step; every legless family lives here.
  */
 import { PRODUCT_GROUP_ORDER, type AnyProductSpec, type ProductGroup } from "./types";
+import {
+  vanillaSpec,
+  riskReversalSpec,
+  strangleSpec,
+  straddleSpec,
+  seagullSpec,
+} from "./strategy";
 import { singleBarrierSpec } from "./singleBarrier";
 import { doubleBarrierSpec } from "./doubleBarrier";
 import { digitalSpec } from "./digital";
@@ -38,6 +45,11 @@ export { PRODUCT_GROUP_ORDER, defineProduct, withTenorAndModel } from "./types";
 
 /** Every registered product family, in catalogue order. */
 export const PRODUCT_REGISTRY: readonly AnyProductSpec[] = [
+  vanillaSpec,
+  riskReversalSpec,
+  strangleSpec,
+  straddleSpec,
+  seagullSpec,
   singleBarrierSpec,
   doubleBarrierSpec,
   digitalSpec,
