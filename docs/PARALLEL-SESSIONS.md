@@ -81,6 +81,16 @@ identifiers (#8); zero-alloc hot core stays alloc/lock/log-free (#11); push **on
 
 ## 6. Coordinator state (updated by the coordinator each milestone)
 
+- **▶ MESH STATUS (2026-06-08, for session-B): see `docs/POST-W2-INTEGRATION-MANIFEST.md`.** The
+  `celnet.proto` window is the single critical path; it now holds W2's `fx_forward/swap/ndf` + `metal`.
+  **All deferred wire integration for the five landed/in-flight new crates (`celnet-{equity,commodity,
+  crypto}-vanilla`, `celnet-rfq`) is reserved in ONE batch there** — Underlying arms `equity=4 /
+  commodity=5 / digital_asset=6`, `Instrument.settlement_style=29` (crypto inverse), and
+  `QuoteService.RequestMultiDealerQuote` + `MultiDealerQuote`/`DealerQuote` (RFQ) — so session-B lands them
+  in its current window (or just reserves the numbers); no per-lane proto re-contention. The coordinator
+  runs the remaining disjoint NON-proto lanes (W4-B finishing → W6 → W5-A) concurrently in isolated
+  worktrees; none blocks the window.
+
 - **▶ DONE (2026-06-08): W3-CRYPTO pricing leaf landed (coordinator lane `lane/w3-crypto`).** NEW disjoint
   crate **`celnet-crypto-vanilla`** on the W1 carry seam (ADR-0008 — no `match carry`): the LINEAR path is
   generalized-BSM with funding carry (`b = r − funding`); the INVERSE/coin-margined path is the genuinely
