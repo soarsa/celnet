@@ -462,6 +462,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "celnet-crypto-vanilla"
+version = "0.0.0"
+dependencies = [
+ "celnet-core",
+ "celnet-types",
+ "celnet-vanilla",
+]
+
+[[package]]
 name = "celnet-engine"
 version = "0.0.0"
 dependencies = [
