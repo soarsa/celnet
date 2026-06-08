@@ -1,0 +1,91 @@
+# Parallel Claude Sessions — service-mesh coordination
+
+> How N independent Claude sessions deliver the `docs/MASTER-EVOLUTION-PROGRAM.md` scope
+> **faster, conflict-free, collaborating** through git + this live board. Read this in full
+> before claiming work. The governing rule from CLAUDE.md holds: **disjoint crate/file
+> ownership ⇒ no merge conflicts; interface/seam crates are coordinator-owned and frozen.**
+
+## 1. Roles
+
+- **Coordinator** (exactly one session — currently the session running W1): owns the
+  interface/seam crates `celnet-types`, `celnet-core`, `celnet-proto`, `celnet-plugin-api`;
+  the **root `Cargo.toml` registry**; **all** `celnet.proto` edits; and **every merge to
+  `main`** + the full-workspace re-gate. Freezes the contract; unblocks lanes; integrates.
+- **Workers** (any number): each owns ONE disjoint **lane** (a set of member crates / file
+  regions) in its OWN git worktree on its OWN branch. A worker never touches a seam crate, the
+  proto, the root manifest, or another lane's files. It builds its lane to green, pushes its
+  branch, and hands off to the coordinator to merge.
+
+## 2. The 3 serialization points (coordinator-gated — never two open at once)
+
+From `docs/DOWNSTREAM-EXECUTION-MAP.md`:
+1. **`celnet.proto`** — only the coordinator edits it; product-arm/field numbers are reserved
+   per wave; one open proto edit at a time across all sessions.
+2. **shared multi-product files** (`celnet-exotics`, the 5 clients' shared codecs) — a lane that
+   must touch these marks `NEEDS-COORDINATOR` and stops at that boundary.
+3. **5-client surfacing** (SDK/CLI/Excel/GUI shared files + server routing) — the last stage of
+   each wave; serialized across waves by the coordinator. The W0 conformance corpus is the gate.
+
+## 3. Worker protocol (follow exactly)
+
+1. **Read**: `CLAUDE.md` → this board → `docs/MASTER-EVOLUTION-PROGRAM.md` →
+   `docs/DOWNSTREAM-EXECUTION-MAP.md` → your lane's plan doc (`docs/W*-PLAN.md` /
+   `docs/GW-FOUNDATION-PLAN.md`) → `docs/VERIFICATION-CONTRACT.md`.
+2. **Claim**: pick an `OPEN` (unblocked) lane below (or the one the operator named). Edit its
+   board row → `status: CLAIMED`, `owner: <your-session-tag>`, `branch: lane/<id>`. Commit
+   **only this file**, `git push`. If the push is rejected, `git pull --rebase` and re-pick
+   (someone claimed it first). The board is the lock.
+3. **Isolate**: `git worktree add ../celnet-<id> -b lane/<id> origin/main` (off latest `main`).
+   Work ONLY your lane's crates/files. (GUI lanes: `ln -s <main>/gui/node_modules
+   ../celnet-<id>/gui/node_modules` to skip reinstall; do NOT `npm install` in the worktree.)
+4. **Build to the lane gate** — SOTA, **zero workarounds** (no `#[ignore]`/`#[allow]`-dodge/
+   `as any`/`@ts-ignore`/skipped tests/lowered tolerance/mock-as-real). Validate every numeric
+   against an **independent** oracle (QuantLib/closed-form/published/code-disjoint MC). The
+   **3 hard lessons**: (a) verify the literal `All gates passed.` line yourself (never a wrapper
+   exit code); (b) clippy the **parity TEST target** (`clippy -p celnet-parity --test <name> -D
+   warnings`), not just the product crate; (c) **re-derive published constants** vs the source,
+   not just re-run the gate (the FRTB 0.75ρ circular-oracle lesson).
+5. **Hand off**: commit to your branch, `git push -u origin lane/<id>`. Set the board row →
+   `status: READY-FOR-MERGE`, record the branch + one-line gate evidence (test counts + the
+   literal gate line). **Stop.** Do NOT merge to `main` or touch `main` yourself.
+6. **Coordinator** merges your branch, runs the full `just check` (+ 5-client conformance + GUI/
+   Excel suites), and sets the row → `DONE` (or returns it with notes). Re-index codebase-memory
+   after structural change.
+
+If your lane needs a seam/proto change mid-stream: set `status: NEEDS-COORDINATOR` with the
+exact ask, push the board, and stop at that boundary — do not edit the contract yourself.
+
+## 4. Hard rules (the mandate — all sessions)
+
+One **unversioned** contract (no `schema_version`, no N/N−1); **FX byte-identical** through any
+generalization (`to_bits`); delete legacy (#10); vendor-/person-neutral purpose-named
+identifiers (#8); zero-alloc hot core stays alloc/lock/log-free (#11); push **only** to
+`origin` = github.com/soarsa/celnet (#1) — workers push **branches**, never to `main`.
+
+## 5. Live lane board
+
+> Status: `OPEN` (claimable now) · `BLOCKED:<dep>` (opens when the dep lands) · `CLAIMED` ·
+> `READY-FOR-MERGE` · `DONE`. **Claim by editing your row, commit-only-this-file, push.**
+
+| Lane | Owns (disjoint crates / files) | Depends on | Gate | Status | Owner / branch |
+|------|-------------------------------|-----------|------|--------|----------------|
+| **W6-RIGOR-INFRA** | `celnet-journal`, `celnet-replog`, `celnet-fanout`, `celnet-router` (+ their `fuzz/` + `.config/mutants-*.toml`) — fully disjoint from W1 | — | per-crate mutation ≥90% kill + a fuzz target/decoder + `check-crate` green | **OPEN** | — |
+| **W2-A-LINEAR** | NEW `celnet-linear` (forward/swap/NDF) + its parity/golden rows | W1 contract | QuantLib FxForward + closed-form DF + structural; conformance row | BLOCKED:W1 | — |
+| **W2-B-BREADTH** | `celnet-conventions`, `celnet-calendar` (>75 pairs + XPT/XPD + metal crosses) | W1 `Underlying::Metal` | EMTA/ISDA/LBMA tables + independent rata-die walk | BLOCKED:W1 | — |
+| **W3-CRYPTO** | NEW `celnet-crypto-vanilla` + crypto surface leaf | W1 contract | GK-funding + independent inverse closed-form + code-disjoint MC; Deribit specs | BLOCKED:W1 | — |
+| **W4-A-PIVOT** | `celnet-exotics/src/pivot.rs` + new payoff arms | W1 + coordinator proto | code-disjoint MC oracle + degenerate→TARF limit | BLOCKED:W1 | — |
+| **W4-B-RFQ** | NEW `celnet-rfq` (multi-dealer aggregation) | W1 + coordinator proto | ≥3 synthetic LP loopback; best-price/tie-break/last-look | BLOCKED:W1 | — |
+| **W5-A-XRISK** | `celnet-risk-normalize`, `celnet-risk-cube` (cross-asset fact + FRTB buckets) | W1 + W5-B leaves | longhand recomputation; FX firm_aggregate==single-node 1e-12 stays green | BLOCKED:W1 | — |
+| **W5-B-LEAVES** | NEW `celnet-equity-vanilla`, `celnet-commodity-vanilla` | W1 contract | QuantLib AnalyticEuropean (div) + Black-76 golden | BLOCKED:W1 | — |
+| **GW2-STRUCTURING** | `gui/src/products/*` (Ticket→ProductSpec registry) + tests | GW0/GW1 merge | vitest per-ProductSpec round-trip + Playwright e2e + axe | BLOCKED:gw-foundation merge | — |
+
+## 6. Coordinator state (updated by the coordinator each milestone)
+
+- **2026-06-08:** Coordinator session is running **W1 multi-asset core** (`ww0tg9n18`) + the
+  **capabilities visual-asset** workflow. Done + awaiting integration: **`gw-foundation`** branch
+  (GW0/GW1, commit `022ae96`). **When the coordinator pushes W1 + merges `gw-foundation`,** the
+  `BLOCKED:W1` / `BLOCKED:gw-foundation` lanes flip to `OPEN` (the coordinator updates this
+  section + the board). Until then the only `OPEN` lane is **W6-RIGOR-INFRA** (disjoint from W1).
+- Plans on `main`: `docs/W2-LINEAR-PLAN.md`, `W3-CRYPTO-PLAN.md`, `W4-STRUCTURED-RFQ-PLAN.md`,
+  `W5-CROSSASSET-RISK-PLAN.md`, `GW-FOUNDATION-PLAN.md`, `DOWNSTREAM-EXECUTION-MAP.md`,
+  `adr/ADR-0008-multi-asset-carry-architecture.md`.
