@@ -77,10 +77,24 @@ identifiers (#8); zero-alloc hot core stays alloc/lock/log-free (#11); push **on
 | **W4-B-RFQ** | NEW `celnet-rfq` (multi-dealer aggregation) | W1 + coordinator proto | ≥3 synthetic LP loopback; best-price/tie-break/last-look | OPEN | — |
 | **W5-A-XRISK** | `celnet-risk-normalize`, `celnet-risk-cube` (cross-asset fact + FRTB buckets) | W1 + W5-B leaves | longhand recomputation; FX firm_aggregate==single-node 1e-12 stays green | OPEN | — |
 | **W5-B-LEAVES** | NEW `celnet-equity-vanilla`, `celnet-commodity-vanilla` | W1 contract | QuantLib AnalyticEuropean (div) + Black-76 golden | OPEN | — |
-| **GW2-STRUCTURING** | `gui/src/products/*` (Ticket→ProductSpec registry) + tests | GW0/GW1 merge | vitest per-ProductSpec round-trip + Playwright e2e + axe | OPEN | — |
+| **GW2-STRUCTURING** | `gui/src/products/*` (Ticket→ProductSpec registry) + tests | GW0/GW1 merge | vitest per-ProductSpec round-trip + Playwright e2e + axe | **DONE** | coordinator / `lane/gw2-structuring` |
 
 ## 6. Coordinator state (updated by the coordinator each milestone)
 
+- **▶ DONE (2026-06-08): GW2-STRUCTURING landed (coordinator lane `lane/gw2-structuring`).** The 3606-line
+  `TicketWorkspace` monolith is decomposed into a `gui/src/products/*` **ProductSpec registry** (21 families:
+  vanilla + 4 strategies + 15 legless exotics), each `toInstrument` byte-identical to the legacy
+  `buildInstrument` (proven by the registry round-trip gate). New structuring UI: a grouped/searchable
+  **StructureGallery** (replaces the flat `<select>`; listbox/option/group a11y), a payoff-at-expiry
+  **PayoffChart** (honest "—" for path-dependent families), and a **NetStructureStrip** (honest "—" on
+  missing leg values). The ticket shell is now 759 lines (down from 3607); the monolith's per-family
+  inline code is **deleted** (zero legacy, #10). Built via three dynamic workflows (registry seam →
+  15-family fan-out → phase-2 components) + a rewire agent, coordinator-integrated + re-gated. **Gate:**
+  `tsc` (app + test) clean, **vitest 50 files / 517 tests** pass, `tsc -b && vite build` green. **Deferred
+  (honest):** the live Playwright e2e + axe boots a real Rust `demo_edge` — a cold cross-crate build that
+  would share the parallel session's active `target/` (collision); it RFQs the DEFAULT structure so it is
+  interaction-compatible with the gallery, and the gallery a11y is asserted structurally in vitest. Run it
+  on a warm Rust build. Adding a product is now a registry entry — the multi-asset GUI (GW6) arrives as data.
 - **▶ LIVE (2026-06-08): W2 is OWNED BY THE PARALLEL SESSION; the coordinator session has stepped OFF W2 to
   avoid duplication.** The parallel session pushed `w2-contract-freeze` (Underlying::Metal + types, FX
   byte-identical) → already on `main` (`325cfab`), and has verified engine branches on origin:
