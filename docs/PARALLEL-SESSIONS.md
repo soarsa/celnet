@@ -72,7 +72,7 @@ identifiers (#8); zero-alloc hot core stays alloc/lock/log-free (#11); push **on
 | **W6-RIGOR-INFRA** | `celnet-journal`, `celnet-replog`, `celnet-fanout`, `celnet-router` (+ their `fuzz/` + `.config/mutants-*.toml`) — fully disjoint from W1 | — | per-crate mutation ≥90% kill + a fuzz target/decoder + `check-crate` green | **OPEN** | — |
 | **W2-A-LINEAR** | NEW `celnet-linear` (forward/swap/NDF) + its parity/golden rows | W1 contract | QuantLib FxForward + closed-form DF + structural; conformance row | OPEN | — |
 | **W2-B-BREADTH** | `celnet-conventions`, `celnet-calendar` (>75 pairs + XPT/XPD + metal crosses) | W1 `Underlying::Metal` | EMTA/ISDA/LBMA tables + independent rata-die walk | OPEN | — |
-| **W3-CRYPTO** | NEW `celnet-crypto-vanilla` + crypto surface leaf | W1 contract | GK-funding + independent inverse closed-form + code-disjoint MC; Deribit specs | OPEN | — |
+| **W3-CRYPTO** | NEW `celnet-crypto-vanilla` + crypto surface leaf | W1 contract | GK-funding + independent inverse closed-form + code-disjoint MC; Deribit specs | **CLAIMED** | coordinator / `lane/w3-crypto` (new-crate pricing leaf now; proto/surface-leaf/surfacing deferred until W2 frees the proto window) |
 | **W4-A-PIVOT** | `celnet-exotics/src/pivot.rs` + new payoff arms | W1 + coordinator proto | code-disjoint MC oracle + degenerate→TARF limit | OPEN | — |
 | **W4-B-RFQ** | NEW `celnet-rfq` (multi-dealer aggregation) | W1 + coordinator proto | ≥3 synthetic LP loopback; best-price/tie-break/last-look | OPEN | — |
 | **W5-A-XRISK** | `celnet-risk-normalize`, `celnet-risk-cube` (cross-asset fact + FRTB buckets) | W1 + W5-B leaves | longhand recomputation; FX firm_aggregate==single-node 1e-12 stays green | OPEN | — |
