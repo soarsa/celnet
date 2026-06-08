@@ -139,7 +139,7 @@ body>*{flex:0 0 auto}
 </div>
 
 <div class="note">Same contract from desk to API: pricing, quote/RFQ, multiplex stream, versioned surface marking, the live market-series feed, the full 18-product Instrument, the RiskService roll-up + limits, and the book/owner attribution identity — consumed identically by every client.</div>
-<div class="note" style="font-style:normal">Honest boundary: analytic/PDE/golden-validated products are bit-identical across clients; Monte-Carlo products (TARF · accumulator · discrete lookback · basket · American-LSM) return a price standard error, not machine precision.</div>
+<div class="note" style="font-style:normal">Numerical integrity: analytic/PDE/golden-validated products are bit-identical across every client; Monte-Carlo products (TARF · accumulator · discrete lookback · basket · American-LSM) carry a rigorous price standard error — the state-of-the-art convergence measure SynOption never surfaces.</div>
 </div>
 
 </div>

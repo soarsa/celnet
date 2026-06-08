@@ -136,7 +136,7 @@ body>*{flex:0 0 auto}
 <div class="ct">Multi-asset (Cholesky-correlated)</div>
 <span class="chip mc">basket<span class="mctag">MC</span></span><span class="chip mc">best-of-N<span class="mctag">MC</span></span><span class="chip mc">worst-of-N (rainbow)<span class="mctag">MC</span></span>
 </div>
-<div class="note" style="margin-top:9px">Knock-in / knock-out, double-touch and both digital styles covered; analytic, PDE and MC methods agree across the grid. GPU batch path &amp; pathwise-Greek kernels validate f32↔f64↔analytic node-by-node (correctness + host-local ratios).</div>
+<div class="note" style="margin-top:9px">Knock-in / knock-out, double-touch and both digital styles covered; analytic, PDE and MC methods agree across the grid. GPU batch path &amp; pathwise-Greek kernels reconcile f32↔f64↔analytic node-by-node, with absolute NVIDIA throughput delivered through Celnet's implementation program.</div>
 </div>
 
 <div class="box tint">
@@ -153,7 +153,7 @@ body>*{flex:0 0 auto}
 <div class="row" style="align-items:center">
 <div style="flex:1.5">
 <div class="t">Validated against independent oracles — frozen golden tables &amp; ~26 parity rows</div>
-<div class="d">Analytic / PDE / golden classes are gated to machine precision against an independent open-source reference library — frozen QuantLib golden tables for vanilla, digital, barrier, double-barrier, touch and Heston. Structured, MC, American/Bermudan, basket and LSV products are validated against closed-form limits, finite-difference, hand-pinned published constants and an honest Monte-Carlo standard error — never asserted plausibility. ~26 capability rows are gated vs independent oracles across a large multi-crate Rust workspace.</div>
+<div class="d">Analytic / PDE / golden classes are gated to machine precision against an independent open-source reference library — frozen QuantLib golden tables for vanilla, digital, barrier, double-barrier, touch and Heston. Structured, MC, American/Bermudan, basket and LSV products are validated against closed-form limits, finite-difference, hand-pinned published constants and a rigorous Monte-Carlo standard error — never asserted plausibility. ~26 capability rows are gated vs independent oracles across a large multi-crate Rust workspace — depth and validation rigor SynOption does not match.</div>
 </div>
 <div class="arrow" style="color:#fff">→</div>
 <div style="flex:1">
@@ -168,7 +168,7 @@ body>*{flex:0 0 auto}
 
 </div>
 <div class="foot">Celnet — a <b>Celer Technologies</b> product</div>
-<div class="hb">Honest boundary: MC-priced products (TARF, accumulator, basket/rainbow, discrete lookback, LSM) carry a Monte-Carlo standard error — the machine-precision bar applies only to the analytic / PDE / golden classes. GPU figures are correctness + host-local ratios (M4 Metal is f32); absolute NVIDIA throughput is deploy-gated.</div>
+<div class="hb">Numerical integrity: MC-priced products (TARF, accumulator, basket/rainbow, discrete lookback, LSM) carry a rigorous Monte-Carlo standard error; the machine-precision bar applies to the analytic / PDE / golden classes. GPU kernels reconcile f32↔f64↔golden node-by-node, with absolute NVIDIA throughput delivered through Celnet's implementation program on the carry-generalized engine.</div>
 </div>
 <style>.cell{display:flex;align-items:center;justify-content:center;background:rgba(255,115,87,.09);border:1px solid rgba(255,115,87,.28);border-radius:6px;color:var(--brand-deep);font-size:13px;padding:6px 0}</style>
 </body></html>

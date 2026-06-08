@@ -42,3 +42,5 @@ gui/**/*.tsbuildinfo
 
 # Transient Playwright-MCP browser-debug console logs (not source)
 .playwright-mcp/
+docs/celnet-capabilities.standalone.html
+docs/_capabilities-build/

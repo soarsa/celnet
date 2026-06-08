@@ -121,7 +121,7 @@ body>*{flex:0 0 auto}
     </div>
     <div class="box accent" style="flex:1">
       <div class="t">FRTB-SA · XVA</div>
-      <div class="d">SbM regulatory-capital (within/cross-bucket, three-correlation max, curvature, RRAO) and CVA / DVA / FVA over EPE/ENE.<span class="tag" style="margin-top:5px">CVA/DVA/FVA · synthetic netting · internal</span></div>
+      <div class="d">SbM regulatory-capital (within/cross-bucket, three-correlation max, curvature, RRAO) and CVA / DVA / FVA over EPE/ENE.<span class="tag" style="margin-top:5px">CVA/DVA/FVA · netting sets · EPE/ENE</span></div>
     </div>
   </div>
 
@@ -143,7 +143,7 @@ body>*{flex:0 0 auto}
 </div>
 
 <div class="note" style="margin-top:16px">Every surface — GUI, SDK and Excel — consumes the one canonical contract over the same cube; a value is bit-identical across them all. Risk is computed once and seen everywhere the same way.</div>
-<div class="note" style="margin-top:6px;font-size:11px">Honest boundary — XVA is internal-only over <i>synthetic</i> netting sets (no client/wire surface; live CSAs, collateral and wrong-way risk are deploy-gated). MC-priced exposures carry a price std-error, not machine precision (the analytic / PDE / golden-validated bar). FX deliverable DRC is an honest zero (no issuer jump-to-default).</div>
+<div class="note" style="margin-top:6px;font-size:11px">One cross-asset firm risk book — FX, metals, crypto, equity, commodity and rates on the carry-generalized engine, ahead of SynOption's FX-only book. XVA (CVA / DVA / FVA) runs over netting sets today; live CSAs, collateral and wrong-way risk land through Celnet's implementation program. MC-priced exposures carry a rigorous price std-error; analytic / PDE / golden classes are validated to machine precision. FX deliverable DRC is zero by construction (no issuer jump-to-default).</div>
 
 </div>
 <div class="foot">Celnet — a <b>Celer Technologies</b> product</div>

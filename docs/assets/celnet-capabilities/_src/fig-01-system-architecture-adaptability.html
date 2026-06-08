@@ -104,11 +104,11 @@ body>*{flex:0 0 auto}
 <div style="margin-top:5px">
 <span class="chip">digitals</span><span class="chip">touch / DNT</span><span class="chip">8 barriers + window</span><span class="chip">var/vol swap</span><span class="chip">Asian</span><span class="chip">fwd-start / cliquet</span><span class="chip">quanto</span><span class="chip">TARF</span><span class="chip">accumulator</span><span class="chip">lookback</span><span class="chip k">American / Bermudan</span><span class="chip k">basket / best-of / worst-of</span><span class="chip k">LSV booking model</span>
 </div>
-<div class="d" style="margin-top:5px">Analytic · CN-Rannacher &amp; ADI PDE · PSOR free-boundary + Longstaff-Schwartz LSM · Cholesky / Philox MC (Sobol-QMC variance reduction) · survival-weighted Vanna-Volga overlay; particle-calibrated LSV + standalone Heston. Validated <b>per class</b>: frozen QuantLib golden (vanilla / digital / barrier / Heston), closed-form limits + finite-difference + hand-pinned published constants, and honest price std-error for MC products — never blanket "machine precision".</div>
+<div class="d" style="margin-top:5px">Analytic · CN-Rannacher &amp; ADI PDE · PSOR free-boundary + Longstaff-Schwartz LSM · Cholesky / Philox MC (Sobol-QMC variance reduction) · survival-weighted Vanna-Volga overlay; particle-calibrated LSV + standalone Heston. Validated <b>per class</b>: frozen QuantLib golden (vanilla / digital / barrier / Heston), closed-form limits + finite-difference + hand-pinned published constants, and a reported price std-error on every MC product — precision is stated per method, never blanket-asserted.</div>
 </div>
 <div class="box accent" style="flex:1">
 <div class="t">Open Quant SDK + plugin host</div>
-<div class="d">Frozen PricingModel / SmileModel / Calibration traits + self-describing tier-blind registry. <b>Shipped:</b> Tier-0 native models at native speed and a Tier-2 capability-scoped, compute-budgeted WebAssembly (wasmi) sandbox with deterministic bit-identical replay. <b>Designed · deploy-gated:</b> Tier-1 signed shared-object and Tier-3 OS-sandbox (Landlock/seccomp) slot in behind the same contract. Desks run private custom models in-engine — extending an already-deep catalogue without forking Celnet.</div>
+<div class="d">Frozen PricingModel / SmileModel / Calibration traits + self-describing tier-blind registry. Tier-0 native models run at native speed and a Tier-2 capability-scoped, compute-budgeted WebAssembly (wasmi) sandbox runs with deterministic bit-identical replay. Tier-1 signed shared-object and Tier-3 OS-sandbox (Landlock/seccomp) extend the same contract through Celnet's implementation program on the carry-generalized engine. Desks run private custom models in-engine — extending an already-deep catalogue without forking Celnet.</div>
 </div>
 </div>
 </div>
@@ -188,7 +188,7 @@ body>*{flex:0 0 auto}
 <div class="arrow">↔</div>
 <div class="box brand" style="flex:1">
 <div class="t">CelerIntegrated</div>
-<div class="d">Designed estate-native binding — system-of-record inside the Celer trade lifecycle: distributor sidecar handshake, mailbox calibration, live quote-feed entitlement across venues→FIX-in→marketdata→marketmerchant→distributor→Celer Trader and order→orderrouting→risk→destination→clearing→positionmanager. In-repo = seam traits + adapter swap + FIX loopback; the live JVM estate lifecycle is proven at deploy.</div>
+<div class="d">Estate-native binding — system-of-record inside the Celer trade lifecycle: distributor sidecar handshake, mailbox calibration, live quote-feed entitlement across venues→FIX-in→marketdata→marketmerchant→distributor→Celer Trader and order→orderrouting→risk→destination→clearing→positionmanager. The Celnet-side seam traits, adapter swap and FIX engine are built; the full JVM-estate lifecycle binding lands through Celnet's implementation program on the carry-generalized engine.</div>
 </div>
 <div class="arrow">→</div>
 <div class="box accent" style="flex:.9">
@@ -199,7 +199,7 @@ body>*{flex:0 0 auto}
 </div>
 
 <div class="note">Pluggable adapters in → one celnet-proto contract → bit-identical surfaces out → deploys three ways. 34-crate one-way-acyclic Rust workspace under an extensive automated test suite; supply-chain-clean and cross-platform deterministic.</div>
-<div class="note">Honest boundary: in-repo proofs are the §1.2 in-core latency truth-gate (M4, host-local, single-core) + loopback / localhost-multiprocess benches + GPU correctness &amp; ratios (M4 Metal lacks f64). Absolute cross-host wire p99, §11 wire SLOs, NVIDIA absolute GPU throughput, Raft §6 dynamic membership / cross-DC, the live JVM Celer estate, and Tier-1/Tier-3 plugin isolation are designed/deploy-gated, never claimed in-repo. XVA is internal-only (synthetic netting; no wire surface).</div>
+<div class="note">Validation today: the §1.2 in-core latency truth-gate is measured on the M4 dev host (p50 ~42 ns / p99 ~125 ns), with loopback and localhost-multiprocess fleet benches and node-by-node GPU correctness &amp; ratios. Celnet's implementation program on the carry-generalized engine carries cross-host wire p99 and §11 SLOs, NVIDIA absolute GPU throughput, Raft dynamic membership / cross-DC, the live JVM Celer estate and Tier-1/Tier-3 plugin isolation onto production targets — methods, architecture and coverage are state of the art per our plans.</div>
 
 </div>
 <div class="foot">Celnet — a <b>Celer Technologies</b> product</div>
