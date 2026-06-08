@@ -76,11 +76,26 @@ identifiers (#8); zero-alloc hot core stays alloc/lock/log-free (#11); push **on
 | **W4-A-PIVOT** | `celnet-exotics/src/pivot.rs` + new payoff arms | W1 + coordinator proto | code-disjoint MC oracle + degenerate→TARF limit | OPEN | — |
 | **W4-B-RFQ** | NEW `celnet-rfq` (multi-dealer aggregation) | W1 + coordinator proto | ≥3 synthetic LP loopback; best-price/tie-break/last-look | OPEN | — |
 | **W5-A-XRISK** | `celnet-risk-normalize`, `celnet-risk-cube` (cross-asset fact + FRTB buckets) | W1 + W5-B leaves | longhand recomputation; FX firm_aggregate==single-node 1e-12 stays green | OPEN | — |
-| **W5-B-LEAVES** | NEW `celnet-equity-vanilla`, `celnet-commodity-vanilla` | W1 contract | QuantLib AnalyticEuropean (div) + Black-76 golden | **CLAIMED** | coordinator / `lane/w5-b-leaves` (GW2 done; disjoint new crates, no proto/client/server overlap with W2) |
+| **W5-B-LEAVES** | NEW `celnet-equity-vanilla`, `celnet-commodity-vanilla` | W1 contract | QuantLib AnalyticEuropean (div) + Black-76 golden | **DONE** | coordinator / `lane/w5-b-leaves` |
 | **GW2-STRUCTURING** | `gui/src/products/*` (Ticket→ProductSpec registry) + tests | GW0/GW1 merge | vitest per-ProductSpec round-trip + Playwright e2e + axe | **DONE** | coordinator / `lane/gw2-structuring` |
 
 ## 6. Coordinator state (updated by the coordinator each milestone)
 
+- **▶ DONE (2026-06-08): W5-B-LEAVES landed (coordinator lane `lane/w5-b-leaves`).** Two NEW disjoint leaf
+  crates on the W1 carry seam, asset-class-agnostic (ADR-0008 — NO `match carry`/`match underlying`):
+  **`celnet-equity-vanilla`** (generalized-BSM via `Carry::CostOfCarry{r, b=r−q}`, full Greeks,
+  `RateSensitivities::Carry.carry_rho` = the dividend-rho) and **`celnet-commodity-vanilla`** (Black-76 on a
+  future, the `b=0` degenerate, `carry_rho` = convenience-rho). Built by a 2-worker dynamic workflow +
+  adversarial verify; each gated against an INDEPENDENT, circular-oracle-free set (external Python-`erf`-pinned
+  Hull / Haug references + model-free put-call parity + the `q=0`/`b=0` limit + central-FD Greeks — which
+  caught + fixed real bugs: an equity `discount_rho` partial, a commodity wrong-sign theta + over-negated
+  charm/color). **No root `Cargo.toml` edit** — the crates auto-join `members=["crates/*"]` and use only the
+  registered `celnet-core`/`celnet-types` (`just workspace-deps` OK), so this lane is purely additive new
+  dirs with ZERO overlap with the parallel session's W2 (proto / `celnet-linear` / conventions / server /
+  5 clients). **Gate:** `just workspace-deps` OK · `check-crate celnet-equity-vanilla` 12/12 ·
+  `check-crate celnet-commodity-vanilla` 10/10. **Deferred to the coordinator (serialized after the W2 proto
+  window frees):** the additive `Underlying::Equity`/`Commodity` wire arms + proto + `celnet-golden` vectors +
+  `celnet-parity` rows + `celnet-risk-normalize` asset-class-leaf selection (W5-A) + 5-client surfacing.
 - **▶ DONE (2026-06-08): GW2-STRUCTURING landed (coordinator lane `lane/gw2-structuring`).** The 3606-line
   `TicketWorkspace` monolith is decomposed into a `gui/src/products/*` **ProductSpec registry** (21 families:
   vanilla + 4 strategies + 15 legless exotics), each `toInstrument` byte-identical to the legacy
