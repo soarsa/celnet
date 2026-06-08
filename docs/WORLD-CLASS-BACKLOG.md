@@ -19,6 +19,16 @@ Status legend: OPEN / IN-PROGRESS / DONE / ENV (deploy-bound, not a gap). Each i
   corpus + 5-client conformance + Excel real-edge + coverage lint). Next: **W1 multi-asset CORE**
   (generalize the FX-only Layer-0 seams: `Underlying`/`Carry`/`Sensitivities` + proto + plugin-api,
   FX byte-identical) — the single highest-risk wave; build as ONE coordinated wave per §2 sequencing.
+- **W1 multi-asset CORE CLOSED (2026-06-08; commits `ba0fc03`/`6143409`):** the P0 W1 items
+  `arch/underlying-abstraction`, `types/carry-model-generalize`, `types/sensitivities-generalize`,
+  `proto/instrument-underlying-redesign`, `plugin-api/generalize-pricingmodel`,
+  `arch/sequence-interface-crates-once` are **DONE** — generalized in place, FX byte-identical
+  (`just check` "All gates passed.", 1343 tests; equity-dividend plugin model vs independent GBS oracle
+  1e-12). `surface/asset-class-neutral-core` is **DEFERRED** (not needed until a non-FX surface leaf
+  lands — W3 carries its own crypto surface leaf). GW0/GW1 GUI foundation merged. **▶ The fan-out lanes
+  (W2/W3/W4/W5 + GW2) are now OPEN** — see `docs/PARALLEL-SESSIONS.md`. Dry-round counter: 0/2 (the
+  convergence loop runs after the asset-class waves land). Next recommended parallel set:
+  W2-A-LINEAR ∥ W3-CRYPTO ∥ W5-B-LEAVES.
 
 ## P0 — Foundation & core (must precede asset-class fan-out)
 

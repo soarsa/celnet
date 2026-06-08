@@ -70,22 +70,30 @@ identifiers (#8); zero-alloc hot core stays alloc/lock/log-free (#11); push **on
 | Lane | Owns (disjoint crates / files) | Depends on | Gate | Status | Owner / branch |
 |------|-------------------------------|-----------|------|--------|----------------|
 | **W6-RIGOR-INFRA** | `celnet-journal`, `celnet-replog`, `celnet-fanout`, `celnet-router` (+ their `fuzz/` + `.config/mutants-*.toml`) — fully disjoint from W1 | — | per-crate mutation ≥90% kill + a fuzz target/decoder + `check-crate` green | **OPEN** | — |
-| **W2-A-LINEAR** | NEW `celnet-linear` (forward/swap/NDF) + its parity/golden rows | W1 contract | QuantLib FxForward + closed-form DF + structural; conformance row | BLOCKED:W1 | — |
-| **W2-B-BREADTH** | `celnet-conventions`, `celnet-calendar` (>75 pairs + XPT/XPD + metal crosses) | W1 `Underlying::Metal` | EMTA/ISDA/LBMA tables + independent rata-die walk | BLOCKED:W1 | — |
-| **W3-CRYPTO** | NEW `celnet-crypto-vanilla` + crypto surface leaf | W1 contract | GK-funding + independent inverse closed-form + code-disjoint MC; Deribit specs | BLOCKED:W1 | — |
-| **W4-A-PIVOT** | `celnet-exotics/src/pivot.rs` + new payoff arms | W1 + coordinator proto | code-disjoint MC oracle + degenerate→TARF limit | BLOCKED:W1 | — |
-| **W4-B-RFQ** | NEW `celnet-rfq` (multi-dealer aggregation) | W1 + coordinator proto | ≥3 synthetic LP loopback; best-price/tie-break/last-look | BLOCKED:W1 | — |
-| **W5-A-XRISK** | `celnet-risk-normalize`, `celnet-risk-cube` (cross-asset fact + FRTB buckets) | W1 + W5-B leaves | longhand recomputation; FX firm_aggregate==single-node 1e-12 stays green | BLOCKED:W1 | — |
-| **W5-B-LEAVES** | NEW `celnet-equity-vanilla`, `celnet-commodity-vanilla` | W1 contract | QuantLib AnalyticEuropean (div) + Black-76 golden | BLOCKED:W1 | — |
-| **GW2-STRUCTURING** | `gui/src/products/*` (Ticket→ProductSpec registry) + tests | GW0/GW1 merge | vitest per-ProductSpec round-trip + Playwright e2e + axe | BLOCKED:gw-foundation merge | — |
+| **W2-A-LINEAR** | NEW `celnet-linear` (forward/swap/NDF) + its parity/golden rows | W1 contract | QuantLib FxForward + closed-form DF + structural; conformance row | OPEN | — |
+| **W2-B-BREADTH** | `celnet-conventions`, `celnet-calendar` (>75 pairs + XPT/XPD + metal crosses) | W1 `Underlying::Metal` | EMTA/ISDA/LBMA tables + independent rata-die walk | OPEN | — |
+| **W3-CRYPTO** | NEW `celnet-crypto-vanilla` + crypto surface leaf | W1 contract | GK-funding + independent inverse closed-form + code-disjoint MC; Deribit specs | OPEN | — |
+| **W4-A-PIVOT** | `celnet-exotics/src/pivot.rs` + new payoff arms | W1 + coordinator proto | code-disjoint MC oracle + degenerate→TARF limit | OPEN | — |
+| **W4-B-RFQ** | NEW `celnet-rfq` (multi-dealer aggregation) | W1 + coordinator proto | ≥3 synthetic LP loopback; best-price/tie-break/last-look | OPEN | — |
+| **W5-A-XRISK** | `celnet-risk-normalize`, `celnet-risk-cube` (cross-asset fact + FRTB buckets) | W1 + W5-B leaves | longhand recomputation; FX firm_aggregate==single-node 1e-12 stays green | OPEN | — |
+| **W5-B-LEAVES** | NEW `celnet-equity-vanilla`, `celnet-commodity-vanilla` | W1 contract | QuantLib AnalyticEuropean (div) + Black-76 golden | OPEN | — |
+| **GW2-STRUCTURING** | `gui/src/products/*` (Ticket→ProductSpec registry) + tests | GW0/GW1 merge | vitest per-ProductSpec round-trip + Playwright e2e + axe | OPEN | — |
 
 ## 6. Coordinator state (updated by the coordinator each milestone)
 
-- **2026-06-08:** Coordinator session is running **W1 multi-asset core** (`ww0tg9n18`) + the
-  **capabilities visual-asset** workflow. Done + awaiting integration: **`gw-foundation`** branch
-  (GW0/GW1, commit `022ae96`). **When the coordinator pushes W1 + merges `gw-foundation`,** the
-  `BLOCKED:W1` / `BLOCKED:gw-foundation` lanes flip to `OPEN` (the coordinator updates this
-  section + the board). Until then the only `OPEN` lane is **W6-RIGOR-INFRA** (disjoint from W1).
+- **2026-06-08 — ▶ W1 LANDED + `gw-foundation` MERGED (commits `ba0fc03` W1 core, `6143409` GUI merge;
+  pushed). ALL fan-out lanes are now `OPEN`.** The multi-asset contract is frozen on `main`:
+  `Underlying`/`Carry`/`CarryModel`/`RateSensitivities` generalized in place, FX byte-identical
+  (`just check` "All gates passed.", 1343 tests; conformance 120/120; GUI 425; Excel e2e 81). The
+  carry-producing-market seam (ADR-0008) is load-bearing on the server price path — a non-FX carry is
+  refused with a typed error, no silent fallback. GW0/GW1 GUI foundation merged (design system +
+  accessible DataGrid + three-axis scope nav; 7 redundant pair affordances deleted).
+  **Workers: claim any lane above — build it in a worktree off `origin/main` (which now carries the
+  generalized contract), push your branch, mark READY-FOR-MERGE.** The 3 serialization points apply:
+  one open `celnet.proto` edit at a time across all running lanes (coordinate the proto-touching lanes
+  W2/W4); 5-client surfacing serializes per wave. Recommended first crate-disjoint set:
+  **W2-A-LINEAR ∥ W3-CRYPTO ∥ W5-B-LEAVES**. The `celnet-surface` split is a follow-up — surface stays
+  FX delta-space until a non-FX surface leaf is needed (W3 carries its own crypto surface leaf).
 - Plans on `main`: `docs/W2-LINEAR-PLAN.md`, `W3-CRYPTO-PLAN.md`, `W4-STRUCTURED-RFQ-PLAN.md`,
   `W5-CROSSASSET-RISK-PLAN.md`, `GW-FOUNDATION-PLAN.md`, `DOWNSTREAM-EXECUTION-MAP.md`,
   `adr/ADR-0008-multi-asset-carry-architecture.md`.
