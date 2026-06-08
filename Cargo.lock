@@ -705,6 +705,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "celnet-rfq"
+version = "0.0.0"
+dependencies = [
+ "celnet-fix",
+ "celnet-proto",
+ "celnet-types",
+ "celnet-vanilla",
+ "futures-util",
+ "proptest",
+ "tokio",
+]
+
+[[package]]
 name = "celnet-risk-cube"
 version = "0.0.0"
 dependencies = [
