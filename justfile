@@ -275,3 +275,12 @@ embed-capabilities:
     #!/usr/bin/env bash
     set -euo pipefail
     node tools/embed-capabilities-assets.mjs
+
+# Render the professionally-styled capabilities PDF (embeds assets → standalone → print-to-PDF
+# off the @media print stylesheet). Output: docs/celnet-capabilities.pdf.
+capabilities-pdf:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    npx --prefix gui playwright install chromium
+    node tools/embed-capabilities-assets.mjs
+    node tools/render-capabilities-pdf.mjs
