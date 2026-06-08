@@ -76,6 +76,15 @@ pub enum PriceError {
         /// The product the model does not support (e.g. `"asian_option"`).
         product: &'static str,
     },
+    /// A linear (non-option) product — an FX outright forward, FX swap, or NDF —
+    /// reached the option-payoff pricer. These are priced by the dedicated linear
+    /// book (`celnet-linear`), not the Garman-Kohlhagen option engine; routing
+    /// one here is a dispatch error, never a silent fallback. Mapped to
+    /// `INVALID_ARGUMENT` at the service boundary.
+    LinearProductNotAnOption {
+        /// The linear product variant (e.g. `"fx_forward"`).
+        product: &'static str,
+    },
 }
 
 impl core::fmt::Display for PriceError {
@@ -90,6 +99,11 @@ impl core::fmt::Display for PriceError {
                 f,
                 "pricing model {model} does not support product {product}; \
                  select a supported product or the default model"
+            ),
+            PriceError::LinearProductNotAnOption { product } => write!(
+                f,
+                "product {product} is a linear (non-option) product priced by the \
+                 linear book, not the option engine"
             ),
         }
     }
@@ -1456,6 +1470,17 @@ pub fn price_instrument(
                 product: "window_barrier",
             })
         }
+        // The linear (non-option) products are priced by the dedicated linear
+        // book (`celnet-linear`), not the option engine. They are valid contract
+        // products but must reach their own dispatch path; arriving here is a
+        // dispatch error, never a silent fallback to an option formula.
+        instrument::Product::FxForward(_) => Err(PriceError::LinearProductNotAnOption {
+            product: "fx_forward",
+        }),
+        instrument::Product::FxSwap(_) => {
+            Err(PriceError::LinearProductNotAnOption { product: "fx_swap" })
+        }
+        instrument::Product::Ndf(_) => Err(PriceError::LinearProductNotAnOption { product: "ndf" }),
     }
 }
 
@@ -1509,6 +1534,9 @@ fn product_name(product: &instrument::Product) -> &'static str {
         instrument::Product::WindowBarrier(_) => "window_barrier",
         instrument::Product::American(_) => "american",
         instrument::Product::Basket(_) => "basket",
+        instrument::Product::FxForward(_) => "fx_forward",
+        instrument::Product::FxSwap(_) => "fx_swap",
+        instrument::Product::Ndf(_) => "ndf",
     }
 }
 

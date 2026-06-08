@@ -9,19 +9,19 @@
 //! ever drifting apart.
 
 use celnet_types::{
-    AtmConvention, BrokenDate, Carry, Ccy, CcyPair, Cut, DayCount, DeltaConvention, Greeks,
-    OptionType, PremiumStyle, RateSensitivities, Settlement, SmileModel, Tenor, Underlying,
-    VanillaInputs,
+    AtmConvention, BrokenDate, Carry, Ccy, CcyPair, Cut, DayCount, DeltaConvention, Greeks, Metal,
+    MetalPair, OptionType, PremiumStyle, RateSensitivities, Settlement, SmileModel, Tenor,
+    Underlying, VanillaInputs,
 };
 
 use crate::{
     AtmConvention as WireAtmConvention, BrokenDate as WireBrokenDate, CarryModel as WireCarryModel,
     CcyPair as WireCcyPair, Cut as WireCut, DayCount as WireDayCount,
-    DeltaConvention as WireDeltaConvention, Greeks as WireGreeks, OptionType as WireOptionType,
-    PremiumStyle as WirePremiumStyle, RateSensitivities as WireRateSensitivities,
-    Settlement as WireSettlement, SmileModel as WireSmileModel, Tenor as WireTenor,
-    Underlying as WireUnderlying, VanillaInputs as WireVanillaInputs, carry_model,
-    rate_sensitivities, tenor, underlying,
+    DeltaConvention as WireDeltaConvention, Greeks as WireGreeks, Metal as WireMetal,
+    MetalPair as WireMetalPair, OptionType as WireOptionType, PremiumStyle as WirePremiumStyle,
+    RateSensitivities as WireRateSensitivities, Settlement as WireSettlement,
+    SmileModel as WireSmileModel, Tenor as WireTenor, Underlying as WireUnderlying,
+    VanillaInputs as WireVanillaInputs, carry_model, rate_sensitivities, tenor, underlying,
 };
 
 /// A decode-side mapping failure: the wire carried a value the domain type
@@ -375,28 +375,135 @@ impl TryFrom<WireCcyPair> for CcyPair {
     }
 }
 
+// ---- Metal -----------------------------------------------------------------
+
+impl From<Metal> for WireMetal {
+    fn from(value: Metal) -> Self {
+        match value {
+            Metal::Gold => WireMetal::Gold,
+            Metal::Silver => WireMetal::Silver,
+            Metal::Platinum => WireMetal::Platinum,
+            Metal::Palladium => WireMetal::Palladium,
+        }
+    }
+}
+
+impl From<WireMetal> for Metal {
+    fn from(value: WireMetal) -> Self {
+        match value {
+            WireMetal::Gold => Metal::Gold,
+            WireMetal::Silver => Metal::Silver,
+            WireMetal::Platinum => Metal::Platinum,
+            WireMetal::Palladium => Metal::Palladium,
+        }
+    }
+}
+
+// ---- MetalPair -------------------------------------------------------------
+
+impl From<MetalPair> for WireMetalPair {
+    fn from(value: MetalPair) -> Self {
+        WireMetalPair {
+            metal: WireMetal::from(value.metal) as i32,
+            quote: value.quote.as_str().to_owned(),
+        }
+    }
+}
+
+impl TryFrom<WireMetalPair> for MetalPair {
+    type Error = WireError;
+
+    fn try_from(value: WireMetalPair) -> Result<Self, Self::Error> {
+        let metal = WireMetal::try_from(value.metal).map_err(|_| WireError::UnknownEnum {
+            kind: "Metal",
+            tag: value.metal,
+        })?;
+        let quote = Ccy::parse(&value.quote).ok_or(WireError::InvalidCcy {
+            field: "quote",
+            value: value.quote,
+        })?;
+        Ok(MetalPair::new(Metal::from(metal), quote))
+    }
+}
+
 // ---- product × underlying validity -----------------------------------------
 
 /// The asset-class validity guard: confirm an instrument's `underlying` is one
 /// the product family can actually price, decoding it to a domain [`Underlying`].
 ///
-/// W1 ships exactly one asset-class arm — FX — and every one of the 18 product
-/// `oneof` arms is an FX product. So the rule is simply: the underlying must be
-/// present and FX; a missing or non-FX underlying for an FX product is rejected
-/// as `INVALID_ARGUMENT` rather than silently coerced (mirrors the
-/// `PricingModel` guard's no-silent-fallback contract). Later asset-class waves
-/// extend this to a genuine product×underlying matrix; today the matrix has one
-/// valid cell.
+/// Both asset-class arms shipped to date — FX (W1) and precious metals (W2) —
+/// share the FX option-pricing path (a metal's lease rate is modelled as the FX
+/// foreign rate), so every FX option product accepts either. The rule is: the
+/// underlying must be present and be one of the option-priceable arms (FX or
+/// metal); a missing underlying is rejected as `INVALID_ARGUMENT` rather than
+/// silently coerced (mirrors the `PricingModel` guard's no-silent-fallback
+/// contract). The linear products carry their own product×underlying matrix (see
+/// [`validate_deliverable_underlying`] / [`validate_non_deliverable_underlying`]).
 ///
 /// # Errors
 ///
 /// [`WireError::MissingField`] if `underlying.ref` is absent;
-/// [`WireError::InvalidCcy`] if the FX pair's legs are malformed. (A future
-/// non-FX arm reaching an FX-only product would surface as an
-/// [`WireError::UnknownEnum`]-style rejection here.)
+/// [`WireError::InvalidCcy`] if a pair's legs are malformed;
+/// [`WireError::UnknownEnum`] if a metal tag is out of range.
 pub fn validate_fx_underlying(underlying: &WireUnderlying) -> Result<Underlying, WireError> {
     match &underlying.r#ref {
         Some(underlying::Ref::Fx(pair)) => Ok(Underlying::Fx(CcyPair::try_from(pair.clone())?)),
+        Some(underlying::Ref::Metal(pair)) => {
+            Ok(Underlying::Metal(MetalPair::try_from(pair.clone())?))
+        }
+        None => Err(WireError::MissingField {
+            field: "Instrument.underlying",
+        }),
+    }
+}
+
+/// The linear-book validity guard for **deliverable** products (FX outright
+/// forward / FX swap): the underlying must be present and deliverable. FX pairs
+/// and precious-metal pairs are deliverable; a non-deliverable underlying for a
+/// deliverable product is rejected as `INVALID_ARGUMENT`.
+///
+/// Non-deliverability is a *convention* of the underlying pair (the registry's
+/// `Settlement::NonDeliverable`), resolved by the server against the convention
+/// registry. This guard works on the decoded [`Underlying`] identity; the server
+/// pairs it with the registry lookup so an NDF-only pair (e.g. USDKRW) handed to
+/// a deliverable `fx_forward` is refused rather than silently delivered.
+///
+/// # Errors
+///
+/// [`WireError::MissingField`] if `underlying.ref` is absent;
+/// [`WireError::InvalidCcy`]/[`WireError::UnknownEnum`] if a leg/metal is
+/// malformed.
+pub fn validate_deliverable_underlying(
+    underlying: &WireUnderlying,
+) -> Result<Underlying, WireError> {
+    // Identity decode is shared; the deliverable/non-deliverable *convention*
+    // check is the server's registry lookup (a malformed identity is rejected
+    // here first).
+    validate_fx_underlying(underlying)
+}
+
+/// The linear-book validity guard for the **non-deliverable** product (NDF): the
+/// underlying must be present and decode to a valid FX pair. The
+/// non-deliverability *convention* (the underlying must actually be a
+/// `Settlement::NonDeliverable` pair) is enforced by the server against the
+/// registry; an NDF on a deliverable pair is rejected as `INVALID_ARGUMENT`. A
+/// metal underlying is not a non-deliverable FX pair, so it is refused here.
+///
+/// # Errors
+///
+/// [`WireError::MissingField`] if `underlying.ref` is absent or not the FX arm
+/// (an NDF references a restricted-currency FX pair, never a metal);
+/// [`WireError::InvalidCcy`] if the FX pair's legs are malformed.
+pub fn validate_non_deliverable_underlying(
+    underlying: &WireUnderlying,
+) -> Result<CcyPair, WireError> {
+    match &underlying.r#ref {
+        Some(underlying::Ref::Fx(pair)) => CcyPair::try_from(pair.clone()),
+        // A metal pair is deliverable (loco-London) — never a valid NDF
+        // underlying; refuse rather than coerce.
+        Some(underlying::Ref::Metal(_)) => Err(WireError::MissingField {
+            field: "Ndf.underlying (non-deliverable FX pair)",
+        }),
         None => Err(WireError::MissingField {
             field: "Instrument.underlying",
         }),
@@ -409,6 +516,7 @@ impl From<Underlying> for WireUnderlying {
     fn from(value: Underlying) -> Self {
         match value {
             Underlying::Fx(pair) => WireUnderlying::fx(WireCcyPair::from(pair)),
+            Underlying::Metal(pair) => WireUnderlying::metal(WireMetalPair::from(pair)),
         }
     }
 }
@@ -419,6 +527,7 @@ impl TryFrom<WireUnderlying> for Underlying {
     fn try_from(value: WireUnderlying) -> Result<Self, Self::Error> {
         match value.r#ref {
             Some(underlying::Ref::Fx(pair)) => Ok(Underlying::Fx(CcyPair::try_from(pair)?)),
+            Some(underlying::Ref::Metal(pair)) => Ok(Underlying::Metal(MetalPair::try_from(pair)?)),
             None => Err(WireError::MissingField {
                 field: "Underlying.ref",
             }),
@@ -786,6 +895,146 @@ mod tests {
             Err(WireError::MissingField {
                 field: "Instrument.underlying",
             })
+        );
+    }
+
+    #[test]
+    fn metal_round_trips() {
+        for (metal, code) in [
+            (Metal::Gold, "XAU"),
+            (Metal::Silver, "XAG"),
+            (Metal::Platinum, "XPT"),
+            (Metal::Palladium, "XPD"),
+        ] {
+            let wire = WireMetal::from(metal);
+            assert_eq!(Metal::from(wire), metal);
+            // The metal's projected base-leg code matches the ISO-4217 X-code.
+            assert_eq!(metal.ccy().as_str(), code);
+        }
+    }
+
+    #[test]
+    fn metal_pair_round_trips() {
+        let mp = MetalPair::new(Metal::Gold, Ccy::USD);
+        let wire = WireMetalPair::from(mp);
+        assert_eq!(wire.metal, WireMetal::Gold as i32);
+        assert_eq!(wire.quote, "USD");
+        assert_eq!(MetalPair::try_from(wire).unwrap(), mp);
+    }
+
+    #[test]
+    fn metal_pair_rejects_bad_enum_and_quote() {
+        let bad_metal = WireMetalPair {
+            metal: 99,
+            quote: "USD".to_owned(),
+        };
+        assert_eq!(
+            MetalPair::try_from(bad_metal),
+            Err(WireError::UnknownEnum {
+                kind: "Metal",
+                tag: 99,
+            })
+        );
+        let bad_quote = WireMetalPair {
+            metal: WireMetal::Gold as i32,
+            quote: "US".to_owned(),
+        };
+        assert!(matches!(
+            MetalPair::try_from(bad_quote),
+            Err(WireError::InvalidCcy { .. })
+        ));
+    }
+
+    #[test]
+    fn underlying_round_trips_metal() {
+        let u = Underlying::Metal(MetalPair::new(Metal::Platinum, Ccy::USD));
+        let wire = WireUnderlying::from(u);
+        // The settlement currency is stamped as the metal pair's fiat quote leg.
+        assert_eq!(wire.settlement_ccy, "USD");
+        assert_eq!(Underlying::try_from(wire).unwrap(), u);
+    }
+
+    // The metal underlying's projection onto the registry-keyed `CcyPair` is
+    // byte-identical to a plain FX `CcyPair` of the same metal-base legs: a metal
+    // pair (Underlying::Metal) and the metal-base FX pair (Underlying::Fx) decode
+    // to the SAME `CcyPair` and the SAME settlement currency — the W2 metal
+    // byte-identity invariant on the wire projection. (The metal arm adds the
+    // *asset-class tag*; the pricing path keys on the identical projected pair.)
+    #[test]
+    fn metal_projection_byte_identical_to_fx_path() {
+        use prost::Message;
+        let metal_base = CcyPair::new(Ccy::XAU, Ccy::USD);
+        // FX-shaped encoding of the metal-base pair (the pre-W2 path metals took).
+        let via_fx = WireUnderlying::from(Underlying::Fx(metal_base));
+        // The W2 metal-tagged encoding.
+        let via_metal =
+            WireUnderlying::from(Underlying::Metal(MetalPair::new(Metal::Gold, Ccy::USD)));
+        // Both project to the identical registry-keyed pair + settlement ccy.
+        assert_eq!(via_fx.settlement_ccy, via_metal.settlement_ccy);
+        let fx_pair = Underlying::try_from(via_fx.clone()).unwrap().as_ccy_pair();
+        let metal_pair = Underlying::try_from(via_metal.clone())
+            .unwrap()
+            .as_ccy_pair();
+        assert_eq!(fx_pair, metal_pair);
+        assert_eq!(fx_pair, metal_base);
+        // The metal-tagged encode/decode round-trip is itself stable.
+        let bytes = via_metal.encode_to_vec();
+        let back = WireUnderlying::decode(bytes.as_slice()).unwrap();
+        assert_eq!(
+            Underlying::try_from(back).unwrap().as_ccy_pair(),
+            metal_base
+        );
+    }
+
+    #[test]
+    fn validate_fx_underlying_accepts_metal() {
+        let wire =
+            WireUnderlying::metal(WireMetalPair::from(MetalPair::new(Metal::Silver, Ccy::USD)));
+        assert_eq!(
+            super::validate_fx_underlying(&wire).unwrap(),
+            Underlying::Metal(MetalPair::new(Metal::Silver, Ccy::USD))
+        );
+    }
+
+    #[test]
+    fn validate_non_deliverable_underlying_rejects_metal_and_absent() {
+        // A metal is deliverable (loco-London) — not a valid NDF underlying.
+        let metal =
+            WireUnderlying::metal(WireMetalPair::from(MetalPair::new(Metal::Gold, Ccy::USD)));
+        assert!(super::validate_non_deliverable_underlying(&metal).is_err());
+        // An absent ref is rejected.
+        let absent = WireUnderlying {
+            r#ref: None,
+            settlement_ccy: String::new(),
+        };
+        assert_eq!(
+            super::validate_non_deliverable_underlying(&absent),
+            Err(WireError::MissingField {
+                field: "Instrument.underlying",
+            })
+        );
+        // A (restricted) FX pair decodes as the NDF underlying identity.
+        let fx = WireUnderlying::fx(WireCcyPair::from(CcyPair::new(Ccy::USD, Ccy::JPY)));
+        assert_eq!(
+            super::validate_non_deliverable_underlying(&fx).unwrap(),
+            CcyPair::new(Ccy::USD, Ccy::JPY)
+        );
+    }
+
+    #[test]
+    fn validate_deliverable_underlying_accepts_fx_and_metal() {
+        let fx = WireUnderlying::fx(WireCcyPair::from(CcyPair::new(Ccy::EUR, Ccy::USD)));
+        assert_eq!(
+            super::validate_deliverable_underlying(&fx).unwrap(),
+            Underlying::Fx(CcyPair::new(Ccy::EUR, Ccy::USD))
+        );
+        let metal = WireUnderlying::metal(WireMetalPair::from(MetalPair::new(
+            Metal::Palladium,
+            Ccy::USD,
+        )));
+        assert_eq!(
+            super::validate_deliverable_underlying(&metal).unwrap(),
+            Underlying::Metal(MetalPair::new(Metal::Palladium, Ccy::USD))
         );
     }
 

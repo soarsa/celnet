@@ -108,6 +108,17 @@ impl Ccy {
     pub const CAD: Ccy = Ccy([b'C', b'A', b'D']);
     /// New Zealand dollar.
     pub const NZD: Ccy = Ccy([b'N', b'Z', b'D']);
+
+    // Precious metals as ISO-4217 "X"-prefixed asset codes (the metal leg of a
+    // [`MetalPair`] projects to one of these — XAU/XAG/XPT/XPD vs a fiat quote).
+    /// Gold (one troy ounce), ISO-4217 XAU.
+    pub const XAU: Ccy = Ccy([b'X', b'A', b'U']);
+    /// Silver (one troy ounce), ISO-4217 XAG.
+    pub const XAG: Ccy = Ccy([b'X', b'A', b'G']);
+    /// Platinum (one troy ounce), ISO-4217 XPT.
+    pub const XPT: Ccy = Ccy([b'X', b'P', b'T']);
+    /// Palladium (one troy ounce), ISO-4217 XPD.
+    pub const XPD: Ccy = Ccy([b'X', b'P', b'D']);
 }
 
 impl fmt::Display for Ccy {
@@ -152,19 +163,124 @@ impl fmt::Display for CcyPair {
     }
 }
 
+/// A precious metal traded as the asset (base) leg of a metal pair.
+///
+/// The four LBMA/LPPM precious metals. Each projects to an ISO-4217 "X"-prefixed
+/// asset code ([`Ccy::XAU`]/[`Ccy::XAG`]/[`Ccy::XPT`]/[`Ccy::XPD`]) so a
+/// [`MetalPair`] overlaps the FX [`CcyPair`] encoding byte-for-byte on the metal
+/// leg. The metal is *always* the base/asset; the quote is a fiat numeraire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Metal {
+    /// Gold (XAU).
+    Gold,
+    /// Silver (XAG).
+    Silver,
+    /// Platinum (XPT).
+    Platinum,
+    /// Palladium (XPD).
+    Palladium,
+}
+
+impl Metal {
+    /// The ISO-4217 "X"-prefixed asset code for this metal (XAU/XAG/XPT/XPD) as
+    /// the base/asset [`Ccy`].
+    #[must_use]
+    pub const fn ccy(self) -> Ccy {
+        match self {
+            Metal::Gold => Ccy::XAU,
+            Metal::Silver => Ccy::XAG,
+            Metal::Platinum => Ccy::XPT,
+            Metal::Palladium => Ccy::XPD,
+        }
+    }
+
+    /// The metal for an ISO-4217 asset code, or `None` if the code is not one of
+    /// the four precious-metal codes (XAU/XAG/XPT/XPD).
+    #[must_use]
+    pub const fn from_ccy(c: Ccy) -> Option<Metal> {
+        // `Ccy` is not `const`-comparable with `==`, so match the raw bytes.
+        match c.0 {
+            [b'X', b'A', b'U'] => Some(Metal::Gold),
+            [b'X', b'A', b'G'] => Some(Metal::Silver),
+            [b'X', b'P', b'T'] => Some(Metal::Platinum),
+            [b'X', b'P', b'D'] => Some(Metal::Palladium),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for Metal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.ccy().as_str())
+    }
+}
+
+/// A precious-metal pair: the [`Metal`] is the base/asset leg, traded against a
+/// fiat `quote` (numeraire) currency, e.g. `XAUUSD`, `XAUEUR`, `XAGJPY`.
+///
+/// A metal pair projects losslessly to/from an FX-shaped [`CcyPair`] whose `base`
+/// is the metal's ISO-4217 asset code — this keeps the `celnet-conventions` /
+/// `celnet-calendar` registries (which key on [`CcyPair`]) untouched, and makes
+/// the XAU/XAG/XPT/XPD-vs-fiat projection **byte-identical** to the FX path where
+/// it overlaps (the W2 metal byte-identity invariant). The asset-class *naming*
+/// (lease rate vs foreign rate) is a convention/risk-layer concern; the carry
+/// math is the identical generalized forward/discount producer ([`Carry`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct MetalPair {
+    /// The precious metal (the base/asset leg).
+    pub metal: Metal,
+    /// The fiat quote (numeraire) currency, e.g. `USD`, `EUR`, `JPY`.
+    pub quote: Ccy,
+}
+
+impl MetalPair {
+    /// Construct a metal pair from its metal (base/asset) and fiat quote leg.
+    #[must_use]
+    pub const fn new(metal: Metal, quote: Ccy) -> Self {
+        Self { metal, quote }
+    }
+
+    /// Project this metal pair into the FX-shaped [`CcyPair`] whose `base` is the
+    /// metal's ISO-4217 asset code and whose `quote` is the fiat quote leg. The
+    /// inverse of [`MetalPair::from_ccy_pair`] on a metal-base pair.
+    #[must_use]
+    pub const fn as_ccy_pair(self) -> CcyPair {
+        CcyPair::new(self.metal.ccy(), self.quote)
+    }
+
+    /// Recover a metal pair from an FX-shaped [`CcyPair`] iff its `base` leg is a
+    /// precious-metal asset code (XAU/XAG/XPT/XPD); else `None`. The inverse of
+    /// [`MetalPair::as_ccy_pair`].
+    #[must_use]
+    pub const fn from_ccy_pair(p: CcyPair) -> Option<MetalPair> {
+        match Metal::from_ccy(p.base) {
+            Some(metal) => Some(MetalPair::new(metal, p.quote)),
+            None => None,
+        }
+    }
+}
+
+impl fmt::Display for MetalPair {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}{}", self.metal, self.quote)
+    }
+}
+
 /// The instrument's underlying — the asset-class discriminator that lets one
-/// unversioned contract name FX (and, in later waves, metals, digital assets,
-/// equities and listed futures).
+/// unversioned contract name FX and precious metals (and, in later waves, digital
+/// assets, equities and listed futures).
 ///
 /// This type answers only *what is the underlying*; pricing carry and settlement
-/// specifics live in [`Carry`] and the per-arm references. W1 ships the FX arm
-/// (the platform's origin asset class); further arms are added by their
-/// asset-class wave as additive enum growth (one current contract — no
-/// versioning, no placeholder arms).
+/// specifics live in [`Carry`] and the per-arm references. W1 shipped the FX arm
+/// (the platform's origin asset class); W2 adds the [`Metal`] arm. Further arms
+/// are added by their asset-class wave as additive enum growth (one current
+/// contract — no versioning, no placeholder arms).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Underlying {
     /// An FX currency pair (e.g. `EURUSD`).
     Fx(CcyPair),
+    /// A precious-metal pair (metal vs fiat quote, e.g. `XAUUSD`).
+    Metal(MetalPair),
 }
 
 impl Underlying {
@@ -173,6 +289,28 @@ impl Underlying {
     pub const fn as_fx(&self) -> Option<CcyPair> {
         match self {
             Underlying::Fx(p) => Some(*p),
+            Underlying::Metal(_) => None,
+        }
+    }
+
+    /// The metal pair if this underlying is a precious metal, else `None`.
+    #[must_use]
+    pub const fn as_metal(&self) -> Option<MetalPair> {
+        match self {
+            Underlying::Metal(m) => Some(*m),
+            Underlying::Fx(_) => None,
+        }
+    }
+
+    /// Project the underlying to the FX-shaped [`CcyPair`] the convention /
+    /// calendar registries key on: the pair itself for FX, or the metal pair's
+    /// metal-base projection for a metal. This is the bridge that keeps those
+    /// registries [`CcyPair`]-keyed while the wire/identity layer is asset-tagged.
+    #[must_use]
+    pub const fn as_ccy_pair(&self) -> CcyPair {
+        match self {
+            Underlying::Fx(p) => *p,
+            Underlying::Metal(m) => m.as_ccy_pair(),
         }
     }
 }
@@ -183,10 +321,17 @@ impl From<CcyPair> for Underlying {
     }
 }
 
+impl From<MetalPair> for Underlying {
+    fn from(m: MetalPair) -> Self {
+        Underlying::Metal(m)
+    }
+}
+
 impl fmt::Display for Underlying {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Underlying::Fx(p) => write!(f, "{p}"),
+            Underlying::Metal(m) => write!(f, "{m}"),
         }
     }
 }
@@ -722,8 +867,98 @@ mod tests {
         let p = CcyPair::parse("EURUSD").unwrap();
         let u: Underlying = p.into();
         assert_eq!(u.as_fx(), Some(p));
+        assert_eq!(u.as_metal(), None);
+        assert_eq!(u.as_ccy_pair(), p);
         assert_eq!(u.to_string(), "EURUSD");
         assert_eq!(u, Underlying::Fx(p));
+    }
+
+    #[test]
+    fn metal_ccy_codes_are_iso_x_prefixed() {
+        assert_eq!(Metal::Gold.ccy(), Ccy::XAU);
+        assert_eq!(Metal::Silver.ccy(), Ccy::XAG);
+        assert_eq!(Metal::Platinum.ccy(), Ccy::XPT);
+        assert_eq!(Metal::Palladium.ccy(), Ccy::XPD);
+        assert_eq!(Metal::Gold.to_string(), "XAU");
+        // Round-trip every metal through its asset code.
+        for m in [
+            Metal::Gold,
+            Metal::Silver,
+            Metal::Platinum,
+            Metal::Palladium,
+        ] {
+            assert_eq!(Metal::from_ccy(m.ccy()), Some(m));
+        }
+        // A fiat code is not a metal.
+        assert_eq!(Metal::from_ccy(Ccy::USD), None);
+        assert_eq!(Metal::from_ccy(Ccy::EUR), None);
+    }
+
+    #[test]
+    fn metal_pair_projects_to_metal_base_ccy_pair() {
+        let mp = MetalPair::new(Metal::Gold, Ccy::USD);
+        let cp = mp.as_ccy_pair();
+        assert_eq!(cp.base, Ccy::XAU);
+        assert_eq!(cp.quote, Ccy::USD);
+        assert_eq!(cp.to_string(), "XAUUSD");
+        assert_eq!(mp.to_string(), "XAUUSD");
+        // Round-trip CcyPair -> MetalPair -> CcyPair.
+        assert_eq!(MetalPair::from_ccy_pair(cp), Some(mp));
+        // A non-metal-base pair is not a metal pair.
+        assert_eq!(
+            MetalPair::from_ccy_pair(CcyPair::new(Ccy::EUR, Ccy::USD)),
+            None
+        );
+        // A metal cross (XAUEUR, XAGJPY).
+        let cross = MetalPair::new(Metal::Gold, Ccy::EUR);
+        assert_eq!(cross.as_ccy_pair().to_string(), "XAUEUR");
+    }
+
+    #[test]
+    fn underlying_metal_roundtrip() {
+        let mp = MetalPair::new(Metal::Platinum, Ccy::USD);
+        let u: Underlying = mp.into();
+        assert_eq!(u.as_metal(), Some(mp));
+        assert_eq!(u.as_fx(), None);
+        assert_eq!(u.to_string(), "XPTUSD");
+        assert_eq!(u, Underlying::Metal(mp));
+        // The CcyPair projection is the metal-base pair the registries key on.
+        assert_eq!(u.as_ccy_pair(), CcyPair::new(Ccy::XPT, Ccy::USD));
+    }
+
+    // The metal XAUUSD projection's forward and discount factors are byte-for-byte
+    // identical to the FX path over the SAME (spot, r_dom = quote rate, r_for =
+    // lease rate) inputs — the W2 metal byte-identity invariant. The metal lease
+    // rate is modelled as the FX foreign rate (per `InstrumentClass::PreciousMetal`
+    // and ADR-0008): identical operations, identical order, so `to_bits` matches.
+    #[test]
+    fn metal_carry_byte_identical_to_fx_path() {
+        // (spot, quote/discount rate r_dom, lease rate r_for, t)
+        for &(spot, r_dom, r_for, t) in &[
+            (1850.0, 0.045, 0.012, 1.0),
+            (24.5, 0.05, 0.0, 0.25),
+            (980.0, -0.004, 0.031, 2.5),
+        ] {
+            // FX path (the reference): a plain CcyPair vanilla input.
+            let fx = VanillaInputs::new(spot, 1.0, 0.1, t, r_dom, r_for);
+            // Metal path: identical carry assembly via the generalized producer,
+            // reached through the Underlying::Metal projection's CcyPair.
+            let mp = MetalPair::new(Metal::Gold, Ccy::USD);
+            let u = Underlying::Metal(mp);
+            // The projected pair the registry/pricer keys on must be metal-base.
+            assert_eq!(u.as_ccy_pair(), CcyPair::new(Ccy::XAU, Ccy::USD));
+            let carry = Carry::FxRates { r_dom, r_for };
+            assert_eq!(
+                (spot * carry.forward_factor(t)).to_bits(),
+                fx.forward().to_bits(),
+                "metal forward must be byte-identical to the FX path"
+            );
+            assert_eq!(
+                carry.discount_df(t).to_bits(),
+                fx.df_dom().to_bits(),
+                "metal discount must be byte-identical to the FX path"
+            );
+        }
     }
 
     // The FX projection of the generalized `Carry` reproduces the FX two-rate
