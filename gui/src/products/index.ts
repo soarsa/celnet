@@ -43,6 +43,16 @@ export type {
 } from "./types";
 export { PRODUCT_GROUP_ORDER, defineProduct, withTenorAndModel } from "./types";
 
+// The structuring UI the ticket shell composes the registry with: the grouped
+// gallery picker (replaces the flat structure <select>), the payoff-at-expiry
+// preview, and the net-structure economics strip.
+export { StructureGallery } from "./StructureGallery";
+export type { StructureGalleryProps } from "./StructureGallery";
+export { PayoffChart } from "./PayoffChart";
+export type { PayoffChartProps } from "./PayoffChart";
+export { NetStructureStrip } from "./NetStructureStrip";
+export type { NetStructureLeg } from "./NetStructureStrip";
+
 /** Every registered product family, in catalogue order. */
 export const PRODUCT_REGISTRY: readonly AnyProductSpec[] = [
   vanillaSpec,
