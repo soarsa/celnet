@@ -1,0 +1,23 @@
+[package]
+name = "celnet-crypto-vanilla"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet digital-asset (crypto) vanilla pricing: linear (USD-margined) generalized-BSM + inverse (coin-margined) closed form on the cost-of-carry seam, with the full Greek strip."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+celnet-types.workspace = true
+celnet-core.workspace = true
+
+[dev-dependencies]
+# The FX (Garman-Kohlhagen) leaf — used ONLY by the test suite as the independent,
+# already-QuantLib-golden linear oracle (the `funding → r_for` identity routes a
+# linear crypto vanilla through it, a genuinely disjoint code path). NOT a runtime
+# dependency: the leaves are siblings, never a chain (ADR-0008 / W3 §1).
+celnet-vanilla.workspace = true
