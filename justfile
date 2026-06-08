@@ -216,3 +216,25 @@ render-figures FIG="":
     set -euo pipefail
     npx --prefix gui playwright install chromium
     node tools/render-capability-figures.mjs {{FIG}}
+
+# Verify every relative link, figure/img source, and in-document #anchor across the
+# capability showcase corpus (docs/CELNET-CAPABILITIES.md, docs/celnet-capabilities/*.md,
+# docs/celnet-capabilities.html) actually resolves on disk. Exits non-zero listing any
+# broken reference. No network calls — external http(s) links are out of scope.
+check-docs:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source "$HOME/.cargo/env"
+    node tools/check-doc-links.mjs
+
+# Verify docs/celnet-capabilities.html has NO horizontal overflow, no element wider
+# than the viewport, and a vertically-reachable footer across a viewport sweep
+# (1920×1080 → 375×667) in headless Chromium. Reuses the Playwright vendored under
+# gui/node_modules; ensures the Chromium binary is installed first. Exits non-zero
+# listing any failing viewport/element.
+check-html-responsive:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source "$HOME/.cargo/env"
+    npx --prefix gui playwright install chromium
+    node tools/check-html-responsive.mjs

@@ -1,11 +1,11 @@
-<sub>**[Celnet Capabilities](../CELNET-CAPABILITIES.md)** › Engineering Rigor & Assurance</sub>
+<sub>[← Prev: Competitive Positioning](13-competitive-positioning.md) · [Index](../CELNET-CAPABILITIES.md) · [Showcase ↗](../celnet-capabilities.html)</sub>
 
 # 14. Engineering Rigor & Assurance
 
 A pricing platform is only as trustworthy as the evidence behind its numbers. Celnet is engineered so that every headline claim — correctness, determinism, latency, resilience — is *earned and continuously re-proven*, not asserted. The differentiator is not a single clever gate; it is that the **whole 34-crate workspace ships behind a wall of independent, executable proofs that run on every change**, with each product class validated by the *strongest oracle that class admits* and labelled honestly when no exact oracle exists. Where an incumbent ships a number and a brochure, Celnet ships the number, the independent re-derivation that pins it, and the gate that fails the build if the two ever diverge.
 
 ![Celnet engineering assurance: golden-oracle validation, an executable parity matrix, mutation and property testing, deterministic replay, and the resilient hot core](../assets/celnet-capabilities/fig-12-capability-landscape.png)
-*Celnet's assurance landscape — every capability is backed by an executable proof that runs on every change.*
+*Fig 12 ([index](../CELNET-CAPABILITIES.md#figure-index)) — Celnet's assurance landscape — every capability is backed by an executable proof that runs on every change.*
 
 ### 14.1 Correctness, validated against the strongest oracle each class admits
 
@@ -47,7 +47,7 @@ Capability claims are not prose in a brochure alone — they are codified as an 
 Determinism is a first-class guarantee. Celnet's counter-based random number generator is **bit-identical between CPU and GPU**, and GPU results are reconciled against a high-precision CPU oracle, so the same scenario produces the same number whether it runs on the accelerator or the CPU SIMD fallback. (Note the honest hardware boundary in §14.8: the M4 dev host's Metal backend lacks f64, so the in-repo GPU proofs establish *correctness and ratios* against the f64 CPU oracle — the absolute NVIDIA throughput headline is deploy-gated, never claimed here.) Plugin execution is equally deterministic: the WebAssembly sandbox supports **bit-identical replay** (`f64::to_bits` identity across runs), so a model's output can be reproduced exactly from its inputs — the foundation for reproducible risk, auditable pricing, and confident debugging across heterogeneous hardware. The distributed substrate inherits the same guarantee: a follower or recovered node replays the leader-replicated log to **bit-identical** state, with the workload deliberately containing a 1-ULP value so the bits must match.
 
 ![The tiered plugin host — replayable, capability-scoped, bit-identical; Tier-0 native and Tier-2 wasmi are shipped, Tier-1 signed-shared-object and Tier-3 OS-sandbox are designed and deploy-gated](../assets/celnet-capabilities/fig-05-plugin-tiers.png)
-*Bit-identical RNG across CPU and GPU and replayable plugins make every Celnet number reproducible by construction. The shipped tiers are Tier-0 native and Tier-2 wasmi; the signed-shared-object and OS-sandbox tiers are designed-and-seamed, proven at deploy (see Ch. 5).*
+*Fig 5 ([index](../CELNET-CAPABILITIES.md#figure-index)) — Bit-identical RNG across CPU and GPU and replayable plugins make every Celnet number reproducible by construction. The shipped tiers are Tier-0 native and Tier-2 wasmi; the signed-shared-object and OS-sandbox tiers are designed-and-seamed, proven at deploy (see Ch. 5).*
 
 ### 14.5 Zero-cost observability
 
@@ -62,7 +62,7 @@ Celnet is built exclusively on **open-source, permissively-licensed** software �
 The runtime is engineered to keep trading through faults and upgrades. A **zero-allocation hot core** — wait-free single-producer/single-consumer rings feeding pinned cores, lock-free read-mostly state publication via an atomically swapped market-state snapshot and a single-writer seqlock top-of-book — does no allocation, locking or logging on the pricing path. **Blue-green zero-downtime state handoff** lets a new build take over from a running one without dropping the book, so hot upgrades are a routine operation rather than an outage. Underneath, a **durable, checksummed, append-only journal** (with compaction/checkpoint now built) provides clean crash recovery: a torn final record heals to the last good entry on restart, and the book and its repricing come back bit-for-bit. Above the single node, a **leader-replicated event log with full Raft** (election + Pre-Vote, conflicting-tail truncation, snapshot compaction and InstallSnapshot reseed) commits only on quorum and replays to bit-identical state — proven on localhost multi-process (the honest boundary in §14.8 keeps cross-host wire SLOs, cross-DC transport and dynamic membership deploy-gated).
 
 ![The resilient engine: pinned zero-allocation hot core, lock-free publication, blue-green handoff, durable journal](../assets/celnet-capabilities/fig-13-engine-concurrency.png)
-*A zero-allocation hot core, blue-green hot upgrade, a durable journal, and bit-identical Raft replay keep Celnet pricing through faults and deployments.*
+*Fig 13 ([index](../CELNET-CAPABILITIES.md#figure-index)) — A zero-allocation hot core, blue-green hot upgrade, a durable journal, and bit-identical Raft replay keep Celnet pricing through faults and deployments.*
 
 ### 14.8 The honest boundary
 
@@ -80,5 +80,7 @@ Rigor includes refusing to claim what has not been proven *in-repo*. Celnet's do
 
 These mechanisms are not independent niceties — they compose into a single discipline. The per-class oracle and finite-difference gates earn *correctness*; property, mutation and fuzz testing earn *robustness*; the parity matrix earns *competitiveness*; bit-identical RNG, plugin replay and Raft replay earn *determinism*; zero-cost observability and the absolute in-core truth-gate earn *performance*; the zero-allocation core, blue-green handoff, durable journal and replicated log earn *resilience*; supply-chain policy earns *ownership*; and the honest boundary earns *trust*. Built as a 34-crate one-way-acyclic Rust workspace with an extensive automated test suite, Celnet is a platform whose every number a desk can trade on, a quant can reproduce, and an architect can deploy — because the proof runs every time the code does, and the docs claim nothing the proof does not cover.
 
+**See also:** [`CLIENT-PARITY-MATRIX.md`](../CLIENT-PARITY-MATRIX.md) is the executable parity matrix; [§4 Quant Coverage](04-quant-coverage.md) is the per-class validation regime; [§13 Competitive Positioning](13-competitive-positioning.md) is the claim these proofs earn.
+
 ---
-<sub>[← Competitive Positioning](13-competitive-positioning.md)  ·  **[Contents](../CELNET-CAPABILITIES.md)**  ·  [Back to Overview →](../CELNET-CAPABILITIES.md)</sub>
+<sub>[← Prev: Competitive Positioning](13-competitive-positioning.md) · [Index](../CELNET-CAPABILITIES.md) · [Showcase ↗](../celnet-capabilities.html)</sub>

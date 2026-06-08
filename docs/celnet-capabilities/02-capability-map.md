@@ -1,11 +1,11 @@
-<sub>**[Celnet Capabilities](../CELNET-CAPABILITIES.md)** › Capability Map — What Celnet Does</sub>
+<sub>[← Prev: Executive Summary](01-executive-summary.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: System Architecture →](03-system-architecture.md) · [Showcase ↗](../celnet-capabilities.html)</sub>
 
 # 2. Capability Map — What Celnet Does
 
 Celnet is not a thin challenger closing gaps — it is a functionally complete, evidence-backed superset of what a derivatives desk stitches together today, proven by a runnable parity matrix against independent oracles, behind one unversioned contract reachable identically from five clients. This section is the scannable master inventory — what the platform does, grouped by capability cluster. Every later chapter expands a row here, and the recurring promise across all of them is the same: every value is bit-identical across the GUI, the Excel add-in, the Rust SDK, the admin CLI, and the WebSocket mirror, because they all consume the one contract.
 
 ![The Celnet capability landscape — pricing & analytics, engine & performance, GPU, risk, extensibility, edge & API, clients, and Celer integration, all served from one contract.](../assets/celnet-capabilities/fig-12-capability-landscape.png)
-*Figure 12 — The capability landscape: a full FX-options catalogue (vanilla → first-generation exotics → structured & path-dependent → American/Bermudan → correlated basket → LSV booking), a nanosecond-class in-core engine, GPU acceleration, server-side hierarchical risk with FRTB-SA and internal XVA, an open quant SDK, and Celer trade-lifecycle integration — unified by a single API-first contract.*
+*Figure 12 ([index](../CELNET-CAPABILITIES.md#figure-index)) — The capability landscape: a full FX-options catalogue (vanilla → first-generation exotics → structured & path-dependent → American/Bermudan → correlated basket → LSV booking), a nanosecond-class in-core engine, GPU acceleration, server-side hierarchical risk with FRTB-SA and internal XVA, an open quant SDK, and Celer trade-lifecycle integration — unified by a single API-first contract.*
 
 ### 2.1 Pricing & analytics — the full catalogue
 
@@ -153,5 +153,7 @@ Celnet's parity claims are executable: `CLIENT-PARITY-MATRIX.md` plus ~26 `celne
 | Determinism | Cross-platform, bit-identical results (mutation + fuzz estate) |
 | Honesty as a differentiator | Every figure is labelled (in-core / M4 / loopback); deploy-gated absolutes are never claimed in-repo — a reviewer doing diligence finds proof, not marketing fiction |
 
+**See also:** each cluster above is expanded in its own chapter — [§3 System Architecture](03-system-architecture.md), [§4 Quant Coverage](04-quant-coverage.md), [§5 Extensibility](05-extensibility-plugins.md), [§6 Risk Management](06-risk-management.md), [§7 Performance & Latency](07-performance-latency.md), [§8 Scalability & Scale-Out](08-scalability-scaleout.md), [§9 API & Client Parity](09-api-contract-parity.md) and [§12 Celer Integration](12-celer-integration.md).
+
 ---
-<sub>[← Executive Summary](01-executive-summary.md)  ·  **[Contents](../CELNET-CAPABILITIES.md)**  ·  [System Architecture →](03-system-architecture.md)</sub>
+<sub>[← Prev: Executive Summary](01-executive-summary.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: System Architecture →](03-system-architecture.md) · [Showcase ↗](../celnet-capabilities.html)</sub>

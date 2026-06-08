@@ -10,6 +10,8 @@
 
 This document is a linked set of focused chapters. Start with the **[Executive Summary](celnet-capabilities/01-executive-summary.md)**, scan the **[Capability Map](celnet-capabilities/02-capability-map.md)**, or jump straight to any topic below.
 
+> **Standalone showcase:** for the single-page, vector-figure rendering of this corpus, open **[`celnet-capabilities.html`](celnet-capabilities.html)** — the self-contained brochure built from these chapters and the diagram sources.
+
 ---
 
 ## Contents
@@ -28,6 +30,18 @@ This document is a linked set of focused chapters. Start with the **[Executive S
 12. **[Celer Trader & Estate Integration](celnet-capabilities/12-celer-integration.md)** — Celnet as the FX-options pricing system-of-record in the Celer lifecycle.
 13. **[Competitive Positioning](celnet-capabilities/13-competitive-positioning.md)** — How Celnet out-functions, out-intuits and out-performs, proven by executable parity.
 14. **[Engineering Rigor & Assurance](celnet-capabilities/14-engineering-rigor.md)** — The validation, determinism and supply-chain guarantees behind every claim.
+
+---
+
+## Related documents
+
+Three companion documents back the capability claims in this corpus and are linked from the relevant chapters:
+
+- **[`CLIENT-PARITY-MATRIX.md`](CLIENT-PARITY-MATRIX.md)** — the executable matrix proving all 19 products reach all five clients (GUI · Excel · SDK · CLI · WebSocket), with every honest exception stated. (Referenced from [§9 API & Client Parity](celnet-capabilities/09-api-contract-parity.md), [§10 Excel](celnet-capabilities/10-excel-integration.md), [§13 Competitive Positioning](celnet-capabilities/13-competitive-positioning.md), [§14 Engineering Rigor](celnet-capabilities/14-engineering-rigor.md).)
+- **[`CAPABILITIES-VS-COMPETITION.md`](CAPABILITIES-VS-COMPETITION.md)** — the feature-by-feature capability comparison against the vendor-neutral incumbent archetypes. (Referenced from [§13 Competitive Positioning](celnet-capabilities/13-competitive-positioning.md).)
+- **[`COMPETITIVE-ANALYSIS.md`](COMPETITIVE-ANALYSIS.md)** — the competitor critique and market-positioning analysis. (Referenced from [§13 Competitive Positioning](celnet-capabilities/13-competitive-positioning.md).)
+
+And the standalone single-page rendering: **[`celnet-capabilities.html`](celnet-capabilities.html)**.
 
 ---
 

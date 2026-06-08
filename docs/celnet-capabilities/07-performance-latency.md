@@ -1,4 +1,4 @@
-<sub>**[Celnet Capabilities](../CELNET-CAPABILITIES.md)** › Performance & Latency</sub>
+<sub>[← Prev: Risk Management](06-risk-management.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: Scalability & Scale-Out →](08-scalability-scaleout.md) · [Showcase ↗](../celnet-capabilities.html)</sub>
 
 # 7. Performance & Latency
 
@@ -6,7 +6,7 @@ Celnet is built so that **pricing is never the bottleneck**. The maths runs in n
 
 ![A latency ladder showing the in-core pricing path, the wait-free ring handoff, the async edge, and the network as the dominant remaining cost.](../assets/celnet-capabilities/fig-07-performance-ladder.png)
 
-*The Celnet latency ladder: a pinned, allocation-free hot core feeds a wait-free ring that bridges to the async edge — the network is the only layer left that matters.*
+*Fig 7 ([index](../CELNET-CAPABILITIES.md#figure-index)) — The Celnet latency ladder: a pinned, allocation-free hot core feeds a wait-free ring that bridges to the async edge — the network is the only layer left that matters.*
 
 ### Pricing as a non-event
 
@@ -72,5 +72,7 @@ The in-repo proofs above establish the **in-core §1.2 truth-gate**, the surface
 
 Network framing — not computation — is the only meaningful latency floor, and Celnet states it as a *shape*, never as a fabricated wire number.
 
+**See also:** [§8 Scalability & Scale-Out](08-scalability-scaleout.md) extends the hot-core latency story across the fleet; [§3 System Architecture](03-system-architecture.md) is the two-tier model these gates measure; [§14 Engineering Rigor](14-engineering-rigor.md) holds the regression and instruction-count gates.
+
 ---
-<sub>[← Risk Management](06-risk-management.md)  ·  **[Contents](../CELNET-CAPABILITIES.md)**  ·  [Scalability & Scale-Out →](08-scalability-scaleout.md)</sub>
+<sub>[← Prev: Risk Management](06-risk-management.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: Scalability & Scale-Out →](08-scalability-scaleout.md) · [Showcase ↗](../celnet-capabilities.html)</sub>

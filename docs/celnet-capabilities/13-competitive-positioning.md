@@ -1,11 +1,11 @@
-<sub>**[Celnet Capabilities](../CELNET-CAPABILITIES.md)** › Competitive Positioning</sub>
+<sub>[← Prev: Celer Integration](12-celer-integration.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: Engineering Rigor & Assurance →](14-engineering-rigor.md) · [Showcase ↗](../celnet-capabilities.html)</sub>
 
 # 13. Competitive Positioning
 
 Celnet is not a thin challenger closing gaps. It is a **functionally complete, evidence-backed superset** of what a derivatives desk stitches together today — proven by a runnable parity matrix against independent oracles, behind one unversioned contract reachable identically from five clients. Every claim in this brochure is wired to a gated test, so "meets or beats" is something the platform demonstrates on every build rather than something a sales deck asserts. The result is a posture that is easy to state and hard to argue with: Celnet **out-functions, out-intuits, and out-performs** across the FX-options stack, as a supply-chain-clean, cross-platform-deterministic system that drops into the estate you already run.
 
 ![Celnet versus the vendor-neutral capability landscape](../assets/celnet-capabilities/fig-12-capability-landscape.png)
-*Figure 13.1 — The capability landscape, mapped against vendor-neutral archetypes. Celnet's footprint spans the full pricing catalogue (first-generation exotics → structured/path-dependent → American/Bermudan → correlated basket → LSV booking), firm-wide and regulatory risk, an internal XVA lens, a streaming edge, and five-client parity in one coherent product.*
+*Figure 13.1 ([index](../CELNET-CAPABILITIES.md#figure-index)) — The capability landscape, mapped against vendor-neutral archetypes. Celnet's footprint spans the full pricing catalogue (first-generation exotics → structured/path-dependent → American/Bermudan → correlated basket → LSV booking), firm-wide and regulatory risk, an internal XVA lens, a streaming edge, and five-client parity in one coherent product.*
 
 ### 13.1 An executable parity matrix — claims you can run
 
@@ -42,7 +42,7 @@ Where an incumbent archetype is strong in one band — deep pricing, or firm-wid
 Function is only half the contest; the other half is whether a desk can actually *use* it. Celnet's clients are two zooms of one model, not a scatter of disconnected screens. The GUI's Book and Risk views read the same position-fact cube, so a trader drills from an aggregated book row straight into a single position's scenario risk without changing tools or mental model. A scope breadcrumb, a pair navigator, a command palette, a `?` keyboard-shortcuts overlay, and consistent trend modes carry the same vocabulary across Ticket, Stream, Surface, Risk, and Book — and the Ticket structures the full exotic catalogue, not just vanilla strategies.
 
 ![Book aggregate drilling into position-level scenario risk](../assets/celnet-capabilities/shot-05-book-aggregate.png)
-*Figure 13.2 — One model, two zooms: a net Book view whose rows drill straight through to position-level scenario risk.*
+*Figure 13.2 ([index](../CELNET-CAPABILITIES.md#figure-index)) — One model, two zooms: a net Book view whose rows drill straight through to position-level scenario risk.*
 
 Critically, the front-end has no privileged path. The GUI uses the same APIs as any client, the Excel add-in runs no pricing in the cell, and a value is bit-identical across the GUI, the SDK, the CLI, and the spreadsheet. A desk can move from a streaming blotter to a structuring ticket to a marked surface to a risk grid — and reconcile every one of those numbers against the same server truth. That coherence is what "out-intuits" means in practice: fewer surfaces to learn, no contradictions to chase.
 
@@ -53,7 +53,7 @@ Celnet's hot core prices vanilla and Greeks at nanosecond scale, so on a streami
 Performance is held, not hoped. The in-core §1.2 truth-gate asserts **absolute** budgets — p50 ≤ 2µs, p99 ≤ 10µs, p99.9 ≤ 25µs — and measures roughly 42ns / 125ns / ~1µs on the M4 development host (a 24–80× margin), captured coordinated-omission-aware and regression-gated alongside the parity matrix, plus an iai-callgrind instruction-count gate in Linux CI. A change that costs speed fails the gate.
 
 ![The performance ladder from in-core compute out to the wire](../assets/celnet-capabilities/fig-07-performance-ladder.png)
-*Figure 13.3 — In-core pricing sits far below network framing on the latency ladder, so the wire is the floor and the maths is free.*
+*Figure 13.3 ([index](../CELNET-CAPABILITIES.md#figure-index)) — In-core pricing sits far below network framing on the latency ladder, so the wire is the floor and the maths is free.*
 
 **Honest boundary.** The numbers above are **host-local, single-core, in-core**. Cross-host wire p99, kernel-bypass NIC latency, and the §11 absolute wire-latency SLOs are **deploy-gated** — in-repo proves the §1.2 truth-gate and loopback benches only. On the accelerator side, in-repo measures the GPU dispatch-amortization **ratio** curve (0.68×@4k → ~53×@1M paths on M4); because Apple M4 Metal lacks f64, the GPU path proves **correctness and ratios only** (M4/Lavapipe). CUDA/NVIDIA absolute GPU throughput, the ≤50ms exotic figure, and Workload-A/B absolute numbers are deploy-gated and never claimed here.
 
@@ -68,11 +68,13 @@ Determinism is the second pillar. A counter-based RNG is bit-identical between C
 Positioning is not only about a head-to-head; it is about fit. Celnet is the FX-options pricing system-of-record inside the Celer trade lifecycle and runs across Standalone, Hybrid, and CelerIntegrated deployment modes via reversible adapter swaps on its seam traits — never a rewrite. The in-repo proof is the seam: the FIX 4.4 engine (acceptor + initiator, loopback-tested), the egress governor, the resilient subscriber, the normalization layer, and the DeployMode adapter swap. **CelerIntegrated mode is the designed estate-native binding**: the live JVM distributor sidecar handshake, mailbox calibration, and live quote-feed entitlement are deploy/live-gated, proven at deploy against the running estate — distinct from the in-repo seam. The same market-data seam ingests external products and feeds as integration targets: venue and aggregator feeds such as **Fenics**, **Bloomberg**, **Refinitiv**, and **EBS** are adapter destinations, demonstrating that Celnet meets a desk where its data already lives.
 
 ![Celnet's adaptability across deployment modes and external feeds](../assets/celnet-capabilities/fig-10-deployment-modes.png)
-*Figure 13.4 — Reversible adapter swaps move Celnet between Standalone, Hybrid, and CelerIntegrated modes; the same seam ingests external market-data feeds. CelerIntegrated is the designed estate-native binding, proven at deploy against the live JVM estate.*
+*Figure 13.4 ([index](../CELNET-CAPABILITIES.md#figure-index)) — Reversible adapter swaps move Celnet between Standalone, Hybrid, and CelerIntegrated modes; the same seam ingests external market-data feeds. CelerIntegrated is the designed estate-native binding, proven at deploy against the live JVM estate.*
 
 ### 13.7 The positioning, in one line
 
 Celnet now matches Murex MX.3, Numerix CrossAsset, and Fenics kACE on structured and path-dependent **breadth** — full first-generation exotics, var/vol swaps, Asians, forward-start/cliquet, quanto, TARF, accumulator, lookback, American/Bermudan early exercise, correlated basket/best-of/worst-of, and an LSV booking model — *while retaining* the edges the deep-catalogue incumbents structurally lack: an open quant SDK, one clean unversioned contract with bit-identical values across five clients, a pinned zero-allocation nanosecond hot core, server-side hierarchical risk, FRTB-SA capital, an internal XVA lens, and an honest evidence trail (parity matrix + golden tables + mutation + fuzz). It meets the closed terminal on reach, the front-to-back platform on lifecycle fit and catalogue depth, the data-venue on distribution, and the modern library on numerical rigour — and it beats each on the dimension the others lack, proven by a parity matrix you can run, on a supply-chain-clean, deterministic foundation. No deploy-gated absolute is claimed in-repo.
 
+**See also:** [`CAPABILITIES-VS-COMPETITION.md`](../CAPABILITIES-VS-COMPETITION.md) is the feature-by-feature comparison; [`COMPETITIVE-ANALYSIS.md`](../COMPETITIVE-ANALYSIS.md) is the market-positioning critique; [`CLIENT-PARITY-MATRIX.md`](../CLIENT-PARITY-MATRIX.md) is the runnable five-client parity proof; [§14 Engineering Rigor](14-engineering-rigor.md) is the evidence trail behind every claim.
+
 ---
-<sub>[← Celer Trader & Estate Integration](12-celer-integration.md)  ·  **[Contents](../CELNET-CAPABILITIES.md)**  ·  [Engineering Rigor & Assurance →](14-engineering-rigor.md)</sub>
+<sub>[← Prev: Celer Integration](12-celer-integration.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: Engineering Rigor & Assurance →](14-engineering-rigor.md) · [Showcase ↗](../celnet-capabilities.html)</sub>

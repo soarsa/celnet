@@ -1,11 +1,11 @@
-<sub>**[Celnet Capabilities](../CELNET-CAPABILITIES.md)** › Scalability & Scale-Out</sub>
+<sub>[← Prev: Performance & Latency](07-performance-latency.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: API & Wire Contract + API-First Client Parity →](09-api-contract-parity.md) · [Showcase ↗](../celnet-capabilities.html)</sub>
 
 # 8. Scalability & Scale-Out
 
 Celnet scales along two independent axes at once: **down** into a single node, where a pinned hot core prices an investment-bank-sized book without ever leaving cache or touching the allocator; and **out** across a fleet, where a rendezvous-hashed partition fabric shards the universe, a Raft-replicated event log keeps state bit-identical across nodes, and a lock-free broadcast ring fans each pair's live tick to every subscriber. The same binary serves a one-desk standalone deployment and a firm-wide grid — you add nodes, not architecture. The scaling story is grounded in shipped, parity-gated crates, not roadmap prose.
 
 ![Scale-out fabric: node-local hot substrate, GPU backend, Raft-replicated state, SPMC fan-out ring, and cross-fleet risk aggregation](../assets/celnet-capabilities/fig-08-scaleout.png)
-*The scaling story composes from shipped substrates: the in-core hot path on each node, a cross-platform GPU backend for batch-parallel work, a Raft-replicated event log for distributed correctness, a lock-free SPMC ring fanning per-pair ticks to many subscribers, and a cross-fleet risk fan-out that reconciles to the single-node aggregate.*
+*Fig 8 ([index](../CELNET-CAPABILITIES.md#figure-index)) — The scaling story composes from shipped substrates: the in-core hot path on each node, a cross-platform GPU backend for batch-parallel work, a Raft-replicated event log for distributed correctness, a lock-free SPMC ring fanning per-pair ticks to many subscribers, and a cross-fleet risk fan-out that reconciles to the single-node aggregate.*
 
 ### 8.1 The node-local hot substrate
 
@@ -52,5 +52,7 @@ Firm-level risk fans out and back in over the same partition fabric (`celnet-ris
 
 The crucial property is that these layers compose without changing the contract. The identical unversioned API, the identical hot-core pricing, and bit-identical values hold whether Celnet runs as a single self-contained node on a trader's desk or as a sharded, GPU-accelerated, Raft-replicated, fanned-out fleet inside the firm's estate. A deployment moves along the scale-out curve by swapping adapters and adding nodes — never by re-implementing the platform — and zero-cost observability (tail-percentile latency histograms, coordinated-omission aware, on a bounded drop-on-full telemetry ring) plus regression-gated benchmarks keep that scaling honest as the fleet grows.
 
+**See also:** [§3 System Architecture](03-system-architecture.md) is the node-local two-tier substrate this scales out; [§6 Risk Management](06-risk-management.md) is the cross-fleet risk fan-out reconciled here; [§7 Performance & Latency](07-performance-latency.md) is the in-core latency floor the fabric carries.
+
 ---
-<sub>[← Performance & Latency](07-performance-latency.md)  ·  **[Contents](../CELNET-CAPABILITIES.md)**  ·  [API & Wire Contract + API-First Client Parity →](09-api-contract-parity.md)</sub>
+<sub>[← Prev: Performance & Latency](07-performance-latency.md) · [Index](../CELNET-CAPABILITIES.md) · [Next: API & Wire Contract + API-First Client Parity →](09-api-contract-parity.md) · [Showcase ↗](../celnet-capabilities.html)</sub>
