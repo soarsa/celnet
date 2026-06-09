@@ -185,12 +185,25 @@ impl CurrencyExposure {
         false
     }
 
-    /// Accumulate a canonical leaf's **delta** into the vector as its two currency
-    /// legs: `+delta_base` in the base currency, `−delta_base · spot` in the quote
-    /// currency. Returns `false` only if a new currency overflowed [`Self::CAP`].
+    /// Accumulate a **fiat-quoted** canonical leaf's **delta** into the vector as
+    /// its two currency legs: `+delta_base` in the base currency, `−delta_base ·
+    /// spot` in the quote currency. This is the §2.3 currency-node netting and is
+    /// byte-identical to the FX path for FX/metal underlyings (whose
+    /// [`Underlying::as_ccy_pair`] projects to a fiat-quoted [`CcyPair`]).
+    ///
+    /// Returns `false` if a new currency overflowed [`Self::CAP`], **or** if the
+    /// leaf's underlying does not project to a fiat [`CcyPair`] (the cross-asset
+    /// equity/commodity/crypto base leg is an *asset unit*, not a currency, so it
+    /// cannot be added to a `Ccy`-keyed vector — that asset-leg netting is the
+    /// deferred follow-up documented at the crate level). The leaf is then **not**
+    /// silently dropped into the wrong currency; the caller must route its delta
+    /// through the asset-leg path instead.
     pub fn add_leaf_delta(&mut self, leaf: &CanonicalLeaf) -> bool {
-        let base_ok = self.add(leaf.pair.base, leaf.greeks.delta_base);
-        let quote_ok = self.add(leaf.pair.quote, -leaf.greeks.delta_base * leaf.spot);
+        let Some(pair) = leaf.underlying.as_ccy_pair() else {
+            return false;
+        };
+        let base_ok = self.add(pair.base, leaf.greeks.delta_base);
+        let quote_ok = self.add(pair.quote, -leaf.greeks.delta_base * leaf.spot);
         base_ok && quote_ok
     }
 
@@ -294,15 +307,32 @@ impl Numeraire {
         let mut vega_numeraire = 0.0;
 
         for leaf in leaves {
-            // Delta → two currency legs, netted in the vector.
-            // (FX universes are far under CAP=32 distinct currencies; an overflow
-            // would be a programming error in an enormous synthetic portfolio, so
-            // we treat the boolean as an assertion via debug_assert and continue —
-            // production never hits it. We do not silently drop: see test.)
-            let ok = delta_vector.add_leaf_delta(leaf);
-            debug_assert!(ok, "currency-exposure vector exceeded CAP");
-            // Premium is in the quote currency.
-            premium_numeraire += convert(leaf.premium_quote, leaf.pair.quote, resolver)?;
+            // Delta → two currency legs, netted in the vector. For a fiat-quoted
+            // underlying (FX/metal — the §1.5 first-landing scope) both legs are
+            // currencies. A non-projecting cross-asset underlying's base leg is an
+            // asset unit, not a currency, so it is not nettable here; its quote
+            // (numeraire) funding leg is still currency-nettable and is added
+            // explicitly below. (FX universes are far under CAP=32 distinct
+            // currencies; a CAP overflow would be a programming error in an enormous
+            // synthetic portfolio, so it trips a debug_assert. We never silently
+            // drop into the wrong currency: see the tests.)
+            match leaf.underlying.as_ccy_pair() {
+                Some(_) => {
+                    let ok = delta_vector.add_leaf_delta(leaf);
+                    debug_assert!(ok, "currency-exposure vector exceeded CAP");
+                }
+                None => {
+                    // Cross-asset leaf: net only the numeraire-currency funding leg
+                    // here; the asset-unit base leg netting is the documented
+                    // deferred follow-up (§1.5).
+                    let ok = delta_vector
+                        .add(leaf.vega_premium_ccy, -leaf.greeks.delta_base * leaf.spot);
+                    debug_assert!(ok, "currency-exposure vector exceeded CAP");
+                }
+            }
+            // Premium is in the numeraire / quote currency (= the leaf's premium
+            // currency for every fiat-quoted underlying).
+            premium_numeraire += convert(leaf.premium_quote, leaf.vega_premium_ccy, resolver)?;
             // Vega is in the premium currency (§2.3 coupling).
             vega_numeraire += convert(leaf.greeks.vega, leaf.vega_premium_ccy, resolver)?;
         }
@@ -336,11 +366,13 @@ mod tests {
     use crate::PositionRisk;
     use crate::leaf::{CanonicalGreeks, canonicalize};
     use celnet_core::is_close;
-    use celnet_types::{CcyPair, DeltaConvention, OptionType, PremiumStyle, VanillaInputs};
+    use celnet_types::{
+        CcyPair, DeltaConvention, OptionType, PremiumStyle, Underlying, VanillaInputs,
+    };
 
     fn leaf(pair: CcyPair, delta_base: f64, spot: f64) -> CanonicalLeaf {
         CanonicalLeaf {
-            pair,
+            underlying: Underlying::Fx(pair),
             spot,
             greeks: CanonicalGreeks {
                 delta_base,
@@ -463,25 +495,27 @@ mod tests {
     fn end_to_end_two_pair_book_in_usd() {
         let eurusd = CcyPair::new(Ccy::EUR, Ccy::USD);
         let usdjpy = CcyPair::new(Ccy::USD, Ccy::JPY);
-        let p1 = canonicalize(&PositionRisk::new(
+        let p1 = canonicalize(&PositionRisk::fx(
             eurusd,
             OptionType::Call,
             10_000_000.0,
             VanillaInputs::new(1.10, 1.12, 0.10, 1.0, 0.04, 0.02),
             DeltaConvention::SpotPremiumAdjusted,
             PremiumStyle::PercentForeign,
-        ));
-        let p2 = canonicalize(&PositionRisk::new(
+        ))
+        .unwrap();
+        let p2 = canonicalize(&PositionRisk::fx(
             usdjpy,
             OptionType::Put,
             8_000_000.0,
             VanillaInputs::new(156.0, 154.0, 0.11, 0.5, 0.01, 0.05),
             DeltaConvention::SpotUnadjusted,
             PremiumStyle::DomesticPips,
-        ));
+        ))
+        .unwrap();
         // Numeraire USD; EUR worth 1.10 USD, JPY worth 1/156 USD.
         let usd = StaticSpotResolver::new(Ccy::USD, &[(Ccy::EUR, 1.10), (Ccy::JPY, 1.0 / 156.0)]);
-        let view = Numeraire::from_leaves(&[p1, p2], &usd).unwrap();
+        let view = Numeraire::from_leaves(&[p1.clone(), p2.clone()], &usd).unwrap();
         assert_eq!(view.numeraire, Ccy::USD);
         // Premium of a long call + long put is positive in USD.
         assert!(view.premium_numeraire > 0.0);
