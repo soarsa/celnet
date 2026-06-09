@@ -19,8 +19,9 @@
 //! Code"; the generalised-BSM presentation of Haug (2007). Identifiers are
 //! purpose-named and vendor/research-neutral.
 
-use celnet_core::math::{exp, ln, norm_cdf, norm_pdf, sqrt};
-use celnet_types::{OptionType, VanillaInputs};
+use crate::inputs::ExoticInputs;
+use celnet_core::math::{ln, norm_cdf, norm_pdf, sqrt};
+use celnet_types::OptionType;
 
 /// What a digital pays when it finishes in the money.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -64,9 +65,9 @@ impl DigitalKind {
 
 /// `(d_1, d_2)` of the Garman-Kohlhagen model for the digital's strike.
 #[inline]
-fn d12(i: &VanillaInputs) -> (f64, f64) {
+fn d12(i: &ExoticInputs) -> (f64, f64) {
     let vsqt = i.vol * sqrt(i.t);
-    let d1 = (ln(i.spot / i.strike) + (i.r_dom - i.r_for + 0.5 * i.vol * i.vol) * i.t) / vsqt;
+    let d1 = (ln(i.spot / i.strike) + (i.carry_rate() + 0.5 * i.vol * i.vol) * i.t) / vsqt;
     (d1, d1 - vsqt)
 }
 
@@ -76,10 +77,10 @@ fn d12(i: &VanillaInputs) -> (f64, f64) {
 ///
 /// For a notional `N` of the payout unit, multiply by `N`.
 #[must_use]
-pub fn digital_price(kind: DigitalKind, i: &VanillaInputs) -> f64 {
+pub fn digital_price(kind: DigitalKind, i: &ExoticInputs) -> f64 {
     let (d1, d2) = d12(i);
-    let df_dom = exp(-i.r_dom * i.t);
-    let df_for = exp(-i.r_for * i.t);
+    let df_dom = i.discount_df();
+    let df_for = i.carry_df();
     match (kind.style, kind.option) {
         (DigitalStyle::CashOrNothing, OptionType::Call) => df_dom * norm_cdf(d2),
         (DigitalStyle::CashOrNothing, OptionType::Put) => df_dom * norm_cdf(-d2),
@@ -115,11 +116,11 @@ pub struct DigitalGreeks {
 /// `S·e^{−r_f T}·Φ(±d_1)` term and use `∂d_1/∂σ = −d_2/σ`.
 #[must_use]
 #[allow(clippy::similar_names)] // d1/d2 are canonical option-pricing names
-pub fn digital_greeks(kind: DigitalKind, i: &VanillaInputs) -> DigitalGreeks {
+pub fn digital_greeks(kind: DigitalKind, i: &ExoticInputs) -> DigitalGreeks {
     let (d1, d2) = d12(i);
     let vsqt = i.vol * sqrt(i.t);
-    let df_dom = exp(-i.r_dom * i.t);
-    let df_for = exp(-i.r_for * i.t);
+    let df_dom = i.discount_df();
+    let df_for = i.carry_df();
     let s = i.spot;
 
     let price = digital_price(kind, i);
@@ -165,6 +166,8 @@ pub fn digital_greeks(kind: DigitalKind, i: &VanillaInputs) -> DigitalGreeks {
 mod tests {
     use super::*;
     use celnet_core::assert_close;
+    use celnet_core::math::exp;
+    use celnet_types::VanillaInputs;
     use celnet_vanilla::price as vanilla_price;
 
     fn base() -> VanillaInputs {
@@ -177,8 +180,9 @@ mod tests {
     #[test]
     fn cash_call_put_complementary() {
         let i = base();
-        let c = digital_price(DigitalKind::cash(OptionType::Call), &i);
-        let p = digital_price(DigitalKind::cash(OptionType::Put), &i);
+        let e: ExoticInputs = (&i).into();
+        let c = digital_price(DigitalKind::cash(OptionType::Call), &e);
+        let p = digital_price(DigitalKind::cash(OptionType::Put), &e);
         assert_close!(c + p, exp(-i.r_dom * i.t), 1e-12, 1e-12);
     }
 
@@ -186,8 +190,9 @@ mod tests {
     #[test]
     fn asset_call_put_complementary() {
         let i = base();
-        let c = digital_price(DigitalKind::asset(OptionType::Call), &i);
-        let p = digital_price(DigitalKind::asset(OptionType::Put), &i);
+        let e: ExoticInputs = (&i).into();
+        let c = digital_price(DigitalKind::asset(OptionType::Call), &e);
+        let p = digital_price(DigitalKind::asset(OptionType::Put), &e);
         assert_close!(c + p, i.spot * exp(-i.r_for * i.t), 1e-12, 1e-12);
     }
 
@@ -196,16 +201,17 @@ mod tests {
     #[test]
     fn vanilla_decomposition() {
         let i = base();
-        let asset_c = digital_price(DigitalKind::asset(OptionType::Call), &i);
-        let cash_c = digital_price(DigitalKind::cash(OptionType::Call), &i);
+        let e: ExoticInputs = (&i).into();
+        let asset_c = digital_price(DigitalKind::asset(OptionType::Call), &e);
+        let cash_c = digital_price(DigitalKind::cash(OptionType::Call), &e);
         assert_close!(
             vanilla_price(OptionType::Call, &i),
             asset_c - i.strike * cash_c,
             1e-10,
             1e-12
         );
-        let asset_p = digital_price(DigitalKind::asset(OptionType::Put), &i);
-        let cash_p = digital_price(DigitalKind::cash(OptionType::Put), &i);
+        let asset_p = digital_price(DigitalKind::asset(OptionType::Put), &e);
+        let cash_p = digital_price(DigitalKind::cash(OptionType::Put), &e);
         assert_close!(
             vanilla_price(OptionType::Put, &i),
             i.strike * cash_p - asset_p,
@@ -231,13 +237,13 @@ mod tests {
         };
         let fd = -(vanilla_price(OptionType::Call, &up) - vanilla_price(OptionType::Call, &dn))
             / (2.0 * hk);
-        let cash = digital_price(DigitalKind::cash(OptionType::Call), &i);
+        let cash = digital_price(DigitalKind::cash(OptionType::Call), &(&i).into());
         assert_close!(cash, fd, 1e-5, 1e-8);
 
         // And the cash-or-nothing put equals +∂P/∂K.
         let fd_put = (vanilla_price(OptionType::Put, &up) - vanilla_price(OptionType::Put, &dn))
             / (2.0 * hk);
-        let cash_put = digital_price(DigitalKind::cash(OptionType::Put), &i);
+        let cash_put = digital_price(DigitalKind::cash(OptionType::Put), &(&i).into());
         assert_close!(cash_put, fd_put, 1e-5, 1e-8);
     }
 
@@ -251,20 +257,23 @@ mod tests {
             VanillaInputs::new(1.40, 1.30, 0.09, 2.0, 0.04, 0.01),
         ];
         for i in &cases {
+            let e: ExoticInputs = i.into();
             for style in [DigitalStyle::CashOrNothing, DigitalStyle::AssetOrNothing] {
                 for option in [OptionType::Call, OptionType::Put] {
                     let kind = DigitalKind { style, option };
-                    let g = digital_greeks(kind, i);
+                    let g = digital_greeks(kind, &e);
 
                     let hs = 1e-5 * i.spot;
-                    let up = VanillaInputs {
+                    let up: ExoticInputs = (&VanillaInputs {
                         spot: i.spot + hs,
                         ..*i
-                    };
-                    let dn = VanillaInputs {
+                    })
+                        .into();
+                    let dn: ExoticInputs = (&VanillaInputs {
                         spot: i.spot - hs,
                         ..*i
-                    };
+                    })
+                        .into();
                     let d_fd = (digital_price(kind, &up) - digital_price(kind, &dn)) / (2.0 * hs);
                     assert_close!(g.delta, d_fd, 1e-4, 1e-6);
 
@@ -274,14 +283,16 @@ mod tests {
                     assert_close!(g.gamma, g_fd, 5e-3, 1e-4);
 
                     let hv = 1e-5;
-                    let vu = VanillaInputs {
+                    let vu: ExoticInputs = (&VanillaInputs {
                         vol: i.vol + hv,
                         ..*i
-                    };
-                    let vd = VanillaInputs {
+                    })
+                        .into();
+                    let vd: ExoticInputs = (&VanillaInputs {
                         vol: i.vol - hv,
                         ..*i
-                    };
+                    })
+                        .into();
                     let v_fd = (digital_price(kind, &vu) - digital_price(kind, &vd)) / (2.0 * hv);
                     assert_close!(g.vega, v_fd, 1e-4, 1e-6);
                 }
@@ -293,7 +304,39 @@ mod tests {
     #[test]
     fn digital_within_bounds() {
         let i = base();
-        let cash = digital_price(DigitalKind::cash(OptionType::Call), &i);
+        let cash = digital_price(DigitalKind::cash(OptionType::Call), &(&i).into());
         assert!(cash >= 0.0 && cash <= exp(-i.r_dom * i.t) + 1e-12);
+    }
+
+    /// Cross-asset enablement (independent oracle): a cash-or-nothing digital on a
+    /// dividend-paying EQUITY priced through the agnostic carry seam
+    /// (`Carry::CostOfCarry { r, b = r − q }`) must equal the hand-re-derived
+    /// generalized-BSM digital `e^{−r·T}·Φ(d₂)`, with
+    /// `d₂ = [ln(S/K) + (b − ½σ²)T]/(σ√T)`. The closed form is re-derived here from
+    /// first principles — NOT read back from the engine — so the oracle is
+    /// non-circular (the FRTB 0.75ρ lesson).
+    #[test]
+    fn equity_digital_matches_generalized_bsm() {
+        use celnet_types::{Carry, Ccy, EquityRef, Symbol, Underlying};
+        let (s, k, vol, t, r, q) = (100.0, 95.0, 0.22, 0.75, 0.04, 0.018);
+        let e = ExoticInputs::new(
+            s,
+            k,
+            vol,
+            t,
+            Underlying::Equity(EquityRef::new(
+                Symbol::new("ACME", "XLON"),
+                Ccy::parse("GBP").unwrap(),
+            )),
+            Carry::CostOfCarry { r, b: r - q },
+        );
+        let engine = digital_price(DigitalKind::cash(OptionType::Call), &e);
+
+        // Independent hand-derived oracle.
+        let b = r - q;
+        let vsqt = vol * t.sqrt();
+        let d2 = ((s / k).ln() + (b - 0.5 * vol * vol) * t) / vsqt;
+        let oracle = (-r * t).exp() * norm_cdf(d2);
+        assert_close!(engine, oracle, 1e-12, 1e-12);
     }
 }

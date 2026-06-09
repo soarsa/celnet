@@ -509,7 +509,7 @@ mod tests {
         };
         let pde = solve(&i, problem, grid);
         let analytic = single_barrier_price(
-            &i,
+            &(&i).into(),
             SingleBarrier {
                 kind: BarrierKind {
                     up: true,
@@ -546,7 +546,7 @@ mod tests {
         };
         let pde = solve(&i, problem, grid);
         let analytic = single_barrier_price(
-            &i,
+            &(&i).into(),
             SingleBarrier {
                 kind: BarrierKind {
                     up: false,

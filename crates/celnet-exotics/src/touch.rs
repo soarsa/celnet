@@ -40,8 +40,8 @@
 //! Kunitomo-Ikeda (1992) / Geman-Yor (1996). Identifiers are purpose-named and
 //! vendor/research-neutral.
 
+use crate::inputs::ExoticInputs;
 use celnet_core::math::{exp, norm_cdf};
-use celnet_types::VanillaInputs;
 
 use crate::{Lognormal, dlog};
 
@@ -86,7 +86,7 @@ pub enum RebateTiming {
 /// `barrier` vs `i.spot` if you use [`one_touch_price`]; the raw side-explicit
 /// form is private.
 #[must_use]
-pub fn one_touch_price(i: &VanillaInputs, barrier: f64, rebate: f64, timing: RebateTiming) -> f64 {
+pub fn one_touch_price(i: &ExoticInputs, barrier: f64, rebate: f64, timing: RebateTiming) -> f64 {
     let side = TouchSide::from_levels(i.spot, barrier);
     one_touch_with_side(i, barrier, rebate, timing, side)
 }
@@ -94,7 +94,7 @@ pub fn one_touch_price(i: &VanillaInputs, barrier: f64, rebate: f64, timing: Reb
 /// One-touch with an explicit side (used internally and by the double-touch
 /// decomposition).
 fn one_touch_with_side(
-    i: &VanillaInputs,
+    i: &ExoticInputs,
     barrier: f64,
     rebate: f64,
     timing: RebateTiming,
@@ -108,7 +108,7 @@ fn one_touch_with_side(
     if through {
         return match timing {
             RebateTiming::AtHit => rebate,
-            RebateTiming::AtExpiry => rebate * exp(-i.r_dom * i.t),
+            RebateTiming::AtExpiry => rebate * i.discount_df(),
         };
     }
 
@@ -151,7 +151,7 @@ fn one_touch_with_side(
             let a1 = base + drift_sign * mu * vsqt;
             let a2 = base - drift_sign * mu * vsqt;
             let prob = norm_cdf(a1) + pow_cdf(z, 2.0 * mu, a2);
-            rebate * exp(-i.r_dom * i.t) * prob
+            rebate * i.discount_df() * prob
         }
     };
     // Upper bound on a (discounted) touch value: the touch probability is ≤ 1, so
@@ -160,7 +160,7 @@ fn one_touch_with_side(
     // domestic rates the deferred payout `R·e^{−r_d T}` (or the at-hit payout at
     // the latest possible hit time) exceeds `R`, so clamping at `R` would wrongly
     // truncate it. We therefore clamp by `R·max(1, e^{−r_d T})`.
-    let max_df = exp(-i.r_dom * i.t).max(1.0);
+    let max_df = i.discount_df().max(1.0);
     let upper = rebate.max(0.0) * max_df;
     if value.is_finite() {
         value.clamp(0.0, upper)
@@ -188,8 +188,8 @@ fn pow_cdf(ln_hs: f64, p: f64, arg: f64) -> f64 {
 /// `[0, rebate]`. A no-touch always pays at expiry, so it is defined against the
 /// **deferred** one-touch (matching discount timing).
 #[must_use]
-pub fn no_touch_price(i: &VanillaInputs, barrier: f64, rebate: f64) -> f64 {
-    let df = exp(-i.r_dom * i.t);
+pub fn no_touch_price(i: &ExoticInputs, barrier: f64, rebate: f64) -> f64 {
+    let df = i.discount_df();
     let ot = one_touch_price(i, barrier, rebate, RebateTiming::AtExpiry);
     // Bounded by the discounted rebate (the survive-probability ≤ 1 paid at expiry),
     // which under negative domestic rates exceeds the rebate face — clamp by it, not
@@ -255,7 +255,7 @@ const IMAGE_TERMS: i32 = 12;
 /// geometrically in `|k|`; it is validated against a Brownian-bridge Monte-Carlo
 /// reference and the symmetric driftless Feller limit in the tests. Provenance
 /// (doc-only): Kunitomo-Ikeda (1992); Geman-Yor (1996); the Feller strip series.
-fn dnt_survival(i: &VanillaInputs, lower: f64, upper: f64) -> f64 {
+fn dnt_survival(i: &ExoticInputs, lower: f64, upper: f64) -> f64 {
     // Already outside the corridor ⇒ no survival.
     if i.spot <= lower || i.spot >= upper {
         return 0.0;
@@ -339,8 +339,8 @@ fn single_wall_hit_prob(mu: f64, vsqt: f64, z: f64) -> f64 {
 /// Present value of a [`DoubleNoTouch`]: `e^{−r_d T}·R·P(survive)`, clamped to
 /// `[0, R]`.
 #[must_use]
-pub fn double_no_touch_price(i: &VanillaInputs, dnt: DoubleNoTouch) -> f64 {
-    let df = exp(-i.r_dom * i.t);
+pub fn double_no_touch_price(i: &ExoticInputs, dnt: DoubleNoTouch) -> f64 {
+    let df = i.discount_df();
     let surv = dnt_survival(i, dnt.lower, dnt.upper);
     // Survival ∈ [0, 1] is already enforced in `dnt_survival`; the value is that
     // survival paid at expiry, bounded by the discounted rebate (which exceeds the
@@ -354,8 +354,8 @@ pub fn double_no_touch_price(i: &VanillaInputs, dnt: DoubleNoTouch) -> f64 {
 /// By complementarity `double_touch = e^{−r_d T}·R − double_no_touch`, clamped to
 /// `[0, R]`.
 #[must_use]
-pub fn double_touch_price(i: &VanillaInputs, dnt: DoubleNoTouch) -> f64 {
-    let df = exp(-i.r_dom * i.t);
+pub fn double_touch_price(i: &ExoticInputs, dnt: DoubleNoTouch) -> f64 {
+    let df = i.discount_df();
     let nt = double_no_touch_price(i, dnt);
     (dnt.rebate * df - nt).clamp(0.0, dnt.rebate.max(0.0) * df.max(1.0))
 }
@@ -364,10 +364,11 @@ pub fn double_touch_price(i: &VanillaInputs, dnt: DoubleNoTouch) -> f64 {
 mod tests {
     use super::*;
     use celnet_core::{assert_close, is_close};
+    use celnet_types::VanillaInputs;
 
-    fn base() -> VanillaInputs {
+    fn base() -> ExoticInputs {
         // S=100, σ=20%, 1Y, r_d=5%, r_f=2%. (strike unused for touches.)
-        VanillaInputs::new(100.0, 100.0, 0.20, 1.0, 0.05, 0.02)
+        VanillaInputs::new(100.0, 100.0, 0.20, 1.0, 0.05, 0.02).into()
     }
 
     /// One-touch + no-touch (both at expiry) = the discounted rebate: exactly
@@ -378,7 +379,7 @@ mod tests {
         for h in [80.0, 90.0, 110.0, 125.0] {
             let ot = one_touch_price(&i, h, 1.0, RebateTiming::AtExpiry);
             let nt = no_touch_price(&i, h, 1.0);
-            assert_close!(ot + nt, exp(-i.r_dom * i.t), 1e-9, 1e-10);
+            assert_close!(ot + nt, i.discount_df(), 1e-9, 1e-10);
         }
     }
 
@@ -419,14 +420,14 @@ mod tests {
     #[test]
     fn already_touched_pays_rebate() {
         // Spot pushed onto an upper barrier ⇒ certain touch.
-        let breached = VanillaInputs {
+        let breached = ExoticInputs {
             spot: 120.0,
             ..base()
         };
         let up = one_touch_price(&breached, 120.0, 1.0, RebateTiming::AtHit);
         assert_close!(up, 1.0, 1e-12, 1e-12);
         let up_def = one_touch_price(&breached, 120.0, 1.0, RebateTiming::AtExpiry);
-        assert_close!(up_def, exp(-breached.r_dom * breached.t), 1e-12, 1e-12);
+        assert_close!(up_def, breached.discount_df(), 1e-12, 1e-12);
 
         // A live (un-breached) barrier is uncertain ⇒ strictly less than rebate.
         let i = base();
@@ -445,7 +446,7 @@ mod tests {
         let dnt = DoubleNoTouch::new(85.0, 120.0, 1.0);
         let nt = double_no_touch_price(&i, dnt);
         let dt = double_touch_price(&i, dnt);
-        assert_close!(nt + dt, exp(-i.r_dom * i.t), 1e-12, 1e-12);
+        assert_close!(nt + dt, i.discount_df(), 1e-12, 1e-12);
     }
 
     /// DNT is bounded by, and below, each single no-touch (adding a second wall
@@ -480,12 +481,12 @@ mod tests {
     fn dnt_survival_truncation_is_converged() {
         for (i, lo, up) in [
             (
-                VanillaInputs::new(100.0, 100.0, 0.15, 0.5, 0.03, 0.03),
+                ExoticInputs::from(VanillaInputs::new(100.0, 100.0, 0.15, 0.5, 0.03, 0.03)),
                 90.0,
                 111.111_111_111,
             ),
             (
-                VanillaInputs::new(100.0, 100.0, 0.20, 1.0, 0.05, 0.02),
+                ExoticInputs::from(VanillaInputs::new(100.0, 100.0, 0.20, 1.0, 0.05, 0.02)),
                 85.0,
                 120.0,
             ),
@@ -501,7 +502,7 @@ mod tests {
 
     /// A reference re-evaluation of the survival series with an arbitrary term
     /// count (the production path fixes it at `IMAGE_TERMS`).
-    fn dnt_survival_dense(i: &VanillaInputs, lower: f64, upper: f64, terms: i32) -> f64 {
+    fn dnt_survival_dense(i: &ExoticInputs, lower: f64, upper: f64, terms: i32) -> f64 {
         let l = Lognormal::from_inputs(i);
         let mu = l.mu();
         let vsqt = l.sigma_sqrt_t();
@@ -528,12 +529,12 @@ mod tests {
     fn dnt_survival_matches_monte_carlo() {
         let cases = [
             (
-                VanillaInputs::new(100.0, 100.0, 0.15, 0.5, 0.03, 0.03),
+                ExoticInputs::from(VanillaInputs::new(100.0, 100.0, 0.15, 0.5, 0.03, 0.03)),
                 90.0,
                 111.111_111_111,
             ),
             (
-                VanillaInputs::new(100.0, 100.0, 0.20, 1.0, 0.05, 0.02),
+                ExoticInputs::from(VanillaInputs::new(100.0, 100.0, 0.20, 1.0, 0.05, 0.02)),
                 85.0,
                 120.0,
             ),
@@ -554,7 +555,7 @@ mod tests {
     /// Deterministic Brownian-bridge Monte-Carlo estimate of the continuous
     /// double-barrier survival probability — an independent reference oracle.
     fn mc_survival(
-        i: &VanillaInputs,
+        i: &ExoticInputs,
         lower: f64,
         upper: f64,
         steps: usize,
@@ -563,7 +564,7 @@ mod tests {
     ) -> f64 {
         use celnet_core::math::{exp, ln, sqrt};
         let dt = i.t / steps as f64;
-        let drift = (i.r_dom - i.r_for - 0.5 * i.vol * i.vol) * dt;
+        let drift = (i.carry_rate() - 0.5 * i.vol * i.vol) * dt;
         let vs = i.vol * sqrt(dt);
         let (ln_l, ln_u) = (ln(lower), ln(upper));
         let two_s2dt = 2.0 * i.vol * i.vol * dt;
@@ -627,20 +628,21 @@ mod proptests {
             up in any::<bool>(),
             offset in 0.05f64..0.60,
         ) {
+            let i: ExoticInputs = i.into();
             let barrier = if up { i.spot * (1.0 + offset) } else { i.spot * (1.0 - offset) };
             let ot_hit = one_touch_price(&i, barrier, 1.0, RebateTiming::AtHit);
             let ot_exp = one_touch_price(&i, barrier, 1.0, RebateTiming::AtExpiry);
             let nt = no_touch_price(&i, barrier, 1.0);
             // Probability-weighted (discounted) payouts lie in [0, max(1, df)] —
             // under negative domestic rates the discounted face exceeds the notional.
-            let cap = exp(-i.r_dom * i.t).max(1.0) + 1e-12;
+            let cap = i.discount_df().max(1.0) + 1e-12;
             prop_assert!((0.0..=cap).contains(&ot_hit));
             prop_assert!((0.0..=cap).contains(&ot_exp));
             prop_assert!((0.0..=cap).contains(&nt));
             // Exact complementarity & timing dominance hold when the discounted
             // rebate ≤ rebate (non-negative domestic rate ⇒ clamp inactive).
-            if i.r_dom >= 0.0 {
-                prop_assert!(celnet_core::is_close(ot_exp + nt, i.df_dom(), 1e-7, 1e-8));
+            if i.discount_rate() >= 0.0 {
+                prop_assert!(celnet_core::is_close(ot_exp + nt, i.discount_df(), 1e-7, 1e-8));
                 prop_assert!(ot_hit >= ot_exp - 1e-9);
             }
         }
@@ -655,13 +657,14 @@ mod proptests {
             lo_off in 0.05f64..0.45,
             hi_off in 0.05f64..0.45,
         ) {
+            let i: ExoticInputs = i.into();
             let lower = i.spot * (1.0 - lo_off);
             let upper = i.spot * (1.0 + hi_off);
             let dnt = DoubleNoTouch::new(lower, upper, 1.0);
             let nt = double_no_touch_price(&i, dnt);
             let dt = double_touch_price(&i, dnt);
             // Discounted payouts in [0, max(1, df)] (df > 1 under negative r_d).
-            let cap = exp(-i.r_dom * i.t).max(1.0) + 1e-12;
+            let cap = i.discount_df().max(1.0) + 1e-12;
             prop_assert!((0.0..=cap).contains(&nt));
             prop_assert!((0.0..=cap).contains(&dt));
             // Below each single no-touch (adding a wall only lowers survival).
@@ -674,8 +677,8 @@ mod proptests {
             prop_assert!(nt <= no_touch_price(&i, upper, 1.0) + 1e-7);
             prop_assert!(nt <= no_touch_price(&i, lower, 1.0) + 1e-7);
             // Exact complementarity when the discounted rebate ≤ rebate.
-            if i.r_dom >= 0.0 {
-                prop_assert!(celnet_core::is_close(nt + dt, i.df_dom(), 1e-9, 1e-10));
+            if i.discount_rate() >= 0.0 {
+                prop_assert!(celnet_core::is_close(nt + dt, i.discount_df(), 1e-9, 1e-10));
             }
         }
     }

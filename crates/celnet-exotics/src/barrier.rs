@@ -39,9 +39,10 @@
 //! Identifiers are purpose-named and vendor/research-neutral.
 
 use celnet_core::math::{exp, norm_cdf, sqrt};
-use celnet_types::{OptionType, VanillaInputs};
+use celnet_types::OptionType;
 use celnet_vanilla::price as vanilla_price;
 
+use crate::inputs::ExoticInputs;
 use crate::touch::RebateTiming;
 use crate::{Lognormal, dlog, one_touch_price};
 
@@ -104,7 +105,7 @@ struct RrBlocks {
 }
 
 impl RrBlocks {
-    fn new(i: &VanillaInputs, strike: f64, barrier: f64, option: OptionType, up: bool) -> Self {
+    fn new(i: &ExoticInputs, strike: f64, barrier: f64, option: OptionType, up: bool) -> Self {
         let l = Lognormal::from_inputs(i);
         let vsqt = l.sigma_sqrt_t();
         let mu = l.mu();
@@ -135,7 +136,7 @@ impl RrBlocks {
         }
     }
 
-    fn vsqt(i: &VanillaInputs) -> f64 {
+    fn vsqt(i: &ExoticInputs) -> f64 {
         i.vol * sqrt(i.t)
     }
 
@@ -176,7 +177,7 @@ fn pow(base: f64, exp_: f64) -> f64 {
 /// its rebate **at hit** via a one-touch; a knock-in pays at expiry if never
 /// knocked in, via a no-touch on the same barrier).
 #[must_use]
-pub fn single_barrier_price(i: &VanillaInputs, spec: SingleBarrier) -> f64 {
+pub fn single_barrier_price(i: &ExoticInputs, spec: SingleBarrier) -> f64 {
     let SingleBarrier {
         kind,
         strike,
@@ -201,13 +202,16 @@ pub fn single_barrier_price(i: &VanillaInputs, spec: SingleBarrier) -> f64 {
 }
 
 /// The rebate-free single-barrier value.
-fn single_barrier_no_rebate(
-    i: &VanillaInputs,
-    kind: BarrierKind,
-    strike: f64,
-    barrier: f64,
-) -> f64 {
-    let vanilla = vanilla_price(kind.option, &VanillaInputs { strike, ..*i });
+fn single_barrier_no_rebate(i: &ExoticInputs, kind: BarrierKind, strike: f64, barrier: f64) -> f64 {
+    // The Reiner-Rubinstein in/out parity leg is the plain vanilla at `strike`.
+    // This analytic closed form is the Garman-Kohlhagen (FX) image construction;
+    // a non-FX barrier prices on the PDE/MC engines, so lowering to the FX vanilla
+    // here typed-rejects a non-FX carry rather than silently mis-pricing it.
+    let vanilla = vanilla_price(
+        kind.option,
+        &i.as_fx_vanilla(strike)
+            .expect("analytic single-barrier is the FX (Garman-Kohlhagen) closed form"),
+    );
 
     // If the barrier is already breached the knock is resolved immediately.
     let breached = if kind.up {
@@ -319,7 +323,7 @@ const DKO_TERMS: i32 = 10;
 /// machine precision for realistic corridors. Provenance (doc-only): Ikeda-Kunitomo
 /// (1992); the presentation in Haug (2007).
 #[must_use]
-pub fn double_knock_out_price(i: &VanillaInputs, spec: DoubleBarrierKnockOut) -> f64 {
+pub fn double_knock_out_price(i: &ExoticInputs, spec: DoubleBarrierKnockOut) -> f64 {
     let DoubleBarrierKnockOut {
         option,
         strike,
@@ -405,10 +409,17 @@ pub fn double_knock_out_price(i: &VanillaInputs, spec: DoubleBarrierKnockOut) ->
 mod tests {
     use super::*;
     use celnet_core::{assert_close, is_close};
+    use celnet_types::VanillaInputs;
 
-    fn base() -> VanillaInputs {
+    fn base() -> ExoticInputs {
         // S=100, K varies, σ=20%, 1Y, r_d=5%, r_f=2%.
-        VanillaInputs::new(100.0, 100.0, 0.20, 1.0, 0.05, 0.02)
+        VanillaInputs::new(100.0, 100.0, 0.20, 1.0, 0.05, 0.02).into()
+    }
+
+    /// Lower the agnostic test fixture back to the FX `VanillaInputs` (with a
+    /// substituted strike) for the parity/oracle vanilla legs.
+    fn vi(i: &ExoticInputs, strike: f64) -> VanillaInputs {
+        i.as_fx_vanilla(strike).expect("FX test fixture")
     }
 
     /// Hard-coded knock-in reference prices from QuantLib 1.42.1's
@@ -494,7 +505,7 @@ mod tests {
                         rebate: 0.0,
                     },
                 );
-                let vanilla = vanilla_price(option, &VanillaInputs { strike: k, ..i });
+                let vanilla = vanilla_price(option, &vi(&i, k));
                 assert_close!(ki + ko, vanilla, 1e-10, 1e-10);
             }
         }
@@ -517,7 +528,7 @@ mod tests {
                             rebate: 0.0,
                         },
                     );
-                    let vanilla = vanilla_price(option, &VanillaInputs { strike: k, ..i });
+                    let vanilla = vanilla_price(option, &vi(&i, k));
                     assert!(
                         v >= -1e-10 && v <= vanilla + 1e-9,
                         "barrier {v} out of [0,{vanilla}] for up={up},{option:?},{style:?}"
@@ -560,7 +571,12 @@ mod tests {
                 rebate: 0.0,
             },
         );
-        assert_close!(ki, vanilla_price(OptionType::Call, &i), 1e-12, 1e-12);
+        assert_close!(
+            ki,
+            vanilla_price(OptionType::Call, &vi(&i, i.strike)),
+            1e-12,
+            1e-12
+        );
     }
 
     /// A rebate strictly increases the value of a knock-out (it pays something on
@@ -636,14 +652,17 @@ mod tests {
         let i = base();
         let spec = DoubleBarrierKnockOut::new(OptionType::Call, 100.0, 85.0, 120.0);
         let v = double_knock_out_price(&i, spec);
-        let vanilla = vanilla_price(OptionType::Call, &i);
+        let vanilla = vanilla_price(OptionType::Call, &vi(&i, i.strike));
         assert!(
             v >= -1e-10 && v <= vanilla + 1e-9,
             "DKO {v} in [0,{vanilla}]"
         );
 
         // Breached corridor ⇒ 0.
-        let outside = VanillaInputs { spot: 130.0, ..i };
+        let outside = ExoticInputs {
+            spot: 130.0,
+            ..i.clone()
+        };
         assert_close!(double_knock_out_price(&outside, spec), 0.0, 1e-12, 1e-12);
     }
 
@@ -662,7 +681,7 @@ mod tests {
         );
         assert!(wide > tight, "wide DKO {wide} should exceed tight {tight}");
         // And the wide KO is below the unconstrained vanilla.
-        assert!(wide <= vanilla_price(OptionType::Call, &i) + 1e-9);
+        assert!(wide <= vanilla_price(OptionType::Call, &vi(&i, i.strike)) + 1e-9);
     }
 
     /// Sandwich: a double knock-out cannot exceed either single knock-out built
@@ -735,7 +754,7 @@ mod tests {
     /// `β ≈ 0.5826`, which shrinks the corridor to cancel the discrete-monitoring
     /// survivorship bias to `o(1/√steps)`.
     fn mc_double_ko(
-        i: &VanillaInputs,
+        i: &ExoticInputs,
         spec: DoubleBarrierKnockOut,
         steps: usize,
         paths: usize,
@@ -744,9 +763,9 @@ mod tests {
         use celnet_core::math::{exp, ln, sqrt};
 
         let dt = i.t / steps as f64;
-        let drift = (i.r_dom - i.r_for - 0.5 * i.vol * i.vol) * dt;
+        let drift = (i.carry_rate() - 0.5 * i.vol * i.vol) * dt;
         let vol_step = i.vol * sqrt(dt);
-        let df = exp(-i.r_dom * i.t);
+        let df = i.discount_df();
         // Broadie-Glasserman-Kou continuity correction: shrink the corridor.
         const BETA: f64 = 0.582_597_403_404_879_2; // −ζ(½)/√(2π)
         let shift = BETA * vol_step;
@@ -809,6 +828,7 @@ mod proptests {
             offset in 0.05f64..0.60,
             strike_mult in 0.6f64..1.6,
         ) {
+            let i: ExoticInputs = i.into();
             // Barrier strictly on the chosen side of spot.
             let barrier = if up { i.spot * (1.0 + offset) } else { i.spot * (1.0 - offset) };
             let strike = i.spot * strike_mult;
@@ -822,7 +842,7 @@ mod proptests {
                 kind: BarrierKind { up, style: BarrierStyle::KnockOut, option },
                 strike, barrier, rebate: 0.0,
             });
-            let vanilla = vanilla_price(option, &VanillaInputs { strike, ..i });
+            let vanilla = vanilla_price(option, &i.as_fx_vanilla(strike).unwrap());
             prop_assert!(celnet_core::is_close(ki + ko, vanilla, 1e-7, 1e-7));
             // Each leg is a non-negative fraction of the vanilla.
             prop_assert!(ki >= -1e-7 && ko >= -1e-7);
@@ -839,12 +859,13 @@ mod proptests {
             hi_off in 0.05f64..0.45,
             _v in arb_vol(),
         ) {
+            let i: ExoticInputs = i.into();
             let option = if call { OptionType::Call } else { OptionType::Put };
             let lower = i.spot * (1.0 - lo_off);
             let upper = i.spot * (1.0 + hi_off);
             let spec = DoubleBarrierKnockOut::new(option, i.spot, lower, upper);
             let v = double_knock_out_price(&i, spec);
-            let vanilla = vanilla_price(option, &VanillaInputs { strike: i.spot, ..i });
+            let vanilla = vanilla_price(option, &i.as_fx_vanilla(i.spot).unwrap());
             prop_assert!(v >= -1e-7 && v <= vanilla + 1e-6);
         }
     }

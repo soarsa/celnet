@@ -132,6 +132,7 @@ pub mod asian;
 pub mod barrier;
 pub mod digital;
 pub mod forward_start;
+pub mod inputs;
 pub mod leverage;
 pub mod lookback;
 pub mod lsv;
@@ -171,6 +172,7 @@ pub use forward_start::{
     Cliquet, CliquetEstimate, CliquetMcConfig, CliquetSchedule, ForwardStart,
     cliquet_price_capped_mc, cliquet_price_plain, cliquet_price_plain_mc, forward_start_price,
 };
+pub use inputs::ExoticInputs;
 pub use leverage::{ImpliedVolSurface, LeverageSurface, LocalVolSurface};
 pub use lookback::{
     Lookback, LookbackEstimate, LookbackMcConfig, LookbackStyle, fixed_lookback_price,
@@ -213,7 +215,7 @@ pub use var_swap::{
 pub use vol_swap::{VolSwapResult, fair_volatility, fair_volatility_with};
 
 use celnet_core::math::{exp, ln, sqrt};
-use celnet_types::VanillaInputs;
+use celnet_types::Carry;
 
 /// Shared lognormal Garman-Kohlhagen scaffolding reused by every analytic
 /// exotic in this crate.
@@ -228,43 +230,49 @@ pub(crate) struct Lognormal {
     pub vol: f64,
     /// Time to expiry in years `T`.
     pub t: f64,
-    /// Continuously-compounded domestic (quote) rate `r_d`.
-    pub r_dom: f64,
-    /// Continuously-compounded foreign (base) rate `r_f`.
-    pub r_for: f64,
+    /// The cost-of-carry producer behind the forward and discounting. For FX this
+    /// is [`Carry::FxRates`], so every accessor below is byte-identical to the FX
+    /// two-rate form.
+    pub carry: Carry,
 }
 
 impl Lognormal {
-    /// Build the scaffolding from the canonical [`VanillaInputs`] (the `strike`
+    /// Build the scaffolding from the agnostic [`ExoticInputs`] (the `strike`
     /// field is unused — touches and barriers are parameterised by their own
     /// barrier/strike levels).
     #[inline]
-    pub(crate) fn from_inputs(i: &VanillaInputs) -> Self {
+    pub(crate) fn from_inputs(i: &ExoticInputs) -> Self {
         Self {
             vol: i.vol,
             t: i.t,
-            r_dom: i.r_dom,
-            r_for: i.r_for,
+            carry: i.carry,
         }
     }
 
-    /// Cost of carry `b = r_d − r_f` (the Garman-Kohlhagen drift of the spot
-    /// under the domestic risk-neutral measure).
+    /// Cost of carry `b` (= `r_d − r_f` for FX): the drift of the spot under the
+    /// numeraire risk-neutral measure. Read through the agnostic carry seam.
     #[inline]
     pub(crate) fn carry(&self) -> f64 {
-        self.r_dom - self.r_for
+        self.carry.carry_rate()
     }
 
-    /// Domestic discount factor `e^{−r_d·T}`.
+    /// Numeraire discount factor `e^{−r·T}` (= `e^{−r_d·T}` for FX).
     #[inline]
     pub(crate) fn df_dom(&self) -> f64 {
-        exp(-self.r_dom * self.t)
+        self.carry.discount_df(self.t)
     }
 
-    /// Foreign discount factor `e^{−r_f·T}`.
+    /// Yield/foreign discount factor `e^{−q·T}` (= `e^{−r_f·T}` for FX), reading
+    /// the stored yield rate verbatim via [`Carry::yield_rate`].
     #[inline]
     pub(crate) fn df_for(&self) -> f64 {
-        exp(-self.r_for * self.t)
+        exp(-self.carry.yield_rate() * self.t)
+    }
+
+    /// The numeraire discount rate `r` (= `r_d` for FX).
+    #[inline]
+    pub(crate) fn discount_rate(&self) -> f64 {
+        self.carry.discount_rate()
     }
 
     /// `σ·√T`, the total Black standard deviation.
@@ -282,12 +290,12 @@ impl Lognormal {
         self.carry() / (self.vol * self.vol) - 0.5
     }
 
-    /// `√(μ² + 2·r_d/σ²)`, the discounted-hit exponent (the `λ` of the
+    /// `√(μ² + 2·r/σ²)`, the discounted-hit exponent (the `λ` of the
     /// Reiner-Rubinstein touch formulae).
     #[inline]
     pub(crate) fn lambda(&self) -> f64 {
         let m = self.mu();
-        sqrt(m * m + 2.0 * self.r_dom / (self.vol * self.vol))
+        sqrt(m * m + 2.0 * self.discount_rate() / (self.vol * self.vol))
     }
 }
 
@@ -301,10 +309,11 @@ pub(crate) fn dlog(x: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use celnet_types::VanillaInputs;
 
     #[test]
     fn lognormal_carry_and_discounts() {
-        let i = VanillaInputs::new(1.30, 1.30, 0.10, 1.0, 0.03, 0.01);
+        let i: ExoticInputs = VanillaInputs::new(1.30, 1.30, 0.10, 1.0, 0.03, 0.01).into();
         let l = Lognormal::from_inputs(&i);
         celnet_core::assert_close!(l.carry(), 0.02, 1e-15, 1e-15);
         celnet_core::assert_close!(l.df_dom(), exp(-0.03), 1e-15, 1e-15);
@@ -314,7 +323,7 @@ mod tests {
 
     #[test]
     fn lambda_is_non_negative() {
-        let i = VanillaInputs::new(100.0, 100.0, 0.2, 0.5, 0.05, 0.02);
+        let i: ExoticInputs = VanillaInputs::new(100.0, 100.0, 0.2, 0.5, 0.05, 0.02).into();
         let l = Lognormal::from_inputs(&i);
         assert!(l.lambda() >= 0.0);
     }
@@ -353,13 +362,13 @@ mod tests {
 
         // A double-no-touch corridor around spot; its flat-vol price.
         let dnt = DoubleNoTouch::new(1.18, 1.43, 1.0);
-        let flat = double_no_touch_price(&i, dnt);
+        let flat = double_no_touch_price(&(&i).into(), dnt);
 
         // Exotic vanna/volga by finite differences of the flat-vol closed form.
         let x = exotic_sensitivities_fd(
             |spot, vol| {
                 let bumped = VanillaInputs { spot, vol, ..i };
-                double_no_touch_price(&bumped, dnt)
+                double_no_touch_price(&(&bumped).into(), dnt)
             },
             i.spot,
             i.vol,
@@ -469,7 +478,7 @@ mod cross_validation {
         let (k, h) = (100.0, 130.0);
 
         let analytic = single_barrier_price(
-            &i,
+            &(&i).into(),
             SingleBarrier {
                 kind: BarrierKind {
                     up: true,
