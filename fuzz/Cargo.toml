@@ -47,6 +47,11 @@ celnet-replog = { path = "../crates/celnet-replog" }
 celnet-journal = { path = "../crates/celnet-journal" }
 # The wire-contract decode path (prost) + the convert.rs domain mapping.
 celnet-proto = { path = "../crates/celnet-proto" }
+# The lock-free SPMC fan-out ring + the deterministic fleet router — fuzzed not
+# as byte parsers but as PROPERTY surfaces (operation interleavings / membership
+# + key combinations) driving the real code with no re-implementation.
+celnet-fanout = { path = "../crates/celnet-fanout" }
+celnet-router = { path = "../crates/celnet-router" }
 # Same protobuf runtime the contract is generated against (workspace pin 0.13).
 prost = "0.13"
 
@@ -93,6 +98,26 @@ bench = false
 [[bin]]
 name = "proto_convert"
 path = "fuzz_targets/proto_convert.rs"
+test = false
+doc = false
+bench = false
+
+# --- Property targets (PC-FUZZ-PROPERTY) ------------------------------------
+# Not byte parsers: these fuzz the OPERATIONAL surface — arbitrary publish/recv
+# interleavings, and arbitrary membership + key combinations — asserting the
+# crate's invariants (conflation conservation; HRW routing determinism + the
+# inline-scan-vs-sorted-rank differential).
+
+[[bin]]
+name = "fanout_ring"
+path = "fuzz_targets/fanout_ring.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "router_route"
+path = "fuzz_targets/router_route.rs"
 test = false
 doc = false
 bench = false
