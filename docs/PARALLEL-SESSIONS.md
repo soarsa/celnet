@@ -62,6 +62,23 @@ generalization (`to_bits`); delete legacy (#10); vendor-/person-neutral purpose-
 identifiers (#8); zero-alloc hot core stays alloc/lock/log-free (#11); push **only** to
 `origin` = github.com/soarsa/celnet (#1) — workers push **branches**, never to `main`.
 
+### 4.1 Compute courtesy — never block, never starve (all sessions, one machine)
+
+Disjoint worktrees solve *source/`target/` collisions* — they do **not** solve **CPU
+contention**. All sessions run on the single M4; cores + the shared `sccache` are the only
+scarce resource. A starved Rust gate does not merely slow — it **stalls indefinitely** (a
+CPU-starved `nextest` list/exec phase can sit at 0% CPU forever; observed 2026-06-08). So:
+
+1. **No continuous / loop rebuilds.** No watch-mode, no repeated full `just check` loops. Build
+   **once per change** with the incremental scoped gate (`check-crate` / `check-changed`), then
+   **yield the cores**. Idle between iterations; do not spin.
+2. **Critical path has compute priority.** The session holding the **proto window + W2
+   integration** (session-B) is the serialization bottleneck for *all* downstream wiring. When it
+   announces a gate run (note in §6), background lanes (W6/W5-A/W4-A) **pause their builds** until
+   it reports green. One bottleneck moving > N lanes half-starved.
+3. **Never two full-workspace builds at once.** Stagger heavy gates; coordinate the window via §6.
+4. **Async only.** Coordinate through this board + git; never spin-wait holding compute.
+
 ## 5. Live lane board
 
 > Status: `OPEN` (claimable now) · `BLOCKED:<dep>` (opens when the dep lands) · `CLAIMED` ·
@@ -81,6 +98,16 @@ identifiers (#8); zero-alloc hot core stays alloc/lock/log-free (#11); push **on
 
 ## 6. Coordinator state (updated by the coordinator each milestone)
 
+- **▶ DIRECTIVE (2026-06-08, session-B → mesh): NEVER BLOCK, NEVER STARVE — see new §4.1.** Observed
+  this session: a background lane's continuous `check-crate` rebuild on this one M4 **CPU-starved
+  session-B's W2 `nextest` into an indefinite 0%-CPU stall** (worktrees were correctly disjoint — this was
+  pure compute contention, not a source/`target/` collision). **Ask to all background lanes (W6/W5-A/W4-A):
+  stop continuous rebuilding.** Build once per change with the incremental scoped gate, then yield the
+  cores; do not loop. **session-B (W2 + the proto window) is the critical path** and gets compute priority
+  for its gate windows — it will announce each gate run here; pause your builds until it reports green, so
+  the one bottleneck that frees *all* downstream wiring is never the thing left starved. W2 status: linear
+  integration verified green at the changed-crate gate (fmt+clippy+build pass; Excel 231/231); about to
+  land W2 + the batched proto window (`POST-W2-INTEGRATION-MANIFEST.md`).
 - **▶ DONE (2026-06-08): W4-B-RFQ engine landed (coordinator lane `lane/w4-b-rfq`).** NEW disjoint crate
   **`celnet-rfq`** — a `MultiDealerEngine` fanning one `QuoteRequest` to N `QuoteSource`s concurrently
   (`join_all` + per-source `tokio::time::timeout`), ranking best-bid (max) / best-offer (min), deterministic
