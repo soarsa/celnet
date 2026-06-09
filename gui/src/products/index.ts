@@ -16,6 +16,9 @@ import {
   straddleSpec,
   seagullSpec,
 } from "./strategy";
+import { forwardSpec } from "./forward";
+import { swapSpec } from "./swap";
+import { ndfSpec } from "./ndf";
 import { singleBarrierSpec } from "./singleBarrier";
 import { doubleBarrierSpec } from "./doubleBarrier";
 import { digitalSpec } from "./digital";
@@ -60,6 +63,10 @@ export const PRODUCT_REGISTRY: readonly AnyProductSpec[] = [
   strangleSpec,
   straddleSpec,
   seagullSpec,
+  // Linear (forwards & swaps): the W2 closed-form DCF products.
+  forwardSpec,
+  swapSpec,
+  ndfSpec,
   singleBarrierSpec,
   doubleBarrierSpec,
   digitalSpec,

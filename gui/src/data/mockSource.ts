@@ -965,13 +965,16 @@ function freezeStrikes(instrument: Instrument, m: MarketContext): Instrument {
     case "lookback":
     case "american":
     case "basket":
+    case "fxForward":
+    case "fxSwap":
+    case "ndf":
       // These products carry no delta-specified strike to freeze (the swaps and the
       // touch have none; the digital/Asian/quanto/TARF/lookback/American/basket
       // strikes are absolute; the forward-start/cliquet/accumulator strikes
       // reset/pivot off the spot path; the basket strike is on the aggregated
-      // underlying). Scenario shocks move them through the market alone, so return
-      // unchanged. (The single-/double-barrier ARE frozen above — they wrap a
-      // delta-able vanilla strike.)
+      // underlying; the W2 linear products carry an absolute contract rate). Scenario
+      // shocks move them through the market alone, so return unchanged. (The
+      // single-/double-barrier ARE frozen above — they wrap a delta-able vanilla strike.)
       return instrument;
   }
 }
