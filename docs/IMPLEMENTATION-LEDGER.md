@@ -7,6 +7,31 @@
 > and replace the CLAUDE.md anchor in place with a single-line summary — never paste the
 > full entry into `CLAUDE.md` (that re-bloats the per-session context).**
 
+- 2026-06-09 — **W6-fanout — LOOM SEQLOCK MODEL-CHECK + celnet-fanout MUTATION GATE (zero non-equivalent
+  survivors).** Two rigor upgrades on the SPMC broadcast ring (`celnet-fanout`, the per-shard price
+  fan-out substrate), both MEASURED green locally; the std hot path is byte-for-byte unchanged.
+  **(a) Loom relaxed-memory model-check** (`tests/loom_seqlock.rs` + new `src/mem.rs` `cfg(loom)` shim):
+  an EXHAUSTIVE 1P/1C interleaving search over a 2-slot ring proving NO interleaving returns a torn pair
+  with strict in-order, conserving delivery. `mem.rs` re-exports std atomics/cell under `not(loom)`
+  (identical codegen) and loom primitives under `--cfg loom`; the seqlock payload is modeled as
+  `Acquire`/`Release` atomic lanes (the model-faithful image of the production `Acquire` fence's hardware
+  coherence — strict-C11 loom refuses to bless the production non-atomic `UnsafeCell` copy, the known
+  benign seqlock data race, recorded honestly). `loom` is a `[target.'cfg(loom)'.dependencies]` MIT
+  dev/cfg-only dep — never in a release build; `cargo deny check` clean. The model is a VERIFIED-LIVE
+  oracle: disabling the consumer's `stamp_after != want` torn-read re-check makes it FAIL deterministically
+  (torn pair `(0,2)`). Recipe `just loom-fanout` (`LOOM_MAX_PREEMPTIONS=3`). **(b) Mutation gate**
+  (`.config/mutants-fanout.toml`, `just mutants-gate-fanout`, plain `cargo test` runner — NOT nextest —
+  `--jobs 3`): raw run = 11 survivors; the genuine gaps (conflation-frontier `cursor < oldest_live`, head
+  empty-check, `published()`/`capacity()` accessors) KILLED by new closed-form-oracle tests
+  (`tests/conflation_boundaries.rs`, ORACLE = the half-open live window `[head−capacity, head)`); the rest
+  EXCLUDED with inline justification + verified evidence (cfg(loom)-only fns not compiled in the std gate;
+  `^`/`>>` stamp mutants provably identical; the dual-skip-path / zero-gap / spin-vs-Empty boundary
+  mutants equivalent; the one concurrency-only torn-read mutant `(seq<<1)&1` caught DETERMINISTICALLY by
+  the loom oracle, not the std gate). Final gate: `72 mutants tested: 37 caught, 21 unviable, 14 timeouts,
+  0 missed`, exit 0. Re-gated: fmt clean, clippy `-D warnings` clean, 18 std tests green, loom 2/2, deny
+  clean. Docs: `docs/HARDENING.md` §2 W6 section (gate table + per-survivor classification + loom honesty
+  boundary). Lane branch `lane/w6-rigor-infra`. (Journal sync-word frame + journal mutation gate from the
+  same W6 design pack are a DISJOINT lane, not in this commit.)
 - 2026-06-08 — **W1 — MULTI-ASSET CORE LANDED + GUI foundation merged (commits `ba0fc03` W1 core,
   `6143409` gw-foundation merge; pushed).** The keystone wave: generalized the three FX-only Layer-0
   seams to a cross-asset vocabulary IN PLACE (one unversioned contract, FX byte-identical) per

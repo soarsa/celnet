@@ -206,6 +206,95 @@ clusters before it was scoped:
   `arbitrage.rs` and the config's `exclude_re` is deliberately **empty** (no
   survivor is hidden behind an unjustified exclusion).
 
+### Infra-crate mutation gate — `celnet-fanout` (W6, MEASURED green locally)
+
+The SPMC broadcast ring (`celnet-fanout`) is the per-shard price fan-out
+substrate: one pricing core → 100s–1000s of counterparty readers. Its hand-rolled
+seqlock publish + torn-read protocol + conflation accounting is exactly the kind
+of lock-free code where a silently-weakened suite is dangerous, so it gets its own
+enforceable mutation gate in the house style — with two deliberate deltas from the
+numerics gates (recorded in `.config/mutants-fanout.toml`):
+
+- **plain `cargo test` runner** (`--test-tool=cargo`, NOT nextest): the gate must
+  be reproducible independent of the workspace nextest profile, and a concurrent
+  build session may `pkill -f nextest`.
+- **`--jobs 3`**: bounds wall-time deterministically on the M4 and stays courteous
+  to a parallel session.
+
+| Crate | Config | just recipe | Loom oracle | Status |
+|-------|--------|-------------|-------------|--------|
+| `celnet-fanout` | `.config/mutants-fanout.toml` | `just mutants-gate-fanout` | `just loom-fanout` (`tests/loom_seqlock.rs`) | **MEASURED green locally** — zero non-equivalent survivors |
+
+**Measured baseline** (`aarch64-apple-darwin`, cargo-mutants 27.0.0, toolchain
+1.96.0). A crate-wide raw run surfaced **11 survivors** (62 viable mutants, 51
+caught). Each was reproduced by hand and classified — none hidden:
+
+- **KILLED with new tests (genuine gaps).** The conflation-frontier comparison
+  `cursor < oldest_live`, the head empty-check, and the `Producer::published()` /
+  `capacity()` accessors were untested. They were killed by
+  `tests/conflation_boundaries.rs` — deterministic, single-threaded tests whose
+  INDEPENDENT ORACLE is the closed-form half-open live window
+  `[head − capacity, head)`: a single deterministic producer makes
+  `oldest_live = head − capacity` an exact integer, so every delivered sequence and
+  every skip count is predicted in closed form and asserted bit-for-bit (and
+  `published()`/`capacity()` are asserted directly).
+- **EQUIVALENT (excluded with inline justification + verified evidence).**
+  - `mem.rs:69 spin_loop → ()`: `std::hint::spin_loop()` is a pure CPU-pause hint
+    with no architectural effect.
+  - `ring.rs:171 | with ^`: `seq << 1` is always even and `even ^ 1 == even | 1`
+    bit-for-bit — an identical-value mutant (loom green with it applied).
+  - `ring.rs:171 << with >>`: `(seq >> 1) | 1` stays odd, so it is still a valid
+    in-progress marker — the only property the protocol uses is the odd-ness
+    (loom green with it applied).
+  - `ring.rs:277 < with ==` and `< with <=`: the conflation skip is performed a
+    SECOND time in the seqlock retry loop with the same `head − capacity`, which
+    compensates exactly (identical delivered sequence + skip count).
+  - `ring.rs:304 < with <=` and `ring.rs:309 >= with <`: retry-path boundary /
+    dead-branch mutants whose effect is a zero-length skip or a spin-vs-`Empty`
+    that converges — the conservation contract (`received + skipped == produced`,
+    strict order) is unchanged. Each verified: full std suite green with the
+    mutant applied.
+- **CONCURRENCY-ONLY, caught by the loom oracle (excluded from the `cargo test`
+  gate, kept under the loom gate).** `ring.rs:171 | with &` makes the in-progress
+  stamp `(seq << 1) & 1 == 0` (even), destroying the writer-side marker so a reader
+  can accept a mid-write slot — a genuine TORN-READ bug. It manifests only as a
+  relaxed-memory race a deterministic `cargo test` cannot reliably trigger (the
+  "surfaced once under 16× CPU oversubscription" class the ring doc records). The
+  **exhaustive loom model** (`just loom-fanout`) catches it DETERMINISTICALLY:
+  verified this session — applying the mutant makes
+  `spmc_seqlock_no_torn_read_under_all_interleavings` FAIL with a torn pair
+  `(0, 2)`. It is excluded from the std gate (which cannot kill it) and stands
+  under the loom gate; recorded here, not hidden.
+
+After these tests + the justified exclusions, `just mutants-gate-fanout` runs to
+**zero non-equivalent survivors**, exit 0.
+
+#### Loom model-check of the seqlock ring (`just loom-fanout`)
+
+`tests/loom_seqlock.rs` is an EXHAUSTIVE relaxed-memory model-check of the SPMC
+seqlock under `loom` (MIT; a `[target.'cfg(loom)'.dependencies]` dev/`cfg`-only
+dep that never enters a release build). The std hot path is byte-for-byte
+unchanged: `src/mem.rs` is a `cfg(loom)` shim that re-exports the std atomics/cell
+under `not(loom)` and loom-instrumented primitives under `--cfg loom`. The model
+runs a 1-producer / 1-concurrent-consumer interleaving over a 2-slot ring (3
+publishes ⇒ guaranteed in-place overwrite concurrent with a read), bounded by
+`LOOM_MAX_PREEMPTIONS=3`, and proves NO interleaving returns a torn pair, with
+strict in-order, conserving delivery.
+
+- **Honesty boundary.** Strict-C11 loom (correctly) refuses to bless the
+  production *non-atomic* `UnsafeCell` payload copy — the well-known benign
+  seqlock data race. The model therefore renders the payload as `Acquire`/`Release`
+  atomic lanes (the model-faithful image of the hardware coherence the production
+  `Acquire` fence relies on) and verifies the **stamp/fence rejection protocol**
+  exhaustively. The production non-atomic copy's soundness on the weakly-ordered
+  target rests on the documented `Acquire` fence + cache coherence (`ring.rs`
+  §"Seqlock reader barrier") and is exercised by the std conflation-stress suite.
+- **The model is a LIVE oracle, not a vacuous pass.** Verified this session by a
+  manual probe: disabling the consumer's post-copy `stamp_after != want` torn-read
+  re-check makes the model FAIL deterministically (torn pair returned). So the
+  model genuinely exercises the rejection logic. Run `just loom-fanout` after any
+  edit to the publish/consume stamp protocol or the reader fence.
+
 ## 3. Coverage (region / function / line)
 
 `cargo llvm-cov nextest` instruments the test run and reports per-file

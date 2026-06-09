@@ -53,6 +53,7 @@
 //! §11). This crate proves the *ring arithmetic, ordering, conflation accounting,
 //! and zero-alloc publish* — nothing about NVIDIA or a live cross-DC fabric.
 
+pub(crate) mod mem;
 mod ring;
 
 pub use ring::{BroadcastRing, Consumer, Producer, RecvError};

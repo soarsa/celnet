@@ -20,6 +20,11 @@ publish = false
 unsafe_code = "deny"
 missing_docs = "warn"
 unreachable_pub = "warn"
+# `loom` is a custom cfg set only by the loom model-check invocation
+# (`RUSTFLAGS="--cfg loom"`, see `tests/loom_seqlock.rs` + the `loom-fanout`
+# recipe). Register it so `-D warnings` does not flag the `cfg(loom)` shim in
+# `src/mem.rs` as an unexpected cfg in a normal build.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
 
 [lints.clippy]
 all = "warn"
@@ -28,3 +33,10 @@ all = "warn"
 # Leaf crate: std + atomics only, plus the workspace false-sharing guard already
 # vetted for the engine hot path. No celnet-* deps (the ring is payload-generic).
 crossbeam-utils.workspace = true
+
+# Relaxed-memory model checker for the seqlock ring. Pulled in ONLY under
+# `--cfg loom` (the canonical loom wiring), so a normal `cargo build`/`just check`
+# never compiles or links it and it never enters a shipped binary. MIT-licensed,
+# dev/cfg-only. See `tests/loom_seqlock.rs` and the `loom-fanout` justfile recipe.
+[target.'cfg(loom)'.dependencies]
+loom = "0.7"
