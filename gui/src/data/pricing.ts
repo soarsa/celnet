@@ -19,12 +19,16 @@ import type {
   Digital,
   DoubleBarrier,
   ForwardStart,
+  FxForward,
+  FxSwap,
   Greeks,
   Instrument,
   Leg,
   Lookback,
   MarketContext,
+  Ndf,
   Quanto,
+  Side,
   SingleBarrier,
   StrikeOrDelta,
   Tarf,
@@ -337,6 +341,15 @@ export function priceInstrument(
       return priceAmerican(instrument.product.american, m, t);
     case "basket":
       return priceBasket(instrument.product.basket, m, t);
+    case "fxForward":
+      return priceForward(instrument.product.fxForward, m, t);
+    case "fxSwap":
+      return priceSwap(instrument.product.fxSwap, m, t);
+    case "ndf":
+      // An NDF's risk-neutral PV is identical to a deliverable forward of equal
+      // terms — non-deliverability changes only the settlement mechanics, not the
+      // PV (the `fixing`/`settlementCcy` carry the convention identity only).
+      return priceForward(instrument.product.ndf, m, t);
     case "windowBarrier":
       // The window barrier has NO closed form — it is priced ONLY by the server's
       // local-stochastic-volatility ADI-PDE / Monte-Carlo engine (pricing model
@@ -374,6 +387,65 @@ export function priceInstrument(
       return { greeks: acc, resolvedStrike: legs[0]?.strike ?? m.spot };
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// linear products (W2) — exact discounted-cashflow forwards / swaps / NDF
+// ---------------------------------------------------------------------------
+//
+// A forward / NDF is a LINEAR, vol-independent discounted cashflow, NOT an option:
+// its per-unit-notional PV is `sign · (S·e^{−r_for·T} − K·e^{−r_dom·T})`
+// (= `sign · e^{−r_dom·T}·(F − K)`, with `F = S·e^{(r_dom−r_for)·T}` the forward).
+// It is priced in EXACT closed form (no Monte-Carlo standard error), exactly like
+// the server's `celnet-linear` leaf. Vol-derivative Greeks (gamma/vega/vanna/…)
+// are identically ZERO; the non-trivial sensitivities are the (forward-)delta,
+// the two rho legs and theta, all available in closed form.
+
+/** BUY = long the forward (+1); SELL = short (−1); TWO_WAY defaults to long. */
+function forwardSign(side: Side): number {
+  return side === "SELL" ? -1 : 1;
+}
+
+/**
+ * Price one outright-forward / NDF leg in exact closed form. `price` is the
+ * per-unit-notional PV; the trade notional is applied by the caller's display
+ * layer exactly as for the option families. Greeks that depend on volatility are
+ * identically zero (the payoff is linear in spot).
+ */
+function priceForward(spec: FxForward | Ndf, m: MarketContext, t: number): PriceOutcome {
+  const { spot: s, rDom, rFor } = m;
+  const k = spec.contractRate;
+  const sign = forwardSign(spec.side);
+  const dfFor = Math.exp(-rFor * t);
+  const dfDom = Math.exp(-rDom * t);
+  const greeks = zeroGreeks();
+  // PV = sign · (S·e^{−r_for·T} − K·e^{−r_dom·T}) = sign · e^{−r_dom·T}·(F − K).
+  greeks.price = sign * (s * dfFor - k * dfDom);
+  // ∂PV/∂S = sign·e^{−r_for·T}; ∂PV/∂F = sign·e^{−r_dom·T} (F = S·e^{(r_dom−r_for)T}).
+  greeks.deltaSpot = sign * dfFor;
+  greeks.deltaForward = sign * dfDom;
+  // ∂PV/∂r_dom = sign·K·T·e^{−r_dom·T}; ∂PV/∂r_for = −sign·S·T·e^{−r_for·T}.
+  greeks.rhoDom = sign * k * t * dfDom;
+  greeks.rhoFor = -sign * s * t * dfFor;
+  // ∂PV/∂t = sign·(−r_for·S·e^{−r_for·T} + r_dom·K·e^{−r_dom·T}); per-day display.
+  greeks.theta = (sign * (-rFor * s * dfFor + rDom * k * dfDom)) / 365;
+  return { greeks, resolvedStrike: k };
+}
+
+/**
+ * Price an FX swap as the EXACT sum of its two legs. By the booking convention the
+ * near leg settles at the spot date (`t = 0`, so its discount factors are 1) and
+ * the far leg settles at the instrument's expiry; the legs trade opposite
+ * directions. The aggregate Greeks are the linear sum of the per-leg Greeks.
+ */
+function priceSwap(spec: FxSwap, m: MarketContext, t: number): PriceOutcome {
+  const near = priceForward(spec.near, m, 0);
+  const far = priceForward(spec.far, m, t);
+  return {
+    greeks: addScaled(near.greeks, far.greeks, 1),
+    // The far (tenor-dated) leg's contract rate is the trade-resolved strike shown.
+    resolvedStrike: far.resolvedStrike,
+  };
 }
 
 // ---------------------------------------------------------------------------

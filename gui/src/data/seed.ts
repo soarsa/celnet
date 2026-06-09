@@ -19,6 +19,7 @@ import type {
   DigitalStyle,
   ExerciseStyle,
   FixingSchedule,
+  FixingSource,
   Instrument,
   Leg,
   LookbackMonitoring,
@@ -28,6 +29,7 @@ import type {
   OptionType,
   Product,
   QuantoPayoff,
+  Side,
   StrategyKind,
   StrikeOrDelta,
   TarfRedemption,
@@ -710,6 +712,134 @@ function basketInstrument(
   };
 }
 
+/** The opposite direction of a forward leg (used to derive an FX swap's far side). */
+export function oppositeSide(side: Side): Side {
+  if (side === "BUY") return "SELL";
+  if (side === "SELL") return "BUY";
+  return "TWO_WAY";
+}
+
+/** The inputs for an outright FX forward (`product.fxForward`). */
+export interface ForwardTerms {
+  /** The agreed contract (delivery) rate `K`. */
+  contractRate: number;
+  /** The direction taken (`BUY` = long the base/asset forward; `SELL` = short). */
+  side: Side;
+}
+
+/**
+ * An outright-forward instrument (`product.fxForward`, proto field 26). A linear,
+ * closed-form discounted-cashflow product (not an option payoff); the notional is
+ * the ticket notional (base units), the direction is carried by `side`.
+ */
+function forwardInstrument(
+  pair: CcyPair,
+  tenorYears: number,
+  notionalMm: number,
+  terms: ForwardTerms,
+): Instrument {
+  return {
+    pair,
+    tenor: tenorYearsToTenor(tenorYears),
+    expiryYears: tenorYears,
+    quantity: { notional: notionalMm * 1e6, baseCcy: true },
+    side: "TWO_WAY",
+    product: {
+      kind: "fxForward",
+      fxForward: {
+        contractRate: terms.contractRate,
+        notional: notionalMm * 1e6,
+        side: terms.side,
+      },
+    },
+  };
+}
+
+/** The inputs for an FX swap (`product.fxSwap`): the two leg rates + the near side. */
+export interface SwapTerms {
+  /** The near (spot-dated) leg's contract rate. */
+  nearRate: number;
+  /** The far (tenor-dated) leg's contract rate. */
+  farRate: number;
+  /** The near leg's direction; the far leg takes the opposite side by convention. */
+  nearSide: Side;
+}
+
+/**
+ * An FX-swap instrument (`product.fxSwap`, proto field 27). The near leg settles
+ * at the spot date (`t = 0`) and the far leg at the instrument's expiry/tenor (the
+ * single ticket tenor anchors the far leg). By market convention the far leg
+ * trades the OPPOSITE side to the near leg. The shared ticket notional rides both
+ * legs. PV is the independent sum of the two leg PVs; deliverable underlying only.
+ */
+function swapInstrument(
+  pair: CcyPair,
+  tenorYears: number,
+  notionalMm: number,
+  terms: SwapTerms,
+): Instrument {
+  const notional = notionalMm * 1e6;
+  return {
+    pair,
+    tenor: tenorYearsToTenor(tenorYears),
+    expiryYears: tenorYears,
+    quantity: { notional, baseCcy: true },
+    side: "TWO_WAY",
+    product: {
+      kind: "fxSwap",
+      fxSwap: {
+        near: { contractRate: terms.nearRate, notional, side: terms.nearSide },
+        far: { contractRate: terms.farRate, notional, side: oppositeSide(terms.nearSide) },
+      },
+    },
+  };
+}
+
+/** The inputs for a non-deliverable forward (`product.ndf`). */
+export interface NdfTerms {
+  /** The agreed contract (forward) rate `K`. */
+  contractRate: number;
+  /** The direction taken (`BUY` = long the base/asset forward; `SELL` = short). */
+  side: Side;
+  /** The published settlement-rate option fixed against (identity only). */
+  fixing: FixingSource;
+  /** The convertible (settlement) currency the net cash settlement is paid in. */
+  settlementCcy: string;
+}
+
+/**
+ * A non-deliverable-forward instrument (`product.ndf`, proto field 28). The
+ * risk-neutral PV is identical to a deliverable forward of equal terms; only the
+ * settlement mechanics differ. Valid ONLY for a non-deliverable underlying.
+ * `fixing` carries the published settlement-rate IDENTITY — the live fixing VALUE
+ * is an estate-gated feed and is never sourced in-repo; the settlement is paid in
+ * `settlementCcy` (defaults to the quote currency, the convertible leg).
+ */
+function ndfInstrument(
+  pair: CcyPair,
+  tenorYears: number,
+  notionalMm: number,
+  terms: NdfTerms,
+): Instrument {
+  return {
+    pair,
+    tenor: tenorYearsToTenor(tenorYears),
+    expiryYears: tenorYears,
+    quantity: { notional: notionalMm * 1e6, baseCcy: true },
+    side: "TWO_WAY",
+    product: {
+      kind: "ndf",
+      ndf: {
+        contractRate: terms.contractRate,
+        notional: notionalMm * 1e6,
+        side: terms.side,
+        fixing: terms.fixing,
+        settlementCcy: terms.settlementCcy,
+      },
+    },
+  };
+}
+
 /**
  * The set of products the LOCAL_STOCH_VOL booking model prices (mirrors the
  * server's `lsv_pricer` supported list): vanilla, single (continuous) barrier and
@@ -803,4 +933,7 @@ export {
   windowBarrierInstrument,
   americanInstrument,
   basketInstrument,
+  forwardInstrument,
+  swapInstrument,
+  ndfInstrument,
 };
