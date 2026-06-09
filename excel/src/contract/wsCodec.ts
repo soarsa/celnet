@@ -62,6 +62,7 @@ import type {
   Tarf,
   TradableToken,
   TwoWayPrice,
+  Underlying,
   Update,
   VegaBucket,
   WindowBarrier,
@@ -134,6 +135,47 @@ function array(o: WireObject, key: string): WireObject[] {
 
 export function ccyPairToWire(p: CcyPair): WireObject {
   return { base: p.base, quote: p.quote };
+}
+
+/**
+ * Encode the cross-asset {@link Underlying} oneof (proto `Underlying`) under the
+ * `underlying` key: the active arm by its proto field NAME (snake_case —
+ * `fx`/`metal`/`equity`/`commodity`/`digital_asset`, proto `oneof ref` field
+ * numbers 1/3/4/5/6) plus `settlement_ccy`. The `metal` arm carries the numeric
+ * `Metal` enum tag; the equity/commodity arms nest the `symbol` (ticker + venue).
+ */
+export function underlyingToWire(u: Underlying): WireObject {
+  const settlement_ccy = u.settlementCcy;
+  switch (u.kind) {
+    case "fx":
+      return { fx: { base: u.fx.base, quote: u.fx.quote }, settlement_ccy };
+    case "metal":
+      return {
+        metal: { metal: e.metal.toWire(u.metal.metal), quote: u.metal.quote },
+        settlement_ccy,
+      };
+    case "equity":
+      return {
+        equity: {
+          symbol: { ticker: u.equity.symbol.ticker, venue: u.equity.symbol.venue },
+          currency: u.equity.currency,
+        },
+        settlement_ccy,
+      };
+    case "commodity":
+      return {
+        commodity: {
+          symbol: { ticker: u.commodity.symbol.ticker, venue: u.commodity.symbol.venue },
+          currency: u.commodity.currency,
+        },
+        settlement_ccy,
+      };
+    case "digitalAsset":
+      return {
+        digital_asset: { base: u.digitalAsset.base, quote: u.digitalAsset.quote },
+        settlement_ccy,
+      };
+  }
 }
 
 export function conventionsToWire(c: Conventions): WireObject {
@@ -265,7 +307,21 @@ export function instrumentToWire(i: Instrument): WireObject {
     quantity: { notional: i.quantity.notional, base_ccy: i.quantity.baseCcy },
     side: e.side.toWire(i.side),
   };
+  // The cross-asset underlying (proto `Instrument.underlying`, field 1). Emit it
+  // ONLY when set: an absent `underlying` keeps the FX `pair` projection the FX WS
+  // surface keys on (byte-identical to the contract before the cross-asset arms).
+  // A non-FX instrument carries the full `Underlying` oneof here AND the leg-string
+  // `pair` so the FX-keyed surfaces stay total.
+  if (i.underlying) base["underlying"] = underlyingToWire(i.underlying);
   if (i.solve) base["solve"] = solveToWire(i.solve);
+  // The settlement-style selector (proto `Instrument.settlement_style`, field 29).
+  // Emit it ONLY when non-LINEAR: LINEAR is the proto3 zero value, so omitting it
+  // keeps the wire frame byte-identical to the contract before this field existed
+  // (the server reads an absent key as LINEAR). INVERSE_COIN is carried as its
+  // numeric proto tag — the coin-margined `1/S_T` digital-asset convention.
+  if (i.settlementStyle !== undefined && i.settlementStyle !== "LINEAR") {
+    base["settlement_style"] = e.settlementStyle.toWire(i.settlementStyle);
+  }
   // The pricing-model selector (proto `Instrument.pricing_model`, field 22). Emit
   // it ONLY when non-DEFAULT: a DEFAULT/absent model is the proto3 zero value, so
   // omitting it keeps the wire frame byte-identical to the contract before this

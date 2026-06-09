@@ -18,10 +18,10 @@ use celnet_core::is_close;
 use celnet_golden::oracle::{
     self, AccumulatorMonitoring, BasketKind, BasketLeg, Cp, McEstimate, TarfRedemption,
 };
-use celnet_golden::vectors::{FAMILIES, GoldenVector, MC_FAMILIES};
+use celnet_golden::vectors::{CROSS_ASSET_FAMILIES, FAMILIES, GoldenVector, MC_FAMILIES};
 use celnet_golden::{
-    BarrierType, DigitalSettlement, DoubleBarrierKind, TouchKind, load_barrier, load_digital,
-    load_double_barrier, load_touch, load_vectors,
+    BarrierType, DigitalSettlement, DoubleBarrierKind, TouchKind, load_barrier,
+    load_cross_asset_vectors, load_digital, load_double_barrier, load_touch, load_vectors,
 };
 
 /// The Monte-Carlo path-pairs / paths the generator used. The re-derivation must
@@ -240,6 +240,101 @@ fn vanilla_vectors_carry_full_greek_strip() {
                 v.id
             );
         }
+    }
+}
+
+/// The cross-asset option corpus (equity / commodity / crypto — the `vanilla`
+/// product arm seen through a non-FX `Underlying.ref` arm) re-derives from the
+/// independent, code-disjoint cross-asset oracles in [`oracle`] (the `libm::erf`
+/// normal-CDF route, disjoint from the leaves' `erfc`-based `norm_cdf`). This guards
+/// the frozen `<asset>_option.json` artifacts exactly as the FX corpus is guarded,
+/// without ever consulting the equity/commodity/crypto leaves under test.
+#[test]
+fn cross_asset_vectors_redrive_from_independent_oracle() {
+    let vectors = load_cross_asset_vectors().expect("cross-asset corpus loads");
+    assert!(!vectors.is_empty(), "cross-asset corpus must be non-empty");
+
+    // Every cross-asset family present, well-formed, and tagged with a known
+    // CROSS_ASSET_FAMILIES key (NOT a proto product arm — those stay in FAMILIES).
+    let present: HashSet<&str> = vectors.iter().map(|v| v.family.as_str()).collect();
+    for fam in CROSS_ASSET_FAMILIES {
+        assert!(
+            present.contains(fam),
+            "cross-asset family `{fam}` has no golden vectors"
+        );
+    }
+    let mut ids = HashSet::new();
+    for v in &vectors {
+        assert!(
+            CROSS_ASSET_FAMILIES.contains(&v.family.as_str()),
+            "cross-asset vector {} has an invalid family `{}`",
+            v.id,
+            v.family
+        );
+        assert!(
+            !FAMILIES.contains(&v.family.as_str()),
+            "cross-asset family `{}` must NOT collide with a proto product arm",
+            v.family
+        );
+        assert!(ids.insert(v.id.clone()), "duplicate vector id `{}`", v.id);
+        assert!(v.expected.price_std_error.is_none(), "closed-form only");
+
+        let m = v.market;
+        let t = v.term_f64("expiry_years");
+        let cp = cp_of(v, "option_type");
+        let strike = v.term_f64("strike");
+        let recomputed = match v.family.as_str() {
+            "equity_option" => oracle::equity_bsm_price(
+                cp,
+                m.spot,
+                strike,
+                m.vol,
+                t,
+                v.term_f64("r"),
+                v.term_f64("q"),
+                v.term_f64("repo"),
+            ),
+            "commodity_option" => {
+                let r = v.term_f64("r");
+                // The oracle takes the FORWARD directly: a listed future IS the
+                // forward (b=0); the spot representation lifts S to F=S·e^{(r−conv)t}.
+                let f = match v.term_str("representation") {
+                    "FUTURE" => m.spot,
+                    "SPOT" => m.spot * ((r - v.term_f64("convenience")) * t).exp(),
+                    other => panic!("unknown commodity representation `{other}`"),
+                };
+                oracle::black76_price(cp, f, strike, m.vol, t, r)
+            }
+            "crypto_option" => {
+                let r = v.term_f64("r");
+                let funding = v.term_f64("funding");
+                match v.term_str("settlement_style") {
+                    "LINEAR" => {
+                        oracle::crypto_linear_price(cp, m.spot, strike, m.vol, t, r, funding)
+                    }
+                    "INVERSE_COIN" => {
+                        oracle::crypto_inverse_price(cp, m.spot, strike, m.vol, t, r, funding)
+                    }
+                    other => panic!("unknown crypto settlement_style `{other}`"),
+                }
+            }
+            other => panic!("unhandled cross-asset family `{other}` for vector {}", v.id),
+        };
+        assert!(
+            is_close(
+                recomputed,
+                v.expected.price,
+                v.tolerance.rel,
+                v.tolerance.abs
+            ),
+            "frozen cross-asset vector {} drifted: re-derived {recomputed} vs frozen {} (rel {}, abs {})",
+            v.id,
+            v.expected.price,
+            v.tolerance.rel,
+            v.tolerance.abs
+        );
+        assert!(m.spot > 0.0 && m.vol > 0.0);
+        assert!(v.expected.price.is_finite());
     }
 }
 

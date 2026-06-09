@@ -12,12 +12,14 @@ import type { Instrument, PricingModel, Product, Tenor } from "../data/contract"
 import type { BrokenDate } from "../data/contract";
 
 /**
- * Asset class of a structurable product. FX is the only populated class today;
- * the multi-asset GUI wave adds metals/crypto/equity/rates as registry DATA
- * (new specs), not a shell rewrite — the registry is the seam that makes that a
- * data change.
+ * Asset class of a structurable product. FX is the origin class; the cross-asset
+ * integration wave adds METAL / EQUITY / COMMODITY / CRYPTO as registry DATA (new
+ * specs over the W1 `Underlying` oneof seam), not a shell rewrite — the registry
+ * is the seam that makes that a data change. Each non-FX class books through the
+ * same `Instrument.product` oneof, carrying its asset-class identity on
+ * `Instrument.underlying` (and, for CRYPTO, `Instrument.settlementStyle`).
  */
-export type AssetClass = "FX";
+export type AssetClass = "FX" | "METAL" | "EQUITY" | "COMMODITY" | "CRYPTO";
 
 /** Gallery grouping for the structure picker (replaces the flat 19-item `<select>`). */
 export type ProductGroup =
@@ -26,7 +28,8 @@ export type ProductGroup =
   | "Barriers & digitals"
   | "Volatility"
   | "Path-dependent"
-  | "Structured";
+  | "Structured"
+  | "Cross-asset (equity / commodity / crypto)";
 
 /** The canonical group order in the structure gallery. */
 export const PRODUCT_GROUP_ORDER: readonly ProductGroup[] = [
@@ -36,6 +39,7 @@ export const PRODUCT_GROUP_ORDER: readonly ProductGroup[] = [
   "Volatility",
   "Path-dependent",
   "Structured",
+  "Cross-asset (equity / commodity / crypto)",
 ];
 
 /**

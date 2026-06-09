@@ -19,8 +19,9 @@
 
 use celnet_proto::{instrument, owner, strike_or_delta};
 use celnet_types::{
-    AtmConvention, CcyPair, Cut, DayCount, DeltaConvention, Greeks, OptionType, PremiumStyle,
-    Settlement, SmileModel, Tenor,
+    AtmConvention, CcyPair, CommodityRef, CryptoPair, Cut, DayCount, DeltaConvention, EquityRef,
+    Greeks, OptionType, PremiumStyle, Settlement, SettlementStyle, SmileModel, Symbol, Tenor,
+    Underlying,
 };
 
 use crate::error::{ClientError, ClientResult};
@@ -2277,8 +2278,12 @@ fn equal_fixing_years(fixings: u32) -> Vec<f64> {
 /// label.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InstrumentSpec {
-    /// The currency pair the instrument trades.
-    pub pair: CcyPair,
+    /// The instrument's underlying — the asset-class-tagged identity (FX pair,
+    /// precious metal, equity, commodity, or digital asset). The FX builders
+    /// construct [`Underlying::Fx`]; the cross-asset builders
+    /// ([`InstrumentSpec::equity_vanilla`] / [`InstrumentSpec::commodity_vanilla`]
+    /// / [`InstrumentSpec::crypto_vanilla`]) construct the matching arm.
+    pub underlying: Underlying,
     /// The trader-facing tenor label.
     pub tenor: Tenor,
     /// The expiry as a year fraction (authoritative for pricing).
@@ -2287,6 +2292,12 @@ pub struct InstrumentSpec {
     pub quantity: Quantity,
     /// The top-level side (or `TwoWay` to request a two-way market).
     pub side: Side,
+    /// The contract settlement mechanics (linear quote-currency-margined, or
+    /// inverse coin-margined for a digital asset). Defaults to
+    /// [`SettlementStyle::Linear`] — byte-identical to the contract before this
+    /// dimension existed; set via [`InstrumentSpec::settlement_style`] /
+    /// [`InstrumentSpec::inverse_coin`].
+    pub settlement_style: SettlementStyle,
     /// The booking / pricing model the instrument is priced under. Defaults to
     /// [`PricingModel::Default`] (the analytic engine); set via
     /// [`InstrumentSpec::pricing_model`] / [`InstrumentSpec::with_lsv`].
@@ -2336,6 +2347,141 @@ impl InstrumentSpec {
         self.pricing_model(PricingModel::LocalStochVol)
     }
 
+    /// Set the contract settlement mechanics this instrument books under (linear
+    /// quote-currency-margined, or inverse coin-margined). Returns `self` for
+    /// fluent chaining. The default is [`SettlementStyle::Linear`], byte-identical
+    /// to the contract before this dimension existed.
+    #[must_use]
+    pub fn settlement_style(mut self, style: SettlementStyle) -> Self {
+        self.settlement_style = style;
+        self
+    }
+
+    /// Book this instrument as inverse (coin-margined) — a convenience for
+    /// `.settlement_style(SettlementStyle::InverseCoin)`. Meaningful only for a
+    /// digital-asset underlying (the `1/S_T`, base-coin-denominated payoff).
+    #[must_use]
+    pub fn inverse_coin(self) -> Self {
+        self.settlement_style(SettlementStyle::InverseCoin)
+    }
+
+    /// A vanilla European option on a generalized (asset-class-tagged)
+    /// [`Underlying`] — the cross-asset generalization of [`InstrumentSpec::vanilla`]
+    /// (which is its FX-arm special case). The option arithmetic is the
+    /// asset-class-agnostic payoff over the carry-producing market (ADR-0008): the
+    /// underlying travels as contract identity, and the price is the generalized-BSM
+    /// closed form against the request market context. Defaults to
+    /// [`SettlementStyle::Linear`]; chain [`InstrumentSpec::inverse_coin`] for a
+    /// coin-margined digital-asset contract.
+    #[must_use]
+    pub fn vanilla_on(
+        underlying: Underlying,
+        tenor: Tenor,
+        expiry_years: f64,
+        quantity: Quantity,
+        side: Side,
+        option: OptionType,
+        strike: StrikeSpec,
+    ) -> Self {
+        Self {
+            underlying,
+            tenor,
+            expiry_years,
+            quantity,
+            side,
+            settlement_style: SettlementStyle::Linear,
+            pricing_model: PricingModel::Default,
+            product: Product::Vanilla { option, strike },
+        }
+    }
+
+    /// A vanilla European option on a single-name / index **equity** underlying
+    /// (`ticker`/`venue` quoted in `currency`). A purpose-named convenience over
+    /// [`InstrumentSpec::vanilla_on`] with an [`Underlying::Equity`].
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn equity_vanilla(
+        ticker: impl Into<String>,
+        venue: impl Into<String>,
+        currency: celnet_types::Ccy,
+        tenor: Tenor,
+        expiry_years: f64,
+        quantity: Quantity,
+        side: Side,
+        option: OptionType,
+        strike: StrikeSpec,
+    ) -> Self {
+        let underlying = Underlying::Equity(EquityRef::new(Symbol::new(ticker, venue), currency));
+        Self::vanilla_on(
+            underlying,
+            tenor,
+            expiry_years,
+            quantity,
+            side,
+            option,
+            strike,
+        )
+    }
+
+    /// A vanilla European option on a **commodity** underlying (`symbol` quoted in
+    /// `currency`). A purpose-named convenience over [`InstrumentSpec::vanilla_on`]
+    /// with an [`Underlying::Commodity`].
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn commodity_vanilla(
+        symbol: impl Into<String>,
+        venue: impl Into<String>,
+        currency: celnet_types::Ccy,
+        tenor: Tenor,
+        expiry_years: f64,
+        quantity: Quantity,
+        side: Side,
+        option: OptionType,
+        strike: StrikeSpec,
+    ) -> Self {
+        let underlying =
+            Underlying::Commodity(CommodityRef::new(Symbol::new(symbol, venue), currency));
+        Self::vanilla_on(
+            underlying,
+            tenor,
+            expiry_years,
+            quantity,
+            side,
+            option,
+            strike,
+        )
+    }
+
+    /// A vanilla European option on a **digital-asset (crypto)** pair
+    /// (`base`/`quote`). A purpose-named convenience over
+    /// [`InstrumentSpec::vanilla_on`] with an [`Underlying::DigitalAsset`]. The
+    /// coin-margined inverse convention is selected separately via
+    /// [`InstrumentSpec::inverse_coin`]; the default is the linear (quote-margined)
+    /// contract.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn crypto_vanilla(
+        base: impl Into<String>,
+        quote: impl Into<String>,
+        tenor: Tenor,
+        expiry_years: f64,
+        quantity: Quantity,
+        side: Side,
+        option: OptionType,
+        strike: StrikeSpec,
+    ) -> Self {
+        let underlying = Underlying::DigitalAsset(CryptoPair::new(base, quote));
+        Self::vanilla_on(
+            underlying,
+            tenor,
+            expiry_years,
+            quantity,
+            side,
+            option,
+            strike,
+        )
+    }
+
     /// A window knock-out barrier (active only inside the calendar window
     /// `[window_start, window_end] ⊆ [0, expiry_years]`). This product has no
     /// closed form and is priced **only** under the LSV model, so the spec is
@@ -2361,11 +2507,12 @@ impl InstrumentSpec {
         mc_seed: u64,
     ) -> Self {
         Self {
-            pair,
+            underlying: Underlying::Fx(pair),
             tenor,
             expiry_years,
             quantity,
             side,
+            settlement_style: SettlementStyle::Linear,
             pricing_model: PricingModel::LocalStochVol,
             product: Product::WindowBarrier {
                 option,
@@ -2393,11 +2540,12 @@ impl InstrumentSpec {
         strike: StrikeSpec,
     ) -> Self {
         Self {
-            pair,
+            underlying: Underlying::Fx(pair),
             tenor,
             expiry_years,
             quantity,
             side,
+            settlement_style: SettlementStyle::Linear,
             pricing_model: PricingModel::Default,
             product: Product::Vanilla { option, strike },
         }
@@ -2415,11 +2563,12 @@ impl InstrumentSpec {
         legs: Vec<Leg>,
     ) -> Self {
         Self {
-            pair,
+            underlying: Underlying::Fx(pair),
             tenor,
             expiry_years,
             quantity,
             side,
+            settlement_style: SettlementStyle::Linear,
             pricing_model: PricingModel::Default,
             product: Product::Strategy { kind, legs },
         }
@@ -2440,11 +2589,12 @@ impl InstrumentSpec {
         terms: BarrierTerms,
     ) -> Self {
         Self {
-            pair,
+            underlying: Underlying::Fx(pair),
             tenor,
             expiry_years,
             quantity,
             side,
+            settlement_style: SettlementStyle::Linear,
             pricing_model: PricingModel::Default,
             product: Product::SingleBarrier {
                 option: terms.option,
@@ -2471,11 +2621,12 @@ impl InstrumentSpec {
         terms: DoubleBarrierTerms,
     ) -> Self {
         Self {
-            pair,
+            underlying: Underlying::Fx(pair),
             tenor,
             expiry_years,
             quantity,
             side,
+            settlement_style: SettlementStyle::Linear,
             pricing_model: PricingModel::Default,
             product: Product::DoubleBarrier {
                 option: terms.option,
@@ -2502,11 +2653,12 @@ impl InstrumentSpec {
         terms: DigitalTerms,
     ) -> Self {
         Self {
-            pair,
+            underlying: Underlying::Fx(pair),
             tenor,
             expiry_years,
             quantity,
             side,
+            settlement_style: SettlementStyle::Linear,
             pricing_model: PricingModel::Default,
             product: Product::Digital {
                 option: terms.option,
@@ -2531,11 +2683,12 @@ impl InstrumentSpec {
         terms: TouchTerms,
     ) -> Self {
         Self {
-            pair,
+            underlying: Underlying::Fx(pair),
             tenor,
             expiry_years,
             quantity,
             side,
+            settlement_style: SettlementStyle::Linear,
             pricing_model: PricingModel::Default,
             product: Product::Touch {
                 kind: terms.kind,
@@ -2632,11 +2785,12 @@ impl InstrumentSpec {
         strike_vol: f64,
     ) -> Self {
         Self {
-            pair,
+            underlying: Underlying::Fx(pair),
             tenor,
             expiry_years,
             quantity,
             side,
+            settlement_style: SettlementStyle::Linear,
             pricing_model: PricingModel::Default,
             product: Product::VarianceSwap { strike_vol },
         }
@@ -2654,11 +2808,12 @@ impl InstrumentSpec {
         strike_vol: f64,
     ) -> Self {
         Self {
-            pair,
+            underlying: Underlying::Fx(pair),
             tenor,
             expiry_years,
             quantity,
             side,
+            settlement_style: SettlementStyle::Linear,
             pricing_model: PricingModel::Default,
             product: Product::VolatilitySwap { strike_vol },
         }
@@ -2677,11 +2832,12 @@ impl InstrumentSpec {
         terms: AsianTerms,
     ) -> Self {
         Self {
-            pair,
+            underlying: Underlying::Fx(pair),
             tenor,
             expiry_years,
             quantity,
             side,
+            settlement_style: SettlementStyle::Linear,
             pricing_model: PricingModel::Default,
             product: Product::AsianOption {
                 option: terms.option,
@@ -2707,11 +2863,12 @@ impl InstrumentSpec {
         terms: ForwardStartTerms,
     ) -> Self {
         Self {
-            pair,
+            underlying: Underlying::Fx(pair),
             tenor,
             expiry_years,
             quantity,
             side,
+            settlement_style: SettlementStyle::Linear,
             pricing_model: PricingModel::Default,
             product: Product::ForwardStart {
                 option: terms.option,
@@ -2735,11 +2892,12 @@ impl InstrumentSpec {
         terms: CliquetTerms,
     ) -> Self {
         Self {
-            pair,
+            underlying: Underlying::Fx(pair),
             tenor,
             expiry_years,
             quantity,
             side,
+            settlement_style: SettlementStyle::Linear,
             pricing_model: PricingModel::Default,
             product: Product::Cliquet {
                 option: terms.option,
@@ -2767,11 +2925,12 @@ impl InstrumentSpec {
         terms: QuantoTerms,
     ) -> Self {
         Self {
-            pair,
+            underlying: Underlying::Fx(pair),
             tenor,
             expiry_years,
             quantity,
             side,
+            settlement_style: SettlementStyle::Linear,
             pricing_model: PricingModel::Default,
             product: Product::Quanto {
                 payoff: terms.payoff,
@@ -2796,11 +2955,12 @@ impl InstrumentSpec {
         terms: TarfTerms,
     ) -> Self {
         Self {
-            pair,
+            underlying: Underlying::Fx(pair),
             tenor,
             expiry_years,
             quantity,
             side,
+            settlement_style: SettlementStyle::Linear,
             pricing_model: PricingModel::Default,
             product: Product::Tarf {
                 option: terms.option,
@@ -2829,11 +2989,12 @@ impl InstrumentSpec {
         terms: AccumulatorTerms,
     ) -> Self {
         Self {
-            pair,
+            underlying: Underlying::Fx(pair),
             tenor,
             expiry_years,
             quantity,
             side,
+            settlement_style: SettlementStyle::Linear,
             pricing_model: PricingModel::Default,
             product: Product::Accumulator {
                 pivot: terms.pivot,
@@ -2862,11 +3023,12 @@ impl InstrumentSpec {
         terms: LookbackTerms,
     ) -> Self {
         Self {
-            pair,
+            underlying: Underlying::Fx(pair),
             tenor,
             expiry_years,
             quantity,
             side,
+            settlement_style: SettlementStyle::Linear,
             pricing_model: PricingModel::Default,
             product: Product::Lookback {
                 style: terms.style,
@@ -2894,11 +3056,12 @@ impl InstrumentSpec {
         terms: AmericanTerms,
     ) -> Self {
         Self {
-            pair,
+            underlying: Underlying::Fx(pair),
             tenor,
             expiry_years,
             quantity,
             side,
+            settlement_style: SettlementStyle::Linear,
             pricing_model: PricingModel::Default,
             product: Product::American {
                 option: terms.option,
@@ -2928,11 +3091,12 @@ impl InstrumentSpec {
         terms: BasketTerms,
     ) -> Self {
         Self {
-            pair,
+            underlying: Underlying::Fx(pair),
             tenor,
             expiry_years,
             quantity,
             side,
+            settlement_style: SettlementStyle::Linear,
             pricing_model: PricingModel::Default,
             product: Product::Basket {
                 legs: terms.legs,
@@ -2963,11 +3127,12 @@ impl InstrumentSpec {
         terms: ForwardTerms,
     ) -> Self {
         Self {
-            pair,
+            underlying: Underlying::Fx(pair),
             tenor,
             expiry_years,
             quantity,
             side: terms.side.instrument_side(),
+            settlement_style: SettlementStyle::Linear,
             pricing_model: PricingModel::Default,
             product: Product::FxForward {
                 contract_rate: terms.contract_rate,
@@ -2992,11 +3157,12 @@ impl InstrumentSpec {
         terms: SwapTerms,
     ) -> Self {
         Self {
-            pair,
+            underlying: Underlying::Fx(pair),
             tenor,
             expiry_years,
             quantity,
             side: terms.near.side.instrument_side(),
+            settlement_style: SettlementStyle::Linear,
             pricing_model: PricingModel::Default,
             product: Product::FxSwap {
                 contract_rate: terms.near.contract_rate,
@@ -3022,11 +3188,12 @@ impl InstrumentSpec {
         terms: NdfTerms,
     ) -> Self {
         Self {
-            pair,
+            underlying: Underlying::Fx(pair),
             tenor,
             expiry_years,
             quantity,
             side: terms.side.instrument_side(),
+            settlement_style: SettlementStyle::Linear,
             pricing_model: PricingModel::Default,
             product: Product::Ndf {
                 contract_rate: terms.contract_rate,
@@ -3044,9 +3211,10 @@ impl InstrumentSpec {
     #[must_use]
     pub(crate) fn to_wire(&self) -> celnet_proto::Instrument {
         celnet_proto::Instrument {
-            underlying: Some(celnet_proto::Underlying::fx(celnet_proto::CcyPair::from(
-                self.pair,
-            ))),
+            // Map the asset-class-tagged underlying to its wire oneof arm (FX,
+            // metal, equity, commodity, or digital asset) — the FX arm stays
+            // byte-identical to the former FX-only encoding.
+            underlying: Some(celnet_proto::Underlying::from(self.underlying.clone())),
             tenor: Some(celnet_proto::Tenor::from(self.tenor)),
             expiry_years: self.expiry_years,
             quantity: Some(celnet_proto::Quantity {
@@ -3055,9 +3223,9 @@ impl InstrumentSpec {
             }),
             side: self.side.to_wire() as i32,
             solve: None,
+            settlement_style: celnet_proto::SettlementStyle::from(self.settlement_style) as i32,
             pricing_model: self.pricing_model.to_wire() as i32,
             product: Some(self.product.to_wire()),
-            ..Default::default()
         }
     }
 }

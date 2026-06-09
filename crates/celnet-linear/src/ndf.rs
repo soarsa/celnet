@@ -129,7 +129,7 @@ mod tests {
         ];
         for (s, k, n, side, rd, rf, t) in cases {
             let deliverable = mk(s, k, n, side, rd, rf, t);
-            let ndf = Ndf::new(deliverable, FixingSource::BrlPtax);
+            let ndf = Ndf::new(deliverable.clone(), FixingSource::BrlPtax);
             // Same numeraire, same terms ⇒ byte-identical PV (no separate route).
             assert_eq!(ndf.pv().to_bits(), forward::pv(&deliverable).to_bits());
         }
@@ -140,7 +140,7 @@ mod tests {
     #[test]
     fn fixing_identity_is_metadata_only() {
         let li = mk(5.0, 5.1, 1_000_000.0, Side::Buy, 0.10, 0.05, 0.5);
-        let a = Ndf::new(li, FixingSource::BrlPtax);
+        let a = Ndf::new(li.clone(), FixingSource::BrlPtax);
         let b = Ndf::new(li, FixingSource::InrRbiRef);
         assert_eq!(a.pv().to_bits(), b.pv().to_bits());
         assert_eq!(a.fixing(), FixingSource::BrlPtax);

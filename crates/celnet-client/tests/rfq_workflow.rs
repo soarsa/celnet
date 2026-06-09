@@ -19,8 +19,7 @@ use std::time::Duration;
 
 use celnet_client::{
     BarrierKind as SdkBarrierKind, BarrierSide as SdkBarrierSide, BarrierTerms, Conventions,
-    DigitalTerms, DoubleBarrierTerms, InstrumentSpec, Quantity, Side, StrikeSpec, TouchKind,
-    vocab::Product,
+    DigitalTerms, DoubleBarrierTerms, InstrumentSpec, Quantity, Side, StrikeSpec,
 };
 use celnet_core::is_close;
 use celnet_exotics::{
@@ -39,20 +38,14 @@ use common::{
 /// Build a 1Y EURUSD double-no-touch with a `[lower, upper]` corridor and a
 /// rebate, in the typed SDK vocabulary.
 fn dnt(lower: f64, upper: f64, rebate: f64) -> InstrumentSpec {
-    InstrumentSpec {
-        pair: eurusd(),
-        tenor: Tenor::Years(1),
-        expiry_years: 1.0,
-        quantity: Quantity::base(1_000_000.0),
-        side: Side::TwoWay,
-        pricing_model: celnet_client::PricingModel::Default,
-        product: Product::Touch {
-            kind: TouchKind::DoubleNoTouch,
-            lower,
-            upper,
-            rebate,
-        },
-    }
+    InstrumentSpec::double_no_touch(
+        eurusd(),
+        Tenor::Years(1),
+        1.0,
+        Quantity::base(1_000_000.0),
+        Side::TwoWay,
+        celnet_client::TouchTerms::double_no_touch(lower, upper, rebate),
+    )
 }
 
 /// Scenario 2: a taker requests a quote on a double-no-touch, the quoted two-way

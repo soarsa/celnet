@@ -101,6 +101,16 @@ export const ALL_FAMILIES = [
   "fx_forward",
   "fx_swap",
   "ndf",
+  // Cross-asset vanilla underlyings (W1 `Underlying` oneof). The frozen golden
+  // vectors the Rust cross-asset leaf lanes produce carry the GENERALIZED carry
+  // (`q`/`repo`/`funding`/`convenience`) the FX-two-rate WS price path does not yet
+  // transport, so these are NOT exposed by the FX-WS Excel corpus path (declared in
+  // `FAMILIES_NOT_EXPOSED`); the add-in DOES shape them onto the wire (the cross-
+  // asset `Underlying` + `settlement_style` shapers, gated by
+  // `crossAssetProducts.test.ts`).
+  "equity_option",
+  "commodity_option",
+  "crypto_option",
 ] as const;
 
 /**

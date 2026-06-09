@@ -7,9 +7,9 @@
 //! option is reported alongside the Greeks. All numerics route through
 //! `celnet-vanilla`; this module only marshals arguments and formats output.
 
-use celnet_types::{AtmConvention, DeltaConvention, Greeks, OptionType};
+use celnet_types::{AtmConvention, DeltaConvention, Greeks, OptionType, SettlementStyle};
 
-use crate::args::Market;
+use crate::args::{CliAsset, Market};
 
 /// How the strike is determined for a `price` run.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -104,9 +104,21 @@ pub(crate) fn run(
     })
 }
 
-/// Render a [`PriceResult`] as a stable, aligned key/value report.
+/// Render a [`PriceResult`] as a stable, aligned key/value report, headed by the
+/// asset class, the underlying identifier, and the settlement style. The vanilla
+/// option payoff is the asset-class-agnostic generalized-BSM / Garman-Kohlhagen
+/// closed form over the carry-producing market (ADR-0008): the asset class is
+/// contract identity, so the priced numbers are the same against the same market
+/// inputs regardless of class. The `price` line is keyed exactly like every other
+/// CLI report so the conformance harness parses it identically.
 #[must_use]
-pub(crate) fn format_report(option: OptionType, r: &PriceResult) -> String {
+pub(crate) fn format_report_for(
+    option: OptionType,
+    asset: CliAsset,
+    underlying: &str,
+    settlement: SettlementStyle,
+    r: &PriceResult,
+) -> String {
     let g = &r.greeks;
     let mut out = String::new();
     let side = match option {
@@ -114,6 +126,13 @@ pub(crate) fn format_report(option: OptionType, r: &PriceResult) -> String {
         OptionType::Put => "put",
     };
     out.push_str(&format!("vanilla {side}\n"));
+    out.push_str(&format!("  asset           {}\n", asset.label()));
+    out.push_str(&format!("  underlying      {underlying}\n"));
+    let settle = match settlement {
+        SettlementStyle::Linear => "linear",
+        SettlementStyle::InverseCoin => "inverse-coin",
+    };
+    out.push_str(&format!("  settlement      {settle}\n"));
     out.push_str(&format!("  strike          {:.10}\n", r.strike));
     out.push_str(&format!("  price           {:.10}\n", g.price));
     out.push_str(&format!("  delta_spot      {:.10}\n", g.delta_spot));

@@ -1,6 +1,6 @@
 //! Gate for the runnable SDK quickstart examples (`examples/quote_and_trade.rs`,
 //! `examples/stream_blotter.rs`, `examples/price_exotic.rs`,
-//! `examples/price_linear.rs`).
+//! `examples/price_linear.rs`, `examples/price_cross_asset.rs`).
 //!
 //! The examples themselves are the canonical onboarding affordance (`cargo run -p
 //! celnet-client --example <x>` against a `demo_edge`); booting two OS processes is

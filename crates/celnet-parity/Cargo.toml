@@ -77,3 +77,16 @@ celnet-xva.workspace = true
 # oracle (the two-zero-coupon-bond DCF route + structural/limit/netting identities
 # that can disagree + a hand-pinned NDF literal), per docs/W2-LINEAR-PLAN.md §3.
 celnet-linear.workspace = true
+# Cross-asset vanilla leaves (the `vanilla` product arm priced through a non-FX
+# `Underlying.ref` arm on the cost-of-carry seam, ADR-0008): generalized-BSM equity,
+# Black-76 commodity, and linear+inverse crypto. The production pricers under test by
+# tests/crossasset.rs, each reconciled to the INDEPENDENT, code-disjoint oracle in
+# `celnet-golden::oracle` (the libm::erf normal-CDF route, disjoint from the leaves'
+# erfc-based norm_cdf) plus model-free checks (put-call parity, q=0/b=0 limits,
+# central-FD Greeks). Depended on via `.workspace = true` (the path-dep lint bans a
+# relative path-dep): these three leaves are registered in the central
+# [workspace.dependencies] by the serialized W0/root-Cargo.toml step (lane agents do
+# not edit the root manifest); this lane only consumes the registry entry.
+celnet-equity-vanilla.workspace = true
+celnet-commodity-vanilla.workspace = true
+celnet-crypto-vanilla.workspace = true

@@ -69,7 +69,6 @@ fn call_on(pair: CcyPair, strike: f64) -> celnet_proto::Instrument {
     let mut inst = vanilla_call(strike);
     inst.underlying = Some(celnet_proto::Underlying::fx(wire_pair(pair)));
     inst
-    ..Default::default()
 }
 
 // ---------------------------------------------------------------------------

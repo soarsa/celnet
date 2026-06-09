@@ -493,9 +493,7 @@ impl Underlying {
         match self {
             Underlying::Fx(p) => Some(*p),
             Underlying::Metal(m) => Some(m.as_ccy_pair()),
-            Underlying::Equity(_)
-            | Underlying::Commodity(_)
-            | Underlying::DigitalAsset(_) => None,
+            Underlying::Equity(_) | Underlying::Commodity(_) | Underlying::DigitalAsset(_) => None,
         }
     }
 }

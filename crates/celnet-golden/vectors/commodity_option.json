@@ -1,0 +1,89 @@
+[
+  {
+    "id": "commodity-future-atm-call-f20k20",
+    "family": "commodity_option",
+    "underlying": "WTI",
+    "tenor": "4M",
+    "market": {
+      "spot": 20.0,
+      "vol": 0.25,
+      "r_dom": 0.09,
+      "r_for": 0.09
+    },
+    "terms": {
+      "expiry_years": 0.3333333333333333,
+      "option_type": "CALL",
+      "strike": 20.0,
+      "representation": "FUTURE",
+      "r": 0.09,
+      "convenience": 0.0
+    },
+    "expected": {
+      "price": 1.1166414565589438,
+      "price_std_error": null,
+      "oracle": "independent Black-76 (1976) via libm::erf on the futures price F=20 (b=0); matches Hull worked futures-option example"
+    },
+    "tolerance": {
+      "rel": 1e-9,
+      "abs": 1e-9
+    }
+  },
+  {
+    "id": "commodity-future-atm-put-f20k20",
+    "family": "commodity_option",
+    "underlying": "WTI",
+    "tenor": "4M",
+    "market": {
+      "spot": 20.0,
+      "vol": 0.25,
+      "r_dom": 0.09,
+      "r_for": 0.09
+    },
+    "terms": {
+      "expiry_years": 0.3333333333333333,
+      "option_type": "PUT",
+      "strike": 20.0,
+      "representation": "FUTURE",
+      "r": 0.09,
+      "convenience": 0.0
+    },
+    "expected": {
+      "price": 1.1166414565589438,
+      "price_std_error": null,
+      "oracle": "independent Black-76 via libm::erf on F=20; ATM (F=K) put equals the call by Black-76 symmetry"
+    },
+    "tolerance": {
+      "rel": 1e-9,
+      "abs": 1e-9
+    }
+  },
+  {
+    "id": "commodity-spot-convenience-call-s100k98",
+    "family": "commodity_option",
+    "underlying": "GOLD",
+    "tenor": "6M",
+    "market": {
+      "spot": 100.0,
+      "vol": 0.28,
+      "r_dom": 0.05,
+      "r_for": 0.02
+    },
+    "terms": {
+      "expiry_years": 0.5,
+      "option_type": "CALL",
+      "strike": 98.0,
+      "representation": "SPOT",
+      "r": 0.05,
+      "convenience": 0.02
+    },
+    "expected": {
+      "price": 9.505128029204576,
+      "price_std_error": null,
+      "oracle": "independent Black-76 via libm::erf on the implied forward F=S*e^{(r-convenience)t}=101.5113..., b=r-convenience=0.03"
+    },
+    "tolerance": {
+      "rel": 1e-9,
+      "abs": 1e-9
+    }
+  }
+]

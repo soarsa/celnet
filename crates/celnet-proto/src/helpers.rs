@@ -12,8 +12,8 @@
 //! introduced; this is pure (de)structuring of the wire message.
 
 use crate::{
-    CarryModel, CcyPair, CommodityRef, CryptoPair, EquityRef, FxRates, Greeks, MarketContext, Metal,
-    MetalPair, RateSensitivities, Symbol, Underlying, VanillaInputs, carry_model,
+    CarryModel, CcyPair, CommodityRef, CryptoPair, EquityRef, FxRates, Greeks, MarketContext,
+    Metal, MetalPair, RateSensitivities, Symbol, Underlying, VanillaInputs, carry_model,
     rate_sensitivities, underlying,
 };
 

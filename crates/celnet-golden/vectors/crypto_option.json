@@ -1,0 +1,118 @@
+[
+  {
+    "id": "crypto-linear-call-btc-30000k31000",
+    "family": "crypto_option",
+    "underlying": "BTCUSD",
+    "tenor": "6M",
+    "market": {
+      "spot": 30000.0,
+      "vol": 0.65,
+      "r_dom": 0.05,
+      "r_for": 0.02
+    },
+    "terms": {
+      "expiry_years": 0.5,
+      "option_type": "CALL",
+      "strike": 31000.0,
+      "settlement_style": "LINEAR",
+      "r": 0.05,
+      "funding": 0.02
+    },
+    "expected": {
+      "price": 5184.455693284908,
+      "price_std_error": null,
+      "oracle": "independent linear-crypto generalized-BSM via libm::erf in forward space, b=r-funding; USD per USD-notional-1"
+    },
+    "tolerance": {
+      "rel": 1e-9,
+      "abs": 1e-9
+    }
+  },
+  {
+    "id": "crypto-linear-put-btc-30000k31000",
+    "family": "crypto_option",
+    "underlying": "BTCUSD",
+    "tenor": "6M",
+    "market": {
+      "spot": 30000.0,
+      "vol": 0.65,
+      "r_dom": 0.05,
+      "r_for": 0.02
+    },
+    "terms": {
+      "expiry_years": 0.5,
+      "option_type": "PUT",
+      "strike": 31000.0,
+      "settlement_style": "LINEAR",
+      "r": 0.05,
+      "funding": 0.02
+    },
+    "expected": {
+      "price": 5717.567953688182,
+      "price_std_error": null,
+      "oracle": "independent linear-crypto generalized-BSM via libm::erf, b=r-funding; USD per USD-notional-1"
+    },
+    "tolerance": {
+      "rel": 1e-9,
+      "abs": 1e-9
+    }
+  },
+  {
+    "id": "crypto-inverse-call-btc-30000k31000",
+    "family": "crypto_option",
+    "underlying": "BTCUSD",
+    "tenor": "6M",
+    "market": {
+      "spot": 30000.0,
+      "vol": 0.65,
+      "r_dom": 0.05,
+      "r_for": 0.02
+    },
+    "terms": {
+      "expiry_years": 0.5,
+      "option_type": "CALL",
+      "strike": 31000.0,
+      "settlement_style": "INVERSE_COIN",
+      "r": 0.05,
+      "funding": 0.02
+    },
+    "expected": {
+      "price": 0.09835519529197453,
+      "price_std_error": null,
+      "oracle": "independent inverse/coin-margined closed form V_coin=phi*df*[Phi(phi*d2)-(K/F)*e^{sigma^2 t}*Phi(phi*d3)] via libm::erf; COINS per USD-notional-1 (not V_lin/S0)"
+    },
+    "tolerance": {
+      "rel": 1e-9,
+      "abs": 1e-9
+    }
+  },
+  {
+    "id": "crypto-inverse-put-btc-30000k31000",
+    "family": "crypto_option",
+    "underlying": "BTCUSD",
+    "tenor": "6M",
+    "market": {
+      "spot": 30000.0,
+      "vol": 0.65,
+      "r_dom": 0.05,
+      "r_for": 0.02
+    },
+    "terms": {
+      "expiry_years": 0.5,
+      "option_type": "PUT",
+      "strike": 31000.0,
+      "settlement_style": "INVERSE_COIN",
+      "r": 0.05,
+      "funding": 0.02
+    },
+    "expected": {
+      "price": 0.3493922723465317,
+      "price_std_error": null,
+      "oracle": "independent inverse/coin-margined closed form via libm::erf; COINS per USD-notional-1"
+    },
+    "tolerance": {
+      "rel": 1e-9,
+      "abs": 1e-9
+    }
+  }
+]

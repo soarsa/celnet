@@ -944,6 +944,170 @@ pub fn basket_mc(
     }
 }
 
+// ===========================================================================
+// Cross-asset closed-form oracles (equity / commodity / crypto)
+// ===========================================================================
+//
+// These price the SAME `vanilla` product arm of the `celnet.proto` `oneof product`
+// seen through a NON-FX `Underlying.ref` arm (equity / commodity / digital-asset),
+// each routed through the asset-class-agnostic cost-of-carry seam (ADR-0008). The
+// production leaves under test are `celnet-equity-vanilla` (generalized BSM,
+// `b = r − q − repo`), `celnet-commodity-vanilla` (Black-76, `b = 0` on a future /
+// `b = r − convenience` on spot) and `celnet-crypto-vanilla` (linear funded BSM +
+// the inverse / coin-margined `1/S_T` closed form).
+//
+// ## Why these oracles are CODE-DISJOINT from the leaves (anti-circular rule)
+//
+// The leaves compute the normal CDF via `celnet_core::math::norm_cdf`, which is
+// `½·erfc(−x/√2)` over **`libm::erfc`**. The oracles below deliberately route the
+// normal CDF through a DIFFERENT special function — `½·(1 + erf(x/√2))` over
+// **`libm::erf`** — and call `libm::{exp,log,sqrt}` directly rather than the
+// `celnet_core::math` wrappers. `erf` and `erfc` are independent library routines
+// (different polynomial/rational branches; `erfc` is *not* internally `1 − erf`
+// in the deep tail), so a closed form built on `xerf` shares no arithmetic with the
+// production `norm_cdf` path — exactly the independence the FRTB-0.75ρ
+// circular-oracle lesson requires. The closed-form algebra itself is re-derived
+// here from each model's primary source (Merton 1973 / Black 1976 / the `1/S_T`
+// risk-neutral expectation), not read back from any leaf crate (`celnet-golden`
+// does not depend on the equity/commodity/crypto leaves).
+
+/// Standard-normal CDF via the **erf** route `½·(1 + erf(x/√2))` — deliberately a
+/// DIFFERENT special function than the production `norm_cdf` (which is
+/// `½·erfc(−x/√2)` over `erfc`), so the cross-asset oracle is code-disjoint from
+/// the leaves under test.
+#[inline]
+#[must_use]
+pub fn xerf_norm_cdf(x: f64) -> f64 {
+    0.5 * (1.0 + libm::erf(x * std::f64::consts::FRAC_1_SQRT_2))
+}
+
+/// **Generalized Black-Scholes-Merton (Merton 1973) equity vanilla** present value,
+/// re-derived independently of `celnet-equity-vanilla`. The net cost of carry is
+/// `b = r − q − repo`; the forward is `F = S·e^{b·t}`, the discount `e^{−r·t}`:
+///
+/// ```text
+/// d1 = [ln(S/K) + (b + ½σ²)·t] / (σ√t),   d2 = d1 − σ√t
+/// Call = S·e^{(b−r)t}·Φ(d1) − K·e^{−r t}·Φ(d2)
+/// Put  = K·e^{−r t}·Φ(−d2) − S·e^{(b−r)t}·Φ(−d1)
+/// ```
+///
+/// `Φ` is the **erf-route** CDF [`xerf_norm_cdf`]; `exp`/`ln`/`sqrt` are called on
+/// `libm` directly. Code-disjoint from the leaf's `erfc`-route arithmetic.
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn equity_bsm_price(
+    cp: Cp,
+    spot: f64,
+    strike: f64,
+    vol: f64,
+    t: f64,
+    r: f64,
+    q: f64,
+    repo: f64,
+) -> f64 {
+    let b = r - q - repo;
+    if t <= 0.0 {
+        return (cp.sign() * (spot - strike)).max(0.0);
+    }
+    let vsqt = vol * libm::sqrt(t);
+    let d1 = (libm::log(spot / strike) + (b + 0.5 * vol * vol) * t) / vsqt;
+    let d2 = d1 - vsqt;
+    let s_disc = spot * libm::exp((b - r) * t);
+    let k_disc = strike * libm::exp(-r * t);
+    match cp {
+        Cp::Call => s_disc * xerf_norm_cdf(d1) - k_disc * xerf_norm_cdf(d2),
+        Cp::Put => k_disc * xerf_norm_cdf(-d2) - s_disc * xerf_norm_cdf(-d1),
+    }
+}
+
+/// **Black-76 (1976) commodity option** present value on a forward/future `f`,
+/// re-derived independently of `celnet-commodity-vanilla`. Black's model is the
+/// `b = 0` degenerate of generalized BSM under the futures measure:
+///
+/// ```text
+/// d1 = [ln(F/K) + ½σ²·t] / (σ√t),   d2 = d1 − σ√t
+/// Call = e^{−r t}·[ F·Φ(d1) − K·Φ(d2) ]
+/// Put  = e^{−r t}·[ K·Φ(−d2) − F·Φ(−d1) ]
+/// ```
+///
+/// The caller passes the **forward** `f` directly (for a listed future this is the
+/// futures price; for the spot representation it is `S·e^{b·t}`), so this oracle is
+/// reached by a route that never re-forms the leaf's `spot · forward_factor(t)`.
+/// `Φ` is the erf-route CDF; transcendentals via `libm` directly.
+#[must_use]
+pub fn black76_price(cp: Cp, f: f64, strike: f64, vol: f64, t: f64, r: f64) -> f64 {
+    if t <= 0.0 {
+        return libm::exp(-r * t) * (cp.sign() * (f - strike)).max(0.0);
+    }
+    let vsqt = vol * libm::sqrt(t);
+    let d1 = (libm::log(f / strike) + 0.5 * vol * vol * t) / vsqt;
+    let d2 = d1 - vsqt;
+    let df = libm::exp(-r * t);
+    match cp {
+        Cp::Call => df * (f * xerf_norm_cdf(d1) - strike * xerf_norm_cdf(d2)),
+        Cp::Put => df * (strike * xerf_norm_cdf(-d2) - f * xerf_norm_cdf(-d1)),
+    }
+}
+
+/// **Linear (USD-margined) crypto vanilla** present value (USD per USD-notional-1),
+/// re-derived independently of `celnet-crypto-vanilla::linear`. The funding carry is
+/// `b = r − funding`; this is the generalized-BSM forward-space form, written here
+/// in forward space `df·[F·Φ(d1) − K·Φ(d2)]` (NOT the leaf's spot-space
+/// `S·e^{−r_for t}·Φ(d1) − K·e^{−r_dom t}·Φ(d2)` operation order), with the
+/// erf-route CDF — a genuinely different rounding path than the leaf, which is
+/// itself `to_bits`-tied to the FX leaf.
+#[must_use]
+pub fn crypto_linear_price(
+    cp: Cp,
+    spot: f64,
+    strike: f64,
+    vol: f64,
+    t: f64,
+    r: f64,
+    funding: f64,
+) -> f64 {
+    let b = r - funding;
+    let f = spot * libm::exp(b * t);
+    black76_price(cp, f, strike, vol, t, r)
+}
+
+/// **Inverse / coin-margined crypto vanilla** present value (COINS per
+/// USD-notional-1), re-derived independently of `celnet-crypto-vanilla::inverse`
+/// from the USD risk-neutral expectation of the `1/S_T`-weighted payoff
+/// `df·max(φ(S_T−K),0)/S_T`. The funding carry is `b = r − funding`,
+/// `F = S·e^{b·t}`, `df = e^{−r·t}`:
+///
+/// ```text
+/// d1 = [ln(F/K) + ½σ²t]/(σ√t),  d2 = d1 − σ√t,  d3 = d1 − 2σ√t
+/// V_coin = φ·df·[ Φ(φ·d2) − (K/F)·e^{σ²t}·Φ(φ·d3) ]   coins.
+/// ```
+///
+/// This is the genuine non-linear convexity transform (the `e^{σ²t}` measure
+/// factor and the doubly-shifted `Φ(d3)`), NOT a `V_lin/S₀` rescale. `Φ` is the
+/// erf-route CDF; transcendentals via `libm` directly. Code-disjoint from the leaf.
+#[must_use]
+pub fn crypto_inverse_price(
+    cp: Cp,
+    spot: f64,
+    strike: f64,
+    vol: f64,
+    t: f64,
+    r: f64,
+    funding: f64,
+) -> f64 {
+    let b = r - funding;
+    let f = spot * libm::exp(b * t);
+    let df = libm::exp(-r * t);
+    let s2t = vol * vol * t;
+    let vsqt = vol * libm::sqrt(t);
+    let d1 = (libm::log(f / strike) + 0.5 * s2t) / vsqt;
+    let d2 = d1 - vsqt;
+    let d3 = d1 - 2.0 * vsqt;
+    let amp = (strike / f) * libm::exp(s2t); // (K/F)·e^{σ²t}
+    let phi = cp.sign();
+    phi * df * (xerf_norm_cdf(phi * d2) - amp * xerf_norm_cdf(phi * d3))
+}
+
 /// Lower-triangular Cholesky factor `L` of a symmetric positive-definite matrix
 /// (`A = L·Lᵀ`).
 ///

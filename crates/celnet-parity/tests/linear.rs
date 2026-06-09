@@ -488,7 +488,7 @@ fn ndf_pv_equals_deliverable_forward_pv() {
 #[test]
 fn ndf_fixing_identity_is_metadata_only() {
     let inp = outright("USDBRL", 5.0, 5.1, 1_000_000.0, Side::Buy, 0.10, 0.05, 0.5);
-    let a = Ndf::new(inp, FixingSource::BrlPtax);
+    let a = Ndf::new(inp.clone(), FixingSource::BrlPtax);
     let b = Ndf::new(inp, FixingSource::InrRbiRef);
     assert_eq!(a.pv().to_bits(), b.pv().to_bits());
     assert_eq!(a.fixing(), FixingSource::BrlPtax);

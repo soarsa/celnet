@@ -35,6 +35,7 @@ import { lookbackSpec } from "./lookback";
 import { windowBarrierSpec } from "./windowBarrier";
 import { americanSpec } from "./american";
 import { basketSpec } from "./basket";
+import { crossAssetSpec } from "./crossAsset";
 
 export type {
   AnyProductSpec,
@@ -83,6 +84,9 @@ export const PRODUCT_REGISTRY: readonly AnyProductSpec[] = [
   windowBarrierSpec,
   americanSpec,
   basketSpec,
+  // Cross-asset (equity / commodity / crypto / metal) vanilla over the W1
+  // `Underlying` oneof + settlement-style seam.
+  crossAssetSpec,
 ];
 
 /** Look up a product spec by its structure id, or `undefined` if not registered. */

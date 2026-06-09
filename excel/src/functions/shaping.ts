@@ -28,10 +28,13 @@ import type {
   BasketOption,
   CcyPair,
   Cliquet,
+  CommodityRef,
   Conventions,
+  CryptoPair,
   Digital,
   DigitalStyle,
   DoubleBarrier,
+  EquityRef,
   ExerciseStyle,
   FixingSchedule,
   FixingSource,
@@ -42,11 +45,14 @@ import type {
   LookbackMonitoring,
   LookbackStyle,
   MarketObservable,
+  Metal,
+  MetalPair,
   MonitoringStyle,
   OptionType,
   PricingModel,
   Product,
   QuantoPayoff,
+  SettlementStyle,
   Side,
   SingleBarrier,
   SmileModel,
@@ -57,6 +63,7 @@ import type {
   TenorUnit,
   Touch,
   TouchKind,
+  Underlying,
   WindowBarrier,
 } from "../contract/contract";
 import type {
@@ -780,6 +787,272 @@ export function shapeNdf(args: NdfArgs): Instrument {
       },
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// cross-asset underlyings — equity / commodity / digital-asset (crypto) vanillas
+// on the ONE wire contract's `Underlying` oneof + `settlement_style`
+// ---------------------------------------------------------------------------
+
+/**
+ * The ISO-4217 "X"-prefixed asset code each precious {@link Metal} projects to,
+ * so a metal pair overlaps the FX `CcyPair` encoding byte-for-byte on the metal
+ * leg (the convention/calendar registries key on the X-code base).
+ */
+const METAL_ISO_CODE: Record<Metal, string> = {
+  GOLD: "XAU",
+  SILVER: "XAG",
+  PLATINUM: "XPT",
+  PALLADIUM: "XPD",
+};
+
+/**
+ * Parse a precious-metal token (a metal name, its ISO "X"-code, or the wire
+ * member) into the canonical {@link Metal}. Case-insensitive.
+ */
+export function shapeMetal(raw: string): Metal {
+  const t = raw.trim().toUpperCase();
+  switch (t) {
+    case "GOLD":
+    case "XAU":
+      return "GOLD";
+    case "SILVER":
+    case "XAG":
+      return "SILVER";
+    case "PLATINUM":
+    case "XPT":
+      return "PLATINUM";
+    case "PALLADIUM":
+    case "XPD":
+      return "PALLADIUM";
+    default:
+      throw new ShapingError(
+        `invalid metal \`${raw}\` (expected GOLD/XAU, SILVER/XAG, PLATINUM/XPT, PALLADIUM/XPD)`,
+      );
+  }
+}
+
+/**
+ * Parse the contract settlement mechanics (proto `SettlementStyle`). LINEAR
+ * (quote-ccy-margined) is the default; INVERSE_COIN is the coin-margined `1/S_T`
+ * digital-asset convention. Case-insensitive; accepts `INVERSE`/`COIN` aliases.
+ */
+export function shapeSettlementStyle(raw: string | undefined): SettlementStyle {
+  const t = (raw ?? "LINEAR").trim().toUpperCase().replace(/[._\s]/g, "");
+  switch (t) {
+    case "LINEAR":
+      return "LINEAR";
+    case "INVERSECOIN":
+    case "INVERSE":
+    case "COIN":
+      return "INVERSE_COIN";
+    default:
+      throw new ShapingError(
+        `invalid settlement style \`${raw}\` (expected LINEAR or INVERSE_COIN)`,
+      );
+  }
+}
+
+/** Validate a strictly-positive vanilla notional (cross-asset shapes share this). */
+function shapeCrossAssetNotional(raw: number): number {
+  if (!Number.isFinite(raw) || raw <= 0) {
+    throw new ShapingError(`invalid notional \`${raw}\` (must be positive)`);
+  }
+  return raw;
+}
+
+/** Build the FX `pair` leg-string projection an `Underlying` overlays onto the instrument. */
+function underlyingPairProjection(u: Underlying): CcyPair {
+  switch (u.kind) {
+    case "fx":
+      return u.fx;
+    case "metal":
+      return { base: METAL_ISO_CODE[u.metal.metal], quote: u.metal.quote };
+    case "equity":
+      return { base: u.equity.symbol.ticker, quote: u.equity.currency };
+    case "commodity":
+      return { base: u.commodity.symbol.ticker, quote: u.commodity.currency };
+    case "digitalAsset":
+      return { base: u.digitalAsset.base, quote: u.digitalAsset.quote };
+  }
+}
+
+/**
+ * Shape a cross-asset vanilla instrument over an arbitrary {@link Underlying} arm:
+ * the `underlying` oneof carries the asset-class identity, the FX `pair`
+ * leg-string projection keeps the FX-keyed surfaces total, and `settlementStyle`
+ * carries the linear/inverse contract mechanics (INVERSE_COIN is meaningful only
+ * for a digital-asset underlying). `side` is TWO_WAY (a cell reads a market, not a
+ * directional ticket). The notional is in the base/asset leg.
+ */
+function shapeCrossAssetVanilla(
+  underlying: Underlying,
+  args: CrossAssetVanillaArgs,
+  settlementStyle: SettlementStyle,
+): Instrument {
+  const { tenor, expiryYears } = parseTenor(args.tenor);
+  const instrument: Instrument = {
+    pair: underlyingPairProjection(underlying),
+    underlying,
+    tenor,
+    expiryYears,
+    quantity: { notional: shapeCrossAssetNotional(args.notional), baseCcy: true },
+    side: "TWO_WAY" as Side,
+    product: {
+      kind: "vanilla",
+      vanilla: {
+        optionType: parseOptionType(args.callPut),
+        strike: parseStrikeOrDelta(args.strikeOrDelta),
+      },
+    },
+  };
+  // LINEAR is the proto3 zero default — presence-omit it so an FX/linear frame is
+  // byte-identical to the contract before the field existed.
+  if (settlementStyle !== "LINEAR") instrument.settlementStyle = settlementStyle;
+  return instrument;
+}
+
+/** Cell arguments shared by every cross-asset vanilla (equity / commodity / crypto). */
+export interface CrossAssetVanillaArgs {
+  readonly tenor: string;
+  readonly strikeOrDelta: string | number;
+  readonly callPut: string;
+  readonly notional: number;
+}
+
+/** Cell arguments for an equity (single-name / index) vanilla. */
+export interface EquityVanillaArgs extends CrossAssetVanillaArgs {
+  readonly ticker: string;
+  readonly currency: string;
+  readonly venue?: string | undefined;
+}
+
+/**
+ * Shape an equity (single-name or index) vanilla — proto `Underlying.equity`
+ * (oneof field 4), priced through the generalized cost-of-carry seam
+ * (dividend yield as carry `b`). Quote-ccy-margined (LINEAR) settlement.
+ */
+export function shapeEquityVanilla(args: EquityVanillaArgs): Instrument {
+  const ticker = args.ticker.trim().toUpperCase();
+  if (ticker.length === 0) throw new ShapingError("equity ticker is required");
+  const currency = args.currency.trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(currency)) {
+    throw new ShapingError(`invalid equity currency \`${args.currency}\` (expected a 3-letter code)`);
+  }
+  const equity: EquityRef = {
+    symbol: { ticker, venue: (args.venue ?? "").trim().toUpperCase() },
+    currency,
+  };
+  return shapeCrossAssetVanilla(
+    { kind: "equity", equity, settlementCcy: currency },
+    args,
+    "LINEAR",
+  );
+}
+
+/** Cell arguments for a commodity vanilla. */
+export interface CommodityVanillaArgs extends CrossAssetVanillaArgs {
+  readonly symbol: string;
+  readonly currency: string;
+  readonly venue?: string | undefined;
+}
+
+/**
+ * Shape a commodity vanilla — proto `Underlying.commodity` (oneof field 5),
+ * priced through the generalized cost-of-carry seam (storage/convenience yield as
+ * carry `b`). Quote-ccy-margined (LINEAR) settlement.
+ */
+export function shapeCommodityVanilla(args: CommodityVanillaArgs): Instrument {
+  const ticker = args.symbol.trim().toUpperCase();
+  if (ticker.length === 0) throw new ShapingError("commodity symbol is required");
+  const currency = args.currency.trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(currency)) {
+    throw new ShapingError(
+      `invalid commodity currency \`${args.currency}\` (expected a 3-letter code)`,
+    );
+  }
+  const commodity: CommodityRef = {
+    symbol: { ticker, venue: (args.venue ?? "").trim().toUpperCase() },
+    currency,
+  };
+  return shapeCrossAssetVanilla(
+    { kind: "commodity", commodity, settlementCcy: currency },
+    args,
+    "LINEAR",
+  );
+}
+
+/** Cell arguments for a digital-asset (crypto) vanilla. */
+export interface CryptoVanillaArgs extends CrossAssetVanillaArgs {
+  readonly pair: string;
+  /** LINEAR (USD/stablecoin-margined) or INVERSE_COIN (coin-margined `1/S_T`). */
+  readonly settlementStyle?: string | undefined;
+}
+
+/**
+ * Parse a crypto pair string (`"BTC-USD"`, `"BTC/USDT"`, `"BTCUSD"` where the
+ * quote is a known fiat/stablecoin) into a {@link CryptoPair}. Crypto tickers are
+ * NOT constrained to the 3-letter ISO shape, so an explicit separator is the
+ * unambiguous form; a separatorless string is split on a trailing known quote.
+ */
+export function parseCryptoPair(raw: string): CryptoPair {
+  const s = raw.trim().toUpperCase();
+  const sep = /[-/_]/.exec(s);
+  if (sep) {
+    const [base, quote] = s.split(/[-/_]/, 2);
+    if (base && quote) return { base, quote };
+  }
+  // Separatorless: peel a trailing known numeraire (fiat or common stablecoin).
+  for (const q of ["USDT", "USDC", "USD", "EUR", "BTC", "ETH"]) {
+    if (s.length > q.length && s.endsWith(q)) {
+      return { base: s.slice(0, s.length - q.length), quote: q };
+    }
+  }
+  throw new ShapingError(
+    `invalid crypto pair \`${raw}\` (expected e.g. BTC-USD, ETH/USDT, BTCUSD)`,
+  );
+}
+
+/**
+ * Shape a digital-asset (crypto) vanilla — proto `Underlying.digital_asset`
+ * (oneof field 6). LINEAR (USD/stablecoin-margined) is the default; INVERSE_COIN
+ * is the coin-margined `1/S_T` (base-coin-denominated) convention, carried on
+ * `Instrument.settlement_style` (field 29) — the inverse-perpetual desk's payoff.
+ */
+export function shapeCryptoVanilla(args: CryptoVanillaArgs): Instrument {
+  const digitalAsset = parseCryptoPair(args.pair);
+  const settlementStyle = shapeSettlementStyle(args.settlementStyle);
+  return shapeCrossAssetVanilla(
+    { kind: "digitalAsset", digitalAsset, settlementCcy: digitalAsset.quote },
+    args,
+    settlementStyle,
+  );
+}
+
+/**
+ * Shape a precious-metal vanilla — proto `Underlying.metal` (oneof field 3). The
+ * metal is the base/asset leg; the FX `pair` projection uses the metal's ISO
+ * "X"-code so the convention/calendar registries (keyed on the X-code base) stay
+ * total. Quote-ccy-margined (LINEAR) settlement.
+ */
+export function shapeMetalVanilla(args: MetalVanillaArgs): Instrument {
+  const metal = shapeMetal(args.metal);
+  const quote = args.quote.trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(quote)) {
+    throw new ShapingError(`invalid metal quote \`${args.quote}\` (expected a 3-letter code)`);
+  }
+  const metalPair: MetalPair = { metal, quote };
+  return shapeCrossAssetVanilla(
+    { kind: "metal", metal: metalPair, settlementCcy: quote },
+    args,
+    "LINEAR",
+  );
+}
+
+/** Cell arguments for a precious-metal vanilla. */
+export interface MetalVanillaArgs extends CrossAssetVanillaArgs {
+  readonly metal: string;
+  readonly quote: string;
 }
 
 /** The fully-parsed inputs an Asian CELNET.* function shapes into a request. */

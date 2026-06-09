@@ -94,6 +94,48 @@ const FAMILY_TO_PARITY_FILE = {
   ndf: 'linear.rs', //  NDF PV hand-derived literal + NDF==deliverable-forward-PV identity + independent two-bond DCF + fixing-is-metadata-only honesty gate
 };
 
+/*
+ * Curated cross-asset OPTION family → parity file map.
+ *
+ * The `vanilla` product arm priced through a NON-FX `Underlying.ref` arm (equity /
+ * commodity / digital-asset) is a distinct ASSET-CLASS family of the one contract —
+ * a different pricing engine on the cost-of-carry seam (ADR-0008), NOT a new
+ * `oneof product` arm. The verification contract still requires BOTH a golden vector
+ * and an independent-oracle parity row for each, so this lint enforces them as a
+ * SECOND, proto-driven pass keyed off the `Underlying.ref` oneof (below), exactly
+ * like the product-arm pass — no weakening, just a second axis the contract demands.
+ *
+ * The KEYS are the `<assetClass>_option` family names; the proto `Underlying.ref`
+ * arm field names they are DERIVED from are listed in CROSS_ASSET_REF_TO_FAMILY so
+ * the set stays driven by the proto (a new non-FX underlying arm forces a new entry
+ * here, or the lint fails — it can never be silently bypassed).
+ */
+const CROSS_ASSET_FAMILY_TO_PARITY_FILE = {
+  equity_option: 'crossasset.rs', //  generalized-BSM (b=r−q−repo) vs independent libm::erf oracle + put-call parity + q=0 standard-BSM limit + central-FD delta/vega/dividend-rho
+  commodity_option: 'crossasset.rs', //  Black-76 (future b=0 / spot b=r−convenience) vs independent libm::erf oracle on the forward + parity + b=0 flat-forward limit + central-FD greeks
+  crypto_option: 'crossasset.rs', //  linear funded-BSM + inverse coin-margined 1/S_T closed form vs independent libm::erf oracle + parity + b=0 limit + signed convexity sandwich + central-FD greeks
+};
+
+/*
+ * Map from the proto `Underlying.ref` oneof arm field name → the `<assetClass>_option`
+ * family key. FX (and the metal arm, which projects byte-identically onto a CcyPair
+ * and is priced by the SAME FX engine) are excluded: they ARE the FX `vanilla`
+ * product family already covered by the product-arm pass. Every OTHER `Underlying.ref`
+ * arm is a distinct asset-class option family that MUST carry its own vector + row.
+ *
+ * To add a NEW cross-asset underlying: add its `Underlying.ref` arm in the proto,
+ * its `<asset>_option.json` vector, its parity row, then ONE entry here and ONE in
+ * CROSS_ASSET_FAMILY_TO_PARITY_FILE. The lint then keeps it honest forever.
+ */
+const CROSS_ASSET_REF_TO_FAMILY = {
+  equity: 'equity_option',
+  commodity: 'commodity_option',
+  digital_asset: 'crypto_option',
+};
+
+/* The `Underlying.ref` arms that are FX-engine-equivalent (NOT a separate family). */
+const FX_EQUIVALENT_REFS = new Set(['fx', 'metal']);
+
 /**
  * Parse the `oneof product { ... }` block inside `message Instrument` and return
  * the ordered list of arm field names (snake_case = family key).
@@ -156,6 +198,87 @@ function extractProductArms(protoText) {
   }
   if (arms.length === 0) throw new Error('parsed zero arms from `oneof product` — parser/proto drift');
   return arms;
+}
+
+/**
+ * Parse the `oneof ref { ... }` block inside `message Underlying` and return the
+ * ordered list of arm field names (the asset-class discriminators). Brace-matched,
+ * comment-stripped — the same robust parse `extractProductArms` uses.
+ */
+function extractUnderlyingRefArms(protoText) {
+  const msgIdx = protoText.search(/\bmessage\s+Underlying\s*\{/);
+  if (msgIdx < 0) throw new Error('could not find `message Underlying` in celnet.proto');
+  let depth = 0;
+  let bodyStart = -1;
+  let bodyEnd = -1;
+  for (let i = protoText.indexOf('{', msgIdx); i < protoText.length; i++) {
+    const ch = protoText[i];
+    if (ch === '{') {
+      if (depth === 0) bodyStart = i + 1;
+      depth++;
+    } else if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        bodyEnd = i;
+        break;
+      }
+    }
+  }
+  if (bodyStart < 0 || bodyEnd < 0) throw new Error('unbalanced braces in `message Underlying`');
+  const body = protoText.slice(bodyStart, bodyEnd);
+
+  const oneofIdx = body.search(/\boneof\s+ref\s*\{/);
+  if (oneofIdx < 0) throw new Error('could not find `oneof ref` inside `message Underlying`');
+  let d = 0;
+  let start = -1;
+  let end = -1;
+  for (let i = body.indexOf('{', oneofIdx); i < body.length; i++) {
+    const ch = body[i];
+    if (ch === '{') {
+      if (d === 0) start = i + 1;
+      d++;
+    } else if (ch === '}') {
+      d--;
+      if (d === 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+  if (start < 0 || end < 0) throw new Error('unbalanced braces in `oneof ref`');
+  const noBlockComments = body.slice(start, end).replace(/\/\*[\s\S]*?\*\//g, '');
+  const arms = [];
+  for (const rawLine of noBlockComments.split('\n')) {
+    const line = rawLine.replace(/\/\/.*$/, '').trim();
+    if (line === '') continue;
+    const m = /^[A-Za-z_][A-Za-z0-9_.]*\s+([a-z][a-z0-9_]*)\s*=\s*\d+\s*;/.exec(line);
+    if (m) arms.push(m[1]);
+  }
+  if (arms.length === 0) throw new Error('parsed zero arms from `oneof ref` — parser/proto drift');
+  return arms;
+}
+
+/** Check the parity row for a cross-asset option family. Returns null if OK, else a reason. */
+async function checkCrossAssetParity(family) {
+  const testFile = CROSS_ASSET_FAMILY_TO_PARITY_FILE[family];
+  if (!testFile) {
+    return `no parity row: cross-asset family is unmapped in CROSS_ASSET_FAMILY_TO_PARITY_FILE (a new non-FX Underlying.ref arm MUST add a curated map entry pointing at its celnet-parity row)`;
+  }
+  const abs = path.join(PARITY_TESTS_DIR, testFile);
+  if (!existsSync(abs)) {
+    return `mapped parity test missing on disk: ${path.relative(REPO_ROOT, abs)}`;
+  }
+  const text = await readFile(abs, 'utf8');
+  if (!/#\[test\]/.test(text)) {
+    return `mapped parity test ${testFile} contains no #[test] rows`;
+  }
+  // The file must reference this asset class by its financial stem (e.g.
+  // `equity_option` → `equity`), so a gutted/renamed row is caught, not waved through.
+  const stem = family.replace(/_option$/, '');
+  if (!new RegExp(stem, 'i').test(text)) {
+    return `mapped parity test ${testFile} does not reference family "${family}" (stem "${stem}")`;
+  }
+  return null;
 }
 
 /** Check the golden vector for a family. Returns null if OK, else a reason string. */
@@ -247,29 +370,68 @@ async function main() {
     if (reasons.length) uncovered.push({ family, reasons });
   }
 
-  const checked = arms.length;
+  // SECOND, proto-driven pass: every NON-FX `Underlying.ref` arm is a distinct
+  // asset-class OPTION family of the one contract (the `vanilla` product on a non-FX
+  // underlying), and the verification contract requires BOTH a golden vector and an
+  // independent-oracle parity row for it too. Driven off `message Underlying`'s
+  // `oneof ref` so a new underlying arm cannot ship without its coverage.
+  let refArms;
+  try {
+    refArms = extractUnderlyingRefArms(protoText);
+  } catch (e) {
+    console.error(`check-verification-coverage: FAILED — proto parse error: ${e.message}`);
+    process.exit(1);
+  }
+  const crossAssetFamilies = [];
+  for (const ref of refArms) {
+    if (FX_EQUIVALENT_REFS.has(ref)) continue; // FX/metal = the FX `vanilla` family, already covered.
+    const family = CROSS_ASSET_REF_TO_FAMILY[ref];
+    if (!family) {
+      uncovered.push({
+        family: `${ref} (Underlying.ref)`,
+        reasons: [
+          `cross-asset: non-FX Underlying.ref arm "${ref}" is unmapped in CROSS_ASSET_REF_TO_FAMILY ` +
+            `(a new cross-asset underlying MUST add a "<asset>_option" family with a golden vector + parity row)`,
+        ],
+      });
+      continue;
+    }
+    crossAssetFamilies.push(family);
+    const reasons = [];
+    const v = await checkVector(family);
+    if (v) reasons.push(`vector: ${v}`);
+    const p = await checkCrossAssetParity(family);
+    if (p) reasons.push(`parity: ${p}`);
+    if (reasons.length) uncovered.push({ family, reasons });
+  }
+
+  const checked = arms.length + crossAssetFamilies.length;
   const covered = checked - uncovered.length;
 
   if (uncovered.length === 0) {
     console.log(
-      `check-verification-coverage: OK — all ${checked} product-oneof arms have BOTH a golden vector ` +
-        `(crates/celnet-golden/vectors/) AND an independent-oracle parity row (crates/celnet-parity/tests/).`,
+      `check-verification-coverage: OK — all ${arms.length} product-oneof arms AND all ` +
+        `${crossAssetFamilies.length} cross-asset option families (non-FX Underlying.ref arms) have BOTH a ` +
+        `golden vector (crates/celnet-golden/vectors/) AND an independent-oracle parity row ` +
+        `(crates/celnet-parity/tests/).`,
     );
-    console.log(`  arms: ${arms.join(', ')}`);
+    console.log(`  product arms: ${arms.join(', ')}`);
+    console.log(`  cross-asset families: ${crossAssetFamilies.join(', ')}`);
     process.exit(0);
   }
 
   console.error(
     `check-verification-coverage: FAILED — ${uncovered.length}/${checked} product-oneof arm(s) ` +
-      `lack a golden vector and/or a parity row (see docs/VERIFICATION-CONTRACT.md):\n`,
+      `and/or cross-asset option famil(ies) lack a golden vector and/or a parity row ` +
+      `(see docs/VERIFICATION-CONTRACT.md):\n`,
   );
   for (const { family, reasons } of uncovered) {
     console.error(`  ✗ ${family}`);
     for (const r of reasons) console.error(`      ${r}`);
   }
   console.error(
-    `\n  ${covered}/${checked} arms fully covered. Add the missing golden vector and/or the ` +
-      `independent-oracle parity row (and its map entry) — do NOT weaken this lint.`,
+    `\n  ${covered}/${checked} arms + cross-asset families fully covered. Add the missing golden ` +
+      `vector and/or the independent-oracle parity row (and its map entry) — do NOT weaken this lint.`,
   );
   process.exit(1);
 }

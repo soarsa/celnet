@@ -33,6 +33,7 @@ import type {
   LookbackMonitoring,
   LookbackStyle,
   MarketObservable,
+  Metal,
   MonitoringStyle,
   OptionType,
   PremiumStyle,
@@ -41,6 +42,7 @@ import type {
   RagStatus,
   RiskDimension,
   Settlement,
+  SettlementStyle,
   ShockFactor,
   Side,
   SmileModel,
@@ -132,6 +134,21 @@ export const dayCount = enumCodec<DayCount>(["ACT_365_FIXED", "ACT_360"]);
 
 /** `Settlement` ↔ proto `Settlement`. */
 export const settlement = enumCodec<Settlement>(["DELIVERABLE", "NON_DELIVERABLE"]);
+
+/**
+ * `Metal` ↔ proto `Metal` (METAL_GOLD=0, METAL_SILVER=1, METAL_PLATINUM=2,
+ * METAL_PALLADIUM=3). The precious-metal base/asset leg of a metal pair.
+ */
+export const metal = enumCodec<Metal>(["GOLD", "SILVER", "PLATINUM", "PALLADIUM"]);
+
+/**
+ * `SettlementStyle` ↔ proto `SettlementStyle`
+ * (SETTLEMENT_STYLE_LINEAR=0, SETTLEMENT_STYLE_INVERSE_COIN=1). The contract
+ * settlement mechanics carried on `Instrument.settlement_style` (field 29):
+ * LINEAR (quote-ccy-margined) is the proto3 zero default; INVERSE_COIN is the
+ * coin-margined `1/S_T` digital-asset convention.
+ */
+export const settlementStyle = enumCodec<SettlementStyle>(["LINEAR", "INVERSE_COIN"]);
 
 /** `StrategyKind` ↔ proto `StrategyKind`. */
 export const strategyKind = enumCodec<StrategyKind>([

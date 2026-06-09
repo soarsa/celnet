@@ -5,7 +5,7 @@
 //! domain enum so the subcommand modules stay free of CLI-parsing concerns.
 
 use celnet_exotics::{BarrierKind, BarrierStyle, DigitalKind, DigitalStyle};
-use celnet_types::{DeltaConvention, OptionType, VanillaInputs};
+use celnet_types::{DeltaConvention, OptionType, SettlementStyle, VanillaInputs};
 use clap::ValueEnum;
 
 /// The shared Garman-Kohlhagen market state for a single quote: spot, flat vol,
@@ -72,6 +72,58 @@ impl From<CliDeltaConvention> for DeltaConvention {
             CliDeltaConvention::ForwardUnadj => DeltaConvention::ForwardUnadjusted,
             CliDeltaConvention::SpotPa => DeltaConvention::SpotPremiumAdjusted,
             CliDeltaConvention::ForwardPa => DeltaConvention::ForwardPremiumAdjusted,
+        }
+    }
+}
+
+/// The asset class of a vanilla-option underlying on the command line. The option
+/// payoff is the asset-class-agnostic generalized-BSM / Garman-Kohlhagen closed form
+/// over the carry-producing market (ADR-0008): the asset class is contract identity,
+/// so a vanilla on any class prices identically against the same market inputs (where
+/// `--r-for` is the asset's carry yield — an FX foreign rate, an equity dividend
+/// yield, a commodity cost-of-carry, or a crypto funding rate). The CLI labels the
+/// report with the chosen class and surfaces the linear/inverse settlement style.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
+pub(crate) enum CliAsset {
+    /// An FX currency pair (the platform's origin class; the default).
+    #[default]
+    Fx,
+    /// A single-name / index equity underlying.
+    Equity,
+    /// A commodity underlying.
+    Commodity,
+    /// A digital-asset (crypto) pair.
+    Crypto,
+}
+
+impl CliAsset {
+    /// The human-readable class label for the report header.
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            CliAsset::Fx => "fx",
+            CliAsset::Equity => "equity",
+            CliAsset::Commodity => "commodity",
+            CliAsset::Crypto => "crypto",
+        }
+    }
+}
+
+/// Contract settlement mechanics on the command line — linear (quote-margined, the
+/// default) or inverse coin-margined (digital-asset convention).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
+pub(crate) enum CliSettlementStyle {
+    /// Linear: quote-currency-margined (the default, every asset class).
+    #[default]
+    Linear,
+    /// Inverse, coin-margined (digital-asset `1/S_T` convention).
+    InverseCoin,
+}
+
+impl From<CliSettlementStyle> for SettlementStyle {
+    fn from(v: CliSettlementStyle) -> Self {
+        match v {
+            CliSettlementStyle::Linear => SettlementStyle::Linear,
+            CliSettlementStyle::InverseCoin => SettlementStyle::InverseCoin,
         }
     }
 }
