@@ -102,7 +102,12 @@ impl core::error::Error for LinearInputError {}
 /// ([`LinearInputs::forward`] / [`LinearInputs::discount_df`]), never by matching
 /// on the [`Carry`] variant — this is the asset-class-agnostic discipline
 /// (ADR-0008 §the no-workaround test).
-#[derive(Debug, Clone, Copy, PartialEq)]
+///
+/// `LinearInputs` is `Clone` but not `Copy`: the [`Underlying`] identity now
+/// carries string-bearing cross-asset arms (equity / commodity / digital-asset
+/// symbols), which cannot be `Copy`. The pricing functions take `&LinearInputs`,
+/// so the hot path never copies the inputs.
+#[derive(Debug, Clone, PartialEq)]
 pub struct LinearInputs {
     /// Spot price of the underlying (quote per 1 unit of base, for FX).
     pub spot: f64,

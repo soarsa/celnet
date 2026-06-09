@@ -71,6 +71,15 @@ pub const UNDERLYING_CLASS_FX: i32 = 0;
 /// Discriminant for the precious-metal underlying asset class.
 pub const UNDERLYING_CLASS_METAL: i32 = 1;
 
+/// Discriminant for the equity underlying asset class.
+pub const UNDERLYING_CLASS_EQUITY: i32 = 2;
+
+/// Discriminant for the commodity underlying asset class.
+pub const UNDERLYING_CLASS_COMMODITY: i32 = 3;
+
+/// Discriminant for the digital-asset (crypto) underlying asset class.
+pub const UNDERLYING_CLASS_DIGITAL_ASSET: i32 = 4;
+
 /// Discriminant for [`Carry::FxRates`] (`carry_field_0 = r_dom`, `_1 = r_for`).
 pub const CARRY_KIND_FX_RATES: i32 = 0;
 /// Discriminant for [`Carry::CostOfCarry`] (`carry_field_0 = r`, `_1 = b`).
@@ -114,10 +123,13 @@ pub const fn opt_from_abi(raw: i32) -> Option<OptionType> {
 
 /// The asset-class discriminant of an [`Underlying`].
 #[must_use]
-pub const fn underlying_to_abi(u: Underlying) -> i32 {
+pub const fn underlying_to_abi(u: &Underlying) -> i32 {
     match u {
         Underlying::Fx(_) => UNDERLYING_CLASS_FX,
         Underlying::Metal(_) => UNDERLYING_CLASS_METAL,
+        Underlying::Equity(_) => UNDERLYING_CLASS_EQUITY,
+        Underlying::Commodity(_) => UNDERLYING_CLASS_COMMODITY,
+        Underlying::DigitalAsset(_) => UNDERLYING_CLASS_DIGITAL_ASSET,
     }
 }
 
@@ -165,7 +177,7 @@ pub fn input_to_bytes(inputs: &CarryInputs) -> [u8; INPUT_BYTES] {
     }
     // Trailing i32 discriminant words, packed after the numeric block.
     let base = INPUT_FIELDS * 8;
-    out[base..base + 4].copy_from_slice(&underlying_to_abi(inputs.underlying).to_le_bytes());
+    out[base..base + 4].copy_from_slice(&underlying_to_abi(&inputs.underlying).to_le_bytes());
     out[base + 4..base + 8].copy_from_slice(&carry_kind.to_le_bytes());
     out
 }

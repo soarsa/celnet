@@ -63,8 +63,8 @@ use crate::tick::TickSource;
 
 use celnet_proto::quote_service_server::QuoteService;
 use celnet_proto::{
-    Execution, MarketContext, Quote, QuoteAccept, QuoteReject, QuoteRequest, RejectAck, Side,
-    TwoWayPrice,
+    DealerQuote, Execution, MarketContext, MultiDealerQuote, Quote, QuoteAccept, QuoteReject,
+    QuoteRequest, RejectAck, Side, TwoWayPrice,
 };
 use tokio::sync::Mutex;
 use tonic::{Request, Response, Status};
@@ -402,6 +402,55 @@ impl QuoteService for QuoteEdge {
         }
 
         Ok(Response::new(quote))
+    }
+
+    async fn request_multi_dealer_quote(
+        &self,
+        request: Request<QuoteRequest>,
+    ) -> Result<Response<MultiDealerQuote>, Status> {
+        // This edge is a single liquidity provider (the maker auto-pricer): the
+        // multi-dealer (RFQ-to-many) response is the genuine one-dealer ladder
+        // built from this edge's own price. A multi-dealer aggregator
+        // (`celnet-rfq`) fans the same `QuoteRequest` out to several edges and
+        // merges their `DealerQuote` lines; a single edge contributes exactly the
+        // line below. This is a real one-LP ladder, not a placeholder — the
+        // ranking/touch fields are computed from the actual quote.
+        let req = request.into_inner();
+        let correlation_id = req.correlation_id;
+        // Reuse the full single-dealer pricing/idempotency/pinning path verbatim,
+        // so a dealer line is byte-identical to the `RequestQuote` it mirrors.
+        let quote = self
+            .request_quote(Request::new(req))
+            .await?
+            .into_inner();
+
+        let lp_id = super::attribution::MAKER_AUTO_PRICER_ID.to_owned();
+        let price = quote.price.unwrap_or(TwoWayPrice {
+            bid: 0.0,
+            offer: 0.0,
+        });
+        let dealer = DealerQuote {
+            lp_id: lp_id.clone(),
+            price: Some(price),
+            greeks: quote.greeks,
+            resolved_strike: quote.resolved_strike,
+            valid_until_nanos: quote.valid_until_nanos,
+            attribution: quote.attribution,
+            price_std_error: quote.price_std_error,
+        };
+        let multi = MultiDealerQuote {
+            quote_id: quote.quote_id,
+            idempotency_key: quote.idempotency_key,
+            dealers: vec![dealer],
+            // With one dealer, it is the best on both sides of the market.
+            best_bid_lp_id: lp_id.clone(),
+            best_offer_lp_id: lp_id,
+            conventions: quote.conventions,
+            epoch_nanos: quote.epoch_nanos,
+            correlation_id,
+            surface_version: quote.surface_version,
+        };
+        Ok(Response::new(multi))
     }
 
     async fn accept_quote(

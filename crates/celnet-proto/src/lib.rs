@@ -164,6 +164,7 @@ mod tests {
                 target_premium: 0.0,
             }),
             pricing_model: PricingModel::Default as i32,
+            settlement_style: SettlementStyle::Linear as i32,
             product: Some(instrument::Product::Vanilla(Vanilla {
                 option_type: OptionType::Call as i32,
                 strike: Some(StrikeOrDelta {
@@ -239,6 +240,7 @@ mod tests {
                 target_premium: 0.0,
             }),
             pricing_model: PricingModel::Default as i32,
+            settlement_style: SettlementStyle::Linear as i32,
             product: Some(instrument::Product::Strategy(Strategy {
                 kind: StrategyKind::RiskReversal as i32,
                 legs: vec![
@@ -260,6 +262,7 @@ mod tests {
             side: Side::Buy as i32,
             solve: None,
             pricing_model: PricingModel::Default as i32,
+            settlement_style: SettlementStyle::Linear as i32,
             product: Some(instrument::Product::SingleBarrier(SingleBarrier {
                 vanilla: Some(Vanilla {
                     option_type: OptionType::Call as i32,
@@ -284,6 +287,7 @@ mod tests {
             side: Side::Buy as i32,
             solve: None,
             pricing_model: PricingModel::Default as i32,
+            settlement_style: SettlementStyle::Linear as i32,
             product: Some(instrument::Product::DoubleBarrier(DoubleBarrier {
                 vanilla: Some(Vanilla {
                     option_type: OptionType::Put as i32,
@@ -308,6 +312,7 @@ mod tests {
             side: Side::Sell as i32,
             solve: None,
             pricing_model: PricingModel::Default as i32,
+            settlement_style: SettlementStyle::Linear as i32,
             product: Some(instrument::Product::Digital(Digital {
                 option_type: OptionType::Call as i32,
                 strike: 1.12,
@@ -325,6 +330,7 @@ mod tests {
             side: Side::Buy as i32,
             solve: None,
             pricing_model: PricingModel::Default as i32,
+            settlement_style: SettlementStyle::Linear as i32,
             product: Some(instrument::Product::Touch(Touch {
                 kind: TouchKind::DoubleNoTouch as i32,
                 lower_barrier: 1.05,
@@ -346,6 +352,7 @@ mod tests {
             side: Side::Buy as i32,
             solve: None,
             pricing_model: PricingModel::Default as i32,
+            settlement_style: SettlementStyle::Linear as i32,
             product: Some(instrument::Product::VarianceSwap(VarianceSwap {
                 strike_vol: 0.11,
             })),
@@ -360,6 +367,7 @@ mod tests {
             side: Side::Sell as i32,
             solve: None,
             pricing_model: PricingModel::Default as i32,
+            settlement_style: SettlementStyle::Linear as i32,
             product: Some(instrument::Product::VolatilitySwap(VolatilitySwap {
                 strike_vol: 0.0,
             })),
@@ -374,6 +382,7 @@ mod tests {
             side: Side::Buy as i32,
             solve: None,
             pricing_model: PricingModel::Default as i32,
+            settlement_style: SettlementStyle::Linear as i32,
             product: Some(instrument::Product::AsianOption(AsianOption {
                 option_type: OptionType::Call as i32,
                 strike: 1.10,
@@ -397,6 +406,7 @@ mod tests {
             side: Side::Buy as i32,
             solve: None,
             pricing_model: PricingModel::Default as i32,
+            settlement_style: SettlementStyle::Linear as i32,
             product: Some(instrument::Product::ForwardStart(ForwardStart {
                 option_type: OptionType::Call as i32,
                 moneyness: 1.0,
@@ -413,6 +423,7 @@ mod tests {
             side: Side::Buy as i32,
             solve: None,
             pricing_model: PricingModel::Default as i32,
+            settlement_style: SettlementStyle::Linear as i32,
             product: Some(instrument::Product::Cliquet(Cliquet {
                 option_type: OptionType::Call as i32,
                 moneyness: 1.0,
@@ -435,6 +446,7 @@ mod tests {
             side: Side::Sell as i32,
             solve: None,
             pricing_model: PricingModel::Default as i32,
+            settlement_style: SettlementStyle::Linear as i32,
             product: Some(instrument::Product::Quanto(Quanto {
                 payoff: QuantoPayoff::Vanilla as i32,
                 option_type: OptionType::Put as i32,
@@ -456,6 +468,7 @@ mod tests {
             side: Side::Sell as i32,
             solve: None,
             pricing_model: PricingModel::Default as i32,
+            settlement_style: SettlementStyle::Linear as i32,
             product: Some(instrument::Product::Tarf(Tarf {
                 option_type: OptionType::Put as i32,
                 strike: 1.10,
@@ -480,6 +493,7 @@ mod tests {
             side: Side::Buy as i32,
             solve: None,
             pricing_model: PricingModel::Default as i32,
+            settlement_style: SettlementStyle::Linear as i32,
             product: Some(instrument::Product::Accumulator(Accumulator {
                 pivot: 1.10,
                 barrier: 1.16,
@@ -503,6 +517,7 @@ mod tests {
             side: Side::Buy as i32,
             solve: None,
             pricing_model: PricingModel::Default as i32,
+            settlement_style: SettlementStyle::Linear as i32,
             product: Some(instrument::Product::Lookback(Lookback {
                 style: LookbackStyle::Fixed as i32,
                 option_type: OptionType::Call as i32,
@@ -528,6 +543,7 @@ mod tests {
             side: Side::Sell as i32,
             solve: None,
             pricing_model: PricingModel::LocalStochVol as i32,
+            settlement_style: SettlementStyle::Linear as i32,
             product: Some(instrument::Product::WindowBarrier(WindowBarrier {
                 vanilla: Some(Vanilla {
                     option_type: OptionType::Call as i32,
@@ -566,6 +582,7 @@ mod tests {
             side: Side::Buy as i32,
             solve: None,
             pricing_model: PricingModel::Default as i32,
+            settlement_style: SettlementStyle::Linear as i32,
             product: Some(instrument::Product::American(AmericanOption {
                 option_type: OptionType::Put as i32,
                 strike: 1.10,
@@ -589,6 +606,7 @@ mod tests {
             side: Side::Buy as i32,
             solve: None,
             pricing_model: PricingModel::Default as i32,
+            settlement_style: SettlementStyle::Linear as i32,
             product: Some(instrument::Product::American(AmericanOption {
                 option_type: OptionType::Call as i32,
                 strike: 1.05,
@@ -614,6 +632,7 @@ mod tests {
             side: Side::Buy as i32,
             solve: None,
             pricing_model: PricingModel::Default as i32,
+            settlement_style: SettlementStyle::Linear as i32,
             product: Some(instrument::Product::Basket(BasketOption {
                 legs: vec![
                     BasketLeg {
@@ -701,6 +720,7 @@ mod tests {
             quote_id: 1_001,
             idempotency_key: request.idempotency_key.clone(),
             side: Side::Buy as i32,
+            lp_id: String::new(),
         };
         round_trip(&accept);
 
@@ -720,6 +740,128 @@ mod tests {
             attribution: Some(sample_attribution()),
         };
         round_trip(&execution);
+    }
+
+    #[test]
+    fn round_trip_multi_dealer_quote() {
+        let dealer = |lp: &str, bid: f64, offer: f64| DealerQuote {
+            lp_id: lp.to_owned(),
+            price: Some(TwoWayPrice { bid, offer }),
+            greeks: Some(sample_greeks()),
+            resolved_strike: 1.1050,
+            valid_until_nanos: 1_717_000_300_000_000_000,
+            attribution: Some(sample_attribution()),
+            price_std_error: None,
+        };
+        let mdq = MultiDealerQuote {
+            quote_id: 7_007,
+            idempotency_key: "rfq-to-many-1".to_owned(),
+            // Ordered best-first on the offer (LP-A tightest), per the contract.
+            dealers: vec![
+                dealer("LP-A", 0.0082, 0.0088),
+                dealer("LP-B", 0.0081, 0.0090),
+            ],
+            best_bid_lp_id: "LP-A".to_owned(),
+            best_offer_lp_id: "LP-A".to_owned(),
+            conventions: Some(sample_conventions()),
+            epoch_nanos: 1_717_000_000_000_000_000,
+            correlation_id: Some(0xCAFE_F00D),
+            surface_version: Some(42),
+        };
+        round_trip(&mdq);
+
+        // The optional fields are presence-tracked.
+        let mdq_bare = MultiDealerQuote {
+            quote_id: 7_008,
+            idempotency_key: "rfq-to-many-2".to_owned(),
+            dealers: Vec::new(),
+            best_bid_lp_id: String::new(),
+            best_offer_lp_id: String::new(),
+            conventions: Some(sample_conventions()),
+            epoch_nanos: 1,
+            correlation_id: None,
+            surface_version: None,
+        };
+        round_trip(&mdq_bare);
+
+        // A multi-dealer accept carries the chosen LP line.
+        round_trip(&QuoteAccept {
+            quote_id: 7_007,
+            idempotency_key: "rfq-to-many-1".to_owned(),
+            side: Side::Buy as i32,
+            lp_id: "LP-A".to_owned(),
+        });
+    }
+
+    #[test]
+    fn round_trip_cross_asset_instruments() {
+        // An inverse coin-margined digital-asset vanilla — the settlement_style
+        // and digital_asset arm round-trip on the instrument.
+        let crypto = Instrument {
+            underlying: Some(Underlying::digital_asset(CryptoPair::new("BTC", "USDT"))),
+            tenor: Some(sample_tenor()),
+            expiry_years: 0.25,
+            quantity: Some(sample_quantity()),
+            side: Side::Buy as i32,
+            solve: None,
+            pricing_model: PricingModel::Default as i32,
+            settlement_style: SettlementStyle::InverseCoin as i32,
+            product: Some(instrument::Product::Vanilla(Vanilla {
+                option_type: OptionType::Call as i32,
+                strike: Some(StrikeOrDelta {
+                    spec: Some(strike_or_delta::Spec::Strike(65_000.0)),
+                }),
+            })),
+        };
+        round_trip(&crypto);
+
+        // An equity vanilla — the equity arm round-trips; default linear style.
+        let equity = Instrument {
+            underlying: Some(Underlying::equity(EquityRef::new(
+                Symbol::new("AAPL", "XNAS"),
+                "USD",
+            ))),
+            tenor: Some(sample_tenor()),
+            expiry_years: 1.0,
+            quantity: Some(sample_quantity()),
+            side: Side::Buy as i32,
+            solve: None,
+            pricing_model: PricingModel::Default as i32,
+            settlement_style: SettlementStyle::Linear as i32,
+            product: Some(instrument::Product::Vanilla(Vanilla {
+                option_type: OptionType::Put as i32,
+                strike: Some(StrikeOrDelta {
+                    spec: Some(strike_or_delta::Spec::Strike(190.0)),
+                }),
+            })),
+        };
+        round_trip(&equity);
+
+        // A commodity vanilla — the commodity arm round-trips.
+        let commodity = Instrument {
+            underlying: Some(Underlying::commodity(CommodityRef::new(
+                Symbol::new("BRENT", ""),
+                "USD",
+            ))),
+            tenor: Some(sample_tenor()),
+            expiry_years: 0.5,
+            quantity: Some(sample_quantity()),
+            side: Side::Sell as i32,
+            solve: None,
+            pricing_model: PricingModel::Default as i32,
+            settlement_style: SettlementStyle::Linear as i32,
+            product: Some(instrument::Product::Vanilla(Vanilla {
+                option_type: OptionType::Call as i32,
+                strike: Some(StrikeOrDelta {
+                    spec: Some(strike_or_delta::Spec::Strike(85.0)),
+                }),
+            })),
+        };
+        round_trip(&commodity);
+
+        // Meaningful-zero: the LINEAR style is the proto3 default (tag 0), so an
+        // unset settlement_style is byte-identical to the linear contract.
+        assert_eq!(SettlementStyle::Linear as i32, 0);
     }
 
     /// A sample attribution chain (human-quoted, machine-held, in competition)

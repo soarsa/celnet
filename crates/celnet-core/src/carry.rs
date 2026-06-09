@@ -26,7 +26,12 @@ use celnet_types::{Carry, Greeks, OptionType, RateSensitivities, Underlying, Van
 /// model (*how* the forward and discounting are formed). The forward and discount
 /// factor are delegated to [`Carry`], so the FX arm reproduces the FX two-rate
 /// arithmetic bit-for-bit (see [`Carry::FxRates`]).
-#[derive(Debug, Clone, Copy, PartialEq)]
+///
+/// `CarryInputs` is `Clone` but not `Copy`: the [`Underlying`] discriminator now
+/// carries string-bearing cross-asset arms (equity / commodity / digital-asset
+/// symbols), which cannot be `Copy`. The pricing seam takes `&CarryInputs`, so
+/// the hot path never copies it regardless.
+#[derive(Debug, Clone, PartialEq)]
 pub struct CarryInputs {
     /// Spot price of the underlying (quote per 1 unit of base, for FX).
     pub spot: f64,
@@ -195,6 +200,12 @@ pub fn fx_vanilla_inputs(inputs: &CarryInputs) -> Result<VanillaInputs, CarryPri
         // FX and metals both lower through the FX two-rate path (metal lease rate
         // modelled as the foreign rate).
         Underlying::Fx(_) | Underlying::Metal(_) => {}
+        // The cross-asset arms (equity / commodity / digital-asset) route to
+        // their own carry leaves (the generalized cost-of-carry / inverse-coin
+        // paths), not the FX two-rate lowering — refuse rather than misprice.
+        Underlying::Equity(_) | Underlying::Commodity(_) | Underlying::DigitalAsset(_) => {
+            return Err(CarryPriceError::UnsupportedUnderlying);
+        }
     }
     let (r_dom, r_for) = match inputs.carry {
         Carry::FxRates { r_dom, r_for } => (r_dom, r_for),

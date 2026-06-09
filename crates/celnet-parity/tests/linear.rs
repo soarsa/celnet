@@ -477,7 +477,7 @@ fn ndf_pv_equals_deliverable_forward_pv() {
     ];
     for (tok, s, k, n, side, rd, rf, t) in cases {
         let deliverable = outright(tok, s, k, n, side, rd, rf, t);
-        let ndf = Ndf::new(deliverable, FixingSource::BrlPtax);
+        let ndf = Ndf::new(deliverable.clone(), FixingSource::BrlPtax);
         assert_eq!(ndf.pv().to_bits(), forward::pv(&deliverable).to_bits());
     }
 }

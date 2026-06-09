@@ -231,6 +231,7 @@ pub fn vanilla_call(strike: f64) -> Instrument {
                 spec: Some(strike_or_delta::Spec::Strike(strike)),
             }),
         })),
+        ..Default::default()
     }
 }
 

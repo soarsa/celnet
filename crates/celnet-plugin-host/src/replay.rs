@@ -27,9 +27,10 @@ use crate::model::HostModel;
 
 /// A fixed market snapshot to replay: an option type and its [`CarryInputs`].
 ///
-/// Deliberately `Copy` and self-contained so a snapshot can be checked into a
-/// golden file and replayed unchanged across releases.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// Self-contained so a snapshot can be checked into a golden file and replayed
+/// unchanged across releases. `Clone` (not `Copy`): its [`CarryInputs`] now
+/// carries the string-bearing cross-asset [`Underlying`] arms.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Snapshot {
     /// The option type to price.
     pub opt: OptionType,

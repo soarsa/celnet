@@ -1537,7 +1537,13 @@ fn linear_market(
 /// under tenor and orientation), so any tenor resolves the same class; a metal
 /// underlying is always deliverable (loco-London).
 fn underlying_is_non_deliverable(underlying: &celnet_types::Underlying) -> bool {
-    let pair = underlying.as_ccy_pair();
+    // Non-deliverability is an FX-pair convention. Only the leg-pair arms (FX /
+    // metal) project to a registry-keyed `CcyPair`; the cross-asset arms
+    // (equity / commodity / digital-asset) have no FX-pair projection and are
+    // never NDF/NDO pairs, so they are deliverable by construction.
+    let Some(pair) = underlying.as_ccy_pair() else {
+        return false;
+    };
     celnet_conventions::resolve(pair, celnet_types::Tenor::Years(1))
         .record
         .is_non_deliverable()
@@ -1653,7 +1659,7 @@ fn price_fx_swap(
     // the exact analytic Greek of the two-leg sum.
     let near_only = LinearInputs {
         far_settle_t: None,
-        ..near_inputs
+        ..near_inputs.clone()
     };
     let far_only = LinearInputs {
         side: side.opposite(),
@@ -1720,15 +1726,12 @@ fn price_ndf(
         expiry,
     )
     .map_err(|_| PriceError::Domain("ndf notional must be positive"))?;
-    let ndf = LinearNdf::new(inputs, fixing);
     // The NDF PV equals the deliverable-forward PV of equal terms; report the
-    // full linear Greek strip from the same inputs.
-    let mut priced = linear_priced(
-        celnet_linear::greeks(&inputs),
-        n.contract_rate,
-        market,
-        expiry,
-    );
+    // full linear Greek strip from the same inputs. Take the Greek strip before
+    // moving `inputs` into the NDF (`LinearInputs` is no longer `Copy`).
+    let greeks = celnet_linear::greeks(&inputs);
+    let ndf = LinearNdf::new(inputs, fixing);
+    let mut priced = linear_priced(greeks, n.contract_rate, market, expiry);
     priced.greeks.price = ndf.pv();
     Ok(priced)
 }
@@ -1903,6 +1906,7 @@ mod tests {
                     spec: Some(strike_or_delta::Spec::Strike(strike)),
                 }),
             })),
+            ..Default::default()
         }
     }
 
@@ -1972,6 +1976,7 @@ mod tests {
                 rebate: 0.0,
                 monitoring: celnet_proto::MonitoringStyle::Continuous as i32,
             })),
+            ..Default::default()
         };
         let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
         let spec = ExSingleBarrier {
@@ -2039,6 +2044,7 @@ mod tests {
                     ),
                 ],
             })),
+            ..Default::default()
         };
         let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
         let call = celnet_vanilla::greeks(
@@ -2079,6 +2085,7 @@ mod tests {
             solve: None,
             pricing_model: celnet_proto::PricingModel::Default as i32,
             product: Some(product),
+            ..Default::default()
         }
     }
 
@@ -2946,6 +2953,7 @@ mod tests {
                 lsm_exercise_dates: 0,
                 lsm_seed,
             })),
+            ..Default::default()
         }
     }
 
@@ -3234,6 +3242,7 @@ mod tests {
                 mc_steps: 1,
                 mc_seed: 0xBA5_3E7,
             })),
+            ..Default::default()
         }
     }
 
@@ -3392,6 +3401,7 @@ mod tests {
                 notional,
                 side: side as i32,
             })),
+            ..Default::default()
         }
     }
 
@@ -3554,6 +3564,7 @@ mod tests {
                 near: Some(near_leg),
                 far: Some(far_leg),
             })),
+            ..Default::default()
         };
         let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
 
@@ -3611,6 +3622,7 @@ mod tests {
                 fixing: fixing as i32,
                 settlement_ccy: "USD".into(),
             })),
+            ..Default::default()
         }
     }
 

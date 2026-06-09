@@ -221,12 +221,13 @@ pub(crate) fn run_swap(
     // Net swap Greeks: the near leg (spot) plus the far leg (opposite side, forward
     // tenor), each reconstructed as a standalone outright — the exact analytic Greek
     // of the two-leg sum.
+    let far_side = near_inputs.side.opposite();
     let near_only = LinearInputs {
         far_settle_t: None,
-        ..near_inputs
+        ..near_inputs.clone()
     };
     let far_only = LinearInputs {
-        side: near_inputs.side.opposite(),
+        side: far_side,
         far_settle_t: None,
         near_settle_t: market.t,
         ..near_inputs
@@ -258,13 +259,12 @@ pub(crate) fn run_ndf(
         ));
     }
     let inputs = outright_inputs(pair, market, rate, notional, side, market.t)?;
-    let ndf = Ndf::new(inputs, fixing.into());
     // The NDF PV equals the equal-terms deliverable-forward PV; the Greek strip is
-    // the same outright forward strip from the identical inputs.
-    Ok(LinearResult::from_greeks(
-        ndf.pv(),
-        celnet_linear::greeks(&inputs),
-    ))
+    // the same outright forward strip from the identical inputs. Take the strip
+    // before moving `inputs` into the NDF (`LinearInputs` is no longer `Copy`).
+    let greeks = celnet_linear::greeks(&inputs);
+    let ndf = Ndf::new(inputs, fixing.into());
+    Ok(LinearResult::from_greeks(ndf.pv(), greeks))
 }
 
 /// Format a linear-product report (the `price` line keyed exactly like `exotic`/

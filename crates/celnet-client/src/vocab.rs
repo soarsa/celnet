@@ -3057,6 +3057,7 @@ impl InstrumentSpec {
             solve: None,
             pricing_model: self.pricing_model.to_wire() as i32,
             product: Some(self.product.to_wire()),
+            ..Default::default()
         }
     }
 }

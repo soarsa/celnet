@@ -266,21 +266,158 @@ impl fmt::Display for MetalPair {
     }
 }
 
+/// A free-form instrument ticker — the vendor-neutral identifier for an asset
+/// not named by a currency-pair / metal-pair leg structure (an equity, a
+/// commodity, a digital-asset coin).
+///
+/// Mirrors the wire `Symbol`. The `ticker` is the trading symbol (an
+/// exchange/ISIN-style code); `venue` is the optional listing venue / exchange
+/// MIC, empty when the ticker is globally unambiguous. Purpose-named only — no
+/// vendor product names appear.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Symbol {
+    /// The trading symbol / ticker, e.g. `AAPL`, `BRENT`, an ISIN.
+    pub ticker: String,
+    /// The listing venue / exchange MIC, e.g. `XNAS`; empty when unambiguous.
+    pub venue: String,
+}
+
+impl Symbol {
+    /// Construct a symbol from its ticker and listing venue (pass an empty venue
+    /// when the ticker is globally unambiguous).
+    #[must_use]
+    pub fn new(ticker: impl Into<String>, venue: impl Into<String>) -> Self {
+        Self {
+            ticker: ticker.into(),
+            venue: venue.into(),
+        }
+    }
+}
+
+impl fmt::Display for Symbol {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.venue.is_empty() {
+            f.write_str(&self.ticker)
+        } else {
+            write!(f, "{}.{}", self.ticker, self.venue)
+        }
+    }
+}
+
+/// An equity (single-name or index) underlying — mirrors the wire `EquityRef`.
+///
+/// The `symbol` names the listed instrument; `currency` is the trading /
+/// settlement currency the price is quoted in. The dividend treatment is a
+/// carry-layer concern ([`Carry::CostOfCarry`]), not encoded here.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct EquityRef {
+    /// The listed equity symbol (single name or index).
+    pub symbol: Symbol,
+    /// The currency the equity is quoted / settled in.
+    pub currency: Ccy,
+}
+
+impl EquityRef {
+    /// Construct an equity reference from its symbol and quote/settlement
+    /// currency.
+    #[must_use]
+    pub const fn new(symbol: Symbol, currency: Ccy) -> Self {
+        Self { symbol, currency }
+    }
+}
+
+impl fmt::Display for EquityRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} ({})", self.symbol, self.currency)
+    }
+}
+
+/// A commodity underlying (a futures-style or spot commodity) — mirrors the wire
+/// `CommodityRef`.
+///
+/// The `symbol` names the commodity / contract; `currency` is the quote /
+/// settlement currency. The cost-of-carry (storage / convenience yield) is a
+/// carry-layer concern ([`Carry::CostOfCarry`]), not encoded here.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CommodityRef {
+    /// The commodity / contract symbol, e.g. `BRENT`.
+    pub symbol: Symbol,
+    /// The currency the commodity is quoted / settled in.
+    pub currency: Ccy,
+}
+
+impl CommodityRef {
+    /// Construct a commodity reference from its symbol and quote/settlement
+    /// currency.
+    #[must_use]
+    pub const fn new(symbol: Symbol, currency: Ccy) -> Self {
+        Self { symbol, currency }
+    }
+}
+
+impl fmt::Display for CommodityRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} ({})", self.symbol, self.currency)
+    }
+}
+
+/// A digital-asset (crypto) pair — mirrors the wire `CryptoPair`.
+///
+/// The `base` is the coin/asset leg (e.g. `BTC`); the `quote` is the numeraire
+/// it is priced against, which may be a fiat currency (`USD`) or another coin /
+/// stablecoin (`USDT`). Both legs are free-form strings — crypto tickers are not
+/// constrained to the 3-letter ISO-4217 shape, so they are not [`Ccy`] newtypes.
+/// The linear/inverse settlement of a coin-margined contract is carried on the
+/// instrument's [`SettlementStyle`], not here (it is a contract-mechanics
+/// convention, not part of the pair identity).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CryptoPair {
+    /// The coin/asset (base) leg, e.g. `BTC`, `ETH`.
+    pub base: String,
+    /// The numeraire (quote) leg — fiat (`USD`) or coin/stablecoin (`USDT`).
+    pub quote: String,
+}
+
+impl CryptoPair {
+    /// Construct a crypto pair from its coin (base) leg and numeraire (quote)
+    /// leg.
+    #[must_use]
+    pub fn new(base: impl Into<String>, quote: impl Into<String>) -> Self {
+        Self {
+            base: base.into(),
+            quote: quote.into(),
+        }
+    }
+}
+
+impl fmt::Display for CryptoPair {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}{}", self.base, self.quote)
+    }
+}
+
 /// The instrument's underlying — the asset-class discriminator that lets one
-/// unversioned contract name FX and precious metals (and, in later waves, digital
-/// assets, equities and listed futures).
+/// unversioned contract name FX, precious metals, equities, commodities and
+/// digital assets (and, in later waves, further classes).
 ///
 /// This type answers only *what is the underlying*; pricing carry and settlement
 /// specifics live in [`Carry`] and the per-arm references. W1 shipped the FX arm
-/// (the platform's origin asset class); W2 adds the [`Metal`] arm. Further arms
-/// are added by their asset-class wave as additive enum growth (one current
+/// (the platform's origin asset class); W2 adds the [`Metal`] arm; the cross-asset
+/// wave adds the [`EquityRef`], [`CommodityRef`] and [`CryptoPair`] arms. Further
+/// arms are added by their asset-class wave as additive enum growth (one current
 /// contract — no versioning, no placeholder arms).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Underlying {
     /// An FX currency pair (e.g. `EURUSD`).
     Fx(CcyPair),
     /// A precious-metal pair (metal vs fiat quote, e.g. `XAUUSD`).
     Metal(MetalPair),
+    /// An equity (single-name or index) underlying.
+    Equity(EquityRef),
+    /// A commodity underlying.
+    Commodity(CommodityRef),
+    /// A digital-asset (crypto) pair.
+    DigitalAsset(CryptoPair),
 }
 
 impl Underlying {
@@ -289,7 +426,10 @@ impl Underlying {
     pub const fn as_fx(&self) -> Option<CcyPair> {
         match self {
             Underlying::Fx(p) => Some(*p),
-            Underlying::Metal(_) => None,
+            Underlying::Metal(_)
+            | Underlying::Equity(_)
+            | Underlying::Commodity(_)
+            | Underlying::DigitalAsset(_) => None,
         }
     }
 
@@ -298,19 +438,64 @@ impl Underlying {
     pub const fn as_metal(&self) -> Option<MetalPair> {
         match self {
             Underlying::Metal(m) => Some(*m),
-            Underlying::Fx(_) => None,
+            Underlying::Fx(_)
+            | Underlying::Equity(_)
+            | Underlying::Commodity(_)
+            | Underlying::DigitalAsset(_) => None,
+        }
+    }
+
+    /// The equity reference if this underlying is an equity, else `None`.
+    #[must_use]
+    pub fn as_equity(&self) -> Option<&EquityRef> {
+        match self {
+            Underlying::Equity(e) => Some(e),
+            Underlying::Fx(_)
+            | Underlying::Metal(_)
+            | Underlying::Commodity(_)
+            | Underlying::DigitalAsset(_) => None,
+        }
+    }
+
+    /// The commodity reference if this underlying is a commodity, else `None`.
+    #[must_use]
+    pub fn as_commodity(&self) -> Option<&CommodityRef> {
+        match self {
+            Underlying::Commodity(c) => Some(c),
+            Underlying::Fx(_)
+            | Underlying::Metal(_)
+            | Underlying::Equity(_)
+            | Underlying::DigitalAsset(_) => None,
+        }
+    }
+
+    /// The crypto pair if this underlying is a digital asset, else `None`.
+    #[must_use]
+    pub fn as_digital_asset(&self) -> Option<&CryptoPair> {
+        match self {
+            Underlying::DigitalAsset(p) => Some(p),
+            Underlying::Fx(_)
+            | Underlying::Metal(_)
+            | Underlying::Equity(_)
+            | Underlying::Commodity(_) => None,
         }
     }
 
     /// Project the underlying to the FX-shaped [`CcyPair`] the convention /
-    /// calendar registries key on: the pair itself for FX, or the metal pair's
-    /// metal-base projection for a metal. This is the bridge that keeps those
-    /// registries [`CcyPair`]-keyed while the wire/identity layer is asset-tagged.
+    /// calendar registries key on, *if* the underlying is one of the leg-pair
+    /// arms (FX, or a metal's metal-base projection). The cross-asset arms
+    /// (equity / commodity / digital-asset) have no `CcyPair` projection — they
+    /// are not keyed by the FX-pair-shaped registries — so they return `None`
+    /// rather than a coerced pair. This is the bridge that keeps those registries
+    /// [`CcyPair`]-keyed while the wire/identity layer is asset-tagged.
     #[must_use]
-    pub const fn as_ccy_pair(&self) -> CcyPair {
+    pub const fn as_ccy_pair(&self) -> Option<CcyPair> {
         match self {
-            Underlying::Fx(p) => *p,
-            Underlying::Metal(m) => m.as_ccy_pair(),
+            Underlying::Fx(p) => Some(*p),
+            Underlying::Metal(m) => Some(m.as_ccy_pair()),
+            Underlying::Equity(_)
+            | Underlying::Commodity(_)
+            | Underlying::DigitalAsset(_) => None,
         }
     }
 }
@@ -327,11 +512,32 @@ impl From<MetalPair> for Underlying {
     }
 }
 
+impl From<EquityRef> for Underlying {
+    fn from(e: EquityRef) -> Self {
+        Underlying::Equity(e)
+    }
+}
+
+impl From<CommodityRef> for Underlying {
+    fn from(c: CommodityRef) -> Self {
+        Underlying::Commodity(c)
+    }
+}
+
+impl From<CryptoPair> for Underlying {
+    fn from(p: CryptoPair) -> Self {
+        Underlying::DigitalAsset(p)
+    }
+}
+
 impl fmt::Display for Underlying {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Underlying::Fx(p) => write!(f, "{p}"),
             Underlying::Metal(m) => write!(f, "{m}"),
+            Underlying::Equity(e) => write!(f, "{e}"),
+            Underlying::Commodity(c) => write!(f, "{c}"),
+            Underlying::DigitalAsset(p) => write!(f, "{p}"),
         }
     }
 }
@@ -539,6 +745,29 @@ pub enum Settlement {
     Deliverable,
     /// Non-deliverable option: cash-settled at a published fixing.
     NonDeliverable,
+}
+
+/// Contract settlement mechanics — how a contract's PnL is denominated and
+/// margined. Mirrors the wire `SettlementStyle`.
+///
+/// The meaningful-zero convention (matching the other vocabulary enums): the
+/// [`SettlementStyle::Linear`] style is the canonical default, so an
+/// instrument that does not assert a settlement style is the ordinary
+/// quote-currency-margined linear contract — byte-identical to the contract
+/// before this dimension existed. [`SettlementStyle::InverseCoin`] is the
+/// coin-margined (digital-asset) convention where PnL accrues in the base coin
+/// against a `1/S_T` payoff.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum SettlementStyle {
+    /// Linear (quote-currency-margined): the ordinary contract whose payoff and
+    /// margin are in the quote / numeraire currency. The default for every asset
+    /// class shipped before the digital-asset arm.
+    #[default]
+    Linear,
+    /// Inverse, coin-margined: the digital-asset convention whose payoff is the
+    /// `1/S_T` (base-coin-denominated) form and whose margin accrues in the base
+    /// coin. Meaningful only for a `DigitalAsset` underlying.
+    InverseCoin,
 }
 
 /// The published reference fixing a non-deliverable FX option (NDO) or NDF
@@ -868,7 +1097,7 @@ mod tests {
         let u: Underlying = p.into();
         assert_eq!(u.as_fx(), Some(p));
         assert_eq!(u.as_metal(), None);
-        assert_eq!(u.as_ccy_pair(), p);
+        assert_eq!(u.as_ccy_pair(), Some(p));
         assert_eq!(u.to_string(), "EURUSD");
         assert_eq!(u, Underlying::Fx(p));
     }
@@ -923,7 +1152,7 @@ mod tests {
         assert_eq!(u.to_string(), "XPTUSD");
         assert_eq!(u, Underlying::Metal(mp));
         // The CcyPair projection is the metal-base pair the registries key on.
-        assert_eq!(u.as_ccy_pair(), CcyPair::new(Ccy::XPT, Ccy::USD));
+        assert_eq!(u.as_ccy_pair(), Some(CcyPair::new(Ccy::XPT, Ccy::USD)));
     }
 
     // The metal XAUUSD projection's forward and discount factors are byte-for-byte
@@ -946,7 +1175,7 @@ mod tests {
             let mp = MetalPair::new(Metal::Gold, Ccy::USD);
             let u = Underlying::Metal(mp);
             // The projected pair the registry/pricer keys on must be metal-base.
-            assert_eq!(u.as_ccy_pair(), CcyPair::new(Ccy::XAU, Ccy::USD));
+            assert_eq!(u.as_ccy_pair(), Some(CcyPair::new(Ccy::XAU, Ccy::USD)));
             let carry = Carry::FxRates { r_dom, r_for };
             assert_eq!(
                 (spot * carry.forward_factor(t)).to_bits(),

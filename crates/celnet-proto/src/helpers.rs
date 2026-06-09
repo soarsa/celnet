@@ -12,8 +12,9 @@
 //! introduced; this is pure (de)structuring of the wire message.
 
 use crate::{
-    CarryModel, CcyPair, FxRates, Greeks, MarketContext, Metal, MetalPair, RateSensitivities,
-    Underlying, VanillaInputs, carry_model, rate_sensitivities, underlying,
+    CarryModel, CcyPair, CommodityRef, CryptoPair, EquityRef, FxRates, Greeks, MarketContext, Metal,
+    MetalPair, RateSensitivities, Symbol, Underlying, VanillaInputs, carry_model,
+    rate_sensitivities, underlying,
 };
 
 impl Underlying {
@@ -39,12 +40,51 @@ impl Underlying {
         }
     }
 
+    /// An equity underlying for `equity`, stamping the settlement (numeraire)
+    /// currency as the equity's quote/settlement currency.
+    #[must_use]
+    pub fn equity(equity: EquityRef) -> Self {
+        let settlement_ccy = equity.currency.clone();
+        Underlying {
+            r#ref: Some(underlying::Ref::Equity(equity)),
+            settlement_ccy,
+        }
+    }
+
+    /// A commodity underlying for `commodity`, stamping the settlement
+    /// (numeraire) currency as the commodity's quote/settlement currency.
+    #[must_use]
+    pub fn commodity(commodity: CommodityRef) -> Self {
+        let settlement_ccy = commodity.currency.clone();
+        Underlying {
+            r#ref: Some(underlying::Ref::Commodity(commodity)),
+            settlement_ccy,
+        }
+    }
+
+    /// A digital-asset (crypto) underlying for `pair`, stamping the settlement
+    /// (numeraire) currency as the crypto pair's quote leg (fiat or stablecoin).
+    #[must_use]
+    pub fn digital_asset(pair: CryptoPair) -> Self {
+        let settlement_ccy = pair.quote.clone();
+        Underlying {
+            r#ref: Some(underlying::Ref::DigitalAsset(pair)),
+            settlement_ccy,
+        }
+    }
+
     /// The FX pair if this underlying is the FX arm, else `None`.
     #[must_use]
     pub fn as_fx(&self) -> Option<&CcyPair> {
         match &self.r#ref {
             Some(underlying::Ref::Fx(p)) => Some(p),
-            Some(underlying::Ref::Metal(_)) | None => None,
+            Some(
+                underlying::Ref::Metal(_)
+                | underlying::Ref::Equity(_)
+                | underlying::Ref::Commodity(_)
+                | underlying::Ref::DigitalAsset(_),
+            )
+            | None => None,
         }
     }
 
@@ -53,7 +93,59 @@ impl Underlying {
     pub fn as_metal(&self) -> Option<&MetalPair> {
         match &self.r#ref {
             Some(underlying::Ref::Metal(m)) => Some(m),
-            Some(underlying::Ref::Fx(_)) | None => None,
+            Some(
+                underlying::Ref::Fx(_)
+                | underlying::Ref::Equity(_)
+                | underlying::Ref::Commodity(_)
+                | underlying::Ref::DigitalAsset(_),
+            )
+            | None => None,
+        }
+    }
+
+    /// The equity reference if this underlying is the equity arm, else `None`.
+    #[must_use]
+    pub fn as_equity(&self) -> Option<&EquityRef> {
+        match &self.r#ref {
+            Some(underlying::Ref::Equity(e)) => Some(e),
+            Some(
+                underlying::Ref::Fx(_)
+                | underlying::Ref::Metal(_)
+                | underlying::Ref::Commodity(_)
+                | underlying::Ref::DigitalAsset(_),
+            )
+            | None => None,
+        }
+    }
+
+    /// The commodity reference if this underlying is the commodity arm, else
+    /// `None`.
+    #[must_use]
+    pub fn as_commodity(&self) -> Option<&CommodityRef> {
+        match &self.r#ref {
+            Some(underlying::Ref::Commodity(c)) => Some(c),
+            Some(
+                underlying::Ref::Fx(_)
+                | underlying::Ref::Metal(_)
+                | underlying::Ref::Equity(_)
+                | underlying::Ref::DigitalAsset(_),
+            )
+            | None => None,
+        }
+    }
+
+    /// The crypto pair if this underlying is the digital-asset arm, else `None`.
+    #[must_use]
+    pub fn as_digital_asset(&self) -> Option<&CryptoPair> {
+        match &self.r#ref {
+            Some(underlying::Ref::DigitalAsset(p)) => Some(p),
+            Some(
+                underlying::Ref::Fx(_)
+                | underlying::Ref::Metal(_)
+                | underlying::Ref::Equity(_)
+                | underlying::Ref::Commodity(_),
+            )
+            | None => None,
         }
     }
 }
@@ -64,6 +156,51 @@ impl MetalPair {
     pub fn new(metal: Metal, quote: impl Into<String>) -> Self {
         MetalPair {
             metal: metal as i32,
+            quote: quote.into(),
+        }
+    }
+}
+
+impl Symbol {
+    /// A symbol from its ticker and listing venue (pass an empty venue when the
+    /// ticker is globally unambiguous).
+    #[must_use]
+    pub fn new(ticker: impl Into<String>, venue: impl Into<String>) -> Self {
+        Symbol {
+            ticker: ticker.into(),
+            venue: venue.into(),
+        }
+    }
+}
+
+impl EquityRef {
+    /// An equity reference from its listed symbol and quote/settlement currency.
+    #[must_use]
+    pub fn new(symbol: Symbol, currency: impl Into<String>) -> Self {
+        EquityRef {
+            symbol: Some(symbol),
+            currency: currency.into(),
+        }
+    }
+}
+
+impl CommodityRef {
+    /// A commodity reference from its symbol and quote/settlement currency.
+    #[must_use]
+    pub fn new(symbol: Symbol, currency: impl Into<String>) -> Self {
+        CommodityRef {
+            symbol: Some(symbol),
+            currency: currency.into(),
+        }
+    }
+}
+
+impl CryptoPair {
+    /// A crypto pair from its coin (base) leg and its numeraire (quote) leg.
+    #[must_use]
+    pub fn new(base: impl Into<String>, quote: impl Into<String>) -> Self {
+        CryptoPair {
+            base: base.into(),
             quote: quote.into(),
         }
     }

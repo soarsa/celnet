@@ -124,6 +124,7 @@ mod tests {
                     spec: Some(strike_or_delta::Spec::Strike(strike)),
                 }),
             })),
+            ..Default::default()
         }
     }
 
