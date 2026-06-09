@@ -177,6 +177,32 @@ mutants-gate-xva:
 mutants-gate-numerics: mutants-gate-vanilla mutants-gate-surface mutants-gate-exotics mutants-gate-risk-cube mutants-gate-xva
     @echo "All numerics mutation gates passed."
 
+# ---------------------------------------------------------------------------
+# Infra rigor gates (W6): the loom model-check of the fan-out seqlock ring + the
+# infra-crate mutation gates. See docs/HARDENING.md (W6 section).
+# ---------------------------------------------------------------------------
+
+# Loom model-check of the SPMC seqlock ring (relaxed-memory interleaving search).
+# Built ONLY under `--cfg loom` so the std hot path is byte-for-byte unaffected
+# (loom never enters a release build; it is a `[target.'cfg(loom)'.dependencies]`
+# dev/cfg-only dep). Bounded-preemption exploration keeps the search inside CI
+# time while exhaustively covering the producer/consumer interleavings the
+# two-stamp + Acquire-fence torn-read protocol must reject (see ring.rs
+# §"Seqlock reader barrier" and crates/celnet-fanout/src/mem.rs).
+loom-fanout:
+    timeout 1800 env RUSTFLAGS="--cfg loom" LOOM_MAX_PREEMPTIONS=3 \
+        {{_cargo}} test -p celnet-fanout --test loom_seqlock --release
+
+# Mutation GATE on the SPMC fan-out ring (seqlock publish + torn-read protocol +
+# conflation/skip accounting). Plain `cargo test` runner (NOT nextest: a
+# concurrent session may `pkill nextest`, and the gate must be reproducible
+# independent of the workspace nextest profile); `--jobs 3` bounds wall-time on
+# the M4 and stays courteous to a parallel session. Zero non-equivalent
+# survivors. See docs/HARDENING.md.
+mutants-gate-fanout:
+    timeout 1200 {{_cargo}} mutants -p celnet-fanout --test-tool=cargo --jobs 3 \
+        --config .config/mutants-fanout.toml
+
 # Coverage GATE on the vanilla pricing core: fail if region/line coverage drops
 # below the committed floor (see docs/HARDENING.md). `--fail-under-lines` /
 # `--fail-under-regions` make llvm-cov exit non-zero below the threshold.

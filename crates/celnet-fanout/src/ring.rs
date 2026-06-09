@@ -34,9 +34,7 @@
 //! except their own (thread-local) cursor, so there is no inter-consumer
 //! contention.
 
-use std::cell::UnsafeCell;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use crate::mem::{Arc, AtomicU64, Ordering, PayloadCell, fence, spin_loop};
 
 use crossbeam_utils::CachePadded;
 
@@ -74,21 +72,23 @@ struct Slot<T> {
     /// around the payload write; `Acquire`d by readers before and after copying.
     stamp: AtomicU64,
     /// Single-writer payload. Read concurrently by many consumers; the seqlock
-    /// stamp protocol makes the `Copy`-out race-free for `T: Copy`.
-    value: UnsafeCell<T>,
+    /// stamp protocol makes the `Copy`-out race-free for `T: Copy`. The cell is
+    /// a plain `UnsafeCell<T>` in production and relaxed-atomic lanes under
+    /// `cfg(loom)` (see [`crate::mem`]) so the model-check can explore the
+    /// benign payload race.
+    value: PayloadCell<T>,
 }
 
 /// Sentinel stamp for a never-written slot: an odd value (so it reads as
 /// "in-progress" / never a stable `(seq << 1)`) that no real sequence produces.
 const UNWRITTEN: u64 = u64::MAX;
 
-// SAFETY: `Slot<T>` is shared across threads inside `Inner`. The only mutable
-// access to `value` is by the single producer, ordered with consumers by the
-// `seq` seqlock (Release on publish / Acquire on read, plus a second Acquire to
-// detect a concurrent overwrite). `T: Copy + Send` guarantees the payload bytes
-// are trivially movable across threads and carry no thread-affine ownership.
-#[allow(unsafe_code)]
-unsafe impl<T: Send> Sync for Slot<T> {}
+// `Slot<T>: Sync` (for `T: Send`) is provided structurally: the stamp is an
+// `AtomicU64` (always `Sync`) and the `PayloadCell<T>` carries the audited
+// `unsafe impl Sync` for the seqlock-ordered single-writer payload (see
+// `crate::mem`). The justification — single producer ordered with readers by the
+// stamp protocol (Release on publish / Acquire on read + the reader fence) — now
+// lives on `PayloadCell`, the one place the raw cell access is made.
 
 /// Shared ring storage; held immutably by the producer and every consumer.
 struct Inner<T> {
@@ -114,7 +114,7 @@ impl<T: Copy + Default + Send> Inner<T> {
         let slots: Box<[Slot<T>]> = (0..capacity)
             .map(|_| Slot {
                 stamp: AtomicU64::new(UNWRITTEN),
-                value: UnsafeCell::new(T::default()),
+                value: PayloadCell::new(T::default()),
             })
             .collect();
         Arc::new(Self {
@@ -177,7 +177,7 @@ impl<T: Copy + Default + Send> Producer<T> {
         #[allow(unsafe_code)]
         // SAFETY: exclusive single-producer write, in-bounds index.
         unsafe {
-            *slot.value.get() = item;
+            slot.value.write(item);
         }
         slot.stamp.store(stable, Ordering::Release);
 
@@ -311,7 +311,7 @@ impl<T: Copy + Default + Send> Consumer<T> {
                 }
                 // In-window but not yet stable: the producer is mid-write of this
                 // exact slot. Spin-retry the same cursor.
-                std::hint::spin_loop();
+                spin_loop();
                 continue;
             }
 
@@ -322,7 +322,7 @@ impl<T: Copy + Default + Send> Consumer<T> {
             // a coherent, never-torn snapshot of sequence `seq`.
             #[allow(unsafe_code)]
             // SAFETY: in-bounds index; `Copy` read guarded by the seqlock stamps.
-            let value = unsafe { *slot.value.get() };
+            let value = unsafe { slot.value.read() };
 
             // Seqlock reader barrier (canonical form): an Acquire fence between the
             // plain payload copy and the post-stamp re-check. Without it, on a
@@ -335,12 +335,12 @@ impl<T: Copy + Default + Send> Consumer<T> {
             // change and the read is retried. (Surfaced once under 16x full-suite
             // CPU oversubscription by the conflation stress test; the two-Acquire-
             // load form alone left this reorder window open.)
-            std::sync::atomic::fence(Ordering::Acquire);
+            fence(Ordering::Acquire);
             let stamp_after = slot.stamp.load(Ordering::Acquire);
             if stamp_after != want {
                 // Producer began (or finished) overwriting this slot while we
                 // copied → torn read. Discard and retry (likely laps us forward).
-                std::hint::spin_loop();
+                spin_loop();
                 continue;
             }
 

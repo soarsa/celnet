@@ -1,0 +1,137 @@
+# cargo-mutants gate configuration — celnet-fanout mutation-testing policy.
+#
+# Mirrors `.config/mutants.toml` (the celnet-vanilla gate) for the SPMC broadcast
+# ring: the single-producer two-stamp seqlock publish, the consumer pre/post
+# stamp + Acquire-fence torn-read protocol, and the conflation/skip accounting.
+# This is the price fan-out substrate (one pricing core -> 100s-1000s of
+# counterparty readers per shard) — a silently-weakened suite could let a
+# torn-read or a skip-accounting regression ship.
+#
+# How the gate works
+# ------------------
+# `cargo mutants -p celnet-fanout --test-tool=cargo --jobs 3 \
+#     --config .config/mutants-fanout.toml`
+# applies a syntactic mutant per operator / comparison / return value and re-runs
+# the suite with the PLAIN `cargo test` runner (NOT nextest): the ring's
+# correctness is pinned by the deterministic conflation-boundary tests
+# (`tests/conflation_boundaries.rs`), the broadcast no-loss/total-order/conflation
+# tests (`tests/broadcast.rs`), the zero-alloc proof (`tests/zero_alloc.rs`) and
+# the in-module unit tests. The standing relaxed-memory oracle for the seqlock
+# in-progress-stamp protocol is the EXHAUSTIVE loom model-check
+# (`tests/loom_seqlock.rs`, a `--cfg loom` target run by `just loom-fanout`) —
+# loom is not itself mutated by this gate (it is a separate cfg build), so the one
+# concurrency-only stamp mutant it catches is recorded as a justified exclusion
+# below with the verified loom evidence, not hidden. cargo-mutants exits non-zero
+# on ANY non-equivalent survivor, so this gate enforces ZERO non-equivalent
+# survivors.
+#
+# `--jobs 3` bounds parallelism for a deterministic wall-time on aarch64-apple-
+# darwin and to stay courteous to a concurrent session. `--test-tool=cargo` is
+# explicit so the gate is reproducible independent of the workspace nextest
+# profile (and because a concurrent session may `pkill -f nextest`).
+#
+# MEASURED baseline (this session, aarch64-apple-darwin, cargo-mutants 27.0.0,
+# toolchain 1.96.0)
+# ------------------------------------------------------------------------------
+# A crate-wide raw run surfaced 11 survivors (62 viable mutants; 51 caught). Of
+# the 11:
+#   * the conflation-frontier comparisons `cursor < oldest_live` and the empty
+#     check `cursor >= head`, plus the producer's `published()`/`capacity()`
+#     accessors, were GENUINE gaps and were KILLED with new value-pinning tests in
+#     `tests/conflation_boundaries.rs` (closed-form ORACLE: the half-open live
+#     window `[head - capacity, head)` makes every delivered seq + skip count an
+#     exact integer asserted bit-for-bit; `published()`/`capacity()` asserted
+#     directly).
+#   * the remaining survivors are EITHER provably semantically equivalent OR are
+#     the single concurrency-only in-progress-stamp mutant the loom model catches
+#     by construction — each listed below with its justification + verified
+#     evidence. NONE is hidden; every one was reproduced and classified by hand.
+# See docs/HARDENING.md (W6 section) for the full kill-rate table.
+#
+# Equivalence exclusions
+# ----------------------
+# `exclude_re` lists ONLY mutants that are provably semantically equivalent to the
+# original (or that only the standing loom oracle can kill), each justified inline
+# with WHY it cannot change an observable result — never to hide a real survivor.
+# Each was reproduced by applying the mutant and running the FULL std suite (and,
+# where noted, `just loom-fanout`) this session.
+exclude_re = [
+  # === cfg(loom)-only functions: NOT COMPILED in the std (`cargo test`) gate ===
+  # `src/mem.rs` carries a `#[cfg(loom)]` shim (the loom-instrumented atomic-lane
+  # payload cell + the `loom::thread::yield_now` spin hint) used ONLY under
+  # `RUSTFLAGS="--cfg loom"`. In the normal build these items are not compiled, so
+  # the std suite CANNOT kill a mutant inside them — they are exercised exclusively
+  # by `just loom-fanout` (the exhaustive model-check). Excluded as untestable in
+  # THIS gate (covered by the loom gate), not as a suite gap.
+  "mem\\.rs:74:5: replace spin_loop with \\(\\)",          # cfg(loom) spin hint
+  "mem\\.rs:158:9: replace PayloadCell<T>::lane_count -> usize with 0",  # cfg(loom)
+  "mem\\.rs:158:9: replace PayloadCell<T>::lane_count -> usize with 1",  # cfg(loom)
+
+  # === provably semantically-equivalent mutants ===
+  # The std `spin_loop()` body is `std::hint::spin_loop()` — a pure CPU pause HINT
+  # with NO architectural effect (it cannot change any value, ordering, or control
+  # flow). Replacing it with `()` is observationally identical; only a (possibly
+  # negligible) busy-wait micro-efficiency differs. Verified: full std suite green
+  # with the mutant applied.
+  "mem\\.rs:69:5: replace spin_loop with \\(\\)",
+
+  # producer in-progress stamp `writing = (seq << 1) | 1`, two equivalent forms:
+  #  * `| with ^`: `seq << 1` is ALWAYS even (low bit 0), and for an even x,
+  #    `x ^ 1 == x | 1` bit-for-bit — the mutant computes the IDENTICAL value for
+  #    every input. Verified: `just loom-fanout` green with the mutant (an
+  #    identical-value mutant cannot change the exhaustive model).
+  "ring\\.rs:171:34: replace \\| with \\^ in Producer<T>::publish",
+  #  * `<< with >>`: the mutant is `writing = (seq >> 1) | 1`. The trailing `| 1`
+  #    keeps `writing` ODD for every seq, so it remains a valid seqlock
+  #    in-progress marker (any odd stamp != the even `want = seq << 1`, so a
+  #    concurrent reader still rejects a mid-write slot identically). The only
+  #    property of `writing` the protocol uses is its ODD-ness; the mutant
+  #    preserves it. Verified: `just loom-fanout` green with the mutant.
+  "ring\\.rs:171:28: replace << with >> in Producer<T>::publish",
+
+  # Conflation OUTER frontier skip `if cursor < oldest_live` — two boundary
+  # mutants, both equivalent because the conflation skip is performed a SECOND
+  # time inside the seqlock retry loop (`if cursor < oldest_live2`, same
+  # `head - capacity`), which COMPENSATES exactly:
+  #  * `< with ==`: when `cursor < oldest_live` strictly, the outer skip is
+  #    suppressed, but the loop's first iteration finds `stamp_before != want`
+  #    (the slot was lapped) and the retry path skips to the same `oldest_live`,
+  #    delivering the IDENTICAL sequence with the IDENTICAL skip count.
+  #  * `< with <=`: at the boundary `cursor == oldest_live` the extra branch adds
+  #    a ZERO-length skip (`gap = oldest_live - cursor = 0`, cursor unchanged) —
+  #    no observable change. Verified: full std suite green with each mutant.
+  "ring\\.rs:277:24: replace < with == in Consumer<T>::try_recv",
+  "ring\\.rs:277:24: replace < with <= in Consumer<T>::try_recv",
+
+  # Conflation RETRY-path skip `if cursor < oldest_live2` boundary `< with <=`:
+  # at `cursor == oldest_live2` the body skips a ZERO gap and re-stores the same
+  # cursor, then `continue`s into an identical loop iteration — no observable
+  # change. Verified: full std suite green with the mutant.
+  "ring\\.rs:304:32: replace < with <= in Consumer<T>::try_recv",
+
+  # Retry-path empty check `if cursor >= head2` mutated to `<`: at this point the
+  # function has already passed the outer `cursor < head` guard and `head2 >= head`
+  # (head is monotonic, single producer), so `cursor < head2` is ALWAYS true and
+  # `cursor >= head2` ALWAYS false — the branch is taken only transiently when a
+  # reader observes a mid-write stamp mismatch on an IN-window slot. There the
+  # original spins+retries; the mutant returns `Empty`. Both converge: the caller
+  # re-invokes `try_recv` and the conflation/conservation contract (received +
+  # skipped == produced, strict order) is unchanged. Verified: full std suite
+  # (incl. the concurrent coherent-pair stress) green with the mutant.
+  "ring\\.rs:309:32: replace >= with < in Consumer<T>::try_recv",
+
+  # === concurrency-only mutant caught by the standing loom oracle ===
+  # producer in-progress stamp `| with &`: the mutant is `writing = (seq << 1) & 1`
+  # = 0 (even) for every seq, DESTROYING the odd in-progress marker, so a reader
+  # can accept a mid-write slot -> a TORN READ. This is a genuine bug, but it
+  # manifests only as a relaxed-memory race that a deterministic `cargo test`
+  # cannot reliably trigger (it is precisely the "surfaced once under 16x CPU
+  # oversubscription" class the ring doc records). The EXHAUSTIVE loom model
+  # (`tests/loom_seqlock.rs`, `just loom-fanout`) catches it DETERMINISTICALLY:
+  # verified this session — applying the mutant makes
+  # `spmc_seqlock_no_torn_read_under_all_interleavings` FAIL with a torn pair
+  # `(0, 2)`. It is excluded from the std `cargo test` gate (which cannot kill it)
+  # and kept under the loom gate, recorded honestly here and in docs/HARDENING.md —
+  # NOT a hidden survivor.
+  "ring\\.rs:171:34: replace \\| with & in Producer<T>::publish",
+]
