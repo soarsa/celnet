@@ -106,11 +106,15 @@ fn adversarial_journal_bytes() -> impl Strategy<Value = Vec<u8>> {
             bytes
         });
 
-    // A buffer that starts with the snapshot sentinel + a (possibly hostile) inner
-    // length, to drive `read_snapshot` and its length bound.
+    // A buffer that starts with the sync word + the snapshot sentinel + a
+    // (possibly hostile) inner length, to drive `read_snapshot` and its length
+    // bound. The sync word (ASCII "CLNJRNL\0" LE) must lead the frame under the
+    // per-record sync-word format or recovery classifies the start as a torn tail
+    // before reaching the snapshot branch.
     let snapshot_shaped =
         (any::<u32>(), prop::collection::vec(any::<u8>(), 0..256)).prop_map(|(inner_len, tail)| {
             let mut bytes = Vec::new();
+            bytes.extend_from_slice(&u64::from_le_bytes(*b"CLNJRNL\0").to_le_bytes()); // SYNC_WORD
             bytes.extend_from_slice(&u32::MAX.to_le_bytes()); // SNAPSHOT_MARKER
             bytes.extend_from_slice(&7u64.to_le_bytes()); // watermark
             bytes.extend_from_slice(&inner_len.to_le_bytes()); // attacker inner length

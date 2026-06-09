@@ -20,20 +20,25 @@
 //!
 //! # On-disk format
 //!
-//! The log is a flat file of back-to-back records. A normal **data** record is:
+//! The log is a flat file of back-to-back records. Every record (data and
+//! snapshot) begins with a fixed 8-byte **sync word** ([`SYNC_WORD`], ASCII
+//! `"CLNJRNL\0"` little-endian) — a start-of-frame magic that lets recovery
+//! resynchronize and, crucially, tell an interior CRC failure apart from a torn
+//! tail (see the failure model below). A normal **data** record is:
 //!
 //! ```text
-//! ┌──────────────┬──────────────┬─────────────────┬──────────────┐
-//! │ payload_len  │  sequence    │   payload       │   crc32      │
-//! │  u32 LE      │  u64 LE      │  payload_len B  │  u32 LE      │
-//! └──────────────┴──────────────┴─────────────────┴──────────────┘
+//! ┌────────────┬──────────────┬──────────────┬─────────────────┬──────────────┐
+//! │ SYNC_WORD  │ payload_len  │  sequence    │   payload       │   crc32      │
+//! │  u64 LE    │  u32 LE      │  u64 LE      │  payload_len B  │  u32 LE      │
+//! └────────────┴──────────────┴──────────────┴─────────────────┴──────────────┘
 //! ```
 //!
-//! The CRC-32 (IEEE, see [`crc32`]) covers the framed header **and** the payload
-//! (`payload_len || sequence || payload`), so a flipped byte anywhere in the
-//! record is detected. A record whose bytes are present but whose CRC fails, or
-//! whose frame is truncated (a short read at EOF), is treated as a torn tail:
-//! recovery stops at the last good record and truncates the file to that offset.
+//! The CRC-32 (IEEE, see [`crc32`]) covers the sync word, the framed header **and**
+//! the payload (`SYNC_WORD || payload_len || sequence || payload`), so a flipped
+//! byte anywhere in the record — including a corrupted sync byte — is detected. A
+//! record whose frame is truncated (a short read at EOF), or whose start does not
+//! carry the sync word, is treated as a torn tail: recovery stops at the last good
+//! record and truncates the file to that offset.
 //!
 //! A leading **snapshot** record (written only by [`Journal::compact`]) reuses the
 //! exact same frame, distinguished losslessly by a **sentinel in the `payload_len`
@@ -46,14 +51,14 @@
 //! the *true* snapshot length is stored as a leading `u32` of its payload region:
 //!
 //! ```text
-//! ┌──────────────┬──────────────┬──────────────┬──────────────┬──────────┐
-//! │ SNAPSHOT_MARK│  watermark   │ snapshot_len │ snapshot B   │  crc32   │
-//! │  u32 = MAX   │  u64 LE      │  u32 LE      │ snapshot_len │  u32 LE  │
-//! └──────────────┴──────────────┴──────────────┴──────────────┴──────────┘
+//! ┌────────────┬──────────────┬──────────────┬──────────────┬────────────┬──────────┐
+//! │ SYNC_WORD  │ SNAPSHOT_MARK│  watermark   │ snapshot_len │ snapshot B │  crc32   │
+//! │  u64 LE    │  u32 = MAX   │  u64 LE      │  u32 LE      │ snapshot_l │  u32 LE  │
+//! └────────────┴──────────────┴──────────────┴──────────────┴────────────┴──────────┘
 //! ```
 //!
-//! The CRC still covers everything before it, so a corrupt snapshot record is
-//! detected exactly like a data record.
+//! The CRC still covers everything before it (including the sync word), so a
+//! corrupt snapshot record is detected exactly like a data record.
 //!
 //! # Durability contract
 //!
@@ -66,32 +71,41 @@
 //! parent directory once (covering first creation), so the first record cannot be
 //! lost to an un-synced directory on the filesystems where that matters.
 //!
-//! # Failure model & a stated limitation
+//! # Failure model
 //!
-//! This format is **marker-less** (no resync/sync-word between records), chosen
-//! for simplicity and minimal per-record overhead. The consequence, stated
-//! honestly rather than papered over:
+//! The per-record [`SYNC_WORD`] is the resync marker that lets recovery separate
+//! the two post-crash conditions a marker-less format conflated — so an interior
+//! CRC failure is **surfaced**, not silently healed:
 //!
-//! * A **torn tail** (truncated final frame, or a CRC failure on the last record)
-//!   is the expected post-crash state — recovery stops at the last good record and
-//!   truncates, returning no error. This is correct: the torn bytes were never
-//!   acknowledged (`append` had not returned `Ok`).
-//! * A **CRC failure on an *interior* record** (e.g. silent bit-rot under an
-//!   otherwise-intact tail) is **indistinguishable** from a torn tail without a
-//!   resync marker, so it is handled the same way: recovery stops there and the
-//!   trailing — possibly already-acknowledged — records are truncated. `open`
-//!   returns `Ok`, **not** an error. This is a genuine limitation: a single rotted
-//!   interior byte can silently drop committed records after it. Mitigations are
-//!   (a) the checkpoint/compaction cycle below, which bounds the residual tail and
-//!   thus the exposure window, and (b) external integrity scrubbing for cold logs.
-//! * The interior inconsistencies the format *can* cheaply detect — a CRC-**valid**
-//!   data record whose sequence number is non-monotonic, or a CRC-valid snapshot
-//!   record found anywhere but first — **are** surfaced as
+//! * A **torn tail** (a crash mid-`append`) is the expected post-crash state. It
+//!   manifests as one of: zero bytes at a record boundary (clean EOF); a short read
+//!   of the sync word, header, payload or CRC trailer of the final frame; or
+//!   trailing bytes at the physical tail whose leading 8 bytes are not the sync
+//!   word. In every case recovery stops at the last good record and truncates,
+//!   returning **no error** — correct, since the torn bytes were never acknowledged
+//!   (`append` had not returned `Ok`).
+//! * An **interior CRC failure** — an intact sync word followed by a *complete*
+//!   frame body (payload/snapshot bytes **and** the CRC trailer all present) whose
+//!   CRC nonetheless fails — is **bit-rot of a fully-written record**, not a torn
+//!   tail. A torn tail cannot reach this state: an interrupted append leaves the
+//!   body *short* (a missing/partial CRC trailer, classified as a torn tail above),
+//!   and it cannot forge a complete CRC trailer for bytes it never wrote. So this
+//!   case is surfaced as [`JournalError::CorruptInterior`] rather than truncating
+//!   the (possibly already-acknowledged) records after it. This closes the
+//!   limitation the marker-less format documented.
+//! * The other interior inconsistencies the format detects — a CRC-**valid** data
+//!   record whose sequence number is non-monotonic, or a CRC-valid snapshot record
+//!   found anywhere but first — are likewise surfaced as
 //!   [`JournalError::CorruptInterior`] rather than healed.
 //!
-//! (A future framed format with a per-record resync marker would let recovery
-//! distinguish interior CRC corruption from a torn tail and surface it; that is a
-//! deliberate non-goal of this first cut, recorded here, not silently assumed.)
+//! > **Conservative bias on adversarial garbage.** Trailing garbage from an
+//! > interrupted append that happens to be ≥ 8 bytes but is *not* the sync word is
+//! > handled as a torn tail. The pathological case "garbage that exactly equals the
+//! > sync word, followed by a complete-but-CRC-bad body" is astronomically
+//! > improbable (an interrupted append cannot produce a complete CRC trailer for
+//! > bytes it never wrote); were it ever to occur, surfacing it as
+//! > `CorruptInterior` is the *safe* failure — stop and report rather than silently
+//! > drop committed records. This bias is intentional, not hand-waved.
 //!
 //! # Checkpointing & compaction
 //!
@@ -157,6 +171,18 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
+/// Per-record sync word at the head of every frame (data and snapshot). A fixed,
+/// non-zero magic so recovery can tell an **interior** CRC failure (intact sync
+/// word, failing CRC ⇒ [`JournalError::CorruptInterior`]) apart from a torn tail
+/// (absent/short sync word at EOF, or a sync word that does not match ⇒ heal). It
+/// is **inside** the CRC coverage, so a flipped sync byte is still caught. The
+/// bytes are ASCII `"CLNJRNL\0"` interpreted little-endian — human-recognizable in
+/// a hex dump and, as the start-of-frame magic, the resync point the old marker-
+/// less format lacked.
+const SYNC_WORD: u64 = u64::from_le_bytes(*b"CLNJRNL\0");
+/// Width of the sync word prefix, in bytes.
+const SYNC_LEN: usize = 8;
+
 /// Size of a record's fixed header: `payload_len: u32` + `sequence: u64`.
 const HEADER_LEN: usize = 4 + 8;
 /// Size of the trailing CRC-32: `u32`.
@@ -187,17 +213,21 @@ const SNAPSHOT_MARKER: u32 = u32::MAX;
 pub enum JournalError {
     /// An underlying filesystem IO error.
     Io(io::Error),
-    /// A CRC-**valid** record carried an interior inconsistency that truncation
-    /// cannot explain — a data record whose sequence is non-monotonic (a
-    /// reordered/duplicated frame), or a snapshot record placed after the start of
-    /// the log — so it is surfaced rather than silently healed. Carries the
-    /// expected sequence number at the bad record.
+    /// A record carried an interior inconsistency that truncation cannot explain,
+    /// so it is surfaced rather than silently healed. Carries the expected sequence
+    /// number at the bad record. Raised in three cases:
     ///
-    /// Note the scope precisely: this is **not** raised for a CRC *failure*. A
-    /// failed CRC is indistinguishable, in a marker-less format, from a torn tail,
-    /// so it is handled as such (recovery stops and truncates — see
-    /// [`Journal::open`] and the failure-model note there). This variant covers
-    /// only cases the format *can* detect: intact bytes, wrong structure.
+    /// * **interior CRC failure** — an intact [`SYNC_WORD`] followed by a *complete*
+    ///   frame body (all bytes through the CRC trailer present) whose CRC fails:
+    ///   bit-rot of a fully-written record, not a torn tail (a torn tail leaves the
+    ///   body short, healed silently). This is the discrimination the per-record
+    ///   sync word makes possible;
+    /// * a CRC-**valid** data record whose sequence is non-monotonic (a
+    ///   reordered/duplicated frame);
+    /// * a CRC-valid snapshot record placed anywhere but the start of the log.
+    ///
+    /// A short body at EOF (an interrupted append) is *not* this error — it is a
+    /// torn tail, healed by truncation (see [`Journal::open`] and the failure model).
     CorruptInterior {
         /// The expected (monotonic) sequence number at the failing record.
         at_sequence: u64,
@@ -328,25 +358,25 @@ pub struct Journal {
 impl Journal {
     /// Open the journal at `path`, creating it if absent.
     ///
-    /// On open the file is scanned front-to-back: each record's CRC and the
-    /// strict sequence monotonicity (`0, 1, 2, …`, or `watermark+1, …` after a
-    /// leading snapshot) are validated. A truncated or CRC-failing **final**
-    /// record (a crash mid-`append`) is treated as a torn tail — the file is
-    /// truncated to the end of the last good record and the caller sees a clean,
-    /// consistent log (no partial record, no error).
+    /// On open the file is scanned front-to-back: each record's [`SYNC_WORD`], CRC
+    /// and the strict sequence monotonicity (`0, 1, 2, …`, or `watermark+1, …` after
+    /// a leading snapshot) are validated. A **torn tail** (a crash mid-`append`) —
+    /// a short read of the final frame, or trailing bytes not led by the sync word —
+    /// is healed: the file is truncated to the end of the last good record and the
+    /// caller sees a clean, consistent log (no partial record, no error).
     ///
-    /// Recovery stops at the **first** record that fails its CRC and truncates
-    /// from there: a CRC failure means the bytes from that record onward are not
-    /// trustworthy, so the recovered prefix is exactly the contiguous run of
-    /// good records. A *sequence break* on an otherwise CRC-valid data record (a
-    /// reordered/duplicated frame), or a snapshot record found after the start,
-    /// is surfaced as [`JournalError::CorruptInterior`] rather than hidden.
+    /// An **interior CRC failure** (an intact sync word + a complete frame body
+    /// whose CRC fails), a *sequence break* on a CRC-valid data record, or a
+    /// snapshot record found after the start, are each surfaced as
+    /// [`JournalError::CorruptInterior`] rather than hidden — a torn tail cannot
+    /// produce any of these (it leaves the body short or the sync word absent).
     ///
     /// # Errors
     ///
     /// - [`JournalError::Io`] on filesystem failure.
-    /// - [`JournalError::CorruptInterior`] on a detectable interior
-    ///   inconsistency (non-monotonic sequence, or a misplaced snapshot record).
+    /// - [`JournalError::CorruptInterior`] on a detectable interior inconsistency
+    ///   (interior CRC failure under an intact sync word, non-monotonic sequence, or
+    ///   a misplaced snapshot record).
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         let mut file = OpenOptions::new()
@@ -414,7 +444,7 @@ impl Journal {
 
         // Build the framed record in a single buffer, then issue one write so a
         // crash produces either nothing or a prefix (detected as a torn tail) —
-        // never an interleaved frame. CRC covers header + payload.
+        // never an interleaved frame. CRC covers sync word + header + payload.
         let frame = frame_record(seq, len_u32, payload);
 
         // Ensure we write at the logical end (defensive against an external seek).
@@ -655,7 +685,8 @@ enum ReadOutcome {
     Record(Record),
     /// Clean end of file at a record boundary.
     Eof,
-    /// A truncated or CRC-failing **final** record (torn tail) — stop here.
+    /// A truncated **final** record, or a start that does not carry the sync word
+    /// (torn tail) — stop here and heal by truncation.
     TornTail,
 }
 
@@ -668,17 +699,31 @@ enum ReadOutcome {
 /// Returns:
 /// - `Record` on success (and leaves the reader at the next record),
 /// - `Eof` if the reader is exactly at end-of-file (clean boundary),
-/// - `TornTail` if the frame is truncated or its CRC fails (crash mid-append),
-/// - `Err(CorruptInterior)` if the record is well-formed and CRC-valid but a data
-///   record's sequence breaks monotonicity, or a snapshot record appears anywhere
-///   but first (interior corruption that truncation cannot heal).
+/// - `TornTail` if the frame start is not the sync word, or the frame is truncated
+///   (a short read of sync word/header/payload/CRC — crash mid-append),
+/// - `Err(CorruptInterior)` if the frame is fully present under an intact sync word
+///   but its CRC fails (interior bit-rot), a CRC-valid data record's sequence breaks
+///   monotonicity, or a snapshot record appears anywhere but first.
 fn read_one<R: Read>(reader: &mut R, expected_seq: u64, at_start: bool) -> Result<ReadOutcome> {
-    // Read the fixed header. A short read here means either a clean EOF (0 bytes)
-    // or a torn header (1..HEADER_LEN bytes) — both end the log.
-    let mut header = [0u8; HEADER_LEN];
-    match read_full_or_short(reader, &mut header)? {
+    // 1. Sync word: distinguishes the start of a framed record from a torn/EOF
+    //    boundary. Zero bytes available is a clean EOF; a short read (1..SYNC_LEN)
+    //    is a torn final frame whose header never fully flushed.
+    let mut sync = [0u8; SYNC_LEN];
+    match read_full_or_short(reader, &mut sync)? {
         FillState::Empty => return Ok(ReadOutcome::Eof),
         FillState::Short => return Ok(ReadOutcome::TornTail),
+        FillState::Full => {}
+    }
+    if u64::from_le_bytes(sync) != SYNC_WORD {
+        // No framed record begins here. At the physical tail this is a torn final
+        // frame (or trailing garbage from an interrupted append) — heal it.
+        return Ok(ReadOutcome::TornTail);
+    }
+
+    // 2. Logical header (payload_len + sequence). A short read is a torn tail.
+    let mut header = [0u8; HEADER_LEN];
+    match read_full_or_short(reader, &mut header)? {
+        FillState::Empty | FillState::Short => return Ok(ReadOutcome::TornTail),
         FillState::Full => {}
     }
 
@@ -690,7 +735,7 @@ fn read_one<R: Read>(reader: &mut R, expected_seq: u64, at_start: bool) -> Resul
     // A snapshot record is flagged by the SNAPSHOT_MARKER sentinel in the length
     // field — handled separately (it carries an extra inner length prefix).
     if len_field == SNAPSHOT_MARKER {
-        return read_snapshot(reader, &header, sequence, expected_seq, at_start);
+        return read_snapshot(reader, &sync, &header, sequence, expected_seq, at_start);
     }
 
     // A length beyond the safety bound (but not the sentinel) can only be
@@ -716,21 +761,25 @@ fn read_one<R: Read>(reader: &mut R, expected_seq: u64, at_start: bool) -> Resul
     }
     let stored_crc = u32::from_le_bytes(crc_bytes);
 
-    // Recompute the CRC over header + payload and compare.
-    let mut framed = Vec::with_capacity(HEADER_LEN + payload.len());
+    // Recompute the CRC over sync word + header + payload and compare.
+    let mut framed = Vec::with_capacity(SYNC_LEN + HEADER_LEN + payload.len());
+    framed.extend_from_slice(&sync);
     framed.extend_from_slice(&header);
     framed.extend_from_slice(&payload);
     let actual_crc = crc32(&framed);
 
     if actual_crc != stored_crc {
-        // A CRC failure is, by the journal's failure model, a torn/corrupt tail:
-        // the record's bytes are present but did not flush atomically, or rot hit
-        // a record. In this marker-less format a CRC failure cannot be told apart
-        // from a genuine torn tail, so recovery stops here and truncates — see the
-        // crate-level "Failure model & a stated limitation": if the failure is in
-        // fact an interior record, the trailing (possibly acknowledged) records are
-        // dropped with it. We never surface a partial record to the caller.
-        return Ok(ReadOutcome::TornTail);
+        // INTERIOR-vs-TORN discrimination. An intact sync word means a real,
+        // fully-framed record started here, and the full body (payload + CRC
+        // trailer) is present — a torn tail would have left the body *short* (the
+        // CRC trailer absent/partial, caught above as `Short`) or the next sync
+        // word absent. So an intact sync word with a complete body but a failing
+        // CRC is **interior corruption** (bit-rot of a fully-written record), not a
+        // torn tail. Surface it rather than silently truncating the records after.
+        return Err(JournalError::CorruptInterior {
+            at_sequence: expected_seq,
+            reason: "record CRC failed with an intact sync word (interior corruption)",
+        });
     }
 
     // CRC is valid ⇒ the record is intact. A data record's sequence must be
@@ -756,10 +805,13 @@ fn read_one<R: Read>(reader: &mut R, expected_seq: u64, at_start: bool) -> Resul
 ///
 /// A snapshot record is legal **only** as the very first record of a compacted
 /// log; a CRC-valid snapshot record found anywhere else is interior corruption
-/// truncation cannot explain, so it is surfaced rather than healed. A torn or
-/// CRC-failing snapshot record is a torn tail like any other.
+/// truncation cannot explain, so it is surfaced rather than healed. A snapshot
+/// record with an intact sync word and a complete body but a failing CRC is
+/// likewise interior corruption; a truncated (short-body) snapshot record is a
+/// torn tail like any other.
 fn read_snapshot<R: Read>(
     reader: &mut R,
+    sync: &[u8; SYNC_LEN],
     header: &[u8; HEADER_LEN],
     watermark: u64,
     expected_seq: u64,
@@ -791,13 +843,21 @@ fn read_snapshot<R: Read>(
     }
     let stored_crc = u32::from_le_bytes(crc_bytes);
 
-    // CRC covers header (incl. the sentinel + watermark) + inner length + bytes.
-    let mut framed = Vec::with_capacity(HEADER_LEN + 4 + snapshot.len());
+    // CRC covers sync word + header (incl. the sentinel + watermark) + inner length
+    // + snapshot bytes.
+    let mut framed = Vec::with_capacity(SYNC_LEN + HEADER_LEN + 4 + snapshot.len());
+    framed.extend_from_slice(sync);
     framed.extend_from_slice(header);
     framed.extend_from_slice(&inner_len_bytes);
     framed.extend_from_slice(&snapshot);
     if crc32(&framed) != stored_crc {
-        return Ok(ReadOutcome::TornTail);
+        // As in `read_one`: an intact sync word plus a complete body (snapshot
+        // bytes + CRC trailer present) with a failing CRC is interior corruption,
+        // not a torn tail (a torn tail leaves the body short, caught above).
+        return Err(JournalError::CorruptInterior {
+            at_sequence: expected_seq,
+            reason: "snapshot CRC failed with an intact sync word (interior corruption)",
+        });
     }
 
     // CRC valid ⇒ intact. A snapshot record is only legal at the start of the log.
@@ -816,6 +876,7 @@ fn read_snapshot<R: Read>(
 }
 
 /// How much of a target buffer a read managed to fill.
+#[derive(Debug)]
 enum FillState {
     /// Zero bytes read at the very first attempt (clean EOF boundary).
     Empty,
@@ -826,18 +887,19 @@ enum FillState {
 }
 
 /// Frame one **data** record into a single contiguous buffer in the canonical
-/// on-disk layout (`payload_len || sequence || payload || crc32`).
+/// on-disk layout (`SYNC_WORD || payload_len || sequence || payload || crc32`).
 ///
-/// The CRC-32 covers the header and the payload, so any flipped byte — length,
-/// sequence, or payload — is detected on read. Used by both [`Journal::append`]
-/// and [`Journal::compact`] (for the byte-copied residual data records), so the
-/// two paths cannot drift in framing.
+/// The CRC-32 covers the sync word, the header and the payload, so any flipped
+/// byte — sync word, length, sequence, or payload — is detected on read. Used by
+/// both [`Journal::append`] and [`Journal::compact`] (for the byte-copied residual
+/// data records), so the two paths cannot drift in framing.
 fn frame_record(sequence: u64, payload_len: u32, payload: &[u8]) -> Vec<u8> {
     debug_assert!(
         payload_len <= MAX_PAYLOAD_LEN,
         "data payload over the bound"
     );
-    let mut frame = Vec::with_capacity(HEADER_LEN + payload.len() + CRC_LEN);
+    let mut frame = Vec::with_capacity(SYNC_LEN + HEADER_LEN + payload.len() + CRC_LEN);
+    frame.extend_from_slice(&SYNC_WORD.to_le_bytes());
     frame.extend_from_slice(&payload_len.to_le_bytes());
     frame.extend_from_slice(&sequence.to_le_bytes());
     frame.extend_from_slice(payload);
@@ -855,7 +917,8 @@ fn frame_record(sequence: u64, payload_len: u32, payload: &[u8]) -> Vec<u8> {
 fn frame_snapshot(watermark: u64, snap_len: u32, snapshot: &[u8]) -> Vec<u8> {
     debug_assert_eq!(snap_len as usize, snapshot.len());
     debug_assert!(snap_len <= MAX_PAYLOAD_LEN, "snapshot over the bound");
-    let mut frame = Vec::with_capacity(HEADER_LEN + 4 + snapshot.len() + CRC_LEN);
+    let mut frame = Vec::with_capacity(SYNC_LEN + HEADER_LEN + 4 + snapshot.len() + CRC_LEN);
+    frame.extend_from_slice(&SYNC_WORD.to_le_bytes());
     frame.extend_from_slice(&SNAPSHOT_MARKER.to_le_bytes());
     frame.extend_from_slice(&watermark.to_le_bytes());
     frame.extend_from_slice(&snap_len.to_le_bytes());

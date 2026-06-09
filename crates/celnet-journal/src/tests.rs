@@ -172,7 +172,13 @@ fn appending_after_torn_tail_recovery_continues_cleanly() {
 }
 
 #[test]
-fn flipped_byte_in_final_record_is_detected_and_dropped() {
+fn flipped_byte_in_final_record_with_intact_sync_is_interior() {
+    // A flipped byte in the FINAL record's payload leaves its sync word intact and
+    // its full body (payload + CRC trailer) present, so under the sync-word format
+    // this is INTERIOR corruption (bit-rot of a complete record), surfaced as
+    // `CorruptInterior` — NOT silently healed as a torn tail. (Pre-sync-word, the
+    // last record's CRC failure was indistinguishable from a torn tail and dropped;
+    // that conflation is exactly what the sync word closes.)
     let dir = TempDir::new("flip-tail");
     let log = dir.file("events.log");
 
@@ -186,24 +192,57 @@ fn flipped_byte_in_final_record_is_detected_and_dropped() {
         }
     }
 
-    // Flip a byte inside the LAST record's payload region. Locate it: the final
-    // record starts at the offset just past the second-to-last record. We flip a
-    // byte near the physical end (within the last record's payload) — robust
-    // because the last record is the longest-lived candidate for a torn write.
+    // Flip a byte just before the trailing CRC — inside the last record's payload,
+    // with its sync word and the full frame (through the CRC trailer) all present.
     let bytes = std::fs::read(&log).expect("read");
-    let flip_at = bytes.len() - CRC_LEN - 2; // inside the last payload, before CRC
+    let flip_at = bytes.len() - CRC_LEN - 2;
     let mut corrupted = bytes.clone();
     corrupted[flip_at] ^= 0xFF;
     std::fs::write(&log, &corrupted).expect("write corrupted");
 
-    // The CRC of the last record now fails ⇒ treated as a torn tail and dropped.
-    let journal = Journal::open(&log).expect("reopen (no error: tail corruption)");
+    match Journal::open(&log) {
+        Err(JournalError::CorruptInterior { reason, .. }) => {
+            assert!(
+                reason.contains("interior"),
+                "reason names interior corruption: {reason}"
+            );
+        }
+        other => panic!("expected CorruptInterior on intact-sync + bad-CRC, got {other:?}"),
+    }
+}
+
+#[test]
+fn truncated_final_record_heals_as_torn_tail() {
+    // The genuine torn-tail path: chop the physical tail so the final record's body
+    // is SHORT (its CRC trailer is partially gone). The sync word did not break
+    // torn-tail healing — recovery drops the torn record and surfaces N-1 good
+    // records with NO error. (Companion to the interior case above; together they
+    // are the discrimination the old format lacked.)
+    let dir = TempDir::new("flip-tail-trunc");
+    let log = dir.file("events.log");
+
+    const N: u64 = 8;
+    {
+        let mut journal = Journal::open(&log).expect("open");
+        for i in 0..N {
+            journal
+                .append(format!("payload-{i}").as_bytes())
+                .expect("append");
+        }
+    }
+
+    let full_len = std::fs::metadata(&log).expect("meta").len();
+    let f = OpenOptions::new()
+        .write(true)
+        .open(&log)
+        .expect("open for trunc");
+    f.set_len(full_len - 3).expect("truncate tail");
+    f.sync_all().expect("sync trunc");
+    drop(f);
+
+    let journal = Journal::open(&log).expect("reopen (torn tail, no error)");
     let recs = journal.records().expect("replay");
-    assert_eq!(
-        recs.len() as u64,
-        N - 1,
-        "corrupt final record dropped via CRC"
-    );
+    assert_eq!(recs.len() as u64, N - 1, "torn final record dropped");
     for (i, rec) in recs.iter().enumerate() {
         assert_eq!(rec.sequence, i as u64);
         assert_eq!(rec.payload, format!("payload-{i}").into_bytes());
@@ -211,13 +250,12 @@ fn flipped_byte_in_final_record_is_detected_and_dropped() {
 }
 
 #[test]
-fn interior_crc_corruption_truncates_trailing_records() {
-    // Documents the STATED LIMITATION of the marker-less format (see the crate doc
-    // "Failure model"): a CRC failure on an interior record is indistinguishable
-    // from a torn tail, so recovery stops there and the trailing — possibly
-    // already-acknowledged — records are dropped, with `open` returning Ok (NOT an
-    // error). This test pins that behavior so a future resync-marker format that
-    // *does* surface it is a deliberate, test-visible change, not an accident.
+fn interior_crc_corruption_is_surfaced_not_healed() {
+    // The headline behavior change. A CRC failure on an INTERIOR record (intact
+    // sync word + full body present, with valid records after it) is now surfaced
+    // as `CorruptInterior` instead of being healed as a torn tail and silently
+    // dropping the trailing — possibly already-acknowledged — records. This is the
+    // discrimination the per-record sync word makes possible.
     let dir = TempDir::new("interior");
     let log = dir.file("events.log");
 
@@ -232,26 +270,31 @@ fn interior_crc_corruption_truncates_trailing_records() {
         }
     }
 
-    // Each record: 4 (len) + 8 (seq) + 7 (payload "recNNNN") + 4 (crc) = 23 bytes.
-    let record_len = HEADER_LEN + 7 + CRC_LEN;
+    // Each record: 8 (sync) + 4 (len) + 8 (seq) + 7 (payload "recNNNN") + 4 (crc).
+    let record_len = SYNC_LEN + HEADER_LEN + 7 + CRC_LEN;
     let bytes = std::fs::read(&log).expect("read");
-    // Flip a byte in the payload of record index 2 (an INTERIOR record).
-    let flip_at = 2 * record_len + HEADER_LEN + 1;
+    // Flip a byte in the payload of record index 2 (an INTERIOR record): past its
+    // sync word and logical header, inside the payload region.
+    let flip_at = 2 * record_len + SYNC_LEN + HEADER_LEN + 1;
     let mut corrupted = bytes.clone();
     corrupted[flip_at] ^= 0xFF;
     std::fs::write(&log, &corrupted).expect("write corrupted");
 
-    // Record 2's CRC now fails. Because there are valid records AFTER it, the
-    // log does not end here — but our recovery cannot tell interior rot from a
-    // torn tail, so it stops at the first bad record (treating it as the tail) and
-    // drops the trailing good records, healing by truncation. The survivors are
-    // exactly the records BEFORE the corruption — and open() returns Ok.
-    let journal = Journal::open(&log).expect("reopen (healed, not errored)");
-    let recs = journal.records().expect("replay");
-    // Records 0 and 1 are intact and recovered; 2..N are dropped with the tail.
-    assert_eq!(recs.len(), 2, "recovery stops at first corrupt record");
-    assert_eq!(recs[0].payload, b"rec0000".to_vec());
-    assert_eq!(recs[1].payload, b"rec0001".to_vec());
+    // Record 2's sync word is intact and its full body is present, but its CRC now
+    // fails — interior corruption, surfaced (NOT healed by truncation).
+    match Journal::open(&log) {
+        Err(JournalError::CorruptInterior {
+            at_sequence,
+            reason,
+        }) => {
+            assert_eq!(at_sequence, 2, "surfaced at the corrupt interior record");
+            assert!(
+                reason.contains("interior"),
+                "reason names interior corruption: {reason}"
+            );
+        }
+        other => panic!("expected CorruptInterior, got {other:?}"),
+    }
 }
 
 /// Frame a record exactly as [`Journal::append`] does, but with a caller-chosen
@@ -259,6 +302,7 @@ fn interior_crc_corruption_truncates_trailing_records() {
 /// sequence (the one interior inconsistency the format is able to detect).
 fn frame_record(seq: u64, payload: &[u8]) -> Vec<u8> {
     let mut frame = Vec::new();
+    frame.extend_from_slice(&SYNC_WORD.to_le_bytes());
     frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
     frame.extend_from_slice(&seq.to_le_bytes());
     frame.extend_from_slice(payload);
@@ -273,6 +317,7 @@ fn frame_record(seq: u64, payload: &[u8]) -> Vec<u8> {
 /// snapshot record in an illegal position to exercise the misplacement check.
 fn forge_snapshot(watermark: u64, snapshot: &[u8]) -> Vec<u8> {
     let mut frame = Vec::new();
+    frame.extend_from_slice(&SYNC_WORD.to_le_bytes());
     frame.extend_from_slice(&SNAPSHOT_MARKER.to_le_bytes());
     frame.extend_from_slice(&watermark.to_le_bytes());
     frame.extend_from_slice(&(snapshot.len() as u32).to_le_bytes());
@@ -905,6 +950,178 @@ fn misplaced_snapshot_record_is_surfaced_as_interior_corruption() {
     }
 }
 
+// ──────────────────── Sync-word frame: §2.6 gate tests ────────────────────
+
+#[test]
+fn intact_syncword_failing_crc_interior_is_corrupt() {
+    // §2.6 (1) — the headline. Append N=6 data records; flip one byte in the
+    // payload of an INTERIOR record (index 2), leaving its sync word and full body
+    // present. `open` must return `CorruptInterior` with a reason naming interior
+    // corruption — the behavior the old marker-less format could not provide.
+    let dir = TempDir::new("syncword-interior");
+    let log = dir.file("events.log");
+
+    const N: u64 = 6;
+    {
+        let mut journal = Journal::open(&log).expect("open");
+        for i in 0..N {
+            journal
+                .append(format!("rec{i:04}").as_bytes())
+                .expect("append");
+        }
+    }
+    let record_len = SYNC_LEN + HEADER_LEN + 7 + CRC_LEN;
+    let flip_at = 2 * record_len + SYNC_LEN + HEADER_LEN + 1; // inside record 2's payload
+    let mut bytes = std::fs::read(&log).expect("read");
+    bytes[flip_at] ^= 0xFF;
+    std::fs::write(&log, &bytes).expect("write corrupted");
+
+    match Journal::open(&log) {
+        Err(JournalError::CorruptInterior { reason, .. }) => {
+            assert!(reason.contains("interior"), "reason: {reason}");
+        }
+        other => panic!("expected CorruptInterior, got {other:?}"),
+    }
+}
+
+#[test]
+fn torn_tail_still_heals_with_syncword_format() {
+    // §2.6 (2) — the sync word must not break torn-tail healing. Append N=10, chop
+    // the physical tail so the final record's body/CRC is short. `open` heals to
+    // N-1 good records (Ok), file truncated. Independent oracle: the surviving
+    // payloads equal the first N-1 appended.
+    let dir = TempDir::new("syncword-torn");
+    let log = dir.file("events.log");
+
+    const N: u64 = 10;
+    let mut appended: Vec<Vec<u8>> = Vec::new();
+    {
+        let mut journal = Journal::open(&log).expect("open");
+        for i in 0..N {
+            let p = format!("payload-{i}").into_bytes();
+            journal.append(&p).expect("append");
+            appended.push(p);
+        }
+    }
+    let full_len = std::fs::metadata(&log).expect("meta").len();
+    let f = OpenOptions::new()
+        .write(true)
+        .open(&log)
+        .expect("open for trunc");
+    f.set_len(full_len - 3).expect("truncate tail");
+    f.sync_all().expect("sync");
+    drop(f);
+
+    let journal = Journal::open(&log).expect("reopen (torn tail heals, no error)");
+    let recs = journal.records().expect("replay");
+    assert_eq!(recs.len() as u64, N - 1, "torn final record dropped");
+    // Independent oracle: surviving payloads == the first N-1 appended.
+    for (rec, want) in recs.iter().zip(appended.iter().take((N - 1) as usize)) {
+        assert_eq!(&rec.payload, want);
+    }
+    assert!(
+        std::fs::metadata(&log).expect("meta").len() < full_len - 3,
+        "file physically truncated to the last good record"
+    );
+}
+
+#[test]
+fn interior_corruption_distinct_from_torn_tail() {
+    // §2.6 (3) — the discrimination proof. Two forged logs share the same good
+    // prefix (records 0,1). (a) prefix + an interior record (seq 2) with intact
+    // sync + BAD CRC + a valid record (seq 3) after ⇒ `CorruptInterior`. (b) prefix
+    // + a record (seq 2) whose sync word + header are intact but whose BODY is
+    // TRUNCATED at EOF ⇒ heals to the prefix length (Ok). The two inputs that were
+    // INDISTINGUISHABLE under the old format now yield DIFFERENT verdicts.
+    let dir = TempDir::new("syncword-distinct");
+
+    let prefix = {
+        let mut b = frame_record(0, b"alpha");
+        b.extend_from_slice(&frame_record(1, b"bravo"));
+        b
+    };
+
+    // (a) interior bad-CRC record + a valid trailing record.
+    {
+        let log_a = dir.file("interior.log");
+        let mut bytes = prefix.clone();
+        let mut bad = frame_record(2, b"charlie");
+        // Corrupt a payload byte AFTER the CRC was computed (intact sync + full
+        // body present, only the CRC now disagrees).
+        let payload_off = SYNC_LEN + HEADER_LEN + 1;
+        bad[payload_off] ^= 0xFF;
+        bytes.extend_from_slice(&bad);
+        bytes.extend_from_slice(&frame_record(3, b"delta")); // a valid record AFTER
+        std::fs::write(&log_a, &bytes).expect("write a");
+
+        match Journal::open(&log_a) {
+            Err(JournalError::CorruptInterior {
+                at_sequence,
+                reason,
+            }) => {
+                assert_eq!(at_sequence, 2);
+                assert!(reason.contains("interior"), "reason: {reason}");
+            }
+            other => panic!("(a) expected CorruptInterior, got {other:?}"),
+        }
+    }
+
+    // (b) record 2's sync word + header intact, body truncated at EOF.
+    {
+        let log_b = dir.file("torn.log");
+        let mut bytes = prefix.clone();
+        let torn = frame_record(2, b"charlie");
+        // Keep the sync word + the logical header, but chop the payload/CRC so the
+        // body is SHORT — a genuine torn final frame.
+        let keep = SYNC_LEN + HEADER_LEN + 3;
+        bytes.extend_from_slice(&torn[..keep]);
+        std::fs::write(&log_b, &bytes).expect("write b");
+
+        let journal = Journal::open(&log_b).expect("(b) torn body heals, no error");
+        let recs = journal.records().expect("replay");
+        assert_eq!(recs.len(), 2, "healed to the good prefix (records 0,1)");
+        assert_eq!(recs[0].payload, b"alpha".to_vec());
+        assert_eq!(recs[1].payload, b"bravo".to_vec());
+        assert_eq!(
+            journal.len_bytes(),
+            prefix.len() as u64,
+            "truncated to prefix"
+        );
+    }
+}
+
+#[test]
+fn snapshot_interior_crc_failure_is_surfaced() {
+    // The snapshot analogue of the data-record discrimination: a leading snapshot
+    // record with an intact sync word and a COMPLETE body (snapshot bytes + CRC
+    // trailer present) whose CRC fails is interior corruption, not a torn tail.
+    let dir = TempDir::new("syncword-snap-interior");
+    let log = dir.file("events.log");
+    {
+        let mut j = Journal::open(&log).expect("open");
+        for i in 0..4u64 {
+            j.append(format!("e{i}").as_bytes()).expect("append");
+        }
+        j.compact(2, &[0x11u8, 0x22, 0x33, 0x44]).expect("compact");
+    }
+    // Flip a byte inside the snapshot record's snapshot-bytes region. Layout:
+    // SYNC_LEN | SNAPSHOT_MARKER(4) | watermark(8) | snap_len(4) | snapshot | crc.
+    let snap_byte_off = SYNC_LEN + 4 + 8 + 4 + 1;
+    let mut bytes = std::fs::read(&log).expect("read");
+    bytes[snap_byte_off] ^= 0xFF;
+    std::fs::write(&log, &bytes).expect("write corrupted");
+
+    match Journal::open(&log) {
+        Err(JournalError::CorruptInterior { reason, .. }) => {
+            assert!(
+                reason.contains("interior"),
+                "snapshot interior corruption reason: {reason}"
+            );
+        }
+        other => panic!("expected CorruptInterior on a snapshot, got {other:?}"),
+    }
+}
+
 #[test]
 fn snapshot_record_roundtrips_through_the_public_api() {
     // A direct check that a compacted log's snapshot payload survives byte-for-byte
@@ -931,4 +1148,243 @@ fn snapshot_record_roundtrips_through_the_public_api() {
     assert_eq!(recs[0].sequence, 2);
     assert_eq!(recs[1].sequence, 3, "residual record 3 preserved");
     assert_eq!(recs[1].payload, b"e3".to_vec());
+}
+
+// ─────────────────── Mutation-gate kill tests (W6 journal) ───────────────────
+//
+// These pin the load-bearing constants, error-surface, and recovery-bound
+// branches that the behavioral tests above exercise but do not *assert exactly*,
+// so a syntactic mutant of each is CAUGHT. See `.config/mutants-journal.toml`.
+
+#[test]
+fn max_payload_len_is_exactly_64_mib() {
+    // Pins the recovery safety bound bit-for-bit (`64 * 1024 * 1024`). A `*`→`+`
+    // mutant of either multiply changes the constant (1_048_640 or 66_560); since
+    // the oversize-rejection tests reference the constant itself, only this exact
+    // pin distinguishes the original value. The bound is the wild-allocation guard,
+    // so its exact magnitude is a contract, not an accident.
+    assert_eq!(MAX_PAYLOAD_LEN, 64 * 1024 * 1024);
+    assert_eq!(MAX_PAYLOAD_LEN, 67_108_864);
+}
+
+#[test]
+fn journal_error_display_and_source_are_exact() {
+    // Pins the `Display` text and `Error::source` wiring so the trait-impl mutants
+    // (`fmt -> Ok(default)`, `source -> None`, `delete match arm Io(e)`) are caught.
+    let io = JournalError::Io(std::io::Error::other("disk"));
+    let s = format!("{io}");
+    assert!(s.contains("journal io error"), "io display: {s}");
+    assert!(s.contains("disk"), "io display carries the source: {s}");
+    // `source()` must thread through to the inner io::Error (the `Io(e) => Some(e)`
+    // arm) — not `None`, and the arm must not be deleted.
+    assert!(
+        std::error::Error::source(&io).is_some(),
+        "Io error exposes its source"
+    );
+
+    let interior = JournalError::CorruptInterior {
+        at_sequence: 7,
+        reason: "interior boom",
+    };
+    let s = format!("{interior}");
+    assert!(s.contains("interior corruption at sequence 7"), "{s}");
+    assert!(s.contains("interior boom"), "{s}");
+    assert!(
+        std::error::Error::source(&interior).is_none(),
+        "non-Io variants have no source"
+    );
+
+    let too_large = JournalError::PayloadTooLarge { len: 999 };
+    let s = format!("{too_large}");
+    assert!(s.contains("payload too large"), "{s}");
+    assert!(s.contains("999"), "{s}");
+}
+
+#[test]
+fn oversized_length_field_heals_without_wild_allocation() {
+    // A forged data record whose `payload_len` field is just ABOVE the safety bound
+    // (and is NOT the snapshot sentinel) must be treated as a torn tail and healed —
+    // never used to drive a multi-gigabyte allocation. This pins `read_one`'s
+    // `len_field > MAX_PAYLOAD_LEN` guard: the `> with ==` mutant would fall through
+    // (the field != MAX) and attempt `vec![0u8; len_field]`.
+    let dir = TempDir::new("oversize-len");
+    let log = dir.file("events.log");
+
+    // One good record, then a frame whose length field is MAX+1 (hostile).
+    let mut bytes = frame_record(0, b"good");
+    let hostile_len = MAX_PAYLOAD_LEN + 1; // > bound, and != u32::MAX sentinel
+    bytes.extend_from_slice(&SYNC_WORD.to_le_bytes());
+    bytes.extend_from_slice(&hostile_len.to_le_bytes());
+    bytes.extend_from_slice(&1u64.to_le_bytes());
+    bytes.extend_from_slice(&[0u8; 8]); // a few body bytes, far short of the claim
+    std::fs::write(&log, &bytes).expect("write forged");
+
+    // Heals to the one good record (the hostile frame is the torn tail), Ok.
+    let journal = Journal::open(&log).expect("reopen heals hostile-length tail");
+    let recs = journal.records().expect("replay");
+    assert_eq!(recs.len(), 1, "only the good record survives");
+    assert_eq!(recs[0].payload, b"good".to_vec());
+}
+
+#[test]
+fn exact_max_payload_record_roundtrips() {
+    // The inclusive boundary for the DATA-record recovery guard `len_field >
+    // MAX_PAYLOAD_LEN`: a FULLY-VALID record whose payload is EXACTLY
+    // `MAX_PAYLOAD_LEN` bytes must round-trip (append accepts `len <= MAX`). Under
+    // the `> with ==` mutant, `len_field == MAX` ⇒ TornTail ⇒ the record is dropped;
+    // under `> with >=`, `MAX >= MAX` ⇒ TornTail ⇒ dropped — both then FAIL the
+    // `recs.len() == 1` assertion. Heavy (64 MiB) but the only input that separates
+    // the boundary; run once.
+    let dir = TempDir::new("exact-max");
+    let log = dir.file("events.log");
+
+    let payload = vec![0xABu8; MAX_PAYLOAD_LEN as usize];
+    {
+        let mut journal = Journal::open(&log).expect("open");
+        let seq = journal.append(&payload).expect("append exact-MAX payload");
+        assert_eq!(seq, 0);
+    }
+    let journal = Journal::open(&log).expect("reopen — exact-MAX record is valid, not torn");
+    let recs = journal.records().expect("replay");
+    assert_eq!(recs.len(), 1, "the exact-MAX record survives recovery");
+    assert_eq!(recs[0].payload.len(), MAX_PAYLOAD_LEN as usize);
+    assert_eq!(recs[0].payload, payload, "exact-MAX payload byte-identical");
+}
+
+#[test]
+fn exact_max_snapshot_record_roundtrips() {
+    // The inclusive boundary for the SNAPSHOT recovery guard `snap_len >
+    // MAX_PAYLOAD_LEN`: a leading snapshot record whose snapshot bytes are EXACTLY
+    // `MAX_PAYLOAD_LEN` must round-trip (`compact` accepts `len <= MAX`). Under the
+    // `> with ==` / `> with >=` mutants of that guard, `snap_len == MAX` /
+    // `MAX >= MAX` ⇒ TornTail ⇒ the snapshot is dropped, so recovery loses it and
+    // the assertions FAIL. Only a complete exact-MAX snapshot separates `>` from
+    // `==`/`>=` here (a short body heals identically under all three); run once.
+    let dir = TempDir::new("exact-max-snap");
+    let log = dir.file("events.log");
+
+    let snapshot = vec![0xCDu8; MAX_PAYLOAD_LEN as usize];
+    {
+        let mut journal = Journal::open(&log).expect("open");
+        journal.append(b"d0").expect("append");
+        journal.append(b"d1").expect("append");
+        // Compact at watermark 1 with an exact-MAX snapshot (residual tail empty).
+        journal
+            .compact(1, &snapshot)
+            .expect("compact exact-MAX snapshot");
+    }
+    let journal = Journal::open(&log).expect("reopen — exact-MAX snapshot is valid, not torn");
+    let recs = journal.records().expect("replay");
+    assert_eq!(recs.len(), 1, "snapshot-only compacted log");
+    assert_eq!(recs[0].kind, RecordKind::Snapshot);
+    assert_eq!(recs[0].sequence, 1, "watermark preserved");
+    assert_eq!(
+        recs[0].payload.len(),
+        MAX_PAYLOAD_LEN as usize,
+        "exact-MAX snapshot survives recovery"
+    );
+}
+
+/// A `Read` that yields a scripted sequence of results, so tests can drive
+/// `read_full_or_short`'s short-read and `Interrupted`-retry branches directly
+/// (the recovery parser's lowest-level building block, otherwise only reached via
+/// real files that never produce `Interrupted`).
+struct ScriptedReader {
+    /// Each step: `Ok(bytes_to_yield)` or an `ErrorKind` to return.
+    steps: std::collections::VecDeque<std::result::Result<Vec<u8>, std::io::ErrorKind>>,
+}
+
+impl ScriptedReader {
+    fn new(steps: Vec<std::result::Result<Vec<u8>, std::io::ErrorKind>>) -> Self {
+        ScriptedReader {
+            steps: steps.into(),
+        }
+    }
+}
+
+impl std::io::Read for ScriptedReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self.steps.pop_front() {
+            Some(Ok(data)) => {
+                let n = data.len().min(buf.len());
+                buf[..n].copy_from_slice(&data[..n]);
+                Ok(n)
+            }
+            Some(Err(kind)) => Err(std::io::Error::from(kind)),
+            None => Ok(0), // exhausted ⇒ EOF
+        }
+    }
+}
+
+#[test]
+fn read_full_or_short_retries_on_interrupted_then_fills() {
+    // Pins the `Interrupted` retry guard in `read_full_or_short`
+    // (`e.kind() == io::ErrorKind::Interrupted => continue`): an `Interrupted`
+    // error mid-read must be transparently retried so a fully-available frame still
+    // reports `Full`. The `guard -> false` and `== with !=` mutants would propagate
+    // the `Interrupted` as a hard error; the `guard -> true` mutant would treat ANY
+    // error (below) as retryable — caught by the next test.
+    let mut reader = ScriptedReader::new(vec![
+        Ok(vec![1, 2, 3]),
+        Err(std::io::ErrorKind::Interrupted),
+        Ok(vec![4, 5]),
+    ]);
+    let mut buf = [0u8; 5];
+    match read_full_or_short(&mut reader, &mut buf).expect("no hard error") {
+        FillState::Full => {}
+        other => panic!("expected Full after Interrupted retry, got {other:?}"),
+    }
+    assert_eq!(buf, [1, 2, 3, 4, 5], "bytes reassembled across the retry");
+}
+
+#[test]
+fn read_full_or_short_propagates_non_interrupted_errors() {
+    // The complement: a NON-`Interrupted` error must propagate as a hard `Err`, not
+    // be retried. The `guard -> true` mutant (retry on any error) and the `== with
+    // !=` mutant (retry only on non-Interrupted) would instead loop/continue and
+    // mis-handle this `PermissionDenied`.
+    let mut reader = ScriptedReader::new(vec![
+        Ok(vec![1, 2]),
+        Err(std::io::ErrorKind::PermissionDenied),
+    ]);
+    let mut buf = [0u8; 5];
+    let err = read_full_or_short(&mut reader, &mut buf).expect_err("hard error propagates");
+    assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+}
+
+#[test]
+fn read_full_or_short_reports_short_then_full_and_empty() {
+    // Pins the fill classification (`Empty` / `Short` / `Full`) the recovery state
+    // machine maps to EOF vs torn-tail vs record. A `< with <=` mutant of the fill
+    // loop guard or a boundary slip would misclassify these.
+    // Short: fewer bytes than requested before EOF.
+    let mut short = ScriptedReader::new(vec![Ok(vec![9, 9])]);
+    let mut buf3 = [0u8; 3];
+    assert!(
+        matches!(
+            read_full_or_short(&mut short, &mut buf3).expect("ok"),
+            FillState::Short
+        ),
+        "2 of 3 bytes ⇒ Short"
+    );
+    // Empty: zero bytes available at a clean boundary.
+    let mut empty = ScriptedReader::new(vec![]);
+    let mut buf1 = [0u8; 1];
+    assert!(
+        matches!(
+            read_full_or_short(&mut empty, &mut buf1).expect("ok"),
+            FillState::Empty
+        ),
+        "no bytes ⇒ Empty"
+    );
+    // Full: exactly the requested bytes (delivered in two chunks).
+    let mut full = ScriptedReader::new(vec![Ok(vec![1, 2]), Ok(vec![3])]);
+    let mut buf3b = [0u8; 3];
+    assert!(
+        matches!(
+            read_full_or_short(&mut full, &mut buf3b).expect("ok"),
+            FillState::Full
+        ),
+        "3 of 3 bytes ⇒ Full"
+    );
 }
