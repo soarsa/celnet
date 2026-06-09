@@ -201,7 +201,7 @@ fn default_path_is_byte_identical_to_analytic_barrier() {
         rebate: 0.0,
     };
     let analytic = celnet_exotics::single_barrier_price(
-        &VanillaInputs::new(m.spot, 1.30, m.vol, EXPIRY, m.r_dom(), m.r_for()),
+        &(&VanillaInputs::new(m.spot, 1.30, m.vol, EXPIRY, m.r_dom(), m.r_for())).into(),
         spec,
     );
     assert_eq!(
@@ -264,7 +264,7 @@ fn lsv_barrier_matches_direct_exotics_reprice() {
     // barrier (otherwise the selector would be a no-op). The LSV model carries
     // skew/stoch-vol the flat-GK barrier does not.
     let analytic = celnet_exotics::single_barrier_price(
-        &VanillaInputs::new(m.spot, 1.30, m.vol, EXPIRY, m.r_dom(), m.r_for()),
+        &(&VanillaInputs::new(m.spot, 1.30, m.vol, EXPIRY, m.r_dom(), m.r_for())).into(),
         celnet_exotics::SingleBarrier {
             kind: celnet_exotics::BarrierKind {
                 up: false,

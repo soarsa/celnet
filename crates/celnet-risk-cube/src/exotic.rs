@@ -91,9 +91,10 @@ impl ExoticKind {
     /// per payout unit for a digital), under the supplied market inputs.
     #[must_use]
     fn unit_price(self, inputs: &VanillaInputs) -> f64 {
+        let i: celnet_exotics::ExoticInputs = inputs.into();
         match self {
-            ExoticKind::SingleBarrier(spec) => single_barrier_price(inputs, spec),
-            ExoticKind::Digital(kind) => digital_price(kind, inputs),
+            ExoticKind::SingleBarrier(spec) => single_barrier_price(&i, spec),
+            ExoticKind::Digital(kind) => digital_price(kind, &i),
         }
     }
 }
@@ -291,7 +292,7 @@ impl ExoticLeg {
         // + vega (exact, no FD round-off); FD supplies only the remainder.
         let (delta_base_unit, gamma_final, vega_final) = match self.kind {
             ExoticKind::Digital(kind) => {
-                let dg = digital_greeks(kind, i);
+                let dg = digital_greeks(kind, &i.into());
                 (dg.delta, dg.gamma, dg.vega)
             }
             ExoticKind::SingleBarrier(_) => (delta_unit, gamma_unit, vega_unit),
@@ -390,7 +391,7 @@ mod tests {
             inputs,
         );
         let leaf = leg.canonical_leaf();
-        let want = single_barrier_price(&inputs, up_out_call()) * 10_000_000.0;
+        let want = single_barrier_price(&(&inputs).into(), up_out_call()) * 10_000_000.0;
         assert!(is_close(leaf.premium_quote, want, 1e-12, 1e-6));
     }
 
@@ -408,7 +409,7 @@ mod tests {
             inputs,
         );
         let leaf = leg.canonical_leaf();
-        let dg = digital_greeks(kind, &inputs);
+        let dg = digital_greeks(kind, &(&inputs).into());
         assert!(is_close(leaf.greeks.delta_base, dg.delta * n, 1e-12, 1e-3));
         assert!(is_close(leaf.greeks.gamma, dg.gamma * n, 1e-12, 1e-3));
         assert!(is_close(leaf.greeks.vega, dg.vega * n, 1e-12, 1e-3));
@@ -431,9 +432,11 @@ mod tests {
         let up = Scenario::spot(0.05);
         let exotic_pnl = leg.pnl(up);
         // Independent: real barrier reprice difference (FX projection of the shock).
+        // Merge: W5-A's `apply_fx` (yields a VanillaInputs shock, used by the vanilla
+        // sanity check below) + ADR-0008's `ExoticInputs` barrier signature (`.into()`).
         let shocked = apply_fx(up, &inputs);
-        let want = (single_barrier_price(&shocked, up_out_call())
-            - single_barrier_price(&inputs, up_out_call()))
+        let want = (single_barrier_price(&(&shocked).into(), up_out_call())
+            - single_barrier_price(&(&inputs).into(), up_out_call()))
             * 10_000_000.0;
         assert!(is_close(exotic_pnl, want, 1e-9, 1e-3));
         // A long up-and-out call LOSES value as spot rises toward the barrier.
@@ -461,7 +464,8 @@ mod tests {
         // Independent central FD of the closed-form price for delta/gamma/vega.
         let pr = |s: f64, vol: f64| {
             single_barrier_price(
-                &VanillaInputs::new(s, inputs.strike, vol, inputs.t, inputs.r_dom, inputs.r_for),
+                &(&VanillaInputs::new(s, inputs.strike, vol, inputs.t, inputs.r_dom, inputs.r_for))
+                    .into(),
                 spec,
             )
         };

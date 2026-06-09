@@ -672,7 +672,7 @@ mod tests {
             "the booked exotic must carry an ExoticLeg re-derivation source"
         );
         // The leaf is the REAL exotic Greek set (premium == closed-form barrier price).
-        let want = celnet_exotics::single_barrier_price(&leg.inputs, spec) * 8_000_000.0;
+        let want = celnet_exotics::single_barrier_price(&(&leg.inputs).into(), spec) * 8_000_000.0;
         assert!((fact.measure.leaf.premium_quote - want).abs() <= 1e-6 * (1.0 + want.abs()));
     }
 }

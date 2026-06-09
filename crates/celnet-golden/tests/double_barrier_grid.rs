@@ -34,7 +34,7 @@ use celnet_vanilla::price as vanilla_price;
 fn celnet_double_barrier(rec: &DoubleBarrierRecord) -> f64 {
     let i = VanillaInputs::new(rec.spot, rec.strike, rec.vol, rec.t, rec.r_dom, rec.r_for);
     let ko = double_knock_out_price(
-        &i,
+        &(&i).into(),
         DoubleBarrierKnockOut::new(rec.option_type, rec.strike, rec.lower, rec.upper),
     );
     match rec.kind {

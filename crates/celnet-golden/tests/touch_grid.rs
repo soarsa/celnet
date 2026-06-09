@@ -40,7 +40,8 @@ use celnet_types::VanillaInputs;
 
 /// Price one touch row with the matching Celnet entry point.
 fn celnet_touch(rec: &TouchRecord) -> f64 {
-    let i = VanillaInputs::new(rec.spot, rec.spot, rec.vol, rec.t, rec.r_dom, rec.r_for);
+    let v = VanillaInputs::new(rec.spot, rec.spot, rec.vol, rec.t, rec.r_dom, rec.r_for);
+    let i: celnet_exotics::ExoticInputs = (&v).into();
     match rec.kind {
         TouchKind::OneTouch => one_touch_price(
             &i,
