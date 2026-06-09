@@ -69,7 +69,7 @@ identifiers (#8); zero-alloc hot core stays alloc/lock/log-free (#11); push **on
 
 | Lane | Owns (disjoint crates / files) | Depends on | Gate | Status | Owner / branch |
 |------|-------------------------------|-----------|------|--------|----------------|
-| **W6-RIGOR-INFRA** | `celnet-journal`, `celnet-replog`, `celnet-fanout`, `celnet-router` (+ their `fuzz/` + `.config/mutants-*.toml`) — fully disjoint from W1 | — | per-crate mutation ≥90% kill + a fuzz target/decoder + `check-crate` green | **OPEN** | — |
+| **W6-RIGOR-INFRA** | `celnet-journal`, `celnet-replog`, `celnet-fanout`, `celnet-router` (+ their `fuzz/` + `.config/mutants-*.toml`) — fully disjoint from W1 | — | per-crate mutation ≥90% kill + a fuzz target/decoder + `check-crate` green | **CLAIMED** | coordinator / `lane/w6-rigor-infra` |
 | **W2-A-LINEAR** | NEW `celnet-linear` (forward/swap/NDF) + its parity/golden rows | W1 contract | QuantLib FxForward + closed-form DF + structural; conformance row | IN-PROGRESS | session-B (W2 integrator) / main |
 | **W2-B-BREADTH** | `celnet-conventions`, `celnet-calendar` (>75 pairs + XPT/XPD + metal crosses) | W1 `Underlying::Metal` | EMTA/ISDA/LBMA tables + independent rata-die walk | IN-PROGRESS | session-B (W2 integrator) / main |
 | **W3-CRYPTO** | NEW `celnet-crypto-vanilla` (+ crypto surface leaf — deferred) | W1 contract | GK-funding + independent inverse closed-form + code-disjoint MC; Deribit specs | **DONE (pricing leaf)** | coordinator / `lane/w3-crypto` |
