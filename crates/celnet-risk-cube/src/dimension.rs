@@ -20,13 +20,13 @@
 //! handles. Keeping them here lets the cube evolve its hierarchy model without
 //! touching the frozen wire contract (guardrail #9: one clean current contract).
 
-use celnet_types::CcyPair;
+use celnet_types::Underlying;
 
 /// The set of independent dimensions a [`RiskFact`] is keyed by
 /// (`docs/RISK-HIERARCHY.md` §2.1). These are **orthogonal** roll-up axes.
 ///
 /// `Trader`/`Book`/`Desk` form the front-office org chain; `Location`/`Entity`
-/// the booking/regulatory chain; `CcyPair` the underlying axis. The `Firm` apex
+/// the booking/regulatory chain; `Underlying` the underlying axis. The `Firm` apex
 /// is implicit — every dimension rolls up into the single firm node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DimensionId {
@@ -36,8 +36,13 @@ pub enum DimensionId {
     Book,
     /// The desk the book belongs to (a regulatory unit under FRTB).
     Desk,
-    /// The currency pair (the underlying axis — orthogonal to the org axes).
-    CcyPair,
+    /// The underlying asset (the underlying axis — orthogonal to the org axes).
+    /// Cross-asset: FX pairs, metals, equities, commodities and digital assets all
+    /// share this axis; the group value packs the underlying's
+    /// [`Underlying::as_ccy_pair`] projection where it has one (FX/metals — keeping
+    /// FX group identity byte-identical) and falls back to the arm's stable hash
+    /// otherwise.
+    Underlying,
     /// The booking location (follow-the-sun / country).
     Location,
     /// The legal entity (the regulatory-capital unit).
@@ -99,7 +104,7 @@ dim_key!(
 /// All axes are carried explicitly so a group-by can select any subset at any
 /// level. The parent chains (`Book → Desk`, `Location → Entity → Firm`) live in
 /// [`Hierarchy`]; this struct holds only the finest-level keys.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FactKey {
     /// The trader who owns the position.
     pub trader: TraderId,
@@ -107,8 +112,9 @@ pub struct FactKey {
     pub book: BookId,
     /// The desk the book belongs to.
     pub desk: DeskId,
-    /// The currency pair underlying the position.
-    pub ccy_pair: CcyPair,
+    /// The underlying asset of the position (cross-asset: FX pair, metal, equity,
+    /// commodity or digital asset).
+    pub underlying: Underlying,
     /// The booking location.
     pub location: LocationId,
     /// The legal entity.
@@ -117,8 +123,11 @@ pub struct FactKey {
 
 impl FactKey {
     /// The key value at a given dimension, as a `u64` discriminant suitable for
-    /// grouping. For [`DimensionId::CcyPair`] the two 3-letter codes are packed
-    /// into the low 48 bits; the org keys widen their `u32` handle.
+    /// grouping. For [`DimensionId::Underlying`] an FX/metal pair packs its two
+    /// 3-letter codes into the low 48 bits (so FX group identity is **byte-identical**
+    /// to the pre-generalization `CcyPair` packing); a cross-asset arm with no
+    /// [`CcyPair`](celnet_types::CcyPair) projection hashes its `Underlying` into a
+    /// stable `u64`. The org keys widen their `u32` handle.
     ///
     /// Used by the cube's group-by to bucket facts by one dimension without
     /// allocating a per-dimension key type.
@@ -130,15 +139,58 @@ impl FactKey {
             DimensionId::Desk => u64::from(self.desk.0),
             DimensionId::Location => u64::from(self.location.0),
             DimensionId::Entity => u64::from(self.entity.0),
-            DimensionId::CcyPair => {
-                let b = self.ccy_pair.base.as_str().as_bytes();
-                let q = self.ccy_pair.quote.as_str().as_bytes();
-                let mut v: u64 = 0;
-                for &x in b.iter().chain(q.iter()) {
-                    v = (v << 8) | u64::from(x);
-                }
-                v
-            }
+            DimensionId::Underlying => underlying_group_value(&self.underlying),
+        }
+    }
+}
+
+/// Pack an [`Underlying`] into a stable `u64` group key. An FX/metal pair packs its
+/// two 3-letter codes into the low 48 bits (the original `CcyPair` packing — FX
+/// group identity unchanged); any other arm hashes the full underlying (whose
+/// `Hash`/`Eq` is the canonical identity) into a `u64`, with the top bit set so it
+/// can never collide with a 48-bit packed pair.
+#[must_use]
+fn underlying_group_value(u: &Underlying) -> u64 {
+    if let Some(pair) = u.as_ccy_pair() {
+        let b = pair.base.as_str().as_bytes();
+        let q = pair.quote.as_str().as_bytes();
+        let mut v: u64 = 0;
+        for &x in b.iter().chain(q.iter()) {
+            v = (v << 8) | u64::from(x);
+        }
+        return v;
+    }
+    use core::hash::{Hash, Hasher};
+    let mut h = FnvHasher::new();
+    u.hash(&mut h);
+    // Set the top bit so a hashed cross-asset key is in a disjoint range from any
+    // 48-bit packed FX/metal pair (which never sets bits ≥ 48).
+    h.finish() | (1u64 << 63)
+}
+
+/// A tiny deterministic FNV-1a hasher: the group key must be **reproducible** across
+/// runs/processes, so the cube cannot use the std `RandomState` (per-process seeded).
+/// FNV-1a is the standard small deterministic byte hash; collisions across distinct
+/// underlyings only conflate two groups (never corrupts a within-group sum), and the
+/// 64-bit space makes that vanishingly unlikely for a book's underlying universe.
+struct FnvHasher(u64);
+
+impl FnvHasher {
+    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    fn new() -> Self {
+        Self(Self::OFFSET)
+    }
+}
+
+impl core::hash::Hasher for FnvHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 ^= u64::from(b);
+            self.0 = self.0.wrapping_mul(Self::PRIME);
         }
     }
 }
@@ -169,7 +221,7 @@ impl FactKey {
 /// This split is what lets a booked exotic stop being silently excluded from
 /// firm/desk/book risk: its Greeks roll up additively, and its non-additive
 /// contribution re-prices the true exotic payoff.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FactMeasure {
     /// The convention-free canonical leaf (the additive measure carrier; the real
     /// exotic Greeks for an exotic fact).
@@ -192,7 +244,7 @@ pub struct FactMeasure {
 /// *new* fact for the same `position` under a new `surface_version`, so a node
 /// total is always reconcilable to the exact facts that built it (§2.5). The
 /// cube's `replace` keeps one current fact per position by id.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RiskFact {
     /// The position identity (the leaf key; one current fact per id in the cube).
     pub position_id: PositionId,

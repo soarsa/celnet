@@ -74,6 +74,7 @@
 //! `libm`-routed, so for fixed sensitivities and parameters the charge is
 //! bit-reproducible.
 
+use celnet_core::carry::CarryPricer;
 use celnet_core::math::sqrt;
 
 use crate::cube::NodeAggregate;
@@ -395,34 +396,46 @@ where
 /// [`crate::nonadditive::sbm_curvature_spot`] uses for its `max(CVR^+, CVR^-, 0)`,
 /// re-exposed here without the floor so the bucket selection logic owns the `max`.
 #[must_use]
-pub fn curvature_legs(positions: &[PositionRisk], rw: f64) -> (f64, f64) {
+pub fn curvature_legs<P: CarryPricer>(
+    pricer: &P,
+    positions: &[PositionRisk],
+    rw: f64,
+) -> (f64, f64) {
     let base: f64 = positions
         .iter()
-        .map(|p| celnet_vanilla::price(p.option, &p.inputs) * p.notional_base)
+        .map(|p| {
+            pricer
+                .price(p.option, &p.inputs)
+                .map_or(0.0, |v| v * p.notional_base)
+        })
         .sum();
     let reprice = |mult: f64| -> f64 {
         positions
             .iter()
             .map(|p| {
-                let s = celnet_types::VanillaInputs::new(
+                // Spot-only relative shock; carry/vol/time and the underlying held
+                // fixed (no match on the underlying — the leaf prices its own asset).
+                let s = celnet_core::carry::CarryInputs::new(
                     p.inputs.spot * mult,
                     p.inputs.strike,
                     p.inputs.vol,
                     p.inputs.t,
-                    p.inputs.r_dom,
-                    p.inputs.r_for,
+                    p.inputs.underlying.clone(),
+                    p.inputs.carry,
                 );
-                celnet_vanilla::price(p.option, &s) * p.notional_base
+                pricer
+                    .price(p.option, &s)
+                    .map_or(0.0, |v| v * p.notional_base)
             })
             .sum()
     };
     let linear: f64 = positions
         .iter()
         .map(|p| {
-            celnet_vanilla::greeks(p.option, &p.inputs).delta_spot
-                * p.notional_base
-                * rw
-                * p.inputs.spot
+            let delta_spot = pricer
+                .price_greeks(p.option, &p.inputs)
+                .map_or(0.0, |g| g.delta_spot);
+            delta_spot * p.notional_base * rw * p.inputs.spot
         })
         .sum();
     let cvr_up = -((reprice(1.0 + rw) - base) - linear);
@@ -585,11 +598,16 @@ where
 /// [`crate::nonadditive::sbm_curvature_spot`] (which is the floored max) — proving
 /// the new aggregation composes with, rather than duplicates, the existing lens.
 #[must_use]
-pub fn node_curvature_bucket(node: &NodeAggregate, id: u32, rw: f64) -> CurvatureBucket {
-    let (cvr_up, cvr_down) = curvature_legs(&node.positions, rw);
+pub fn node_curvature_bucket<P: CarryPricer>(
+    pricer: &P,
+    node: &NodeAggregate,
+    id: u32,
+    rw: f64,
+) -> CurvatureBucket {
+    let (cvr_up, cvr_down) = curvature_legs(pricer, &node.positions, rw);
     debug_assert!(
-        (cvr_up.max(cvr_down).max(0.0) - sbm_curvature_spot(&node.positions, rw)).abs()
-            <= 1e-6 * (1.0 + sbm_curvature_spot(&node.positions, rw).abs()),
+        (cvr_up.max(cvr_down).max(0.0) - sbm_curvature_spot(pricer, &node.positions, rw)).abs()
+            <= 1e-6 * (1.0 + sbm_curvature_spot(pricer, &node.positions, rw).abs()),
         "curvature_legs must reconcile to the existing sbm_curvature_spot lens"
     );
     CurvatureBucket {

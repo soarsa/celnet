@@ -728,7 +728,9 @@ dependencies = [
 name = "celnet-risk-cube"
 version = "0.0.0"
 dependencies = [
+ "celnet-commodity-vanilla",
  "celnet-core",
+ "celnet-equity-vanilla",
  "celnet-exotics",
  "celnet-gpu",
  "celnet-risk-normalize",

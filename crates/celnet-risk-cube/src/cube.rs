@@ -33,6 +33,7 @@
 //! that way (they need constituent facts), which is precisely the §3.4 caveat that
 //! a firm-level VaR/curvature run gathers facts rather than summing shard results.
 
+use celnet_core::carry::CarryPricer;
 use celnet_risk_normalize::{CanonicalLeaf, Numeraire, NumeraireError, PositionRisk, SpotResolver};
 
 use crate::additive::{NetGreeks, VegaLadder, VegaPillar};
@@ -133,12 +134,12 @@ fn accumulate_fact<P: VegaPillarMap>(agg: &mut NodeAggregate, fact: &RiskFact, p
         pillars.pillar_of(leaf, &fact.measure.position),
         leaf.greeks.vega,
     );
-    agg.leaves.push(*leaf);
+    agg.leaves.push(leaf.clone());
     match fact.measure.exotic {
         // An exotic fact re-prices through the real closed-form exotic pricer.
         Some(leg) => agg.exotic_legs.push(leg),
-        // A vanilla fact re-prices through celnet-vanilla.
-        None => agg.positions.push(fact.measure.position),
+        // A vanilla fact re-prices through its asset's leaf (the seam).
+        None => agg.positions.push(fact.measure.position.clone()),
     }
 }
 
@@ -261,8 +262,13 @@ impl Cube {
     /// **bump-and-revalue** — the exact reference / oracle (`docs/RISK-HIERARCHY.md`
     /// §2.5). Re-derived, not summed. O(positions × scenarios) repricings.
     #[must_use]
-    pub fn node_var_es(node: &NodeAggregate, scenarios: &[Scenario], alpha: f64) -> VarEs {
-        node_var_es_combined(&node.positions, &node.exotic_legs, scenarios, alpha)
+    pub fn node_var_es<P: CarryPricer>(
+        pricer: &P,
+        node: &NodeAggregate,
+        scenarios: &[Scenario],
+        alpha: f64,
+    ) -> VarEs {
+        node_var_es_combined(pricer, &node.positions, &node.exotic_legs, scenarios, alpha)
     }
 
     /// **Non-additive (scale path)**: VaR/ES of a node by the **AAD sensitivity
@@ -276,19 +282,26 @@ impl Cube {
     /// shocks; reconcile against [`Cube::node_var_es`] (the oracle) for the exact
     /// tail. See [`crate::nonadditive::sensitivity_var_es`] for the precise regime.
     #[must_use]
-    pub fn node_var_es_sensitivity(
+    pub fn node_var_es_sensitivity<P: CarryPricer>(
+        pricer: &P,
         node: &NodeAggregate,
         scenarios: &[Scenario],
         alpha: f64,
     ) -> VarEs {
-        node_var_es_sensitivity_combined(&node.positions, &node.exotic_legs, scenarios, alpha)
+        node_var_es_sensitivity_combined(
+            pricer,
+            &node.positions,
+            &node.exotic_legs,
+            scenarios,
+            alpha,
+        )
     }
 
     /// **Non-additive**: FRTB-SbM spot curvature of a node by up/down full reprice
     /// net of the linear delta term (`docs/RISK-HIERARCHY.md` §2.5).
     #[must_use]
-    pub fn node_curvature_spot(node: &NodeAggregate, rw: f64) -> f64 {
-        sbm_curvature_spot_combined(&node.positions, &node.exotic_legs, rw)
+    pub fn node_curvature_spot<P: CarryPricer>(pricer: &P, node: &NodeAggregate, rw: f64) -> f64 {
+        sbm_curvature_spot_combined(pricer, &node.positions, &node.exotic_legs, rw)
     }
 
     /// **Non-additive**: the correlation-weighted vega aggregate over a node's

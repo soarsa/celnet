@@ -150,7 +150,14 @@ pub fn gpu_pv_grid(
     let mut var = vec![0.0_f64; n];
 
     for p in positions {
-        let i = &p.inputs;
+        // The GPU scenario kernel is the FX/metal GBM path (the only asset class with
+        // a wired batched Monte-Carlo kernel today); a non-FX position lowers to no
+        // FX inputs and is skipped — its batched-grid kernel is a separate, named GPU
+        // workload (`docs/GPU-AT-SCALE-PLAN.md`), not faked here. The discriminant is
+        // read by the leaf's own FX lowering, not by an aggregation-loop match.
+        let Ok(i) = celnet_core::carry::fx_vanilla_inputs(&p.inputs) else {
+            continue;
+        };
         let spec = PathSpec::gbm(i.spot, i.vol, i.t, i.r_dom, i.r_for, paths, 1, seed);
         let payoff = match p.option {
             OptionType::Call => PayoffKernel::call(i.strike),
@@ -195,16 +202,20 @@ pub fn analytic_pv_grid(positions: &[PositionRisk], axes: &ScenarioAxes) -> Node
             let vb = f64::from(vb);
             pv[idx] = positions
                 .iter()
-                .map(|p| {
+                .filter_map(|p| {
+                    // FX/metal GBM oracle grid (the GPU kernel's reference); a non-FX
+                    // position has no FX lowering and is skipped (same scope as the GPU
+                    // path above).
+                    let base = celnet_core::carry::fx_vanilla_inputs(&p.inputs).ok()?;
                     let s = VanillaInputs::new(
-                        p.inputs.spot * sm,
-                        p.inputs.strike,
-                        p.inputs.vol + vb,
-                        p.inputs.t,
-                        p.inputs.r_dom,
-                        p.inputs.r_for,
+                        base.spot * sm,
+                        base.strike,
+                        base.vol + vb,
+                        base.t,
+                        base.r_dom,
+                        base.r_for,
                     );
-                    price(p.option, &s) * p.notional_base
+                    Some(price(p.option, &s) * p.notional_base)
                 })
                 .sum();
         }
@@ -229,7 +240,7 @@ mod tests {
     }
 
     fn pos(opt: OptionType, notional: f64, inputs: VanillaInputs) -> PositionRisk {
-        PositionRisk::new(
+        PositionRisk::fx(
             eurusd(),
             opt,
             notional,
@@ -291,7 +302,10 @@ mod tests {
         let centre = analytic.pv(3, 3); // 7 rungs → centre index 3.
         let base: f64 = positions
             .iter()
-            .map(|p| price(p.option, &p.inputs) * p.notional_base)
+            .map(|p| {
+                let vi = celnet_core::carry::fx_vanilla_inputs(&p.inputs).unwrap();
+                price(p.option, &vi) * p.notional_base
+            })
             .sum();
         assert!(
             is_close(centre, base, 1e-12, 1e-6),

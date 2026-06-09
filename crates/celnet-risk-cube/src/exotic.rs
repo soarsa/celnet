@@ -48,9 +48,26 @@ use celnet_exotics::{
     DigitalKind, SingleBarrier, digital_greeks, digital_price, single_barrier_price,
 };
 use celnet_risk_normalize::{CanonicalGreeks, CanonicalLeaf};
-use celnet_types::{Ccy, CcyPair, VanillaInputs};
+use celnet_types::{Ccy, CcyPair, Underlying, VanillaInputs};
 
 use crate::nonadditive::Scenario;
+
+/// Apply a [`Scenario`]'s shocks to an FX-exotic leg's [`VanillaInputs`]: spot
+/// relative, vol absolute, and the FX rates from the asset-agnostic carry shocks
+/// (`Δr_dom = discount_abs`, `Δr_for = discount_abs − carry_abs`, the inverse of the
+/// FX carry packing `r = r_dom`, `b = r_dom − r_for`). This is the FX projection of
+/// [`crate::nonadditive::shift_carry`] for the FX-only exotic catalogue.
+#[must_use]
+fn apply_fx(scenario: Scenario, i: &VanillaInputs) -> VanillaInputs {
+    VanillaInputs::new(
+        i.spot * (1.0 + scenario.spot_rel),
+        i.strike,
+        i.vol + scenario.vol_abs,
+        i.t,
+        i.r_dom + scenario.discount_abs,
+        i.r_for + (scenario.discount_abs - scenario.carry_abs),
+    )
+}
 
 /// Which closed-form exotic an [`ExoticLeg`] prices.
 ///
@@ -137,9 +154,16 @@ impl ExoticLeg {
     /// Re-price the leg under a [`Scenario`] and return its **P&L** vs base in the
     /// quote (domestic) currency, signed by the long/short notional — the exotic
     /// analogue of [`crate::nonadditive::position_pnl`].
+    ///
+    /// The FX-exotic legs are priced in the FX two-rate basis, so the scenario's
+    /// asset-agnostic `(discount_abs, carry_abs)` carry shocks are mapped back to the
+    /// FX rate moves (`Δr_dom = discount_abs`, `Δr_for = discount_abs − carry_abs`)
+    /// before repricing — the same carry transform [`crate::nonadditive::shift_carry`]
+    /// applies to the [`celnet_types::Carry::FxRates`] arm, keeping a mixed
+    /// vanilla+exotic node's scenario consistent.
     #[must_use]
     pub fn pnl(&self, scenario: Scenario) -> f64 {
-        let shocked = scenario.apply(&self.inputs);
+        let shocked = apply_fx(scenario, &self.inputs);
         self.value(&shocked) - self.base_value()
     }
 
@@ -191,7 +215,7 @@ impl ExoticLeg {
     pub fn canonical_leaf(&self) -> CanonicalLeaf {
         let g = self.canonical_greeks();
         CanonicalLeaf {
-            pair: self.pair,
+            underlying: Underlying::Fx(self.pair),
             spot: self.inputs.spot,
             greeks: g,
             premium_quote: self.kind.unit_price(&self.inputs) * self.notional,
@@ -406,8 +430,8 @@ mod tests {
         // A +5% spot move pushes toward the 1.25 up-and-out barrier.
         let up = Scenario::spot(0.05);
         let exotic_pnl = leg.pnl(up);
-        // Independent: real barrier reprice difference.
-        let shocked = up.apply(&inputs);
+        // Independent: real barrier reprice difference (FX projection of the shock).
+        let shocked = apply_fx(up, &inputs);
         let want = (single_barrier_price(&shocked, up_out_call())
             - single_barrier_price(&inputs, up_out_call()))
             * 10_000_000.0;

@@ -92,6 +92,7 @@ pub mod cube;
 pub mod dimension;
 pub mod exotic;
 pub mod frtb;
+pub mod frtb_params;
 pub mod nonadditive;
 pub mod scenario_grid;
 
@@ -108,10 +109,14 @@ pub use frtb::{
     delta_vega_class, fx_default_risk_charge, node_curvature_bucket, quadratic_form,
     residual_addon,
 };
+pub use frtb_params::{
+    StandardFrtbParams, standard_curvature_buckets, standard_delta_buckets, standard_vega_buckets,
+};
 pub use nonadditive::{
     PositionSensitivity, Scenario, VarEs, correlation_weighted_vega, historical_var_es, node_pnl,
     node_sensitivities, node_var_es_combined, node_var_es_sensitivity_combined, position_pnl,
-    sbm_curvature_spot, sbm_curvature_spot_combined, sensitivity_var_es, vanilla_curvature_legs,
+    sbm_curvature_spot, sbm_curvature_spot_combined, sensitivity_var_es, shift_carry,
+    vanilla_curvature_legs,
 };
 pub use scenario_grid::{NodeScenarioGrid, analytic_pv_grid, gpu_pv_grid};
 
@@ -119,8 +124,16 @@ pub use scenario_grid::{NodeScenarioGrid, analytic_pv_grid, gpu_pv_grid};
 mod tests {
     use super::*;
     use celnet_core::is_close;
-    use celnet_risk_normalize::{PositionRisk, StaticSpotResolver, canonicalize};
-    use celnet_types::{Ccy, CcyPair, DeltaConvention, OptionType, PremiumStyle, VanillaInputs};
+    use celnet_risk_normalize::{AssetPricer, PositionRisk, StaticSpotResolver, canonicalize};
+    use celnet_types::{
+        Ccy, CcyPair, DeltaConvention, OptionType, PremiumStyle, Underlying, VanillaInputs,
+    };
+
+    /// Canonicalize a position through the default seam, unwrapping (FX positions
+    /// always price). Keeps the existing tests one-line-changed.
+    fn canon(p: &PositionRisk) -> celnet_risk_normalize::CanonicalLeaf {
+        canonicalize(p).unwrap()
+    }
 
     fn eurusd() -> CcyPair {
         CcyPair::new(Ccy::EUR, Ccy::USD)
@@ -144,7 +157,7 @@ mod tests {
     }
 
     fn pos(pair: CcyPair, opt: OptionType, notional: f64, inputs: VanillaInputs) -> PositionRisk {
-        PositionRisk::new(
+        PositionRisk::fx(
             pair,
             opt,
             notional,
@@ -161,7 +174,7 @@ mod tests {
         desk: u32,
         loc: u32,
         ent: u32,
-        position: PositionRisk,
+        position: &PositionRisk,
     ) -> RiskFact {
         RiskFact {
             position_id: PositionId(id),
@@ -169,13 +182,13 @@ mod tests {
                 trader: TraderId(trader),
                 book: BookId(book),
                 desk: DeskId(desk),
-                ccy_pair: position.pair,
+                underlying: position.underlying.clone(),
                 location: LocationId(loc),
                 entity: EntityId(ent),
             },
             measure: FactMeasure {
-                leaf: canonicalize(&position),
-                position,
+                leaf: canon(position),
+                position: position.clone(),
                 exotic: None,
             },
             surface_version: 1,
@@ -208,15 +221,15 @@ mod tests {
             7_000_000.0,
             VanillaInputs::new(1.10, 1.15, 0.09, 1.0, 0.04, 0.02),
         );
-        cube.upsert(fact(1, 1, 1, 1, 1, 1, p1));
-        cube.upsert(fact(2, 1, 1, 1, 1, 1, p2));
-        cube.upsert(fact(3, 2, 2, 1, 1, 1, p3));
+        cube.upsert(fact(1, 1, 1, 1, 1, 1, &p1));
+        cube.upsert(fact(2, 1, 1, 1, 1, 1, &p2));
+        cube.upsert(fact(3, 2, 2, 1, 1, 1, &p3));
 
         let by_book = cube.group_by(DimensionId::Book, &DaysPillar);
         assert_eq!(by_book.len(), 2);
 
         // Book 1's net delta = canonical(p1) + canonical(p2).
-        let want_b1 = canonicalize(&p1).greeks.delta_base + canonicalize(&p2).greeks.delta_base;
+        let want_b1 = canon(&p1).greeks.delta_base + canon(&p2).greeks.delta_base;
         let b1 = by_book.iter().find(|a| a.group == 1).unwrap();
         assert!(is_close(b1.net_greeks.delta_base, want_b1, 1e-12, 1e-6));
         // Drill-down reconciliation: re-summing the node's retained leaves gives
@@ -227,9 +240,9 @@ mod tests {
 
         // Firm = sum across both books.
         let firm = cube.firm_aggregate(&DaysPillar);
-        let want_firm = canonicalize(&p1).greeks.delta_base
-            + canonicalize(&p2).greeks.delta_base
-            + canonicalize(&p3).greeks.delta_base;
+        let want_firm = canon(&p1).greeks.delta_base
+            + canon(&p2).greeks.delta_base
+            + canon(&p3).greeks.delta_base;
         assert!(is_close(firm.net_greeks.delta_base, want_firm, 1e-12, 1e-6));
         // And firm == Σ book-level aggregates (the roll-up is associative).
         let sum_books: f64 = by_book.iter().map(|a| a.net_greeks.delta_base).sum();
@@ -259,16 +272,16 @@ mod tests {
             8_000_000.0,
             VanillaInputs::new(1.10, 1.11, 0.10, 0.5, 0.04, 0.02),
         );
-        cube.upsert(fact(1, 1, 1, 1, 1, 1, p1));
-        cube.upsert(fact(2, 1, 1, 1, 1, 1, p2));
-        cube.upsert(fact(3, 1, 1, 1, 1, 1, p3));
+        cube.upsert(fact(1, 1, 1, 1, 1, 1, &p1));
+        cube.upsert(fact(2, 1, 1, 1, 1, 1, &p2));
+        cube.upsert(fact(3, 1, 1, 1, 1, 1, &p3));
 
         let firm = cube.firm_aggregate(&DaysPillar);
         let pillar_1y = VegaPillar::new(365, 5000);
         let pillar_6m = VegaPillar::new(183, 5000);
         // The 1Y pillar nets p1 + p2; the 6M pillar holds p3.
-        let want_1y = canonicalize(&p1).greeks.vega + canonicalize(&p2).greeks.vega;
-        let want_6m = canonicalize(&p3).greeks.vega;
+        let want_1y = canon(&p1).greeks.vega + canon(&p2).greeks.vega;
+        let want_6m = canon(&p3).greeks.vega;
         assert!(is_close(
             firm.vega_ladder.vega_in(pillar_1y),
             want_1y,
@@ -311,13 +324,13 @@ mod tests {
             VanillaInputs::new(1.10, 1.13, 0.10, 1.0, 0.04, 0.02),
         );
         // The fact's own desk key is deliberately wrong (0); the parent pointer wins.
-        cube.upsert(fact(1, 1, 10, 0, 1, 1, p1));
-        cube.upsert(fact(2, 2, 11, 0, 1, 1, p2));
+        cube.upsert(fact(1, 1, 10, 0, 1, 1, &p1));
+        cube.upsert(fact(2, 2, 11, 0, 1, 1, &p2));
         let by_desk = cube.group_by(DimensionId::Desk, &DaysPillar);
         assert_eq!(by_desk.len(), 1, "both books must roll into desk 99");
         let desk = &by_desk[0];
         assert_eq!(desk.group, 99);
-        let want = canonicalize(&p1).greeks.delta_base + canonicalize(&p2).greeks.delta_base;
+        let want = canon(&p1).greeks.delta_base + canon(&p2).greeks.delta_base;
         assert!(is_close(desk.net_greeks.delta_base, want, 1e-12, 1e-6));
     }
 
@@ -336,9 +349,11 @@ mod tests {
         let long = pos(eurusd(), OptionType::Call, 10_000_000.0, inputs);
         let short = pos(eurusd(), OptionType::Call, -10_000_000.0, inputs);
 
-        let var_long = historical_var_es(&[long], &scen, 0.99).var;
-        let var_short = historical_var_es(&[short], &scen, 0.99).var;
-        let var_combined = historical_var_es(&[long, short], &scen, 0.99).var;
+        let var_long =
+            historical_var_es(&AssetPricer, std::slice::from_ref(&long), &scen, 0.99).var;
+        let var_short =
+            historical_var_es(&AssetPricer, std::slice::from_ref(&short), &scen, 0.99).var;
+        let var_combined = historical_var_es(&AssetPricer, &[long, short], &scen, 0.99).var;
 
         assert!(var_long > 0.0 && var_short > 0.0);
         // A perfectly offsetting book has ~zero VaR, far below the sum of legs.
@@ -365,7 +380,7 @@ mod tests {
             1,
             1,
             1,
-            pos(
+            &pos(
                 eurusd(),
                 OptionType::Call,
                 10_000_000.0,
@@ -379,7 +394,7 @@ mod tests {
             1,
             1,
             1,
-            pos(
+            &pos(
                 eurusd(),
                 OptionType::Put,
                 6_000_000.0,
@@ -393,7 +408,7 @@ mod tests {
             1,
             1,
             1,
-            pos(
+            &pos(
                 eurusd(),
                 OptionType::Call,
                 -4_000_000.0,
@@ -408,13 +423,13 @@ mod tests {
                 scen.push(Scenario {
                     spot_rel: f64::from(si) * 0.01,
                     vol_abs: f64::from(vj) * 0.005,
-                    rate_dom_abs: 0.0,
-                    rate_for_abs: 0.0,
+                    discount_abs: 0.0,
+                    carry_abs: 0.0,
                 });
             }
         }
-        let oracle = Cube::node_var_es(&node, &scen, 0.99);
-        let fast = Cube::node_var_es_sensitivity(&node, &scen, 0.99);
+        let oracle = Cube::node_var_es(&AssetPricer, &node, &scen, 0.99);
+        let fast = Cube::node_var_es_sensitivity(&AssetPricer, &node, &scen, 0.99);
         assert!(oracle.var > 0.0);
         assert!(
             is_close(fast.var, oracle.var, 8e-2, 1e-3),
@@ -442,7 +457,10 @@ mod tests {
         );
 
         // Independent reference: compute the P&L vector, sort, pick the quantile.
-        let mut pnl: Vec<f64> = scen.iter().map(|s| position_pnl(&p, *s)).collect();
+        let mut pnl: Vec<f64> = scen
+            .iter()
+            .map(|s| position_pnl(&AssetPricer, &p, *s))
+            .collect();
         pnl.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let n = pnl.len();
         let alpha = 0.90;
@@ -450,7 +468,7 @@ mod tests {
         let ref_var = -pnl[tail - 1];
         let ref_es = -(pnl[..tail].iter().sum::<f64>() / tail as f64);
 
-        let got = historical_var_es(&[p], &scen, alpha);
+        let got = historical_var_es(&AssetPricer, &[p], &scen, alpha);
         assert!(
             is_close(got.var, ref_var, 1e-12, 1e-6),
             "VaR {} vs ref {ref_var}",
@@ -487,7 +505,7 @@ mod tests {
                 1,
                 1,
                 1,
-                pos(eurusd(), OptionType::Call, 10_000_000.0, inputs),
+                &pos(eurusd(), OptionType::Call, 10_000_000.0, inputs),
             ));
             c.upsert(fact(
                 2,
@@ -496,12 +514,12 @@ mod tests {
                 1,
                 1,
                 1,
-                pos(eurusd(), OptionType::Put, 10_000_000.0, inputs),
+                &pos(eurusd(), OptionType::Put, 10_000_000.0, inputs),
             ));
             c.firm_aggregate(&DaysPillar)
         };
         assert_eq!(
-            Cube::node_curvature_spot(&long_node, rw),
+            Cube::node_curvature_spot(&AssetPricer, &long_node, rw),
             0.0,
             "long-gamma book must have zero curvature charge"
         );
@@ -511,34 +529,31 @@ mod tests {
         let put = pos(eurusd(), OptionType::Put, -10_000_000.0, inputs);
         let short_node = {
             let mut c = Cube::new();
-            c.upsert(fact(1, 1, 1, 1, 1, 1, call));
-            c.upsert(fact(2, 1, 1, 1, 1, 1, put));
+            c.upsert(fact(1, 1, 1, 1, 1, 1, &call));
+            c.upsert(fact(2, 1, 1, 1, 1, 1, &put));
             c.firm_aggregate(&DaysPillar)
         };
-        let cvr = Cube::node_curvature_spot(&short_node, rw);
+        let cvr = Cube::node_curvature_spot(&AssetPricer, &short_node, rw);
         assert!(
             cvr > 0.0,
             "short straddle must have positive curvature charge, got {cvr}"
         );
 
-        // Cross-check the math against an independent up/down reprice net of delta.
+        // Cross-check the math against an independent up/down reprice net of delta,
+        // calling the FX leaf directly on the lowered inputs (the oracle path).
         let positions = [call, put];
+        let vi = |p: &PositionRisk| celnet_core::carry::fx_vanilla_inputs(&p.inputs).unwrap();
         let base: f64 = positions
             .iter()
-            .map(|p| celnet_vanilla::price(p.option, &p.inputs) * p.notional_base)
+            .map(|p| celnet_vanilla::price(p.option, &vi(p)) * p.notional_base)
             .sum();
         let reprice = |mult: f64| -> f64 {
             positions
                 .iter()
                 .map(|p| {
-                    let s = VanillaInputs::new(
-                        p.inputs.spot * mult,
-                        p.inputs.strike,
-                        p.inputs.vol,
-                        p.inputs.t,
-                        p.inputs.r_dom,
-                        p.inputs.r_for,
-                    );
+                    let b = vi(p);
+                    let s =
+                        VanillaInputs::new(b.spot * mult, b.strike, b.vol, b.t, b.r_dom, b.r_for);
                     celnet_vanilla::price(p.option, &s) * p.notional_base
                 })
                 .sum()
@@ -546,7 +561,7 @@ mod tests {
         let linear: f64 = positions
             .iter()
             .map(|p| {
-                celnet_vanilla::greeks(p.option, &p.inputs).delta_spot
+                celnet_vanilla::greeks(p.option, &vi(p)).delta_spot
                     * p.notional_base
                     * rw
                     * p.inputs.spot
@@ -598,8 +613,8 @@ mod tests {
             8_000_000.0,
             VanillaInputs::new(156.0, 154.0, 0.11, 0.5, 0.01, 0.05),
         );
-        cube.upsert(fact(1, 1, 1, 1, 1, 1, p1));
-        cube.upsert(fact(2, 2, 2, 1, 1, 1, p2));
+        cube.upsert(fact(1, 1, 1, 1, 1, 1, &p1));
+        cube.upsert(fact(2, 2, 2, 1, 1, 1, &p2));
         let firm = cube.firm_aggregate(&DaysPillar);
         let usd = StaticSpotResolver::new(Ccy::USD, &[(Ccy::EUR, 1.10), (Ccy::JPY, 1.0 / 156.0)]);
         let view = firm.numeraire_view(&usd).unwrap();
@@ -609,8 +624,8 @@ mod tests {
         assert!(is_close(recomputed, view.delta_numeraire, 1e-9, 1e-3));
         // The USD leg is EURUSD's funding leg + USDJPY's base hedge (§2.3 netting).
         let usd_leg = view.delta_vector.amount_in(Ccy::USD);
-        let l1 = canonicalize(&p1);
-        let l2 = canonicalize(&p2);
+        let l1 = canon(&p1);
+        let l2 = canon(&p2);
         let expected_usd = -l1.greeks.delta_base * l1.spot + l2.greeks.delta_base;
         assert!(is_close(usd_leg, expected_usd, 1e-9, 1e-3));
     }
@@ -635,16 +650,16 @@ mod tests {
         );
         // Shard A holds p1, shard B holds p2.
         let mut a = Cube::new();
-        a.upsert(fact(1, 1, 1, 1, 1, 1, p1));
+        a.upsert(fact(1, 1, 1, 1, 1, 1, &p1));
         let mut b = Cube::new();
-        b.upsert(fact(2, 1, 1, 1, 1, 1, p2));
+        b.upsert(fact(2, 1, 1, 1, 1, 1, &p2));
         let mut merged = a.firm_aggregate(&DaysPillar);
         merged.merge_additive(&b.firm_aggregate(&DaysPillar));
 
         // Reference: one cube with both facts.
         let mut whole = Cube::new();
-        whole.upsert(fact(1, 1, 1, 1, 1, 1, p1));
-        whole.upsert(fact(2, 1, 1, 1, 1, 1, p2));
+        whole.upsert(fact(1, 1, 1, 1, 1, 1, &p1));
+        whole.upsert(fact(2, 1, 1, 1, 1, 1, &p2));
         let ref_agg = whole.firm_aggregate(&DaysPillar);
 
         assert!(is_close(
@@ -679,12 +694,43 @@ mod tests {
             20_000_000.0,
             VanillaInputs::new(1.10, 1.12, 0.10, 1.0, 0.04, 0.02),
         );
-        cube.upsert(fact(1, 1, 1, 1, 1, 1, p_old));
-        cube.upsert(fact(1, 1, 1, 1, 1, 1, p_new));
+        cube.upsert(fact(1, 1, 1, 1, 1, 1, &p_old));
+        cube.upsert(fact(1, 1, 1, 1, 1, 1, &p_new));
         assert_eq!(cube.len(), 1);
         let firm = cube.firm_aggregate(&DaysPillar);
         // Greeks scale linearly in notional → the new (2×) fact is the only one.
-        let want = canonicalize(&p_new).greeks.delta_base;
+        let want = canon(&p_new).greeks.delta_base;
         assert!(is_close(firm.net_greeks.delta_base, want, 1e-12, 1e-6));
+    }
+
+    /// **A non-FX (equity) fact rolls up through the cube by its OWN leaf delta.** A
+    /// firm built from a single equity position has `net_greeks.delta_base` equal to
+    /// the canonical leaf's delta — proving the cross-asset fact flows through the
+    /// generalized fact table and seam (the `Underlying` axis carries the equity arm,
+    /// the roll-up sums the equity leaf's own Greeks, never an FX proxy).
+    #[test]
+    fn equity_fact_rolls_up_by_its_own_leaf() {
+        use celnet_core::carry::CarryInputs;
+        use celnet_types::{Carry, EquityRef, Symbol};
+        let u = Underlying::Equity(EquityRef::new(Symbol::new("ACME", ""), Ccy::USD));
+        let ci = CarryInputs::new(
+            100.0,
+            105.0,
+            0.20,
+            1.0,
+            u.clone(),
+            Carry::CostOfCarry { r: 0.03, b: 0.01 },
+        );
+        let eq = PositionRisk::carry(u, OptionType::Call, 1_000.0, ci);
+        let mut cube = Cube::new();
+        cube.upsert(fact(1, 1, 1, 1, 1, 1, &eq));
+        // The fact's underlying axis is the equity arm.
+        let by_under = cube.group_by(DimensionId::Underlying, &DaysPillar);
+        assert_eq!(by_under.len(), 1);
+        let firm = cube.firm_aggregate(&DaysPillar);
+        let want = canon(&eq).greeks.delta_base;
+        assert!(is_close(firm.net_greeks.delta_base, want, 1e-12, 1e-9));
+        // And it is the equity leaf's delta, not zero / not FX.
+        assert!(firm.net_greeks.delta_base.abs() > 1.0);
     }
 }
