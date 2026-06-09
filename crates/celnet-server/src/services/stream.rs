@@ -1646,6 +1646,7 @@ mod tests {
                     }),
                 },
             )),
+            ..Default::default()
         }
     }
 

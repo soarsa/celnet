@@ -625,6 +625,7 @@ impl ToWirePub for InstrumentSpec {
                     }),
                 },
             )),
+            ..Default::default()
         }
     }
 }

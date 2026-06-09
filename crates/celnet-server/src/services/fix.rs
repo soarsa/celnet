@@ -594,6 +594,7 @@ fn instrument_from_descriptor(desc: &OptionDescriptor, expiry_years: f64) -> Ins
                 spec: Some(strike_or_delta::Spec::Strike(desc.strike)),
             }),
         })),
+        ..Default::default()
     }
 }
 

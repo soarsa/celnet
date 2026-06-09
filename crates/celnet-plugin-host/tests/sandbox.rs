@@ -611,7 +611,8 @@ fn replay_is_bit_identical_across_runs() {
     let model = WasmModel::load_default(fwd_descriptor(), &bytes).unwrap();
     for opt in [OptionType::Call, OptionType::Put] {
         let snap = Snapshot::new(opt, market());
-        let outcome = replay::replay(&model, snap, 16).expect("replay must be bit-identical");
+        let outcome =
+            replay::replay(&model, snap.clone(), 16).expect("replay must be bit-identical");
         assert_eq!(outcome.runs, 16);
         // Re-running the harness yields the very same bits again.
         let again = replay::replay(&model, snap, 4).unwrap();
@@ -681,7 +682,7 @@ fn native_and_wasm_twins_agree_through_one_registry() {
     ];
     for m in markets {
         for opt in [OptionType::Call, OptionType::Put] {
-            assert_agree(native, wasmm, Snapshot::new(opt, m))
+            assert_agree(native, wasmm, Snapshot::new(opt, m.clone()))
                 .unwrap_or_else(|e| panic!("tier-0 vs tier-2 disagreed for {opt:?} {m:?}: {e}"));
         }
     }

@@ -104,6 +104,7 @@ pub fn vanilla_call(strike: f64) -> celnet_proto::Instrument {
                 }),
             },
         )),
+        ..Default::default()
     }
 }
 

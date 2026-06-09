@@ -9,19 +9,22 @@
 //! ever drifting apart.
 
 use celnet_types::{
-    AtmConvention, BrokenDate, Carry, Ccy, CcyPair, Cut, DayCount, DeltaConvention, Greeks, Metal,
-    MetalPair, OptionType, PremiumStyle, RateSensitivities, Settlement, SmileModel, Tenor,
-    Underlying, VanillaInputs,
+    AtmConvention, BrokenDate, Carry, Ccy, CcyPair, CommodityRef, CryptoPair, Cut, DayCount,
+    DeltaConvention, EquityRef, Greeks, Metal, MetalPair, OptionType, PremiumStyle,
+    RateSensitivities, Settlement, SettlementStyle, SmileModel, Symbol, Tenor, Underlying,
+    VanillaInputs,
 };
 
 use crate::{
     AtmConvention as WireAtmConvention, BrokenDate as WireBrokenDate, CarryModel as WireCarryModel,
-    CcyPair as WireCcyPair, Cut as WireCut, DayCount as WireDayCount,
-    DeltaConvention as WireDeltaConvention, Greeks as WireGreeks, Metal as WireMetal,
+    CcyPair as WireCcyPair, CommodityRef as WireCommodityRef, CryptoPair as WireCryptoPair,
+    Cut as WireCut, DayCount as WireDayCount, DeltaConvention as WireDeltaConvention,
+    EquityRef as WireEquityRef, Greeks as WireGreeks, Metal as WireMetal,
     MetalPair as WireMetalPair, OptionType as WireOptionType, PremiumStyle as WirePremiumStyle,
     RateSensitivities as WireRateSensitivities, Settlement as WireSettlement,
-    SmileModel as WireSmileModel, Tenor as WireTenor, Underlying as WireUnderlying,
-    VanillaInputs as WireVanillaInputs, carry_model, rate_sensitivities, tenor, underlying,
+    SettlementStyle as WireSettlementStyle, SmileModel as WireSmileModel, Symbol as WireSymbol,
+    Tenor as WireTenor, Underlying as WireUnderlying, VanillaInputs as WireVanillaInputs,
+    carry_model, rate_sensitivities, tenor, underlying,
 };
 
 /// A decode-side mapping failure: the wire carried a value the domain type
@@ -55,6 +58,18 @@ pub enum WireError {
         /// The out-of-range value as received on the wire.
         value: i64,
     },
+    /// The underlying decoded to a valid asset class, but one this product
+    /// family cannot price (e.g. an equity handed to an FX-option product, or a
+    /// metal handed to a non-deliverable-FX product). The underlying is NOT
+    /// thrown away — it decodes to its domain variant for routing — but the
+    /// product-family guard refuses it as `INVALID_ARGUMENT` rather than
+    /// silently coercing it.
+    WrongUnderlying {
+        /// The product family that refused the underlying (e.g. `"FX option"`).
+        product_family: &'static str,
+        /// The decoded asset-class name that was refused (e.g. `"equity"`).
+        underlying: &'static str,
+    },
 }
 
 impl core::fmt::Display for WireError {
@@ -71,6 +86,15 @@ impl core::fmt::Display for WireError {
             }
             WireError::OutOfRange { field, value } => {
                 write!(f, "value {value} out of range for `{field}`")
+            }
+            WireError::WrongUnderlying {
+                product_family,
+                underlying,
+            } => {
+                write!(
+                    f,
+                    "{underlying} underlying is not valid for a {product_family} product"
+                )
             }
         }
     }
@@ -426,6 +450,121 @@ impl TryFrom<WireMetalPair> for MetalPair {
     }
 }
 
+// ---- SettlementStyle -------------------------------------------------------
+
+impl From<SettlementStyle> for WireSettlementStyle {
+    fn from(value: SettlementStyle) -> Self {
+        match value {
+            SettlementStyle::Linear => WireSettlementStyle::Linear,
+            SettlementStyle::InverseCoin => WireSettlementStyle::InverseCoin,
+        }
+    }
+}
+
+impl From<WireSettlementStyle> for SettlementStyle {
+    fn from(value: WireSettlementStyle) -> Self {
+        match value {
+            WireSettlementStyle::Linear => SettlementStyle::Linear,
+            WireSettlementStyle::InverseCoin => SettlementStyle::InverseCoin,
+        }
+    }
+}
+
+// ---- Symbol ----------------------------------------------------------------
+
+impl From<Symbol> for WireSymbol {
+    fn from(value: Symbol) -> Self {
+        WireSymbol {
+            ticker: value.ticker,
+            venue: value.venue,
+        }
+    }
+}
+
+impl From<WireSymbol> for Symbol {
+    fn from(value: WireSymbol) -> Self {
+        Symbol {
+            ticker: value.ticker,
+            venue: value.venue,
+        }
+    }
+}
+
+// ---- EquityRef -------------------------------------------------------------
+
+impl From<EquityRef> for WireEquityRef {
+    fn from(value: EquityRef) -> Self {
+        WireEquityRef {
+            symbol: Some(WireSymbol::from(value.symbol)),
+            currency: value.currency.as_str().to_owned(),
+        }
+    }
+}
+
+impl TryFrom<WireEquityRef> for EquityRef {
+    type Error = WireError;
+
+    fn try_from(value: WireEquityRef) -> Result<Self, Self::Error> {
+        let symbol = value
+            .symbol
+            .ok_or(WireError::MissingField {
+                field: "EquityRef.symbol",
+            })
+            .map(Symbol::from)?;
+        let currency = Ccy::parse(&value.currency).ok_or(WireError::InvalidCcy {
+            field: "currency",
+            value: value.currency,
+        })?;
+        Ok(EquityRef::new(symbol, currency))
+    }
+}
+
+// ---- CommodityRef ----------------------------------------------------------
+
+impl From<CommodityRef> for WireCommodityRef {
+    fn from(value: CommodityRef) -> Self {
+        WireCommodityRef {
+            symbol: Some(WireSymbol::from(value.symbol)),
+            currency: value.currency.as_str().to_owned(),
+        }
+    }
+}
+
+impl TryFrom<WireCommodityRef> for CommodityRef {
+    type Error = WireError;
+
+    fn try_from(value: WireCommodityRef) -> Result<Self, Self::Error> {
+        let symbol = value
+            .symbol
+            .ok_or(WireError::MissingField {
+                field: "CommodityRef.symbol",
+            })
+            .map(Symbol::from)?;
+        let currency = Ccy::parse(&value.currency).ok_or(WireError::InvalidCcy {
+            field: "currency",
+            value: value.currency,
+        })?;
+        Ok(CommodityRef::new(symbol, currency))
+    }
+}
+
+// ---- CryptoPair ------------------------------------------------------------
+
+impl From<CryptoPair> for WireCryptoPair {
+    fn from(value: CryptoPair) -> Self {
+        WireCryptoPair {
+            base: value.base,
+            quote: value.quote,
+        }
+    }
+}
+
+impl From<WireCryptoPair> for CryptoPair {
+    fn from(value: WireCryptoPair) -> Self {
+        CryptoPair::new(value.base, value.quote)
+    }
+}
+
 // ---- product × underlying validity -----------------------------------------
 
 /// The asset-class validity guard: confirm an instrument's `underlying` is one
@@ -451,6 +590,22 @@ pub fn validate_fx_underlying(underlying: &WireUnderlying) -> Result<Underlying,
         Some(underlying::Ref::Metal(pair)) => {
             Ok(Underlying::Metal(MetalPair::try_from(pair.clone())?))
         }
+        // The cross-asset arms decode to their domain variant (the server routes
+        // on the identity), but an FX-option product cannot price them: refuse
+        // them with a typed `WrongUnderlying` rather than discarding the
+        // identity or silently coercing it.
+        Some(underlying::Ref::Equity(_)) => Err(WireError::WrongUnderlying {
+            product_family: "FX option",
+            underlying: "equity",
+        }),
+        Some(underlying::Ref::Commodity(_)) => Err(WireError::WrongUnderlying {
+            product_family: "FX option",
+            underlying: "commodity",
+        }),
+        Some(underlying::Ref::DigitalAsset(_)) => Err(WireError::WrongUnderlying {
+            product_family: "FX option",
+            underlying: "digital asset",
+        }),
         None => Err(WireError::MissingField {
             field: "Instrument.underlying",
         }),
@@ -476,10 +631,33 @@ pub fn validate_fx_underlying(underlying: &WireUnderlying) -> Result<Underlying,
 pub fn validate_deliverable_underlying(
     underlying: &WireUnderlying,
 ) -> Result<Underlying, WireError> {
-    // Identity decode is shared; the deliverable/non-deliverable *convention*
-    // check is the server's registry lookup (a malformed identity is rejected
-    // here first).
-    validate_fx_underlying(underlying)
+    // The deliverable linear book prices FX and precious-metal pairs; both are
+    // deliverable leg-pair underlyings. The cross-asset arms decode to their
+    // domain variant (the server routes on the identity) but are not deliverable
+    // FX/metal forwards: refuse them with a typed `WrongUnderlying`. The
+    // deliverable/non-deliverable *convention* check (e.g. an NDF-only FX pair)
+    // is the server's registry lookup, layered on the decoded identity below.
+    match &underlying.r#ref {
+        Some(underlying::Ref::Fx(pair)) => Ok(Underlying::Fx(CcyPair::try_from(pair.clone())?)),
+        Some(underlying::Ref::Metal(pair)) => {
+            Ok(Underlying::Metal(MetalPair::try_from(pair.clone())?))
+        }
+        Some(underlying::Ref::Equity(_)) => Err(WireError::WrongUnderlying {
+            product_family: "deliverable forward",
+            underlying: "equity",
+        }),
+        Some(underlying::Ref::Commodity(_)) => Err(WireError::WrongUnderlying {
+            product_family: "deliverable forward",
+            underlying: "commodity",
+        }),
+        Some(underlying::Ref::DigitalAsset(_)) => Err(WireError::WrongUnderlying {
+            product_family: "deliverable forward",
+            underlying: "digital asset",
+        }),
+        None => Err(WireError::MissingField {
+            field: "Instrument.underlying",
+        }),
+    }
 }
 
 /// The linear-book validity guard for the **non-deliverable** product (NDF): the
@@ -501,8 +679,22 @@ pub fn validate_non_deliverable_underlying(
         Some(underlying::Ref::Fx(pair)) => CcyPair::try_from(pair.clone()),
         // A metal pair is deliverable (loco-London) — never a valid NDF
         // underlying; refuse rather than coerce.
-        Some(underlying::Ref::Metal(_)) => Err(WireError::MissingField {
-            field: "Ndf.underlying (non-deliverable FX pair)",
+        Some(underlying::Ref::Metal(_)) => Err(WireError::WrongUnderlying {
+            product_family: "non-deliverable forward",
+            underlying: "metal",
+        }),
+        // The cross-asset arms are not non-deliverable FX pairs either.
+        Some(underlying::Ref::Equity(_)) => Err(WireError::WrongUnderlying {
+            product_family: "non-deliverable forward",
+            underlying: "equity",
+        }),
+        Some(underlying::Ref::Commodity(_)) => Err(WireError::WrongUnderlying {
+            product_family: "non-deliverable forward",
+            underlying: "commodity",
+        }),
+        Some(underlying::Ref::DigitalAsset(_)) => Err(WireError::WrongUnderlying {
+            product_family: "non-deliverable forward",
+            underlying: "digital asset",
         }),
         None => Err(WireError::MissingField {
             field: "Instrument.underlying",
@@ -517,6 +709,13 @@ impl From<Underlying> for WireUnderlying {
         match value {
             Underlying::Fx(pair) => WireUnderlying::fx(WireCcyPair::from(pair)),
             Underlying::Metal(pair) => WireUnderlying::metal(WireMetalPair::from(pair)),
+            Underlying::Equity(equity) => WireUnderlying::equity(WireEquityRef::from(equity)),
+            Underlying::Commodity(commodity) => {
+                WireUnderlying::commodity(WireCommodityRef::from(commodity))
+            }
+            Underlying::DigitalAsset(pair) => {
+                WireUnderlying::digital_asset(WireCryptoPair::from(pair))
+            }
         }
     }
 }
@@ -528,6 +727,15 @@ impl TryFrom<WireUnderlying> for Underlying {
         match value.r#ref {
             Some(underlying::Ref::Fx(pair)) => Ok(Underlying::Fx(CcyPair::try_from(pair)?)),
             Some(underlying::Ref::Metal(pair)) => Ok(Underlying::Metal(MetalPair::try_from(pair)?)),
+            Some(underlying::Ref::Equity(equity)) => {
+                Ok(Underlying::Equity(EquityRef::try_from(equity)?))
+            }
+            Some(underlying::Ref::Commodity(commodity)) => {
+                Ok(Underlying::Commodity(CommodityRef::try_from(commodity)?))
+            }
+            Some(underlying::Ref::DigitalAsset(pair)) => {
+                Ok(Underlying::DigitalAsset(CryptoPair::from(pair)))
+            }
             None => Err(WireError::MissingField {
                 field: "Underlying.ref",
             }),
@@ -859,7 +1067,7 @@ mod tests {
     #[test]
     fn underlying_round_trips_fx() {
         let u = Underlying::Fx(CcyPair::new(Ccy::EUR, Ccy::USD));
-        let wire = WireUnderlying::from(u);
+        let wire = WireUnderlying::from(u.clone());
         // The settlement currency is stamped as the FX quote (domestic) leg.
         assert_eq!(wire.settlement_ccy, "USD");
         assert_eq!(Underlying::try_from(wire).unwrap(), u);
@@ -948,7 +1156,7 @@ mod tests {
     #[test]
     fn underlying_round_trips_metal() {
         let u = Underlying::Metal(MetalPair::new(Metal::Platinum, Ccy::USD));
-        let wire = WireUnderlying::from(u);
+        let wire = WireUnderlying::from(u.clone());
         // The settlement currency is stamped as the metal pair's fiat quote leg.
         assert_eq!(wire.settlement_ccy, "USD");
         assert_eq!(Underlying::try_from(wire).unwrap(), u);
@@ -971,10 +1179,14 @@ mod tests {
             WireUnderlying::from(Underlying::Metal(MetalPair::new(Metal::Gold, Ccy::USD)));
         // Both project to the identical registry-keyed pair + settlement ccy.
         assert_eq!(via_fx.settlement_ccy, via_metal.settlement_ccy);
-        let fx_pair = Underlying::try_from(via_fx.clone()).unwrap().as_ccy_pair();
+        let fx_pair = Underlying::try_from(via_fx.clone())
+            .unwrap()
+            .as_ccy_pair()
+            .unwrap();
         let metal_pair = Underlying::try_from(via_metal.clone())
             .unwrap()
-            .as_ccy_pair();
+            .as_ccy_pair()
+            .unwrap();
         assert_eq!(fx_pair, metal_pair);
         assert_eq!(fx_pair, metal_base);
         // The metal-tagged encode/decode round-trip is itself stable.
@@ -982,7 +1194,7 @@ mod tests {
         let back = WireUnderlying::decode(bytes.as_slice()).unwrap();
         assert_eq!(
             Underlying::try_from(back).unwrap().as_ccy_pair(),
-            metal_base
+            Some(metal_base)
         );
     }
 
@@ -1035,6 +1247,116 @@ mod tests {
         assert_eq!(
             super::validate_deliverable_underlying(&metal).unwrap(),
             Underlying::Metal(MetalPair::new(Metal::Palladium, Ccy::USD))
+        );
+    }
+
+    #[test]
+    fn settlement_style_round_trips() {
+        for s in [SettlementStyle::Linear, SettlementStyle::InverseCoin] {
+            assert_eq!(SettlementStyle::from(WireSettlementStyle::from(s)), s);
+        }
+        // Meaningful-zero: the LINEAR style is the proto3 default tag 0.
+        assert_eq!(WireSettlementStyle::Linear as i32, 0);
+    }
+
+    #[test]
+    fn equity_underlying_round_trips() {
+        let e = EquityRef::new(Symbol::new("AAPL", "XNAS"), Ccy::USD);
+        let u = Underlying::Equity(e.clone());
+        let wire = WireUnderlying::from(u.clone());
+        assert_eq!(wire.settlement_ccy, "USD");
+        assert_eq!(Underlying::try_from(wire).unwrap(), u);
+        // The cross-asset arm has no FX-pair projection.
+        assert_eq!(u.as_ccy_pair(), None);
+        assert_eq!(u.as_equity(), Some(&e));
+    }
+
+    #[test]
+    fn commodity_underlying_round_trips() {
+        let c = CommodityRef::new(Symbol::new("BRENT", String::new()), Ccy::USD);
+        let u = Underlying::Commodity(c.clone());
+        let wire = WireUnderlying::from(u.clone());
+        assert_eq!(wire.settlement_ccy, "USD");
+        assert_eq!(Underlying::try_from(wire).unwrap(), u);
+        assert_eq!(u.as_ccy_pair(), None);
+        assert_eq!(u.as_commodity(), Some(&c));
+    }
+
+    #[test]
+    fn digital_asset_underlying_round_trips() {
+        // A crypto pair whose legs are NOT 3-letter ISO codes (BTC vs USDT).
+        let p = CryptoPair::new("BTC", "USDT");
+        let u = Underlying::DigitalAsset(p.clone());
+        let wire = WireUnderlying::from(u.clone());
+        assert_eq!(wire.settlement_ccy, "USDT");
+        assert_eq!(Underlying::try_from(wire).unwrap(), u);
+        assert_eq!(u.as_ccy_pair(), None);
+        assert_eq!(u.as_digital_asset(), Some(&p));
+    }
+
+    #[test]
+    fn equity_ref_rejects_absent_symbol() {
+        let wire = WireEquityRef {
+            symbol: None,
+            currency: "USD".to_owned(),
+        };
+        assert_eq!(
+            EquityRef::try_from(wire),
+            Err(WireError::MissingField {
+                field: "EquityRef.symbol",
+            })
+        );
+    }
+
+    #[test]
+    fn equity_ref_rejects_bad_currency() {
+        let wire = WireEquityRef {
+            symbol: Some(WireSymbol::from(Symbol::new("AAPL", "XNAS"))),
+            currency: "DOLLARS".to_owned(),
+        };
+        assert_eq!(
+            EquityRef::try_from(wire),
+            Err(WireError::InvalidCcy {
+                field: "currency",
+                value: "DOLLARS".to_owned(),
+            })
+        );
+    }
+
+    // The cross-asset arms decode to their domain variant (so the server can
+    // route them) but the FX-option / linear-book guards refuse them with a
+    // typed `WrongUnderlying` — they are NOT thrown away on decode.
+    #[test]
+    fn validate_fx_underlying_rejects_cross_asset_arms() {
+        let equity = WireUnderlying::equity(WireEquityRef::from(EquityRef::new(
+            Symbol::new("AAPL", "XNAS"),
+            Ccy::USD,
+        )));
+        assert_eq!(
+            super::validate_fx_underlying(&equity),
+            Err(WireError::WrongUnderlying {
+                product_family: "FX option",
+                underlying: "equity",
+            })
+        );
+        // ...yet the same wire decodes fine to its domain identity.
+        assert_eq!(
+            Underlying::try_from(equity).unwrap(),
+            Underlying::Equity(EquityRef::new(Symbol::new("AAPL", "XNAS"), Ccy::USD))
+        );
+
+        let crypto =
+            WireUnderlying::digital_asset(WireCryptoPair::from(CryptoPair::new("BTC", "USDT")));
+        assert_eq!(
+            super::validate_fx_underlying(&crypto),
+            Err(WireError::WrongUnderlying {
+                product_family: "FX option",
+                underlying: "digital asset",
+            })
+        );
+        assert_eq!(
+            Underlying::try_from(crypto).unwrap(),
+            Underlying::DigitalAsset(CryptoPair::new("BTC", "USDT"))
         );
     }
 

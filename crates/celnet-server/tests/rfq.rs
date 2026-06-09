@@ -88,6 +88,7 @@ async fn rfq_quote_accept_matches_direct_price() {
                 quote_id: quote.quote_id,
                 idempotency_key: "rfq-key-001".to_owned(),
                 side: Side::Buy as i32,
+                lp_id: String::new(),
             }),
         )
         .await
@@ -161,6 +162,7 @@ async fn rfq_idempotent_retry_returns_same_quote_and_execution() {
             quote_id: first.quote_id,
             idempotency_key: "dedup-42".to_owned(),
             side: Side::Buy as i32,
+            lp_id: String::new(),
         };
         let e1 = tokio::time::timeout(STEP_DEADLINE, client.accept_quote(acc()))
             .await
@@ -224,6 +226,7 @@ async fn rfq_accept_after_validity_is_rejected() {
                 quote_id: quote.quote_id,
                 idempotency_key: "expiring".to_owned(),
                 side: Side::Buy as i32,
+                lp_id: String::new(),
             }),
         )
         .await
@@ -359,6 +362,7 @@ async fn rfq_accept_requires_originating_idempotency_key() {
                 quote_id: quote.quote_id,
                 idempotency_key: "not-the-owner".to_owned(),
                 side: Side::Buy as i32,
+                lp_id: String::new(),
             }),
         )
         .await
@@ -373,6 +377,7 @@ async fn rfq_accept_requires_originating_idempotency_key() {
                 quote_id: quote.quote_id,
                 idempotency_key: String::new(),
                 side: Side::Buy as i32,
+                lp_id: String::new(),
             }),
         )
         .await
@@ -387,6 +392,7 @@ async fn rfq_accept_requires_originating_idempotency_key() {
                 quote_id: quote.quote_id,
                 idempotency_key: "owner-key-xyz".to_owned(),
                 side: Side::Buy as i32,
+                lp_id: String::new(),
             }),
         )
         .await
@@ -440,6 +446,7 @@ async fn rfq_accept_retry_side_flip_is_refused() {
                 quote_id: quote.quote_id,
                 idempotency_key: "flip-key".to_owned(),
                 side: Side::Buy as i32,
+                lp_id: String::new(),
             }),
         )
         .await
@@ -455,6 +462,7 @@ async fn rfq_accept_retry_side_flip_is_refused() {
                 quote_id: quote.quote_id,
                 idempotency_key: "flip-key".to_owned(),
                 side: Side::Sell as i32,
+                lp_id: String::new(),
             }),
         )
         .await
@@ -469,6 +477,7 @@ async fn rfq_accept_retry_side_flip_is_refused() {
                 quote_id: quote.quote_id,
                 idempotency_key: "flip-key".to_owned(),
                 side: Side::Buy as i32,
+                lp_id: String::new(),
             }),
         )
         .await
@@ -603,6 +612,7 @@ async fn rfq_reject_returns_typed_ack_and_blocks_accept() {
                 quote_id: quote.quote_id,
                 idempotency_key: "reject-me".to_owned(),
                 side: Side::Buy as i32,
+                lp_id: String::new(),
             }),
         )
         .await
@@ -685,6 +695,7 @@ async fn rfq_lifecycle_carries_maker_and_holder_attribution() {
                 quote_id: quote.quote_id,
                 idempotency_key: "attr-key-1".to_owned(),
                 side: Side::Buy as i32,
+                lp_id: String::new(),
             }),
         )
         .await

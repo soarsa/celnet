@@ -55,7 +55,7 @@ pub fn pv(inputs: &LinearInputs) -> Result<f64, SwapError> {
     // contract rate; only the side and settlement time change.
     let far_leg = LinearInputs {
         side: inputs.side.opposite(),
-        ..*inputs
+        ..inputs.clone()
     };
     let far_pv = pv_at(&far_leg, far_t);
     Ok(near_pv + far_pv)

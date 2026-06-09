@@ -69,6 +69,7 @@ fn call_on(pair: CcyPair, strike: f64) -> celnet_proto::Instrument {
     let mut inst = vanilla_call(strike);
     inst.underlying = Some(celnet_proto::Underlying::fx(wire_pair(pair)));
     inst
+    ..Default::default()
 }
 
 // ---------------------------------------------------------------------------
@@ -432,6 +433,7 @@ async fn quote_request_then_accept_routes_to_issuer() {
                 quote_id: quote.quote_id,
                 idempotency_key: "fwd-key-1".to_owned(),
                 side: celnet_proto::Side::Buy as i32,
+                lp_id: String::new(),
             }))
             .await
             .expect("front accept routed to issuer + booked")
@@ -449,6 +451,7 @@ async fn quote_request_then_accept_routes_to_issuer() {
                 quote_id: quote.quote_id ^ 0xDEAD_BEEF,
                 idempotency_key: "x".to_owned(),
                 side: celnet_proto::Side::Buy as i32,
+                lp_id: String::new(),
             }))
             .await
             .expect_err("unknown quote_id is not_found");

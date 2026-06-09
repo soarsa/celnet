@@ -739,6 +739,7 @@ pub(super) fn instrument_from_json(v: &Value) -> Result<Instrument> {
         // analytic path is unchanged for existing browser requests).
         pricing_model: enum_or_zero(o, "pricing_model"),
         product: Some(product_from_json(o)?),
+        ..Default::default()
     })
 }
 
@@ -847,6 +848,7 @@ pub(super) fn quote_accept_from_json(o: &Map<String, Value>) -> Result<QuoteAcce
         quote_id: u64_field(o, "quote_id")?,
         idempotency_key: string_or_empty(o, "idempotency_key"),
         side: enum_or_zero(o, "side"),
+        lp_id: String::new(),
     })
 }
 

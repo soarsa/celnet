@@ -109,6 +109,25 @@ enum Settlement {
   SETTLEMENT_NON_DELIVERABLE = 1;
 }
 
+// Contract settlement mechanics — how a contract's PnL is denominated and
+// margined. Mirrors `celnet_types::SettlementStyle`. The meaningful-zero
+// convention (matching the other enums): the LINEAR style is the canonical
+// default (value 0), so an absent/zero `Instrument.settlement_style` is the
+// ordinary quote-currency-margined linear contract — byte-identical to the
+// contract before this field existed. INVERSE_COIN is the coin-margined
+// (digital-asset) convention where PnL accrues in the base coin against a 1/S_T
+// payoff.
+enum SettlementStyle {
+  // Linear (quote-currency-margined): the ordinary contract whose payoff and
+  // margin are in the quote/numeraire currency. The default for every asset
+  // class shipped before the digital-asset arm.
+  SETTLEMENT_STYLE_LINEAR = 0;
+  // Inverse, coin-margined: the digital-asset convention whose payoff is the
+  // `1/S_T` (base-coin-denominated) form and whose margin accrues in the base
+  // coin. Meaningful only for a `digital_asset` underlying.
+  SETTLEMENT_STYLE_INVERSE_COIN = 1;
+}
+
 // A precious metal traded as the asset (base) leg of a metal pair — mirrors
 // `celnet_types::Metal`. The four LBMA/LPPM precious metals; each projects to an
 // ISO-4217 "X"-prefixed asset code (XAU/XAG/XPT/XPD) so a `MetalPair` overlaps
@@ -361,6 +380,18 @@ message Underlying {
     // leg vs a fiat quote. Projects byte-identically onto the metal-base
     // `CcyPair` the convention/calendar registries key on.
     MetalPair metal = 3;
+    // An equity (single-name or index) underlying — the cross-asset equity arm,
+    // priced through the generalized cost-of-carry seam (dividend yield as the
+    // carry `b`). Not an FX-option underlying.
+    EquityRef equity = 4;
+    // A commodity underlying — the cross-asset commodity arm, priced through the
+    // generalized cost-of-carry seam (storage/convenience yield as the carry
+    // `b`). Not an FX-option underlying.
+    CommodityRef commodity = 5;
+    // A digital-asset (crypto) pair — the cross-asset digital-asset arm. Linear
+    // (USD/stablecoin-margined) or inverse (coin-margined) settlement is carried
+    // on `Instrument.settlement_style`. Not an FX-option underlying.
+    CryptoPair digital_asset = 6;
   }
   // The settlement / numeraire currency (a 3-letter code). For FX this is the
   // pair's quote (domestic) currency; for a metal it is the metal pair's fiat
@@ -377,6 +408,58 @@ message MetalPair {
   // The precious metal (the base/asset leg).
   Metal metal = 1;
   // The fiat quote (numeraire) currency, e.g. "USD", "EUR", "JPY".
+  string quote = 2;
+}
+
+// A free-form instrument ticker — the vendor-neutral identifier for an asset
+// that is not named by a currency-pair / metal-pair leg structure (an equity, a
+// commodity, a digital-asset coin). Mirrors `celnet_types::Symbol`. The `ticker`
+// is the trading symbol (an exchange/ISIN-style code carried as a UTF-8 string
+// for wire legibility); `venue` is the optional listing venue / exchange MIC (or
+// the empty string when the ticker is globally unambiguous). No vendor product
+// names appear — this is the purpose-named "instrument symbol", nothing more.
+message Symbol {
+  // The trading symbol / ticker, e.g. "AAPL", "BRENT", an ISIN. UTF-8.
+  string ticker = 1;
+  // The listing venue / exchange MIC, e.g. "XNAS"; empty when unambiguous.
+  string venue = 2;
+}
+
+// An equity (single-name or index) underlying — mirrors
+// `celnet_types::EquityRef`. The `symbol` names the listed instrument; `currency`
+// is the trading/settlement currency the price is quoted in (a 3-letter code,
+// matching `CcyPair`'s leg encoding). The dividend treatment is a carry-layer
+// concern (`CostOfCarry`), not encoded here.
+message EquityRef {
+  // The listed equity symbol (single name or index).
+  Symbol symbol = 1;
+  // The currency the equity is quoted / settled in (a 3-letter code).
+  string currency = 2;
+}
+
+// A commodity underlying (a futures-style or spot commodity) — mirrors
+// `celnet_types::CommodityRef`. The `symbol` names the commodity / contract;
+// `currency` is the quote/settlement currency (a 3-letter code). The
+// cost-of-carry (storage/convenience yield) is a carry-layer concern
+// (`CostOfCarry`), not encoded here.
+message CommodityRef {
+  // The commodity / contract symbol, e.g. "BRENT", "XAU-spot" (non-metal-leg).
+  Symbol symbol = 1;
+  // The currency the commodity is quoted / settled in (a 3-letter code).
+  string currency = 2;
+}
+
+// A digital-asset (crypto) pair — mirrors `celnet_types::CryptoPair`. The `base`
+// is the coin/asset leg (e.g. "BTC", "ETH"); the `quote` is the numeraire it is
+// priced against, which may be a fiat currency ("USD") or another coin / a
+// stablecoin ("USDT"). Both legs are carried as UTF-8 strings (crypto tickers are
+// not constrained to the 3-letter ISO-4217 shape). The linear/inverse settlement
+// of a coin-margined contract is carried on `Instrument.settlement_style`, not
+// here (it is a contract-mechanics convention, not part of the pair identity).
+message CryptoPair {
+  // The coin/asset (base) leg, e.g. "BTC", "ETH". UTF-8.
+  string base = 1;
+  // The numeraire (quote) leg — fiat ("USD") or coin/stablecoin ("USDT").
   string quote = 2;
 }
 
@@ -1158,6 +1241,13 @@ message Instrument {
   // single-barrier knock-out, window-barrier) through the LSV engine. Travels on
   // the instrument so it reaches price/quote/stream/scenario uniformly.
   PricingModel pricing_model = 22;
+  // The contract settlement mechanics (linear vs inverse/coin-margined). Absent
+  // or `SETTLEMENT_STYLE_LINEAR` selects the ordinary quote-currency-margined
+  // linear contract (byte-identical to the contract before this field existed);
+  // `SETTLEMENT_STYLE_INVERSE_COIN` selects the coin-margined `1/S_T` digital-
+  // asset convention. Travels on the instrument so it reaches
+  // price/quote/stream/scenario uniformly, exactly like `pricing_model`.
+  SettlementStyle settlement_style = 29;
   // The product payoff: exactly one variant is set.
   oneof product {
     // A vanilla European option.
@@ -1391,6 +1481,65 @@ message Quote {
   optional double price_std_error = 12;
 }
 
+// One liquidity provider's line in a multi-dealer (RFQ-to-many) response: the
+// dealer's identity, its two-way market, and the per-dealer validity / ranking
+// metadata the aggregator computed. A `MultiDealerQuote` carries one of these per
+// responding dealer; the aggregate `quote_id` keys the request, and `lp_id`
+// disambiguates which dealer's price a `QuoteAccept` lifts/hits.
+message DealerQuote {
+  // The liquidity provider's stable identifier (a dealer/LP key, e.g. "LP-A").
+  string lp_id = 1;
+  // This dealer's two-way bid/offer premium in the request's
+  // `Conventions.premium_style` units.
+  TwoWayPrice price = 2;
+  // The full Greek set for this dealer's line.
+  Greeks greeks = 3;
+  // The strike this dealer resolved (if the request used a delta / solve).
+  double resolved_strike = 4;
+  // This dealer's line validity deadline (last-look), nanoseconds since the Unix
+  // epoch (UTC). An accept of this dealer after the instant is rejected.
+  int64 valid_until_nanos = 5;
+  // The dealer's attribution (who quoted this line), so the multi-dealer ladder
+  // keys the who's-trading roll-up (presence-tracked). Absent ⇒ unattributed.
+  optional AttributionRecord attribution = 6;
+  // Monte-Carlo standard error of this dealer's premium (presence-tracked): set
+  // ONLY for MC-priced products, absent for closed-form. Surfaced so a client
+  // never presents an MC dealer price as exact.
+  optional double price_std_error = 7;
+}
+
+// The multi-dealer (RFQ-to-many) response: the competing dealer lines for one
+// request, pre-ranked by the aggregator. `dealers` is ordered best-first on the
+// requested side (the tightest price leads); `best_bid_lp_id` / `best_offer_lp_id`
+// name the touch dealers so a client can lift/hit the best line without re-sorting.
+// The aggregate `quote_id` keys the request; a `QuoteAccept` carries the chosen
+// `DealerQuote.lp_id` to trade a specific dealer's line.
+message MultiDealerQuote {
+  // Server-assigned aggregate request identifier (the request, not a single
+  // dealer line). A `QuoteAccept` echoes this with the chosen `lp_id`.
+  uint64 quote_id = 1;
+  // Echo of the originating request's idempotency key.
+  string idempotency_key = 2;
+  // The competing dealer lines, ordered best-first on the requested side.
+  repeated DealerQuote dealers = 3;
+  // The `lp_id` of the dealer showing the best (highest) bid (the client sells
+  // into it). Empty if no dealer quoted a bid.
+  string best_bid_lp_id = 4;
+  // The `lp_id` of the dealer showing the best (lowest) offer (the client buys
+  // from it). Empty if no dealer quoted an offer.
+  string best_offer_lp_id = 5;
+  // The conventions the dealer lines are expressed under (resolved server-side).
+  Conventions conventions = 6;
+  // Publication time, nanoseconds since the Unix epoch (UTC).
+  int64 epoch_nanos = 7;
+  // Echo of the originating `QuoteRequest.correlation_id`, if one was supplied
+  // (presence-tracked).
+  optional uint64 correlation_id = 8;
+  // The marked-surface version the dealer lines were priced against
+  // (presence-tracked). A *data* field, not an API version.
+  optional uint64 surface_version = 9;
+}
+
 // A client acceptance of a previously issued `Quote`.
 message QuoteAccept {
   // The quote being accepted.
@@ -1400,6 +1549,13 @@ message QuoteAccept {
   // The side the client trades on a two-way quote (BUY = lift the offer,
   // SELL = hit the bid). Ignored for an already one-way quote.
   Side side = 3;
+  // The liquidity provider whose dealer line the client is accepting, in a
+  // multi-dealer (RFQ-to-many) context: the `DealerQuote.lp_id` of the winning
+  // dealer. Empty selects the single-dealer quote keyed solely by `quote_id`
+  // (byte-identical to a single-dealer accept). In a `MultiDealerQuote` the
+  // `quote_id` is the aggregate request id, so `lp_id` disambiguates which
+  // dealer's price is being lifted/hit.
+  string lp_id = 4;
 }
 
 // A client rejection of a previously issued `Quote` (declines to trade).
@@ -2663,6 +2819,10 @@ service PricingService {
 service QuoteService {
   // Request a tradable two-way quote for an instrument (idempotent on key).
   rpc RequestQuote(QuoteRequest) returns (Quote);
+  // Request competing two-way quotes from many dealers (RFQ-to-many) for one
+  // instrument; returns the pre-ranked dealer ladder with the best bid/offer
+  // touch dealers named. Idempotent on the request's `idempotency_key`.
+  rpc RequestMultiDealerQuote(QuoteRequest) returns (MultiDealerQuote);
   // Accept a quote and book the resulting execution.
   rpc AcceptQuote(QuoteAccept) returns (Execution);
   // Reject a quote (decline to trade); returns a typed acknowledgement, not an

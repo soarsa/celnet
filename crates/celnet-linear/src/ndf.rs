@@ -30,7 +30,7 @@ use celnet_types::FixingSource;
 /// The [`FixingSource`] is metadata for booking, reconciliation and settlement-
 /// convention reporting; it does **not** enter the PV (which is a deterministic
 /// discounted cashflow). The realized fixing value is never sourced here.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Ndf {
     /// The linear market state + contract terms (read through the carry seam).
     pub inputs: LinearInputs,

@@ -68,6 +68,7 @@ fn vanilla_call(strike: f64, model: celnet_proto::PricingModel) -> Instrument {
                 spec: Some(strike_or_delta::Spec::Strike(strike)),
             }),
         })),
+        ..Default::default()
     }
 }
 
@@ -93,6 +94,7 @@ fn down_out_call(strike: f64, barrier: f64, model: celnet_proto::PricingModel) -
             rebate: 0.0,
             monitoring: celnet_proto::MonitoringStyle::Continuous as i32,
         })),
+        ..Default::default()
     }
 }
 
@@ -308,6 +310,7 @@ fn lsv_window_barrier_matches_direct_exotics_reprice() {
             mc_steps: 0,
             mc_seed: 0,
         })),
+        ..Default::default()
     };
     let priced = price_instrument(&instr, &m, &conv())
         .expect("LSV window barrier prices via the LSV engine");
@@ -357,6 +360,7 @@ fn lsv_window_barrier_mc_carries_std_error() {
             mc_steps: 48,
             mc_seed: 7,
         })),
+        ..Default::default()
     };
     let priced = price_instrument(&instr, &m, &conv()).expect("LSV window MC prices");
     let se = priced
@@ -393,6 +397,7 @@ fn lsv_on_unsupported_product_errors_clearly() {
                 elapsed_weight: 0.0,
             },
         )),
+        ..Default::default()
     };
     let err = price_instrument(&instr, &m, &conv())
         .expect_err("LSV on an Asian must be a hard error, never a silent fallback");
@@ -433,6 +438,7 @@ fn default_model_on_window_barrier_errors_clearly() {
             mc_steps: 0,
             mc_seed: 0,
         })),
+        ..Default::default()
     };
     let err = price_instrument(&instr, &m, &conv())
         .expect_err("DEFAULT on a window barrier must be a hard error");

@@ -641,6 +641,7 @@ impl Rfq {
             quote_id: quote.quote_id,
             idempotency_key: self.idempotency_key.clone(),
             side: side.to_wire() as i32,
+            lp_id: String::new(),
         };
         let resp = svc.accept_quote(request).await?.into_inner();
         Execution::from_wire(resp)
