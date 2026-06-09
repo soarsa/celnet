@@ -28,3 +28,11 @@ celnet-risk-normalize.workspace = true
 # the analytic closed form. celnet-gpu depends only on -types/-core, so this is a
 # one-way edge (no cycle).
 celnet-gpu.workspace = true
+
+[dev-dependencies]
+# The cross-asset leaf crates are used ONLY by the longhand oracle test, which
+# re-derives a mixed FX/metal/equity firm aggregate + its FRTB charge by calling the
+# leaf crates' public `price`/`greeks` DIRECTLY (code-disjoint from the production
+# seam path), the independent non-circular oracle the cube is gated against.
+celnet-equity-vanilla.workspace = true
+celnet-commodity-vanilla.workspace = true

@@ -58,29 +58,42 @@
 //! [`VanillaInputs`]; both repricing and the AAD sweep are deterministic (`libm`),
 //! so every measure here is bit-reproducible for a fixed scenario set.
 
+use celnet_core::carry::{CarryInputs, CarryPricer};
 use celnet_core::math::sqrt;
 use celnet_risk_normalize::PositionRisk;
-use celnet_types::{Greeks, VanillaInputs};
-use celnet_vanilla::{adjoint_greeks, price};
+use celnet_types::{Carry, Greeks, RateSensitivities};
+use celnet_vanilla::adjoint_greeks;
 
 /// One scenario: a set of multiplicative/additive shocks to the pricing inputs of
 /// every constituent position, used to reprice the node under stress.
 ///
 /// Shocks are expressed as the *change applied to each position's own inputs*, so
 /// a single scenario means the same economic move (e.g. "spot +1 %, vol +1 vol")
-/// applied consistently across a heterogeneous book. `spot_rel` multiplies spot;
-/// `vol_abs` adds to vol (in absolute vol units, so 0.01 = +1 vol point);
-/// `rate_dom_abs`/`rate_for_abs` add to the two rates.
+/// applied consistently across a heterogeneous **cross-asset** book. `spot_rel`
+/// multiplies spot; `vol_abs` adds to vol (in absolute vol units, so 0.01 = +1 vol
+/// point); the two carry shocks bump the asset-agnostic carry coordinates `(r, b)`:
+/// `discount_abs` adds to the discount rate `r`, `carry_abs` adds to the net carry
+/// `b` (`F = S·e^{b·t}`).
+///
+/// # Cross-asset carry mapping (ADR-0008)
+///
+/// The shocks are stated in the **carry-neutral** `(r, b)` basis so a single scenario
+/// is the *same* economic move across every asset class — and there is **no
+/// match-on-underlying** here. For FX, `r = r_dom` and `b = r_dom − r_for`, so a
+/// classic `Δr_dom`/`Δr_for` shock maps to `discount_abs = Δr_dom`,
+/// `carry_abs = Δr_dom − Δr_for` (see [`Scenario::fx_rates`]). The shock arithmetic
+/// itself lives on [`Carry`] (the legitimate two-arm carry transform), applied
+/// uniformly to whichever carry the position holds.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Scenario {
     /// Relative spot shock (0.01 = +1 %). Applied as `spot *= 1 + spot_rel`.
     pub spot_rel: f64,
     /// Absolute vol shock in vol units (0.01 = +1 vol point). `vol += vol_abs`.
     pub vol_abs: f64,
-    /// Absolute domestic-rate shock. `r_dom += rate_dom_abs`.
-    pub rate_dom_abs: f64,
-    /// Absolute foreign-rate shock. `r_for += rate_for_abs`.
-    pub rate_for_abs: f64,
+    /// Absolute discount-rate shock `Δr` (the numeraire rate; `r_dom` for FX).
+    pub discount_abs: f64,
+    /// Absolute net-carry shock `Δb` (`r_dom − r_for` for FX).
+    pub carry_abs: f64,
 }
 
 impl Scenario {
@@ -90,8 +103,8 @@ impl Scenario {
         Self {
             spot_rel: 0.0,
             vol_abs: 0.0,
-            rate_dom_abs: 0.0,
-            rate_for_abs: 0.0,
+            discount_abs: 0.0,
+            carry_abs: 0.0,
         }
     }
 
@@ -101,8 +114,8 @@ impl Scenario {
         Self {
             spot_rel,
             vol_abs: 0.0,
-            rate_dom_abs: 0.0,
-            rate_for_abs: 0.0,
+            discount_abs: 0.0,
+            carry_abs: 0.0,
         }
     }
 
@@ -112,22 +125,60 @@ impl Scenario {
         Self {
             spot_rel: 0.0,
             vol_abs,
-            rate_dom_abs: 0.0,
-            rate_for_abs: 0.0,
+            discount_abs: 0.0,
+            carry_abs: 0.0,
         }
     }
 
-    /// Apply this scenario's shocks to a set of pricing inputs.
+    /// Construct the carry shocks from a classic FX two-rate shock `(Δr_dom, Δr_for)`:
+    /// `discount_abs = Δr_dom`, `carry_abs = Δr_dom − Δr_for` (so `r = r_dom` shifts by
+    /// `Δr_dom` and `b = r_dom − r_for` shifts by `Δr_dom − Δr_for`). This reproduces
+    /// the pre-generalization FX scenario byte-for-byte.
     #[must_use]
-    pub fn apply(&self, i: &VanillaInputs) -> VanillaInputs {
-        VanillaInputs::new(
+    pub const fn fx_rates(spot_rel: f64, vol_abs: f64, d_r_dom: f64, d_r_for: f64) -> Self {
+        Self {
+            spot_rel,
+            vol_abs,
+            discount_abs: d_r_dom,
+            carry_abs: d_r_dom - d_r_for,
+        }
+    }
+
+    /// Apply this scenario's shocks to a set of carry-tagged pricing inputs, asset-
+    /// class-agnostically: shock spot relatively, vol absolutely, and shift the carry
+    /// coordinates `(r, b)` by `(discount_abs, carry_abs)` via [`shift_carry`]. The
+    /// underlying is untouched; **no match on the underlying** appears here.
+    #[must_use]
+    pub fn apply(&self, i: &CarryInputs) -> CarryInputs {
+        CarryInputs::new(
             i.spot * (1.0 + self.spot_rel),
             i.strike,
             i.vol + self.vol_abs,
             i.t,
-            i.r_dom + self.rate_dom_abs,
-            i.r_for + self.rate_for_abs,
+            i.underlying.clone(),
+            shift_carry(i.carry, self.discount_abs, self.carry_abs),
         )
+    }
+}
+
+/// Shift a [`Carry`] by `(Δr, Δb)` in the asset-agnostic discount/carry basis. For
+/// [`Carry::FxRates`] this reproduces `r_dom += Δr`, `r_for += Δr − Δb` (so the
+/// discount rate `r = r_dom` shifts by `Δr` and the net carry `b = r_dom − r_for`
+/// shifts by `Δb`); for [`Carry::CostOfCarry`] it is `r += Δr`, `b += Δb` directly.
+/// The two-arm match here is the legitimate carry transform (ADR-0008-clean — a
+/// carry-internal operation, not an aggregation-loop branch on the underlying).
+#[must_use]
+pub fn shift_carry(carry: Carry, discount_abs: f64, carry_abs: f64) -> Carry {
+    match carry {
+        Carry::FxRates { r_dom, r_for } => Carry::FxRates {
+            r_dom: r_dom + discount_abs,
+            // b = r_dom − r_for shifts by carry_abs ⇒ r_for shifts by (Δr − Δb).
+            r_for: r_for + (discount_abs - carry_abs),
+        },
+        Carry::CostOfCarry { r, b } => Carry::CostOfCarry {
+            r: r + discount_abs,
+            b: b + carry_abs,
+        },
     }
 }
 
@@ -135,22 +186,37 @@ impl Scenario {
 /// the position's quote (domestic) currency, scaled by notional and signed by the
 /// long/short direction of the notional.
 ///
-/// `price` returns the per-unit-base domestic PV; multiplying by `notional_base`
+/// `price` returns the per-unit-base numeraire PV; multiplying by `notional_base`
 /// gives the position value, and the P&L is `value(shocked) − value(base)`.
+///
+/// The base and shocked prices are obtained **through the agnostic
+/// [`CarryPricer`] seam** — the asset's own leaf prices the position; this function
+/// never matches on the underlying and never silently FX-proxies a non-FX leg. A
+/// position the pricer cannot price contributes `0.0` (its leaf rejected it); the
+/// caller chooses a dispatcher whose leaves cover the book (see
+/// [`node_pnl`]/[`historical_var_es`], which take the dispatcher explicitly).
 #[must_use]
-pub fn position_pnl(pos: &PositionRisk, scenario: Scenario) -> f64 {
-    let base_v = price(pos.option, &pos.inputs) * pos.notional_base;
+pub fn position_pnl<P: CarryPricer>(pricer: &P, pos: &PositionRisk, scenario: Scenario) -> f64 {
+    let Ok(base_unit) = pricer.price(pos.option, &pos.inputs) else {
+        return 0.0;
+    };
     let shocked = scenario.apply(&pos.inputs);
-    let shocked_v = price(pos.option, &shocked) * pos.notional_base;
-    shocked_v - base_v
+    let Ok(shocked_unit) = pricer.price(pos.option, &shocked) else {
+        return 0.0;
+    };
+    (shocked_unit - base_unit) * pos.notional_base
 }
 
 /// The total P&L of a node (its constituent positions) under one scenario, in the
 /// **common premium currency** assumption (all positions share a quote ccy) — see
-/// the note on [`historical_var_es`] for the multi-currency caveat.
+/// the note on [`historical_var_es`] for the multi-currency caveat. Each leg is
+/// repriced through the seam (`pricer`).
 #[must_use]
-pub fn node_pnl(positions: &[PositionRisk], scenario: Scenario) -> f64 {
-    positions.iter().map(|p| position_pnl(p, scenario)).sum()
+pub fn node_pnl<P: CarryPricer>(pricer: &P, positions: &[PositionRisk], scenario: Scenario) -> f64 {
+    positions
+        .iter()
+        .map(|p| position_pnl(pricer, p, scenario))
+        .sum()
 }
 
 /// Historical-style **VaR** and **Expected Shortfall** of a node, by full
@@ -178,13 +244,22 @@ pub fn node_pnl(positions: &[PositionRisk], scenario: Scenario) -> f64 {
 /// Returns `(var, es)`; both are non-negative loss magnitudes. An empty scenario
 /// set yields `(0.0, 0.0)`.
 #[must_use]
-pub fn historical_var_es(positions: &[PositionRisk], scenarios: &[Scenario], alpha: f64) -> VarEs {
+pub fn historical_var_es<P: CarryPricer>(
+    pricer: &P,
+    positions: &[PositionRisk],
+    scenarios: &[Scenario],
+    alpha: f64,
+) -> VarEs {
     if scenarios.is_empty() {
         return VarEs { var: 0.0, es: 0.0 };
     }
-    // Full bump-and-revalue P&L per scenario (a loss is a negative P&L). The tail
-    // reduction is the SHARED `quantile_var_es`, identical to the AAD lens.
-    let mut pnl: Vec<f64> = scenarios.iter().map(|s| node_pnl(positions, *s)).collect();
+    // Full bump-and-revalue P&L per scenario (a loss is a negative P&L), repriced
+    // through the seam. The tail reduction is the SHARED `quantile_var_es`,
+    // identical to the AAD lens.
+    let mut pnl: Vec<f64> = scenarios
+        .iter()
+        .map(|s| node_pnl(pricer, positions, *s))
+        .collect();
     quantile_var_es(&mut pnl, alpha)
 }
 
@@ -202,9 +277,11 @@ pub fn historical_var_es(positions: &[PositionRisk], scenarios: &[Scenario], alp
 /// Units are deliberately explicit so the Taylor expansion is unit-correct:
 /// `delta_spot` is `∂V/∂S` (per **absolute** spot move `dS`, **not** per relative
 /// move), `gamma` is `∂²V/∂S²`, `vega`/`volga` are per absolute vol move,
-/// `vanna` is `∂²V/∂S∂σ`, and the rhos are per absolute rate move. `spot` is the
-/// position's own spot level, retained so a relative spot shock `spot_rel` is
-/// turned into the absolute move `dS = spot · spot_rel` at expansion time.
+/// `vanna` is `∂²V/∂S∂σ`, and the rate sensitivities are carry-tagged
+/// (`discount_rho = ∂V/∂r`, `carry_rho = ∂V/∂b`) per absolute carry-coordinate move.
+/// `spot` is the position's own spot level, retained so a relative spot shock
+/// `spot_rel` is turned into the absolute move `dS = spot · spot_rel` at expansion
+/// time.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PositionSensitivity {
     /// The position's own spot level (to convert relative→absolute spot shocks).
@@ -219,21 +296,60 @@ pub struct PositionSensitivity {
     pub volga: f64,
     /// `∂²V/∂S∂σ` · notional.
     pub vanna: f64,
-    /// `∂V/∂r_d` · notional (per absolute domestic-rate move).
-    pub rho_dom: f64,
-    /// `∂V/∂r_f` · notional (per absolute foreign-rate move).
-    pub rho_for: f64,
+    /// `∂V/∂r` · notional (discount-rate rho; per absolute `discount_abs` move).
+    /// For FX `r = r_dom`, so this is the domestic rho.
+    pub discount_rho: f64,
+    /// `∂V/∂b` · notional (net-carry rho; per absolute `carry_abs` move). For FX
+    /// `b = r_dom − r_for`, so this is `−rho_for` (since `∂/∂b = −∂/∂r_for` at fixed
+    /// `r_dom`).
+    pub carry_rho: f64,
 }
 
 impl PositionSensitivity {
-    /// Build a position's sensitivity profile from **one** reverse-mode AAD sweep
-    /// ([`celnet_vanilla::adjoint_greeks`]) scaled by notional. This is the single
-    /// price-equivalent of work paid once per position; every scenario then reuses
-    /// it via [`PositionSensitivity::taylor_pnl`].
+    /// Build a position's sensitivity profile through the agnostic seam, scaled by
+    /// notional. For an FX/metal underlying this consumes **one** reverse-mode AAD
+    /// sweep ([`celnet_vanilla::adjoint_greeks`]) — the price-equivalent gradient
+    /// paid once per position; for every other asset class it uses the leaf's
+    /// closed-form carry-tagged Greeks through `pricer.price_greeks`. The rate block
+    /// is normalized to the carry basis `(discount_rho, carry_rho)` regardless of
+    /// asset class, so a heterogeneous node's profiles sum element-wise.
+    ///
+    /// A position the pricer cannot price yields an all-zero profile (its leaf
+    /// rejected it) — the same no-silent-FX-proxy contract as [`position_pnl`].
     #[must_use]
-    pub fn from_position(pos: &PositionRisk) -> Self {
-        let g: Greeks = adjoint_greeks(pos.option, &pos.inputs);
+    pub fn from_position<P: CarryPricer>(pricer: &P, pos: &PositionRisk) -> Self {
         let n = pos.notional_base;
+        // FX/metal: the fast reverse-mode AAD sweep (one gradient for the price of
+        // one price). The discriminant read here is the FX-acceleration guard (the
+        // leaf's own "is this FX?" lowering), not an aggregation-loop match.
+        if let Ok(vi) = celnet_core::carry::fx_vanilla_inputs(&pos.inputs) {
+            let g: Greeks = adjoint_greeks(pos.option, &vi);
+            return Self {
+                spot: pos.inputs.spot,
+                delta_spot: g.delta_spot * n,
+                gamma: g.gamma * n,
+                vega: g.vega * n,
+                volga: g.volga * n,
+                vanna: g.vanna * n,
+                // FX carry basis: r = r_dom ⇒ ∂V/∂r = rho_dom; b = r_dom − r_for ⇒
+                // ∂V/∂b = −rho_for (at fixed r_dom).
+                discount_rho: g.rho_dom * n,
+                carry_rho: -g.rho_for * n,
+            };
+        }
+        // Non-FX: the leaf's closed-form carry-tagged strip through the seam.
+        let Ok(g) = pricer.price_greeks(pos.option, &pos.inputs) else {
+            return Self::zero(pos.inputs.spot);
+        };
+        let (discount_rho, carry_rho) = match g.rates {
+            RateSensitivities::Carry {
+                discount_rho,
+                carry_rho,
+            } => (discount_rho, carry_rho),
+            // An FX-tagged strip from a non-FX-lowering leaf cannot occur (FX lowers
+            // above); normalize defensively to the carry basis.
+            RateSensitivities::Fx { rho_dom, rho_for } => (rho_dom, -rho_for),
+        };
         Self {
             spot: pos.inputs.spot,
             delta_spot: g.delta_spot * n,
@@ -241,8 +357,23 @@ impl PositionSensitivity {
             vega: g.vega * n,
             volga: g.volga * n,
             vanna: g.vanna * n,
-            rho_dom: g.rho_dom * n,
-            rho_for: g.rho_for * n,
+            discount_rho: discount_rho * n,
+            carry_rho: carry_rho * n,
+        }
+    }
+
+    /// An all-zero profile at a given spot (an unpriceable position's contribution).
+    #[must_use]
+    const fn zero(spot: f64) -> Self {
+        Self {
+            spot,
+            delta_spot: 0.0,
+            gamma: 0.0,
+            vega: 0.0,
+            volga: 0.0,
+            vanna: 0.0,
+            discount_rho: 0.0,
+            carry_rho: 0.0,
         }
     }
 
@@ -253,14 +384,14 @@ impl PositionSensitivity {
     /// dV ≈ delta_spot·dS + ½·gamma·dS²
     ///    + vega·dσ + ½·volga·dσ²
     ///    + vanna·dS·dσ
-    ///    + rho_dom·dr_d + rho_for·dr_f
+    ///    + discount_rho·dr + carry_rho·db
     /// ```
     ///
     /// where `dS = spot · spot_rel` (the **absolute** spot move implied by the
-    /// relative shock), `dσ = vol_abs`, `dr_d = rate_dom_abs`, `dr_f =
-    /// rate_for_abs`. Rate sensitivity is kept first-order: vanilla rho convexity is
-    /// negligible over a VaR-scale rate shock and the analytic/AAD set carries no
-    /// second-order rate Greek, so adding a fake one would over-claim.
+    /// relative shock), `dσ = vol_abs`, `dr = discount_abs`, `db = carry_abs`. Rate
+    /// sensitivity is kept first-order: rho convexity is negligible over a VaR-scale
+    /// rate shock and the analytic/AAD set carries no second-order rate Greek, so
+    /// adding a fake one would over-claim.
     #[must_use]
     pub fn taylor_pnl(&self, scenario: Scenario) -> f64 {
         let d_s = self.spot * scenario.spot_rel;
@@ -270,19 +401,22 @@ impl PositionSensitivity {
             + self.vega * d_vol
             + 0.5 * self.volga * d_vol * d_vol
             + self.vanna * d_s * d_vol
-            + self.rho_dom * scenario.rate_dom_abs
-            + self.rho_for * scenario.rate_for_abs
+            + self.discount_rho * scenario.discount_abs
+            + self.carry_rho * scenario.carry_abs
     }
 }
 
-/// Compute every position's [`PositionSensitivity`] for a node in **one** AAD
-/// sweep per position (O(positions) sweeps total) — the precompute step shared by
+/// Compute every position's [`PositionSensitivity`] for a node through the seam,
+/// one sweep/strip per position (O(positions) total) — the precompute step shared by
 /// all scenarios in [`sensitivity_var_es`].
 #[must_use]
-pub fn node_sensitivities(positions: &[PositionRisk]) -> Vec<PositionSensitivity> {
+pub fn node_sensitivities<P: CarryPricer>(
+    pricer: &P,
+    positions: &[PositionRisk],
+) -> Vec<PositionSensitivity> {
     positions
         .iter()
-        .map(PositionSensitivity::from_position)
+        .map(|p| PositionSensitivity::from_position(pricer, p))
         .collect()
 }
 
@@ -324,12 +458,17 @@ pub fn node_sensitivities(positions: &[PositionRisk]) -> Vec<PositionSensitivity
 /// applies: P&L is summed in each position's quote ccy (numeraire-normalize first
 /// for a multi-currency node). Bit-reproducible for a fixed scenario set (`libm`).
 #[must_use]
-pub fn sensitivity_var_es(positions: &[PositionRisk], scenarios: &[Scenario], alpha: f64) -> VarEs {
+pub fn sensitivity_var_es<P: CarryPricer>(
+    pricer: &P,
+    positions: &[PositionRisk],
+    scenarios: &[Scenario],
+    alpha: f64,
+) -> VarEs {
     if scenarios.is_empty() {
         return VarEs { var: 0.0, es: 0.0 };
     }
-    // ONE adjoint sweep per position, reused across every scenario.
-    let sens = node_sensitivities(positions);
+    // ONE sweep/strip per position through the seam, reused across every scenario.
+    let sens = node_sensitivities(pricer, positions);
     // Node Taylor P&L per scenario (a loss is a negative P&L).
     let mut pnl: Vec<f64> = scenarios
         .iter()
@@ -387,8 +526,8 @@ pub struct VarEs {
 /// spans several spot levels, the convention-exact linear term cannot use a single
 /// representative spot — it is recomputed from each position's own spot/delta here.
 #[must_use]
-pub fn sbm_curvature_spot(positions: &[PositionRisk], rw: f64) -> f64 {
-    let (cvr_up, cvr_down) = vanilla_curvature_legs(positions, rw);
+pub fn sbm_curvature_spot<P: CarryPricer>(pricer: &P, positions: &[PositionRisk], rw: f64) -> f64 {
+    let (cvr_up, cvr_down) = vanilla_curvature_legs(pricer, positions, rw);
     cvr_up.max(cvr_down).max(0.0)
 }
 
@@ -398,17 +537,25 @@ pub fn sbm_curvature_spot(positions: &[PositionRisk], rw: f64) -> f64 {
 /// (curvature is non-additive in exactly this way: `max(Σ_vanilla up + Σ_exotic up,
 /// Σ_vanilla down + Σ_exotic down, 0)`, not the sum of two independent `max`es).
 #[must_use]
-pub fn vanilla_curvature_legs(positions: &[PositionRisk], rw: f64) -> (f64, f64) {
-    // Reprice the node up and down by the relative shock.
-    let base = node_value(positions);
-    let up = node_value_shocked(positions, 1.0 + rw);
-    let down = node_value_shocked(positions, 1.0 - rw);
-    // The convention-exact linear term, netted per position (see the doc note).
+pub fn vanilla_curvature_legs<P: CarryPricer>(
+    pricer: &P,
+    positions: &[PositionRisk],
+    rw: f64,
+) -> (f64, f64) {
+    // Reprice the node up and down by the relative spot shock, through the seam.
+    let base = node_value(pricer, positions);
+    let up = node_value_shocked(pricer, positions, 1.0 + rw);
+    let down = node_value_shocked(pricer, positions, 1.0 - rw);
+    // The convention-exact linear term, netted per position (see the doc note). The
+    // leaf's spot delta is read through the seam (the asset's own ∂V/∂S), never an
+    // FX proxy.
     let linear = positions
         .iter()
         .map(|p| {
-            let g = celnet_vanilla::greeks(p.option, &p.inputs);
-            g.delta_spot * p.notional_base * rw * p.inputs.spot
+            let delta_spot = pricer
+                .price_greeks(p.option, &p.inputs)
+                .map_or(0.0, |g| g.delta_spot);
+            delta_spot * p.notional_base * rw * p.inputs.spot
         })
         .sum::<f64>();
     let cvr_up = -((up - base) - linear);
@@ -423,7 +570,8 @@ pub fn vanilla_curvature_legs(positions: &[PositionRisk], rw: f64) -> (f64, f64)
 /// exotic leg contributes its true tail risk — never a vanilla proxy, never excluded.
 /// Reduces to [`historical_var_es`] exactly when there are no exotic legs.
 #[must_use]
-pub fn node_var_es_combined(
+pub fn node_var_es_combined<P: CarryPricer>(
+    pricer: &P,
     positions: &[PositionRisk],
     exotic_legs: &[crate::exotic::ExoticLeg],
     scenarios: &[Scenario],
@@ -434,7 +582,7 @@ pub fn node_var_es_combined(
     }
     let mut pnl: Vec<f64> = scenarios
         .iter()
-        .map(|s| node_pnl(positions, *s) + crate::exotic::exotic_node_pnl(exotic_legs, *s))
+        .map(|s| node_pnl(pricer, positions, *s) + crate::exotic::exotic_node_pnl(exotic_legs, *s))
         .collect();
     quantile_var_es(&mut pnl, alpha)
 }
@@ -447,7 +595,8 @@ pub fn node_var_es_combined(
 /// Taylor speed-up. Reduces to [`sensitivity_var_es`] exactly when there are no
 /// exotic legs.
 #[must_use]
-pub fn node_var_es_sensitivity_combined(
+pub fn node_var_es_sensitivity_combined<P: CarryPricer>(
+    pricer: &P,
     positions: &[PositionRisk],
     exotic_legs: &[crate::exotic::ExoticLeg],
     scenarios: &[Scenario],
@@ -456,7 +605,7 @@ pub fn node_var_es_sensitivity_combined(
     if scenarios.is_empty() {
         return VarEs { var: 0.0, es: 0.0 };
     }
-    let sens = node_sensitivities(positions);
+    let sens = node_sensitivities(pricer, positions);
     let mut pnl: Vec<f64> = scenarios
         .iter()
         .map(|s| {
@@ -474,12 +623,13 @@ pub fn node_var_es_sensitivity_combined(
 /// `max` per class and summing would over-count). Reduces to [`sbm_curvature_spot`]
 /// exactly when there are no exotic legs.
 #[must_use]
-pub fn sbm_curvature_spot_combined(
+pub fn sbm_curvature_spot_combined<P: CarryPricer>(
+    pricer: &P,
     positions: &[PositionRisk],
     exotic_legs: &[crate::exotic::ExoticLeg],
     rw: f64,
 ) -> f64 {
-    let (v_up, v_down) = vanilla_curvature_legs(positions, rw);
+    let (v_up, v_down) = vanilla_curvature_legs(pricer, positions, rw);
     let (e_up, e_down) = crate::exotic::exotic_curvature_legs(exotic_legs, rw);
     (v_up + e_up).max(v_down + e_down).max(0.0)
 }
@@ -513,28 +663,41 @@ where
     sqrt(acc.max(0.0))
 }
 
-/// The base (unshocked) value of a node in quote ccy (Σ per-unit PV × notional).
-fn node_value(positions: &[PositionRisk]) -> f64 {
-    positions
-        .iter()
-        .map(|p| price(p.option, &p.inputs) * p.notional_base)
-        .sum()
-}
-
-/// The node value after multiplying every position's spot by `spot_mult`.
-fn node_value_shocked(positions: &[PositionRisk], spot_mult: f64) -> f64 {
+/// The base (unshocked) value of a node in quote ccy (Σ per-unit PV × notional),
+/// repriced through the seam.
+fn node_value<P: CarryPricer>(pricer: &P, positions: &[PositionRisk]) -> f64 {
     positions
         .iter()
         .map(|p| {
-            let shocked = VanillaInputs::new(
+            pricer
+                .price(p.option, &p.inputs)
+                .map_or(0.0, |v| v * p.notional_base)
+        })
+        .sum()
+}
+
+/// The node value after multiplying every position's spot by `spot_mult` (carry,
+/// vol and time held fixed), repriced through the seam. The shocked input keeps the
+/// position's own underlying/carry — no match on the underlying.
+fn node_value_shocked<P: CarryPricer>(
+    pricer: &P,
+    positions: &[PositionRisk],
+    spot_mult: f64,
+) -> f64 {
+    positions
+        .iter()
+        .map(|p| {
+            let shocked = CarryInputs::new(
                 p.inputs.spot * spot_mult,
                 p.inputs.strike,
                 p.inputs.vol,
                 p.inputs.t,
-                p.inputs.r_dom,
-                p.inputs.r_for,
+                p.inputs.underlying.clone(),
+                p.inputs.carry,
             );
-            price(p.option, &shocked) * p.notional_base
+            pricer
+                .price(p.option, &shocked)
+                .map_or(0.0, |v| v * p.notional_base)
         })
         .sum()
 }
@@ -543,14 +706,15 @@ fn node_value_shocked(positions: &[PositionRisk], spot_mult: f64) -> f64 {
 mod tests {
     use super::*;
     use celnet_core::is_close;
-    use celnet_types::{Ccy, CcyPair, DeltaConvention, OptionType, PremiumStyle};
+    use celnet_risk_normalize::AssetPricer;
+    use celnet_types::{Ccy, CcyPair, DeltaConvention, OptionType, PremiumStyle, VanillaInputs};
 
     fn eurusd() -> CcyPair {
         CcyPair::new(Ccy::EUR, Ccy::USD)
     }
 
     fn pos(opt: OptionType, notional: f64, inputs: VanillaInputs) -> PositionRisk {
-        PositionRisk::new(
+        PositionRisk::fx(
             eurusd(),
             opt,
             notional,
@@ -570,8 +734,8 @@ mod tests {
                 v.push(Scenario {
                     spot_rel: f64::from(si) * 0.01,
                     vol_abs: f64::from(vj) * 0.005,
-                    rate_dom_abs: 0.0,
-                    rate_for_abs: 0.0,
+                    discount_abs: 0.0,
+                    carry_abs: 0.0,
                 });
             }
         }
@@ -579,23 +743,24 @@ mod tests {
     }
 
     /// **The fast lens genuinely consumes `adjoint_greeks`.** The per-position
-    /// sensitivity profile must equal `celnet_vanilla::adjoint_greeks` scaled by
+    /// sensitivity profile (FX) must equal `celnet_vanilla::adjoint_greeks` scaled by
     /// notional — bit-identical, proving the lens is built on the real reverse-mode
-    /// AAD sweep (not the analytic `greeks`, not finite differences).
+    /// AAD sweep (not the analytic `greeks`, not finite differences). The rate block
+    /// is in the carry basis: `discount_rho = rho_dom·n`, `carry_rho = −rho_for·n`.
     #[test]
     fn sensitivity_profile_is_adjoint_greeks_scaled_by_notional() {
         let inputs = VanillaInputs::new(1.10, 1.12, 0.10, 1.0, 0.04, 0.02);
         let notional = 7_500_000.0;
         let p = pos(OptionType::Call, notional, inputs);
-        let s = PositionSensitivity::from_position(&p);
+        let s = PositionSensitivity::from_position(&AssetPricer, &p);
         let g = adjoint_greeks(OptionType::Call, &inputs);
         assert_eq!(s.delta_spot.to_bits(), (g.delta_spot * notional).to_bits());
         assert_eq!(s.gamma.to_bits(), (g.gamma * notional).to_bits());
         assert_eq!(s.vega.to_bits(), (g.vega * notional).to_bits());
         assert_eq!(s.volga.to_bits(), (g.volga * notional).to_bits());
         assert_eq!(s.vanna.to_bits(), (g.vanna * notional).to_bits());
-        assert_eq!(s.rho_dom.to_bits(), (g.rho_dom * notional).to_bits());
-        assert_eq!(s.rho_for.to_bits(), (g.rho_for * notional).to_bits());
+        assert_eq!(s.discount_rho.to_bits(), (g.rho_dom * notional).to_bits());
+        assert_eq!(s.carry_rho.to_bits(), (-g.rho_for * notional).to_bits());
         assert_eq!(s.spot.to_bits(), inputs.spot.to_bits());
     }
 
@@ -634,8 +799,8 @@ mod tests {
                 VanillaInputs::new(1.10, 1.15, 0.095, 1.5, 0.04, 0.02),
             ),
         ];
-        let oracle = historical_var_es(&node, &scen, 0.99);
-        let fast = sensitivity_var_es(&node, &scen, 0.99);
+        let oracle = historical_var_es(&AssetPricer, &node, &scen, 0.99);
+        let fast = sensitivity_var_es(&AssetPricer, &node, &scen, 0.99);
         assert!(
             oracle.var > 0.0 && oracle.es > 0.0,
             "oracle must see a tail loss"
@@ -687,13 +852,13 @@ mod tests {
                     scen.push(Scenario {
                         spot_rel: f64::from(si) * sr,
                         vol_abs: f64::from(vj) * vr,
-                        rate_dom_abs: 0.0,
-                        rate_for_abs: 0.0,
+                        discount_abs: 0.0,
+                        carry_abs: 0.0,
                     });
                 }
             }
-            let o = historical_var_es(&node, &scen, 0.99).var;
-            let f = sensitivity_var_es(&node, &scen, 0.99).var;
+            let o = historical_var_es(&AssetPricer, &node, &scen, 0.99).var;
+            let f = sensitivity_var_es(&AssetPricer, &node, &scen, 0.99).var;
             ((f - o) / o).abs()
         };
         let wide = rel_err(5, 0.01, 4, 0.005); // ±5% / ±2pt
@@ -733,8 +898,8 @@ mod tests {
                 .filter(|i| *i != 0)
                 .map(|i| Scenario::spot(f64::from(i) * spot_step))
                 .collect();
-            let o = historical_var_es(&node, &scen, 0.99).var;
-            let f = sensitivity_var_es(&node, &scen, 0.99).var;
+            let o = historical_var_es(&AssetPricer, &node, &scen, 0.99).var;
+            let f = sensitivity_var_es(&AssetPricer, &node, &scen, 0.99).var;
             ((f - o) / o).abs()
         };
         // Small regime: ±5% spot in 1% rungs. Large regime: ±40% spot in 8% rungs.
@@ -776,15 +941,16 @@ mod tests {
                 VanillaInputs::new(1.10, 1.08, 0.11, 0.5, 0.04, 0.02),
             ),
         ];
-        let a = sensitivity_var_es(&node, &scen, 0.975);
-        let b = sensitivity_var_es(&node, &scen, 0.975);
+        let a = sensitivity_var_es(&AssetPricer, &node, &scen, 0.975);
+        let b = sensitivity_var_es(&AssetPricer, &node, &scen, 0.975);
         assert_eq!(a.var.to_bits(), b.var.to_bits());
         assert_eq!(a.es.to_bits(), b.es.to_bits());
     }
 
-    /// **The rate-shock terms expand correctly.** A pure domestic-rate scenario's
-    /// node Taylor P&L equals `rho_dom · dr_d` summed over positions — first-order,
-    /// as documented (no fake rate convexity).
+    /// **The carry-shock terms expand correctly.** A pure discount-rate scenario's
+    /// node Taylor P&L equals `discount_rho · dr` summed over positions — first-order,
+    /// as documented (no fake rate convexity). A pure carry shock expands by
+    /// `carry_rho · db`.
     #[test]
     fn rate_shock_expansion_is_first_order_rho() {
         let p = pos(
@@ -792,17 +958,30 @@ mod tests {
             10_000_000.0,
             VanillaInputs::new(1.10, 1.12, 0.10, 1.0, 0.04, 0.02),
         );
-        let s = PositionSensitivity::from_position(&p);
-        let dr = 0.0010; // +10bp domestic.
-        let scenario = Scenario {
+        let s = PositionSensitivity::from_position(&AssetPricer, &p);
+        let dr = 0.0010; // +10bp discount.
+        let discount_only = Scenario {
             spot_rel: 0.0,
             vol_abs: 0.0,
-            rate_dom_abs: dr,
-            rate_for_abs: 0.0,
+            discount_abs: dr,
+            carry_abs: 0.0,
         };
         assert!(is_close(
-            s.taylor_pnl(scenario),
-            s.rho_dom * dr,
+            s.taylor_pnl(discount_only),
+            s.discount_rho * dr,
+            1e-12,
+            1e-9
+        ));
+        let db = 0.0007; // +7bp carry.
+        let carry_only = Scenario {
+            spot_rel: 0.0,
+            vol_abs: 0.0,
+            discount_abs: 0.0,
+            carry_abs: db,
+        };
+        assert!(is_close(
+            s.taylor_pnl(carry_only),
+            s.carry_rho * db,
             1e-12,
             1e-9
         ));
