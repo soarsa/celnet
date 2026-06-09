@@ -1,0 +1,89 @@
+[
+  {
+    "id": "ndf-usdbrl-6m-buy",
+    "family": "ndf",
+    "underlying": "USDBRL",
+    "tenor": "6M",
+    "market": {
+      "spot": 5.0,
+      "vol": 0.1,
+      "r_dom": 0.1,
+      "r_for": 0.05
+    },
+    "terms": {
+      "contract_rate": 5.1,
+      "expiry_years": 0.5,
+      "fixing": "BrlPtax",
+      "notional": 1.0,
+      "settlement_ccy": "USD",
+      "side": "BUY"
+    },
+    "expected": {
+      "price": 0.025279495188022416,
+      "price_std_error": null,
+      "oracle": "hand-derived NDF PV == deliverable-forward PV in same numeraire (independent two-bond DCF); fixing is metadata"
+    },
+    "tolerance": {
+      "rel": 1e-9,
+      "abs": 1e-11
+    }
+  },
+  {
+    "id": "ndf-usdcop-3m-buy",
+    "family": "ndf",
+    "underlying": "USDCOP",
+    "tenor": "3M",
+    "market": {
+      "spot": 4000.0,
+      "vol": 0.1,
+      "r_dom": 0.095,
+      "r_for": 0.05
+    },
+    "terms": {
+      "contract_rate": 4050.0,
+      "expiry_years": 0.25,
+      "fixing": "CopTrm",
+      "notional": 1.0,
+      "settlement_ccy": "USD",
+      "side": "BUY"
+    },
+    "expected": {
+      "price": -4.634535396593947,
+      "price_std_error": null,
+      "oracle": "hand-derived NDF PV == deliverable-forward PV in same numeraire (independent two-bond DCF); fixing is metadata"
+    },
+    "tolerance": {
+      "rel": 1e-9,
+      "abs": 1e-11
+    }
+  },
+  {
+    "id": "ndf-usdinr-1y-sell",
+    "family": "ndf",
+    "underlying": "USDINR",
+    "tenor": "1Y",
+    "market": {
+      "spot": 83.0,
+      "vol": 0.1,
+      "r_dom": 0.066,
+      "r_for": 0.05
+    },
+    "terms": {
+      "contract_rate": 84.0,
+      "expiry_years": 1.0,
+      "fixing": "InrRbiRef",
+      "notional": 1.0,
+      "settlement_ccy": "USD",
+      "side": "SELL"
+    },
+    "expected": {
+      "price": -0.3170496330632915,
+      "price_std_error": null,
+      "oracle": "hand-derived NDF PV == deliverable-forward PV in same numeraire (independent two-bond DCF); fixing is metadata"
+    },
+    "tolerance": {
+      "rel": 1e-9,
+      "abs": 1e-11
+    }
+  }
+]

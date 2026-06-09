@@ -30,6 +30,11 @@
 //!   Monte-Carlo reimplementation (a `splitmix64` RNG + Box–Muller + the payoff,
 //!   independent of the production counter-RNG path) with a reported
 //!   `price_std_error`; conformance asserts `|client − expected| ≤ k · stderr`.
+//! * `fx_forward` / `fx_swap` / `ndf` — the linear FX book: the
+//!   **two-zero-coupon-bond** discounted-cashflow closed form
+//!   `side·notional·(spot·e^{−r_for·t} − K·e^{−r_dom·t})` re-derived here from the
+//!   raw rates (a different rounding route than the production
+//!   `df·(F−K)` form), not read back from `celnet-linear`.
 //!
 //! The corpus is **frozen**: it is committed to disk and regenerated only
 //! deliberately via `cargo run -p celnet-golden --bin gen_vectors`. The
@@ -41,10 +46,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// The exact 18 product-oneof family names (mirroring the `celnet.proto`
+/// The exact 21 product-oneof family names (mirroring the `celnet.proto`
 /// `Instrument.product` oneof arm names). A vector's [`GoldenVector::family`] must
-/// be one of these; the corpus is required to cover all 18.
-pub const FAMILIES: [&str; 18] = [
+/// be one of these; the corpus is required to cover all 21.
+pub const FAMILIES: [&str; 21] = [
     "vanilla",
     "strategy",
     "single_barrier",
@@ -63,6 +68,10 @@ pub const FAMILIES: [&str; 18] = [
     "window_barrier",
     "american",
     "basket",
+    // W2 linear FX book — exact discounted-cashflow products (closed form, no MC).
+    "fx_forward",
+    "fx_swap",
+    "ndf",
 ];
 
 /// The families priced by Monte-Carlo, whose [`Expected::price_std_error`] is a
@@ -127,7 +136,7 @@ pub struct Tolerance {
 pub struct GoldenVector {
     /// Stable, unique identifier (e.g. `"vanilla-eurusd-1y-call-k1.12"`).
     pub id: String,
-    /// Exactly one of the 18 product-oneof family names ([`FAMILIES`]).
+    /// Exactly one of the 21 product-oneof family names ([`FAMILIES`]).
     pub family: String,
     /// The underlying currency-pair token (e.g. `"EURUSD"`). For `basket` this is
     /// the settlement / numeraire pair; the underlyings live in `terms.legs`.
@@ -263,7 +272,7 @@ pub fn load_vectors() -> Result<Vec<GoldenVector>, VectorError> {
         let path = vectors_file(family);
         if !path.exists() {
             // A missing file is a real gap the selfcheck catches (it asserts all
-            // 18 families present); skip here so a partial regenerate still loads.
+            // 21 families present); skip here so a partial regenerate still loads.
             continue;
         }
         let text = std::fs::read_to_string(&path).map_err(|e| VectorError::Io {

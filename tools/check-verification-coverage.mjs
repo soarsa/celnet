@@ -89,6 +89,9 @@ const FAMILY_TO_PARITY_FILE = {
   lookback: 'structured.rs', //  floating-/fixed-strike closed form vs MC + lookback-dominates-vanilla
   window_barrier: 'lsv.rs', //  window knock-out under LOCAL_STOCH_VOL (ξ=0→Dupire limit, PDE≈MC)
   basket: 'basket.rs', //  Cholesky multi-asset GBM MC vs Levy-1992 hand-pinned + structural sandwich
+  fx_forward: 'linear.rs', //  outright forward PV vs independent two-zero-coupon-bond DCF + fair-fwd⇒PV0 / linearity / netting / t→0 intrinsic + hand-pinned literal
+  fx_swap: 'linear.rs', //  swap PV == independent sum of two outright forwards + CIP swap-points identity + equal-dates-net-0 / carry-sign structural gates
+  ndf: 'linear.rs', //  NDF PV hand-derived literal + NDF==deliverable-forward-PV identity + independent two-bond DCF + fixing-is-metadata-only honesty gate
 };
 
 /**

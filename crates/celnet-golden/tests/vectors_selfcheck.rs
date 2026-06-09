@@ -3,7 +3,7 @@
 //! This proves the committed `vectors/*.json` cannot silently drift: every vector
 //! is **re-derived** from its independent oracle (the same oracle the generator
 //! uses) and asserted equal to the frozen `expected.price` within its tolerance.
-//! It also asserts the corpus is well-formed: all 18 product-oneof families
+//! It also asserts the corpus is well-formed: all 21 product-oneof families
 //! present, unique ids, valid family tags, MC families carry a positive standard
 //! error, closed-form families carry `null`.
 //!
@@ -36,8 +36,17 @@ fn cp_of(v: &GoldenVector, key: &str) -> Cp {
     Cp::parse(v.term_str(key))
 }
 
+/// The signed `±1` multiplier a `BUY`/`SELL` side contributes to a linear PV.
+fn side_sign(side: &str) -> f64 {
+    match side {
+        "BUY" => 1.0,
+        "SELL" => -1.0,
+        other => panic!("unknown side `{other}`"),
+    }
+}
+
 #[test]
-fn all_eighteen_families_present_and_unique() {
+fn all_families_present_and_unique() {
     let vectors = load_vectors().expect("corpus loads");
     assert!(!vectors.is_empty(), "corpus must be non-empty");
 
@@ -45,7 +54,7 @@ fn all_eighteen_families_present_and_unique() {
     for fam in FAMILIES {
         assert!(
             present.contains(fam),
-            "family `{fam}` has no golden vectors (all 18 oneof arms must be covered)"
+            "family `{fam}` has no golden vectors (all 21 oneof arms must be covered)"
         );
     }
     assert_eq!(
@@ -148,6 +157,34 @@ fn closed_form_vectors_redrive_from_independent_oracle() {
                     v.expected.price // hand-pinned published constant
                 }
             }
+            "fx_forward" => oracle::fx_forward_pv(
+                side_sign(v.term_str("side")),
+                m.spot,
+                v.term_f64("contract_rate"),
+                v.term_f64("notional"),
+                t,
+                m.r_dom,
+                m.r_for,
+            ),
+            "fx_swap" => oracle::fx_swap_pv(
+                side_sign(v.term_str("near_side")),
+                m.spot,
+                v.term_f64("contract_rate"),
+                v.term_f64("notional"),
+                v.term_f64("near_settle_years"),
+                v.term_f64("far_settle_years"),
+                m.r_dom,
+                m.r_for,
+            ),
+            "ndf" => oracle::ndf_pv(
+                side_sign(v.term_str("side")),
+                m.spot,
+                v.term_f64("contract_rate"),
+                v.term_f64("notional"),
+                t,
+                m.r_dom,
+                m.r_for,
+            ),
             other => panic!("unhandled closed-form family `{other}` for vector {}", v.id),
         };
         assert!(

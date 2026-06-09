@@ -1,5 +1,6 @@
 //! Gate for the runnable SDK quickstart examples (`examples/quote_and_trade.rs`,
-//! `examples/stream_blotter.rs`, `examples/price_exotic.rs`).
+//! `examples/stream_blotter.rs`, `examples/price_exotic.rs`,
+//! `examples/price_linear.rs`).
 //!
 //! The examples themselves are the canonical onboarding affordance (`cargo run -p
 //! celnet-client --example <x>` against a `demo_edge`); booting two OS processes is
@@ -24,10 +25,11 @@ mod common;
 use std::time::Duration;
 
 use celnet_client::{
-    AmericanTerms, AsianTerms, Conventions, InstrumentSpec, MarketContext, Quantity, Side,
-    StreamEvent, StrikeSpec, Subscription,
+    AmericanTerms, AsianTerms, Conventions, FixingSource, ForwardSide, ForwardTerms,
+    InstrumentSpec, MarketContext, NdfTerms, Quantity, Side, StreamEvent, StrikeSpec, Subscription,
+    SwapTerms,
 };
-use celnet_types::{OptionType, Tenor};
+use celnet_types::{CcyPair, OptionType, Tenor};
 
 use common::{conventions, eurusd, start_edge_and_client};
 
@@ -238,6 +240,115 @@ async fn example_price_exotic_path_prices_asian_and_american() {
         assert!(
             american_px.is_finite() && american_px >= european_px - 1e-9,
             "American put {american_px} must be >= European {european_px}"
+        );
+
+        edge.shutdown(Duration::from_secs(5)).await;
+    })
+    .await
+    .expect("test must not hang");
+}
+
+/// `price_linear.rs` — price an FX forward, an FX swap, and an NDF via the SDK
+/// linear-book builders. Asserts a fair-struck forward has PV ≈ 0 with no MC
+/// std-error, the swap is finite/exact, and the NDF PV equals the hand-derived
+/// equal-terms deliverable-forward PV — the same guards the example exits non-zero
+/// on.
+#[tokio::test]
+async fn example_price_linear_path_prices_forward_swap_ndf() {
+    tokio::time::timeout(SMOKE_TEST, async {
+        let (edge, client) = start_edge_and_client().await;
+        let conv = Conventions::major_default();
+
+        // Forward struck at the fair forward ⇒ PV ≈ 0, exact (no std-error).
+        let fx_market = MarketContext {
+            spot: 1.10,
+            vol: 0.10,
+            r_dom: 0.02,
+            r_for: 0.01,
+        };
+        let fair_forward = 1.10 * f64::exp(0.01);
+        let at_fair = InstrumentSpec::fx_forward(
+            eurusd(),
+            Tenor::Years(1),
+            1.0,
+            Quantity::base(1_000_000.0),
+            ForwardTerms::new(fair_forward, 1_000_000.0, ForwardSide::Buy),
+        );
+        let priced_fair = tokio::time::timeout(SMOKE_STEP, client.price(&at_fair, fx_market, conv))
+            .await
+            .expect("forward price in time")
+            .expect("forward price ok");
+        assert!(
+            priced_fair.greeks.price.is_finite() && priced_fair.greeks.price.abs() <= 1.0,
+            "fair-struck forward PV ~0: {}",
+            priced_fair.greeks.price
+        );
+        assert!(
+            priced_fair.price_std_error.is_none(),
+            "closed-form forward carries no MC standard error"
+        );
+
+        // FX swap: near BUY @ 1.10 + far SELL — finite, exact.
+        let swap = InstrumentSpec::fx_swap(
+            eurusd(),
+            Tenor::Years(1),
+            1.0,
+            Quantity::base(1_000_000.0),
+            SwapTerms::new(ForwardTerms::new(1.10, 1_000_000.0, ForwardSide::Buy)),
+        );
+        let priced_swap = tokio::time::timeout(SMOKE_STEP, client.price(&swap, fx_market, conv))
+            .await
+            .expect("swap price in time")
+            .expect("swap price ok");
+        assert!(
+            priced_swap.greeks.price.is_finite() && priced_swap.price_std_error.is_none(),
+            "closed-form swap finite + no std-error: {}",
+            priced_swap.greeks.price
+        );
+
+        // NDF on a non-deliverable pair (USDBRL): PV == equal-terms deliverable fwd.
+        let usdbrl = CcyPair::parse("USDBRL").expect("USDBRL parses");
+        let ndf_market = MarketContext {
+            spot: 5.00,
+            vol: 0.10,
+            r_dom: 0.10,
+            r_for: 0.05,
+        };
+        let ndf = InstrumentSpec::ndf(
+            usdbrl,
+            Tenor::Months(6),
+            0.5,
+            Quantity::base(1_000_000.0),
+            NdfTerms::new(
+                5.10,
+                1_000_000.0,
+                ForwardSide::Buy,
+                FixingSource::BrlPtax,
+                "USD",
+            ),
+        );
+        let priced_ndf = tokio::time::timeout(SMOKE_STEP, client.price(&ndf, ndf_market, conv))
+            .await
+            .expect("ndf price in time")
+            .expect("ndf price ok");
+        let t = 0.5_f64;
+        let notional = 1_000_000.0_f64;
+        let fwd = ndf_market.spot * f64::exp((ndf_market.r_dom - ndf_market.r_for) * t);
+        let expected_ndf = notional * f64::exp(-ndf_market.r_dom * t) * (fwd - 5.10);
+        let scale = priced_ndf
+            .greeks
+            .price
+            .abs()
+            .max(expected_ndf.abs())
+            .max(1.0);
+        assert!(
+            priced_ndf.price_std_error.is_none(),
+            "closed-form NDF carries no MC standard error"
+        );
+        assert!(
+            (priced_ndf.greeks.price - expected_ndf).abs() <= 1e-9 * scale,
+            "NDF PV {} == equal-terms deliverable fwd {expected_ndf}",
+            priced_ndf.greeks.price
         );
 
         edge.shutdown(Duration::from_secs(5)).await;

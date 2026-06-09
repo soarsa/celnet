@@ -19,16 +19,17 @@ use celnet_proto::{
     ArbReport, AsianOption, BasketLeg, BasketOption, BrokerQuoteSet, BucketedRisk, CcyExposureLeg,
     CcyPair, Cliquet, Conventions, CrossGamma, Digital, DoubleBarrier, DrillRiskRequest,
     DrillRiskResponse, EntitlementPrincipal, EntitlementRule, Execute, Executed, Execution,
-    FixingSchedule, ForwardStart, GetSmileRequest, Greeks, Instrument, Leg, LimitStatusRequest,
-    LimitStatusResponse, LimitUtilization, ListPositionsRequest, ListPositionsResponse, Lookback,
-    MarkSurfaceRequest, MarkSurfaceResponse, MarketContext, Modify, NonAdditiveRisk, NumeraireRate,
-    OrgKey, PriceRequest, PriceResponse, Quantity, Quanto, Quote, QuoteAccept, QuoteReject,
-    QuoteRequest, RejectAck, ReportingNumeraire, Resync, RiskBucketRequest, RiskNode, RiskPosition,
-    RiskScope, ScenarioPoint, ScenarioRequest, ScenarioResponse, ShockAxis, SingleBarrier, Smile,
-    SmilePoint, Snapshot, Solve, Strategy, StrategyKind, StreamEnd, StreamReject, StrikeOrDelta,
-    Subscribe, SubscriptionId, Tarf, Tenor, Touch, TradableToken, TwoWayPrice, Unsubscribe, Update,
-    Vanilla, VanillaInputs, VarianceSwap, VegaLadderBucket, VegaPillar, VolatilitySwap,
-    WindowBarrier, instrument, shock_axis, strike_or_delta, tenor,
+    FixingSchedule, ForwardStart, FxForward, FxSwap, GetSmileRequest, Greeks, Instrument, Leg,
+    LimitStatusRequest, LimitStatusResponse, LimitUtilization, ListPositionsRequest,
+    ListPositionsResponse, Lookback, MarkSurfaceRequest, MarkSurfaceResponse, MarketContext,
+    Modify, Ndf, NonAdditiveRisk, NumeraireRate, OrgKey, PriceRequest, PriceResponse, Quantity,
+    Quanto, Quote, QuoteAccept, QuoteReject, QuoteRequest, RejectAck, ReportingNumeraire, Resync,
+    RiskBucketRequest, RiskNode, RiskPosition, RiskScope, ScenarioPoint, ScenarioRequest,
+    ScenarioResponse, ShockAxis, SingleBarrier, Smile, SmilePoint, Snapshot, Solve, Strategy,
+    StrategyKind, StreamEnd, StreamReject, StrikeOrDelta, Subscribe, SubscriptionId, Tarf, Tenor,
+    Touch, TradableToken, TwoWayPrice, Unsubscribe, Update, Vanilla, VanillaInputs, VarianceSwap,
+    VegaLadderBucket, VegaPillar, VolatilitySwap, WindowBarrier, instrument, shock_axis,
+    strike_or_delta, tenor,
 };
 
 /// A codec error: a malformed or out-of-contract JSON message. Carries a
@@ -617,10 +618,45 @@ fn american_from_json(v: &Value) -> Result<AmericanOption> {
     })
 }
 
+/// Decode an FX outright forward (`fx_forward`) — the W2 linear-book product.
+/// `side` is the proto `Side` enum tag (BUY = 0). Closed-form, exact ⇒ no MC.
+fn fx_forward_from_json(v: &Value) -> Result<FxForward> {
+    let o = obj(v, "fx_forward")?;
+    Ok(FxForward {
+        contract_rate: f64_field(o, "contract_rate")?,
+        notional: f64_field(o, "notional")?,
+        side: enum_or_zero(o, "side"),
+    })
+}
+
+/// Decode an FX swap (`fx_swap`) — a near leg + a far leg, each an `fx_forward`.
+fn fx_swap_from_json(v: &Value) -> Result<FxSwap> {
+    let o = obj(v, "fx_swap")?;
+    Ok(FxSwap {
+        near: Some(nested(o, "near", fx_forward_from_json)?),
+        far: Some(nested(o, "far", fx_forward_from_json)?),
+    })
+}
+
+/// Decode a non-deliverable forward (`ndf`) — cash-settled at a named fixing.
+/// `fixing` is the proto `FixingSource` enum tag; `settlement_ccy` names the
+/// convertible settlement currency. The fixing identity is metadata only.
+fn ndf_from_json(v: &Value) -> Result<Ndf> {
+    let o = obj(v, "ndf")?;
+    Ok(Ndf {
+        contract_rate: f64_field(o, "contract_rate")?,
+        notional: f64_field(o, "notional")?,
+        side: enum_or_zero(o, "side"),
+        fixing: enum_or_zero(o, "fixing"),
+        settlement_ccy: string_or_empty(o, "settlement_ccy"),
+    })
+}
+
 /// Decode the instrument `product` oneof. The JSON carries exactly one of the
 /// product keys (`vanilla`, `strategy`, `single_barrier`, `double_barrier`,
 /// `digital`, `touch`, `variance_swap`, `volatility_swap`, `asian_option`,
-/// `forward_start`, `cliquet`, `quanto`, `tarf`, `accumulator`, `lookback`) — the
+/// `forward_start`, `cliquet`, `quanto`, `tarf`, `accumulator`, `lookback`,
+/// `window_barrier`, `american`, `basket`, `fx_forward`, `fx_swap`, `ndf`) — the
 /// same shape as the proto oneof.
 fn product_from_json(o: &Map<String, Value>) -> Result<instrument::Product> {
     // Each product variant nests its body under its own key (mirroring the proto
@@ -673,12 +709,19 @@ fn product_from_json(o: &Map<String, Value>) -> Result<instrument::Product> {
         Ok(instrument::Product::American(american_from_json(v)?))
     } else if let Some(v) = o.get("basket") {
         Ok(instrument::Product::Basket(basket_from_json(v)?))
+    } else if let Some(v) = o.get("fx_forward") {
+        Ok(instrument::Product::FxForward(fx_forward_from_json(v)?))
+    } else if let Some(v) = o.get("fx_swap") {
+        Ok(instrument::Product::FxSwap(fx_swap_from_json(v)?))
+    } else if let Some(v) = o.get("ndf") {
+        Ok(instrument::Product::Ndf(ndf_from_json(v)?))
     } else {
         Err(err(
             "instrument needs exactly one product (vanilla / strategy / \
              single_barrier / double_barrier / digital / touch / variance_swap / \
              volatility_swap / asian_option / forward_start / cliquet / quanto / \
-             tarf / accumulator / lookback / window_barrier / american / basket)",
+             tarf / accumulator / lookback / window_barrier / american / basket / \
+             fx_forward / fx_swap / ndf)",
         ))
     }
 }
@@ -1729,6 +1772,77 @@ mod tests {
                 assert_eq!(b.mc_replications, 16);
             }
             other => panic!("expected a basket product, got {other:?}"),
+        }
+    }
+
+    /// The W2 linear-book product arms decode from the WS JSON mirror field-for-
+    /// field (the same shape as the proto oneof), so the WS transport reaches the
+    /// same shared `price_instrument` routing as gRPC.
+    #[test]
+    fn fx_forward_instrument_round_trips_from_json() {
+        let v = json!({
+            "pair": { "base": "EUR", "quote": "USD" },
+            "expiry_years": 1.0,
+            "side": 0,
+            "fx_forward": { "contract_rate": 1.25, "notional": 1000000.0, "side": 0 }
+        });
+        let instr = instrument_from_json(&v).expect("decode");
+        match instr.product {
+            Some(instrument::Product::FxForward(f)) => {
+                assert_eq!(f.contract_rate.to_bits(), 1.25_f64.to_bits());
+                assert_eq!(f.notional.to_bits(), 1_000_000.0_f64.to_bits());
+                assert_eq!(f.side, celnet_proto::Side::Buy as i32);
+            }
+            other => panic!("expected an fx_forward product, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fx_swap_instrument_round_trips_from_json() {
+        let v = json!({
+            "pair": { "base": "EUR", "quote": "USD" },
+            "expiry_years": 1.0,
+            "side": 0,
+            "fx_swap": {
+                "near": { "contract_rate": 1.25, "notional": 2000000.0, "side": 0 },
+                "far": { "contract_rate": 1.25, "notional": 2000000.0, "side": 1 }
+            }
+        });
+        let instr = instrument_from_json(&v).expect("decode");
+        match instr.product {
+            Some(instrument::Product::FxSwap(s)) => {
+                let near = s.near.expect("near leg");
+                let far = s.far.expect("far leg");
+                assert_eq!(near.side, celnet_proto::Side::Buy as i32);
+                assert_eq!(far.side, celnet_proto::Side::Sell as i32);
+                assert_eq!(near.notional.to_bits(), 2_000_000.0_f64.to_bits());
+            }
+            other => panic!("expected an fx_swap product, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ndf_instrument_round_trips_from_json() {
+        let v = json!({
+            "pair": { "base": "USD", "quote": "BRL" },
+            "expiry_years": 0.5,
+            "side": 0,
+            "ndf": {
+                "contract_rate": 5.1,
+                "notional": 1000000.0,
+                "side": 0,
+                "fixing": 3,
+                "settlement_ccy": "USD"
+            }
+        });
+        let instr = instrument_from_json(&v).expect("decode");
+        match instr.product {
+            Some(instrument::Product::Ndf(n)) => {
+                assert_eq!(n.contract_rate.to_bits(), 5.1_f64.to_bits());
+                assert_eq!(n.fixing, celnet_proto::FixingSource::BrlPtax as i32);
+                assert_eq!(n.settlement_ccy, "USD");
+            }
+            other => panic!("expected an ndf product, got {other:?}"),
         }
     }
 

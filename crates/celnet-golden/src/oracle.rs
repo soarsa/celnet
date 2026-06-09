@@ -50,6 +50,95 @@ impl Cp {
 }
 
 // ===========================================================================
+// Linear (discounted-cashflow) oracles — independent of `celnet-linear`
+// ===========================================================================
+//
+// The linear FX book (outright forward / swap / NDF) is priced by the production
+// `celnet-linear` crate as `side · notional · df · (F − K)` with
+// `F = spot · forward_factor(t)` and `df = discount_df(t)`. This module computes
+// the SAME products by a genuinely different route — the two-zero-coupon-bond
+// decomposition re-derived here from the raw rates, never forming `F` or `df`:
+//
+//   A long forward = long a base-currency discount bond worth `spot·e^{−r_for·t}`
+//   minus `K` quote-currency discount bonds worth `K·e^{−r_dom·t}`. Hence
+//
+//       PV = side · notional · ( spot·e^{−r_for·t}  −  K·e^{−r_dom·t} )          (★)
+//
+// This is algebraically identical to the production form (CIP: `F =
+// spot·e^{(r_dom−r_for)t}`, so `df·(F−K) = spot·e^{−r_for·t} − K·e^{−r_dom·t}`),
+// but the ORACLE route goes straight to the two discount-bond legs — a different
+// rounding path that does not reuse the carry-factor / discount-factor product.
+// A forward/discount/sign slip in the production path surfaces as a disagreement
+// here. (This mirrors the independent oracle in `celnet-linear`'s own unit tests,
+// but is duplicated here so the golden corpus is self-contained and never calls
+// the crate under test — the anti-circular-oracle rule.)
+
+/// Present value of an FX outright forward by the independent two-discount-bond
+/// route `(★)`: `side · notional · (spot·e^{−r_for·t} − K·e^{−r_dom·t})`, in the
+/// quote (settlement) numeraire. `side` is `+1` for a buy (long the base
+/// forward), `−1` for a sell.
+#[must_use]
+pub fn fx_forward_pv(
+    side: f64,
+    spot: f64,
+    strike: f64,
+    notional: f64,
+    t: f64,
+    r_dom: f64,
+    r_for: f64,
+) -> f64 {
+    side * notional * (spot * exp(-r_for * t) - strike * exp(-r_dom * t))
+}
+
+/// Present value of an FX swap: a near leg at `side` settling at `near_t` plus a
+/// far leg at the **opposite** side settling at `far_t`, each an independent
+/// outright forward `(★)` at the same contract `strike`/`spot`/rates. By market
+/// convention the far leg trades opposite the near leg.
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn fx_swap_pv(
+    near_side: f64,
+    spot: f64,
+    strike: f64,
+    notional: f64,
+    near_t: f64,
+    far_t: f64,
+    r_dom: f64,
+    r_for: f64,
+) -> f64 {
+    let near = fx_forward_pv(near_side, spot, strike, notional, near_t, r_dom, r_for);
+    let far = fx_forward_pv(-near_side, spot, strike, notional, far_t, r_dom, r_for);
+    near + far
+}
+
+/// The swap points — the far outright forward minus the near outright forward
+/// `spot·(e^{(r_dom−r_for)·far_t} − e^{(r_dom−r_for)·near_t})` — re-derived here
+/// directly from the CIP carry factor (an independent identity used to
+/// cross-check the production `swap_points`).
+#[must_use]
+pub fn fx_swap_points(spot: f64, near_t: f64, far_t: f64, r_dom: f64, r_for: f64) -> f64 {
+    let b = r_dom - r_for;
+    spot * (exp(b * far_t) - exp(b * near_t))
+}
+
+/// Present value of a non-deliverable forward, identical risk-neutral PV to a
+/// deliverable outright forward `(★)` in the same (convertible/settlement)
+/// numeraire — non-deliverability changes settlement mechanics, not the PV. The
+/// fixing identity is metadata and does not enter the value.
+#[must_use]
+pub fn ndf_pv(
+    side: f64,
+    spot: f64,
+    strike: f64,
+    notional: f64,
+    t: f64,
+    r_dom: f64,
+    r_for: f64,
+) -> f64 {
+    fx_forward_pv(side, spot, strike, notional, t, r_dom, r_for)
+}
+
+// ===========================================================================
 // Closed-form oracles
 // ===========================================================================
 

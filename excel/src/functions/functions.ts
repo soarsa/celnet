@@ -55,9 +55,12 @@ import {
   shapeCalibration,
   shapeCliquet,
   shapeDigital,
+  shapeForward,
   shapeForwardStart,
   shapeLookback,
+  shapeNdf,
   shapeQuanto,
+  shapeSwap,
   shapeReportingNumeraire,
   shapeTarf,
   shapeTouch,
@@ -638,6 +641,145 @@ export async function VOLSWAP(
     // `greeks.price` (K_vol).
     return formatVolSwapSpill({
       fairVol: quote.resolvedStrike,
+      conventions: quote.conventions,
+      surfaceVersion: quote.surfaceVersion,
+      epochNanos: quote.epochNanos,
+    });
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
+/**
+ * Price an FX outright forward (deliverable): a labelled spill of `["premium", PV]`,
+ * the 13 risk Greeks, and a convention footer. The PV is the server's exact
+ * closed-form discounted-cashflow value from the dedicated linear book (the same
+ * `celnet-linear` value the SDK/CLI read) — a linear product, so there is no
+ * standard-error row. The pair must be DELIVERABLE; a non-deliverable pair is
+ * rejected by the server (use `CELNET.NDF`).
+ * @customfunction FORWARD
+ * @param pair Currency pair, e.g. EURUSD (must be deliverable).
+ * @param tenor Tenor, e.g. 1Y (the settlement date).
+ * @param rate The contract (delivery) rate K, quote per 1 unit of base.
+ * @param notional Trade notional in the base currency.
+ * @param side Optional BUY (default, long the base forward) or SELL.
+ * @returns A spill: premium, the 13 Greeks, and a convention footer.
+ */
+export async function FORWARD(
+  pair: string,
+  tenor: string,
+  rate: number,
+  notional: number,
+  side?: string,
+): Promise<SpillMatrix> {
+  try {
+    const instrument = shapeForward({ pair, tenor, contractRate: rate, notional, side });
+    const quote = await getConnection().requestQuote(
+      instrument,
+      DEFAULT_CONVENTIONS,
+      `forward:${pair}:${tenor}:${rate}:${notional}:${side ?? ""}`,
+    );
+    return formatPathDependentSpill({
+      premium: quote.greeks.price,
+      stdError: quote.priceStdError,
+      greeks: quote.greeks,
+      conventions: quote.conventions,
+      surfaceVersion: quote.surfaceVersion,
+      epochNanos: quote.epochNanos,
+    });
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
+/**
+ * Price an FX swap (deliverable): a labelled spill of `["premium", PV]`, the 13
+ * net-risk Greeks, and a convention footer. The near leg settles at the spot date
+ * and the far leg at the tenor (`rate`/`notional`/`side` drive both legs; the far
+ * leg trades the opposite side). The PV is the net of the two legs — the same exact
+ * `celnet-linear` value the SDK/CLI read; no standard-error row.
+ * @customfunction SWAP
+ * @param pair Currency pair, e.g. EURUSD (must be deliverable).
+ * @param tenor Tenor of the far leg, e.g. 1Y (the near leg settles at spot).
+ * @param rate The near leg's contract rate K (drives both legs).
+ * @param notional Trade notional in the base currency.
+ * @param nearSide Optional near-leg side BUY (default) or SELL (the far leg is the opposite).
+ * @returns A spill: premium, the 13 net Greeks, and a convention footer.
+ */
+export async function SWAP(
+  pair: string,
+  tenor: string,
+  rate: number,
+  notional: number,
+  nearSide?: string,
+): Promise<SpillMatrix> {
+  try {
+    const instrument = shapeSwap({ pair, tenor, contractRate: rate, notional, side: nearSide });
+    const quote = await getConnection().requestQuote(
+      instrument,
+      DEFAULT_CONVENTIONS,
+      `swap:${pair}:${tenor}:${rate}:${notional}:${nearSide ?? ""}`,
+    );
+    return formatPathDependentSpill({
+      premium: quote.greeks.price,
+      stdError: quote.priceStdError,
+      greeks: quote.greeks,
+      conventions: quote.conventions,
+      surfaceVersion: quote.surfaceVersion,
+      epochNanos: quote.epochNanos,
+    });
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
+/**
+ * Price a non-deliverable forward (NDF): a labelled spill of `["premium", PV]`, the
+ * 13 risk Greeks, and a convention footer. Cash-settled in the convertible
+ * (settlement) currency at the named `fixing`; the risk-neutral PV is identical to a
+ * deliverable forward of equal terms (the same exact `celnet-linear` value the
+ * SDK/CLI read; no standard-error row). The pair must be NON-DELIVERABLE; a
+ * deliverable pair is rejected (use `CELNET.FORWARD`). The `fixing` is convention
+ * identity only — the live fixing VALUE is an estate-gated feed, never sourced
+ * in-repo.
+ * @customfunction NDF
+ * @param pair Currency pair, e.g. USDBRL (must be non-deliverable).
+ * @param tenor Tenor, e.g. 6M (the settlement date).
+ * @param rate The contract (forward) rate K, settlement-ccy per 1 unit of base.
+ * @param notional Trade notional in the base currency.
+ * @param fixing The published settlement-rate fixing, e.g. BRL.PTAX, COP.TRM, INR.RBIB.
+ * @param settlementCcy Optional convertible settlement currency (default USD).
+ * @param side Optional BUY (default, long the base forward) or SELL.
+ * @returns A spill: premium, the 13 Greeks, and a convention footer.
+ */
+export async function NDF(
+  pair: string,
+  tenor: string,
+  rate: number,
+  notional: number,
+  fixing: string,
+  settlementCcy?: string,
+  side?: string,
+): Promise<SpillMatrix> {
+  try {
+    const instrument = shapeNdf({
+      pair,
+      tenor,
+      contractRate: rate,
+      notional,
+      fixing,
+      settlementCcy,
+      side,
+    });
+    const quote = await getConnection().requestQuote(
+      instrument,
+      DEFAULT_CONVENTIONS,
+      `ndf:${pair}:${tenor}:${rate}:${notional}:${fixing}:${settlementCcy ?? ""}:${side ?? ""}`,
+    );
+    return formatPathDependentSpill({
+      premium: quote.greeks.price,
+      stdError: quote.priceStdError,
+      greeks: quote.greeks,
       conventions: quote.conventions,
       surfaceVersion: quote.surfaceVersion,
       epochNanos: quote.epochNanos,
@@ -1553,6 +1695,9 @@ function registerAll(): void {
   cf.associate("TOUCH", TOUCH as (...a: never[]) => unknown);
   cf.associate("VARSWAP", VARSWAP as (...a: never[]) => unknown);
   cf.associate("VOLSWAP", VOLSWAP as (...a: never[]) => unknown);
+  cf.associate("FORWARD", FORWARD as (...a: never[]) => unknown);
+  cf.associate("SWAP", SWAP as (...a: never[]) => unknown);
+  cf.associate("NDF", NDF as (...a: never[]) => unknown);
   cf.associate("ASIAN", ASIAN as (...a: never[]) => unknown);
   cf.associate("FORWARDSTART", FORWARDSTART as (...a: never[]) => unknown);
   cf.associate("CLIQUET", CLIQUET as (...a: never[]) => unknown);

@@ -26,9 +26,12 @@ import {
   shapeBasket,
   shapeCliquet,
   shapeDigital,
+  shapeForward,
   shapeForwardStart,
   shapeLookback,
+  shapeNdf,
   shapeQuanto,
+  shapeSwap,
   shapeTarf,
   shapeTouch,
   shapeVanillaInstrument,
@@ -75,7 +78,7 @@ export interface GoldenVector {
   tolerance: VectorTolerance;
 }
 
-/** The 18 product-oneof family names that may appear in the corpus. */
+/** The 21 product-oneof family names that may appear in the corpus. */
 export const ALL_FAMILIES = [
   "vanilla",
   "strategy",
@@ -95,6 +98,9 @@ export const ALL_FAMILIES = [
   "window_barrier",
   "american",
   "basket",
+  "fx_forward",
+  "fx_swap",
+  "ndf",
 ] as const;
 
 /**
@@ -122,6 +128,9 @@ export const EXCEL_FAMILIES = [
   "window_barrier",
   "american",
   "basket",
+  "fx_forward",
+  "fx_swap",
+  "ndf",
 ] as const;
 
 /** Families in the corpus that no `CELNET.*` worksheet function exposes. */
@@ -177,6 +186,37 @@ const barrierSide = (token: string): "UP" | "DOWN" => {
   if (token === "UPPER") return "UP";
   if (token === "LOWER") return "DOWN";
   throw new Error(`unknown barrier side \`${token}\``);
+};
+
+/** The corpus directional side (`BUY`/`SELL`) the linear shapers parse. */
+const linearSide = (token: string): "BUY" | "SELL" => {
+  if (token === "BUY" || token === "SELL") return token;
+  throw new Error(`unknown side \`${token}\``);
+};
+
+/**
+ * Map the corpus NDF fixing (the `celnet_types::FixingSource` variant name the
+ * generator writes, e.g. `BrlPtax`) to the dotted code the Excel shaper parses
+ * (`BRL.PTAX`). The shaper itself accepts several spellings; the dotted code is the
+ * canonical wire-stable form.
+ */
+const fixingToken = (variant: string): string => {
+  switch (variant) {
+    case "KrwKftc18":
+      return "KRW.KFTC18";
+    case "TwdTaipei":
+      return "TWD.TAIPEI";
+    case "InrRbiRef":
+      return "INR.RBIB";
+    case "BrlPtax":
+      return "BRL.PTAX";
+    case "ClpDolarObs":
+      return "CLP.DOLAROBS";
+    case "CopTrm":
+      return "COP.TRM";
+    default:
+      throw new Error(`unknown fixing \`${variant}\``);
+  }
 };
 
 /**
@@ -423,6 +463,35 @@ export function instrumentOf(v: GoldenVector): Instrument {
       });
       break;
     }
+    case "fx_forward":
+      inst = shapeForward({
+        pair,
+        tenor,
+        contractRate: num(v.terms, "contract_rate"),
+        notional: num(v.terms, "notional"),
+        side: linearSide(str(v.terms, "side")),
+      });
+      break;
+    case "fx_swap":
+      inst = shapeSwap({
+        pair,
+        tenor,
+        contractRate: num(v.terms, "contract_rate"),
+        notional: num(v.terms, "notional"),
+        side: linearSide(str(v.terms, "near_side")),
+      });
+      break;
+    case "ndf":
+      inst = shapeNdf({
+        pair,
+        tenor,
+        contractRate: num(v.terms, "contract_rate"),
+        notional: num(v.terms, "notional"),
+        side: linearSide(str(v.terms, "side")),
+        fixing: fixingToken(str(v.terms, "fixing")),
+        settlementCcy: str(v.terms, "settlement_ccy"),
+      });
+      break;
     default:
       throw new Error(`family \`${v.family}\` is not exposed by Excel`);
   }

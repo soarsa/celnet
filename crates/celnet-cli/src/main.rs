@@ -18,6 +18,7 @@ mod basket;
 mod cli;
 mod convention;
 mod exotic;
+mod linear;
 mod price;
 mod risk;
 mod surface;

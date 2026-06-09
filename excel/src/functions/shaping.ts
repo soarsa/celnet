@@ -34,6 +34,7 @@ import type {
   DoubleBarrier,
   ExerciseStyle,
   FixingSchedule,
+  FixingSource,
   Greeks,
   Heartbeat,
   Instrument,
@@ -609,6 +610,175 @@ export function shapeVolatilitySwap(args: SwapArgs): Instrument {
     quantity: { notional: args.notional, baseCcy: true },
     side: "TWO_WAY" as Side,
     product: { kind: "volatilitySwap", volatilitySwap: { strikeVol: shapeStrikeVol(args.strikeVol) } },
+  };
+}
+
+// --- linear book (forward / swap / NDF) -------------------------------------
+
+/**
+ * Parse a directional side for a linear product: BUY / B (default) or SELL / S,
+ * case-insensitive. A linear product needs a definite side (its PV has a sign);
+ * TWO_WAY is not a valid linear direction.
+ */
+export function shapeForwardSide(raw: string | undefined): Side {
+  const t = (raw ?? "BUY").trim().toUpperCase();
+  if (t === "BUY" || t === "B") return "BUY";
+  if (t === "SELL" || t === "S") return "SELL";
+  throw new ShapingError(`invalid side \`${raw}\` (expected BUY/B or SELL/S)`);
+}
+
+/** Validate a strictly-positive contract (forward) rate `K`. */
+function shapeContractRate(raw: number): number {
+  if (!Number.isFinite(raw) || raw <= 0) {
+    throw new ShapingError(`invalid contract rate \`${raw}\` (must be positive)`);
+  }
+  return raw;
+}
+
+/** Validate a strictly-positive linear notional. */
+function shapeLinearNotional(raw: number): number {
+  if (!Number.isFinite(raw) || raw <= 0) {
+    throw new ShapingError(`invalid notional \`${raw}\` (must be positive)`);
+  }
+  return raw;
+}
+
+/**
+ * Parse the published NDF fixing identity (EMTA/ISDA per-currency templates),
+ * case-insensitive, accepting the dotted code (`BRL.PTAX`), the bare token
+ * (`BRLPTAX`/`PTAX`) or the wire member (`BRL_PTAX`). Identity only — the live
+ * fixing value is never sourced in-repo.
+ */
+export function shapeFixingSource(raw: string): FixingSource {
+  const t = raw.trim().toUpperCase().replace(/[._\s]/g, "");
+  switch (t) {
+    case "KRWKFTC18":
+    case "KFTC18":
+      return "KRW_KFTC18";
+    case "TWDTAIPEI":
+    case "TAIPEI":
+      return "TWD_TAIPEI";
+    case "INRRBIREF":
+    case "INRRBIB":
+    case "RBIB":
+      return "INR_RBI_REF";
+    case "BRLPTAX":
+    case "PTAX":
+      return "BRL_PTAX";
+    case "CLPDOLAROBS":
+    case "DOLAROBS":
+      return "CLP_DOLAR_OBS";
+    case "COPTRM":
+    case "TRM":
+      return "COP_TRM";
+    default:
+      throw new ShapingError(
+        `invalid fixing \`${raw}\` (expected one of KRW.KFTC18, TWD.TAIPEI, ` +
+          `INR.RBIB, BRL.PTAX, CLP.DOLAROBS, COP.TRM)`,
+      );
+  }
+}
+
+/** Cell arguments for an FX outright forward / swap. */
+export interface ForwardArgs {
+  readonly pair: string;
+  readonly tenor: string;
+  readonly contractRate: number;
+  readonly notional: number;
+  readonly side?: string | undefined;
+}
+
+/**
+ * Shape an FX outright forward (deliverable). The top-level instrument side and the
+ * product side are the directional side (a linear PV needs a sign). The server
+ * rejects a non-deliverable pair as INVALID_ARGUMENT (use NDF).
+ */
+export function shapeForward(args: ForwardArgs): Instrument {
+  const { pair, tenor, expiryYears } = shapeSwapBase({ ...args, notional: args.notional });
+  const side = shapeForwardSide(args.side);
+  return {
+    pair,
+    tenor,
+    expiryYears,
+    quantity: { notional: shapeLinearNotional(args.notional), baseCcy: true },
+    side,
+    product: {
+      kind: "fxForward",
+      fxForward: {
+        contractRate: shapeContractRate(args.contractRate),
+        notional: shapeLinearNotional(args.notional),
+        side,
+      },
+    },
+  };
+}
+
+/**
+ * Shape an FX swap (deliverable). The near leg's contract rate / notional / side
+ * drive both legs; the far leg is the opposite side at the same contract rate,
+ * settling at the forward tenor (`expiryYears`), while the near leg settles at the
+ * spot date. The server reads the near leg's economics (mirroring the SDK's
+ * single-near-leg swap shape) and forms the far leg.
+ */
+export function shapeSwap(args: ForwardArgs): Instrument {
+  const { pair, tenor, expiryYears } = shapeSwapBase({ ...args, notional: args.notional });
+  const side = shapeForwardSide(args.side);
+  const contractRate = shapeContractRate(args.contractRate);
+  const notional = shapeLinearNotional(args.notional);
+  const oppositeSide: Side = side === "BUY" ? "SELL" : "BUY";
+  return {
+    pair,
+    tenor,
+    expiryYears,
+    quantity: { notional, baseCcy: true },
+    side,
+    product: {
+      kind: "fxSwap",
+      fxSwap: {
+        near: { contractRate, notional, side },
+        far: { contractRate, notional, side: oppositeSide },
+      },
+    },
+  };
+}
+
+/** Cell arguments for a non-deliverable forward. */
+export interface NdfArgs {
+  readonly pair: string;
+  readonly tenor: string;
+  readonly contractRate: number;
+  readonly notional: number;
+  readonly fixing: string;
+  readonly settlementCcy?: string | undefined;
+  readonly side?: string | undefined;
+}
+
+/**
+ * Shape a non-deliverable forward (non-deliverable underlying only). The fixing is
+ * convention identity only; the live fixing VALUE is never sourced in-repo. The
+ * settlement currency defaults to the convertible USD leg the EM panel cash-settles
+ * in. The server rejects a deliverable pair as INVALID_ARGUMENT (use FORWARD).
+ */
+export function shapeNdf(args: NdfArgs): Instrument {
+  const { pair, tenor, expiryYears } = shapeSwapBase({ ...args, notional: args.notional });
+  const side = shapeForwardSide(args.side);
+  const settlementCcy = (args.settlementCcy ?? "USD").trim().toUpperCase();
+  return {
+    pair,
+    tenor,
+    expiryYears,
+    quantity: { notional: shapeLinearNotional(args.notional), baseCcy: true },
+    side,
+    product: {
+      kind: "ndf",
+      ndf: {
+        contractRate: shapeContractRate(args.contractRate),
+        notional: shapeLinearNotional(args.notional),
+        side,
+        fixing: shapeFixingSource(args.fixing),
+        settlementCcy,
+      },
+    },
   };
 }
 
@@ -2837,6 +3007,32 @@ function canonicalProduct(p: Product): unknown {
         mcr: p.basket.mcReplications,
         mst: p.basket.mcSteps,
         mcs: p.basket.mcSeed.toString(),
+      };
+    case "fxForward":
+      return {
+        k: "fwd",
+        cr: p.fxForward.contractRate,
+        n: p.fxForward.notional,
+        sd: p.fxForward.side,
+      };
+    case "fxSwap":
+      return {
+        k: "swp",
+        ncr: p.fxSwap.near.contractRate,
+        nn: p.fxSwap.near.notional,
+        nsd: p.fxSwap.near.side,
+        fcr: p.fxSwap.far.contractRate,
+        fn: p.fxSwap.far.notional,
+        fsd: p.fxSwap.far.side,
+      };
+    case "ndf":
+      return {
+        k: "ndf",
+        cr: p.ndf.contractRate,
+        n: p.ndf.notional,
+        sd: p.ndf.side,
+        fx: p.ndf.fixing,
+        sc: p.ndf.settlementCcy,
       };
   }
 }

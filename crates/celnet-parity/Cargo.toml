@@ -70,3 +70,10 @@ pollster.workspace = true
 # table. Backs the closed-form-CVA-limit / monotonicity / zero-default-probability
 # / DVA-symmetry parity row in tests/xva.rs (oracle coded independently in-test).
 celnet-xva.workspace = true
+# Linear FX book (outright forward / swap / NDF) — the production discounted-cashflow
+# pricers under test (W2). In the central workspace.dependencies table; depended on
+# here via `.workspace` (the lint bans path-deps outside that registry). Backs the
+# forward/swap/NDF parity rows in tests/linear.rs: each driven against an INDEPENDENT
+# oracle (the two-zero-coupon-bond DCF route + structural/limit/netting identities
+# that can disagree + a hand-pinned NDF literal), per docs/W2-LINEAR-PLAN.md §3.
+celnet-linear.workspace = true
