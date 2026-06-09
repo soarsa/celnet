@@ -23,7 +23,9 @@ use celnet_risk_cube::{
     PositionId, RiskFact, TraderId, VegaPillar,
 };
 use celnet_risk_normalize::{NumeraireError, PositionRisk, SpotResolver, canonicalize};
-use celnet_types::{Ccy, CcyPair, DeltaConvention, OptionType, PremiumStyle, VanillaInputs};
+use celnet_types::{
+    Ccy, CcyPair, DeltaConvention, OptionType, PremiumStyle, Underlying, VanillaInputs,
+};
 use tonic::Status;
 
 /// Map a wire [`RiskDimension`] enum value (the proto `i32`) onto an optional cube
@@ -40,7 +42,7 @@ pub fn dimension_of(dim: i32) -> Result<Option<DimensionId>, Status> {
         RiskDimension::Trader => Some(DimensionId::Trader),
         RiskDimension::Book => Some(DimensionId::Book),
         RiskDimension::Desk => Some(DimensionId::Desk),
-        RiskDimension::Underlying => Some(DimensionId::CcyPair),
+        RiskDimension::Underlying => Some(DimensionId::Underlying),
         RiskDimension::Location => Some(DimensionId::Location),
         RiskDimension::Entity => Some(DimensionId::Entity),
     })
@@ -54,7 +56,7 @@ pub fn dimension_to_wire(dim: DimensionId) -> i32 {
         DimensionId::Trader => RiskDimension::Trader,
         DimensionId::Book => RiskDimension::Book,
         DimensionId::Desk => RiskDimension::Desk,
-        DimensionId::CcyPair => RiskDimension::Underlying,
+        DimensionId::Underlying => RiskDimension::Underlying,
         DimensionId::Location => RiskDimension::Location,
         DimensionId::Entity => RiskDimension::Entity,
     };
@@ -231,7 +233,7 @@ pub fn position_to_fact(p: &RiskPosition) -> Result<RiskFact, Status> {
         celnet_proto::PremiumStyle::try_from(p.premium_style)
             .map_err(|_| Status::invalid_argument("unknown PremiumStyle"))?,
     );
-    let position = PositionRisk::new(
+    let position = PositionRisk::fx(
         pair,
         option,
         p.notional_base,
@@ -239,6 +241,8 @@ pub fn position_to_fact(p: &RiskPosition) -> Result<RiskFact, Status> {
         quoted_delta,
         premium_style,
     );
+    let leaf = canonicalize(&position)
+        .map_err(|e| Status::invalid_argument(format!("position is not priceable: {e}")))?;
     let handle = u32::try_from(p.position_id).map_err(|_| {
         Status::invalid_argument(format!(
             "position_id {} exceeds the u32 cube handle space",
@@ -251,12 +255,12 @@ pub fn position_to_fact(p: &RiskPosition) -> Result<RiskFact, Status> {
             trader: TraderId(org.trader),
             book: BookId(org.book),
             desk: DeskId(org.desk),
-            ccy_pair: pair,
+            underlying: Underlying::Fx(pair),
             location: LocationId(org.location),
             entity: EntityId(org.entity),
         },
         measure: FactMeasure {
-            leaf: canonicalize(&position),
+            leaf,
             position,
             // The wire `RiskPosition` carries a vanilla leg (the proto is unchanged
             // — guardrail #9); a federated exotic leg, when present, is staged via
@@ -277,7 +281,29 @@ pub fn fact_to_position(
     attribution: Option<AttributionRecord>,
 ) -> RiskPosition {
     let p = &fact.measure.position;
-    let wire_pair: celnet_proto::CcyPair = p.pair.into();
+    // The wire `RiskPosition` carries an FX vanilla leg (the proto is unchanged —
+    // guardrail #9). Project the carry-tagged position back to its FX pair + the FX
+    // two-rate vanilla inputs (byte-identical to the originating leg); a non-FX leg
+    // has no FX wire form, so it falls back to the leaf's spot-derived inputs.
+    let wire_pair: celnet_proto::CcyPair = fact
+        .key
+        .underlying
+        .as_ccy_pair()
+        .or_else(|| p.inputs.underlying.as_ccy_pair())
+        .unwrap_or_else(|| CcyPair::new(Ccy::USD, Ccy::USD))
+        .into();
+    let vanilla = celnet_core::carry::fx_vanilla_inputs(&p.inputs).unwrap_or_else(|_| {
+        VanillaInputs::new(
+            p.inputs.spot,
+            p.inputs.strike,
+            p.inputs.vol,
+            p.inputs.t,
+            0.0,
+            0.0,
+        )
+    });
+    let quoted_delta = p.quoted_delta.unwrap_or(DeltaConvention::SpotUnadjusted);
+    let premium_style = p.premium_style.unwrap_or(PremiumStyle::DomesticPips);
     RiskPosition {
         position_id: wire_id,
         org: Some(OrgKey {
@@ -290,9 +316,9 @@ pub fn fact_to_position(
         }),
         option_type: celnet_proto::OptionType::from(p.option) as i32,
         notional_base: p.notional_base,
-        inputs: Some(p.inputs.into()),
-        quoted_delta: celnet_proto::DeltaConvention::from(p.quoted_delta) as i32,
-        premium_style: celnet_proto::PremiumStyle::from(p.premium_style) as i32,
+        inputs: Some(vanilla.into()),
+        quoted_delta: celnet_proto::DeltaConvention::from(quoted_delta) as i32,
+        premium_style: celnet_proto::PremiumStyle::from(premium_style) as i32,
         surface_version: fact.surface_version,
         attribution,
     }

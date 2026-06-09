@@ -131,7 +131,7 @@ impl Master {
             trader: TraderId(self.entity * 100 + self.book),
             book: CubeBookId(self.book),
             desk: DeskId(self.entity * 10),
-            ccy_pair: self.pair,
+            underlying: celnet_types::Underlying::Fx(self.pair),
             location: LocationId(self.entity),
             entity: EntityId(self.entity),
         }
@@ -140,7 +140,7 @@ impl Master {
     /// The `RiskFact` (for HRW routing at partition time).
     #[must_use]
     pub fn fact(self) -> RiskFact {
-        let position = PositionRisk::new(
+        let position = PositionRisk::fx(
             self.pair,
             self.option,
             self.notional,
@@ -152,7 +152,7 @@ impl Master {
             position_id: PositionId(u32::try_from(self.id).unwrap()),
             key: self.key(),
             measure: FactMeasure {
-                leaf: canonicalize(&position),
+                leaf: canonicalize(&position).unwrap(),
                 position,
                 exotic: None,
             },

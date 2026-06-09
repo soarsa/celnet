@@ -158,7 +158,7 @@ impl VegaPillarMap for PillarGrid {
 #[must_use]
 pub fn entitled_cube(facts: &[RiskFact], principal: &Principal, hierarchy: &Hierarchy) -> Cube {
     let filter = EntitlementFilter::new(principal, hierarchy);
-    filter.entitled_cube(facts.iter().copied())
+    filter.entitled_cube(facts.iter().cloned())
 }
 
 /// Roll the entitled cube up over a dimension (or the firm apex when `dim` is
@@ -257,9 +257,9 @@ pub fn numeraire_pillar_vega(
     for (leaf, position) in node.leaves.iter().zip(node.positions.iter()) {
         let pillar = grid.pillar_of(leaf, position);
         if let Some(slot) = by_pillar.iter_mut().find(|(p, _)| *p == pillar) {
-            slot.1.push(*leaf);
+            slot.1.push(leaf.clone());
         } else {
-            by_pillar.push((pillar, vec![*leaf]));
+            by_pillar.push((pillar, vec![leaf.clone()]));
         }
     }
     let mut out = Vec::with_capacity(by_pillar.len());
@@ -318,13 +318,19 @@ fn nonadditive_measures(
 
     let (var, es, var_alpha) = if cfg.evaluates_var() {
         let scenarios: Vec<Scenario> = cfg.spot_shocks.iter().map(|s| Scenario::spot(*s)).collect();
-        let ve = Cube::node_var_es(&scaled_node, &scenarios, cfg.alpha());
+        let ve = Cube::node_var_es(
+            &celnet_risk_normalize::AssetPricer,
+            &scaled_node,
+            &scenarios,
+            cfg.alpha(),
+        );
         (Some(ve.var), Some(ve.es), Some(cfg.alpha()))
     } else {
         (None, None, None)
     };
     let curvature_spot = if cfg.evaluates_curvature() {
         Some(Cube::node_curvature_spot(
+            &celnet_risk_normalize::AssetPricer,
             &scaled_node,
             cfg.curvature_risk_weight,
         ))
@@ -351,22 +357,25 @@ fn scale_positions_to_numeraire(
 ) -> Result<Vec<PositionRisk>, Status> {
     let mut out = Vec::with_capacity(node.positions.len());
     for p in &node.positions {
+        // The position's quote/premium (numeraire) currency — the leg the spot rate
+        // converts into the reporting numeraire. FX/metal project to their pair quote;
+        // the cross-asset arms carry their own numeraire currency.
+        let quote = p.numeraire_ccy().ok_or_else(|| {
+            convert::numeraire_status(NumeraireError::MissingRate(celnet_types::Ccy::USD))
+        })?;
         let rate = resolver
-            .rate_into_numeraire(p.pair.quote)
-            .ok_or_else(|| convert::numeraire_status(NumeraireError::MissingRate(p.pair.quote)))?;
+            .rate_into_numeraire(quote)
+            .ok_or_else(|| convert::numeraire_status(NumeraireError::MissingRate(quote)))?;
         if !rate.is_finite() || rate <= 0.0 {
             return Err(convert::numeraire_status(NumeraireError::InvalidRate(
-                p.pair.quote,
+                quote,
             )));
         }
-        out.push(PositionRisk::new(
-            p.pair,
-            p.option,
-            p.notional_base * rate,
-            p.inputs,
-            p.quoted_delta,
-            p.premium_style,
-        ));
+        // Scale the notional in place, preserving the carry-tagged inputs/underlying
+        // and FX-provenance conventions exactly (an API-faithful clone-and-scale).
+        let mut scaled = p.clone();
+        scaled.notional_base = p.notional_base * rate;
+        out.push(scaled);
     }
     Ok(out)
 }
@@ -411,12 +420,12 @@ pub fn entitled_facts_for_scope(
     let filter = EntitlementFilter::new(principal, hierarchy);
     let mut admitted: Vec<RiskFact> = facts
         .iter()
-        .copied()
         .filter(|f| filter.admits(f))
         .filter(|f| match scope {
             None => true,
             Some((dim, value)) => resolved_group_value(hierarchy, f, dim) == value,
         })
+        .cloned()
         .collect();
     admitted.sort_by_key(|f: &RiskFact| f.position_id.0);
     admitted
@@ -444,7 +453,7 @@ pub fn resolved_group_value(hierarchy: &Hierarchy, fact: &RiskFact, dim: Dimensi
 pub fn cube_from_facts(facts: &[RiskFact], hierarchy: Hierarchy) -> Cube {
     let mut dedup: BTreeMap<u32, RiskFact> = BTreeMap::new();
     for f in facts {
-        dedup.insert(f.position_id.0, *f);
+        dedup.insert(f.position_id.0, f.clone());
     }
     let mut cube = Cube::with_hierarchy(hierarchy);
     for (_, f) in dedup {
@@ -472,8 +481,8 @@ pub(crate) fn test_fact(
         BookId, DeskId, EntityId, FactKey, FactMeasure, LocationId, PositionId, TraderId,
     };
     use celnet_risk_normalize::canonicalize;
-    use celnet_types::{DeltaConvention, PremiumStyle};
-    let position = PositionRisk::new(
+    use celnet_types::{DeltaConvention, PremiumStyle, Underlying};
+    let position = PositionRisk::fx(
         pair,
         option,
         notional,
@@ -487,12 +496,12 @@ pub(crate) fn test_fact(
             trader: TraderId(trader),
             book: BookId(book),
             desk: DeskId(desk),
-            ccy_pair: pair,
+            underlying: Underlying::Fx(pair),
             location: LocationId(loc),
             entity: EntityId(ent),
         },
         measure: FactMeasure {
-            leaf: canonicalize(&position),
+            leaf: canonicalize(&position).unwrap(),
             position,
             exotic: None,
         },
@@ -628,7 +637,7 @@ mod tests {
             8_000_000.0,
             VanillaInputs::new(156.0, 154.0, 0.11, 0.5, 0.01, 0.05),
         );
-        let cube = cube_from_facts(&[p1, p2], Hierarchy::new());
+        let cube = cube_from_facts(&[p1.clone(), p2.clone()], Hierarchy::new());
         let resolver = usd_numeraire();
         let firm =
             aggregate_nodes(&cube, None, &resolver, &[], &NonAdditiveConfig::default()).unwrap();
@@ -647,8 +656,8 @@ mod tests {
         );
 
         // The USD leg = EURUSD funding leg (−delta·spot) + USDJPY base hedge.
-        let l1 = canonicalize(&p1.measure.position);
-        let l2 = canonicalize(&p2.measure.position);
+        let l1 = canonicalize(&p1.measure.position).unwrap();
+        let l2 = canonicalize(&p2.measure.position).unwrap();
         let expected_usd = -l1.greeks.delta_base * l1.spot + l2.greeks.delta_base;
         let usd_leg = add
             .delta_vector
@@ -748,7 +757,7 @@ mod tests {
         };
 
         let combined = aggregate_nodes(
-            &cube_from_facts(&[long, short], Hierarchy::new()),
+            &cube_from_facts(&[long.clone(), short], Hierarchy::new()),
             None,
             &resolver,
             &[],
@@ -758,7 +767,7 @@ mod tests {
         let var_combined = combined[0].nonadditive.as_ref().unwrap().var.unwrap();
 
         let long_only = aggregate_nodes(
-            &cube_from_facts(&[long], Hierarchy::new()),
+            &cube_from_facts(&[long.clone()], Hierarchy::new()),
             None,
             &resolver,
             &[],

@@ -19,10 +19,13 @@ celnet-risk-cube.workspace = true
 # The HRW partition map + replica membership the partitioner routes facts
 # through. One-way edge: fleet -> router. (router does NOT depend on fleet.)
 celnet-router.workspace = true
-# Domain vocabulary (CcyPair) shared by the fact key and the partition key.
+# Domain vocabulary (CcyPair, Underlying) shared by the fact key and the
+# partition key.
 celnet-types.workspace = true
+# The canonical leaf + the AssetPricer carry seam the non-additive firm
+# reducers re-derive measures through. One-way edge: fleet -> risk-normalize.
+celnet-risk-normalize.workspace = true
 
 [dev-dependencies]
 celnet-core.workspace = true
-celnet-risk-normalize.workspace = true
 proptest.workspace = true

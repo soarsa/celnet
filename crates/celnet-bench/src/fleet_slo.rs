@@ -126,7 +126,7 @@ fn seed(store: &celnet_server::services::risk::store::PositionStore) {
             trader: TraderId(entity * 100 + bk),
             book: CubeBookId(bk),
             desk: DeskId(entity * 10),
-            ccy_pair: pair,
+            underlying: celnet_types::Underlying::Fx(pair),
             location: LocationId(entity),
             entity: EntityId(entity),
         };

@@ -2336,8 +2336,11 @@ mod tests {
                 "a SELL fill is a short position (negative notional)"
             );
             assert_eq!(
-                fact.measure.position.pair,
-                celnet_types::CcyPair::new(celnet_types::Ccy::EUR, celnet_types::Ccy::USD)
+                fact.measure.position.underlying,
+                celnet_types::Underlying::Fx(celnet_types::CcyPair::new(
+                    celnet_types::Ccy::EUR,
+                    celnet_types::Ccy::USD
+                ))
             );
             // The attribution chain (holder book) round-trips for the roll-up.
             let attr = snap

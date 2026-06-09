@@ -91,10 +91,54 @@
 use celnet_risk_cube::{
     Cube, DimensionId, NodeAggregate, RiskFact, Scenario, VarEs, VegaPillarMap,
 };
+use celnet_risk_normalize::AssetPricer;
 use celnet_router::{
     BookId, PartitionKey, PartitionMap, ReplicaId, ReplicaSet, RouteError, TenantId,
 };
-use celnet_types::CcyPair;
+use celnet_types::{CcyPair, Underlying};
+
+/// Project a fact's [`Underlying`] onto the [`CcyPair`] the partition map keys on
+/// (`docs/SCALE-OUT.md` §2 — the currency-pair is the primary partition key).
+///
+/// FX and metal underlyings project to their leg-pair via
+/// [`Underlying::as_ccy_pair`], so the partition key — and thus every fact's shard
+/// home — is **byte-identical** to the pre-generalization `CcyPair`-keyed routing.
+/// A cross-asset arm (equity / commodity / digital asset) has no `CcyPair`
+/// projection; the router's rendezvous key is currency-pair-shaped, so until the
+/// router grows a native cross-asset partition axis those arms fold onto the metal
+/// quote currency's self-pair as a deterministic, stable home (every tenor/strike
+/// of the same underlying still co-resides on one shard — the §2 co-residency
+/// guarantee holds — and the choice never affects the firm aggregate, which is
+/// partition-shape-agnostic). The fleet's risk book is FX today, so this branch is
+/// exercised only by a cross-asset book and never alters an FX fact's routing.
+#[must_use]
+fn partition_pair_of(underlying: &Underlying) -> CcyPair {
+    underlying.as_ccy_pair().unwrap_or_else(|| {
+        // No FX/metal pair projection: derive a stable self-pair from the underlying's
+        // numeraire currency so all flow of this underlying co-resides deterministically.
+        let n = cross_asset_numeraire(underlying);
+        CcyPair::new(n, n)
+    })
+}
+
+/// The numeraire (quote-leg) currency of a non-FX/metal underlying — equity and
+/// commodity carry it on their reference; a fiat-quoted digital-asset pair parses
+/// to a [`Ccy`], and a coin-quoted one falls back to USD as a deterministic home.
+/// Used only to derive a stable cross-asset partition self-pair (see
+/// [`partition_pair_of`]); never affects an FX fact's routing.
+#[must_use]
+fn cross_asset_numeraire(underlying: &Underlying) -> celnet_types::Ccy {
+    use celnet_types::Ccy;
+    if let Some(e) = underlying.as_equity() {
+        e.currency
+    } else if let Some(c) = underlying.as_commodity() {
+        c.currency
+    } else if let Some(p) = underlying.as_digital_asset() {
+        Ccy::parse(&p.quote).unwrap_or(Ccy::USD)
+    } else {
+        Ccy::USD
+    }
+}
 
 /// Build the [`celnet_router::PartitionKey`] for a fact from its
 /// `(legal-entity, ccy-pair)` dimension keys (`docs/RISK-HIERARCHY.md` §3.4,
@@ -120,7 +164,8 @@ use celnet_types::CcyPair;
 /// firm reducer, and the non-additive firm re-gather sees both legs jointly.
 #[must_use]
 pub fn partition_key_of(fact: &RiskFact) -> PartitionKey {
-    PartitionKey::pair(fact.key.ccy_pair).with_tenant(TenantId(u64::from(fact.key.entity.0)))
+    PartitionKey::pair(partition_pair_of(&fact.key.underlying))
+        .with_tenant(TenantId(u64::from(fact.key.entity.0)))
 }
 
 /// Build the partition key from an explicit `(legal-entity, ccy-pair)` pair —
@@ -139,7 +184,7 @@ pub fn partition_key_for(entity: u32, pair: CcyPair) -> PartitionKey {
 /// reconciles identically either way (the algebra is partition-shape-agnostic).
 #[must_use]
 pub fn partition_key_sub_book(fact: &RiskFact) -> PartitionKey {
-    PartitionKey::pair(fact.key.ccy_pair)
+    PartitionKey::pair(partition_pair_of(&fact.key.underlying))
         .with_tenant(TenantId(u64::from(fact.key.entity.0)))
         .with_book(BookId(u64::from(fact.key.book.0)))
 }
@@ -319,7 +364,7 @@ impl FleetReducer {
         alpha: f64,
     ) -> VarEs {
         let firm = self.gather_firm_node(pillars);
-        Cube::node_var_es(&firm, scenarios, alpha)
+        Cube::node_var_es(&AssetPricer, &firm, scenarios, alpha)
     }
 
     /// Firm-level **VaR / ES** by the AAD sensitivity scale path, re-gathered over
@@ -332,7 +377,7 @@ impl FleetReducer {
         alpha: f64,
     ) -> VarEs {
         let firm = self.gather_firm_node(pillars);
-        Cube::node_var_es_sensitivity(&firm, scenarios, alpha)
+        Cube::node_var_es_sensitivity(&AssetPricer, &firm, scenarios, alpha)
     }
 
     /// Firm-level **FRTB-SbM spot curvature** by the §3.4 re-gather: re-derive once
@@ -340,7 +385,7 @@ impl FleetReducer {
     /// curvatures (curvature is a non-linear `max`).
     pub fn firm_curvature_spot<P: VegaPillarMap>(&self, pillars: &P, rw: f64) -> f64 {
         let firm = self.gather_firm_node(pillars);
-        Cube::node_curvature_spot(&firm, rw)
+        Cube::node_curvature_spot(&AssetPricer, &firm, rw)
     }
 }
 
@@ -394,7 +439,7 @@ pub fn partition_facts_with(
                 shards.len() - 1
             }
         };
-        shards[idx].upsert(*fact);
+        shards[idx].upsert(fact.clone());
     }
     // Deterministic reduction order: ascending replica id.
     shards.sort_by_key(|s| s.replica().0);
@@ -446,8 +491,8 @@ pub fn fan_out_aggregate<P: VegaPillarMap>(
 ) -> Result<FleetAggregate, RouteError> {
     let reducer = partition_facts(facts, replicas)?;
     let firm = reducer.gather_firm_node(pillars);
-    let var_es = Cube::node_var_es(&firm, scenarios, alpha);
-    let curvature_spot = Cube::node_curvature_spot(&firm, curvature_rw);
+    let var_es = Cube::node_var_es(&AssetPricer, &firm, scenarios, alpha);
+    let curvature_spot = Cube::node_curvature_spot(&AssetPricer, &firm, curvature_rw);
     Ok(FleetAggregate {
         firm,
         var_es,
@@ -721,8 +766,8 @@ pub fn fan_out_aggregate_over(
 ) -> Result<FleetAggregate, FleetError> {
     let additive = fan_in_additive_over(src)?;
     let firm = gather_firm_node_over(src)?;
-    let var_es = Cube::node_var_es(&firm, scenarios, alpha);
-    let curvature_spot = Cube::node_curvature_spot(&firm, curvature_rw);
+    let var_es = Cube::node_var_es(&AssetPricer, &firm, scenarios, alpha);
+    let curvature_spot = Cube::node_curvature_spot(&AssetPricer, &firm, curvature_rw);
     let shard_count = src.shard_ids().len();
     Ok(FleetAggregate {
         firm: NodeAggregate {
@@ -749,9 +794,11 @@ mod tests {
         BookId as CubeBookId, DeskId, EntityId, FactKey, FactMeasure, LocationId, PositionId,
         TraderId, VegaPillar,
     };
-    use celnet_risk_normalize::{CanonicalLeaf, PositionRisk, canonicalize};
+    use celnet_risk_normalize::{AssetPricer, CanonicalLeaf, PositionRisk, canonicalize};
     use celnet_router::{Replica, RouteReason};
-    use celnet_types::{Ccy, CcyPair, DeltaConvention, OptionType, PremiumStyle, VanillaInputs};
+    use celnet_types::{
+        Ccy, CcyPair, DeltaConvention, OptionType, PremiumStyle, Underlying, VanillaInputs,
+    };
 
     fn pair(b: Ccy, q: Ccy) -> CcyPair {
         CcyPair::new(b, q)
@@ -767,7 +814,7 @@ mod tests {
     }
 
     fn pos(p: CcyPair, opt: OptionType, notional: f64, inputs: VanillaInputs) -> PositionRisk {
-        PositionRisk::new(
+        PositionRisk::fx(
             p,
             opt,
             notional,
@@ -793,12 +840,12 @@ mod tests {
                 trader: TraderId(trader),
                 book: CubeBookId(book),
                 desk: DeskId(desk),
-                ccy_pair: position.pair,
+                underlying: position.underlying.clone(),
                 location: LocationId(loc),
                 entity: EntityId(entity),
             },
             measure: FactMeasure {
-                leaf: canonicalize(&position),
+                leaf: canonicalize(&position).unwrap(),
                 position,
                 exotic: None,
             },
@@ -948,8 +995,8 @@ mod tests {
                 v.push(Scenario {
                     spot_rel: f64::from(si) * 0.01,
                     vol_abs: f64::from(vj) * 0.005,
-                    rate_dom_abs: 0.0,
-                    rate_for_abs: 0.0,
+                    discount_abs: 0.0,
+                    carry_abs: 0.0,
                 });
             }
         }
@@ -960,7 +1007,7 @@ mod tests {
     fn single_node(facts: &[RiskFact]) -> Cube {
         let mut c = Cube::new();
         for f in facts {
-            c.upsert(*f);
+            c.upsert(f.clone());
         }
         c
     }
@@ -1042,11 +1089,11 @@ mod tests {
         let scen = ladder();
 
         let single_node_node = single_node(&facts).firm_aggregate(&DaysPillar);
-        let single = Cube::node_var_es(&single_node_node, &scen, 0.99);
+        let single = Cube::node_var_es(&AssetPricer, &single_node_node, &scen, 0.99);
 
         let reducer = partition_facts(&facts, &set).unwrap();
         let fleet_node = reducer.gather_firm_node(&DaysPillar);
-        let fleet = Cube::node_var_es(&fleet_node, &scen, 0.99);
+        let fleet = Cube::node_var_es(&AssetPricer, &fleet_node, &scen, 0.99);
 
         assert!(single.var > 0.0, "reference must see a tail loss");
         // (1) Identical constituent multiset (algebra exactness): same positions,
@@ -1091,7 +1138,7 @@ mod tests {
         let rw = 0.18;
 
         let single_node_node = single_node(&facts).firm_aggregate(&DaysPillar);
-        let single = Cube::node_curvature_spot(&single_node_node, rw);
+        let single = Cube::node_curvature_spot(&AssetPricer, &single_node_node, rw);
         let fleet = partition_facts(&facts, &set)
             .unwrap()
             .firm_curvature_spot(&DaysPillar, rw);
@@ -1139,6 +1186,7 @@ mod tests {
         assert_eq!(reducer.shard_count(), 1);
 
         let single = Cube::node_var_es(
+            &AssetPricer,
             &single_node(&facts).firm_aggregate(&DaysPillar),
             &scen,
             0.99,
@@ -1166,8 +1214,8 @@ mod tests {
         let rw = 0.18;
 
         let single = single_node(&facts).firm_aggregate(&DaysPillar);
-        let single_var = Cube::node_var_es(&single, &scen, 0.99);
-        let single_cvr = Cube::node_curvature_spot(&single, rw);
+        let single_var = Cube::node_var_es(&AssetPricer, &single, &scen, 0.99);
+        let single_cvr = Cube::node_curvature_spot(&AssetPricer, &single, rw);
 
         let agg = fan_out_aggregate(&facts, &set, &DaysPillar, &scen, 0.99, rw).unwrap();
 
@@ -1209,7 +1257,7 @@ mod tests {
             .iter()
             .map(|s| {
                 let node = s.local_aggregate(&DaysPillar);
-                Cube::node_var_es(&node, &scen, 0.99).var
+                Cube::node_var_es(&AssetPricer, &node, &scen, 0.99).var
             })
             .sum();
 
@@ -1290,11 +1338,12 @@ mod tests {
         let set = replicas(&[1, 2, 3, 4, 5]);
         let map = PartitionMap::new(&set);
 
-        // Group facts by (entity, pair) and assert one owner per cell.
-        let mut cells: Vec<((u32, CcyPair), ReplicaId)> = Vec::new();
+        // Group facts by (entity, underlying) and assert one owner per cell. For FX
+        // the underlying maps 1:1 to its pair, so this is the §2 (entity, pair) cell.
+        let mut cells: Vec<((u32, Underlying), ReplicaId)> = Vec::new();
         for f in &facts {
             let owner = natural_owner_of(f, &map).unwrap();
-            let cell = (f.key.entity.0, f.key.ccy_pair);
+            let cell = (f.key.entity.0, f.key.underlying.clone());
             if let Some((_, o)) = cells.iter().find(|(c, _)| *c == cell) {
                 assert_eq!(
                     *o, owner,
@@ -1677,8 +1726,8 @@ mod tests {
         /// Build the single-node oracle over the whole book.
         fn new(facts: &'a [RiskFact], scen: &'a [Scenario], alpha: f64, rw: f64) -> Self {
             let single = single_node(facts).firm_aggregate(&DaysPillar);
-            let single_var = Cube::node_var_es(&single, scen, alpha);
-            let single_cvr = Cube::node_curvature_spot(&single, rw);
+            let single_var = Cube::node_var_es(&AssetPricer, &single, scen, alpha);
+            let single_cvr = Cube::node_curvature_spot(&AssetPricer, &single, rw);
             assert!(single_var.var > 0.0, "oracle must see a firm tail loss");
             Self {
                 facts,

@@ -109,7 +109,7 @@ mod tests {
     }
 
     fn pos(pair: CcyPair, opt: OptionType, notional: f64, inputs: VanillaInputs) -> PositionRisk {
-        PositionRisk::new(
+        PositionRisk::fx(
             pair,
             opt,
             notional,
@@ -135,12 +135,12 @@ mod tests {
                 trader: TraderId(trader),
                 book: BookId(book),
                 desk: DeskId(desk),
-                ccy_pair: position.pair,
+                underlying: position.underlying.clone(),
                 location: LocationId(loc),
                 entity: EntityId(ent),
             },
             measure: FactMeasure {
-                leaf: canonicalize(&position),
+                leaf: canonicalize(&position).unwrap(),
                 position,
                 exotic: None,
             },
@@ -226,10 +226,10 @@ mod tests {
         );
 
         // The entitled cube == an unfiltered cube built from the same facts.
-        let entitled = filter.entitled_cube(facts.iter().copied());
+        let entitled = filter.entitled_cube(facts.iter().cloned());
         let mut unfiltered = Cube::with_hierarchy(h.clone());
         for f in &facts {
-            unfiltered.upsert(*f);
+            unfiltered.upsert(f.clone());
         }
         assert_eq!(entitled.len(), unfiltered.len());
         assert_eq!(firm_delta(&entitled), firm_delta(&unfiltered));
@@ -260,9 +260,15 @@ mod tests {
         assert!(pruned.iter().all(|f| f.position_id != PositionId(3)));
 
         // The firm aggregate the scoped principal sees == ONLY desk-1 facts.
-        let scoped_firm = firm_delta(&filter.entitled_cube(facts.iter().copied()));
-        let want_desk1 = canonicalize(&facts[0].measure.position).greeks.delta_base
-            + canonicalize(&facts[1].measure.position).greeks.delta_base;
+        let scoped_firm = firm_delta(&filter.entitled_cube(facts.iter().cloned()));
+        let want_desk1 = canonicalize(&facts[0].measure.position)
+            .unwrap()
+            .greeks
+            .delta_base
+            + canonicalize(&facts[1].measure.position)
+                .unwrap()
+                .greeks
+                .delta_base;
         assert!(
             (scoped_firm - want_desk1).abs() < 1e-9,
             "scoped firm {scoped_firm} must equal desk-1 sum {want_desk1}, not the whole firm"
@@ -273,7 +279,7 @@ mod tests {
         let true_firm = {
             let mut c = Cube::with_hierarchy(h.clone());
             for f in &facts {
-                c.upsert(*f);
+                c.upsert(f.clone());
             }
             firm_delta(&c)
         };
@@ -284,7 +290,7 @@ mod tests {
 
         // Drill-down likewise sees only its subtree: grouping by Book yields exactly
         // the two desk-1 books, never the desk-2 book.
-        let entitled = filter.entitled_cube(facts.iter().copied());
+        let entitled = filter.entitled_cube(facts.iter().cloned());
         let by_book = entitled.group_by(DimensionId::Book, &DaysPillar);
         let mut books: Vec<u64> = by_book.iter().map(|a: &NodeAggregate| a.group).collect();
         books.sort_unstable();
@@ -297,14 +303,18 @@ mod tests {
     #[test]
     fn grant_on_one_axis_keeps_other_axes_wide() {
         let (h, facts) = sample();
-        let eurusd_value = facts[0].key.group_value(DimensionId::CcyPair);
-        let principal = Principal::scoped().grant(Rule::on(DimensionId::CcyPair, eurusd_value));
+        let eurusd_value = facts[0].key.group_value(DimensionId::Underlying);
+        let principal = Principal::scoped().grant(Rule::on(DimensionId::Underlying, eurusd_value));
         let filter = EntitlementFilter::new(&principal, &h);
 
         let pruned = filter.prune(&facts);
         // Facts 1 (desk 1) and 3 (desk 2) are EURUSD; fact 2 is USDJPY → pruned.
         assert_eq!(pruned.len(), 2);
-        assert!(pruned.iter().all(|f| f.key.ccy_pair == eurusd()));
+        assert!(
+            pruned
+                .iter()
+                .all(|f| f.key.underlying.as_ccy_pair() == Some(eurusd()))
+        );
         // Spans both desks — the grant did not constrain the desk axis.
         assert!(pruned.iter().any(|f| f.position_id == PositionId(1)));
         assert!(pruned.iter().any(|f| f.position_id == PositionId(3)));
@@ -339,9 +349,15 @@ mod tests {
         assert!(pruned.iter().all(|f| f.key.book != BookId(11)));
 
         // Firm total excludes the walled book.
-        let walled_firm = firm_delta(&filter.entitled_cube(facts.iter().copied()));
-        let want = canonicalize(&facts[0].measure.position).greeks.delta_base
-            + canonicalize(&facts[2].measure.position).greeks.delta_base;
+        let walled_firm = firm_delta(&filter.entitled_cube(facts.iter().cloned()));
+        let want = canonicalize(&facts[0].measure.position)
+            .unwrap()
+            .greeks
+            .delta_base
+            + canonicalize(&facts[2].measure.position)
+                .unwrap()
+                .greeks
+                .delta_base;
         assert!((walled_firm - want).abs() < 1e-9);
     }
 
@@ -352,7 +368,7 @@ mod tests {
         let principal = Principal::scoped();
         let filter = EntitlementFilter::new(&principal, &h);
         assert!(filter.prune(&facts).is_empty());
-        assert_eq!(filter.entitled_cube(facts.iter().copied()).len(), 0);
+        assert_eq!(filter.entitled_cube(facts.iter().cloned()).len(), 0);
     }
 
     /// The single-fact predicate matches the slice prune (consistency of the

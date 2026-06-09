@@ -259,7 +259,7 @@ impl PositionStore {
                 booked.position_id
             ))
         })?;
-        let position = PositionRisk::new(
+        let position = PositionRisk::fx(
             booked.pair,
             booked.option,
             booked.notional_base,
@@ -267,11 +267,14 @@ impl PositionStore {
             booked.quoted_delta,
             booked.premium_style,
         );
+        let leaf = canonicalize(&position).map_err(|e| {
+            tonic::Status::invalid_argument(format!("booked position is not priceable: {e}"))
+        })?;
         let fact = RiskFact {
             position_id: PositionId(handle),
             key,
             measure: FactMeasure {
-                leaf: canonicalize(&position),
+                leaf,
                 position,
                 // The live RFS / click-to-trade book records vanilla legs here; a
                 // booked exotic is recorded via `upsert_exotic` (its `exotic` field
@@ -332,7 +335,7 @@ impl PositionStore {
         let leg = booked.leg;
         // The underlying-vanilla metadata for vega-pillar bucketing (never priced for
         // an exotic fact — the cube routes exotic facts through the exotic pricer).
-        let position = PositionRisk::new(
+        let position = PositionRisk::fx(
             leg.pair,
             booked.option,
             leg.notional,
@@ -412,7 +415,7 @@ impl PositionStore {
             book: CubeBookId(book_h),
             // Desk resolves from the book's parent pointer (0 ⇒ resolve).
             desk: DeskId(0),
-            ccy_pair: booked.pair,
+            underlying: celnet_types::Underlying::Fx(booked.pair),
             location: LocationId(location_h),
             // Entity resolves from the location's parent pointer (0 ⇒ resolve).
             entity: EntityId(0),
@@ -645,7 +648,7 @@ mod tests {
             trader: TraderId(1),
             book: CubeBookId(1),
             desk: DeskId(0),
-            ccy_pair: eurusd(),
+            underlying: celnet_types::Underlying::Fx(eurusd()),
             location: LocationId(1),
             entity: EntityId(1),
         };

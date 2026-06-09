@@ -262,12 +262,12 @@ fn limit_scope_of(scope: &RiskScope) -> Result<LimitScope, Status> {
         Some(DimensionId::Entity) => {
             LimitScope::Entity(EntityId(u32::try_from(value).unwrap_or(0)))
         }
-        Some(DimensionId::CcyPair) => {
-            // A ccy-pair limit scope is addressed by the packed pair discriminant;
-            // the limit tree's `LimitScope::CcyPair` packs the same way, but the wire
-            // only carries the `u64` value, so we cannot reconstruct the pair. A
-            // ccy-pair limit scope is therefore not addressable by value alone —
-            // reject loudly rather than guess.
+        Some(DimensionId::Underlying) => {
+            // An underlying limit scope is addressed by the packed underlying
+            // discriminant; the limit tree's `LimitScope::CcyPair` packs the same way
+            // for FX/metals, but the wire only carries the `u64` value, so we cannot
+            // reconstruct the underlying. An underlying limit scope is therefore not
+            // addressable by value alone — reject loudly rather than guess.
             return Err(Status::invalid_argument(
                 "limit status for a CCY_PAIR scope is addressed by the pair, not a bare value",
             ));
@@ -335,13 +335,13 @@ impl RiskEdge {
                 let scoped: Vec<_> = snapshot
                     .facts
                     .iter()
-                    .copied()
                     .filter(|f| {
                         celnet_entitlements::EntitlementFilter::new(&principal, &snapshot.hierarchy)
                             .admits(f)
                             && aggregate::resolved_group_value(&snapshot.hierarchy, f, sdim)
                                 == value
                     })
+                    .cloned()
                     .collect();
                 cube_from_facts(&scoped, snapshot.hierarchy.clone())
             }
@@ -479,7 +479,12 @@ impl RiskEdge {
                 .iter()
                 .map(|s| celnet_risk_cube::Scenario::spot(*s))
                 .collect();
-            NonAdditiveExposure::from_scenarios(&scaled_node, &scenarios, alpha)
+            NonAdditiveExposure::from_scenarios(
+                &celnet_risk_normalize::AssetPricer,
+                &scaled_node,
+                &scenarios,
+                alpha,
+            )
         };
 
         let checks = check_scope(&snapshot.limits, limit_scope, &numeraire_node, &nonadditive);
@@ -554,13 +559,16 @@ fn numeraire_expressed_node(
     // Scale the leaves' delta_base / vega for the gross concentration metrics.
     let mut leaves = node.leaves.clone();
     for leaf in &mut leaves {
-        let dr = resolver
-            .rate_into_numeraire(leaf.pair.base)
-            .ok_or_else(|| {
-                convert::numeraire_status(celnet_risk_normalize::NumeraireError::MissingRate(
-                    leaf.pair.base,
-                ))
-            })?;
+        // The leaf's base-leg currency (the leg `delta_base` nets at). FX/metals
+        // project to their pair base; a cross-asset base leg is an asset unit with no
+        // `Ccy`, so its gross-concentration scaling falls back to the numeraire leg.
+        let base_ccy = leaf
+            .underlying
+            .as_ccy_pair()
+            .map_or(leaf.vega_premium_ccy, |p| p.base);
+        let dr = resolver.rate_into_numeraire(base_ccy).ok_or_else(|| {
+            convert::numeraire_status(celnet_risk_normalize::NumeraireError::MissingRate(base_ccy))
+        })?;
         let vr = resolver
             .rate_into_numeraire(leaf.vega_premium_ccy)
             .ok_or_else(|| {
@@ -597,24 +605,27 @@ fn scale_node_positions(
 ) -> Result<Vec<celnet_risk_normalize::PositionRisk>, Status> {
     let mut out = Vec::with_capacity(node.positions.len());
     for p in &node.positions {
-        let rate = resolver.rate_into_numeraire(p.pair.quote).ok_or_else(|| {
+        // The position's quote/premium (numeraire) currency — the leg the spot rate
+        // converts into the reporting numeraire (FX/metal pair quote, or the cross-
+        // asset arm's own numeraire currency).
+        let quote = p.numeraire_ccy().ok_or_else(|| {
             convert::numeraire_status(celnet_risk_normalize::NumeraireError::MissingRate(
-                p.pair.quote,
+                celnet_types::Ccy::USD,
             ))
+        })?;
+        let rate = resolver.rate_into_numeraire(quote).ok_or_else(|| {
+            convert::numeraire_status(celnet_risk_normalize::NumeraireError::MissingRate(quote))
         })?;
         if !rate.is_finite() || rate <= 0.0 {
             return Err(convert::numeraire_status(
-                celnet_risk_normalize::NumeraireError::InvalidRate(p.pair.quote),
+                celnet_risk_normalize::NumeraireError::InvalidRate(quote),
             ));
         }
-        out.push(celnet_risk_normalize::PositionRisk::new(
-            p.pair,
-            p.option,
-            p.notional_base * rate,
-            p.inputs,
-            p.quoted_delta,
-            p.premium_style,
-        ));
+        // Clone-and-scale: preserve the carry-tagged inputs/underlying + FX-provenance
+        // conventions exactly, scaling only the notional (an API-faithful migration).
+        let mut scaled = p.clone();
+        scaled.notional_base = p.notional_base * rate;
+        out.push(scaled);
     }
     Ok(out)
 }
