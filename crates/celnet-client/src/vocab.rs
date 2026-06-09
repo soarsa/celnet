@@ -1394,6 +1394,155 @@ impl LookbackTerms {
     }
 }
 
+/// The published settlement-rate option a non-deliverable forward fixes against —
+/// the typed form of the wire [`celnet_proto::FixingSource`] (re-exporting
+/// [`celnet_types::FixingSource`]).
+///
+/// This names *which* published rate the contract settles against (each EMTA /
+/// ISDA per-currency template names one); it is convention identity, NOT a
+/// market-data input — the live fixing VALUE is an estate-gated feed, never
+/// sourced in-repo (only the identity travels on the wire).
+pub type FixingSource = celnet_types::FixingSource;
+
+/// Encode a [`FixingSource`] identity to its wire tag. Exhaustive so a future
+/// fixing added to the domain enum forces a compile error here rather than a
+/// silent mis-map.
+fn fixing_source_to_wire(f: FixingSource) -> celnet_proto::FixingSource {
+    use celnet_proto::FixingSource as W;
+    match f {
+        FixingSource::KrwKftc18 => W::KrwKftc18,
+        FixingSource::TwdTaipei => W::TwdTaipei,
+        FixingSource::InrRbiRef => W::InrRbiRef,
+        FixingSource::BrlPtax => W::BrlPtax,
+        FixingSource::ClpDolarObs => W::ClpDolarObs,
+        FixingSource::CopTrm => W::CopTrm,
+    }
+}
+
+/// The directional side a linear (forward / swap / NDF) product takes — a
+/// definite BUY or SELL (a linear PV needs a sign; a two-way request is not a
+/// pricing direction). Maps to the wire [`celnet_proto::Side`] on the product
+/// message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForwardSide {
+    /// Buy (long the base/asset forward): PV gains as the forward rate rises
+    /// above the contract rate.
+    Buy,
+    /// Sell (short the base/asset forward).
+    Sell,
+}
+
+impl ForwardSide {
+    fn to_wire(self) -> celnet_proto::Side {
+        match self {
+            ForwardSide::Buy => celnet_proto::Side::Buy,
+            ForwardSide::Sell => celnet_proto::Side::Sell,
+        }
+    }
+
+    /// The top-level instrument [`Side`] a linear product carries (the directional
+    /// side, never two-way).
+    fn instrument_side(self) -> Side {
+        match self {
+            ForwardSide::Buy => Side::Buy,
+            ForwardSide::Sell => Side::Sell,
+        }
+    }
+}
+
+/// The terms of an FX outright forward (deliverable): the contract (delivery)
+/// rate `K`, the notional, and the direction. A linear, closed-form
+/// discounted-cashflow product — PV is
+/// `side · notional · discount_df(t) · (forward_rate − K)`, exact (no std-error).
+/// Built via [`ForwardTerms::new`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ForwardTerms {
+    /// The agreed contract (delivery) rate `K`, in quote per 1 unit of base/asset.
+    pub contract_rate: f64,
+    /// The notional amount (always positive; direction is carried by `side`).
+    pub notional: f64,
+    /// The direction taken (buy = long the base/asset forward).
+    pub side: ForwardSide,
+}
+
+impl ForwardTerms {
+    /// A forward at `contract_rate` for `notional`, taking `side`.
+    #[must_use]
+    pub fn new(contract_rate: f64, notional: f64, side: ForwardSide) -> Self {
+        Self {
+            contract_rate,
+            notional,
+            side,
+        }
+    }
+}
+
+/// The terms of an FX swap: a near leg + a far leg (two outright forwards trading
+/// the opposite direction). The near leg's contract rate, notional and side
+/// anchor the swap; the far leg is the opposite side at the same contract rate,
+/// settling at the instrument's forward tenor (`expiry_years`), while the near
+/// leg settles at the spot date. The swap PV is the sum of the two leg PVs.
+/// Built via [`SwapTerms::new`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SwapTerms {
+    /// The near leg (its contract rate / notional / side drive both legs).
+    pub near: ForwardTerms,
+}
+
+impl SwapTerms {
+    /// A swap whose near leg is `near` (the far leg is formed server-side as the
+    /// opposite side at the same contract rate, settling at the forward tenor).
+    #[must_use]
+    pub fn new(near: ForwardTerms) -> Self {
+        Self { near }
+    }
+}
+
+/// The terms of a non-deliverable forward (NDF): the contract (forward) rate `K`,
+/// the notional, the direction, the published settlement-rate option it fixes
+/// against, and the convertible (settlement) currency. The risk-neutral PV is
+/// identical to a deliverable forward of equal terms (non-deliverability changes
+/// only the settlement mechanics), so it is closed-form and exact. The fixing is
+/// booking/convention identity only — the live fixing VALUE is an estate-gated
+/// feed, never sourced in-repo. Built via [`NdfTerms::new`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct NdfTerms {
+    /// The agreed contract (forward) rate `K`, in settlement-ccy per 1 unit of
+    /// base.
+    pub contract_rate: f64,
+    /// The notional amount (always positive; direction is carried by `side`).
+    pub notional: f64,
+    /// The direction taken (buy = long the base/asset forward).
+    pub side: ForwardSide,
+    /// The published settlement-rate option the contract fixes against (identity
+    /// only — the live fixing value is never sourced in-repo).
+    pub fixing: FixingSource,
+    /// The convertible (settlement) currency the net cash settlement is paid in
+    /// (a 3-letter code, e.g. `"USD"`).
+    pub settlement_ccy: String,
+}
+
+impl NdfTerms {
+    /// An NDF at `contract_rate` for `notional`, taking `side`, fixing against
+    /// `fixing` and cash-settling in `settlement_ccy`.
+    #[must_use]
+    pub fn new(
+        contract_rate: f64,
+        notional: f64,
+        side: ForwardSide,
+        fixing: FixingSource,
+        settlement_ccy: impl Into<String>,
+    ) -> Self {
+        Self {
+            contract_rate,
+            notional,
+            side,
+            fixing,
+            settlement_ccy: settlement_ccy.into(),
+        }
+    }
+}
+
 /// The product payoff of an instrument — the typed form of the wire `Instrument`
 /// `product` oneof. Exactly one variant is built per instrument.
 #[derive(Debug, Clone, PartialEq)]
@@ -1679,6 +1828,43 @@ pub enum Product {
         mc_steps: u32,
         /// The base scramble seed.
         mc_seed: u64,
+    },
+    /// An FX outright forward (deliverable): a linear, closed-form
+    /// discounted-cashflow product priced by the dedicated linear book (NOT the
+    /// option engine). Exact ⇒ no [`PricedLine::price_std_error`]. Valid for a
+    /// deliverable underlying; the server rejects a non-deliverable pair.
+    FxForward {
+        /// The contract (delivery) rate `K`.
+        contract_rate: f64,
+        /// The notional (always positive; direction is `side`).
+        notional: f64,
+        /// The directional side.
+        side: ForwardSide,
+    },
+    /// An FX swap: a near leg + a far leg (two outright forwards, opposite sides).
+    /// The PV is the sum of the two leg PVs. Deliverable underlying only.
+    FxSwap {
+        /// The near (shorter-dated, spot-settling) leg's contract rate.
+        contract_rate: f64,
+        /// The near leg's notional.
+        notional: f64,
+        /// The near leg's directional side (the far leg is the opposite side).
+        side: ForwardSide,
+    },
+    /// A non-deliverable forward (NDF): cash-settled in the convertible currency
+    /// at a named fixing. Risk-neutral PV identical to a deliverable forward of
+    /// equal terms. Valid ONLY for a non-deliverable underlying.
+    Ndf {
+        /// The contract (forward) rate `K`.
+        contract_rate: f64,
+        /// The notional (always positive; direction is `side`).
+        notional: f64,
+        /// The directional side.
+        side: ForwardSide,
+        /// The published settlement-rate option the contract fixes against.
+        fixing: FixingSource,
+        /// The convertible (settlement) currency.
+        settlement_ccy: String,
     },
 }
 
@@ -2016,6 +2202,58 @@ impl Product {
                 mc_replications: *mc_replications,
                 mc_steps: *mc_steps,
                 mc_seed: *mc_seed,
+            }),
+            Product::FxForward {
+                contract_rate,
+                notional,
+                side,
+            } => instrument::Product::FxForward(celnet_proto::FxForward {
+                contract_rate: *contract_rate,
+                notional: *notional,
+                side: side.to_wire() as i32,
+            }),
+            Product::FxSwap {
+                contract_rate,
+                notional,
+                side,
+            } => {
+                // The near leg anchors the swap: its contract rate / notional /
+                // side drive both legs. The far leg trades the opposite side at the
+                // same contract rate, settling at the instrument's forward tenor —
+                // the server forms it from the near leg, so the `far` message is
+                // populated as the opposite side for a complete, self-describing
+                // wire instrument (the server reads only `near`'s economics).
+                let near = celnet_proto::FxForward {
+                    contract_rate: *contract_rate,
+                    notional: *notional,
+                    side: side.to_wire() as i32,
+                };
+                let far = celnet_proto::FxForward {
+                    contract_rate: *contract_rate,
+                    notional: *notional,
+                    side: match side {
+                        ForwardSide::Buy => ForwardSide::Sell,
+                        ForwardSide::Sell => ForwardSide::Buy,
+                    }
+                    .to_wire() as i32,
+                };
+                instrument::Product::FxSwap(celnet_proto::FxSwap {
+                    near: Some(near),
+                    far: Some(far),
+                })
+            }
+            Product::Ndf {
+                contract_rate,
+                notional,
+                side,
+                fixing,
+                settlement_ccy,
+            } => instrument::Product::Ndf(celnet_proto::Ndf {
+                contract_rate: *contract_rate,
+                notional: *notional,
+                side: side.to_wire() as i32,
+                fixing: fixing_source_to_wire(*fixing) as i32,
+                settlement_ccy: settlement_ccy.clone(),
             }),
         }
     }
@@ -2706,6 +2944,96 @@ impl InstrumentSpec {
                 mc_replications: terms.mc_replications,
                 mc_steps: terms.mc_steps,
                 mc_seed: terms.mc_seed,
+            },
+        }
+    }
+
+    /// An FX outright forward (deliverable) on the given pair / tenor / expiry /
+    /// notional, carrying a [`ForwardTerms`] spec. A linear, closed-form
+    /// discounted-cashflow product priced by the dedicated linear book; the
+    /// instrument carries the forward's directional side at the top level (a
+    /// linear PV needs a sign). The server rejects a non-deliverable pair with
+    /// `INVALID_ARGUMENT` (use [`InstrumentSpec::ndf`]).
+    #[must_use]
+    pub fn fx_forward(
+        pair: CcyPair,
+        tenor: Tenor,
+        expiry_years: f64,
+        quantity: Quantity,
+        terms: ForwardTerms,
+    ) -> Self {
+        Self {
+            pair,
+            tenor,
+            expiry_years,
+            quantity,
+            side: terms.side.instrument_side(),
+            pricing_model: PricingModel::Default,
+            product: Product::FxForward {
+                contract_rate: terms.contract_rate,
+                notional: terms.notional,
+                side: terms.side,
+            },
+        }
+    }
+
+    /// An FX swap (deliverable) on the given pair / tenor / expiry / notional,
+    /// carrying a [`SwapTerms`] spec. The near leg settles at the spot date and
+    /// the far leg at the instrument's forward tenor (`expiry_years`), trading the
+    /// opposite side at the same contract rate; the PV is the sum of the two leg
+    /// PVs and the Greek strip is the net (near + far) risk. The server rejects a
+    /// non-deliverable pair with `INVALID_ARGUMENT`.
+    #[must_use]
+    pub fn fx_swap(
+        pair: CcyPair,
+        tenor: Tenor,
+        expiry_years: f64,
+        quantity: Quantity,
+        terms: SwapTerms,
+    ) -> Self {
+        Self {
+            pair,
+            tenor,
+            expiry_years,
+            quantity,
+            side: terms.near.side.instrument_side(),
+            pricing_model: PricingModel::Default,
+            product: Product::FxSwap {
+                contract_rate: terms.near.contract_rate,
+                notional: terms.near.notional,
+                side: terms.near.side,
+            },
+        }
+    }
+
+    /// A non-deliverable forward on the given pair / tenor / expiry / notional,
+    /// carrying an [`NdfTerms`] spec. Cash-settled in the convertible currency at
+    /// a named fixing; the risk-neutral PV is identical to a deliverable forward
+    /// of equal terms. Valid ONLY for a non-deliverable underlying — the server
+    /// rejects a deliverable pair with `INVALID_ARGUMENT` (use
+    /// [`InstrumentSpec::fx_forward`]). The fixing is convention identity only;
+    /// the live fixing VALUE is an estate-gated feed, never sourced in-repo.
+    #[must_use]
+    pub fn ndf(
+        pair: CcyPair,
+        tenor: Tenor,
+        expiry_years: f64,
+        quantity: Quantity,
+        terms: NdfTerms,
+    ) -> Self {
+        Self {
+            pair,
+            tenor,
+            expiry_years,
+            quantity,
+            side: terms.side.instrument_side(),
+            pricing_model: PricingModel::Default,
+            product: Product::Ndf {
+                contract_rate: terms.contract_rate,
+                notional: terms.notional,
+                side: terms.side,
+                fixing: terms.fixing,
+                settlement_ccy: terms.settlement_ccy,
             },
         }
     }

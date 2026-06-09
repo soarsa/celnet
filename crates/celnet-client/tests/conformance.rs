@@ -24,9 +24,10 @@ use std::time::Duration;
 use celnet_client::{
     AccumulatorMonitoring, AccumulatorTerms, AmericanTerms, AsianMethod, AsianTerms, BarrierKind,
     BarrierSide, BarrierTerms, BasketKind, BasketLegTerms, BasketTerms, CliquetTerms, Conventions,
-    DigitalTerms, DoubleBarrierTerms, ForwardStartTerms, InstrumentSpec, Leg, LookbackStyle,
-    MarketContext, PricedLine, Quantity, QuantoPayoff, QuantoTerms, Side, StrategyKind, StrikeSpec,
-    TarfRedemption, TarfTerms, TouchTerms,
+    DigitalTerms, DoubleBarrierTerms, FixingSource, ForwardSide, ForwardStartTerms, ForwardTerms,
+    InstrumentSpec, Leg, LookbackStyle, MarketContext, NdfTerms, PricedLine, Quantity,
+    QuantoPayoff, QuantoTerms, Side, StrategyKind, StrikeSpec, SwapTerms, TarfRedemption,
+    TarfTerms, TouchTerms,
 };
 use celnet_golden::{FAMILIES, GoldenVector, load_vectors};
 use celnet_types::{CcyPair, OptionType, Tenor};
@@ -351,7 +352,56 @@ fn instrument_of(v: &GoldenVector) -> InstrumentSpec {
             );
             InstrumentSpec::basket(pair, tenor, t, qty, side, terms)
         }
+        "fx_forward" => {
+            let terms = ForwardTerms::new(
+                v.term_f64("contract_rate"),
+                v.term_f64("notional"),
+                forward_side(v.term_str("side")),
+            );
+            InstrumentSpec::fx_forward(pair, tenor, t, qty, terms)
+        }
+        "fx_swap" => {
+            let near = ForwardTerms::new(
+                v.term_f64("contract_rate"),
+                v.term_f64("notional"),
+                forward_side(v.term_str("near_side")),
+            );
+            InstrumentSpec::fx_swap(pair, tenor, t, qty, SwapTerms::new(near))
+        }
+        "ndf" => {
+            let terms = NdfTerms::new(
+                v.term_f64("contract_rate"),
+                v.term_f64("notional"),
+                forward_side(v.term_str("side")),
+                fixing_source(v.term_str("fixing")),
+                v.term_str("settlement_ccy"),
+            );
+            InstrumentSpec::ndf(pair, tenor, t, qty, terms)
+        }
         other => panic!("conformance: unhandled family `{other}`"),
+    }
+}
+
+/// The directional side a linear product's vector terms carry.
+fn forward_side(token: &str) -> ForwardSide {
+    match token {
+        "BUY" => ForwardSide::Buy,
+        "SELL" => ForwardSide::Sell,
+        other => panic!("unknown forward side `{other}`"),
+    }
+}
+
+/// The published fixing identity an NDF vector names. The vector strings match the
+/// `celnet_types::FixingSource` variant names.
+fn fixing_source(token: &str) -> FixingSource {
+    match token {
+        "KrwKftc18" => FixingSource::KrwKftc18,
+        "TwdTaipei" => FixingSource::TwdTaipei,
+        "InrRbiRef" => FixingSource::InrRbiRef,
+        "BrlPtax" => FixingSource::BrlPtax,
+        "ClpDolarObs" => FixingSource::ClpDolarObs,
+        "CopTrm" => FixingSource::CopTrm,
+        other => panic!("unknown fixing source `{other}`"),
     }
 }
 
@@ -492,6 +542,9 @@ async fn sdk_conforms_closed_form_families() {
         "forward_start",
         "quanto",
         "american",
+        "fx_forward",
+        "fx_swap",
+        "ndf",
     ])
     .await;
 }
@@ -524,10 +577,10 @@ async fn sdk_conforms_window_barrier() {
     run_conformance(&["window_barrier"]).await;
 }
 
-/// Reachability backstop: every one of the 18 product-oneof families appears in
+/// Reachability backstop: every one of the 21 product-oneof families appears in
 /// the corpus (the conformance tests above collectively price them all).
 #[tokio::test]
-async fn corpus_covers_all_eighteen_families() {
+async fn corpus_covers_all_families() {
     let vectors = load_vectors().expect("golden corpus loads");
     let present: HashSet<&str> = vectors.iter().map(|v| v.family.as_str()).collect();
     for fam in FAMILIES {

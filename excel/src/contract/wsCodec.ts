@@ -35,6 +35,7 @@ import type {
   Executed,
   Execution,
   FixingSchedule,
+  FxForward,
   Greeks,
   Heartbeat,
   Instrument,
@@ -355,8 +356,40 @@ export function instrumentToWire(i: Instrument): WireObject {
     case "basket":
       base["basket"] = basketToWire(i.product.basket);
       break;
+    case "fxForward":
+      base["fx_forward"] = fxForwardToWire(i.product.fxForward);
+      break;
+    case "fxSwap":
+      base["fx_swap"] = {
+        near: fxForwardToWire(i.product.fxSwap.near),
+        far: fxForwardToWire(i.product.fxSwap.far),
+      };
+      break;
+    case "ndf":
+      base["ndf"] = {
+        contract_rate: i.product.ndf.contractRate,
+        notional: i.product.ndf.notional,
+        side: e.side.toWire(i.product.ndf.side),
+        fixing: e.fixingSource.toWire(i.product.ndf.fixing),
+        settlement_ccy: i.product.ndf.settlementCcy,
+      };
+      break;
   }
   return base;
+}
+
+/**
+ * Encode an `FxForward` body — the EXACT shape `fx_forward_from_json` /
+ * `fx_swap_from_json` (the near/far legs) decode: `contract_rate`, `notional`, and
+ * the directional `side` (proto `Side` enum number; BUY=0). Reused for both an
+ * outright forward and each swap leg.
+ */
+function fxForwardToWire(f: FxForward): WireObject {
+  return {
+    contract_rate: f.contractRate,
+    notional: f.notional,
+    side: e.side.toWire(f.side),
+  };
 }
 
 /**

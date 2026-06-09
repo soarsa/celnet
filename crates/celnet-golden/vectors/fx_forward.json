@@ -1,0 +1,110 @@
+[
+  {
+    "id": "fxforward-eurusd-1y-buy-fair",
+    "family": "fx_forward",
+    "underlying": "EURUSD",
+    "tenor": "1Y",
+    "market": {
+      "spot": 1.1,
+      "vol": 0.1,
+      "r_dom": 0.02,
+      "r_for": 0.01
+    },
+    "terms": {
+      "contract_rate": 1.1110551837925848,
+      "expiry_years": 1.0,
+      "notional": 1.0,
+      "side": "BUY"
+    },
+    "expected": {
+      "price": 2.220446049250313e-16,
+      "price_std_error": null,
+      "oracle": "independent two-zero-coupon-bond DCF: side·N·(spot·e^{−r_for·t} − K·e^{−r_dom·t})"
+    },
+    "tolerance": {
+      "rel": 1e-9,
+      "abs": 1e-11
+    }
+  },
+  {
+    "id": "fxforward-eurusd-1y-buy-itm",
+    "family": "fx_forward",
+    "underlying": "EURUSD",
+    "tenor": "1Y",
+    "market": {
+      "spot": 1.1,
+      "vol": 0.1,
+      "r_dom": 0.02,
+      "r_for": 0.01
+    },
+    "terms": {
+      "contract_rate": 1.08,
+      "expiry_years": 1.0,
+      "notional": 1.0,
+      "side": "BUY"
+    },
+    "expected": {
+      "price": 0.030440249952789378,
+      "price_std_error": null,
+      "oracle": "independent two-zero-coupon-bond DCF: side·N·(spot·e^{−r_for·t} − K·e^{−r_dom·t})"
+    },
+    "tolerance": {
+      "rel": 1e-9,
+      "abs": 1e-11
+    }
+  },
+  {
+    "id": "fxforward-eurusd-6m-sell-otm",
+    "family": "fx_forward",
+    "underlying": "EURUSD",
+    "tenor": "6M",
+    "market": {
+      "spot": 1.3,
+      "vol": 0.1,
+      "r_dom": 0.03,
+      "r_for": 0.01
+    },
+    "terms": {
+      "contract_rate": 1.34,
+      "expiry_years": 0.5,
+      "notional": 1.0,
+      "side": "SELL"
+    },
+    "expected": {
+      "price": 0.02653377611761698,
+      "price_std_error": null,
+      "oracle": "independent two-zero-coupon-bond DCF: side·N·(spot·e^{−r_for·t} − K·e^{−r_dom·t})"
+    },
+    "tolerance": {
+      "rel": 1e-9,
+      "abs": 1e-11
+    }
+  },
+  {
+    "id": "fxforward-usdjpy-2y-buy",
+    "family": "fx_forward",
+    "underlying": "USDJPY",
+    "tenor": "2Y",
+    "market": {
+      "spot": 150.0,
+      "vol": 0.1,
+      "r_dom": 0.04,
+      "r_for": 0.005
+    },
+    "terms": {
+      "contract_rate": 145.0,
+      "expiry_years": 2.0,
+      "notional": 1.0,
+      "side": "BUY"
+    },
+    "expected": {
+      "price": 14.655604836313046,
+      "price_std_error": null,
+      "oracle": "independent two-zero-coupon-bond DCF: side·N·(spot·e^{−r_for·t} − K·e^{−r_dom·t})"
+    },
+    "tolerance": {
+      "rel": 1e-9,
+      "abs": 1e-11
+    }
+  }
+]

@@ -47,6 +47,7 @@ use celnet_exotics::{
     lookback_mc, no_touch_price, one_touch_price, price_basket, quanto_digital_price,
     quanto_vanilla_price, single_barrier_price, tarf_price, turnbull_wakeman_price,
 };
+use celnet_linear::{LinearInputs, LinearTerms, Side as LinearSide, ndf::Ndf as LinearNdf, swap};
 
 /// A failure pricing a wire instrument: a malformed / unsupported message.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1471,17 +1472,290 @@ pub fn price_instrument(
             })
         }
         // The linear (non-option) products are priced by the dedicated linear
-        // book (`celnet-linear`), not the option engine. They are valid contract
-        // products but must reach their own dispatch path; arriving here is a
-        // dispatch error, never a silent fallback to an option formula.
-        instrument::Product::FxForward(_) => Err(PriceError::LinearProductNotAnOption {
-            product: "fx_forward",
-        }),
-        instrument::Product::FxSwap(_) => {
-            Err(PriceError::LinearProductNotAnOption { product: "fx_swap" })
-        }
-        instrument::Product::Ndf(_) => Err(PriceError::LinearProductNotAnOption { product: "ndf" }),
+        // book (`celnet-linear`), not the option engine. Each routes to the
+        // closed-form discounted-cashflow leaf behind the product×underlying
+        // validity matrix (deliverable forward/swap vs non-deliverable NDF).
+        instrument::Product::FxForward(f) => price_fx_forward(instrument, market, expiry, f),
+        instrument::Product::FxSwap(s) => price_fx_swap(instrument, market, expiry, s),
+        instrument::Product::Ndf(n) => price_ndf(instrument, market, expiry, n),
     }
+}
+
+/// The standard spot-settlement time for the near leg of an FX swap, in years.
+///
+/// An FX swap's near leg settles on the spot date (the valuation horizon) and the
+/// far leg settles at the instrument's forward tenor (`expiry_years`). The spot
+/// date sits at the valuation date for present-value purposes, so the near leg's
+/// settlement time is `0.0` (the degenerate spot-settling case `LinearInputs`
+/// explicitly permits). The forward-points spread between the two legs is the
+/// economically meaningful swap quantity and is carried entirely by the
+/// `near = 0` / `far = expiry_years` time separation.
+const SWAP_NEAR_SETTLE_YEARS: f64 = 0.0;
+
+/// Decode the wire [`celnet_proto::Side`] into the linear book's buy/sell
+/// discriminator. `TWO_WAY` is a quoting directive, not a booked direction, so a
+/// linear *pricing* request carrying it is rejected (the linear PV needs a
+/// definite side).
+fn decode_linear_side(tag: i32) -> Result<LinearSide, PriceError> {
+    match celnet_proto::Side::try_from(tag) {
+        Ok(celnet_proto::Side::Buy) => Ok(LinearSide::Buy),
+        Ok(celnet_proto::Side::Sell) => Ok(LinearSide::Sell),
+        Ok(celnet_proto::Side::TwoWay) => Err(PriceError::Domain(
+            "a linear product needs a definite BUY/SELL side, not TWO_WAY",
+        )),
+        Err(_) => Err(PriceError::UnknownEnum { kind: "Side", tag }),
+    }
+}
+
+/// Decode the instrument's [`celnet_proto::Underlying`] into the domain identity,
+/// the FX carry produced from the market context, and the spot — the shared input
+/// the linear pricers consume. A missing/malformed underlying or a non-positive
+/// notional is a typed error (`INVALID_ARGUMENT` at the boundary), never a silent
+/// coercion.
+fn linear_market(
+    instrument: &Instrument,
+    market: &WireMarketContext,
+) -> Result<(celnet_types::Underlying, celnet_types::Carry), PriceError> {
+    let wire_underlying = instrument
+        .underlying
+        .as_ref()
+        .ok_or(PriceError::MissingField("instrument.underlying"))?;
+    let underlying = celnet_types::Underlying::try_from(wire_underlying.clone())
+        .map_err(|_| PriceError::Domain("instrument.underlying is malformed"))?;
+    // The carry guard at the top of `price_instrument` has already rejected a
+    // non-FX carry, so the FX two-rate carry reproduces the forward/discount the
+    // option leaf would use bit-for-bit (the byte-identity contract).
+    let carry = celnet_types::Carry::FxRates {
+        r_dom: market.r_dom(),
+        r_for: market.r_for(),
+    };
+    Ok((underlying, carry))
+}
+
+/// Whether the instrument's underlying is a non-deliverable (NDF/NDO) pair, per
+/// the convention registry. Settlement style is a pair-level property (invariant
+/// under tenor and orientation), so any tenor resolves the same class; a metal
+/// underlying is always deliverable (loco-London).
+fn underlying_is_non_deliverable(underlying: &celnet_types::Underlying) -> bool {
+    let pair = underlying.as_ccy_pair();
+    celnet_conventions::resolve(pair, celnet_types::Tenor::Years(1))
+        .record
+        .is_non_deliverable()
+}
+
+/// Build the [`Priced`] result for a linear product from its exact closed-form
+/// Greeks. A linear (discounted-cashflow) product has, by construction, zero
+/// gamma / vega / vanna / volga / charm / speed / zomma / color and no
+/// `price_std_error` (it is exact, not Monte-Carlo). The forward delta uses the
+/// same `e^{r_for·t}·delta_spot` relation the vanilla closed form satisfies.
+fn linear_priced(
+    g: celnet_linear::ForwardGreeks,
+    resolved_strike: f64,
+    market: &WireMarketContext,
+    t: f64,
+) -> Priced {
+    let delta_forward = g.delta * celnet_core::math::exp(market.r_for() * t);
+    Priced {
+        greeks: Greeks {
+            price: g.pv,
+            delta_spot: g.delta,
+            delta_forward,
+            gamma: 0.0,
+            vega: 0.0,
+            theta: g.theta,
+            rho_dom: g.rho_dom,
+            rho_for: g.rho_for,
+            vanna: 0.0,
+            volga: 0.0,
+            charm: 0.0,
+            speed: 0.0,
+            zomma: 0.0,
+            color: 0.0,
+        },
+        resolved_strike,
+        vol: 0.0,
+        std_error: None,
+    }
+}
+
+/// Price an FX outright forward via the `celnet-linear` forward leaf, behind the
+/// deliverable validity matrix (a non-deliverable underlying handed to a
+/// deliverable forward is rejected as `INVALID_ARGUMENT`).
+fn price_fx_forward(
+    instrument: &Instrument,
+    market: &WireMarketContext,
+    expiry: f64,
+    f: &celnet_proto::FxForward,
+) -> Result<Priced, PriceError> {
+    let (underlying, carry) = linear_market(instrument, market)?;
+    if underlying_is_non_deliverable(&underlying) {
+        return Err(PriceError::Domain(
+            "fx_forward requires a deliverable underlying; this pair is non-deliverable (use ndf)",
+        ));
+    }
+    let side = decode_linear_side(f.side)?;
+    let inputs = LinearInputs::outright(
+        market.spot,
+        underlying,
+        carry,
+        LinearTerms::new(f.contract_rate, f.notional, side),
+        expiry,
+    )
+    .map_err(|_| PriceError::Domain("fx_forward notional must be positive"))?;
+    Ok(linear_priced(
+        celnet_linear::greeks(&inputs),
+        f.contract_rate,
+        market,
+        expiry,
+    ))
+}
+
+/// Price an FX swap (near leg at the spot date + far leg at the forward tenor,
+/// opposite sides) via the `celnet-linear` swap leaf. Deliverable underlying
+/// only; the swap PV is the sum of the two leg PVs and the headline Greek strip
+/// is the **net** (near + far) risk — the honest risk view of the whole swap,
+/// each leg being a linear product (higher-order Greeks stay zero).
+fn price_fx_swap(
+    instrument: &Instrument,
+    market: &WireMarketContext,
+    expiry: f64,
+    s: &celnet_proto::FxSwap,
+) -> Result<Priced, PriceError> {
+    let (underlying, carry) = linear_market(instrument, market)?;
+    if underlying_is_non_deliverable(&underlying) {
+        return Err(PriceError::Domain(
+            "fx_swap requires a deliverable underlying; this pair is non-deliverable",
+        ));
+    }
+    let near = s
+        .near
+        .as_ref()
+        .ok_or(PriceError::MissingField("fx_swap.near"))?;
+    let side = decode_linear_side(near.side)?;
+    // The near leg anchors the swap: its contract rate / notional / side drive
+    // both legs (the far leg trades the opposite side by convention, formed
+    // inside the swap leaf). The near leg settles at the spot date, the far leg
+    // at the instrument's forward tenor.
+    let near_inputs = LinearInputs::outright(
+        market.spot,
+        underlying,
+        carry,
+        LinearTerms::new(near.contract_rate, near.notional, side),
+        SWAP_NEAR_SETTLE_YEARS,
+    )
+    .map_err(|_| PriceError::Domain("fx_swap near notional must be positive"))?
+    .with_far(expiry)
+    .map_err(|_| PriceError::Domain("fx_swap far settlement time must be non-negative"))?;
+    let pv = swap::pv(&near_inputs).map_err(|_| PriceError::MissingField("fx_swap.far"))?;
+    // The net swap risk is the near leg's Greeks (settling at the spot date) plus
+    // the far leg's Greeks (the opposite side, settling at the forward tenor).
+    // Reconstruct each leg as a standalone outright forward and sum the strips —
+    // the exact analytic Greek of the two-leg sum.
+    let near_only = LinearInputs {
+        far_settle_t: None,
+        ..near_inputs
+    };
+    let far_only = LinearInputs {
+        side: side.opposite(),
+        far_settle_t: None,
+        near_settle_t: expiry,
+        ..near_inputs
+    };
+    let near_priced = linear_priced(
+        celnet_linear::greeks(&near_only),
+        near.contract_rate,
+        market,
+        SWAP_NEAR_SETTLE_YEARS,
+    );
+    let far_priced = linear_priced(
+        celnet_linear::greeks(&far_only),
+        near.contract_rate,
+        market,
+        expiry,
+    );
+    let mut greeks = add_scaled(&near_priced.greeks, &far_priced.greeks, 1.0);
+    // The summed price must equal the swap leaf PV exactly (same arithmetic); pin
+    // it to the leaf value so the headline PV is the canonical swap PV.
+    greeks.price = pv;
+    Ok(Priced {
+        greeks,
+        resolved_strike: near.contract_rate,
+        vol: 0.0,
+        std_error: None,
+    })
+}
+
+/// Price a non-deliverable forward via the `celnet-linear` NDF leaf, behind the
+/// non-deliverable validity matrix (an NDF on a *deliverable* pair, or on a metal
+/// underlying, is rejected as `INVALID_ARGUMENT`).
+fn price_ndf(
+    instrument: &Instrument,
+    market: &WireMarketContext,
+    expiry: f64,
+    n: &celnet_proto::Ndf,
+) -> Result<Priced, PriceError> {
+    let (underlying, carry) = linear_market(instrument, market)?;
+    // An NDF references a restricted-currency FX pair, never a metal (metals are
+    // deliverable loco-London).
+    if underlying.as_fx().is_none() {
+        return Err(PriceError::Domain(
+            "ndf requires a non-deliverable FX underlying, not a metal pair",
+        ));
+    }
+    if !underlying_is_non_deliverable(&underlying) {
+        return Err(PriceError::Domain(
+            "ndf requires a non-deliverable underlying; this pair is deliverable (use fx_forward)",
+        ));
+    }
+    // The fixing identity is carried for booking/reconciliation only — it does
+    // not enter the deterministic discounted-cashflow PV. A malformed tag is a
+    // clear error rather than a silent default.
+    let fixing = decode_fixing_source(n.fixing)?;
+    let side = decode_linear_side(n.side)?;
+    let inputs = LinearInputs::outright(
+        market.spot,
+        underlying,
+        carry,
+        LinearTerms::new(n.contract_rate, n.notional, side),
+        expiry,
+    )
+    .map_err(|_| PriceError::Domain("ndf notional must be positive"))?;
+    let ndf = LinearNdf::new(inputs, fixing);
+    // The NDF PV equals the deliverable-forward PV of equal terms; report the
+    // full linear Greek strip from the same inputs.
+    let mut priced = linear_priced(
+        celnet_linear::greeks(&inputs),
+        n.contract_rate,
+        market,
+        expiry,
+    );
+    priced.greeks.price = ndf.pv();
+    Ok(priced)
+}
+
+/// Decode the wire [`celnet_proto::FixingSource`] into the domain fixing identity.
+///
+/// The two enums mirror each other one-for-one (the proto comment states it
+/// mirrors `celnet_types::FixingSource`); the match is exhaustive so a future
+/// fixing added to one enum forces a compile error here rather than a silent
+/// mis-map. The fixing is booking/reconciliation metadata only — it never enters
+/// the deterministic discounted-cashflow PV (the honest boundary: live fixing
+/// VALUES are an estate-gated feed, never sourced in-repo).
+fn decode_fixing_source(tag: i32) -> Result<celnet_types::FixingSource, PriceError> {
+    use celnet_proto::FixingSource as W;
+    use celnet_types::FixingSource as D;
+    let w = W::try_from(tag).map_err(|_| PriceError::UnknownEnum {
+        kind: "FixingSource",
+        tag,
+    })?;
+    Ok(match w {
+        W::KrwKftc18 => D::KrwKftc18,
+        W::TwdTaipei => D::TwdTaipei,
+        W::InrRbiRef => D::InrRbiRef,
+        W::BrlPtax => D::BrlPtax,
+        W::ClpDolarObs => D::ClpDolarObs,
+        W::CopTrm => D::CopTrm,
+    })
 }
 
 /// Dispatch an instrument selected for the LSV booking model to the
@@ -3057,6 +3331,366 @@ mod tests {
             celnet_proto::OptionType::Call,
             1.18,
             celnet_proto::BasketKind::Basket,
+            1.0,
+        );
+        assert!(matches!(
+            price_instrument(&instr, &m, &conv_set()),
+            Err(PriceError::Domain(_))
+        ));
+    }
+
+    // =====================================================================
+    // W2 — linear book (FX forward / FX swap / NDF) server routing.
+    //
+    // Each test proves: server `price_instrument` == the `celnet-linear` leaf
+    // == an INDEPENDENT oracle (the two-discount-bond route, hand-derived
+    // literals, structural identities), and the product×underlying validity
+    // matrix (deliverable forward/swap vs non-deliverable NDF) is enforced as
+    // INVALID_ARGUMENT (a `PriceError`), never a silent fallback.
+    // =====================================================================
+
+    /// A deliverable FX underlying (EURUSD).
+    fn eurusd_underlying() -> celnet_proto::Underlying {
+        celnet_proto::Underlying::fx(celnet_proto::CcyPair {
+            base: "EUR".into(),
+            quote: "USD".into(),
+        })
+    }
+
+    /// A non-deliverable FX underlying (USDBRL — the registry marks BRL as a
+    /// PTAX-fixed NDF pair).
+    fn usdbrl_underlying() -> celnet_proto::Underlying {
+        celnet_proto::Underlying::fx(celnet_proto::CcyPair {
+            base: "USD".into(),
+            quote: "BRL".into(),
+        })
+    }
+
+    /// A market context whose spot/rates suit a linear-book worked example
+    /// (spot 1.20, r_dom 0.05, r_for 0.02). Vol is irrelevant to a linear PV.
+    fn linear_market_ctx() -> WM {
+        WM::fx(1.20, 0.10, 0.05, 0.02)
+    }
+
+    fn fx_forward_instrument(
+        underlying: celnet_proto::Underlying,
+        contract_rate: f64,
+        notional: f64,
+        side: celnet_proto::Side,
+        expiry: f64,
+    ) -> Instrument {
+        Instrument {
+            underlying: Some(underlying),
+            tenor: None,
+            expiry_years: expiry,
+            quantity: None,
+            side: side as i32,
+            solve: None,
+            pricing_model: celnet_proto::PricingModel::Default as i32,
+            product: Some(Product::FxForward(celnet_proto::FxForward {
+                contract_rate,
+                notional,
+                side: side as i32,
+            })),
+        }
+    }
+
+    /// Server forward PV == the `celnet-linear` leaf == the INDEPENDENT
+    /// two-discount-bond oracle, and the linear Greek strip is surfaced with
+    /// the higher-order option Greeks exactly zero.
+    #[test]
+    fn fx_forward_matches_linear_leaf_and_independent_oracle() {
+        let m = linear_market_ctx();
+        let (k, n, t) = (1.25, 1_000_000.0, 1.0);
+        let instr = fx_forward_instrument(eurusd_underlying(), k, n, celnet_proto::Side::Buy, t);
+        let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+
+        // The `celnet-linear` leaf, constructed directly from the same inputs.
+        let li = LinearInputs::outright(
+            1.20,
+            celnet_types::Underlying::Fx(celnet_types::CcyPair::parse("EURUSD").unwrap()),
+            celnet_types::Carry::FxRates {
+                r_dom: 0.05,
+                r_for: 0.02,
+            },
+            LinearTerms::new(k, n, LinearSide::Buy),
+            t,
+        )
+        .unwrap();
+        let leaf = celnet_linear::greeks(&li);
+        assert_eq!(priced.greeks.price.to_bits(), leaf.pv.to_bits());
+        assert_eq!(priced.greeks.delta_spot.to_bits(), leaf.delta.to_bits());
+        assert_eq!(priced.greeks.rho_dom.to_bits(), leaf.rho_dom.to_bits());
+        assert_eq!(priced.greeks.rho_for.to_bits(), leaf.rho_for.to_bits());
+        assert_eq!(priced.greeks.theta.to_bits(), leaf.theta.to_bits());
+
+        // INDEPENDENT oracle: value each leg as a zero-coupon discount bond
+        // straight from the raw rates (a route that never forms F or df) —
+        // PV = side·N·(spot·e^{−r_for·t} − K·e^{−r_dom·t}).
+        let oracle = 1.0
+            * n
+            * (1.20 * celnet_core::math::exp(-0.02 * t) - k * celnet_core::math::exp(-0.05 * t));
+        assert!(
+            (priced.greeks.price - oracle).abs() <= 1e-7 * oracle.abs().max(1.0),
+            "server {} vs oracle {oracle}",
+            priced.greeks.price
+        );
+
+        // A linear product has no optionality: gamma/vega/vanna/volga/charm/
+        // speed/zomma/color are exactly zero.
+        for g in [
+            priced.greeks.gamma,
+            priced.greeks.vega,
+            priced.greeks.vanna,
+            priced.greeks.volga,
+            priced.greeks.charm,
+            priced.greeks.speed,
+            priced.greeks.zomma,
+            priced.greeks.color,
+        ] {
+            assert_eq!(g.to_bits(), 0.0_f64.to_bits());
+        }
+        // Exact (not Monte-Carlo) ⇒ no standard error.
+        assert_eq!(priced.std_error, None);
+        assert_eq!(priced.resolved_strike.to_bits(), k.to_bits());
+    }
+
+    /// A forward struck at the fair forward has PV exactly 0 (a structural gate
+    /// that exercises the full server dispatch).
+    #[test]
+    fn fx_forward_at_fair_forward_is_zero_pv() {
+        let m = linear_market_ctx();
+        // Fair forward F = 1.20·e^{(0.05−0.02)·1} = 1.20·e^{0.03}.
+        let fair = 1.20 * celnet_core::math::exp(0.03);
+        let instr = fx_forward_instrument(
+            eurusd_underlying(),
+            fair,
+            1_000_000.0,
+            celnet_proto::Side::Buy,
+            1.0,
+        );
+        let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+        assert!(
+            priced.greeks.price.abs() <= 1e-6,
+            "pv {}",
+            priced.greeks.price
+        );
+    }
+
+    /// An FX forward on a non-deliverable pair is rejected (INVALID_ARGUMENT),
+    /// never silently delivered.
+    #[test]
+    fn fx_forward_on_non_deliverable_is_rejected() {
+        let m = linear_market_ctx();
+        let instr = fx_forward_instrument(
+            usdbrl_underlying(),
+            5.1,
+            1_000_000.0,
+            celnet_proto::Side::Buy,
+            0.5,
+        );
+        assert!(matches!(
+            price_instrument(&instr, &m, &conv_set()),
+            Err(PriceError::Domain(_))
+        ));
+    }
+
+    /// A linear product needs a definite side; TWO_WAY is a quoting directive
+    /// and is rejected.
+    #[test]
+    fn fx_forward_two_way_side_is_rejected() {
+        let m = linear_market_ctx();
+        let instr = fx_forward_instrument(
+            eurusd_underlying(),
+            1.25,
+            1_000_000.0,
+            celnet_proto::Side::TwoWay,
+            1.0,
+        );
+        assert!(matches!(
+            price_instrument(&instr, &m, &conv_set()),
+            Err(PriceError::Domain(_))
+        ));
+    }
+
+    /// A forward with no underlying is rejected (no silent coercion).
+    #[test]
+    fn fx_forward_missing_underlying_is_rejected() {
+        let m = linear_market_ctx();
+        let mut instr =
+            fx_forward_instrument(eurusd_underlying(), 1.25, 1e6, celnet_proto::Side::Buy, 1.0);
+        instr.underlying = None;
+        assert!(matches!(
+            price_instrument(&instr, &m, &conv_set()),
+            Err(PriceError::MissingField("instrument.underlying"))
+        ));
+    }
+
+    /// Server swap PV == the `celnet-linear` swap leaf (near at spot, far at the
+    /// instrument tenor, opposite sides) == the INDEPENDENT two-outright sum.
+    #[test]
+    fn fx_swap_matches_linear_leaf_and_two_leg_sum() {
+        let m = linear_market_ctx();
+        let (k, n, far_t) = (1.25, 2_000_000.0, 1.0);
+        let near_leg = celnet_proto::FxForward {
+            contract_rate: k,
+            notional: n,
+            side: celnet_proto::Side::Buy as i32,
+        };
+        let far_leg = celnet_proto::FxForward {
+            contract_rate: k,
+            notional: n,
+            side: celnet_proto::Side::Sell as i32,
+        };
+        let instr = Instrument {
+            underlying: Some(eurusd_underlying()),
+            tenor: None,
+            expiry_years: far_t,
+            quantity: None,
+            side: celnet_proto::Side::Buy as i32,
+            solve: None,
+            pricing_model: celnet_proto::PricingModel::Default as i32,
+            product: Some(Product::FxSwap(celnet_proto::FxSwap {
+                near: Some(near_leg),
+                far: Some(far_leg),
+            })),
+        };
+        let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+
+        // The leaf: near at spot (t=0), far at the tenor, opposite sides.
+        let inputs = LinearInputs::outright(
+            1.20,
+            celnet_types::Underlying::Fx(celnet_types::CcyPair::parse("EURUSD").unwrap()),
+            celnet_types::Carry::FxRates {
+                r_dom: 0.05,
+                r_for: 0.02,
+            },
+            LinearTerms::new(k, n, LinearSide::Buy),
+            SWAP_NEAR_SETTLE_YEARS,
+        )
+        .unwrap()
+        .with_far(far_t)
+        .unwrap();
+        let leaf_pv = swap::pv(&inputs).unwrap();
+        assert_eq!(priced.greeks.price.to_bits(), leaf_pv.to_bits());
+
+        // INDEPENDENT two-outright sum from the discount-bond oracle.
+        let bond = |side: f64, t: f64| {
+            side * n
+                * (1.20 * celnet_core::math::exp(-0.02 * t) - k * celnet_core::math::exp(-0.05 * t))
+        };
+        let oracle = bond(1.0, SWAP_NEAR_SETTLE_YEARS) + bond(-1.0, far_t);
+        assert!(
+            (priced.greeks.price - oracle).abs() <= 1e-7 * oracle.abs().max(1.0),
+            "swap server {} vs oracle {oracle}",
+            priced.greeks.price
+        );
+        assert_eq!(priced.std_error, None);
+    }
+
+    fn ndf_instrument(
+        underlying: celnet_proto::Underlying,
+        contract_rate: f64,
+        notional: f64,
+        side: celnet_proto::Side,
+        fixing: celnet_proto::FixingSource,
+        expiry: f64,
+    ) -> Instrument {
+        Instrument {
+            underlying: Some(underlying),
+            tenor: None,
+            expiry_years: expiry,
+            quantity: None,
+            side: side as i32,
+            solve: None,
+            pricing_model: celnet_proto::PricingModel::Default as i32,
+            product: Some(Product::Ndf(celnet_proto::Ndf {
+                contract_rate,
+                notional,
+                side: side as i32,
+                fixing: fixing as i32,
+                settlement_ccy: "USD".into(),
+            })),
+        }
+    }
+
+    /// Server NDF PV == the `celnet-linear` NDF leaf == the HAND-DERIVED literal
+    /// (USD/BRL worked example from `ndf.rs`), and equals the deliverable-forward
+    /// PV of equal terms (structural identity).
+    #[test]
+    fn ndf_matches_linear_leaf_and_hand_derived_literal() {
+        // USD/BRL: spot 5.0, K 5.1, r_dom(BRL) 0.10, r_for(USD) 0.05, t 0.5,
+        // notional 1_000_000, BUY. df = e^{−0.05}, F = 5·e^{0.025}.
+        let m = WM::fx(5.0, 0.10, 0.10, 0.05);
+        let instr = ndf_instrument(
+            usdbrl_underlying(),
+            5.1,
+            1_000_000.0,
+            celnet_proto::Side::Buy,
+            celnet_proto::FixingSource::BrlPtax,
+            0.5,
+        );
+        let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+
+        // The leaf NDF, same inputs.
+        let li = LinearInputs::outright(
+            5.0,
+            celnet_types::Underlying::Fx(celnet_types::CcyPair::parse("USDBRL").unwrap()),
+            celnet_types::Carry::FxRates {
+                r_dom: 0.10,
+                r_for: 0.05,
+            },
+            LinearTerms::new(5.1, 1_000_000.0, LinearSide::Buy),
+            0.5,
+        )
+        .unwrap();
+        let leaf = LinearNdf::new(li, celnet_types::FixingSource::BrlPtax);
+        assert_eq!(priced.greeks.price.to_bits(), leaf.pv().to_bits());
+
+        // HAND-DERIVED literal (external recomputation, see ndf.rs).
+        let expected = 25_279.495_188_022_105_f64;
+        assert!(
+            (priced.greeks.price - expected).abs() <= 1e-6,
+            "ndf server {} vs pinned {expected}",
+            priced.greeks.price
+        );
+        assert_eq!(priced.std_error, None);
+    }
+
+    /// An NDF on a DELIVERABLE pair is rejected (INVALID_ARGUMENT) — use a
+    /// deliverable forward instead; never a silent fallback.
+    #[test]
+    fn ndf_on_deliverable_is_rejected() {
+        let m = linear_market_ctx();
+        let instr = ndf_instrument(
+            eurusd_underlying(),
+            1.25,
+            1_000_000.0,
+            celnet_proto::Side::Buy,
+            celnet_proto::FixingSource::BrlPtax,
+            1.0,
+        );
+        assert!(matches!(
+            price_instrument(&instr, &m, &conv_set()),
+            Err(PriceError::Domain(_))
+        ));
+    }
+
+    /// An NDF on a metal underlying is rejected (metals are deliverable
+    /// loco-London, never a non-deliverable FX pair).
+    #[test]
+    fn ndf_on_metal_is_rejected() {
+        let m = WM::fx(2000.0, 0.10, 0.05, 0.0);
+        let metal = celnet_proto::Underlying::metal(celnet_proto::MetalPair::new(
+            celnet_proto::Metal::Gold,
+            "USD",
+        ));
+        let instr = ndf_instrument(
+            metal,
+            2000.0,
+            100.0,
+            celnet_proto::Side::Buy,
+            celnet_proto::FixingSource::BrlPtax,
             1.0,
         );
         assert!(matches!(

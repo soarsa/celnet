@@ -17,7 +17,7 @@ use crate::risk::{
     self, AggregateReq, CliDimension, DrillReq, LimitsReq, PositionsReq, RiskCommon, StreamReq,
 };
 use crate::tenor::parse_tenor;
-use crate::{convention, exotic, price, surface};
+use crate::{convention, exotic, linear, price, surface};
 
 use celnet_client::{OrgDimension, Scope, StrikeSpec};
 
@@ -47,6 +47,15 @@ pub(crate) enum Command {
     /// worst-of) over N currency-pair legs (Cholesky-correlated multi-asset GBM
     /// Monte-Carlo; reports a standard error; multi-asset Greeks deferred).
     Basket(BasketArgs),
+    /// Price an FX outright forward (deliverable): a closed-form discounted
+    /// cashflow at a contract rate, plus its exact linear Greeks.
+    Forward(ForwardArgs),
+    /// Price an FX swap (near leg spot-settling + far leg at the tenor, opposite
+    /// sides): the net PV of the two outright forwards, deliverable underlying.
+    Swap(SwapCmdArgs),
+    /// Price a non-deliverable forward (NDF): cash-settled in the convertible
+    /// currency at a named fixing; non-deliverable underlying only.
+    Ndf(NdfArgs),
     /// Resolve and print the convention record for a pair and tenor.
     Convention(ConventionArgs),
     /// Firm-scale hierarchical risk against a running edge (the same `RiskService`
@@ -647,6 +656,101 @@ pub(crate) struct BasketArgs {
     pub(crate) mc_seed: u64,
 }
 
+/// Shared market flags for the linear book (`forward` / `swap` / `ndf`): spot, the
+/// settlement / far-leg tenor in years, and the two carry rates. A linear product
+/// has no volatility input (it is a discounted cashflow, not an option).
+#[derive(Debug, Args)]
+pub(crate) struct LinearMarketArgs {
+    /// Spot FX rate (quote per 1 unit of base).
+    #[arg(long)]
+    pub(crate) spot: f64,
+    /// Time to settlement in years (the far-leg tenor for a swap; authoritative).
+    #[arg(long)]
+    pub(crate) t: f64,
+    /// Continuously-compounded domestic (quote) rate.
+    #[arg(long)]
+    pub(crate) r_dom: f64,
+    /// Continuously-compounded foreign (base) rate.
+    #[arg(long)]
+    pub(crate) r_for: f64,
+}
+
+impl LinearMarketArgs {
+    fn to_market(&self) -> linear::LinearMarket {
+        linear::LinearMarket {
+            spot: self.spot,
+            t: self.t,
+            r_dom: self.r_dom,
+            r_for: self.r_for,
+        }
+    }
+}
+
+/// Arguments to `forward`.
+#[derive(Debug, Args)]
+pub(crate) struct ForwardArgs {
+    /// Currency pair, e.g. EURUSD (must be deliverable).
+    #[arg(long)]
+    pub(crate) pair: String,
+    /// The contract (delivery) rate `K`.
+    #[arg(long)]
+    pub(crate) rate: f64,
+    /// The notional (always positive; direction is `--side`).
+    #[arg(long, default_value_t = 1.0)]
+    pub(crate) notional: f64,
+    /// Buy (long the base forward) or sell.
+    #[arg(long, value_enum, default_value = "buy")]
+    pub(crate) side: linear::CliSide,
+    /// Shared linear market inputs.
+    #[command(flatten)]
+    pub(crate) market: LinearMarketArgs,
+}
+
+/// Arguments to `swap`.
+#[derive(Debug, Args)]
+pub(crate) struct SwapCmdArgs {
+    /// Currency pair, e.g. EURUSD (must be deliverable).
+    #[arg(long)]
+    pub(crate) pair: String,
+    /// The near leg's contract rate `K` (drives both legs).
+    #[arg(long)]
+    pub(crate) rate: f64,
+    /// The near leg's notional.
+    #[arg(long, default_value_t = 1.0)]
+    pub(crate) notional: f64,
+    /// The near leg's side (the far leg trades the opposite side).
+    #[arg(long, value_enum, default_value = "buy")]
+    pub(crate) near_side: linear::CliSide,
+    /// Shared linear market inputs (`--t` is the far-leg tenor; the near leg
+    /// settles at the spot date).
+    #[command(flatten)]
+    pub(crate) market: LinearMarketArgs,
+}
+
+/// Arguments to `ndf`.
+#[derive(Debug, Args)]
+pub(crate) struct NdfArgs {
+    /// Currency pair, e.g. USDBRL (must be non-deliverable).
+    #[arg(long)]
+    pub(crate) pair: String,
+    /// The contract (forward) rate `K`.
+    #[arg(long)]
+    pub(crate) rate: f64,
+    /// The notional (always positive; direction is `--side`).
+    #[arg(long, default_value_t = 1.0)]
+    pub(crate) notional: f64,
+    /// Buy (long the base forward) or sell.
+    #[arg(long, value_enum, default_value = "buy")]
+    pub(crate) side: linear::CliSide,
+    /// The published settlement-rate fixing the contract references (identity
+    /// only — the live fixing value is never sourced in-repo).
+    #[arg(long, value_enum)]
+    pub(crate) fixing: linear::CliFixing,
+    /// Shared linear market inputs.
+    #[command(flatten)]
+    pub(crate) market: LinearMarketArgs,
+}
+
 /// Arguments to `convention`.
 #[derive(Debug, Args)]
 pub(crate) struct ConventionArgs {
@@ -674,6 +778,9 @@ pub(crate) enum DispatchError {
     Surface(celnet_surface::CalibrationError),
     /// A `risk` / `stream` networked-command failure (connect, status, timeout).
     Risk(risk::RiskError),
+    /// A `forward` / `swap` / `ndf` linear-product failure (bad input or a
+    /// product × underlying validity-matrix violation).
+    Linear(linear::LinearError),
     /// An argument was out of its valid domain.
     Invalid(String),
 }
@@ -686,6 +793,7 @@ impl core::fmt::Display for DispatchError {
             DispatchError::Price(e) => write!(f, "{e}"),
             DispatchError::Surface(e) => write!(f, "surface calibration failed: {e:?}"),
             DispatchError::Risk(e) => write!(f, "{e}"),
+            DispatchError::Linear(e) => write!(f, "{e}"),
             DispatchError::Invalid(s) => write!(f, "invalid argument: {s}"),
         }
     }
@@ -1128,6 +1236,34 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
             let r = basket::run(&req)
                 .map_err(|e| DispatchError::Invalid(format!("basket pricing failed: {e}")))?;
             write!(out, "{}", basket::format_report(&req, &r)).ok();
+            Ok(())
+        }
+        Command::Forward(a) => {
+            let pair = parse_pair(&a.pair)?;
+            let r = linear::run_forward(pair, a.market.to_market(), a.rate, a.notional, a.side)
+                .map_err(DispatchError::Linear)?;
+            write!(out, "{}", linear::format_report("fx-forward", &r)).ok();
+            Ok(())
+        }
+        Command::Swap(a) => {
+            let pair = parse_pair(&a.pair)?;
+            let r = linear::run_swap(pair, a.market.to_market(), a.rate, a.notional, a.near_side)
+                .map_err(DispatchError::Linear)?;
+            write!(out, "{}", linear::format_report("fx-swap", &r)).ok();
+            Ok(())
+        }
+        Command::Ndf(a) => {
+            let pair = parse_pair(&a.pair)?;
+            let r = linear::run_ndf(
+                pair,
+                a.market.to_market(),
+                a.rate,
+                a.notional,
+                a.side,
+                a.fixing,
+            )
+            .map_err(DispatchError::Linear)?;
+            write!(out, "{}", linear::format_report("ndf", &r)).ok();
             Ok(())
         }
         Command::Convention(a) => {

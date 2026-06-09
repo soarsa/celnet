@@ -9,12 +9,13 @@
 //! vector's tolerance for closed-form families, or within `k · stderr` for the
 //! Monte-Carlo families.
 //!
-//! Scope: the CLI's local-compute surface — `price` (vanilla) and `exotic`
+//! Scope: the CLI's local-compute surface — `price` (vanilla), `exotic`
 //! (digital / one-touch / single-barrier / var-swap / vol-swap / asian /
-//! forward-start / quanto / cliquet / tarf / accumulator / lookback / american) and
-//! `basket`. Networked subcommands (`risk`, `stream`) are out of scope for the
-//! vector corpus (they are gated by the four-client parity test). Every family
-//! covered here is asserted reachable through the CLI.
+//! forward-start / quanto / cliquet / tarf / accumulator / lookback / american),
+//! `basket`, and the linear book `forward` / `swap` / `ndf`. Networked subcommands
+//! (`risk`, `stream`) are out of scope for the vector corpus (they are gated by the
+//! four-client parity test). Every family covered here is asserted reachable
+//! through the CLI.
 
 use std::process::Command;
 
@@ -27,8 +28,8 @@ const K_STDERR: f64 = 4.0;
 /// The families the CLI prices locally (and therefore this test covers). The other
 /// oneof arms (strategy, double-barrier, touch corridors, window-barrier) either
 /// have no single-flag CLI surface or are LSV-only; they are gated by the SDK
-/// conformance harness, which exercises every one of the 18 families.
-const CLI_FAMILIES: [&str; 9] = [
+/// conformance harness, which exercises every one of the 21 families.
+const CLI_FAMILIES: [&str; 12] = [
     "vanilla",
     "digital",
     "touch", // only the single ONE_TOUCH (the CLI's `one-touch`)
@@ -38,6 +39,9 @@ const CLI_FAMILIES: [&str; 9] = [
     "forward_start",
     "quanto",
     "american",
+    "fx_forward",
+    "fx_swap",
+    "ndf",
 ];
 
 fn bin() -> &'static str {
@@ -103,6 +107,46 @@ fn market_flags(v: &GoldenVector, strike: Option<f64>) -> Vec<String> {
         a.push(s(k));
     }
     a
+}
+
+/// The `--spot --t --r-dom --r-for` market flags for the linear book (no `--vol`:
+/// a linear DCF has no volatility input). `--t` is the settlement / far-leg tenor.
+fn linear_market_flags(v: &GoldenVector) -> Vec<String> {
+    let m = &v.market;
+    vec![
+        "--spot".into(),
+        s(m.spot),
+        "--t".into(),
+        s(v.term_f64("expiry_years")),
+        "--r-dom".into(),
+        s(m.r_dom),
+        "--r-for".into(),
+        s(m.r_for),
+    ]
+}
+
+/// The CLI `--side`/`--near-side` token (`buy`/`sell`) for a linear vector field.
+fn side_token(v: &GoldenVector, key: &str) -> &'static str {
+    match v.term_str(key) {
+        "BUY" => "buy",
+        "SELL" => "sell",
+        other => panic!("unknown side `{other}`"),
+    }
+}
+
+/// The CLI `--fixing` value-enum token for an NDF vector's fixing identity (the
+/// vector string matches the `celnet_types::FixingSource` variant name; clap's
+/// value-enum spells it kebab-case).
+fn fixing_token(v: &GoldenVector) -> &'static str {
+    match v.term_str("fixing") {
+        "KrwKftc18" => "krw-kftc18",
+        "TwdTaipei" => "twd-taipei",
+        "InrRbiRef" => "inr-rbi-ref",
+        "BrlPtax" => "brl-ptax",
+        "ClpDolarObs" => "clp-dolar-obs",
+        "CopTrm" => "cop-trm",
+        other => panic!("unknown fixing `{other}`"),
+    }
 }
 
 fn opt_token(v: &GoldenVector, key: &str) -> &'static str {
@@ -240,6 +284,47 @@ fn argv_for(v: &GoldenVector) -> Option<Vec<String>> {
                 opt_token(v, "option_type").into(),
                 "--strike".into(),
                 s(v.term_f64("strike")),
+            ]);
+            Some(a)
+        }
+        "fx_forward" => {
+            let mut a = vec!["forward".into(), "--pair".into(), v.underlying.clone()];
+            a.extend(linear_market_flags(v));
+            a.extend([
+                "--rate".into(),
+                s(v.term_f64("contract_rate")),
+                "--notional".into(),
+                s(v.term_f64("notional")),
+                "--side".into(),
+                side_token(v, "side").into(),
+            ]);
+            Some(a)
+        }
+        "fx_swap" => {
+            let mut a = vec!["swap".into(), "--pair".into(), v.underlying.clone()];
+            a.extend(linear_market_flags(v));
+            a.extend([
+                "--rate".into(),
+                s(v.term_f64("contract_rate")),
+                "--notional".into(),
+                s(v.term_f64("notional")),
+                "--near-side".into(),
+                side_token(v, "near_side").into(),
+            ]);
+            Some(a)
+        }
+        "ndf" => {
+            let mut a = vec!["ndf".into(), "--pair".into(), v.underlying.clone()];
+            a.extend(linear_market_flags(v));
+            a.extend([
+                "--rate".into(),
+                s(v.term_f64("contract_rate")),
+                "--notional".into(),
+                s(v.term_f64("notional")),
+                "--side".into(),
+                side_token(v, "side").into(),
+                "--fixing".into(),
+                fixing_token(v).into(),
             ]);
             Some(a)
         }

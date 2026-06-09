@@ -1,0 +1,89 @@
+[
+  {
+    "id": "fxswap-eurusd-spot1y-sellnear",
+    "family": "fx_swap",
+    "underlying": "EURUSD",
+    "tenor": "1Y",
+    "market": {
+      "spot": 1.3,
+      "vol": 0.1,
+      "r_dom": 0.03,
+      "r_for": 0.01
+    },
+    "terms": {
+      "contract_rate": 1.3,
+      "expiry_years": 1.0,
+      "far_settle_years": 1.0,
+      "near_settle_years": 0.0,
+      "near_side": "SELL",
+      "notional": 1.0
+    },
+    "expected": {
+      "price": 0.02548559026085795,
+      "price_std_error": null,
+      "oracle": "independent sum of two outright forwards (near side + opposite-side far), each the two-bond DCF"
+    },
+    "tolerance": {
+      "rel": 1e-9,
+      "abs": 1e-11
+    }
+  },
+  {
+    "id": "fxswap-eurusd-spot9m-buynear",
+    "family": "fx_swap",
+    "underlying": "EURUSD",
+    "tenor": "9M",
+    "market": {
+      "spot": 1.1,
+      "vol": 0.1,
+      "r_dom": 0.02,
+      "r_for": 0.01
+    },
+    "terms": {
+      "contract_rate": 1.1,
+      "expiry_years": 0.75,
+      "far_settle_years": 0.75,
+      "near_settle_years": 0.0,
+      "near_side": "BUY",
+      "notional": 1.0
+    },
+    "expected": {
+      "price": -0.008157726737683335,
+      "price_std_error": null,
+      "oracle": "independent sum of two outright forwards (near side + opposite-side far), each the two-bond DCF"
+    },
+    "tolerance": {
+      "rel": 1e-9,
+      "abs": 1e-11
+    }
+  },
+  {
+    "id": "fxswap-usdjpy-spot18m-buynear",
+    "family": "fx_swap",
+    "underlying": "USDJPY",
+    "tenor": "18M",
+    "market": {
+      "spot": 150.0,
+      "vol": 0.1,
+      "r_dom": 0.04,
+      "r_for": 0.005
+    },
+    "terms": {
+      "contract_rate": 150.0,
+      "expiry_years": 1.5,
+      "far_settle_years": 1.5,
+      "near_settle_years": 0.0,
+      "near_side": "BUY",
+      "notional": 1.0
+    },
+    "expected": {
+      "price": -7.614528185233468,
+      "price_std_error": null,
+      "oracle": "independent sum of two outright forwards (near side + opposite-side far), each the two-bond DCF"
+    },
+    "tolerance": {
+      "rel": 1e-9,
+      "abs": 1e-11
+    }
+  }
+]

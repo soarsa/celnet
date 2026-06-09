@@ -705,6 +705,68 @@ export interface AmericanOption {
   lsmSeed: bigint;
 }
 
+/**
+ * The published settlement-rate option a non-deliverable forward fixes against
+ * (proto `FixingSource`, mirrors `celnet_types::FixingSource`). Convention
+ * identity only — the live fixing VALUE is an estate-gated feed, never sourced
+ * in-repo; it does not enter the deterministic discounted-cashflow PV. The string
+ * members are listed in proto enum-number order (KRW_KFTC18=0, …).
+ */
+export type FixingSource =
+  | "KRW_KFTC18"
+  | "TWD_TAIPEI"
+  | "INR_RBI_REF"
+  | "BRL_PTAX"
+  | "CLP_DOLAR_OBS"
+  | "COP_TRM";
+
+/**
+ * An FX outright forward (proto `FxForward`) — a linear, closed-form
+ * discounted-cashflow product (NOT an option payoff): PV is
+ * `side · notional · discount_df(t) · (forward_rate − contractRate)`. Exact ⇒ no
+ * standard error. Valid for a deliverable underlying; an NDF pair is rejected.
+ */
+export interface FxForward {
+  /** The contract (delivery) rate `K`, quote per 1 unit of base/asset. */
+  contractRate: number;
+  /** The notional (always positive; direction is `side`). */
+  notional: number;
+  /** The directional side (BUY = long the base/asset forward; never TWO_WAY). */
+  side: Side;
+}
+
+/**
+ * An FX swap (proto `FxSwap`) — a near leg + a far leg, each an `FxForward`. By
+ * convention the two legs trade opposite directions; the swap PV is the sum of
+ * the two leg PVs. The near leg settles at the spot date and the far leg at the
+ * instrument's forward tenor (`expiryYears`).
+ */
+export interface FxSwap {
+  /** The near (shorter-dated, spot-settling) leg. */
+  near: FxForward;
+  /** The far (longer-dated) leg; the opposite side at the same contract rate. */
+  far: FxForward;
+}
+
+/**
+ * A non-deliverable forward (proto `Ndf`) — cash-settled in the convertible
+ * (settlement) currency at a named fixing. The risk-neutral PV is identical to a
+ * deliverable forward of equal terms (non-deliverability changes only settlement
+ * mechanics). Valid ONLY for a non-deliverable underlying.
+ */
+export interface Ndf {
+  /** The contract (forward) rate `K`, settlement-ccy per 1 unit of base. */
+  contractRate: number;
+  /** The notional (always positive; direction is `side`). */
+  notional: number;
+  /** The directional side (BUY = long the base/asset forward; never TWO_WAY). */
+  side: Side;
+  /** The published settlement-rate option the contract fixes against (identity only). */
+  fixing: FixingSource;
+  /** The convertible (settlement) currency code, e.g. "USD". */
+  settlementCcy: string;
+}
+
 /** The product payoff carried by an Instrument (the proto `product` oneof). */
 export type Product =
   | { kind: "vanilla"; vanilla: Vanilla }
@@ -724,7 +786,10 @@ export type Product =
   | { kind: "lookback"; lookback: Lookback }
   | { kind: "windowBarrier"; windowBarrier: WindowBarrier }
   | { kind: "american"; american: AmericanOption }
-  | { kind: "basket"; basket: BasketOption };
+  | { kind: "basket"; basket: BasketOption }
+  | { kind: "fxForward"; fxForward: FxForward }
+  | { kind: "fxSwap"; fxSwap: FxSwap }
+  | { kind: "ndf"; ndf: Ndf };
 
 /** Solve directive: solve a free parameter to hit a target (e.g. zero premium). */
 export interface Solve {

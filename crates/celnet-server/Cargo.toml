@@ -22,6 +22,7 @@ celnet-conventions.workspace = true
 celnet-vanilla.workspace = true
 celnet-surface.workspace = true
 celnet-exotics.workspace = true
+celnet-linear.workspace = true
 celnet-engine.workspace = true
 celnet-proto.workspace = true
 celnet-risk-normalize.workspace = true

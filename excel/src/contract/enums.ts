@@ -29,6 +29,7 @@ import type {
   DeltaConvention,
   DigitalStyle,
   ExerciseStyle,
+  FixingSource,
   LookbackMonitoring,
   LookbackStyle,
   MarketObservable,
@@ -77,6 +78,20 @@ export const optionType = enumCodec<OptionType>(["CALL", "PUT"]);
 
 /** `Side` ↔ proto `Side` (BUY=0, SELL=1, TWO_WAY=2). */
 export const side = enumCodec<Side>(["BUY", "SELL", "TWO_WAY"]);
+
+/**
+ * `FixingSource` ↔ proto `FixingSource` (KRW_KFTC18=0, TWD_TAIPEI=1,
+ * INR_RBI_REF=2, BRL_PTAX=3, CLP_DOLAR_OBS=4, COP_TRM=5). The NDF fixing identity;
+ * a metadata-only convention tag (never a market-data value).
+ */
+export const fixingSource = enumCodec<FixingSource>([
+  "KRW_KFTC18",
+  "TWD_TAIPEI",
+  "INR_RBI_REF",
+  "BRL_PTAX",
+  "CLP_DOLAR_OBS",
+  "COP_TRM",
+]);
 
 /** `DeltaConvention` ↔ proto `DeltaConvention`. */
 export const deltaConvention = enumCodec<DeltaConvention>([

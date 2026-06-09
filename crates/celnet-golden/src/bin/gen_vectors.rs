@@ -1,7 +1,7 @@
 //! Generator for the frozen golden-vector corpus.
 //!
 //! Run with `cargo run -p celnet-golden --bin gen_vectors`. Emits
-//! `crates/celnet-golden/vectors/<family>.json` for all 18 product-oneof families,
+//! `crates/celnet-golden/vectors/<family>.json` for all 21 product-oneof families,
 //! every `expected.price` produced by an oracle **independent of the production
 //! wire/server path** (see `celnet_golden::vectors` module docs and the per-family
 //! comments below). The output is a frozen artifact, committed to disk; the
@@ -92,7 +92,334 @@ fn main() {
     gen_window_barrier();
     gen_american();
     gen_basket();
+    gen_fx_forward();
+    gen_fx_swap();
+    gen_ndf();
     println!("corpus generation complete.");
+}
+
+// ===========================================================================
+// fx_forward — oracle: independent two-zero-coupon-bond discounted-cashflow form
+//   PV = side·notional·(spot·e^{−r_for·t} − K·e^{−r_dom·t})  (per unit base)
+// ===========================================================================
+
+/// Map a `BUY`/`SELL` token to the signed multiplier the linear PV uses.
+fn side_sign(side: &str) -> f64 {
+    match side {
+        "BUY" => 1.0,
+        "SELL" => -1.0,
+        other => panic!("unknown side `{other}`"),
+    }
+}
+
+fn gen_fx_forward() {
+    // Each case: (id, underlying, side, spot, contract_rate, r_dom, r_for, t).
+    // `vol` is irrelevant to a linear forward but the market carries a positive
+    // value (the corpus market shape requires vol > 0). notional is 1 (the corpus
+    // price is per 1 unit of base notional).
+    struct Case {
+        id: &'static str,
+        underlying: &'static str,
+        side: &'static str,
+        spot: f64,
+        contract_rate: f64,
+        r_dom: f64,
+        r_for: f64,
+        t: f64,
+    }
+    let cases = [
+        Case {
+            id: "fxforward-eurusd-1y-buy-fair",
+            underlying: "EURUSD",
+            side: "BUY",
+            spot: 1.10,
+            // Struck AT the fair forward F = 1.10·e^{(0.02−0.01)·1} ⇒ PV ≈ 0
+            // (a structural anchor that a forward/discount slip cannot satisfy).
+            contract_rate: 1.10 * (0.02f64 - 0.01).exp(),
+            r_dom: 0.02,
+            r_for: 0.01,
+            t: 1.0,
+        },
+        Case {
+            id: "fxforward-eurusd-1y-buy-itm",
+            underlying: "EURUSD",
+            side: "BUY",
+            spot: 1.10,
+            contract_rate: 1.08,
+            r_dom: 0.02,
+            r_for: 0.01,
+            t: 1.0,
+        },
+        Case {
+            id: "fxforward-eurusd-6m-sell-otm",
+            underlying: "EURUSD",
+            side: "SELL",
+            spot: 1.30,
+            contract_rate: 1.34,
+            r_dom: 0.03,
+            r_for: 0.01,
+            t: 0.5,
+        },
+        Case {
+            id: "fxforward-usdjpy-2y-buy",
+            underlying: "USDJPY",
+            side: "BUY",
+            spot: 150.0,
+            contract_rate: 145.0,
+            r_dom: 0.04,
+            r_for: 0.005,
+            t: 2.0,
+        },
+    ];
+    let mut out = Vec::new();
+    for c in &cases {
+        let price = oracle::fx_forward_pv(
+            side_sign(c.side),
+            c.spot,
+            c.contract_rate,
+            1.0,
+            c.t,
+            c.r_dom,
+            c.r_for,
+        );
+        out.push(GoldenVector {
+            id: c.id.to_owned(),
+            family: "fx_forward".to_owned(),
+            underlying: c.underlying.to_owned(),
+            tenor: tenor_token(c.t),
+            // vol = 0.10 placeholder (unused by a linear DCF; market requires > 0).
+            market: market(c.spot, 0.10, c.r_dom, c.r_for),
+            terms: json!({
+                "contract_rate": c.contract_rate,
+                "notional": 1.0,
+                "side": c.side,
+                "expiry_years": c.t,
+            }),
+            expected: Expected {
+                price,
+                greeks: BTreeMap::new(),
+                price_std_error: None,
+                oracle: "independent two-zero-coupon-bond DCF: \
+                         side·N·(spot·e^{−r_for·t} − K·e^{−r_dom·t})"
+                    .to_owned(),
+            },
+            // Closed-form to closed-form (the production path is the algebraically
+            // identical df·(F−K) form): tight tolerance.
+            tolerance: Tolerance {
+                rel: 1e-9,
+                abs: 1e-11,
+            },
+        });
+    }
+    write_family("fx_forward", &out);
+}
+
+// ===========================================================================
+// fx_swap — oracle: independent sum of two outright forwards (near + opposite far)
+// ===========================================================================
+
+fn gen_fx_swap() {
+    // Each case: (id, underlying, near_side, spot, contract_rate, r_dom, r_for,
+    //             far_t).
+    //
+    // The swap's NEAR leg settles at the spot date (the valuation horizon, t = 0)
+    // and the FAR leg at the instrument's forward tenor (`expiry_years` = far_t),
+    // trading the opposite side — exactly the model the one wire contract carries
+    // (`celnet_proto::FxSwap` has no per-leg settle time; the server fixes
+    // near = 0 / far = expiry_years, see `pricer::SWAP_NEAR_SETTLE_YEARS`). The
+    // economically meaningful swap quantity is the forward-points spread between
+    // the two legs, carried entirely by that near = 0 / far = expiry separation.
+    // The oracle prices the same two-leg sum by the independent two-bond route.
+    const NEAR_T: f64 = 0.0;
+    struct Case {
+        id: &'static str,
+        underlying: &'static str,
+        near_side: &'static str,
+        spot: f64,
+        contract_rate: f64,
+        r_dom: f64,
+        r_for: f64,
+        far_t: f64,
+    }
+    let cases = [
+        Case {
+            id: "fxswap-eurusd-spot9m-buynear",
+            underlying: "EURUSD",
+            near_side: "BUY",
+            spot: 1.10,
+            contract_rate: 1.10,
+            r_dom: 0.02,
+            r_for: 0.01,
+            far_t: 0.75,
+        },
+        Case {
+            id: "fxswap-eurusd-spot1y-sellnear",
+            underlying: "EURUSD",
+            near_side: "SELL",
+            spot: 1.30,
+            contract_rate: 1.30,
+            r_dom: 0.03,
+            r_for: 0.01,
+            far_t: 1.0,
+        },
+        Case {
+            id: "fxswap-usdjpy-spot18m-buynear",
+            underlying: "USDJPY",
+            near_side: "BUY",
+            spot: 150.0,
+            contract_rate: 150.0,
+            r_dom: 0.04,
+            r_for: 0.005,
+            far_t: 1.5,
+        },
+    ];
+    let mut out = Vec::new();
+    for c in &cases {
+        let price = oracle::fx_swap_pv(
+            side_sign(c.near_side),
+            c.spot,
+            c.contract_rate,
+            1.0,
+            NEAR_T,
+            c.far_t,
+            c.r_dom,
+            c.r_for,
+        );
+        out.push(GoldenVector {
+            id: c.id.to_owned(),
+            family: "fx_swap".to_owned(),
+            underlying: c.underlying.to_owned(),
+            tenor: tenor_token(c.far_t),
+            market: market(c.spot, 0.10, c.r_dom, c.r_for),
+            terms: json!({
+                "contract_rate": c.contract_rate,
+                "notional": 1.0,
+                "near_side": c.near_side,
+                "near_settle_years": NEAR_T,
+                "far_settle_years": c.far_t,
+                "expiry_years": c.far_t,
+            }),
+            expected: Expected {
+                price,
+                greeks: BTreeMap::new(),
+                price_std_error: None,
+                oracle: "independent sum of two outright forwards \
+                         (near side + opposite-side far), each the two-bond DCF"
+                    .to_owned(),
+            },
+            tolerance: Tolerance {
+                rel: 1e-9,
+                abs: 1e-11,
+            },
+        });
+    }
+    write_family("fx_swap", &out);
+}
+
+// ===========================================================================
+// ndf — oracle: hand-derived side·N·df_settle·(F−K) == deliverable-forward PV in
+//   the same numeraire (via the independent two-bond DCF). Fixing identity is
+//   metadata only and does not enter the PV.
+// ===========================================================================
+
+fn gen_ndf() {
+    // Each case: (id, underlying, side, spot, contract_rate, r_dom, r_for, t,
+    //             fixing, settlement_ccy). The restricted-leg pairs are USD-quote
+    //             NDFs (BRL/INR/COP); the convertible settlement leg is USD, so
+    //             `r_dom` is the settlement (USD) discounting rate.
+    struct Case {
+        id: &'static str,
+        underlying: &'static str,
+        side: &'static str,
+        spot: f64,
+        contract_rate: f64,
+        r_dom: f64,
+        r_for: f64,
+        t: f64,
+        fixing: &'static str,
+        settlement_ccy: &'static str,
+    }
+    let cases = [
+        Case {
+            id: "ndf-usdbrl-6m-buy",
+            underlying: "USDBRL",
+            side: "BUY",
+            spot: 5.0,
+            contract_rate: 5.1,
+            // r_dom = BRL (restricted leg of the spot quote), r_for = USD. The PV
+            // is the two-bond DCF in the BRL-equivalent numeraire; the structural
+            // NDF==deliverable identity proves no separate route is used.
+            r_dom: 0.10,
+            r_for: 0.05,
+            t: 0.5,
+            fixing: "BrlPtax",
+            settlement_ccy: "USD",
+        },
+        Case {
+            id: "ndf-usdinr-1y-sell",
+            underlying: "USDINR",
+            side: "SELL",
+            spot: 83.0,
+            contract_rate: 84.0,
+            r_dom: 0.066,
+            r_for: 0.05,
+            t: 1.0,
+            fixing: "InrRbiRef",
+            settlement_ccy: "USD",
+        },
+        Case {
+            id: "ndf-usdcop-3m-buy",
+            underlying: "USDCOP",
+            side: "BUY",
+            spot: 4000.0,
+            contract_rate: 4050.0,
+            r_dom: 0.095,
+            r_for: 0.05,
+            t: 0.25,
+            fixing: "CopTrm",
+            settlement_ccy: "USD",
+        },
+    ];
+    let mut out = Vec::new();
+    for c in &cases {
+        let price = oracle::ndf_pv(
+            side_sign(c.side),
+            c.spot,
+            c.contract_rate,
+            1.0,
+            c.t,
+            c.r_dom,
+            c.r_for,
+        );
+        out.push(GoldenVector {
+            id: c.id.to_owned(),
+            family: "ndf".to_owned(),
+            underlying: c.underlying.to_owned(),
+            tenor: tenor_token(c.t),
+            market: market(c.spot, 0.10, c.r_dom, c.r_for),
+            terms: json!({
+                "contract_rate": c.contract_rate,
+                "notional": 1.0,
+                "side": c.side,
+                "fixing": c.fixing,
+                "settlement_ccy": c.settlement_ccy,
+                "expiry_years": c.t,
+            }),
+            expected: Expected {
+                price,
+                greeks: BTreeMap::new(),
+                price_std_error: None,
+                oracle: "hand-derived NDF PV == deliverable-forward PV in same \
+                         numeraire (independent two-bond DCF); fixing is metadata"
+                    .to_owned(),
+            },
+            tolerance: Tolerance {
+                rel: 1e-9,
+                abs: 1e-11,
+            },
+        });
+    }
+    write_family("ndf", &out);
 }
 
 // ===========================================================================
