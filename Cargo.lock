@@ -548,6 +548,7 @@ dependencies = [
  "celnet-heston",
  "celnet-types",
  "celnet-vanilla",
+ "libm",
  "serde",
  "serde_json",
 ]
@@ -635,8 +636,11 @@ name = "celnet-parity"
 version = "0.0.0"
 dependencies = [
  "celnet-calendar",
+ "celnet-commodity-vanilla",
  "celnet-conventions",
  "celnet-core",
+ "celnet-crypto-vanilla",
+ "celnet-equity-vanilla",
  "celnet-exotics",
  "celnet-golden",
  "celnet-gpu",
@@ -767,10 +771,13 @@ version = "0.0.0"
 dependencies = [
  "blake3",
  "celnet-client",
+ "celnet-commodity-vanilla",
  "celnet-conventions",
  "celnet-core",
+ "celnet-crypto-vanilla",
  "celnet-engine",
  "celnet-entitlements",
+ "celnet-equity-vanilla",
  "celnet-exotics",
  "celnet-fanout",
  "celnet-fix",
@@ -779,6 +786,7 @@ dependencies = [
  "celnet-linear",
  "celnet-observability",
  "celnet-proto",
+ "celnet-rfq",
  "celnet-risk-cube",
  "celnet-risk-fleet",
  "celnet-risk-normalize",

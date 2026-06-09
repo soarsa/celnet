@@ -25,15 +25,18 @@ import type {
   LookbackMonitoring,
   LookbackStyle,
   MarketContext,
+  Metal,
   MonitoringStyle,
   OptionType,
   Product,
   QuantoPayoff,
+  SettlementStyle,
   Side,
   StrategyKind,
   StrikeOrDelta,
   TarfRedemption,
   TouchKind,
+  Underlying,
 } from "./contract";
 import type { PricingModel } from "./contract";
 
@@ -712,6 +715,71 @@ function basketInstrument(
   };
 }
 
+/**
+ * The ISO-4217 "X"-prefixed asset code each precious metal projects to, so a metal
+ * pair overlaps the FX `CcyPair` encoding byte-for-byte on the metal leg (the
+ * convention/calendar registries key on the X-code base).
+ */
+const METAL_ISO_CODE: Record<Metal, string> = {
+  GOLD: "XAU",
+  SILVER: "XAG",
+  PLATINUM: "XPT",
+  PALLADIUM: "XPD",
+};
+
+/** Build the FX `pair` leg-string projection an `Underlying` overlays onto the instrument. */
+export function underlyingPairProjection(u: Underlying): CcyPair {
+  switch (u.kind) {
+    case "fx":
+      return u.fx;
+    case "metal":
+      return { base: METAL_ISO_CODE[u.metal.metal], quote: u.metal.quote };
+    case "equity":
+      return { base: u.equity.symbol.ticker, quote: u.equity.currency };
+    case "commodity":
+      return { base: u.commodity.symbol.ticker, quote: u.commodity.currency };
+    case "digitalAsset":
+      return { base: u.digitalAsset.base, quote: u.digitalAsset.quote };
+  }
+}
+
+/** The inputs for a cross-asset vanilla over an arbitrary `Underlying` arm. */
+export interface CrossAssetVanillaTerms {
+  optionType: OptionType;
+  /** Strike as an absolute level or a signed convention delta. */
+  strike: StrikeOrDelta;
+  /** The cross-asset underlying (equity / commodity / metal / digital-asset / fx). */
+  underlying: Underlying;
+  /** Contract settlement mechanics (INVERSE_COIN is meaningful only for digitalAsset). */
+  settlementStyle: SettlementStyle;
+}
+
+/**
+ * A cross-asset vanilla instrument over an arbitrary {@link Underlying} arm
+ * (`Instrument.underlying`, proto field 1). The `underlying` carries the
+ * asset-class identity; the FX `pair` projection keeps the FX-keyed surfaces total;
+ * `settlementStyle` (proto field 29) carries the linear/inverse contract mechanics
+ * — LINEAR is presence-omitted (the proto3 zero value) so an FX/linear frame stays
+ * byte-identical to the contract before the field existed.
+ */
+function crossAssetVanillaInstrument(
+  tenorYears: number,
+  notionalMm: number,
+  terms: CrossAssetVanillaTerms,
+): Instrument {
+  const instrument: Instrument = {
+    pair: underlyingPairProjection(terms.underlying),
+    underlying: terms.underlying,
+    tenor: tenorYearsToTenor(tenorYears),
+    expiryYears: tenorYears,
+    quantity: { notional: notionalMm * 1e6, baseCcy: true },
+    side: "TWO_WAY",
+    product: { kind: "vanilla", vanilla: { optionType: terms.optionType, strike: terms.strike } },
+  };
+  if (terms.settlementStyle !== "LINEAR") instrument.settlementStyle = terms.settlementStyle;
+  return instrument;
+}
+
 /** The opposite direction of a forward leg (used to derive an FX swap's far side). */
 export function oppositeSide(side: Side): Side {
   if (side === "BUY") return "SELL";
@@ -936,4 +1004,5 @@ export {
   forwardInstrument,
   swapInstrument,
   ndfInstrument,
+  crossAssetVanillaInstrument,
 };

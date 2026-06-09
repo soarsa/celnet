@@ -181,9 +181,20 @@ describe("Excel real-edge conformance (frozen golden corpus over a REAL WebSocke
   }
 
   it("reports (does not skip) the corpus families Excel does not expose", () => {
-    // Documentation-as-assertion: `strategy` is the only corpus family without a
-    // `CELNET.*` worksheet function. If a future family becomes Excel-exposed, this
-    // pins the honest gap so it cannot silently drift.
-    expect(FAMILIES_NOT_EXPOSED).toEqual(["strategy"]);
+    // Documentation-as-assertion (CLAUDE.md rule 2 — no silent gap). The corpus
+    // families the FX-WS Excel price path does NOT expose:
+    //  - `strategy` has no single `CELNET.*` worksheet function (built leg-by-leg).
+    //  - `equity_option` / `commodity_option` / `crypto_option` carry the GENERALIZED
+    //    cost-of-carry (`q`/`repo`/`funding`/`convenience`) the FX-two-rate WS price
+    //    path does not yet transport; the add-in DOES shape them onto the wire (the
+    //    cross-asset `Underlying` + `settlement_style` shapers, gated by
+    //    `test/crossAssetProducts.test.ts`).
+    // If a family becomes FX-WS-exposed, this pins the honest gap so it cannot drift.
+    expect(FAMILIES_NOT_EXPOSED).toEqual([
+      "strategy",
+      "equity_option",
+      "commodity_option",
+      "crypto_option",
+    ]);
   });
 });

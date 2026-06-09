@@ -380,3 +380,204 @@ fn cli_prices_match_the_golden_corpus() {
         );
     }
 }
+
+// ---- Cross-asset vanilla: CLI == server == oracle --------------------------
+//
+// The golden corpus is FX-only, so the cross-asset families (equity / commodity /
+// crypto) are reconciled here as a dedicated three-way gate rather than off the
+// corpus: for each asset class we (1) run the real `celnet` binary's `price`
+// command with `--asset <class>`, parsing its headline price; (2) compute the
+// INDEPENDENT generalized-BSM / Garman-Kohlhagen closed form via `celnet-vanilla`
+// (the oracle — a code path the CLI/server share but compute separately here); and
+// (3) price the SAME instrument through the typed SDK against a real in-process
+// `celnet-server` edge. We assert CLI == server == oracle. The vanilla payoff is
+// the asset-class-agnostic closed form over the carry-producing market (ADR-0008),
+// so the underlying is contract identity only and every class matches the FX price
+// on the same market — which the CLI test also asserts.
+
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
+
+use celnet_client::{
+    Ccy, Client, Conventions, InstrumentSpec, MarketContext, Quantity, Side, StrikeSpec,
+};
+use celnet_engine::testing::make_state;
+use celnet_server::{Clock, CoreLink, Edge, SpreadModel};
+use celnet_types::{CcyPair, OptionType, Tenor, VanillaInputs};
+
+/// Boot a ready in-process edge on an ephemeral port over the EURUSD fixture.
+async fn start_ready_edge() -> (Edge, SocketAddr) {
+    let eurusd = CcyPair::parse("EURUSD").unwrap();
+    let conv = celnet_conventions::resolve(eurusd, Tenor::Years(1)).record;
+    let initial = make_state(1.10, conv);
+    let link = CoreLink::start(initial, None);
+    let grpc: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let edge = Edge::start(
+        grpc,
+        Arc::clone(&link),
+        SpreadModel::default(),
+        Clock::system(),
+    )
+    .await
+    .expect("edge binds on an ephemeral port");
+    edge.gate().mark_ready();
+    let addr = edge.grpc_addr();
+    (edge, addr)
+}
+
+#[tokio::test]
+async fn cli_cross_asset_vanilla_equals_server_equals_oracle() {
+    // A non-degenerate 1Y market shared across asset classes (full-precision flags).
+    let (spot, strike, vol, t, r_dom, r_for) = (100.0_f64, 105.0, 0.22, 1.0, 0.03, 0.012);
+
+    // The independent oracle: the generalized-BSM / GK closed form for this market.
+    let oracle = celnet_vanilla::greeks(
+        OptionType::Call,
+        &VanillaInputs::new(spot, strike, vol, t, r_dom, r_for),
+    )
+    .price;
+
+    let (edge, addr) = start_ready_edge().await;
+    let client = Client::connect(format!("http://{addr}"))
+        .await
+        .expect("SDK connects to the edge");
+    let conv = Conventions::major_default();
+    let market = MarketContext {
+        spot,
+        vol,
+        r_dom,
+        r_for,
+    };
+    let tenor = Tenor::Years(1);
+    let qty = Quantity::base(1.0);
+
+    // (asset CLI token, the SDK InstrumentSpec for the same underlying).
+    let cases: Vec<(&str, InstrumentSpec)> = vec![
+        (
+            "equity",
+            InstrumentSpec::equity_vanilla(
+                "AAPL",
+                "XNAS",
+                Ccy::USD,
+                tenor,
+                t,
+                qty,
+                Side::TwoWay,
+                OptionType::Call,
+                StrikeSpec::Absolute(strike),
+            ),
+        ),
+        (
+            "commodity",
+            InstrumentSpec::commodity_vanilla(
+                "BRENT",
+                "",
+                Ccy::USD,
+                tenor,
+                t,
+                qty,
+                Side::TwoWay,
+                OptionType::Call,
+                StrikeSpec::Absolute(strike),
+            ),
+        ),
+        (
+            "crypto",
+            InstrumentSpec::crypto_vanilla(
+                "BTC",
+                "USDT",
+                tenor,
+                t,
+                qty,
+                Side::TwoWay,
+                OptionType::Call,
+                StrikeSpec::Absolute(strike),
+            ),
+        ),
+    ];
+
+    for (asset, spec) in &cases {
+        // (1) The CLI binary's local-compute price with the cross-asset selector.
+        let argv = vec![
+            "price".to_string(),
+            "--option".into(),
+            "call".into(),
+            "--asset".into(),
+            (*asset).into(),
+            "--spot".into(),
+            s(spot),
+            "--vol".into(),
+            s(vol),
+            "--t".into(),
+            s(t),
+            "--r-dom".into(),
+            s(r_dom),
+            "--r-for".into(),
+            s(r_for),
+            "--strike".into(),
+            s(strike),
+        ];
+        let cli = cli_price(&run(&argv));
+
+        // (2) The SAME instrument priced through the SDK against the real server.
+        let server =
+            tokio::time::timeout(Duration::from_secs(30), client.price(spec, market, conv))
+                .await
+                .unwrap_or_else(|_| panic!("{asset} server price timed out"))
+                .unwrap_or_else(|e| panic!("{asset} server price failed: {e:?}"))
+                .greeks
+                .price;
+
+        // CLI == oracle (closed form), and server == oracle — so CLI == server.
+        assert!(
+            (cli - oracle).abs() <= 1e-9,
+            "{asset} CLI price {cli} vs independent oracle {oracle}"
+        );
+        assert!(
+            (server - oracle).abs() <= 1e-9,
+            "{asset} server price {server} vs independent oracle {oracle}"
+        );
+        assert!(
+            (cli - server).abs() <= 1e-9,
+            "{asset} CLI price {cli} vs server price {server}"
+        );
+    }
+
+    drop(client);
+    drop(edge);
+}
+
+#[test]
+fn cli_rejects_inverse_coin_for_non_crypto() {
+    // The inverse coin-margined settlement style is valid only for a digital asset;
+    // requesting it for an equity must fail loudly (no silent wrong-label pricing).
+    let out = Command::new(bin())
+        .args([
+            "price",
+            "--option",
+            "call",
+            "--asset",
+            "equity",
+            "--settlement-style",
+            "inverse-coin",
+            "--spot",
+            "100",
+            "--vol",
+            "0.2",
+            "--t",
+            "1.0",
+            "--r-dom",
+            "0.03",
+            "--r-for",
+            "0.0",
+            "--strike",
+            "105",
+        ])
+        .output()
+        .expect("spawn celnet CLI");
+    assert!(
+        !out.status.success(),
+        "inverse-coin on a non-crypto asset must be rejected"
+    );
+}

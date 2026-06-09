@@ -11,7 +11,9 @@ use std::io::Write;
 use celnet_types::{AtmConvention, CcyPair};
 use clap::{Args, Parser, Subcommand};
 
-use crate::args::{CliBarrier, CliDeltaConvention, CliDigital, CliOptionType, Market};
+use crate::args::{
+    CliAsset, CliBarrier, CliDeltaConvention, CliDigital, CliOptionType, CliSettlementStyle, Market,
+};
 use crate::basket::{self, CliBasketKind};
 use crate::risk::{
     self, AggregateReq, CliDimension, DrillReq, LimitsReq, PositionsReq, RiskCommon, StreamReq,
@@ -243,6 +245,23 @@ pub(crate) struct PriceArgs {
     /// ATM strike convention (used only with `--atm`).
     #[arg(long, value_enum, default_value = "atm-forward")]
     pub(crate) atm_convention: CliAtmConvention,
+    /// The underlying asset class. One unversioned contract names every class: a
+    /// vanilla on any class prices by the same asset-class-agnostic
+    /// generalized-BSM / Garman-Kohlhagen closed form over the carry-producing
+    /// market (ADR-0008), where `--r-for` is the asset's carry yield (FX foreign
+    /// rate / equity dividend yield / commodity cost-of-carry / crypto funding).
+    #[arg(long, value_enum, default_value = "fx")]
+    pub(crate) asset: CliAsset,
+    /// The underlying identifier for the chosen `--asset`: a pair (`EURUSD`,
+    /// `BTCUSDT`) or a symbol (`AAPL`, `BRENT`). Labels the report; defaults per
+    /// class when omitted.
+    #[arg(long)]
+    pub(crate) underlying: Option<String>,
+    /// The contract settlement mechanics: `linear` (quote-margined, the default)
+    /// or `inverse-coin` (the digital-asset `1/S_T` convention; valid only with
+    /// `--asset crypto`).
+    #[arg(long, value_enum, default_value = "linear")]
+    pub(crate) settlement_style: CliSettlementStyle,
 }
 
 /// ATM strike convention on the command line.
@@ -806,6 +825,17 @@ fn parse_pair(s: &str) -> Result<CcyPair, DispatchError> {
     CcyPair::parse(s).ok_or_else(|| DispatchError::BadPair(s.to_owned()))
 }
 
+/// The per-asset-class default underlying label when `--underlying` is omitted.
+fn default_underlying(asset: CliAsset) -> String {
+    match asset {
+        CliAsset::Fx => "EURUSD",
+        CliAsset::Equity => "EQUITY",
+        CliAsset::Commodity => "COMMODITY",
+        CliAsset::Crypto => "BTCUSDT",
+    }
+    .to_owned()
+}
+
 /// Run a parsed [`Cli`], writing the formatted report to `out`.
 ///
 /// # Errors
@@ -834,6 +864,16 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
                     "specify exactly one of --strike, --delta, or --atm".to_owned(),
                 ));
             };
+            // The inverse coin-margined settlement convention is meaningful only for
+            // a digital-asset underlying — reject it for any other class loudly,
+            // rather than silently pricing the linear payoff under a wrong label.
+            if matches!(a.settlement_style, CliSettlementStyle::InverseCoin)
+                && !matches!(a.asset, CliAsset::Crypto)
+            {
+                return Err(DispatchError::Invalid(
+                    "--settlement-style inverse-coin is valid only with --asset crypto".to_owned(),
+                ));
+            }
             let r = price::run(
                 option,
                 spec,
@@ -841,7 +881,13 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
                 a.delta_convention.into(),
             )
             .map_err(DispatchError::Price)?;
-            write!(out, "{}", price::format_report(option, &r)).ok();
+            let label = a.underlying.unwrap_or_else(|| default_underlying(a.asset));
+            write!(
+                out,
+                "{}",
+                price::format_report_for(option, a.asset, &label, a.settlement_style.into(), &r)
+            )
+            .ok();
             Ok(())
         }
         Command::Surface(a) => {

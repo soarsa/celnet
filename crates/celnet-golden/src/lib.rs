@@ -77,8 +77,8 @@ pub use table::{
     load_digital, load_double_barrier, load_heston, load_touch, load_vanilla,
 };
 pub use vectors::{
-    Expected, FAMILIES, GoldenVector, MC_FAMILIES, Market, Tolerance, VECTORS_DIR, VectorError,
-    load_vectors, vectors_file,
+    CROSS_ASSET_FAMILIES, Expected, FAMILIES, GoldenVector, MC_FAMILIES, Market, Tolerance,
+    VECTORS_DIR, VectorError, load_cross_asset_vectors, load_vectors, vectors_file,
 };
 
 /// Directory holding the frozen reference tables, relative to the crate root.

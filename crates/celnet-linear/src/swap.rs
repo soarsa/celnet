@@ -146,7 +146,7 @@ mod tests {
         ];
         for (s, k, n, side, rd, rf, nt, ft) in cases {
             let near = leg(s, k, n, side, rd, rf, nt);
-            let swap = swap_inp(near, ft);
+            let swap = swap_inp(near.clone(), ft);
             // Independent legs as standalone outright forwards.
             let far = leg(s, k, n, side.opposite(), rd, rf, ft);
             let independent = forward::pv(&near) + forward::pv(&far);

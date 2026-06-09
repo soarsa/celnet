@@ -99,7 +99,7 @@ mod tests {
 
     /// Copy `i`, replacing one field via the mutator; keeps the FX carry tag.
     fn bump(i: &CarryInputs, f: impl FnOnce(&mut CarryInputs)) -> CarryInputs {
-        let mut out = *i;
+        let mut out = i.clone();
         f(&mut out);
         out
     }

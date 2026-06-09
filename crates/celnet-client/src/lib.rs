@@ -27,6 +27,7 @@
 //! cargo run -p celnet-client --example quote_and_trade    # RFQ: request → BUY → book
 //! cargo run -p celnet-client --example stream_blotter     # one session, 3 streamed lines
 //! cargo run -p celnet-client --example price_exotic       # Asian (closed-form) + American (FD)
+//! cargo run -p celnet-client --example price_cross_asset  # equity / commodity / crypto vanilla
 //! ```
 //!
 //! Each example reads `CELNET_GRPC_ADDR` (default `http://127.0.0.1:50551`) so it
@@ -136,6 +137,12 @@ pub use vocab::{
     PricedLine, PricingModel, Product, Quantity, QuantoPayoff, QuantoTerms, Quote, RejectAck, Seat,
     Side, StrategyKind, StrikeSpec, SwapTerms, TarfRedemption, TarfTerms, TouchKind, TouchTerms,
     TwoWay,
+};
+// The cross-asset underlying vocabulary the instrument builders speak — re-exported
+// from `celnet-types` so a caller names an equity / commodity / crypto underlying
+// (and the settlement style) without reaching past the SDK into the type crate.
+pub use celnet_types::{
+    Ccy, CommodityRef, CryptoPair, EquityRef, SettlementStyle, Symbol, Underlying,
 };
 
 use celnet_proto::pricing_service_client::PricingServiceClient;

@@ -592,17 +592,22 @@ trait ToWirePub {
 }
 impl ToWirePub for InstrumentSpec {
     fn to_wire_pub(&self) -> celnet_proto::Instrument {
+        // The scale harness exercises the FX option path exclusively.
+        let pair = self
+            .underlying
+            .as_fx()
+            .expect("scale_harness builds FX instruments");
         let strike = match self.product {
             celnet_client::Product::Vanilla {
                 strike: StrikeSpec::Absolute(k),
                 ..
             } => k,
-            _ => strike_for(self.pair),
+            _ => strike_for(pair),
         };
         celnet_proto::Instrument {
             underlying: Some(celnet_proto::Underlying::fx(celnet_proto::CcyPair {
-                base: self.pair.base.as_str().to_owned(),
-                quote: self.pair.quote.as_str().to_owned(),
+                base: pair.base.as_str().to_owned(),
+                quote: pair.quote.as_str().to_owned(),
             })),
             tenor: Some(celnet_proto::Tenor {
                 unit: celnet_proto::tenor::Unit::Years as i32,

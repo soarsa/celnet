@@ -188,6 +188,94 @@ fn underlying_to_json(u: &celnet_proto::Underlying) -> Value {
     u.as_fx().map_or_else(|| json!(null), ccy_pair_to_json)
 }
 
+/// Decode an instrument's underlying for the WS mirror, supporting every wire
+/// arm — FX (the legacy `pair` key, unchanged for the GUI/Excel contract) plus the
+/// cross-asset arms carried on a richer `underlying` object: `{"fx": {base,quote}}`,
+/// `{"metal": {metal, quote}}`, `{"equity": {symbol:{ticker,venue}, currency}}`,
+/// `{"commodity": {...}}`, `{"digital_asset": {base, quote}}`. The legacy FX `pair`
+/// key takes precedence so existing browser requests are byte-identical; a request
+/// carrying neither yields `None` (the same as the prior `opt_nested("pair")`).
+fn instrument_underlying_from_json(
+    o: &Map<String, Value>,
+) -> Result<Option<celnet_proto::Underlying>> {
+    // Legacy FX `pair` key (the unchanged GUI/Excel contract).
+    if let Some(v) = o.get("pair").filter(|v| !v.is_null()) {
+        return Ok(Some(celnet_proto::Underlying::fx(ccy_pair_from_json(v)?)));
+    }
+    // The cross-asset `underlying` object mirrors the wire oneof.
+    match o.get("underlying") {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => underlying_object_from_json(v).map(Some),
+    }
+}
+
+/// Decode the richer `underlying` object (the wire `Underlying` oneof) — exactly
+/// one arm key set, mirroring the proto. The cross-asset arms lower onto the
+/// generated `celnet_proto::Underlying` constructors.
+fn underlying_object_from_json(v: &Value) -> Result<celnet_proto::Underlying> {
+    let o = obj(v, "underlying")?;
+    if let Some(fx) = o.get("fx") {
+        Ok(celnet_proto::Underlying::fx(ccy_pair_from_json(fx)?))
+    } else if let Some(m) = o.get("metal") {
+        Ok(celnet_proto::Underlying::metal(metal_pair_from_json(m)?))
+    } else if let Some(e) = o.get("equity") {
+        Ok(celnet_proto::Underlying::equity(equity_ref_from_json(e)?))
+    } else if let Some(c) = o.get("commodity") {
+        Ok(celnet_proto::Underlying::commodity(
+            commodity_ref_from_json(c)?,
+        ))
+    } else if let Some(d) = o.get("digital_asset") {
+        Ok(celnet_proto::Underlying::digital_asset(
+            crypto_pair_from_json(d)?,
+        ))
+    } else {
+        Err(err(
+            "underlying needs exactly one arm (fx / metal / equity / commodity / \
+             digital_asset)",
+        ))
+    }
+}
+
+fn metal_pair_from_json(v: &Value) -> Result<celnet_proto::MetalPair> {
+    let o = obj(v, "metal")?;
+    Ok(celnet_proto::MetalPair {
+        metal: enum_or_zero(o, "metal"),
+        quote: string_field(o, "quote")?,
+    })
+}
+
+fn symbol_from_json(v: &Value) -> Result<celnet_proto::Symbol> {
+    let o = obj(v, "symbol")?;
+    Ok(celnet_proto::Symbol {
+        ticker: string_field(o, "ticker")?,
+        venue: string_or_empty(o, "venue"),
+    })
+}
+
+fn equity_ref_from_json(v: &Value) -> Result<celnet_proto::EquityRef> {
+    let o = obj(v, "equity")?;
+    Ok(celnet_proto::EquityRef {
+        symbol: Some(nested(o, "symbol", symbol_from_json)?),
+        currency: string_field(o, "currency")?,
+    })
+}
+
+fn commodity_ref_from_json(v: &Value) -> Result<celnet_proto::CommodityRef> {
+    let o = obj(v, "commodity")?;
+    Ok(celnet_proto::CommodityRef {
+        symbol: Some(nested(o, "symbol", symbol_from_json)?),
+        currency: string_field(o, "currency")?,
+    })
+}
+
+fn crypto_pair_from_json(v: &Value) -> Result<celnet_proto::CryptoPair> {
+    let o = obj(v, "digital_asset")?;
+    Ok(celnet_proto::CryptoPair {
+        base: string_field(o, "base")?,
+        quote: string_field(o, "quote")?,
+    })
+}
+
 fn tenor_from_json(v: &Value) -> Result<Tenor> {
     let o = obj(v, "tenor")?;
     Ok(Tenor {
@@ -729,7 +817,10 @@ fn product_from_json(o: &Map<String, Value>) -> Result<instrument::Product> {
 pub(super) fn instrument_from_json(v: &Value) -> Result<Instrument> {
     let o = obj(v, "instrument")?;
     Ok(Instrument {
-        underlying: opt_nested(o, "pair", underlying_from_json)?,
+        // Every wire underlying arm: the legacy FX `pair` key (unchanged) or the
+        // richer cross-asset `underlying` object (equity / commodity / digital
+        // asset / metal), mirroring the gRPC contract field-for-field.
+        underlying: instrument_underlying_from_json(o)?,
         tenor: opt_nested(o, "tenor", tenor_from_json)?,
         expiry_years: f64_field(o, "expiry_years")?,
         quantity: opt_nested(o, "quantity", quantity_from_json)?,
@@ -738,8 +829,11 @@ pub(super) fn instrument_from_json(v: &Value) -> Result<Instrument> {
         // The booking-model selector (absent ⇒ 0 ⇒ PRICING_MODEL_DEFAULT, so the
         // analytic path is unchanged for existing browser requests).
         pricing_model: enum_or_zero(o, "pricing_model"),
+        // The settlement style (absent ⇒ 0 ⇒ SETTLEMENT_STYLE_LINEAR, byte-identical
+        // to the contract before this field existed). Selects the inverse/coin-
+        // margined crypto convention when set; mirrors gRPC.
+        settlement_style: enum_or_zero(o, "settlement_style"),
         product: Some(product_from_json(o)?),
-        ..Default::default()
     })
 }
 

@@ -18,6 +18,12 @@ celnet-vanilla.workspace = true
 celnet-exotics.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# Correctly-rounded, cross-platform-identical transcendentals for the cross-asset
+# (equity/commodity/crypto) closed-form oracles in `src/oracle.rs`. They route the
+# normal CDF through `libm::erf` (a DIFFERENT special function than the production
+# `celnet_core::math::norm_cdf`, which is `libm::erfc`-based) so the oracle is
+# code-disjoint from the leaves under test — the anti-circular-oracle discipline.
+libm.workspace = true
 
 [dev-dependencies]
 # Heston pricer under test by the published-literature Heston golden table

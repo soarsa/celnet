@@ -74,6 +74,19 @@ pub const FAMILIES: [&str; 21] = [
     "ndf",
 ];
 
+/// The **cross-asset option families** — the `vanilla` product arm of the
+/// `celnet.proto` `oneof product` seen through a NON-FX `Underlying.ref` arm
+/// (equity / commodity / digital-asset), each routed through the cost-of-carry seam
+/// (ADR-0008). These are NOT additional `oneof product` arms (so they are
+/// deliberately absent from [`FAMILIES`] — the FX `vanilla` count stays 21); they
+/// are asset-class *variants* of the same product, carried in their own corpus files
+/// and re-derived against the cross-asset oracles
+/// ([`crate::oracle::equity_bsm_price`] / [`crate::oracle::black76_price`] /
+/// [`crate::oracle::crypto_linear_price`] / [`crate::oracle::crypto_inverse_price`]).
+/// The names match the `<asset>_option` keys the `tools/check-verification-coverage.mjs`
+/// cross-asset gate derives from the proto's `Underlying.ref` oneof.
+pub const CROSS_ASSET_FAMILIES: [&str; 3] = ["equity_option", "commodity_option", "crypto_option"];
+
 /// The families priced by Monte-Carlo, whose [`Expected::price_std_error`] is a
 /// positive number and whose conformance tolerance is `k · stderr`.
 pub const MC_FAMILIES: [&str; 7] = [
@@ -273,6 +286,38 @@ pub fn load_vectors() -> Result<Vec<GoldenVector>, VectorError> {
         if !path.exists() {
             // A missing file is a real gap the selfcheck catches (it asserts all
             // 21 families present); skip here so a partial regenerate still loads.
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).map_err(|e| VectorError::Io {
+            path: path.clone(),
+            source: e.to_string(),
+        })?;
+        let mut vecs: Vec<GoldenVector> =
+            serde_json::from_str(&text).map_err(|e| VectorError::Parse {
+                path: path.clone(),
+                source: e.to_string(),
+            })?;
+        all.append(&mut vecs);
+    }
+    all.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(all)
+}
+
+/// Load the **cross-asset option corpus** ([`CROSS_ASSET_FAMILIES`]) from
+/// `vectors/{equity_option,commodity_option,crypto_option}.json`, sorted by `id`.
+///
+/// Kept separate from [`load_vectors`] so the proto-product-arm corpus (the 21
+/// [`FAMILIES`]) and its `present.len() == FAMILIES.len()` self-check are unaffected
+/// — these files carry an `<asset>_option` family tag that is intentionally NOT a
+/// `oneof product` arm.
+///
+/// # Errors
+/// [`VectorError`] on any I/O or JSON parse failure.
+pub fn load_cross_asset_vectors() -> Result<Vec<GoldenVector>, VectorError> {
+    let mut all = Vec::new();
+    for family in CROSS_ASSET_FAMILIES {
+        let path = vectors_file(family);
+        if !path.exists() {
             continue;
         }
         let text = std::fs::read_to_string(&path).map_err(|e| VectorError::Io {

@@ -27,8 +27,8 @@ use celnet_proto::{
     strike_or_delta,
 };
 use celnet_types::{
-    AtmConvention, Cut, DayCount, DeltaConvention, Greeks, OptionType, PremiumStyle, Settlement,
-    VanillaInputs,
+    AtmConvention, Carry, Cut, DayCount, DeltaConvention, Greeks, OptionType, PremiumStyle,
+    RateSensitivities, Settlement, SettlementStyle, Underlying, VanillaInputs,
 };
 
 use celnet_core::FlatSmile;
@@ -48,6 +48,13 @@ use celnet_exotics::{
     quanto_vanilla_price, single_barrier_price, tarf_price, turnbull_wakeman_price,
 };
 use celnet_linear::{LinearInputs, LinearTerms, Side as LinearSide, ndf::Ndf as LinearNdf, swap};
+
+use celnet_commodity_vanilla::CommodityInputs;
+use celnet_crypto_vanilla::{
+    InverseInputs as CryptoInverseInputs, LinearInputs as CryptoLinearInputs,
+    SettlementStyle as CryptoSettlementStyle, inverse as crypto_inverse, linear as crypto_linear,
+};
+use celnet_equity_vanilla::EquityInputs;
 
 /// A failure pricing a wire instrument: a malformed / unsupported message.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -449,6 +456,44 @@ pub fn price_instrument(
     if expiry <= 0.0 || !expiry.is_finite() {
         return Err(PriceError::Domain("expiry_years must be positive"));
     }
+
+    // Asset-class routing FIRST (ADR-0008): branch on the decoded underlying before
+    // the FX carry guard. An equity / commodity / digital-asset underlying is priced
+    // by the cross-asset cost-of-carry leaves (`celnet-{equity,commodity,crypto}-
+    // vanilla`), which ACCEPT the generalized `CostOfCarry { b }` carry; that path
+    // never touches the FX two-rate guard below. An FX / metal underlying (or an
+    // absent underlying, as a pure-context price request carries) falls through to
+    // the UNCHANGED FX path + its guard, so the FX/metal contract stays
+    // byte-identical. The underlying is decoded for routing only — the FX path's own
+    // FX-option validity guard (`validate_fx_underlying`) is unaffected.
+    if let Some(wire_underlying) = instrument.underlying.as_ref()
+        && let Ok(underlying) = celnet_types::Underlying::try_from(wire_underlying.clone())
+        && is_cross_asset(&underlying)
+    {
+        let product = instrument
+            .product
+            .as_ref()
+            .ok_or(PriceError::EmptyProduct)?;
+        // The LSV booking model is the FX vol-surface engine (local-stochastic vol
+        // calibrated to the FX smile); it does not apply to a cross-asset
+        // cost-of-carry leaf. Selecting it for a cross-asset underlying is refused
+        // with a typed error, never silently downgraded to the analytic leaf.
+        let model =
+            celnet_proto::PricingModel::try_from(instrument.pricing_model).map_err(|_| {
+                PriceError::UnknownEnum {
+                    kind: "PricingModel",
+                    tag: instrument.pricing_model,
+                }
+            })?;
+        if matches!(model, celnet_proto::PricingModel::LocalStochVol) {
+            return Err(PriceError::UnsupportedModel {
+                model: "LOCAL_STOCH_VOL",
+                product: product_name(product),
+            });
+        }
+        return price_cross_asset(&underlying, instrument, product, market, expiry);
+    }
+
     // Carry-producing-market architecture (no silent fallback): the FX pricing path
     // prices the FX two-rate carry only. An explicitly-supplied generalized
     // (cost-of-carry) carry is refused here with a typed error — never read as FX
@@ -1479,6 +1524,233 @@ pub fn price_instrument(
         instrument::Product::FxSwap(s) => price_fx_swap(instrument, market, expiry, s),
         instrument::Product::Ndf(n) => price_ndf(instrument, market, expiry, n),
     }
+}
+
+// ===========================================================================
+// Cross-asset routing (equity / commodity / digital-asset) — ADR-0008
+// ===========================================================================
+
+/// Whether the underlying is a cross-asset (non-FX/non-metal) arm routed through
+/// the generalized cost-of-carry leaves. FX and metal stay on the FX option path
+/// (a metal's lease rate is modelled as the FX foreign rate), byte-identically.
+fn is_cross_asset(underlying: &Underlying) -> bool {
+    matches!(
+        underlying,
+        Underlying::Equity(_) | Underlying::Commodity(_) | Underlying::DigitalAsset(_)
+    )
+}
+
+/// Read the generalized cost-of-carry `(r, b)` from the market context for a
+/// cross-asset price. The discount rate `r` is the out-of-band `discount_rate`
+/// (= `r_dom`); the net carry `b` is the generalized [`celnet_proto::CostOfCarry`]
+/// arm. The carry MUST be the generalized arm — an FX two-rate carry on a
+/// cross-asset underlying is a mismatch (a misrouted FX context), refused with a
+/// typed error rather than silently coerced; an absent carry is likewise refused
+/// (`b` is the whole pricing input — there is no safe default across asset
+/// classes), mirroring the FX path's no-silent-fallback guard.
+fn cost_of_carry(market: &WireMarketContext) -> Result<Carry, PriceError> {
+    use celnet_proto::carry_model::Model;
+    let carry = market.carry.as_ref().ok_or(PriceError::Domain(
+        "a cross-asset underlying requires a carry market arm (FX two-rate or generalized cost-of-carry)",
+    ))?;
+    // A cross-asset underlying prices over the SAME carry-producing market as FX
+    // (ADR-0008 — asset class is identity-only for the payoff): the net cost-of-carry
+    // `b` is either taken directly from the generalized arm, or derived from the FX
+    // two-rate arm as `b = r − r_for` (where `r_for` is the asset's carry yield — the
+    // dividend yield for an equity, convenience for a commodity, funding for a crypto
+    // pair). Both arms are valid and produce the same forward `S·e^{b·t}`. An ABSENT
+    // carry is refused — no silent fallback to `b = r` (the ADR-0008 carry guard).
+    match carry.model.as_ref() {
+        Some(Model::Generalized(g)) => Ok(Carry::CostOfCarry {
+            r: market.discount_rate,
+            b: g.b,
+        }),
+        Some(Model::Fx(fx)) => Ok(Carry::CostOfCarry {
+            r: market.discount_rate,
+            b: market.discount_rate - fx.r_for,
+        }),
+        None => Err(PriceError::Domain(
+            "a cross-asset underlying requires a non-empty carry market arm; no silent fallback",
+        )),
+    }
+}
+
+/// Build the wire-facing [`Greeks`] strip from a leaf [`celnet_core::carry::CarryGreeks`]
+/// strip. The leaf reports the rate sensitivities as
+/// [`RateSensitivities::Carry`] (discount-rho `∂V/∂r`, carry-rho `∂V/∂b`); these
+/// project losslessly onto the flat FX-shaped [`Greeks`] rhos via the
+/// `celnet_types` bijection `rho_dom = discount_rho + carry_rho`,
+/// `rho_for = −carry_rho`, exactly as an FX vanilla strip populates them (the FX
+/// rhos ARE that projection with `r = r_dom`, `b = r_dom − r_for`). The wire
+/// boundary then emits them through the same `Greeks → WireGreeks` path the FX
+/// vanilla uses.
+fn carry_greeks_to_greeks(g: &celnet_core::carry::CarryGreeks) -> Greeks {
+    let (rho_dom, rho_for) = match g.rates {
+        RateSensitivities::Carry {
+            discount_rho,
+            carry_rho,
+        } => (discount_rho + carry_rho, -carry_rho),
+        // The cross-asset leaves always tag Carry; an Fx arm here would be a leaf
+        // contract break. Carry the rhos through unchanged rather than fabricate.
+        RateSensitivities::Fx { rho_dom, rho_for } => (rho_dom, rho_for),
+    };
+    Greeks {
+        price: g.price,
+        delta_spot: g.delta_spot,
+        delta_forward: g.delta_forward,
+        gamma: g.gamma,
+        vega: g.vega,
+        theta: g.theta,
+        rho_dom,
+        rho_for,
+        vanna: g.vanna,
+        volga: g.volga,
+        charm: g.charm,
+        speed: g.speed,
+        zomma: g.zomma,
+        color: g.color,
+    }
+}
+
+/// Route a cross-asset (equity / commodity / digital-asset) instrument to its
+/// generalized cost-of-carry leaf. Only the vanilla product is a cross-asset
+/// option today (equity/commodity/crypto options are `Product::Vanilla` over a
+/// non-FX underlying — there is no separate product arm); every other product on
+/// a cross-asset underlying is refused with a typed error rather than silently
+/// mispriced on the FX exotic path. The caller has already rejected the LSV
+/// booking model (the FX vol-surface engine) for cross-asset underlyings.
+fn price_cross_asset(
+    underlying: &Underlying,
+    instrument: &Instrument,
+    product: &instrument::Product,
+    market: &WireMarketContext,
+    expiry: f64,
+) -> Result<Priced, PriceError> {
+    let v = match product {
+        instrument::Product::Vanilla(v) => v,
+        other => {
+            return Err(PriceError::UnsupportedModel {
+                model: "DEFAULT",
+                product: product_name(other),
+            });
+        }
+    };
+    let option_type = decode_option_type(v.option_type)?;
+    // A delta-keyed strike requires the FX delta-convention solver, which is an
+    // FX-option construct; a cross-asset option carries an absolute strike. A
+    // delta key on a cross-asset underlying is a clear input error.
+    let spec = v
+        .strike
+        .as_ref()
+        .and_then(|s| s.spec.as_ref())
+        .ok_or(PriceError::MissingField("vanilla.strike"))?;
+    let strike = match spec {
+        strike_or_delta::Spec::Strike(k) => *k,
+        strike_or_delta::Spec::Delta(_) => {
+            return Err(PriceError::Domain(
+                "a cross-asset (equity/commodity/digital-asset) option requires an \
+                 absolute strike, not an FX delta key",
+            ));
+        }
+    };
+    let carry = cost_of_carry(market)?;
+    let (spot, vol) = (market.spot, market.vol);
+
+    match underlying {
+        Underlying::Equity(_) => {
+            // Generalized-BSM (carry b = r − q). The leaf's spot-space `Carry` is
+            // `CostOfCarry { r, b }`; the equity leaf takes (r, q) with q = r − b.
+            let r = carry.discount_rate();
+            let q = r - carry.carry_rate();
+            let inputs = EquityInputs::dividend_paying(spot, strike, vol, expiry, r, q);
+            let g = celnet_equity_vanilla::greeks(option_type, &inputs);
+            // Reuse the shared carry→flat-greeks projection: the equity leaf's
+            // EquityGreeks mirrors CarryGreeks field-for-field.
+            let cg = celnet_core::carry::CarryGreeks {
+                price: g.price,
+                delta_spot: g.delta_spot,
+                delta_forward: g.delta_forward,
+                gamma: g.gamma,
+                vega: g.vega,
+                theta: g.theta,
+                rates: g.rates,
+                vanna: g.vanna,
+                volga: g.volga,
+                charm: g.charm,
+                speed: g.speed,
+                zomma: g.zomma,
+                color: g.color,
+            };
+            Ok(Priced {
+                greeks: carry_greeks_to_greeks(&cg),
+                resolved_strike: strike,
+                vol,
+                std_error: None,
+            })
+        }
+        Underlying::Commodity(_) => {
+            // Black-76 / cost-of-carry: the commodity leaf consumes the `Carry`
+            // directly (the spot is the physical spot, `b` the net carry).
+            let inputs = CommodityInputs::new(spot, strike, vol, expiry, carry);
+            let g = celnet_commodity_vanilla::greeks(option_type, &inputs);
+            Ok(Priced {
+                greeks: carry_greeks_to_greeks(&g),
+                resolved_strike: strike,
+                vol,
+                std_error: None,
+            })
+        }
+        Underlying::DigitalAsset(_) => {
+            // Linear (USD-margined) generalized-BSM or inverse (coin-margined)
+            // `1/S_T` payoff, selected by the instrument's settlement style. The
+            // crypto carry seam is the SAME `CostOfCarry { r, b }` the other leaves
+            // read (crypto's `b = r − funding`, so the carry-rho is the funding-rho);
+            // it is passed through unchanged (no `r − b` round-trip, which is not
+            // bit-exact). The inverse leaf's headline strip is in COINS (the
+            // contract's natural unit a coin-margined desk hedges in); the
+            // USD-equivalent rides on `InverseGreeks::usd_equivalent`.
+            let style = decode_settlement_style(instrument.settlement_style)?;
+            let g = match style {
+                CryptoSettlementStyle::Linear => {
+                    let inputs = CryptoLinearInputs::new(spot, strike, vol, expiry, carry);
+                    crypto_linear::greeks(option_type, &inputs)
+                }
+                CryptoSettlementStyle::InverseCoin => {
+                    let inputs = CryptoInverseInputs::new(spot, strike, vol, expiry, carry);
+                    crypto_inverse::greeks(option_type, &inputs).coin
+                }
+            };
+            Ok(Priced {
+                greeks: carry_greeks_to_greeks(&g),
+                resolved_strike: strike,
+                vol,
+                std_error: None,
+            })
+        }
+        // FX / metal never reach here (the caller routes them to the FX path).
+        Underlying::Fx(_) | Underlying::Metal(_) => Err(PriceError::Domain(
+            "internal: FX/metal underlying routed to the cross-asset path",
+        )),
+    }
+}
+
+/// Decode the wire [`celnet_proto::SettlementStyle`] tag into the crypto leaf's
+/// local settlement discriminator. The proto3 default (`0`, `LINEAR`) is the
+/// ordinary USD-margined contract; `INVERSE_COIN` selects the coin-margined
+/// `1/S_T` payoff. An out-of-range tag is a typed error, never a silent default.
+fn decode_settlement_style(tag: i32) -> Result<CryptoSettlementStyle, PriceError> {
+    // Decode through the domain `SettlementStyle` (the wire ↔ domain map lives in
+    // `celnet-proto`), then lower onto the crypto leaf's local enum.
+    let domain = celnet_proto::SettlementStyle::try_from(tag)
+        .map(SettlementStyle::from)
+        .map_err(|_| PriceError::UnknownEnum {
+            kind: "SettlementStyle",
+            tag,
+        })?;
+    Ok(match domain {
+        SettlementStyle::Linear => CryptoSettlementStyle::Linear,
+        SettlementStyle::InverseCoin => CryptoSettlementStyle::InverseCoin,
+    })
 }
 
 /// The standard spot-settlement time for the near leg of an FX swap, in years.
@@ -3709,5 +3981,220 @@ mod tests {
             price_instrument(&instr, &m, &conv_set()),
             Err(PriceError::Domain(_))
         ));
+    }
+
+    // ---- cross-asset routing (equity / commodity / digital-asset) -----------
+
+    /// A market context carrying the generalized cost-of-carry arm `CostOfCarry{b}`
+    /// over the discount rate `r` — the cross-asset market shape.
+    fn cross_asset_market(spot: f64, vol: f64, r: f64, b: f64) -> WM {
+        WM {
+            spot,
+            vol,
+            discount_rate: r,
+            carry: Some(celnet_proto::CarryModel {
+                model: Some(celnet_proto::carry_model::Model::Generalized(
+                    celnet_proto::CostOfCarry { b },
+                )),
+            }),
+        }
+    }
+
+    fn cross_asset_vanilla(underlying: celnet_proto::Underlying, strike: f64) -> Instrument {
+        Instrument {
+            underlying: Some(underlying),
+            expiry_years: 1.0,
+            side: celnet_proto::Side::Buy as i32,
+            pricing_model: celnet_proto::PricingModel::Default as i32,
+            product: Some(Product::Vanilla(Vanilla {
+                option_type: celnet_proto::OptionType::Call as i32,
+                strike: Some(StrikeOrDelta {
+                    spec: Some(strike_or_delta::Spec::Strike(strike)),
+                }),
+            })),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn equity_vanilla_routes_to_equity_leaf() {
+        // r = 0.05, q = 0.03 ⇒ b = r − q = 0.02.
+        let (r, q) = (0.05, 0.03);
+        let m = cross_asset_market(100.0, 0.20, r, r - q);
+        let underlying = celnet_proto::Underlying::equity(celnet_proto::EquityRef::new(
+            celnet_proto::Symbol::new("AAPL", "XNAS"),
+            "USD",
+        ));
+        let instr = cross_asset_vanilla(underlying, 100.0);
+        let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+        let oracle = celnet_equity_vanilla::price(
+            OptionType::Call,
+            &celnet_equity_vanilla::EquityInputs::dividend_paying(100.0, 100.0, 0.20, 1.0, r, q),
+        );
+        assert!(
+            is_close(priced.greeks.price, oracle, 1e-12, 1e-12),
+            "server equity {} vs leaf {oracle}",
+            priced.greeks.price
+        );
+        assert!(is_close(priced.resolved_strike, 100.0, 1e-14, 1e-14));
+    }
+
+    #[test]
+    fn commodity_vanilla_routes_to_black76_leaf() {
+        // Option on a future: b = 0, the pure Black-76 degenerate.
+        let r = 0.05;
+        let m = cross_asset_market(50.0, 0.30, r, 0.0);
+        let underlying = celnet_proto::Underlying::commodity(celnet_proto::CommodityRef::new(
+            celnet_proto::Symbol::new("BRENT", ""),
+            "USD",
+        ));
+        let instr = cross_asset_vanilla(underlying, 55.0);
+        let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+        let oracle = celnet_commodity_vanilla::price(
+            OptionType::Call,
+            &celnet_commodity_vanilla::CommodityInputs::on_future(50.0, 55.0, 0.30, 1.0, r),
+        );
+        assert!(
+            is_close(priced.greeks.price, oracle, 1e-12, 1e-12),
+            "server commodity {} vs leaf {oracle}",
+            priced.greeks.price
+        );
+    }
+
+    #[test]
+    fn crypto_linear_routes_to_linear_leaf() {
+        // b = r − funding ⇒ funding = r − b.
+        let (r, b) = (0.05, 0.03);
+        let m = cross_asset_market(30_000.0, 0.65, r, b);
+        let underlying =
+            celnet_proto::Underlying::digital_asset(celnet_proto::CryptoPair::new("BTC", "USDT"));
+        let mut instr = cross_asset_vanilla(underlying, 31_000.0);
+        instr.settlement_style = celnet_proto::SettlementStyle::Linear as i32;
+        let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+        let oracle = celnet_crypto_vanilla::linear::price(
+            OptionType::Call,
+            &celnet_crypto_vanilla::LinearInputs::new(
+                30_000.0,
+                31_000.0,
+                0.65,
+                1.0,
+                celnet_types::Carry::CostOfCarry { r, b },
+            ),
+        );
+        assert!(
+            is_close(priced.greeks.price, oracle, 1e-9, 1e-9),
+            "server crypto-linear {} vs leaf {oracle}",
+            priced.greeks.price
+        );
+    }
+
+    #[test]
+    fn crypto_inverse_routes_to_inverse_leaf() {
+        let (r, b) = (0.05, 0.03);
+        let m = cross_asset_market(30_000.0, 0.65, r, b);
+        let underlying =
+            celnet_proto::Underlying::digital_asset(celnet_proto::CryptoPair::new("BTC", "USD"));
+        let mut instr = cross_asset_vanilla(underlying, 31_000.0);
+        instr.settlement_style = celnet_proto::SettlementStyle::InverseCoin as i32;
+        let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+        // The inverse headline price is in COINS (a small premium).
+        let oracle = celnet_crypto_vanilla::inverse::price(
+            OptionType::Call,
+            &celnet_crypto_vanilla::InverseInputs::new(
+                30_000.0,
+                31_000.0,
+                0.65,
+                1.0,
+                celnet_types::Carry::CostOfCarry { r, b },
+            ),
+        );
+        assert!(
+            is_close(priced.greeks.price, oracle, 1e-12, 1e-12),
+            "server crypto-inverse {} vs leaf {oracle}",
+            priced.greeks.price
+        );
+        assert!(priced.greeks.price < 1.0, "inverse premium is in coins");
+    }
+
+    #[test]
+    fn cross_asset_accepts_fx_carry_rejects_absent_carry() {
+        // ADR-0008: a cross-asset underlying prices over the SAME carry-producing
+        // market as FX. The FX two-rate carry is a valid net cost-of-carry
+        // (b = r − r_for, with r_for the asset's carry yield) and is ACCEPTED; an
+        // ABSENT carry is refused — no silent fallback to b = r.
+        let underlying = celnet_proto::Underlying::equity(celnet_proto::EquityRef::new(
+            celnet_proto::Symbol::new("AAPL", "XNAS"),
+            "USD",
+        ));
+        let instr = cross_asset_vanilla(underlying, 100.0);
+
+        // FX two-rate carry → accepted (prices the equity leaf with q = r_for).
+        let m_fx = WM::fx(100.0, 0.20, 0.05, 0.03);
+        assert!(
+            price_instrument(&instr, &m_fx, &conv_set()).is_ok(),
+            "cross-asset must accept the FX two-rate carry (b = r − r_for)"
+        );
+
+        // Absent carry → rejected (the no-silent-fallback guard).
+        let mut m_absent = WM::fx(100.0, 0.20, 0.05, 0.03);
+        m_absent.carry = None;
+        assert!(matches!(
+            price_instrument(&instr, &m_absent, &conv_set()),
+            Err(PriceError::Domain(_))
+        ));
+    }
+
+    #[test]
+    fn cross_asset_lsv_is_rejected() {
+        let m = cross_asset_market(100.0, 0.20, 0.05, 0.02);
+        let underlying = celnet_proto::Underlying::equity(celnet_proto::EquityRef::new(
+            celnet_proto::Symbol::new("AAPL", "XNAS"),
+            "USD",
+        ));
+        let mut instr = cross_asset_vanilla(underlying, 100.0);
+        instr.pricing_model = celnet_proto::PricingModel::LocalStochVol as i32;
+        assert!(matches!(
+            price_instrument(&instr, &m, &conv_set()),
+            Err(PriceError::UnsupportedModel { .. })
+        ));
+    }
+
+    #[test]
+    fn cross_asset_non_vanilla_product_is_rejected() {
+        // Only vanilla is a cross-asset option; a digital on an equity is refused.
+        let m = cross_asset_market(100.0, 0.20, 0.05, 0.02);
+        let underlying = celnet_proto::Underlying::equity(celnet_proto::EquityRef::new(
+            celnet_proto::Symbol::new("AAPL", "XNAS"),
+            "USD",
+        ));
+        let instr = Instrument {
+            underlying: Some(underlying),
+            expiry_years: 1.0,
+            product: Some(Product::Digital(celnet_proto::Digital {
+                option_type: celnet_proto::OptionType::Call as i32,
+                strike: 100.0,
+                style: celnet_proto::DigitalStyle::CashOrNothing as i32,
+                payout: 1.0,
+            })),
+            ..Default::default()
+        };
+        assert!(matches!(
+            price_instrument(&instr, &m, &conv_set()),
+            Err(PriceError::UnsupportedModel { .. })
+        ));
+    }
+
+    #[test]
+    fn fx_path_unchanged_when_underlying_absent() {
+        // An absent underlying (a pure-context FX price request) takes the FX path
+        // byte-identically — the cross-asset branch is not entered.
+        let m = market();
+        let instr = vanilla_instrument(1.12);
+        let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+        let direct = celnet_vanilla::greeks(
+            OptionType::Call,
+            &VanillaInputs::new(1.10, 1.12, 0.10, 1.0, 0.02, 0.01),
+        );
+        assert_eq!(priced.greeks.price.to_bits(), direct.price.to_bits());
     }
 }

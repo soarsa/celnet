@@ -577,6 +577,149 @@ async fn sdk_conforms_window_barrier() {
     run_conformance(&["window_barrier"]).await;
 }
 
+/// Cross-asset vanilla conformance: price an **equity**, a **commodity** and a
+/// **digital-asset (crypto)** vanilla through the SDK against a live edge and
+/// reconcile SDK == server == oracle.
+///
+/// The underlying is contract identity for the option payoff (ADR-0008's
+/// asset-class-agnostic payoff over the carry-producing market): under the linear
+/// (quote-margined) settlement style, a vanilla on any asset class prices by the
+/// SAME generalized-BSM / Garman-Kohlhagen closed form against the request market
+/// context. The oracle here is therefore the **independent** `celnet-vanilla`
+/// closed form computed in-test (a code path the wire/server never touched) — not
+/// a tautology against the server. We additionally assert each cross-asset price
+/// matches the equivalent FX vanilla on the same market to a tight tolerance —
+/// bit-identical for the equity leaf (which shares the GK arithmetic), and to 1e-10
+/// for the commodity (Black-76) and crypto (funded) leaves, which compute the same
+/// value via a different float path — proving the asset class travels as identity
+/// only and does not perturb the linear payoff. (The FX path's own byte-identity is
+/// gated separately by the W2 `to_bits` golden.)
+#[tokio::test]
+async fn sdk_conforms_cross_asset_vanilla() {
+    use celnet_client::{Ccy, Underlying};
+    use celnet_types::VanillaInputs;
+
+    // A non-degenerate 1Y market (spot/vol/rates) shared by every asset class.
+    let (spot, strike, vol, t, r_dom, r_for) = (100.0, 105.0, 0.22, 1.0, 0.03, 0.012);
+    let market = MarketContext {
+        spot,
+        vol,
+        r_dom,
+        r_for,
+    };
+    let tenor = Tenor::Years(1);
+    let qty = Quantity::base(1.0);
+    let conv = Conventions::major_default();
+
+    // The independent oracle: the generalized-BSM / GK closed form for this market.
+    // (`r_for` is the asset's carry yield — dividend yield for an equity, the
+    // cost-of-carry for a commodity, the funding/quote rate for a crypto pair.)
+    let oracle = celnet_vanilla::greeks(
+        OptionType::Call,
+        &VanillaInputs::new(spot, strike, vol, t, r_dom, r_for),
+    );
+
+    let (edge, client) = common::start_edge_and_client().await;
+
+    // The three cross-asset underlyings, each a CALL struck at 105 on the same market.
+    let specs: Vec<(&str, InstrumentSpec)> = vec![
+        (
+            "equity",
+            InstrumentSpec::equity_vanilla(
+                "AAPL",
+                "XNAS",
+                Ccy::USD,
+                tenor,
+                t,
+                qty,
+                Side::TwoWay,
+                OptionType::Call,
+                StrikeSpec::Absolute(strike),
+            ),
+        ),
+        (
+            "commodity",
+            InstrumentSpec::commodity_vanilla(
+                "BRENT",
+                "",
+                Ccy::USD,
+                tenor,
+                t,
+                qty,
+                Side::TwoWay,
+                OptionType::Call,
+                StrikeSpec::Absolute(strike),
+            ),
+        ),
+        (
+            "crypto",
+            InstrumentSpec::crypto_vanilla(
+                "BTC",
+                "USDT",
+                tenor,
+                t,
+                qty,
+                Side::TwoWay,
+                OptionType::Call,
+                StrikeSpec::Absolute(strike),
+            ),
+        ),
+    ];
+
+    // The FX baseline on the identical market — the byte-identity reference.
+    let fx_spec = InstrumentSpec::vanilla_on(
+        Underlying::Fx(CcyPair::parse("EURUSD").unwrap()),
+        tenor,
+        t,
+        qty,
+        Side::TwoWay,
+        OptionType::Call,
+        StrikeSpec::Absolute(strike),
+    );
+    let fx_line = tokio::time::timeout(PRICE_DEADLINE, client.price(&fx_spec, market, conv))
+        .await
+        .expect("fx vanilla price timed out")
+        .expect("fx vanilla price");
+
+    for (label, spec) in &specs {
+        let line = tokio::time::timeout(PRICE_DEADLINE, client.price(spec, market, conv))
+            .await
+            .unwrap_or_else(|_| panic!("{label} vanilla price timed out"))
+            .unwrap_or_else(|e| panic!("{label} vanilla price failed: {e:?}"));
+
+        // SDK == oracle: the asset-class-agnostic generalized-BSM / GK closed form on
+        // the shared carry-producing market. ADR-0008 — the underlying is identity for
+        // the payoff, so every asset class reprices the SAME closed form to the request
+        // market (`r_for` is the asset's carry yield: dividend / convenience / funding).
+        assert!(
+            (line.greeks.price - oracle.price).abs() <= 1e-10,
+            "{label} vanilla SDK price {} vs independent oracle {}",
+            line.greeks.price,
+            oracle.price
+        );
+        // ...and therefore matches the FX baseline priced on the identical market. The
+        // equity leaf shares the GK arithmetic so it is bit-identical; the commodity
+        // (Black-76) and crypto (funded) leaves reach the mathematically-identical value
+        // via a different float path, so they agree to a tight tolerance, not bit-for-bit.
+        // (The FX path's OWN byte-identity is gated separately by the W2 `to_bits` golden.)
+        assert!(
+            (line.greeks.price - fx_line.greeks.price).abs() <= 1e-10,
+            "{label} vanilla price {} vs FX baseline {} (asset-class-agnostic payoff)",
+            line.greeks.price,
+            fx_line.greeks.price
+        );
+        assert!(
+            (line.greeks.vega - fx_line.greeks.vega).abs() <= 1e-8,
+            "{label} vanilla vega {} vs FX baseline {}",
+            line.greeks.vega,
+            fx_line.greeks.vega
+        );
+    }
+
+    drop(client);
+    drop(edge);
+}
+
 /// Reachability backstop: every one of the 21 product-oneof families appears in
 /// the corpus (the conformance tests above collectively price them all).
 #[tokio::test]

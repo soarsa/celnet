@@ -155,16 +155,40 @@ const FAMILIES_COVERED = [
 ] as const;
 
 /**
- * The corpus families the GUI deliberately does NOT expose offline, each with a
- * concrete, asserted reason (never a silent gap; CLAUDE.md rule 2):
+ * The corpus families the GUI deliberately does NOT price with its OFFLINE
+ * in-process pricer, each with a concrete, asserted reason (never a silent gap;
+ * CLAUDE.md rule 2):
  *  - `window_barrier` - no closed form, server LOCAL_STOCH_VOL-only: the offline
  *    pricer THROWS.
  *  - `lookback` - the corpus's discrete lookback uses a Beaglehole-Dybvig-Zhou
  *    continuous-within-segment extremum correction the GUI's fixing-point-only
  *    offline pricer does not model (a ~15% systematic gap), so the offline price is
  *    a genuinely different, cruder model and is NOT claimed to conform.
+ *  - `fx_forward` / `fx_swap` / `ndf` - the W2 LINEAR products are discounted
+ *    cashflows, not option payoffs: the GUI's offline OPTION pricer does not price
+ *    them. The GUI DOES book them faithfully onto the wire (the `forward`/`swap`/
+ *    `ndf` ProductSpecs, gated by `linearProducts.test.ts`); their numerical
+ *    conformance is the server/SDK gate (`celnet-linear` vs its independent oracle),
+ *    not the offline GUI pricer.
+ *  - `equity_option` / `commodity_option` / `crypto_option` - the cross-asset
+ *    vanillas price through the GENERALIZED cost-of-carry seam (a single net carry
+ *    `b` over equity dividend/repo, commodity convenience yield, or crypto funding),
+ *    which the GUI's FX-two-rate offline pricer does not model. The GUI DOES book
+ *    them faithfully onto the wire (the `crossAssetSpec` over the `Underlying` oneof
+ *    + `settlement_style`, gated by `crossAssetProducts.test.ts`); their numerical
+ *    conformance is the server/SDK gate (the cross-asset leaves vs their independent
+ *    generalized-BSM / Black-76 oracles), not the offline GUI pricer.
  */
-const FAMILIES_NOT_EXPOSED_BY_GUI = ["window_barrier", "lookback"] as const;
+const FAMILIES_NOT_EXPOSED_BY_GUI = [
+  "window_barrier",
+  "lookback",
+  "fx_forward",
+  "fx_swap",
+  "ndf",
+  "equity_option",
+  "commodity_option",
+  "crypto_option",
+] as const;
 
 // ---------------------------------------------------------------------------
 // GUI declared numerical-accuracy class (NOT a relaxation of the corpus band)

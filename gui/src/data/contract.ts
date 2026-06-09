@@ -42,6 +42,26 @@ export type DayCount = "ACT_365_FIXED" | "ACT_360";
 export type Settlement = "DELIVERABLE" | "NON_DELIVERABLE";
 
 /**
+ * A precious metal traded as the asset (base) leg of a metal pair
+ * (`celnet.wire.Metal`, mirrors `celnet_types::Metal`). The four LBMA/LPPM
+ * precious metals; each projects to an ISO-4217 "X"-prefixed asset code
+ * (XAU/XAG/XPT/XPD) so a metal pair overlaps the FX `CcyPair` encoding
+ * byte-for-byte on the metal leg. Listed in proto enum-number order (GOLD=0, …).
+ */
+export type Metal = "GOLD" | "SILVER" | "PLATINUM" | "PALLADIUM";
+
+/**
+ * Contract settlement mechanics — how a contract's PnL is denominated and
+ * margined (`celnet.wire.SettlementStyle`, carried on `Instrument.settlement_style`,
+ * field 29). LINEAR is the proto3 zero default (the ordinary quote-currency-margined
+ * contract, byte-identical to the contract before this field existed) for EVERY
+ * asset class; INVERSE_COIN is the coin-margined digital-asset convention whose
+ * payoff is the `1/S_T` (base-coin-denominated) form — meaningful only for a
+ * `digitalAsset` underlying.
+ */
+export type SettlementStyle = "LINEAR" | "INVERSE_COIN";
+
+/**
  * The published settlement-rate option a non-deliverable forward fixes against
  * (`celnet.wire.FixingSource`). This names *which* published rate the contract
  * settles to (each EMTA / ISDA per-currency template names exactly one) — it is
@@ -222,6 +242,85 @@ export interface CcyPair {
   /** Domestic / numeraire currency (CCY2), e.g. "USD". */
   quote: string;
 }
+
+/**
+ * A precious-metal pair (`celnet.wire.MetalPair`): the `metal` is the base/asset
+ * leg, `quote` the fiat numeraire (3-letter code). Projects byte-identically onto
+ * a metal-base `CcyPair` (base = the metal's ISO-4217 "X"-prefixed asset code).
+ */
+export interface MetalPair {
+  /** The precious metal (the base/asset leg). */
+  metal: Metal;
+  /** The fiat quote (numeraire) currency, e.g. "USD", "EUR", "JPY". */
+  quote: string;
+}
+
+/**
+ * A free-form instrument ticker (`celnet.wire.Symbol`) — the vendor-neutral
+ * identifier for an asset not named by a currency-/metal-pair leg structure (an
+ * equity, a commodity, a digital-asset coin).
+ */
+export interface Symbol {
+  /** The trading symbol / ticker, e.g. "AAPL", "BRENT", an ISIN. UTF-8. */
+  ticker: string;
+  /** The listing venue / exchange MIC, e.g. "XNAS"; empty when unambiguous. */
+  venue: string;
+}
+
+/**
+ * An equity (single-name or index) underlying (`celnet.wire.EquityRef`), priced
+ * through the generalized cost-of-carry seam (dividend yield as carry `b`). The
+ * dividend treatment is a carry-layer concern, not encoded here.
+ */
+export interface EquityRef {
+  /** The listed equity symbol (single name or index). */
+  symbol: Symbol;
+  /** The currency the equity is quoted / settled in (a 3-letter code). */
+  currency: string;
+}
+
+/**
+ * A commodity underlying (`celnet.wire.CommodityRef`), priced through the
+ * generalized cost-of-carry seam (storage/convenience yield as carry `b`). The
+ * cost-of-carry is a carry-layer concern, not encoded here.
+ */
+export interface CommodityRef {
+  /** The commodity / contract symbol, e.g. "BRENT". */
+  symbol: Symbol;
+  /** The currency the commodity is quoted / settled in (a 3-letter code). */
+  currency: string;
+}
+
+/**
+ * A digital-asset (crypto) pair (`celnet.wire.CryptoPair`). The `base` is the
+ * coin/asset leg (e.g. "BTC", "ETH"); the `quote` is the numeraire — a fiat
+ * ("USD") or coin/stablecoin ("USDT"). Both legs are UTF-8 strings (crypto tickers
+ * are not constrained to the 3-letter ISO-4217 shape). The linear/inverse
+ * settlement of a coin-margined contract is carried on `Instrument.settlementStyle`,
+ * NOT here (a contract-mechanics convention, not part of the pair identity).
+ */
+export interface CryptoPair {
+  /** The coin/asset (base) leg, e.g. "BTC", "ETH". UTF-8. */
+  base: string;
+  /** The numeraire (quote) leg — fiat ("USD") or coin/stablecoin ("USDT"). */
+  quote: string;
+}
+
+/**
+ * The instrument's underlying — the asset-class discriminator (`celnet.wire
+ * .Underlying`). Exactly one `ref` arm is set. FX is the first-class arm (also
+ * carried directly as `Instrument.pair` for the FX surfaces' byte-identical
+ * projection); metal/equity/commodity/digitalAsset are the cross-asset extensions
+ * (proto `oneof ref` field numbers fx=1, metal=3, equity=4, commodity=5,
+ * digital_asset=6). `settlementCcy` is the settlement / numeraire currency code
+ * (for FX, the pair's quote currency).
+ */
+export type Underlying =
+  | { kind: "fx"; fx: CcyPair; settlementCcy: string }
+  | { kind: "metal"; metal: MetalPair; settlementCcy: string }
+  | { kind: "equity"; equity: EquityRef; settlementCcy: string }
+  | { kind: "commodity"; commodity: CommodityRef; settlementCcy: string }
+  | { kind: "digitalAsset"; digitalAsset: CryptoPair; settlementCcy: string };
 
 /** An explicit calendar date for a `BROKEN_DATE` tenor (`celnet.wire.BrokenDate`). */
 export interface BrokenDate {
@@ -807,12 +906,29 @@ export interface Solve {
 /** The unified instrument every Celnet workflow speaks. */
 export interface Instrument {
   pair: CcyPair;
+  /**
+   * The cross-asset underlying (`Instrument.underlying`, proto field 1 — an
+   * `Underlying` oneof). Presence-tracked: absent ⇒ the FX projection carried by
+   * `pair` (the FX surfaces key on `pair`). A non-FX instrument sets this to a
+   * metal / equity / commodity / digital-asset arm; `pair` then carries the
+   * underlying's leg-string projection so the FX-keyed surfaces stay total.
+   */
+  underlying?: Underlying;
   tenor: Tenor;
   /** Expiry year fraction on the surface day-count (authoritative for pricing). */
   expiryYears: number;
   quantity: Quantity;
   side: Side;
   solve?: Solve;
+  /**
+   * The contract settlement mechanics (`Instrument.settlement_style`, proto field
+   * 29). Presence-tracked: absent/`LINEAR` ⇒ the ordinary quote-currency-margined
+   * linear contract (the proto3 zero value, byte-identical to the contract before
+   * this field existed); `INVERSE_COIN` selects the coin-margined `1/S_T`
+   * digital-asset convention. Travels uniformly on the Instrument exactly like
+   * `pricingModel`.
+   */
+  settlementStyle?: SettlementStyle;
   /**
    * The pricing/booking model the instrument is priced under (`Instrument
    * .pricing_model`, proto field 22). Presence-tracked: absent/`DEFAULT` ⇒ the

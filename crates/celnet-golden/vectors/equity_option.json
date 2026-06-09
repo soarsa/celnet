@@ -1,0 +1,118 @@
+[
+  {
+    "id": "equity-hull-index-call-930k900",
+    "family": "equity_option",
+    "underlying": "SPX",
+    "tenor": "2M",
+    "market": {
+      "spot": 930.0,
+      "vol": 0.2,
+      "r_dom": 0.08,
+      "r_for": 0.03
+    },
+    "terms": {
+      "expiry_years": 0.16666666666666666,
+      "option_type": "CALL",
+      "strike": 900.0,
+      "r": 0.08,
+      "q": 0.03,
+      "repo": 0.0
+    },
+    "expected": {
+      "price": 51.83295679649086,
+      "price_std_error": null,
+      "oracle": "independent generalized-BSM (Merton 1973) via libm::erf, b=r-q-repo; matches Hull worked index-option example (call 51.83)"
+    },
+    "tolerance": {
+      "rel": 1e-9,
+      "abs": 1e-9
+    }
+  },
+  {
+    "id": "equity-hull-index-put-930k900",
+    "family": "equity_option",
+    "underlying": "SPX",
+    "tenor": "2M",
+    "market": {
+      "spot": 930.0,
+      "vol": 0.2,
+      "r_dom": 0.08,
+      "r_for": 0.03
+    },
+    "terms": {
+      "expiry_years": 0.16666666666666666,
+      "option_type": "PUT",
+      "strike": 900.0,
+      "r": 0.08,
+      "q": 0.03,
+      "repo": 0.0
+    },
+    "expected": {
+      "price": 14.550996773772397,
+      "price_std_error": null,
+      "oracle": "independent generalized-BSM (Merton 1973) via libm::erf, b=r-q-repo"
+    },
+    "tolerance": {
+      "rel": 1e-9,
+      "abs": 1e-9
+    }
+  },
+  {
+    "id": "equity-repo-spread-call-100k105",
+    "family": "equity_option",
+    "underlying": "AAPL",
+    "tenor": "1Y",
+    "market": {
+      "spot": 100.0,
+      "vol": 0.3,
+      "r_dom": 0.05,
+      "r_for": 0.03
+    },
+    "terms": {
+      "expiry_years": 1.0,
+      "option_type": "CALL",
+      "strike": 105.0,
+      "r": 0.05,
+      "q": 0.02,
+      "repo": 0.01
+    },
+    "expected": {
+      "price": 10.376476625785315,
+      "price_std_error": null,
+      "oracle": "independent generalized-BSM via libm::erf with a borrow/repo spread folded into b=r-q-repo=0.02"
+    },
+    "tolerance": {
+      "rel": 1e-9,
+      "abs": 1e-9
+    }
+  },
+  {
+    "id": "equity-dividend-atm-call-100k100",
+    "family": "equity_option",
+    "underlying": "STOXX",
+    "tenor": "1Y",
+    "market": {
+      "spot": 100.0,
+      "vol": 0.2,
+      "r_dom": 0.05,
+      "r_for": 0.03
+    },
+    "terms": {
+      "expiry_years": 1.0,
+      "option_type": "CALL",
+      "strike": 100.0,
+      "r": 0.05,
+      "q": 0.03,
+      "repo": 0.0
+    },
+    "expected": {
+      "price": 8.652528553942709,
+      "price_std_error": null,
+      "oracle": "independent generalized-BSM via libm::erf, continuous dividend yield q=0.03"
+    },
+    "tolerance": {
+      "rel": 1e-9,
+      "abs": 1e-9
+    }
+  }
+]
