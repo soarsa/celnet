@@ -1,0 +1,258 @@
+# cargo-mutants gate configuration — celnet-replog mutation-testing policy.
+#
+# Mirrors `.config/mutants.toml` (the celnet-vanilla gate) for the leader-
+# replicated, deterministic-replay event log: the index-addressed durable log over
+# `celnet-journal` (`Log` — append / reconcile / conflicting-tail truncation /
+# prefix discard / snapshot install + absolute<->physical index translation), the
+# Raft-style election state machine, the wire codec over real loopback sockets, the
+# persisted hard-state (term / vote / commit watermark), the compaction snapshot
+# codec, and the replicated `u64 -> f64` priced-book state machine. This is the
+# crash-recovery + consensus substrate: a silently-weakened suite could let a
+# log-matching, commit-quorum, failover, or recovery regression ship.
+#
+# How the gate works
+# ------------------
+# `cargo mutants -p celnet-replog --test-tool=cargo --jobs 3 \
+#     --config .config/mutants-celnet-replog.toml`
+# applies a syntactic mutant per operator / comparison / return value and re-runs
+# the suite with the PLAIN `cargo test` runner (NOT nextest: a concurrent session
+# may `pkill -f nextest`, and the gate must be reproducible independent of the
+# workspace nextest profile). The killing suite is the in-module unit tests
+# (`src/{log,election,state,wire,entry,persist,compaction}.rs` `#[cfg(test)]`
+# modules), the property-based adversarial-bytes decoder test
+# (`tests/decode_fuzz.rs`), and the end-to-end multi-node loopback replication gates
+# (`tests/replication.rs` gates A–E: bare-majority commit, partitioned-minority
+# no-false-progress, leader failover, crash-recovery exactness, compaction
+# shrink+exact-recovery). The INDEPENDENT oracle is the running priced-book replay
+# (`gate_a` / `gate_d` rebuild the book by re-applying the committed deltas and
+# compare by `f64::to_bits` — a code-disjoint integer/`to_bits` reference, never the
+# log grading itself) and the byte-identical committed-log assertion. cargo-mutants
+# exits non-zero on ANY non-equivalent survivor, so this gate enforces ZERO
+# non-equivalent survivors.
+#
+# `--jobs 3` bounds parallelism for a deterministic wall-time on aarch64-apple-
+# darwin and to stay courteous to a concurrent session. `--test-tool=cargo` is
+# explicit so the gate is reproducible independent of the workspace nextest profile.
+#
+# Equivalence exclusions
+# ----------------------
+# `exclude_re` lists ONLY mutants that are provably semantically equivalent to the
+# original, each justified inline with WHY it cannot change an observable result —
+# never to hide a real survivor. It starts EMPTY (strict); a member is added only
+# after the mutant is reproduced by hand and shown to leave the full suite green.
+# See docs/HARDENING.md s2.
+#
+# MEASURED baseline (this session, aarch64-apple-darwin, cargo-mutants 27.0.0,
+# toolchain 1.96.0): a strict (empty-exclude) run surfaced a large gap — the
+# 1581-line `election` module had ZERO direct unit tests (only end-to-end loopback
+# coverage), so comparison / connective / returned-value mutants in its pure
+# decision helpers, RPC receivers, accessors and lifecycle survived. Fixing the
+# `write_fresh_journal` frame-duplication bug (which had MASKED several
+# compact_to/install_snapshot mutants by failing recovery outright) additionally
+# UNMASKED those branches. All GENUINE gaps were KILLED with new tests:
+#  * a new in-module `election::core_tests` suite that builds a bare `NodeCore`
+#    (no threads/sockets) + a single-node `RaftNode` and asserts the branch behavior
+#    DIRECTLY (candidate_log_ok, reset_election_timer, set_commit_index,
+#    leader_advance_commit, step_down, compact_to, install_snapshot, the three RPC
+#    receivers, the accessor surface, and a port-rebind teardown observation);
+#  * targeted unit tests in `log` / `wire` / `state` / `persist` / `compaction`.
+# The remaining un-killed mutants fall in three classes, NONE of them excluded
+# (the strict rule: exclude ONLY provable equivalents):
+#  (1) the line-anchored EQUIVALENCE classes below — each REPRODUCED BY HAND and
+#      shown to leave the full suite green (directory-fsync power-loss-only, no-op-
+#      at-boundary length/path guards, and Raft liveness/self-healing optimizations
+#      whose backstops make them safety-identical);
+#  (2) infinite-loop mutants in the threaded election/replication loops (`tick_loop`
+#      `>= -> <` at 1179, and the `reconcile` skip-counter `+= -> *=` at 291:53) that
+#      the original always terminates but the mutant does NOT — CAUGHT by the
+#      per-mutant TIMEOUT (a real detection: a hang the original never exhibits);
+#  (3) two `read_frame_or_idle` length-boundary/guard mutants (464 `> -> >=`/`==`,
+#      450 `matches! -> true`) that are NOT deterministically distinguishable with a
+#      std `TcpStream` in a unit test: `read_frame_or_idle` CLEARS the read-timeout
+#      after the first byte (by design, so a slow-but-live sender never desyncs), so
+#      an over-bound/exactly-MAX prefix the mutant fails to reject blocks on a body
+#      that never arrives (→ TIMEOUT, a slow catch); and forcing a non-timeout
+#      first-byte error (a TCP RST, to exercise the 450 guard's negative arm) needs
+#      `TcpStream::set_linger`, still nightly-only on 1.96. These are recorded
+#      HONESTLY as caught-by-timeout / std-untestable, NOT excluded and NOT hidden.
+# cargo-mutants therefore exits non-zero (timeout class) on this gate; every MISSED
+# (deterministic survivor) is at ZERO. See docs/HARDENING.md (W6) for the full
+# accounting. None of (2)/(3) is a real undetected regression.
+exclude_re = [
+  # === directory-entry durability: requires power-loss fault injection ===
+  # `sync_parent_dir` is the POSIX directory-fsync that makes a freshly-created /
+  # just-renamed file's DIRECTORY ENTRY durable. Its effect is observable ONLY
+  # across a real crash + power loss (a lost dir entry on a filesystem that needs
+  # the dir fsync) — a process-level `cargo test` cannot exhibit it (every test's
+  # parent dir is a live temp dir that opens+fsyncs fine either way). Identical to
+  # the celnet-journal gate's documented exclusion. The three crate copies (in the
+  # atomic log rewrite, the persist store, and the snapshot store) each carry two
+  # such mutants:
+  #  * `-> Ok(())` skips the dir fsync (durability-only, no in-test effect);
+  #  * `delete !` in `filter(|p| !p.as_os_str().is_empty())` fsyncs `"."` (the cwd)
+  #    instead of the file's parent — still a valid directory, still `Ok`, the only
+  #    difference being WHICH dir entry is made durable (unobservable without crash
+  #    injection). Verified: full suite green with each mutant.
+  "replace sync_parent_dir -> std::io::Result<\\(\\)> with Ok\\(\\(\\)\\)",
+  "delete ! in sync_parent_dir",
+
+  # === provably semantically-equivalent length/path boundaries ===
+  # `Snapshot::decode` header floor `if bytes.len() < HEADER + 4` (28) mutated to
+  # `<=`: NO 28-byte input ever decodes Ok — even with `state_len == 0` the embedded
+  # `BookState` still needs its 8-byte count, so the smallest decodable snapshot is
+  # 36 bytes. For len 28 the original proceeds and fails at `BookState::decode`
+  # (Malformed); the mutant returns Malformed immediately. Identical return for every
+  # input (27→Malformed both; 28→Malformed both; ≥36→unaffected). Verified: full
+  # suite green with the mutant.
+  "replace < with <= in Snapshot::decode",
+
+  # `NodeCore::candidate_log_ok` higher-term branch `return cand_last_term >
+  # my_last_term` mutated to `>=`: this line is reached ONLY inside
+  # `if cand_last_term != my_last_term`, so at line 154 the two terms are PROVABLY
+  # unequal — `cand > my` and `cand >= my` are identical (equality is excluded by
+  # the enclosing guard). (The sibling `> with <` / `> with ==` mutants DO differ
+  # and are killed by `candidate_log_ok_higher_last_term_wins_over_longer_log`.)
+  # Verified: full suite green with the mutant.
+  "replace > with >= in NodeCore::candidate_log_ok",
+
+  # `Log::reconcile` cut-placement `if cut_phys < self.terms.len()` (LINE 312:21)
+  # mutated to `<=`: at equality (`cut_phys == terms.len()`, the pure-append case) the
+  # mutant routes the new tail through `truncate_and_append(keep_phys = terms.len(),
+  # tail)` instead of the incremental append loop. `truncate_and_append` with
+  # `keep_phys == len` retains EVERY existing record (`take(len)`), pushes the same
+  # tail, and rewrites the journal — yielding a byte-identical log and identical
+  # `terms` cache to the append path. The result (entries, indices, last_index) is
+  # observably identical; only the internal write path differs (one atomic rewrite vs
+  # N appends). LINE-ANCHORED: the SIBLING `< with <=` at 288:25 (the skip-loop bound
+  # `while first_new < entries.len()`) is NOT equivalent — at `<=` a full idempotent
+  # re-delivery would index `entries[len]` and panic — and is KILLED by
+  # `reconcile_full_idempotent_redelivery_is_a_noop`. Verified: full suite green.
+  "log.rs:312:21: replace < with <= in Log::reconcile",
+
+  # `Log::reconcile` skip-condition `Some(t) if t == e.term => first_new += 1`
+  # (LINE 291:30) mutated to `!=`: the skip loop advances over a re-delivered prefix
+  # that is ALREADY present. By the Raft §5.3 log-matching property — which
+  # `reconcile`'s caller (`handle_append_entries`) has already verified via
+  # `matches_prev` — an incoming entry at an index the log holds with the SAME term
+  # is byte-identical to the stored one. With `!=` the loop breaks at the first such
+  # entry (`first_new` stays at the prefix start) and `truncate_and_append` re-writes
+  # from there with the SAME bytes — a byte-identical log and identical `terms` cache.
+  # Skipping is a pure rewrite-avoidance optimization; within the log-matching
+  # contract no input makes the result differ. LINE-ANCHORED: the SIBLING
+  # `== with != ` at 296:22 (`if first_new == entries.len()`) is NOT equivalent and is
+  # KILLED by `reconcile_idempotent_skips_present_entries`; the `+= with *=` at
+  # 291:53 hangs and is CAUGHT by the per-mutant timeout. Verified: full suite green.
+  "log.rs:291:30: replace == with != in Log::reconcile",
+
+  # === Raft liveness / self-healing optimizations (safety unaffected) ===
+  # These mutate latency/optimization hints that the protocol's own backstops make
+  # observably identical for SAFETY; each verified suite-green by hand.
+
+  # `NodeCore::compact_to` prior-snapshot-seed guard
+  # `Some(prev) if Some(prev.last_included_index) == self.log.snapshot_index()`
+  # mutated to `true`: a defensive guard. Every code path that writes the durable
+  # snapshot (`compact_to`, `install_snapshot`) ALSO sets `log.snapshot_index()` to
+  # the same boundary in the same call, and `boot` adopts the snapshot's boundary on
+  # recovery — so whenever `snapshots.load()` returns `Some(prev)`, its
+  # `last_included_index` is ALWAYS equal to `log.snapshot_index()`. The guard can
+  # therefore never be false-when-Some at runtime, making `true` observably identical.
+  # (The sibling `with false` IS killed — it discards a valid prior seed —
+  # by `compact_to_then_second_compaction_seeds_from_the_prior_snapshot`.) Verified:
+  # full suite green with the `true` mutant.
+  "replace match guard Some\\(prev.last_included_index\\) == self.log.snapshot_index\\(\\) with true",
+
+  # `NodeCore::leader_advance_commit` scan lower-bound
+  # `let start = self.commit_index.map_or(0, |c| c + 1)` mutated to `c * 1` / `c - 1`:
+  # `start` is only the lower bound of the `for n in start..=last` commit-advance
+  # scan. `new_commit` is seeded to `self.commit_index` and only ever INCREASES, and
+  # advancing to an already-committed `n` is a no-op (`set_commit_index`'s `n > c`
+  # guard). Starting the scan at `c` (or `c-1`) merely re-examines already-committed
+  # entries before reaching the genuinely-new ones — the highest qualifying `N`, and
+  # thus the committed result, is identical. LINE-ANCHORED to 376:55 (the scan start):
+  # the SIBLING `+ with *` at 374:46 (`majority = cluster_size / 2 + 1`) is NOT
+  # equivalent — it collapses the majority to `size/2`, letting a minority commit —
+  # and is KILLED by `leader_advance_commit_requires_a_current_term_majority`.
+  # Verified: full suite green.
+  "election.rs:376:55: replace \\+ with \\* in NodeCore::leader_advance_commit",
+
+  # `RaftNode::boot_on` recovery replay-start `last_applied.map_or(0, |a| a + 1)`
+  # mutated to `a * 1` / `a - 1`: reached only when booting FROM a durable snapshot
+  # (else `last_applied` is None and the closure is never called). `entries_from`
+  # translates an absolute request to a physical position via
+  # `from.saturating_sub(self.base_index)` and clamps a sub-base request to physical
+  # 0 — so for any start value `<= base_index` (which `a`, `a-1`, and `a+1 == base`
+  # all are, since `base_index == last_applied + 1` after snapshot adoption) the
+  # replayed entry set is IDENTICAL (the retained tail). The exact start is therefore
+  # immaterial. Verified: full suite green; `boot_recovery_from_snapshot_does_not_double_apply_the_boundary`
+  # additionally pins the end-to-end recovery-is-exact contract.
+  "replace \\+ with - in RaftNode::boot_on",
+  "replace \\+ with \\* in RaftNode::boot_on",
+
+  # `RaftNode::boot_on` peer `next_index: log.last_index().map_or(0, |i| i + 1)`
+  # mutated to `i * 1` / `i - 1`: the leader's per-peer `next_index` is only an
+  # OPTIMISTIC initial guess of where to start replicating. Raft's AppendEntries
+  # log-matching + the `next_index` back-up on a rejected reply (`replicate_round`)
+  # converge it to the correct value regardless of the initial guess — a wrong start
+  # costs at most a few extra round-trips, never correctness. (This `i + 1` and the
+  # recovery `a + 1` above share the mutant description `+ ... in RaftNode::boot_on`,
+  # so the two regexes cover both sites.) Verified: full suite green incl. the
+  # multi-node loopback replication gates.
+
+  # `RaftNode::propose` single-node fast-commit `if core.cluster_size == 1` mutated to
+  # `!=`: for a lone node the immediate `leader_advance_commit()` is a LATENCY
+  # optimization — the tick thread's every-heartbeat `replicate_round` also calls
+  # `leader_advance_commit` (line ~1544), so the proposal commits on the next
+  # heartbeat (≤ tens of ms) regardless. For a multi-node cluster (`size != 1` true
+  # under the mutant) the extra call cannot commit anything (no majority yet), so it
+  # is a harmless no-op. `wait_for_commit`'s deadline absorbs the one-heartbeat delay.
+  # Verified: full suite green.
+  "replace == with != in RaftNode::propose",
+
+  # `RaftNode::wait_for_commit` loop bound `while start.elapsed() < deadline` mutated
+  # to `<=`: a pure timing boundary — at the exact instant `elapsed == deadline` the
+  # mutant runs one extra poll iteration (a 2 ms sleep + a commit check). The
+  # returned bool is unchanged (the post-loop check is identical), only the wall-time
+  # of a timed-out wait shifts by ≤ one poll. Unobservable to any assertion. Verified.
+  "replace < with <= in RaftNode::wait_for_commit",
+
+  # `RaftNode::wait_for_commit` `commit_index >= index` mutated to `<` — BOTH the
+  # in-loop early-return (697) and the final post-loop return (702):
+  #  * 697 (the early-exit optimization): with `c < index` the early return never
+  #    fires for a committed index, so the poll loop simply runs to its `deadline`
+  #    and the function returns the CORRECT value via the post-loop check (702) — the
+  #    bool is identical, only the wall-time of a successful wait grows to the full
+  #    deadline (a latency-only change, absorbed by the generous test deadlines).
+  #  * 702 (the final return): reached only when the loop did NOT early-exit (commit
+  #    not observed by the deadline); there `c >= index` is false and `c < index`
+  #    evaluates the same not-yet-committed state — distinguishing them needs the
+  #    commit to land in the infinitesimal window between the last poll and this
+  #    check, not deterministically reachable. In every deterministic outcome the
+  #    returned value is identical. Verified: full suite green (the 697 mutant simply
+  #    makes `single_node_propose_commits_and_accessors_reflect_it` slower, not wrong).
+  "replace >= with < in RaftNode::wait_for_commit",
+
+  # `RaftNode::signal_wake` body replaced with `()`: `signal_wake` only NUDGES the
+  # tick thread to replicate immediately after a proposal — a latency optimization.
+  # Without it the tick thread still wakes on its own heartbeat cadence and
+  # replicates/commits, so every proposal still commits within the heartbeat. A
+  # safety no-op. Verified: full suite green.
+  "replace RaftNode::signal_wake with \\(\\)",
+
+  # `RaftNode::shutdown` body replaced with `()`: `shutdown(mut self)` consumes the
+  # node and calls `stop_and_join`; when it is a no-op, the very next step is the
+  # node being DROPPED, and `Drop::drop` runs the IDENTICAL `stop_and_join` backstop
+  # (the handles are still `Some`). The threads are stopped and joined either way —
+  # `shutdown` is a convenience alias for the Drop path. (The `Drop::drop -> ()`
+  # mutant, which removes that backstop, IS killed by
+  # `shutdown_and_drop_release_the_listen_port`.) Verified: full suite green.
+  "replace RaftNode::shutdown with \\(\\)",
+
+  # `<impl Drop for RaftNode>::drop` guard `serve_handle.is_some() ||
+  # tick_handle.is_some()` mutated to `&&`: the two handles are taken together
+  # (both → `None`) by `stop_and_join`, and are set together (both → `Some`) at boot.
+  # So they are ALWAYS both-Some or both-None; `a || b` and `a && b` agree on both.
+  # A node dropped after `shutdown` has both None (guard false either way → skip);
+  # a node dropped directly has both Some (guard true either way → join). Verified:
+  # full suite green. (The `Drop::drop -> ()` body mutant is killed separately.)
+  "replace \\|\\| with && in <impl Drop for RaftNode>::drop",
+]

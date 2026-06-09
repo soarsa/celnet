@@ -66,7 +66,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use celnet_journal::{Journal, crc32};
+use celnet_journal::Journal;
 
 use crate::entry::LogEntry;
 
@@ -579,35 +579,23 @@ fn rewrite_tmp_path(path: &Path) -> PathBuf {
 }
 
 /// Write a fresh journal file at `tmp` containing exactly `payloads` (each an
-/// already-encoded [`LogEntry`]), in canonical journal-record framing, fsync'd.
+/// already-encoded [`LogEntry`]), fsync'd, in the canonical journal framing.
 ///
-/// We build the file with the journal's own framing so re-opening it via
-/// [`Journal::open`] yields byte-identical records — the same `(payload_len,
-/// sequence, payload, crc32)` layout the journal writes itself. Sequence numbers
-/// are `0,1,2,…` to preserve the journal monotonicity invariant.
+/// The frame layout is owned **solely** by [`celnet_journal`]: we open a fresh
+/// [`Journal`] at `tmp` and [`Journal::append`] each payload, so re-opening the
+/// file via [`Journal::open`] yields byte-identical records by construction —
+/// there is no second copy of the on-disk format here to drift from the journal's
+/// (e.g. when the journal evolves its per-record framing). The journal assigns
+/// sequence numbers `0,1,2,…` and fsyncs each appended record, preserving the
+/// monotonicity and durability invariants the rewrite relies on.
 fn write_fresh_journal(tmp: &Path, payloads: &[Vec<u8>]) -> std::io::Result<()> {
-    use std::io::Write;
-    // Remove any stale temp from a previous interrupted rewrite.
+    // Remove any stale temp from a previous interrupted rewrite so `open` starts
+    // from an empty file (a leftover temp must not be appended onto).
     let _ = fs::remove_file(tmp);
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(tmp)?;
-    let mut buf = Vec::new();
-    for (seq, payload) in payloads.iter().enumerate() {
-        let len_u32 = u32::try_from(payload.len())
-            .map_err(|_| std::io::Error::other("log rewrite payload too large"))?;
-        let mut frame = Vec::with_capacity(4 + 8 + payload.len() + 4);
-        frame.extend_from_slice(&len_u32.to_le_bytes());
-        frame.extend_from_slice(&(seq as u64).to_le_bytes());
-        frame.extend_from_slice(payload);
-        let checksum = crc32(&frame);
-        frame.extend_from_slice(&checksum.to_le_bytes());
-        buf.extend_from_slice(&frame);
+    let mut journal = Journal::open(tmp).map_err(to_io)?;
+    for payload in payloads {
+        journal.append(payload).map_err(to_io)?;
     }
-    file.write_all(&buf)?;
-    file.sync_data()?;
     Ok(())
 }
 
@@ -688,6 +676,137 @@ mod tests {
         assert!(log.matches_prev(1, 3)); // index 1 has term 3
         assert!(!log.matches_prev(1, 2)); // wrong term
         assert!(!log.matches_prev(2, 1)); // no entry at index 2
+    }
+
+    #[test]
+    fn is_empty_tracks_retained_entries() {
+        let path = temp_log();
+        let mut log = Log::open(&path).unwrap();
+        // A fresh log is empty; after one append it is not (kills `is_empty -> true`,
+        // which would always report empty even with retained entries).
+        assert!(log.is_empty());
+        log.append(&e(1, 0, 1)).unwrap();
+        assert!(!log.is_empty(), "a log with a retained entry is not empty");
+        assert_eq!(log.len(), 1);
+    }
+
+    #[test]
+    fn discard_prefix_at_base_index_boundary_does_real_work() {
+        let path = temp_log();
+        let mut log = Log::open(&path).unwrap();
+        for i in 0..4u64 {
+            log.append(&e(1, i, i as u8)).unwrap();
+        }
+        // First discard [0,0] → base becomes 1, three retained.
+        log.discard_prefix(0, 1).unwrap();
+        assert_eq!(log.base_index(), 1);
+        assert_eq!(log.len(), 3);
+        // Now discard EXACTLY at the current base_index (1): this is NOT below base,
+        // so it must do real work (base → 2). The `< with <=` mutant on the
+        // idempotent guard (line 397) would treat `1 < 1`→`1 <= 1` as already-gone
+        // and SKIP it, leaving base at 1 — caught here.
+        log.discard_prefix(1, 1).unwrap();
+        assert_eq!(
+            log.base_index(),
+            2,
+            "discard at the base boundary advances it"
+        );
+        assert_eq!(log.len(), 2);
+        assert_eq!(log.snapshot_index(), Some(1));
+        // And the surviving tail is the absolute [2,3] entries (kills the `- with +`
+        // drop_count arithmetic on line 400: with base 1, drop_count must be
+        // `1 - 1 + 1 = 1`; the `+` mutant computes `1 + 1 + 1 = 3`, dropping the whole
+        // retained tail and erroring or shrinking to the wrong length).
+        let e2 = log.entry_at(2).unwrap().unwrap();
+        assert_eq!(e2.payload, vec![2u8]);
+        let e3 = log.entry_at(3).unwrap().unwrap();
+        assert_eq!(e3.payload, vec![3u8]);
+    }
+
+    #[test]
+    fn discard_prefix_drop_count_arithmetic_over_a_shifted_base() {
+        let path = temp_log();
+        let mut log = Log::open(&path).unwrap();
+        for i in 0..6u64 {
+            log.append(&e(1, i, (i + 10) as u8)).unwrap();
+        }
+        // Shift the base to 2 (discard [0,1]); retained absolute [2,5], len 4.
+        log.discard_prefix(1, 1).unwrap();
+        assert_eq!(log.base_index(), 2);
+        assert_eq!(log.len(), 4);
+        // Discard [.., 4]: drop_count must be `4 - 2 + 1 = 3` (retain absolute [5]),
+        // leaving exactly ONE entry. The `- with +` mutant (line 400) computes
+        // `4 + 2 + 1 = 7 > len 4` → an error (drop beyond range), so a correct
+        // single-entry retain proves the subtraction.
+        log.discard_prefix(4, 1).unwrap();
+        assert_eq!(log.base_index(), 5);
+        assert_eq!(
+            log.len(),
+            1,
+            "exactly one entry retained → drop_count was a subtraction"
+        );
+        assert_eq!(log.entry_at(5).unwrap().unwrap().payload, vec![15u8]);
+    }
+
+    #[test]
+    fn reconcile_full_idempotent_redelivery_is_a_noop() {
+        let path = temp_log();
+        let mut log = Log::open(&path).unwrap();
+        log.append(&e(1, 0, 1)).unwrap();
+        log.append(&e(1, 1, 2)).unwrap();
+        log.append(&e(2, 2, 3)).unwrap();
+        // Re-deliver EXACTLY the present entries (all already there, no new tail) — a
+        // heartbeat re-send. The skip loop must advance `first_new` to entries.len()
+        // and `return Ok(last_index())` at the `first_new == entries.len()` guard
+        // (idempotent). This is the case that exercises the loop bound at its TOP end:
+        // the `while first_new < entries.len()` bound (line 288) mutated to `<=` would
+        // run one extra iteration and index `entries[entries.len()]` → panic. A clean
+        // idempotent no-op here proves the strict `<` bound.
+        let last = log
+            .reconcile(&[e(1, 0, 1), e(1, 1, 2), e(2, 2, 3)])
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            last, 2,
+            "idempotent re-delivery leaves last_index unchanged"
+        );
+        assert_eq!(log.len(), 3, "no entries added or removed");
+        assert_eq!(log.term_at(2), Some(2));
+    }
+
+    #[test]
+    fn reconcile_skip_loop_advances_over_present_prefix_then_truncates() {
+        let path = temp_log();
+        let mut log = Log::open(&path).unwrap();
+        // Three present entries; index 2 is term 1 and will CONFLICT with a term-2
+        // re-delivery, so the skip loop must advance over indices 0,1 (present,
+        // identical) and STOP at index 2 (conflict), truncating [2,..] and appending.
+        log.append(&e(1, 0, 100)).unwrap();
+        log.append(&e(1, 1, 101)).unwrap();
+        log.append(&e(1, 2, 102)).unwrap();
+        // Re-deliver 0,1 identically, then a CONFLICTING index 2 (term 2) + new 3.
+        let last = log
+            .reconcile(&[e(1, 0, 100), e(1, 1, 101), e(2, 2, 222), e(2, 3, 223)])
+            .unwrap()
+            .unwrap();
+        assert_eq!(last, 3);
+        assert_eq!(log.len(), 4);
+        // The skip loop must have advanced `first_new` to 2 (not stayed at 0): the
+        // retained prefix [0,1] keeps its ORIGINAL term-1 entries, and [2,3] are the
+        // new term-2 ones. The `first_new += 1`→`*=` mutant freezes first_new at 0
+        // (cutting from index 0); the `< with >`/`==` loop mutant also mis-cuts. Both
+        // would change which entries survive — pinned by the exact term/payload below.
+        assert_eq!(log.term_at(0), Some(1));
+        assert_eq!(log.entry_at(0).unwrap().unwrap().payload, vec![100u8]);
+        assert_eq!(log.term_at(1), Some(1));
+        assert_eq!(log.entry_at(1).unwrap().unwrap().payload, vec![101u8]);
+        assert_eq!(
+            log.term_at(2),
+            Some(2),
+            "the conflicting entry is overwritten to term 2"
+        );
+        assert_eq!(log.entry_at(2).unwrap().unwrap().payload, vec![222u8]);
+        assert_eq!(log.entry_at(3).unwrap().unwrap().payload, vec![223u8]);
     }
 
     #[test]

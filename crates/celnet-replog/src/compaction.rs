@@ -356,6 +356,67 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_error_display_is_exact() {
+        // Pins the Display string (kills `SnapshotError::fmt -> Ok(Default::default())`).
+        assert_eq!(SnapshotError::Malformed.to_string(), "snapshot malformed");
+    }
+
+    #[test]
+    fn decode_rejects_below_header_plus_crc_and_accepts_the_real_minimum() {
+        // The header+crc floor is HEADER(24) + crc(4) = 28 bytes (`bytes.len() <
+        // HEADER + 4`, line 118). The smallest ACTUALLY-decodable snapshot is larger
+        // (36 bytes): it must additionally carry the embedded empty-state's 8-byte
+        // count. We pin the floor here; the `< with <=` boundary at exactly 28 is a
+        // provably-equivalent mutant (no 28-byte input ever decodes Ok — the embedded
+        // state still needs its 8-byte count — so `< 28` and `<= 28` return the
+        // identical `Malformed` for every input), justified in
+        // `.config/mutants-celnet-replog.toml`.
+        let empty = Snapshot::new(0, 0, BookState::new());
+        let bytes = empty.encode();
+        assert_eq!(
+            bytes.len(),
+            36,
+            "empty snapshot is 36 bytes (header+crc+state count)"
+        );
+        // Anything below the 28-byte floor is rejected by the length guard.
+        assert_eq!(
+            Snapshot::decode(&bytes[..27]),
+            Err(SnapshotError::Malformed)
+        );
+        // The real minimum decodes back to an empty book.
+        let back = Snapshot::decode(&bytes).expect("the 36-byte empty snapshot decodes");
+        assert_eq!(back.last_included_index, 0);
+        assert!(back.state.is_empty());
+    }
+
+    #[test]
+    fn load_missing_file_is_none_not_an_error() {
+        // An absent snapshot file must load to None via the NotFound match guard
+        // (line 174) — kills `replace match guard ... with true`, which would treat
+        // every io error as file-not-found. A genuinely-absent file is None.
+        let path = temp_path();
+        assert!(!path.exists());
+        let store = SnapshotStore::new(&path);
+        assert!(store.load().unwrap().is_none());
+        assert!(!store.exists().unwrap());
+    }
+
+    #[test]
+    fn load_non_notfound_io_error_propagates() {
+        // A path whose PARENT is a regular file makes `fs::read` fail with a
+        // non-NotFound error; the real code propagates it (`Err(e) => Err(e)`), while
+        // the `with true` guard mutant would mask it as None. Pin that it propagates.
+        let file = temp_path();
+        std::fs::write(&file, b"x").unwrap();
+        let nested = file.join("snap"); // <regular-file>/snap → not a directory
+        let store = SnapshotStore::new(&nested);
+        assert!(
+            store.load().is_err(),
+            "a non-NotFound IO error must propagate, not become a None load"
+        );
+    }
+
+    #[test]
     fn empty_state_snapshot_round_trips() {
         let snap = Snapshot::new(0, 1, BookState::new());
         let back = Snapshot::decode(&snap.encode()).expect("decodes");

@@ -217,10 +217,11 @@ mutants-gate-journal:
     timeout 1800 {{_cargo}} mutants -p celnet-journal --test-tool=cargo --jobs 3 \
         --config .config/mutants-journal.toml
 
-# Both infra-crate mutation gates (the SPMC fan-out ring + the durable journal) in
-# sequence — the crash-recovery / fan-out substrate, separate from the
-# numerics-only `mutants-gate-numerics` aggregate.
-mutants-gate-infra: mutants-gate-fanout mutants-gate-journal
+# All infra-crate mutation gates (the SPMC fan-out ring, the durable journal, the
+# fleet router, and the replicated event log) in sequence — the crash-recovery /
+# fan-out / scale-out / consensus substrate, separate from the numerics-only
+# `mutants-gate-numerics` aggregate.
+mutants-gate-infra: mutants-gate-fanout mutants-gate-journal mutants-gate-celnet-router mutants-gate-celnet-replog
     @echo "All infra mutation gates passed."
 
 # Mutation GATE on the fleet router (HRW rendezvous assignment + argmax tie-break,
@@ -244,6 +245,24 @@ mutants-gate-celnet-router:
     timeout 1500 env PROPTEST_MAX_SHRINK_ITERS=0 PROPTEST_DISABLE_FAILURE_PERSISTENCE=1 \
         {{_cargo}} mutants -p celnet-router --test-tool=cargo --jobs 3 \
         --minimum-test-timeout=60 --config .config/mutants-celnet-router.toml
+
+# Mutation GATE on the leader-replicated, deterministic-replay event log
+# (`celnet-replog`): the index-addressed durable `Log` over the journal (append /
+# reconcile / conflicting-tail truncate / prefix discard / snapshot install +
+# absolute<->physical index translation), the Raft election state machine
+# (vote / commit-quorum / RPC receivers / step-down / failover), the wire codec
+# over real loopback sockets, the persisted hard-state, the compaction snapshot
+# codec, and the deterministic `u64 -> f64` priced-book state machine. Plain
+# `cargo test` runner (NOT nextest: a concurrent session may `pkill -f nextest`,
+# and the gate must be reproducible independent of the workspace nextest profile);
+# `--jobs 3` bounds wall-time on the M4 and stays courteous to a parallel session.
+# The INDEPENDENT oracle is the running priced-book replay (`gate_a`/`gate_d` in
+# tests/replication.rs re-apply the committed deltas to a fresh BookState and
+# compare by `f64::to_bits` — code-disjoint from the log) + the byte-identical
+# committed-log assertion. Zero non-equivalent survivors. See docs/HARDENING.md.
+mutants-gate-celnet-replog:
+    timeout 2400 {{_cargo}} mutants -p celnet-replog --test-tool=cargo --jobs 3 \
+        --config .config/mutants-celnet-replog.toml
 
 # Coverage GATE on the vanilla pricing core: fail if region/line coverage drops
 # below the committed floor (see docs/HARDENING.md). `--fail-under-lines` /

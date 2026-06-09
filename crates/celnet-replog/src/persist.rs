@@ -297,6 +297,58 @@ mod tests {
     }
 
     #[test]
+    fn open_missing_file_is_default_not_an_error() {
+        // A path that does not exist must open to the default state via the
+        // `NotFound` match guard (line 69) — kills `replace match guard ... with
+        // true`, which would treat EVERY io error (incl. a real one) as
+        // file-not-found. Here a genuinely-absent file must still succeed as default.
+        let path = temp_path();
+        assert!(!path.exists());
+        let s = PersistStore::open(&path).unwrap();
+        assert_eq!(s.state(), PersistentState::default());
+    }
+
+    #[test]
+    fn open_unreadable_parent_surfaces_the_io_error() {
+        // A path whose PARENT is a regular file (not a directory) makes `fs::read`
+        // fail with an error whose kind is NOT NotFound (NotADirectory / other). The
+        // real code propagates it (`Err(e) => return Err(e)`); the `with true` mutant
+        // on the NotFound guard would instead swallow it as a default open. This pins
+        // that a non-NotFound IO error is surfaced, not masked.
+        let file = temp_path(); // a normal file path inside a temp dir
+        std::fs::write(&file, b"x").unwrap();
+        let nested = file.join("state"); // <regular-file>/state → not a directory
+        let result = PersistStore::open(&nested);
+        assert!(
+            result.is_err(),
+            "a non-NotFound IO error must propagate, not become a default open"
+        );
+    }
+
+    #[test]
+    fn state_accessor_returns_the_loaded_state_not_default() {
+        // `state()` must return the actual stored state (kills `state ->
+        // Default::default()`). Persist a non-default state, reopen, and assert the
+        // full struct round-trips through `state()`.
+        let path = temp_path();
+        {
+            let mut s = PersistStore::open(&path).unwrap();
+            s.save(9, Some(40_002)).unwrap();
+            s.save_commit_index(Some(5)).unwrap();
+        }
+        let s = PersistStore::open(&path).unwrap();
+        assert_eq!(
+            s.state(),
+            PersistentState {
+                current_term: 9,
+                voted_for: Some(40_002),
+                commit_index: Some(5),
+            },
+            "state() returns the loaded non-default state"
+        );
+    }
+
+    #[test]
     fn crc_flip_reads_as_default() {
         let path = temp_path();
         let mut bytes = encode(&PersistentState {
