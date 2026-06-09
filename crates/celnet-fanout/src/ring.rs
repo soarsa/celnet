@@ -351,6 +351,37 @@ impl<T: Copy + Default + Send> Consumer<T> {
         }
     }
 
+    /// Drain up to `out.len()` in-order items into the caller's slice, returning
+    /// the count written (`out[..n]`). **Zero-allocation** (the caller owns the
+    /// buffer) and lock-free.
+    ///
+    /// This is the broadcast-ring analogue of the LMAX-Disruptor *batch* receive
+    /// (M. Thompson et al., *Disruptor*, 2011 §4 "batching effect"): a consumer
+    /// that has fallen behind amortises its per-item dispatch by draining a run
+    /// in one call instead of one `try_recv` per item, which is the dominant win
+    /// when a single producer outruns a fan-out consumer. Each element still goes
+    /// through the full per-slot seqlock validation (so conflation accounting and
+    /// torn-read rejection are identical to [`try_recv`](Self::try_recv)); the
+    /// saving is purely the collapsed call/loop overhead at the consume site.
+    ///
+    /// Returns `0` only when the consumer is already caught up (an empty ring or
+    /// `out.is_empty()`). Stops early at the first `Empty`, so `n < out.len()`
+    /// means the consumer has drained everything currently available.
+    #[inline]
+    pub fn try_recv_batch(&mut self, out: &mut [T]) -> usize {
+        let mut n = 0;
+        while n < out.len() {
+            match self.try_recv() {
+                Ok(v) => {
+                    out[n] = v;
+                    n += 1;
+                }
+                Err(RecvError::Empty) => break,
+            }
+        }
+        n
+    }
+
     /// Items successfully delivered to this consumer.
     #[inline]
     pub fn received(&self) -> u64 {
@@ -497,6 +528,60 @@ mod tests {
         for w in got.windows(2) {
             assert!(w[0] < w[1], "delivered items must be strictly in order");
         }
+    }
+
+    #[test]
+    fn batch_drain_matches_single_recv_and_conserves() {
+        let cap = 8usize;
+        let mut ring = BroadcastRing::<u64>::new(cap);
+        let mut c = ring.consumer();
+        let p = ring.producer();
+        const PRODUCED: u64 = 100;
+        for i in 0..PRODUCED {
+            p.publish(i);
+        }
+        // Drain in small batches into a fixed stack buffer (zero-alloc).
+        let mut buf = [0u64; 3];
+        let mut got = Vec::new();
+        loop {
+            let n = c.try_recv_batch(&mut buf);
+            if n == 0 {
+                break;
+            }
+            assert!(n <= buf.len());
+            got.extend_from_slice(&buf[..n]);
+        }
+        // Same convergence + accounting contract as the single-item path.
+        assert_eq!(
+            *got.last().unwrap(),
+            PRODUCED - 1,
+            "must converge on the latest"
+        );
+        assert_eq!(
+            c.received() + c.skipped(),
+            PRODUCED,
+            "received+skipped != produced"
+        );
+        assert_eq!(c.received(), got.len() as u64);
+        assert!(got.len() <= cap, "saw more than the live window");
+        for w in got.windows(2) {
+            assert!(w[0] < w[1], "batch delivery must be strictly in order");
+        }
+    }
+
+    #[test]
+    fn batch_drain_into_empty_or_oversized_slice() {
+        let mut ring = BroadcastRing::<u64>::new(16);
+        let mut c = ring.consumer();
+        ring.producer().publish(10);
+        ring.producer().publish(20);
+        // Empty target slice: nothing drained, cursor untouched.
+        assert_eq!(c.try_recv_batch(&mut []), 0);
+        // Oversized target: drains exactly what's available, no more.
+        let mut buf = [0u64; 8];
+        assert_eq!(c.try_recv_batch(&mut buf), 2);
+        assert_eq!(&buf[..2], &[10, 20]);
+        assert_eq!(c.try_recv_batch(&mut buf), 0);
     }
 
     #[test]
