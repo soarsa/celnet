@@ -295,6 +295,88 @@ strict in-order, conserving delivery.
   model genuinely exercises the rejection logic. Run `just loom-fanout` after any
   edit to the publish/consume stamp protocol or the reader fence.
 
+### Infra-crate mutation gate — `celnet-router` (W6, MEASURED green locally)
+
+The fleet router (`celnet-router`) is the horizontal scale-out substrate: it
+shards pricing work across stateless replicas by **highest-random-weight
+(rendezvous) hashing**, fails over to hot standbys with no key loss, and sheds at
+a per-replica inflight cap. The whole crate is a pure, deterministic routing core
+(no IO, no pricing state); a silently-weakened suite could let a non-deterministic
+assignment (fleet divergence), a fallback mis-selection, a down-standby route, or
+a cap overshoot ship. It gets its own enforceable mutation gate in the house
+style, with the same two deltas as the fanout gate (`.config/mutants-celnet-router.toml`):
+
+- **plain `cargo test` runner** (`--test-tool=cargo`, NOT nextest) — reproducible
+  independent of the workspace nextest profile; a concurrent session may
+  `pkill -f nextest`.
+- **`--jobs 3`** — bounds wall-time on the M4, courteous to a parallel session.
+
+| Crate | Config | just recipe | Independent oracle | Status |
+|-------|--------|-------------|--------------------|--------|
+| `celnet-router` | `.config/mutants-celnet-router.toml` | `just mutants-gate-celnet-router` | code-disjoint splitmix64/digest + brute-force argmax (`tests/router_mutation.rs`) | **MEASURED green locally** — 99 mutants, 83 caught, 16 unviable, zero non-equivalent survivors |
+
+**Measured baseline** (`aarch64-apple-darwin`, cargo-mutants 27.0.0, toolchain
+1.96.0). A crate-wide raw run surfaced **32 MISSED** mutants (108 total; 45 caught,
+16 unviable, the rest caught). The `mix64`/`digest`/`seed`/`fold64`/
+`rendezvous_weight` whole-fn `-> 0/1`/operator collapse mutants ARE caught (they
+make the hash degenerate, which the exact-value oracle + balance/avalanche suites
+fail), but they originally **hung** the gate: three test helpers searched for a
+key with a given owner via an unbounded `(0..).find(...)`, and a collapsed hash
+pins the owner to one id so the search never terminates. Fixed by bounding those
+searches to `[0, 10000)` with an `.expect()` (in `src/map.rs`'s two failover
+tests and `tests/router_mutation.rs`'s standby test) so a degenerate-hash mutant
+FAILS FAST (caught) instead of looping; the gate additionally sets
+`PROPTEST_MAX_SHRINK_ITERS=0` (skip slow shrinking of a guaranteed-failing
+proptest case) and a 60s timeout floor for deterministic scoring (exit 0). Each of
+the 32 MISSED was reproduced and classified — none hidden:
+
+- **KILLED with new tests (23 genuine gaps).** The pre-existing
+  `tests/routing_properties.rs` proves the *shape* of routing (balance, minimal
+  reshuffle, no key loss, bounded shed) but only asserts *relations* — descending
+  rank, distinct digests, `route.replica != downed` — so a mutant that changes the
+  hash mixing, the digest byte-packing, or *which* healthy replica a fallback picks
+  still satisfied them. `tests/router_mutation.rs` closes the gap by pinning every
+  load-bearing value against an **INDEPENDENT ORACLE**: a code-disjoint
+  re-implementation of the frozen `splitmix64` finalizer / rotate-fold / rendezvous
+  weight / replica seed / partition-key digest (re-derived from the documented
+  algorithm, never calling the crate's `pub(crate)` `mix64`/`fold64`), plus a
+  brute-force max-weight + lowest-id argmax. It kills:
+  - the exact `digest` bits — every per-slot `<<` shift, the `|` pack, the `tagged`
+    xor-mask, and the second-step `mix64` `^`/`>>` (digest calls `mix64`);
+  - the exact `RankedReplica.weight` vs the independent rendezvous spec;
+  - the natural-owner / primary-route argmax (vs brute-force);
+  - the **HRW-fallback selection** — `route.replica` must equal the argmax over the
+    HEALTHY subset, which distinguishes `172 > with <` (min-pick), `> with ==`,
+    `|| with &&`, `&& with ||`, `== with !=`, and the guard `true`/`false` (each
+    selects a different healthy replica for some down/seed configuration);
+  - the `healthy_standby` health gate (`matches!(.., Up) -> true`) — a DOWN standby
+    must be rejected and the key fall through to HRW;
+  - the `cap` accessor and both `Display` impls (`fmt -> Ok(default)`).
+- **EQUIVALENT (9 excluded with inline justification + verified evidence).** Two
+  provably-equivalent clusters:
+  - *Rendezvous-weight tie-break (4):* `map.rs:134` and `map.rs:172`,
+    `bw > w -> bw >= w` and the tie clause `id.0 <= r.id.0 -> id.0 > r.id.0`. The
+    `bw == w` tie clause is reached ONLY when two DISTINCT replicas have the EXACT
+    same 64-bit rendezvous weight for one key; since the weight is
+    `mix64(fold64(seed, digest))` with `mix64` a splitmix64 bijection, a tie
+    requires a full 64-bit collision `fold64(seed_a, d) == fold64(seed_b, d)` for
+    distinct seeds — computationally infeasible to exhibit, so no
+    test/proptest/production input reaches it.
+  - *Disjoint-bit-slot OR == XOR in the digest pair-pack (5):* `key.rs:95–99`,
+    `| with ^`. `digest` packs the six validated ASCII currency bytes into one u64
+    at NON-OVERLAPPING 8-bit positions (`b0<<40 | … | q2`). Each byte is `<= 0xFF`
+    (8 bits) and the slots are 8 bits apart, so the operands have pairwise-disjoint
+    bits — for which `a | b == a ^ b` bit-for-bit. The mutated lane (hence digest)
+    is IDENTICAL for every valid pair. (`| with &` is NOT excluded: `a & b == 0`
+    for disjoint bits changes the digest and IS caught by the exact-value oracle.)
+  Each was VERIFIED equivalent this session: applied to the source, the FULL suite
+  (`router_mutation.rs`'s exact-digest + argmax pinning over 6 replicas × 400–600
+  keys, and `routing_properties.rs`'s 8000-key balance/reshuffle) stayed GREEN.
+
+After these tests + the 9 justified exclusions, `just mutants-gate-celnet-router`
+runs to **zero non-equivalent survivors**, exit 0 (MEASURED: 99 mutants tested in
+42s after the 9 exclusions — 83 caught, 16 unviable, **0 missed, 0 timeout**).
+
 ## 3. Coverage (region / function / line)
 
 `cargo llvm-cov nextest` instruments the test run and reports per-file

@@ -1,0 +1,113 @@
+# cargo-mutants gate configuration — celnet-router mutation-testing policy.
+#
+# Mirrors `.config/mutants.toml` (the celnet-vanilla gate) for the fleet router:
+# the highest-random-weight (rendezvous) assignment and its argmax tie-break, the
+# splitmix64 mixer / lane-fold digest, the hot-standby failover + HRW-fallback
+# decision tree, the membership-validation invariants, and the per-replica
+# inflight backpressure cap. This is the horizontal scale-out substrate — a
+# silently-weakened suite could let a non-deterministic assignment (fleet
+# divergence), a tie-break asymmetry, a failover key-loss, or a cap overshoot
+# ship.
+#
+# How the gate works
+# ------------------
+# `cargo mutants -p celnet-router --test-tool=cargo --jobs 3 \
+#     --config .config/mutants-celnet-router.toml`
+# applies a syntactic mutant per operator / comparison / return value and re-runs
+# the suite with the PLAIN `cargo test` runner (NOT nextest: a concurrent session
+# may `pkill -f nextest`, and the gate must be reproducible independent of the
+# workspace nextest profile). The router's correctness is pinned by:
+#   * the in-module unit tests (hash mixer bijectivity/avalanche/order-sensitivity,
+#     digest determinism/distinctness, membership validation, backpressure cap),
+#   * the closed-form / brute-force-argmax routing tie-break and standby/fallback
+#     tests in `tests/routing_properties.rs` + the new `tests/router_mutation.rs`
+#     value-pinning suite, and
+#   * the concurrent backpressure stress (`concurrent_admits_never_exceed_cap`).
+# The INDEPENDENT oracle for the HRW assignment is an in-test re-implementation of
+# the argmax (a brute-force max-weight + lowest-id tie-break computed from the
+# public `rendezvous_weight`-equivalent surface) that grades the router's `route`
+# / `natural_owner` / `ranked_into` output, never the routing code grading itself.
+# cargo-mutants exits non-zero on ANY non-equivalent survivor, so this gate
+# enforces ZERO non-equivalent survivors.
+#
+# `--jobs 3` bounds parallelism for a deterministic wall-time on aarch64-apple-
+# darwin and to stay courteous to a concurrent session. `--test-tool=cargo` is
+# explicit so the gate is reproducible independent of the workspace nextest
+# profile. The `just` recipe also runs with `PROPTEST_MAX_SHRINK_ITERS=0` and a
+# 60s timeout floor so a hash-collapse mutant (degenerate mixer) fails FAST
+# (caught) rather than spending minutes shrinking a guaranteed-failing proptest
+# case; the owner-search test helpers are bounded to `[0,10000)` for the same
+# reason (a collapsed hash pins the owner to one id, which would otherwise loop).
+#
+# Equivalence exclusions
+# ----------------------
+# `exclude_re` lists ONLY mutants that are provably semantically equivalent to the
+# original, each justified inline with WHY it cannot change an observable result —
+# never to hide a real survivor. Each was reproduced by applying the mutant and
+# running the FULL suite this session. See docs/HARDENING.md s2.
+#
+# MEASURED baseline (this session, aarch64-apple-darwin, cargo-mutants 27.0.0,
+# toolchain 1.96.0)
+# ------------------------------------------------------------------------------
+# A crate-wide raw run surfaced 32 MISSED mutants (108 total; the rest caught,
+# 16 unviable). 23 of the 32 were GENUINE gaps and were KILLED with
+# `tests/router_mutation.rs` (the independent splitmix64/digest oracle + the
+# brute-force max-weight/lowest-id argmax oracle): the exact `digest` bits
+# (byte-packing `<<` shifts, `|`->`&` packs, the `tagged` xor-mask, and the second
+# `mix64` `^`/`>>` step), the exact `RankedReplica.weight` vs the independent
+# rendezvous spec, the natural-owner/primary argmax, the HRW-fallback selection
+# (line-172 `> with <`/`==`, `|| with &&`, `&& with ||`, `== with !=`, guard
+# true/false — each picks a different healthy replica), the `healthy_standby`
+# down-standby rejection, the `cap` accessor, and the two `Display` impls. The
+# remaining 9 are provably equivalent (two clusters), listed below: 4 weight-tie-
+# only argmax mutants + 5 disjoint-bit-slot `|`->`^` digest-pack mutants.
+#
+# Equivalence cluster 1 — the rendezvous-weight tie-break (UNREACHABLE)
+# --------------------------------------------------------------------
+# The argmax in `route`/`natural_owner` keeps the incumbent when
+# `bw > w || (bw == w && id.0 <= r.id.0)`. The `bw == w` clause is the tie-break,
+# reached ONLY when two DISTINCT replicas have the EXACT same 64-bit rendezvous
+# weight for one key. The weight is `mix64(fold64(seed, digest))` with `mix64` a
+# bijection over the documented splitmix64 finalizer; a tie requires a full
+# 64-bit collision `fold64(seed_a, d) == fold64(seed_b, d)` for distinct seeds —
+# computationally infeasible to exhibit (no test, proptest, or production input
+# reaches it). Each mutant below therefore CANNOT change any observable selection
+# and is semantically equivalent on every reachable input. VERIFIED this session:
+# each was applied to `src/map.rs` and the FULL suite (incl.
+# `tests/router_mutation.rs`'s exhaustive argmax pinning over 6 replicas x 400-600
+# keys, and `tests/routing_properties.rs`'s 8000-key balance/reshuffle) stayed
+# GREEN — confirming no reachable interleaving distinguishes them.
+exclude_re = [
+  # Natural-owner pass `bw > w` -> `bw >= w`: differs only when `bw == w` (a
+  # weight tie). Verified: full suite green with the mutant applied.
+  "map\\.rs:134:38: replace > with >= in PartitionMap<'a>::route",
+  # Natural-owner pass tie-break `id.0 <= r.id.0` -> `id.0 > r.id.0`: the tie
+  # clause is gated by `bw == w`, never reached. Verified: full suite green.
+  "map\\.rs:134:62: replace <= with > in PartitionMap<'a>::route",
+  # HRW-fallback pass `bw > w` -> `bw >= w`: same weight-tie-only argument over
+  # the HEALTHY subset. Verified: full suite green with the mutant applied.
+  "map\\.rs:172:38: replace > with >= in PartitionMap<'a>::route",
+  # HRW-fallback pass tie-break `id.0 <= r.id.0` -> `id.0 > r.id.0`: tie clause
+  # gated by `bw == w`, never reached. Verified: full suite green.
+  "map\\.rs:172:62: replace <= with > in PartitionMap<'a>::route",
+
+  # Equivalence cluster 2 — disjoint-bit-slot OR == XOR in the digest pair-pack
+  # ----------------------------------------------------------------------------
+  # `digest` packs the six validated ASCII currency bytes into one u64 lane at
+  # NON-OVERLAPPING 8-bit positions: `b0<<40 | b1<<32 | b2<<24 | q0<<16 | q1<<8 |
+  # q2`. Each `CcyPair` byte is an ASCII uppercase letter (<= 0xFF, 8 bits), and
+  # the shift offsets are 8 bits apart, so the six operands have PAIRWISE-DISJOINT
+  # bits. For disjoint-bit operands `a | b == a ^ b` bit-for-bit (a carry-free
+  # union), so replacing any pack `|` with `^` computes the IDENTICAL lane and the
+  # IDENTICAL digest for every valid currency pair. (Note `| with &` is NOT
+  # excluded — `a & b == 0` for disjoint bits, which DOES change the digest and is
+  # CAUGHT by the exact-value oracle in `tests/router_mutation.rs`.) Each was
+  # VERIFIED equivalent this session: applied to `src/key.rs`, the exact-digest
+  # oracle suite stayed GREEN (the mutated lane equals the independent oracle's
+  # lane bit-for-bit).
+  "key\\.rs:95:13: replace \\| with \\^ in PartitionKey::digest",
+  "key\\.rs:96:13: replace \\| with \\^ in PartitionKey::digest",
+  "key\\.rs:97:13: replace \\| with \\^ in PartitionKey::digest",
+  "key\\.rs:98:13: replace \\| with \\^ in PartitionKey::digest",
+  "key\\.rs:99:13: replace \\| with \\^ in PartitionKey::digest",
+]
