@@ -77,6 +77,11 @@
 //!    * [`accumulator`] — periodic accumulation at a discounted pivot with an
 //!      up-and-out knock-out barrier (discrete or Brownian-bridge continuous) and
 //!      below-pivot gearing, priced by Monte-Carlo;
+//!    * [`pivot`] — the **pivot Target-Redemption Accumulator**: a two-level
+//!      (pivot/strike) piecewise-linear fixing strip with cumulative-target
+//!      redemption and gap-risk handling, collapsing to [`tarf::Tarf`] exactly when
+//!      `pivot == strike` (gated to 1e-12), priced by Monte-Carlo with a forward-
+//!      strip control variate and cross-validated against a code-disjoint oracle;
 //!    * [`forward_start`] — **forward-start** vanillas (strike reset to
 //!      `m·S(t₁)` at a future date, with the exact Rubinstein (1990) FX
 //!      dual-carry closed form) and **cliquet / ratchet** strips (the plain
@@ -137,6 +142,7 @@ pub mod normal;
 pub mod particle;
 pub mod payoff;
 pub mod pde;
+pub mod pivot;
 pub mod quanto;
 pub mod rng;
 pub mod stochvol;
@@ -187,6 +193,7 @@ pub use normal::{gaussian_pair_from_uniforms, inverse_cdf};
 pub use particle::{CalibrationResult, ParticleConfig, calibrate_leverage};
 pub use payoff::{ArithmeticAsian, DiscreteBarrier, vanilla_intrinsic};
 pub use pde::{PdeGrid, PdeProblem, solve as pde_solve};
+pub use pivot::{PivotTra, PivotTraMcConfig, PivotTraResult, pivot_tra_price, pivot_tra_price_cv};
 pub use quanto::{
     QuantoEstimate, QuantoMcConfig, QuantoParams, quanto_digital_mc, quanto_digital_price,
     quanto_vanilla_mc, quanto_vanilla_price,
