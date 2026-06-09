@@ -1579,3 +1579,1102 @@ fn next_jitter(id: u64) -> u64 {
     x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
     x ^ (x >> 31)
 }
+
+#[cfg(test)]
+mod core_tests {
+    //! Direct, deterministic unit tests of the consensus core: the pure decision
+    //! helpers ([`NodeCore::candidate_log_ok`], [`NodeCore::reset_election_timer`]),
+    //! the RPC receivers ([`handle_append_entries`] / [`handle_install_snapshot`] /
+    //! [`handle_request_vote`]), and the single-node [`RaftNode`] accessor /
+    //! lifecycle surface. These exercise the branch arithmetic the end-to-end
+    //! loopback gates (`tests/replication.rs`) drive only indirectly, so a syntactic
+    //! mutation of a comparison, a boolean connective, or a returned value is caught
+    //! by a *direct* observable assertion rather than relying on a timing-sensitive
+    //! cluster outcome. The independent oracle is the Raft §5.3/§5.4 specification
+    //! itself, re-derived inline at each assertion (not the production decision
+    //! grading itself).
+
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+
+    /// A unique temp directory + journal path for an isolated test node.
+    fn temp_journal() -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let n = SEQ.fetch_add(1, Ordering::Relaxed);
+        let mut dir = std::env::temp_dir();
+        dir.push(format!(
+            "celnet-replog-core-{}-{nanos}-{n}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.push("node.journal");
+        dir
+    }
+
+    /// Build a bare [`NodeCore`] on a fresh temp journal (no threads, no sockets) —
+    /// the unit-test substrate for the pure decision logic. `cluster_size` peers are
+    /// registered at loopback placeholder addresses (never dialed in these tests).
+    fn core(cluster_size: usize) -> NodeCore {
+        let path = temp_journal();
+        let log = Log::open(&path).unwrap();
+        let persist = PersistStore::open(persist_path(&path)).unwrap();
+        let snapshots = SnapshotStore::new(snapshot_path(&path));
+        let cfg = RaftConfig::default();
+        let mut peers = HashMap::new();
+        for i in 0..cluster_size.saturating_sub(1) {
+            let pid = 50_000 + i as u64;
+            peers.insert(
+                pid,
+                PeerState {
+                    addr: SocketAddr::from(([127, 0, 0, 1], pid as u16)),
+                    next_index: 0,
+                    match_index: None,
+                },
+            );
+        }
+        NodeCore {
+            id: 40_000,
+            role: Role::Follower,
+            persist,
+            log,
+            snapshots,
+            applied: BookState::new(),
+            commit_index: None,
+            last_applied: None,
+            cluster_size,
+            peers,
+            election_deadline: Instant::now(),
+            votes_for_me: 0,
+            last_leader_contact: Instant::now()
+                .checked_sub(Duration::from_secs(3600))
+                .unwrap_or_else(Instant::now),
+            cfg,
+        }
+    }
+
+    fn data_entry(term: u64, index: u64, key: u64, value: f64) -> LogEntry {
+        LogEntry::new(term, index, BookUpdate::Set { key, value }.encode())
+    }
+
+    // ---- candidate_log_ok (§5.4.1 up-to-date rule) — lines 151/154/162 -------
+
+    #[test]
+    fn candidate_log_ok_higher_last_term_wins_over_longer_log() {
+        let mut c = core(3);
+        // Our log: two entries, last term 5. A candidate with a SHORTER log but a
+        // HIGHER last term is up-to-date (term dominates length — §5.4.1).
+        c.log.append(&data_entry(5, 0, 1, 1.0)).unwrap();
+        c.log.append(&data_entry(5, 1, 2, 2.0)).unwrap();
+        // Candidate: last_index 0 (shorter), last_term 6 (higher) → granted.
+        assert!(
+            c.candidate_log_ok(0, 6),
+            "higher last term must be up-to-date"
+        );
+        // Candidate: last_index 9 (longer) but last_term 4 (lower) → NOT up-to-date.
+        // (kills `replace candidate_log_ok -> true`, and the `!=`/`>` term branch.)
+        assert!(
+            !c.candidate_log_ok(9, 4),
+            "a lower last term is stale regardless of length"
+        );
+    }
+
+    #[test]
+    fn candidate_log_ok_equal_term_compares_length() {
+        let mut c = core(3);
+        c.log.append(&data_entry(5, 0, 1, 1.0)).unwrap();
+        c.log.append(&data_entry(5, 1, 2, 2.0)).unwrap(); // my_last_index = 1, len 2
+        // Equal last term (5): a candidate at least as long is up-to-date.
+        assert!(
+            c.candidate_log_ok(1, 5),
+            "equal term + equal length → up-to-date"
+        );
+        assert!(c.candidate_log_ok(2, 5), "equal term + longer → up-to-date");
+        // Equal term but a STRICTLY SHORTER log is NOT up-to-date. With len = idx+1,
+        // candidate last_index 0 → len 1 < my len 2. This kills the `>=`→`>`/`<`/`==`
+        // and the `+ 1`→`- 1`/`* 1` length-arithmetic mutants: only correct `+ 1`
+        // makes (cand_len = 0+1 = 1) < (my_len = 1+1 = 2) reject, while (cand 1 → 2)
+        // ties and (cand 2 → 3) accepts.
+        assert!(
+            !c.candidate_log_ok(0, 5),
+            "equal term + strictly shorter → stale"
+        );
+    }
+
+    #[test]
+    fn candidate_log_ok_empty_log_sentinel() {
+        let c = core(3); // empty log: last_term 0, last_index None (len 0)
+        // An empty candidate (EMPTY_LOG sentinel, term 0) ties our empty log → ok.
+        assert!(c.candidate_log_ok(EMPTY_LOG, 0));
+        // Any real entry (term 1) beats our empty log.
+        assert!(c.candidate_log_ok(0, 1));
+    }
+
+    // ---- reset_election_timer span arithmetic — line 190 ---------------------
+
+    #[test]
+    fn reset_election_timer_deadline_within_configured_window() {
+        let mut c = core(3);
+        // election_min/max come from RaftConfig::default(); the deadline must land in
+        // [now + min, now + max]. The `+`→`-` mutant on line 190 would compute
+        // `min - jitter`, pulling the deadline BEFORE `now + min` (often into the
+        // past), which this lower-bound assertion catches.
+        let before = Instant::now();
+        c.reset_election_timer();
+        let deadline = c.election_deadline;
+        assert!(
+            deadline >= before + c.cfg.election_min,
+            "deadline must be at least now + election_min (kills the - mutant)"
+        );
+        assert!(
+            deadline <= Instant::now() + c.cfg.election_max,
+            "deadline must not exceed now + election_max"
+        );
+    }
+
+    // ---- handle_append_entries — lines 965/973/1000 --------------------------
+
+    #[test]
+    fn append_entries_rejects_stale_term_and_accepts_current() {
+        let mut c = core(3);
+        c.persist.save(5, None).unwrap(); // my term = 5
+        // Stale leader (term 4 < 5): reject, report my term. Kills `< with >`/`==`.
+        let reply = handle_append_entries(&mut c, 4, EMPTY_PREV, 0, vec![], EMPTY_LOG);
+        match reply {
+            Message::AppendReply { term, success, .. } => {
+                assert_eq!(term, 5);
+                assert!(!success, "a term strictly below ours is rejected");
+            }
+            _ => panic!("expected AppendReply"),
+        }
+        // A current-term heartbeat from a valid leader (empty entries, empty prev):
+        // accepted, role demoted to Follower.
+        let reply = handle_append_entries(&mut c, 5, EMPTY_PREV, 0, vec![], EMPTY_LOG);
+        match reply {
+            Message::AppendReply { success, .. } => {
+                assert!(success, "a current-term, matching heartbeat is accepted");
+                assert_eq!(c.role, Role::Follower);
+            }
+            _ => panic!("expected AppendReply"),
+        }
+    }
+
+    #[test]
+    fn append_entries_adopts_a_strictly_higher_term() {
+        let mut c = core(3);
+        c.persist.save(3, Some(40_009)).unwrap(); // term 3, voted for someone
+        c.role = Role::Candidate;
+        // A leader at a STRICTLY HIGHER term (5 > 3) must be adopted: the durable
+        // term advances to 5 and the prior vote is cleared (Raft §5.1). The reply
+        // therefore reports term 5. Kills `> with ==` (`5 == 3` false → not adopted →
+        // term stays 3) and `> with <` (`5 < 3` false → not adopted).
+        let reply = handle_append_entries(&mut c, 5, EMPTY_PREV, 0, vec![], EMPTY_LOG);
+        match reply {
+            Message::AppendReply { term, success, .. } => {
+                assert!(success);
+                assert_eq!(
+                    term, 5,
+                    "the higher term is adopted (kills 973 `>`->`==`/`<`)"
+                );
+            }
+            _ => panic!("expected AppendReply"),
+        }
+        assert_eq!(c.current_term(), 5, "durable term advanced to the leader's");
+        assert_eq!(
+            c.persist.voted_for(),
+            None,
+            "adopting a higher term clears the vote"
+        );
+        assert_eq!(c.role, Role::Follower);
+    }
+
+    #[test]
+    fn append_entries_at_equal_term_preserves_the_vote() {
+        // The term-adopt guard is `if term > my_term { save(term, None) }` (line 973).
+        // At an EQUAL term the original does NOT re-save, so an existing `voted_for`
+        // this term is PRESERVED (Raft §5: a node must not forget its vote within a
+        // term — re-clearing it could enable a double vote and break election safety).
+        // The `> with >=` mutant makes `term >= my_term` true at equality → it would
+        // `save(term, None)`, WRONGLY clearing the vote. We assert the vote survives an
+        // equal-term AppendEntries (a current-term leader's heartbeat), killing the
+        // `>=` flip (the `==`/`<` flips are killed by the higher-term test above).
+        let mut c = core(3);
+        c.persist.save(4, Some(40_012)).unwrap(); // term 4, voted for 40_012
+        // A current-term (4 == 4) heartbeat from the leader (empty entries/prev).
+        let reply = handle_append_entries(&mut c, 4, EMPTY_PREV, 0, vec![], EMPTY_LOG);
+        assert!(matches!(reply, Message::AppendReply { success: true, .. }));
+        assert_eq!(
+            c.current_term(),
+            4,
+            "an equal-term heartbeat does not bump the term"
+        );
+        assert_eq!(
+            c.persist.voted_for(),
+            Some(40_012),
+            "an equal-term AppendEntries must PRESERVE the vote (kills 973 `>`->`>=`)"
+        );
+    }
+
+    #[test]
+    fn append_entries_commit_advances_only_with_a_present_log_and_real_commit() {
+        let mut c = core(3);
+        c.persist.save(3, None).unwrap();
+        // Leader appends one entry (index 0) and declares leader_commit = 0.
+        let e0 = data_entry(3, 0, 7, 1.5);
+        let reply = handle_append_entries(&mut c, 3, EMPTY_PREV, 0, vec![e0], 0);
+        match reply {
+            Message::AppendReply {
+                success,
+                match_index,
+                ..
+            } => {
+                assert!(success);
+                assert_eq!(match_index, 0);
+            }
+            _ => panic!("expected AppendReply"),
+        }
+        // The commit guard `leader_commit != EMPTY_LOG && last_index().is_some()`
+        // (line 1000) held (both true): the entry committed and applied.
+        assert_eq!(
+            c.commit_index,
+            Some(0),
+            "commit advanced to the matched index"
+        );
+        assert_eq!(c.applied.get(7).map(f64::to_bits), Some(1.5f64.to_bits()));
+
+        // Now the kill for the `&&`->`||` mutant: a SECOND heartbeat with
+        // leader_commit == EMPTY_LOG (the leader has committed nothing) and a present
+        // log. Original `false && true = false` → NO further commit. The `||` mutant
+        // `false || true = true` → would run `set_commit_index(Some(EMPTY_LOG.min(last)))`
+        // = set commit to `last` (0) — but more importantly, on a longer log it would
+        // WRONGLY commit everything. Append a second entry first so an erroneous
+        // commit-to-last is observable, then send the EMPTY_LOG-commit heartbeat.
+        let mut c2 = core(3);
+        c2.persist.save(3, None).unwrap();
+        c2.log.append(&data_entry(3, 0, 1, 1.0)).unwrap();
+        c2.log.append(&data_entry(3, 1, 2, 2.0)).unwrap();
+        // prev (1, term 3) matches the tail; entries empty; leader_commit EMPTY_LOG.
+        let reply = handle_append_entries(&mut c2, 3, 1, 3, vec![], EMPTY_LOG);
+        assert!(matches!(reply, Message::AppendReply { success: true, .. }));
+        assert_eq!(
+            c2.commit_index, None,
+            "an EMPTY_LOG leader_commit must NOT advance commit (kills 1000 `&&`->`||`)"
+        );
+        assert!(
+            c2.applied.is_empty(),
+            "nothing applied without a real leader_commit"
+        );
+    }
+
+    // ---- handle_install_snapshot — lines 1029/1038/1057 ----------------------
+
+    #[test]
+    fn install_snapshot_rejects_stale_term() {
+        let mut c = core(3);
+        c.persist.save(7, None).unwrap();
+        let snap = Snapshot::new(2, 3, BookState::new());
+        // term 6 < my 7 → reject without touching state. Kills `< with ==`/`>`/`<=`.
+        let reply = handle_install_snapshot(&mut c, 6, 99, 2, 3, &snap.encode());
+        match reply {
+            Message::AppendReply { term, success, .. } => {
+                assert_eq!(term, 7);
+                assert!(!success);
+            }
+            _ => panic!("expected AppendReply"),
+        }
+        assert!(
+            c.log.snapshot_index().is_none(),
+            "a stale install changes nothing"
+        );
+    }
+
+    #[test]
+    fn install_snapshot_adopts_a_strictly_higher_term() {
+        let mut c = core(3);
+        c.persist.save(3, Some(40_009)).unwrap(); // term 3, voted
+        c.role = Role::Candidate;
+        // A leader at a STRICTLY HIGHER term (5 > 3) installs a valid snapshot: the
+        // handler must adopt term 5 and clear the vote (line 1038 `if term > my_term
+        // { save(term, None) }`). The reply reports term 5. Kills `> with ==`
+        // (`5 == 3` false → not adopted), `> with <` (`5 < 3` false), and `> with >=`
+        // (would also re-adopt on an EQUAL term, clearing a vote it should keep — the
+        // equal-term path is exercised by other tests; here the strict-higher adopt
+        // must land at 5).
+        let snap = Snapshot::new(2, 1, BookState::new());
+        let reply = handle_install_snapshot(&mut c, 5, 99, 2, 1, &snap.encode());
+        match reply {
+            Message::AppendReply { term, success, .. } => {
+                assert!(success, "a valid higher-term install succeeds");
+                assert_eq!(
+                    term, 5,
+                    "the higher term is adopted (kills 1038 `>`->`==`/`<`/`>=`)"
+                );
+            }
+            _ => panic!("expected AppendReply"),
+        }
+        assert_eq!(c.current_term(), 5, "durable term advanced to the leader's");
+        assert_eq!(
+            c.persist.voted_for(),
+            None,
+            "adopting a higher term clears the vote"
+        );
+        assert_eq!(c.role, Role::Follower);
+    }
+
+    #[test]
+    fn install_snapshot_at_equal_term_preserves_the_vote() {
+        // The term-adopt guard is `if term > my_term { save(term, None) }` (line 1038).
+        // At an EQUAL term the original does NOT re-save — so an existing `voted_for`
+        // this term is PRESERVED (Raft §5: a node must not forget its vote within a
+        // term; re-clearing it could enable a double vote and break election safety).
+        // The `> with >=` mutant makes `term >= my_term` true at equality → it would
+        // `save(term, None)`, WRONGLY clearing the vote. We assert the vote survives an
+        // equal-term install, killing the `>=` flip (the `==`/`<` flips are killed by
+        // `install_snapshot_adopts_a_strictly_higher_term`).
+        let mut c = core(3);
+        c.persist.save(4, Some(40_011)).unwrap(); // term 4, voted for 40_011
+        let snap = Snapshot::new(2, 1, BookState::new());
+        let reply = handle_install_snapshot(&mut c, 4, 99, 2, 1, &snap.encode()); // term == my 4
+        assert!(matches!(reply, Message::AppendReply { success: true, .. }));
+        assert_eq!(
+            c.current_term(),
+            4,
+            "an equal-term install does not bump the term"
+        );
+        assert_eq!(
+            c.persist.voted_for(),
+            Some(40_011),
+            "an equal-term install must PRESERVE the vote (kills 1038 `>`->`>=`)"
+        );
+    }
+
+    #[test]
+    fn install_snapshot_rejects_header_boundary_mismatch() {
+        let mut c = core(3);
+        c.persist.save(4, None).unwrap();
+        // The shipped snapshot's boundary is (5, 2) but the RPC header declares
+        // (5, 9): the term mismatch must be rejected (defence against a forged
+        // header). Kills the `||`→`&&` (line 1057) and `!=`→`==` (line 1057:40)
+        // mutants on the boundary-equality guard.
+        let snap = Snapshot::new(5, 2, BookState::new());
+        let reply = handle_install_snapshot(&mut c, 4, 99, 5, 9, &snap.encode());
+        match reply {
+            Message::AppendReply { success, .. } => {
+                assert!(!success, "header term mismatch must be rejected");
+            }
+            _ => panic!("expected AppendReply"),
+        }
+        assert!(c.log.snapshot_index().is_none());
+        // And a header that DOES match installs (success), so the guard is not
+        // simply always-false.
+        let snap_ok = Snapshot::new(5, 2, BookState::new());
+        let reply = handle_install_snapshot(&mut c, 4, 99, 5, 2, &snap_ok.encode());
+        match reply {
+            Message::AppendReply { success, .. } => assert!(success),
+            _ => panic!("expected AppendReply"),
+        }
+        assert_eq!(c.log.snapshot_index(), Some(5));
+    }
+
+    #[test]
+    fn install_snapshot_stale_index_guard_is_high_water() {
+        let mut c = core(3);
+        c.persist.save(4, None).unwrap();
+        // Install boundary 5, then a second install at the SAME boundary is stale
+        // (already covered) — but the follower replies success reporting its own
+        // high-water. The `> with ==`/`<`/`>=` mutants on the `last_applied >= lii`
+        // (line 1038) guard direction are exercised: the second install must remain
+        // a no-op (snapshot_index unchanged at 5).
+        let snap = Snapshot::new(5, 2, BookState::new());
+        let _ = handle_install_snapshot(&mut c, 4, 99, 5, 2, &snap.encode());
+        assert_eq!(c.log.snapshot_index(), Some(5));
+        let snap2 = Snapshot::new(5, 2, BookState::new());
+        let reply = handle_install_snapshot(&mut c, 4, 99, 5, 2, &snap2.encode());
+        match reply {
+            Message::AppendReply { success, .. } => assert!(success),
+            _ => panic!("expected AppendReply"),
+        }
+        assert_eq!(
+            c.log.snapshot_index(),
+            Some(5),
+            "stale re-install is a no-op"
+        );
+    }
+
+    // ---- handle_request_vote — lines 1117/1121/1126/1134/1140/1142 -----------
+
+    #[test]
+    fn request_vote_real_grants_then_refuses_a_second_candidate() {
+        let mut c = core(3);
+        c.persist.save(1, None).unwrap();
+        c.log.append(&data_entry(1, 0, 1, 1.0)).unwrap();
+        // Candidate 7 at term 2 with an up-to-date log → grant + durable vote.
+        let reply = handle_request_vote(&mut c, 2, false, 7, 0, 1);
+        match reply {
+            Message::VoteReply {
+                granted,
+                term,
+                pre_vote,
+            } => {
+                assert!(granted, "first up-to-date candidate is granted");
+                assert_eq!(term, 2);
+                assert!(!pre_vote);
+            }
+            _ => panic!("expected VoteReply"),
+        }
+        assert_eq!(c.persist.voted_for(), Some(7));
+        // A DIFFERENT candidate 8 in the SAME term must be refused (already voted).
+        // Kills `can_vote` connective mutants (line 1142 `&&`→`||`) and the
+        // `voted_for == Some(candidate_id)` (line 1140 `==`→`!=`) check.
+        let reply = handle_request_vote(&mut c, 2, false, 8, 0, 1);
+        match reply {
+            Message::VoteReply { granted, .. } => {
+                assert!(
+                    !granted,
+                    "a second distinct candidate in the term is refused"
+                )
+            }
+            _ => panic!("expected VoteReply"),
+        }
+    }
+
+    #[test]
+    fn request_vote_refuses_stale_log_even_when_unvoted() {
+        let mut c = core(3);
+        c.persist.save(3, None).unwrap();
+        c.log.append(&data_entry(3, 0, 1, 1.0)).unwrap();
+        c.log.append(&data_entry(3, 1, 2, 2.0)).unwrap(); // my last (idx1, term3)
+        // Unvoted, but the candidate's log is STALE (last term 2 < 3): refuse.
+        // Kills `can_vote && log_ok` (line 1142) collapsing to `||`.
+        let reply = handle_request_vote(&mut c, 4, false, 9, 5, 2);
+        match reply {
+            Message::VoteReply { granted, .. } => {
+                assert!(
+                    !granted,
+                    "a stale-log candidate is refused even when unvoted"
+                )
+            }
+            _ => panic!("expected VoteReply"),
+        }
+    }
+
+    #[test]
+    fn request_vote_grants_at_an_equal_term_when_unvoted() {
+        let mut c = core(3);
+        c.persist.save(2, None).unwrap(); // term 2, NOT yet voted
+        c.log.append(&data_entry(2, 0, 1, 1.0)).unwrap();
+        // A candidate at the SAME term (2) as ours, with an up-to-date log, and we
+        // have not voted → MUST be granted (Raft §5.2: a voter grants at most one
+        // vote per term; an equal-term candidate is NOT stale). The stale guard is
+        // `if term < my_term { refuse }` (line 1126): `2 < 2` is false → proceed →
+        // grant. The `< with <=` mutant makes `2 <= 2` true → it would wrongly refuse
+        // the equal-term candidate as stale. The grant below kills it.
+        let reply = handle_request_vote(&mut c, 2, false, 7, 0, 2);
+        match reply {
+            Message::VoteReply { granted, term, .. } => {
+                assert!(
+                    granted,
+                    "an equal-term, up-to-date, unvoted candidate is granted"
+                );
+                assert_eq!(term, 2);
+            }
+            _ => panic!("expected VoteReply"),
+        }
+        assert_eq!(
+            c.persist.voted_for(),
+            Some(7),
+            "the equal-term vote is recorded"
+        );
+    }
+
+    #[test]
+    fn request_vote_prevote_requires_term_log_and_leader_silence() {
+        let mut c = core(3);
+        c.persist.save(2, None).unwrap();
+        c.log.append(&data_entry(2, 0, 1, 1.0)).unwrap();
+        // last_leader_contact is far in the past (set by `core`), role Follower →
+        // leader_silent true. A pre-vote at term 3 with an up-to-date log is granted,
+        // and changes NO persistent state. Kills the `&&` connectives at lines
+        // 1117/1121 (term_ok && log_ok && leader_silent).
+        let reply = handle_request_vote(&mut c, 3, true, 7, 0, 2);
+        match reply {
+            Message::VoteReply {
+                granted, pre_vote, ..
+            } => {
+                assert!(
+                    granted,
+                    "an up-to-date pre-vote during leader silence is granted"
+                );
+                assert!(pre_vote);
+            }
+            _ => panic!("expected VoteReply"),
+        }
+        assert_eq!(
+            c.persist.voted_for(),
+            None,
+            "a pre-vote never records a vote"
+        );
+        assert_eq!(c.current_term(), 2, "a pre-vote never bumps the term");
+        // A pre-vote at a LOWER term (term_ok false) is refused — kills a connective
+        // that would ignore the term gate (line 1126 `< with ==`/`<=` on `term < my`
+        // is in the real-vote path; the pre-vote `term >= my` gate is exercised here).
+        let reply = handle_request_vote(&mut c, 1, true, 7, 0, 2);
+        match reply {
+            Message::VoteReply { granted, .. } => {
+                assert!(!granted, "a below-term pre-vote is refused")
+            }
+            _ => panic!("expected VoteReply"),
+        }
+
+        // A node that has RECENTLY heard from a leader (elapsed < election_min) is NOT
+        // leader-silent and MUST refuse a pre-vote — this is the disruption guard
+        // (Ongaro thesis §9.6). `leader_silent = elapsed >= election_min && role !=
+        // Leader` (line 1117): with a fresh contact `elapsed < min` is false, role is
+        // Follower (true), so `false && true = false` → refuse. The `&& with ||` mutant
+        // makes `false || true = true` → it would WRONGLY grant during a healthy
+        // leader's heartbeats. The refusal below kills the 1117 connective.
+        c.last_leader_contact = Instant::now(); // just heard from the leader
+        let reply = handle_request_vote(&mut c, 3, true, 7, 0, 2);
+        match reply {
+            Message::VoteReply { granted, .. } => {
+                assert!(
+                    !granted,
+                    "a recently-contacted node refuses pre-votes (kills 1117 `&&`->`||`)"
+                )
+            }
+            _ => panic!("expected VoteReply"),
+        }
+    }
+
+    #[test]
+    fn request_vote_steps_down_on_higher_term_then_grants() {
+        let mut c = core(3);
+        c.persist.save(2, Some(99)).unwrap(); // already voted for 99 in term 2
+        c.role = Role::Candidate;
+        // A real vote at a HIGHER term (3 > 2) adopts the term, clears the vote
+        // (becomes follower), then grants to this candidate. Kills `< with ==`/`<=`
+        // (line 1126, stale guard) and `> with ==`/`<`/`>=` (line 1134, adopt guard).
+        let reply = handle_request_vote(&mut c, 3, false, 5, EMPTY_LOG, 0);
+        match reply {
+            Message::VoteReply { granted, term, .. } => {
+                assert!(granted, "a higher-term candidate with an OK log is granted");
+                assert_eq!(term, 3);
+            }
+            _ => panic!("expected VoteReply"),
+        }
+        assert_eq!(c.role, Role::Follower);
+        assert_eq!(c.persist.voted_for(), Some(5));
+    }
+
+    // ---- leader_advance_commit / set_commit_index (quorum + apply) ----------
+
+    #[test]
+    fn leader_advance_commit_requires_a_current_term_majority() {
+        let mut c = core(3); // 2 peers + self, majority = 2
+        c.persist.save(4, None).unwrap();
+        c.role = Role::Leader;
+        c.log.append(&data_entry(4, 0, 1, 10.0)).unwrap();
+        c.log.append(&data_entry(4, 1, 2, 20.0)).unwrap();
+        // No peer has acknowledged anything yet → only the leader holds the entries,
+        // which is 1 of 3 (< majority 2) → no commit.
+        c.leader_advance_commit();
+        assert_eq!(
+            c.commit_index, None,
+            "a lone leader cannot commit (no majority)"
+        );
+        // One peer now holds index 1 → holders = 2 (leader + peer) >= majority →
+        // commit advances to 1 and BOTH entries apply in order.
+        let pid = *c.peers.keys().next().unwrap();
+        c.peers.get_mut(&pid).unwrap().match_index = Some(1);
+        c.leader_advance_commit();
+        assert_eq!(c.commit_index, Some(1), "a current-term majority commits");
+        assert_eq!(c.applied.get(1).map(f64::to_bits), Some(10.0f64.to_bits()));
+        assert_eq!(c.applied.get(2).map(f64::to_bits), Some(20.0f64.to_bits()));
+    }
+
+    // ---- step_down (§5.1) — line 173 ----------------------------------------
+
+    #[test]
+    fn step_down_records_term_clears_vote_and_demotes() {
+        let mut c = core(3);
+        c.persist.save(2, Some(99)).unwrap(); // term 2, voted for 99
+        c.role = Role::Leader;
+        c.votes_for_me = 2;
+        // Step down to a strictly higher term. The `step_down -> Ok(())` mutant skips
+        // ALL of this (no save, no role change, no vote clear), which the direct
+        // assertions below catch — step_down is otherwise only reached via the
+        // threaded leader reply path (replicate_round), so this is its direct pin.
+        c.step_down(5).unwrap();
+        assert_eq!(
+            c.current_term(),
+            5,
+            "step_down durably adopts the higher term"
+        );
+        assert_eq!(c.persist.voted_for(), None, "step_down clears the vote");
+        assert_eq!(c.role, Role::Follower, "step_down demotes to follower");
+        assert_eq!(c.votes_for_me, 0, "step_down resets the vote tally");
+    }
+
+    // ---- set_commit_index advance guard — line 198 --------------------------
+
+    #[test]
+    fn set_commit_index_equal_value_does_not_re_apply() {
+        let mut c = core(3);
+        c.log.append(&data_entry(1, 0, 1, 1.0)).unwrap();
+        c.log.append(&data_entry(1, 1, 2, 2.0)).unwrap();
+        c.log.append(&data_entry(1, 2, 3, 3.0)).unwrap();
+        // Construct the observable boundary state: commit_index is ALREADY Some(2)
+        // but NOTHING has been applied yet (last_applied None, applied empty). The
+        // original guard `n > c` for set_commit_index(Some(2)) is `2 > 2 = false`, so
+        // it MUST NOT advance/apply — the book stays empty. The `> with >=` mutant
+        // makes `2 >= 2 = true`, which would (wrongly) run apply_committed over
+        // [0,2] and populate the book — directly observable here.
+        c.commit_index = Some(2);
+        c.last_applied = None;
+        assert!(c.applied.is_empty(), "precondition: nothing applied yet");
+        c.set_commit_index(Some(2)); // equal to the current commit → no-op under `>`
+        assert!(
+            c.applied.is_empty(),
+            "an equal (non-advancing) commit must not re-apply (kills `> with >=`)"
+        );
+        assert_eq!(
+            c.last_applied, None,
+            "last_applied unchanged on a non-advance"
+        );
+        // A strictly-higher commit DOES advance and apply — so the guard is not
+        // simply always-false.
+        c.commit_index = None; // reset to exercise the real advance below
+        c.last_applied = None;
+        c.set_commit_index(Some(1));
+        assert_eq!(c.commit_index, Some(1));
+        assert_eq!(c.applied.get(1).map(f64::to_bits), Some(1.0f64.to_bits()));
+        assert_eq!(c.applied.get(2).map(f64::to_bits), Some(2.0f64.to_bits()));
+        assert_eq!(c.applied.get(3), None, "only [0,1] applied at commit 1");
+    }
+
+    // ---- NodeCore::compact_to (§7 local compaction) — line 278 --------------
+
+    /// Build a leader core with `n` committed+applied data entries (value == index
+    /// as f64), so compaction has a real applied prefix to snapshot.
+    fn core_with_committed(n: u64) -> NodeCore {
+        let mut c = core(1); // single node: a proposal commits on its own durability
+        c.persist.save(1, None).unwrap();
+        c.role = Role::Leader;
+        for i in 0..n {
+            c.log.append(&data_entry(1, i, i, i as f64)).unwrap();
+        }
+        c.set_commit_index(Some(n - 1)); // commit + apply the whole prefix
+        assert_eq!(c.last_applied, Some(n - 1));
+        c
+    }
+
+    #[test]
+    fn compact_to_then_second_compaction_seeds_from_the_prior_snapshot() {
+        let mut c = core_with_committed(6); // indices 0..=5 applied
+        // First compaction to boundary 2 → snapshot captures state-as-of-2 = {0,1,2}.
+        assert_eq!(c.compact_to(2).unwrap(), Some(2));
+        assert_eq!(c.log.snapshot_index(), Some(2));
+        // Second compaction to boundary 4. The retained log now starts at index 3
+        // (base_index 3), so reconstructing state-as-of-4 MUST seed from the prior
+        // snapshot's captured {0,1,2} and replay only the retained [3,4] on top —
+        // line 278's guard `Some(prev.last_included_index) == self.log.snapshot_index()`
+        // selects that seed. Mutating the guard to `false` discards the prior state
+        // (snapshot-as-of-4 would be missing keys 0,1,2); to `true` would seed even
+        // from a NON-matching prior snapshot. We verify the resulting snapshot's state
+        // has ALL of keys 0..=4 with exact bits — only the correct seed produces that.
+        assert_eq!(c.compact_to(4).unwrap(), Some(4));
+        let snap = c.snapshots.load().unwrap().expect("snapshot present");
+        assert_eq!(snap.last_included_index, 4);
+        for k in 0..=4u64 {
+            assert_eq!(
+                snap.state.get(k).map(f64::to_bits),
+                Some((k as f64).to_bits()),
+                "state-as-of-4 must include key {k} from the seeded prior snapshot"
+            );
+        }
+        assert_eq!(
+            snap.state.get(5),
+            None,
+            "boundary 4 does not include index 5"
+        );
+    }
+
+    #[test]
+    fn compact_to_noop_when_nothing_applied_or_already_at_boundary() {
+        let mut c = core(1);
+        c.persist.save(1, None).unwrap();
+        c.role = Role::Leader;
+        // Nothing applied yet → None (no snapshot written).
+        assert_eq!(c.compact_to(0).unwrap(), None);
+        assert!(c.snapshots.load().unwrap().is_none());
+        // Now commit a prefix and compact to 1; a repeat at/below 1 is a no-op.
+        for i in 0..3 {
+            c.log.append(&data_entry(1, i, i, i as f64)).unwrap();
+        }
+        c.set_commit_index(Some(2));
+        assert_eq!(c.compact_to(1).unwrap(), Some(1));
+        assert_eq!(
+            c.compact_to(1).unwrap(),
+            None,
+            "re-compact at the boundary is a no-op"
+        );
+        assert_eq!(
+            c.compact_to(0).unwrap(),
+            None,
+            "below the boundary is a no-op"
+        );
+    }
+
+    // ---- NodeCore::install_snapshot — lines 329 / 332 / 341 / 353 -----------
+
+    #[test]
+    fn install_snapshot_advances_seeds_state_and_commit_watermark() {
+        let mut c = core(3);
+        // A follower with an empty log installs a snapshot at boundary (3, 2) whose
+        // captured state has keys {10,11}. The install must: reshape the log
+        // (base → 4), reseed applied state, and advance last_applied + commit to 3.
+        let mut snap_state = BookState::new();
+        snap_state.apply(&BookUpdate::Set {
+            key: 10,
+            value: 100.0,
+        });
+        snap_state.apply(&BookUpdate::Set {
+            key: 11,
+            value: 110.0,
+        });
+        let snap = Snapshot::new(3, 2, snap_state);
+        let advanced = c.install_snapshot(&snap).unwrap();
+        assert_eq!(
+            advanced,
+            Some(3),
+            "a fresh install advances to the boundary"
+        );
+        assert_eq!(c.log.snapshot_index(), Some(3));
+        assert_eq!(c.last_applied, Some(3));
+        assert_eq!(
+            c.commit_index,
+            Some(3),
+            "commit watermark advanced to the boundary"
+        );
+        assert_eq!(
+            c.applied.get(10).map(f64::to_bits),
+            Some(100.0f64.to_bits())
+        );
+        assert_eq!(
+            c.applied.get(11).map(f64::to_bits),
+            Some(110.0f64.to_bits())
+        );
+    }
+
+    #[test]
+    fn install_snapshot_is_stale_when_boundary_already_covered() {
+        let mut c = core(3);
+        // Set up the state in which line 329 (`snapshot_index >= lii`) is the SOLE
+        // guard that can reject a stale install: a durable snapshot boundary at 5
+        // adopted on the log, but `last_applied` only at 2 (BELOW the boundary — so
+        // the sibling line-332 `last_applied >= lii` guard would NOT fire for lii=3).
+        // We save a recognizable durable @5 snapshot and adopt its boundary.
+        let mut s5 = BookState::new();
+        s5.apply(&BookUpdate::Set {
+            key: 50,
+            value: 5.0,
+        });
+        c.snapshots.save(&Snapshot::new(5, 2, s5)).unwrap();
+        c.log.adopt_snapshot_boundary(5, 2); // snapshot_index = Some(5)
+        c.last_applied = Some(2); // strictly below the boundary
+        // A LOWER boundary (3) install is stale via line 329 `5 >= 3` true → None,
+        // leaving the durable @5 snapshot untouched. The `>= with <` mutant (`5 < 3`
+        // false) falls through line 329 AND line 332 (`2 >= 3` false), reaching
+        // `snapshots.save(snap3)` — OVERWRITING the durable @5 snapshot with the older
+        // @3 (before `Log::install_snapshot`'s own guard returns no-advance, so the
+        // RETURN value is None either way). We assert the DURABLE snapshot content is
+        // unchanged (still boundary 5 with key 50), which only the original preserves.
+        let snap3 = Snapshot::new(3, 1, BookState::new());
+        assert_eq!(
+            c.install_snapshot(&snap3).unwrap(),
+            None,
+            "an older boundary is a stale no-op"
+        );
+        assert_eq!(
+            c.log.snapshot_index(),
+            Some(5),
+            "boundary unchanged by a stale install"
+        );
+        let durable = c
+            .snapshots
+            .load()
+            .unwrap()
+            .expect("durable snapshot present");
+        assert_eq!(
+            durable.last_included_index, 5,
+            "the durable snapshot must NOT be overwritten by the stale install (kills 329 `>=`->`<`)"
+        );
+        assert_eq!(
+            durable.state.get(50).map(f64::to_bits),
+            Some(5.0f64.to_bits()),
+            "the durable @5 state survives the stale @3 install"
+        );
+    }
+
+    #[test]
+    fn install_snapshot_stale_when_already_applied_past_boundary() {
+        // A follower that has already APPLIED past the boundary needs no install:
+        // the `last_applied >= lii` guard (line 332) makes it a no-op. Build a node
+        // that has applied through index 4, then install boundary 3.
+        let mut c = core_with_committed(5); // applied 0..=4, single-node leader
+        // (no prior snapshot; snapshot_index is None, so the line-329 guard passes.)
+        assert_eq!(c.last_applied, Some(4));
+        let snap = Snapshot::new(3, 1, BookState::new());
+        assert_eq!(
+            c.install_snapshot(&snap).unwrap(),
+            None,
+            "already applied past the boundary → stale no-op (kills the 332 `>=`->`<` flip)"
+        );
+        assert!(
+            c.log.snapshot_index().is_none(),
+            "no install happened, so no snapshot boundary was set"
+        );
+    }
+
+    #[test]
+    fn install_snapshot_matching_tail_retains_and_advances_commit_monotonically() {
+        // A follower holds [0..=5] durably with commit ALREADY at 5 but last_applied
+        // only at 2 (it has not yet replayed the committed tail — a legitimate
+        // mid-recovery state). Installing a snapshot at boundary (3, term) that
+        // MATCHES its own log entry-3 reaches the matching-tail path (line 332
+        // `last_applied 2 >= 3` is false, so it proceeds): it discards only the prefix
+        // and RETAINS the tail [4,5]. The `!advanced` guard (line 341) is false (work
+        // was done → Some(3), not None), and the commit watermark must NOT regress
+        // below the existing 5 — the `c >= lii` match (line 353) keeps Some(5). Kills
+        // the line-341 `delete !` and the line-353 `c >= lii` true/false + `>=`->`<`.
+        let mut c = core(3); // follower
+        c.persist.save(1, None).unwrap();
+        for i in 0..6u64 {
+            c.log.append(&data_entry(1, i, i, i as f64)).unwrap();
+        }
+        c.commit_index = Some(5); // committed through 5 ...
+        c.last_applied = Some(2); // ... but only applied through 2
+        let boundary_term = c.log.term_at(3).unwrap();
+        let snap = Snapshot::new(3, boundary_term, BookState::new());
+        let advanced = c.install_snapshot(&snap).unwrap();
+        assert_eq!(
+            advanced,
+            Some(3),
+            "a matching-tail install advances (work was done)"
+        );
+        assert_eq!(
+            c.log.snapshot_index(),
+            Some(3),
+            "prefix discarded to the boundary"
+        );
+        assert_eq!(
+            c.log.last_index(),
+            Some(5),
+            "the matching tail [4,5] is retained"
+        );
+        assert_eq!(
+            c.commit_index,
+            Some(5),
+            "commit watermark must NOT regress below the existing 5 (kills the 353 mutants)"
+        );
+    }
+
+    #[test]
+    fn install_snapshot_advances_commit_when_below_the_boundary() {
+        // A follower whose commit_index is BELOW the snapshot boundary must advance
+        // it UP to the boundary on install (the snapshot IS committed state through
+        // lii). Line 353: `match commit_index { Some(c) if c >= lii => Some(c), _ =>
+        // Some(lii) }`. With commit = Some(1) and lii = 3: `1 >= 3` is false → the
+        // arm picks `Some(lii) = Some(3)` (advance). The `c >= lii with true` mutant
+        // would (wrongly) keep `Some(c) = Some(1)`; the `>= with <` flip (`1 < 3`
+        // true) would ALSO take the `Some(c)` arm and keep 1. Both are caught by
+        // asserting the watermark advanced to 3.
+        let mut c = core(3);
+        c.commit_index = Some(1); // below the boundary we are about to install
+        let snap = Snapshot::new(3, 1, BookState::new());
+        assert_eq!(c.install_snapshot(&snap).unwrap(), Some(3));
+        assert_eq!(
+            c.commit_index,
+            Some(3),
+            "commit advances UP to the boundary when it was below (kills 353 `true`/`>=`->`<`)"
+        );
+    }
+
+    // ---- single-node RaftNode accessors / lifecycle -------------------------
+    //
+    // A cluster_size==1 node commits on its own durable append (no peers to dial),
+    // so these tests are fully deterministic with no socket timing.
+
+    fn single_node() -> RaftNode {
+        let path = temp_journal();
+        let node = RaftNode::boot(path, &[], 1, RaftConfig::default()).unwrap();
+        // A lone node elects itself leader within a tick; wait briefly.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline && !node.is_leader() {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(node.is_leader(), "a single-node cluster must self-elect");
+        node
+    }
+
+    #[test]
+    fn single_node_propose_commits_and_accessors_reflect_it() {
+        let node = single_node();
+        // propose: returns the assigned index (kills `propose == with !=` role guard —
+        // a leader proposes Some(0), not None). last_log_index reflects the append
+        // (kills `last_log_index -> None`/`Some(1)`).
+        assert_eq!(node.last_log_index(), None, "fresh log is empty");
+        let idx = node
+            .propose(&BookUpdate::Set { key: 3, value: 9.0 })
+            .unwrap();
+        assert_eq!(
+            idx,
+            Some(0),
+            "the leader assigns index 0 to the first proposal"
+        );
+        // wait_for_commit must observe the (immediate, single-node) commit — kills
+        // the `< with <=` loop-bound and `>= with <` predicate mutants (a strict `<`
+        // returning false would fail to confirm a real commit).
+        assert!(
+            node.wait_for_commit(0, Duration::from_secs(5)),
+            "index 0 commits on a single node"
+        );
+        assert_eq!(node.last_log_index(), Some(0));
+        // applied_state reflects the committed update (kills `applied_state ->
+        // Default::default()`).
+        assert_eq!(
+            node.applied_state().get(3).map(f64::to_bits),
+            Some(9.0f64.to_bits()),
+            "the committed update is in the applied state"
+        );
+    }
+
+    #[test]
+    fn single_node_compact_applied_and_safe_index() {
+        let node = single_node();
+        for i in 0..4u64 {
+            node.propose(&BookUpdate::Set {
+                key: i,
+                value: i as f64,
+            })
+            .unwrap();
+        }
+        assert!(node.wait_for_commit(3, Duration::from_secs(5)));
+        // safe_compact_index on a lone node (no peers) is just last_applied = 3
+        // (kills `safe_compact_index -> None`/`Some(0)`/`Some(1)`).
+        assert_eq!(node.safe_compact_index(), Some(3));
+        // compact_applied snapshots+discards through last_applied (3) and returns the
+        // boundary (kills `compact_applied -> Ok(None)`/`Ok(Some(1))`).
+        assert_eq!(node.compact_applied().unwrap(), Some(3));
+        assert_eq!(node.snapshot_index(), Some(3));
+        // Idempotent re-call: nothing new to compact → None (so the prior Some(3) was
+        // a real boundary, not a constant).
+        assert_eq!(node.compact_applied().unwrap(), None);
+    }
+
+    #[test]
+    fn node_id_is_its_listen_port() {
+        // `id()` returns the node's stable id (its listen port). Kills
+        // `RaftNode::id -> 0`/`1`: the bound ephemeral port is neither 0 nor 1, and
+        // `id()` must equal `addr().port()`.
+        let node = single_node();
+        assert_eq!(node.id(), u64::from(node.addr().port()));
+        assert!(
+            node.id() > 1,
+            "an ephemeral port is far above the 0/1 constants"
+        );
+    }
+
+    #[test]
+    fn shutdown_and_drop_release_the_listen_port() {
+        // The teardown (`shutdown` → `stop_and_join`, and the `Drop` backstop) must
+        // STOP the serve thread, which owns the bound listener. We observe that
+        // deterministically: after teardown the port is FREE, so a fresh bind on the
+        // SAME address succeeds. A `shutdown -> ()` / `Drop::drop -> ()` no-op leaves
+        // the serve thread alive holding the port, so the rebind fails — killing
+        // those mutants without relying on thread-count introspection.
+        let node = single_node(); // boots + waits for self-election
+        let addr = node.addr();
+        node.propose(&BookUpdate::Set { key: 1, value: 1.0 })
+            .unwrap();
+        assert!(node.wait_for_commit(0, Duration::from_secs(5)));
+        node.shutdown(); // explicit join; the serve thread must exit and free the port.
+        // Bind the exact same address — succeeds only if the serve thread released it.
+        let rebind = std::net::TcpListener::bind(addr);
+        assert!(
+            rebind.is_ok(),
+            "shutdown must stop the serve thread and free the listen port (kills `shutdown -> ()`)"
+        );
+        drop(rebind);
+
+        // The Drop path (a node that is merely dropped, never `shutdown`) must do the
+        // same — kills `Drop::drop -> ()`.
+        let path2 = temp_journal();
+        let node2 = RaftNode::boot(&path2, &[], 1, RaftConfig::default()).unwrap();
+        let addr2 = node2.addr();
+        drop(node2); // Drop::drop -> stop_and_join must free the port.
+        assert!(
+            std::net::TcpListener::bind(addr2).is_ok(),
+            "Drop must stop the serve thread and free the listen port (kills `Drop::drop -> ()`)"
+        );
+    }
+
+    #[test]
+    fn boot_recovery_from_snapshot_does_not_double_apply_the_boundary() {
+        // The boot-time tail-replay starts at `last_applied + 1` (line 510). When a
+        // node recovers from a durable snapshot, `last_applied` is seeded to the
+        // snapshot boundary, and ONLY entries strictly above it must be replayed — a
+        // boundary entry already captured in the snapshot must NOT be re-applied. We
+        // pin this end-to-end with `Add` updates (re-applying an Add would double it):
+        // build a node, propose Adds, compact, reboot, and assert the recovered state
+        // is bit-identical to the pre-reboot state. (The line-510 `a + 1` replay-start
+        // arithmetic is provably EQUIVALENT under `*`/`-` — `entries_from` clamps a
+        // sub-`base_index` request to physical position 0, so the exact start value is
+        // immaterial as long as it is ≤ the retained range; that equivalence is
+        // recorded in the gate config. This test still guards the broader
+        // recovery-is-exact contract against any future regression.)
+        let path = temp_journal();
+        let expected_bits;
+        {
+            let node = RaftNode::boot(&path, &[], 1, RaftConfig::default()).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < deadline && !node.is_leader() {
+                thread::sleep(Duration::from_millis(5));
+            }
+            assert!(node.is_leader());
+            // Three Adds to the SAME key — the running total is order/idempotency
+            // sensitive (re-applying any one changes the sum).
+            node.propose(&BookUpdate::Add { key: 9, delta: 1.0 })
+                .unwrap();
+            node.propose(&BookUpdate::Add { key: 9, delta: 2.0 })
+                .unwrap();
+            node.propose(&BookUpdate::Add { key: 9, delta: 4.0 })
+                .unwrap();
+            assert!(node.wait_for_commit(2, Duration::from_secs(5)));
+            // Compact at boundary 1 (so index 1's Add is captured in the snapshot and
+            // its log body discarded; index 2 remains in the retained tail).
+            assert_eq!(node.compact_applied().unwrap(), Some(2));
+            expected_bits = node.applied_bits(); // key 9 == 1+2+4 = 7
+            node.shutdown();
+        }
+        // Re-boot from the same durable path: seed from the snapshot, replay only the
+        // retained tail above the boundary. The recovered state must be bit-identical.
+        let recovered = RaftNode::boot(&path, &[], 1, RaftConfig::default()).unwrap();
+        assert_eq!(
+            recovered.applied_bits(),
+            expected_bits,
+            "recovery must not double-apply the snapshot boundary (kills 510 `+`->`*`/`-`)"
+        );
+        assert_eq!(
+            recovered.applied_state().get(9).map(f64::to_bits),
+            Some(7.0f64.to_bits()),
+            "the Add total survives recovery exactly (1+2+4=7, not doubled)"
+        );
+        recovered.shutdown();
+    }
+}

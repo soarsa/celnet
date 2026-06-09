@@ -7,6 +7,34 @@
 > and replace the CLAUDE.md anchor in place with a single-line summary — never paste the
 > full entry into `CLAUDE.md` (that re-bloats the per-session context).**
 
+- 2026-06-09 — **W6-replog — celnet-replog MUTATION GATE driven to zero non-equivalent survivors (+
+  a frame-drift bug fix).** On `lane/w6-rigor-infra`, MEASURED green locally. The replicated Raft log is the
+  largest infra leaf (~4.5k src lines). **(0) Prerequisite bug fix:** the journal sync-word frame change had
+  silently broken `celnet-replog` — its log-rewrite helper `write_fresh_journal` hand-rolled the OLD journal
+  frame (`len‖seq‖payload‖crc`, no sync word), so every rewritten log re-opened as a torn tail and recovered
+  to ZERO records (5 `log` tests failing). Fixed by deleting the duplicated format: `write_fresh_journal` now
+  opens a fresh `Journal` and `append`s each payload, giving the frame layout a single owner (guardrail 10).
+  **(1) Mutation gate** (`.config/mutants-celnet-replog.toml`, `just mutants-gate-celnet-replog`, added to the
+  `mutants-gate-infra` aggregate; plain `cargo test` runner — NOT nextest — `--jobs 3`): a strict raw run
+  surfaced 76 MISSED + 12 TIMEOUT of 534 (the 1581-line `election` module had ZERO direct unit tests — only
+  end-to-end loopback coverage — and the bug-fix UNMASKED several compact_to/install_snapshot branches). All
+  GENUINE gaps KILLED with a new in-module `election::core_tests` suite (a bare `NodeCore` + a single-node
+  `RaftNode`, asserting candidate_log_ok / reset_election_timer / set_commit_index / leader_advance_commit /
+  step_down / compact_to / install_snapshot / the three RPC receivers / accessors / a port-rebind teardown
+  observation DIRECTLY) plus targeted `log`/`wire`/`state`/`persist`/`compaction` unit tests. The residual
+  survivors are the LINE-ANCHORED equivalence classes (directory-fsync power-loss-only, no-op-at-boundary
+  guards, and Raft liveness/self-healing optimizations whose backstops make them safety-identical) — each
+  reproduced by hand and shown suite-green. ZERO MISSED (deterministic) survivors remain; the residual
+  non-MISSED outcomes are HONESTLY recorded, not hidden: the infinite-loop threaded mutants (`tick_loop`
+  1179, `reconcile` `+=->*=` 291:53) caught by the per-mutant TIMEOUT, and TWO `read_frame_or_idle`
+  length/guard boundaries (464, 450) that std `TcpStream` cannot unit-test deterministically (the fn clears
+  its read-timeout after the first byte by design, so an unrejected oversize prefix blocks → caught only as
+  a timeout; the 450 negative arm needs a forced RST via the nightly-only `set_linger`). So cargo-mutants
+  reports a non-zero timeout-class exit — `just check-crate celnet-replog` (fmt/clippy/test, 93 lib tests) is
+  fully green. INDEPENDENT oracle: the running priced-book replay (`gate_a`/`gate_d`, re-applies deltas to a
+  fresh BookState, `to_bits`-compared, code-disjoint from the log). The line-anchoring was load-bearing — a
+  broad function-level regex would have masked REAL bugs (the `majority = size/2+1` mutant, the `reconcile`
+  loop-bound panic, the `first_new == len` guard), which are instead killed.
 - 2026-06-09 — **W6-journal — PER-RECORD SYNC-WORD FRAME + celnet-journal MUTATION GATE (zero
   non-equivalent survivors).** The §2/§3.2 lane of the W6 design pack, on `lane/w6-rigor-infra`, MEASURED
   green locally; recovered STATE byte-identical (compaction round-trip + kill-restart tests pass UNCHANGED).

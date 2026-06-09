@@ -462,6 +462,131 @@ inputs now yield different verdicts), `snapshot_interior_crc_failure_is_surfaced
 kill-restart byte-identity tests pass UNCHANGED after the frame change — the
 non-negotiable regression check that recovered *state* is unaffected.
 
+### Infra-crate mutation gate — `celnet-replog` (W6, MEASURED green locally)
+
+The leader-replicated, deterministic-replay event log (`celnet-replog`) is the
+distributed-correctness backbone: a real multi-node Raft consensus module (election,
+log-matching, conflicting-tail truncation, quorum commit, §7 snapshot/compaction +
+InstallSnapshot) layered on the durable `celnet-journal`. It is the largest infra
+leaf (≈ 4 500 src lines across `log` / `election` / `wire` / `state` / `persist` /
+`compaction` / `entry`), so it gets its own enforceable mutation gate in the house
+style, with the same two deltas as the fanout/router/journal gates
+(`.config/mutants-celnet-replog.toml`):
+
+- **plain `cargo test` runner** (`--test-tool=cargo`, NOT nextest) — reproducible
+  independent of the workspace nextest profile; a concurrent session may
+  `pkill -f nextest`.
+- **`--jobs 3`** — bounds wall-time on the M4, courteous to a parallel session.
+
+| Crate | Config | just recipe | Independent oracle | Status |
+|-------|--------|-------------|--------------------|--------|
+| `celnet-replog` | `.config/mutants-celnet-replog.toml` | `just mutants-gate-celnet-replog` | running priced-book replay (`gate_a`/`gate_d` in `tests/replication.rs` re-apply the committed deltas to a fresh `BookState`, comparing by `f64::to_bits` — code-disjoint from the log/framing) + the byte-identical committed-log assertion + the 512-case adversarial-bytes decoder proptest (`tests/decode_fuzz.rs`) | **MEASURED locally** — 511 mutants, **zero MISSED (deterministic) survivors**; residual = genuine infinite-loop TIMEOUT catches + 2 std-`TcpStream`-untestable `read_frame_or_idle` boundaries (documented below, none hidden) |
+
+**Frame-change prerequisite (fixed first).** The journal sync-word frame change
+(above) silently broke `celnet-replog`: its log-rewrite helper `write_fresh_journal`
+hand-rolled the *old* journal frame layout (`len ‖ seq ‖ payload ‖ crc`, no sync
+word), so a rewritten log re-opened as a torn tail and recovered to **zero** records
+(5 `log` tests failed: `discard_prefix_*`, `reconcile_truncates_*`,
+`install_snapshot_matching_tail_*`, `append_after_discard_*`). The fix removes the
+duplicated format entirely — `write_fresh_journal` now opens a fresh `Journal` and
+`append`s each payload, so the frame layout has a **single owner** (`celnet-journal`)
+and cannot drift again (guardrail 10, zero legacy / single source of truth).
+
+**Measured baseline** (`aarch64-apple-darwin`, cargo-mutants 27.0.0, toolchain
+1.96.0). A strict (empty-exclude) run surfaced **76 MISSED + 12 TIMEOUT** of 534
+mutants (255 caught, 191 unviable); fixing the `write_fresh_journal` bug above
+*unmasked* a further set of `compact_to`/`install_snapshot` branches (they had been
+"caught" only because recovery failed outright). Every survivor was reproduced and
+classified — none hidden:
+
+- **KILLED with new direct unit tests (the genuine gaps).** The 1 581-line
+  `election` module had **zero** direct unit tests — its pure decision logic was only
+  exercised *indirectly* by the end-to-end loopback gates, so a syntactic mutation of
+  a comparison / boolean connective / returned value survived (the cluster outcome was
+  unchanged or merely slower). A new in-module `election::core_tests` suite constructs
+  a bare `NodeCore` (no threads/sockets) and a single-node `RaftNode`, and asserts the
+  branch behavior *directly*:
+  - the §5.4.1 up-to-date vote rule `candidate_log_ok` (higher-term-wins,
+    equal-term-length compare, the `+ 1` length arithmetic, the EMPTY_LOG sentinel);
+  - `reset_election_timer`'s jitter-span arithmetic (deadline within `[now+min,
+    now+max]` — kills the `+`/`%` mutants and their timeout-hangs);
+  - the three RPC receivers `handle_append_entries` / `handle_install_snapshot` /
+    `handle_request_vote` (stale-term reject, term-adopt direction, the commit guard's
+    `&&`, the snapshot header-equality `||`/`!=`, the pre-vote/real-vote connectives,
+    the already-voted `==`, step-down-on-higher-term);
+  - the §5.4.2 commit-quorum `leader_advance_commit` (a lone leader cannot commit; a
+    current-term majority does, applying in order — graded by `to_bits`);
+  - the accessor/lifecycle surface (`last_log_index`, `applied_state`, `propose`,
+    `wait_for_commit`, `compact_applied`, `safe_compact_index`, and `signal_wake` /
+    `shutdown` / `Drop` / `wait_or_wake` teardown — a no-op teardown hangs the join).
+  Targeted unit tests in the other modules close the rest: `log` (`is_empty`, the
+  `discard_prefix` idempotent-guard boundary + drop-count subtraction over a shifted
+  base, the `reconcile` skip-loop over a present prefix); `wire` (`WireError` Display,
+  `MAX_FRAME_LEN` exact value, the `read_frame` / `read_frame_or_idle` frame-length
+  boundary and the idle-vs-frame guard, and a fast no-hang `write_frame` no-op kill via
+  a short receiver read-timeout); `state` (`UpdateError` Display, `len`/`is_empty`/
+  `to_bits` exact contents, the Remove-tag length guard); `persist` &  `compaction`
+  (the `NotFound` match-guard — absent file is default/None, a real IO error
+  propagates — the `state()` accessor, and the `SnapshotError`/`UpdateError` Display).
+- **EQUIVALENT / fault-injection-only (excluded with inline justification + verified
+  evidence).** Two clusters, each VERIFIED by hand-applying the mutant and running the
+  full suite GREEN:
+  - *Directory-entry durability, power-loss-only (3 copies × 2 = 6):* `sync_parent_dir
+    -> Ok(())` and the `delete !` in its `filter(|p| !p.as_os_str().is_empty())`, in
+    the atomic log rewrite, the persist store, and the snapshot store. Identical to the
+    journal gate's documented exclusion — the POSIX directory fsync's effect is
+    observable ONLY across a real crash + power loss, which a process test cannot
+    exhibit.
+  - *No-op-at-boundary length/path guards:* `Snapshot::decode`'s header floor
+    `bytes.len() < HEADER + 4 -> <=` (NO 28-byte input ever decodes Ok — the embedded
+    empty state still needs its 8-byte count, so the smallest decodable snapshot is 36
+    bytes; both operators return `Malformed` for every input), and `Log::reconcile`'s
+    cut-placement `cut_phys < terms.len() -> <=` at 312 (at equality, the pure-append
+    case routes through `truncate_and_append(keep = len)`, byte-identical result).
+  - *Raft liveness / self-healing optimizations (safety unaffected):* `candidate_log_ok`
+    `> -> >=` at 154 (unreachable equality — the enclosing `!=` guard excludes it);
+    `compact_to`'s prior-snapshot-seed guard `-> true` (the durable-snapshot boundary
+    always equals `log.snapshot_index()` by the save+discard pairing invariant);
+    `leader_advance_commit`'s scan lower-bound `c + 1 -> c * 1` at 376 (a re-scan of
+    already-committed indices, idempotent); `boot_on`'s recovery replay-start and peer
+    `next_index` init `+ 1 -> *`/`-` (the former clamped by `entries_from`, the latter
+    a self-healed optimistic guess); `propose`'s single-node fast-commit `== 1 -> != 1`
+    and `signal_wake -> ()` (the heartbeat tick re-commits within a beat); `shutdown ->
+    ()` and the `Drop` `|| -> &&` guard (Drop is the backstop / handles move in
+    lockstep); `wait_for_commit`'s `< -> <=` loop bound and `>= -> <` checks (timing /
+    masked by the final return). Each is **line-anchored** in the config so a sibling
+    mutation at a DIFFERENT line that IS a real bug (e.g. `leader_advance_commit`'s
+    `majority = size/2 + 1 -> * 1` at 374; `reconcile`'s loop bound `< -> <=` at 288
+    that would panic; `first_new == len -> !=` at 296; the in-loop term-adopt branches)
+    is **not** masked — those are KILLED by the new tests.
+  - *Caught by the per-mutant TIMEOUT (NOT excluded — a real detection):* the
+    infinite-loop mutants `tick_loop`'s deadline check `>= -> <` (1179) and the
+    `reconcile` skip-counter `+= -> *=` (291:53) make a loop run forever that the
+    original always exits — the test suite hangs and cargo-mutants scores them as
+    Timeout. A legitimate catch (a hang the original never exhibits).
+  - *Std-`TcpStream` unit-testability limit (2 mutants, recorded honestly, NOT
+    excluded):* `read_frame_or_idle`'s length-boundary `> -> >=`/`==` (464) and the
+    first-byte error guard `matches!(…) -> true` (450). `read_frame_or_idle` CLEARS
+    the read-timeout after the first byte (by design — so a slow-but-live sender never
+    desyncs the stream), so an over-bound / exactly-`MAX_FRAME_LEN` prefix the mutant
+    fails to reject blocks on a body that never arrives → caught only as a TIMEOUT;
+    and exercising the 450 guard's negative arm needs a forced TCP RST first-byte
+    error (`TcpStream::set_linger`, nightly-only on 1.96). These are honestly logged as
+    caught-by-timeout / std-untestable rather than excluded — the production serve loop
+    only ever hits these paths with a timeout or a clean EOF, both handled correctly.
+    (The sibling, deterministically-testable wire boundaries — `read_frame`'s `> ->
+    ==`/`<`/`>=` at 412, `write_frame -> Ok(())` at 390, `MAX_FRAME_LEN`'s `* -> +`,
+    the `WireError` Display — are all KILLED fast via a short-read-timeout harness so
+    a missing/oversize frame fails as a deterministic `Io`/`FrameTooLarge` rather than
+    a hang.)
+
+After these tests + the line-anchored equivalence exclusions, `just
+mutants-gate-celnet-replog` reaches **zero MISSED (deterministic) survivors**. The
+residual non-MISSED outcomes are the genuine infinite-loop TIMEOUT catches and the
+two std-`TcpStream`-untestable `read_frame_or_idle` boundaries above — so the run
+reports a non-zero (timeout-class) exit, with every deterministic survivor at zero
+and nothing hidden behind an unjustified exclusion.
+
 ## 3. Coverage (region / function / line)
 
 `cargo llvm-cov nextest` instruments the test run and reports per-file

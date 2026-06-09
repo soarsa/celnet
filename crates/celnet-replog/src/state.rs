@@ -322,6 +322,68 @@ mod tests {
     }
 
     #[test]
+    fn update_error_display_is_exact() {
+        // Pins the Display strings (kills `UpdateError::fmt -> Ok(Default::default())`,
+        // which would emit an empty string).
+        assert_eq!(UpdateError::Truncated.to_string(), "book update truncated");
+        assert_eq!(
+            UpdateError::UnknownTag(7).to_string(),
+            "book update unknown tag 7"
+        );
+    }
+
+    #[test]
+    fn len_is_empty_and_to_bits_reflect_contents() {
+        let mut s = BookState::new();
+        // Empty: len 0, is_empty true, to_bits empty. Kills `len -> 0/1`,
+        // `is_empty -> true` (already true here, also checked non-empty below),
+        // and `to_bits -> vec![(_,_)]` (must be EMPTY for an empty book).
+        assert_eq!(s.len(), 0);
+        assert!(s.is_empty());
+        assert_eq!(s.to_bits(), Vec::<(u64, u64)>::new());
+        // Two distinct keys with exact, recognizable bits.
+        s.apply(&BookUpdate::Set {
+            key: 11,
+            value: 2.0,
+        });
+        s.apply(&BookUpdate::Set {
+            key: 22,
+            value: 4.0,
+        });
+        // len == 2 (kills `len -> 0/1`).
+        assert_eq!(s.len(), 2);
+        // is_empty false for a populated book (kills `is_empty -> true`).
+        assert!(!s.is_empty());
+        // to_bits is the exact, key-sorted (key, value-bits) pairs — kills every
+        // `to_bits -> vec![(c, d)]` constant: neither key (11/22) nor the value bits
+        // match any (0,0)/(0,1)/(1,0)/(1,1) constant, and the length is 2 not 1.
+        assert_eq!(
+            s.to_bits(),
+            vec![(11u64, 2.0f64.to_bits()), (22u64, 4.0f64.to_bits())]
+        );
+    }
+
+    #[test]
+    fn decode_rejects_short_remove_and_short_set() {
+        // A Remove tag (2) with a < 8-byte body must be Truncated (kills the
+        // `rest.len() < 8` guard direction `< with >` in decode at line 99 — under
+        // `>`, a 7-byte body would be (wrongly) accepted or index out of range).
+        let mut short_remove = vec![2u8];
+        short_remove.extend_from_slice(&[0u8; 7]); // 7 < 8
+        assert_eq!(
+            BookUpdate::decode(&short_remove),
+            Err(UpdateError::Truncated)
+        );
+        // Exactly 8 bytes decodes (so the boundary is `< 8`, not `<= 8`).
+        let mut exact_remove = vec![2u8];
+        exact_remove.extend_from_slice(&5u64.to_le_bytes());
+        assert_eq!(
+            BookUpdate::decode(&exact_remove),
+            Ok(BookUpdate::Remove { key: 5 })
+        );
+    }
+
+    #[test]
     fn update_codec_round_trips_all_variants() {
         for u in [
             BookUpdate::Set {

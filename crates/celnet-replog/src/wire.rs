@@ -478,6 +478,7 @@ mod tests {
     use crate::entry::LogEntry;
     use std::net::{TcpListener, TcpStream};
     use std::thread;
+    use std::time::Duration;
 
     fn sample_messages() -> Vec<Message> {
         vec![
@@ -620,12 +621,212 @@ mod tests {
         let sent2 = sent.clone();
         let server = thread::spawn(move || {
             let (mut conn, _) = listener.accept().unwrap();
-            read_frame(&mut conn).unwrap()
+            // A bounded read so a regression that drops the write fails FAST (a
+            // mutation that makes `write_frame` a no-op would otherwise hang here).
+            conn.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            read_frame(&mut conn).expect("frame round-trips")
         });
         let mut client = TcpStream::connect(addr).expect("connect");
         write_frame(&mut client, &sent2).unwrap();
         let got = server.join().unwrap();
         assert_eq!(got, sent);
+    }
+
+    #[test]
+    fn wire_error_display_is_exact() {
+        // Pins the Display strings (kills `WireError::fmt -> Ok(Default::default())`,
+        // which would emit empty strings).
+        assert_eq!(
+            WireError::Io(io::Error::from(io::ErrorKind::UnexpectedEof)).to_string(),
+            format!("wire io: {}", io::Error::from(io::ErrorKind::UnexpectedEof))
+        );
+        assert_eq!(
+            WireError::FrameTooLarge(123).to_string(),
+            "wire frame too large: 123"
+        );
+        assert_eq!(WireError::Malformed.to_string(), "wire frame malformed");
+    }
+
+    #[test]
+    fn max_frame_len_is_exactly_64_mib() {
+        // 64 * 1024 * 1024. Kills `* with +` on line 50 (`64 + 1024 + 1024` =
+        // 2112 != 67108864), which would also wrongly reject legitimately-sized
+        // frames at runtime.
+        assert_eq!(MAX_FRAME_LEN, 67_108_864);
+        assert_eq!(MAX_FRAME_LEN, 64 * 1024 * 1024);
+    }
+
+    #[test]
+    fn read_frame_rejects_oversize_prefix_at_and_above_the_bound() {
+        // A length prefix of MAX_FRAME_LEN + 1 must be rejected as FrameTooLarge,
+        // while exactly MAX_FRAME_LEN is accepted-as-a-length (it then tries to read
+        // the body). This pins the `len > MAX_FRAME_LEN` boundary in read_frame
+        // (line 412): `> with ==` would reject a too-large length only when it is
+        // EXACTLY equal (wrong), and `> with >=` would WRONGLY reject the
+        // exactly-MAX legal length.
+        //
+        // Every server socket here carries a SHORT read-timeout so that, whenever the
+        // length check fails to reject and `read_frame` proceeds to read a body that
+        // never arrives, the read fails FAST as an Io-timeout (a deterministic, fast
+        // CAUGHT) rather than blocking until the mutation-test timeout.
+        //
+        // (a) Over-bound prefix MAX+1: the original `len > MAX` rejects → FrameTooLarge
+        //     BEFORE reading any body (fast). The `> with ==` mutant (`MAX+1 == MAX`
+        //     false) and `> with <` (`MAX+1 < MAX` false) do NOT reject → proceed to
+        //     read the 64 MiB+1 body that never comes → Io-timeout. So FrameTooLarge
+        //     vs Io distinguishes the original from both mutants.
+        let got = drive_read_frame((MAX_FRAME_LEN + 1).to_be_bytes().to_vec());
+        assert!(
+            matches!(got, Err(WireError::FrameTooLarge(n)) if n == MAX_FRAME_LEN + 1),
+            "a prefix above the bound is FrameTooLarge (kills `> with ==`/`<`)"
+        );
+        // (b) Exactly-MAX prefix (a LEGAL length): the original `MAX > MAX` is false →
+        //     proceeds to read the body (none sent) → Io-timeout. The `> with >=`
+        //     mutant (`MAX >= MAX` true) WRONGLY rejects it as FrameTooLarge. So Io
+        //     (not FrameTooLarge) proves the bound is strict `>` (kills `> with >=`).
+        let got = drive_read_frame(MAX_FRAME_LEN.to_be_bytes().to_vec());
+        assert!(
+            matches!(got, Err(WireError::Io(_))),
+            "exactly-MAX is a legal length: Io-timeout on the body, not FrameTooLarge (kills `> with >=`)"
+        );
+    }
+
+    /// Send `prefix_bytes` to a fresh loopback `read_frame` server whose socket has a
+    /// short read-timeout, then return its result. The timeout guarantees the call
+    /// returns fast even when a (mutated) `read_frame` proceeds to read a body that is
+    /// never sent — turning a would-be hang into a deterministic `Io` error.
+    fn drive_read_frame(prefix_bytes: Vec<u8>) -> Result<Message, WireError> {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut conn, _) = listener.accept().unwrap();
+            conn.set_read_timeout(Some(Duration::from_millis(250)))
+                .unwrap();
+            read_frame(&mut conn)
+        });
+        let mut client = TcpStream::connect(addr).unwrap();
+        client.write_all(&prefix_bytes).unwrap();
+        client.flush().unwrap();
+        let got = server.join().unwrap();
+        drop(client);
+        got
+    }
+
+    #[test]
+    fn read_frame_or_idle_returns_idle_only_at_a_frame_boundary_timeout() {
+        // A read timeout with NO bytes sent → Idle (the WouldBlock/TimedOut guard at
+        // line 450 accepts it). Kills `matches! with false`, which would turn this
+        // boundary timeout into an Io error.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut conn, _) = listener.accept().unwrap();
+            conn.set_read_timeout(Some(Duration::from_millis(150)))
+                .unwrap();
+            read_frame_or_idle(&mut conn)
+        });
+        let _client = TcpStream::connect(addr).unwrap(); // connect, send nothing
+        assert!(
+            matches!(server.join().unwrap(), Ok(FrameRead::Idle)),
+            "a boundary timeout with no bytes is Idle (kills `matches! with false`)"
+        );
+    }
+
+    #[test]
+    fn read_frame_or_idle_completes_a_real_frame() {
+        // A full frame sent after the connect must be returned as Frame(..), proving
+        // the guard does NOT swallow live data as idle.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let sent = Message::StatusRequest;
+        let sent2 = sent.clone();
+        let server = thread::spawn(move || {
+            let (mut conn, _) = listener.accept().unwrap();
+            conn.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            read_frame_or_idle(&mut conn)
+        });
+        let mut client = TcpStream::connect(addr).unwrap();
+        write_frame(&mut client, &sent2).unwrap();
+        let got = server.join().unwrap();
+        assert!(
+            matches!(got, Ok(FrameRead::Frame(m)) if m == sent),
+            "a complete frame is returned, not Idle"
+        );
+    }
+
+    /// Send `prefix` (a 4-byte length) to a fresh `read_frame_or_idle` server, then
+    /// CLOSE the connection so the post-prefix body read hits EOF immediately. The
+    /// close makes the call return FAST (no block) even when the mutated length check
+    /// fails to reject and proceeds to read a body — `read_exact` errors on the EOF.
+    fn drive_idle_prefix_then_close(prefix: [u8; 4]) -> Result<FrameRead, WireError> {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut conn, _) = listener.accept().unwrap();
+            conn.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            read_frame_or_idle(&mut conn)
+        });
+        let mut client = TcpStream::connect(addr).unwrap();
+        client.write_all(&prefix).unwrap();
+        client.flush().unwrap();
+        drop(client); // clean EOF after the 4 prefix bytes
+        server.join().unwrap()
+    }
+
+    #[test]
+    fn read_frame_or_idle_length_boundary_is_strict() {
+        // The idle-path length guard `if len > MAX_FRAME_LEN` (line 464). After the
+        // first byte the read-timeout is cleared, so a body that never arrives would
+        // block — we instead CLOSE the connection right after the 4-byte prefix, so
+        // the post-prefix body read fails FAST with EOF (`Io`) and the call returns
+        // deterministically. The two distinguishing prefixes:
+        //  * MAX+1 (over-bound): original `len > MAX` true → FrameTooLarge (no body
+        //    read). `> with ==` (`MAX+1 == MAX` false) → reads body → EOF `Io`. So
+        //    FrameTooLarge vs Io kills `> with ==`.
+        let got = drive_idle_prefix_then_close((MAX_FRAME_LEN + 1).to_be_bytes());
+        assert!(
+            matches!(got, Err(WireError::FrameTooLarge(n)) if n == MAX_FRAME_LEN + 1),
+            "an over-bound idle prefix is FrameTooLarge (kills 464 `> with ==`)"
+        );
+        //  * exactly-MAX (legal): original `MAX > MAX` false → reads the body → EOF
+        //    `Io`. `> with >=` (`MAX >= MAX` true) → WRONGLY rejects as FrameTooLarge.
+        //    So Io (not FrameTooLarge) kills `> with >=`.
+        let got = drive_idle_prefix_then_close(MAX_FRAME_LEN.to_be_bytes());
+        assert!(
+            matches!(got, Err(WireError::Io(_))),
+            "exactly-MAX is a legal idle length: EOF Io on the body, not FrameTooLarge (kills 464 `> with >=`)"
+        );
+    }
+
+    #[test]
+    fn write_frame_actually_writes_the_framed_bytes() {
+        // A `write_frame -> Ok(())` mutant writes NOTHING. To catch it WITHOUT
+        // hanging (the loopback reader would block forever on a missing prefix), the
+        // receiver uses a short read-timeout: a correct write_frame delivers a full,
+        // decodable frame; the no-op mutant delivers zero bytes → the reader times
+        // out (Err), which this asserts against. So the test is fast either way and
+        // distinguishes the two.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let sent = Message::Status {
+            last_index: 42,
+            term: 9,
+        };
+        let sent2 = sent.clone();
+        let server = thread::spawn(move || {
+            let (mut conn, _) = listener.accept().unwrap();
+            conn.set_read_timeout(Some(Duration::from_millis(500)))
+                .unwrap();
+            read_frame(&mut conn)
+        });
+        let mut client = TcpStream::connect(addr).unwrap();
+        write_frame(&mut client, &sent2).expect("write_frame must succeed");
+        let got = server.join().unwrap();
+        assert_eq!(
+            got.expect("a real write_frame delivers a decodable frame"),
+            sent,
+            "write_frame must put the framed bytes on the wire (kills the Ok(()) no-op)"
+        );
     }
 
     #[test]
@@ -642,7 +843,8 @@ mod tests {
         let sent2 = sent.clone();
         let server = thread::spawn(move || {
             let (mut conn, _) = listener.accept().unwrap();
-            read_frame(&mut conn).unwrap()
+            conn.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            read_frame(&mut conn).expect("frame round-trips")
         });
         let mut client = TcpStream::connect(addr).expect("connect");
         write_frame(&mut client, &sent2).unwrap();
