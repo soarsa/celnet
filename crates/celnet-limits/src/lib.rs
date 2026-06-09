@@ -91,8 +91,10 @@ mod tests {
         NetGreeks, NodeAggregate, PositionId, RiskFact, Scenario, TraderId, VegaLadder, VegaPillar,
         VegaPillarMap,
     };
-    use celnet_risk_normalize::{CanonicalLeaf, PositionRisk, canonicalize};
-    use celnet_types::{Ccy, CcyPair, DeltaConvention, OptionType, PremiumStyle, VanillaInputs};
+    use celnet_risk_normalize::{AssetPricer, CanonicalLeaf, PositionRisk, canonicalize};
+    use celnet_types::{
+        Ccy, CcyPair, DeltaConvention, OptionType, PremiumStyle, Underlying, VanillaInputs,
+    };
 
     fn eurusd() -> CcyPair {
         CcyPair::new(Ccy::EUR, Ccy::USD)
@@ -107,7 +109,7 @@ mod tests {
     }
 
     fn pos(opt: OptionType, notional: f64, inputs: VanillaInputs) -> PositionRisk {
-        PositionRisk::new(
+        PositionRisk::fx(
             eurusd(),
             opt,
             notional,
@@ -124,12 +126,12 @@ mod tests {
                 trader: TraderId(trader),
                 book: BookId(book),
                 desk: DeskId(desk),
-                ccy_pair: position.pair,
+                underlying: position.underlying.clone(),
                 location: LocationId(1),
                 entity: EntityId(1),
             },
             measure: FactMeasure {
-                leaf: canonicalize(&position),
+                leaf: canonicalize(&position).unwrap(),
                 position,
                 exotic: None,
             },
@@ -152,7 +154,7 @@ mod tests {
     fn one_book_cube(positions: &[(u32, PositionRisk)]) -> Cube {
         let mut cube = Cube::new();
         for (id, p) in positions {
-            cube.upsert(fact(*id, 1, 1, 1, *p));
+            cube.upsert(fact(*id, 1, 1, 1, p.clone()));
         }
         cube
     }
@@ -219,15 +221,17 @@ mod tests {
             5_000_000.0,
             VanillaInputs::new(1.10, 1.08, 0.11, 1.0, 0.04, 0.02),
         );
-        let cube = one_book_cube(&[(1, p1), (2, p2)]);
+        let cube = one_book_cube(&[(1, p1.clone()), (2, p2.clone())]);
         let node = cube.firm_aggregate(&DaysPillar);
         let na = NonAdditiveExposure::default();
 
-        let want_delta = canonicalize(&p1).greeks.delta_base + canonicalize(&p2).greeks.delta_base;
+        let want_delta = canonicalize(&p1).unwrap().greeks.delta_base
+            + canonicalize(&p2).unwrap().greeks.delta_base;
         assert_eq!(exposure_of(&node, LimitMetric::Delta, &na), want_delta);
 
         let pillar_1y = VegaPillar::new(365, 5000);
-        let want_vega = canonicalize(&p1).greeks.vega + canonicalize(&p2).greeks.vega;
+        let want_vega =
+            canonicalize(&p1).unwrap().greeks.vega + canonicalize(&p2).unwrap().greeks.vega;
         assert_eq!(
             exposure_of(&node, LimitMetric::VegaBucket(pillar_1y), &na),
             want_vega
@@ -277,7 +281,7 @@ mod tests {
             .filter(|i| *i != 0)
             .map(|i| Scenario::spot(f64::from(i) * 0.005))
             .collect();
-        let na = NonAdditiveExposure::from_scenarios(&node, &scen, 0.99);
+        let na = NonAdditiveExposure::from_scenarios(&AssetPricer, &node, &scen, 0.99);
         let var = exposure_of(&node, LimitMetric::Var, &na);
         assert!(var > 0.0);
         assert_eq!(var, na.var.unwrap());
@@ -318,7 +322,7 @@ mod tests {
             trader: TraderId(1),
             book: BookId(10),
             desk: DeskId(0), // deliberately unset; the parent pointer wins.
-            ccy_pair: eurusd(),
+            underlying: Underlying::Fx(eurusd()),
             location: LocationId(1),
             entity: EntityId(1),
         };
@@ -360,7 +364,7 @@ mod tests {
             10_000_000.0,
             VanillaInputs::new(1.10, 1.10, 0.10, 1.0, 0.04, 0.02),
         );
-        let leaf = canonicalize(&proposed);
+        let leaf = canonicalize(&proposed).unwrap();
         let incremental = IncrementalTrade::from_leaf(&leaf, VegaPillar::new(365, 5000));
 
         let path = ScopePath::resolve(
@@ -368,7 +372,7 @@ mod tests {
                 trader: TraderId(1),
                 book: BookId(1),
                 desk: DeskId(1),
-                ccy_pair: eurusd(),
+                underlying: Underlying::Fx(eurusd()),
                 location: LocationId(1),
                 entity: EntityId(1),
             },
@@ -413,7 +417,7 @@ mod tests {
             10_000_000.0,
             VanillaInputs::new(1.10, 1.10, 0.10, 1.0, 0.04, 0.02),
         );
-        let leaf = canonicalize(&proposed);
+        let leaf = canonicalize(&proposed).unwrap();
         let incr_delta = leaf.greeks.delta_base.abs();
         let incremental = IncrementalTrade::from_leaf(&leaf, VegaPillar::new(365, 5000));
         let path = ScopePath::resolve(
@@ -421,7 +425,7 @@ mod tests {
                 trader: TraderId(1),
                 book: BookId(1),
                 desk: DeskId(1),
-                ccy_pair: eurusd(),
+                underlying: Underlying::Fx(eurusd()),
                 location: LocationId(1),
                 entity: EntityId(1),
             },

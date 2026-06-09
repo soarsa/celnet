@@ -69,7 +69,7 @@ use celnet_proto::{
     ListPositionsResponse, RiskNode, RiskPosition, VegaLadderBucket,
 };
 use celnet_router::{PartitionKey, PartitionMap, Replica, ReplicaId, ReplicaSet};
-use celnet_types::CcyPair;
+use celnet_types::{CcyPair, DeltaConvention, PremiumStyle};
 use futures_util::future::join_all;
 use tonic::Status;
 
@@ -580,14 +580,24 @@ impl RiskEdge {
         let store = Arc::new(self.store.fork_config());
         for wire in union {
             let fact = convert::position_to_fact(wire)?;
+            let pos = &fact.measure.position;
+            // The federated union carries FX vanilla legs (the wire contract is FX);
+            // project the carry-tagged fact back to its FX pair + two-rate vanilla
+            // inputs (byte-identical) for the FX-shaped BookedPosition.
+            let pair =
+                fact.key.underlying.as_ccy_pair().ok_or_else(|| {
+                    Status::invalid_argument("federated leg is not an FX underlying")
+                })?;
+            let inputs = celnet_core::carry::fx_vanilla_inputs(&pos.inputs)
+                .map_err(|e| Status::invalid_argument(format!("federated leg not FX: {e}")))?;
             let booked = BookedPosition {
                 position_id: wire.position_id,
-                pair: fact.key.ccy_pair,
-                option: fact.measure.position.option,
-                notional_base: fact.measure.position.notional_base,
-                inputs: fact.measure.position.inputs,
-                quoted_delta: fact.measure.position.quoted_delta,
-                premium_style: fact.measure.position.premium_style,
+                pair,
+                option: pos.option,
+                notional_base: pos.notional_base,
+                inputs,
+                quoted_delta: pos.quoted_delta.unwrap_or(DeltaConvention::SpotUnadjusted),
+                premium_style: pos.premium_style.unwrap_or(PremiumStyle::DomesticPips),
                 surface_version: fact.surface_version,
             };
             store.upsert(booked, fact.key, wire.attribution.clone())?;

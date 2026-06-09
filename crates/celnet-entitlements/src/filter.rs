@@ -71,7 +71,7 @@ impl<'a> EntitlementFilter<'a> {
     /// caller owns its fact store and only needs the admitted leaves.
     #[must_use]
     pub fn prune(&self, facts: &[RiskFact]) -> Vec<RiskFact> {
-        facts.iter().copied().filter(|f| self.admits(f)).collect()
+        facts.iter().filter(|f| self.admits(f)).cloned().collect()
     }
 
     /// Build a [`Cube`] over **only** the admitted facts, wired to the same

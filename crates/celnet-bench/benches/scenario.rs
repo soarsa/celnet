@@ -45,7 +45,7 @@ const SEED: u64 = 0xBEEF_F00D;
 fn node() -> Vec<PositionRisk> {
     let pair = CcyPair::new(Ccy::EUR, Ccy::USD);
     let mk = |opt, notional, strike, vol| {
-        PositionRisk::new(
+        PositionRisk::fx(
             pair,
             opt,
             notional,
@@ -102,12 +102,16 @@ fn scenario_grid_gpu_unbatched(bencher: Bencher) {
                 let vb = f64::from(vb);
                 for p in &positions {
                     let i = &p.inputs;
+                    // The FX two-rate view of the carry-tagged inputs (these benches
+                    // are FX-only; byte-identical to the prior VanillaInputs rates).
+                    let v =
+                        celnet_core::carry::fx_vanilla_inputs(i).expect("FX scenario bench inputs");
                     let spec = PathSpec::gbm(
                         i.spot * sm,
                         i.vol + vb,
                         i.t,
-                        i.r_dom,
-                        i.r_for,
+                        v.r_dom,
+                        v.r_for,
                         PATHS,
                         1,
                         SEED,

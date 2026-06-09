@@ -17,9 +17,36 @@
 use celnet_risk_cube::{
     BookId, DeskId, DimensionId, EntityId, FactKey, Hierarchy, LocationId, TraderId,
 };
-use celnet_types::CcyPair;
+use celnet_types::{CcyPair, Underlying};
 
 use crate::limit::LimitSpec;
+
+/// Project a fact's [`Underlying`] onto the [`CcyPair`] the currency-pair limit
+/// scope addresses. FX and metal underlyings project to their leg-pair via
+/// [`Underlying::as_ccy_pair`] (byte-identical to the pre-generalization
+/// `CcyPair` scope, so an FX/metal limit's matched group discriminant is
+/// unchanged). A cross-asset arm has no `CcyPair` projection; the currency-pair
+/// scope vocabulary is FX/metal-shaped, so such a fact's underlying-axis limit is
+/// addressed by its own group value, and the scope's pair is the metal/FX
+/// projection where one exists. The limit book is FX/metal today, so this falls
+/// back only for a cross-asset fact, deriving a stable self-pair from its
+/// numeraire currency so the scope remains a well-formed, deterministic key.
+#[must_use]
+fn scope_pair_of(underlying: &Underlying) -> CcyPair {
+    use celnet_types::Ccy;
+    underlying.as_ccy_pair().unwrap_or_else(|| {
+        let n = if let Some(e) = underlying.as_equity() {
+            e.currency
+        } else if let Some(c) = underlying.as_commodity() {
+            c.currency
+        } else if let Some(p) = underlying.as_digital_asset() {
+            Ccy::parse(&p.quote).unwrap_or(Ccy::USD)
+        } else {
+            Ccy::USD
+        };
+        CcyPair::new(n, n)
+    })
+}
 
 /// A single addressable node in the limit hierarchy: one dimension value at one
 /// level (`docs/RISK-HIERARCHY.md` §5). The firm apex is [`LimitScope::Firm`].
@@ -55,7 +82,7 @@ impl LimitScope {
             LimitScope::Trader(_) => Some(DimensionId::Trader),
             LimitScope::Book(_) => Some(DimensionId::Book),
             LimitScope::Desk(_) => Some(DimensionId::Desk),
-            LimitScope::CcyPair(_) => Some(DimensionId::CcyPair),
+            LimitScope::CcyPair(_) => Some(DimensionId::Underlying),
             LimitScope::Location(_) => Some(DimensionId::Location),
             LimitScope::Entity(_) => Some(DimensionId::Entity),
         }
@@ -73,15 +100,19 @@ impl LimitScope {
             LimitScope::Location(l) => Some(u64::from(l.raw())),
             LimitScope::Entity(e) => Some(u64::from(e.raw())),
             LimitScope::CcyPair(p) => {
+                // The currency-pair scope addresses the cube's underlying axis; an FX
+                // pair packs `as_ccy_pair()` byte-identically to the pre-generalization
+                // `CcyPair` group value, so the discriminant a CcyPair limit matches is
+                // unchanged.
                 let key = FactKey {
                     trader: TraderId(0),
                     book: BookId(0),
                     desk: DeskId(0),
-                    ccy_pair: p,
+                    underlying: Underlying::Fx(p),
                     location: LocationId(0),
                     entity: EntityId(0),
                 };
-                Some(key.group_value(DimensionId::CcyPair))
+                Some(key.group_value(DimensionId::Underlying))
             }
         }
     }
@@ -115,7 +146,7 @@ impl ScopePath {
                 LimitScope::Trader(key.trader),
                 LimitScope::Book(key.book),
                 LimitScope::Desk(desk),
-                LimitScope::CcyPair(key.ccy_pair),
+                LimitScope::CcyPair(scope_pair_of(&key.underlying)),
                 LimitScope::Location(key.location),
                 LimitScope::Entity(entity),
                 LimitScope::Firm,

@@ -52,8 +52,13 @@ impl NonAdditiveExposure {
     /// convenience path; a caller with its own scenario engine may build the struct
     /// directly.
     #[must_use]
-    pub fn from_scenarios(node: &NodeAggregate, scenarios: &[Scenario], alpha: f64) -> Self {
-        let ve = celnet_risk_cube::Cube::node_var_es(node, scenarios, alpha);
+    pub fn from_scenarios<P: celnet_core::carry::CarryPricer>(
+        pricer: &P,
+        node: &NodeAggregate,
+        scenarios: &[Scenario],
+        alpha: f64,
+    ) -> Self {
+        let ve = celnet_risk_cube::Cube::node_var_es(pricer, node, scenarios, alpha);
         Self {
             var: Some(ve.var),
             es: Some(ve.es),

@@ -15,3 +15,7 @@ workspace = true
 celnet-types.workspace = true
 celnet-risk-cube.workspace = true
 celnet-risk-normalize.workspace = true
+# The agnostic CarryPricer carry seam the non-additive VaR/ES re-derivation
+# threads through (the cube reducers are generic over it). One-way edge:
+# limits -> core.
+celnet-core.workspace = true

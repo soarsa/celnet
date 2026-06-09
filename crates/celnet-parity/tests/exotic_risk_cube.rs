@@ -22,6 +22,7 @@
 //! Every exotic here is a **deterministic closed form** (Reiner-Rubinstein barrier,
 //! European digital), so the comparison is machine-exact with no Monte-Carlo caveat.
 
+use celnet_core::carry::CarryInputs;
 use celnet_core::is_close;
 use celnet_exotics::{
     BarrierKind, BarrierStyle, DigitalKind, SingleBarrier, digital_greeks, single_barrier_price,
@@ -31,9 +32,11 @@ use celnet_risk_cube::{
     PositionId, RiskFact, Scenario, TraderId, VegaPillar, VegaPillarMap,
 };
 use celnet_risk_fleet::{fan_out_aggregate, partition_facts};
-use celnet_risk_normalize::{CanonicalLeaf, PositionRisk, canonicalize};
+use celnet_risk_normalize::{AssetPricer, CanonicalLeaf, PositionRisk, canonicalize};
 use celnet_router::{Replica, ReplicaId, ReplicaSet};
-use celnet_types::{Ccy, CcyPair, DeltaConvention, OptionType, PremiumStyle, VanillaInputs};
+use celnet_types::{
+    Carry, Ccy, CcyPair, DeltaConvention, OptionType, PremiumStyle, Underlying, VanillaInputs,
+};
 
 fn eurusd() -> CcyPair {
     CcyPair::new(Ccy::EUR, Ccy::USD)
@@ -58,7 +61,7 @@ impl VegaPillarMap for DaysPillar {
 }
 
 fn vanilla(pair: CcyPair, opt: OptionType, notional: f64, inputs: VanillaInputs) -> PositionRisk {
-    PositionRisk::new(
+    PositionRisk::fx(
         pair,
         opt,
         notional,
@@ -77,7 +80,7 @@ fn org_key(org: u32, pair: CcyPair) -> FactKey {
         trader: TraderId(org),
         book: BookId(org),
         desk: DeskId(0),
-        ccy_pair: pair,
+        underlying: Underlying::Fx(pair),
         location: LocationId(org),
         entity: EntityId(org),
     }
@@ -86,9 +89,15 @@ fn org_key(org: u32, pair: CcyPair) -> FactKey {
 fn vanilla_fact(id: u32, org: u32, position: PositionRisk) -> RiskFact {
     RiskFact {
         position_id: PositionId(id),
-        key: org_key(org, position.pair),
+        key: org_key(
+            org,
+            position
+                .underlying
+                .as_ccy_pair()
+                .expect("vanilla parity facts are FX"),
+        ),
         measure: FactMeasure {
-            leaf: canonicalize(&position),
+            leaf: canonicalize(&position).unwrap(),
             position,
             exotic: None,
         },
@@ -98,7 +107,7 @@ fn vanilla_fact(id: u32, org: u32, position: PositionRisk) -> RiskFact {
 
 fn exotic_fact(id: u32, org: u32, option: OptionType, leg: ExoticLeg) -> RiskFact {
     // The underlying-vanilla bucketing metadata (never priced; the exotic pricer is).
-    let position = PositionRisk::new(
+    let position = PositionRisk::fx(
         leg.pair,
         option,
         leg.notional,
@@ -234,7 +243,7 @@ fn mixed_firm_book() -> Vec<RiskFact> {
 fn single_node(facts: &[RiskFact]) -> Cube {
     let mut cube = Cube::new();
     for f in facts {
-        cube.upsert(*f);
+        cube.upsert(f.clone());
     }
     cube
 }
@@ -251,8 +260,8 @@ fn ladder() -> Vec<Scenario> {
             v.push(Scenario {
                 spot_rel: f64::from(si) * 0.01,
                 vol_abs: f64::from(vj) * 0.005,
-                rate_dom_abs: 0.0,
-                rate_for_abs: 0.0,
+                discount_abs: 0.0,
+                carry_abs: 0.0,
             });
         }
     }
@@ -273,8 +282,8 @@ fn fan_out_equals_single_node_including_exotics() {
     // Single-node reference.
     let cube = single_node(&facts);
     let firm = cube.firm_aggregate(&DaysPillar);
-    let s_var = Cube::node_var_es(&firm, &scen, alpha);
-    let s_cvr = Cube::node_curvature_spot(&firm, rw);
+    let s_var = Cube::node_var_es(&AssetPricer, &firm, &scen, alpha);
+    let s_cvr = Cube::node_curvature_spot(&AssetPricer, &firm, rw);
 
     // The book genuinely contains exotic legs (else the test would be vacuous).
     assert_eq!(
@@ -485,8 +494,8 @@ fn exotic_leg_strictly_changes_the_rollup() {
     );
 
     // And the non-additive tail changes too (the exotic legs carry real VaR).
-    let var_without = Cube::node_var_es(&firm_without, &scen, alpha).var;
-    let var_with = Cube::node_var_es(&firm_with, &scen, alpha).var;
+    let var_without = Cube::node_var_es(&AssetPricer, &firm_without, &scen, alpha).var;
+    let var_with = Cube::node_var_es(&AssetPricer, &firm_with, &scen, alpha).var;
     assert!(var_without > 0.0 && var_with > 0.0);
     assert!(
         (var_with - var_without).abs() > 1e-6 * var_without,
@@ -521,7 +530,7 @@ fn knock_out_var_is_exotic_not_vanilla() {
         ExoticLeg::new(eurusd(), ExoticKind::SingleBarrier(spec), n, inputs),
     )];
     let firm_exotic = single_node(&exotic_only).firm_aggregate(&DaysPillar);
-    let var_exotic = Cube::node_var_es(&firm_exotic, &scen, 0.99).var;
+    let var_exotic = Cube::node_var_es(&AssetPricer, &firm_exotic, &scen, 0.99).var;
 
     // Vanilla-only firm of the underlying call (same strike/inputs/notional).
     let vanilla_only = vec![vanilla_fact(
@@ -530,7 +539,7 @@ fn knock_out_var_is_exotic_not_vanilla() {
         vanilla(eurusd(), OptionType::Call, n, inputs),
     )];
     let firm_vanilla = single_node(&vanilla_only).firm_aggregate(&DaysPillar);
-    let var_vanilla = Cube::node_var_es(&firm_vanilla, &scen, 0.99).var;
+    let var_vanilla = Cube::node_var_es(&AssetPricer, &firm_vanilla, &scen, 0.99).var;
 
     assert!(var_exotic > 0.0 && var_vanilla > 0.0);
     // The two VaRs are materially different — the exotic payoff is not the vanilla's.
@@ -540,11 +549,24 @@ fn knock_out_var_is_exotic_not_vanilla() {
     );
     // Independent check: the worst single-scenario loss of the long up-and-out call
     // is an UP scenario (toward the knock-out), the opposite of a long vanilla call.
+    // Lift the FX VanillaInputs to the agnostic carry basis the scenario shocks act
+    // on (the FX two-rate carry — byte-identical to the prior VanillaInputs shock).
+    let carry_inputs = CarryInputs::new(
+        inputs.spot,
+        inputs.strike,
+        inputs.vol,
+        inputs.t,
+        Underlying::Fx(eurusd()),
+        Carry::FxRates {
+            r_dom: inputs.r_dom,
+            r_for: inputs.r_for,
+        },
+    );
     let exotic_pnls: Vec<(f64, f64)> = scen
         .iter()
         .map(|s| {
-            let shocked = s.apply(&inputs);
-            let pnl = (single_barrier_price(&(&shocked).into(), spec)
+            let shocked = s.apply(&carry_inputs);
+            let pnl = (single_barrier_price(&shocked.into(), spec)
                 - single_barrier_price(&(&inputs).into(), spec))
                 * n;
             (s.spot_rel, pnl)
@@ -578,8 +600,8 @@ fn exotic_only_fan_out_reconciles() {
     let firm = single_node(&facts).firm_aggregate(&DaysPillar);
     assert!(firm.positions.is_empty(), "no vanilla legs in this book");
     assert_eq!(firm.exotic_legs.len(), 3);
-    let s_var = Cube::node_var_es(&firm, &scen, alpha);
-    let s_cvr = Cube::node_curvature_spot(&firm, rw);
+    let s_var = Cube::node_var_es(&AssetPricer, &firm, &scen, alpha);
+    let s_cvr = Cube::node_curvature_spot(&AssetPricer, &firm, rw);
 
     let reps = replicas(&[7, 14, 21]);
     // Sanity that partitioning routes all three.
