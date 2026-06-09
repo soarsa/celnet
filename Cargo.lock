@@ -752,7 +752,10 @@ dependencies = [
 name = "celnet-risk-normalize"
 version = "0.0.0"
 dependencies = [
+ "celnet-commodity-vanilla",
  "celnet-core",
+ "celnet-crypto-vanilla",
+ "celnet-equity-vanilla",
  "celnet-types",
  "celnet-vanilla",
  "proptest",

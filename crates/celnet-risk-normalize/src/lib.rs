@@ -41,6 +41,35 @@
 //!    (§2.2 and §2.3 are coupled — `vega_premium_ccy` carries the premium ccy so
 //!    the conversion is correct).
 //!
+//! # Cross-asset scope (ADR-0008)
+//!
+//! Canonicalization is **asset-class-agnostic**: a position carries a
+//! [`celnet_types::Underlying`] (FX pair / precious metal / equity / commodity /
+//! digital asset) and a carry-tagged [`celnet_core::carry::CarryInputs`], and its
+//! canonical Greek strip is produced through the agnostic
+//! [`celnet_core::carry::CarryPricer`] seam — by default the [`AssetPricer`]
+//! dispatcher, which resolves the asset's own leaf and **never** silently prices a
+//! non-FX position under FX arithmetic. The asset class is matched only *inside*
+//! the leaf adapter's own guard (the ADR-0008-sanctioned location); no
+//! aggregation/reduction loop in this crate matches on the underlying. FX numbers
+//! are byte-identical through the generalized seam (proved against the direct
+//! `celnet-vanilla` path in [`pricer`]'s tests).
+//!
+//! ## Honest deferral
+//!
+//! The §2.3 cross-asset **numeraire collapse** ([`Numeraire::from_leaves`]) is
+//! landed for **fiat-quoted** underlyings (FX, metals, and any equity/commodity/
+//! crypto-**linear** position quoted in a fiat numeraire): their delta nets cleanly
+//! in `Ccy` legs through the existing [`SpotResolver`]. A cross-asset position's
+//! **base** leg is an *asset unit* (shares, ounces, coins), not a currency, so it
+//! is not added to the `Ccy`-keyed exposure vector — only its numeraire-currency
+//! funding leg is netted there. The genuine non-linear case — the
+//! **crypto-inverse** (`1/S_T`) coin-margined payoff, whose premium and vega settle
+//! in the *base coin* — is **not** routed through the additive linear seam at all;
+//! its full coin-leg numeraire netting is a documented follow-up. This is a real
+//! boundary, not a stub: the additive Greek roll-up and FRTB bucketing work for
+//! every arm; only the asset-unit/coin-leg numeraire collapse is deferred.
+//!
 //! # What this crate does NOT do (honest scope)
 //!
 //! - It does **not** aggregate. Summing canonical leaves across the hierarchy is
@@ -68,6 +97,7 @@
 
 mod leaf;
 mod numeraire;
+mod pricer;
 
 pub use leaf::{
     CanonicalGreeks, CanonicalLeaf, GreekEngine, PositionRisk, canonicalize, canonicalize_with,
@@ -76,3 +106,4 @@ pub use numeraire::{
     CcyExposure, CurrencyExposure, MonetaryAmount, Numeraire, NumeraireError, SpotResolver,
     StaticSpotResolver,
 };
+pub use pricer::{AssetPricer, CommodityLeaf, CryptoLeaf, EquityLeaf, FxLeaf};

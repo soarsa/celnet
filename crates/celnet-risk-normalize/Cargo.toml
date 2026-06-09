@@ -15,6 +15,9 @@ workspace = true
 celnet-types.workspace = true
 celnet-core.workspace = true
 celnet-vanilla.workspace = true
+celnet-equity-vanilla.workspace = true
+celnet-commodity-vanilla.workspace = true
+celnet-crypto-vanilla.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
