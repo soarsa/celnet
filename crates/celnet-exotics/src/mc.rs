@@ -473,7 +473,7 @@ mod tests {
             },
         );
         let analytic = single_barrier_price(
-            &i,
+            &(&i).into(),
             SingleBarrier {
                 kind: BarrierKind {
                     up: true,
@@ -519,7 +519,7 @@ mod tests {
         let bgk = price_barrier_bgk_shifted(&i, spec, cfg);
         let bridge = price_barrier(&i, spec, cfg);
         let analytic = single_barrier_price(
-            &i,
+            &(&i).into(),
             SingleBarrier {
                 kind: BarrierKind {
                     up: true,
