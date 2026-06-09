@@ -62,7 +62,7 @@ fn digitals_match_quantlib() {
         };
         // The table scales the unit pricer by the row's payout (unit cash / one
         // asset unit in this grid).
-        let celnet = rec.payout * digital_price(kind, &i);
+        let celnet = rec.payout * digital_price(kind, &(&i).into());
         assert!(
             is_close(celnet, rec.price, REL, ABS),
             "{:?} {:?}: celnet {celnet} != QuantLib {}",
@@ -91,21 +91,23 @@ fn celnet_touch(rec: &TouchRecord) -> f64 {
     let i = inputs(rec.spot, rec.strike(), rec.vol, rec.t, rec.r_dom, rec.r_for);
     match rec.kind {
         TouchKind::OneTouch => one_touch_price(
-            &i,
+            &(&i).into(),
             rec.barrier.expect("one-touch barrier"),
             rec.rebate,
             RebateTiming::AtExpiry,
         ),
-        TouchKind::NoTouch => {
-            no_touch_price(&i, rec.barrier.expect("no-touch barrier"), rec.rebate)
-        }
+        TouchKind::NoTouch => no_touch_price(
+            &(&i).into(),
+            rec.barrier.expect("no-touch barrier"),
+            rec.rebate,
+        ),
         TouchKind::Dnt => {
             let dnt = DoubleNoTouch::new(
                 rec.lower.expect("dnt lower"),
                 rec.upper.expect("dnt upper"),
                 rec.rebate,
             );
-            double_no_touch_price(&i, dnt)
+            double_no_touch_price(&(&i).into(), dnt)
         }
         TouchKind::DoubleTouch => {
             let dnt = DoubleNoTouch::new(
@@ -113,7 +115,7 @@ fn celnet_touch(rec: &TouchRecord) -> f64 {
                 rec.upper.expect("double-touch upper"),
                 rec.rebate,
             );
-            double_touch_price(&i, dnt)
+            double_touch_price(&(&i).into(), dnt)
         }
     }
 }
@@ -191,7 +193,7 @@ fn barriers_match_quantlib() {
             barrier: rec.barrier,
             rebate: rec.rebate,
         };
-        let celnet = single_barrier_price(&i, spec);
+        let celnet = single_barrier_price(&(&i).into(), spec);
         assert!(
             is_close(celnet, rec.price, REL, ABS),
             "{:?} {:?}: celnet {celnet} != QuantLib {}",
@@ -241,7 +243,7 @@ fn double_barriers_match_quantlib() {
 fn celnet_double_barrier(rec: &DoubleBarrierRecord) -> f64 {
     let i = inputs(rec.spot, rec.strike, rec.vol, rec.t, rec.r_dom, rec.r_for);
     let ko = double_knock_out_price(
-        &i,
+        &(&i).into(),
         DoubleBarrierKnockOut::new(rec.option_type, rec.strike, rec.lower, rec.upper),
     );
     match rec.kind {

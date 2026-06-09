@@ -725,7 +725,7 @@ fn run_core(
                         barrier: q.barrier,
                         rebate: q.rebate,
                     };
-                    let price = single_barrier_price(&q.inputs, spec);
+                    let price = single_barrier_price(&(&q.inputs).into(), spec);
                     let _ = reply.send(price);
                     handled_control = true;
                 }

@@ -75,7 +75,7 @@ fn single_barrier_prices_match_quantlib_all_flavours() {
             barrier: rec.barrier,
             rebate: rec.rebate,
         };
-        let celnet = single_barrier_price(&inputs, spec);
+        let celnet = single_barrier_price(&(&inputs).into(), spec);
 
         let abs_dev = (celnet - rec.price).abs();
         let scale = celnet.abs().max(rec.price.abs());

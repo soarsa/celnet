@@ -348,7 +348,7 @@ fn smile_and_exotics_are_bit_identical() {
     // Exotics: digital + barrier reproduce across threads from rebuilt inputs.
     let i = VanillaInputs::new(100.0, 100.0, 0.2, 1.0, 0.03, 0.01);
     let isnap = snapshot(&i);
-    let d_ref = digital_price(DigitalKind::cash(OptionType::Call), &i).to_bits();
+    let d_ref = digital_price(DigitalKind::cash(OptionType::Call), &(&i).into()).to_bits();
     let spec = SingleBarrier {
         kind: BarrierKind {
             up: false,
@@ -359,14 +359,15 @@ fn smile_and_exotics_are_bit_identical() {
         barrier: 85.0,
         rebate: 0.0,
     };
-    let b_ref = single_barrier_price(&i, spec).to_bits();
+    let b_ref = single_barrier_price(&(&i).into(), spec).to_bits();
     let ex_handles: Vec<_> = (0..THREADS)
         .map(|_| {
             let s = isnap.clone();
             thread::spawn(move || {
                 let inp = from_snapshot(&s);
-                let d = digital_price(DigitalKind::cash(OptionType::Call), &inp).to_bits();
-                let b = single_barrier_price(&inp, spec).to_bits();
+                let d =
+                    digital_price(DigitalKind::cash(OptionType::Call), &(&inp).into()).to_bits();
+                let b = single_barrier_price(&(&inp).into(), spec).to_bits();
                 (d, b)
             })
         })

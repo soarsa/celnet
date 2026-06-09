@@ -56,7 +56,7 @@ fn digital_prices_match_quantlib_all_flavours() {
     for rec in &records {
         let inputs = VanillaInputs::new(rec.spot, rec.strike, rec.vol, rec.t, rec.r_dom, rec.r_for);
         // celnet prices per one payout unit; the oracle row carries `payout`.
-        let celnet = rec.payout * digital_price(kind_of(rec), &inputs);
+        let celnet = rec.payout * digital_price(kind_of(rec), &(&inputs).into());
 
         let abs_dev = (celnet - rec.price).abs();
         let scale = celnet.abs().max(rec.price.abs());

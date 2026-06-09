@@ -80,7 +80,7 @@ async fn taker_rfqs_dnt_accepts_and_books() {
         // Reference: a direct `celnet-exotics` DNT price at the live ATM market.
         let m = live_market();
         let direct = double_no_touch_price(
-            &VanillaInputs::new(m.spot, lower, m.vol, 1.0, m.r_dom, m.r_for),
+            &(&VanillaInputs::new(m.spot, lower, m.vol, 1.0, m.r_dom, m.r_for)).into(),
             DoubleNoTouch::new(lower, upper, rebate),
         );
         assert!(
@@ -387,7 +387,7 @@ async fn sdk_ctors_price_barriers_digital_touch_equal_exotics_reference() {
                 .expect("single-barrier price returns in time")
                 .expect("single-barrier price succeeds");
         let sb_ref = single_barrier_price(
-            &inputs(strike),
+            &(&inputs(strike)).into(),
             ExSingleBarrier {
                 kind: ExBarrierKind {
                     up: true,
@@ -432,7 +432,7 @@ async fn sdk_ctors_price_barriers_digital_touch_equal_exotics_reference() {
                 .expect("double-barrier price returns in time")
                 .expect("double-barrier price succeeds");
         let db_ref = double_knock_out_price(
-            &inputs(strike),
+            &(&inputs(strike)).into(),
             DoubleBarrierKnockOut::new(OptionType::Call, strike, lower, upper),
         );
         assert!(
@@ -457,8 +457,11 @@ async fn sdk_ctors_price_barriers_digital_touch_equal_exotics_reference() {
                 .await
                 .expect("digital price returns in time")
                 .expect("digital price succeeds");
-        let dig_ref =
-            payout * digital_price(DigitalKind::cash(OptionType::Call), &inputs(dig_strike));
+        let dig_ref = payout
+            * digital_price(
+                DigitalKind::cash(OptionType::Call),
+                &(&inputs(dig_strike)).into(),
+            );
         assert!(
             is_close(priced_dig.greeks.price, dig_ref, 1e-12, 1e-12),
             "cash-or-nothing digital SDK price {} != celnet-exotics reference {dig_ref}",
@@ -484,7 +487,7 @@ async fn sdk_ctors_price_barriers_digital_touch_equal_exotics_reference() {
                 .expect("one-touch price succeeds");
         // A touch has no strike; the server prices on inputs with strike = barrier.
         let ot_ref = one_touch_price(
-            &inputs(touch_barrier),
+            &(&inputs(touch_barrier)).into(),
             touch_barrier,
             touch_rebate,
             RebateTiming::AtHit,

@@ -427,9 +427,12 @@ pub(crate) fn run(spec: ExoticSpec, inputs: &VanillaInputs) -> ExoticResult {
         }
         _ => {}
     }
+    // The agnostic carry-seam view of the FX market input, for the exotics engines
+    // already migrated onto `ExoticInputs` (byte-identical for FX).
+    let einputs: celnet_exotics::ExoticInputs = inputs.into();
     let price = match spec {
         ExoticSpec::Vanilla { option } => celnet_vanilla::price(option, inputs),
-        ExoticSpec::Digital(kind) => digital_price(kind, inputs),
+        ExoticSpec::Digital(kind) => digital_price(kind, &einputs),
         ExoticSpec::OneTouch {
             barrier,
             rebate,
@@ -440,13 +443,13 @@ pub(crate) fn run(spec: ExoticSpec, inputs: &VanillaInputs) -> ExoticResult {
             } else {
                 RebateTiming::AtHit
             };
-            one_touch_price(inputs, barrier, rebate, timing)
+            one_touch_price(&einputs, barrier, rebate, timing)
         }
         ExoticSpec::DoubleNoTouch {
             lower,
             upper,
             rebate,
-        } => double_no_touch_price(inputs, DoubleNoTouch::new(lower, upper, rebate)),
+        } => double_no_touch_price(&einputs, DoubleNoTouch::new(lower, upper, rebate)),
         ExoticSpec::SingleBarrier {
             option,
             topology,
@@ -454,7 +457,7 @@ pub(crate) fn run(spec: ExoticSpec, inputs: &VanillaInputs) -> ExoticResult {
             barrier,
             rebate,
         } => single_barrier_price(
-            inputs,
+            &einputs,
             SingleBarrier {
                 kind: topology.kind(option),
                 strike,
@@ -867,7 +870,7 @@ mod tests {
             option: OptionType::Call,
         };
         let r = run(ExoticSpec::Digital(kind), &inputs());
-        let direct = digital_price(kind, &inputs());
+        let direct = digital_price(kind, &(&inputs()).into());
         assert!(is_close(r.price, direct, 1e-15, 1e-15));
     }
 
@@ -884,7 +887,7 @@ mod tests {
             &inputs(),
         );
         let direct = single_barrier_price(
-            &inputs(),
+            &(&inputs()).into(),
             SingleBarrier {
                 kind: BarrierKind {
                     up: false,
@@ -909,7 +912,7 @@ mod tests {
             },
             &inputs(),
         );
-        let direct = one_touch_price(&inputs(), 1.20, 1.0, RebateTiming::AtHit);
+        let direct = one_touch_price(&(&inputs()).into(), 1.20, 1.0, RebateTiming::AtHit);
         assert!(is_close(r.price, direct, 1e-15, 1e-15));
     }
 
@@ -923,7 +926,8 @@ mod tests {
             },
             &inputs(),
         );
-        let direct = double_no_touch_price(&inputs(), DoubleNoTouch::new(1.00, 1.20, 1.0));
+        let direct =
+            double_no_touch_price(&(&inputs()).into(), DoubleNoTouch::new(1.00, 1.20, 1.0));
         assert!(is_close(r.price, direct, 1e-15, 1e-15));
     }
 

@@ -390,7 +390,8 @@ fn barrier_contribution_matches_independent_fd() {
     // Independent central FD of the closed-form barrier price (no cube code).
     let pr = |s: f64, vol: f64| {
         single_barrier_price(
-            &VanillaInputs::new(s, inputs.strike, vol, inputs.t, inputs.r_dom, inputs.r_for),
+            &(&VanillaInputs::new(s, inputs.strike, vol, inputs.t, inputs.r_dom, inputs.r_for))
+                .into(),
             spec,
         )
     };
@@ -433,7 +434,7 @@ fn digital_contribution_matches_closed_form_greeks() {
     let firm = single_node(&with_exotic).firm_aggregate(&DaysPillar);
 
     // Independent oracle: the closed-form digital Greeks (no cube code).
-    let dg = digital_greeks(kind, &inputs);
+    let dg = digital_greeks(kind, &(&inputs).into());
     assert!(is_close(
         firm.net_greeks.delta_base,
         dg.delta * n,
@@ -543,8 +544,9 @@ fn knock_out_var_is_exotic_not_vanilla() {
         .iter()
         .map(|s| {
             let shocked = s.apply(&inputs);
-            let pnl =
-                (single_barrier_price(&shocked, spec) - single_barrier_price(&inputs, spec)) * n;
+            let pnl = (single_barrier_price(&(&shocked).into(), spec)
+                - single_barrier_price(&(&inputs).into(), spec))
+                * n;
             (s.spot_rel, pnl)
         })
         .collect();

@@ -622,10 +622,10 @@ pub fn price_instrument(
                 rebate,
             };
             let price = |m: &WireMarketContext| {
-                single_barrier_price(&inputs_at(m, expiry, strike, m.vol), ex_spec)
+                single_barrier_price(&(&inputs_at(m, expiry, strike, m.vol)).into(), ex_spec)
             };
             let price_at = |t: f64, m: &WireMarketContext| {
-                single_barrier_price(&inputs_at(m, t, strike, m.vol), ex_spec)
+                single_barrier_price(&(&inputs_at(m, t, strike, m.vol)).into(), ex_spec)
             };
             let greeks = exotic_greeks(&price, &price_at, market, expiry);
             Ok(Priced {
@@ -664,7 +664,7 @@ pub fn price_instrument(
             let knock_in = matches!(kind, celnet_proto::BarrierKind::KnockIn);
             let price = move |m: &WireMarketContext| {
                 let ki = inputs_at(m, expiry, strike, m.vol);
-                let ko_px = double_knock_out_price(&ki, ko);
+                let ko_px = double_knock_out_price(&(&ki).into(), ko);
                 if knock_in {
                     celnet_vanilla::price(option_type, &ki) - ko_px
                 } else {
@@ -673,7 +673,7 @@ pub fn price_instrument(
             };
             let price_at = move |t: f64, m: &WireMarketContext| {
                 let ki = inputs_at(m, t, strike, m.vol);
-                let ko_px = double_knock_out_price(&ki, ko);
+                let ko_px = double_knock_out_price(&(&ki).into(), ko);
                 if knock_in {
                     celnet_vanilla::price(option_type, &ki) - ko_px
                 } else {
@@ -703,10 +703,10 @@ pub fn price_instrument(
             let strike = d.strike;
             let payout = d.payout;
             let price = move |m: &WireMarketContext| {
-                payout * digital_price(kind, &inputs_at(m, expiry, strike, m.vol))
+                payout * digital_price(kind, &(&inputs_at(m, expiry, strike, m.vol)).into())
             };
             let price_at = move |t: f64, m: &WireMarketContext| {
-                payout * digital_price(kind, &inputs_at(m, t, strike, m.vol))
+                payout * digital_price(kind, &(&inputs_at(m, t, strike, m.vol)).into())
             };
             let greeks = exotic_greeks(&price, &price_at, market, expiry);
             Ok(Priced {
@@ -730,14 +730,14 @@ pub fn price_instrument(
             let price: Box<ExoticPrice<'_>> = match kind {
                 celnet_proto::TouchKind::OneTouch => Box::new(move |m: &WireMarketContext| {
                     one_touch_price(
-                        &inputs_at(m, expiry, lower, m.vol),
+                        &(&inputs_at(m, expiry, lower, m.vol)).into(),
                         lower,
                         rebate,
                         RebateTiming::AtHit,
                     )
                 }),
                 celnet_proto::TouchKind::NoTouch => Box::new(move |m: &WireMarketContext| {
-                    no_touch_price(&inputs_at(m, expiry, lower, m.vol), lower, rebate)
+                    no_touch_price(&(&inputs_at(m, expiry, lower, m.vol)).into(), lower, rebate)
                 }),
                 celnet_proto::TouchKind::DoubleNoTouch => {
                     if !(lower > 0.0 && lower < upper) {
@@ -747,7 +747,7 @@ pub fn price_instrument(
                     }
                     Box::new(move |m: &WireMarketContext| {
                         double_no_touch_price(
-                            &inputs_at(m, expiry, lower, m.vol),
+                            &(&inputs_at(m, expiry, lower, m.vol)).into(),
                             DoubleNoTouch::new(lower, upper, rebate),
                         )
                     })
@@ -760,7 +760,7 @@ pub fn price_instrument(
                     }
                     Box::new(move |m: &WireMarketContext| {
                         double_touch_price(
-                            &inputs_at(m, expiry, lower, m.vol),
+                            &(&inputs_at(m, expiry, lower, m.vol)).into(),
                             DoubleNoTouch::new(lower, upper, rebate),
                         )
                     })
@@ -771,20 +771,20 @@ pub fn price_instrument(
             let price_at = move |t_exp: f64, m: &WireMarketContext| -> f64 {
                 match kind {
                     celnet_proto::TouchKind::OneTouch => one_touch_price(
-                        &inputs_at(m, t_exp, lower, m.vol),
+                        &(&inputs_at(m, t_exp, lower, m.vol)).into(),
                         lower,
                         rebate,
                         RebateTiming::AtHit,
                     ),
                     celnet_proto::TouchKind::NoTouch => {
-                        no_touch_price(&inputs_at(m, t_exp, lower, m.vol), lower, rebate)
+                        no_touch_price(&(&inputs_at(m, t_exp, lower, m.vol)).into(), lower, rebate)
                     }
                     celnet_proto::TouchKind::DoubleNoTouch => double_no_touch_price(
-                        &inputs_at(m, t_exp, lower, m.vol),
+                        &(&inputs_at(m, t_exp, lower, m.vol)).into(),
                         DoubleNoTouch::new(lower, upper, rebate),
                     ),
                     celnet_proto::TouchKind::DoubleOneTouch => double_touch_price(
-                        &inputs_at(m, t_exp, lower, m.vol),
+                        &(&inputs_at(m, t_exp, lower, m.vol)).into(),
                         DoubleNoTouch::new(lower, upper, rebate),
                     ),
                 }
@@ -2261,16 +2261,18 @@ mod tests {
             barrier: 0.95,
             rebate: 0.0,
         };
-        let base =
-            single_barrier_price(&VanillaInputs::new(1.10, 1.10, 0.10, 1.0, 0.02, 0.01), spec);
+        let base = single_barrier_price(
+            &(&VanillaInputs::new(1.10, 1.10, 0.10, 1.0, 0.02, 0.01)).into(),
+            spec,
+        );
         assert!(is_close(priced.greeks.price, base, 1e-12, 1e-12));
         // Manual delta over a 1% bump, compared loosely to the FD field.
         let up = single_barrier_price(
-            &VanillaInputs::new(1.111, 1.10, 0.10, 1.0, 0.02, 0.01),
+            &(&VanillaInputs::new(1.111, 1.10, 0.10, 1.0, 0.02, 0.01)).into(),
             spec,
         );
         let dn = single_barrier_price(
-            &VanillaInputs::new(1.089, 1.10, 0.10, 1.0, 0.02, 0.01),
+            &(&VanillaInputs::new(1.089, 1.10, 0.10, 1.0, 0.02, 0.01)).into(),
             spec,
         );
         let manual = (up - dn) / (2.0 * 0.011);
