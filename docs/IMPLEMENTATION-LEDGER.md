@@ -2,9 +2,10 @@
 
 > Append-only status log. **Newest first.** One line per meaningful unit of progress.
 > This is the full history, externalized from `CLAUDE.md` to keep the per-session
-> directive context small (token-and-context-discipline). `CLAUDE.md` keeps only the
-> newest entry inline as a resume anchor; **append new entries here, at the top of the
-> list below, and mirror the single newest entry into `CLAUDE.md`.**
+> directive context small (token-and-context-discipline). `CLAUDE.md` keeps only a
+> **one-line** resume anchor; **append the full entry here, at the top of the list below,
+> and replace the CLAUDE.md anchor in place with a single-line summary — never paste the
+> full entry into `CLAUDE.md` (that re-bloats the per-session context).**
 
 - 2026-06-08 — **W1 — MULTI-ASSET CORE LANDED + GUI foundation merged (commits `ba0fc03` W1 core,
   `6143409` gw-foundation merge; pushed).** The keystone wave: generalized the three FX-only Layer-0

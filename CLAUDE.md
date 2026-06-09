@@ -120,54 +120,15 @@ coordination. A session: (1) reads this file + `docs/ROADMAP.md` + the implement
 ledger (`docs/IMPLEMENTATION-LEDGER.md`; newest entry mirrored below), (2) claims a
 workstream, (3) builds it to passing gates, (4) updates the ledger + memory.
 
-## Implementation ledger
+## Implementation ledger & live ownership
 
-> Append-only status log. **Full history → [`docs/IMPLEMENTATION-LEDGER.md`](docs/IMPLEMENTATION-LEDGER.md)** (newest first). Only the newest entry is
-> mirrored below as a resume anchor — append new entries to that file (top of list)
-> and replace the anchor here with the new newest entry.
+All status lives in disk files, not here (keeps per-session context small —
+[[token-and-context-discipline]]):
 
-**Current state (newest entry — full history in the ledger file):**
+- **Full append-only history** → [`docs/IMPLEMENTATION-LEDGER.md`](docs/IMPLEMENTATION-LEDGER.md) (newest first). Append new entries at its top.
+- **Live parallel-session lane board** (claims/owners/branches) → [`docs/PARALLEL-SESSIONS.md`](docs/PARALLEL-SESSIONS.md). Claim a lane there before starting.
+- **Phase plan + crate-workstream map** → [`docs/ROADMAP.md`](docs/ROADMAP.md) §4/§7.
 
-- 2026-06-08 — **W1 — MULTI-ASSET CORE LANDED + GUI foundation merged (commits `ba0fc03` W1 core,
-  `6143409` gw-foundation merge; pushed).** The keystone wave: generalized the three FX-only Layer-0
-  seams to a cross-asset vocabulary IN PLACE (one unversioned contract, FX byte-identical) per **ADR-0008**
-  (identity / carry-as-forward-discount-producer / asset-class-agnostic payoff). Built as a gated workflow
-  (trait → contract → GUI∥Excel∥plugin → adversarial-verify) + my independent re-gate. **celnet-core:** the
-  carry-producing-market seam (`CarryInputs`/`CarryPricer`/`CarryGreeks` + typed `CarryPriceError`).
-  **celnet-vanilla:** `FxPricer` delegates to the UNCHANGED GK arithmetic, to_bits-gated vs the golden grid.
-  **celnet-proto:** `Underlying` (oneof fx) replaces `CcyPair`; MarketContext/VanillaInputs →
-  {discount_rate, CarryModel}; Greeks rhos → `RateSensitivities`; convert FX round-trip to_bits-identical +
-  product×underlying validity guard. **celnet-server:** routes by Underlying + a **no-silent-fallback carry
-  guard** at the price-path head (the verifier-flagged blocker: a generalized carry was silently read as FX
-  r_for=0; now a typed error). **plugin-api/-host:** PricingModel+WIT+wasmi ABI generalized; a NEW
-  equity-dividend (CostOfCarry) plugin gate reconciles to an INDEPENDENT generalized-BSM oracle 1e-12 (no
-  circular oracle). **GUI (gw-foundation, parallel worktree):** GW0 design-system + accessible role=grid
-  `<DataGrid>` + GW1 single breadcrumb scope nav, deleting 7 redundant pair affordances. **Re-gated:** `just
-  check` literal "All gates passed." (1343 tests, was 1306); conformance 120/120; GUI 425; Excel e2e 81; FX
-  byte-identity gated by to_bits. **▶ All downstream fan-out lanes now OPEN** (`docs/PARALLEL-SESSIONS.md`):
-  W2/W3/W4/W5 + GW2 — claimable by parallel service-mesh sessions on worktrees off `main`. Also done this
-  arc: the **capabilities document** rebuilt comprehensive + multi-asset + SOTA + audience-targeted
-  (Traders/Quants/Tech/Leadership), 30 visuals embedded, 0 hedges (`docs/celnet-capabilities.html`; PDF =
-  open backlog `deliverable/capabilities-pdf`). Follow-up (not W1): the `celnet-surface` FX→neutral split
-  (only when a non-FX surface leaf lands — W3 carries its own crypto surface leaf).
+**Resume anchor — one line only; replace in place each milestone, never grow it:**
 
-
-
-## Work-stream ledger
-
-> Live ownership for parallel sessions (see `docs/ROADMAP.md` §4/§7). Claim a row by
-> editing it before starting. One owner per row at a time; crates are disjoint.
-
-| Stream | Crates (owned) | Status | Owner | Dep gate | Notes |
-|--------|----------------|--------|-------|----------|-------|
-| WS-0 | celnet-types, celnet-core, celnet-proto, celnet-plugin-api | **DONE** | — | — | G0 complete; all four frozen. Wire contract unversioned (ADR-0007). |
-| WS-A | celnet-conventions, celnet-calendar | **DONE** | — | G0 | calendar (43 tests) + convention registry green & validated. |
-| WS-B | celnet-vanilla | **DONE** | — | G0 | GK + 14 Greeks + 4 delta conventions + ATM/DNS + strike↔delta solver. G1 reached. |
-| WS-C | celnet-surface | **DONE** | — | G1 | VV/SABR/SVI/SSVI + broker→smile + arb-free term structure. G2 reached. |
-| WS-D | celnet-exotics | **DONE (1st-gen)** | — | G2 | digitals/touches/DNT/barriers + PDE/MC, QuantLib-gated. LSV booking model pending (task #16). |
-| WS-E | celnet-gpu | **DONE (core)** | — | G0 | PricingBackend wgpu/Metal + CPU oracle, Philox, f32↔f64 reconciled. Sobol QMC = enhancement. |
-| WS-F | celnet-engine | **DONE (hot path)** | — | G1/G3 | core-pinned zero-alloc rt + blue-green handoff. Full edge wiring = WS-I. |
-| WS-G | celnet-plugin-host | **DONE** | — | G0 | Tiered host: Tier-0 native registry + Tier-2 **wasmi 1.0.9** fuel-metered no-WASI sandbox + replay harness, behind frozen `celnet-plugin-api`. 14 tests, all 4 gates green; deny clean. wasmtime blocker CLOSED. Tier-1 stabby `.so` + Tier-3 Landlock ring designed, not yet wired. |
-| WS-H | celnet-integration | UNBLOCKED | — | G0/WS-C | **next** — vendor feed normalization + multi-source surface aggregation/divergence. |
-| WS-I | celnet-server, celnet-cli | UNBLOCKED (G3) | — | G3 | **next** — streaming gRPC/WS edge + admin CLI (tokio/tonic vetted). |
-| WS-T | CI/test/deny/golden/bench | PARTIAL | — | G0 | testkit + QuantLib golden + latency bench DONE; pending: fuzz/mutation/coverage gates, CI matrix, executable parity matrix (#14). |
+- 2026-06-08 — W1 multi-asset core + GUI foundation landed & pushed (`ba0fc03`, `6143409`): cross-asset carry seam per ADR-0008, FX byte-identical, `just check` green (1343 tests); W2/W3/W4/W5 + GW2 fan-out lanes OPEN. Detail → ledger top entry.
