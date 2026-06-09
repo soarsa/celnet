@@ -963,6 +963,22 @@ impl Carry {
     pub fn forward_factor(&self, t: f64) -> f64 {
         libm::exp(self.carry_rate() * t)
     }
+
+    /// The yield/foreign rate `q` such that discount `= e^{−r·t}`, growth `= e^{−q·t}`,
+    /// and net carry `b = r − q`.
+    ///
+    /// For [`Carry::FxRates`] this is the **stored** `r_for`, returned *verbatim* —
+    /// never reconstructed as `discount_rate() − carry_rate()` (`r_dom − (r_dom − r_for)`
+    /// does not in general round-trip bit-for-bit). Reading the stored field keeps every
+    /// foreign-discount site (`e^{−r_for·t}`) byte-identical to the FX two-rate form.
+    /// For [`Carry::CostOfCarry`] it is `r − b`.
+    #[must_use]
+    pub fn yield_rate(&self) -> f64 {
+        match self {
+            Carry::FxRates { r_for, .. } => *r_for,
+            Carry::CostOfCarry { r, b } => r - b,
+        }
+    }
 }
 
 /// The full FX-options Greek set produced by the vanilla engine.
@@ -1212,7 +1228,21 @@ mod tests {
             );
             assert_eq!(carry.discount_rate(), r_dom);
             assert_eq!(carry.carry_rate(), r_dom - r_for);
+            // The yield/foreign rate must be the STORED `r_for`, bit-for-bit — NOT the
+            // `discount_rate() − carry_rate()` reconstruction, which would not round-trip.
+            assert_eq!(
+                carry.yield_rate().to_bits(),
+                r_for.to_bits(),
+                "yield_rate must read the stored r_for verbatim (byte-identical)"
+            );
         }
+    }
+
+    #[test]
+    fn yield_rate_cost_of_carry() {
+        let (r, q) = (0.04, 0.03);
+        let carry = Carry::CostOfCarry { r, b: r - q };
+        assert_eq!(carry.yield_rate(), r - (r - q));
     }
 
     #[test]
