@@ -203,6 +203,28 @@ mutants-gate-fanout:
     timeout 1200 {{_cargo}} mutants -p celnet-fanout --test-tool=cargo --jobs 3 \
         --config .config/mutants-fanout.toml
 
+# Mutation GATE on the fleet router (HRW rendezvous assignment + argmax tie-break,
+# splitmix64 mixer / digest, hot-standby failover + HRW fallback, membership
+# validation, per-replica inflight cap). Plain `cargo test` runner (NOT nextest);
+# `--jobs 3` bounds wall-time on the M4 and stays courteous to a parallel session.
+# The INDEPENDENT oracle is the code-disjoint splitmix64/digest + brute-force
+# argmax in tests/router_mutation.rs. Zero non-equivalent survivors. See
+# docs/HARDENING.md.
+#
+# `PROPTEST_MAX_SHRINK_ITERS=0`: a hash-collapse mutant (e.g. `mix64 -> 0`) makes
+# the balance/reshuffle proptests fail — correctly CAUGHT — but proptest's default
+# shrinking then re-runs the 6000–8000-key case hundreds of times, which under
+# `--jobs 3` contention can exceed any per-mutant timeout and be MIS-scored as a
+# spurious Timeout. Disabling shrink iters makes a failing case report
+# immediately, so every such mutant is deterministically scored CAUGHT.
+# `PROPTEST_DISABLE_FAILURE_PERSISTENCE=1` stops the gate writing transient
+# `.proptest-regressions` artifacts from the mutated runs. `--minimum-test-timeout`
+# is a generous floor for the remaining (non-shrinking) cases.
+mutants-gate-celnet-router:
+    timeout 1500 env PROPTEST_MAX_SHRINK_ITERS=0 PROPTEST_DISABLE_FAILURE_PERSISTENCE=1 \
+        {{_cargo}} mutants -p celnet-router --test-tool=cargo --jobs 3 \
+        --minimum-test-timeout=60 --config .config/mutants-celnet-router.toml
+
 # Coverage GATE on the vanilla pricing core: fail if region/line coverage drops
 # below the committed floor (see docs/HARDENING.md). `--fail-under-lines` /
 # `--fail-under-regions` make llvm-cov exit non-zero below the threshold.

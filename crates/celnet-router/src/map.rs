@@ -254,10 +254,13 @@ mod tests {
         let probe =
             ReplicaSet::new(vec![Replica::up(ReplicaId(1)), Replica::up(ReplicaId(2))]).unwrap();
         let pm = PartitionMap::new(&probe);
-        let key = (0..)
+        // Bounded search so a degenerate hash (e.g. a mutated mixer that collapses
+        // every weight and pins the owner to one id) FAILS FAST here instead of
+        // looping forever; the real mixer finds a replica-1 key within a few tries.
+        let key = (0..10_000)
             .map(pk)
             .find(|&k| pm.natural_owner(k) == Some(ReplicaId(1)))
-            .unwrap();
+            .expect("no replica-1 key in [0,10000) — degenerate hash?");
 
         let s = ReplicaSet::new(vec![
             Replica::up(ReplicaId(1)).with_standby(ReplicaId(99)).down(),
@@ -276,10 +279,12 @@ mod tests {
     fn hrw_fallback_when_no_standby() {
         let probe = set(&[1, 2, 3]);
         let pm = PartitionMap::new(&probe);
-        let key = (0..)
+        // Bounded search (see `standby_takes_a_downed_owner`): fail fast under a
+        // degenerate hash rather than loop forever.
+        let key = (0..10_000)
             .map(pk)
             .find(|&k| pm.natural_owner(k) == Some(ReplicaId(1)))
-            .unwrap();
+            .expect("no replica-1 key in [0,10000) — degenerate hash?");
 
         let s = ReplicaSet::new(vec![
             Replica::up(ReplicaId(1)).down(),
