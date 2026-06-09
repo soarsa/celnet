@@ -767,7 +767,7 @@ mod tests {
         let var_combined = combined[0].nonadditive.as_ref().unwrap().var.unwrap();
 
         let long_only = aggregate_nodes(
-            &cube_from_facts(&[long.clone()], Hierarchy::new()),
+            &cube_from_facts(std::slice::from_ref(&long), Hierarchy::new()),
             None,
             &resolver,
             &[],
