@@ -22,6 +22,7 @@ export type AssetClass = "FX";
 /** Gallery grouping for the structure picker (replaces the flat 19-item `<select>`). */
 export type ProductGroup =
   | "Vanilla & strategies"
+  | "Linear (forwards & swaps)"
   | "Barriers & digitals"
   | "Volatility"
   | "Path-dependent"
@@ -30,6 +31,7 @@ export type ProductGroup =
 /** The canonical group order in the structure gallery. */
 export const PRODUCT_GROUP_ORDER: readonly ProductGroup[] = [
   "Vanilla & strategies",
+  "Linear (forwards & swaps)",
   "Barriers & digitals",
   "Volatility",
   "Path-dependent",

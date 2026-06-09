@@ -324,6 +324,12 @@ function legsOf(instrument: Instrument): { strikeSpec: StrikeOrDelta; isCall: bo
       // A correlated multi-asset basket has no single representative smile read on
       // the settlement pair (its legs are distinct underlyings) ⇒ ATM face vol.
       return [];
+    case "fxForward":
+    case "fxSwap":
+    case "ndf":
+      // The W2 linear products are vol-INDEPENDENT discounted cashflows — there is
+      // no representative smile strike (the payoff is linear in spot) ⇒ ATM face vol.
+      return [];
   }
 }
 

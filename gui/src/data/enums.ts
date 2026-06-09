@@ -28,6 +28,7 @@ import type {
   DigitalStyle,
   Enforcement,
   ExerciseStyle,
+  FixingSource,
   LimitMetricKind,
   LookbackMonitoring,
   LookbackStyle,
@@ -86,6 +87,20 @@ export const pricingModel = enumCodec<PricingModel>(["DEFAULT", "LOCAL_STOCH_VOL
 
 /** `Side` ↔ proto `Side` (BUY=0, SELL=1, TWO_WAY=2). */
 export const side = enumCodec<Side>(["BUY", "SELL", "TWO_WAY"]);
+
+/**
+ * `FixingSource` ↔ proto `FixingSource` (KRW_KFTC18=0, TWD_TAIPEI=1,
+ * INR_RBI_REF=2, BRL_PTAX=3, CLP_DOLAR_OBS=4, COP_TRM=5). Identity only — names
+ * which published settlement-rate the NDF fixes against, never a fixing value.
+ */
+export const fixingSource = enumCodec<FixingSource>([
+  "KRW_KFTC18",
+  "TWD_TAIPEI",
+  "INR_RBI_REF",
+  "BRL_PTAX",
+  "CLP_DOLAR_OBS",
+  "COP_TRM",
+]);
 
 /** `DeltaConvention` ↔ proto `DeltaConvention`. */
 export const deltaConvention = enumCodec<DeltaConvention>([

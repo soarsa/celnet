@@ -41,6 +41,22 @@ export type DayCount = "ACT_365_FIXED" | "ACT_360";
 
 export type Settlement = "DELIVERABLE" | "NON_DELIVERABLE";
 
+/**
+ * The published settlement-rate option a non-deliverable forward fixes against
+ * (`celnet.wire.FixingSource`). This names *which* published rate the contract
+ * settles to (each EMTA / ISDA per-currency template names exactly one) — it is
+ * convention IDENTITY, NOT a market-data input: the live fixing VALUE is an
+ * estate-gated feed, never sourced in-repo, so only the identity is on the wire.
+ * Purpose-named, vendor/method-neutral (CLAUDE.md rule 8).
+ */
+export type FixingSource =
+  | "KRW_KFTC18"
+  | "TWD_TAIPEI"
+  | "INR_RBI_REF"
+  | "BRL_PTAX"
+  | "CLP_DOLAR_OBS"
+  | "COP_TRM";
+
 export type StrategyKind = "RISK_REVERSAL" | "STRANGLE" | "STRADDLE" | "SEAGULL";
 
 /**
@@ -702,6 +718,62 @@ export interface AmericanOption {
   lsmSeed: bigint;
 }
 
+/**
+ * An outright forward (`celnet.wire.FxForward`, product field 26) — the
+ * `celnet-linear` forward leaf. A linear, closed-form discounted-cashflow product
+ * (NOT an option payoff): its PV is `side · notional · discount_df(t) ·
+ * (forward_rate − contractRate)` where `forward_rate = spot · forward_factor(t)`
+ * comes from the instrument's carry. Asset-class-agnostic (an FX or metal forward
+ * uses the identical engine) and EXACT — the reply never carries a
+ * `Quote.priceStdError`. Valid for a DELIVERABLE underlying only.
+ */
+export interface FxForward {
+  /** The agreed contract (delivery) rate `K` in quote per 1 unit of base/asset. */
+  contractRate: number;
+  /** The notional amount (always positive; direction is carried by `side`). */
+  notional: number;
+  /** The direction taken (`BUY` = long the base/asset forward; `SELL` = short). */
+  side: Side;
+}
+
+/**
+ * An FX swap (`celnet.wire.FxSwap`, product field 27) — a near leg and a far leg,
+ * each an outright {@link FxForward}. By market convention the two legs trade in
+ * OPPOSITE directions (`far.side` is the opposite of `near.side`); the swap PV is
+ * the independent sum of the two leg PVs. The near leg settles at the spot date
+ * (`t = 0`) and the far leg at the instrument's expiry/tenor (the single ticket
+ * tenor anchors the far leg). Deliverable underlying only.
+ */
+export interface FxSwap {
+  /** The near (spot-dated) leg. */
+  near: FxForward;
+  /** The far (tenor-dated) leg; by convention the opposite side to `near`. */
+  far: FxForward;
+}
+
+/**
+ * A non-deliverable forward (`celnet.wire.Ndf`, product field 28) — the
+ * `celnet-linear` NDF leaf. The risk-neutral PV is identical to a deliverable
+ * forward of equal terms (`side · notional · discount_df(t) · (forward_rate −
+ * contractRate)`, discounted at the convertible/settlement-ccy rate);
+ * non-deliverability changes only the settlement mechanics, not the PV. Valid
+ * ONLY for a NON-DELIVERABLE underlying. `fixing` names the published
+ * settlement-rate option — identity only; the live fixing VALUE is an estate-gated
+ * feed, never sourced in-repo.
+ */
+export interface Ndf {
+  /** The agreed contract (forward) rate `K` in settlement-ccy per 1 unit of base. */
+  contractRate: number;
+  /** The notional amount (always positive; direction is carried by `side`). */
+  notional: number;
+  /** The direction taken (`BUY` = long the base/asset forward; `SELL` = short). */
+  side: Side;
+  /** The published settlement-rate option fixed against (identity only — no value). */
+  fixing: FixingSource;
+  /** The convertible (settlement) currency the net cash settlement is paid in. */
+  settlementCcy: string;
+}
+
 /** The product payoff carried by an Instrument (the proto `product` oneof). */
 export type Product =
   | { kind: "vanilla"; vanilla: Vanilla }
@@ -721,7 +793,10 @@ export type Product =
   | { kind: "lookback"; lookback: Lookback }
   | { kind: "windowBarrier"; windowBarrier: WindowBarrier }
   | { kind: "american"; american: AmericanOption }
-  | { kind: "basket"; basket: BasketOption };
+  | { kind: "basket"; basket: BasketOption }
+  | { kind: "fxForward"; fxForward: FxForward }
+  | { kind: "fxSwap"; fxSwap: FxSwap }
+  | { kind: "ndf"; ndf: Ndf };
 
 /** Solve directive: solve a free parameter to hit a target (e.g. zero premium). */
 export interface Solve {

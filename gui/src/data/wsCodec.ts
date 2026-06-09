@@ -593,6 +593,50 @@ export function instrumentToWire(i: Instrument): WireObject {
       };
       break;
     }
+    // The W2 linear products (the `celnet-linear` leaf), appended additively at
+    // fx_forward=26, fx_swap=27, ndf=28 (one current contract, no schema_version,
+    // no renumber; CLAUDE.md rule 9). Closed-form discounted cashflows (NOT option
+    // payoffs); each arm uses the EXACT snake_case field NAMES + numeric enum tags
+    // the server WS codec decodes. The Side enum rides each leg (BUY=0/SELL=1).
+    case "fxForward": {
+      const f = i.product.fxForward;
+      base["fx_forward"] = {
+        contract_rate: f.contractRate,
+        notional: f.notional,
+        side: e.side.toWire(f.side),
+      };
+      break;
+    }
+    // The FX swap nests two FxForward legs (near=1, far=2). The near leg settles at
+    // the spot date and the far leg at the instrument's tenor; by convention the
+    // far leg trades the OPPOSITE side to the near leg (enforced by the builder).
+    case "fxSwap": {
+      const s = i.product.fxSwap;
+      const legToWire = (leg: typeof s.near): WireObject => ({
+        contract_rate: leg.contractRate,
+        notional: leg.notional,
+        side: e.side.toWire(leg.side),
+      });
+      base["fx_swap"] = {
+        near: legToWire(s.near),
+        far: legToWire(s.far),
+      };
+      break;
+    }
+    // The non-deliverable forward (fields contract_rate=1, notional=2, side=3,
+    // fixing=4, settlement_ccy=5). `fixing` carries the published settlement-rate
+    // IDENTITY only (the live fixing value is an estate-gated feed, never in-repo).
+    case "ndf": {
+      const n = i.product.ndf;
+      base["ndf"] = {
+        contract_rate: n.contractRate,
+        notional: n.notional,
+        side: e.side.toWire(n.side),
+        fixing: e.fixingSource.toWire(n.fixing),
+        settlement_ccy: n.settlementCcy,
+      };
+      break;
+    }
   }
   return base;
 }
