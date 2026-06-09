@@ -131,4 +131,4 @@ All status lives in disk files, not here (keeps per-session context small —
 
 **Resume anchor — one line only; replace in place each milestone, never grow it:**
 
-- 2026-06-08 — W1 multi-asset core + GUI foundation landed & pushed (`ba0fc03`, `6143409`): cross-asset carry seam per ADR-0008, FX byte-identical, `just check` green (1343 tests); W2/W3/W4/W5 + GW2 fan-out lanes OPEN. Detail → ledger top entry.
+- 2026-06-09 — Cross-asset platform + rigor wave GREEN on `main` (`5160201`): session-B's integration (proto/server/5-clients, oracle 21+3) ∥ session-A's W6 (loom + journal sync-word + 4 mutation gates) + W5-A xrisk + W4-A pivot + ADR-0008-A analytic-exotics; joint gate real-exit fmt/clippy/test/deny=0, 172 sections. ADR-0008 Waves B/C/D/S = tracked tail. Detail → ledger top entry.
