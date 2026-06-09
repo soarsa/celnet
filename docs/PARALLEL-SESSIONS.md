@@ -86,7 +86,7 @@ CPU-starved `nextest` list/exec phase can sit at 0% CPU forever; observed 2026-0
 
 | Lane | Owns (disjoint crates / files) | Depends on | Gate | Status | Owner / branch |
 |------|-------------------------------|-----------|------|--------|----------------|
-| **W6-RIGOR-INFRA** | `celnet-journal`, `celnet-replog`, `celnet-fanout`, `celnet-router` (+ their `fuzz/` + `.config/mutants-*.toml`) — fully disjoint from W1 | — | per-crate mutation ≥90% kill + a fuzz target/decoder + `check-crate` green | **CLAIMED** | coordinator / `lane/w6-rigor-infra` |
+| **W6-RIGOR-INFRA** | `celnet-journal`, `celnet-replog`, `celnet-fanout`, `celnet-router` | — | mutation zero-survivor ×4 + loom seqlock model-check + journal sync-word + fuzz targets | **DONE** | coordinator / merged `7d3df75` |
 | **W2-A-LINEAR** | NEW `celnet-linear` (forward/swap/NDF) + its parity/golden rows | W1 contract | QuantLib FxForward + closed-form DF + structural; conformance row | **DONE** (5-client + parity/golden, `80d1596`) | session-B / main |
 | **W2-B-BREADTH** | `celnet-conventions`, `celnet-calendar` (>75 pairs + XPT/XPD + metal crosses) | W1 `Underlying::Metal` | EMTA/ISDA/LBMA tables + independent rata-die walk | **DONE** | session-B / main |
 | **XASSET-INTEGRATION** | proto window + `celnet-types`/`convert` + server routing to the equity/commodity/crypto/RFQ leaf engines + oracle + 5 clients | W1 + leaves (W3/W4-B/W5-B) | clippy+fmt clean · cargo-test server/client 8/8/parity/golden/cli · coverage 21+3 · deny · Excel 243 · GUI 541 | **DONE** (`1484fb0`) | session-B / main |
