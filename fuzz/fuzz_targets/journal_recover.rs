@@ -2,13 +2,16 @@
 //! `replay` (the crash-recovery / torn-tail parser).
 //!
 //! The journal is the durable substrate: on restart it scans a flat file of
-//! back-to-back CRC-framed records front-to-back, heals a torn final record
-//! (crash mid-append) by truncation, and surfaces detectable interior corruption
-//! as a typed error. After a crash the on-disk bytes are *exactly* whatever the
-//! kernel managed to flush — i.e. arbitrary — so the open/scan/replay path is a
+//! back-to-back CRC-framed records front-to-back. Each frame begins with an 8-byte
+//! sync word (ASCII "CLNJRNL\0" LE); recovery heals a torn final frame (a short
+//! read, or a start not led by the sync word) by truncation, and surfaces an
+//! interior CRC failure (intact sync word + complete body, failing CRC) as a typed
+//! `CorruptInterior` error. After a crash the on-disk bytes are *exactly* whatever
+//! the kernel managed to flush — i.e. arbitrary — so the open/scan/replay path is a
 //! genuinely untrusted byte parser, and a hostile `payload_len`/`snapshot_len`
 //! field is the length-amplification point (`read_one`/`read_snapshot` bound the
-//! allocation by `MAX_PAYLOAD_LEN` and a short read).
+//! allocation by `MAX_PAYLOAD_LEN` and a short read). The coverage-guided search
+//! discovers the sync word and drives the framed-record branches behind it.
 //!
 //! This target writes the fuzzer's arbitrary bytes to a real temp file and drives
 //! the actual recovery code (no re-implementation), asserting:

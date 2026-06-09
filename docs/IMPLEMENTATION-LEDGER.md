@@ -7,6 +7,37 @@
 > and replace the CLAUDE.md anchor in place with a single-line summary — never paste the
 > full entry into `CLAUDE.md` (that re-bloats the per-session context).**
 
+- 2026-06-09 — **W6-journal — PER-RECORD SYNC-WORD FRAME + celnet-journal MUTATION GATE (zero
+  non-equivalent survivors).** The §2/§3.2 lane of the W6 design pack, on `lane/w6-rigor-infra`, MEASURED
+  green locally; recovered STATE byte-identical (compaction round-trip + kill-restart tests pass UNCHANGED).
+  **(a) Sync-word frame** (`crates/celnet-journal/src/lib.rs`): every record (data + snapshot) now begins
+  with a fixed 8-byte `SYNC_WORD` (ASCII `"CLNJRNL\0"` LE), INSIDE the CRC coverage. `frame_record` /
+  `frame_snapshot` prepend it; `read_one` / `read_snapshot` read it first and classify per the new rule —
+  **intact sync word + a COMPLETE frame body (through the CRC trailer) whose CRC fails ⇒ `CorruptInterior`**
+  (interior bit-rot, surfaced, not silently healed), while a torn tail (short read of sync/header/payload/
+  CRC, or a start not led by the sync word) still heals by truncation. This closes the marker-less format's
+  one documented limitation (an interior CRC failure was indistinguishable from a torn tail, silently
+  dropping committed records). Clean break, no migration shim (guardrail 9). Crate doc + on-disk diagrams +
+  `CorruptInterior` doc rewritten to the stronger contract; the `decode_fuzz` snapshot-shaped strategy +
+  the `journal_recover` cargo-fuzz target doc updated to lead frames with the sync word. New behavioral
+  tests pin the discrimination (`intact_syncword_failing_crc_interior_is_corrupt`,
+  `torn_tail_still_heals_with_syncword_format`, `interior_corruption_distinct_from_torn_tail`,
+  `snapshot_interior_crc_failure_is_surfaced`) + the two repurposed byte-offset tests. **(b) Mutation gate**
+  (`.config/mutants-journal.toml`, `just mutants-gate-journal` + a `mutants-gate-infra: fanout journal`
+  aggregate, plain `cargo test` runner — NOT nextest — `--jobs 3`): strict raw run = 16 MISSED of 116; 11
+  GENUINE gaps KILLED with new value-pinning tests (the `MAX_PAYLOAD_LEN = 64·1024·1024` constant pinned
+  bit-for-bit; the `Display`/`Error::source` surface asserted; the recovery length-bound `> ==`/`>=`
+  boundary killed by EXACT-MAX valid data + snapshot round-trips — the only inputs that separate the
+  operators; `read_full_or_short`'s Interrupted-retry + short/empty/full classification driven by an
+  in-module `ScriptedReader`); the remaining 5 EXCLUDED with inline justification + verified evidence (two
+  no-op-at-boundary `< → <=` mutants in `open`/`read_full_or_short`; three directory-entry-durability
+  `sync_parent_dir` mutants observable only under real power-loss fault injection). INDEPENDENT oracle = the
+  running-sum replay machine (reference state = plain integer sum, code-disjoint from framing) + the
+  kill-restart byte-identity test + the 512-case adversarial-bytes proptest. Final gate: **111 mutants
+  tested — 97 caught, 14 unviable, 0 missed, 0 timeout**, exit 0. Re-gated: fmt clean, clippy `-D warnings`
+  clean (fixed a latent `io_other_error` lint surfaced by a new test), 35 lib tests + proptest green. Docs:
+  `docs/HARDENING.md` §2 (journal gate table + per-survivor classification + the sync-word regression-test
+  list). DISJOINT lane from W6-fanout (different crate); both on `lane/w6-rigor-infra`.
 - 2026-06-09 — **W6-fanout — LOOM SEQLOCK MODEL-CHECK + celnet-fanout MUTATION GATE (zero non-equivalent
   survivors).** Two rigor upgrades on the SPMC broadcast ring (`celnet-fanout`, the per-shard price
   fan-out substrate), both MEASURED green locally; the std hot path is byte-for-byte unchanged.

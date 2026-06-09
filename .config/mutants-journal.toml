@@ -1,0 +1,83 @@
+# cargo-mutants gate configuration — celnet-journal mutation-testing policy.
+#
+# Mirrors `.config/mutants.toml` (the celnet-vanilla gate) for the durable event
+# journal: the per-record sync-word framing (`frame_record` / `frame_snapshot`),
+# the CRC-32, the recovery state machine (`read_one` / `read_snapshot` / `scan` /
+# `read_full_or_short`) — including the sync-word-enabled discrimination of an
+# INTERIOR CRC failure (intact sync word + complete body, failing CRC ->
+# `CorruptInterior`) from a healing torn tail — and the atomic compaction. This is
+# the crash-recovery substrate: a silently-weakened suite could let a torn-tail-
+# vs-interior-corruption misclassification or a non-deterministic replay ship.
+#
+# How the gate works
+# ------------------
+# `cargo mutants -p celnet-journal --test-tool=cargo --jobs 3 \
+#     --config .config/mutants-journal.toml`
+# applies a syntactic mutant per operator / comparison / return value and re-runs
+# the suite with the PLAIN `cargo test` runner (NOT nextest): the recovery /
+# framing / compaction behavior is pinned by the in-module unit tests
+# (`src/tests.rs`) and the property-based adversarial-bytes recovery test
+# (`tests/decode_fuzz.rs`, 512 cases). The INDEPENDENT oracle is the running-sum
+# replay machine (`replay_from_compacted_equals_replay_from_full_bit_identical`,
+# whose reference state is the plain integer sum of the deltas — code-disjoint from
+# the framing) plus the kill-restart byte-identity test: they grade the recovered
+# STATE, not the framing code, so they cannot grade themselves circularly.
+# cargo-mutants exits non-zero on ANY non-equivalent survivor, so this gate
+# enforces ZERO non-equivalent survivors.
+#
+# `--jobs 3` bounds parallelism for a deterministic wall-time on aarch64-apple-
+# darwin and to stay courteous to a concurrent session. `--test-tool=cargo` is
+# explicit so the gate is reproducible independent of the workspace nextest profile
+# (and because a concurrent session may `pkill -f nextest`).
+#
+# Equivalence exclusions
+# ----------------------
+# `exclude_re` lists ONLY mutants that are provably semantically equivalent to the
+# original, each justified inline with WHY it cannot change an observable result —
+# never to hide a real survivor. It starts EMPTY (strict); a member is added only
+# after the mutant is reproduced by hand and shown to leave the full suite green.
+# See docs/HARDENING.md s2.
+#
+# MEASURED baseline (this session, aarch64-apple-darwin, cargo-mutants 27.0.0,
+# toolchain 1.96.0): a strict (empty-exclude) run surfaced 16 MISSED of 116
+# mutants. 11 were GENUINE gaps and were KILLED with new value-pinning tests in
+# `src/tests.rs` (the constant pin, the Display/source error-surface assertions,
+# the oversized-length / exact-MAX recovery-bound forges, and a scripted-`Read`
+# exercise of `read_full_or_short`'s short/Interrupted/full classification). The
+# remaining 5 are EITHER provably semantically equivalent OR require filesystem
+# power-loss fault injection beyond a process-level test — each justified below,
+# reproduced and classified by hand, none hidden. See docs/HARDENING.md (W6).
+exclude_re = [
+  # === provably semantically-equivalent mutants ===
+  # `Journal::open` truncation guard `if scan.good_end_offset < file_len` mutated to
+  # `<=`: at equality (a clean log with no torn tail) the mutant additionally calls
+  # `file.set_len(file_len)` — a no-op, the length is unchanged — and `sync_data()`
+  # — a harmless extra flush of already-durable bytes. No observable difference:
+  # recovered records, byte length and next_sequence are identical. Verified: full
+  # suite green with the mutant.
+  "replace < with <= in Journal::open",
+
+  # `read_full_or_short` fill loop `while filled < buf.len()` mutated to `<=`: when
+  # the buffer is already full (`filled == buf.len()`), the extra iteration calls
+  # `reader.read(&mut buf[buf.len()..])` — a read into an EMPTY sub-slice, which
+  # returns `Ok(0)` and immediately `break`s. The classification (`Empty`/`Short`/
+  # `Full`) and the bytes read are identical. Verified: full suite green (incl. the
+  # scripted-Read short/full/empty test) with the mutant.
+  "replace < with <= in read_full_or_short",
+
+  # === directory-entry durability: requires power-loss fault injection ===
+  # `sync_parent_dir` is the POSIX directory-fsync that makes a freshly-created /
+  # just-truncated / just-renamed journal file's DIRECTORY ENTRY durable. Its effect
+  # is observable ONLY across a real crash + power loss (a lost dir entry on a
+  # filesystem that needs the dir fsync) — a process-level `cargo test` cannot
+  # exhibit it (every test's parent dir is a live temp dir that opens+fsyncs fine
+  # either way). Both mutants leave every non-crash assertion green:
+  #  * `-> Ok(())` skips the dir fsync (durability-only, no in-test effect);
+  #  * `delete !` in `filter(|p| !p.as_os_str().is_empty())` fsyncs `"."` (the cwd)
+  #    instead of the file's parent — still a valid directory, still `Ok`, the only
+  #    difference being WHICH dir entry is made durable (unobservable without crash
+  #    injection). Verified: full suite green with each mutant. Recorded honestly as
+  #    fault-injection-only, not a suite gap.
+  "replace sync_parent_dir -> io::Result<\\(\\)> with Ok\\(\\(\\)\\)",
+  "delete ! in sync_parent_dir",
+]

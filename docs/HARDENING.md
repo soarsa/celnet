@@ -377,6 +377,91 @@ After these tests + the 9 justified exclusions, `just mutants-gate-celnet-router
 runs to **zero non-equivalent survivors**, exit 0 (MEASURED: 99 mutants tested in
 42s after the 9 exclusions — 83 caught, 16 unviable, **0 missed, 0 timeout**).
 
+### Infra-crate mutation gate — `celnet-journal` (W6, MEASURED green locally)
+
+The durable event journal (`celnet-journal`) is the crash-recovery substrate: an
+fsync'd, append-only, sequence-ordered log that, on restart, heals a torn tail and
+replays to rebuild state bit-identically. The W6 frame change makes every record
+begin with an 8-byte **sync word** (`SYNC_WORD`, ASCII `"CLNJRNL\0"` LE, inside the
+CRC coverage), which lets recovery tell an **interior CRC failure** (intact sync
+word + a complete frame body whose CRC fails ⇒ `CorruptInterior`) apart from a
+**torn tail** (a short read, or a start not led by the sync word ⇒ heal) — closing
+the one limitation the old marker-less format documented. A silently-weakened suite
+could let a torn-tail-vs-interior-corruption misclassification or a non-deterministic
+replay ship, so the crate gets its own enforceable mutation gate in the house style,
+with the same two deltas as the fanout/router gates (`.config/mutants-journal.toml`):
+
+- **plain `cargo test` runner** (`--test-tool=cargo`, NOT nextest) — reproducible
+  independent of the workspace nextest profile; a concurrent session may
+  `pkill -f nextest`.
+- **`--jobs 3`** — bounds wall-time on the M4, courteous to a parallel session.
+
+| Crate | Config | just recipe | Independent oracle | Status |
+|-------|--------|-------------|--------------------|--------|
+| `celnet-journal` | `.config/mutants-journal.toml` | `just mutants-gate-journal` | running-sum replay (`replay_from_compacted_equals_replay_from_full_bit_identical`, reference state = plain integer sum, code-disjoint from framing) + kill-restart byte-identity (`src/tests.rs`) + the 512-case adversarial-bytes proptest (`tests/decode_fuzz.rs`) | **MEASURED green locally** — 116 mutants, zero non-equivalent survivors |
+
+**Measured baseline** (`aarch64-apple-darwin`, cargo-mutants 27.0.0, toolchain
+1.96.0). A strict (empty-exclude) run surfaced **16 MISSED** of 116 mutants (86
+caught, 14 unviable). Each was reproduced and classified — none hidden:
+
+- **KILLED with new tests (11 genuine gaps).** The behavioral tests exercise these
+  branches but did not *assert exactly*, so a syntactic mutant survived. New
+  value-pinning tests in `src/tests.rs` close every one:
+  - the recovery safety bound `MAX_PAYLOAD_LEN = 64 * 1024 * 1024` — both `*`→`+`
+    mutants (which change the constant to 1_048_640 / 66_560) — pinned bit-for-bit
+    by `max_payload_len_is_exactly_64_mib` (the oversize-rejection tests reference
+    the constant itself, so only an exact pin distinguishes the original value);
+  - the error surface — `<Display>::fmt -> Ok(default)`, `<Error>::source -> None`,
+    and `delete match arm Io(e)` — pinned by `journal_error_display_and_source_are_exact`
+    (asserts each variant's `Display` text and that only `Io` exposes a `source`);
+  - the recovery length-bound guards `len_field > MAX_PAYLOAD_LEN` (`read_one`) and
+    `snap_len > MAX_PAYLOAD_LEN` (`read_snapshot`), BOTH `> with ==` and `> with >=`
+    — a FULLY-VALID record/snapshot whose body is EXACTLY `MAX_PAYLOAD_LEN` bytes
+    must round-trip (append/compact accept `len <= MAX`); under either mutant the
+    exact-MAX body is rejected as torn and dropped, failing the round-trip:
+    `exact_max_payload_record_roundtrips` (data) and
+    `exact_max_snapshot_record_roundtrips` (snapshot). A complete exact-MAX body is
+    the only input that separates the boundary — a short hostile body heals
+    identically under all three operators. A companion robustness test
+    (`oversized_length_field_heals_without_wild_allocation`) pins that a hostile
+    above-bound length field heals as a torn tail without a multi-GiB allocation;
+  - `read_full_or_short`'s `Interrupted`-retry guard (`guard -> true`/`false`,
+    `== with !=`) and the short/empty/full classification — driven by a scripted
+    `Read` (the in-module `ScriptedReader`) in `read_full_or_short_retries_on_interrupted_then_fills`,
+    `..._propagates_non_interrupted_errors`, and `..._reports_short_then_full_and_empty`.
+- **EQUIVALENT / fault-injection-only (5 excluded with inline justification +
+  verified evidence).** Two clusters, each VERIFIED by applying the mutant and
+  running the full suite GREEN:
+  - *No-op-at-boundary (2):* `Journal::open`'s truncation guard
+    `scan.good_end_offset < file_len -> <=` (at equality, `set_len(file_len)` is a
+    no-op + a harmless extra fsync), and `read_full_or_short`'s fill loop
+    `while filled < buf.len() -> <=` (the extra iteration reads into an empty
+    sub-slice, returns `Ok(0)`, and breaks — identical classification/bytes).
+  - *Directory-entry durability, power-loss-only (3):* `sync_parent_dir -> Ok(())`
+    and the `delete !` in its `filter(|p| !p.as_os_str().is_empty())`. This is the
+    POSIX directory fsync that makes a freshly-created/renamed file's *directory
+    entry* durable; its effect is observable ONLY across a real crash + power loss,
+    which a process-level test cannot exhibit (every test's parent dir opens+fsyncs
+    fine either way; `delete !` fsyncs the cwd `"."` instead of the parent — still a
+    valid `Ok`). Recorded honestly as fault-injection-only, not a suite gap.
+
+After these tests + the 5 justified exclusions, `just mutants-gate-journal` runs to
+**zero non-equivalent survivors**, exit 0.
+
+#### Sync-word frame discrimination — the dedicated regression tests
+
+Beyond the mutation gate, the frame change is pinned by behavioral tests in
+`src/tests.rs`: `intact_syncword_failing_crc_interior_is_corrupt` (interior CRC
+failure surfaced), `torn_tail_still_heals_with_syncword_format` (healing intact),
+`interior_corruption_distinct_from_torn_tail` (the two formerly-indistinguishable
+inputs now yield different verdicts), `snapshot_interior_crc_failure_is_surfaced`
+(the snapshot analogue), and the repurposed
+`interior_crc_corruption_is_surfaced_not_healed` /
+`flipped_byte_in_final_record_with_intact_sync_is_interior` /
+`truncated_final_record_heals_as_torn_tail`. The compaction round-trip and
+kill-restart byte-identity tests pass UNCHANGED after the frame change — the
+non-negotiable regression check that recovered *state* is unaffected.
+
 ## 3. Coverage (region / function / line)
 
 `cargo llvm-cov nextest` instruments the test run and reports per-file

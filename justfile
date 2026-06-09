@@ -203,6 +203,26 @@ mutants-gate-fanout:
     timeout 1200 {{_cargo}} mutants -p celnet-fanout --test-tool=cargo --jobs 3 \
         --config .config/mutants-fanout.toml
 
+# Mutation GATE on the durable journal (per-record sync-word framing + CRC-32 +
+# recovery state machine — incl. the intact-sync-word + failing-CRC ->
+# CorruptInterior discrimination — + atomic compaction). Plain `cargo test` runner
+# (NOT nextest: a concurrent session may `pkill nextest`, and the gate must be
+# reproducible independent of the workspace nextest profile) so the proptest
+# adversarial-bytes recovery test + the unit/recovery/compaction tests drive every
+# mutant; `--jobs 3` bounds wall-time on the M4 and stays courteous to a parallel
+# session. The INDEPENDENT oracle is the running-sum replay machine + the
+# kill-restart byte-identity test (they grade recovered STATE, not the framing
+# code). Zero non-equivalent survivors. See docs/HARDENING.md.
+mutants-gate-journal:
+    timeout 1800 {{_cargo}} mutants -p celnet-journal --test-tool=cargo --jobs 3 \
+        --config .config/mutants-journal.toml
+
+# Both infra-crate mutation gates (the SPMC fan-out ring + the durable journal) in
+# sequence — the crash-recovery / fan-out substrate, separate from the
+# numerics-only `mutants-gate-numerics` aggregate.
+mutants-gate-infra: mutants-gate-fanout mutants-gate-journal
+    @echo "All infra mutation gates passed."
+
 # Mutation GATE on the fleet router (HRW rendezvous assignment + argmax tie-break,
 # splitmix64 mixer / digest, hot-standby failover + HRW fallback, membership
 # validation, per-replica inflight cap). Plain `cargo test` runner (NOT nextest);
