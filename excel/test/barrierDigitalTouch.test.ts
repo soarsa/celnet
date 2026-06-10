@@ -7,7 +7,8 @@
 // 9 / 10 / 11 / 12) with the same nested vanilla body, numeric enums and snake_case
 // fields the Rust decoder reads (`single_barrier_from_json` /
 // `double_barrier_from_json` / `digital_from_json` / `touch_from_json`) — and that
-// the CELNET.BARRIER / DIGITAL / TOUCH functions decode the server's reply into the
+// the BARRIER / DIGITAL / TOUCH families (the polymorphic CELNET.INSTRUMENT + verb
+// path) decode the server's reply into the
 // right spill geometry. No pricing math lives in the add-in — the numbers are the
 // server's libm-core values (the SDK/CLI + celnet-golden/celnet-exotics gate the
 // server pricer against the independent oracle), so a cell is bit-identical to the
@@ -18,7 +19,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_CONVENTIONS,
   ShapingError,
-  formatExoticPremiumSpill,
+  formatPremiumSpill,
   parseBarrierKind,
   parseBarrierSide,
   parseDigitalStyle,
@@ -421,7 +422,7 @@ const SAMPLE_GREEKS: Greeks = {
 
 describe("barrier / digital / touch spill formatting", () => {
   it("leads with the premium, then the 13 risk Greeks, then a footer (no std-error row)", () => {
-    const m = formatExoticPremiumSpill({
+    const m = formatPremiumSpill({
       premium: SAMPLE_GREEKS.price,
       greeks: SAMPLE_GREEKS,
       conventions: DEFAULT_CONVENTIONS,
@@ -529,7 +530,7 @@ describe("single-barrier end-to-end over the WS mirror", () => {
     const quote = await p;
     // A closed-form barrier carries no MC std-error.
     expect(quote.priceStdError).toBeUndefined();
-    const m = formatExoticPremiumSpill({
+    const m = formatPremiumSpill({
       premium: quote.greeks.price,
       greeks: quote.greeks,
       conventions: quote.conventions,
@@ -587,7 +588,7 @@ describe("digital end-to-end over the WS mirror", () => {
     expect(wireInstr["digital"]).toEqual({ option_type: 0, strike: 1.15, style: 0, payout: 1 });
     replyQuote(sock, { greeks: { price: 0.41, delta_spot: 1.2 }, resolved_strike: 1.15 });
     const quote = await p;
-    const m = formatExoticPremiumSpill({
+    const m = formatPremiumSpill({
       premium: quote.greeks.price,
       greeks: quote.greeks,
       conventions: quote.conventions,
@@ -623,7 +624,7 @@ describe("touch end-to-end over the WS mirror", () => {
     replyQuote(sock, { greeks: { price: 0.55 }, resolved_strike: 0 });
     const quote = await p;
     expect(quote.priceStdError).toBeUndefined();
-    const m = formatExoticPremiumSpill({
+    const m = formatPremiumSpill({
       premium: quote.greeks.price,
       greeks: quote.greeks,
       conventions: quote.conventions,

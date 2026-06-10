@@ -5,7 +5,8 @@
 // carrying field numbers 19 / 20 / 21), that the count-based fixing schedule
 // encodes the SAME `fixing_years` array the SDK's `equal_fixing_years` produces
 // (so an Excel TARF/accumulator is bit-identical to the SDK/CLI), and that the
-// CELNET.TARF / ACCUMULATOR / LOOKBACK functions decode the SERVER's reply into
+// TARF / ACCUMULATOR / LOOKBACK families (the polymorphic CELNET.INSTRUMENT +
+// verb path) decode the SERVER's reply into
 // the right spill geometry — including the HONEST Monte-Carlo std-error row.
 //
 // MC-honesty is the heart of this wave: TARF and accumulator are ALWAYS Monte-
@@ -24,7 +25,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_CONVENTIONS,
   ShapingError,
-  formatPathDependentSpill,
+  formatPremiumSpill,
   lookbackIsMonteCarlo,
   parseAccumulatorMonitoring,
   parseLookbackMonitoring,
@@ -383,7 +384,7 @@ const SAMPLE_GREEKS: Greeks = {
 
 describe("path-dependent spill formatting", () => {
   it("surfaces the MC std-error row when the server reports one (TARF/accumulator/discrete-lookback)", () => {
-    const m = formatPathDependentSpill({
+    const m = formatPremiumSpill({
       premium: 0.0285,
       stdError: 1.7e-4,
       greeks: SAMPLE_GREEKS,
@@ -400,7 +401,7 @@ describe("path-dependent spill formatting", () => {
   });
 
   it("OMITS the std-error row for an exact closed form (continuous lookback)", () => {
-    const m = formatPathDependentSpill({
+    const m = formatPremiumSpill({
       premium: 0.031,
       stdError: undefined,
       greeks: SAMPLE_GREEKS,
@@ -513,7 +514,7 @@ describe("TARF end-to-end over the WS mirror — server emits the MC std-error",
     });
     const quote = await p;
     expect(quote.priceStdError).toBe(2.4e-4);
-    const m = formatPathDependentSpill({
+    const m = formatPremiumSpill({
       premium: quote.greeks.price,
       stdError: quote.priceStdError,
       greeks: quote.greeks,
@@ -554,7 +555,7 @@ describe("accumulator end-to-end over the WS mirror — server emits the MC std-
     });
     const quote = await p;
     expect(quote.priceStdError).toBe(3.1e-4);
-    const m = formatPathDependentSpill({
+    const m = formatPremiumSpill({
       premium: quote.greeks.price,
       stdError: quote.priceStdError,
       greeks: quote.greeks,
@@ -588,7 +589,7 @@ describe("lookback end-to-end over the WS mirror — MC iff DISCRETE", () => {
     replyQuote(sock, { greeks: { price: 0.072, delta_spot: 0.55 }, resolved_strike: 0 });
     const quote = await p;
     expect(quote.priceStdError).toBeUndefined();
-    const m = formatPathDependentSpill({
+    const m = formatPremiumSpill({
       premium: quote.greeks.price,
       stdError: isMc ? quote.priceStdError : undefined,
       greeks: quote.greeks,
@@ -633,7 +634,7 @@ describe("lookback end-to-end over the WS mirror — MC iff DISCRETE", () => {
     });
     const quote = await p;
     expect(quote.priceStdError).toBe(1.2e-4);
-    const m = formatPathDependentSpill({
+    const m = formatPremiumSpill({
       premium: quote.greeks.price,
       stdError: isMc ? quote.priceStdError : undefined,
       greeks: quote.greeks,

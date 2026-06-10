@@ -1,12 +1,14 @@
 /**
  * Load the FROZEN golden corpus (`crates/celnet-golden/vectors/*.json`) and build,
- * for every family the Excel `CELNET.*` functions expose, the EXACT `Instrument`
- * that function shapes — using the production add-in shaping functions
- * (`src/functions/shaping.ts`), the same code the worksheet functions call. The
- * conformance spec then prices each instrument through the REAL add-in `Connection`
- * over a REAL WebSocket to a REAL booted edge, asserting the server's price equals
- * the vector's independent oracle within the vector's frozen tolerance (a `k·stderr`
- * band for the Monte-Carlo families).
+ * for every family the Excel add-in exposes, the EXACT `Instrument` the
+ * POLYMORPHIC surface shapes — `CELNET.INSTRUMENT(underlier, product, terms)`
+ * (the production `shapeSpecInstrument` + the opaque-token codec, the same code
+ * the worksheet function runs), round-tripped through the token exactly as a
+ * `CELNET.PRICE(token)` cell would. The conformance spec then prices each
+ * instrument through the REAL add-in `Connection` over a REAL WebSocket to a REAL
+ * booted edge, asserting the server's price equals the vector's independent
+ * oracle within the vector's frozen tolerance (a `k·stderr` band for the
+ * Monte-Carlo families).
  *
  * This mirrors the Rust SDK conformance gate (`celnet-client/tests/conformance.rs`)
  * field-for-field — same instruments, same vector-own market context, same `k=4`
@@ -19,26 +21,11 @@ import { fileURLToPath } from "node:url";
 
 import type { Instrument, MarketContext } from "../src/contract/contract";
 import {
-  shapeAccumulator,
-  shapeAmerican,
-  shapeAsianOption,
-  shapeBarrier,
-  shapeBasket,
-  shapeCliquet,
-  shapeDigital,
-  shapeForward,
-  shapeForwardStart,
-  shapeLookback,
-  shapeNdf,
-  shapeQuanto,
-  shapeSwap,
-  shapeTarf,
-  shapeTouch,
-  shapeVanillaInstrument,
-  shapeVarianceSwap,
-  shapeVolatilitySwap,
-  shapeWindowBarrier,
-} from "../src/functions/shaping";
+  decodeInstrumentToken,
+  encodeInstrumentToken,
+  shapeSpecInstrument,
+  type InstrumentSpecArgs,
+} from "../src/functions/instrumentSpec";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const VECTORS_DIR = resolve(HERE, "..", "..", "crates", "celnet-golden", "vectors");
@@ -104,21 +91,22 @@ export const ALL_FAMILIES = [
   // Cross-asset vanilla underlyings (W1 `Underlying` oneof). The frozen golden
   // vectors the Rust cross-asset leaf lanes produce carry the GENERALIZED carry
   // (`q`/`repo`/`funding`/`convenience`) the FX-two-rate WS price path does not yet
-  // transport, so these are NOT exposed by the FX-WS Excel corpus path (declared in
-  // `FAMILIES_NOT_EXPOSED`); the add-in DOES shape them onto the wire (the cross-
-  // asset `Underlying` + `settlement_style` shapers, gated by
-  // `crossAssetProducts.test.ts`).
+  // transport, so these are NOT priced by the FX-WS Excel corpus path (declared in
+  // `FAMILIES_NOT_EXPOSED`); the polymorphic `CELNET.INSTRUMENT` underlier grammar
+  // DOES shape them onto the wire (gated by `crossAssetProducts.test.ts` and the
+  // polymorphic parity suite).
   "equity_option",
   "commodity_option",
   "crypto_option",
 ] as const;
 
 /**
- * The families the Excel `CELNET.*` worksheet functions actually expose (each has a
- * `shape*` builder + a worksheet function in `src/functions/functions.ts`). The one
- * family present in the corpus but NOT exposed by Excel is `strategy` (there is no
- * `CELNET.STRATEGY` worksheet function — strategies are built leg-by-leg in the GUI
- * ticket / SDK, not as a single Excel cell). It is reported in `FAMILIES_NOT_EXPOSED`.
+ * The families the polymorphic Excel surface prices over the FX WS path: every
+ * one is reachable as `CELNET.INSTRUMENT(underlier, family, terms)` + a verb
+ * (`CELNET.PRICE`/`GREEKS`/`RFQ`/`SUBSCRIBE`). The one family present in the
+ * corpus but NOT expressible as a single instrument spec is `strategy` (a
+ * multi-leg structure — built leg-by-leg in the GUI ticket / SDK, not as one
+ * Excel cell). It is reported in `FAMILIES_NOT_EXPOSED`, never silently skipped.
  */
 export const EXCEL_FAMILIES = [
   "vanilla",
@@ -143,7 +131,7 @@ export const EXCEL_FAMILIES = [
   "ndf",
 ] as const;
 
-/** Families in the corpus that no `CELNET.*` worksheet function exposes. */
+/** Families in the corpus that the Excel price path does not (yet) expose. */
 export const FAMILIES_NOT_EXPOSED = ALL_FAMILIES.filter(
   (f) => !(EXCEL_FAMILIES as readonly string[]).includes(f),
 );
@@ -241,273 +229,224 @@ function tenorFor(t: number): string {
   return `${Math.max(1, months)}M`;
 }
 
+/** One 2-column terms row as a `CELNET.INSTRUMENT` cell would receive it. */
+type TermsRow = (string | number)[];
+
 /**
- * Build the EXACT `Instrument` the Excel `CELNET.*` function for this family shapes,
- * via the production `shape*` functions. The shaper derives `expiryYears` from the
- * coarse display tenor; we then override it with the vector's exact `expiry_years`
- * (the authoritative pricing maturity on the wire). Monte-Carlo families are sent
- * with the server-default budget (`mcPairs = 0`) — exactly as the SDK conformance
- * does — and the `k·(oracle_se + server_se)` band governs; `window_barrier` carries
- * its explicit MC budget from the corpus (its only engine is MC).
+ * Build the EXACT `CELNET.INSTRUMENT(underlier, product, terms, tenor, notional)`
+ * cell arguments for a vector: the vector's product-arm family name is passed
+ * VERBATIM as the product (the family table answers to the proto arm names), and
+ * the vector's terms become the named 2-column key/value rows a trader would type.
+ * Monte-Carlo families are sent with the server-default budget (`mcPairs = 0`) —
+ * exactly as the SDK conformance does — and the `k·(oracle_se + server_se)` band
+ * governs; `window_barrier` carries its explicit MC budget from the corpus (its
+ * only engine is MC).
  */
-export function instrumentOf(v: GoldenVector): Instrument {
+export function specOf(v: GoldenVector): InstrumentSpecArgs {
   const t = num(v.terms, "expiry_years");
   const tenor = tenorFor(t);
-  const pair = v.underlying;
-  const notional = 1.0;
-  let inst: Instrument;
+  const rows: TermsRow[] = [];
+  let notional = 1.0;
 
   switch (v.family) {
     case "vanilla":
-      inst = shapeVanillaInstrument({
-        pair,
-        tenor,
-        strikeOrDelta: num(v.terms, "strike"),
-        callPut: cp(str(v.terms, "option_type")),
-        notional,
-      });
+      rows.push(["strike", num(v.terms, "strike")], ["callPut", cp(str(v.terms, "option_type"))]);
       break;
     case "single_barrier":
-      inst = shapeBarrier({
-        pair,
-        tenor,
-        strikeOrDelta: num(v.terms, "strike"),
-        callPut: cp(str(v.terms, "option_type")),
-        notional,
-        barrier: num(v.terms, "barrier"),
-        kind: str(v.terms, "kind"),
-        side: barrierSide(str(v.terms, "side")),
-        rebate: num(v.terms, "rebate"),
-        monitoring: str(v.terms, "monitoring"),
-      });
+      rows.push(
+        ["strike", num(v.terms, "strike")],
+        ["callPut", cp(str(v.terms, "option_type"))],
+        ["barrier", num(v.terms, "barrier")],
+        ["kind", str(v.terms, "kind")],
+        ["side", barrierSide(str(v.terms, "side"))],
+        ["rebate", num(v.terms, "rebate")],
+        ["monitoring", str(v.terms, "monitoring")],
+      );
       break;
     case "double_barrier":
-      inst = shapeBarrier({
-        pair,
-        tenor,
-        strikeOrDelta: num(v.terms, "strike"),
-        callPut: cp(str(v.terms, "option_type")),
-        notional,
-        barrier: num(v.terms, "lower_barrier"),
-        upperBarrier: num(v.terms, "upper_barrier"),
-        kind: str(v.terms, "kind"),
-        rebate: num(v.terms, "rebate"),
-        monitoring: str(v.terms, "monitoring"),
-      });
+      rows.push(
+        ["strike", num(v.terms, "strike")],
+        ["callPut", cp(str(v.terms, "option_type"))],
+        ["barrier", num(v.terms, "lower_barrier")],
+        ["upperBarrier", num(v.terms, "upper_barrier")],
+        ["kind", str(v.terms, "kind")],
+        ["rebate", num(v.terms, "rebate")],
+        ["monitoring", str(v.terms, "monitoring")],
+      );
       break;
     case "digital":
-      inst = shapeDigital({
-        pair,
-        tenor,
-        strike: num(v.terms, "strike"),
-        callPut: cp(str(v.terms, "option_type")),
-        notional,
-        style: str(v.terms, "style"),
-        payout: num(v.terms, "payout"),
-      });
+      rows.push(
+        ["strike", num(v.terms, "strike")],
+        ["callPut", cp(str(v.terms, "option_type"))],
+        ["style", str(v.terms, "style")],
+        ["payout", num(v.terms, "payout")],
+      );
       break;
     case "touch": {
       const kind = str(v.terms, "kind");
       const isDouble = kind === "DOUBLE_NO_TOUCH" || kind === "DOUBLE_ONE_TOUCH";
-      inst = shapeTouch({
-        pair,
-        tenor,
-        notional,
-        kind,
-        barrier: num(v.terms, "lower_barrier"),
-        ...(isDouble ? { upperBarrier: num(v.terms, "upper_barrier") } : {}),
-        rebate: num(v.terms, "rebate"),
-        monitoring: str(v.terms, "monitoring"),
-      });
+      rows.push(["kind", kind], ["barrier", num(v.terms, "lower_barrier")]);
+      if (isDouble) rows.push(["upperBarrier", num(v.terms, "upper_barrier")]);
+      rows.push(["rebate", num(v.terms, "rebate")], ["monitoring", str(v.terms, "monitoring")]);
       break;
     }
     case "variance_swap":
-      inst = shapeVarianceSwap({ pair, tenor, notional, strikeVol: num(v.terms, "strike_vol") });
-      break;
     case "volatility_swap":
-      inst = shapeVolatilitySwap({ pair, tenor, notional, strikeVol: num(v.terms, "strike_vol") });
+      rows.push(["strikeVol", num(v.terms, "strike_vol")]);
       break;
     case "asian_option":
-      inst = shapeAsianOption({
-        pair,
-        tenor,
-        strike: num(v.terms, "strike"),
-        callPut: cp(str(v.terms, "option_type")),
-        notional,
-        averaging: str(v.terms, "averaging"),
-        observations: num(v.terms, "observations"),
-        method: str(v.terms, "method"),
-      });
+      rows.push(
+        ["strike", num(v.terms, "strike")],
+        ["callPut", cp(str(v.terms, "option_type"))],
+        ["averaging", str(v.terms, "averaging")],
+        ["observations", num(v.terms, "observations")],
+        ["method", str(v.terms, "method")],
+      );
       break;
     case "forward_start":
-      inst = shapeForwardStart({
-        pair,
-        tenor,
-        callPut: cp(str(v.terms, "option_type")),
-        moneyness: num(v.terms, "moneyness"),
-        reset: num(v.terms, "reset"),
-        notional,
-      });
+      rows.push(
+        ["callPut", cp(str(v.terms, "option_type"))],
+        ["moneyness", num(v.terms, "moneyness")],
+        ["reset", num(v.terms, "reset")],
+      );
       break;
     case "cliquet": {
+      rows.push(
+        ["callPut", cp(str(v.terms, "option_type"))],
+        ["moneyness", num(v.terms, "moneyness")],
+        ["periods", num(v.terms, "periods")],
+      );
       const lf = optNum(v.terms, "local_floor");
       const lc = optNum(v.terms, "local_cap");
       const gf = optNum(v.terms, "global_floor");
       const gc = optNum(v.terms, "global_cap");
-      inst = shapeCliquet({
-        pair,
-        tenor,
-        callPut: cp(str(v.terms, "option_type")),
-        moneyness: num(v.terms, "moneyness"),
-        periods: num(v.terms, "periods"),
-        notional,
-        ...(lf !== undefined ? { localFloor: lf } : {}),
-        ...(lc !== undefined ? { localCap: lc } : {}),
-        ...(gf !== undefined ? { globalFloor: gf } : {}),
-        ...(gc !== undefined ? { globalCap: gc } : {}),
-      });
+      if (lf !== undefined) rows.push(["localFloor", lf]);
+      if (lc !== undefined) rows.push(["localCap", lc]);
+      if (gf !== undefined) rows.push(["globalFloor", gf]);
+      if (gc !== undefined) rows.push(["globalCap", gc]);
       break;
     }
     case "quanto":
-      inst = shapeQuanto({
-        pair,
-        tenor,
-        callPut: cp(str(v.terms, "option_type")),
-        strike: num(v.terms, "strike"),
-        notional,
-        conversionVol: num(v.terms, "conversion_vol"),
-        correlation: num(v.terms, "correlation"),
-        payoff: str(v.terms, "payoff"),
-      });
+      rows.push(
+        ["callPut", cp(str(v.terms, "option_type"))],
+        ["strike", num(v.terms, "strike")],
+        ["conversionVol", num(v.terms, "conversion_vol")],
+        ["correlation", num(v.terms, "correlation")],
+        ["payoff", str(v.terms, "payoff")],
+      );
       break;
     case "tarf":
-      inst = shapeTarf({
-        pair,
-        tenor,
-        callPut: cp(str(v.terms, "option_type")),
-        strike: num(v.terms, "strike"),
-        target: num(v.terms, "target"),
-        leverage: num(v.terms, "leverage"),
-        fixings: num(v.terms, "fixings"),
-        notional,
-        redemption: str(v.terms, "redemption"),
-        fixingNotional: num(v.terms, "fixing_notional"),
-      });
+      rows.push(
+        ["callPut", cp(str(v.terms, "option_type"))],
+        ["strike", num(v.terms, "strike")],
+        ["target", num(v.terms, "target")],
+        ["leverage", num(v.terms, "leverage")],
+        ["fixings", num(v.terms, "fixings")],
+        ["redemption", str(v.terms, "redemption")],
+        ["fixingNotional", num(v.terms, "fixing_notional")],
+      );
       break;
     case "accumulator":
-      inst = shapeAccumulator({
-        pair,
-        tenor,
-        pivot: num(v.terms, "pivot"),
-        barrier: num(v.terms, "barrier"),
-        leverage: num(v.terms, "leverage"),
-        fixings: num(v.terms, "fixings"),
-        notional,
-        monitoring: str(v.terms, "monitoring"),
-        fixingNotional: num(v.terms, "fixing_notional"),
-      });
+      rows.push(
+        ["pivot", num(v.terms, "pivot")],
+        ["barrier", num(v.terms, "barrier")],
+        ["leverage", num(v.terms, "leverage")],
+        ["fixings", num(v.terms, "fixings")],
+        ["monitoring", str(v.terms, "monitoring")],
+        ["fixingNotional", num(v.terms, "fixing_notional")],
+      );
       break;
     case "lookback": {
       const style = str(v.terms, "style");
-      inst = shapeLookback({
-        pair,
-        tenor,
-        callPut: cp(str(v.terms, "option_type")),
-        notional,
-        style,
-        monitoring: str(v.terms, "monitoring"),
-        ...(style === "FIXED" ? { strike: num(v.terms, "strike") } : {}),
-        observations: optNum(v.terms, "observations"),
-      });
+      rows.push(["callPut", cp(str(v.terms, "option_type"))], ["style", style]);
+      rows.push(["monitoring", str(v.terms, "monitoring")]);
+      if (style === "FIXED") rows.push(["strike", num(v.terms, "strike")]);
+      const obs = optNum(v.terms, "observations");
+      if (obs !== undefined) rows.push(["observations", obs]);
       break;
     }
     case "window_barrier":
       // The window barrier's ONLY engine is Monte-Carlo (no closed form); the corpus
       // encodes its exact MC budget/seed and the SDK conformance passes them through.
-      inst = shapeWindowBarrier({
-        pair,
-        tenor,
-        strikeOrDelta: num(v.terms, "strike"),
-        callPut: cp(str(v.terms, "option_type")),
-        notional,
-        barrier: num(v.terms, "barrier"),
-        side: barrierSide(str(v.terms, "side")),
-        windowStart: num(v.terms, "window_start"),
-        windowEnd: num(v.terms, "window_end"),
-        mcPairs: num(v.terms, "mc_pairs"),
-        mcSteps: num(v.terms, "mc_steps"),
-        mcSeed: num(v.terms, "mc_seed"),
-      });
+      rows.push(
+        ["strike", num(v.terms, "strike")],
+        ["callPut", cp(str(v.terms, "option_type"))],
+        ["barrier", num(v.terms, "barrier")],
+        ["side", barrierSide(str(v.terms, "side"))],
+        ["windowStart", num(v.terms, "window_start")],
+        ["windowEnd", num(v.terms, "window_end")],
+        ["mcPairs", num(v.terms, "mc_pairs")],
+        ["mcSteps", num(v.terms, "mc_steps")],
+        ["mcSeed", num(v.terms, "mc_seed")],
+      );
       break;
     case "american":
-      inst = shapeAmerican({
-        pair,
-        tenor,
-        strike: num(v.terms, "strike"),
-        callPut: cp(str(v.terms, "option_type")),
-        notional,
-      });
+      rows.push(["strike", num(v.terms, "strike")], ["callPut", cp(str(v.terms, "option_type"))]);
       break;
     case "basket": {
+      rows.push(
+        ["callPut", cp(str(v.terms, "option_type"))],
+        ["strike", num(v.terms, "strike")],
+        ["kind", str(v.terms, "kind")],
+      );
       const legsRaw = v.terms["legs"] as Array<Record<string, unknown>>;
-      const legs = legsRaw.map((leg) => [
-        String(leg["pair"]),
-        Number(leg["weight"]),
-        Number(leg["spot"]),
-        Number(leg["vol"]),
-        Number(leg["r_for"]),
-      ]);
+      for (const leg of legsRaw) {
+        rows.push([
+          "legs",
+          String(leg["pair"]),
+          Number(leg["weight"]),
+          Number(leg["spot"]),
+          Number(leg["vol"]),
+          Number(leg["r_for"]),
+        ]);
+      }
       const corrFlat = (v.terms["correlations"] as number[]).map(Number);
-      const n = legs.length;
-      const corr: number[][] = [];
-      for (let i = 0; i < n; i++) corr.push(corrFlat.slice(i * n, i * n + n));
-      inst = shapeBasket({
-        pair,
-        tenor,
-        notional,
-        callPut: cp(str(v.terms, "option_type")),
-        strike: num(v.terms, "strike"),
-        kind: str(v.terms, "kind"),
-        legs,
-        correlations: corr,
-      });
+      const n = legsRaw.length;
+      for (let i = 0; i < n; i++) {
+        rows.push(["correlations", ...corrFlat.slice(i * n, i * n + n)]);
+      }
       break;
     }
     case "fx_forward":
-      inst = shapeForward({
-        pair,
-        tenor,
-        contractRate: num(v.terms, "contract_rate"),
-        notional: num(v.terms, "notional"),
-        side: linearSide(str(v.terms, "side")),
-      });
+      notional = num(v.terms, "notional");
+      rows.push(["rate", num(v.terms, "contract_rate")], ["side", linearSide(str(v.terms, "side"))]);
       break;
     case "fx_swap":
-      inst = shapeSwap({
-        pair,
-        tenor,
-        contractRate: num(v.terms, "contract_rate"),
-        notional: num(v.terms, "notional"),
-        side: linearSide(str(v.terms, "near_side")),
-      });
+      notional = num(v.terms, "notional");
+      rows.push(
+        ["rate", num(v.terms, "contract_rate")],
+        ["nearSide", linearSide(str(v.terms, "near_side"))],
+      );
       break;
     case "ndf":
-      inst = shapeNdf({
-        pair,
-        tenor,
-        contractRate: num(v.terms, "contract_rate"),
-        notional: num(v.terms, "notional"),
-        side: linearSide(str(v.terms, "side")),
-        fixing: fixingToken(str(v.terms, "fixing")),
-        settlementCcy: str(v.terms, "settlement_ccy"),
-      });
+      notional = num(v.terms, "notional");
+      rows.push(
+        ["rate", num(v.terms, "contract_rate")],
+        ["fixing", fixingToken(str(v.terms, "fixing"))],
+        ["settlementCcy", str(v.terms, "settlement_ccy")],
+        ["side", linearSide(str(v.terms, "side"))],
+      );
       break;
     default:
       throw new Error(`family \`${v.family}\` is not exposed by Excel`);
   }
 
+  return { underlier: v.underlying, product: v.family, terms: rows, tenor, notional };
+}
+
+/**
+ * Build the EXACT `Instrument` the polymorphic Excel surface prices for this
+ * vector: shape the spec (the same `shapeSpecInstrument` the `CELNET.INSTRUMENT`
+ * cell runs), then round-trip it through the opaque token codec exactly as a
+ * `CELNET.PRICE(token)` cell would — so the e2e gate covers the full
+ * spec → token → wire path, not just the shaper. The shaper derives `expiryYears`
+ * from the coarse display tenor; we then override it with the vector's exact
+ * `expiry_years` (the authoritative pricing maturity on the wire).
+ */
+export function instrumentOf(v: GoldenVector): Instrument {
+  const inst = decodeInstrumentToken(encodeInstrumentToken(shapeSpecInstrument(specOf(v))));
   // The vector's `expiry_years` is the authoritative pricing maturity (the corpus
   // uses fractional broken-date expiries, e.g. 91/365 for a "3M"); the display
   // tenor above is coarse, so pin the exact maturity the server prices against.
-  return { ...inst, expiryYears: t };
+  return { ...inst, expiryYears: num(v.terms, "expiry_years") };
 }
