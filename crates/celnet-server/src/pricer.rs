@@ -2173,7 +2173,11 @@ fn wire_error_to_price_error(e: celnet_proto::convert::WireError) -> PriceError 
 /// [`price_perpetual`]), so only the four spot/vol stencils are evaluated.
 fn perpetual_cross_greeks(option: OptionType, i: &PerpetualInputs) -> (f64, f64, f64, f64) {
     let at = |spot: f64, vol: f64| {
+        // Only spot and vol are bumped — the carry is untouched, so the leaf's
+        // carry-domain refusal (a b > r call) cannot newly trigger here: the
+        // caller has already priced these inputs through `perpetual_greeks`.
         perpetual_price(option, &PerpetualInputs::new(spot, i.strike, vol, i.carry))
+            .expect("spot/vol bumps preserve the already-validated carry domain")
     };
     let (s, v) = (i.spot, i.vol);
     let h_s = s * FD_SPOT_REL;
@@ -2234,7 +2238,15 @@ fn price_perpetual(
         ));
     }
     let inputs = PerpetualInputs::new(market.spot, p.strike, market.vol, carry);
-    let g = perpetual_greeks(option, &inputs);
+    // The leaf's typed refusal (a CALL with carry strictly exceeding the
+    // discount rate diverges — no finite value) surfaces as INVALID_ARGUMENT,
+    // mirroring the negative-discount-rate refusal above. On the FX path this
+    // is exactly r_for < 0 (b = r_dom − r_for > r_dom).
+    let g = perpetual_greeks(option, &inputs).map_err(|_| {
+        PriceError::Domain(
+            "a perpetual call with carry exceeding the discount rate has no finite value",
+        )
+    })?;
     // The same rho bijection as `carry_greeks_to_greeks`: the FX arm is
     // verbatim; the generalized arm projects losslessly via
     // `rho_dom = discount_rho + carry_rho`, `rho_for = −carry_rho`.
@@ -4545,7 +4557,8 @@ mod tests {
                     r_for: 0.01,
                 },
             ),
-        );
+        )
+        .unwrap();
         assert_eq!(priced.greeks.price.to_bits(), leaf.price.to_bits());
         assert_eq!(priced.greeks.delta_spot.to_bits(), leaf.delta.to_bits());
         assert_eq!(priced.greeks.gamma.to_bits(), leaf.gamma.to_bits());
@@ -4594,7 +4607,8 @@ mod tests {
         let leaf = perpetual_greeks(
             OptionType::Call,
             &PerpetualInputs::new(100.0, 100.0, 0.30, Carry::CostOfCarry { r, b }),
-        );
+        )
+        .unwrap();
         assert_eq!(priced.greeks.price.to_bits(), leaf.price.to_bits());
         assert_eq!(priced.greeks.delta_spot.to_bits(), leaf.delta.to_bits());
         assert_eq!(priced.greeks.gamma.to_bits(), leaf.gamma.to_bits());
@@ -4642,7 +4656,7 @@ mod tests {
             let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
 
             let leaf = |spot: f64, vol: f64| {
-                perpetual_greeks(opt, &PerpetualInputs::new(spot, k, vol, carry))
+                perpetual_greeks(opt, &PerpetualInputs::new(spot, k, vol, carry)).unwrap()
             };
             let h_v = 1e-6;
             let h_s = s * 1e-6;
@@ -4703,6 +4717,29 @@ mod tests {
             price_instrument(&instr, &m, &conv_set()),
             Err(PriceError::Domain(_))
         ));
+    }
+
+    /// The leaf's carry-domain law on the wire: an FX perpetual CALL with
+    /// `r_for < 0` has `b = r_dom − r_for > r_dom = r` strictly — the value
+    /// diverges (no finite value exists), so the request is refused as the
+    /// typed INVALID_ARGUMENT, mirroring the negative-discount-rate refusal
+    /// (adversarial-verify refutation of the old `V = S` pin, which sat below
+    /// the same-terms long-dated European — an internal arbitrage). The PUT on
+    /// the very same market is unaffected and still prices.
+    #[test]
+    fn perpetual_call_with_carry_exceeding_discount_is_rejected() {
+        let m = WM::fx(1.25, 0.10, 0.02, -0.005); // b = 0.025 > r = 0.02
+        let call = perpetual_instrument(None, celnet_proto::OptionType::Call, 1.10);
+        assert!(matches!(
+            price_instrument(&call, &m, &conv_set()),
+            Err(PriceError::Domain(
+                "a perpetual call with carry exceeding the discount rate has no finite value"
+            ))
+        ));
+        // Puts price on the y₂ branch for every carry: finite, never refused.
+        let put = perpetual_instrument(None, celnet_proto::OptionType::Put, 1.10);
+        let priced = price_instrument(&put, &m, &conv_set()).unwrap();
+        assert!(priced.greeks.price.is_finite() && priced.greeks.price >= 0.0);
     }
 
     /// Neither new arm has an LSV (FX vol-surface) booking model: selecting it

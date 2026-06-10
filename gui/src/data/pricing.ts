@@ -469,9 +469,15 @@ function priceSwap(spec: FxSwap, m: MarketContext, t: number): PriceOutcome {
 // closed form the server's perpetual engine prices (validated there against an
 // independent bisection re-derivation), mirrored here so the offline ticket is a
 // genuine exact value, not a stub. Degenerate arms are handled exactly: a call
-// with `b ≥ r` is never exercised (`V = S`, the `y₁ → 1⁺` limit) and a put with
-// `r = 0`, `b ≤ ½σ²` collapses its boundary to 0 (`V = K`, the unattained
-// supremum) — never as near-singular power evaluations. Method provenance (doc
+// with `b == r` EXACTLY is never exercised (`ψ(1) = 0` makes `y₁ = 1`, so
+// `V = S` — the `y₁ → 1⁺` limit and the `T → ∞` limit of the same-terms
+// European call) and a put with `r = 0`, `b ≤ ½σ²` collapses its boundary to 0
+// (`V = K`, the unattained supremum) — never as near-singular power
+// evaluations. A call with `b > r` STRICTLY (FX form: `r_for < 0`) has NO
+// finite value — stopping at any level `L` is worth `(L−K)·(S/L)^{y₁}` with
+// `y₁ < 1`, unbounded as `L → ∞` (`e^{−rt}·S_t` is a strict submartingale) —
+// so the offline pricer throws the same typed refusal the server returns
+// (INVALID_ARGUMENT), never a fabricated number. Method provenance (doc
 // comments only, CLAUDE.md rule 8): the perpetual American free-boundary closed
 // form of McKean (1965) / Merton (1973), cost-of-carry form per Haug (2007, 2nd
 // ed.).
@@ -512,7 +518,9 @@ function perpetualCharacteristicRoots(
  * higher-order cross-Greeks (vanna/volga/speed/zomma) are not part of the
  * server's perpetual strip and are not fabricated here. Domain: `r ≥ 0` — a
  * perpetual claim under a negative discount rate has no finite value (the server
- * refuses it; the offline pricer throws rather than fabricate one).
+ * refuses it; the offline pricer throws rather than fabricate one) — and a CALL
+ * with `b > r` strictly (FX form: `r_for < 0`) also has no finite value (the
+ * value diverges), refused with the same typed throw the server mirrors.
  */
 function pricePerpetual(spec: PerpetualOption, m: MarketContext): PriceOutcome {
   const { spot: s, vol, rDom, rFor } = m;
@@ -525,18 +533,35 @@ function pricePerpetual(spec: PerpetualOption, m: MarketContext): PriceOutcome {
     );
   }
   const isCall = spec.optionType === "CALL";
+  if (isCall && b > r) {
+    // b > r STRICTLY: the perpetual call diverges — an honest typed refusal
+    // (the server returns the same law as INVALID_ARGUMENT), never a number.
+    throw new Error(
+      "a perpetual call with carry exceeding the discount rate has no finite value (r_for < 0)",
+    );
+  }
   const greeks = zeroGreeks();
 
   // Degenerate arms, handled exactly (mirroring the server engine):
-  // call with b ≥ r ⇒ never exercised, V = S (unit delta, flat otherwise);
+  // call with b == r EXACTLY ⇒ never exercised, V = S (unit delta, flat
+  // otherwise — the T → ∞ European-call limit);
   // put with r = 0 and b ≤ ½σ² ⇒ boundary collapses to 0, V = K (flat strip).
-  if (isCall && b >= r) {
+  if (isCall && b === r) {
     greeks.price = s;
     greeks.deltaSpot = 1;
     return { greeks, resolvedStrike: k };
   }
   const roots = perpetualCharacteristicRoots(vol, r, b);
   const y = isCall ? roots.yHigh : roots.yLow;
+  if (isCall && y === 1) {
+    // The sub-ulp window b ∈ (r − O(ulp·r), r): the finite-precision root
+    // collapses to exactly 1 even though b < r strictly — take the exact
+    // y₁ → 1⁺ limit (V = S), never the 1/0 boundary whose value is ∞·0 = NaN
+    // (mirrors the server engine's structural guard exactly).
+    greeks.price = s;
+    greeks.deltaSpot = 1;
+    return { greeks, resolvedStrike: k };
+  }
   if (!isCall && y === 0) {
     greeks.price = k;
     return { greeks, resolvedStrike: k };

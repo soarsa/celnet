@@ -468,15 +468,17 @@ fn gen_perpetual_option() {
             note: "continuation region (S above the put free boundary)",
         },
         Case {
-            id: "perpetual-eurusd-call-carry-dominates",
+            id: "perpetual-eurusd-call-carry-equals-discount",
             underlying: "EURUSD",
             cp: Cp::Call,
             spot: 1.25,
             strike: 1.10,
             vol: 0.10,
             r_dom: 0.02,
-            r_for: -0.005,
-            note: "degenerate b = 0.025 >= r = 0.02: never exercised, V = S exactly",
+            r_for: 0.0,
+            note: "degenerate b == r = 0.02 exactly (r_for = 0): never exercised, V = S \
+                   exactly (the T->inf European-call limit; a call with b > r STRICTLY \
+                   has no finite value and is refused, never pinned)",
         },
         Case {
             id: "perpetual-eurusd-call-exercised",
@@ -504,7 +506,8 @@ fn gen_perpetual_option() {
     let mut out = Vec::new();
     for c in &cases {
         // FX carry seam: r = r_dom, b = r_dom − r_for (the same mapping the
-        // selfcheck re-derivation uses).
+        // selfcheck re-derivation uses). The oracle refuses a b > r call (no
+        // finite value); the corpus must contain only priceable contracts.
         let price = oracle::perpetual_american_price(
             c.cp,
             c.spot,
@@ -512,7 +515,8 @@ fn gen_perpetual_option() {
             c.vol,
             c.r_dom,
             c.r_dom - c.r_for,
-        );
+        )
+        .expect("the corpus carries no b > r perpetual call (refused: no finite value)");
         out.push(GoldenVector {
             id: c.id.to_owned(),
             family: "perpetual_option".to_owned(),

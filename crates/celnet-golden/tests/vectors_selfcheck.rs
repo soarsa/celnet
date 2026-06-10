@@ -187,6 +187,8 @@ fn closed_form_vectors_redrive_from_independent_oracle() {
             ),
             // A perpetual has NO expiry (`expiry_years` is 0 by the proto arm-30
             // invariant; `t` is unused). FX carry seam: r = r_dom, b = r_dom − r_for.
+            // The oracle refuses a b > r call (no finite value) — the frozen
+            // corpus must never carry one.
             "perpetual_option" => oracle::perpetual_american_price(
                 cp_of(v, "option_type"),
                 m.spot,
@@ -194,7 +196,13 @@ fn closed_form_vectors_redrive_from_independent_oracle() {
                 m.vol,
                 m.r_dom,
                 m.r_dom - m.r_for,
-            ),
+            )
+            .unwrap_or_else(|| {
+                panic!(
+                    "vector {} is a refused b > r perpetual call — corpus defect",
+                    v.id
+                )
+            }),
             // The market `spot` IS the listed futures price (the vector carries
             // r_dom = r_for = r, i.e. the futures-measure martingale carry b = 0);
             // the margining term selects discounted vs undiscounted Black-76.

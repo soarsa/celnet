@@ -202,8 +202,8 @@ pub use particle::{CalibrationResult, ParticleConfig, calibrate_leverage};
 pub use payoff::{ArithmeticAsian, DiscreteBarrier, vanilla_intrinsic};
 pub use pde::{PdeGrid, PdeProblem, solve as pde_solve};
 pub use perpetual::{
-    PerpetualGreeks, PerpetualInputs, perpetual_exercise_boundary, perpetual_greeks,
-    perpetual_price,
+    PerpetualError, PerpetualGreeks, PerpetualInputs, perpetual_exercise_boundary,
+    perpetual_greeks, perpetual_price,
 };
 pub use pivot::{PivotTra, PivotTraMcConfig, PivotTraResult, pivot_tra_price, pivot_tra_price_cv};
 pub use quanto::{
