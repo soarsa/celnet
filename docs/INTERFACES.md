@@ -92,7 +92,7 @@ celnet-golden, celnet-testkit, celnet-bench  →  test/validation/bench only
 |-------|---------|---------|---------|
 | `celnet-types` | 0.0.0 | **freeze-candidate** | `OptionType`, `Ccy`, `CcyPair`, `Tenor` (now `Overnight`/`TomNext`/`SpotNext`/`Weeks`/`Months`/`Years`/`Imm(u8)`/`BrokenDate(BrokenDate)`), `BrokenDate{year:i32,month:u8,day:u8}`, `SmileModel` (`MarketHedge`/`StochasticVol`/`Parametric`/`ParametricSurface`/`ExtendedSurface`, `Default=MarketHedge`; the five mirror VV / SABR / SVI / SSVI / eSSVI); newtypes `Vol`/`Strike`/`Rate`/`Delta`/`Df`/`Time`; convention enums `DeltaConvention`/`AtmConvention`/`PremiumStyle`/`Cut`/`DayCount`/`Settlement`; DTOs `VanillaInputs`, `Greeks`. POD/`Copy`, `serde`. (No `time` dep — a broken date is the POD triple.) |
 | `celnet-core` | 0.0.0 | **freeze-candidate** | `math` (`norm_cdf`, `norm_pdf`, `exp`/`ln`/`sqrt` via `libm`); `is_close` + `assert_close!` (ULP/rel/abs); trait `Smile` + `FlatSmile`. Zero IO. |
-| `celnet-proto` | 0.0.0 | **freeze-candidate** | single current wire contract (`prost 0.13` / `tonic 0.12`); `celnet.proto` services `PricingService`/`QuoteService`/`StreamService`/`SurfaceService`; `Instrument` oneof; **no** version field / negotiation. Phase-1 additions: `Tenor` short-end/IMM/`BrokenDate` units; `SmileModel` enum on `MarkSurfaceRequest`/`ScenarioRequest`; market-series feed (`MarketObservable`, `MarketSeriesSubscribe`/`Unsubscribe`/`Point`/`Snapshot`) multiplexed on `StreamSession`; attribution identity (`BookId`/`Owner`/`AttributionRecord`) on the quote/trade lifecycle. Phase-2 addition: `RiskService` (`ListPositions`/`AggregateRisk`/`DrillRisk`/`LimitStatus`) — server-side hierarchical risk over the org cube. api-first catalogue (W1–W6) additions: `Instrument.product` exotic arms `variance_swap=13`…`basket=25`, supporting enums (`AsianMethod`/`QuantoPayoff`/`TarfRedemption`/`AccumulatorMonitoring`/`LookbackStyle`/`BasketKind`/`ExerciseStyle`), `PricingModel pricing_model=22` booking selector, `SMILE_MODEL_EXTENDED_SURFACE=4`, `PriceResponse.price_std_error=7`/`Quote.price_std_error=12`, `ArbReport.smile_model=5` typed provenance. See §"Phase-1 contract extensions", §"Phase-2 contract: `RiskService`", and §"Exotic catalogue + booking-model + provenance". |
+| `celnet-proto` | 0.0.0 | **freeze-candidate** | single current wire contract (`prost 0.13` / `tonic 0.12`); `celnet.proto` services `PricingService`/`QuoteService`/`StreamService`/`SurfaceService`; `Instrument` oneof; **no** version field / negotiation. Phase-1 additions: `Tenor` short-end/IMM/`BrokenDate` units; `SmileModel` enum on `MarkSurfaceRequest`/`ScenarioRequest`; market-series feed (`MarketObservable`, `MarketSeriesSubscribe`/`Unsubscribe`/`Point`/`Snapshot`) multiplexed on `StreamSession`; attribution identity (`BookId`/`Owner`/`AttributionRecord`) on the quote/trade lifecycle. Phase-2 addition: `RiskService` (`ListPositions`/`AggregateRisk`/`DrillRisk`/`LimitStatus`) — server-side hierarchical risk over the org cube. api-first catalogue (W1–W6) additions: `Instrument.product` exotic arms `variance_swap=13`…`basket=25`, supporting enums (`AsianMethod`/`QuantoPayoff`/`TarfRedemption`/`AccumulatorMonitoring`/`LookbackStyle`/`BasketKind`/`ExerciseStyle`), `PricingModel pricing_model=22` booking selector, `SMILE_MODEL_EXTENDED_SURFACE=4`, `PriceResponse.price_std_error=7`/`Quote.price_std_error=12`, `ArbReport.smile_model=5` typed provenance. Cross-asset/linear/RFQ (W1–W5) additions: `Underlying` asset-class oneof + the agnostic `CarryModel` seam, linear arms `fx_forward=26`/`fx_swap=27`/`ndf=28`, `SettlementStyle settlement_style=29`, multi-dealer RFQ (`RequestMultiDealerQuote`/`MultiDealerQuote`/`DealerQuote`/`QuoteAccept.lp_id`); landing payoff arms `perpetual_option=30`/`listed_future_option=31` (in-flight). See §"Phase-1 contract extensions", §"Phase-2 contract: `RiskService`", §"Exotic catalogue + booking-model + provenance", and §"Asset-class universe, linear products, RFQ-to-many + settlement mechanics". |
 | `celnet-plugin-api` | 0.0.0 | **freeze-candidate** | SDK traits (`PricingModel`/`PricingBackend`) + WIT world. |
 
 > `celnet-proto` and `celnet-plugin-api` are built — **Gate G0 is reached** (consistent with
@@ -699,12 +699,106 @@ retiring the `model=<family>` regex previously parsed out of `Smile.arbitrage.no
 Excel / SDK. Values per the `SmileModel` enum above, including `SMILE_MODEL_EXTENDED_SURFACE=4`
 (eSSVI). Parity/round-trip in `celnet-parity/tests/essvi.rs` + the client codec tests.
 
-**Cross-check.** Every arm/enum/field above is present in `crates/celnet-proto/proto/celnet.proto`,
-dispatched in `crates/celnet-server/src/pricer.rs`, reachable from all five clients
-(see `docs/CLIENT-PARITY-MATRIX.md`), and backed by the cited gated test. No proto symbol is
-present-but-unregistered.
+## Asset-class universe, linear products, RFQ-to-many + settlement mechanics — `celnet-proto` registry (W1–W5 cross-asset waves + the in-flight payoff arms)
 
-**Build status.** All catalogue extensions are **DONE and gated green** end-to-end (server pricer +
-SDK `InstrumentSpec`/vocab builders + CLI `exotic …` + Excel `CELNET.*` + GUI ticket), validated by
+The cross-asset waves (W1 carry seam, W2 linear + metals, W3 crypto, W4 RFQ-to-many, W5
+equity/commodity) extended the **same one contract** additively. The frozen registry —
+every symbol cited at its `crates/celnet-proto/proto/celnet.proto` line so nothing is
+present-but-unregistered:
+
+### The asset-class discriminator + agnostic carry seam (W1/W2/W3/W5)
+
+There are **no per-class product arms**: a cross-asset option is the *existing* product
+arm priced over a non-FX `Underlying` arm + the generalized carry (ADR-0008).
+
+| Symbol | proto | Notes |
+|---|---|---|
+| `message Underlying` | `celnet.proto:390` | `oneof ref`: `CcyPair fx = 1` (:394), `MetalPair metal = 3` (:398), `EquityRef equity = 4` (:402), `CommodityRef commodity = 5` (:406), `CryptoPair digital_asset = 6` (:410); `settlement_ccy = 2` (:415) |
+| `enum Metal` | `celnet.proto:151` | the four LBMA/LPPM metals (XAU/XAG/XPT/XPD); projects byte-identically onto the metal-base `CcyPair` the convention/calendar registries key on |
+| `message MetalPair` | `celnet.proto:423` | `Metal metal = 1`, `string quote = 2` — metal-vs-FIAT only |
+| `message Symbol` | `celnet.proto:437` | `ticker = 1`, `venue = 2` — the vendor-neutral instrument symbol; reused by `EquityRef`/`CommodityRef` and `ListedFutureOption.future_symbol` |
+| `message EquityRef` | `celnet.proto:449` | `Symbol symbol = 1`, `currency = 2` |
+| `message CommodityRef` | `celnet.proto:461` | `Symbol symbol = 1`, `currency = 2` |
+| `message CryptoPair` | `celnet.proto:475` | `base = 1`, `quote = 2` (UTF-8 tickers); linear/inverse mechanics live on `Instrument.settlement_style`, not the pair identity |
+| `message FxRates` | `celnet.proto:487` | `r_for = 1` — the FX two-rate carry arm (`discount_rate` carries `r_dom` out of band) |
+| `message CostOfCarry` | `celnet.proto:496` | `b = 1` — generalized net carry `F = S·e^{b·t}` (equity dividend yield / commodity storage-convenience / crypto funding) |
+| `message CarryModel` | `celnet.proto:505` | `oneof model`: `FxRates fx = 1` / `CostOfCarry generalized = 2`; attached at `MarketContext.carry = 4` (:649) and `VanillaInputs.carry = 6` (:670) |
+| `message RateSensitivities` | `celnet.proto:519` | `oneof sensitivities`: `FxRho fx = 1` (`rho_dom`/`rho_for`) / `CarryRho carry = 2` (`discount_rho`/`carry_rho`); attached at `Greeks.rate_sensitivities = 15` (:734); the flat `rho_dom`/`rho_for` field numbers 7/8 are `reserved` (:716–717) |
+
+Cross-asset dispatch: `celnet-server/src/pricer.rs` routes a non-FX underlying through the
+generalized-carry path (`pricer.rs:1705` ff.) onto the leaf engines (`celnet-equity-vanilla` /
+`celnet-commodity-vanilla` / `celnet-crypto-vanilla`). Gates: golden vector families
+`vectors/{equity_option,commodity_option,crypto_option}.json`, independent parity
+`celnet-parity/tests/crossasset.rs`, and the CLI three-way gate
+(`celnet-cli/tests/conformance.rs`: CLI == server == independent oracle per class).
+
+### Contract settlement mechanics
+
+- **`enum SettlementStyle`** (`celnet.proto:120`): `SETTLEMENT_STYLE_LINEAR = 0`
+  (meaningful-zero default — byte-identical to the pre-field contract) /
+  `SETTLEMENT_STYLE_INVERSE_COIN = 1` (the coin-margined `1/S_T` digital-asset convention).
+  Carried on **`Instrument.settlement_style = 29`** (`celnet.proto:1266`), travelling on the
+  instrument like `pricing_model` so it reaches price/quote/stream/scenario uniformly.
+- **`enum Margining`** (`celnet.proto:138`): `MARGINING_EQUITY_STYLE = 0` (premium-upfront,
+  discounted; meaningful-zero default) / `MARGINING_FUTURES_STYLE = 1` (daily-margined,
+  undiscounted). Carried on `ListedFutureOption.margining = 6` (`celnet.proto:1432`; a
+  landing arm — see below).
+- **`enum FixingSource`** (`celnet.proto:167`): the six EMTA/ISDA per-currency NDF
+  settlement-rate identities (KRW KFTC18 / TWD TAIPEI / INR RBI / BRL PTAX / CLP DÓLAR OBS /
+  COP TRM) — convention **identity only**; live fixing VALUES remain an estate-gated feed,
+  never sourced in-repo. Carried on `Ndf.fixing = 4` (`celnet.proto:1382`).
+
+### Linear (non-option) `Instrument.product` arms — built + gated
+
+| Product | oneof arm (proto line) | Server pricer | Independent gate |
+|---|---|---|---|
+| Outright forward (deliverable FX/metal) | `FxForward fx_forward = 26` (`celnet.proto:1317`; message :1344) | `pricer.rs:1597` → `celnet-linear` closed-form DCF (exact; no std-error) | `celnet-parity/tests/linear.rs`; golden `vectors/fx_forward.json` |
+| FX swap (near + far leg, opposite sides) | `FxSwap fx_swap = 27` (`celnet.proto:1320`; message :1358) | `pricer.rs:1598` → independent leg-PV sum | `celnet-parity/tests/linear.rs`; `vectors/fx_swap.json` |
+| NDF (non-deliverable; settles in the convertible ccy) | `Ndf ndf = 28` (`celnet.proto:1324`; message :1373; `fixing = 4` :1382, `settlement_ccy = 5` :1386) | `pricer.rs:1599`; an NDF on a deliverable pair is rejected `INVALID_ARGUMENT` | `celnet-parity/tests/linear.rs`; `vectors/ndf.json` |
+
+### Landing `Instrument.product` arms — in-flight new-payoff-shapes wave (committed at wip checkpoint `c8fb02f`; full-workspace gates pending)
+
+| Product | oneof arm (proto line) | Server pricer | Gate (landing) |
+|---|---|---|---|
+| Perpetual American option (no expiry; `Instrument.expiry_years` MUST be 0 — `convert::validate_perpetual_terms`) | `PerpetualOption perpetual_option = 30` (`celnet.proto:1329`; message :1396) | `pricer.rs:1604` (FX two-rate carry) + the cross-asset carry path (:1724) | `celnet-parity/tests/perpetual.rs`; `vectors/perpetual_option.json` |
+| Listed-future option, any asset class (`future_expiry_years >= expiry_years > 0` — `convert::validate_listed_future_terms`) | `ListedFutureOption listed_future_option = 31` (`celnet.proto:1334`; message :1414; `margining = 6` :1432) | `pricer.rs:1612` | `celnet-parity/tests/listed_future.rs`; `vectors/listed_future_option.json` |
+
+### RFQ-to-many (multi-dealer panel) — built + gated (`celnet-rfq`, W4)
+
+| Symbol | proto | Notes |
+|---|---|---|
+| `rpc QuoteService.RequestMultiDealerQuote(QuoteRequest) returns (MultiDealerQuote)` | `celnet.proto:2897` | idempotent on the request's `idempotency_key`; the SAME `QuoteRequest` — no new request type |
+| `message DealerQuote` | `celnet.proto:1561` | `lp_id = 1` (:1563), `TwoWayPrice price = 2`, `Greeks greeks = 3`, `resolved_strike = 4`, `valid_until_nanos = 5` (per-dealer last-look), `optional AttributionRecord attribution = 6`, `optional double price_std_error = 7` |
+| `message MultiDealerQuote` | `celnet.proto:1589` | `quote_id = 1` (the aggregate request id), `idempotency_key = 2`, `repeated DealerQuote dealers = 3` (ordered best-first, :1596), `best_bid_lp_id = 4` (:1599) / `best_offer_lp_id = 5` (:1602), `Conventions conventions = 6`, `epoch_nanos = 7`, `optional correlation_id = 8`, `optional surface_version = 9` |
+| `QuoteAccept.lp_id = 4` | `celnet.proto:1630` | selects the winning `DealerQuote.lp_id`; empty selects the single-dealer quote — byte-identical to a pre-field accept |
+
+Engine: `celnet-rfq` (concurrent fan-out, ranking, deterministic tie-break, last-look)
+behind the server edge; gated by `celnet-server/tests/multi_dealer.rs` + `tests/rfq.rs`
+(≥3 loopback LPs, external-winner booking, WS mirror). Client reach (commit `1ebd742`):
+SDK `Client::request_multi_dealer_quote` → `MultiDealerRfq` (+ the `multi_dealer_trade`
+example), CLI `rfq`, Excel `CELNET.RFQ` (ranked panel spill; the task-pane accept books by
+`(quote_id, lp_id)`), GUI `DealerPanel`.
+
+---
+
+**Cross-check (re-verified 2026-06-10 against the working tree).** Every arm/enum/field in
+the catalogue registry and the asset-class/linear/RFQ registry above is present in
+`crates/celnet-proto/proto/celnet.proto` at the cited line, dispatched in
+`crates/celnet-server/src/pricer.rs`, reachable per `docs/CLIENT-PARITY-MATRIX.md`, and
+backed by the cited gate. The `Instrument.product` oneof is fully registered: arms 7–21 and
+23–28 built + gated, arms 30/31 **landing** (in-flight wave); the `Instrument` scalar selectors
+`pricing_model = 22` and `settlement_style = 29` are registered, as are the `Underlying`
+asset-class arms, the carry-seam messages, the settlement enums and the `QuoteService`
+RFQ-to-many symbols. No proto symbol is present-but-unregistered.
+
+**Build status.** All W1–W6 catalogue extensions are **DONE and gated green** end-to-end (server
+pricer + SDK `InstrumentSpec`/vocab builders + CLI `exotic …` + Excel + GUI ticket), validated by
 the cited `celnet-parity` rows, the server suite, the SDK e2e suites, the GUI/Excel build+test
-suites, and full `just check` ("All gates passed."). One unversioned contract; no `schema_version`.
+suites, and full `just check` ("All gates passed."). The W2–W5 linear / cross-asset / RFQ-to-many
+extensions are likewise gated (`linear.rs` / `crossasset.rs` / `multi_dealer.rs` + the client
+suites). The Excel surface all of this rides is the **polymorphic** `CELNET.INSTRUMENT` token +
+`PRICE`/`GREEKS`/`RFQ`/`SUBSCRIBE` verbs — the 18 per-product worksheet functions were retired at
+proven byte-identical wire parity (commit `5800ec4`; see `docs/EXCEL-INTEGRATION.md` §3.3 and
+`docs/CLIENT-PARITY-MATRIX.md`). Arms 30/31 are **landing** (in-flight new-payoff-shapes wave;
+committed at wip checkpoint `c8fb02f`, full-workspace gates pending — not yet claimable as done).
+One unversioned contract; no `schema_version`.
