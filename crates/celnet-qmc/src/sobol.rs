@@ -153,24 +153,23 @@ impl SobolSequence {
 
     /// The `i`-th **unscrambled** point as raw 32-bit integers (gray-code XOR of
     /// the direction numbers selected by the set bits of `g(i) = i ⊕ (i >> 1)`).
+    ///
+    /// The construction is 32-bit: exactly the low [`BITS`] gray-code bits
+    /// select direction numbers, so the sequence period is `2^32` (indices
+    /// beyond it reduce to their low 32 gray bits — a documented contract, and
+    /// the loop below is structurally total over the 32 direction numbers).
     #[must_use]
     pub fn point_u32(&self, i: u64) -> Vec<u32> {
         let g = i ^ (i >> 1);
-        let mut out = vec![0u32; self.dim];
-        for (j, slot) in out.iter_mut().enumerate() {
-            let mut acc = 0u32;
-            let mut bits = g;
-            let mut k = 0;
-            while bits != 0 && k < BITS as usize {
-                if bits & 1 == 1 {
-                    acc ^= self.v[j][k];
-                }
-                bits >>= 1;
-                k += 1;
-            }
-            *slot = acc;
-        }
-        out
+        self.v
+            .iter()
+            .map(|vj| {
+                vj.iter()
+                    .enumerate()
+                    .filter(|(k, _)| (g >> k) & 1 == 1)
+                    .fold(0u32, |acc, (_, &vk)| acc ^ vk)
+            })
+            .collect()
     }
 
     /// The `i`-th unscrambled point as `f64` coordinates in `[0, 1)`.
@@ -281,6 +280,61 @@ impl SobolStream<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Tiny deterministic LCG for in-test sample generation (test-only; not a
+    /// statistical claim — just a spread of bit patterns).
+    fn lcg(state: &mut u64) -> u32 {
+        *state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1);
+        (*state >> 32) as u32
+    }
+
+    /// The defining property of a *nested* digital permutation: the top `k`
+    /// output bits depend only on the top `k` input bits (the scramble permutes
+    /// points within — never across — dyadic elementary intervals). For any two
+    /// inputs sharing a `k`-bit prefix, the outputs must share a `k`-bit prefix.
+    #[test]
+    fn owen_scramble_preserves_dyadic_prefixes() {
+        let mut state = 0x1234_5678_9abc_def0u64;
+        for trial in 0..200 {
+            let x = lcg(&mut state);
+            let y = lcg(&mut state);
+            let dim = u64::from(lcg(&mut state) % 64);
+            let seed = u64::from(lcg(&mut state));
+            for k in [1u32, 4, 9, 17, 31] {
+                // Force y to share x's top-k bits.
+                let mask = !0u32 << (BITS - k);
+                let y_shared = (x & mask) | (y & !mask);
+                let sx = owen_scramble_u32(x, dim, seed);
+                let sy = owen_scramble_u32(y_shared, dim, seed);
+                assert_eq!(
+                    sx & mask,
+                    sy & mask,
+                    "prefix k={k} not preserved (trial {trial})"
+                );
+            }
+        }
+    }
+
+    /// A digital permutation is bijective on every prefix length: the 256
+    /// possible top-byte patterns must map onto a permutation of all 256
+    /// top-byte patterns (for any fixed `(dim, seed)`).
+    #[test]
+    fn owen_scramble_top_byte_is_a_permutation() {
+        for (dim, seed) in [(0u64, 1u64), (3, 0xDEAD_BEEF), (63, 42)] {
+            let mut seen = [false; 256];
+            for k in 0u32..256 {
+                let out = owen_scramble_u32(k << 24, dim, seed) >> 24;
+                assert!(
+                    !seen[out as usize],
+                    "top byte {out} hit twice (dim={dim}, seed={seed})"
+                );
+                seen[out as usize] = true;
+            }
+            assert!(seen.iter().all(|&b| b));
+        }
+    }
 
     /// The streaming gray-code recurrence must agree bit-for-bit with the direct
     /// `point_u32` construction (before scrambling).

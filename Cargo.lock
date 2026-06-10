@@ -704,6 +704,7 @@ name = "celnet-qmc"
 version = "0.0.0"
 dependencies = [
  "celnet-core",
+ "libm",
 ]
 
 [[package]]

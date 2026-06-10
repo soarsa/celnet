@@ -1,0 +1,96 @@
+# cargo-mutants gate configuration — celnet-qmc mutation-testing policy.
+#
+# Mirrors `.config/mutants.toml` (the celnet-vanilla gate) for the
+# quasi-Monte-Carlo crate: the gray-code Joe-Kuo Sobol generator + embedded
+# direction-number table, the Owen-style nested digital scramble, the
+# Brownian-bridge path construction, the inverse standard-normal CDF, and the
+# randomized-QMC estimator. These numerics feed exotics, xva, the GPU path and
+# parity — a silently-weakened suite here could let a biased path generator or
+# a wrong quantile map ship under every Monte-Carlo price.
+#
+# How the gate works
+# ------------------
+# `just mutants-gate-qmc` runs
+#   cargo mutants -p celnet-qmc --test-tool=cargo --jobs 3 \
+#       --config .config/mutants-qmc.toml
+# applying a syntactic mutant per operator/comparison/return value and
+# re-running the suite; a MISSED mutant is a test gap. cargo-mutants exits
+# non-zero on ANY survivor, so the gate enforces ZERO non-equivalent survivors
+# — a future edit that weakens the suite below the kill bar fails the build.
+# See docs/HARDENING.md §2 for the measured baseline.
+#
+# Kill strategy (W6 rigor wave): every mutant is killed by an INDEPENDENT
+# oracle in `tests/sequence_oracle.rs` + in-module additions — exact dyadic
+# radical-inverse pins (to_bits), an m_k-domain re-derivation of the
+# direction-number recurrence, published normal quantiles + an erfc round-trip,
+# the exact bridge covariance L·Lᵀ = min(t_i,t_j), closed-form monomial
+# integrals through the full RQMC pipeline, and frozen-bits rows (the house
+# fx_byte_identity pattern) for hash/scramble internals that any
+# distributional property would tolerate.
+#
+# MEASURED baseline (this session, aarch64-apple-darwin, cargo-mutants 27.0.0,
+# toolchain 1.96.0)
+# ------------------------------------------------------------------------------
+# Raw crate-wide run (no exclusions): `359 mutants tested in 16m: 7 missed,
+# 295 caught, 2 unviable, 55 timeouts`. The 7 raw survivors were dispositioned:
+#   * 1 KILLED with a new test — `bisect`'s floor-midpoint pivot (`- with /`
+#     turns `lo + (right-lo-1)/2` into the equally-*valid* ceil-ish pivot:
+#     identical covariance, different deterministic plan) — pinned by the
+#     hand-derived m=3 weight matrix (`bridge_plan_uses_documented_floor_midpoint`).
+#   * 3 KILLED with a new test — the Halley-polish internals of `inv_norm_cdf`
+#     (`u / (1 + 0.5·x·u)`: `/ with %`, `/ with *`, `+ with -`), sub-ULP in the
+#     central domain but ≥1 ULP at extreme tails — pinned by the frozen-bits
+#     ladder (`halley_polish_is_load_bearing`, incl. the subnormal floor where
+#     the deviation is ~10^12 ULPs).
+#   * 1 ELIMINATED structurally — `point_u32`'s early-exit loop guard
+#     (`< with <=`, observable only as an OOB panic for out-of-period
+#     i >= 2^32) — the loop was rewritten structurally total over the 32
+#     direction numbers, making the 2^32 period an explicit documented contract
+#     and removing the mutation site.
+#   * 2 EXCLUDED below as provably semantically equivalent.
+# The 55 timeout classifications were environment artifacts (the documented
+# macOS first-launch stall of freshly linked test binaries tripping the
+# auto-set 20s floor; every one sits in code directly pinned by sub-second
+# oracle tests and none contains a value-dependent loop) — the gate carries
+# `--minimum-test-timeout=240` so they classify honestly as caught.
+# Canonical gate run after the kills/exclusions (clean slate, RUSTC_WRAPPER=""):
+# `350 mutants tested in 9m: 348 caught, 2 unviable` — zero missed, zero
+# timeouts, real exit 0. See docs/HARDENING.md §2 for the full record.
+#
+# Runner settings (mirrored by the `mutants-gate-qmc` recipe flags, and picked
+# up as-is by the CI `mutation-gate-numerics` matrix leg which passes only
+# `--config`): plain `cargo test` (reproducible independent of the workspace
+# nextest profile; a concurrent session may `pkill -f nextest`) and a generous
+# per-mutant test-timeout floor (see the timeout note above — the suite runs in
+# ~1s; the floor only guards against launch-stall misclassification).
+test_tool = "cargo"
+minimum_test_timeout = 240
+
+# Equivalence exclusions
+# ----------------------
+# `exclude_re` lists ONLY mutants that are provably *semantically equivalent*
+# to the original — each justified inline with WHY it cannot change an
+# observable result — never to hide a real survivor. Policy here is STRICT.
+# Both members were hand-reproduced: full suite green with the mutant applied
+# (including every frozen-bits pin — empirically bit-identical, not merely
+# tolerance-identical).
+exclude_re = [
+  # --- inv_norm_cdf: domain-guard short-circuit ---
+  # `p.is_nan() || !(0..=1).contains(&p)` vs `&&`: the branch only diverges for
+  # non-NaN out-of-range p, where the early `return NaN` is skipped — but every
+  # downstream branch then computes `ln` of a negative number (p < 0 takes the
+  # low-tail `ln(p)`; p > 1 takes the high-tail `ln(1−p)`), and the resulting
+  # NaN propagates through the polynomial and the Halley step to the same NaN
+  # return. For NaN p both forms return NaN (`contains(NaN)` is false). NaN
+  # payload bits are not observable by house policy (compare.rs: never assert
+  # on NaN bit patterns). Verified: full suite green with the mutant applied.
+  "normal\\.rs:65:19: replace \\|\\| with && in inv_norm_cdf",
+
+  # --- owen_scramble_u32: prefix accumulator on disjoint bits ---
+  # `prefix = (prefix << 1) | out_bit` vs `^`: bit 0 of `prefix << 1` is always
+  # zero and `out_bit ∈ {0,1}`, so OR and XOR act on disjoint bit positions and
+  # are identical for every input — a pure operator identity, not a test gap.
+  # Verified: full suite green with the mutant applied (frozen scramble rows
+  # bit-identical).
+  "sobol\\.rs:241:32: replace \\| with \\^ in owen_scramble_u32",
+]
