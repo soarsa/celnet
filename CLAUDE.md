@@ -131,4 +131,4 @@ All status lives in disk files, not here (keeps per-session context small —
 
 **Resume anchor — one line only; replace in place each milestone, never grow it:**
 
-- 2026-06-09 — Cross-asset platform + rigor wave GREEN on `main` (`5160201`): session-B's integration (proto/server/5-clients, oracle 21+3) ∥ session-A's W6 (loom + journal sync-word + 4 mutation gates) + W5-A xrisk + W4-A pivot + ADR-0008-A analytic-exotics; joint gate real-exit fmt/clippy/test/deny=0, 172 sections. ADR-0008 Waves B/C/D/S = tracked tail. Detail → ledger top entry.
+- 2026-06-10 — ADR-0008 COMPLETE on `main` (`4dd500d`): every exotic engine (MC/PDE/composite) + surface MarketContext + pivot + VV overlay on the one agnostic carry seam; ~120 frozen to_bits, zero raw-rate engine math; gate real-exit cargo 0×5 (173 sections) + vitest 567 + live e2e 13/13. ∥ session-B: GUI-UNIVERSE + EXCEL-POLYMORPHIC + GW1-layout fix. Next: rfq-panel (B), crypto surface leaf. Detail → ledger top entry.
