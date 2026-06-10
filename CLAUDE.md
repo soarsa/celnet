@@ -77,14 +77,22 @@ source "$HOME/.cargo/env" && cargo <...>
 Or use the **justfile** (each recipe sources the env): `just build`, `just test`,
 `just lint`, `just fmt`, `just deny`, `just coverage`, `just mutants`, `just check`.
 
-**Build incrementally — gate only what changed.** Per iteration, verify the modified
-crate(s) only: `just check-crate <crate>` (one crate) or `just check-changed` (all crates
-touched in the working tree). These use `cargo … -p <crate>`, so unchanged crates are
-neither recompiled (sccache + cargo incremental) nor re-tested. Reserve the full-workspace
-`just check` for the **cross-crate integration gate before committing a milestone**. The
-crate split exists precisely so a change rebuilds/tests a minimal subtree — keep crates
-small and dependencies pointing one way (see `docs/INTERFACES.md`). Use `detect_changes`
-(codebase-memory) to see a diff's blast radius before choosing the gate scope.
+**Tiered gates — gate only what changed** (`docs/PARALLEL-SESSIONS.md` §4.2 is the law):
+
+- **T0** (per-edit, seconds): `just t0 <crate>` = `cargo check -p`. Iterate on T0 only.
+- **T1** (per-lane-batch): `just t1 [<crate>…]` — ONE invocation settles the accumulated
+  batch (a single multi-`-p` cargo test + scoped clippy `-D warnings` + fmt; no args ⇒
+  crates changed since the last green T1). **Accumulate edits; never gate per-fix.**
+- **T2** (landing only): `just t2` — the full `check` gate set + the live GUI/Excel e2e,
+  ONCE per push milestone, never per fix-iteration.
+
+T1/T2 run through the **resumable runner** (`tools/gate-runner.sh`, ledger
+`.gate-ledger.jsonl`): each step's PASS/FAIL + literal output line + REAL exit code is
+journaled keyed on HEAD + a dirty-tree hash, so a killed/spend-walled gate resumes from
+the last green step. `check`/`check-crate`/`check-changed` remain valid at their tier.
+The crate split exists precisely so a change rebuilds/tests a minimal subtree — keep
+crates small and dependencies pointing one way (see `docs/INTERFACES.md`). Use
+`detect_changes` (codebase-memory) to see a diff's blast radius before choosing scope.
 
 Toolchain pinned to **1.96.0** via `rust-toolchain.toml`. Edition **2024**.
 Installed tooling: cargo-nextest, cargo-deny, cargo-audit, cargo-llvm-cov, cargo-mutants,

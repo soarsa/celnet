@@ -56,6 +56,7 @@ defaults to 1). Per family (optional keys bracketed):
 | `product` | terms keys |
 |---|---|
 | `VANILLA` | `strike` (level or delta `25dP`/`ATM`), `callPut` |
+| `STRATEGY` | `kind` (`RISK_REVERSAL`/`RR`, `STRADDLE`, `STRANGLE`, `SEAGULL`), plus repeated rows `("legs", callPut, strike, side, [ratio])` — one per option leg (delta strikes resolve server-side); naming the template as the `product` (`RISK_REVERSAL`, `STRADDLE`, `STRANGLE`, `SEAGULL`) binds `kind` |
 | `BARRIER` | `strike`, `callPut`, `barrier`, `[kind]`, `[side]`, `[upperBarrier]` (⇒ double), `[rebate]`, `[monitoring]`, `[model]` (`ANALYTIC`/`LSV`) |
 | `WINDOWBARRIER` | `strike`, `callPut`, `barrier`, `[side]`, `[windowStart]`, `[windowEnd]`, `[mcPairs]`, `[mcSteps]`, `[mcSeed]` |
 | `DIGITAL` | `strike`, `callPut`, `[style]`, `[payout]` |

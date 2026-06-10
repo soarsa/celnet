@@ -32,6 +32,16 @@
 //! A malformed or out-of-contract frame is answered with a typed `error` frame
 //! (echoing any `correlation_id`); it never tears the connection down.
 //!
+//! # Resource caps
+//!
+//! The accept path applies the explicit transport bounds in [`limits`] — never
+//! the tungstenite defaults (64 MiB message / 16 MiB frame / unbounded write
+//! buffer). A message over the 1 MiB contract cap is refused with a typed
+//! `error` frame plus an RFC 6455 1009 "Message Too Big" close; a peer blowing
+//! past the 2× hard transport backstop is torn down with a best-effort 1009.
+//! Per-connection inbound memory is bounded at the backstop, outbound at the
+//! write-buffer cap.
+//!
 //! # Not blocking the pinned core; readiness / drain
 //!
 //! The WS server runs entirely on the async edge. The RFS session is driven by the
@@ -43,6 +53,7 @@
 //! for WS sessions exactly as it waits for gRPC calls.
 
 pub mod codec;
+mod limits;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -52,6 +63,7 @@ use serde_json::{Map, Value};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
+use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tonic::Request;
 
 use celnet_proto::pricing_service_server::PricingService;
@@ -76,6 +88,15 @@ use crate::surface_book::SurfaceBook;
 /// the gRPC RFS channel depth so a lagging WS consumer is paused (LAGGED) rather
 /// than back-pressuring the shared driver — one slow socket never stalls the core.
 const WS_CHANNEL_DEPTH: usize = 256;
+
+/// One transmission queued to the per-connection writer task.
+enum Outbound {
+    /// A type-tagged contract frame, serialized to one WS text message.
+    Frame(Value),
+    /// A typed terminal close (e.g. the RFC 6455 1009 oversize refusal from
+    /// [`limits`]); the writer sends it and ends the connection.
+    Close(CloseFrame<'static>),
+}
 
 /// The shared, transport-neutral service set every WS connection dispatches onto —
 /// the **same** edges the gRPC server hosts, behind one [`CoreLink`] / one
@@ -222,10 +243,16 @@ async fn accept_loop(listener: TcpListener, services: WsServices) {
 /// Serve one WebSocket connection: complete the upgrade, gate on readiness, then
 /// run the multiplexed session loop (request/response calls inline + the RFS driver).
 async fn serve_connection(tcp: TcpStream, services: WsServices) {
-    let ws = match tokio_tungstenite::accept_async(tcp).await {
-        Ok(ws) => ws,
-        Err(_) => return, // not a valid WebSocket handshake; drop.
-    };
+    // Accept under the explicit transport caps ([`limits`]) — never the
+    // tungstenite defaults — so one connection's inbound/outbound buffering is
+    // hard-bounded before the first frame is read.
+    let ws =
+        match tokio_tungstenite::accept_async_with_config(tcp, Some(limits::transport_config()))
+            .await
+        {
+            Ok(ws) => ws,
+            Err(_) => return, // not a valid WebSocket handshake; drop.
+        };
 
     // Gate new connections on readiness, and hold an in-flight guard for the whole
     // connection so the graceful drain waits for live WS sessions just like gRPC.
@@ -251,7 +278,7 @@ async fn serve_connection(tcp: TcpStream, services: WsServices) {
     // is queued here and pumped to the socket by a dedicated writer task, so the
     // request/response path and the RFS driver share one ordered, bounded outbound
     // sink without either blocking the other.
-    let (out_tx, mut out_rx) = mpsc::channel::<Value>(WS_CHANNEL_DEPTH);
+    let (out_tx, mut out_rx) = mpsc::channel::<Outbound>(WS_CHANNEL_DEPTH);
 
     // The RFS session is driven lazily: the connection is also an RFS session, so we
     // bridge inbound stream-control frames into the shared `run_session` driver via
@@ -276,10 +303,17 @@ async fn serve_connection(tcp: TcpStream, services: WsServices) {
         loop {
             tokio::select! {
                 reply = out_rx.recv() => match reply {
-                    Some(v) => {
+                    Some(Outbound::Frame(v)) => {
                         if ws_tx.send(WsMessage::Text(v.to_string())).await.is_err() {
                             break;
                         }
+                    }
+                    // A typed terminal close (oversize refusal): send it, then
+                    // stop writing — the trailing `close()` completes the
+                    // handshake flush.
+                    Some(Outbound::Close(frame)) => {
+                        let _ = ws_tx.send(WsMessage::Close(Some(frame))).await;
+                        break;
                     }
                     None => break,
                 },
@@ -313,17 +347,42 @@ async fn serve_connection(tcp: TcpStream, services: WsServices) {
                 Ok(t) => t,
                 Err(_) => {
                     let _ = out_tx
-                        .send(codec::error_frame(
+                        .send(Outbound::Frame(codec::error_frame(
                             "binary frame is not valid UTF-8 JSON",
                             None,
-                        ))
+                        )))
                         .await;
                     continue;
                 }
             },
             Ok(WsMessage::Ping(_) | WsMessage::Pong(_) | WsMessage::Frame(_)) => continue,
-            Ok(WsMessage::Close(_)) | Err(_) => break,
+            Ok(WsMessage::Close(_)) => break,
+            Err(e) => {
+                // The hard transport backstop tripped (> 2× the contract cap):
+                // answer with a best-effort typed 1009 close. Any other read
+                // error is an ordinary disconnect.
+                if let Some(close) = limits::backstop_close(&e) {
+                    let _ = out_tx.send(Outbound::Close(close)).await;
+                }
+                break;
+            }
         };
+        // The contract cap: a message over the documented bound is refused with
+        // a typed `error` frame plus the RFC 6455 1009 close. The transport
+        // backstop assembled it in full, so the protocol parser is coherent and
+        // the closing handshake is clean (no reset racing the refusal).
+        if msg.len() > limits::MAX_CONTRACT_MESSAGE_BYTES {
+            let _ = out_tx
+                .send(Outbound::Frame(codec::error_frame(
+                    &limits::oversize_reject_text(msg.len()),
+                    None,
+                )))
+                .await;
+            let _ = out_tx
+                .send(Outbound::Close(limits::oversize_close(msg.len())))
+                .await;
+            break;
+        }
         if !dispatch(&services, &msg, &out_tx, &rfs_in_tx).await {
             break;
         }
@@ -345,30 +404,36 @@ async fn serve_connection(tcp: TcpStream, services: WsServices) {
 async fn dispatch(
     services: &WsServices,
     raw: &str,
-    out_tx: &mpsc::Sender<Value>,
+    out_tx: &mpsc::Sender<Outbound>,
     rfs_in_tx: &mpsc::Sender<ClientStreamMessage>,
 ) -> bool {
     let value: Value = match serde_json::from_str(raw) {
         Ok(v) => v,
         Err(e) => {
             return out_tx
-                .send(codec::error_frame(&format!("invalid JSON: {e}"), None))
+                .send(Outbound::Frame(codec::error_frame(
+                    &format!("invalid JSON: {e}"),
+                    None,
+                )))
                 .await
                 .is_ok();
         }
     };
     let Some(o) = value.as_object() else {
         return out_tx
-            .send(codec::error_frame("frame must be a JSON object", None))
+            .send(Outbound::Frame(codec::error_frame(
+                "frame must be a JSON object",
+                None,
+            )))
             .await
             .is_ok();
     };
     let Some(kind) = o.get("type").and_then(Value::as_str) else {
         return out_tx
-            .send(codec::error_frame(
+            .send(Outbound::Frame(codec::error_frame(
                 "frame missing a `type` discriminator",
                 None,
-            ))
+            )))
             .await
             .is_ok();
     };
@@ -390,7 +455,10 @@ async fn dispatch(
                     rfs_in_tx.send(msg).await.is_ok()
                 }
                 Err(e) => out_tx
-                    .send(codec::error_frame(&e.to_string(), correlation_id))
+                    .send(Outbound::Frame(codec::error_frame(
+                        &e.to_string(),
+                        correlation_id,
+                    )))
                     .await
                     .is_ok(),
             }
@@ -398,7 +466,7 @@ async fn dispatch(
         // ---- request/response RPCs: run the same edge, reply inline ----------
         _ => {
             let reply = handle_unary(services, kind, o, correlation_id).await;
-            out_tx.send(reply).await.is_ok()
+            out_tx.send(Outbound::Frame(reply)).await.is_ok()
         }
     }
 }
