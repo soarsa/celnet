@@ -9,7 +9,7 @@
 //      frame byte-identical to the contract before the field existed (proto3
 //      zero value, omitted; the server reads an absent key as DEFAULT);
 //   3. shapes a single-barrier under LSV (the model travels uniformly on the
-//      instrument, so the existing CELNET.BARRIER reaches the LSV engine);
+//      instrument, so a BARRIER spec with model LSV reaches the LSV engine);
 //   4. shapes a window barrier into the EXACT `window_barrier` product key (proto
 //      field 23) the server's `crates/celnet-server/src/ws/codec.rs`
 //      `window_barrier_from_json` decodes — a nested `vanilla`, `barrier`,
@@ -29,7 +29,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_CONVENTIONS,
   ShapingError,
-  formatPathDependentSpill,
+  formatPremiumSpill,
   parsePricingModel,
   shapeBarrier,
   shapeWindowBarrier,
@@ -361,7 +361,7 @@ const SAMPLE_GREEKS: Greeks = {
 
 describe("window-barrier / LSV spill formatting", () => {
   it("the exact ADI-PDE route spills premium + 13 Greeks + footer (NO std-error row)", () => {
-    const m = formatPathDependentSpill({
+    const m = formatPremiumSpill({
       premium: SAMPLE_GREEKS.price,
       stdError: undefined,
       greeks: SAMPLE_GREEKS,
@@ -375,7 +375,7 @@ describe("window-barrier / LSV spill formatting", () => {
   });
 
   it("the Monte-Carlo route inserts an honest std-error row after the premium", () => {
-    const m = formatPathDependentSpill({
+    const m = formatPremiumSpill({
       premium: SAMPLE_GREEKS.price,
       stdError: 1.5e-5,
       greeks: SAMPLE_GREEKS,
@@ -467,7 +467,7 @@ describe("single-barrier-under-LSV end-to-end over the WS mirror", () => {
     replyQuote(sock, { greeks: { price: 0.0071, delta_spot: 0.28 }, resolved_strike: 1.1 });
     const quote = await p;
     expect(quote.priceStdError).toBeUndefined();
-    const m = formatPathDependentSpill({
+    const m = formatPremiumSpill({
       premium: quote.greeks.price,
       stdError: quote.priceStdError,
       greeks: quote.greeks,
@@ -509,7 +509,7 @@ describe("window-barrier end-to-end over the WS mirror", () => {
     replyQuote(sock, { greeks: { price: 0.0042, delta_spot: 0.19 }, resolved_strike: 1.1 });
     const quote = await p;
     expect(quote.priceStdError).toBeUndefined();
-    const m = formatPathDependentSpill({
+    const m = formatPremiumSpill({
       premium: quote.greeks.price,
       stdError: quote.priceStdError,
       greeks: quote.greeks,
@@ -545,7 +545,7 @@ describe("window-barrier end-to-end over the WS mirror", () => {
     replyQuote(sock, { greeks: { price: 0.0039 }, resolved_strike: 1.1, price_std_error: 2.1e-5 });
     const quote = await p;
     expect(quote.priceStdError).toBe(2.1e-5);
-    const m = formatPathDependentSpill({
+    const m = formatPremiumSpill({
       premium: quote.greeks.price,
       stdError: quote.priceStdError,
       greeks: quote.greeks,

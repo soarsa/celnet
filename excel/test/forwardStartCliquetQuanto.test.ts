@@ -5,7 +5,8 @@
 // `forward_start` / `cliquet` / `quanto` carrying field numbers 16 / 17 / 18),
 // that the presence-tracked cliquet clamps + `mc_pairs` / `mc_seed` encode exactly
 // like the proto `optional double` / the server's `opt_f64`, and that the
-// CELNET.FORWARDSTART / CLIQUET / QUANTO functions decode the server's reply into
+// FORWARDSTART / CLIQUET / QUANTO families (the polymorphic CELNET.INSTRUMENT +
+// verb path) decode the server's reply into
 // the right spill geometry — including the HONEST Monte-Carlo std-error row that
 // appears ONLY for a clamped (MC-priced) cliquet. No pricing math lives in the
 // add-in; the numbers are the server's libm-core values, so a cell is
@@ -17,9 +18,7 @@ import {
   DEFAULT_CONVENTIONS,
   ShapingError,
   cliquetIsMonteCarlo,
-  formatCliquetSpill,
-  formatForwardStartSpill,
-  formatQuantoSpill,
+  formatPremiumSpill,
   parseQuantoPayoff,
   shapeCliquet,
   shapeForwardStart,
@@ -387,7 +386,7 @@ const SAMPLE_GREEKS: Greeks = {
 
 describe("structured-product spill formatting", () => {
   it("FORWARDSTART spill leads with the premium, then the 13 Greeks, then a footer (no std-error)", () => {
-    const m = formatForwardStartSpill({
+    const m = formatPremiumSpill({
       premium: SAMPLE_GREEKS.price,
       greeks: SAMPLE_GREEKS,
       conventions: DEFAULT_CONVENTIONS,
@@ -403,7 +402,7 @@ describe("structured-product spill formatting", () => {
   });
 
   it("CLIQUET spill OMITS the std-error row for a plain ratchet (exact closed form)", () => {
-    const m = formatCliquetSpill({
+    const m = formatPremiumSpill({
       premium: 0.031,
       stdError: undefined, // plain ratchet ⇒ no MC noise
       greeks: SAMPLE_GREEKS,
@@ -419,7 +418,7 @@ describe("structured-product spill formatting", () => {
   });
 
   it("CLIQUET spill SURFACES the MC std-error row for a clamped cliquet (honest precision)", () => {
-    const m = formatCliquetSpill({
+    const m = formatPremiumSpill({
       premium: 0.0285,
       stdError: 1.7e-4, // MC standard error reported by the server
       greeks: SAMPLE_GREEKS,
@@ -436,7 +435,7 @@ describe("structured-product spill formatting", () => {
   });
 
   it("QUANTO spill leads with the premium, then the 13 Greeks, then a footer", () => {
-    const m = formatQuantoSpill({
+    const m = formatPremiumSpill({
       premium: SAMPLE_GREEKS.price,
       greeks: SAMPLE_GREEKS,
       conventions: DEFAULT_CONVENTIONS,
@@ -554,7 +553,7 @@ describe("forward-start end-to-end over the WS mirror", () => {
     expect(wireInstr["forward_start"]).toEqual({ option_type: 0, moneyness: 1.0, reset: 0.25 });
     replyQuote(sock, { greeks: { price: 0.0188, delta_spot: 0.49, vega: 0.0031 }, resolved_strike: 1.1 });
     const quote = await p;
-    const m = formatForwardStartSpill({
+    const m = formatPremiumSpill({
       premium: quote.greeks.price,
       greeks: quote.greeks,
       conventions: quote.conventions,
@@ -589,7 +588,7 @@ describe("cliquet end-to-end over the WS mirror", () => {
     // suppresses it because the product carries no clamp.
     replyQuote(sock, { greeks: { price: 0.031, delta_spot: 0.5 }, resolved_strike: 1.1 });
     const quote = await p;
-    const m = formatCliquetSpill({
+    const m = formatPremiumSpill({
       premium: quote.greeks.price,
       stdError: isMc ? quote.priceStdError : undefined,
       greeks: quote.greeks,
@@ -636,7 +635,7 @@ describe("cliquet end-to-end over the WS mirror", () => {
     });
     const quote = await p;
     expect(quote.priceStdError).toBe(1.7e-4);
-    const m = formatCliquetSpill({
+    const m = formatPremiumSpill({
       premium: quote.greeks.price,
       stdError: isMc ? quote.priceStdError : undefined,
       greeks: quote.greeks,
@@ -672,7 +671,7 @@ describe("quanto end-to-end over the WS mirror", () => {
     });
     replyQuote(sock, { greeks: { price: 0.052, delta_spot: 0.52 }, resolved_strike: 152.5 });
     const quote = await p;
-    const m = formatQuantoSpill({
+    const m = formatPremiumSpill({
       premium: quote.greeks.price,
       greeks: quote.greeks,
       conventions: quote.conventions,

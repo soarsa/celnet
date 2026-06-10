@@ -127,7 +127,7 @@
       </bt:ShortStrings>
       <bt:LongStrings>
         <bt:String id="Celnet.Taskpane.Tooltip" DefaultValue="Open the Celnet ticket: RFQ, click-to-trade, and surface contribution." />
-        <bt:String id="Celnet.GetStarted.Description" DefaultValue="Use =CELNET.PRICE, =CELNET.GREEKS, =CELNET.SURFACE, =CELNET.MARKSURFACE, =CELNET.RFQ, =CELNET.BARRIER, =CELNET.DIGITAL, =CELNET.TOUCH, =CELNET.VARSWAP, =CELNET.VOLSWAP, =CELNET.ASIAN, =CELNET.FORWARDSTART, =CELNET.CLIQUET, =CELNET.QUANTO, =CELNET.TARF, =CELNET.ACCUMULATOR, =CELNET.LOOKBACK, =CELNET.AMERICAN, =CELNET.BASKET, =CELNET.SUBSCRIBE, =CELNET.SERIES, =CELNET.MARK, =CELNET.RISK, =CELNET.POSITIONS and =CELNET.LIMITS, and open the Celnet Ticket task pane." />
+        <bt:String id="Celnet.GetStarted.Description" DefaultValue="Build any instrument with =CELNET.INSTRUMENT(underlier, product, terms) — FX, metals, equity, commodity, crypto — then price it with =CELNET.PRICE, =CELNET.GREEKS, =CELNET.RFQ or =CELNET.SUBSCRIBE. Also =CELNET.SURFACE, =CELNET.MARKSURFACE, =CELNET.SERIES, =CELNET.MARK, =CELNET.RISK, =CELNET.POSITIONS, =CELNET.LIMITS and =CELNET.STATUS, and the Celnet Ticket task pane." />
       </bt:LongStrings>
     </Resources>
   </VersionOverrides>

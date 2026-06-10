@@ -111,6 +111,17 @@ export function parsePair(raw: string): CcyPair {
   return { base: s.slice(0, 3), quote: s.slice(3, 6) };
 }
 
+/**
+ * Resolve a pair argument that is either the trader-typed string (`"EURUSD"`) or
+ * an already-parsed `CcyPair` (the polymorphic `CELNET.INSTRUMENT` path passes the
+ * underlier's leg-string projection, whose legs — an equity ticker, a commodity
+ * symbol, a crypto coin — are not constrained to the 6-letter FX shape). The
+ * string form keeps the exact legacy parse, so every FX flow is byte-unchanged.
+ */
+function resolvePair(p: string | CcyPair): CcyPair {
+  return typeof p === "string" ? parsePair(p) : p;
+}
+
 /** Years-per-unit for converting a parsed tenor to the contract `expiryYears`. */
 const YEARS_PER_UNIT: Record<TenorUnit, number> = {
   OVERNIGHT: 1 / 365,
@@ -417,11 +428,31 @@ export function parseRiskScope(raw: string | undefined): RiskScope | undefined {
 
 /** The fully-parsed inputs a vanilla CELNET.* function shapes into a request. */
 export interface VanillaArgs {
-  readonly pair: string;
+  readonly pair: string | CcyPair;
   readonly tenor: string;
   readonly strikeOrDelta: string | number;
   readonly callPut: string;
   readonly notional: number;
+}
+
+/**
+ * Build the FX `pair` leg-string projection an `Underlying` overlays onto the
+ * instrument (exported for the polymorphic `CELNET.INSTRUMENT` underlier path —
+ * the projection keeps the FX-keyed surfaces total for every asset class).
+ */
+export function underlyingPairProjection(u: Underlying): CcyPair {
+  switch (u.kind) {
+    case "fx":
+      return u.fx;
+    case "metal":
+      return { base: METAL_ISO_CODE[u.metal.metal], quote: u.metal.quote };
+    case "equity":
+      return { base: u.equity.symbol.ticker, quote: u.equity.currency };
+    case "commodity":
+      return { base: u.commodity.symbol.ticker, quote: u.commodity.currency };
+    case "digitalAsset":
+      return { base: u.digitalAsset.base, quote: u.digitalAsset.quote };
+  }
 }
 
 /**
@@ -435,7 +466,7 @@ export function shapeVanillaInstrument(args: VanillaArgs): Instrument {
   }
   const { tenor, expiryYears } = parseTenor(args.tenor);
   return {
-    pair: parsePair(args.pair),
+    pair: resolvePair(args.pair),
     tenor,
     expiryYears,
     quantity: { notional: args.notional, baseCcy: true },
@@ -452,7 +483,7 @@ export function shapeVanillaInstrument(args: VanillaArgs): Instrument {
 
 /** The fully-parsed inputs a model-selected surface calibration shapes. */
 export interface CalibrateArgs {
-  readonly pair: string;
+  readonly pair: string | CcyPair;
   readonly tenor: string;
   readonly model: string | undefined;
   readonly atmVol: number;
@@ -482,7 +513,7 @@ export interface ShapedCalibration {
  * layer turns this into the `mark_surface` body (broker_quotes + smile_model).
  */
 export function shapeCalibration(args: CalibrateArgs): ShapedCalibration {
-  const pair = parsePair(args.pair);
+  const pair = resolvePair(args.pair);
   const { expiryYears } = parseTenor(args.tenor);
   const model = parseSmileModel(args.model);
   if (!Number.isFinite(args.atmVol) || args.atmVol <= 0 || args.atmVol >= 5) {
@@ -562,7 +593,7 @@ export function parseAsianMethod(raw: string | undefined): AsianMethod {
 
 /** The fully-parsed inputs a swap CELNET.* function shapes into a request. */
 export interface SwapArgs {
-  readonly pair: string;
+  readonly pair: string | CcyPair;
   readonly tenor: string;
   readonly notional: number;
   /** Fixed strike vol; `0`/absent ⇒ a fresh request reading the fair strike off the response. */
@@ -570,7 +601,7 @@ export interface SwapArgs {
 }
 
 /** Validate the common (pair, tenor, notional) of a swap/Asian request. */
-function shapeSwapBase(args: { pair: string; tenor: string; notional: number }): {
+function shapeSwapBase(args: { pair: string | CcyPair; tenor: string; notional: number }): {
   pair: CcyPair;
   tenor: Tenor;
   expiryYears: number;
@@ -579,7 +610,7 @@ function shapeSwapBase(args: { pair: string; tenor: string; notional: number }):
     throw new ShapingError(`invalid notional \`${args.notional}\``);
   }
   const { tenor, expiryYears } = parseTenor(args.tenor);
-  return { pair: parsePair(args.pair), tenor, expiryYears };
+  return { pair: resolvePair(args.pair), tenor, expiryYears };
 }
 
 /** Validate an optional fixed strike-vol; absent/zero ⇒ 0 (read fair off the response). */
@@ -688,7 +719,7 @@ export function shapeFixingSource(raw: string): FixingSource {
 
 /** Cell arguments for an FX outright forward / swap. */
 export interface ForwardArgs {
-  readonly pair: string;
+  readonly pair: string | CcyPair;
   readonly tenor: string;
   readonly contractRate: number;
   readonly notional: number;
@@ -751,7 +782,7 @@ export function shapeSwap(args: ForwardArgs): Instrument {
 
 /** Cell arguments for a non-deliverable forward. */
 export interface NdfArgs {
-  readonly pair: string;
+  readonly pair: string | CcyPair;
   readonly tenor: string;
   readonly contractRate: number;
   readonly notional: number;
@@ -861,20 +892,78 @@ function shapeCrossAssetNotional(raw: number): number {
   return raw;
 }
 
-/** Build the FX `pair` leg-string projection an `Underlying` overlays onto the instrument. */
-function underlyingPairProjection(u: Underlying): CcyPair {
-  switch (u.kind) {
-    case "fx":
-      return u.fx;
-    case "metal":
-      return { base: METAL_ISO_CODE[u.metal.metal], quote: u.metal.quote };
-    case "equity":
-      return { base: u.equity.symbol.ticker, quote: u.equity.currency };
-    case "commodity":
-      return { base: u.commodity.symbol.ticker, quote: u.commodity.currency };
-    case "digitalAsset":
-      return { base: u.digitalAsset.base, quote: u.digitalAsset.quote };
+/**
+ * Build (and validate) an equity `Underlying` arm — proto `Underlying.equity`
+ * (oneof field 4). Shared by the per-class vanilla shaper and the polymorphic
+ * `CELNET.INSTRUMENT` underlier grammar, so the wire shape is built in ONE place.
+ */
+export function shapeEquityUnderlying(args: {
+  readonly ticker: string;
+  readonly currency: string;
+  readonly venue?: string | undefined;
+}): Underlying {
+  const ticker = args.ticker.trim().toUpperCase();
+  if (ticker.length === 0) throw new ShapingError("equity ticker is required");
+  const currency = args.currency.trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(currency)) {
+    throw new ShapingError(`invalid equity currency \`${args.currency}\` (expected a 3-letter code)`);
   }
+  const equity: EquityRef = {
+    symbol: { ticker, venue: (args.venue ?? "").trim().toUpperCase() },
+    currency,
+  };
+  return { kind: "equity", equity, settlementCcy: currency };
+}
+
+/**
+ * Build (and validate) a commodity `Underlying` arm — proto `Underlying.commodity`
+ * (oneof field 5). Shared by the per-class vanilla shaper and the polymorphic
+ * `CELNET.INSTRUMENT` underlier grammar.
+ */
+export function shapeCommodityUnderlying(args: {
+  readonly symbol: string;
+  readonly currency: string;
+  readonly venue?: string | undefined;
+}): Underlying {
+  const ticker = args.symbol.trim().toUpperCase();
+  if (ticker.length === 0) throw new ShapingError("commodity symbol is required");
+  const currency = args.currency.trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(currency)) {
+    throw new ShapingError(
+      `invalid commodity currency \`${args.currency}\` (expected a 3-letter code)`,
+    );
+  }
+  const commodity: CommodityRef = {
+    symbol: { ticker, venue: (args.venue ?? "").trim().toUpperCase() },
+    currency,
+  };
+  return { kind: "commodity", commodity, settlementCcy: currency };
+}
+
+/**
+ * Build a digital-asset (crypto) `Underlying` arm — proto `Underlying.digital_asset`
+ * (oneof field 6) — from a crypto pair string (`"BTC-USD"`, `"ETH/USDT"`, `"BTCUSD"`).
+ */
+export function shapeCryptoUnderlying(pair: string): Underlying {
+  const digitalAsset = parseCryptoPair(pair);
+  return { kind: "digitalAsset", digitalAsset, settlementCcy: digitalAsset.quote };
+}
+
+/**
+ * Build (and validate) a precious-metal `Underlying` arm — proto `Underlying.metal`
+ * (oneof field 3) — from a metal token (name / ISO X-code) + fiat quote leg.
+ */
+export function shapeMetalUnderlying(args: {
+  readonly metal: string;
+  readonly quote: string;
+}): Underlying {
+  const metal = shapeMetal(args.metal);
+  const quote = args.quote.trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(quote)) {
+    throw new ShapingError(`invalid metal quote \`${args.quote}\` (expected a 3-letter code)`);
+  }
+  const metalPair: MetalPair = { metal, quote };
+  return { kind: "metal", metal: metalPair, settlementCcy: quote };
 }
 
 /**
@@ -933,21 +1022,7 @@ export interface EquityVanillaArgs extends CrossAssetVanillaArgs {
  * (dividend yield as carry `b`). Quote-ccy-margined (LINEAR) settlement.
  */
 export function shapeEquityVanilla(args: EquityVanillaArgs): Instrument {
-  const ticker = args.ticker.trim().toUpperCase();
-  if (ticker.length === 0) throw new ShapingError("equity ticker is required");
-  const currency = args.currency.trim().toUpperCase();
-  if (!/^[A-Z]{3}$/.test(currency)) {
-    throw new ShapingError(`invalid equity currency \`${args.currency}\` (expected a 3-letter code)`);
-  }
-  const equity: EquityRef = {
-    symbol: { ticker, venue: (args.venue ?? "").trim().toUpperCase() },
-    currency,
-  };
-  return shapeCrossAssetVanilla(
-    { kind: "equity", equity, settlementCcy: currency },
-    args,
-    "LINEAR",
-  );
+  return shapeCrossAssetVanilla(shapeEquityUnderlying(args), args, "LINEAR");
 }
 
 /** Cell arguments for a commodity vanilla. */
@@ -963,23 +1038,7 @@ export interface CommodityVanillaArgs extends CrossAssetVanillaArgs {
  * carry `b`). Quote-ccy-margined (LINEAR) settlement.
  */
 export function shapeCommodityVanilla(args: CommodityVanillaArgs): Instrument {
-  const ticker = args.symbol.trim().toUpperCase();
-  if (ticker.length === 0) throw new ShapingError("commodity symbol is required");
-  const currency = args.currency.trim().toUpperCase();
-  if (!/^[A-Z]{3}$/.test(currency)) {
-    throw new ShapingError(
-      `invalid commodity currency \`${args.currency}\` (expected a 3-letter code)`,
-    );
-  }
-  const commodity: CommodityRef = {
-    symbol: { ticker, venue: (args.venue ?? "").trim().toUpperCase() },
-    currency,
-  };
-  return shapeCrossAssetVanilla(
-    { kind: "commodity", commodity, settlementCcy: currency },
-    args,
-    "LINEAR",
-  );
+  return shapeCrossAssetVanilla(shapeCommodityUnderlying(args), args, "LINEAR");
 }
 
 /** Cell arguments for a digital-asset (crypto) vanilla. */
@@ -1020,12 +1079,10 @@ export function parseCryptoPair(raw: string): CryptoPair {
  * `Instrument.settlement_style` (field 29) — the inverse-perpetual desk's payoff.
  */
 export function shapeCryptoVanilla(args: CryptoVanillaArgs): Instrument {
-  const digitalAsset = parseCryptoPair(args.pair);
-  const settlementStyle = shapeSettlementStyle(args.settlementStyle);
   return shapeCrossAssetVanilla(
-    { kind: "digitalAsset", digitalAsset, settlementCcy: digitalAsset.quote },
+    shapeCryptoUnderlying(args.pair),
     args,
-    settlementStyle,
+    shapeSettlementStyle(args.settlementStyle),
   );
 }
 
@@ -1036,17 +1093,7 @@ export function shapeCryptoVanilla(args: CryptoVanillaArgs): Instrument {
  * total. Quote-ccy-margined (LINEAR) settlement.
  */
 export function shapeMetalVanilla(args: MetalVanillaArgs): Instrument {
-  const metal = shapeMetal(args.metal);
-  const quote = args.quote.trim().toUpperCase();
-  if (!/^[A-Z]{3}$/.test(quote)) {
-    throw new ShapingError(`invalid metal quote \`${args.quote}\` (expected a 3-letter code)`);
-  }
-  const metalPair: MetalPair = { metal, quote };
-  return shapeCrossAssetVanilla(
-    { kind: "metal", metal: metalPair, settlementCcy: quote },
-    args,
-    "LINEAR",
-  );
+  return shapeCrossAssetVanilla(shapeMetalUnderlying(args), args, "LINEAR");
 }
 
 /** Cell arguments for a precious-metal vanilla. */
@@ -1057,7 +1104,7 @@ export interface MetalVanillaArgs extends CrossAssetVanillaArgs {
 
 /** The fully-parsed inputs an Asian CELNET.* function shapes into a request. */
 export interface AsianArgs {
-  readonly pair: string;
+  readonly pair: string | CcyPair;
   readonly tenor: string;
   readonly strike: string | number;
   readonly callPut: string;
@@ -1164,9 +1211,9 @@ function shapeMoneyness(raw: number): number {
   return raw;
 }
 
-/** The fully-parsed inputs the CELNET.FORWARDSTART function shapes into a request. */
+/** The fully-parsed inputs the FORWARDSTART family (CELNET.INSTRUMENT spec) shapes into a request. */
 export interface ForwardStartArgs {
-  readonly pair: string;
+  readonly pair: string | CcyPair;
   readonly tenor: string;
   readonly callPut: string;
   readonly moneyness: number;
@@ -1203,9 +1250,9 @@ export function shapeForwardStart(args: ForwardStartArgs): Instrument {
   };
 }
 
-/** The fully-parsed inputs the CELNET.CLIQUET function shapes into a request. */
+/** The fully-parsed inputs the CLIQUET family (CELNET.INSTRUMENT spec) shapes into a request. */
 export interface CliquetArgs {
-  readonly pair: string;
+  readonly pair: string | CcyPair;
   readonly tenor: string;
   readonly callPut: string;
   readonly moneyness: number;
@@ -1297,9 +1344,9 @@ export function cliquetIsMonteCarlo(c: Cliquet): boolean {
   );
 }
 
-/** The fully-parsed inputs the CELNET.QUANTO function shapes into a request. */
+/** The fully-parsed inputs the QUANTO family (CELNET.INSTRUMENT spec) shapes into a request. */
 export interface QuantoArgs {
-  readonly pair: string;
+  readonly pair: string | CcyPair;
   readonly tenor: string;
   readonly callPut: string;
   readonly strike: string | number;
@@ -1427,7 +1474,7 @@ export function parseBasketKind(raw: string | undefined): BasketKind {
 /** Arguments to shape a correlated multi-asset basket from worksheet cells. */
 export interface BasketArgs {
   /** The settlement / numeraire pair (the top-level instrument pair). */
-  readonly pair: string;
+  readonly pair: string | CcyPair;
   readonly tenor: string;
   readonly notional: number;
   /** Call or put on the aggregated underlying. */
@@ -1647,9 +1694,9 @@ export function parseLookbackMonitoring(raw: string | undefined): LookbackMonito
   }
 }
 
-/** The fully-parsed inputs the CELNET.TARF function shapes into a request. */
+/** The fully-parsed inputs the TARF family (CELNET.INSTRUMENT spec) shapes into a request. */
 export interface TarfArgs {
-  readonly pair: string;
+  readonly pair: string | CcyPair;
   readonly tenor: string;
   readonly callPut: string;
   readonly strike: string | number;
@@ -1709,9 +1756,9 @@ export function shapeTarf(args: TarfArgs): Instrument {
   };
 }
 
-/** The fully-parsed inputs the CELNET.ACCUMULATOR function shapes into a request. */
+/** The fully-parsed inputs the ACCUMULATOR family (CELNET.INSTRUMENT spec) shapes into a request. */
 export interface AccumulatorArgs {
-  readonly pair: string;
+  readonly pair: string | CcyPair;
   readonly tenor: string;
   readonly pivot: string | number;
   readonly barrier: number;
@@ -1772,9 +1819,9 @@ export function shapeAccumulator(args: AccumulatorArgs): Instrument {
   };
 }
 
-/** The fully-parsed inputs the CELNET.LOOKBACK function shapes into a request. */
+/** The fully-parsed inputs the LOOKBACK family (CELNET.INSTRUMENT spec) shapes into a request. */
 export interface LookbackArgs {
-  readonly pair: string;
+  readonly pair: string | CcyPair;
   readonly tenor: string;
   readonly callPut: string;
   readonly notional: number;
@@ -1867,9 +1914,9 @@ export function parseExerciseStyle(raw: string | undefined): ExerciseStyle {
   );
 }
 
-/** The fully-parsed inputs the CELNET.AMERICAN function shapes into a request. */
+/** The fully-parsed inputs the AMERICAN family (CELNET.INSTRUMENT spec) shapes into a request. */
 export interface AmericanArgs {
-  readonly pair: string;
+  readonly pair: string | CcyPair;
   readonly tenor: string;
   /** The strike `K` — must be an absolute level (an American is struck at a level). */
   readonly strike: string | number;
@@ -2143,9 +2190,9 @@ function shapeBarrierLevel(raw: number, what: string): number {
   return raw;
 }
 
-/** The fully-parsed inputs the CELNET.BARRIER function shapes (single OR double). */
+/** The fully-parsed inputs the BARRIER family (CELNET.INSTRUMENT spec) shapes (single OR double). */
 export interface BarrierArgs {
-  readonly pair: string;
+  readonly pair: string | CcyPair;
   readonly tenor: string;
   readonly strikeOrDelta: string | number;
   readonly callPut: string;
@@ -2240,9 +2287,9 @@ export function shapeBarrier(args: BarrierArgs): Instrument {
   return { ...base, product: { kind: "singleBarrier", singleBarrier } };
 }
 
-/** The fully-parsed inputs the CELNET.WINDOWBARRIER function shapes into a request. */
+/** The fully-parsed inputs the WINDOWBARRIER family (CELNET.INSTRUMENT spec) shapes into a request. */
 export interface WindowBarrierArgs {
-  readonly pair: string;
+  readonly pair: string | CcyPair;
   readonly tenor: string;
   readonly strikeOrDelta: string | number;
   readonly callPut: string;
@@ -2321,9 +2368,9 @@ export function shapeWindowBarrier(args: WindowBarrierArgs): Instrument {
   };
 }
 
-/** The fully-parsed inputs the CELNET.DIGITAL function shapes into a request. */
+/** The fully-parsed inputs the DIGITAL family (CELNET.INSTRUMENT spec) shapes into a request. */
 export interface DigitalArgs {
-  readonly pair: string;
+  readonly pair: string | CcyPair;
   readonly tenor: string;
   readonly strike: string | number;
   readonly callPut: string;
@@ -2367,9 +2414,9 @@ export function shapeDigital(args: DigitalArgs): Instrument {
   };
 }
 
-/** The fully-parsed inputs the CELNET.TOUCH function shapes into a request. */
+/** The fully-parsed inputs the TOUCH family (CELNET.INSTRUMENT spec) shapes into a request. */
 export interface TouchArgs {
-  readonly pair: string;
+  readonly pair: string | CcyPair;
   readonly tenor: string;
   readonly notional: number;
   readonly kind?: string | undefined;
@@ -2577,7 +2624,7 @@ export function formatRfqSpill(r: RfqResult): SpillMatrix {
   ];
 }
 
-/** The decoded fields a CELNET.VARSWAP spill renders (fair variance + fair vol). */
+/** The decoded fields a VARSWAP-family spill renders (fair variance + fair vol). */
 export interface VarSwapResult {
   /** The fair variance strike `K_var` (the server's `resolved_strike` / `greeks.price`). */
   readonly fairVariance: number;
@@ -2587,7 +2634,7 @@ export interface VarSwapResult {
 }
 
 /**
- * Format CELNET.VARSWAP as a labelled 2×2 spill — `["fair_variance", K_var]` and
+ * Format a VARSWAP-family quote as a labelled 2×2 spill — `["fair_variance", K_var]` and
  * `["fair_vol", √K_var]` — followed by a convention footer. The fair vol is the
  * √ of the fair variance the server returns; both are shown so the desk reads the
  * variance strike AND its vol-equivalent without a hidden √.
@@ -2601,7 +2648,7 @@ export function formatVarSwapSpill(r: VarSwapResult): SpillMatrix {
   ];
 }
 
-/** The decoded fields a CELNET.VOLSWAP spill renders (the convexity-adjusted fair vol). */
+/** The decoded fields a VOLSWAP-family spill renders (the convexity-adjusted fair vol). */
 export interface VolSwapResult {
   /** The fair volatility strike `K_vol` (the server's `resolved_strike` / `greeks.price`). */
   readonly fairVol: number;
@@ -2611,7 +2658,7 @@ export interface VolSwapResult {
 }
 
 /**
- * Format CELNET.VOLSWAP as a labelled 1×2 spill `["fair_vol", K_vol]` followed by
+ * Format a VOLSWAP-family quote as a labelled 1×2 spill `["fair_vol", K_vol]` followed by
  * a convention footer. `K_vol` is the convexity-adjusted fair volatility strike,
  * strictly below `√K_var` for any non-degenerate smile.
  */
@@ -2622,155 +2669,27 @@ export function formatVolSwapSpill(r: VolSwapResult): SpillMatrix {
   ];
 }
 
-/** The decoded fields a CELNET.ASIAN spill renders (the discounted option PV + Greeks). */
-export interface AsianResult {
-  /** The discounted Asian-option premium (the server's `greeks.price`). */
-  readonly premium: number;
-  readonly greeks: Greeks;
-  readonly conventions: Conventions;
-  readonly surfaceVersion: bigint | undefined;
-  readonly epochNanos: bigint;
-}
-
 /**
- * Format CELNET.ASIAN as a labelled spill: `["premium", PV]`, then the 13 risk
- * Greeks the server returns (the same set/order as CELNET.GREEKS), then a
- * convention footer. The Asian carries a genuine discounted PV + the full FD
- * Greek set (unlike the swaps, whose headline is a fair strike).
+ * The decoded fields a premium-headline product spill renders: the discounted PV
+ * (the server's `greeks.price`), the OPTIONAL Monte-Carlo standard error, the 13
+ * risk Greeks, and the convention footer. This is the ONE shared spill geometry
+ * for every product whose headline is a premium (barrier, window barrier, digital,
+ * touch, Asian, forward-start, cliquet, quanto, TARF, accumulator, lookback,
+ * American, basket, forward/swap/NDF, and a vanilla priced via an instrument
+ * token). The swaps (variance/volatility) keep their fair-strike spills.
  */
-export function formatAsianSpill(r: AsianResult): SpillMatrix {
-  const rows: SpillMatrix = [["premium", r.premium]];
-  for (const g of GREEK_ROWS) rows.push([g.label, r.greeks[g.key]]);
-  rows.push([conventionFooter(r.conventions, r.surfaceVersion, r.epochNanos)]);
-  return rows;
-}
-
-/** The decoded fields a CELNET.FORWARDSTART spill renders (discounted PV + Greeks). */
-export interface ForwardStartResult {
-  /** The discounted forward-start premium (the server's `greeks.price`). */
-  readonly premium: number;
-  readonly greeks: Greeks;
-  readonly conventions: Conventions;
-  readonly surfaceVersion: bigint | undefined;
-  readonly epochNanos: bigint;
-}
-
-/**
- * Format CELNET.FORWARDSTART as a labelled spill: `["premium", PV]`, then the 13
- * risk Greeks the server returns (the same set/order as CELNET.GREEKS), then a
- * convention footer. The forward-start is a closed-form (dual-carry strike-reset)
- * price — exact, so no standard-error row.
- */
-export function formatForwardStartSpill(r: ForwardStartResult): SpillMatrix {
-  const rows: SpillMatrix = [["premium", r.premium]];
-  for (const g of GREEK_ROWS) rows.push([g.label, r.greeks[g.key]]);
-  rows.push([conventionFooter(r.conventions, r.surfaceVersion, r.epochNanos)]);
-  return rows;
-}
-
-/** The decoded fields a CELNET.CLIQUET spill renders (discounted PV + optional MC stderr + Greeks). */
-export interface CliquetResult {
-  /** The discounted cliquet premium (the server's `greeks.price`). */
-  readonly premium: number;
-  /**
-   * The Monte-Carlo standard error of the premium (the server's `price_std_error`),
-   * present ONLY for a clamped cliquet (MC-priced); `undefined` for a plain ratchet
-   * (exact closed-form sum of legs). Surfaced honestly so a clamped premium is never
-   * mistaken for closed-form precision.
-   */
-  readonly stdError: number | undefined;
-  readonly greeks: Greeks;
-  readonly conventions: Conventions;
-  readonly surfaceVersion: bigint | undefined;
-  readonly epochNanos: bigint;
-}
-
-/**
- * Format CELNET.CLIQUET as a labelled spill: `["premium", PV]`, then — ONLY when
- * the server returned a Monte-Carlo standard error (a clamped cliquet) — a
- * `["std_error", σ̄]` row, then the 13 risk Greeks, then a convention footer. A
- * plain ratchet (closed-form, exact) omits the std-error row entirely, so the
- * geometry is honest about whether the headline carries MC noise.
- */
-export function formatCliquetSpill(r: CliquetResult): SpillMatrix {
-  const rows: SpillMatrix = [["premium", r.premium]];
-  if (r.stdError !== undefined) rows.push(["std_error", r.stdError]);
-  for (const g of GREEK_ROWS) rows.push([g.label, r.greeks[g.key]]);
-  rows.push([conventionFooter(r.conventions, r.surfaceVersion, r.epochNanos)]);
-  return rows;
-}
-
-/** The decoded fields a CELNET.QUANTO spill renders (discounted PV + Greeks). */
-export interface QuantoResult {
-  /** The discounted quanto-option premium (the server's `greeks.price`). */
-  readonly premium: number;
-  readonly greeks: Greeks;
-  readonly conventions: Conventions;
-  readonly surfaceVersion: bigint | undefined;
-  readonly epochNanos: bigint;
-}
-
-/**
- * Format CELNET.QUANTO as a labelled spill: `["premium", PV]`, then the 13 risk
- * Greeks the server returns (the same set/order as CELNET.GREEKS), then a
- * convention footer. The quanto is a closed-form (quanto-adjusted) price — exact,
- * so no standard-error row.
- */
-export function formatQuantoSpill(r: QuantoResult): SpillMatrix {
-  const rows: SpillMatrix = [["premium", r.premium]];
-  for (const g of GREEK_ROWS) rows.push([g.label, r.greeks[g.key]]);
-  rows.push([conventionFooter(r.conventions, r.surfaceVersion, r.epochNanos)]);
-  return rows;
-}
-
-/**
- * The decoded fields a barrier / digital / touch spill renders (discounted PV +
- * the 13 Greeks). These already-contracted exotics are priced by the server's
- * exact/PDE closed forms — NO Monte-Carlo standard error (the server stamps
- * `std_error: None` for all four), so the spill carries no std-error row, exactly
- * like the forward-start / quanto closed-form spills.
- */
-export interface ExoticPremiumResult {
-  /** The discounted premium (the server's `greeks.price`). */
-  readonly premium: number;
-  readonly greeks: Greeks;
-  readonly conventions: Conventions;
-  readonly surfaceVersion: bigint | undefined;
-  readonly epochNanos: bigint;
-}
-
-/**
- * Format a barrier / digital / touch product as a labelled spill: `["premium", PV]`,
- * then the 13 risk Greeks the server returns (the same set/order as CELNET.GREEKS),
- * then a convention footer. Shared by CELNET.BARRIER / DIGITAL / TOUCH — these
- * products are priced exactly (closed-form / PDE), so there is no standard-error
- * row (mirrors `formatForwardStartSpill` / `formatQuantoSpill`).
- */
-export function formatExoticPremiumSpill(r: ExoticPremiumResult): SpillMatrix {
-  const rows: SpillMatrix = [["premium", r.premium]];
-  for (const g of GREEK_ROWS) rows.push([g.label, r.greeks[g.key]]);
-  rows.push([conventionFooter(r.conventions, r.surfaceVersion, r.epochNanos)]);
-  return rows;
-}
-
-/**
- * The decoded fields a path-dependent product spill renders (discounted PV, the
- * optional MC standard error, the 13 Greeks, and the convention footer). Shared by
- * CELNET.TARF / ACCUMULATOR / LOOKBACK: the `stdError` is present ONLY for a
- * Monte-Carlo-priced product (always for TARF/accumulator; for a DISCRETE
- * lookback) and `undefined` for the exact CONTINUOUS lookback, so a cell never
- * mistakes a closed-form price for an MC estimate (or vice-versa).
- */
-export interface PathDependentResult {
+export interface PremiumResult {
   /** The discounted premium (the server's `greeks.price`). */
   readonly premium: number;
   /**
-   * The Monte-Carlo standard error of the premium (the server's `price_std_error`),
-   * present ONLY for an MC-priced product; `undefined` for the exact closed-form
-   * (continuous lookback) case. Surfaced honestly so an MC premium is never
-   * mistaken for closed-form precision.
+   * The Monte-Carlo standard error of the premium (the server's
+   * `price_std_error`), present ONLY for an MC-priced request (TARF / accumulator
+   * / basket always; clamped cliquet, DISCRETE lookback, LSM American, MC window
+   * barrier, LSV-MC barrier when stamped); absent/`undefined` for every exact
+   * closed-form / PDE / FD price. Surfaced honestly so an MC premium is never
+   * mistaken for closed-form precision — and vice-versa.
    */
-  readonly stdError: number | undefined;
+  readonly stdError?: number | undefined;
   readonly greeks: Greeks;
   readonly conventions: Conventions;
   readonly surfaceVersion: bigint | undefined;
@@ -2778,16 +2697,14 @@ export interface PathDependentResult {
 }
 
 /**
- * Format a path-dependent product (TARF / accumulator / lookback) as a labelled
- * spill: `["premium", PV]`, then — ONLY when the server returned a Monte-Carlo
- * standard error — a `["std_error", σ̄]` row, then the 13 risk Greeks, then a
- * convention footer. The TARF and accumulator are always MC (so always carry the
- * std-error row); the lookback carries it for the DISCRETE variant only (the
- * CONTINUOUS variant is exact closed form and omits it). The geometry is therefore
- * honest about whether the headline carries MC noise. Shared by CELNET.TARF /
- * ACCUMULATOR / LOOKBACK (mirrors `formatCliquetSpill`).
+ * Format a premium-headline product as a labelled spill: `["premium", PV]`, then —
+ * ONLY when a Monte-Carlo standard error is supplied — a `["std_error", σ̄]` row,
+ * then the 13 risk Greeks (the same set/order as CELNET.GREEKS), then a convention
+ * footer. The geometry is honest about whether the headline carries MC noise: the
+ * caller gates `stdError` on the shaped product (e.g. `cliquetIsMonteCarlo`), so a
+ * closed-form price never surfaces a stray precision claim.
  */
-export function formatPathDependentSpill(r: PathDependentResult): SpillMatrix {
+export function formatPremiumSpill(r: PremiumResult): SpillMatrix {
   const rows: SpillMatrix = [["premium", r.premium]];
   if (r.stdError !== undefined) rows.push(["std_error", r.stdError]);
   for (const g of GREEK_ROWS) rows.push([g.label, r.greeks[g.key]]);
@@ -3112,6 +3029,12 @@ function canonicalInstrument(i: Instrument): unknown {
     // the supported products), so two cells that differ only in model must NOT
     // coalesce onto one subscription. Absent ⇒ DEFAULT (the canonical default).
     pm: i.pricingModel ?? "DEFAULT",
+    // The cross-asset identity: two instruments that share a pair PROJECTION but
+    // differ in the underlying arm (e.g. an equity ticker colliding with a crypto
+    // coin) or in settlement mechanics (LINEAR vs the coin-margined 1/S_T form)
+    // must NOT coalesce. Absent ⇒ the FX projection / LINEAR (canonical defaults).
+    u: i.underlying ?? null,
+    ss: i.settlementStyle ?? "LINEAR",
     product,
   };
 }
