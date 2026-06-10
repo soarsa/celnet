@@ -142,7 +142,7 @@ audited config and a CI matrix leg:
 | `celnet-surface`   | `.config/mutants-surface.toml`   | `just mutants-gate-surface` (`-arbitrage` for the proven slice) | `mutation-gate-numerics` (matrix leg) | arbitrage.rs **MEASURED green locally**; crate-wide CI-run |
 | `celnet-exotics`   | `.config/mutants-exotics.toml`   | `just mutants-gate-exotics`   | `mutation-gate-numerics` (matrix leg) | wired; baseline CI-run |
 | `celnet-risk-cube` | `.config/mutants-risk-cube.toml` | `just mutants-gate-risk-cube` | `mutation-gate-numerics` (matrix leg) | wired; baseline CI-run |
-| `celnet-xva`       | `.config/mutants-xva.toml`       | `just mutants-gate-xva`       | `mutation-gate-numerics` (matrix leg) | wired; baseline CI-run |
+| `celnet-xva`       | `.config/mutants-xva.toml`       | `just mutants-gate-xva`       | `mutation-gate-numerics` (matrix leg) | **MEASURED green locally** (W6 — see below) |
 | `celnet-qmc`       | `.config/mutants-qmc.toml`       | `just mutants-gate-qmc`       | `mutation-gate-numerics` (matrix leg) | **MEASURED green locally** (W6 — see below) |
 
 Each config exits non-zero on ANY non-equivalent survivor, exactly like the
@@ -260,6 +260,47 @@ the Owen scramble.
   reappeared as MISSED on the next run — the gate caught its own stale
   anchor, but after ANY edit to a gated file, re-verify the `exclude_re`
   line anchors.
+
+#### `celnet-xva` — measured baseline (W6 analytics-rigor wave, crate-wide green)
+
+The XVA crate (CVA/DVA/FVA aggregation + piecewise-hazard survival curve +
+low-discrepancy exposure simulation + synthetic netting sets) computes
+regulatory/accounting numbers but had only 13 thin in-module tests. Per the W6
+plan (`docs/plan/W6-ANALYTICS-RIGOR-PLAN.md` §3.2) the gap was closed
+**pre-kill-first**: `tests/closed_form_oracle.rs` (32 tests) pins every module
+against an independent oracle *before* the run — the documented CVA/DVA/FVA
+quadrature re-derived longhand with raw std `exp` (single-interval,
+non-uniform, and 101-node grids; both FVA signs), exact survival identities
+(flat `Λ(t) = λ·t` to bits, an independent knot-overlap partial-sum
+recomputation of the piecewise hazard integral, `S = exp(−Λ)` and
+`S(a) − S(b)` to bits), the total-adjustment decomposition `CVA − DVA + FVA`
+to bits, a from-scratch two-rate vanilla re-derivation (`Φ` via `erfc`, std
+logs/exps) for every netting-set mark including the matured `τ ≤ 0 ⇒ 0`
+boundary and signed notionals, frozen-bits exposure rows (the fx_byte_identity
+house pattern) for two fixed netting sets chosen so BOTH `max(·, 0)` exposure
+floors bite at the pinned nodes, and the full panic contract of every
+constructor/aggregator assert driven on both sides of its boundary
+(out-of-range LGD, negative hazards, non-increasing pillars/grids, zero
+steps/paths/horizon).
+
+- **Raw crate-wide run** (no exclusions, aarch64-apple-darwin, cargo-mutants
+  27.0.0, toolchain 1.96.0, `RUSTC_WRAPPER=""`): **`170 mutants tested in 2m:
+  3 missed, 161 caught, 6 unviable`** — zero timeouts. All 3 raw survivors
+  belong to ONE equivalence cluster: the `cumulative_hazard` segment-scan
+  early-return optimization (`survival.rs:83` `hi > lo` → `>=`, which differs
+  only at `t = 0` where it adds exactly `+0.0`; `survival.rs:93` `&&` → `||`
+  and `>` → `>=` on the post-loop extrapolation guard, whose both conjuncts
+  are provably true whenever the line is reachable). Each was EXCLUDED with
+  the reachability proof inline in `.config/mutants-xva.toml` and
+  hand-reproduced — **full suite green with the mutant applied** — never to
+  hide a value gap. The 6 unviable are `Default::default()` replacements on
+  types that implement no `Default`.
+- **Canonical gate run** (clean slate, `.config/mutants-xva.toml`,
+  `--test-tool=cargo --jobs 3 --minimum-test-timeout=240`,
+  `RUSTC_WRAPPER=""`): **`167 mutants tested in 3m: 161 caught, 6 unviable`**
+  — **zero missed, zero timeouts, real exit 0**. The enforceable bar
+  (`just mutants-gate-xva`, CI matrix leg) is **zero non-equivalent
+  survivors** with all three exclusions line-anchored and justified inline.
 
 ### Infra-crate mutation gate — `celnet-fanout` (W6, MEASURED green locally)
 

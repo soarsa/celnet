@@ -862,6 +862,7 @@ dependencies = [
 name = "celnet-xva"
 version = "0.0.0"
 dependencies = [
+ "celnet-core",
  "celnet-qmc",
  "celnet-types",
  "celnet-vanilla",
