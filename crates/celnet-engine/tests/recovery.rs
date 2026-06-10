@@ -24,16 +24,21 @@ use celnet_engine::rt::{BookEntry, BookState};
 use celnet_engine::{DurableBook, recover};
 use celnet_types::{CcyPair, Greeks, OptionType, Tenor};
 
-/// A unique temp journal path for this test run (PID + nanos), so concurrent
-/// nextest binaries never collide on the same file.
+/// A unique temp journal path: PID for cross-process uniqueness, a process-wide
+/// atomic counter for intra-process uniqueness (parallel test threads can
+/// observe the same clock tick, so nanos alone collide — two tests would then
+/// interleave appends into one file and corrupt it), and nanos for uniqueness
+/// across reused PIDs.
 fn temp_journal_path() -> std::path::PathBuf {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut p = std::env::temp_dir();
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock after epoch")
         .as_nanos();
     p.push(format!(
-        "celnet-engine-recovery-{}-{nanos}.journal",
+        "celnet-engine-recovery-{}-{nanos}-{n}.journal",
         std::process::id()
     ));
     p
