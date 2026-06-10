@@ -354,7 +354,7 @@ mod tests {
         let smile = MarketHedgeSmile::new([kp, f, kc], [0.115, 0.10, 0.115], f, i.t);
 
         // Market price of vanna/volga read off the surface smile at the wings.
-        let market = market_price_of_hedge_smile(&smile, &i, kp, kc);
+        let market = market_price_of_hedge_smile(&smile, &(&i).into(), kp, kc);
         assert!(
             market.volga_price > 0.0,
             "convex smile ⇒ positive volga price"
