@@ -99,6 +99,15 @@ export interface ProductSpec<I> {
   /** The booking models valid for this family (from `bookingModelsFor(kind)`). */
   allowedModels: readonly PricingModel[];
   /**
+   * Declared ONLY by a family with no expiry/tenor dimension (the perpetual
+   * option — the one tenorless, expiryless product on the contract). The ticket
+   * shell disables the expiry controls and shows the `reason` in their place,
+   * and the family's `toInstrument` MUST encode the contract's canonical
+   * no-expiry shape (`expiryYears = 0` exactly, no `tenor`). Absent ⇒ an
+   * ordinary dated product (the expiry controls behave as ever).
+   */
+  noExpiry?: { reason: string };
+  /**
    * Build the wire {@link Instrument} from the trader inputs + market context.
    * MUST match the legacy `buildInstrument` output byte-for-byte. Use
    * {@link withTenorAndModel} to stamp the tenor + booking model identically.
@@ -135,8 +144,22 @@ export function withTenorAndModel(
   ctx: ProductBuildCtx,
   lockedModel?: PricingModel,
 ): Instrument {
+  return withModel({ ...base, tenor: ctx.tenor }, ctx, lockedModel);
+}
+
+/**
+ * Stamp ONLY the booking model (the {@link withTenorAndModel} tail without the
+ * tenor stamp) — for the one tenorless family (the perpetual), whose instrument
+ * must carry NO tenor. DEFAULT stays presence-omitted on the wire exactly as in
+ * {@link withTenorAndModel}.
+ */
+export function withModel(
+  base: Instrument,
+  ctx: ProductBuildCtx,
+  lockedModel?: PricingModel,
+): Instrument {
   const resolved: PricingModel = lockedModel ?? ctx.pricingModel;
-  const instrument: Instrument = { ...base, tenor: ctx.tenor };
+  const instrument: Instrument = { ...base };
   if (resolved !== "DEFAULT") instrument.pricingModel = resolved;
   return instrument;
 }

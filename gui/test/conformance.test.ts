@@ -57,6 +57,7 @@ import type {
   CcyPair,
   Instrument,
   Leg,
+  Margining,
   MarketContext,
   OptionType,
   Product,
@@ -152,6 +153,14 @@ const FAMILIES_COVERED = [
   "accumulator",
   "american",
   "basket",
+  // The new payoff shapes (arms 30/31), both EXACT closed forms the GUI's
+  // offline pricer mirrors faithfully: the perpetual free-boundary closed form
+  // (the corpus oracle is an independent bisection re-derivation) and the
+  // futures-measure listed-future-option closed form (the corpus pins the
+  // published Haug 2nd-ed. §1.2.2 worked market) — the futures price embodies
+  // the carry, so the asset class never enters the formula.
+  "perpetual_option",
+  "listed_future_option",
 ] as const;
 
 /**
@@ -578,6 +587,54 @@ function buildBasket(v: GoldenVector): Instrument {
   });
 }
 
+function buildPerpetual(v: GoldenVector): Instrument {
+  // The ONE tenorless product: the corpus encodes the contract's canonical
+  // no-expiry shape (`expiry_years` exactly 0), asserted here — a perpetual
+  // vector carrying a dated expiry would be a corpus defect, never coerced.
+  const t = num(v.terms, "expiry_years");
+  if (t !== 0) throw new Error(`perpetual vector ${v.id} carries a non-zero expiry ${t}`);
+  return {
+    pair: PAIR,
+    expiryYears: 0,
+    quantity: { notional: 1, baseCcy: true },
+    side: "TWO_WAY",
+    product: {
+      kind: "perpetualOption",
+      perpetualOption: {
+        optionType: optionType(v.terms),
+        strike: num(v.terms, "strike"),
+        notional: num(v.terms, "notional"),
+      },
+    },
+  };
+}
+
+function buildListedFutureOption(v: GoldenVector): Instrument {
+  const margining = str(v.terms, "margining") as Margining;
+  if (margining !== "EQUITY_STYLE" && margining !== "FUTURES_STYLE") {
+    throw new Error(`margining ${margining}`);
+  }
+  const rawSymbol = v.terms["future_symbol"];
+  if (rawSymbol === null || typeof rawSymbol !== "object") {
+    throw new Error("listed_future_option.future_symbol is not an object");
+  }
+  const symbolTerms = rawSymbol as Record<string, unknown>;
+  return instrumentOf(v, {
+    kind: "listedFutureOption",
+    listedFutureOption: {
+      futureSymbol: {
+        ticker: str(symbolTerms, "ticker"),
+        venue: str(symbolTerms, "venue"),
+      },
+      futureExpiryYears: num(v.terms, "future_expiry_years"),
+      optionType: optionType(v.terms),
+      strike: num(v.terms, "strike"),
+      notional: num(v.terms, "notional"),
+      margining,
+    },
+  });
+}
+
 /** Dispatch a vector to the GUI Instrument its family builds. */
 const BUILDERS: Record<(typeof FAMILIES_COVERED)[number], (v: GoldenVector) => Instrument> = {
   vanilla: buildVanilla,
@@ -596,6 +653,8 @@ const BUILDERS: Record<(typeof FAMILIES_COVERED)[number], (v: GoldenVector) => I
   accumulator: buildAccumulator,
   american: buildAmerican,
   basket: buildBasket,
+  perpetual_option: buildPerpetual,
+  listed_future_option: buildListedFutureOption,
 };
 
 // ---------------------------------------------------------------------------

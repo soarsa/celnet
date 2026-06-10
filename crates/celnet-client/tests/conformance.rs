@@ -23,11 +23,12 @@ use std::time::Duration;
 
 use celnet_client::{
     AccumulatorMonitoring, AccumulatorTerms, AmericanTerms, AsianMethod, AsianTerms, BarrierKind,
-    BarrierSide, BarrierTerms, BasketKind, BasketLegTerms, BasketTerms, CliquetTerms, Conventions,
-    DigitalTerms, DoubleBarrierTerms, FixingSource, ForwardSide, ForwardStartTerms, ForwardTerms,
-    InstrumentSpec, Leg, LookbackStyle, MarketContext, NdfTerms, PricedLine, Quantity,
-    QuantoPayoff, QuantoTerms, Side, StrategyKind, StrikeSpec, SwapTerms, TarfRedemption,
-    TarfTerms, TouchTerms,
+    BarrierSide, BarrierTerms, BasketKind, BasketLegTerms, BasketTerms, Ccy, CliquetTerms,
+    CommodityRef, Conventions, DigitalTerms, DoubleBarrierTerms, EquityRef, FixingSource,
+    ForwardSide, ForwardStartTerms, ForwardTerms, InstrumentSpec, Leg, ListedFutureTerms,
+    LookbackStyle, Margining, MarketContext, NdfTerms, PricedLine, Quantity, QuantoPayoff,
+    QuantoTerms, Side, StrategyKind, StrikeSpec, SwapTerms, Symbol, TarfRedemption, TarfTerms,
+    TouchTerms, Underlying,
 };
 use celnet_golden::{FAMILIES, GoldenVector, load_vectors};
 use celnet_types::{CcyPair, OptionType, Tenor};
@@ -378,7 +379,66 @@ fn instrument_of(v: &GoldenVector) -> InstrumentSpec {
             );
             InstrumentSpec::ndf(pair, tenor, t, qty, terms)
         }
+        // The one tenorless, expiryless product: the builder takes neither (it
+        // encodes the contract's canonical `expiry_years = 0` shape), so the
+        // vector's `t = 0` / tenor label never enter.
+        "perpetual_option" => InstrumentSpec::perpetual(
+            pair,
+            qty,
+            side,
+            cp(v.term_str("option_type")),
+            v.term_f64("strike"),
+        ),
+        "listed_future_option" => {
+            let sym = v
+                .terms
+                .get("future_symbol")
+                .expect("listed-future vector carries future_symbol");
+            let future_symbol = Symbol::new(
+                sym.get("ticker").unwrap().as_str().unwrap(),
+                sym.get("venue").unwrap().as_str().unwrap(),
+            );
+            let terms = ListedFutureTerms::new(
+                future_symbol,
+                v.term_f64("future_expiry_years"),
+                cp(v.term_str("option_type")),
+                v.term_f64("strike"),
+            )
+            .margining(margining(v.term_str("margining")));
+            InstrumentSpec::listed_future_option(
+                listed_future_underlying(&v.underlying),
+                tenor,
+                t,
+                qty,
+                side,
+                terms,
+            )
+        }
         other => panic!("conformance: unhandled family `{other}`"),
+    }
+}
+
+/// The premium margining convention a listed-future vector names.
+fn margining(token: &str) -> Margining {
+    match token {
+        "EQUITY_STYLE" => Margining::EquityStyle,
+        "FUTURES_STYLE" => Margining::FuturesStyle,
+        other => panic!("unknown margining `{other}`"),
+    }
+}
+
+/// The asset-class underlying a listed-future vector names: `WTI` is the NYMEX
+/// crude-oil class (a commodity), `ES` the CME E-mini S&P 500 class (an equity
+/// index). The underlying is contract identity for the listed-future arm (the
+/// quoted futures price already embodies the carry, so every asset class prices
+/// by the same closed form) — mapped to a real cross-asset [`Underlying`] here
+/// so the SDK exercises the arm exactly as a trader books it, never through a
+/// stand-in FX pair.
+fn listed_future_underlying(token: &str) -> Underlying {
+    match token {
+        "WTI" => Underlying::Commodity(CommodityRef::new(Symbol::new("WTI", "XNYM"), Ccy::USD)),
+        "ES" => Underlying::Equity(EquityRef::new(Symbol::new("ES", "XCME"), Ccy::USD)),
+        other => panic!("unknown listed-future underlying `{other}`"),
     }
 }
 
@@ -525,9 +585,9 @@ async fn run_conformance(families: &[&str]) {
 }
 
 /// Closed-form / analytic families (fast): vanilla, strategy, all barriers /
-/// digital / touch, var/vol swaps, forward-start, plain cliquet, quanto,
-/// continuous-form references — priced against the QuantLib CSVs / independent
-/// closed forms.
+/// digital / touch, var/vol swaps, forward-start, plain cliquet, quanto, the
+/// perpetual American and the listed-future option, continuous-form references
+/// — priced against the QuantLib CSVs / independent closed forms.
 #[tokio::test]
 async fn sdk_conforms_closed_form_families() {
     run_conformance(&[
@@ -545,6 +605,8 @@ async fn sdk_conforms_closed_form_families() {
         "fx_forward",
         "fx_swap",
         "ndf",
+        "perpetual_option",
+        "listed_future_option",
     ])
     .await;
 }
@@ -596,7 +658,6 @@ async fn sdk_conforms_window_barrier() {
 /// gated separately by the W2 `to_bits` golden.)
 #[tokio::test]
 async fn sdk_conforms_cross_asset_vanilla() {
-    use celnet_client::{Ccy, Underlying};
     use celnet_types::VanillaInputs;
 
     // A non-degenerate 1Y market (spot/vol/rates) shared by every asset class.
@@ -720,7 +781,7 @@ async fn sdk_conforms_cross_asset_vanilla() {
     drop(edge);
 }
 
-/// Reachability backstop: every one of the 21 product-oneof families appears in
+/// Reachability backstop: every one of the 23 product-oneof families appears in
 /// the corpus (the conformance tests above collectively price them all).
 #[tokio::test]
 async fn corpus_covers_all_families() {

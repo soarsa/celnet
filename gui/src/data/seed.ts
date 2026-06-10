@@ -24,6 +24,7 @@ import type {
   Leg,
   LookbackMonitoring,
   LookbackStyle,
+  Margining,
   MarketContext,
   Metal,
   MonitoringStyle,
@@ -34,7 +35,9 @@ import type {
   Side,
   StrategyKind,
   StrikeOrDelta,
+  Symbol,
   TarfRedemption,
+  Tenor,
   TouchKind,
   Underlying,
 } from "./contract";
@@ -908,6 +911,85 @@ function ndfInstrument(
   };
 }
 
+/** The inputs for a perpetual (no-expiry) American option (`product.perpetualOption`). */
+export interface PerpetualTerms {
+  optionType: OptionType;
+  /** Strike `K` (absolute level, quote per 1 unit of base). */
+  strike: number;
+}
+
+/**
+ * A perpetual-option instrument (`product.perpetualOption`, proto field 30) —
+ * the ONE tenorless, expiryless product. A perpetual has no expiry date, so the
+ * instrument carries NO `tenor` (no tenor label exists for it) and the
+ * contract's canonical no-expiry shape `expiryYears = 0` exactly — the server's
+ * term validator rejects any other expiry on this arm as INVALID_ARGUMENT.
+ * There is deliberately no `tenorYears` parameter: a perpetual has none.
+ */
+function perpetualInstrument(pair: CcyPair, notionalMm: number, terms: PerpetualTerms): Instrument {
+  return {
+    pair,
+    expiryYears: 0,
+    quantity: { notional: notionalMm * 1e6, baseCcy: true },
+    side: "TWO_WAY",
+    product: {
+      kind: "perpetualOption",
+      perpetualOption: {
+        optionType: terms.optionType,
+        strike: terms.strike,
+        notional: notionalMm * 1e6,
+      },
+    },
+  };
+}
+
+/** The inputs for an option on a listed future (`product.listedFutureOption`). */
+export interface ListedFutureTerms {
+  /** The listed future contract the option exercises into (ticker + venue MIC). */
+  futureSymbol: Symbol;
+  /** The FUTURE's own expiry (years); `>= expiryYears > 0` — the future outlives the option. */
+  futureExpiryYears: number;
+  optionType: OptionType;
+  /** Strike `K` (absolute level, in the future's quote units). */
+  strike: number;
+  /** Premium margining: EQUITY_STYLE upfront/discounted, FUTURES_STYLE daily-margined. */
+  margining: Margining;
+}
+
+/**
+ * A listed-future-option instrument (`product.listedFutureOption`, proto field
+ * 31). The instrument's tenor/expiry is the OPTION's; the future's own expiry
+ * rides the product body and must satisfy `futureExpiryYears >= expiryYears > 0`
+ * (the future outlives the option — validity-checked server-side). The quoted
+ * futures price already embodies the underlying's carry, so every asset class
+ * prices by the same futures-measure closed form.
+ */
+function listedFutureOptionInstrument(
+  pair: CcyPair,
+  tenorYears: number,
+  notionalMm: number,
+  terms: ListedFutureTerms,
+): Instrument {
+  return {
+    pair,
+    tenor: tenorYearsToTenor(tenorYears),
+    expiryYears: tenorYears,
+    quantity: { notional: notionalMm * 1e6, baseCcy: true },
+    side: "TWO_WAY",
+    product: {
+      kind: "listedFutureOption",
+      listedFutureOption: {
+        futureSymbol: terms.futureSymbol,
+        futureExpiryYears: terms.futureExpiryYears,
+        optionType: terms.optionType,
+        strike: terms.strike,
+        notional: notionalMm * 1e6,
+        margining: terms.margining,
+      },
+    },
+  };
+}
+
 /**
  * The set of products the LOCAL_STOCH_VOL booking model prices (mirrors the
  * server's `lsv_pricer` supported list): vanilla, single (continuous) barrier and
@@ -959,7 +1041,7 @@ function strategyLegs(kind: StrategyKind): Leg[] {
 }
 
 /** Convert a year fraction to the nearest standard Tenor label. */
-export function tenorYearsToTenor(years: number): Instrument["tenor"] {
+export function tenorYearsToTenor(years: number): Tenor {
   if (years <= 2 / 365) return { unit: "OVERNIGHT", count: 1 };
   if (years < 25 / 365) return { unit: "WEEKS", count: Math.round(years * 52) };
   if (years < 360 / 365) return { unit: "MONTHS", count: Math.round(years * 12) };
@@ -1005,4 +1087,6 @@ export {
   swapInstrument,
   ndfInstrument,
   crossAssetVanillaInstrument,
+  perpetualInstrument,
+  listedFutureOptionInstrument,
 };

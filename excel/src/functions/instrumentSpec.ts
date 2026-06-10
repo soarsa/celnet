@@ -65,9 +65,11 @@ import {
   shapeEquityUnderlying,
   shapeForward,
   shapeForwardStart,
+  shapeListedFutureOption,
   shapeLookback,
   shapeMetalUnderlying,
   shapeNdf,
+  shapePerpetual,
   shapeQuanto,
   shapeSettlementStyle,
   shapeSwap,
@@ -411,6 +413,12 @@ interface BuildCommon {
 interface FamilySpec {
   /** The per-family term keys, for the self-documenting unknown-key error. */
   readonly keys: readonly string[];
+  /**
+   * Set on the ONE expiryless family (PERPETUAL): it takes NO tenor — supplying
+   * one (the tenor argument or a ("tenor", …) term) is a typed error, never a
+   * silent drop. Its build never reads `BuildCommon.tenor`.
+   */
+  readonly tenorless?: boolean;
   readonly build: (t: Terms, c: BuildCommon) => Instrument;
 }
 
@@ -803,6 +811,38 @@ const FAMILIES: ReadonlyMap<string, FamilySpec> = new Map<string, FamilySpec>([
         }),
     },
   ],
+  [
+    "PERPETUAL",
+    {
+      keys: ["strike", "callPut"],
+      // The one expiryless product (proto arm 30): no tenor exists for it — the
+      // wire shape is `expiry_years = 0` exactly with NO tenor key, and a
+      // supplied tenor is a typed error (see `shapeSpecInstrument`).
+      tenorless: true,
+      build: (t, c) =>
+        shapePerpetual({
+          pair: c.pair,
+          notional: c.notional,
+          strike: t.reqNum("PERPETUAL", "strike"),
+          callPut: t.reqStr("PERPETUAL", "callPut"),
+        }),
+    },
+  ],
+  [
+    "FUTUREOPTION",
+    {
+      keys: ["strike", "callPut", "futureSymbol", "futureExpiry", "margining"],
+      build: (t, c) =>
+        shapeListedFutureOption({
+          ...c,
+          strike: t.reqNum("FUTUREOPTION", "strike"),
+          callPut: t.reqStr("FUTUREOPTION", "callPut"),
+          futureSymbol: t.reqStr("FUTUREOPTION", "futureSymbol"),
+          futureExpiry: t.reqNum("FUTUREOPTION", "futureExpiry", "futureExpiryYears"),
+          margining: t.optStr("margining"),
+        }),
+    },
+  ],
 ]);
 
 /** Proto product-arm aliases → the canonical trader-facing family name. */
@@ -814,6 +854,8 @@ const FAMILY_ALIASES: ReadonlyMap<string, string> = new Map([
   ["ASIANOPTION", "ASIAN"],
   ["FXFORWARD", "FORWARD"],
   ["FXSWAP", "SWAP"],
+  ["PERPETUALOPTION", "PERPETUAL"],
+  ["LISTEDFUTUREOPTION", "FUTUREOPTION"],
 ]);
 
 /** The canonical family names, for the unknown-family error message. */
@@ -842,7 +884,8 @@ export interface InstrumentSpecArgs {
   readonly product: string;
   /** The 2-column key/value terms range (rows may extend for `legs`/`correlations`). */
   readonly terms: unknown;
-  /** The tenor (e.g. "1Y"); may instead be supplied as a ("tenor", …) term. */
+  /** The tenor (e.g. "1Y"); may instead be supplied as a ("tenor", …) term.
+   *  The no-expiry PERPETUAL family takes none (a supplied tenor is a typed error). */
   readonly tenor?: string | undefined;
   /** The notional (base/asset leg); a ("notional", …) term also works; default 1. */
   readonly notional?: number | undefined;
@@ -859,13 +902,24 @@ export interface InstrumentSpecArgs {
 export function shapeSpecInstrument(args: InstrumentSpecArgs): Instrument {
   const u = parseUnderlier(args.underlier);
   const terms = new Terms(args.terms);
+  const { name, spec } = familyOf(args.product);
 
   const tenorTerm = terms.optStr("tenor");
   if (args.tenor !== undefined && args.tenor.trim() !== "" && tenorTerm !== undefined) {
     throw new ShapingError("tenor supplied twice (both the tenor argument and a (\"tenor\", …) term)");
   }
   const tenor = args.tenor !== undefined && args.tenor.trim() !== "" ? args.tenor : tenorTerm;
-  if (tenor === undefined) {
+  if (spec.tenorless) {
+    // The one expiryless family: a tenor is contradictory, so it is a typed
+    // error — never silently dropped (mirrors the server's exact
+    // `expiry_years == 0` perpetual guard).
+    if (tenor !== undefined) {
+      throw new ShapingError(
+        `${name} is the no-expiry (perpetual) family — it takes no tenor ` +
+          "(omit the tenor argument and any (\"tenor\", …) term)",
+      );
+    }
+  } else if (tenor === undefined) {
     throw new ShapingError("a tenor is required (the tenor argument or a (\"tenor\", …) term, e.g. 1Y)");
   }
 
@@ -877,9 +931,13 @@ export function shapeSpecInstrument(args: InstrumentSpecArgs): Instrument {
   }
   const notional = args.notional ?? notionalTerm ?? 1;
 
-  const { name, spec } = familyOf(args.product);
-  const instrument = spec.build(terms, { pair: u.pair, tenor, notional });
-  terms.assertAllConsumed(name, [...spec.keys, "tenor", "notional"]);
+  // A tenorless family's build never reads `tenor` (see `FamilySpec.tenorless`).
+  const instrument = spec.build(terms, { pair: u.pair, tenor: tenor ?? "", notional });
+  terms.assertAllConsumed(name, [
+    ...spec.keys,
+    ...(spec.tenorless ? [] : ["tenor"]),
+    "notional",
+  ]);
 
   if (u.underlying === undefined) {
     // FX: no overlay — the frame is byte-identical to the legacy per-product one.
@@ -939,5 +997,11 @@ export function decodeInstrumentToken(token: string): Instrument {
 /** A short trader-facing label for a decoded instrument (streaming cells). */
 export function instrumentLabel(instrument: Instrument): string {
   const pair = `${instrument.pair.base}${instrument.pair.quote}`;
-  return `${pair} ${instrument.product.kind} ${instrument.expiryYears.toPrecision(3)}y`;
+  // A perpetual has NO expiry (`expiryYears` is the wire's exact 0): label it
+  // honestly as perpetual rather than as a zero-year maturity.
+  const maturity =
+    instrument.product.kind === "perpetualOption"
+      ? "perp"
+      : `${instrument.expiryYears.toPrecision(3)}y`;
+  return `${pair} ${instrument.product.kind} ${maturity}`;
 }

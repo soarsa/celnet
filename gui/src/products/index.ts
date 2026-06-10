@@ -19,6 +19,7 @@ import {
 import { forwardSpec } from "./forward";
 import { swapSpec } from "./swap";
 import { ndfSpec } from "./ndf";
+import { listedFutureOptionSpec } from "./listedFutureOption";
 import { singleBarrierSpec } from "./singleBarrier";
 import { doubleBarrierSpec } from "./doubleBarrier";
 import { digitalSpec } from "./digital";
@@ -34,6 +35,7 @@ import { accumulatorSpec } from "./accumulator";
 import { lookbackSpec } from "./lookback";
 import { windowBarrierSpec } from "./windowBarrier";
 import { americanSpec } from "./american";
+import { perpetualSpec } from "./perpetual";
 import { basketSpec } from "./basket";
 import { crossAssetSpec } from "./crossAsset";
 
@@ -64,6 +66,9 @@ export const PRODUCT_REGISTRY: readonly AnyProductSpec[] = [
   strangleSpec,
   straddleSpec,
   seagullSpec,
+  // Vanilla on a named listed future (arm 31): futures-measure closed form with
+  // the equity-/futures-style premium-margining convention.
+  listedFutureOptionSpec,
   // Linear (forwards & swaps): the W2 closed-form DCF products.
   forwardSpec,
   swapSpec,
@@ -83,6 +88,9 @@ export const PRODUCT_REGISTRY: readonly AnyProductSpec[] = [
   lookbackSpec,
   windowBarrierSpec,
   americanSpec,
+  // The perpetual (arm 30): the one tenorless, expiryless product — declares
+  // `noExpiry`, so the ticket shell disables the expiry controls for it.
+  perpetualSpec,
   basketSpec,
   // Cross-asset (equity / commodity / crypto / metal) vanilla over the W1
   // `Underlying` oneof + settlement-style seam.

@@ -1,0 +1,137 @@
+[
+  {
+    "id": "perpetual-eurusd-call-atm-continuation",
+    "family": "perpetual_option",
+    "underlying": "EURUSD",
+    "tenor": "PERP",
+    "market": {
+      "spot": 1.1,
+      "vol": 0.105,
+      "r_dom": 0.05,
+      "r_for": 0.01
+    },
+    "terms": {
+      "expiry_years": 0.0,
+      "notional": 1.0,
+      "option_type": "CALL",
+      "strike": 1.1
+    },
+    "expected": {
+      "price": 0.6247924556634318,
+      "price_std_error": null,
+      "oracle": "independent perpetual-American closed form: expanding-bracket bisection of psi(y) = half*sigma^2*y*(y-1) + b*y - r (product form) + libm::pow, code-disjoint from the production quadratic route; continuation region (b = 0.04 < r = 0.05, S below the free boundary)"
+    },
+    "tolerance": {
+      "rel": 1e-9,
+      "abs": 1e-12
+    }
+  },
+  {
+    "id": "perpetual-eurusd-call-carry-dominates",
+    "family": "perpetual_option",
+    "underlying": "EURUSD",
+    "tenor": "PERP",
+    "market": {
+      "spot": 1.25,
+      "vol": 0.1,
+      "r_dom": 0.02,
+      "r_for": -0.005
+    },
+    "terms": {
+      "expiry_years": 0.0,
+      "notional": 1.0,
+      "option_type": "CALL",
+      "strike": 1.1
+    },
+    "expected": {
+      "price": 1.25,
+      "price_std_error": null,
+      "oracle": "independent perpetual-American closed form: expanding-bracket bisection of psi(y) = half*sigma^2*y*(y-1) + b*y - r (product form) + libm::pow, code-disjoint from the production quadratic route; degenerate b = 0.025 >= r = 0.02: never exercised, V = S exactly"
+    },
+    "tolerance": {
+      "rel": 1e-9,
+      "abs": 1e-12
+    }
+  },
+  {
+    "id": "perpetual-eurusd-call-exercised",
+    "family": "perpetual_option",
+    "underlying": "EURUSD",
+    "tenor": "PERP",
+    "market": {
+      "spot": 1.4,
+      "vol": 0.1,
+      "r_dom": 0.05,
+      "r_for": 0.07
+    },
+    "terms": {
+      "expiry_years": 0.0,
+      "notional": 1.0,
+      "option_type": "CALL",
+      "strike": 1.1
+    },
+    "expected": {
+      "price": 0.2999999999999998,
+      "price_std_error": null,
+      "oracle": "independent perpetual-American closed form: expanding-bracket bisection of psi(y) = half*sigma^2*y*(y-1) + b*y - r (product form) + libm::pow, code-disjoint from the production quadratic route; in the exercise region (b = -0.02, S* ~ 1.299 < S): V = S - K exactly"
+    },
+    "tolerance": {
+      "rel": 1e-9,
+      "abs": 1e-12
+    }
+  },
+  {
+    "id": "perpetual-eurusd-put-itm-continuation",
+    "family": "perpetual_option",
+    "underlying": "EURUSD",
+    "tenor": "PERP",
+    "market": {
+      "spot": 1.1,
+      "vol": 0.105,
+      "r_dom": 0.03,
+      "r_for": 0.015
+    },
+    "terms": {
+      "expiry_years": 0.0,
+      "notional": 1.0,
+      "option_type": "PUT",
+      "strike": 1.15
+    },
+    "expected": {
+      "price": 0.1279734106996592,
+      "price_std_error": null,
+      "oracle": "independent perpetual-American closed form: expanding-bracket bisection of psi(y) = half*sigma^2*y*(y-1) + b*y - r (product form) + libm::pow, code-disjoint from the production quadratic route; continuation region (S above the put free boundary)"
+    },
+    "tolerance": {
+      "rel": 1e-9,
+      "abs": 1e-12
+    }
+  },
+  {
+    "id": "perpetual-usdjpy-put-exercised",
+    "family": "perpetual_option",
+    "underlying": "USDJPY",
+    "tenor": "PERP",
+    "market": {
+      "spot": 100.0,
+      "vol": 0.1,
+      "r_dom": 0.04,
+      "r_for": 0.005
+    },
+    "terms": {
+      "expiry_years": 0.0,
+      "notional": 1.0,
+      "option_type": "PUT",
+      "strike": 150.0
+    },
+    "expected": {
+      "price": 50.0,
+      "price_std_error": null,
+      "oracle": "independent perpetual-American closed form: expanding-bracket bisection of psi(y) = half*sigma^2*y*(y-1) + b*y - r (product form) + libm::pow, code-disjoint from the production quadratic route; in the exercise region (S** ~ 131.5 > S): V = K - S exactly"
+    },
+    "tolerance": {
+      "rel": 1e-9,
+      "abs": 1e-12
+    }
+  }
+]

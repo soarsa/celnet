@@ -35,6 +35,14 @@
 //!   `side·notional·(spot·e^{−r_for·t} − K·e^{−r_dom·t})` re-derived here from the
 //!   raw rates (a different rounding route than the production
 //!   `df·(F−K)` form), not read back from `celnet-linear`.
+//! * `perpetual_option` — the perpetual American closed form re-derived by an
+//!   **independently-coded root solve** (expanding-bracket bisection of the
+//!   characteristic quadratic in its `y·(y−1)` product form + `libm::pow`),
+//!   code-disjoint from the production engine's standard-form discriminant +
+//!   cancellation-free pairing + `exp(y·ln x)` route.
+//! * `listed_future_option` — the Black (1976) closed form via the **`libm::erf`**
+//!   normal-CDF route (equity-style discounted / futures-style undiscounted),
+//!   code-disjoint from the production `erfc`-route engine.
 //!
 //! The corpus is **frozen**: it is committed to disk and regenerated only
 //! deliberately via `cargo run -p celnet-golden --bin gen_vectors`. The
@@ -46,10 +54,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// The exact 21 product-oneof family names (mirroring the `celnet.proto`
+/// The exact 23 product-oneof family names (mirroring the `celnet.proto`
 /// `Instrument.product` oneof arm names). A vector's [`GoldenVector::family`] must
-/// be one of these; the corpus is required to cover all 21.
-pub const FAMILIES: [&str; 21] = [
+/// be one of these; the corpus is required to cover all 23.
+pub const FAMILIES: [&str; 23] = [
     "vanilla",
     "strategy",
     "single_barrier",
@@ -72,6 +80,10 @@ pub const FAMILIES: [&str; 21] = [
     "fx_forward",
     "fx_swap",
     "ndf",
+    // Proto arms 30/31 — perpetual (no-expiry) American vanilla and the option on
+    // a listed future (equity-/futures-style premium margining). Closed form, no MC.
+    "perpetual_option",
+    "listed_future_option",
 ];
 
 /// The **cross-asset option families** — the `vanilla` product arm of the
@@ -149,7 +161,7 @@ pub struct Tolerance {
 pub struct GoldenVector {
     /// Stable, unique identifier (e.g. `"vanilla-eurusd-1y-call-k1.12"`).
     pub id: String,
-    /// Exactly one of the 21 product-oneof family names ([`FAMILIES`]).
+    /// Exactly one of the 23 product-oneof family names ([`FAMILIES`]).
     pub family: String,
     /// The underlying currency-pair token (e.g. `"EURUSD"`). For `basket` this is
     /// the settlement / numeraire pair; the underlyings live in `terms.legs`.
@@ -285,7 +297,7 @@ pub fn load_vectors() -> Result<Vec<GoldenVector>, VectorError> {
         let path = vectors_file(family);
         if !path.exists() {
             // A missing file is a real gap the selfcheck catches (it asserts all
-            // 21 families present); skip here so a partial regenerate still loads.
+            // 23 families present); skip here so a partial regenerate still loads.
             continue;
         }
         let text = std::fs::read_to_string(&path).map_err(|e| VectorError::Io {
@@ -306,7 +318,7 @@ pub fn load_vectors() -> Result<Vec<GoldenVector>, VectorError> {
 /// Load the **cross-asset option corpus** ([`CROSS_ASSET_FAMILIES`]) from
 /// `vectors/{equity_option,commodity_option,crypto_option}.json`, sorted by `id`.
 ///
-/// Kept separate from [`load_vectors`] so the proto-product-arm corpus (the 21
+/// Kept separate from [`load_vectors`] so the proto-product-arm corpus (the 23
 /// [`FAMILIES`]) and its `present.len() == FAMILIES.len()` self-check are unaffected
 /// — these files carry an `<asset>_option` family tag that is intentionally NOT a
 /// `oneof product` arm.

@@ -1,0 +1,134 @@
+[
+  {
+    "id": "listedfuture-cl-equitystyle-call-atm",
+    "family": "listed_future_option",
+    "underlying": "WTI",
+    "tenor": "9M",
+    "market": {
+      "spot": 19.0,
+      "vol": 0.28,
+      "r_dom": 0.1,
+      "r_for": 0.1
+    },
+    "terms": {
+      "expiry_years": 0.75,
+      "future_expiry_years": 0.75,
+      "future_symbol": {
+        "ticker": "CL",
+        "venue": "XNYM"
+      },
+      "margining": "EQUITY_STYLE",
+      "notional": 1.0,
+      "option_type": "CALL",
+      "strike": 19.0
+    },
+    "expected": {
+      "price": 1.701050725236268,
+      "price_std_error": null,
+      "oracle": "independent Black-76 (1976) via libm::erf on the futures price (EQUITY_STYLE premium margining); the Haug (2007) 2nd ed. sec 1.2.2 Black-76 worked market (published call 1.7011)"
+    },
+    "tolerance": {
+      "rel": 1e-9,
+      "abs": 1e-9
+    }
+  },
+  {
+    "id": "listedfuture-cl-equitystyle-put-atm",
+    "family": "listed_future_option",
+    "underlying": "WTI",
+    "tenor": "9M",
+    "market": {
+      "spot": 19.0,
+      "vol": 0.28,
+      "r_dom": 0.1,
+      "r_for": 0.1
+    },
+    "terms": {
+      "expiry_years": 0.75,
+      "future_expiry_years": 0.75,
+      "future_symbol": {
+        "ticker": "CL",
+        "venue": "XNYM"
+      },
+      "margining": "EQUITY_STYLE",
+      "notional": 1.0,
+      "option_type": "PUT",
+      "strike": 19.0
+    },
+    "expected": {
+      "price": 1.701050725236268,
+      "price_std_error": null,
+      "oracle": "independent Black-76 (1976) via libm::erf on the futures price (EQUITY_STYLE premium margining); ATM-forward put == call by the discounted parity C - P = df*(F - K) = 0"
+    },
+    "tolerance": {
+      "rel": 1e-9,
+      "abs": 1e-9
+    }
+  },
+  {
+    "id": "listedfuture-es-futuresstyle-call-itm",
+    "family": "listed_future_option",
+    "underlying": "ES",
+    "tenor": "6M",
+    "market": {
+      "spot": 45.0,
+      "vol": 0.35,
+      "r_dom": 0.04,
+      "r_for": 0.04
+    },
+    "terms": {
+      "expiry_years": 0.5,
+      "future_expiry_years": 0.75,
+      "future_symbol": {
+        "ticker": "ES",
+        "venue": "XCME"
+      },
+      "margining": "FUTURES_STYLE",
+      "notional": 1.0,
+      "option_type": "CALL",
+      "strike": 40.0
+    },
+    "expected": {
+      "price": 7.147686932941205,
+      "price_std_error": null,
+      "oracle": "independent Black-76 (1976) via libm::erf on the futures price (FUTURES_STYLE premium margining); daily-margined premium: the undiscounted Black expectation (df never enters)"
+    },
+    "tolerance": {
+      "rel": 1e-9,
+      "abs": 1e-9
+    }
+  },
+  {
+    "id": "listedfuture-es-futuresstyle-put-otm",
+    "family": "listed_future_option",
+    "underlying": "ES",
+    "tenor": "6M",
+    "market": {
+      "spot": 45.0,
+      "vol": 0.35,
+      "r_dom": 0.04,
+      "r_for": 0.04
+    },
+    "terms": {
+      "expiry_years": 0.5,
+      "future_expiry_years": 0.75,
+      "future_symbol": {
+        "ticker": "ES",
+        "venue": "XCME"
+      },
+      "margining": "FUTURES_STYLE",
+      "notional": 1.0,
+      "option_type": "PUT",
+      "strike": 40.0
+    },
+    "expected": {
+      "price": 2.1476869329412,
+      "price_std_error": null,
+      "oracle": "independent Black-76 (1976) via libm::erf on the futures price (FUTURES_STYLE premium margining); undiscounted parity anchor: C - P = F - K exactly (model-free)"
+    },
+    "tolerance": {
+      "rel": 1e-9,
+      "abs": 1e-9
+    }
+  }
+]

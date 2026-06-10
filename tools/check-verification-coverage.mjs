@@ -92,6 +92,8 @@ const FAMILY_TO_PARITY_FILE = {
   fx_forward: 'linear.rs', //  outright forward PV vs independent two-zero-coupon-bond DCF + fair-fwd⇒PV0 / linearity / netting / t→0 intrinsic + hand-pinned literal
   fx_swap: 'linear.rs', //  swap PV == independent sum of two outright forwards + CIP swap-points identity + equal-dates-net-0 / carry-sign structural gates
   ndf: 'linear.rs', //  NDF PV hand-derived literal + NDF==deliverable-forward-PV identity + independent two-bond DCF + fixing-is-metadata-only honesty gate
+  perpetual_option: 'perpetual.rs', //  engine vs independent product-form-bisection+libm::pow oracle + american_fd T→∞ sandwich (FD(50y)<FD(100y)<perpetual, converging) + the b≥r call==spot exact law
+  listed_future_option: 'listed_future.rs', //  CPython-recomputed pinned literals (Haug 1.7011 / Hull 1.12 + full precision) + undiscounted parity C−P==F−K (bitwise at ATM anchors) + equity==df·futures-style bitwise + vs independent libm::erf oracle (both marginings)
 };
 
 /*

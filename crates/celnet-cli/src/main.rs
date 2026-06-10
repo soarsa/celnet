@@ -3,8 +3,9 @@
 //!
 //! `main` is intentionally thin: it parses the [`cli::Cli`] command tree and hands
 //! off to [`cli::dispatch`], which converts arguments and invokes the per-command
-//! core functions in [`price`], [`surface`], [`exotic`], [`convention`], and
-//! [`risk`]. The local-compute cores route every number through the underlying
+//! core functions in [`price`], [`surface`], [`exotic`], [`basket`], [`linear`],
+//! [`perpetual`], [`future_option`], [`convention`], and [`risk`]. The
+//! local-compute cores route every number through the underlying
 //! Celnet crates, and the networked [`risk`] (`risk aggregate`/`drill`/`positions`/
 //! `limits`), `stream`, and [`rfq`] (multi-dealer panel + pinned-row accept)
 //! commands route every number through the typed `celnet-client` SDK against a
@@ -18,7 +19,9 @@ mod basket;
 mod cli;
 mod convention;
 mod exotic;
+mod future_option;
 mod linear;
+mod perpetual;
 mod price;
 mod rfq;
 mod risk;

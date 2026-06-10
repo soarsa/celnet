@@ -128,6 +128,22 @@ enum SettlementStyle {
   SETTLEMENT_STYLE_INVERSE_COIN = 1;
 }
 
+// How a listed-future option's premium settles against the exchange — the
+// margining convention that decides whether the premium is paid upfront (and
+// the option price therefore carries the discount factor) or is margined daily
+// like the future itself (undiscounted). The meaningful-zero convention
+// (matching `SettlementStyle`): EQUITY_STYLE is the canonical default
+// (value 0), so an absent/zero `ListedFutureOption.margining` is the ordinary
+// upfront-premium contract.
+enum Margining {
+  // Equity-style (premium-upfront): the full premium is paid at trade date, so
+  // the price is the discounted expectation.
+  MARGINING_EQUITY_STYLE = 0;
+  // Futures-style (daily-margined): the premium is margined daily like the
+  // future itself, so the price is the undiscounted expectation.
+  MARGINING_FUTURES_STYLE = 1;
+}
+
 // A precious metal traded as the asset (base) leg of a metal pair — mirrors
 // `celnet_types::Metal`. The four LBMA/LPPM precious metals; each projects to an
 // ISO-4217 "X"-prefixed asset code (XAU/XAG/XPT/XPD) so a `MetalPair` overlaps
@@ -1306,6 +1322,16 @@ message Instrument {
     // (settlement) currency at a named fixing. Valid ONLY for a non-deliverable
     // underlying; an NDF on a deliverable pair is rejected as INVALID_ARGUMENT.
     Ndf ndf = 28;
+    // A perpetual (no-expiry) American option. The enclosing `expiry_years`
+    // MUST be 0 for this arm (a perpetual has no expiry to encode); a non-zero
+    // expiry on a perpetual is rejected as INVALID_ARGUMENT at decode/validity
+    // — never silently ignored.
+    PerpetualOption perpetual_option = 30;
+    // An option on a listed future — any asset class (the `underlying` names
+    // the class; `ListedFutureOption.future_symbol` names the contract). The
+    // future must outlive the option: `future_expiry_years >= expiry_years > 0`
+    // is validity-checked, INVALID_ARGUMENT otherwise.
+    ListedFutureOption listed_future_option = 31;
   }
 }
 
@@ -1358,6 +1384,52 @@ message Ndf {
   // 3-letter code). The PV is discounted at the convertible-leg (settlement-ccy)
   // rate, not the restricted leg's.
   string settlement_ccy = 5;
+}
+
+// A perpetual (no-expiry) American option: the holder may exercise at any time,
+// with no terminal date — exercise is the only way the contract ends, so the
+// product is American by construction and carries no exercise-style field.
+// Because there is no expiry to encode, the enclosing `Instrument.expiry_years`
+// MUST be 0 for this arm; a non-zero expiry on a perpetual is rejected as
+// INVALID_ARGUMENT at decode/validity (`convert::validate_perpetual_terms`) —
+// never silently ignored.
+message PerpetualOption {
+  // Call or put.
+  OptionType option_type = 1;
+  // Strike `K` (absolute level, quote per 1 unit of base/asset).
+  double strike = 2;
+  // The notional amount (always positive; direction is carried by the
+  // enclosing `Instrument.side`).
+  double notional = 3;
+}
+
+// An option on a listed future, for any asset class: the enclosing
+// `Instrument.underlying` names the asset class and `future_symbol` names the
+// specific listed contract the option exercises into. The future must outlive
+// the option — `future_expiry_years >= Instrument.expiry_years > 0` is
+// validity-checked (`convert::validate_listed_future_terms`), INVALID_ARGUMENT
+// otherwise. The `margining` convention decides whether the premium is paid
+// upfront (equity-style, discounted) or margined daily (futures-style,
+// undiscounted).
+message ListedFutureOption {
+  // The listed future contract the option exercises into (reuses the
+  // vendor-neutral `Symbol`: ticker + listing venue MIC).
+  Symbol future_symbol = 1;
+  // The FUTURE's own expiry as a year fraction on the surface day-count. Must
+  // be >= the option's `Instrument.expiry_years` (the future outlives the
+  // option), which in turn must be > 0.
+  double future_expiry_years = 2;
+  // Call or put on the future.
+  OptionType option_type = 3;
+  // Strike `K` (absolute level, in the future's quote units).
+  double strike = 4;
+  // The notional amount (always positive; direction is carried by the
+  // enclosing `Instrument.side`).
+  double notional = 5;
+  // The premium margining convention (equity-style upfront/discounted vs
+  // futures-style daily-margined/undiscounted). Meaningful-zero (like
+  // `SettlementStyle`): absent/zero is the ordinary equity-style contract.
+  Margining margining = 6;
 }
 
 // ===========================================================================

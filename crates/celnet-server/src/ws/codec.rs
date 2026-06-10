@@ -21,15 +21,16 @@ use celnet_proto::{
     DrillRiskRequest, DrillRiskResponse, EntitlementPrincipal, EntitlementRule, Execute, Executed,
     Execution, FixingSchedule, ForwardStart, FxForward, FxSwap, GetSmileRequest, Greeks,
     Instrument, Leg, LimitStatusRequest, LimitStatusResponse, LimitUtilization,
-    ListPositionsRequest, ListPositionsResponse, Lookback, MarkSurfaceRequest, MarkSurfaceResponse,
-    MarketContext, Modify, MultiDealerQuote, Ndf, NonAdditiveRisk, NumeraireRate, OrgKey,
-    PriceRequest, PriceResponse, Quantity, Quanto, Quote, QuoteAccept, QuoteReject, QuoteRequest,
-    RejectAck, ReportingNumeraire, Resync, RiskBucketRequest, RiskNode, RiskPosition, RiskScope,
-    ScenarioPoint, ScenarioRequest, ScenarioResponse, ShockAxis, SingleBarrier, Smile, SmilePoint,
-    Snapshot, Solve, Strategy, StrategyKind, StreamEnd, StreamReject, StrikeOrDelta, Subscribe,
-    SubscriptionId, Tarf, Tenor, Touch, TradableToken, TwoWayPrice, Unsubscribe, Update, Vanilla,
-    VanillaInputs, VarianceSwap, VegaLadderBucket, VegaPillar, VolatilitySwap, WindowBarrier,
-    instrument, shock_axis, strike_or_delta, tenor,
+    ListPositionsRequest, ListPositionsResponse, ListedFutureOption, Lookback, MarkSurfaceRequest,
+    MarkSurfaceResponse, MarketContext, Modify, MultiDealerQuote, Ndf, NonAdditiveRisk,
+    NumeraireRate, OrgKey, PerpetualOption, PriceRequest, PriceResponse, Quantity, Quanto, Quote,
+    QuoteAccept, QuoteReject, QuoteRequest, RejectAck, ReportingNumeraire, Resync,
+    RiskBucketRequest, RiskNode, RiskPosition, RiskScope, ScenarioPoint, ScenarioRequest,
+    ScenarioResponse, ShockAxis, SingleBarrier, Smile, SmilePoint, Snapshot, Solve, Strategy,
+    StrategyKind, StreamEnd, StreamReject, StrikeOrDelta, Subscribe, SubscriptionId, Tarf, Tenor,
+    Touch, TradableToken, TwoWayPrice, Unsubscribe, Update, Vanilla, VanillaInputs, VarianceSwap,
+    VegaLadderBucket, VegaPillar, VolatilitySwap, WindowBarrier, instrument, shock_axis,
+    strike_or_delta, tenor,
 };
 
 /// A codec error: a malformed or out-of-contract JSON message. Carries a
@@ -740,12 +741,44 @@ fn ndf_from_json(v: &Value) -> Result<Ndf> {
     })
 }
 
+/// Decode a perpetual (no-expiry) American option (`perpetual_option`). The
+/// enclosing instrument's `expiry_years` MUST be 0 for this arm (a perpetual
+/// has no expiry to encode) — enforced at the shared pricing/validity seam,
+/// never silently ignored. `notional` is the booked trade size (proto3 scalar,
+/// absent ⇒ 0), not a pricing input — the premium is per 1 unit of base.
+fn perpetual_option_from_json(v: &Value) -> Result<PerpetualOption> {
+    let o = obj(v, "perpetual_option")?;
+    Ok(PerpetualOption {
+        option_type: enum_or_zero(o, "option_type"),
+        strike: f64_field(o, "strike")?,
+        notional: f64_or_zero(o, "notional"),
+    })
+}
+
+/// Decode an option on a listed future (`listed_future_option`): the future's
+/// contract identity (`future_symbol`: ticker + venue MIC), the future's own
+/// expiry (which must outlive the option's — validity-checked at the shared
+/// pricing seam) and the premium `margining` tag (the proto `Margining` enum
+/// number; 0 = equity-style upfront, 1 = futures-style daily-margined).
+fn listed_future_option_from_json(v: &Value) -> Result<ListedFutureOption> {
+    let o = obj(v, "listed_future_option")?;
+    Ok(ListedFutureOption {
+        future_symbol: Some(nested(o, "future_symbol", symbol_from_json)?),
+        future_expiry_years: f64_field(o, "future_expiry_years")?,
+        option_type: enum_or_zero(o, "option_type"),
+        strike: f64_field(o, "strike")?,
+        notional: f64_or_zero(o, "notional"),
+        margining: enum_or_zero(o, "margining"),
+    })
+}
+
 /// Decode the instrument `product` oneof. The JSON carries exactly one of the
 /// product keys (`vanilla`, `strategy`, `single_barrier`, `double_barrier`,
 /// `digital`, `touch`, `variance_swap`, `volatility_swap`, `asian_option`,
 /// `forward_start`, `cliquet`, `quanto`, `tarf`, `accumulator`, `lookback`,
-/// `window_barrier`, `american`, `basket`, `fx_forward`, `fx_swap`, `ndf`) — the
-/// same shape as the proto oneof.
+/// `window_barrier`, `american`, `basket`, `fx_forward`, `fx_swap`, `ndf`,
+/// `perpetual_option`, `listed_future_option`) — the same shape as the proto
+/// oneof.
 fn product_from_json(o: &Map<String, Value>) -> Result<instrument::Product> {
     // Each product variant nests its body under its own key (mirroring the proto
     // oneof field names); descend into that body before decoding.
@@ -803,13 +836,21 @@ fn product_from_json(o: &Map<String, Value>) -> Result<instrument::Product> {
         Ok(instrument::Product::FxSwap(fx_swap_from_json(v)?))
     } else if let Some(v) = o.get("ndf") {
         Ok(instrument::Product::Ndf(ndf_from_json(v)?))
+    } else if let Some(v) = o.get("perpetual_option") {
+        Ok(instrument::Product::PerpetualOption(
+            perpetual_option_from_json(v)?,
+        ))
+    } else if let Some(v) = o.get("listed_future_option") {
+        Ok(instrument::Product::ListedFutureOption(
+            listed_future_option_from_json(v)?,
+        ))
     } else {
         Err(err(
             "instrument needs exactly one product (vanilla / strategy / \
              single_barrier / double_barrier / digital / touch / variance_swap / \
              volatility_swap / asian_option / forward_start / cliquet / quanto / \
              tarf / accumulator / lookback / window_barrier / american / basket / \
-             fx_forward / fx_swap / ndf)",
+             fx_forward / fx_swap / ndf / perpetual_option / listed_future_option)",
         ))
     }
 }
@@ -1975,6 +2016,68 @@ mod tests {
                 assert_eq!(n.settlement_ccy, "USD");
             }
             other => panic!("expected an ndf product, got {other:?}"),
+        }
+    }
+
+    /// The perpetual-option arm (proto field 30) decodes from the WS JSON
+    /// mirror field-for-field. A perpetual has no expiry, so the instrument
+    /// carries the exact proto3 zero `expiry_years: 0.0` (the shape the shared
+    /// validity seam enforces).
+    #[test]
+    fn perpetual_option_instrument_round_trips_from_json() {
+        let v = json!({
+            "pair": { "base": "EUR", "quote": "USD" },
+            "expiry_years": 0.0,
+            "side": 0,
+            "perpetual_option": {
+                "option_type": 1,
+                "strike": 1.05,
+                "notional": 10000000.0
+            }
+        });
+        let instr = instrument_from_json(&v).expect("decode");
+        assert_eq!(instr.expiry_years.to_bits(), 0.0_f64.to_bits());
+        match instr.product {
+            Some(instrument::Product::PerpetualOption(p)) => {
+                assert_eq!(p.option_type, celnet_proto::OptionType::Put as i32);
+                assert_eq!(p.strike.to_bits(), 1.05_f64.to_bits());
+                assert_eq!(p.notional.to_bits(), 10_000_000.0_f64.to_bits());
+            }
+            other => panic!("expected a perpetual_option product, got {other:?}"),
+        }
+    }
+
+    /// The listed-future-option arm (proto field 31) decodes from the WS JSON
+    /// mirror field-for-field, including the nested `future_symbol` contract
+    /// identity and the `margining` enum number.
+    #[test]
+    fn listed_future_option_instrument_round_trips_from_json() {
+        let v = json!({
+            "underlying": { "commodity": { "symbol": { "ticker": "BRENT" }, "currency": "USD" } },
+            "expiry_years": 0.5,
+            "side": 0,
+            "listed_future_option": {
+                "future_symbol": { "ticker": "BRN-DEC26", "venue": "IFEU" },
+                "future_expiry_years": 0.55,
+                "option_type": 0,
+                "strike": 85.0,
+                "notional": 1000.0,
+                "margining": 1
+            }
+        });
+        let instr = instrument_from_json(&v).expect("decode");
+        match instr.product {
+            Some(instrument::Product::ListedFutureOption(o)) => {
+                let symbol = o.future_symbol.expect("future_symbol");
+                assert_eq!(symbol.ticker, "BRN-DEC26");
+                assert_eq!(symbol.venue, "IFEU");
+                assert_eq!(o.future_expiry_years.to_bits(), 0.55_f64.to_bits());
+                assert_eq!(o.option_type, celnet_proto::OptionType::Call as i32);
+                assert_eq!(o.strike.to_bits(), 85.0_f64.to_bits());
+                assert_eq!(o.notional.to_bits(), 1_000.0_f64.to_bits());
+                assert_eq!(o.margining, celnet_proto::Margining::FuturesStyle as i32);
+            }
+            other => panic!("expected a listed_future_option product, got {other:?}"),
         }
     }
 

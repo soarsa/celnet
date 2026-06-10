@@ -365,9 +365,13 @@ export function tenorToWire(t: Tenor): WireObject {
 }
 
 export function instrumentToWire(i: Instrument): WireObject {
+  // The tenor label is presence-tracked: absent ONLY for the one tenorless
+  // product (the perpetual option, whose canonical wire shape is
+  // `expiry_years: 0` with no `tenor` key — matching the SDK's optional tenor).
+  // The conditional spread keeps every dated family's frame byte-identical.
   const base: WireObject = {
     pair: ccyPairToWire(i.pair),
-    tenor: tenorToWire(i.tenor),
+    ...(i.tenor ? { tenor: tenorToWire(i.tenor) } : {}),
     expiry_years: i.expiryYears,
     quantity: { notional: i.quantity.notional, base_ccy: i.quantity.baseCcy },
     side: e.side.toWire(i.side),
@@ -693,6 +697,35 @@ export function instrumentToWire(i: Instrument): WireObject {
         side: e.side.toWire(n.side),
         fixing: e.fixingSource.toWire(n.fixing),
         settlement_ccy: n.settlementCcy,
+      };
+      break;
+    }
+    // The new payoff shapes, appended additively at perpetual_option=30 /
+    // listed_future_option=31 (one current contract, no schema_version, no
+    // renumber; CLAUDE.md rule 9). Fields match the server WS codec's
+    // `perpetual_option_from_json` (option_type=1, strike=2, notional=3) and
+    // `listed_future_option_from_json` (future_symbol=1, future_expiry_years=2,
+    // option_type=3, strike=4, notional=5, margining=6). The perpetual rides an
+    // instrument with `expiry_years: 0` exactly and NO `tenor` key (the
+    // contract's canonical no-expiry shape, enforced by the server validator).
+    case "perpetualOption": {
+      const p = i.product.perpetualOption;
+      base["perpetual_option"] = {
+        option_type: e.optionType.toWire(p.optionType),
+        strike: p.strike,
+        notional: p.notional,
+      };
+      break;
+    }
+    case "listedFutureOption": {
+      const o = i.product.listedFutureOption;
+      base["listed_future_option"] = {
+        future_symbol: { ticker: o.futureSymbol.ticker, venue: o.futureSymbol.venue },
+        future_expiry_years: o.futureExpiryYears,
+        option_type: e.optionType.toWire(o.optionType),
+        strike: o.strike,
+        notional: o.notional,
+        margining: e.margining.toWire(o.margining),
       };
       break;
     }

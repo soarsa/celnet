@@ -212,6 +212,17 @@ export type TarfRedemption = "FULL_GAIN" | "CAPPED_GAIN";
 export type AccumulatorMonitoring = "DISCRETE" | "CONTINUOUS";
 
 /**
+ * The premium margining convention of an option on a listed future (proto
+ * `Margining`). EQUITY_STYLE (premium-upfront) pays the full premium at trade
+ * date, so the price is the discounted expectation; FUTURES_STYLE margins the
+ * premium daily like the future itself, so the price is the undiscounted
+ * expectation. Meaningful-zero (like `SettlementStyle`): an absent/zero tag is
+ * the ordinary equity-style contract. Mirrors `celnet_proto::Margining`
+ * (MARGINING_EQUITY_STYLE=0, MARGINING_FUTURES_STYLE=1).
+ */
+export type Margining = "EQUITY_STYLE" | "FUTURES_STYLE";
+
+/**
  * The two lookback families (proto `LookbackStyle`). FLOATING settles against the
  * path extremum (`S_T − min` call, `max − S_T` put — always ≥ 0); FIXED exercises
  * against a fixed `K` (`(max − K)⁺` call, `(K − min)⁺` put). Mirrors
@@ -871,6 +882,51 @@ export interface Ndf {
   settlementCcy: string;
 }
 
+/**
+ * A perpetual (no-expiry) American option (proto `PerpetualOption`, product
+ * field 30): exercisable at any time, forever. The enclosing instrument is the
+ * one TENORLESS, expiryless shape on the contract — `expiryYears` MUST be `0`
+ * exactly and no `tenor` is carried (the server's
+ * `convert::validate_perpetual_terms` rejects anything else as
+ * INVALID_ARGUMENT, never silently ignores it). Priced by the stationary-ODE
+ * closed form on the same carry branching as the vanilla; exact ⇒ no standard
+ * error, and theta is identically zero (the value is time-homogeneous).
+ */
+export interface PerpetualOption {
+  optionType: OptionType;
+  /** The strike `K` (absolute level, quote per 1 unit of base/asset). */
+  strike: number;
+  /** The booked notional (always positive; direction is the instrument `side`). */
+  notional: number;
+}
+
+/**
+ * An option on a listed future, for any asset class (proto `ListedFutureOption`,
+ * product field 31): the enclosing `Instrument.underlying` names the asset class
+ * and `futureSymbol` names the specific listed contract the option exercises
+ * into. The future must outlive the option —
+ * `futureExpiryYears >= Instrument.expiryYears > 0` is validity-checked by the
+ * server (`convert::validate_listed_future_terms`), INVALID_ARGUMENT otherwise.
+ * The quoted futures price (the request market context's `spot`) already
+ * embodies the underlying's carry, so every asset class prices by the same
+ * futures-measure closed form; `margining` decides whether the premium is paid
+ * upfront (equity-style, discounted) or margined daily (futures-style,
+ * undiscounted).
+ */
+export interface ListedFutureOption {
+  /** The listed future contract the option exercises into (ticker + venue MIC). */
+  futureSymbol: Symbol;
+  /** The FUTURE's own expiry (year fraction); `>= Instrument.expiryYears > 0`. */
+  futureExpiryYears: number;
+  optionType: OptionType;
+  /** The strike `K` (absolute level, in the future's quote units). */
+  strike: number;
+  /** The booked notional (always positive; direction is the instrument `side`). */
+  notional: number;
+  /** The premium margining convention (equity-style upfront vs futures-style daily). */
+  margining: Margining;
+}
+
 /** The product payoff carried by an Instrument (the proto `product` oneof). */
 export type Product =
   | { kind: "vanilla"; vanilla: Vanilla }
@@ -893,7 +949,9 @@ export type Product =
   | { kind: "basket"; basket: BasketOption }
   | { kind: "fxForward"; fxForward: FxForward }
   | { kind: "fxSwap"; fxSwap: FxSwap }
-  | { kind: "ndf"; ndf: Ndf };
+  | { kind: "ndf"; ndf: Ndf }
+  | { kind: "perpetualOption"; perpetualOption: PerpetualOption }
+  | { kind: "listedFutureOption"; listedFutureOption: ListedFutureOption };
 
 /** Solve directive: solve a free parameter to hit a target (e.g. zero premium). */
 export interface Solve {
@@ -912,7 +970,14 @@ export interface Instrument {
    * underlying's leg-string projection so the FX-keyed surfaces stay total.
    */
   underlying?: Underlying;
-  tenor: Tenor;
+  /**
+   * The standard tenor label (proto `Instrument.tenor`, a message field —
+   * presence-tracked). Present on every dated product; ABSENT only for the one
+   * tenorless shape on the contract, the perpetual (no-expiry) American option
+   * (`perpetualOption`, whose canonical wire form carries no tenor and
+   * `expiryYears = 0` exactly — mirrors the SDK's `tenor: None`).
+   */
+  tenor?: Tenor;
   /** Expiry year fraction on the surface day-count (authoritative for pricing). */
   expiryYears: number;
   quantity: Quantity;

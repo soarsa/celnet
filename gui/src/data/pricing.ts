@@ -24,9 +24,11 @@ import type {
   Greeks,
   Instrument,
   Leg,
+  ListedFutureOption,
   Lookback,
   MarketContext,
   Ndf,
+  PerpetualOption,
   Quanto,
   Side,
   SingleBarrier,
@@ -350,6 +352,12 @@ export function priceInstrument(
       // terms — non-deliverability changes only the settlement mechanics, not the
       // PV (the `fixing`/`settlementCcy` carry the convention identity only).
       return priceForward(instrument.product.ndf, m, t);
+    case "perpetualOption":
+      // A perpetual has no expiry: the instrument's `expiryYears` is exactly 0
+      // and never enters the time-homogeneous closed form.
+      return pricePerpetual(instrument.product.perpetualOption, m);
+    case "listedFutureOption":
+      return priceListedFutureOption(instrument.product.listedFutureOption, m, t);
     case "windowBarrier":
       // The window barrier has NO closed form — it is priced ONLY by the server's
       // local-stochastic-volatility ADI-PDE / Monte-Carlo engine (pricing model
@@ -446,6 +454,176 @@ function priceSwap(spec: FxSwap, m: MarketContext, t: number): PriceOutcome {
     // The far (tenor-dated) leg's contract rate is the trade-resolved strike shown.
     resolvedStrike: far.resolvedStrike,
   };
+}
+
+// ---------------------------------------------------------------------------
+// perpetual American option — exact free-boundary closed form (no expiry)
+// ---------------------------------------------------------------------------
+//
+// A perpetual option has no terminal date: the value is time-homogeneous and
+// solves the stationary pricing ODE `½σ²·S²·V″ + b·S·V′ − r·V = 0` whose power
+// solutions `V = S^y` have exponents at the roots of the characteristic
+// quadratic `ψ(y) = ½σ²·y·(y−1) + b·y − r = 0` (FX carry: `r = r_dom`,
+// `b = r_dom − r_for`). Value matching AND smooth pasting at the free
+// early-exercise boundary pin both the boundary and the closed form — the SAME
+// closed form the server's perpetual engine prices (validated there against an
+// independent bisection re-derivation), mirrored here so the offline ticket is a
+// genuine exact value, not a stub. Degenerate arms are handled exactly: a call
+// with `b ≥ r` is never exercised (`V = S`, the `y₁ → 1⁺` limit) and a put with
+// `r = 0`, `b ≤ ½σ²` collapses its boundary to 0 (`V = K`, the unattained
+// supremum) — never as near-singular power evaluations. Method provenance (doc
+// comments only, CLAUDE.md rule 8): the perpetual American free-boundary closed
+// form of McKean (1965) / Merton (1973), cost-of-carry form per Haug (2007, 2nd
+// ed.).
+
+/**
+ * The two real roots of the characteristic quadratic
+ * `ψ(y) = ½σ²·y² + (b − ½σ²)·y − r = 0`, paired cancellation-free (neither root
+ * is formed by subtracting nearly-equal magnitudes — this matters in the σ→0
+ * regime where `|b|/σ² → ∞`), mirroring the server engine's route exactly.
+ * `sqrtDisc` equals `ψ′(y₁)` exactly (`ψ′(y₂) = −sqrtDisc`).
+ */
+function perpetualCharacteristicRoots(
+  vol: number,
+  r: number,
+  b: number,
+): { yHigh: number; yLow: number; sqrtDisc: number } {
+  const quad = 0.5 * vol * vol; // quadratic coefficient ½σ²
+  const lin = b - quad; // linear coefficient b − ½σ²
+  const con = -r; // constant coefficient −r
+  // disc = (b − ½σ²)² + 2σ²r ≥ 0 whenever r ≥ 0 (the documented domain).
+  const sqrtDisc = Math.sqrt(lin * lin - 4 * quad * con);
+  const half = lin >= 0 ? -0.5 * (lin + sqrtDisc) : -0.5 * (lin - sqrtDisc);
+  // `half === 0` requires lin == 0 AND disc == 0, i.e. r == 0 with b == ½σ²: a
+  // double root at the origin (exact-zero structural comparison).
+  const first = half === 0 ? 0 : half / quad;
+  const second = half === 0 ? 0 : con / half;
+  return first >= second
+    ? { yHigh: first, yLow: second, sqrtDisc }
+    : { yHigh: second, yLow: first, sqrtDisc };
+}
+
+/**
+ * Price a perpetual American vanilla in exact closed form with the analytic
+ * Greek strip the server's perpetual engine reports (delta, gamma, vega, the two
+ * FX rhos — all exact `y`-root chain rule, no finite differences). Theta, charm
+ * and color are IDENTICALLY zero (the value is time-homogeneous) and there is no
+ * settlement tenor to define a forward delta, so those stay zero honestly; the
+ * higher-order cross-Greeks (vanna/volga/speed/zomma) are not part of the
+ * server's perpetual strip and are not fabricated here. Domain: `r ≥ 0` — a
+ * perpetual claim under a negative discount rate has no finite value (the server
+ * refuses it; the offline pricer throws rather than fabricate one).
+ */
+function pricePerpetual(spec: PerpetualOption, m: MarketContext): PriceOutcome {
+  const { spot: s, vol, rDom, rFor } = m;
+  const k = spec.strike;
+  const r = rDom; // numeraire discount rate
+  const b = rDom - rFor; // FX cost-of-carry
+  if (r < 0) {
+    throw new Error(
+      "a perpetual option has no finite value under a negative discount rate (r_dom < 0)",
+    );
+  }
+  const isCall = spec.optionType === "CALL";
+  const greeks = zeroGreeks();
+
+  // Degenerate arms, handled exactly (mirroring the server engine):
+  // call with b ≥ r ⇒ never exercised, V = S (unit delta, flat otherwise);
+  // put with r = 0 and b ≤ ½σ² ⇒ boundary collapses to 0, V = K (flat strip).
+  if (isCall && b >= r) {
+    greeks.price = s;
+    greeks.deltaSpot = 1;
+    return { greeks, resolvedStrike: k };
+  }
+  const roots = perpetualCharacteristicRoots(vol, r, b);
+  const y = isCall ? roots.yHigh : roots.yLow;
+  if (!isCall && y === 0) {
+    greeks.price = k;
+    return { greeks, resolvedStrike: k };
+  }
+
+  // Free boundary S_b = K·y/(y−1); beyond it the value is intrinsic exactly.
+  const boundary = (k * y) / (y - 1);
+  const stopped = isCall ? s >= boundary : s <= boundary;
+  if (stopped) {
+    const sign = isCall ? 1 : -1;
+    greeks.price = sign * (s - k);
+    greeks.deltaSpot = sign;
+    return { greeks, resolvedStrike: k };
+  }
+
+  // Continuation region: V = |S_b − K|·(S/S_b)^y, with every sensitivity the
+  // exact chain rule through the root (∂V/∂y = V·ln(S/S_b): the boundary's own
+  // y-dependence cancels exactly by smooth pasting; implicit-function
+  // derivatives of ψ(y) = 0 with ψ′(y) = ±√disc).
+  const value = Math.abs(boundary - k) * Math.pow(s / boundary, y);
+  const dpsiDy = isCall ? roots.sqrtDisc : -roots.sqrtDisc;
+  const dvDy = value * Math.log(s / boundary);
+  const dyDsigma = -(vol * y * (y - 1)) / dpsiDy;
+  const dyDr = 1 / dpsiDy;
+  const dyDb = -y / dpsiDy;
+  const discountRho = dvDy * dyDr;
+  const carryRho = dvDy * dyDb;
+  greeks.price = value;
+  greeks.deltaSpot = (y * value) / s;
+  greeks.gamma = (y * (y - 1) * value) / (s * s);
+  greeks.vega = dvDy * dyDsigma;
+  // FX chain rule through r = r_dom, b = r_dom − r_for.
+  greeks.rhoDom = discountRho + carryRho;
+  greeks.rhoFor = -carryRho;
+  return { greeks, resolvedStrike: k };
+}
+
+// ---------------------------------------------------------------------------
+// option on a listed future — exact futures-measure closed form
+// ---------------------------------------------------------------------------
+//
+// The quoted futures price (the market context's `spot`) already embodies the
+// underlying's carry, so the option prices by the futures-measure closed form
+// for EVERY asset class: `V = df·(F·N(d1) − K·N(d2))` (call) with
+// `d1 = (ln(F/K) + ½σ²T)/(σ√T)`, where `df = e^{−r_dom·T}` for the
+// EQUITY_STYLE (upfront, discounted) premium and `df = 1` for the FUTURES_STYLE
+// (daily-margined, undiscounted) premium. The future's own expiry does not
+// enter the price — it is a validity bound (the future must outlive the
+// option). Method provenance (doc comments only): the futures-option closed
+// form of Black (1976); margining treatment per Haug (2007, 2nd ed. §1.2.2).
+
+/**
+ * Price an option on a listed future in exact closed form, with the analytic
+ * delta/gamma/vega/rho/theta strip. The delta is with respect to the quoted
+ * futures level itself (`m.spot` IS the future here), so `deltaForward` equals
+ * `deltaSpot`; the EQUITY_STYLE rho is the pure discounting sensitivity
+ * `−T·V` (a FUTURES_STYLE premium has none).
+ */
+function priceListedFutureOption(
+  spec: ListedFutureOption,
+  m: MarketContext,
+  t: number,
+): PriceOutcome {
+  const f = m.spot; // the quoted futures price (carry already embodied)
+  const k = spec.strike;
+  const isCall = spec.optionType === "CALL";
+  const sqrtT = Math.sqrt(t);
+  const sd = m.vol * sqrtT;
+  const d1 = (Math.log(f / k) + 0.5 * m.vol * m.vol * t) / sd;
+  const d2 = d1 - sd;
+  const discounted = spec.margining !== "FUTURES_STYLE";
+  const df = discounted ? Math.exp(-m.rDom * t) : 1;
+  const pdf = phi(d1);
+  const greeks = zeroGreeks();
+  greeks.price =
+    df * (isCall ? f * normCdf(d1) - k * normCdf(d2) : k * normCdf(-d2) - f * normCdf(-d1));
+  greeks.deltaSpot = df * (isCall ? normCdf(d1) : normCdf(d1) - 1);
+  greeks.deltaForward = greeks.deltaSpot; // the underlying IS the futures level
+  greeks.gamma = (df * pdf) / (f * sd);
+  greeks.vega = df * f * pdf * sqrtT;
+  // EQUITY_STYLE: only the upfront premium's discounting is rate-sensitive.
+  greeks.rhoDom = discounted ? -t * greeks.price : 0;
+  // Calendar theta: + r·V from the shrinking discount window (EQUITY_STYLE
+  // only) − the diffusion decay df·F·φ(d1)·σ/(2√T); per-day display convention.
+  const decay = (df * f * pdf * m.vol) / (2 * sqrtT);
+  greeks.theta = ((discounted ? m.rDom * greeks.price : 0) - decay) / 365;
+  return { greeks, resolvedStrike: k };
 }
 
 // ---------------------------------------------------------------------------

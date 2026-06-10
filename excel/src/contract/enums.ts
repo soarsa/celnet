@@ -32,6 +32,7 @@ import type {
   FixingSource,
   LookbackMonitoring,
   LookbackStyle,
+  Margining,
   MarketObservable,
   Metal,
   MonitoringStyle,
@@ -303,6 +304,13 @@ export const lookbackMonitoring = enumCodec<LookbackMonitoring>(["CONTINUOUS", "
  * (EXERCISE_STYLE_AMERICAN=0, EXERCISE_STYLE_BERMUDAN=1).
  */
 export const exerciseStyle = enumCodec<ExerciseStyle>(["AMERICAN", "BERMUDAN"]);
+
+/**
+ * `Margining` ↔ proto `Margining`
+ * (MARGINING_EQUITY_STYLE=0, MARGINING_FUTURES_STYLE=1). The listed-future-option
+ * premium convention; meaningful-zero (the equity-style upfront contract).
+ */
+export const margining = enumCodec<Margining>(["EQUITY_STYLE", "FUTURES_STYLE"]);
 
 /**
  * `BasketKind` ↔ proto `BasketKind`

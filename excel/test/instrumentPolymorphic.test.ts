@@ -31,7 +31,13 @@
  */
 import { describe, expect, it } from "vitest";
 
-import type { Instrument } from "../src/contract/contract";
+import type {
+  Instrument,
+  Margining,
+  OptionType,
+  Tenor,
+  Underlying,
+} from "../src/contract/contract";
 import { canonicalWireJson } from "../src/contract/instrumentCodec";
 import { instrumentToWire } from "../src/contract/wsCodec";
 import {
@@ -132,6 +138,11 @@ function tenorFor(t: number): string {
  * exact pre-retirement `e2e/corpus.ts` builder, preserved here as the parity
  * reference). It calls the same production shapers those functions called, with
  * the same arguments.
+ *
+ * The two post-retirement arms (`perpetual_option` 30 / `listed_future_option`
+ * 31) never had a per-product worksheet function — their reference instruments
+ * are HAND-BUILT typed literals (no production shaper involved), so the parity
+ * proof for them is spec-path == hand-built frame, the strongest form.
  */
 function legacyInstrumentOf(v: GoldenVector): Instrument {
   const t = num(v.terms, "expiry_years");
@@ -362,6 +373,79 @@ function legacyInstrumentOf(v: GoldenVector): Instrument {
         fixing: fixingToken(str(v.terms, "fixing")),
         settlementCcy: str(v.terms, "settlement_ccy"),
       });
+    case "perpetual_option": {
+      // HAND-BUILT reference (no shaper): the contract's canonical tenorless
+      // shape — NO `tenor`, `expiry_years = 0` exactly, the product notional
+      // mirroring the one quantity.
+      const notional = num(v.terms, "notional");
+      return {
+        pair: { base: pair.slice(0, 3), quote: pair.slice(3, 6) },
+        expiryYears: 0,
+        quantity: { notional, baseCcy: true },
+        side: "TWO_WAY",
+        product: {
+          kind: "perpetualOption",
+          perpetualOption: {
+            optionType: str(v.terms, "option_type") as OptionType,
+            strike: num(v.terms, "strike"),
+            notional,
+          },
+        },
+      };
+    }
+    case "listed_future_option": {
+      // HAND-BUILT reference (no shaper): the cross-asset underlying the corpus
+      // class token names (same WTI=commodity / ES=equity mapping as the Rust
+      // SDK conformance, projected onto the Excel grammar's venue-less
+      // commodity form), the future's contract identity, and the margining tag.
+      const notional = num(v.terms, "notional");
+      const sym = v.terms["future_symbol"] as Record<string, unknown>;
+      const handBuilt: Record<string, { underlying: Underlying; pair: Instrument["pair"] }> = {
+        WTI: {
+          underlying: {
+            kind: "commodity",
+            commodity: { symbol: { ticker: "WTI", venue: "" }, currency: "USD" },
+            settlementCcy: "USD",
+          },
+          pair: { base: "WTI", quote: "USD" },
+        },
+        ES: {
+          underlying: {
+            kind: "equity",
+            equity: { symbol: { ticker: "ES", venue: "XCME" }, currency: "USD" },
+            settlementCcy: "USD",
+          },
+          pair: { base: "ES", quote: "USD" },
+        },
+      };
+      const cls = handBuilt[v.underlying];
+      if (!cls) throw new Error(`unknown listed-future underlying \`${v.underlying}\``);
+      const months = Math.round(t * 12);
+      const handTenor: Tenor =
+        months % 12 === 0 ? { unit: "YEARS", count: months / 12 } : { unit: "MONTHS", count: months };
+      return {
+        pair: cls.pair,
+        underlying: cls.underlying,
+        tenor: handTenor,
+        expiryYears: t,
+        quantity: { notional, baseCcy: true },
+        side: "TWO_WAY",
+        product: {
+          kind: "listedFutureOption",
+          listedFutureOption: {
+            futureSymbol: {
+              ticker: String(sym["ticker"]),
+              venue: typeof sym["venue"] === "string" ? sym["venue"] : "",
+            },
+            futureExpiryYears: num(v.terms, "future_expiry_years"),
+            optionType: str(v.terms, "option_type") as OptionType,
+            strike: num(v.terms, "strike"),
+            notional,
+            margining: str(v.terms, "margining") as Margining,
+          },
+        },
+      };
+    }
     default:
       throw new Error(`family \`${v.family}\` was not exposed by the retired functions`);
   }
