@@ -1169,9 +1169,19 @@ pub fn black76_undiscounted_price(cp: Cp, f: f64, strike: f64, vol: f64, t: f64)
 /// ```
 ///
 /// with `V` = intrinsic beyond the free boundary, and the exact degenerate arms:
-/// a call with `b ≥ r` is never exercised (`V = S`); a put with `r = 0` has the
-/// exact factorization `ψ(y) = y·(½σ²·(y−1) + b)`, so `y₂ = 1 − 2b/σ²` when
-/// `b > ½σ²` and otherwise the boundary collapses and `V = K`.
+/// a call with `b == r` **exactly** is never exercised (`ψ(1) = 0` makes
+/// `y₁ = 1`, so `V = S` — the `T → ∞` limit of the same-terms European call); a
+/// put with `r = 0` has the exact factorization `ψ(y) = y·(½σ²·(y−1) + b)`, so
+/// `y₂ = 1 − 2b/σ²` when `b > ½σ²` and otherwise the boundary collapses and
+/// `V = K`.
+///
+/// A call with `b > r` **strictly** has NO finite value — stopping at any level
+/// `L > K` is worth `(L − K)·(S/L)^{y₁}` with `y₁ < 1` (`ψ(1) = b − r > 0` puts
+/// the larger root below 1), unbounded as `L → ∞` (`e^{−rt}·S_t` is a strict
+/// submartingale) — so the oracle **refuses** (`None`), exactly where the
+/// production engine refuses with its typed error: the oracle must never
+/// produce a number the engine refuses. Puts are unaffected (the `y₂ ≤ 0`
+/// branch exists for every `b`; the put payoff is bounded by `K`).
 ///
 /// INDEPENDENT route (anti-circular): the root is found by expanding-bracket
 /// **bisection of ψ in the `y·(y−1)` product form** (200 halvings reach machine
@@ -1179,7 +1189,14 @@ pub fn black76_undiscounted_price(cp: Cp, f: f64, strike: f64, vol: f64, t: f64)
 /// production engine's standard-form quadratic discriminant + cancellation-free
 /// pairing nor its `exp(y·ln x)` power route.
 #[must_use]
-pub fn perpetual_american_price(cp: Cp, spot: f64, strike: f64, vol: f64, r: f64, b: f64) -> f64 {
+pub fn perpetual_american_price(
+    cp: Cp,
+    spot: f64,
+    strike: f64,
+    vol: f64,
+    r: f64,
+    b: f64,
+) -> Option<f64> {
     let psi = |y: f64| 0.5 * vol * vol * y * (y - 1.0) + b * y - r;
     // Bisection with the sign invariant ψ(neg) ≤ 0 < ψ(pos) (the bracket may be
     // numerically reversed — only the signs matter). 200 halvings exhaust f64.
@@ -1194,13 +1211,18 @@ pub fn perpetual_american_price(cp: Cp, spot: f64, strike: f64, vol: f64, r: f64
         }
         0.5 * (neg + pos)
     };
-    match cp {
+    Some(match cp {
         Cp::Call => {
-            if b >= r {
-                // Holding the asset never costs carry relative to discounting:
-                // early exercise is never optimal and the value is the spot
-                // itself (the exact y₁ → 1⁺ limit).
-                return spot;
+            // b > r STRICTLY: the perpetual call diverges (no finite value) —
+            // the oracle refuses, mirroring the engine's typed refusal.
+            if b > r {
+                return None;
+            }
+            // b == r EXACTLY (structural comparison): ψ(1) = 0 makes y₁ = 1 —
+            // early exercise is never optimal and the value is the spot itself
+            // (the exact y₁ → 1⁺ limit, also the T → ∞ European-call limit).
+            if b == r {
+                return Some(spot);
             }
             // y₁ > 1 since ψ(1) = b − r < 0 here; expand the upper bracket.
             let mut hi = 2.0;
@@ -1211,14 +1233,14 @@ pub fn perpetual_american_price(cp: Cp, spot: f64, strike: f64, vol: f64, r: f64
             // In the sub-ulp window b ∈ (r − O(ulp·r), r) the bisected root
             // collapses to exactly 1.0 even though b < r strictly: the exact
             // arm is the y₁ → 1⁺ limit (V = spot, no finite boundary) — the
-            // same law as b ≥ r, never a 1/0 boundary evaluation. (Exact
+            // same law as b == r, never a 1/0 boundary evaluation. (Exact
             // structural comparison; the bisection's invariant keeps y ≥ 1.)
             if y == 1.0 {
-                return spot;
+                return Some(spot);
             }
             let boundary = strike * y / (y - 1.0);
             if spot >= boundary {
-                return spot - strike; // stopped: immediate exercise, intrinsic
+                return Some(spot - strike); // stopped: immediate exercise, intrinsic
             }
             (boundary - strike) * libm::pow(spot / boundary, y)
         }
@@ -1228,7 +1250,7 @@ pub fn perpetual_american_price(cp: Cp, spot: f64, strike: f64, vol: f64, r: f64
                 // is 0 when b ≤ ½σ² (boundary collapses to the origin, value =
                 // the unattained supremum K), else 1 − 2b/σ².
                 if b <= 0.5 * vol * vol {
-                    return strike;
+                    return Some(strike);
                 }
                 1.0 - 2.0 * b / (vol * vol)
             } else {
@@ -1241,11 +1263,11 @@ pub fn perpetual_american_price(cp: Cp, spot: f64, strike: f64, vol: f64, r: f64
             };
             let boundary = strike * y / (y - 1.0); // ∈ (0, K) for y < 0
             if spot <= boundary {
-                return strike - spot; // stopped: immediate exercise, intrinsic
+                return Some(strike - spot); // stopped: immediate exercise, intrinsic
             }
             (strike - boundary) * libm::pow(spot / boundary, y)
         }
-    }
+    })
 }
 
 /// Lower-triangular Cholesky factor `L` of a symmetric positive-definite matrix

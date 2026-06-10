@@ -29,16 +29,27 @@
 //!   V = (S* − K) · (S/S*)^{y₁}      (= K/(y₁−1) · ((y₁−1)/y₁ · S/K)^{y₁}) ,
 //!   ```
 //!
-//!   with `V = S − K` (immediate exercise) for `S ≥ S*`. When `b ≥ r` the
-//!   quadratic has `ψ(1) = b − r ≥ 0`, so `y₁ ≤ 1`: holding the asset never
-//!   costs carry relative to discounting, early exercise is **never** optimal,
-//!   and the value is the spot itself — the exact `y₁ → 1⁺` limit of the
-//!   closed form (for `b = r` it is also the `T → ∞` limit of the European
-//!   call). This arm is handled exactly (`V = S`), never as a near-singular
-//!   evaluation of the power form. The same exact arm catches the **sub-ulp
-//!   window** `b ∈ (r − O(ulp·r), r)` where the finite-precision root collapses
-//!   to exactly `y₁ = 1` even though `b < r` strictly — the rounding-collapsed
+//!   with `V = S − K` (immediate exercise) for `S ≥ S*`. At `b = r` **exactly**
+//!   the quadratic has `ψ(1) = b − r = 0`, so `y₁ = 1`: holding the asset costs
+//!   exactly nothing relative to discounting, early exercise is never optimal,
+//!   and the value is the spot itself — `V = S`, the exact `y₁ → 1⁺` limit of
+//!   the closed form and the `T → ∞` limit of the same-terms European call
+//!   (the one degenerate where the perpetual call equals its underlying). This
+//!   arm is handled exactly, never as a near-singular evaluation of the power
+//!   form. The same exact arm catches the **sub-ulp window**
+//!   `b ∈ (r − O(ulp·r), r)` where the finite-precision root collapses to
+//!   exactly `y₁ = 1` even though `b < r` strictly — the rounding-collapsed
 //!   root takes the limit arm, never a `1/0` boundary evaluation.
+//!
+//!   For `b > r` **strictly** the perpetual call has **no finite value** and
+//!   the pricer refuses with the typed [`PerpetualError`]: stopping at any
+//!   level `L > K` is worth `(L − K)·(S/L)^{y₁}` with `y₁ < 1` (since
+//!   `ψ(1) = b − r > 0` puts the larger root strictly below 1), which grows
+//!   without bound as `L → ∞`; equivalently, `e^{−rt}·S_t` is a **strict
+//!   submartingale** under `b > r`, so the value of the never-ending right to
+//!   buy the asset diverges. There is no `V = S` pin here — pinning any finite
+//!   number creates an internal arbitrage against the finite-maturity European
+//!   (whose value already exceeds `S` at long maturities under `b > r`).
 //! * **Put** (uses `y₂ < 0`, which exists iff `r > 0`, or `r = 0` with
 //!   `b > ½σ²`): exercise boundary `S** = K·y₂/(y₂−1) ∈ (0, K)`, and on the
 //!   continuation region `S > S**`
@@ -82,7 +93,12 @@
 //!
 //! `spot > 0`, `strike > 0`, `vol > 0`, and `r ≥ 0`: a perpetual claim under a
 //! negative numeraire rate has no finite value (the discounted strike grows
-//! without bound), so the closed form is not defined there.
+//! without bound), so the closed form is not defined there. A **call** with
+//! `b > r` strictly is refused with [`PerpetualError::CallCarryExceedsDiscount`]
+//! (no finite value — see the call bullet above); **puts are unaffected** by
+//! that refusal: the put prices on the small root `y₂ ≤ 0`, which exists for
+//! every `b` whenever `r ≥ 0` (the product of roots is `−r/(½σ²) ≤ 0`), and the
+//! put payoff is bounded by `K`, so its value is finite for all carries.
 //!
 //! # Method provenance (doc comments only)
 //!
@@ -94,6 +110,32 @@
 
 use celnet_core::math::{exp, ln, sqrt};
 use celnet_types::{Carry, OptionType, RateSensitivities};
+
+/// Typed domain refusal of the perpetual closed form — the contract has **no
+/// finite value** on the refused inputs, so no number is ever fabricated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PerpetualError {
+    /// A perpetual **call** with net carry strictly exceeding the discount
+    /// rate (`b > r`) diverges: stopping at any level `L > K` is worth
+    /// `(L − K)·(S/L)^{y₁}` with `y₁ < 1` (`ψ(1) = b − r > 0` puts the larger
+    /// characteristic root strictly below 1), unbounded as `L → ∞`
+    /// (`e^{−rt}·S_t` is a strict submartingale). Only `b = r` exactly admits
+    /// the degenerate `V = S`; puts are unaffected (the `y₂` branch).
+    CallCarryExceedsDiscount,
+}
+
+impl core::fmt::Display for PerpetualError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let s = match self {
+            PerpetualError::CallCarryExceedsDiscount => {
+                "a perpetual call with carry exceeding the discount rate has no finite value"
+            }
+        };
+        f.write_str(s)
+    }
+}
+
+impl std::error::Error for PerpetualError {}
 
 /// The market state a perpetual American vanilla prices against.
 ///
@@ -209,7 +251,8 @@ fn characteristic_roots(vol: f64, r: f64, b: f64) -> CharacteristicRoots {
 /// Where on the exercise diagram the contract sits, with everything the price
 /// and the Greek strip need from the continuation closed form.
 enum Valuation {
-    /// Call with `b ≥ r`: never exercised, `V = S` exactly (the `y₁ → 1⁺`
+    /// Call with `b = r` exactly (or the rounding-collapsed `y₁ = 1.0` sub-ulp
+    /// window inside `b < r`): never exercised, `V = S` exactly (the `y₁ → 1⁺`
     /// limit). Unit delta, every other sensitivity zero on the open region.
     NeverExercisedCall,
     /// Put with `r = 0` and `b ≤ ½σ²` (`y₂ = 0`): the boundary collapses to 0
@@ -231,13 +274,23 @@ enum Valuation {
     },
 }
 
-fn valuation(opt: OptionType, i: &PerpetualInputs) -> Valuation {
+fn valuation(opt: OptionType, i: &PerpetualInputs) -> Result<Valuation, PerpetualError> {
     let r = i.carry.discount_rate();
     let b = i.carry.carry_rate();
-    match opt {
+    Ok(match opt {
         OptionType::Call => {
-            if b >= r {
-                return Valuation::NeverExercisedCall;
+            // b > r STRICTLY: the perpetual call diverges (ψ(1) = b − r > 0
+            // puts y₁ < 1, so stopping at L gives (L−K)(S/L)^{y₁} → ∞;
+            // e^{−rt}·S_t is a strict submartingale) — refused, never pinned.
+            if b > r {
+                return Err(PerpetualError::CallCarryExceedsDiscount);
+            }
+            // b == r EXACTLY (structural comparison, not a tolerance): the
+            // degenerate where ψ(1) = 0 makes y₁ = 1 — early exercise is never
+            // optimal and V = S exactly, the y₁ → 1⁺ limit of the closed form
+            // and the T → ∞ limit of the same-terms European call.
+            if b == r {
+                return Ok(Valuation::NeverExercisedCall);
             }
             let roots = characteristic_roots(i.vol, r, b);
             let y = roots.y_high; // > 1, since ψ(1) = b − r < 0 here
@@ -249,11 +302,11 @@ fn valuation(opt: OptionType, i: &PerpetualInputs) -> Valuation {
             // form there would form the 1/0 boundary and a NaN value.
             // (Exact-zero structural comparison, not a tolerance.)
             if y == 1.0 {
-                return Valuation::NeverExercisedCall;
+                return Ok(Valuation::NeverExercisedCall);
             }
             let boundary = i.strike * y / (y - 1.0);
             if i.spot >= boundary {
-                return Valuation::Exercised;
+                return Ok(Valuation::Exercised);
             }
             Valuation::Continuation {
                 y,
@@ -269,11 +322,11 @@ fn valuation(opt: OptionType, i: &PerpetualInputs) -> Valuation {
             // so it is ±0 precisely when r == 0 (exact-zero structural
             // comparison, not a tolerance).
             if y == 0.0 {
-                return Valuation::NeverExercisedPut;
+                return Ok(Valuation::NeverExercisedPut);
             }
             let boundary = i.strike * y / (y - 1.0); // ∈ (0, K) for y < 0
             if i.spot <= boundary {
-                return Valuation::Exercised;
+                return Ok(Valuation::Exercised);
             }
             Valuation::Continuation {
                 y,
@@ -282,43 +335,58 @@ fn valuation(opt: OptionType, i: &PerpetualInputs) -> Valuation {
                 dpsi_dy: -roots.sqrt_disc,
             }
         }
-    }
+    })
 }
 
 /// Present value of a perpetual American vanilla (premium in the numeraire
 /// currency, per 1 unit of base). See the module docs for the closed form,
 /// the degenerate arms and the domain.
-#[must_use]
-pub fn perpetual_price(opt: OptionType, i: &PerpetualInputs) -> f64 {
-    match valuation(opt, i) {
+///
+/// # Errors
+///
+/// [`PerpetualError::CallCarryExceedsDiscount`] for a call with `b > r`
+/// strictly — the value diverges, so no number exists to return (puts are
+/// unaffected; `b == r` exactly is the finite `V = S` degenerate).
+pub fn perpetual_price(opt: OptionType, i: &PerpetualInputs) -> Result<f64, PerpetualError> {
+    Ok(match valuation(opt, i)? {
         Valuation::NeverExercisedCall => i.spot,
         Valuation::NeverExercisedPut => i.strike,
         Valuation::Exercised => opt.sign() * (i.spot - i.strike),
         Valuation::Continuation { value, .. } => value,
-    }
+    })
 }
 
 /// The free early-exercise boundary of a perpetual American vanilla:
 /// `S* = K·y₁/(y₁−1)` (call) or `S** = K·y₂/(y₂−1)` (put), independent of the
 /// current spot.
 ///
-/// Degenerate arms return the exact limit: `+∞` for a call with `b ≥ r`
-/// (never exercised — no finite boundary) and `0` for a put with `r = 0` and
-/// `b ≤ ½σ²` (the boundary collapses to the origin).
-#[must_use]
-pub fn perpetual_exercise_boundary(opt: OptionType, i: &PerpetualInputs) -> f64 {
+/// Degenerate arms return the exact limit: `+∞` for a call with `b == r`
+/// exactly (never exercised — no finite boundary) and `0` for a put with
+/// `r = 0` and `b ≤ ½σ²` (the boundary collapses to the origin).
+///
+/// # Errors
+///
+/// [`PerpetualError::CallCarryExceedsDiscount`] for a call with `b > r`
+/// strictly — the contract has no finite value and therefore no boundary.
+pub fn perpetual_exercise_boundary(
+    opt: OptionType,
+    i: &PerpetualInputs,
+) -> Result<f64, PerpetualError> {
     let r = i.carry.discount_rate();
     let b = i.carry.carry_rate();
-    match opt {
+    Ok(match opt {
         OptionType::Call => {
-            if b >= r {
-                return f64::INFINITY;
+            if b > r {
+                return Err(PerpetualError::CallCarryExceedsDiscount);
+            }
+            if b == r {
+                return Ok(f64::INFINITY);
             }
             let y = characteristic_roots(i.vol, r, b).y_high;
             // Rounding-collapsed y₁ == 1.0 (the sub-ulp b → r⁻ window): no
             // finite boundary — the exact y₁ → 1⁺ limit, mirroring `valuation`.
             if y == 1.0 {
-                return f64::INFINITY;
+                return Ok(f64::INFINITY);
             }
             i.strike * y / (y - 1.0)
         }
@@ -326,11 +394,11 @@ pub fn perpetual_exercise_boundary(opt: OptionType, i: &PerpetualInputs) -> f64 
             let y = characteristic_roots(i.vol, r, b).y_low;
             // Exact ±0 when r == 0 (see `valuation`); the boundary limit is 0.
             if y == 0.0 {
-                return 0.0;
+                return Ok(0.0);
             }
             i.strike * y / (y - 1.0)
         }
-    }
+    })
 }
 
 /// Price and the analytic Greek strip of a perpetual American vanilla in one
@@ -340,11 +408,18 @@ pub fn perpetual_exercise_boundary(opt: OptionType, i: &PerpetualInputs) -> f64 
 /// On the stopped (immediate-exercise) region the strip is the intrinsic one:
 /// `delta = ±1`, everything else zero. On the never-exercised degenerate arms
 /// the value is flat in every input over the open region, so the strip is
-/// `delta = 1` (call, `V = S`) or all-zero (put, `V = K`); at the region edges
-/// (`b = r`, `r = 0`) these are the one-sided derivatives from inside the arm.
-#[must_use]
-pub fn perpetual_greeks(opt: OptionType, i: &PerpetualInputs) -> PerpetualGreeks {
-    let (price, delta, gamma, vega, discount_rho, carry_rho) = match valuation(opt, i) {
+/// `delta = 1` (call, `V = S` on `b == r`) or all-zero (put, `V = K`); on
+/// those degenerate sets these are the exact derivatives along the arm.
+///
+/// # Errors
+///
+/// [`PerpetualError::CallCarryExceedsDiscount`] for a call with `b > r`
+/// strictly — there is no finite value, hence no strip (puts are unaffected).
+pub fn perpetual_greeks(
+    opt: OptionType,
+    i: &PerpetualInputs,
+) -> Result<PerpetualGreeks, PerpetualError> {
+    let (price, delta, gamma, vega, discount_rho, carry_rho) = match valuation(opt, i)? {
         Valuation::NeverExercisedCall => (i.spot, 1.0, 0.0, 0.0, 0.0, 0.0),
         Valuation::NeverExercisedPut => (i.strike, 0.0, 0.0, 0.0, 0.0, 0.0),
         Valuation::Exercised => {
@@ -389,13 +464,13 @@ pub fn perpetual_greeks(opt: OptionType, i: &PerpetualInputs) -> PerpetualGreeks
             carry_rho,
         },
     };
-    PerpetualGreeks {
+    Ok(PerpetualGreeks {
         price,
         delta,
         gamma,
         vega,
         rates,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -455,13 +530,13 @@ mod tests {
                 (s_star - k) * (s / s_star).powf(y1)
             };
             assert_close!(
-                perpetual_price(OptionType::Call, &i),
+                perpetual_price(OptionType::Call, &i).unwrap(),
                 call_ref,
                 1e-10,
                 1e-12
             );
             assert_close!(
-                perpetual_exercise_boundary(OptionType::Call, &i),
+                perpetual_exercise_boundary(OptionType::Call, &i).unwrap(),
                 s_star,
                 1e-10,
                 1e-12
@@ -490,9 +565,14 @@ mod tests {
             } else {
                 (k - s_dstar) * (s / s_dstar).powf(y2)
             };
-            assert_close!(perpetual_price(OptionType::Put, &i), put_ref, 1e-10, 1e-12);
             assert_close!(
-                perpetual_exercise_boundary(OptionType::Put, &i),
+                perpetual_price(OptionType::Put, &i).unwrap(),
+                put_ref,
+                1e-10,
+                1e-12
+            );
+            assert_close!(
+                perpetual_exercise_boundary(OptionType::Put, &i).unwrap(),
                 s_dstar,
                 1e-10,
                 1e-12
@@ -521,13 +601,13 @@ mod tests {
     fn pinned_offline_reference_values() {
         let call = inp(100.0, 100.0, 0.30, 0.08, 0.04);
         assert_close!(
-            perpetual_price(OptionType::Call, &call),
+            perpetual_price(OptionType::Call, &call).unwrap(),
             43.822_721_921_567_37,
             1e-10,
             1e-9
         );
         assert_close!(
-            perpetual_exercise_boundary(OptionType::Call, &call),
+            perpetual_exercise_boundary(OptionType::Call, &call).unwrap(),
             356.380_151_868_303_87,
             1e-12,
             1e-9
@@ -535,31 +615,36 @@ mod tests {
 
         let put = inp(100.0, 110.0, 0.25, 0.06, 0.02);
         assert_close!(
-            perpetual_price(OptionType::Put, &put),
+            perpetual_price(OptionType::Put, &put).unwrap(),
             26.849_837_653_852_706,
             1e-10,
             1e-9
         );
         assert_close!(
-            perpetual_exercise_boundary(OptionType::Put, &put),
+            perpetual_exercise_boundary(OptionType::Put, &put).unwrap(),
             60.389_735_486_378_59,
             1e-12,
             1e-9
         );
     }
 
-    /// Degenerate law: `b ≥ r` ⇒ the perpetual call is never exercised early
-    /// and `V = S` exactly (handled as an exact arm — no `y₁ → 1⁺` NaN). The
+    /// Degenerate law: `b == r` EXACTLY ⇒ the perpetual call is never
+    /// exercised early and `V = S` exactly (`ψ(1) = 0`, `y₁ = 1` — the `T → ∞`
+    /// European-call limit; handled as an exact arm, no `y₁ → 1⁺` NaN). The
     /// `to_bits` equalities are the documented exact-arm carve-out from the
     /// no-float-`==` rule.
     #[test]
-    fn never_exercised_call_is_spot_exactly() {
-        for &(r, b) in &[(0.05, 0.05), (0.03, 0.06), (0.0, 0.0), (0.02, 0.025)] {
+    fn carry_equal_to_discount_call_is_spot_exactly() {
+        for &(r, b) in &[(0.05, 0.05), (0.0, 0.0), (0.123, 0.123)] {
             let i = inp(123.45, 100.0, 0.2, r, b);
-            let p = perpetual_price(OptionType::Call, &i);
+            let p = perpetual_price(OptionType::Call, &i).unwrap();
             assert_eq!(p.to_bits(), 123.45f64.to_bits());
-            assert!(perpetual_exercise_boundary(OptionType::Call, &i).is_infinite());
-            let g = perpetual_greeks(OptionType::Call, &i);
+            assert!(
+                perpetual_exercise_boundary(OptionType::Call, &i)
+                    .unwrap()
+                    .is_infinite()
+            );
+            let g = perpetual_greeks(OptionType::Call, &i).unwrap();
             assert_eq!(g.price.to_bits(), p.to_bits());
             assert_eq!(g.delta.to_bits(), 1.0f64.to_bits());
             assert_eq!(g.gamma.to_bits(), 0.0f64.to_bits());
@@ -568,9 +653,51 @@ mod tests {
         // Continuity into the arm: b just below r must stay finite and land
         // next to S (the y₁ → 1⁺ limit), not blow up.
         let near = inp(100.0, 100.0, 0.2, 0.05, 0.05 - 1e-9);
-        let p = perpetual_price(OptionType::Call, &near);
+        let p = perpetual_price(OptionType::Call, &near).unwrap();
         assert!(p.is_finite());
         assert_close!(p, 100.0, 1e-4, 1e-4);
+    }
+
+    /// Divergence law: a call with `b > r` STRICTLY has NO finite value
+    /// (stopping at `L` yields `(L−K)(S/L)^{y₁}` with `y₁ < 1` → ∞;
+    /// `e^{−rt}·S_t` is a strict submartingale) — price, boundary and the
+    /// Greek strip all refuse with the typed error, never a pinned `V = S`
+    /// (adversarial-verify refutation: the old `V = S` pin at `(r, b) =
+    /// (0.02, 0.025)` sat BELOW the same-terms 100y European, an internal
+    /// arbitrage). Puts on the same carries are UNAFFECTED: the `y₂ ≤ 0`
+    /// branch exists for every `b` and the put payoff is bounded by `K`.
+    #[test]
+    fn call_carry_strictly_exceeding_discount_is_refused() {
+        for &(r, b) in &[(0.03, 0.06), (0.02, 0.025), (0.0, 0.05), (0.05, 0.0500001)] {
+            let i = inp(123.45, 100.0, 0.2, r, b);
+            assert_eq!(
+                perpetual_price(OptionType::Call, &i),
+                Err(PerpetualError::CallCarryExceedsDiscount),
+                "r={r} b={b}"
+            );
+            assert_eq!(
+                perpetual_exercise_boundary(OptionType::Call, &i),
+                Err(PerpetualError::CallCarryExceedsDiscount),
+                "r={r} b={b}"
+            );
+            assert_eq!(
+                perpetual_greeks(OptionType::Call, &i),
+                Err(PerpetualError::CallCarryExceedsDiscount),
+                "r={r} b={b}"
+            );
+            // The put is untouched by the call's divergence: finite, within
+            // the no-arbitrage sandwich intrinsic ≤ V ≤ K.
+            let put = perpetual_price(OptionType::Put, &i).unwrap();
+            assert!(
+                put.is_finite() && put >= 0.0 && put <= 100.0,
+                "put must stay finite/bounded at r={r} b={b}: {put}"
+            );
+        }
+        // The typed message is the wire-facing contract text.
+        assert_eq!(
+            PerpetualError::CallCarryExceedsDiscount.to_string(),
+            "a perpetual call with carry exceeding the discount rate has no finite value"
+        );
     }
 
     /// The sub-ulp law: `b` strictly below `r` by as little as ONE ulp keeps
@@ -586,19 +713,19 @@ mod tests {
             let b = f64::from_bits(r.to_bits() - ulps);
             assert!(b < r, "scan must stay strictly inside b < r");
             let i = inp(100.0, 100.0, 0.2, r, b);
-            let p = perpetual_price(OptionType::Call, &i);
+            let p = perpetual_price(OptionType::Call, &i).unwrap();
             assert!(p.is_finite(), "NaN/inf at b = r - {ulps} ulps: {p}");
             // No-arbitrage sandwich: intrinsic ≤ V ≤ S, and the value sits on
             // the S limit to within the closed form's own collapse error
             // (measured ≤ 3e-11 absolute across the 64-ulp window).
             assert!((0.0..=100.0).contains(&p));
             assert_close!(p, 100.0, 1e-9, 1e-9);
-            let g = perpetual_greeks(OptionType::Call, &i);
+            let g = perpetual_greeks(OptionType::Call, &i).unwrap();
             assert!(
                 g.delta.is_finite() && g.gamma.is_finite() && g.vega.is_finite(),
                 "non-finite Greeks at b = r - {ulps} ulps"
             );
-            assert!(perpetual_exercise_boundary(OptionType::Call, &i) > 100.0);
+            assert!(perpetual_exercise_boundary(OptionType::Call, &i).unwrap() > 100.0);
         }
     }
 
@@ -609,10 +736,10 @@ mod tests {
         // Call: S* = 356.38… (pinned above); S = 400 sits beyond it.
         let call = inp(400.0, 100.0, 0.30, 0.08, 0.04);
         assert_eq!(
-            perpetual_price(OptionType::Call, &call).to_bits(),
+            perpetual_price(OptionType::Call, &call).unwrap().to_bits(),
             300.0f64.to_bits()
         );
-        let gc = perpetual_greeks(OptionType::Call, &call);
+        let gc = perpetual_greeks(OptionType::Call, &call).unwrap();
         assert_eq!(gc.delta.to_bits(), 1.0f64.to_bits());
         assert_eq!(gc.gamma.to_bits(), 0.0f64.to_bits());
         assert_eq!(gc.vega.to_bits(), 0.0f64.to_bits());
@@ -620,10 +747,10 @@ mod tests {
         // Put: S** = 60.39… (pinned above); S = 40 sits beyond (below) it.
         let put = inp(40.0, 110.0, 0.25, 0.06, 0.02);
         assert_eq!(
-            perpetual_price(OptionType::Put, &put).to_bits(),
+            perpetual_price(OptionType::Put, &put).unwrap().to_bits(),
             70.0f64.to_bits()
         );
-        let gp = perpetual_greeks(OptionType::Put, &put);
+        let gp = perpetual_greeks(OptionType::Put, &put).unwrap();
         assert_eq!(gp.delta.to_bits(), (-1.0f64).to_bits());
         assert_eq!(gp.gamma.to_bits(), 0.0f64.to_bits());
         assert_eq!(gp.vega.to_bits(), 0.0f64.to_bits());
@@ -639,13 +766,18 @@ mod tests {
     fn sigma_to_zero_deterministic_limits() {
         // Call, 0 < b < r: S₀* = 0.08·100/0.04 = 200, V = 100·(100/200)² = 25.
         let call = inp(100.0, 100.0, 1e-4, 0.08, 0.04);
-        assert_close!(perpetual_price(OptionType::Call, &call), 25.0, 1e-4, 1e-4);
+        assert_close!(
+            perpetual_price(OptionType::Call, &call).unwrap(),
+            25.0,
+            1e-4,
+            1e-4
+        );
 
         // Put, b < 0 < r: S₀* = 0.06·100/0.09 = 200/3,
         // V = (100 − 200/3)·(100/(200/3))^{0.06/−0.03} = (100/3)·(2/3)² = 400/27.
         let put = inp(100.0, 100.0, 1e-4, 0.06, -0.03);
         assert_close!(
-            perpetual_price(OptionType::Put, &put),
+            perpetual_price(OptionType::Put, &put).unwrap(),
             400.0 / 27.0,
             1e-4,
             1e-4
@@ -663,14 +795,18 @@ mod tests {
         // b = 0.01 ≤ ½σ² = 0.02 ⇒ V = K exactly, boundary 0, flat strip.
         let collapsed = inp(100.0, 90.0, 0.20, 0.0, 0.01);
         assert_eq!(
-            perpetual_price(OptionType::Put, &collapsed).to_bits(),
+            perpetual_price(OptionType::Put, &collapsed)
+                .unwrap()
+                .to_bits(),
             90.0f64.to_bits()
         );
         assert_eq!(
-            perpetual_exercise_boundary(OptionType::Put, &collapsed).to_bits(),
+            perpetual_exercise_boundary(OptionType::Put, &collapsed)
+                .unwrap()
+                .to_bits(),
             0.0f64.to_bits()
         );
-        let g = perpetual_greeks(OptionType::Put, &collapsed);
+        let g = perpetual_greeks(OptionType::Put, &collapsed).unwrap();
         assert_eq!(g.delta.to_bits(), 0.0f64.to_bits());
         assert_eq!(g.vega.to_bits(), 0.0f64.to_bits());
 
@@ -681,13 +817,13 @@ mod tests {
         let boundary = 90.0 * y2 / (y2 - 1.0);
         let reference = (90.0 - boundary) * (100.0f64 / boundary).powf(y2);
         assert_close!(
-            perpetual_exercise_boundary(OptionType::Put, &active),
+            perpetual_exercise_boundary(OptionType::Put, &active).unwrap(),
             54.0,
             1e-12,
             1e-12
         );
         assert_close!(
-            perpetual_price(OptionType::Put, &active),
+            perpetual_price(OptionType::Put, &active).unwrap(),
             reference,
             1e-12,
             1e-12
@@ -705,8 +841,8 @@ mod tests {
         for step in 0..=72 {
             let s = 40.0 + 5.0 * f64::from(step);
             let i = inp(s, k, 0.30, r, b);
-            let c = perpetual_price(OptionType::Call, &i);
-            let p = perpetual_price(OptionType::Put, &i);
+            let c = perpetual_price(OptionType::Call, &i).unwrap();
+            let p = perpetual_price(OptionType::Put, &i).unwrap();
             assert!(c >= prev_call - 1e-12, "call not monotone in S at {s}");
             assert!(p <= prev_put + 1e-12, "put not monotone in S at {s}");
             assert!(c >= (s - k).max(0.0) - 1e-12 && c <= s + 1e-12);
@@ -717,8 +853,8 @@ mod tests {
         for step in 1..=20 {
             let vol = 0.05 * f64::from(step);
             let i = inp(90.0, k, vol, r, b);
-            let c = perpetual_price(OptionType::Call, &i);
-            let p = perpetual_price(OptionType::Put, &i);
+            let c = perpetual_price(OptionType::Call, &i).unwrap();
+            let p = perpetual_price(OptionType::Put, &i).unwrap();
             assert!(c >= prev.0 - 1e-12, "call not monotone in σ at {vol}");
             assert!(p >= prev.1 - 1e-12, "put not monotone in σ at {vol}");
             prev = (c, p);
@@ -741,17 +877,25 @@ mod tests {
         ] {
             for opt in [OptionType::Call, OptionType::Put] {
                 let i = inp(s, k, vol, r, b);
-                let g = perpetual_greeks(opt, &i);
-                assert_eq!(g.price.to_bits(), perpetual_price(opt, &i).to_bits());
+                let g = perpetual_greeks(opt, &i).unwrap();
+                assert_eq!(
+                    g.price.to_bits(),
+                    perpetual_price(opt, &i).unwrap().to_bits()
+                );
 
                 let hs = 1e-4 * s;
-                let at_spot = |x: f64| perpetual_price(opt, &PerpetualInputs { spot: x, ..i });
+                let at_spot =
+                    |x: f64| perpetual_price(opt, &PerpetualInputs { spot: x, ..i }).unwrap();
                 assert_close!(g.delta, fd1(&at_spot, s, hs), 1e-6, 1e-9);
-                let delta_at =
-                    |x: f64| perpetual_greeks(opt, &PerpetualInputs { spot: x, ..i }).delta;
+                let delta_at = |x: f64| {
+                    perpetual_greeks(opt, &PerpetualInputs { spot: x, ..i })
+                        .unwrap()
+                        .delta
+                };
                 assert_close!(g.gamma, fd1(&delta_at, s, hs), 1e-6, 1e-9);
 
-                let at_vol = |x: f64| perpetual_price(opt, &PerpetualInputs { vol: x, ..i });
+                let at_vol =
+                    |x: f64| perpetual_price(opt, &PerpetualInputs { vol: x, ..i }).unwrap();
                 assert_close!(g.vega, fd1(&at_vol, vol, 1e-6), 1e-6, 1e-8);
 
                 let at_r = |x: f64| {
@@ -762,6 +906,7 @@ mod tests {
                             ..i
                         },
                     )
+                    .unwrap()
                 };
                 let at_b = |x: f64| {
                     perpetual_price(
@@ -771,6 +916,7 @@ mod tests {
                             ..i
                         },
                     )
+                    .unwrap()
                 };
                 match g.rates {
                     RateSensitivities::Carry {
@@ -798,7 +944,7 @@ mod tests {
             },
         );
         for opt in [OptionType::Call, OptionType::Put] {
-            let g = perpetual_greeks(opt, &fx);
+            let g = perpetual_greeks(opt, &fx).unwrap();
             let at_dom = |x: f64| {
                 perpetual_price(
                     opt,
@@ -810,6 +956,7 @@ mod tests {
                         ..fx
                     },
                 )
+                .unwrap()
             };
             let at_for = |x: f64| {
                 perpetual_price(
@@ -822,6 +969,7 @@ mod tests {
                         ..fx
                     },
                 )
+                .unwrap()
             };
             match g.rates {
                 RateSensitivities::Fx { rho_dom, rho_for } => {
@@ -840,38 +988,42 @@ mod tests {
     #[test]
     fn smooth_pasting_at_the_boundary() {
         let call = inp(100.0, 100.0, 0.30, 0.08, 0.04);
-        let s_star = perpetual_exercise_boundary(OptionType::Call, &call);
+        let s_star = perpetual_exercise_boundary(OptionType::Call, &call).unwrap();
         let just_inside = PerpetualInputs {
             spot: s_star * (1.0 - 1e-7),
             ..call
         };
         assert_close!(
-            perpetual_price(OptionType::Call, &just_inside),
+            perpetual_price(OptionType::Call, &just_inside).unwrap(),
             s_star - 100.0,
             1e-5,
             1e-5
         );
         assert_close!(
-            perpetual_greeks(OptionType::Call, &just_inside).delta,
+            perpetual_greeks(OptionType::Call, &just_inside)
+                .unwrap()
+                .delta,
             1.0,
             1e-5,
             1e-5
         );
 
         let put = inp(100.0, 110.0, 0.25, 0.06, 0.02);
-        let s_dstar = perpetual_exercise_boundary(OptionType::Put, &put);
+        let s_dstar = perpetual_exercise_boundary(OptionType::Put, &put).unwrap();
         let just_inside = PerpetualInputs {
             spot: s_dstar * (1.0 + 1e-7),
             ..put
         };
         assert_close!(
-            perpetual_price(OptionType::Put, &just_inside),
+            perpetual_price(OptionType::Put, &just_inside).unwrap(),
             110.0 - s_dstar,
             1e-5,
             1e-5
         );
         assert_close!(
-            perpetual_greeks(OptionType::Put, &just_inside).delta,
+            perpetual_greeks(OptionType::Put, &just_inside)
+                .unwrap()
+                .delta,
             -1.0,
             1e-5,
             1e-5

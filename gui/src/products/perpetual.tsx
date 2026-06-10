@@ -84,7 +84,8 @@ function PerpetualInputBlock({ value, onChange, ctx }: InputBlockProps<Perpetual
         exercisable at any time, and exercise is the only way the contract ends. Priced in exact
         closed form (the value is time-homogeneous: theta is identically zero); the booked
         instrument carries no tenor and an expiry of exactly 0, the contract's canonical
-        no-expiry shape. Refused under a negative discount rate (no finite value exists).
+        no-expiry shape. Refused under a negative discount rate, and a call is refused when the
+        carry exceeds the discount rate (r_for &lt; 0) — no finite value exists in either case.
       </p>
     </div>
   );

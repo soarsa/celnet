@@ -135,6 +135,45 @@ describe("perpetual product spec (GW2)", () => {
     }
   });
 
+  // The carry/discount call law (the adversarial-verify refutation of the old
+  // `b ≥ r ⇒ V = S` pin): at b == r EXACTLY the call equals the spot (the
+  // Merton degenerate / T → ∞ European limit); for b > r STRICTLY the value
+  // DIVERGES — the offline pricer must throw the typed refusal the server
+  // mirrors as INVALID_ARGUMENT, never report a number. Puts are unaffected.
+  it("prices a call at exactly the spot when the carry equals the discount rate (b == r)", () => {
+    const inst = perpetualSpec.toInstrument(
+      { optionType: "CALL", strike: 1.1 } satisfies PerpetualInputs,
+      CTX,
+    );
+    // FX form of b == r: rFor = 0 (b = rDom − rFor = rDom = r).
+    const m: MarketContext = { spot: 1.25, vol: 0.1, rDom: 0.02, rFor: 0 };
+    const g = priceInstrument(inst, m).greeks;
+    expect(g.price).toBe(1.25); // V = S exactly — the pinned golden literal
+    expect(g.deltaSpot).toBe(1);
+    expect(g.vega).toBe(0);
+  });
+
+  it("refuses a call whose carry strictly exceeds the discount rate (b > r, rFor < 0)", () => {
+    const call = perpetualSpec.toInstrument(
+      { optionType: "CALL", strike: 1.1 } satisfies PerpetualInputs,
+      CTX,
+    );
+    // FX form of b > r: rFor < 0 (b = 0.025 > r = 0.02) — the refuted shape.
+    const m: MarketContext = { spot: 1.25, vol: 0.1, rDom: 0.02, rFor: -0.005 };
+    expect(() => priceInstrument(call, m)).toThrowError(
+      /perpetual call with carry exceeding the discount rate has no finite value/,
+    );
+    // The put on the SAME market is unaffected (the y₂ branch, bounded by K).
+    const put = perpetualSpec.toInstrument(
+      { optionType: "PUT", strike: 1.1 } satisfies PerpetualInputs,
+      CTX,
+    );
+    const g = priceInstrument(put, m).greeks;
+    expect(Number.isFinite(g.price)).toBe(true);
+    expect(g.price).toBeGreaterThanOrEqual(0);
+    expect(g.price).toBeLessThanOrEqual(1.1);
+  });
+
   it("sits in the Path-dependent gallery group (beside the early-exercise American)", () => {
     expect(perpetualSpec.group).toBe("Path-dependent");
     const grouped = registryByGroup();

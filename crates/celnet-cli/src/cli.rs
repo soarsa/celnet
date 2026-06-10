@@ -1478,7 +1478,11 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
                 r_dom: a.r_dom,
                 r_for: a.r_for,
             };
-            let r = perpetual::run(a.option.into(), a.strike, market, a.asset);
+            // The leaf's carry-domain law (typed): a perpetual CALL with carry
+            // strictly exceeding the discount rate (b > r; FX form r_for < 0)
+            // has no finite value — refused exactly as the server refuses it.
+            let r = perpetual::run(a.option.into(), a.strike, market, a.asset)
+                .map_err(|e| DispatchError::Invalid(e.to_string()))?;
             let label = a.underlying.unwrap_or_else(|| default_underlying(a.asset));
             write!(
                 out,
@@ -1906,6 +1910,41 @@ mod tests {
         ])
         .unwrap_err();
         assert!(matches!(err, DispatchError::Invalid(_)));
+    }
+
+    /// The leaf's carry-domain law through the full dispatch: an FX perpetual
+    /// CALL with `r_for < 0` (`b = r_dom − r_for > r_dom` strictly) has no
+    /// finite value — a typed refusal carrying the leaf's message, never a
+    /// number. The PUT on the identical market still prices (the `y₂` branch).
+    #[test]
+    fn perpetual_rejects_a_call_with_carry_exceeding_discount() {
+        let args = |option: &'static str| {
+            [
+                "celnet",
+                "perpetual",
+                "--option",
+                option,
+                "--strike",
+                "1.10",
+                "--spot",
+                "1.25",
+                "--vol",
+                "0.10",
+                "--r-dom",
+                "0.02",
+                "--r-for=-0.005",
+            ]
+        };
+        let err = run_to_string(&args("call")).unwrap_err();
+        match err {
+            DispatchError::Invalid(msg) => assert_eq!(
+                msg,
+                "a perpetual call with carry exceeding the discount rate has no finite value"
+            ),
+            other => panic!("expected the typed Invalid refusal, got {other:?}"),
+        }
+        let out = run_to_string(&args("put")).unwrap();
+        assert!(out.contains("perpetual put") && out.contains("price"));
     }
 
     #[test]

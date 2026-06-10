@@ -17,7 +17,9 @@
 //! time-homogeneous, and theta is identically zero — reported as the exact zero
 //! it is, never a computed decay.
 
-use celnet_exotics::{PerpetualInputs, perpetual_exercise_boundary, perpetual_greeks};
+use celnet_exotics::{
+    PerpetualError, PerpetualInputs, perpetual_exercise_boundary, perpetual_greeks,
+};
 use celnet_types::{Carry, OptionType, RateSensitivities};
 
 use crate::args::CliAsset;
@@ -70,18 +72,21 @@ pub(crate) struct PerpetualResult {
 
 /// Price a perpetual American vanilla and its exact analytic Greek strip.
 /// Domain validation (positive spot/strike/vol, non-negative discount rate)
-/// happens in the dispatch before this is called.
+/// happens in the dispatch before this is called; the leaf's own carry-domain
+/// law is surfaced here as the typed [`PerpetualError`] — a CALL with carry
+/// strictly exceeding the discount rate (`b > r`; FX form: `r_for < 0`) has
+/// NO finite value and is refused, exactly as the server refuses it.
 pub(crate) fn run(
     option: OptionType,
     strike: f64,
     market: PerpetualMarket,
     asset: CliAsset,
-) -> PerpetualResult {
+) -> Result<PerpetualResult, PerpetualError> {
     let inputs = PerpetualInputs::new(market.spot, strike, market.vol, market.carry(asset));
-    PerpetualResult {
-        boundary: perpetual_exercise_boundary(option, &inputs),
-        greeks: perpetual_greeks(option, &inputs),
-    }
+    Ok(PerpetualResult {
+        boundary: perpetual_exercise_boundary(option, &inputs)?,
+        greeks: perpetual_greeks(option, &inputs)?,
+    })
 }
 
 /// Format a perpetual report (the `price` line keyed exactly like every other
@@ -147,7 +152,7 @@ mod tests {
             r_for: 0.01,
         };
         for opt in [OptionType::Call, OptionType::Put] {
-            let r = run(opt, 1.1, market, CliAsset::Fx);
+            let r = run(opt, 1.1, market, CliAsset::Fx).unwrap();
             let direct = perpetual_greeks(
                 opt,
                 &PerpetualInputs::new(
@@ -159,16 +164,38 @@ mod tests {
                         r_for: 0.01,
                     },
                 ),
-            );
+            )
+            .unwrap();
             assert_eq!(r.greeks.price.to_bits(), direct.price.to_bits());
             assert_eq!(r.greeks.delta.to_bits(), direct.delta.to_bits());
             assert!(matches!(r.greeks.rates, RateSensitivities::Fx { .. }));
 
             // The generalized arm prices the SAME value (the carry bijection is
             // lossless) and tags the rhos as discount/carry.
-            let x = run(opt, 1.1, market, CliAsset::Equity);
+            let x = run(opt, 1.1, market, CliAsset::Equity).unwrap();
             assert!(is_close(x.greeks.price, direct.price, 1e-15, 1e-15));
             assert!(matches!(x.greeks.rates, RateSensitivities::Carry { .. }));
+        }
+    }
+
+    /// The leaf's carry-domain law surfaces typed through `run`: an FX CALL
+    /// with `r_for < 0` (`b = r_dom − r_for > r_dom`) has no finite value and
+    /// is refused on BOTH carry arms; the PUT on the same market still prices.
+    #[test]
+    fn run_refuses_a_call_with_carry_exceeding_discount() {
+        let market = PerpetualMarket {
+            spot: 1.25,
+            vol: 0.10,
+            r_dom: 0.02,
+            r_for: -0.005, // b = 0.025 > r = 0.02
+        };
+        for asset in [CliAsset::Fx, CliAsset::Equity] {
+            assert_eq!(
+                run(OptionType::Call, 1.10, market, asset).unwrap_err(),
+                PerpetualError::CallCarryExceedsDiscount
+            );
+            let put = run(OptionType::Put, 1.10, market, asset).unwrap();
+            assert!(put.greeks.price.is_finite() && put.greeks.price >= 0.0);
         }
     }
 
@@ -182,7 +209,7 @@ mod tests {
             r_dom: 0.03,
             r_for: 0.015,
         };
-        let r = run(OptionType::Put, 1.15, market, CliAsset::Fx);
+        let r = run(OptionType::Put, 1.15, market, CliAsset::Fx).unwrap();
         let report = format_report(OptionType::Put, CliAsset::Fx, "EURUSD", 1.15, &r);
         let printed: f64 = report
             .lines()
