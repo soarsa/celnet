@@ -794,11 +794,19 @@ fn gen_touch() {
             TouchKind::Dnt => ("DOUBLE_NO_TOUCH", r.lower.unwrap(), r.upper.unwrap()),
             TouchKind::DoubleTouch => ("DOUBLE_ONE_TOUCH", r.lower.unwrap(), r.upper.unwrap()),
         };
-        // The wire/server one-touch pays the rebate AT HIT (Reiner-Rubinstein),
-        // whereas the QuantLib touch CSV is the AT-EXPIRY (deferred-rebate) product.
-        // So the CSV is the correct oracle for NO_TOUCH / DOUBLE_NO_TOUCH /
-        // DOUBLE_ONE_TOUCH (all at-expiry by construction), but for the single
-        // ONE_TOUCH we use the independent at-hit closed form re-derived in `oracle`.
+        // The wire/server one-touch pays the rebate AT HIT, whereas the QuantLib
+        // touch CSV is the AT-EXPIRY (deferred-rebate) product. So the CSV is the
+        // correct oracle for NO_TOUCH / DOUBLE_NO_TOUCH / DOUBLE_ONE_TOUCH (all
+        // at-expiry by construction), but for the single ONE_TOUCH the literal is
+        // pinned via `oracle::one_touch_at_hit_price` — Gauss-Legendre quadrature
+        // of the DISCOUNTED FIRST-PASSAGE DENSITY, a route with no λ-exponent and
+        // no Φ-pairing, so it is structurally unable to reproduce the engine's
+        // historical flipped-pairing defect (P0: a structural-copy closed-form
+        // oracle here froze +28%-wrong at-hit literals into `touch.json`).
+        // Frozen at-hit literals (independent quadrature, cross-checked against
+        // the corrected published closed form to ~2e-15 rel):
+        //   touch-1 (H=105): 0.04378018727495735   (flipped form had 0.0561744592212154)
+        //   touch-3 (H=110): 5.5470234111495214e-5 (flipped form had 0.00011562220480909844)
         let (price, oracle_str, tol) = match r.kind {
             TouchKind::OneTouch => (
                 oracle::one_touch_at_hit_price(
@@ -810,7 +818,8 @@ fn gen_touch() {
                     r.r_dom,
                     r.r_for,
                 ),
-                "Reiner-Rubinstein at-hit one-touch closed form (independent)".to_owned(),
+                "discounted first-passage density quadrature (independent at-hit route)"
+                    .to_owned(),
                 Tolerance {
                     rel: 1e-6,
                     abs: 1e-8,

@@ -16,9 +16,13 @@
 //! wide-corridor limit of that same independent engine (one wall pushed ≳ 12σ√T
 //! out), so every row here is an external cross-check, not a tautology.
 //!
-//! The frozen grid validates the *at-expiry* (deferred) rebate timing, which
-//! shares all of the drift/exponent/sign machinery with the at-hit form; the
-//! at-hit ordering and the Monte-Carlo cross-check remain in-crate.
+//! The frozen grid validates the *at-expiry* (deferred) rebate timing only. It
+//! does **not** transitively validate the at-hit form: the at-hit λ-power /
+//! CDF-argument pairing is machinery the at-expiry form never touches (the P0
+//! at-hit pairing defect passed this entire grid). The at-hit form is gated
+//! separately — by the discounted-first-passage-density quadrature oracle behind
+//! the `touch.json` ONE_TOUCH vectors plus the in-crate law tests (T→∞ Laplace
+//! limit, the discounting sandwich, the r_d = 0 collapse).
 //!
 //! ## Tolerance
 //!
