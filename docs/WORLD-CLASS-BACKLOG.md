@@ -185,17 +185,20 @@ Status legend: OPEN / IN-PROGRESS / DONE / ENV (deploy-bound, not a gap). Each i
 - **[W1/W3+] clients/excel-polymorphic** — 27 one-per-product fns; BARRIER 12 positional args;
   no composition. Polymorphic `CELNET.PRICE/QUOTE/SURFACE/RISK(underlying,product,terms-range)`
   + `CELNET.INSTRUMENT(…)` spec token. Retire per-product table per #10 at parity. Oracle:
-  headless suite asserts polymorphic fn == SDK == server per class. Effort L. **OPEN**
+  headless suite asserts polymorphic fn == SDK == server per class. Effort L. **IN-PROGRESS**
   (narrowed 2026-06-10: `CELNET.PRICE`/`RFQ`/`SURFACE`/`RISK` exist; the remaining gap is the
-  `CELNET.INSTRUMENT` spec token + retiring the ~20 per-product fns per #10 at parity).
+  `CELNET.INSTRUMENT` spec token + retiring the ~20 per-product fns per #10 at parity —
+  CLAIMED session-B 2026-06-10, excel/-only lane, staying clear of the contract MarketContext
+  mirror per the Wave-S protocol).
 - **[W1/W3+] clients/gui-structuring-and-universe** — No structuring workspace (Ticket
   hardcodes per-product forms); universe is FX-pair-only. Asset-class-aware UniverseNavigator +
   composable contract-derived leg-builder Structuring workspace + surface-family switch. Oracle:
   Playwright e2e per class (navigate→structure→price→stream→risk) + axe; GUI price==server.
-  Effort XL. **IN-PROGRESS** (structuring workspace DONE via GW2 — ProductSpec registry +
-  leg-ladder + gallery, `80d1596` adds the linear group, `1484fb0` the cross-asset spec;
-  **remaining = the asset-class-aware universe/navigator + surface-family switch — CLAIMED
-  session-B 2026-06-10**, gui/-only lane, dedup-key `clients/gui-universe`).
+  Effort XL. **DONE** (structuring via GW2 + `80d1596`/`1484fb0`; the asset-class-aware
+  universe + surface-family switch landed `18ef00f` — class rail in the scope leaf, seeded
+  metal/equity/commodity/crypto universes (metal-vs-fiat only — honesty-verified vs the
+  conventions registry), ticket pre-targeting via the test-gated `crossAssetInputsFor`
+  inverse, honest per-class surface empty state; vitest 54 files / 564 tests, FX untouched).
 - **[W0+] clients/cross-client-parity-matrix-gate** — api-first parity asserted piecemeal, not
   as one matrix gate over (asset-class × product × client). Executable matrix gate seeded with
   FX (green now), one row per new (class,product) before "done". Oracle: the golden-vector
