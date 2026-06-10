@@ -1,4 +1,4 @@
-//! FX byte-identity gate for the ADR-0008 Wave-B carry-seam migration (spec §6).
+//! FX byte-identity gate for the ADR-0008 Wave-B/C carry-seam migration (spec §6).
 //!
 //! Every reference value below was captured from the **pre-migration** engines
 //! (the FX-only `VanillaInputs` two-rate forms) as raw `f64::to_bits`, on this
@@ -8,11 +8,14 @@
 //! epsilon): the whole ADR-0008 claim is that `Carry::FxRates` reproduces the FX
 //! arithmetic exactly, so anything looser would hide a regression.
 //!
-//! Engines covered (the Wave-B set): the Monte-Carlo path core (`mc::*`), the
+//! Engines covered: the Wave-B set — the Monte-Carlo path core (`mc::*`), the
 //! accumulator, the TARF, the lookback closed forms + MC, the forward-start /
 //! cliquet family, and the analytic Asian estimators (Turnbull-Wakeman-style
 //! moment matching, geometric-conditioning, geometric closed forms — provenance
-//! in the engine docs).
+//! in the engine docs) — and the Wave-C finite-difference set — the 1-D
+//! Crank-Nicolson/Rannacher PDE, the 2-D Hundsdorfer-Verwer ADI LSV solver, and
+//! the American/Bermudan PSOR + Longstaff-Schwartz engines including the full
+//! FD Greek strip with the §3.4 rate re-tag.
 
 use celnet_exotics::ExoticInputs;
 use celnet_exotics::asian::{AnalyticAsian, AveragingSchedule, geometric_average_price};
@@ -424,4 +427,340 @@ fn equity_geometric_asian_matches_hand_derived_closed_form() {
         (engine - hand).abs() < 1e-12,
         "equity geometric Asian: engine {engine} vs hand-derived {hand}"
     );
+}
+
+// ===========================================================================
+// Wave C — PDE / ADI / American finite-difference engines (spec §3.3 Wave C +
+// §3.4). Every frozen value below was captured from the pre-migration FX-only
+// engines on this exact grid immediately before the carry-seam rewiring. The
+// far-field boundaries read the STORED r_for via Carry::yield_rate, so these
+// gates are the direct guard on the §8 sharp edge (a discount−carry
+// reconstruction would flip low bits here first).
+// ===========================================================================
+
+#[test]
+fn pde_engine_byte_identical() {
+    use celnet_exotics::pde::{PdeGrid, PdeProblem, solve as pde_solve};
+
+    let grid = PdeGrid::default();
+    let prob = |option, strike, knock_out| PdeProblem {
+        option,
+        strike,
+        knock_out,
+    };
+    gate(
+        "pde_b_call_vanilla",
+        pde_solve(&fx_b(), prob(OptionType::Call, 100.0, None), grid),
+        0x4022740854d740ee,
+    );
+    gate(
+        "pde_b_call_uo",
+        pde_solve(
+            &fx_b(),
+            prob(OptionType::Call, 100.0, Some((130.0, true))),
+            grid,
+        ),
+        0x40091c28c451ced7,
+    );
+    gate(
+        "pde_b_put_do",
+        pde_solve(
+            &fx_b(),
+            prob(OptionType::Put, 100.0, Some((80.0, false))),
+            grid,
+        ),
+        0x3ffbb777d45d44ef,
+    );
+    gate(
+        "pde_c_put_vanilla",
+        pde_solve(&fx_c(), prob(OptionType::Put, 0.90, None), grid),
+        0x3fc24ceee5840456,
+    );
+    gate(
+        "pde_a_call_uo",
+        pde_solve(
+            &fx_a(),
+            prob(OptionType::Call, 1.25, Some((1.45, true))),
+            grid,
+        ),
+        0x3f9d59fea9e28a8c,
+    );
+}
+
+/// Unit leverage surface over a wide spot grid — the fixed LSV scaffolding the
+/// ADI gates price against (identical pre/post migration; the migration touches
+/// only the rate/carry reads).
+fn unit_leverage() -> celnet_exotics::LeverageSurface {
+    let spots: Vec<f64> = (0..41).map(|k| 20.0 + 6.0 * k as f64).collect();
+    let times = vec![0.0, 0.5, 1.0];
+    let mut lev = celnet_exotics::LeverageSurface::new(spots, times);
+    for j in 0..lev.time_len() {
+        for i in 0..lev.spot_len() {
+            lev.set(i, j, 1.0);
+        }
+    }
+    lev
+}
+
+#[test]
+fn adi_engine_byte_identical() {
+    use celnet_exotics::adi::{AdiGrid, AdiProblem, WindowSpec, solve as adi_solve, solve_window};
+    use celnet_exotics::stochvol::VarianceParams;
+
+    let sigma = 0.20f64;
+    let var = VarianceParams::new(sigma * sigma, 1.0, sigma * sigma, 0.4, -0.4);
+    let lev = unit_leverage();
+    let agrid = AdiGrid {
+        x_steps: 80,
+        v_steps: 30,
+        time_steps: 40,
+        ..AdiGrid::default()
+    };
+    gate(
+        "adi_b_call_vanilla",
+        adi_solve(
+            &fx_b(),
+            &var,
+            &lev,
+            AdiProblem {
+                option: OptionType::Call,
+                strike: 100.0,
+                knock_out: None,
+            },
+            agrid,
+        ),
+        0x401dea282ab68a6c,
+    );
+    gate(
+        "adi_b_call_uo",
+        adi_solve(
+            &fx_b(),
+            &var,
+            &lev,
+            AdiProblem {
+                option: OptionType::Call,
+                strike: 100.0,
+                knock_out: Some((130.0, true)),
+            },
+            agrid,
+        ),
+        0x4011ef424f18dbef,
+    );
+    gate(
+        "adi_b_call_window",
+        solve_window(
+            &fx_b(),
+            &var,
+            &lev,
+            WindowSpec {
+                option: OptionType::Call,
+                strike: 100.0,
+                barrier: 130.0,
+                up: true,
+                t_after: 0.3,
+                t_window: 0.4,
+                t_before: 0.3,
+            },
+            agrid,
+        ),
+        0x40159f5ecf5cfa0f,
+    );
+}
+
+#[test]
+fn american_engine_byte_identical() {
+    use celnet_exotics::{
+        AmericanGrid, AmericanOption, ExerciseStyle, LsmConfig, american_fd, american_lsm,
+    };
+
+    let amg = AmericanGrid::default();
+    let amr = |option, strike| AmericanOption {
+        option,
+        strike,
+        style: ExerciseStyle::American,
+    };
+    gate(
+        "am_b_put_fd",
+        american_fd(&fx_b(), &amr(OptionType::Put, 100.0), amg),
+        0x401aa3d3f6419478,
+    );
+    gate(
+        "am_b_call_fd",
+        american_fd(&fx_b(), &amr(OptionType::Call, 100.0), amg),
+        0x402274085607d60c,
+    );
+    gate(
+        "am_c_put_fd",
+        american_fd(&fx_c(), &amr(OptionType::Put, 0.90), amg),
+        0x3fc24ceee580fdf0,
+    );
+    gate(
+        "am_b_put_bermudan",
+        american_fd(
+            &fx_b(),
+            &AmericanOption {
+                option: OptionType::Put,
+                strike: 100.0,
+                style: ExerciseStyle::Bermudan {
+                    dates: vec![0.25, 0.5, 0.75],
+                },
+            },
+            amg,
+        ),
+        0x401a4538ba4c6598,
+    );
+    let lsm = american_lsm(
+        &fx_b(),
+        &amr(OptionType::Put, 100.0),
+        LsmConfig {
+            paths: 20_000,
+            exercise_dates: 20,
+            seed: 0xA11CE,
+        },
+    );
+    gate("am_b_put_lsm_price", lsm.price, 0x401a72617c3a8f0a);
+    gate("am_b_put_lsm_se", lsm.std_error, 0x3fac7b4974317b8b);
+}
+
+/// The full American FD Greek strip, including the §3.4 rate re-tag: the FX
+/// input's rhos are bumped along `r_dom`/`r_for` natively (the historical
+/// perturbations bit-for-bit) and emerge as `RateSensitivities::Fx` — every
+/// member equals the pre-migration `Greeks` field exactly.
+#[test]
+fn american_fd_greeks_byte_identical() {
+    use celnet_exotics::{AmericanGrid, AmericanOption, ExerciseStyle, american_fd_greeks};
+    use celnet_types::RateSensitivities;
+
+    let ggrid = AmericanGrid {
+        space_steps: 300,
+        time_steps: 150,
+        ..AmericanGrid::default()
+    };
+    let g = american_fd_greeks(
+        &fx_b(),
+        &AmericanOption {
+            option: OptionType::Put,
+            strike: 100.0,
+            style: ExerciseStyle::American,
+        },
+        ggrid,
+    );
+    gate("am_g_price", g.price, 0x401aa07e0369565a);
+    gate("am_g_delta_spot", g.delta_spot, 0xbfdb12e2a25c58c0);
+    gate("am_g_delta_forward", g.delta_forward, 0xbfdb9ee6017f777a);
+    gate("am_g_gamma", g.gamma, 0x3ff88d3a3e004380);
+    gate("am_g_vega", g.vega, 0x4043022824315e28);
+    gate("am_g_theta", g.theta, 0xc0058828fd050dc0);
+    gate("am_g_vanna", g.vanna, 0x3fc649a42ff9d1ff);
+    gate("am_g_volga", g.volga, 0x3fdc2a7c52b80000);
+    gate("am_g_charm", g.charm, 0x3f9049f96801c000);
+    gate("am_g_speed", g.speed, 0xbfcad94810404fff);
+    gate("am_g_zomma", g.zomma, 0x40199b3912e1de80);
+    gate("am_g_color", g.color, 0xbff1a299f947a800);
+    match g.rates {
+        RateSensitivities::Fx { rho_dom, rho_for } => {
+            gate("am_g_rho_dom", rho_dom, 0xc0412872bda814c5);
+            gate("am_g_rho_for", rho_for, 0x403e45d24ebe5f6c);
+        }
+        RateSensitivities::Carry { .. } => {
+            panic!("FX American input must report RateSensitivities::Fx")
+        }
+    }
+}
+
+/// Cross-asset enablement (the payoff Wave C unlocks, spec §6/§7): the 1-D PDE
+/// prices an **equity** vanilla on `Carry::CostOfCarry { r, b = r − q }` against
+/// the generalized closed form **re-derived by hand** (`d₁ = [ln(S/K) +
+/// (b+½σ²)T]/(σ√T)`, `C = S·e^{(b−r)T}·Φ(d₁) − K·e^{−rT}·Φ(d₂)` — independent,
+/// non-circular oracle), and the American FD on the same carry dominates the
+/// European value while reporting carry-tagged rate rhos with the documented
+/// signs (`∂C/∂r > 0` net of carry, `∂C/∂b > 0` for a call).
+#[test]
+fn equity_pde_and_american_price_on_the_carry_seam() {
+    use celnet_exotics::pde::{PdeGrid, PdeProblem, solve as pde_solve};
+    use celnet_exotics::{
+        AmericanGrid, AmericanOption, ExerciseStyle, american_fd, american_fd_greeks,
+    };
+    use celnet_types::{Carry, Ccy, EquityRef, RateSensitivities, Symbol, Underlying};
+
+    let (s0, k, vol, t, r, q) = (50.0, 52.0, 0.25, 1.0, 0.04, 0.025);
+    let b = r - q;
+    let inputs = ExoticInputs::new(
+        s0,
+        k,
+        vol,
+        t,
+        Underlying::Equity(EquityRef::new(
+            Symbol::new("ACME", "XLON"),
+            Ccy::parse("GBP").unwrap(),
+        )),
+        Carry::CostOfCarry { r, b },
+    );
+
+    // Hand re-derivation of the generalized lognormal closed form.
+    let sd = vol * t.sqrt();
+    let d1 = ((s0 / k).ln() + (b + 0.5 * vol * vol) * t) / sd;
+    let d2 = d1 - sd;
+    let phi = |x: f64| 0.5 * libm::erfc(-x / std::f64::consts::SQRT_2);
+    let hand = s0 * ((b - r) * t).exp() * phi(d1) - k * (-r * t).exp() * phi(d2);
+
+    let pde = pde_solve(
+        &inputs,
+        PdeProblem {
+            option: OptionType::Call,
+            strike: k,
+            knock_out: None,
+        },
+        PdeGrid {
+            space_steps: 1000,
+            time_steps: 600,
+            ..PdeGrid::default()
+        },
+    );
+    assert!(
+        (pde - hand).abs() < 5e-3,
+        "equity PDE {pde} vs hand-derived closed form {hand}"
+    );
+
+    // American call on a dividend-paying equity: dominates European, and with a
+    // positive dividend the early-exercise premium is non-negative by the LCP.
+    let spec = AmericanOption {
+        option: OptionType::Call,
+        strike: k,
+        style: ExerciseStyle::American,
+    };
+    let am = american_fd(&inputs, &spec, AmericanGrid::default());
+    assert!(
+        am >= hand - 5e-3,
+        "equity American call {am} must dominate European {hand}"
+    );
+
+    // The rate strip is carry-tagged (the §3.4 re-tag) with the documented signs.
+    let g = american_fd_greeks(
+        &inputs,
+        &spec,
+        AmericanGrid {
+            space_steps: 300,
+            time_steps: 150,
+            ..AmericanGrid::default()
+        },
+    );
+    match g.rates {
+        RateSensitivities::Carry {
+            discount_rho,
+            carry_rho,
+        } => {
+            assert!(
+                carry_rho > 0.0,
+                "call carry-rho must be positive, got {carry_rho}"
+            );
+            assert!(
+                discount_rho.is_finite() && carry_rho.is_finite(),
+                "rate strip must be finite"
+            );
+        }
+        RateSensitivities::Fx { .. } => {
+            panic!("equity cost-of-carry input must report RateSensitivities::Carry")
+        }
+    }
 }

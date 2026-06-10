@@ -68,7 +68,11 @@ fn fine_grid() -> AmericanGrid {
 fn american_call_no_carry_equals_european() {
     let (spot, strike, vol, t, r_dom, r_for) = (1.10, 1.12, 0.10, 1.0, 0.02, 0.0);
     let i = VanillaInputs::new(spot, strike, vol, t, r_dom, r_for);
-    let fd = american_fd(&i, &american(OptionType::Call, strike), fine_grid());
+    let fd = american_fd(
+        &(&i).into(),
+        &american(OptionType::Call, strike),
+        fine_grid(),
+    );
     let euro = gk_european(OptionType::Call, spot, strike, vol, t, r_dom, r_for);
     assert!(
         (fd - euro).abs() < 5e-4,
@@ -80,7 +84,7 @@ fn american_call_no_carry_equals_european() {
 #[test]
 fn american_put_matches_published_longstaff_schwartz_2001_table1() {
     let i = VanillaInputs::new(40.0, 40.0, 0.20, 1.0, 0.06, 0.0);
-    let fd = american_fd(&i, &american(OptionType::Put, 40.0), fine_grid());
+    let fd = american_fd(&(&i).into(), &american(OptionType::Put, 40.0), fine_grid());
     const PUBLISHED_FD: f64 = 2.314;
     assert!(
         (fd - PUBLISHED_FD).abs() < 1e-2,
@@ -100,7 +104,7 @@ fn american_put_early_exercise_premium_nonnegative() {
     };
     for &spot in &[1.00_f64, 1.05, 1.10] {
         let i = VanillaInputs::new(spot, strike, vol, t, r_dom, r_for);
-        let fd = american_fd(&i, &american(OptionType::Put, strike), grid);
+        let fd = american_fd(&(&i).into(), &american(OptionType::Put, strike), grid);
         let euro = gk_european(OptionType::Put, spot, strike, vol, t, r_dom, r_for);
         assert!(
             fd >= euro - 1e-4,
