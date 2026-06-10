@@ -240,6 +240,19 @@ fn inputs_at(
     )
 }
 
+/// Build the agnostic carry-seam exotic inputs for `strike` — the
+/// [`celnet_exotics::ExoticInputs`] view of [`inputs_at`] (`Carry::FxRates`,
+/// byte-identical to the FX two-rate form) consumed by every migrated exotics
+/// engine.
+fn exotic_inputs_at(
+    market: &WireMarketContext,
+    expiry_years: f64,
+    strike: f64,
+    vol: f64,
+) -> celnet_exotics::ExoticInputs {
+    (&inputs_at(market, expiry_years, strike, vol)).into()
+}
+
 /// Build a [`VarSwapContext`] (forward + carry) for the swap/replication math
 /// from the wire market context and the instrument expiry. The forward is
 /// `F = S·e^{(r_d−r_f)T}`, derived via [`VanillaInputs::from_inputs`] semantics.
@@ -890,7 +903,7 @@ pub fn price_instrument(
             // exotic legs. `t_start` stays 0 (a fresh remaining window); the
             // realised running average enters via the seasoned-strike shift.
             let price = move |m: &WireMarketContext| -> f64 {
-                let inputs = inputs_at(m, expiry, strike, m.vol);
+                let inputs = exotic_inputs_at(m, expiry, strike, m.vol);
                 match method {
                     celnet_proto::AsianMethod::Curran => curran_price(&inputs, spec),
                     celnet_proto::AsianMethod::TurnbullWakeman => {
@@ -899,7 +912,7 @@ pub fn price_instrument(
                 }
             };
             let price_at = move |t: f64, m: &WireMarketContext| -> f64 {
-                let inputs = inputs_at(m, t, strike, m.vol);
+                let inputs = exotic_inputs_at(m, t, strike, m.vol);
                 match method {
                     celnet_proto::AsianMethod::Curran => curran_price(&inputs, spec),
                     celnet_proto::AsianMethod::TurnbullWakeman => {
@@ -930,7 +943,7 @@ pub fn price_instrument(
             // (informational — the contract strikes at `reset`). The full Greek
             // strip is FD over the closed form.
             let price = move |m: &WireMarketContext| -> f64 {
-                let inputs = inputs_at(m, expiry, m.spot, m.vol);
+                let inputs = exotic_inputs_at(m, expiry, m.spot, m.vol);
                 forward_start_price(
                     &inputs,
                     ForwardStart {
@@ -942,7 +955,7 @@ pub fn price_instrument(
                 )
             };
             let price_at = move |t: f64, m: &WireMarketContext| -> f64 {
-                let inputs = inputs_at(m, t, m.spot, m.vol);
+                let inputs = exotic_inputs_at(m, t, m.spot, m.vol);
                 forward_start_price(
                     &inputs,
                     ForwardStart {
@@ -974,19 +987,20 @@ pub fn price_instrument(
             }
             let moneyness = c.moneyness;
             let periods = c.periods as usize;
-            let build = move |m: &WireMarketContext, t: f64| -> (VanillaInputs, Cliquet) {
-                let inputs = inputs_at(m, t, m.spot, m.vol);
-                let spec = Cliquet {
-                    option,
-                    moneyness,
-                    schedule: CliquetSchedule::equal(periods, t),
-                    local_floor: c.local_floor,
-                    local_cap: c.local_cap,
-                    global_floor: c.global_floor,
-                    global_cap: c.global_cap,
+            let build =
+                move |m: &WireMarketContext, t: f64| -> (celnet_exotics::ExoticInputs, Cliquet) {
+                    let inputs = exotic_inputs_at(m, t, m.spot, m.vol);
+                    let spec = Cliquet {
+                        option,
+                        moneyness,
+                        schedule: CliquetSchedule::equal(periods, t),
+                        local_floor: c.local_floor,
+                        local_cap: c.local_cap,
+                        global_floor: c.global_floor,
+                        global_cap: c.global_cap,
+                    };
+                    (inputs, spec)
                 };
-                (inputs, spec)
-            };
             let is_plain = build(market, expiry).1.is_plain();
             if is_plain {
                 // Plain (unclamped) ratchet: exact closed form (Σ forward-start
@@ -1146,15 +1160,15 @@ pub fn price_instrument(
             // Greek strip is a deterministic function of the market context — the
             // differences are real, not RNG jitter.
             let price = move |m: &WireMarketContext| -> f64 {
-                let inputs = inputs_at(m, expiry, m.spot, m.vol);
+                let inputs = exotic_inputs_at(m, expiry, m.spot, m.vol);
                 tarf_price(&inputs, spec_at(fixings), cfg).price
             };
             let price_at = move |t: f64, m: &WireMarketContext| -> f64 {
-                let inputs = inputs_at(m, t, m.spot, m.vol);
+                let inputs = exotic_inputs_at(m, t, m.spot, m.vol);
                 tarf_price(&inputs, spec_at(fixings), cfg).price
             };
             let greeks = exotic_greeks(&price, &price_at, market, expiry);
-            let inputs = inputs_at(market, expiry, market.spot, market.vol);
+            let inputs = exotic_inputs_at(market, expiry, market.spot, market.vol);
             let estimate = tarf_price(&inputs, spec_at(fixings), cfg);
             Ok(Priced {
                 greeks,
@@ -1218,15 +1232,15 @@ pub fn price_instrument(
                 monitoring,
             };
             let price = move |m: &WireMarketContext| -> f64 {
-                let inputs = inputs_at(m, expiry, m.spot, m.vol);
+                let inputs = exotic_inputs_at(m, expiry, m.spot, m.vol);
                 accumulator_price(&inputs, spec, cfg).price
             };
             let price_at = move |t: f64, m: &WireMarketContext| -> f64 {
-                let inputs = inputs_at(m, t, m.spot, m.vol);
+                let inputs = exotic_inputs_at(m, t, m.spot, m.vol);
                 accumulator_price(&inputs, spec, cfg).price
             };
             let greeks = exotic_greeks(&price, &price_at, market, expiry);
-            let inputs = inputs_at(market, expiry, market.spot, market.vol);
+            let inputs = exotic_inputs_at(market, expiry, market.spot, market.vol);
             let estimate = accumulator_price(&inputs, spec, cfg);
             Ok(Priced {
                 greeks,
@@ -1266,7 +1280,7 @@ pub fn price_instrument(
                     // Exact closed form (Goldman-Sosin-Gatto floating /
                     // Conze-Viswanathan fixed) — no Monte-Carlo std-error.
                     let price = move |m: &WireMarketContext| -> f64 {
-                        let inputs = inputs_at(m, expiry, strike, m.vol);
+                        let inputs = exotic_inputs_at(m, expiry, strike, m.vol);
                         match style {
                             ExLookbackStyle::FloatingStrike => {
                                 floating_lookback_price(&inputs, option)
@@ -1275,7 +1289,7 @@ pub fn price_instrument(
                         }
                     };
                     let price_at = move |t: f64, m: &WireMarketContext| -> f64 {
-                        let inputs = inputs_at(m, t, strike, m.vol);
+                        let inputs = exotic_inputs_at(m, t, strike, m.vol);
                         match style {
                             ExLookbackStyle::FloatingStrike => {
                                 floating_lookback_price(&inputs, option)
@@ -1308,15 +1322,15 @@ pub fn price_instrument(
                     };
                     let spec = ExLookback { style, option };
                     let price = move |m: &WireMarketContext| -> f64 {
-                        let inputs = inputs_at(m, expiry, strike, m.vol);
+                        let inputs = exotic_inputs_at(m, expiry, strike, m.vol);
                         lookback_mc(&inputs, spec, cfg).price
                     };
                     let price_at = move |t: f64, m: &WireMarketContext| -> f64 {
-                        let inputs = inputs_at(m, t, strike, m.vol);
+                        let inputs = exotic_inputs_at(m, t, strike, m.vol);
                         lookback_mc(&inputs, spec, cfg).price
                     };
                     let greeks = exotic_greeks(&price, &price_at, market, expiry);
-                    let inputs = inputs_at(market, expiry, strike, market.vol);
+                    let inputs = exotic_inputs_at(market, expiry, strike, market.vol);
                     let estimate = lookback_mc(&inputs, spec, cfg);
                     Ok(Priced {
                         greeks,
@@ -2481,7 +2495,7 @@ mod tests {
         let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
         let inputs = VanillaInputs::new(m.spot, 1.10, m.vol, 1.0, m.r_dom(), m.r_for());
         let spec = AnalyticAsian::fresh_discrete(OptionType::Call, 1.10, 12);
-        let oracle = curran_price(&inputs, spec);
+        let oracle = curran_price(&(&inputs).into(), spec);
         assert!(
             is_close(priced.greeks.price, oracle, 1e-9, 1e-12),
             "server Asian (Curran) {} vs oracle {}",
@@ -2508,7 +2522,7 @@ mod tests {
         let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
         let inputs = VanillaInputs::new(m.spot, 1.12, m.vol, 1.0, m.r_dom(), m.r_for());
         let spec = AnalyticAsian::fresh_continuous(OptionType::Put, 1.12);
-        let oracle = turnbull_wakeman_price(&inputs, spec);
+        let oracle = turnbull_wakeman_price(&(&inputs).into(), spec);
         assert!(
             is_close(priced.greeks.price, oracle, 1e-9, 1e-12),
             "server Asian (TW) {} vs oracle {}",
@@ -2540,7 +2554,7 @@ mod tests {
             elapsed_avg: 1.095,
             elapsed_weight: 0.25,
         };
-        let oracle = curran_price(&inputs, spec);
+        let oracle = curran_price(&(&inputs).into(), spec);
         assert!(
             is_close(priced.greeks.price, oracle, 1e-9, 1e-12),
             "seasoned Asian {} vs oracle {}",
@@ -2587,7 +2601,7 @@ mod tests {
         let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
         let inputs = VanillaInputs::new(m.spot, m.spot, m.vol, 1.0, m.r_dom(), m.r_for());
         let oracle = forward_start_price(
-            &inputs,
+            &(&inputs).into(),
             ForwardStart {
                 option: OptionType::Call,
                 moneyness: 1.0,
@@ -2655,7 +2669,7 @@ mod tests {
             let reset = (k - 1) as f64 / periods as f64;
             let expiry = k as f64 / periods as f64;
             sum += forward_start_price(
-                &inputs,
+                &(&inputs).into(),
                 ForwardStart {
                     option: OptionType::Call,
                     moneyness,
@@ -2708,7 +2722,7 @@ mod tests {
             global_cap: None,
         };
         let oracle = cliquet_price_capped_mc(
-            &inputs,
+            &(&inputs).into(),
             &spec,
             CliquetMcConfig {
                 pairs: pairs as usize,
@@ -2925,7 +2939,7 @@ mod tests {
         // and the same fixing count ⇒ bit-reproducible ⇒ exact agreement.
         let inputs = VanillaInputs::new(m.spot, m.spot, m.vol, 1.0, m.r_dom(), m.r_for());
         let oracle = tarf_price(
-            &inputs,
+            &(&inputs).into(),
             ExTarf {
                 strike,
                 fixings: 4,
@@ -3031,7 +3045,7 @@ mod tests {
         let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
         let inputs = VanillaInputs::new(m.spot, m.spot, m.vol, 1.0, m.r_dom(), m.r_for());
         let oracle = accumulator_price(
-            &inputs,
+            &(&inputs).into(),
             ExAccumulator {
                 pivot,
                 barrier,
@@ -3106,7 +3120,7 @@ mod tests {
         }));
         let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
         let inputs = VanillaInputs::new(m.spot, m.spot, m.vol, 1.0, m.r_dom(), m.r_for());
-        let oracle = floating_lookback_price(&inputs, OptionType::Call);
+        let oracle = floating_lookback_price(&(&inputs).into(), OptionType::Call);
         assert!(
             is_close(priced.greeks.price, oracle, 1e-9, 1e-12),
             "server floating lookback {} vs closed form {oracle}",
@@ -3139,7 +3153,7 @@ mod tests {
         }));
         let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
         let inputs = VanillaInputs::new(m.spot, strike, m.vol, 1.0, m.r_dom(), m.r_for());
-        let oracle = fixed_lookback_price(&inputs, OptionType::Call);
+        let oracle = fixed_lookback_price(&(&inputs).into(), OptionType::Call);
         assert!(
             is_close(priced.greeks.price, oracle, 1e-9, 1e-12),
             "server fixed lookback {} vs closed form {oracle}",
@@ -3168,7 +3182,7 @@ mod tests {
         let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
         let inputs = VanillaInputs::new(m.spot, strike, m.vol, 1.0, m.r_dom(), m.r_for());
         let oracle = lookback_mc(
-            &inputs,
+            &(&inputs).into(),
             ExLookback {
                 style: ExLookbackStyle::FixedStrike,
                 option: OptionType::Call,

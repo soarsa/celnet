@@ -442,7 +442,7 @@ mod cross_validation {
 
         // A knock-out with a barrier so far away it never binds ≈ vanilla.
         let mc = price_barrier(
-            &i,
+            &(&i).into(),
             DiscreteBarrier {
                 option: OptionType::Call,
                 strike: 100.0,
@@ -506,7 +506,7 @@ mod cross_validation {
         );
 
         let mc = price_barrier(
-            &i,
+            &(&i).into(),
             DiscreteBarrier {
                 option: OptionType::Call,
                 strike: k,

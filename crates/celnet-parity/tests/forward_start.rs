@@ -126,7 +126,7 @@ fn closed_form_matches_independent_mc() {
                         reset: t1,
                         expiry,
                     };
-                    let closed = forward_start_price(&i, spec);
+                    let closed = forward_start_price(&(&i).into(), spec);
                     let (mc, se) = forward_start_mc(&i, spec, 400_000, 0x5EED_0001);
                     // Within a few reported MC standard errors (antithetic, so the
                     // se is honest), plus a tiny floor for the near-zero deep-OTM
@@ -151,7 +151,7 @@ fn reset_to_zero_is_gk_vanilla() {
     for &m in &[0.8, 0.9, 1.0, 1.1, 1.25] {
         for opt in [OptionType::Call, OptionType::Put] {
             let fs = forward_start_price(
-                &i,
+                &(&i).into(),
                 ForwardStart {
                     option: opt,
                     moneyness: m,
@@ -190,12 +190,12 @@ fn plain_cliquet_equals_sum_of_legs() {
                 global_floor: None,
                 global_cap: None,
             };
-            let total = cliquet_price_plain(&i, &c);
+            let total = cliquet_price_plain(&(&i).into(), &c);
             let d = &c.schedule.dates;
             let mut hand = 0.0;
             for k in 1..d.len() {
                 hand += forward_start_price(
-                    &i,
+                    &(&i).into(),
                     ForwardStart {
                         option: opt,
                         moneyness: 1.0,
@@ -229,9 +229,9 @@ fn unclamped_cliquet_mc_matches_closed_form() {
         global_floor: None,
         global_cap: None,
     };
-    let closed = cliquet_price_plain(&i, &c);
+    let closed = cliquet_price_plain(&(&i).into(), &c);
     let mc = cliquet_price_plain_mc(
-        &i,
+        &(&i).into(),
         &c,
         CliquetMcConfig {
             pairs: 400_000,
@@ -271,7 +271,7 @@ fn capped_cliquet_mc_matches_independent_clamped_mc() {
         pairs: 300_000,
         seed: 0xCAFE_1234,
     };
-    let engine = cliquet_price_capped_mc(&i, &c, cfg);
+    let engine = cliquet_price_capped_mc(&(&i).into(), &c, cfg);
 
     // Independent from-scratch MC of the same terminal-settled clamped payoff.
     let d = &c.schedule.dates;
@@ -329,8 +329,8 @@ fn tighter_local_cap_reduces_value() {
     };
     // Caps are on the per-unit period return; 0.10 vs 0.04 are both binding at
     // 22 vol over a quarter, with 0.04 strictly tighter.
-    let loose = cliquet_price_capped_mc(&i, &mk(0.10), cfg);
-    let tight = cliquet_price_capped_mc(&i, &mk(0.04), cfg);
+    let loose = cliquet_price_capped_mc(&(&i).into(), &mk(0.10), cfg);
+    let tight = cliquet_price_capped_mc(&(&i).into(), &mk(0.04), cfg);
     assert!(
         tight.price < loose.price,
         "tighter cap {} should be < looser cap {}",

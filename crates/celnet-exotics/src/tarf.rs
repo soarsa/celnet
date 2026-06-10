@@ -1,4 +1,4 @@
-//! Target-Redemption Forward (TARF) — a strip of periodic FX fixings with a
+//! Target-Redemption Forward (TARF) — a strip of periodic fixings with a
 //! cumulative target that **knocks the structure out** once reached, and
 //! leverage/gearing on the adverse side.
 //!
@@ -50,8 +50,9 @@
 //! Caspers (2014). Identifiers are purpose-named and vendor/research-neutral.
 
 use celnet_core::math::{exp, ln, sqrt};
-use celnet_types::{OptionType, VanillaInputs};
+use celnet_types::OptionType;
 
+use crate::inputs::ExoticInputs;
 use crate::normal::inverse_cdf;
 use crate::rng::CounterRng;
 
@@ -159,19 +160,22 @@ pub struct TarfResult {
 /// and stops when the cumulative gain reaches the target (redemption). All cash
 /// flows are discounted at the domestic rate to their own fixing date.
 #[must_use]
-pub fn tarf_price(i: &VanillaInputs, spec: Tarf, cfg: TarfMcConfig) -> TarfResult {
+pub fn tarf_price(i: &ExoticInputs, spec: Tarf, cfg: TarfMcConfig) -> TarfResult {
     spec.validate();
     let n = spec.fixings;
     let dt = i.t / n as f64;
     let ln_s0 = ln(i.spot);
-    let drift_step = (i.r_dom - i.r_for - 0.5 * i.vol * i.vol) * dt;
+    // Carry accessors read ONCE, outside the path loop (no `Carry` dispatch in the
+    // hot path, ADR-0008); byte-identical to the FX two-rate form for
+    // `Carry::FxRates`.
+    let drift_step = (i.carry_rate() - 0.5 * i.vol * i.vol) * dt;
     let vol_sqrt_dt = i.vol * sqrt(dt);
 
-    // Per-fixing discount factors e^{-r_d · t_k}, t_k = (k+1)·dt.
+    // Per-fixing numeraire discount factors e^{-r · t_k}, t_k = (k+1)·dt.
     let mut dfs = vec![0.0f64; n];
     for (k, df) in dfs.iter_mut().enumerate() {
         let t_k = (k + 1) as f64 * dt;
-        *df = exp(-i.r_dom * t_k);
+        *df = i.discount_df_at(t_k);
     }
 
     let mut pv = Welford::default();
@@ -277,8 +281,8 @@ mod tests {
     /// A typical exporter TARF: sell EUR at an enhanced strike above forward,
     /// client gains when spot falls below strike (put side), geared 2x on the
     /// downside for the bank.
-    fn base() -> VanillaInputs {
-        VanillaInputs::new(1.30, 1.30, 0.10, 1.0, 0.03, 0.01)
+    fn base() -> ExoticInputs {
+        celnet_types::VanillaInputs::new(1.30, 1.30, 0.10, 1.0, 0.03, 0.01).into()
     }
 
     fn spec(redemption: RedemptionStyle) -> Tarf {

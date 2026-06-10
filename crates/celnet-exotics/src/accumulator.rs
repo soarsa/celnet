@@ -40,8 +40,8 @@
 //! Glasserman (2003). Identifiers are purpose-named and vendor/research-neutral.
 
 use celnet_core::math::{exp, ln, sqrt};
-use celnet_types::VanillaInputs;
 
+use crate::inputs::ExoticInputs;
 use crate::normal::inverse_cdf;
 use crate::rng::CounterRng;
 
@@ -144,7 +144,7 @@ pub struct AccumulatorResult {
 /// discounted to its own fixing date.
 #[must_use]
 pub fn accumulator_price(
-    i: &VanillaInputs,
+    i: &ExoticInputs,
     spec: Accumulator,
     cfg: AccumulatorMcConfig,
 ) -> AccumulatorResult {
@@ -152,7 +152,10 @@ pub fn accumulator_price(
     let n = spec.fixings;
     let dt = i.t / n as f64;
     let ln_s0 = ln(i.spot);
-    let drift_step = (i.r_dom - i.r_for - 0.5 * i.vol * i.vol) * dt;
+    // Carry accessors read ONCE, outside the path loop (no `Carry` dispatch in the
+    // hot path, ADR-0008); byte-identical to the FX two-rate form for
+    // `Carry::FxRates` (drift `(r_dom − r_for − ½σ²)dt`, dfs `e^{−r_dom·t_k}`).
+    let drift_step = (i.carry_rate() - 0.5 * i.vol * i.vol) * dt;
     let vol_sqrt_dt = i.vol * sqrt(dt);
     let var_step = vol_sqrt_dt * vol_sqrt_dt;
     let ln_b = ln(spec.barrier);
@@ -160,7 +163,7 @@ pub fn accumulator_price(
     let mut dfs = vec![0.0f64; n];
     for (k, df) in dfs.iter_mut().enumerate() {
         let t_k = (k + 1) as f64 * dt;
-        *df = exp(-i.r_dom * t_k);
+        *df = i.discount_df_at(t_k);
     }
 
     let mut pv = Welford::default();
@@ -293,9 +296,10 @@ fn walk_path(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use celnet_types::VanillaInputs;
 
-    fn base() -> VanillaInputs {
-        VanillaInputs::new(1.30, 1.30, 0.10, 1.0, 0.03, 0.01)
+    fn base() -> ExoticInputs {
+        VanillaInputs::new(1.30, 1.30, 0.10, 1.0, 0.03, 0.01).into()
     }
 
     fn spec(monitoring: Monitoring) -> Accumulator {

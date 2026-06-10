@@ -87,7 +87,8 @@ fn quanto_closed_form_matches_mc_and_collapses_at_zero_correlation() {
 /// vanilla).
 #[test]
 fn lookback_closed_form_matches_mc_and_dominates_vanilla() {
-    let i = VanillaInputs::new(1.10, 1.10, 0.14, 1.0, 0.03, 0.01);
+    let i: celnet_exotics::ExoticInputs =
+        VanillaInputs::new(1.10, 1.10, 0.14, 1.0, 0.03, 0.01).into();
     let cfg = LookbackMcConfig {
         pairs: 120_000,
         steps: 50,
@@ -113,7 +114,7 @@ fn lookback_closed_form_matches_mc_and_dominates_vanilla() {
             mc_float.price,
             mc_float.std_error
         );
-        let vanilla = vanilla_price(opt, &i);
+        let vanilla = vanilla_price(opt, &i.as_fx_vanilla(i.strike).unwrap());
         assert!(
             closed_float > 0.0,
             "floating lookback {opt:?} must be positive"
@@ -168,7 +169,8 @@ fn tarf_spec(redemption: RedemptionStyle) -> Tarf {
 /// premium. FullGain carries a positive expected overshoot; CappedGain none.
 #[test]
 fn tarf_gap_risk_premium_is_priced_and_signed() {
-    let i = VanillaInputs::new(1.12, 1.10, 0.12, 1.0, 0.03, 0.01);
+    let i: celnet_exotics::ExoticInputs =
+        VanillaInputs::new(1.12, 1.10, 0.12, 1.0, 0.03, 0.01).into();
     let cfg = TarfMcConfig {
         pairs: 200_000,
         seed: 0x6A9,
@@ -225,7 +227,8 @@ fn accumulator_spec(monitoring: Monitoring) -> Accumulator {
 /// continuous-monitoring path is genuine, not a relabelled discrete one.
 #[test]
 fn accumulator_continuous_monitoring_knocks_out_more_than_discrete() {
-    let i = VanillaInputs::new(1.10, 1.10, 0.16, 1.0, 0.03, 0.01);
+    let i: celnet_exotics::ExoticInputs =
+        VanillaInputs::new(1.10, 1.10, 0.16, 1.0, 0.03, 0.01).into();
     let cfg = AccumulatorMcConfig {
         pairs: 200_000,
         seed: 0x6EA2,

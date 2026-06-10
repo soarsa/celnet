@@ -442,7 +442,7 @@ async fn wave1_swaps_and_asian_price_through_sdk() {
             market.r_for,
         );
         let asian_oracle = curran_price(
-            &asian_inputs,
+            &(&asian_inputs).into(),
             AnalyticAsian::fresh_discrete(OptionType::Call, asian_strike, 12),
         );
         assert!(
@@ -500,7 +500,7 @@ async fn wave2_forward_start_cliquet_quanto_price_through_sdk() {
                 .expect("forward-start price returns")
                 .expect("forward-start price succeeds");
         let fs_oracle = forward_start_price(
-            &inputs,
+            &(&inputs).into(),
             ForwardStart {
                 option: OptionType::Call,
                 moneyness: 1.0,
@@ -534,7 +534,7 @@ async fn wave2_forward_start_cliquet_quanto_price_through_sdk() {
         .expect("plain cliquet price returns")
         .expect("plain cliquet price succeeds");
         let plain_oracle = cliquet_price_plain(
-            &inputs,
+            &(&inputs).into(),
             &Cliquet {
                 option: OptionType::Call,
                 moneyness: 1.0,
@@ -576,7 +576,7 @@ async fn wave2_forward_start_cliquet_quanto_price_through_sdk() {
         .expect("capped cliquet price returns")
         .expect("capped cliquet price succeeds");
         let capped_oracle = cliquet_price_capped_mc(
-            &inputs,
+            &(&inputs).into(),
             &Cliquet {
                 option: OptionType::Call,
                 moneyness: 1.0,
@@ -790,7 +790,7 @@ async fn wave3_tarf_accumulator_lookback_price_through_sdk() {
         .expect("tarf price returns")
         .expect("tarf price succeeds");
         let tarf_oracle = tarf_price(
-            &inputs,
+            &(&inputs).into(),
             ExTarf {
                 strike: 1.10,
                 fixings: fixings as usize,
@@ -856,7 +856,7 @@ async fn wave3_tarf_accumulator_lookback_price_through_sdk() {
         .expect("accumulator price returns")
         .expect("accumulator price succeeds");
         let acc_oracle = accumulator_price(
-            &inputs,
+            &(&inputs).into(),
             ExAccumulator {
                 pivot: 1.10,
                 barrier: 1.16,
@@ -900,7 +900,7 @@ async fn wave3_tarf_accumulator_lookback_price_through_sdk() {
         .await
         .expect("continuous lookback price returns")
         .expect("continuous lookback price succeeds");
-        let lb_cont_oracle = floating_lookback_price(&inputs, OptionType::Call);
+        let lb_cont_oracle = floating_lookback_price(&(&inputs).into(), OptionType::Call);
         assert!(
             is_close(lb_cont.greeks.price, lb_cont_oracle, 1e-9, 1e-12),
             "SDK continuous lookback {} != closed form {}",
@@ -956,7 +956,7 @@ async fn wave3_tarf_accumulator_lookback_price_through_sdk() {
             market.r_for,
         );
         let lb_disc_oracle = lookback_mc(
-            &fixed_inputs,
+            &(&fixed_inputs).into(),
             ExLookback {
                 style: ExLookbackStyle::FixedStrike,
                 option: OptionType::Call,

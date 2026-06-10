@@ -49,18 +49,18 @@
 //! Wystup (2017), *FX Options and Structured Products*. All identifiers here are
 //! purpose-named; provenance lives only in documentation.
 
-use celnet_core::math::exp;
-use celnet_types::{OptionType, VanillaInputs};
-use celnet_vanilla::price as vanilla_price;
+use celnet_core::math::{exp, sqrt};
+use celnet_types::OptionType;
 
+use crate::inputs::{ExoticInputs, carry_vanilla_price};
 use crate::normal::inverse_cdf;
 use crate::rng::CounterRng;
 
 /// Specification of a single forward-start vanilla option.
 ///
 /// The strike is set at the reset date `reset` to `moneyness · S(reset)` and the
-/// option pays the vanilla payoff at `expiry`. Volatility and the two FX carry
-/// rates are taken from the [`VanillaInputs`] passed to the pricer (its `spot` is
+/// option pays the vanilla payoff at `expiry`. Volatility and the carry model are
+/// taken from the [`ExoticInputs`] passed to the pricer (its `spot` is
 /// `S₀`, its `strike` field is ignored — the strike is reset-determined).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ForwardStart {
@@ -86,36 +86,40 @@ pub struct ForwardStart {
 /// discounted intrinsic in the limit; here we guard the degenerate `τ = 0` by
 /// returning the discounted unit forward intrinsic).
 #[must_use]
-pub fn forward_start_price(i: &VanillaInputs, spec: ForwardStart) -> f64 {
+pub fn forward_start_price(i: &ExoticInputs, spec: ForwardStart) -> f64 {
     debug_assert!(
         spec.reset >= 0.0 && spec.expiry >= spec.reset,
         "require 0 ≤ reset ≤ expiry"
     );
     let residual = spec.expiry - spec.reset;
     let unit = unit_spot_value(i, spec.option, spec.moneyness, residual);
-    exp(-i.r_for * spec.reset) * i.spot * unit
+    // Yield/foreign discount over the reset period: e^{−q·t₁}, reading the stored
+    // foreign rate verbatim for FX (byte-identical to e^{−r_for·t₁}).
+    i.carry_df_at(spec.reset) * i.spot * unit
 }
 
-/// Value at the reset date of a **unit-spot** GK vanilla: spot `1`, strike
-/// `moneyness`, residual maturity `residual`, with the volatility / rates of `i`.
+/// Value at the reset date of a **unit-spot** vanilla: spot `1`, strike
+/// `moneyness`, residual maturity `residual`, with the volatility / carry of `i`,
+/// priced through the carry-seam closed form ([`carry_vanilla_price`] — for FX
+/// byte-identical to the two-rate vanilla).
 ///
-/// For `residual > 0` this is the ordinary GK vanilla; at `residual = 0` the GK
-/// formula degenerates and we return the (undiscounted) forward intrinsic of the
-/// unit-spot option, i.e. `(φ·(1 − m))⁺`.
+/// For `residual > 0` this is the ordinary closed-form vanilla; at `residual = 0`
+/// the formula degenerates and we return the (undiscounted) forward intrinsic of
+/// the unit-spot option, i.e. `(φ·(1 − m))⁺`.
 #[inline]
-fn unit_spot_value(i: &VanillaInputs, option: OptionType, moneyness: f64, residual: f64) -> f64 {
+fn unit_spot_value(i: &ExoticInputs, option: OptionType, moneyness: f64, residual: f64) -> f64 {
     if residual <= 0.0 {
         return (option.sign() * (1.0 - moneyness)).max(0.0);
     }
-    let unit = VanillaInputs {
+    let unit = ExoticInputs {
         spot: 1.0,
         strike: moneyness,
         vol: i.vol,
         t: residual,
-        r_dom: i.r_dom,
-        r_for: i.r_for,
+        underlying: i.underlying.clone(),
+        carry: i.carry,
     };
-    vanilla_price(option, &unit)
+    carry_vanilla_price(option, &unit)
 }
 
 /// A reset schedule for a cliquet: the strictly-increasing reset dates
@@ -196,7 +200,7 @@ impl Cliquet {
 /// cliquet carries any local/global clamp (use [`cliquet_price_capped_mc`] for
 /// the clamped variant).
 #[must_use]
-pub fn cliquet_price_plain(i: &VanillaInputs, c: &Cliquet) -> f64 {
+pub fn cliquet_price_plain(i: &ExoticInputs, c: &Cliquet) -> f64 {
     debug_assert!(
         c.is_plain(),
         "cliquet_price_plain is only valid for an unclamped ratchet"
@@ -260,6 +264,46 @@ impl Welford {
     }
 }
 
+/// Pre-computed per-period cliquet path dynamics: the log-return drift and the
+/// diffusion scale of every period, plus the per-observation-date numeraire
+/// discount factors.
+///
+/// The carry accessors are read **once** here, outside the path loop — the
+/// per-path stepping touches only these precomputed floats (no `Carry` dispatch
+/// in the hot path, ADR-0008). For an FX [`celnet_types::Carry::FxRates`] every
+/// entry is byte-identical to the historical two-rate form
+/// (`drift_k = (r_dom − r_for − ½σ²)Δt_k`, `df_k = e^{−r_dom·t_k}`).
+struct CliquetDynamics {
+    /// Per-period log-return drift `(b − ½σ²)·Δt_k`, `k = 1..=periods`.
+    drifts: Vec<f64>,
+    /// Per-period diffusion scale `σ·√Δt_k`.
+    vol_sqrt_dts: Vec<f64>,
+    /// Numeraire discount factor `e^{−r·t_k}` to each observation date `t_k`.
+    dfs: Vec<f64>,
+}
+
+impl CliquetDynamics {
+    fn new(i: &ExoticInputs, c: &Cliquet) -> Self {
+        let d = &c.schedule.dates;
+        let b = i.carry_rate();
+        let periods = c.schedule.periods();
+        let mut drifts = Vec::with_capacity(periods);
+        let mut vol_sqrt_dts = Vec::with_capacity(periods);
+        let mut dfs = Vec::with_capacity(periods);
+        for k in 1..d.len() {
+            let dt = d[k] - d[k - 1];
+            drifts.push((b - 0.5 * i.vol * i.vol) * dt);
+            vol_sqrt_dts.push(i.vol * sqrt(dt));
+            dfs.push(i.discount_df_at(d[k]));
+        }
+        Self {
+            drifts,
+            vol_sqrt_dts,
+            dfs,
+        }
+    }
+}
+
 /// One period's per-unit (per opening-spot) payoff: the forward-start **option**
 /// return `(φ·(ratio − m))⁺`, then bounded into the optional local
 /// `[floor, cap]`.
@@ -292,15 +336,12 @@ fn clamped_return(c: &Cliquet, phi: f64, ratio: f64) -> f64 {
 /// the per-unit return and the leg is scaled by the opening spot `S(t_{k−1})`, so
 /// the unclamped strip is exactly the sum of forward-start vanillas. The legs are
 /// summed and the global floor/cap is applied last.
-fn cliquet_path_payoff(i: &VanillaInputs, c: &Cliquet, z: &[f64], s: f64) -> f64 {
-    let d = &c.schedule.dates;
+fn cliquet_path_payoff(spot0: f64, dyn_: &CliquetDynamics, c: &Cliquet, z: &[f64], s: f64) -> f64 {
     let phi = c.option.sign();
-    let mut spot = i.spot;
+    let mut spot = spot0;
     let mut acc = 0.0;
-    for k in 1..d.len() {
-        let dt = d[k] - d[k - 1];
-        let drift = (i.r_dom - i.r_for - 0.5 * i.vol * i.vol) * dt;
-        let diffusion = i.vol * celnet_core::math::sqrt(dt) * s * z[k - 1];
+    for ((&drift, &vol_sqrt_dt), &zk) in dyn_.drifts.iter().zip(&dyn_.vol_sqrt_dts).zip(z) {
+        let diffusion = vol_sqrt_dt * s * zk;
         let ratio = exp(drift + diffusion);
         acc += spot * clamped_return(c, phi, ratio);
         spot *= ratio;
@@ -332,18 +373,19 @@ fn cliquet_path_payoff(i: &VanillaInputs, c: &Cliquet, z: &[f64], s: f64) -> f64
 /// estimator is the product variant a structured-note desk quotes.
 #[must_use]
 pub fn cliquet_price_capped_mc(
-    i: &VanillaInputs,
+    i: &ExoticInputs,
     c: &Cliquet,
     cfg: CliquetMcConfig,
 ) -> CliquetEstimate {
     let periods = c.schedule.periods();
-    let df_t = exp(-i.r_dom * c.schedule.dates[c.schedule.dates.len() - 1]);
+    let dyn_ = CliquetDynamics::new(i, c);
+    let df_t = i.discount_df_at(c.schedule.dates[c.schedule.dates.len() - 1]);
     let mut acc = Welford::default();
     let mut z = vec![0.0f64; periods];
     for pair in 0..cfg.pairs {
         draw_period_normals(cfg.seed, pair as u64, periods, &mut z);
-        let a = cliquet_path_payoff(i, c, &z, 1.0);
-        let b = cliquet_path_payoff(i, c, &z, -1.0);
+        let a = cliquet_path_payoff(i.spot, &dyn_, c, &z, 1.0);
+        let b = cliquet_path_payoff(i.spot, &dyn_, c, &z, -1.0);
         acc.push(0.5 * (a + b));
     }
     CliquetEstimate {
@@ -362,13 +404,13 @@ pub fn cliquet_price_capped_mc(
 /// (no floor/cap) and no global clamp it is an unbiased MC of the same quantity.
 #[must_use]
 pub fn cliquet_price_plain_mc(
-    i: &VanillaInputs,
+    i: &ExoticInputs,
     c: &Cliquet,
     cfg: CliquetMcConfig,
 ) -> CliquetEstimate {
-    let d = &c.schedule.dates;
     let periods = c.schedule.periods();
     let phi = c.option.sign();
+    let dyn_ = CliquetDynamics::new(i, c);
     let mut acc = Welford::default();
     let mut z = vec![0.0f64; periods];
     for pair in 0..cfg.pairs {
@@ -376,14 +418,18 @@ pub fn cliquet_price_plain_mc(
         let leg_sum = |s: f64| {
             let mut total = 0.0;
             let mut spot = i.spot;
-            for k in 1..d.len() {
-                let dt = d[k] - d[k - 1];
-                let drift = (i.r_dom - i.r_for - 0.5 * i.vol * i.vol) * dt;
-                let diffusion = i.vol * celnet_core::math::sqrt(dt) * s * z[k - 1];
+            for (((&drift, &vol_sqrt_dt), &df), &zk) in dyn_
+                .drifts
+                .iter()
+                .zip(&dyn_.vol_sqrt_dts)
+                .zip(&dyn_.dfs)
+                .zip(&z)
+            {
+                let diffusion = vol_sqrt_dt * s * zk;
                 let ratio = exp(drift + diffusion);
                 // Forward-start leg payoff S(t_{k−1})·clamped-return, paid at t_k
                 // and discounted to today over [0, t_k].
-                total += exp(-i.r_dom * d[k]) * spot * clamped_return(c, phi, ratio);
+                total += df * spot * clamped_return(c, phi, ratio);
                 spot *= ratio;
             }
             total
@@ -410,10 +456,12 @@ fn draw_period_normals(seed: u64, path: u64, periods: usize, out: &mut [f64]) {
 mod tests {
     use super::*;
     use celnet_core::assert_close;
+    use celnet_types::VanillaInputs;
+    use celnet_vanilla::price as vanilla_price;
 
-    fn base() -> VanillaInputs {
+    fn base() -> ExoticInputs {
         // EURUSD-like 1Y, 10 vol, dual carry.
-        VanillaInputs::new(1.30, 1.30, 0.10, 1.0, 0.03, 0.01)
+        VanillaInputs::new(1.30, 1.30, 0.10, 1.0, 0.03, 0.01).into()
     }
 
     /// At `reset = 0` the forward-start collapses exactly to the plain GK vanilla
@@ -432,13 +480,7 @@ mod tests {
                         expiry: i.t,
                     },
                 );
-                let plain = vanilla_price(
-                    opt,
-                    &VanillaInputs {
-                        strike: m * i.spot,
-                        ..i
-                    },
-                );
+                let plain = vanilla_price(opt, &i.as_fx_vanilla(m * i.spot).unwrap());
                 assert_close!(fs, plain, 1e-12, 1e-12);
             }
         }

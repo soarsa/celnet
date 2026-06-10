@@ -1,6 +1,7 @@
 //! Analytic (closed-form-ish) fixed-strike **arithmetic-average-rate Asian**
 //! pricers — fast, MC-free, moment-matching and geometric-conditioning
-//! approximations under the Garman-Kohlhagen FX dynamics.
+//! approximations under the lognormal carry-seam dynamics (Garman-Kohlhagen for
+//! FX, byte-identical).
 //!
 //! The arithmetic average of lognormal observations is **not** lognormal, so the
 //! arithmetic-Asian option has **no exact closed form**. This module implements
@@ -26,7 +27,7 @@
 //!    **more accurate** independent analytic estimator than the two-moment fit,
 //!    especially for low-to-moderate volatility and longer averaging windows.
 //!
-//! Both pricers handle the standard FX carry `b = r_d − r_f` and the
+//! Both pricers handle the net cost-of-carry `b` (`= r_d − r_f` for FX) and the
 //! **in-progress-average (seasoned)** case, where some of the averaging
 //! observations have already fixed: the realised fixings enter as a deterministic
 //! contribution to the average (an effective-strike shift), and only the
@@ -49,7 +50,9 @@
 //! quadrature implemented in-crate (no external FFT/quadrature dependency).
 
 use celnet_core::math::{exp, ln, norm_cdf, norm_pdf, sqrt};
-use celnet_types::{OptionType, VanillaInputs};
+use celnet_types::{Carry, OptionType};
+
+use crate::inputs::{ExoticInputs, carry_vanilla_price};
 
 /// How the averaging observations are laid out on the averaging window.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -144,8 +147,8 @@ struct AverageMoments {
 /// moment integrals on a dense uniform grid — the moments of the *continuous*
 /// average are the `n → ∞` limit, computed to machine precision by a fine grid
 /// plus the exact closed-form continuous double integral where available.
-fn discrete_moments(i: &VanillaInputs, t_start: f64, n: usize) -> AverageMoments {
-    let b = i.r_dom - i.r_for;
+fn discrete_moments(i: &ExoticInputs, t_start: f64, n: usize) -> AverageMoments {
+    let b = i.carry_rate();
     let v2 = i.vol * i.vol;
     let t_rem = i.t - t_start;
     let dt = t_rem / n as f64;
@@ -189,8 +192,8 @@ fn discrete_moments(i: &VanillaInputs, t_start: f64, n: usize) -> AverageMoments
 /// `E[S_a S_c] = S₀² e^{b(a+c)+σ² min(a,c)}`:
 /// `M₂ = (2 S₀²/τ²) ∫₀^τ ∫₀^s e^{b(2t_start + s + r) + σ²(t_start + r)} dr ds`,
 /// integrated analytically.
-fn continuous_moments(i: &VanillaInputs, t_start: f64) -> AverageMoments {
-    let b = i.r_dom - i.r_for;
+fn continuous_moments(i: &ExoticInputs, t_start: f64) -> AverageMoments {
+    let b = i.carry_rate();
     let v2 = i.vol * i.vol;
     let tau = i.t - t_start;
     let s0 = i.spot;
@@ -272,10 +275,10 @@ fn seasoned_match(spec: &AnalyticAsian, m: AverageMoments) -> (f64, f64, f64) {
 /// error vs a converged Monte-Carlo is `O(10⁻³)` at moderate vol and grows with
 /// `σ²T`; see the crate parity row for the gated band.
 #[must_use]
-pub fn turnbull_wakeman_price(i: &VanillaInputs, spec: AnalyticAsian) -> f64 {
+pub fn turnbull_wakeman_price(i: &ExoticInputs, spec: AnalyticAsian) -> f64 {
     let m = future_moments(i, spec);
     let (ex, ex2, fixed) = seasoned_match(&spec, m);
-    let df = exp(-i.r_dom * i.t);
+    let df = i.discount_df();
     let k_eff = spec.strike - fixed;
 
     black_on_average(spec.option, ex, ex2, k_eff, df)
@@ -283,7 +286,7 @@ pub fn turnbull_wakeman_price(i: &VanillaInputs, spec: AnalyticAsian) -> f64 {
 
 /// Future-average moments dispatched on the schedule, with the discrete grid
 /// refined for the continuous case via the exact closed form.
-fn future_moments(i: &VanillaInputs, spec: AnalyticAsian) -> AverageMoments {
+fn future_moments(i: &ExoticInputs, spec: AnalyticAsian) -> AverageMoments {
     match spec.schedule {
         AveragingSchedule::Discrete { future_obs } => {
             assert!(future_obs >= 1, "Asian needs ≥1 future observation");
@@ -347,7 +350,7 @@ fn black_on_average(option: OptionType, ex: f64, ex2: f64, k_eff: f64, df: f64) 
 /// better at higher `σ²T`. It is **exact** in the same degenerate limits (single
 /// observation; zero vol). See the parity row for the gated bands.
 #[must_use]
-pub fn curran_price(i: &VanillaInputs, spec: AnalyticAsian) -> f64 {
+pub fn curran_price(i: &ExoticInputs, spec: AnalyticAsian) -> f64 {
     let (n, t_start) = match spec.schedule {
         AveragingSchedule::Discrete { future_obs } => {
             assert!(future_obs >= 1, "Asian needs ≥1 future observation");
@@ -358,14 +361,14 @@ pub fn curran_price(i: &VanillaInputs, spec: AnalyticAsian) -> f64 {
         AveragingSchedule::Continuous => (256usize, spec.t_start),
     };
 
-    let b = i.r_dom - i.r_for;
+    let b = i.carry_rate();
     let v2 = i.vol * i.vol;
     let t_rem = i.t - t_start;
     let dt = t_rem / n as f64;
     let w = spec.elapsed_weight;
     let rand_w = 1.0 - w;
     let fixed = w * spec.elapsed_avg;
-    let df = exp(-i.r_dom * i.t);
+    let df = i.discount_df();
     let phi = spec.option.sign();
     let k_eff = spec.strike - fixed;
 
@@ -596,7 +599,7 @@ fn legendre_p_dp(n: usize, x: f64) -> (f64, f64) {
 /// here so the parity row can assert the analytic geometric leg against the
 /// crate's existing [`crate::geometric_asian_price`] to `~1e-12`.
 #[must_use]
-pub fn geometric_average_price(i: &VanillaInputs, spec: AnalyticAsian) -> f64 {
+pub fn geometric_average_price(i: &ExoticInputs, spec: AnalyticAsian) -> f64 {
     let n = match spec.schedule {
         AveragingSchedule::Discrete { future_obs } => future_obs,
         AveragingSchedule::Continuous => {
@@ -607,46 +610,58 @@ pub fn geometric_average_price(i: &VanillaInputs, spec: AnalyticAsian) -> f64 {
     assert!(spec.t_start == 0.0, "fresh geometric oracle only");
     let nf = n as f64;
     let t = i.t;
-    let b = i.r_dom - i.r_for;
+    let b = i.carry_rate();
     let sig2 = i.vol * i.vol * (nf + 1.0) * (2.0 * nf + 1.0) / (6.0 * nf * nf);
     let eff_vol = sqrt(sig2);
     let eff_b = 0.5 * (b - 0.5 * i.vol * i.vol) * (nf + 1.0) / nf + 0.5 * sig2;
-    let synthetic = VanillaInputs {
+    // Synthetic cost-of-carry recast: keep the numeraire discount rate, set the
+    // net carry to `eff_b`. Asset-class-agnostic; for FX byte-identical to the
+    // historical `r_for = r_dom − eff_b` recast because the carry-seam vanilla
+    // prices in the `(r, q = r − b)` form (see [`carry_vanilla_price`]).
+    let synthetic = ExoticInputs {
         spot: i.spot,
         strike: spec.strike,
         vol: eff_vol,
         t,
-        r_dom: i.r_dom,
-        r_for: i.r_dom - eff_b,
+        underlying: i.underlying.clone(),
+        carry: Carry::CostOfCarry {
+            r: i.discount_rate(),
+            b: eff_b,
+        },
     };
-    celnet_vanilla::price(spec.option, &synthetic)
+    carry_vanilla_price(spec.option, &synthetic)
 }
 
 /// Continuous geometric-average-rate Asian closed form (the `n → ∞` Kemna-Vorst
 /// limit): `σ_G² = σ²/3`, effective carry `b_G = ½(b − σ²/6)`.
-fn continuous_geometric_price(i: &VanillaInputs, strike: f64, option: OptionType) -> f64 {
-    let b = i.r_dom - i.r_for;
+fn continuous_geometric_price(i: &ExoticInputs, strike: f64, option: OptionType) -> f64 {
+    let b = i.carry_rate();
     let v2 = i.vol * i.vol;
     let eff_vol = sqrt(v2 / 3.0);
     let eff_b = 0.5 * (b - v2 / 6.0);
-    let synthetic = VanillaInputs {
+    // Synthetic cost-of-carry recast (see `geometric_average_price`).
+    let synthetic = ExoticInputs {
         spot: i.spot,
         strike,
         vol: eff_vol,
         t: i.t,
-        r_dom: i.r_dom,
-        r_for: i.r_dom - eff_b,
+        underlying: i.underlying.clone(),
+        carry: Carry::CostOfCarry {
+            r: i.discount_rate(),
+            b: eff_b,
+        },
     };
-    celnet_vanilla::price(option, &synthetic)
+    carry_vanilla_price(option, &synthetic)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use celnet_core::assert_close;
+    use celnet_types::VanillaInputs;
 
-    fn base() -> VanillaInputs {
-        VanillaInputs::new(100.0, 100.0, 0.20, 1.0, 0.05, 0.02)
+    fn base() -> ExoticInputs {
+        VanillaInputs::new(100.0, 100.0, 0.20, 1.0, 0.05, 0.02).into()
     }
 
     /// Single future observation ⇒ the average IS the terminal spot ⇒ both
@@ -655,7 +670,7 @@ mod tests {
     fn single_observation_is_vanilla() {
         let i = base();
         let spec = AnalyticAsian::fresh_discrete(OptionType::Call, 100.0, 1);
-        let vanilla = celnet_vanilla::price(OptionType::Call, &i);
+        let vanilla = celnet_vanilla::price(OptionType::Call, &i.as_fx_vanilla(i.strike).unwrap());
         let tw = turnbull_wakeman_price(&i, spec);
         let cur = curran_price(&i, spec);
         assert_close!(tw, vanilla, 1e-10, 1e-10);
@@ -669,14 +684,14 @@ mod tests {
         i.vol = 0.0;
         let spec = AnalyticAsian::fresh_discrete(OptionType::Call, 100.0, 12);
         // Deterministic average of S0 e^{b t_k}.
-        let b = i.r_dom - i.r_for;
+        let b = i.carry_rate();
         let n = 12;
         let mut a = 0.0;
         for k in 1..=n {
             a += i.spot * exp(b * (k as f64) * i.t / n as f64);
         }
         a /= n as f64;
-        let df = exp(-i.r_dom * i.t);
+        let df = i.discount_df();
         let expected = df * (a - 100.0).max(0.0);
         let tw = turnbull_wakeman_price(&i, spec);
         let cur = curran_price(&i, spec);
@@ -704,7 +719,7 @@ mod tests {
         let put = AnalyticAsian::fresh_discrete(OptionType::Put, 95.0, 12);
         // E[A] via the first moment.
         let m = future_moments(&i, call);
-        let df = exp(-i.r_dom * i.t);
+        let df = i.discount_df();
         let parity = df * (m.m1 - 95.0);
         let c = turnbull_wakeman_price(&i, call);
         let p = turnbull_wakeman_price(&i, put);
@@ -753,7 +768,7 @@ mod tests {
             elapsed_avg: 105.0,
             elapsed_weight: 1.0 - 1e-9,
         };
-        let df = exp(-i.r_dom * i.t);
+        let df = i.discount_df();
         let tw = turnbull_wakeman_price(&i, spec);
         // Almost entirely the fixed 105 average ⇒ ≈ df·(105 − 100).
         assert_close!(tw, df * 5.0, 1e-3, 1e-3);

@@ -314,7 +314,7 @@ fn highdim_geometric_asian_rqmc_beats_mc() {
     // Exact discrete geometric Kemna-Vorst (independent oracle in celnet-exotics).
     let vi = VanillaInputs::new(mk.s0, strike, mk.sigma, mk.t, mk.r_dom, mk.r_for);
     let spec = AnalyticAsian::fresh_discrete(OptionType::Call, strike, m);
-    let exact = geometric_average_price(&vi, spec);
+    let exact = geometric_average_price(&(&vi).into(), spec);
 
     let budget = 4096;
     let reps = 24;
