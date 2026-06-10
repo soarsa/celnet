@@ -1083,8 +1083,7 @@ fn gen_touch() {
                     r.r_dom,
                     r.r_for,
                 ),
-                "discounted first-passage density quadrature (independent at-hit route)"
-                    .to_owned(),
+                "discounted first-passage density quadrature (independent at-hit route)".to_owned(),
                 Tolerance {
                     rel: 1e-6,
                     abs: 1e-8,

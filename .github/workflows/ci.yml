@@ -209,8 +209,23 @@ jobs:
   # dedicated Linux lane that installs Valgrind + the iai-callgrind runner and
   # runs the bench via `cargo bench`. Benches are NOT nextest targets, so this
   # never affects the cross-OS `gate` matrix or `just check` on the M4 dev host.
-  # On the first run iai-callgrind records the baselines; subsequent runs compare
-  # against them and (with a configured limit) fail on a regression.
+  #
+  # This is a real GATE: every benchmark in `benches/iai_instructions.rs`
+  # carries soft limits (Ir +5%, EstimatedCycles +10% vs the previous run) and
+  # an absolute per-benchmark Ir ceiling (hard limit, checked even on a run
+  # with no baseline). On any breach the iai-callgrind runner exits non-zero,
+  # `cargo bench` fails, and so does this job — there is no `|| true` and no
+  # `continue-on-error` anywhere in this lane.
+  #
+  # Baseline persistence: iai-callgrind compares against the previous run's
+  # output under `target/iai`, so that directory is carried by a DEDICATED
+  # actions/cache pair (not rust-cache, whose key churns with Cargo.lock and
+  # whose entries are immutable). Restore prefix-matches the newest
+  # `iai-baseline-*` entry; save runs only when the job is green and keys on
+  # the commit SHA — i.e. the baseline is always "the last green run", a
+  # regressing run never advances it, and an INTENDED count change
+  # re-baselines automatically on its first green run after merge. GitHub's
+  # cache scoping keeps PR-published baselines invisible to other branches.
   # ---------------------------------------------------------------------------
   iai-instructions:
     name: iai instruction-count gate (linux / valgrind)
@@ -238,8 +253,29 @@ jobs:
         with:
           tool: iai-callgrind-runner@0.16.1
 
+      # Rolling instruction-count baseline: prefix-match the newest entry saved
+      # by a previous green run (cross-branch entries resolve per GitHub's cache
+      # scoping rules), so the soft +5%/+10% limits always have a last-green
+      # comparison point. A miss is safe: the hard absolute ceilings still gate
+      # the run, and this run then publishes the first baseline.
+      - name: Restore instruction-count baseline (last green run)
+        uses: actions/cache/restore@v4
+        with:
+          path: target/iai
+          key: iai-baseline-${{ github.sha }}
+          restore-keys: |
+            iai-baseline-
+
       - name: Instruction-count bench (celnet-bench / iai_instructions)
         run: timeout 300 cargo bench -p celnet-bench --bench iai_instructions
+
+      # Only reached when the bench step passed (no `if: always()`), so a
+      # regressing run can never advance the baseline.
+      - name: Save instruction-count baseline (green runs only)
+        uses: actions/cache/save@v4
+        with:
+          path: target/iai
+          key: iai-baseline-${{ github.sha }}
 
   # ---------------------------------------------------------------------------
   # Mutation + coverage gate for the vanilla pricing core (Linux). This is the
