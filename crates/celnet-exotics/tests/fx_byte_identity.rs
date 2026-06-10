@@ -1248,3 +1248,32 @@ fn equity_lsv_pure_local_vol_limit_matches_closed_form() {
         "equity LSV pure-LV limit: ADI {pde} vs hand-derived {hand}"
     );
 }
+
+/// ADR-0008 final straggler — the Vanna-Volga market-hedge overlay
+/// (`market_price_of_hedge_smile`). Reference values captured from the
+/// pre-migration `VanillaInputs` form on this exact grid (two market points ×
+/// a convex and an asymmetric smile), asserted bit-for-bit post-migration.
+#[test]
+fn market_hedge_overlay_byte_identical() {
+    use celnet_exotics::market_price_of_hedge_smile;
+    use celnet_surface::MarketHedgeSmile;
+
+    // P1: EURUSD-like 1Y, ATM 10 vol, symmetric convex smile.
+    let i1 = VanillaInputs::new(1.30, 1.30, 0.10, 1.0, 0.03, 0.01);
+    let f1 = i1.forward();
+    let (kp1, kc1) = (f1 / 1.10, f1 * 1.10);
+    let s1 = MarketHedgeSmile::new([kp1, f1, kc1], [0.115, 0.10, 0.115], f1, i1.t);
+    let m1 = market_price_of_hedge_smile(&s1, &(&i1).into(), kp1, kc1);
+
+    // P2: negative-rate, long-dated, high-vol, skewed (risk-reversal) smile.
+    let i2 = VanillaInputs::new(0.95, 0.95, 0.22, 2.5, -0.005, 0.012);
+    let f2 = i2.forward();
+    let (kp2, kc2) = (f2 / 1.25, f2 * 1.25);
+    let s2 = MarketHedgeSmile::new([kp2, f2, kc2], [0.245, 0.22, 0.252], f2, i2.t);
+    let m2 = market_price_of_hedge_smile(&s2, &(&i2).into(), kp2, kc2);
+
+    assert_eq!(m1.vanna_price.to_bits(), 0x3f19fd9fb1e89fe7, "p1 vanna");
+    assert_eq!(m1.volga_price.to_bits(), 0x3f5b20f48739ee41, "p1 volga");
+    assert_eq!(m2.vanna_price.to_bits(), 0x3f6a2ca1eb654a68, "p2 vanna");
+    assert_eq!(m2.volga_price.to_bits(), 0x3f9111e016da40ed, "p2 volga");
+}

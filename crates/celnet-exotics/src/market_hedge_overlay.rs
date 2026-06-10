@@ -42,9 +42,9 @@
 //! Deelstra (2010) "Vanna-Volga methods applied to FX derivatives"; Wystup (2017).
 //! Identifiers are purpose-named and vendor/research-neutral.
 
+use crate::inputs::ExoticInputs;
 use celnet_core::Smile;
-use celnet_core::math::{exp, ln, norm_pdf, sqrt};
-use celnet_types::VanillaInputs;
+use celnet_core::math::{ln, norm_pdf, sqrt};
 
 /// The survival (no-early-exit) weight applied to the Vanna-Volga cost.
 ///
@@ -140,7 +140,7 @@ fn bench_greeks(forward: f64, strike: f64, vol: f64, t: f64, df_dom: f64) -> Ben
 /// Extract the **market price of vanna and volga** from a smile at the `25Δ`
 /// pillars, relative to the flat ATM-vol benchmark.
 ///
-/// `i` carries spot/rates/time and the ATM vol in `i.vol`; `put_strike` and
+/// `i` carries spot/carry/time and the ATM vol in `i.vol`; `put_strike` and
 /// `call_strike` are the `25Δ` smile wings (from [`celnet_surface`]'s calibrated
 /// pillars). `smile` supplies the wing vols. The construction matches the
 /// benchmark vanna / volga of the risk-reversal and butterfly to their market
@@ -150,14 +150,16 @@ fn bench_greeks(forward: f64, strike: f64, vol: f64, t: f64, df_dom: f64) -> Ben
 #[must_use]
 pub fn market_price_of_hedge_smile<S: Smile>(
     smile: &S,
-    i: &VanillaInputs,
+    i: &ExoticInputs,
     put_strike: f64,
     call_strike: f64,
 ) -> MarketCrossPrices {
     let f = i.forward();
     let t = i.t;
     let s0 = i.vol; // ATM vol
-    let df_dom = exp(-i.r_dom * t);
+    // Numeraire DF via the carry seam — for `Carry::FxRates` this is the same
+    // single `exp(−r_dom·t)` flop as the legacy two-rate form (byte-identical).
+    let df_dom = i.discount_df_at(t);
 
     // Wing smile vols.
     let sig_put = smile.implied_vol(put_strike, f, t).0;
@@ -274,6 +276,7 @@ pub fn hedge_smile_overlay(
 mod tests {
     use super::*;
     use celnet_core::{FlatSmile, assert_close};
+    use celnet_types::VanillaInputs;
 
     fn base() -> VanillaInputs {
         // EURUSD-like 1Y: S=1.30, σ_ATM=10%, r_d=3%, r_f=1%.
@@ -289,7 +292,7 @@ mod tests {
         let f = i.forward();
         // Symmetric 25Δ-ish wings around the forward in log space.
         let (kp, kc) = (f * 0.92, f * 1.08);
-        let market = market_price_of_hedge_smile(&smile, &i, kp, kc);
+        let market = market_price_of_hedge_smile(&smile, &(&i).into(), kp, kc);
         assert_close!(market.vanna_price, 0.0, 1e-9, 1e-10);
         assert_close!(market.volga_price, 0.0, 1e-9, 1e-10);
 
@@ -319,7 +322,7 @@ mod tests {
             call_vol: 0.12,
             atm_vol: 0.10,
         };
-        let market = market_price_of_hedge_smile(&skewed, &i, kp, kc);
+        let market = market_price_of_hedge_smile(&skewed, &(&i).into(), kp, kc);
         assert!(
             market.vanna_price > 0.0,
             "positive RR ⇒ positive vanna price, got {}",
@@ -361,7 +364,7 @@ mod tests {
             call_vol: 0.115,
             atm_vol: 0.10,
         };
-        let market = market_price_of_hedge_smile(&convex, &i, kp, kc);
+        let market = market_price_of_hedge_smile(&convex, &(&i).into(), kp, kc);
         assert!(
             market.volga_price > 0.0,
             "positive BF ⇒ positive volga price, got {}",
@@ -399,7 +402,7 @@ mod tests {
             call_vol: 0.12,
             atm_vol: 0.10,
         };
-        let market = market_price_of_hedge_smile(&skewed, &i, kp, kc);
+        let market = market_price_of_hedge_smile(&skewed, &(&i).into(), kp, kc);
         let x = ExoticSensitivities {
             vanna: 1.0,
             volga: 0.5,
