@@ -13,17 +13,72 @@
 //!   no_touch = e^{−r_d T} − one_touch_deferred
 //! ```
 //!
-//! With `μ = b/σ² − ½`, `λ = √(μ² + 2 r_d/σ²)`, `vsqt = σ√T`, `z = ln(H/S)`, and
-//! `η = +1` if the barrier is **below** spot (a down-touch), `η = −1` if **above**
-//! (up-touch), the value of a one-touch paying `R` **at hit** is
+//! ## At-hit value from first principles (discounted first-passage expectation)
+//!
+//! Work in log-space: `x_t = ln(S_t/S) = ν·t + σ·W_t` with `ν = b − ½σ²`, barrier
+//! log-distance `z = ln(H/S)` and first-passage time `τ = inf{t > 0 : x_t = z}`.
+//! The at-hit one-touch is the discounted first-passage expectation
 //!
 //! ```text
-//!   OT = R·[ (H/S)^{μ+λ}·Φ(η·(−z/vsqt + λ vsqt))
-//!          + (H/S)^{μ−λ}·Φ(η·(−z/vsqt − λ vsqt)) ].
+//!   OT = R·E[e^{−r_d·τ}·1{τ ≤ T}] = R·∫₀ᵀ e^{−r_d·t}·f_τ(t) dt,
 //! ```
 //!
-//! Paying `R` **at expiry** (deferred) discounts the hit at the domestic rate and
-//! replaces `λ` by `μ` inside the standard expression. Both timings are provided.
+//! where the reflection principle (with a Girsanov tilt for the drift) gives the
+//! single-level first-passage density
+//!
+//! ```text
+//!   f_τ(t) = |z| / (σ·√(2π)·t^{3/2}) · exp(−(z − ν·t)² / (2σ²t)).
+//! ```
+//!
+//! Complete the square between the discount and the density exponent. With
+//! `μ = ν/σ²` and `λ = √(μ² + 2·r_d/σ²)` (so `ν²/(2σ²) + r_d = λ²σ²/2`):
+//!
+//! ```text
+//!   e^{−r_d·t}·f_τ(t) = e^{μz} · |z|/(σ√(2π)·t^{3/2}) · exp(−z²/(2σ²t) − λ²σ²t/2)
+//! ```
+//!
+//! and, picking the square whose drift `±λσ²` points **toward** the barrier
+//! (`+λσ²` for an upper barrier `z > 0`, `−λσ²` for a lower one `z < 0`),
+//!
+//! ```text
+//!   exp(−z²/(2σ²t) − λ²σ²t/2) = e^{−λ|z|} · exp(−(z ∓ λσ²t)²/(2σ²t)),
+//! ```
+//!
+//! the integrand becomes `e^{μz−λ|z|}` times the first-passage density of a
+//! Brownian motion drifting at `±λσ²` toward the barrier — a proper density whose
+//! `[0, T]` integral is the (undiscounted) hit probability under that drift, i.e.
+//! the standard reflected-normal pair. With `vsqt = σ√T`, `η = +1` if the barrier
+//! is **below** spot / `η = −1` if **above**, and `base = η·z/vsqt`:
+//!
+//! ```text
+//!   upper (z > 0, η = −1):
+//!     OT/R = (H/S)^{μ+λ}·Φ(−z/vsqt − λ·vsqt) + (H/S)^{μ−λ}·Φ(−z/vsqt + λ·vsqt)
+//!   lower (z < 0, η = +1):
+//!     OT/R = (H/S)^{μ+λ}·Φ( z/vsqt + λ·vsqt) + (H/S)^{μ−λ}·Φ( z/vsqt − λ·vsqt)
+//!
+//!   uniformly:  OT = R·[ (H/S)^{μ+λ}·Φ(base + η·λ·vsqt)
+//!                      + (H/S)^{μ−λ}·Φ(base − η·λ·vsqt) ].
+//! ```
+//!
+//! The **pairing is load-bearing**: the `(μ+λ)` power multiplies the Φ whose
+//! λ-drift term carries the `+η` sign (the `e^{−λ|z|}` square above), the
+//! `(μ−λ)` power the `−η` one. Pairing them the other way is the historical
+//! at-hit defect this module once carried: it overprices (≈ +28% on the frozen
+//! `touch-1` golden vector) and its `T → ∞` limit explodes above `R`.
+//!
+//! As `T → ∞`, `Φ(base + η·λ·vsqt) → 1` and `Φ(base − η·λ·vsqt) → 0`, so
+//!
+//! ```text
+//!   OT → R·(H/S)^{μ+ηλ} = R·e^{μz − λ|z|} = R·E[e^{−r_d·τ}],
+//! ```
+//!
+//! the perpetual discounted-hit Laplace transform — finite and `< R` for
+//! `r_d > 0`. This convergence is asserted in the tests (it is a *theorem* of the
+//! correct form, not a clamp).
+//!
+//! Paying `R` **at expiry** (deferred) is instead `R·e^{−r_d·T}·P(τ ≤ T)` with the
+//! hit probability from the same reflected-normal pair evaluated at the *real*
+//! drift `μ` (and Girsanov power `2μ`). Both timings are provided.
 //!
 //! # Double-no-touch (two barriers `L < U`)
 //!
@@ -35,10 +90,12 @@
 //! discounting. The DNT value is clamped to `[0, R]` to absorb truncation of the
 //! image series in pathological deep-in-the-corner regimes.
 //!
-//! Provenance (doc-only): Reiner-Rubinstein (1991); the unified generalised-BSM
-//! presentation of Haug (2007); the double-barrier image series of
-//! Kunitomo-Ikeda (1992) / Geman-Yor (1996). Identifiers are purpose-named and
-//! vendor/research-neutral.
+//! Provenance (doc-only): Reiner-Rubinstein (1991, "Breaking down the
+//! barriers"); the unified generalised-BSM "cash-(at-hit)-or-nothing"
+//! presentation of Haug (2007, ch. 4); the reflection-principle first-passage
+//! density as in Shreve (2004, *Stochastic Calculus for Finance II*, §8.3); the
+//! double-barrier image series of Kunitomo-Ikeda (1992) / Geman-Yor (1996).
+//! Identifiers are purpose-named and vendor/research-neutral.
 
 use crate::inputs::ExoticInputs;
 use celnet_core::math::{exp, norm_cdf};
@@ -78,13 +135,14 @@ pub enum RebateTiming {
 /// Present value of a **one-touch** paying `rebate` (domestic) if the spot
 /// touches `barrier` before `T`, with the rebate paid per [`RebateTiming`].
 ///
-/// The value is clamped to `[0, R·max(1, e^{−r_d T})]`: a probability-weighted
-/// payout cannot fall below zero nor exceed the rebate scaled by the largest
-/// applicable discount factor (under non-negative rates simply the rebate `R`;
-/// under negative domestic rates the deferred/at-hit payout can exceed the face).
-/// `i.strike` is ignored — a touch has no strike. `side` is inferred from
-/// `barrier` vs `i.spot` if you use [`one_touch_price`]; the raw side-explicit
-/// form is private.
+/// The value lies in `[0, R·max(1, e^{−r_d T})]` *by construction* (it is a
+/// discounted-payout expectation; under negative domestic rates the deferred /
+/// late-hit payout can exceed the face) — there is deliberately **no** clamp on
+/// the at-hit form, so a formula regression surfaces instead of being masked;
+/// the bound and the `T → ∞` limit are asserted as law tests. `i.strike` is
+/// ignored — a touch has no strike. `side` is inferred from `barrier` vs
+/// `i.spot` if you use [`one_touch_price`]; the raw side-explicit form is
+/// private.
 #[must_use]
 pub fn one_touch_price(i: &ExoticInputs, barrier: f64, rebate: f64, timing: RebateTiming) -> f64 {
     let side = TouchSide::from_levels(i.spot, barrier);
@@ -126,21 +184,32 @@ fn one_touch_with_side(
         TouchSide::Upper => -1.0,
         TouchSide::Lower => 1.0,
     };
-    // `base = side_sign·z/vsqt`; the ± drift term is added with the SAME side
-    // orientation so both barriers reduce to the canonical reflected normal pair.
+    // `base = side_sign·z/vsqt` (= η·z/vsqt, always ≤ 0 for a live barrier); the
+    // at-hit λ-drift terms carry the SAME side orientation η (module-doc
+    // derivation), the at-expiry μ-drift terms the OPPOSITE one: an upper
+    // barrier's running-max tail drifts *up* (+μ·vsqt on a₁), a lower barrier's
+    // running-min *down*.
     let base = side_sign * z / vsqt;
-    // The drift term enters with the OPPOSITE side orientation: an upper barrier's
-    // first-passage tail drifts *up* (+k·vsqt on a₁), a lower barrier's *down*.
     let drift_sign = -side_sign;
 
-    let value = match timing {
+    match timing {
         RebateTiming::AtHit => {
-            // Reiner-Rubinstein at-hit one-touch (discounted-hit expectation):
-            //   OT = R·[ (H/S)^{μ+λ}·Φ(a₁) + (H/S)^{μ−λ}·Φ(a₂) ],
-            //   λ = √(μ²+2r_d/σ²), a₁ = base + drift_sign·λ·vsqt, a₂ = base − drift_sign·λ·vsqt.
+            // Discounted first-passage expectation R·E[e^{−r_d τ}·1{τ≤T}] (full
+            // derivation in the module docs):
+            //   OT = R·[ (H/S)^{μ+λ}·Φ(base + η·λ·vsqt) + (H/S)^{μ−λ}·Φ(base − η·λ·vsqt) ],
+            //   λ = √(μ² + 2·r_d/σ²),  η = side_sign.
+            // The PAIRING is load-bearing: the (μ+λ) power goes with the +η
+            // λ-drift argument. The flipped pairing — (μ+λ) with the −η
+            // (drift_sign) argument — was the P0 at-hit defect: ≈ +28% on the
+            // frozen `touch-1` vector and a T→∞ limit exploding above R
+            // (formerly masked by a clamp here). The correct form needs no
+            // clamp: each `pow_cdf` term is ≥ 0 and finite, and the sum is
+            // E[e^{−r_d τ}·1{τ≤T}] ≤ max(1, e^{−r_d T}) pathwise; its T→∞
+            // convergence to R·(H/S)^{μ+ηλ} = R·E[e^{−r_d τ}] is asserted in
+            // the tests rather than enforced.
             let lam = l.lambda();
-            let a1 = base + drift_sign * lam * vsqt;
-            let a2 = base - drift_sign * lam * vsqt;
+            let a1 = base + side_sign * lam * vsqt; // pairs with (H/S)^{μ+λ}
+            let a2 = base - side_sign * lam * vsqt; // pairs with (H/S)^{μ−λ}
             rebate * (pow_cdf(z, mu + lam, a1) + pow_cdf(z, mu - lam, a2))
         }
         RebateTiming::AtExpiry => {
@@ -148,24 +217,14 @@ fn one_touch_with_side(
             // probability under the spot drift (m = b − ½σ², so m/σ² = μ):
             //   P(hit) = Φ(a₁) + (H/S)^{2μ}·Φ(a₂),
             //   a₁ = base + drift_sign·μ·vsqt,  a₂ = base − drift_sign·μ·vsqt.
+            // `prob` is a probability — in [0, 1] identically in real
+            // arithmetic; the clamp shaves only float round-off at the
+            // certain-hit boundary, never a model value (it masks nothing).
             let a1 = base + drift_sign * mu * vsqt;
             let a2 = base - drift_sign * mu * vsqt;
-            let prob = norm_cdf(a1) + pow_cdf(z, 2.0 * mu, a2);
+            let prob = (norm_cdf(a1) + pow_cdf(z, 2.0 * mu, a2)).clamp(0.0, 1.0);
             rebate * i.discount_df() * prob
         }
-    };
-    // Upper bound on a (discounted) touch value: the touch probability is ≤ 1, so
-    // the value cannot exceed the rebate times the largest applicable discount
-    // factor. Under non-negative rates that is the rebate itself; under *negative*
-    // domestic rates the deferred payout `R·e^{−r_d T}` (or the at-hit payout at
-    // the latest possible hit time) exceeds `R`, so clamping at `R` would wrongly
-    // truncate it. We therefore clamp by `R·max(1, e^{−r_d T})`.
-    let max_df = i.discount_df().max(1.0);
-    let upper = rebate.max(0.0) * max_df;
-    if value.is_finite() {
-        value.clamp(0.0, upper)
-    } else {
-        0.0
     }
 }
 
@@ -395,6 +454,127 @@ mod tests {
         }
     }
 
+    /// **P0 regression pin** — the at-hit one-touch on the frozen `touch-1` /
+    /// `touch-3` golden-vector market (S=100, σ=8%, T=30/365, r_d=5%, r_f=1%).
+    ///
+    /// The pinned literals come from an *independent route*: 24-node
+    /// Gauss-Legendre quadrature of the discounted first-passage density
+    /// `R·∫₀ᵀ e^{−r_d t}·|z|/(σ√(2π)t^{3/2})·e^{−(z−νt)²/(2σ²t)} dt` over 48
+    /// geometric panels (no λ, no Φ-pairing anywhere), cross-checked against the
+    /// published closed form evaluated with `erfc` in double precision — the two
+    /// routes agree to ~2e-15 relative. The historical flipped pairing returned
+    /// 0.0561744592212154 (+28.3%) and 0.00011562220480909844 (×2.08).
+    #[test]
+    fn at_hit_matches_independent_first_passage_quadrature() {
+        let i: ExoticInputs =
+            VanillaInputs::new(100.0, 100.0, 0.08, 0.082_191_780_821_917_8, 0.05, 0.01).into();
+        let v105 = one_touch_price(&i, 105.0, 1.0, RebateTiming::AtHit);
+        assert_close!(v105, 0.043_780_187_274_957_35, 1e-12, 1e-15);
+        let v110 = one_touch_price(&i, 110.0, 1.0, RebateTiming::AtHit);
+        assert_close!(v110, 5.547_023_411_149_521_4e-5, 1e-12, 1e-15);
+    }
+
+    /// **Law test (T → ∞):** the at-hit one-touch converges to the perpetual
+    /// discounted-hit Laplace transform
+    /// `R·E[e^{−r_d τ}] = R·(H/S)^{μ+ηλ} = R·e^{μz−λ|z|}` (η = +1 lower /
+    /// −1 upper) — finite and < R for r_d > 0. This is a *theorem* of the
+    /// correct CDF pairing; the flipped pairing diverges through R here (and was
+    /// masked by the pre-fix clamp). At T = 1000y the transient Φ terms are below
+    /// double-precision resolution, so the equality is exact to round-off.
+    #[test]
+    fn at_hit_t_infinity_is_perpetual_discounted_hit_factor() {
+        let i = ExoticInputs {
+            t: 1000.0,
+            ..base()
+        };
+        let l = Lognormal::from_inputs(&i);
+        for h in [85.0, 95.0, 105.0, 120.0] {
+            let eta = if h >= i.spot { -1.0 } else { 1.0 };
+            let limit = exp((l.mu() + eta * l.lambda()) * dlog(h / i.spot));
+            let v = one_touch_price(&i, h, 1.0, RebateTiming::AtHit);
+            assert_close!(v, limit, 1e-12, 1e-12);
+            assert!(
+                v < 1.0,
+                "perpetual at-hit {v} must stay strictly below the rebate (r_d > 0)"
+            );
+        }
+    }
+
+    /// **Law test (model-free discounting sandwich, r_d ≥ 0):**
+    ///
+    /// ```text
+    ///   at_expiry = R·e^{−r_d T}·P_hit  ≤  at_hit = R·E[e^{−r_d τ}·1{τ≤T}]
+    ///                                   ≤  R·P_hit = at_expiry / e^{−r_d T}.
+    /// ```
+    ///
+    /// Proof: on the event {τ ≤ T} (and r_d ≥ 0), `e^{−r_d T} ≤ e^{−r_d τ} ≤ 1`
+    /// pointwise; take expectations and scale by R. `P_hit` comes from the
+    /// engine's own at-expiry reflection branch, which is independent of the
+    /// at-hit λ-pairing. The pre-fix flipped at-hit violated the *upper* bound by
+    /// 28% on the `touch-1` market (0.0562 > 0.0439) — this is the law test whose
+    /// absence let the defect freeze into the corpus.
+    #[test]
+    fn at_hit_sandwiched_by_discounted_hit_probability() {
+        let i = base();
+        let df = i.discount_df();
+        for h in [85.0, 95.0, 105.0, 120.0] {
+            let hit = one_touch_price(&i, h, 1.0, RebateTiming::AtHit);
+            let deferred = one_touch_price(&i, h, 1.0, RebateTiming::AtExpiry);
+            let rebate_times_hit_prob = deferred / df;
+            assert!(
+                deferred <= hit + 1e-12,
+                "lower bound: deferred {deferred} ≤ at-hit {hit} (H={h})"
+            );
+            assert!(
+                hit <= rebate_times_hit_prob + 1e-12,
+                "upper bound: at-hit {hit} ≤ R·P_hit {rebate_times_hit_prob} (H={h})"
+            );
+        }
+    }
+
+    /// **Law test (r_d = 0):** with a zero discount rate `e^{−r_d τ} ≡ 1`, so the
+    /// at-hit value *is* the hit probability and must equal the deferred value
+    /// exactly (df = 1). In the closed form λ = |μ|, collapsing the λ-pair onto
+    /// the μ-pair — an exact identity that any sign/pairing error breaks.
+    #[test]
+    fn zero_discount_rate_collapses_at_hit_to_deferred() {
+        // r_f = 3% keeps a non-trivial (negative) drift: μ = −1.25, λ = 1.25.
+        let i: ExoticInputs = VanillaInputs::new(100.0, 100.0, 0.20, 1.0, 0.0, 0.03).into();
+        for h in [80.0, 90.0, 110.0, 125.0] {
+            let hit = one_touch_price(&i, h, 1.0, RebateTiming::AtHit);
+            let deferred = one_touch_price(&i, h, 1.0, RebateTiming::AtExpiry);
+            assert_close!(hit, deferred, 1e-12, 1e-12);
+        }
+    }
+
+    /// **Law test (boundary continuity):** as spot → barrier from either side the
+    /// at-hit value converges to the rebate (the hit becomes certain and
+    /// immediate), continuously joining the `S = H` certain-touch branch. The
+    /// no-hit gap is O(|ln(S/H)|) (boundary-local-time scaling), measured ≈ 4·k
+    /// on this market — assert ≤ 10·k, and monotone improvement as S → H.
+    #[test]
+    fn at_hit_continuous_at_the_barrier() {
+        for h in [105.0_f64, 95.0] {
+            let mut prev_gap = f64::INFINITY;
+            for k in [1e-4, 1e-6, 1e-8] {
+                let s = if h > 100.0 { h * (1.0 - k) } else { h * (1.0 + k) };
+                let i = ExoticInputs {
+                    spot: s,
+                    ..base()
+                };
+                let v = one_touch_price(&i, h, 1.0, RebateTiming::AtHit);
+                let gap = 1.0 - v;
+                assert!(gap >= -1e-12, "value {v} may not exceed the rebate (H={h})");
+                assert!(
+                    gap <= 10.0 * k,
+                    "S→H continuity: gap {gap} at distance {k} (H={h})"
+                );
+                assert!(gap <= prev_gap, "gap must shrink approaching the barrier");
+                prev_gap = gap;
+            }
+        }
+    }
+
     /// Touch values lie in `[0, rebate]` and are monotone in the barrier level:
     /// a closer (to spot) barrier is touched more often ⇒ higher one-touch.
     #[test]
@@ -617,11 +797,12 @@ mod proptests {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(256))]
 
-        /// Touch values are clamped to `[0, rebate]` (the S1 requirement) for any
-        /// market. Where the discounted rebate does not exceed the rebate
-        /// (`r_dom ≥ 0`, so the `[0, notional]` clamp does not bind) the deferred
-        /// one-touch and no-touch sum to the discounted rebate, and at-hit
-        /// dominates deferred.
+        /// Touch values lie in `[0, rebate·max(1, df)]` (the S1 requirement) for
+        /// any market — *by construction*, not by clamping: the at-hit form is
+        /// unclamped so a formula regression fails loudly here. With `r_dom ≥ 0`
+        /// the deferred one-touch and no-touch sum to the discounted rebate, and
+        /// the at-hit value is sandwiched between the deferred value and the
+        /// undiscounted hit probability.
         #[test]
         fn touch_bounds_and_complementarity(
             i in arb_inputs(),
@@ -639,11 +820,16 @@ mod proptests {
             prop_assert!((0.0..=cap).contains(&ot_hit));
             prop_assert!((0.0..=cap).contains(&ot_exp));
             prop_assert!((0.0..=cap).contains(&nt));
-            // Exact complementarity & timing dominance hold when the discounted
-            // rebate ≤ rebate (non-negative domestic rate ⇒ clamp inactive).
+            // Exact complementarity plus the model-free discounting sandwich
+            // (proof in the unit tests; r_d ≥ 0):
+            //   ot_exp = R·df·P_hit ≤ ot_hit = R·E[e^{−r_d τ};τ≤T] ≤ R·P_hit = ot_exp/df.
+            // The pre-fix flipped at-hit pairing violated the upper bound by
+            // double-digit percent, so this property alone refutes that defect
+            // class for every generated market.
             if i.discount_rate() >= 0.0 {
                 prop_assert!(celnet_core::is_close(ot_exp + nt, i.discount_df(), 1e-7, 1e-8));
                 prop_assert!(ot_hit >= ot_exp - 1e-9);
+                prop_assert!(ot_hit <= ot_exp / i.discount_df() + 1e-9);
             }
         }
 

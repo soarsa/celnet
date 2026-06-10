@@ -971,12 +971,17 @@ function priceDigital(spec: Digital, m: MarketContext, t: number): PriceOutcome 
 
 // --- touch (one-/no-/double-no-/double-one-touch) --------------------------
 //
-// Mirrors `celnet-exotics::touch`: a one-touch pays AT HIT via the Reiner-
-// Rubinstein discounted-hit expectation; a no-touch is the deferred complement
-// `e^{−r_d T} − one_touch_at_expiry`; the double-no-touch is the corridor survival
-// from the method-of-images series; the double-one-touch is its complement. Each is
-// clamped exactly as the crate does. The server echoes the lower barrier as the
-// resolved strike (a touch has no strike).
+// Mirrors `celnet-exotics::touch`: a one-touch pays AT HIT via the discounted
+// first-passage expectation E[e^{−r_d τ}·1{τ≤T}] (derivation in the crate's
+// module docs — the (μ+λ) power pairs with the +η λ-drift CDF argument; the
+// flipped pairing was the P0 at-hit defect); a no-touch is the deferred
+// complement `e^{−r_d T} − one_touch_at_expiry`; the double-no-touch is the
+// corridor survival from the method-of-images series; the double-one-touch is
+// its complement. As in the crate, the at-hit form is deliberately UNCLAMPED
+// (its bounds hold by construction; a regression must fail loudly, not be
+// masked) while probability legs are clamped to [0, 1] for round-off only. The
+// server echoes the lower barrier as the resolved strike (a touch has no
+// strike).
 
 type RebateTiming = "AT_HIT" | "AT_EXPIRY";
 
@@ -1005,25 +1010,26 @@ function oneTouchValue(
   const vsqt = vol * Math.sqrt(t);
   const mu = (rDom - rFor) / (vol * vol) - 0.5;
   const z = Math.log(barrier / m.spot);
-  const sideSign = upper ? -1 : 1;
+  const sideSign = upper ? -1 : 1; // η: −1 above spot, +1 below
   const base = (sideSign * z) / vsqt;
-  const driftSign = -sideSign;
 
-  let value: number;
   if (timing === "AT_HIT") {
+    // Discounted first-passage expectation R·E[e^{−r_d τ}·1{τ≤T}]: the (μ+λ)
+    // power pairs with the +η λ-drift argument, (μ−λ) with −η (the load-bearing
+    // pairing; flipping it was the P0 at-hit defect, +28% on touch-1). No clamp:
+    // both powCdf terms are ≥ 0 and the sum is ≤ max(1, e^{−r_d T}) pathwise.
     const lam = Math.sqrt(mu * mu + (2 * rDom) / (vol * vol));
-    const a1 = base + driftSign * lam * vsqt;
-    const a2 = base - driftSign * lam * vsqt;
-    value = rebate * (powCdf(z, mu + lam, a1) + powCdf(z, mu - lam, a2));
-  } else {
-    const a1 = base + driftSign * mu * vsqt;
-    const a2 = base - driftSign * mu * vsqt;
-    const prob = normCdf(a1) + powCdf(z, 2 * mu, a2);
-    value = rebate * Math.exp(-rDom * t) * prob;
+    const a1 = base + sideSign * lam * vsqt;
+    const a2 = base - sideSign * lam * vsqt;
+    return rebate * (powCdf(z, mu + lam, a1) + powCdf(z, mu - lam, a2));
   }
-  const maxDf = Math.max(Math.exp(-rDom * t), 1);
-  const cap = Math.max(rebate, 0) * maxDf;
-  return Number.isFinite(value) ? Math.min(Math.max(value, 0), cap) : 0;
+  // Deferred rebate: R·e^{−r_d T}·P(hit), the μ-drift reflected-normal pair. The
+  // probability is clamped to [0, 1] for float round-off only (exact in ℝ).
+  const driftSign = -sideSign;
+  const a1 = base + driftSign * mu * vsqt;
+  const a2 = base - driftSign * mu * vsqt;
+  const prob = Math.min(Math.max(normCdf(a1) + powCdf(z, 2 * mu, a2), 0), 1);
+  return rebate * Math.exp(-rDom * t) * prob;
 }
 
 /** No-touch value (mirrors `no_touch_price`). */
