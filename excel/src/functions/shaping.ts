@@ -44,6 +44,7 @@ import type {
   Lookback,
   LookbackMonitoring,
   LookbackStyle,
+  Margining,
   MarketObservable,
   Metal,
   MetalPair,
@@ -832,6 +833,159 @@ export function shapeNdf(args: NdfArgs): Instrument {
         side,
         fixing: shapeFixingSource(args.fixing),
         settlementCcy,
+      },
+    },
+  };
+}
+
+// --- new payoff shapes: perpetual (arm 30) + listed-future option (arm 31) ---
+
+/**
+ * Parse the listed-future-option premium margining convention (proto
+ * `Margining`), case-/separator-insensitive: `EQUITY`/`EQUITY_STYLE`/`UPFRONT`
+ * (premium paid at trade date — the discounted price) or
+ * `FUTURES`/`FUTURES_STYLE`/`DAILY` (premium margined daily like the future —
+ * the undiscounted price). Absent ⇒ EQUITY_STYLE (the meaningful proto3 zero,
+ * the ordinary upfront-premium contract).
+ */
+export function parseMargining(raw: string | undefined): Margining {
+  const t = (raw ?? "EQUITY_STYLE").trim().toUpperCase().replace(/[._\s-]/g, "");
+  switch (t) {
+    case "EQUITYSTYLE":
+    case "EQUITY":
+    case "UPFRONT":
+      return "EQUITY_STYLE";
+    case "FUTURESSTYLE":
+    case "FUTURES":
+    case "DAILY":
+      return "FUTURES_STYLE";
+    default:
+      throw new ShapingError(
+        `invalid margining \`${raw}\` (expected EQUITY_STYLE or FUTURES_STYLE)`,
+      );
+  }
+}
+
+/** Validate a strictly-positive absolute strike for the closed-form arms 30/31. */
+function shapeAbsoluteStrike(raw: number, family: string): number {
+  if (!Number.isFinite(raw) || raw <= 0) {
+    throw new ShapingError(`invalid ${family} strike \`${raw}\` (must be a positive level)`);
+  }
+  return raw;
+}
+
+/** Cell arguments for a perpetual (no-expiry) American option. */
+export interface PerpetualArgs {
+  readonly pair: string | CcyPair;
+  /** Absolute strike level (a perpetual has no delta-quoted strike convention). */
+  readonly strike: number;
+  readonly callPut: string;
+  readonly notional: number;
+}
+
+/**
+ * Shape a perpetual (no-expiry) American option (proto arm 30) — the one
+ * TENORLESS product on the contract: NO tenor exists for it and the canonical
+ * wire shape is `expiry_years = 0` exactly (the server's
+ * `convert::validate_perpetual_terms` guard; a non-zero/NaN expiry is
+ * INVALID_ARGUMENT, never waved through). The product `notional` mirrors the one
+ * quantity, exactly like the SDK's `InstrumentSpec::perpetual`. `side` is
+ * TWO_WAY (a cell reads a market, not a directional ticket).
+ */
+export function shapePerpetual(args: PerpetualArgs): Instrument {
+  if (!Number.isFinite(args.notional) || args.notional <= 0) {
+    throw new ShapingError(`invalid notional \`${args.notional}\``);
+  }
+  return {
+    pair: resolvePair(args.pair),
+    expiryYears: 0,
+    quantity: { notional: args.notional, baseCcy: true },
+    side: "TWO_WAY" as Side,
+    product: {
+      kind: "perpetualOption",
+      perpetualOption: {
+        optionType: parseOptionType(args.callPut),
+        strike: shapeAbsoluteStrike(args.strike, "perpetual"),
+        notional: args.notional,
+      },
+    },
+  };
+}
+
+/**
+ * Parse a listed-future contract identity `TICKER[@VENUE]` (e.g. `CL@XNYM`,
+ * `BRN-DEC26@IFEU`, or a bare `ES`) into the vendor-neutral symbol (ticker +
+ * listing venue MIC; an omitted venue is the empty string, matching the proto
+ * `Symbol` zero value for an unambiguous contract).
+ */
+export function parseFutureSymbol(raw: string): { ticker: string; venue: string } {
+  const s = raw.trim().toUpperCase();
+  const at = s.indexOf("@");
+  const ticker = (at >= 0 ? s.slice(0, at) : s).trim();
+  const venue = (at >= 0 ? s.slice(at + 1) : "").trim();
+  if (ticker.length === 0) {
+    throw new ShapingError(
+      `invalid future symbol \`${raw}\` (expected TICKER or TICKER@VENUE, e.g. CL@XNYM)`,
+    );
+  }
+  if (!/^[A-Z0-9]*$/.test(venue)) {
+    throw new ShapingError(`invalid future venue \`${raw}\` (expected a MIC, e.g. XNYM, XCME)`);
+  }
+  return { ticker, venue };
+}
+
+/** Cell arguments for an option on a listed future. */
+export interface ListedFutureOptionArgs {
+  readonly pair: string | CcyPair;
+  /** The OPTION's tenor (e.g. "9M"); the future's own expiry is `futureExpiry`. */
+  readonly tenor: string;
+  /** Absolute strike level (in the future's quote units). */
+  readonly strike: number;
+  readonly callPut: string;
+  readonly notional: number;
+  /** The listed future contract identity, `TICKER[@VENUE]` (e.g. `CL@XNYM`). */
+  readonly futureSymbol: string;
+  /** The FUTURE's own expiry as a year fraction; `>=` the option's expiry. */
+  readonly futureExpiry: number;
+  /** EQUITY_STYLE (upfront, default) or FUTURES_STYLE (daily-margined). */
+  readonly margining?: string | undefined;
+}
+
+/**
+ * Shape an option on a listed future (proto arm 31). The future must outlive
+ * the option — `futureExpiry >= expiryYears > 0`, the same term guard the
+ * server enforces (`convert::validate_listed_future_terms`), rejected here with
+ * a typed error naming the constraint rather than a wire round-trip. The
+ * product `notional` mirrors the one quantity (the SDK's
+ * `InstrumentSpec::listed_future_option`); `side` is TWO_WAY (a cell reads a
+ * market).
+ */
+export function shapeListedFutureOption(args: ListedFutureOptionArgs): Instrument {
+  if (!Number.isFinite(args.notional) || args.notional <= 0) {
+    throw new ShapingError(`invalid notional \`${args.notional}\``);
+  }
+  const { tenor, expiryYears } = parseTenor(args.tenor);
+  if (!Number.isFinite(args.futureExpiry) || args.futureExpiry < expiryYears) {
+    throw new ShapingError(
+      `invalid futureExpiry \`${args.futureExpiry}\` (the future must outlive the option: ` +
+        `futureExpiry >= ${expiryYears} years)`,
+    );
+  }
+  return {
+    pair: resolvePair(args.pair),
+    tenor,
+    expiryYears,
+    quantity: { notional: args.notional, baseCcy: true },
+    side: "TWO_WAY" as Side,
+    product: {
+      kind: "listedFutureOption",
+      listedFutureOption: {
+        futureSymbol: parseFutureSymbol(args.futureSymbol),
+        futureExpiryYears: args.futureExpiry,
+        optionType: parseOptionType(args.callPut),
+        strike: shapeAbsoluteStrike(args.strike, "listed-future"),
+        notional: args.notional,
+        margining: parseMargining(args.margining),
       },
     },
   };
@@ -3081,8 +3235,11 @@ function canonicalInstrument(i: Instrument): unknown {
   return {
     base: i.pair.base,
     quote: i.pair.quote,
-    tu: i.tenor.unit,
-    tc: i.tenor.count,
+    // The tenor is presence-tracked (absent only for the tenorless perpetual);
+    // `null` is its canonical absent form. A dated instrument keys identically
+    // to before the field became optional.
+    tu: i.tenor?.unit ?? null,
+    tc: i.tenor?.count ?? null,
     ey: i.expiryYears,
     n: i.quantity.notional,
     bc: i.quantity.baseCcy,
@@ -3291,6 +3448,24 @@ function canonicalProduct(p: Product): unknown {
         sd: p.ndf.side,
         fx: p.ndf.fixing,
         sc: p.ndf.settlementCcy,
+      };
+    case "perpetualOption":
+      return {
+        k: "perp",
+        ot: p.perpetualOption.optionType,
+        strike: p.perpetualOption.strike,
+        n: p.perpetualOption.notional,
+      };
+    case "listedFutureOption":
+      return {
+        k: "lfo",
+        ft: p.listedFutureOption.futureSymbol.ticker,
+        fv: p.listedFutureOption.futureSymbol.venue,
+        fe: p.listedFutureOption.futureExpiryYears,
+        ot: p.listedFutureOption.optionType,
+        strike: p.listedFutureOption.strike,
+        n: p.listedFutureOption.notional,
+        mg: p.listedFutureOption.margining,
       };
   }
 }

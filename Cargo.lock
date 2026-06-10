@@ -396,6 +396,7 @@ name = "celnet-cli"
 version = "0.0.0"
 dependencies = [
  "celnet-client",
+ "celnet-commodity-vanilla",
  "celnet-conventions",
  "celnet-core",
  "celnet-engine",

@@ -66,7 +66,7 @@ use celnet_proto::{AggregateRiskRequest, NumeraireRate, ReportingNumeraire, Risk
 use celnet_risk_cube::{BookId as CubeBookId, DeskId, EntityId, FactKey, LocationId, TraderId};
 use celnet_risk_fleet::FleetTopology;
 use celnet_server::services::risk::store::BookedPosition;
-use celnet_server::{Clock, CoreLink, Edge, SpreadModel};
+use celnet_server::{Clock, CoreLink, Edge, LpPanelConfig, SpreadModel};
 use celnet_types::{Ccy, CcyPair, DeltaConvention, OptionType, PremiumStyle, VanillaInputs};
 
 use tonic::transport::Channel;
@@ -415,6 +415,7 @@ async fn boot_federating_edge(backend_url: &str) -> std::io::Result<Edge> {
         SpreadModel::default(),
         Clock::system(),
         topology,
+        LpPanelConfig::default(),
     )
     .await?;
     edge.gate().mark_ready();

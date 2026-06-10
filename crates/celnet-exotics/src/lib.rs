@@ -86,7 +86,12 @@
 //!      `m·S(t₁)` at a future date, with the exact Rubinstein (1990) FX
 //!      dual-carry closed form) and **cliquet / ratchet** strips (the plain
 //!      ratchet as the exact sum of forward-start legs, the locally-capped /
-//!      -floored variant by Monte-Carlo, cross-validated).
+//!      -floored variant by Monte-Carlo, cross-validated);
+//!    * [`perpetual`] — **perpetual (no-expiry) American** call/put on the
+//!      carry seam, with the exact stationary-ODE closed form (free boundary
+//!      by value matching + smooth pasting) and fully analytic Greeks,
+//!      cross-validated against an independent bisection re-derivation of the
+//!      characteristic root and hand-pinned offline references.
 //!
 //! 6. **Variance & volatility swaps** — the model-free volatility products,
 //!    priced directly off an arbitrage-free [`celnet_surface`] smile:
@@ -143,6 +148,7 @@ pub mod normal;
 pub mod particle;
 pub mod payoff;
 pub mod pde;
+pub mod perpetual;
 pub mod pivot;
 pub mod quanto;
 pub mod rng;
@@ -195,6 +201,10 @@ pub use normal::{gaussian_pair_from_uniforms, inverse_cdf};
 pub use particle::{CalibrationResult, ParticleConfig, calibrate_leverage};
 pub use payoff::{ArithmeticAsian, DiscreteBarrier, vanilla_intrinsic};
 pub use pde::{PdeGrid, PdeProblem, solve as pde_solve};
+pub use perpetual::{
+    PerpetualGreeks, PerpetualInputs, perpetual_exercise_boundary, perpetual_greeks,
+    perpetual_price,
+};
 pub use pivot::{PivotTra, PivotTraMcConfig, PivotTraResult, pivot_tra_price, pivot_tra_price_cv};
 pub use quanto::{
     QuantoEstimate, QuantoMcConfig, QuantoParams, quanto_digital_mc, quanto_digital_price,

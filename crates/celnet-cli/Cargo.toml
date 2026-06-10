@@ -22,6 +22,7 @@ celnet-vanilla.workspace = true
 celnet-conventions.workspace = true
 celnet-surface.workspace = true
 celnet-exotics.workspace = true
+celnet-commodity-vanilla.workspace = true
 celnet-linear.workspace = true
 celnet-client.workspace = true
 clap.workspace = true

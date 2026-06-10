@@ -19,7 +19,7 @@ use crate::risk::{
     self, AggregateReq, CliDimension, DrillReq, LimitsReq, PositionsReq, RiskCommon, StreamReq,
 };
 use crate::tenor::parse_tenor;
-use crate::{convention, exotic, linear, price, rfq, surface};
+use crate::{convention, exotic, future_option, linear, perpetual, price, rfq, surface};
 
 use celnet_client::{OrgDimension, Scope, StrikeSpec};
 
@@ -58,6 +58,16 @@ pub(crate) enum Command {
     /// Price a non-deliverable forward (NDF): cash-settled in the convertible
     /// currency at a named fixing; non-deliverable underlying only.
     Ndf(NdfArgs),
+    /// Price a perpetual (no-expiry) American option: exercisable at any time,
+    /// no terminal date — the exact stationary closed form (free boundary by
+    /// value matching + smooth pasting) with fully analytic Greeks. Takes no
+    /// expiry/tenor: a perpetual has none.
+    Perpetual(PerpetualArgs),
+    /// Price an option on a listed future (any asset class): the quoted futures
+    /// price already embodies the underlying's carry, so the value is the exact
+    /// futures-measure closed form under the chosen premium margining
+    /// convention (equity-style discounted / futures-style undiscounted).
+    FutureOption(FutureOptionArgs),
     /// Resolve and print the convention record for a pair and tenor.
     Convention(ConventionArgs),
     /// Firm-scale hierarchical risk against a running edge (the same `RiskService`
@@ -814,6 +824,85 @@ pub(crate) struct NdfArgs {
     pub(crate) market: LinearMarketArgs,
 }
 
+/// Arguments to `perpetual`. There is deliberately no `--t`/`--tenor`: a
+/// perpetual option has no expiry (the wire contract encodes the no-expiry
+/// shape as `expiry_years = 0`), and its value is time-homogeneous.
+#[derive(Debug, Args)]
+pub(crate) struct PerpetualArgs {
+    /// Call or put.
+    #[arg(long, value_enum)]
+    pub(crate) option: CliOptionType,
+    /// Strike `K` (absolute level, quote per 1 unit of base/asset).
+    #[arg(long)]
+    pub(crate) strike: f64,
+    /// Spot price (quote per 1 unit of base/asset).
+    #[arg(long)]
+    pub(crate) spot: f64,
+    /// Annualized volatility (absolute, e.g. 0.10 = 10 vol).
+    #[arg(long)]
+    pub(crate) vol: f64,
+    /// Continuously-compounded domestic / discount rate (must be ≥ 0: a
+    /// perpetual claim has no finite value under a negative discount rate —
+    /// parsed signed so the rejection is the domain message, never a flag-parse
+    /// error).
+    #[arg(long, allow_hyphen_values = true)]
+    pub(crate) r_dom: f64,
+    /// Continuously-compounded carry yield of the asset (FX foreign rate /
+    /// equity dividend yield / commodity cost-of-carry / crypto funding) — a
+    /// signed quantity (negative yields are real markets).
+    #[arg(long, allow_hyphen_values = true)]
+    pub(crate) r_for: f64,
+    /// The underlying asset class: FX prices over the two-rate carry, every
+    /// other class over the generalized cost-of-carry seam with
+    /// `b = r_dom − r_for` (ADR-0008) — the same value, carry-tagged rhos.
+    #[arg(long, value_enum, default_value = "fx")]
+    pub(crate) asset: CliAsset,
+    /// The underlying identifier for the chosen `--asset` (labels the report;
+    /// defaults per class when omitted).
+    #[arg(long)]
+    pub(crate) underlying: Option<String>,
+}
+
+/// Arguments to `future-option`.
+#[derive(Debug, Args)]
+pub(crate) struct FutureOptionArgs {
+    /// Call or put on the future.
+    #[arg(long, value_enum)]
+    pub(crate) option: CliOptionType,
+    /// The quoted futures price `F` (the complete carry-bearing market input —
+    /// the future already embodies the underlying's carry, any asset class).
+    #[arg(long)]
+    pub(crate) future: f64,
+    /// Strike `K` (absolute level, in the future's quote units).
+    #[arg(long)]
+    pub(crate) strike: f64,
+    /// Annualized volatility of the future (absolute, e.g. 0.28 = 28 vol).
+    #[arg(long)]
+    pub(crate) vol: f64,
+    /// The OPTION's time to expiry in years.
+    #[arg(long)]
+    pub(crate) t: f64,
+    /// The FUTURE's own expiry in years (must be ≥ `--t`: the future outlives
+    /// the option). Booked term — the quoted future already prices the carry.
+    #[arg(long)]
+    pub(crate) future_expiry: f64,
+    /// Continuously-compounded discount (settlement-currency) rate — a signed
+    /// quantity (negative rates are real markets; futures-style margining never
+    /// discounts at all).
+    #[arg(long, allow_hyphen_values = true)]
+    pub(crate) r_dom: f64,
+    /// The premium margining convention: equity-style (premium-upfront,
+    /// discounted) or futures-style (daily-margined, undiscounted).
+    #[arg(long, value_enum, default_value = "equity-style")]
+    pub(crate) margining: future_option::CliMargining,
+    /// The listed future contract's ticker (identity; labels the report).
+    #[arg(long)]
+    pub(crate) symbol: String,
+    /// The listing venue MIC of the contract (identity; labels the report).
+    #[arg(long, default_value = "")]
+    pub(crate) venue: String,
+}
+
 /// Arguments to `convention`.
 #[derive(Debug, Args)]
 pub(crate) struct ConventionArgs {
@@ -1357,6 +1446,106 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
             write!(out, "{}", linear::format_report("ndf", &r)).ok();
             Ok(())
         }
+        Command::Perpetual(a) => {
+            if !(a.strike.is_finite() && a.strike > 0.0) {
+                return Err(DispatchError::Invalid(
+                    "perpetual --strike must be positive".to_owned(),
+                ));
+            }
+            if !(a.spot.is_finite() && a.spot > 0.0) {
+                return Err(DispatchError::Invalid(
+                    "perpetual --spot must be positive".to_owned(),
+                ));
+            }
+            if !(a.vol.is_finite() && a.vol > 0.0) {
+                return Err(DispatchError::Invalid(
+                    "perpetual --vol must be positive".to_owned(),
+                ));
+            }
+            // The leaf's documented domain (mirrors the server's refusal): a
+            // perpetual claim under a negative discount rate has no finite value
+            // — rejected loudly (a NaN rate included), never priced to a NaN.
+            if a.r_dom.is_nan() || a.r_dom < 0.0 {
+                return Err(DispatchError::Invalid(
+                    "a perpetual option has no finite value under a negative discount rate \
+                     (--r-dom must be ≥ 0)"
+                        .to_owned(),
+                ));
+            }
+            let market = perpetual::PerpetualMarket {
+                spot: a.spot,
+                vol: a.vol,
+                r_dom: a.r_dom,
+                r_for: a.r_for,
+            };
+            let r = perpetual::run(a.option.into(), a.strike, market, a.asset);
+            let label = a.underlying.unwrap_or_else(|| default_underlying(a.asset));
+            write!(
+                out,
+                "{}",
+                perpetual::format_report(a.option.into(), a.asset, &label, a.strike, &r)
+            )
+            .ok();
+            Ok(())
+        }
+        Command::FutureOption(a) => {
+            if !(a.strike.is_finite() && a.strike > 0.0) {
+                return Err(DispatchError::Invalid(
+                    "future-option --strike must be positive".to_owned(),
+                ));
+            }
+            if !(a.future.is_finite() && a.future > 0.0) {
+                return Err(DispatchError::Invalid(
+                    "future-option --future must be positive".to_owned(),
+                ));
+            }
+            if !(a.vol.is_finite() && a.vol > 0.0) {
+                return Err(DispatchError::Invalid(
+                    "future-option --vol must be positive".to_owned(),
+                ));
+            }
+            if !(a.t.is_finite() && a.t > 0.0) {
+                return Err(DispatchError::Invalid(
+                    "future-option --t must be finite and > 0".to_owned(),
+                ));
+            }
+            // The contract's term ordering (mirrors the wire validator): the
+            // future must outlive the option — never clamped.
+            if !(a.future_expiry.is_finite() && a.future_expiry >= a.t) {
+                return Err(DispatchError::Invalid(
+                    "future-option --future-expiry must be finite and ≥ --t (the future must \
+                     outlive the option)"
+                        .to_owned(),
+                ));
+            }
+            if a.symbol.is_empty() {
+                return Err(DispatchError::Invalid(
+                    "future-option --symbol must name the listed contract".to_owned(),
+                ));
+            }
+            let market = future_option::FutureOptionMarket {
+                future: a.future,
+                vol: a.vol,
+                t: a.t,
+                r_dom: a.r_dom,
+            };
+            let g = future_option::run(a.option.into(), a.strike, market, a.margining);
+            write!(
+                out,
+                "{}",
+                future_option::format_report(
+                    a.option.into(),
+                    &a.symbol,
+                    &a.venue,
+                    a.future_expiry,
+                    a.margining,
+                    a.strike,
+                    &g,
+                )
+            )
+            .ok();
+            Ok(())
+        }
         Command::Convention(a) => {
             let pair = parse_pair(&a.pair)?;
             let tenor = parse_tenor(&a.tenor).map_err(DispatchError::BadTenor)?;
@@ -1644,6 +1833,138 @@ mod tests {
         let err = run_to_string(&["celnet", "convention", "--pair", "NOPE", "--tenor", "1Y"])
             .unwrap_err();
         assert!(matches!(err, DispatchError::BadPair(_)));
+    }
+
+    #[test]
+    fn perpetual_parses_and_prices() {
+        let out = run_to_string(&[
+            "celnet",
+            "perpetual",
+            "--option",
+            "call",
+            "--strike",
+            "1.10",
+            "--spot",
+            "1.10",
+            "--vol",
+            "0.105",
+            "--r-dom",
+            "0.05",
+            "--r-for",
+            "0.01",
+        ])
+        .unwrap();
+        assert!(out.contains("perpetual call"));
+        assert!(out.contains("price"));
+        assert!(out.contains("exercise_boundary"));
+        assert!(out.contains("rho_dom"));
+    }
+
+    #[test]
+    fn perpetual_takes_no_expiry_flag() {
+        // A perpetual has no expiry: `--t` must be a structural parse error,
+        // never a silently-ignored flag.
+        assert!(
+            Cli::try_parse_from([
+                "celnet",
+                "perpetual",
+                "--option",
+                "call",
+                "--strike",
+                "1.10",
+                "--spot",
+                "1.10",
+                "--vol",
+                "0.105",
+                "--r-dom",
+                "0.05",
+                "--r-for",
+                "0.01",
+                "--t",
+                "1.0",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn perpetual_rejects_a_negative_discount_rate() {
+        let err = run_to_string(&[
+            "celnet",
+            "perpetual",
+            "--option",
+            "put",
+            "--strike",
+            "1.10",
+            "--spot",
+            "1.10",
+            "--vol",
+            "0.105",
+            "--r-dom=-0.01",
+            "--r-for",
+            "0.01",
+        ])
+        .unwrap_err();
+        assert!(matches!(err, DispatchError::Invalid(_)));
+    }
+
+    #[test]
+    fn future_option_parses_and_prices() {
+        let out = run_to_string(&[
+            "celnet",
+            "future-option",
+            "--option",
+            "call",
+            "--future",
+            "19.0",
+            "--strike",
+            "19.0",
+            "--vol",
+            "0.28",
+            "--t",
+            "0.75",
+            "--future-expiry",
+            "0.75",
+            "--r-dom",
+            "0.10",
+            "--margining",
+            "equity-style",
+            "--symbol",
+            "CL",
+            "--venue",
+            "XNYM",
+        ])
+        .unwrap();
+        assert!(out.contains("future-option call"));
+        assert!(out.contains("contract        CL@XNYM"));
+        assert!(out.contains("margining       equity-style"));
+        assert!(out.contains("price"));
+    }
+
+    #[test]
+    fn future_option_rejects_a_future_expiring_before_the_option() {
+        let err = run_to_string(&[
+            "celnet",
+            "future-option",
+            "--option",
+            "put",
+            "--future",
+            "45.0",
+            "--strike",
+            "40.0",
+            "--vol",
+            "0.35",
+            "--t",
+            "0.75",
+            "--future-expiry",
+            "0.5",
+            "--r-dom",
+            "0.04",
+            "--symbol",
+            "ES",
+        ])
+        .unwrap_err();
+        assert!(matches!(err, DispatchError::Invalid(_)));
     }
 
     #[test]

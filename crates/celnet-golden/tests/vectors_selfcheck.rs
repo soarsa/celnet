@@ -3,7 +3,7 @@
 //! This proves the committed `vectors/*.json` cannot silently drift: every vector
 //! is **re-derived** from its independent oracle (the same oracle the generator
 //! uses) and asserted equal to the frozen `expected.price` within its tolerance.
-//! It also asserts the corpus is well-formed: all 21 product-oneof families
+//! It also asserts the corpus is well-formed: all 23 product-oneof families
 //! present, unique ids, valid family tags, MC families carry a positive standard
 //! error, closed-form families carry `null`.
 //!
@@ -54,7 +54,7 @@ fn all_families_present_and_unique() {
     for fam in FAMILIES {
         assert!(
             present.contains(fam),
-            "family `{fam}` has no golden vectors (all 21 oneof arms must be covered)"
+            "family `{fam}` has no golden vectors (all 23 oneof arms must be covered)"
         );
     }
     assert_eq!(
@@ -185,6 +185,37 @@ fn closed_form_vectors_redrive_from_independent_oracle() {
                 m.r_dom,
                 m.r_for,
             ),
+            // A perpetual has NO expiry (`expiry_years` is 0 by the proto arm-30
+            // invariant; `t` is unused). FX carry seam: r = r_dom, b = r_dom − r_for.
+            "perpetual_option" => oracle::perpetual_american_price(
+                cp_of(v, "option_type"),
+                m.spot,
+                v.term_f64("strike"),
+                m.vol,
+                m.r_dom,
+                m.r_dom - m.r_for,
+            ),
+            // The market `spot` IS the listed futures price (the vector carries
+            // r_dom = r_for = r, i.e. the futures-measure martingale carry b = 0);
+            // the margining term selects discounted vs undiscounted Black-76.
+            "listed_future_option" => match v.term_str("margining") {
+                "EQUITY_STYLE" => oracle::black76_price(
+                    cp_of(v, "option_type"),
+                    m.spot,
+                    v.term_f64("strike"),
+                    m.vol,
+                    t,
+                    m.r_dom,
+                ),
+                "FUTURES_STYLE" => oracle::black76_undiscounted_price(
+                    cp_of(v, "option_type"),
+                    m.spot,
+                    v.term_f64("strike"),
+                    m.vol,
+                    t,
+                ),
+                other => panic!("unknown margining `{other}` for vector {}", v.id),
+            },
             other => panic!("unhandled closed-form family `{other}` for vector {}", v.id),
         };
         assert!(

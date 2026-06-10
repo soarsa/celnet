@@ -330,6 +330,14 @@ function legsOf(instrument: Instrument): { strikeSpec: StrikeOrDelta; isCall: bo
       // The W2 linear products are vol-INDEPENDENT discounted cashflows — there is
       // no representative smile strike (the payoff is linear in spot) ⇒ ATM face vol.
       return [];
+    case "perpetualOption":
+      // A perpetual has no expiry: there is no (expiry, delta) pillar on the
+      // marked surface to read a smile at ⇒ ATM face vol (honest fallback).
+      return [];
+    case "listedFutureOption":
+      // The strike sits on the listed FUTURE's level, not the FX spot-delta axis
+      // the marked smiles are keyed on ⇒ ATM face vol (honest fallback).
+      return [];
   }
 }
 

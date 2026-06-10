@@ -38,18 +38,20 @@ use celnet_exotics::{
     BasketKind as ExBasketKind, BasketLeg as ExBasketLeg, BasketMcConfig, BasketSpec, Cliquet,
     CliquetMcConfig, CliquetSchedule, DigitalKind, DoubleBarrierKnockOut, DoubleNoTouch,
     ExerciseStyle as ExExerciseStyle, ForwardStart, Lookback as ExLookback, LookbackMcConfig,
-    LookbackStyle as ExLookbackStyle, LsmConfig, Monitoring as ExMonitoring, QuantoParams,
-    RebateTiming, RedemptionStyle as ExRedemptionStyle, SingleBarrier as ExSingleBarrier,
-    Tarf as ExTarf, TarfMcConfig, VarSwapContext, accumulator_price, american_fd_greeks,
-    american_lsm, cliquet_price_capped_mc, cliquet_price_plain, curran_price, digital_price,
-    double_knock_out_price, double_no_touch_price, double_touch_price, fair_variance,
-    fair_volatility, fixed_lookback_price, floating_lookback_price, forward_start_price,
-    lookback_mc, no_touch_price, one_touch_price, price_basket, quanto_digital_price,
-    quanto_vanilla_price, single_barrier_price, tarf_price, turnbull_wakeman_price,
+    LookbackStyle as ExLookbackStyle, LsmConfig, Monitoring as ExMonitoring, PerpetualInputs,
+    QuantoParams, RebateTiming, RedemptionStyle as ExRedemptionStyle,
+    SingleBarrier as ExSingleBarrier, Tarf as ExTarf, TarfMcConfig, VarSwapContext,
+    accumulator_price, american_fd_greeks, american_lsm, cliquet_price_capped_mc,
+    cliquet_price_plain, curran_price, digital_price, double_knock_out_price,
+    double_no_touch_price, double_touch_price, fair_variance, fair_volatility,
+    fixed_lookback_price, floating_lookback_price, forward_start_price, lookback_mc,
+    no_touch_price, one_touch_price, perpetual_greeks, perpetual_price, price_basket,
+    quanto_digital_price, quanto_vanilla_price, single_barrier_price, tarf_price,
+    turnbull_wakeman_price,
 };
 use celnet_linear::{LinearInputs, LinearTerms, Side as LinearSide, ndf::Ndf as LinearNdf, swap};
 
-use celnet_commodity_vanilla::CommodityInputs;
+use celnet_commodity_vanilla::{CommodityInputs, Margining as CommodityMargining};
 use celnet_crypto_vanilla::{
     InverseInputs as CryptoInverseInputs, LinearInputs as CryptoLinearInputs,
     SettlementStyle as CryptoSettlementStyle, inverse as crypto_inverse, linear as crypto_linear,
@@ -498,7 +500,18 @@ pub fn price_instrument(
     conv: &ConventionSet,
 ) -> Result<Priced, PriceError> {
     let expiry = instrument.expiry_years;
-    if expiry <= 0.0 || !expiry.is_finite() {
+    // Term-shape guard. Every product needs a positive finite expiry EXCEPT the
+    // perpetual arm, which has NO expiry by construction: its arm requires
+    // `expiry_years == 0` exactly, enforced by the contract's canonical
+    // validator (`celnet_proto::convert::validate_perpetual_terms`) and mapped
+    // to `INVALID_ARGUMENT` at the boundary — never silently ignored.
+    if matches!(
+        instrument.product.as_ref(),
+        Some(instrument::Product::PerpetualOption(_))
+    ) {
+        celnet_proto::convert::validate_perpetual_terms(expiry)
+            .map_err(wire_error_to_price_error)?;
+    } else if expiry <= 0.0 || !expiry.is_finite() {
         return Err(PriceError::Domain("expiry_years must be positive"));
     }
 
@@ -1584,6 +1597,19 @@ pub fn price_instrument(
         instrument::Product::FxForward(f) => price_fx_forward(instrument, market, expiry, f),
         instrument::Product::FxSwap(s) => price_fx_swap(instrument, market, expiry, s),
         instrument::Product::Ndf(n) => price_ndf(instrument, market, expiry, n),
+        // The perpetual on the FX path prices over the FX two-rate carry — the
+        // carry guard above has already pinned the market to the FX arm, so the
+        // carry branching is byte-identical to the vanilla path's (an absent
+        // carry stays the FX default, exactly as for a vanilla).
+        instrument::Product::PerpetualOption(p) => price_perpetual(
+            p,
+            market,
+            Carry::FxRates {
+                r_dom: market.r_dom(),
+                r_for: market.r_for(),
+            },
+        ),
+        instrument::Product::ListedFutureOption(o) => price_listed_future_option(o, market, expiry),
     }
 }
 
@@ -1674,12 +1700,14 @@ fn carry_greeks_to_greeks(g: &celnet_core::carry::CarryGreeks) -> Greeks {
 }
 
 /// Route a cross-asset (equity / commodity / digital-asset) instrument to its
-/// generalized cost-of-carry leaf. Only the vanilla product is a cross-asset
-/// option today (equity/commodity/crypto options are `Product::Vanilla` over a
-/// non-FX underlying — there is no separate product arm); every other product on
-/// a cross-asset underlying is refused with a typed error rather than silently
-/// mispriced on the FX exotic path. The caller has already rejected the LSV
-/// booking model (the FX vol-surface engine) for cross-asset underlyings.
+/// generalized cost-of-carry leaf. The cross-asset option products are the
+/// vanilla (equity/commodity/crypto options are `Product::Vanilla` over a
+/// non-FX underlying), the perpetual American (same carry seam, no expiry) and
+/// the listed-future option (asset-class-agnostic Black-76 on the quoted
+/// future); every other product on a cross-asset underlying is refused with a
+/// typed error rather than silently mispriced on the FX exotic path. The
+/// caller has already rejected the LSV booking model (the FX vol-surface
+/// engine) for cross-asset underlyings.
 fn price_cross_asset(
     underlying: &Underlying,
     instrument: &Instrument,
@@ -1689,6 +1717,19 @@ fn price_cross_asset(
 ) -> Result<Priced, PriceError> {
     let v = match product {
         instrument::Product::Vanilla(v) => v,
+        // A perpetual on a cross-asset underlying prices over the SAME
+        // generalized cost-of-carry market arm as the cross-asset vanilla —
+        // the ADR-0008 carry guard applies identically (both carry arms
+        // accepted, an absent carry refused; no silent fallback).
+        instrument::Product::PerpetualOption(p) => {
+            return price_perpetual(p, market, cost_of_carry(market)?);
+        }
+        // A listed-future option is asset-class-agnostic (the quoted futures
+        // price already embodies the underlying's carry), so the cross-asset
+        // arm routes to the same Black-76 `on_future` leaf as the FX path.
+        instrument::Product::ListedFutureOption(o) => {
+            return price_listed_future_option(o, market, expiry);
+        }
         other => {
             return Err(PriceError::UnsupportedModel {
                 model: "DEFAULT",
@@ -2094,6 +2135,192 @@ fn decode_fixing_source(tag: i32) -> Result<celnet_types::FixingSource, PriceErr
     })
 }
 
+// ===========================================================================
+// Perpetual American + listed-future option routing (proto arms 30/31)
+// ===========================================================================
+
+/// Lower a `celnet-proto` decode/validity [`celnet_proto::convert::WireError`]
+/// onto the pricer's typed [`PriceError`]. Both families map to
+/// `INVALID_ARGUMENT` at the service boundary, so the lowering is
+/// message-preserving where the payload is static and never silently absorbs
+/// an error.
+fn wire_error_to_price_error(e: celnet_proto::convert::WireError) -> PriceError {
+    use celnet_proto::convert::WireError as W;
+    match e {
+        W::UnknownEnum { kind, tag } => PriceError::UnknownEnum { kind, tag },
+        W::MissingField { field } => PriceError::MissingField(field),
+        W::InvalidTerms { constraint, .. } => PriceError::Domain(constraint),
+        // The remaining wire-decode families cannot arise from the term
+        // validators this module calls, but the lowering stays total (a future
+        // validator change surfaces as a clear domain error, never a panic).
+        W::InvalidCcy { .. } => PriceError::Domain("underlying currency code is malformed"),
+        W::OutOfRange { .. } => {
+            PriceError::Domain("wire scalar is outside the domain type's range")
+        }
+        W::WrongUnderlying { .. } => {
+            PriceError::Domain("underlying asset class is invalid for this product family")
+        }
+    }
+}
+
+/// The perpetual's cross / higher-order spot-vol sensitivities (vanna, volga,
+/// speed, zomma) by central finite differences of the leaf's closed-form price
+/// — the same stencils and bump sizes as [`exotic_greeks`]. The leaf's own
+/// strip ([`celnet_exotics::PerpetualGreeks`]) is exact for price / delta /
+/// gamma / vega and the rhos and is taken verbatim; the time-bumping arm of
+/// [`exotic_greeks`] cannot apply here (a perpetual has no expiry to bump) and
+/// is never needed (every time Greek is identically zero — see
+/// [`price_perpetual`]), so only the four spot/vol stencils are evaluated.
+fn perpetual_cross_greeks(option: OptionType, i: &PerpetualInputs) -> (f64, f64, f64, f64) {
+    let at = |spot: f64, vol: f64| {
+        perpetual_price(option, &PerpetualInputs::new(spot, i.strike, vol, i.carry))
+    };
+    let (s, v) = (i.spot, i.vol);
+    let h_s = s * FD_SPOT_REL;
+    let h_v = FD_VOL_ABS;
+    let (s_up, s_dn) = (s * (1.0 + FD_SPOT_REL), s * (1.0 - FD_SPOT_REL));
+
+    // Vanna: cross spot/vol second derivative (4-point stencil).
+    let vanna = (at(s_up, v + h_v) - at(s_up, v - h_v) - at(s_dn, v + h_v) + at(s_dn, v - h_v))
+        / (4.0 * h_s * h_v);
+    // Volga: second vol derivative.
+    let volga = (at(s, v + h_v) - 2.0 * at(s, v) + at(s, v - h_v)) / (h_v * h_v);
+    // Speed: third spot derivative via the wider 4-point stencil.
+    let (s_up2, s_dn2) = (s * (1.0 + 2.0 * FD_SPOT_REL), s * (1.0 - 2.0 * FD_SPOT_REL));
+    let speed = (at(s_up2, v) - 2.0 * at(s_up, v) + 2.0 * at(s_dn, v) - at(s_dn2, v))
+        / (2.0 * h_s * h_s * h_s);
+    // Zomma: d(gamma)/d(vol) over the gamma stencil at the bumped vols.
+    let gamma_at = |vol: f64| (at(s_up, vol) - 2.0 * at(s, vol) + at(s_dn, vol)) / (h_s * h_s);
+    let zomma = (gamma_at(v + h_v) - gamma_at(v - h_v)) / (2.0 * h_v);
+    (vanna, volga, speed, zomma)
+}
+
+/// Price a perpetual (no-expiry) American vanilla via the `celnet-exotics`
+/// perpetual leaf over the given carry — the FX two-rate arm on the FX path,
+/// the generalized cost-of-carry arm on the cross-asset path (the caller has
+/// already applied its path's carry guard, so the branching mirrors the
+/// vanilla product's exactly).
+///
+/// # Greek strip honesty
+///
+/// The perpetual value is **time-homogeneous**, so theta, charm and color are
+/// **identically zero** — those zeros are the exact closed-form values (the
+/// stationary value has no time dependence), not placeholders. There is no
+/// settlement tenor, so no forward exists to define a forward delta:
+/// `delta_forward` is structurally absent and rides as the proto3-zero `0.0`
+/// (never fabricated from an `e^{r_for·t}` scaling with no `t`). The leaf's
+/// analytic strip (price / delta / gamma / vega and the exact chain-rule rhos)
+/// is taken verbatim and the rhos projected through the same
+/// [`RateSensitivities`] bijection every carry leaf uses; the cross spot-vol
+/// sensitivities the leaf does not model analytically (vanna / volga / speed /
+/// zomma) are completed by central finite differences of the closed-form price
+/// ([`perpetual_cross_greeks`]) — the module's standard exotic-Greek route.
+fn price_perpetual(
+    p: &celnet_proto::PerpetualOption,
+    market: &WireMarketContext,
+    carry: Carry,
+) -> Result<Priced, PriceError> {
+    let option = decode_option_type(p.option_type)?;
+    if !(p.strike.is_finite() && p.strike > 0.0) {
+        return Err(PriceError::Domain("perpetual strike must be positive"));
+    }
+    // The leaf's documented domain: a perpetual claim under a negative
+    // discount rate has no finite value (the discounted strike grows without
+    // bound), so the request is refused as INVALID_ARGUMENT — never priced
+    // through to a NaN.
+    if carry.discount_rate() < 0.0 {
+        return Err(PriceError::Domain(
+            "a perpetual option has no finite value under a negative discount rate",
+        ));
+    }
+    let inputs = PerpetualInputs::new(market.spot, p.strike, market.vol, carry);
+    let g = perpetual_greeks(option, &inputs);
+    // The same rho bijection as `carry_greeks_to_greeks`: the FX arm is
+    // verbatim; the generalized arm projects losslessly via
+    // `rho_dom = discount_rho + carry_rho`, `rho_for = −carry_rho`.
+    let (rho_dom, rho_for) = match g.rates {
+        RateSensitivities::Fx { rho_dom, rho_for } => (rho_dom, rho_for),
+        RateSensitivities::Carry {
+            discount_rho,
+            carry_rho,
+        } => (discount_rho + carry_rho, -carry_rho),
+    };
+    let (vanna, volga, speed, zomma) = perpetual_cross_greeks(option, &inputs);
+    Ok(Priced {
+        greeks: Greeks {
+            price: g.price,
+            delta_spot: g.delta,
+            // Structurally absent: no settlement tenor defines a forward.
+            delta_forward: 0.0,
+            gamma: g.gamma,
+            vega: g.vega,
+            // Identically zero (exact): the perpetual value is stationary.
+            theta: 0.0,
+            rho_dom,
+            rho_for,
+            vanna,
+            volga,
+            // Identically zero (exact): time-homogeneous delta and gamma.
+            charm: 0.0,
+            speed,
+            zomma,
+            color: 0.0,
+        },
+        resolved_strike: p.strike,
+        vol: market.vol,
+        std_error: None,
+    })
+}
+
+/// Price an option on a listed future via the `celnet-commodity-vanilla`
+/// Black-76 leaf's `on_future` representation, under the wire margining
+/// convention. Asset-class-agnostic: the quoted futures price (the market
+/// context's `spot`) already embodies the underlying's carry, so the leaf's
+/// carry is structurally `b = 0` for EVERY asset class and the market's carry
+/// arm is never read — the only rate that enters is the numeraire discount
+/// `r = r_dom` (the `discount_rate`). Under futures-style margining not even
+/// that: the daily margin sweep removes the financing leg entirely, so the
+/// leaf's discount-rho is the honest, exact `0.0` — a financial statement, not
+/// a numerical shortcut (see `futures_style_greeks` in the leaf).
+fn price_listed_future_option(
+    o: &celnet_proto::ListedFutureOption,
+    market: &WireMarketContext,
+    expiry: f64,
+) -> Result<Priced, PriceError> {
+    // The contract's canonical term validator: a present `future_symbol`, a
+    // known margining tag, and the expiry ordering
+    // `future_expiry_years >= expiry_years > 0` (the future must outlive the
+    // option) — each violation is INVALID_ARGUMENT, never clamped. The symbol
+    // is the booked contract identity, not a pricing input.
+    celnet_proto::convert::validate_listed_future_terms(o, expiry)
+        .map_err(wire_error_to_price_error)?;
+    let option = decode_option_type(o.option_type)?;
+    if !(o.strike.is_finite() && o.strike > 0.0) {
+        return Err(PriceError::Domain(
+            "listed-future option strike must be positive",
+        ));
+    }
+    let margining = match celnet_proto::Margining::try_from(o.margining) {
+        Ok(celnet_proto::Margining::EquityStyle) => CommodityMargining::EquityStyle,
+        Ok(celnet_proto::Margining::FuturesStyle) => CommodityMargining::FuturesStyle,
+        Err(_) => {
+            return Err(PriceError::UnknownEnum {
+                kind: "Margining",
+                tag: o.margining,
+            });
+        }
+    };
+    let inputs =
+        CommodityInputs::on_future(market.spot, o.strike, market.vol, expiry, market.r_dom());
+    let g = celnet_commodity_vanilla::greeks_with_margining(option, margining, &inputs);
+    Ok(Priced {
+        greeks: carry_greeks_to_greeks(&g),
+        resolved_strike: o.strike,
+        vol: market.vol,
+        std_error: None,
+    })
+}
+
 /// Dispatch an instrument selected for the LSV booking model to the
 /// [`crate::lsv_pricer`] route. Supports vanilla, single-barrier (continuous
 /// knock-out / knock-in) and window-barrier; every other product is a clear
@@ -2147,6 +2374,8 @@ fn product_name(product: &instrument::Product) -> &'static str {
         instrument::Product::FxForward(_) => "fx_forward",
         instrument::Product::FxSwap(_) => "fx_swap",
         instrument::Product::Ndf(_) => "ndf",
+        instrument::Product::PerpetualOption(_) => "perpetual_option",
+        instrument::Product::ListedFutureOption(_) => "listed_future_option",
     }
 }
 
@@ -4267,5 +4496,495 @@ mod tests {
             &VanillaInputs::new(1.10, 1.12, 0.10, 1.0, 0.02, 0.01),
         );
         assert_eq!(priced.greeks.price.to_bits(), direct.price.to_bits());
+    }
+
+    // =====================================================================
+    // Perpetual American (oneof arm 30) + listed-future option (arm 31).
+    // Each arm gates BITWISE against its engine leaf, and the term-validity
+    // matrix (perpetual expiry == 0; future outlives option) is enforced as
+    // INVALID_ARGUMENT (`PriceError`), never a silent fallback.
+    // =====================================================================
+
+    fn perpetual_instrument(
+        underlying: Option<celnet_proto::Underlying>,
+        option_type: celnet_proto::OptionType,
+        strike: f64,
+    ) -> Instrument {
+        Instrument {
+            underlying,
+            expiry_years: 0.0,
+            side: celnet_proto::Side::Buy as i32,
+            pricing_model: celnet_proto::PricingModel::Default as i32,
+            product: Some(Product::PerpetualOption(celnet_proto::PerpetualOption {
+                option_type: option_type as i32,
+                strike,
+                notional: 1_000_000.0,
+            })),
+            ..Default::default()
+        }
+    }
+
+    /// Server perpetual on the FX path == the `celnet-exotics` perpetual leaf
+    /// over the FX two-rate carry, bitwise — including the verbatim FX rho
+    /// pair — with the time Greeks identically zero (the stationary value has
+    /// no time dependence) and no fabricated forward delta.
+    #[test]
+    fn perpetual_matches_exotics_leaf_on_the_fx_path() {
+        let m = market(); // spot 1.10, vol 0.10, r_dom 0.02, r_for 0.01
+        let instr = perpetual_instrument(None, celnet_proto::OptionType::Call, 1.05);
+        let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+
+        let leaf = perpetual_greeks(
+            OptionType::Call,
+            &PerpetualInputs::new(
+                1.10,
+                1.05,
+                0.10,
+                Carry::FxRates {
+                    r_dom: 0.02,
+                    r_for: 0.01,
+                },
+            ),
+        );
+        assert_eq!(priced.greeks.price.to_bits(), leaf.price.to_bits());
+        assert_eq!(priced.greeks.delta_spot.to_bits(), leaf.delta.to_bits());
+        assert_eq!(priced.greeks.gamma.to_bits(), leaf.gamma.to_bits());
+        assert_eq!(priced.greeks.vega.to_bits(), leaf.vega.to_bits());
+        match leaf.rates {
+            RateSensitivities::Fx { rho_dom, rho_for } => {
+                assert_eq!(priced.greeks.rho_dom.to_bits(), rho_dom.to_bits());
+                assert_eq!(priced.greeks.rho_for.to_bits(), rho_for.to_bits());
+            }
+            RateSensitivities::Carry { .. } => panic!("FX carry must tag the FX rho pair"),
+        }
+        // Time-homogeneous: theta/charm/color are the exact zeros of the
+        // stationary value; delta_forward has no tenor to define it.
+        for g in [
+            priced.greeks.theta,
+            priced.greeks.charm,
+            priced.greeks.color,
+            priced.greeks.delta_forward,
+        ] {
+            assert_eq!(g.to_bits(), 0.0_f64.to_bits());
+        }
+        // Exact closed form ⇒ no Monte-Carlo standard error.
+        assert_eq!(priced.std_error, None);
+        assert_eq!(priced.resolved_strike.to_bits(), 1.05_f64.to_bits());
+    }
+
+    /// Server perpetual on a cross-asset underlying == the leaf over the
+    /// generalized cost-of-carry arm, bitwise, with the carry-tagged rhos
+    /// projected through the same `RateSensitivities` bijection every carry
+    /// leaf uses; an absent carry is refused (the ADR-0008 guard).
+    #[test]
+    fn perpetual_on_cross_asset_carry_matches_leaf_with_rho_bijection() {
+        let (r, b) = (0.08, 0.04);
+        let m = cross_asset_market(100.0, 0.30, r, b);
+        let underlying = celnet_proto::Underlying::equity(celnet_proto::EquityRef::new(
+            celnet_proto::Symbol::new("AAPL", "XNAS"),
+            "USD",
+        ));
+        let instr = perpetual_instrument(
+            Some(underlying.clone()),
+            celnet_proto::OptionType::Call,
+            100.0,
+        );
+        let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+
+        let leaf = perpetual_greeks(
+            OptionType::Call,
+            &PerpetualInputs::new(100.0, 100.0, 0.30, Carry::CostOfCarry { r, b }),
+        );
+        assert_eq!(priced.greeks.price.to_bits(), leaf.price.to_bits());
+        assert_eq!(priced.greeks.delta_spot.to_bits(), leaf.delta.to_bits());
+        assert_eq!(priced.greeks.gamma.to_bits(), leaf.gamma.to_bits());
+        assert_eq!(priced.greeks.vega.to_bits(), leaf.vega.to_bits());
+        match leaf.rates {
+            RateSensitivities::Carry {
+                discount_rho,
+                carry_rho,
+            } => {
+                assert_eq!(
+                    priced.greeks.rho_dom.to_bits(),
+                    (discount_rho + carry_rho).to_bits()
+                );
+                assert_eq!(priced.greeks.rho_for.to_bits(), (-carry_rho).to_bits());
+            }
+            RateSensitivities::Fx { .. } => panic!("cost-of-carry must tag the carry rho pair"),
+        }
+
+        // Absent carry → refused, never a silent b = r fallback.
+        let mut m_absent = cross_asset_market(100.0, 0.30, r, b);
+        m_absent.carry = None;
+        let instr_absent =
+            perpetual_instrument(Some(underlying), celnet_proto::OptionType::Call, 100.0);
+        assert!(matches!(
+            price_instrument(&instr_absent, &m_absent, &conv_set()),
+            Err(PriceError::Domain(_))
+        ));
+    }
+
+    /// The FD-completed cross sensitivities (vanna / volga / speed / zomma)
+    /// against an INDEPENDENT reference: central differences of the leaf's
+    /// ANALYTIC delta / gamma / vega strips (first differences of exact
+    /// derivatives at a different step), a route disjoint from the server's
+    /// second differences of the price.
+    #[test]
+    fn perpetual_cross_sensitivities_match_fd_of_analytic_strip() {
+        let (s, k, v, r_dom, r_for) = (1.30, 1.25, 0.10, 0.05, 0.01);
+        let m = WM::fx(s, v, r_dom, r_for);
+        let carry = Carry::FxRates { r_dom, r_for };
+        for (opt_wire, opt) in [
+            (celnet_proto::OptionType::Call, OptionType::Call),
+            (celnet_proto::OptionType::Put, OptionType::Put),
+        ] {
+            let instr = perpetual_instrument(None, opt_wire, k);
+            let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+
+            let leaf = |spot: f64, vol: f64| {
+                perpetual_greeks(opt, &PerpetualInputs::new(spot, k, vol, carry))
+            };
+            let h_v = 1e-6;
+            let h_s = s * 1e-6;
+            let vanna_ref = (leaf(s, v + h_v).delta - leaf(s, v - h_v).delta) / (2.0 * h_v);
+            let volga_ref = (leaf(s, v + h_v).vega - leaf(s, v - h_v).vega) / (2.0 * h_v);
+            let speed_ref = (leaf(s + h_s, v).gamma - leaf(s - h_s, v).gamma) / (2.0 * h_s);
+            let zomma_ref = (leaf(s, v + h_v).gamma - leaf(s, v - h_v).gamma) / (2.0 * h_v);
+
+            assert!(
+                is_close(priced.greeks.vanna, vanna_ref, 1e-4, 1e-7),
+                "{opt:?} vanna {} vs analytic-FD {vanna_ref}",
+                priced.greeks.vanna
+            );
+            assert!(
+                is_close(priced.greeks.volga, volga_ref, 1e-4, 1e-6),
+                "{opt:?} volga {} vs analytic-FD {volga_ref}",
+                priced.greeks.volga
+            );
+            assert!(
+                is_close(priced.greeks.speed, speed_ref, 1e-2, 1e-7),
+                "{opt:?} speed {} vs analytic-FD {speed_ref}",
+                priced.greeks.speed
+            );
+            assert!(
+                is_close(priced.greeks.zomma, zomma_ref, 1e-3, 1e-6),
+                "{opt:?} zomma {} vs analytic-FD {zomma_ref}",
+                priced.greeks.zomma
+            );
+        }
+    }
+
+    /// A perpetual with a non-zero (or non-finite) expiry is rejected — the
+    /// arm has no expiry to encode, and a stray expiry is never silently
+    /// ignored.
+    #[test]
+    fn perpetual_with_nonzero_expiry_is_rejected() {
+        let m = market();
+        let mut instr = perpetual_instrument(None, celnet_proto::OptionType::Call, 1.05);
+        instr.expiry_years = 0.25;
+        assert!(matches!(
+            price_instrument(&instr, &m, &conv_set()),
+            Err(PriceError::Domain(_))
+        ));
+        instr.expiry_years = f64::NAN;
+        assert!(matches!(
+            price_instrument(&instr, &m, &conv_set()),
+            Err(PriceError::Domain(_))
+        ));
+    }
+
+    /// The leaf's documented domain: a perpetual under a negative discount
+    /// rate has no finite value — refused, never priced through to a NaN.
+    #[test]
+    fn perpetual_negative_discount_rate_is_rejected() {
+        let m = WM::fx(1.10, 0.10, -0.01, 0.0);
+        let instr = perpetual_instrument(None, celnet_proto::OptionType::Put, 1.05);
+        assert!(matches!(
+            price_instrument(&instr, &m, &conv_set()),
+            Err(PriceError::Domain(_))
+        ));
+    }
+
+    /// Neither new arm has an LSV (FX vol-surface) booking model: selecting it
+    /// is a clear typed refusal naming the product, never a silent analytic
+    /// fallback.
+    #[test]
+    fn perpetual_and_listed_future_reject_lsv_model() {
+        let m = market();
+        let mut perpetual = perpetual_instrument(None, celnet_proto::OptionType::Call, 1.05);
+        perpetual.pricing_model = celnet_proto::PricingModel::LocalStochVol as i32;
+        assert!(matches!(
+            price_instrument(&perpetual, &m, &conv_set()),
+            Err(PriceError::UnsupportedModel {
+                product: "perpetual_option",
+                ..
+            })
+        ));
+
+        let mut future_option =
+            listed_future_instrument(None, 90.0, 0.5, 0.55, celnet_proto::Margining::EquityStyle);
+        future_option.pricing_model = celnet_proto::PricingModel::LocalStochVol as i32;
+        assert!(matches!(
+            price_instrument(&future_option, &m, &conv_set()),
+            Err(PriceError::UnsupportedModel {
+                product: "listed_future_option",
+                ..
+            })
+        ));
+    }
+
+    fn listed_future_instrument(
+        underlying: Option<celnet_proto::Underlying>,
+        strike: f64,
+        expiry: f64,
+        future_expiry: f64,
+        margining: celnet_proto::Margining,
+    ) -> Instrument {
+        Instrument {
+            underlying,
+            expiry_years: expiry,
+            side: celnet_proto::Side::Buy as i32,
+            pricing_model: celnet_proto::PricingModel::Default as i32,
+            product: Some(Product::ListedFutureOption(
+                celnet_proto::ListedFutureOption {
+                    future_symbol: Some(celnet_proto::Symbol::new("BRN-DEC26", "IFEU")),
+                    future_expiry_years: future_expiry,
+                    option_type: celnet_proto::OptionType::Call as i32,
+                    strike,
+                    notional: 1_000.0,
+                    margining: margining as i32,
+                },
+            )),
+            ..Default::default()
+        }
+    }
+
+    fn brent_underlying() -> celnet_proto::Underlying {
+        celnet_proto::Underlying::commodity(celnet_proto::CommodityRef::new(
+            celnet_proto::Symbol::new("BRENT", ""),
+            "USD",
+        ))
+    }
+
+    /// Server listed-future option (equity-style premium) == the Black-76
+    /// `on_future` leaf under the same margining, bitwise — the full strip
+    /// through the shared carry-rho bijection.
+    #[test]
+    fn listed_future_option_equity_style_matches_black76_leaf() {
+        let m = cross_asset_market(85.0, 0.30, 0.05, 0.0);
+        let instr = listed_future_instrument(
+            Some(brent_underlying()),
+            90.0,
+            0.5,
+            0.55,
+            celnet_proto::Margining::EquityStyle,
+        );
+        let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+
+        let inputs = CommodityInputs::on_future(85.0, 90.0, 0.30, 0.5, 0.05);
+        let leaf = celnet_commodity_vanilla::greeks_with_margining(
+            OptionType::Call,
+            CommodityMargining::EquityStyle,
+            &inputs,
+        );
+        assert_eq!(priced.greeks.price.to_bits(), leaf.price.to_bits());
+        assert_eq!(
+            priced.greeks.delta_spot.to_bits(),
+            leaf.delta_spot.to_bits()
+        );
+        assert_eq!(
+            priced.greeks.delta_forward.to_bits(),
+            leaf.delta_forward.to_bits()
+        );
+        assert_eq!(priced.greeks.gamma.to_bits(), leaf.gamma.to_bits());
+        assert_eq!(priced.greeks.vega.to_bits(), leaf.vega.to_bits());
+        assert_eq!(priced.greeks.theta.to_bits(), leaf.theta.to_bits());
+        match leaf.rates {
+            RateSensitivities::Carry {
+                discount_rho,
+                carry_rho,
+            } => {
+                assert_eq!(
+                    priced.greeks.rho_dom.to_bits(),
+                    (discount_rho + carry_rho).to_bits()
+                );
+                assert_eq!(priced.greeks.rho_for.to_bits(), (-carry_rho).to_bits());
+            }
+            RateSensitivities::Fx { .. } => panic!("the Black-76 leaf tags the carry rho pair"),
+        }
+        assert_eq!(priced.std_error, None);
+        assert_eq!(priced.resolved_strike.to_bits(), 90.0_f64.to_bits());
+    }
+
+    /// Futures-style (daily-margined) premium == the undiscounted leaf bitwise,
+    /// with the HONEST zero discount-rho (the margin sweep removes the
+    /// financing leg, so `∂V/∂r ≡ 0` exactly — a financial statement, not a
+    /// numerical shortcut) surfacing as `rho_dom == −rho_for` on the wire; and
+    /// the undiscounted premium strictly dominates the discounted one at
+    /// `r > 0`.
+    #[test]
+    fn listed_future_option_futures_style_has_honest_zero_discount_rho() {
+        let m = cross_asset_market(85.0, 0.30, 0.05, 0.0);
+        let futures_style = listed_future_instrument(
+            Some(brent_underlying()),
+            90.0,
+            0.5,
+            0.55,
+            celnet_proto::Margining::FuturesStyle,
+        );
+        let priced = price_instrument(&futures_style, &m, &conv_set()).unwrap();
+
+        let inputs = CommodityInputs::on_future(85.0, 90.0, 0.30, 0.5, 0.05);
+        let leaf_price = celnet_commodity_vanilla::futures_style_price(OptionType::Call, &inputs);
+        assert_eq!(priced.greeks.price.to_bits(), leaf_price.to_bits());
+
+        // discount_rho ≡ 0 ⇒ the bijection collapses to rho_dom = carry_rho =
+        // −rho_for, exactly.
+        assert_eq!(
+            priced.greeks.rho_dom.to_bits(),
+            (-priced.greeks.rho_for).to_bits()
+        );
+
+        // Undiscounted vs discounted: V_futures-style > V_equity-style for r > 0.
+        let equity_style = listed_future_instrument(
+            Some(brent_underlying()),
+            90.0,
+            0.5,
+            0.55,
+            celnet_proto::Margining::EquityStyle,
+        );
+        let discounted = price_instrument(&equity_style, &m, &conv_set()).unwrap();
+        assert!(
+            priced.greeks.price > discounted.greeks.price,
+            "undiscounted {} must dominate discounted {}",
+            priced.greeks.price,
+            discounted.greeks.price
+        );
+    }
+
+    /// Asset-class agnosticism: the SAME terms priced over a commodity
+    /// underlying (cross-asset branch) and over the FX path (absent
+    /// underlying, FX two-rate context with the same discount rate) hit the
+    /// identical Black-76 `on_future` engine bitwise — the quoted futures
+    /// price already embodies the underlying's carry, so only `r` enters.
+    #[test]
+    fn listed_future_option_is_asset_class_agnostic() {
+        let commodity = price_instrument(
+            &listed_future_instrument(
+                Some(brent_underlying()),
+                90.0,
+                0.5,
+                0.55,
+                celnet_proto::Margining::EquityStyle,
+            ),
+            &cross_asset_market(85.0, 0.30, 0.05, 0.0),
+            &conv_set(),
+        )
+        .unwrap();
+        let fx_path = price_instrument(
+            &listed_future_instrument(None, 90.0, 0.5, 0.55, celnet_proto::Margining::EquityStyle),
+            &WM::fx(85.0, 0.30, 0.05, 0.02),
+            &conv_set(),
+        )
+        .unwrap();
+        assert_eq!(
+            commodity.greeks.price.to_bits(),
+            fx_path.greeks.price.to_bits()
+        );
+        assert_eq!(
+            commodity.greeks.delta_spot.to_bits(),
+            fx_path.greeks.delta_spot.to_bits()
+        );
+        assert_eq!(
+            commodity.greeks.vega.to_bits(),
+            fx_path.greeks.vega.to_bits()
+        );
+        assert_eq!(
+            commodity.greeks.rho_dom.to_bits(),
+            fx_path.greeks.rho_dom.to_bits()
+        );
+    }
+
+    /// The listed-future term-validity matrix: the future must outlive the
+    /// option (`future_expiry_years >= expiry_years > 0`), the contract
+    /// identity must be present, the margining tag known and the strike
+    /// positive — each violation INVALID_ARGUMENT, never clamped.
+    #[test]
+    fn listed_future_option_validity_rejections() {
+        let m = cross_asset_market(85.0, 0.30, 0.05, 0.0);
+
+        // Future expires before the option.
+        let dies_early = listed_future_instrument(
+            Some(brent_underlying()),
+            90.0,
+            0.5,
+            0.4,
+            celnet_proto::Margining::EquityStyle,
+        );
+        assert!(matches!(
+            price_instrument(&dies_early, &m, &conv_set()),
+            Err(PriceError::Domain(_))
+        ));
+
+        // Zero option expiry (the shared positive-expiry guard).
+        let no_expiry = listed_future_instrument(
+            Some(brent_underlying()),
+            90.0,
+            0.0,
+            0.55,
+            celnet_proto::Margining::EquityStyle,
+        );
+        assert!(matches!(
+            price_instrument(&no_expiry, &m, &conv_set()),
+            Err(PriceError::Domain(_))
+        ));
+
+        // Missing future contract identity.
+        let mut no_symbol = listed_future_instrument(
+            Some(brent_underlying()),
+            90.0,
+            0.5,
+            0.55,
+            celnet_proto::Margining::EquityStyle,
+        );
+        if let Some(Product::ListedFutureOption(o)) = no_symbol.product.as_mut() {
+            o.future_symbol = None;
+        }
+        assert!(matches!(
+            price_instrument(&no_symbol, &m, &conv_set()),
+            Err(PriceError::MissingField("ListedFutureOption.future_symbol"))
+        ));
+
+        // Out-of-range margining tag.
+        let mut bad_margining = listed_future_instrument(
+            Some(brent_underlying()),
+            90.0,
+            0.5,
+            0.55,
+            celnet_proto::Margining::EquityStyle,
+        );
+        if let Some(Product::ListedFutureOption(o)) = bad_margining.product.as_mut() {
+            o.margining = 7;
+        }
+        assert!(matches!(
+            price_instrument(&bad_margining, &m, &conv_set()),
+            Err(PriceError::UnknownEnum {
+                kind: "Margining",
+                tag: 7
+            })
+        ));
+
+        // Non-positive strike.
+        let zero_strike = listed_future_instrument(
+            Some(brent_underlying()),
+            0.0,
+            0.5,
+            0.55,
+            celnet_proto::Margining::EquityStyle,
+        );
+        assert!(matches!(
+            price_instrument(&zero_strike, &m, &conv_set()),
+            Err(PriceError::Domain(_))
+        ));
     }
 }

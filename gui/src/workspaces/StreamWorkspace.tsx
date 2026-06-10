@@ -105,6 +105,9 @@ function trendUnitCaption(mode: TrendMode): string {
 
 function tenorLabel(row: StreamRow): string {
   const t = row.instrument.tenor;
+  // The one tenorless product (the perpetual option) carries no tenor label —
+  // its honest blotter label is the no-expiry contract itself.
+  if (!t) return "PERP";
   switch (t.unit) {
     case "OVERNIGHT":
       return "ON";

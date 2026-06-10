@@ -19,8 +19,9 @@ use crate::{
     AtmConvention as WireAtmConvention, BrokenDate as WireBrokenDate, CarryModel as WireCarryModel,
     CcyPair as WireCcyPair, CommodityRef as WireCommodityRef, CryptoPair as WireCryptoPair,
     Cut as WireCut, DayCount as WireDayCount, DeltaConvention as WireDeltaConvention,
-    EquityRef as WireEquityRef, Greeks as WireGreeks, Metal as WireMetal,
-    MetalPair as WireMetalPair, OptionType as WireOptionType, PremiumStyle as WirePremiumStyle,
+    EquityRef as WireEquityRef, Greeks as WireGreeks, ListedFutureOption as WireListedFutureOption,
+    Margining as WireMargining, Metal as WireMetal, MetalPair as WireMetalPair,
+    OptionType as WireOptionType, PremiumStyle as WirePremiumStyle,
     RateSensitivities as WireRateSensitivities, Settlement as WireSettlement,
     SettlementStyle as WireSettlementStyle, SmileModel as WireSmileModel, Symbol as WireSymbol,
     Tenor as WireTenor, Underlying as WireUnderlying, VanillaInputs as WireVanillaInputs,
@@ -70,6 +71,18 @@ pub enum WireError {
         /// The decoded asset-class name that was refused (e.g. `"equity"`).
         underlying: &'static str,
     },
+    /// A product's term invariant was violated: the instrument's scalar terms
+    /// are individually well-formed but structurally inconsistent for the
+    /// product family (e.g. a non-zero expiry on a perpetual, or a
+    /// listed-future option whose future expires before the option). Rejected
+    /// as `INVALID_ARGUMENT` at decode/validity — never silently ignored or
+    /// clamped.
+    InvalidTerms {
+        /// The product family whose term invariant was violated.
+        product_family: &'static str,
+        /// The violated invariant, stated as the rule that must hold.
+        constraint: &'static str,
+    },
 }
 
 impl core::fmt::Display for WireError {
@@ -95,6 +108,12 @@ impl core::fmt::Display for WireError {
                     f,
                     "{underlying} underlying is not valid for a {product_family} product"
                 )
+            }
+            WireError::InvalidTerms {
+                product_family,
+                constraint,
+            } => {
+                write!(f, "invalid {product_family} terms: {constraint}")
             }
         }
     }
@@ -702,6 +721,76 @@ pub fn validate_non_deliverable_underlying(
     }
 }
 
+// ---- product term validity ---------------------------------------------------
+
+/// The perpetual-option term guard: a perpetual has **no expiry**, so the
+/// enclosing `Instrument.expiry_years` MUST be exactly `0`. A non-zero (or
+/// non-finite) expiry on a perpetual is rejected as `INVALID_ARGUMENT` rather
+/// than silently ignored — mirrors the `PricingModel` guard's
+/// no-silent-fallback contract.
+///
+/// # Errors
+///
+/// [`WireError::InvalidTerms`] if `expiry_years != 0`.
+pub fn validate_perpetual_terms(expiry_years: f64) -> Result<(), WireError> {
+    // `!= 0.0` is also true for NaN, so a NaN expiry is rejected, never waved
+    // through as "no expiry".
+    if expiry_years != 0.0 {
+        return Err(WireError::InvalidTerms {
+            product_family: "perpetual option",
+            constraint: "Instrument.expiry_years must be 0 (a perpetual has no expiry)",
+        });
+    }
+    Ok(())
+}
+
+/// The listed-future-option term guard: decode the future contract's
+/// [`Symbol`] and confirm the term structure — the option must have a real
+/// expiry (`Instrument.expiry_years > 0`, finite) and the FUTURE must outlive
+/// it (`future_expiry_years >= expiry_years`, finite). The margining tag must
+/// be a known [`Margining`](crate::Margining) member. Each violation is
+/// `INVALID_ARGUMENT`, never silently clamped or ignored.
+///
+/// # Errors
+///
+/// [`WireError::MissingField`] if `future_symbol` is absent;
+/// [`WireError::UnknownEnum`] if the margining tag is out of range;
+/// [`WireError::InvalidTerms`] if the expiry ordering
+/// `future_expiry_years >= expiry_years > 0` does not hold.
+pub fn validate_listed_future_terms(
+    option: &WireListedFutureOption,
+    expiry_years: f64,
+) -> Result<Symbol, WireError> {
+    let symbol = option
+        .future_symbol
+        .clone()
+        .ok_or(WireError::MissingField {
+            field: "ListedFutureOption.future_symbol",
+        })
+        .map(Symbol::from)?;
+    WireMargining::try_from(option.margining).map_err(|_| WireError::UnknownEnum {
+        kind: "Margining",
+        tag: option.margining,
+    })?;
+    let option_expiry_valid = expiry_years.is_finite() && expiry_years > 0.0;
+    if !option_expiry_valid {
+        return Err(WireError::InvalidTerms {
+            product_family: "listed-future option",
+            constraint: "Instrument.expiry_years must be finite and > 0",
+        });
+    }
+    let future_outlives_option =
+        option.future_expiry_years.is_finite() && option.future_expiry_years >= expiry_years;
+    if !future_outlives_option {
+        return Err(WireError::InvalidTerms {
+            product_family: "listed-future option",
+            constraint: "ListedFutureOption.future_expiry_years must be finite and >= \
+                         Instrument.expiry_years (the future must outlive the option)",
+        });
+    }
+    Ok(symbol)
+}
+
 // ---- Underlying ------------------------------------------------------------
 
 impl From<Underlying> for WireUnderlying {
@@ -1248,6 +1337,85 @@ mod tests {
             super::validate_deliverable_underlying(&metal).unwrap(),
             Underlying::Metal(MetalPair::new(Metal::Palladium, Ccy::USD))
         );
+    }
+
+    #[test]
+    fn perpetual_terms_require_zero_expiry() {
+        // A perpetual has no expiry: exactly 0 is the only valid encoding.
+        assert_eq!(super::validate_perpetual_terms(0.0), Ok(()));
+        // A non-zero expiry on a perpetual is INVALID_ARGUMENT, never ignored.
+        assert_eq!(
+            super::validate_perpetual_terms(0.25),
+            Err(WireError::InvalidTerms {
+                product_family: "perpetual option",
+                constraint: "Instrument.expiry_years must be 0 (a perpetual has no expiry)",
+            })
+        );
+        assert!(super::validate_perpetual_terms(-1.0).is_err());
+        // NaN is not "no expiry" either.
+        assert!(super::validate_perpetual_terms(f64::NAN).is_err());
+    }
+
+    #[test]
+    fn listed_future_terms_validity_matrix() {
+        let option = WireListedFutureOption {
+            future_symbol: Some(WireSymbol::from(Symbol::new("BRN-DEC26", "IFEU"))),
+            future_expiry_years: 0.75,
+            option_type: WireOptionType::Call as i32,
+            strike: 85.0,
+            notional: 1_000.0,
+            margining: WireMargining::FuturesStyle as i32,
+        };
+        // A future outliving the option decodes to the contract symbol.
+        assert_eq!(
+            super::validate_listed_future_terms(&option, 0.5).unwrap(),
+            Symbol::new("BRN-DEC26", "IFEU")
+        );
+        // The boundary is allowed: the future MAY expire exactly at the
+        // option's expiry (>=, not >).
+        assert!(super::validate_listed_future_terms(&option, 0.75).is_ok());
+        // A future expiring BEFORE the option is rejected.
+        assert!(matches!(
+            super::validate_listed_future_terms(&option, 0.8),
+            Err(WireError::InvalidTerms {
+                product_family: "listed-future option",
+                ..
+            })
+        ));
+        // The option must have a real (positive, finite) expiry — 0 is a
+        // perpetual's shape, not a future option's.
+        assert!(super::validate_listed_future_terms(&option, 0.0).is_err());
+        assert!(super::validate_listed_future_terms(&option, -0.1).is_err());
+        assert!(super::validate_listed_future_terms(&option, f64::NAN).is_err());
+        // An absent future symbol is a decode error.
+        let no_symbol = WireListedFutureOption {
+            future_symbol: None,
+            ..option.clone()
+        };
+        assert_eq!(
+            super::validate_listed_future_terms(&no_symbol, 0.5),
+            Err(WireError::MissingField {
+                field: "ListedFutureOption.future_symbol",
+            })
+        );
+        // An unknown margining tag is a decode error.
+        let bad_margining = WireListedFutureOption {
+            margining: 99,
+            ..option.clone()
+        };
+        assert_eq!(
+            super::validate_listed_future_terms(&bad_margining, 0.5),
+            Err(WireError::UnknownEnum {
+                kind: "Margining",
+                tag: 99,
+            })
+        );
+        // A non-finite future expiry is rejected, not treated as "outlives".
+        let inf_future = WireListedFutureOption {
+            future_expiry_years: f64::INFINITY,
+            ..option
+        };
+        assert!(super::validate_listed_future_terms(&inf_future, 0.5).is_err());
     }
 
     #[test]

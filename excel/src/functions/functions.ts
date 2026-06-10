@@ -116,7 +116,7 @@ function toCfError(err: unknown): CustomFunctions.Error {
  * given positionally or as terms (not both); notional defaults to 1.
  * @customfunction INSTRUMENT
  * @param underlier Underlier: FX EURUSD, metal XAUUSD, equity AAPL@XNAS:USD, commodity BRENT@:USD, crypto BTC/USD (optionally :inverse / :linear).
- * @param product Product family: VANILLA, BARRIER, WINDOWBARRIER, DIGITAL, TOUCH, VARSWAP, VOLSWAP, ASIAN, FORWARDSTART, CLIQUET, QUANTO, TARF, ACCUMULATOR, LOOKBACK, AMERICAN, BASKET, FORWARD, SWAP, NDF.
+ * @param product Product family: VANILLA, BARRIER, WINDOWBARRIER, DIGITAL, TOUCH, VARSWAP, VOLSWAP, ASIAN, FORWARDSTART, CLIQUET, QUANTO, TARF, ACCUMULATOR, LOOKBACK, AMERICAN, BASKET, FORWARD, SWAP, NDF, PERPETUAL, FUTUREOPTION.
  * @param terms The 2-column key/value terms range (keys mirror the family's parameters).
  * @param tenor Optional tenor, e.g. 1Y (or supply a ("tenor", …) term).
  * @param notional Optional notional in the base/asset leg (or a ("notional", …) term; default 1).
@@ -193,6 +193,10 @@ function stdErrorFor(instrument: Instrument, quote: Quote): number | undefined {
     case "quanto":
     case "varianceSwap":
     case "volatilitySwap":
+    // Arms 30/31 are exact closed forms (perpetual stationary-ODE; futures-
+    // measure listed-future option) — never Monte-Carlo, never a std-error.
+    case "perpetualOption":
+    case "listedFutureOption":
       return undefined;
     case "singleBarrier":
     case "doubleBarrier":

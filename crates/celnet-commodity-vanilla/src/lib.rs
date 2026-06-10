@@ -42,6 +42,31 @@
 //! independent, model-disjoint oracle (put-call parity on the future, the
 //! generalized-BSM-on-spot reparameterization, and a hand-pinned published
 //! reference value — see the tests).
+//!
+//! # Premium margining
+//!
+//! A listed-future option settles its premium against the exchange one of two
+//! ways ([`Margining`]):
+//!
+//! * **Equity-style** (premium-upfront): the full premium is paid at trade
+//!   date, so the fair value is the *discounted* expectation — the
+//!   [`price`]/[`greeks`] closed forms above.
+//! * **Futures-style** (daily-margined): the premium itself is margined daily
+//!   like the future, no money changes hands upfront, and the fair value is the
+//!   **undiscounted** Black expectation
+//!   ([`futures_style_price`]/[`futures_style_greeks`]):
+//!
+//!   ```text
+//!   Call = F·Φ(d1) − K·Φ(d2)        Put = K·Φ(−d2) − F·Φ(−d1)
+//!   ```
+//!
+//!   implemented as its **own closed form with `df ≡ 1`** — never as a division
+//!   of the discounted price by the discount factor, which would put a spurious
+//!   divide on the float route. The daily margin sweep removes the financing
+//!   leg entirely: the premium is never funded over the option's life, the
+//!   discount rate `r` does not enter the value at all (at fixed carry `b`),
+//!   and the futures-style strip therefore carries an identically-zero
+//!   discount-rho. Put-call parity holds undiscounted: `C − P = F − K`.
 
 #![forbid(unsafe_code)]
 
@@ -305,6 +330,166 @@ pub fn forward_delta(opt: OptionType, i: &CommodityInputs) -> f64 {
 #[must_use]
 pub fn discount_factor(i: &CommodityInputs) -> f64 {
     exp(-i.carry.discount_rate() * i.t)
+}
+
+/// How a listed-future option's premium settles against the exchange — whether
+/// the premium is paid upfront (and the value therefore carries the discount
+/// factor) or is margined daily like the future itself (undiscounted). Mirrors
+/// the wire `Margining` enum; the engine arm is the routing key only, never a
+/// pricing-math branch inside a closed form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Margining {
+    /// Equity-style (premium-upfront): the full premium is paid at trade date,
+    /// so the fair value is the discounted expectation — the existing
+    /// [`price`]/[`greeks`] closed forms.
+    EquityStyle,
+    /// Futures-style (daily-margined): the premium is margined daily like the
+    /// future, so the fair value is the undiscounted expectation —
+    /// [`futures_style_price`]/[`futures_style_greeks`].
+    FuturesStyle,
+}
+
+/// Present value under the given premium-[`Margining`] convention: equity-style
+/// routes to the existing discounted [`price`] verbatim; futures-style routes to
+/// the undiscounted [`futures_style_price`].
+#[must_use]
+pub fn price_with_margining(opt: OptionType, margining: Margining, i: &CommodityInputs) -> f64 {
+    match margining {
+        Margining::EquityStyle => price(opt, i),
+        Margining::FuturesStyle => futures_style_price(opt, i),
+    }
+}
+
+/// Price and the full Greek strip under the given premium-[`Margining`]
+/// convention: equity-style routes to the existing [`greeks`] verbatim;
+/// futures-style routes to [`futures_style_greeks`].
+#[must_use]
+pub fn greeks_with_margining(
+    opt: OptionType,
+    margining: Margining,
+    i: &CommodityInputs,
+) -> CarryGreeks {
+    match margining {
+        Margining::EquityStyle => greeks(opt, i),
+        Margining::FuturesStyle => futures_style_greeks(opt, i),
+    }
+}
+
+/// Futures-style (daily-margined) present value: the **undiscounted** Black
+/// expectation `±(F·Φ(±d1) − K·Φ(±d2))`.
+///
+/// This is the closed form with `df ≡ 1` written out directly — not the
+/// discounted [`price`] divided by the discount factor, which would round
+/// through a spurious multiply-then-divide. With `r = 0` the two margining
+/// styles coincide bit-for-bit (gated in the tests); for any `r` the value is
+/// independent of the discount rate at fixed carry `b`.
+#[must_use]
+pub fn futures_style_price(opt: OptionType, i: &CommodityInputs) -> f64 {
+    let a = aux(i);
+    match opt {
+        OptionType::Call => a.f * norm_cdf(a.d1) - i.strike * norm_cdf(a.d2),
+        OptionType::Put => i.strike * norm_cdf(-a.d2) - a.f * norm_cdf(-a.d1),
+    }
+}
+
+/// Futures-style (daily-margined) price and full Greek strip in a single pass:
+/// the [`greeks`] closed forms with the discount factor identically 1 and no
+/// discounting term anywhere (each expression keeps the equity-style operation
+/// order so the two strips agree bit-for-bit at `r = 0`).
+///
+/// **No discount-rho under futures-style** — and that is a financial statement,
+/// not a numerical shortcut: the daily margin sweep settles the option's
+/// mark-to-market each day, so the premium is never financed over the option's
+/// life. The discount rate `r` does not appear in the value at all (at fixed
+/// carry `b`), hence `discount_rho ≡ 0` exactly. The carry-rho `∂V/∂b` survives
+/// (the forward `F = S·e^{b·t}` still moves with the carry), as do all
+/// spot/vol/time sensitivities.
+#[must_use]
+#[allow(clippy::similar_names)] // d1/d2, nd1/nd2 are the canonical option-pricing names
+pub fn futures_style_greeks(opt: OptionType, i: &CommodityInputs) -> CarryGreeks {
+    let a = aux(i);
+    let (f, d1, d2, sqt, vsqt) = (a.f, a.d1, a.d2, a.sqt, a.vsqt);
+    let (s, k, t, vol) = (i.spot, i.strike, i.t, i.vol);
+    let b = i.carry.carry_rate();
+
+    let pd1 = norm_pdf(d1);
+    let nd1 = norm_cdf(d1);
+    let nd2 = norm_cdf(d2);
+    let nmd1 = norm_cdf(-d1);
+    let nmd2 = norm_cdf(-d2);
+
+    let price = match opt {
+        OptionType::Call => f * nd1 - k * nd2,
+        OptionType::Put => k * nmd2 - f * nmd1,
+    };
+
+    // Same derivations as the equity-style strip with the discount factor
+    // identically 1 (see `greeks` for the step-by-step calculus): the
+    // undiscounted value is V = BS76(F) with F = S·e^{b t}, so every spot/vol
+    // sensitivity simply drops the df factor.
+    let fwd_factor = i.carry.forward_factor(t); // e^{b t}
+    let delta_spot = match opt {
+        OptionType::Call => fwd_factor * nd1,
+        OptionType::Put => fwd_factor * (nd1 - 1.0),
+    };
+    let delta_forward = match opt {
+        OptionType::Call => nd1,
+        OptionType::Put => nd1 - 1.0,
+    };
+
+    let gamma = fwd_factor * fwd_factor * pd1 / (f * vsqt);
+    let vega = f * sqt * pd1;
+    let vanna = -fwd_factor * pd1 * d2 / vol;
+    let volga = vega * d1 * d2 / vol;
+    let speed = -gamma / s * (d1 / vsqt + 1.0);
+    let zomma = gamma * (d1 * d2 - 1.0) / vol;
+
+    // theta = −∂V/∂T of the undiscounted call V = S·e^{bT}·Φ(d1) − K·Φ(d2):
+    // the equity-style derivation with df ≡ 1, the (b − r) coefficient
+    // collapsing to b, and the r·K·Φ(d2) financing term vanishing. The pdf
+    // term is unchanged.
+    let theta_pdf = f * pd1 * vol / (2.0 * sqt);
+    let theta = match opt {
+        OptionType::Call => -(theta_pdf + b * s * fwd_factor * nd1),
+        OptionType::Put => -(theta_pdf - b * s * fwd_factor * nmd1),
+    };
+
+    // Discount-rho ≡ 0: the undiscounted value does not depend on r at fixed b
+    // (the financing leg the equity-style −t·V rho prices is margined away).
+    let discount_rho = 0.0;
+    // Carry-rho ∂V/∂b at fixed r: only F = S·e^{b t} depends on b, exactly as in
+    // the equity-style strip but with ∂V/∂F = Φ(±d1) undiscounted.
+    let carry_rho = match opt {
+        OptionType::Call => t * f * nd1,
+        OptionType::Put => -t * f * nmd1,
+    };
+
+    // charm/color: the equity-style expressions with df ≡ 1 and (b − r) → b.
+    let dd1_dt = b / vsqt + 0.5 * vol / sqt - d1 / (2.0 * t);
+    let charm = match opt {
+        OptionType::Call => b * fwd_factor * nd1 + fwd_factor * pd1 * dd1_dt,
+        OptionType::Put => b * fwd_factor * (nd1 - 1.0) + fwd_factor * pd1 * dd1_dt,
+    };
+    let color = gamma * (b - 1.0 / (2.0 * t) - d1 * dd1_dt);
+
+    CarryGreeks {
+        price,
+        delta_spot,
+        delta_forward,
+        gamma,
+        vega,
+        theta,
+        rates: RateSensitivities::Carry {
+            discount_rho,
+            carry_rho,
+        },
+        vanna,
+        volga,
+        charm,
+        speed,
+        zomma,
+        color,
+    }
 }
 
 #[cfg(test)]
@@ -619,6 +804,313 @@ mod tests {
                 forward_delta(opt, &i).to_bits(),
                 greeks(opt, &i).delta_forward.to_bits()
             );
+        }
+    }
+
+    // =======================================================================
+    // futures-style (daily-margined) premium
+    // =======================================================================
+
+    /// All fourteen scalar sensitivities of a strip, named, with the rates
+    /// destructured (commodity strips always tag as `Carry`). Lets the
+    /// margining tests compare two strips field-by-field via `to_bits` (the
+    /// documented reproducibility carve-out from "no float `==`").
+    fn strip_fields(g: &CarryGreeks) -> [(&'static str, f64); 14] {
+        let (discount_rho, carry_rho) = match g.rates {
+            RateSensitivities::Carry {
+                discount_rho,
+                carry_rho,
+            } => (discount_rho, carry_rho),
+            RateSensitivities::Fx { .. } => panic!("commodity greeks must tag as Carry"),
+        };
+        [
+            ("price", g.price),
+            ("delta_spot", g.delta_spot),
+            ("delta_forward", g.delta_forward),
+            ("gamma", g.gamma),
+            ("vega", g.vega),
+            ("theta", g.theta),
+            ("discount_rho", discount_rho),
+            ("carry_rho", carry_rho),
+            ("vanna", g.vanna),
+            ("volga", g.volga),
+            ("charm", g.charm),
+            ("speed", g.speed),
+            ("zomma", g.zomma),
+            ("color", g.color),
+        ]
+    }
+
+    /// The margining dispatch: equity-style IS the existing pricer bit-for-bit
+    /// (the untouched-path guarantee), futures-style IS the undiscounted
+    /// pricer bit-for-bit. Kills any drift between the dispatcher and the
+    /// underlying closed forms.
+    #[test]
+    fn margining_dispatch_is_bitwise_faithful() {
+        let cases = [
+            CommodityInputs::on_future(19.0, 19.0, 0.28, 0.75, 0.10),
+            CommodityInputs::on_spot(80.0, 75.0, 0.33, 1.25, 0.06, 0.045),
+            CommodityInputs::new(110.0, 95.0, 0.30, 0.25, cost_of_carry(0.01, -0.02)),
+        ];
+        for i in &cases {
+            for opt in [OptionType::Call, OptionType::Put] {
+                assert_eq!(
+                    price_with_margining(opt, Margining::EquityStyle, i).to_bits(),
+                    price(opt, i).to_bits()
+                );
+                assert_eq!(
+                    price_with_margining(opt, Margining::FuturesStyle, i).to_bits(),
+                    futures_style_price(opt, i).to_bits()
+                );
+                for (pair_eq, pair_fut) in
+                    strip_fields(&greeks_with_margining(opt, Margining::EquityStyle, i))
+                        .iter()
+                        .zip(strip_fields(&greeks(opt, i)).iter())
+                {
+                    assert_eq!(pair_eq.1.to_bits(), pair_fut.1.to_bits(), "{}", pair_eq.0);
+                }
+                for (pair_a, pair_b) in
+                    strip_fields(&greeks_with_margining(opt, Margining::FuturesStyle, i))
+                        .iter()
+                        .zip(strip_fields(&futures_style_greeks(opt, i)).iter())
+                {
+                    assert_eq!(pair_a.1.to_bits(), pair_b.1.to_bits(), "{}", pair_a.0);
+                }
+            }
+        }
+    }
+
+    // (a) INDEPENDENT offline re-derivation of the futures-style (undiscounted)
+    // value, erf-route, computed entirely OUTSIDE this crate's code path. Same
+    // two market points as the equity-style pinned references, so the only
+    // difference under test is the dropped discount factor:
+    //
+    //   F = 19, K = 19, t = 0.75, σ = 0.28 (Haug §1.2.2 market, any r):
+    //     Φ(d1) − Φ(d2) = 0.5482509372784995 − 0.4517490627215005
+    //                   = 0.09650187455699899          (erf-based, external)
+    //     C_futures-style = 19·0.09650187455699899 = 1.8335356165829815
+    //
+    //   F = 45, K = 40, t = 0.5, σ = 0.35 (the ITM point, any r):
+    //     C_futures-style = 45·0.7256332475037105 − 40·0.6376452301181443
+    //                     = 32.65349613766697 − 25.50580920472577
+    //                     = 7.147686932941198
+    #[test]
+    fn futures_style_matches_offline_erf_rederivation() {
+        let atm = CommodityInputs::on_future(19.0, 19.0, 0.28, 0.75, 0.10);
+        assert_close!(
+            futures_style_price(OptionType::Call, &atm),
+            1.833_535_616_582_981_5,
+            1e-10,
+            1e-9
+        );
+        let itm = CommodityInputs::on_future(45.0, 40.0, 0.35, 0.5, 0.04);
+        assert_close!(
+            futures_style_price(OptionType::Call, &itm),
+            7.147_686_932_941_198,
+            1e-10,
+            1e-9
+        );
+    }
+
+    /// (a) CAN-DISAGREE gate: the futures-style value is the undiscounted
+    /// identity `V_futures-style · df = V_equity-style` (reached by a different
+    /// float route than the df ≡ 1 closed form), and it is **invariant in the
+    /// discount rate** at fixed carry — bit-for-bit across r, since r enters
+    /// the undiscounted form nowhere. A discount factor sneaking into the
+    /// futures-style route fails both legs.
+    #[test]
+    fn futures_style_is_undiscounted_and_rate_invariant() {
+        for &(s, k, vol, t, b) in &[
+            (50.0, 55.0, 0.30, 1.0, 0.0),
+            (100.0, 90.0, 0.22, 0.5, 0.01),
+            (19.0, 19.0, 0.28, 0.75, -0.02),
+            (1.5, 1.7, 0.45, 2.0, 0.06),
+        ] {
+            let base = CommodityInputs::new(s, k, vol, t, cost_of_carry(0.07, b));
+            for opt in [OptionType::Call, OptionType::Put] {
+                // Undiscounted identity vs the discounted pricer.
+                assert_close!(
+                    futures_style_price(opt, &base) * base.discount_df(),
+                    price(opt, &base),
+                    1e-12,
+                    1e-12
+                );
+                // Rate invariance at fixed b: bitwise across r.
+                let bits = futures_style_price(opt, &base).to_bits();
+                for r in [0.0, 0.03, 0.10] {
+                    let moved = CommodityInputs::new(s, k, vol, t, cost_of_carry(r, b));
+                    assert_eq!(futures_style_price(opt, &moved).to_bits(), bits);
+                }
+            }
+        }
+    }
+
+    /// (a) Futures-style put-call parity is the UNDISCOUNTED forward parity
+    /// `C − P = F − K` — model-free given the forward, no discount factor on
+    /// either side (the margin account holds the parity portfolio at zero
+    /// financing). ~1e-12.
+    #[test]
+    fn futures_style_put_call_parity_is_undiscounted() {
+        for &(s, k, vol, t, r, b) in &[
+            (50.0, 55.0, 0.30, 1.0, 0.05, 0.0),
+            (100.0, 90.0, 0.22, 0.5, 0.03, 0.01),
+            (19.0, 19.0, 0.28, 0.75, 0.10, -0.02),
+            (1.5, 1.7, 0.45, 2.0, 0.02, 0.06),
+        ] {
+            let i = CommodityInputs::new(s, k, vol, t, cost_of_carry(r, b));
+            let c = futures_style_price(OptionType::Call, &i);
+            let p = futures_style_price(OptionType::Put, &i);
+            assert_close!(c - p, i.forward() - k, 1e-12, 1e-12);
+        }
+    }
+
+    /// (b) At `r = 0` the discount factor is exactly 1 and the two margining
+    /// styles must coincide **bit-for-bit** on the price and on every Greek
+    /// except the discount-rho — which is precisely where the financing leg
+    /// lives: the equity-style rho is `−t·V` (bump r, the premium discount
+    /// moves) while the futures-style rho is identically zero (bump r, nothing
+    /// moves — the margin sweep already settled the premium).
+    #[test]
+    fn futures_style_equals_equity_style_at_zero_rate_bitwise() {
+        for &(s, k, vol, t, b) in &[
+            (100.0, 100.0, 0.20, 1.0, 0.0),
+            (80.0, 75.0, 0.33, 1.25, 0.015),
+            (62.0, 70.0, 0.40, 0.5, -0.06),
+        ] {
+            let i = CommodityInputs::new(s, k, vol, t, cost_of_carry(0.0, b));
+            for opt in [OptionType::Call, OptionType::Put] {
+                assert_eq!(
+                    futures_style_price(opt, &i).to_bits(),
+                    price(opt, &i).to_bits()
+                );
+                let fut = futures_style_greeks(opt, &i);
+                let eq = greeks(opt, &i);
+                for (pair_fut, pair_eq) in strip_fields(&fut).iter().zip(strip_fields(&eq).iter()) {
+                    if pair_fut.0 == "discount_rho" {
+                        // The one structural difference: futures-style has no
+                        // financing leg (exact zero); equity-style prices it
+                        // as −t·V even at r = 0.
+                        assert_eq!(pair_fut.1.to_bits(), 0.0f64.to_bits());
+                        assert_eq!(pair_eq.1.to_bits(), (-t * eq.price).to_bits());
+                    } else {
+                        assert_eq!(
+                            pair_fut.1.to_bits(),
+                            pair_eq.1.to_bits(),
+                            "{} differs at r=0",
+                            pair_fut.0
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Every futures-style Greek against independent central finite differences
+    /// of `futures_style_price` — including the identically-zero discount-rho,
+    /// which the FD bump over r confirms (the price does not move).
+    #[test]
+    fn futures_style_greeks_vs_finite_difference() {
+        let cases = [
+            CommodityInputs::on_future(100.0, 100.0, 0.20, 1.0, 0.05),
+            CommodityInputs::on_future(19.0, 19.0, 0.28, 0.75, 0.10),
+            CommodityInputs::on_spot(80.0, 75.0, 0.33, 1.25, 0.06, 0.045),
+            CommodityInputs::new(110.0, 95.0, 0.30, 0.25, cost_of_carry(0.01, -0.02)),
+        ];
+        for i in &cases {
+            for opt in [OptionType::Call, OptionType::Put] {
+                let g = futures_style_greeks(opt, i);
+                let p = |x: &CommodityInputs| futures_style_price(opt, x);
+
+                // The strip's price is the standalone price bit-for-bit.
+                assert_eq!(g.price.to_bits(), futures_style_price(opt, i).to_bits());
+
+                let hs = 1e-4 * i.spot;
+                assert_close!(
+                    g.delta_spot,
+                    fd1(|s| p(&with_spot(i, s)), i.spot, hs),
+                    1e-4,
+                    1e-7
+                );
+                assert_close!(g.vega, fd1(|v| p(&with_vol(i, v)), i.vol, 1e-5), 1e-4, 1e-7);
+                let carry = i.carry.forward_factor(i.t);
+                assert_close!(
+                    g.delta_forward,
+                    fd1(|s| p(&with_spot(i, s)), i.spot, hs) / carry,
+                    1e-4,
+                    1e-7
+                );
+                assert_close!(g.theta, -fd1(|t| p(&with_t(i, t)), i.t, 1e-5), 5e-4, 1e-6);
+
+                match g.rates {
+                    RateSensitivities::Carry {
+                        discount_rho,
+                        carry_rho,
+                    } => {
+                        // Identically zero, and the FD bump agrees exactly:
+                        // the bumped prices are bitwise equal, so the central
+                        // difference is exactly 0.
+                        assert_eq!(discount_rho.to_bits(), 0.0f64.to_bits());
+                        assert_eq!(
+                            fd1(|r| p(&with_r(i, r)), i.carry.discount_rate(), 1e-6).to_bits(),
+                            0.0f64.to_bits()
+                        );
+                        assert_close!(
+                            carry_rho,
+                            fd1(|b| p(&with_b(i, b)), i.carry.carry_rate(), 1e-6),
+                            1e-4,
+                            1e-7
+                        );
+                    }
+                    RateSensitivities::Fx { .. } => panic!("commodity greeks must tag as Carry"),
+                }
+
+                let ds = |s: f64| futures_style_greeks(opt, &with_spot(i, s)).delta_spot;
+                let gam = |x: &CommodityInputs| futures_style_greeks(opt, x).gamma;
+                assert_close!(g.gamma, fd1(ds, i.spot, hs), 1e-3, 1e-6);
+                assert_close!(
+                    g.vanna,
+                    fd1(
+                        |v| futures_style_greeks(opt, &with_vol(i, v)).delta_spot,
+                        i.vol,
+                        1e-5
+                    ),
+                    1e-3,
+                    1e-6
+                );
+                assert_close!(
+                    g.volga,
+                    fd1(
+                        |v| futures_style_greeks(opt, &with_vol(i, v)).vega,
+                        i.vol,
+                        1e-5
+                    ),
+                    1e-3,
+                    1e-6
+                );
+                assert_close!(
+                    g.charm,
+                    fd1(
+                        |t| futures_style_greeks(opt, &with_t(i, t)).delta_spot,
+                        i.t,
+                        1e-5
+                    ),
+                    1e-3,
+                    1e-6
+                );
+                assert_close!(
+                    g.speed,
+                    fd1(|s| gam(&with_spot(i, s)), i.spot, hs),
+                    1e-2,
+                    1e-5
+                );
+                assert_close!(
+                    g.zomma,
+                    fd1(|v| gam(&with_vol(i, v)), i.vol, 1e-5),
+                    1e-2,
+                    1e-5
+                );
+                assert_close!(g.color, fd1(|t| gam(&with_t(i, t)), i.t, 1e-5), 1e-2, 1e-5);
+            }
         }
     }
 }

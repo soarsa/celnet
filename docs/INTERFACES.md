@@ -7,9 +7,9 @@ updating this file, and announcing it in the `CLAUDE.md` ledger. Within a parall
 window the interface crates are treated as **stable** so streams don't churn; a deliberate
 interface change coordinates all affected crates at once (see `docs/ROADMAP.md` §3).
 
-## The 34-crate workspace
+## The 39-crate workspace
 
-The implemented flat workspace is **34 crates** (`ls crates`):
+The implemented flat workspace is **39 crates** (`ls crates`):
 
 ```
 celnet-types  celnet-core  celnet-conventions  celnet-calendar  celnet-vanilla
@@ -18,7 +18,8 @@ celnet-engine  celnet-journal  celnet-replog  celnet-fanout  celnet-integration
 celnet-server  celnet-cli  celnet-client  celnet-proto  celnet-plugin-api
 celnet-plugin-host  celnet-observability  celnet-golden  celnet-testkit  celnet-bench
 celnet-router  celnet-fix  celnet-parity  celnet-risk-normalize  celnet-risk-cube
-celnet-risk-fleet  celnet-limits  celnet-entitlements  celnet-xva
+celnet-risk-fleet  celnet-limits  celnet-entitlements  celnet-xva  celnet-linear
+celnet-equity-vanilla  celnet-commodity-vanilla  celnet-crypto-vanilla  celnet-rfq
 ```
 
 Several domains the early design split across many crates were **consolidated**:
@@ -32,7 +33,12 @@ Sobol' + Owen scramble + Brownian-bridge), `celnet-replog` (leader-replicated de
 replay log over loopback sockets + full Raft) and `celnet-fanout` (lock-free SPMC broadcast
 ring) under the engine, `celnet-risk-fleet` (cross-shard risk fan-out algebra over the
 `celnet-router` HRW map), and `celnet-xva` (internal-only EPE/ENE + CVA/DVA/FVA over synthetic
-netting sets — no wire surface). `celnet-plugin-host` is **built**: the tiered host (Tier-0
+netting sets — no wire surface). The cross-asset/linear/RFQ wave (W2–W5) added five more leaf
+crates: `celnet-linear` (outright forward / FX swap / NDF over the asset-class-agnostic carry
+seam), `celnet-equity-vanilla` (generalized-BSM, dividend-yield carry), `celnet-commodity-vanilla`
+(futures-style undiscounted-forward pricing), `celnet-crypto-vanilla` (linear funding-carry +
+inverse coin-margined `1/S_T` payoff), and `celnet-rfq` (the multi-dealer RFQ-to-many engine:
+concurrent fan-out, ranking, deterministic tie-break, last-look). `celnet-plugin-host` is **built**: the tiered host (Tier-0
 native registry + Tier-2 **wasmi** fuel-metered sandbox + replay harness) behind the frozen
 `celnet-plugin-api` contract — wasmtime was rejected for open RustSec advisories (see
 `docs/PLUGIN-HOST-ALT.md`).
@@ -70,6 +76,13 @@ celnet-limits         →  pure limit framework over celnet-risk-cube (NodeAggre
 celnet-xva            →  internal-only XVA engine (EPE/ENE + CVA/DVA/FVA) over a hazard-rate
                          survival curve + the celnet-qmc Sobol/bridge variates; synthetic
                          netting sets, no wire surface
+celnet-linear         →  linear (non-option) FX book leaf: outright forward / FX swap / NDF
+                         over celnet-core/-types (no IO); consumed by celnet-server/-cli
+celnet-equity-vanilla / celnet-commodity-vanilla / celnet-crypto-vanilla
+                      →  cross-asset vanilla leaves on the generalized carry seam, each over
+                         celnet-core/-types only (no IO); consumed by the server pricer
+celnet-rfq            →  multi-dealer RFQ-to-many engine (fan-out, ranking, tie-break,
+                         last-look) over celnet-proto + celnet-fix + celnet-types
 celnet-golden, celnet-testkit, celnet-bench  →  test/validation/bench only
 ```
 

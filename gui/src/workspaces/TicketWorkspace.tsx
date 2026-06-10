@@ -296,14 +296,6 @@ export function TicketWorkspace(): React.ReactElement {
 
   const tenorYears = resolved.years;
 
-  // A trader-facing expiry label that is honest for BOTH modes: a broken date
-  // reads as its calendar date, never coerced into a tenor band.
-  const expiryLabel =
-    expiryMode === "DATE" && brokenDate ? fmtBrokenDate(brokenDate) : tenorChoice.label;
-
-  // In DATE mode the trader must pick a date before there is a horizon to price.
-  const expiryReady = expiryMode === "TENOR" || brokenDate !== null;
-
   // The market/contract context every spec reads to build its wire instrument and
   // render its input block. The forward uses the active pair's real market
   // (spot/rDom/rFor) at the selected horizon; strikes that default to ATMF read it.
@@ -346,6 +338,20 @@ export function TicketWorkspace(): React.ReactElement {
     ? pricingModel
     : allowedModels[0]!;
   const effectiveCtx: ProductBuildCtx = { ...ctx, pricingModel: effectiveModel };
+
+  // A trader-facing expiry label that is honest for every mode: a declared
+  // no-expiry family (the perpetual) reads "PERP" (it has no expiry date to
+  // label); a broken date reads as its calendar date, never coerced into a
+  // tenor band.
+  const expiryLabel = spec.noExpiry
+    ? "PERP"
+    : expiryMode === "DATE" && brokenDate
+      ? fmtBrokenDate(brokenDate)
+      : tenorChoice.label;
+
+  // In DATE mode the trader must pick a date before there is a horizon to
+  // price; a no-expiry family has no horizon to pick, so it is always ready.
+  const expiryReady = spec.noExpiry !== undefined || expiryMode === "TENOR" || brokenDate !== null;
 
   // Offline (the in-app mock) the LSV engine is NOT available — it is a server-side
   // model (CLAUDE.md: no faked LSV numbers). Detect offline via the documented
@@ -629,98 +635,116 @@ export function TicketWorkspace(): React.ReactElement {
         </div>
 
         <div className={styles.expiryBlock}>
-          <div className={styles.expiryModeRow}>
-            <span className={styles.expiryModeLabel}>Expiry</span>
-            <div className={styles.modeToggle} role="tablist" aria-label="expiry mode">
-              <button
-                role="tab"
-                aria-selected={expiryMode === "TENOR"}
-                className={`${styles.modeTab} ${expiryMode === "TENOR" ? styles.modeActive : ""}`}
-                onClick={() => {
-                  setExpiryMode("TENOR");
-                  clearPriced();
-                }}
-              >
-                Tenor
-              </button>
-              <button
-                role="tab"
-                aria-selected={expiryMode === "DATE"}
-                className={`${styles.modeTab} ${expiryMode === "DATE" ? styles.modeActive : ""}`}
-                onClick={() => {
-                  setExpiryMode("DATE");
-                  clearPriced();
-                }}
-              >
-                Broken date
-              </button>
-            </div>
-          </div>
-
-          {expiryMode === "TENOR" ? (
-            <div className={styles.tenorRow}>
-              {TENOR_CHOICES.map((c, i) => (
-                <button
-                  key={c.label}
-                  className={`${styles.tenorPill} ${i === tenorIdx ? styles.tenorActive : ""}`}
-                  onClick={() => {
-                    setTenorIdx(i);
-                    clearPriced();
-                  }}
-                >
-                  {c.label}
-                </button>
-              ))}
-            </div>
-          ) : (
-            <div className={styles.dateRow}>
-              <DatePicker
-                value={brokenDate}
-                min={dateMin}
-                max={dateMax}
-                onChange={(d) => {
-                  setBrokenDate(d);
-                  clearPriced();
-                }}
-              />
-              <div className={styles.dateResolve}>
-                {brokenDate ? (
-                  <>
-                    <div className={styles.resolveRow}>
-                      <span className={styles.resolveLabel}>Expiry</span>
-                      <span className={`num ${styles.resolveVal}`}>
-                        {fmtBrokenDate(brokenDate)}
-                      </span>
-                    </div>
-                    <div className={styles.resolveRow}>
-                      <span className={styles.resolveLabel}>Horizon</span>
-                      <span className={`num ${styles.resolveVal}`}>
-                        {daysBetween(today, brokenDate)}d · {tenorYears.toFixed(3)}y
-                      </span>
-                    </div>
-                    <div className={styles.resolveRow}>
-                      <span className={styles.resolveLabel}>Interp vol</span>
-                      <span className={`num ${styles.resolveVal}`}>
-                        {interpolatedAtmVol !== null ? fmtVol(interpolatedAtmVol) : "—"}
-                      </span>
-                    </div>
-                    <p className={styles.resolveNote}>
-                      ATM vol total-variance interpolated in time. Exact good-business-day
-                      expiry &amp; spot-lagged delivery resolve server-side (celnet-calendar).
-                    </p>
-                    <p className={styles.eventNote}>
-                      Event-aware pricing (central-bank / NFP jump vol): not yet — smooth-clock
-                      read only.
-                    </p>
-                  </>
-                ) : (
-                  <p className={styles.resolveEmpty}>
-                    Pick a date to price an arbitrary broken-date expiry through the live
-                    pricing path.
-                  </p>
-                )}
+          {spec.noExpiry ? (
+            // The declared no-expiry family (the perpetual): the expiry controls
+            // are not applicable — show the honest reason instead of offering a
+            // tenor the contract cannot carry (the booked instrument is
+            // `expiryYears = 0` exactly, with no tenor).
+            <>
+              <div className={styles.expiryModeRow}>
+                <span className={styles.expiryModeLabel}>Expiry</span>
+                <span className="num" aria-label="no expiry">
+                  — none
+                </span>
               </div>
-            </div>
+              <p className={styles.resolveEmpty}>{spec.noExpiry.reason}</p>
+            </>
+          ) : (
+            <>
+              <div className={styles.expiryModeRow}>
+                <span className={styles.expiryModeLabel}>Expiry</span>
+                <div className={styles.modeToggle} role="tablist" aria-label="expiry mode">
+                  <button
+                    role="tab"
+                    aria-selected={expiryMode === "TENOR"}
+                    className={`${styles.modeTab} ${expiryMode === "TENOR" ? styles.modeActive : ""}`}
+                    onClick={() => {
+                      setExpiryMode("TENOR");
+                      clearPriced();
+                    }}
+                  >
+                    Tenor
+                  </button>
+                  <button
+                    role="tab"
+                    aria-selected={expiryMode === "DATE"}
+                    className={`${styles.modeTab} ${expiryMode === "DATE" ? styles.modeActive : ""}`}
+                    onClick={() => {
+                      setExpiryMode("DATE");
+                      clearPriced();
+                    }}
+                  >
+                    Broken date
+                  </button>
+                </div>
+              </div>
+
+              {expiryMode === "TENOR" ? (
+                <div className={styles.tenorRow}>
+                  {TENOR_CHOICES.map((c, i) => (
+                    <button
+                      key={c.label}
+                      className={`${styles.tenorPill} ${i === tenorIdx ? styles.tenorActive : ""}`}
+                      onClick={() => {
+                        setTenorIdx(i);
+                        clearPriced();
+                      }}
+                    >
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className={styles.dateRow}>
+                  <DatePicker
+                    value={brokenDate}
+                    min={dateMin}
+                    max={dateMax}
+                    onChange={(d) => {
+                      setBrokenDate(d);
+                      clearPriced();
+                    }}
+                  />
+                  <div className={styles.dateResolve}>
+                    {brokenDate ? (
+                      <>
+                        <div className={styles.resolveRow}>
+                          <span className={styles.resolveLabel}>Expiry</span>
+                          <span className={`num ${styles.resolveVal}`}>
+                            {fmtBrokenDate(brokenDate)}
+                          </span>
+                        </div>
+                        <div className={styles.resolveRow}>
+                          <span className={styles.resolveLabel}>Horizon</span>
+                          <span className={`num ${styles.resolveVal}`}>
+                            {daysBetween(today, brokenDate)}d · {tenorYears.toFixed(3)}y
+                          </span>
+                        </div>
+                        <div className={styles.resolveRow}>
+                          <span className={styles.resolveLabel}>Interp vol</span>
+                          <span className={`num ${styles.resolveVal}`}>
+                            {interpolatedAtmVol !== null ? fmtVol(interpolatedAtmVol) : "—"}
+                          </span>
+                        </div>
+                        <p className={styles.resolveNote}>
+                          ATM vol total-variance interpolated in time. Exact good-business-day
+                          expiry &amp; spot-lagged delivery resolve server-side (celnet-calendar).
+                        </p>
+                        <p className={styles.eventNote}>
+                          Event-aware pricing (central-bank / NFP jump vol): not yet — smooth-clock
+                          read only.
+                        </p>
+                      </>
+                    ) : (
+                      <p className={styles.resolveEmpty}>
+                        Pick a date to price an arbitrary broken-date expiry through the live
+                        pricing path.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
 

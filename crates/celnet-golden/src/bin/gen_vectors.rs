@@ -1,7 +1,7 @@
 //! Generator for the frozen golden-vector corpus.
 //!
 //! Run with `cargo run -p celnet-golden --bin gen_vectors`. Emits
-//! `crates/celnet-golden/vectors/<family>.json` for all 21 product-oneof families,
+//! `crates/celnet-golden/vectors/<family>.json` for all 23 product-oneof families,
 //! every `expected.price` produced by an oracle **independent of the production
 //! wire/server path** (see `celnet_golden::vectors` module docs and the per-family
 //! comments below). The output is a frozen artifact, committed to disk; the
@@ -95,6 +95,8 @@ fn main() {
     gen_fx_forward();
     gen_fx_swap();
     gen_ndf();
+    gen_perpetual_option();
+    gen_listed_future_option();
     println!("corpus generation complete.");
 }
 
@@ -420,6 +422,265 @@ fn gen_ndf() {
         });
     }
     write_family("ndf", &out);
+}
+
+// ===========================================================================
+// perpetual_option — oracle: independently-coded perpetual American closed form
+//   (expanding-bracket bisection of ψ(y) = ½σ²·y·(y−1) + b·y − r in product form
+//   + libm::pow), code-disjoint from the production engine's quadratic route.
+//   FX carry mapping: r = r_dom, b = r_dom − r_for. A perpetual has NO expiry,
+//   so `expiry_years` is 0 (the proto arm-30 invariant: non-zero is rejected).
+// ===========================================================================
+
+fn gen_perpetual_option() {
+    struct Case {
+        id: &'static str,
+        underlying: &'static str,
+        cp: Cp,
+        spot: f64,
+        strike: f64,
+        vol: f64,
+        r_dom: f64,
+        r_for: f64,
+        note: &'static str,
+    }
+    let cases = [
+        Case {
+            id: "perpetual-eurusd-call-atm-continuation",
+            underlying: "EURUSD",
+            cp: Cp::Call,
+            spot: 1.10,
+            strike: 1.10,
+            vol: 0.105,
+            r_dom: 0.05,
+            r_for: 0.01,
+            note: "continuation region (b = 0.04 < r = 0.05, S below the free boundary)",
+        },
+        Case {
+            id: "perpetual-eurusd-put-itm-continuation",
+            underlying: "EURUSD",
+            cp: Cp::Put,
+            spot: 1.10,
+            strike: 1.15,
+            vol: 0.105,
+            r_dom: 0.03,
+            r_for: 0.015,
+            note: "continuation region (S above the put free boundary)",
+        },
+        Case {
+            id: "perpetual-eurusd-call-carry-dominates",
+            underlying: "EURUSD",
+            cp: Cp::Call,
+            spot: 1.25,
+            strike: 1.10,
+            vol: 0.10,
+            r_dom: 0.02,
+            r_for: -0.005,
+            note: "degenerate b = 0.025 >= r = 0.02: never exercised, V = S exactly",
+        },
+        Case {
+            id: "perpetual-eurusd-call-exercised",
+            underlying: "EURUSD",
+            cp: Cp::Call,
+            spot: 1.40,
+            strike: 1.10,
+            vol: 0.10,
+            r_dom: 0.05,
+            r_for: 0.07,
+            note: "in the exercise region (b = -0.02, S* ~ 1.299 < S): V = S - K exactly",
+        },
+        Case {
+            id: "perpetual-usdjpy-put-exercised",
+            underlying: "USDJPY",
+            cp: Cp::Put,
+            spot: 100.0,
+            strike: 150.0,
+            vol: 0.10,
+            r_dom: 0.04,
+            r_for: 0.005,
+            note: "in the exercise region (S** ~ 131.5 > S): V = K - S exactly",
+        },
+    ];
+    let mut out = Vec::new();
+    for c in &cases {
+        // FX carry seam: r = r_dom, b = r_dom − r_for (the same mapping the
+        // selfcheck re-derivation uses).
+        let price = oracle::perpetual_american_price(
+            c.cp,
+            c.spot,
+            c.strike,
+            c.vol,
+            c.r_dom,
+            c.r_dom - c.r_for,
+        );
+        out.push(GoldenVector {
+            id: c.id.to_owned(),
+            family: "perpetual_option".to_owned(),
+            underlying: c.underlying.to_owned(),
+            // No expiry exists: the tenor token is the market's perpetual label.
+            tenor: "PERP".to_owned(),
+            market: market(c.spot, c.vol, c.r_dom, c.r_for),
+            terms: json!({
+                "option_type": cp_token(c.cp),
+                "strike": c.strike,
+                "notional": 1.0,
+                // The proto arm-30 invariant: a perpetual has no expiry, the
+                // enclosing `Instrument.expiry_years` MUST be 0.
+                "expiry_years": 0.0,
+            }),
+            expected: Expected {
+                price,
+                greeks: BTreeMap::new(),
+                price_std_error: None,
+                oracle: format!(
+                    "independent perpetual-American closed form: expanding-bracket \
+                     bisection of psi(y) = half*sigma^2*y*(y-1) + b*y - r (product form) \
+                     + libm::pow, code-disjoint from the production quadratic route; {}",
+                    c.note
+                ),
+            },
+            // Closed-form to closed-form (the production path is the same closed
+            // form by a different root/power float route): tight tolerance.
+            tolerance: Tolerance {
+                rel: 1e-9,
+                abs: 1e-12,
+            },
+        });
+    }
+    write_family("perpetual_option", &out);
+}
+
+// ===========================================================================
+// listed_future_option — oracle: Black (1976) via the libm::erf normal-CDF route
+//   (code-disjoint from the production erfc-route engine). The market `spot` IS
+//   the listed futures price F and `r_dom = r_for = r`, so the FX-shaped market
+//   context carries exactly the futures-measure martingale carry b = 0. The
+//   `margining` term selects the discounted (equity-style) vs undiscounted
+//   (futures-style) premium convention.
+// ===========================================================================
+
+fn gen_listed_future_option() {
+    struct Case {
+        id: &'static str,
+        underlying: &'static str,
+        ticker: &'static str,
+        venue: &'static str,
+        cp: Cp,
+        margining: &'static str,
+        future: f64,
+        strike: f64,
+        vol: f64,
+        r: f64,
+        t: f64,
+        future_t: f64,
+        note: &'static str,
+    }
+    let cases = [
+        Case {
+            id: "listedfuture-cl-equitystyle-call-atm",
+            underlying: "WTI",
+            ticker: "CL",
+            venue: "XNYM",
+            cp: Cp::Call,
+            margining: "EQUITY_STYLE",
+            future: 19.0,
+            strike: 19.0,
+            vol: 0.28,
+            r: 0.10,
+            t: 0.75,
+            future_t: 0.75,
+            note: "the Haug (2007) 2nd ed. sec 1.2.2 Black-76 worked market (published call 1.7011)",
+        },
+        Case {
+            id: "listedfuture-cl-equitystyle-put-atm",
+            underlying: "WTI",
+            ticker: "CL",
+            venue: "XNYM",
+            cp: Cp::Put,
+            margining: "EQUITY_STYLE",
+            future: 19.0,
+            strike: 19.0,
+            vol: 0.28,
+            r: 0.10,
+            t: 0.75,
+            future_t: 0.75,
+            note: "ATM-forward put == call by the discounted parity C - P = df*(F - K) = 0",
+        },
+        Case {
+            id: "listedfuture-es-futuresstyle-call-itm",
+            underlying: "ES",
+            ticker: "ES",
+            venue: "XCME",
+            cp: Cp::Call,
+            margining: "FUTURES_STYLE",
+            future: 45.0,
+            strike: 40.0,
+            vol: 0.35,
+            r: 0.04,
+            t: 0.5,
+            future_t: 0.75,
+            note: "daily-margined premium: the undiscounted Black expectation (df never enters)",
+        },
+        Case {
+            id: "listedfuture-es-futuresstyle-put-otm",
+            underlying: "ES",
+            ticker: "ES",
+            venue: "XCME",
+            cp: Cp::Put,
+            margining: "FUTURES_STYLE",
+            future: 45.0,
+            strike: 40.0,
+            vol: 0.35,
+            r: 0.04,
+            t: 0.5,
+            future_t: 0.75,
+            note: "undiscounted parity anchor: C - P = F - K exactly (model-free)",
+        },
+    ];
+    let mut out = Vec::new();
+    for c in &cases {
+        let price = match c.margining {
+            "EQUITY_STYLE" => oracle::black76_price(c.cp, c.future, c.strike, c.vol, c.t, c.r),
+            "FUTURES_STYLE" => {
+                oracle::black76_undiscounted_price(c.cp, c.future, c.strike, c.vol, c.t)
+            }
+            other => panic!("unknown margining `{other}`"),
+        };
+        out.push(GoldenVector {
+            id: c.id.to_owned(),
+            family: "listed_future_option".to_owned(),
+            underlying: c.underlying.to_owned(),
+            tenor: tenor_token(c.t),
+            // spot IS the futures price; r_dom = r_for = r makes the FX-shaped
+            // market's carry b = r_dom − r_for = 0 — the futures-measure
+            // martingale carry, exactly Black-76.
+            market: market(c.future, c.vol, c.r, c.r),
+            terms: json!({
+                "future_symbol": { "ticker": c.ticker, "venue": c.venue },
+                "future_expiry_years": c.future_t,
+                "option_type": cp_token(c.cp),
+                "strike": c.strike,
+                "notional": 1.0,
+                "margining": c.margining,
+                "expiry_years": c.t,
+            }),
+            expected: Expected {
+                price,
+                greeks: BTreeMap::new(),
+                price_std_error: None,
+                oracle: format!(
+                    "independent Black-76 (1976) via libm::erf on the futures price \
+                     ({} premium margining); {}",
+                    c.margining, c.note
+                ),
+            },
+            tolerance: Tolerance {
+                rel: 1e-9,
+                abs: 1e-9,
+            },
+        });
+    }
+    write_family("listed_future_option", &out);
 }
 
 // ===========================================================================

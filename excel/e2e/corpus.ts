@@ -65,7 +65,7 @@ export interface GoldenVector {
   tolerance: VectorTolerance;
 }
 
-/** The 21 product-oneof family names that may appear in the corpus. */
+/** The 23 product-oneof family names that may appear in the corpus. */
 export const ALL_FAMILIES = [
   "vanilla",
   "strategy",
@@ -88,6 +88,8 @@ export const ALL_FAMILIES = [
   "fx_forward",
   "fx_swap",
   "ndf",
+  "perpetual_option",
+  "listed_future_option",
   // Cross-asset vanilla underlyings (W1 `Underlying` oneof). The frozen golden
   // vectors the Rust cross-asset leaf lanes produce carry the GENERALIZED carry
   // (`q`/`repo`/`funding`/`convenience`) the FX-two-rate WS price path does not yet
@@ -129,6 +131,8 @@ export const EXCEL_FAMILIES = [
   "fx_forward",
   "fx_swap",
   "ndf",
+  "perpetual_option",
+  "listed_future_option",
 ] as const;
 
 /** Families in the corpus that the Excel price path does not (yet) expose. */
@@ -218,6 +222,27 @@ const fixingToken = (variant: string): string => {
 };
 
 /**
+ * Map a listed-future vector's underlying class token to the Excel underlier
+ * grammar — the same WTI=NYMEX-crude(commodity) / ES=CME-E-mini-S&P-500(equity)
+ * classes the Rust SDK conformance maps (`listed_future_underlying`). The Excel
+ * grammar's commodity form carries no venue (TICKER@:CCY — the venue lives on
+ * the option's `future_symbol`, the contract identity the arm prices), so the
+ * commodity underlying is the venue-less projection of the SDK's; the listed-
+ * future arm is asset-class-agnostic (the quoted futures price embodies the
+ * carry), so the priced value is identical.
+ */
+const listedFutureUnderlier = (token: string): string => {
+  switch (token) {
+    case "WTI":
+      return "WTI@:USD";
+    case "ES":
+      return "ES@XCME:USD";
+    default:
+      throw new Error(`unknown listed-future underlying \`${token}\``);
+  }
+};
+
+/**
  * A display tenor for an arbitrary expiry year-fraction. The PRICED maturity is the
  * vector's exact `expiry_years` (we override `expiryYears` below); the tenor is a
  * coarse display label only (the server prices off `expiry_years`, never the tenor),
@@ -244,7 +269,10 @@ type TermsRow = (string | number)[];
  */
 export function specOf(v: GoldenVector): InstrumentSpecArgs {
   const t = num(v.terms, "expiry_years");
-  const tenor = tenorFor(t);
+  // The display tenor; cleared for the one TENORLESS family (perpetual), whose
+  // spec takes no tenor at all (a supplied one is a typed error).
+  let tenor: string | undefined = tenorFor(t);
+  let underlier = v.underlying;
   const rows: TermsRow[] = [];
   let notional = 1.0;
 
@@ -427,11 +455,36 @@ export function specOf(v: GoldenVector): InstrumentSpecArgs {
         ["side", linearSide(str(v.terms, "side"))],
       );
       break;
+    case "perpetual_option":
+      // The one tenorless, expiryless product (proto arm 30): the spec takes NO
+      // tenor (the shaper encodes the contract's canonical `expiry_years = 0`),
+      // so the vector's `t = 0` / "PERP" label never enter.
+      tenor = undefined;
+      notional = num(v.terms, "notional");
+      rows.push(["strike", num(v.terms, "strike")], ["callPut", cp(str(v.terms, "option_type"))]);
+      break;
+    case "listed_future_option": {
+      underlier = listedFutureUnderlier(v.underlying);
+      notional = num(v.terms, "notional");
+      const sym = v.terms["future_symbol"] as Record<string, unknown>;
+      const ticker = String(sym["ticker"]);
+      const venue = typeof sym["venue"] === "string" ? sym["venue"] : "";
+      rows.push(
+        ["strike", num(v.terms, "strike")],
+        ["callPut", cp(str(v.terms, "option_type"))],
+        ["futureSymbol", venue.length > 0 ? `${ticker}@${venue}` : ticker],
+        ["futureExpiry", num(v.terms, "future_expiry_years")],
+        ["margining", str(v.terms, "margining")],
+      );
+      break;
+    }
     default:
       throw new Error(`family \`${v.family}\` is not exposed by Excel`);
   }
 
-  return { underlier: v.underlying, product: v.family, terms: rows, tenor, notional };
+  return tenor === undefined
+    ? { underlier, product: v.family, terms: rows, notional }
+    : { underlier, product: v.family, terms: rows, tenor, notional };
 }
 
 /**

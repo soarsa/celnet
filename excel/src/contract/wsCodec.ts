@@ -43,8 +43,10 @@ import type {
   Heartbeat,
   Instrument,
   Leg,
+  ListedFutureOption,
   Lookback,
   MultiDealerQuote,
+  PerpetualOption,
   SingleBarrier,
   Touch,
   Vanilla,
@@ -431,7 +433,12 @@ function windowBarrierToWire(w: WindowBarrier): WireObject {
 export function instrumentToWire(i: Instrument): WireObject {
   const base: WireObject = {
     pair: ccyPairToWire(i.pair),
-    tenor: { unit: e.tenorUnit.toWire(i.tenor.unit), count: i.tenor.count },
+    // The tenor label (a proto message field — presence-tracked). Present on
+    // every dated product (so every existing frame is byte-identical, key order
+    // included); ABSENT only for the tenorless perpetual arm, whose canonical
+    // wire shape carries no tenor and `expiry_years = 0` exactly (mirrors the
+    // SDK's `tenor: None`).
+    ...(i.tenor ? { tenor: { unit: e.tenorUnit.toWire(i.tenor.unit), count: i.tenor.count } } : {}),
     expiry_years: i.expiryYears,
     quantity: { notional: i.quantity.notional, base_ccy: i.quantity.baseCcy },
     side: e.side.toWire(i.side),
@@ -463,8 +470,10 @@ export function instrumentToWire(i: Instrument): WireObject {
   // the proto field number it occupies — vanilla=7, strategy=8, single_barrier=9,
   // double_barrier=10, digital=11, touch=12, variance_swap=13, volatility_swap=14,
   // asian_option=15, forward_start=16, cliquet=17, quanto=18, tarf=19,
-  // accumulator=20, lookback=21, window_barrier=23. The WS JSON mirror keys by
-  // name, exactly like `crates/celnet-server/src/ws/codec.rs` decodes.
+  // accumulator=20, lookback=21, window_barrier=23, american=24, basket=25,
+  // fx_forward=26, fx_swap=27, ndf=28, perpetual_option=30,
+  // listed_future_option=31. The WS JSON mirror keys by name, exactly like
+  // `crates/celnet-server/src/ws/codec.rs` decodes.
   switch (i.product.kind) {
     case "vanilla":
       base["vanilla"] = vanillaToWire(i.product.vanilla);
@@ -559,8 +568,48 @@ export function instrumentToWire(i: Instrument): WireObject {
         settlement_ccy: i.product.ndf.settlementCcy,
       };
       break;
+    case "perpetualOption":
+      base["perpetual_option"] = perpetualOptionToWire(i.product.perpetualOption);
+      break;
+    case "listedFutureOption":
+      base["listed_future_option"] = listedFutureOptionToWire(i.product.listedFutureOption);
+      break;
   }
   return base;
+}
+
+/**
+ * Encode a perpetual (no-expiry) American option body (proto field 30) — the
+ * EXACT shape `perpetual_option_from_json` decodes: `option_type` as the numeric
+ * enum tag, the plain `strike`, and the booked `notional` (a proto3 scalar; the
+ * direction is the instrument `side`). The enclosing instrument is the one
+ * tenorless shape on the contract (`expiry_years = 0` exactly, no `tenor` key).
+ */
+function perpetualOptionToWire(p: PerpetualOption): WireObject {
+  return {
+    option_type: e.optionType.toWire(p.optionType),
+    strike: p.strike,
+    notional: p.notional,
+  };
+}
+
+/**
+ * Encode an option on a listed future (proto field 31) — the EXACT shape
+ * `listed_future_option_from_json` decodes: the nested `future_symbol` contract
+ * identity (ticker + listing venue MIC), the future's own `future_expiry_years`
+ * (which must outlive the option's `expiry_years`), the option enums/strike/
+ * notional, and the premium `margining` tag (the numeric proto enum number;
+ * 0 = equity-style upfront, 1 = futures-style daily-margined).
+ */
+function listedFutureOptionToWire(o: ListedFutureOption): WireObject {
+  return {
+    future_symbol: { ticker: o.futureSymbol.ticker, venue: o.futureSymbol.venue },
+    future_expiry_years: o.futureExpiryYears,
+    option_type: e.optionType.toWire(o.optionType),
+    strike: o.strike,
+    notional: o.notional,
+    margining: e.margining.toWire(o.margining),
+  };
 }
 
 /**

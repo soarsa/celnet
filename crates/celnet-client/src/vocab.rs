@@ -1544,6 +1544,78 @@ impl NdfTerms {
     }
 }
 
+/// The premium margining convention of an option on a listed future — the typed
+/// form of the wire `Margining`. Decides whether the premium is paid upfront
+/// (discounted) or margined daily (undiscounted); the default mirrors the wire's
+/// meaningful-zero (an absent tag is the ordinary equity-style contract).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Margining {
+    /// Premium paid upfront at trade date; the price is the discounted
+    /// expectation. The default (the wire's meaningful zero).
+    #[default]
+    EquityStyle,
+    /// Premium margined daily through the option's life; the daily sweep removes
+    /// the financing leg, so the price is the undiscounted expectation.
+    FuturesStyle,
+}
+
+impl Margining {
+    fn to_wire(self) -> celnet_proto::Margining {
+        match self {
+            Margining::EquityStyle => celnet_proto::Margining::EquityStyle,
+            Margining::FuturesStyle => celnet_proto::Margining::FuturesStyle,
+        }
+    }
+}
+
+/// The payoff terms of an option on a listed future: the future's contract
+/// identity ([`Symbol`]: ticker + listing venue MIC), the future's own expiry
+/// (which must outlive the option's — `future_expiry_years >= expiry_years > 0`,
+/// validity-checked by the server), the option direction/strike, and the premium
+/// [`Margining`] convention. Built via [`ListedFutureTerms::new`] then optionally
+/// [`ListedFutureTerms::margining`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct ListedFutureTerms {
+    /// The listed future contract the option exercises into.
+    pub future_symbol: Symbol,
+    /// The FUTURE's own expiry as a year fraction; must be `>=` the option's
+    /// `expiry_years` (the future outlives the option).
+    pub future_expiry_years: f64,
+    /// Call or put on the future.
+    pub option: OptionType,
+    /// Strike `K` (absolute level, in the future's quote units).
+    pub strike: f64,
+    /// The premium margining convention.
+    pub margining: Margining,
+}
+
+impl ListedFutureTerms {
+    /// An equity-style (upfront-premium) option on the listed future
+    /// `future_symbol` expiring at `future_expiry_years`.
+    #[must_use]
+    pub fn new(
+        future_symbol: Symbol,
+        future_expiry_years: f64,
+        option: OptionType,
+        strike: f64,
+    ) -> Self {
+        Self {
+            future_symbol,
+            future_expiry_years,
+            option,
+            strike,
+            margining: Margining::default(),
+        }
+    }
+
+    /// Set the premium margining convention.
+    #[must_use]
+    pub fn margining(mut self, margining: Margining) -> Self {
+        self.margining = margining;
+        self
+    }
+}
+
 /// The product payoff of an instrument — the typed form of the wire `Instrument`
 /// `product` oneof. Exactly one variant is built per instrument.
 #[derive(Debug, Clone, PartialEq)]
@@ -1866,6 +1938,53 @@ pub enum Product {
         fixing: FixingSource,
         /// The convertible (settlement) currency.
         settlement_ccy: String,
+    },
+    /// A perpetual (no-expiry) American option: exercisable at any time, with no
+    /// terminal date — so American by construction, with no exercise-style field.
+    /// The enclosing `expiry_years` MUST be exactly `0` for this arm (a
+    /// perpetual has no expiry to encode; the server's term validator rejects
+    /// anything else as `INVALID_ARGUMENT`). Closed form, exact ⇒ no
+    /// [`PricedLine::price_std_error`]; the value is time-homogeneous, so the
+    /// returned theta / charm / color are the exact zeros of the stationary
+    /// value, and `delta_forward` is structurally absent (no settlement tenor
+    /// defines a forward).
+    PerpetualOption {
+        /// Call or put.
+        option: OptionType,
+        /// Strike `K` (absolute level, quote per 1 unit of base/asset).
+        strike: f64,
+        /// The booked trade size (always positive; direction is the enclosing
+        /// instrument's side). Identity, not a pricing input — the premium is
+        /// per 1 unit of base; the builders mirror [`Quantity::notional`] here
+        /// so the one notional is stated once.
+        notional: f64,
+    },
+    /// An option on a listed future, for any asset class: the enclosing
+    /// underlying names the asset class and `future_symbol` names the specific
+    /// listed contract the option exercises into. The future must outlive the
+    /// option (`future_expiry_years >= expiry_years > 0`, validity-checked by
+    /// the server). The quoted futures price (the request market context's
+    /// `spot`) already embodies the underlying's carry, so the price is the
+    /// futures-measure closed form under the [`Margining`] convention. Exact ⇒
+    /// no [`PricedLine::price_std_error`].
+    ListedFutureOption {
+        /// The listed future contract the option exercises into.
+        future_symbol: Symbol,
+        /// The FUTURE's own expiry as a year fraction (`>=` the option's
+        /// `expiry_years`).
+        future_expiry_years: f64,
+        /// Call or put on the future.
+        option: OptionType,
+        /// Strike `K` (absolute level, in the future's quote units).
+        strike: f64,
+        /// The booked trade size (always positive; direction is the enclosing
+        /// instrument's side). Identity, not a pricing input — the builders
+        /// mirror [`Quantity::notional`] here so the one notional is stated
+        /// once.
+        notional: f64,
+        /// The premium margining convention (equity-style upfront/discounted vs
+        /// futures-style daily-margined/undiscounted).
+        margining: Margining,
     },
 }
 
@@ -2256,6 +2375,30 @@ impl Product {
                 fixing: fixing_source_to_wire(*fixing) as i32,
                 settlement_ccy: settlement_ccy.clone(),
             }),
+            Product::PerpetualOption {
+                option,
+                strike,
+                notional,
+            } => instrument::Product::PerpetualOption(celnet_proto::PerpetualOption {
+                option_type: celnet_proto::OptionType::from(*option) as i32,
+                strike: *strike,
+                notional: *notional,
+            }),
+            Product::ListedFutureOption {
+                future_symbol,
+                future_expiry_years,
+                option,
+                strike,
+                notional,
+                margining,
+            } => instrument::Product::ListedFutureOption(celnet_proto::ListedFutureOption {
+                future_symbol: Some(celnet_proto::Symbol::from(future_symbol.clone())),
+                future_expiry_years: *future_expiry_years,
+                option_type: celnet_proto::OptionType::from(*option) as i32,
+                strike: *strike,
+                notional: *notional,
+                margining: margining.to_wire() as i32,
+            }),
         }
     }
 }
@@ -2275,7 +2418,9 @@ fn equal_fixing_years(fixings: u32) -> Vec<f64> {
 /// Built fluently from a [`CcyPair`], a [`Tenor`] + expiry year-fraction, a
 /// notional [`Quantity`], a top-level [`Side`], and a [`Product`]. The
 /// `expiry_years` is authoritative for pricing; the `tenor` is the trader-facing
-/// label.
+/// label. The perpetual ([`InstrumentSpec::perpetual`]) is the one tenorless,
+/// expiryless product: its builder takes neither and encodes the contract's
+/// canonical `expiry_years = 0` shape.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InstrumentSpec {
     /// The instrument's underlying — the asset-class-tagged identity (FX pair,
@@ -2284,9 +2429,14 @@ pub struct InstrumentSpec {
     /// ([`InstrumentSpec::equity_vanilla`] / [`InstrumentSpec::commodity_vanilla`]
     /// / [`InstrumentSpec::crypto_vanilla`]) construct the matching arm.
     pub underlying: Underlying,
-    /// The trader-facing tenor label.
-    pub tenor: Tenor,
-    /// The expiry as a year fraction (authoritative for pricing).
+    /// The trader-facing tenor label; `None` for the tenorless perpetual
+    /// ([`InstrumentSpec::perpetual`]), which has no expiry date to label. Every
+    /// dated builder fills `Some(tenor)`, so the wire encoding of the dated
+    /// families is unchanged.
+    pub tenor: Option<Tenor>,
+    /// The expiry as a year fraction (authoritative for pricing). Exactly `0.0`
+    /// for the perpetual (the contract's no-expiry encoding, enforced by the
+    /// server's term validator); strictly positive for every dated product.
     pub expiry_years: f64,
     /// The trade notional and its currency leg.
     pub quantity: Quantity,
@@ -2385,7 +2535,7 @@ impl InstrumentSpec {
     ) -> Self {
         Self {
             underlying,
-            tenor,
+            tenor: Some(tenor),
             expiry_years,
             quantity,
             side,
@@ -2508,7 +2658,7 @@ impl InstrumentSpec {
     ) -> Self {
         Self {
             underlying: Underlying::Fx(pair),
-            tenor,
+            tenor: Some(tenor),
             expiry_years,
             quantity,
             side,
@@ -2541,7 +2691,7 @@ impl InstrumentSpec {
     ) -> Self {
         Self {
             underlying: Underlying::Fx(pair),
-            tenor,
+            tenor: Some(tenor),
             expiry_years,
             quantity,
             side,
@@ -2564,7 +2714,7 @@ impl InstrumentSpec {
     ) -> Self {
         Self {
             underlying: Underlying::Fx(pair),
-            tenor,
+            tenor: Some(tenor),
             expiry_years,
             quantity,
             side,
@@ -2590,7 +2740,7 @@ impl InstrumentSpec {
     ) -> Self {
         Self {
             underlying: Underlying::Fx(pair),
-            tenor,
+            tenor: Some(tenor),
             expiry_years,
             quantity,
             side,
@@ -2622,7 +2772,7 @@ impl InstrumentSpec {
     ) -> Self {
         Self {
             underlying: Underlying::Fx(pair),
-            tenor,
+            tenor: Some(tenor),
             expiry_years,
             quantity,
             side,
@@ -2654,7 +2804,7 @@ impl InstrumentSpec {
     ) -> Self {
         Self {
             underlying: Underlying::Fx(pair),
-            tenor,
+            tenor: Some(tenor),
             expiry_years,
             quantity,
             side,
@@ -2684,7 +2834,7 @@ impl InstrumentSpec {
     ) -> Self {
         Self {
             underlying: Underlying::Fx(pair),
-            tenor,
+            tenor: Some(tenor),
             expiry_years,
             quantity,
             side,
@@ -2786,7 +2936,7 @@ impl InstrumentSpec {
     ) -> Self {
         Self {
             underlying: Underlying::Fx(pair),
-            tenor,
+            tenor: Some(tenor),
             expiry_years,
             quantity,
             side,
@@ -2809,7 +2959,7 @@ impl InstrumentSpec {
     ) -> Self {
         Self {
             underlying: Underlying::Fx(pair),
-            tenor,
+            tenor: Some(tenor),
             expiry_years,
             quantity,
             side,
@@ -2833,7 +2983,7 @@ impl InstrumentSpec {
     ) -> Self {
         Self {
             underlying: Underlying::Fx(pair),
-            tenor,
+            tenor: Some(tenor),
             expiry_years,
             quantity,
             side,
@@ -2864,7 +3014,7 @@ impl InstrumentSpec {
     ) -> Self {
         Self {
             underlying: Underlying::Fx(pair),
-            tenor,
+            tenor: Some(tenor),
             expiry_years,
             quantity,
             side,
@@ -2893,7 +3043,7 @@ impl InstrumentSpec {
     ) -> Self {
         Self {
             underlying: Underlying::Fx(pair),
-            tenor,
+            tenor: Some(tenor),
             expiry_years,
             quantity,
             side,
@@ -2926,7 +3076,7 @@ impl InstrumentSpec {
     ) -> Self {
         Self {
             underlying: Underlying::Fx(pair),
-            tenor,
+            tenor: Some(tenor),
             expiry_years,
             quantity,
             side,
@@ -2956,7 +3106,7 @@ impl InstrumentSpec {
     ) -> Self {
         Self {
             underlying: Underlying::Fx(pair),
-            tenor,
+            tenor: Some(tenor),
             expiry_years,
             quantity,
             side,
@@ -2990,7 +3140,7 @@ impl InstrumentSpec {
     ) -> Self {
         Self {
             underlying: Underlying::Fx(pair),
-            tenor,
+            tenor: Some(tenor),
             expiry_years,
             quantity,
             side,
@@ -3024,7 +3174,7 @@ impl InstrumentSpec {
     ) -> Self {
         Self {
             underlying: Underlying::Fx(pair),
-            tenor,
+            tenor: Some(tenor),
             expiry_years,
             quantity,
             side,
@@ -3057,7 +3207,7 @@ impl InstrumentSpec {
     ) -> Self {
         Self {
             underlying: Underlying::Fx(pair),
-            tenor,
+            tenor: Some(tenor),
             expiry_years,
             quantity,
             side,
@@ -3092,7 +3242,7 @@ impl InstrumentSpec {
     ) -> Self {
         Self {
             underlying: Underlying::Fx(pair),
-            tenor,
+            tenor: Some(tenor),
             expiry_years,
             quantity,
             side,
@@ -3128,7 +3278,7 @@ impl InstrumentSpec {
     ) -> Self {
         Self {
             underlying: Underlying::Fx(pair),
-            tenor,
+            tenor: Some(tenor),
             expiry_years,
             quantity,
             side: terms.side.instrument_side(),
@@ -3158,7 +3308,7 @@ impl InstrumentSpec {
     ) -> Self {
         Self {
             underlying: Underlying::Fx(pair),
-            tenor,
+            tenor: Some(tenor),
             expiry_years,
             quantity,
             side: terms.near.side.instrument_side(),
@@ -3189,7 +3339,7 @@ impl InstrumentSpec {
     ) -> Self {
         Self {
             underlying: Underlying::Fx(pair),
-            tenor,
+            tenor: Some(tenor),
             expiry_years,
             quantity,
             side: terms.side.instrument_side(),
@@ -3205,6 +3355,94 @@ impl InstrumentSpec {
         }
     }
 
+    /// A perpetual (no-expiry) American option on the given FX pair / notional.
+    /// The one tenorless, expiryless product: the builder takes neither a
+    /// [`Tenor`] nor an expiry and encodes the contract's canonical
+    /// `expiry_years = 0` shape (the server's term validator rejects any other
+    /// expiry on this arm as `INVALID_ARGUMENT` — a perpetual has no expiry).
+    /// Closed form, exact; the server refuses a negative discount rate, under
+    /// which a perpetual claim has no finite value. For a cross-asset
+    /// underlying use [`InstrumentSpec::perpetual_on`].
+    #[must_use]
+    pub fn perpetual(
+        pair: CcyPair,
+        quantity: Quantity,
+        side: Side,
+        option: OptionType,
+        strike: f64,
+    ) -> Self {
+        Self::perpetual_on(Underlying::Fx(pair), quantity, side, option, strike)
+    }
+
+    /// A perpetual (no-expiry) American option on a generalized
+    /// (asset-class-tagged) [`Underlying`] — the cross-asset generalization of
+    /// [`InstrumentSpec::perpetual`] (its FX-arm special case), taking the same
+    /// carry branching as the vanilla: an FX / metal underlying prices over the
+    /// FX two-rate carry, an equity / commodity / digital-asset underlying over
+    /// the generalized cost-of-carry seam.
+    #[must_use]
+    pub fn perpetual_on(
+        underlying: Underlying,
+        quantity: Quantity,
+        side: Side,
+        option: OptionType,
+        strike: f64,
+    ) -> Self {
+        Self {
+            underlying,
+            // A perpetual has no expiry date: no tenor label exists for it, and
+            // the contract's canonical wire shape is `expiry_years = 0` exactly.
+            tenor: None,
+            expiry_years: 0.0,
+            quantity,
+            side,
+            settlement_style: SettlementStyle::Linear,
+            pricing_model: PricingModel::Default,
+            product: Product::PerpetualOption {
+                option,
+                strike,
+                notional: quantity.notional,
+            },
+        }
+    }
+
+    /// An option on a listed future on the given underlying asset class / tenor /
+    /// expiry / notional, carrying a [`ListedFutureTerms`] spec (the future's
+    /// contract identity and own expiry, the option direction/strike, and the
+    /// premium [`Margining`] convention). Asset-class-agnostic: the quoted
+    /// futures price (the request market context's `spot`) already embodies the
+    /// underlying's carry, so every asset class prices by the same
+    /// futures-measure closed form. The future must outlive the option —
+    /// `terms.future_expiry_years >= expiry_years > 0`, or the server rejects
+    /// the request with `INVALID_ARGUMENT`.
+    #[must_use]
+    pub fn listed_future_option(
+        underlying: Underlying,
+        tenor: Tenor,
+        expiry_years: f64,
+        quantity: Quantity,
+        side: Side,
+        terms: ListedFutureTerms,
+    ) -> Self {
+        Self {
+            underlying,
+            tenor: Some(tenor),
+            expiry_years,
+            quantity,
+            side,
+            settlement_style: SettlementStyle::Linear,
+            pricing_model: PricingModel::Default,
+            product: Product::ListedFutureOption {
+                future_symbol: terms.future_symbol,
+                future_expiry_years: terms.future_expiry_years,
+                option: terms.option,
+                strike: terms.strike,
+                notional: quantity.notional,
+                margining: terms.margining,
+            },
+        }
+    }
+
     /// Encode to the wire instrument message. `solve` is left unset (the SDK
     /// exposes solve via a dedicated future iteration; the explicit strikes the
     /// caller supplies are used as given).
@@ -3215,7 +3453,9 @@ impl InstrumentSpec {
             // metal, equity, commodity, or digital asset) — the FX arm stays
             // byte-identical to the former FX-only encoding.
             underlying: Some(celnet_proto::Underlying::from(self.underlying.clone())),
-            tenor: Some(celnet_proto::Tenor::from(self.tenor)),
+            // Absent for the tenorless perpetual (its canonical wire shape);
+            // present — byte-identically to before — for every dated product.
+            tenor: self.tenor.map(celnet_proto::Tenor::from),
             expiry_years: self.expiry_years,
             quantity: Some(celnet_proto::Quantity {
                 notional: self.quantity.notional,
@@ -3668,6 +3908,75 @@ mod tests {
                 assert_eq!(b.mc_seed, 0xC0FFEE);
             }
             other => panic!("expected basket, got {other:?}"),
+        }
+    }
+
+    /// The SDK `InstrumentSpec::perpetual` builder encodes to the wire
+    /// `PerpetualOption` arm (product field 30) in the contract's canonical
+    /// no-expiry shape: `expiry_years = 0` exactly, NO tenor label, and the
+    /// notional mirrored from the one [`Quantity`] — the SDK half of the
+    /// api-first parity for arm 30.
+    #[test]
+    fn perpetual_terms_encode_to_the_wire_arm() {
+        let spec = InstrumentSpec::perpetual(
+            CcyPair::parse("EURUSD").unwrap(),
+            Quantity::base(10_000_000.0),
+            Side::Buy,
+            OptionType::Call,
+            1.05,
+        );
+        let wire = spec.to_wire();
+        assert_eq!(wire.expiry_years.to_bits(), 0.0_f64.to_bits());
+        assert!(wire.tenor.is_none(), "a perpetual is tenorless on the wire");
+        match wire.product {
+            Some(instrument::Product::PerpetualOption(p)) => {
+                assert_eq!(p.option_type, celnet_proto::OptionType::Call as i32);
+                assert_eq!(p.strike.to_bits(), 1.05_f64.to_bits());
+                assert_eq!(p.notional.to_bits(), 10_000_000.0_f64.to_bits());
+            }
+            other => panic!("expected perpetual_option, got {other:?}"),
+        }
+    }
+
+    /// The SDK `InstrumentSpec::listed_future_option` builder encodes to the
+    /// wire `ListedFutureOption` arm (product field 31): the nested
+    /// `future_symbol` contract identity, the future's own expiry, the
+    /// margining tag, and the notional mirrored from the one [`Quantity`] — the
+    /// SDK half of the api-first parity for arm 31.
+    #[test]
+    fn listed_future_terms_encode_to_the_wire_arm() {
+        let underlying = Underlying::Commodity(CommodityRef::new(
+            Symbol::new("BRENT", String::new()),
+            celnet_types::Ccy::USD,
+        ));
+        let spec = InstrumentSpec::listed_future_option(
+            underlying,
+            Tenor::Months(6),
+            0.5,
+            Quantity::base(1_000.0),
+            Side::Sell,
+            ListedFutureTerms::new(
+                Symbol::new("BRN-DEC26", "IFEU"),
+                0.55,
+                OptionType::Put,
+                85.0,
+            )
+            .margining(Margining::FuturesStyle),
+        );
+        let wire = spec.to_wire();
+        assert_eq!(wire.expiry_years.to_bits(), 0.5_f64.to_bits());
+        match wire.product {
+            Some(instrument::Product::ListedFutureOption(o)) => {
+                let sym = o.future_symbol.expect("future_symbol travels");
+                assert_eq!(sym.ticker, "BRN-DEC26");
+                assert_eq!(sym.venue, "IFEU");
+                assert_eq!(o.future_expiry_years.to_bits(), 0.55_f64.to_bits());
+                assert_eq!(o.option_type, celnet_proto::OptionType::Put as i32);
+                assert_eq!(o.strike.to_bits(), 85.0_f64.to_bits());
+                assert_eq!(o.notional.to_bits(), 1_000.0_f64.to_bits());
+                assert_eq!(o.margining, celnet_proto::Margining::FuturesStyle as i32);
+            }
+            other => panic!("expected listed_future_option, got {other:?}"),
         }
     }
 }

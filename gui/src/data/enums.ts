@@ -32,6 +32,7 @@ import type {
   LimitMetricKind,
   LookbackMonitoring,
   LookbackStyle,
+  Margining,
   MarketObservable,
   Metal,
   MonitoringStyle,
@@ -149,6 +150,15 @@ export const metal = enumCodec<Metal>(["GOLD", "SILVER", "PLATINUM", "PALLADIUM"
  * coin-margined `1/S_T` digital-asset convention.
  */
 export const settlementStyle = enumCodec<SettlementStyle>(["LINEAR", "INVERSE_COIN"]);
+
+/**
+ * `Margining` ↔ proto `Margining`
+ * (MARGINING_EQUITY_STYLE=0, MARGINING_FUTURES_STYLE=1). The premium margining
+ * convention of an option on a listed future (`ListedFutureOption.margining`,
+ * field 6): EQUITY_STYLE (upfront premium, discounted value) is the meaningful
+ * proto3 zero; FUTURES_STYLE margins the premium daily (undiscounted value).
+ */
+export const margining = enumCodec<Margining>(["EQUITY_STYLE", "FUTURES_STYLE"]);
 
 /** `StrategyKind` ↔ proto `StrategyKind`. */
 export const strategyKind = enumCodec<StrategyKind>([

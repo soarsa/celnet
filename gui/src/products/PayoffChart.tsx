@@ -63,6 +63,8 @@ const EMPTY_REASON: Readonly<Record<string, string>> = {
   QUANTO: "payoff settles in a third currency — priced server-side",
   AMERICAN: "payoff depends on the early-exercise path — priced server-side",
   BASKET: "payoff depends on the basket path — priced server-side",
+  PERPETUAL: "no expiry exists — exercisable at any time; valued by the perpetual closed form",
+  LISTED_FUTURE_OPTION: "payoff is on the listed future's level, not the spot axis",
 };
 
 /** A vanilla call/put intrinsic at expiry. */

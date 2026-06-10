@@ -674,6 +674,61 @@ mod tests {
     }
 
     #[test]
+    fn round_trip_perpetual_and_listed_future_instruments() {
+        // The perpetual arm (oneof field 30) round-trips. A perpetual has no
+        // expiry, so the instrument carries `expiry_years: 0.0` (the shape
+        // `convert::validate_perpetual_terms` enforces) and no tenor label.
+        let perpetual = Instrument {
+            underlying: Some(sample_underlying()),
+            tenor: None,
+            expiry_years: 0.0,
+            quantity: Some(sample_quantity()),
+            side: Side::Buy as i32,
+            solve: None,
+            pricing_model: PricingModel::Default as i32,
+            settlement_style: SettlementStyle::Linear as i32,
+            product: Some(instrument::Product::PerpetualOption(PerpetualOption {
+                option_type: OptionType::Put as i32,
+                strike: 1.05,
+                notional: 10_000_000.0,
+            })),
+        };
+        round_trip(&perpetual);
+
+        // The listed-future-option arm (oneof field 31) round-trips with the
+        // future's own (longer) expiry and the futures-style margining tag.
+        // The underlying names the asset class; `future_symbol` the contract.
+        let future_option = Instrument {
+            underlying: Some(Underlying::commodity(CommodityRef::new(
+                Symbol::new("BRENT", ""),
+                "USD",
+            ))),
+            tenor: Some(sample_tenor()),
+            expiry_years: 0.5,
+            quantity: Some(sample_quantity()),
+            side: Side::Buy as i32,
+            solve: None,
+            pricing_model: PricingModel::Default as i32,
+            settlement_style: SettlementStyle::Linear as i32,
+            product: Some(instrument::Product::ListedFutureOption(
+                ListedFutureOption {
+                    future_symbol: Some(Symbol::new("BRN-DEC26", "IFEU")),
+                    future_expiry_years: 0.55,
+                    option_type: OptionType::Call as i32,
+                    strike: 85.0,
+                    notional: 1_000.0,
+                    margining: Margining::FuturesStyle as i32,
+                },
+            )),
+        };
+        round_trip(&future_option);
+
+        // Meaningful-zero: equity-style (upfront-premium) margining is the
+        // proto3 default (tag 0), like `SettlementStyle`'s LINEAR.
+        assert_eq!(Margining::EquityStyle as i32, 0);
+    }
+
+    #[test]
     fn round_trip_rfq_lifecycle() {
         let request = QuoteRequest {
             idempotency_key: "5f0c1b2e-2a4d-4f8a-9c1e-7b6a5d4c3b2a".to_owned(),

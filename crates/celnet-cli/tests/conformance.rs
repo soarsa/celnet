@@ -12,7 +12,10 @@
 //! Scope: the CLI's local-compute surface — `price` (vanilla), `exotic`
 //! (digital / one-touch / single-barrier / var-swap / vol-swap / asian /
 //! forward-start / quanto / cliquet / tarf / accumulator / lookback / american),
-//! `basket`, and the linear book `forward` / `swap` / `ndf`. Networked subcommands
+//! `basket`, the linear book `forward` / `swap` / `ndf`, and the new payoff
+//! shapes `perpetual` / `future-option` (which are additionally gated three-way
+//! against a live in-process edge below: CLI == server == golden, the corpus
+//! being the independent oracle for both legs). Networked subcommands
 //! are out of scope for the vector corpus: `risk` / `stream` are gated by the
 //! four-client parity test, and the `rfq` multi-dealer panel is gated below
 //! against an in-process multi-dealer edge (CLI ladder == SDK panel, bit for
@@ -30,7 +33,7 @@ const K_STDERR: f64 = 4.0;
 /// oneof arms (strategy, double-barrier, touch corridors, window-barrier) either
 /// have no single-flag CLI surface or are LSV-only; they are gated by the SDK
 /// conformance harness, which exercises every one of the 21 families.
-const CLI_FAMILIES: [&str; 12] = [
+const CLI_FAMILIES: [&str; 14] = [
     "vanilla",
     "digital",
     "touch", // only the single ONE_TOUCH (the CLI's `one-touch`)
@@ -43,6 +46,8 @@ const CLI_FAMILIES: [&str; 12] = [
     "fx_forward",
     "fx_swap",
     "ndf",
+    "perpetual_option",
+    "listed_future_option",
 ];
 
 fn bin() -> &'static str {
@@ -156,6 +161,33 @@ fn opt_token(v: &GoldenVector, key: &str) -> &'static str {
         "PUT" => "put",
         other => panic!("unknown option type `{other}`"),
     }
+}
+
+/// The CLI `--margining` value-enum token for a listed-future vector's premium
+/// margining convention (the vector string matches the wire enum member name;
+/// clap's value-enum spells it kebab-case).
+fn margining_token(v: &GoldenVector) -> &'static str {
+    match v.term_str("margining") {
+        "EQUITY_STYLE" => "equity-style",
+        "FUTURES_STYLE" => "futures-style",
+        other => panic!("unknown margining `{other}`"),
+    }
+}
+
+/// The nested `future_symbol` contract identity `(ticker, venue)` of a
+/// listed-future vector.
+fn future_symbol_of(v: &GoldenVector) -> (String, String) {
+    let sym = v
+        .terms
+        .get("future_symbol")
+        .unwrap_or_else(|| panic!("vector {} missing future_symbol", v.id));
+    let part = |key: &str| {
+        sym.get(key)
+            .and_then(|x| x.as_str())
+            .unwrap_or_else(|| panic!("vector {} future_symbol missing `{key}`", v.id))
+            .to_owned()
+    };
+    (part("ticker"), part("venue"))
 }
 
 /// Build the CLI argv for a vector, or `None` if this vector is not a CLI-covered
@@ -329,6 +361,56 @@ fn argv_for(v: &GoldenVector) -> Option<Vec<String>> {
             ]);
             Some(a)
         }
+        "perpetual_option" => {
+            // A perpetual is expiryless: the command takes no `--t` (the
+            // vector's `expiry_years` is the wire's canonical 0, never priced).
+            let m = &v.market;
+            Some(vec![
+                "perpetual".into(),
+                "--option".into(),
+                opt_token(v, "option_type").into(),
+                "--strike".into(),
+                s(v.term_f64("strike")),
+                "--spot".into(),
+                s(m.spot),
+                "--vol".into(),
+                s(m.vol),
+                "--r-dom".into(),
+                s(m.r_dom),
+                "--r-for".into(),
+                s(m.r_for),
+            ])
+        }
+        "listed_future_option" => {
+            // The vector's market `spot` IS the quoted futures price (the
+            // carry-bearing input); `r_dom` is the discount rate. The contract
+            // identity + the future's own expiry are booked terms.
+            let (ticker, venue) = future_symbol_of(v);
+            let m = &v.market;
+            Some(vec![
+                "future-option".into(),
+                "--option".into(),
+                opt_token(v, "option_type").into(),
+                "--future".into(),
+                s(m.spot),
+                "--strike".into(),
+                s(v.term_f64("strike")),
+                "--vol".into(),
+                s(m.vol),
+                "--t".into(),
+                s(v.term_f64("expiry_years")),
+                "--future-expiry".into(),
+                s(v.term_f64("future_expiry_years")),
+                "--r-dom".into(),
+                s(m.r_dom),
+                "--margining".into(),
+                margining_token(v).into(),
+                "--symbol".into(),
+                ticker,
+                "--venue".into(),
+                venue,
+            ])
+        }
         _ => None,
     }
 }
@@ -401,7 +483,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use celnet_client::{
-    Ccy, Client, Conventions, InstrumentSpec, MarketContext, Quantity, Side, StrikeSpec,
+    Ccy, Client, CommodityRef, Conventions, EquityRef, InstrumentSpec, ListedFutureTerms,
+    Margining, MarketContext, Quantity, Side, StrikeSpec, Symbol, Underlying,
 };
 use celnet_engine::testing::make_state;
 use celnet_server::{Clock, CoreLink, Edge, LpPanelConfig, SpreadModel};
@@ -542,6 +625,171 @@ async fn cli_cross_asset_vanilla_equals_server_equals_oracle() {
         assert!(
             (cli - server).abs() <= 1e-9,
             "{asset} CLI price {cli} vs server price {server}"
+        );
+    }
+
+    drop(client);
+    drop(edge);
+}
+
+// ---- New payoff shapes: CLI == server == golden corpus ----------------------
+//
+// Proto arms 30/31 — the perpetual (no-expiry) American vanilla and the option
+// on a listed future — are gated three-way: the frozen golden corpus is the
+// INDEPENDENT oracle (an expanding-bracket bisection re-derivation of the
+// perpetual characteristic root; a `libm::erf`-route Black-76 for the listed
+// future), and BOTH the real `celnet` binary's local compute (`perpetual` /
+// `future-option` commands) and the live in-process server (the typed SDK
+// instrument, the same wire arms the GUI/Excel speak) must land on it — and on
+// each other bit-for-bit: the CLI and the server run the identical leaf engines
+// on identical `f64` inputs, and the CLI prints shortest-round-trip, so the
+// parsed price reproduces the server's `f64` exactly.
+
+/// The premium margining convention a listed-future vector names.
+fn margining_of(v: &GoldenVector) -> Margining {
+    match v.term_str("margining") {
+        "EQUITY_STYLE" => Margining::EquityStyle,
+        "FUTURES_STYLE" => Margining::FuturesStyle,
+        other => panic!("unknown margining `{other}`"),
+    }
+}
+
+/// The asset-class underlying a listed-future vector names (mirrors the SDK
+/// conformance harness): `WTI` the NYMEX crude-oil class (a commodity), `ES`
+/// the CME E-mini S&P 500 class (an equity index). The underlying is contract
+/// identity for the listed-future arm — the quoted future already embodies the
+/// carry, so every asset class prices by the same closed form.
+fn listed_future_underlying(token: &str) -> Underlying {
+    match token {
+        "WTI" => Underlying::Commodity(CommodityRef::new(Symbol::new("WTI", "XNYM"), Ccy::USD)),
+        "ES" => Underlying::Equity(EquityRef::new(Symbol::new("ES", "XCME"), Ccy::USD)),
+        other => panic!("unknown listed-future underlying `{other}`"),
+    }
+}
+
+/// The trader-facing tenor label for a dated vector's `expiry_years` (mirrors
+/// the SDK conformance harness).
+fn tenor_of(t: f64) -> Tenor {
+    let months = (t * 12.0).round() as i64;
+    if months % 12 == 0 && months > 0 {
+        Tenor::Years(u16::try_from(months / 12).expect("tenor years fit"))
+    } else {
+        Tenor::Months(u16::try_from(months.max(1)).expect("tenor months fit"))
+    }
+}
+
+/// The typed SDK instrument for a new-payoff-shape vector — built exactly as
+/// the SDK conformance harness builds it, so this gate prices the same wire
+/// arms 30/31 the other clients speak.
+fn new_payoff_spec_of(v: &GoldenVector) -> InstrumentSpec {
+    let qty = Quantity::base(1.0);
+    let side = Side::TwoWay;
+    let option = match v.term_str("option_type") {
+        "CALL" => OptionType::Call,
+        "PUT" => OptionType::Put,
+        other => panic!("unknown option type `{other}`"),
+    };
+    match v.family.as_str() {
+        "perpetual_option" => InstrumentSpec::perpetual(
+            CcyPair::parse(&v.underlying).expect("perpetual vectors are FX-pair-keyed"),
+            qty,
+            side,
+            option,
+            v.term_f64("strike"),
+        ),
+        "listed_future_option" => {
+            let (ticker, venue) = future_symbol_of(v);
+            let t = v.term_f64("expiry_years");
+            let terms = ListedFutureTerms::new(
+                Symbol::new(ticker, venue),
+                v.term_f64("future_expiry_years"),
+                option,
+                v.term_f64("strike"),
+            )
+            .margining(margining_of(v));
+            InstrumentSpec::listed_future_option(
+                listed_future_underlying(&v.underlying),
+                tenor_of(t),
+                t,
+                qty,
+                side,
+                terms,
+            )
+        }
+        other => panic!("not a new-payoff-shape family: `{other}`"),
+    }
+}
+
+#[tokio::test]
+async fn cli_new_payoff_shapes_equal_server_equal_golden() {
+    let vectors = load_vectors().expect("golden corpus loads");
+    let subset: Vec<&GoldenVector> = vectors
+        .iter()
+        .filter(|v| {
+            matches!(
+                v.family.as_str(),
+                "perpetual_option" | "listed_future_option"
+            )
+        })
+        .collect();
+    // Both families must be present and exercised (5 perpetual + 4 listed).
+    for fam in ["perpetual_option", "listed_future_option"] {
+        assert!(
+            subset.iter().any(|v| v.family == fam),
+            "the corpus carries no `{fam}` vectors"
+        );
+    }
+
+    let (edge, addr) = start_ready_edge().await;
+    let client = Client::connect(format!("http://{addr}"))
+        .await
+        .expect("SDK connects to the edge");
+    let conv = Conventions::major_default();
+
+    for v in &subset {
+        // (1) The real CLI binary's local-compute price (blocking child-process
+        // wait on a blocking thread — never on the reactor serving the edge).
+        let argv = argv_for(v).expect("both new payoff shapes are CLI-covered");
+        let stdout = tokio::task::spawn_blocking(move || run(&argv))
+            .await
+            .expect("CLI run completes");
+        let cli = cli_price(&stdout);
+        // CLI == golden (the independent oracle, within the vector's band).
+        assert_cli(v, cli);
+
+        // (2) The SAME instrument priced through the typed SDK against the real
+        // server, under the vector's own market context.
+        let spec = new_payoff_spec_of(v);
+        let market = MarketContext {
+            spot: v.market.spot,
+            vol: v.market.vol,
+            r_dom: v.market.r_dom,
+            r_for: v.market.r_for,
+        };
+        let server =
+            tokio::time::timeout(Duration::from_secs(30), client.price(&spec, market, conv))
+                .await
+                .unwrap_or_else(|_| panic!("server price for {} timed out", v.id))
+                .unwrap_or_else(|e| panic!("server price for {} failed: {e:?}", v.id))
+                .greeks
+                .price;
+        // Server == golden (the same independent oracle, the same band).
+        let want = v.expected.price;
+        let scale = server.abs().max(want.abs());
+        assert!(
+            (server - want).abs() <= v.tolerance.abs + v.tolerance.rel * scale,
+            "server vector {} : price {server} vs oracle {want} (rel {}, abs {})",
+            v.id,
+            v.tolerance.rel,
+            v.tolerance.abs
+        );
+        // CLI == server bit-for-bit: identical leaf engines on identical f64
+        // inputs, and the CLI's shortest-round-trip printing loses nothing.
+        assert_eq!(
+            cli.to_bits(),
+            server.to_bits(),
+            "{}: CLI price {cli} != server price {server} bit-for-bit",
+            v.id
         );
     }
 

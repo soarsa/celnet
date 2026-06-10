@@ -43,7 +43,15 @@ describe("product registry (GW2)", () => {
     for (const spec of PRODUCT_REGISTRY) {
       const inst = spec.toInstrument(spec.defaults, CTX);
       // Tenor stamped (buildInstrument tail); DEFAULT model presence-omitted.
-      expect(inst.tenor).toEqual(CTX.tenor);
+      // A declared no-expiry family (the perpetual — the one tenorless product)
+      // instead books the contract's canonical no-expiry shape: no tenor label
+      // exists and the expiry is the exact proto3 zero the server requires.
+      if (spec.noExpiry) {
+        expect(inst.tenor).toBeUndefined();
+        expect(inst.expiryYears).toBe(0);
+      } else {
+        expect(inst.tenor).toEqual(CTX.tenor);
+      }
       if (spec.allowedModels.length === 1 && spec.allowedModels[0] === "DEFAULT") {
         expect(inst.pricingModel).toBeUndefined();
       }

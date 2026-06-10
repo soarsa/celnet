@@ -22,8 +22,10 @@ import type {
   FxForward,
   Instrument,
   Leg,
+  ListedFutureOption,
   Lookback,
   Ndf,
+  PerpetualOption,
   Product,
   Quanto,
   SingleBarrier,
@@ -351,6 +353,30 @@ function ndfFromWire(o: WireObject): Ndf {
   };
 }
 
+/** Decode a perpetual (no-expiry) American option body — proto field 30. */
+function perpetualOptionFromWire(o: WireObject): PerpetualOption {
+  return {
+    optionType: e.optionType.fromWire(enumOrZero(o, "option_type")),
+    strike: reqNum(o, "strike", "perpetual_option"),
+    // A proto3 scalar (absent ⇒ 0) — mirrors the server's `f64_or_zero`.
+    notional: optNumOrZero(o, "notional"),
+  };
+}
+
+/** Decode an option on a listed future — proto field 31. */
+function listedFutureOptionFromWire(o: WireObject): ListedFutureOption {
+  const where = "listed_future_option";
+  const sym = child(o, "future_symbol", where);
+  return {
+    futureSymbol: { ticker: reqStr(sym, "ticker", where), venue: reqStr(sym, "venue", where) },
+    futureExpiryYears: reqNum(o, "future_expiry_years", where),
+    optionType: e.optionType.fromWire(enumOrZero(o, "option_type")),
+    strike: reqNum(o, "strike", where),
+    notional: optNumOrZero(o, "notional"),
+    margining: e.margining.fromWire(enumOrZero(o, "margining")),
+  };
+}
+
 /** Decode the cross-asset `underlying` oneof — the inverse of `underlyingToWire`. */
 export function underlyingFromWire(o: WireObject): Underlying {
   const where = "underlying";
@@ -463,21 +489,29 @@ const PRODUCT_DECODERS: ReadonlyArray<readonly [string, (o: WireObject) => Produ
     }),
   ],
   ["ndf", (o) => ({ kind: "ndf", ndf: ndfFromWire(o) })],
+  [
+    "perpetual_option",
+    (o) => ({ kind: "perpetualOption", perpetualOption: perpetualOptionFromWire(o) }),
+  ],
+  [
+    "listed_future_option",
+    (o) => ({ kind: "listedFutureOption", listedFutureOption: listedFutureOptionFromWire(o) }),
+  ],
 ];
 
 /**
  * Decode a WS-mirror instrument frame to the typed `Instrument` — the exact
  * inverse of `instrumentToWire`, with the server's presence semantics: an absent
  * `underlying` is the FX projection, an absent `settlement_style` is LINEAR, an
- * absent `pricing_model` is DEFAULT (all three stay ABSENT on the typed shape so
- * re-encoding omits them identically — `instrumentToWire(instrumentFromWire(f))`
- * reproduces `f` byte-for-byte under the canonical serialization). Exactly one
- * product arm must be present; anything else is rejected loudly.
+ * absent `pricing_model` is DEFAULT, and an absent `tenor` is the tenorless
+ * perpetual shape (all four stay ABSENT on the typed shape so re-encoding omits
+ * them identically — `instrumentToWire(instrumentFromWire(f))` reproduces `f`
+ * byte-for-byte under the canonical serialization). Exactly one product arm must
+ * be present; anything else is rejected loudly.
  */
 export function instrumentFromWire(o: WireObject): Instrument {
   const where = "instrument";
   const pair: CcyPair = ccyPairFromWire(child(o, "pair", where));
-  const tenorWire = child(o, "tenor", where);
   const present = PRODUCT_DECODERS.filter(([key]) => o[key] !== undefined);
   if (present.length !== 1) {
     const arms = present.map(([key]) => key).join(", ") || "(none)";
@@ -486,10 +520,6 @@ export function instrumentFromWire(o: WireObject): Instrument {
   const [armKey, decode] = present[0] as readonly [string, (w: WireObject) => Product];
   const instrument: Instrument = {
     pair,
-    tenor: {
-      unit: e.tenorUnit.fromWire(enumOrZero(tenorWire, "unit")),
-      count: reqNum(tenorWire, "count", where),
-    },
     expiryYears: reqNum(o, "expiry_years", where),
     quantity: {
       notional: reqNum(child(o, "quantity", where), "notional", where),
@@ -498,6 +528,16 @@ export function instrumentFromWire(o: WireObject): Instrument {
     side: e.side.fromWire(enumOrZero(o, "side")),
     product: decode(child(o, armKey, where)),
   };
+  // The tenor label is presence-tracked (a proto message field): an absent key
+  // stays absent on the typed shape (the tenorless perpetual arm), so re-encoding
+  // omits it identically; when present it decodes strictly.
+  if (o["tenor"] !== undefined) {
+    const tenorWire = child(o, "tenor", where);
+    instrument.tenor = {
+      unit: e.tenorUnit.fromWire(enumOrZero(tenorWire, "unit")),
+      count: reqNum(tenorWire, "count", where),
+    };
+  }
   if (o["underlying"] !== undefined) {
     instrument.underlying = underlyingFromWire(child(o, "underlying", where));
   }
