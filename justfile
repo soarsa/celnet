@@ -256,8 +256,17 @@ mutants-gate-risk-cube:
 mutants-gate-xva:
     timeout 1800 {{_cargo}} mutants -p celnet-xva --config .config/mutants-xva.toml
 
-# All numerics mutation gates in sequence (vanilla + the four widened crates).
-mutants-gate-numerics: mutants-gate-vanilla mutants-gate-surface mutants-gate-exotics mutants-gate-risk-cube mutants-gate-xva
+# Mutation GATE on the low-discrepancy sequence crate (zero non-equivalent survivors).
+# `--minimum-test-timeout=240`: the auto-set 20s floor misclassifies mutants as
+# timeouts when macOS stalls the first launch of freshly linked test binaries
+# under build churn (the suite itself runs in ~1s; the crate has no
+# value-dependent loops that could genuinely hang).
+mutants-gate-qmc:
+    timeout 3600 {{_cargo}} mutants -p celnet-qmc --test-tool=cargo --jobs 3 \
+        --minimum-test-timeout=240 --config .config/mutants-qmc.toml
+
+# All numerics mutation gates in sequence (vanilla + the five widened crates).
+mutants-gate-numerics: mutants-gate-vanilla mutants-gate-surface mutants-gate-exotics mutants-gate-risk-cube mutants-gate-xva mutants-gate-qmc
     @echo "All numerics mutation gates passed."
 
 # ---------------------------------------------------------------------------

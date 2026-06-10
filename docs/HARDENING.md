@@ -143,10 +143,11 @@ audited config and a CI matrix leg:
 | `celnet-exotics`   | `.config/mutants-exotics.toml`   | `just mutants-gate-exotics`   | `mutation-gate-numerics` (matrix leg) | wired; baseline CI-run |
 | `celnet-risk-cube` | `.config/mutants-risk-cube.toml` | `just mutants-gate-risk-cube` | `mutation-gate-numerics` (matrix leg) | wired; baseline CI-run |
 | `celnet-xva`       | `.config/mutants-xva.toml`       | `just mutants-gate-xva`       | `mutation-gate-numerics` (matrix leg) | wired; baseline CI-run |
+| `celnet-qmc`       | `.config/mutants-qmc.toml`       | `just mutants-gate-qmc`       | `mutation-gate-numerics` (matrix leg) | **MEASURED green locally** (W6 — see below) |
 
 Each config exits non-zero on ANY non-equivalent survivor, exactly like the
 vanilla gate, so a future edit that weakens any of these suites below the kill
-bar fails the build. `just mutants-gate-numerics` runs all five in sequence.
+bar fails the build. `just mutants-gate-numerics` runs all six in sequence.
 
 **Honesty note on scope.** cargo-mutants is slow (the vanilla crate alone is ~8
 minutes for 469 mutants; `celnet-surface` is ~2 300 mutants and the exotics
@@ -205,6 +206,60 @@ clusters before it was scoped:
   justification) in `.config/mutants-surface.toml`, the locally-proven slice is
   `arbitrage.rs` and the config's `exclude_re` is deliberately **empty** (no
   survivor is hidden behind an unjustified exclusion).
+
+#### `celnet-qmc` — measured baseline (W6 analytics-rigor wave, crate-wide green)
+
+The quasi-Monte-Carlo crate (gray-code Joe-Kuo Sobol + Owen-style nested
+scramble + Brownian bridge + inverse-normal CDF + RQMC estimator) feeds
+exotics, xva, the GPU path and parity, but had only 10 thin in-module tests.
+Per the W6 plan (`docs/plan/W6-ANALYTICS-RIGOR-PLAN.md` §3.1) the gap was
+closed **pre-kill-first**: `tests/sequence_oracle.rs` pins every module
+against an independent oracle *before* the expensive run — exact dyadic
+radical-inverse rationals (`to_bits`), an in-test `m_k`-domain re-derivation
+of the direction-number recurrence fed with rows typed from the published
+Joe-Kuo data file, published normal quantiles + a code-disjoint
+`½·erfc(−x/√2)` round-trip (libm dev-dep), the exact bridge covariance
+`L·Lᵀ = min(t_i,t_j)` + the hand-derived m=3 weight matrix, closed-form
+monomial integrals through the full pipeline, an independent plain-loop
+std-error re-derivation that simultaneously pins the per-replication seed
+derivation, and frozen-bits rows (the fx_byte_identity house pattern) for the
+hash/scramble internals that any distributional property tolerates. In-module
+additions pin the nested-permutation prefix law and top-byte bijectivity of
+the Owen scramble.
+
+- **Raw crate-wide run** (no exclusions, aarch64-apple-darwin, cargo-mutants
+  27.0.0, toolchain 1.96.0): **`359 mutants tested in 16m: 7 missed, 295
+  caught, 2 unviable, 55 timeouts`**. Dispositions of the 7 raw survivors
+  (full inline detail in `.config/mutants-qmc.toml`): 1 KILLED
+  (`bisect` floor-midpoint pivot — covariance-invariant but
+  plan-observable; pinned by the hand-derived m=3 weight matrix), 3 KILLED
+  (`inv_norm_cdf` Halley-polish internals — sub-ULP centrally, ≥1 ULP at
+  extreme tails; pinned by a frozen-bits ladder incl. the subnormal floor),
+  1 ELIMINATED structurally (`point_u32` early-exit guard observable only as
+  an OOB panic past the 2^32 period; loop made structurally total and the
+  period documented), 2 EXCLUDED as provably equivalent (domain-guard
+  short-circuit whose divergent path still NaNs through `ln(negative)`; OR vs
+  XOR on disjoint bits) — each hand-reproduced: **full suite green with the
+  mutant applied**.
+- **Canonical gate run** (clean slate, `.config/mutants-qmc.toml`,
+  `--test-tool=cargo --jobs 2 --minimum-test-timeout=240`,
+  `RUSTC_WRAPPER=""`): **`350 mutants tested in 9m: 348 caught, 2 unviable`**
+  — **zero missed, zero timeouts, real exit 0**. The enforceable bar
+  (`just mutants-gate-qmc`, CI matrix leg) is **zero non-equivalent
+  survivors** with both exclusions line-anchored and justified inline.
+- **Environment lessons** (recorded for the other W6 crate gates): (a) the
+  raw run's 55 timeout-class results were artifacts — macOS stalls the first
+  launch of freshly linked test binaries under build churn, tripping the
+  auto-set 20s floor (the suite runs in ~1s and the crate has no
+  value-dependent loop that could hang); the 240s floor reclassifies all of
+  them as caught. (b) One run wedged indefinitely on a stalled
+  `sccache`-wrapped rustc (cargo-mutants sets no build timeout) —
+  `RUSTC_WRAPPER=""` de-wedges and is also ~2× faster per mutant. (c) A
+  line-anchored exclusion silently stopped matching when an unrelated
+  refactor in the same file shifted its line (242→241); the survivor
+  reappeared as MISSED on the next run — the gate caught its own stale
+  anchor, but after ANY edit to a gated file, re-verify the `exclude_re`
+  line anchors.
 
 ### Infra-crate mutation gate — `celnet-fanout` (W6, MEASURED green locally)
 
