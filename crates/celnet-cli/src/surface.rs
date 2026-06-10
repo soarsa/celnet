@@ -94,7 +94,15 @@ pub(crate) fn run(req: SurfaceRequest) -> Result<SurfaceResult, CalibrationError
     assert!(req.lo > 0.0, "strike band lower bound must be positive");
 
     let conv = celnet_conventions::resolve(req.pair, req.tenor).record;
-    let ctx = MarketContext::new(req.spot, req.r_dom, req.r_for, req.t, conv);
+    let ctx = MarketContext::new(
+        req.spot,
+        celnet_types::Carry::FxRates {
+            r_dom: req.r_dom,
+            r_for: req.r_for,
+        },
+        req.t,
+        conv,
+    );
     let quotes = MarketQuotes::three_point(req.atm_vol, req.rr_25, req.bf_25);
     let smile = build_smile(&ctx, &quotes)?;
 

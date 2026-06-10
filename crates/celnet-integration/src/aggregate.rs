@@ -252,8 +252,12 @@ pub fn blend(slices: &[NormalizedSlice], cfg: BlendConfig) -> Result<BlendedSlic
         rr25 += fw * q.inner.risk_reversal;
         bf25 += fw * q.inner.butterfly;
         spot += fw * s.context.spot;
-        r_dom += fw * s.context.r_dom;
-        r_for += fw * s.context.r_for;
+        // FX carry rates read verbatim through the seam accessors (`yield_rate`
+        // returns the STORED `r_for` — never a `r_dom − b` reconstruction), so
+        // the blend over `Carry::FxRates` slices is byte-identical to the
+        // former two-rate field reads.
+        r_dom += fw * s.context.carry.discount_rate();
+        r_for += fw * s.context.carry.yield_rate();
         t += fw * s.context.t;
         if let Some(o) = q.outer {
             let (rr, bf, wsum) = outer_acc.get_or_insert((0.0, 0.0, 0.0));
@@ -283,7 +287,12 @@ pub fn blend(slices: &[NormalizedSlice], cfg: BlendConfig) -> Result<BlendedSlic
 
     // The blended context reuses the resolved conventions (identical across
     // same-slice sources) and the staleness-weighted market state.
-    let context = MarketContext::new(spot, r_dom, r_for, t, first.context.conventions);
+    let context = MarketContext::new(
+        spot,
+        celnet_types::Carry::FxRates { r_dom, r_for },
+        t,
+        first.context.conventions,
+    );
 
     let contributing = weights.iter().filter(|w| !w.excluded).count();
 

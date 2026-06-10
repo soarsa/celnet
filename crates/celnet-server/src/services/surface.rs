@@ -161,10 +161,15 @@ fn calibrate(
     model: SmileModel,
 ) -> Result<CalibratedSmile, Status> {
     let record = convention_record(conv);
+    // The wire context already carries the generalized carry model; the FX
+    // projection reads `discount_rate` (= r_dom) and the FX carry arm's `r_for`
+    // verbatim, so the typed `Carry::FxRates` reproduces the exact wire bits.
     let ctx = SurfaceContext::new(
         market.spot,
-        market.r_dom(),
-        market.r_for(),
+        celnet_types::Carry::FxRates {
+            r_dom: market.r_dom(),
+            r_for: market.r_for(),
+        },
         broker.tenor_years,
         record,
     );
@@ -253,7 +258,15 @@ fn smile_to_wire(
     let forward = smile.forward();
     let t = broker.tenor_years;
     let record = convention_record(conv);
-    let ctx = SurfaceContext::new(market.spot, market.r_dom(), market.r_for(), t, record);
+    let ctx = SurfaceContext::new(
+        market.spot,
+        celnet_types::Carry::FxRates {
+            r_dom: market.r_dom(),
+            r_for: market.r_for(),
+        },
+        t,
+        record,
+    );
 
     // Map each report delta to its strike (via the convention inversion) and read
     // the calibrated vol there.

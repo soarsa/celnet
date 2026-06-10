@@ -22,17 +22,18 @@
 //!    ([`celnet_conventions::vol_year_fraction`]), anchored at the feed's
 //!    observation date, not a nominal `months × 30 / 365` approximation.
 //!
-//! The two rates carried by [`celnet_surface::MarketContext`] are reconstructed
-//! so the slice's outright forward is reproduced **exactly**: given a domestic
-//! (numeraire) discount rate from the curve layer, the foreign rate is implied
-//! from `F = S·e^{(r_dom − r_for)·t}` ⇒ `r_for = r_dom − ln(F/S)/t`. The feed's
+//! The FX two-rate carry ([`celnet_types::Carry::FxRates`]) handed to
+//! [`celnet_surface::MarketContext`] is reconstructed so the slice's outright
+//! forward is reproduced **exactly**: given a domestic (numeraire) discount rate
+//! from the curve layer, the foreign rate is implied from
+//! `F = S·e^{(r_dom − r_for)·t}` ⇒ `r_for = r_dom − ln(F/S)/t`. The feed's
 //! forward is therefore honoured to machine precision regardless of the rate the
 //! curve layer supplies, which is what the surface construction consumes.
 
 use celnet_conventions::{resolve, vol_year_fraction};
 use celnet_core::math::ln;
 use celnet_surface::{MarketContext, MarketQuotes};
-use celnet_types::{AtmConvention, CcyPair, DeltaConvention, Tenor};
+use celnet_types::{AtmConvention, Carry, CcyPair, DeltaConvention, Tenor};
 use time::{Date, OffsetDateTime};
 
 use crate::vendor::{VendorSmileMessage, WireWing};
@@ -388,7 +389,7 @@ pub fn normalize(msg: &VendorSmileMessage, r_dom: f64) -> Result<NormalizedSlice
         None => MarketQuotes::three_point(atm_vol, rr25, bf25),
     };
 
-    let context = MarketContext::new(spot, r_dom, r_for, t, resolved);
+    let context = MarketContext::new(spot, Carry::FxRates { r_dom, r_for }, t, resolved);
 
     Ok(NormalizedSlice {
         pair,
@@ -472,8 +473,8 @@ mod tests {
         // Forward reproduced exactly through the implied foreign rate.
         let f_expected = 1.10 + 110.0 / 10_000.0;
         assert!(is_close(slice.context.forward(), f_expected, 1e-12, 1e-13));
-        // Domestic rate preserved.
-        assert_close!(slice.context.r_dom, 0.02);
+        // Domestic rate preserved (the FX carry's discount rate, read verbatim).
+        assert_close!(slice.context.carry.discount_rate(), 0.02);
     }
 
     #[test]

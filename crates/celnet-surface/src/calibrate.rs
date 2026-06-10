@@ -832,11 +832,15 @@ mod tests {
     use super::*;
     use celnet_conventions::resolve;
     use celnet_core::is_close;
-    use celnet_types::{CcyPair, Tenor};
+    use celnet_types::{Carry, CcyPair, Tenor};
 
     fn ctx(spot: f64, t: f64) -> MarketContext {
         let conv = resolve(CcyPair::parse("EURUSD").unwrap(), Tenor::Years(1)).record;
-        MarketContext::new(spot, 0.02, 0.01, t, conv)
+        let carry = Carry::FxRates {
+            r_dom: 0.02,
+            r_for: 0.01,
+        };
+        MarketContext::new(spot, carry, t, conv)
     }
 
     /// The ATM-forward vol is reproduced by every model (each fit pins or matches

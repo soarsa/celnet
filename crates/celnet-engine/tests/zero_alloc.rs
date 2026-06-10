@@ -125,7 +125,15 @@ static GLOBAL: CountingAlloc = CountingAlloc;
 fn build_core() -> PricingCore {
     let conv =
         celnet_conventions::resolve(CcyPair::parse("EURUSD").unwrap(), Tenor::Years(1)).record;
-    let ctx = MarketContext::new(1.10, 0.02, 0.01, 1.0, conv);
+    let ctx = MarketContext::new(
+        1.10,
+        celnet_types::Carry::FxRates {
+            r_dom: 0.02,
+            r_for: 0.01,
+        },
+        1.0,
+        conv,
+    );
     let q = MarketQuotes::three_point(0.105, 0.015, 0.0035);
     let smile = build_smile(&ctx, &q).expect("calibration converges");
     let state = celnet_engine::rt::MarketState {
@@ -217,7 +225,15 @@ fn hot_pricing_under_concurrent_publish_allocates_zero() {
     let states: Vec<celnet_engine::rt::MarketState> = (0..16)
         .map(|i| {
             let spot = 1.05 + 0.01 * f64::from(i);
-            let ctx = MarketContext::new(spot, 0.02, 0.01, 1.0, conv);
+            let ctx = MarketContext::new(
+                spot,
+                celnet_types::Carry::FxRates {
+                    r_dom: 0.02,
+                    r_for: 0.01,
+                },
+                1.0,
+                conv,
+            );
             let q = MarketQuotes::three_point(0.105, 0.015, 0.0035);
             let smile = build_smile(&ctx, &q).expect("calibration converges");
             celnet_engine::rt::MarketState {
@@ -346,7 +362,15 @@ fn hot_pricing_under_concurrent_publish_allocates_zero() {
 fn pricing_a_journalled_book_allocates_zero() {
     let conv =
         celnet_conventions::resolve(CcyPair::parse("EURUSD").unwrap(), Tenor::Years(1)).record;
-    let ctx = MarketContext::new(1.10, 0.02, 0.01, 1.0, conv);
+    let ctx = MarketContext::new(
+        1.10,
+        celnet_types::Carry::FxRates {
+            r_dom: 0.02,
+            r_for: 0.01,
+        },
+        1.0,
+        conv,
+    );
     let q = MarketQuotes::three_point(0.105, 0.015, 0.0035);
     let smile = build_smile(&ctx, &q).expect("calibration converges");
     let market = celnet_engine::rt::MarketState {

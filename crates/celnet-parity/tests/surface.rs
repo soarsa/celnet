@@ -29,7 +29,15 @@ use proptest::prelude::*;
 /// A 1Y EURUSD-style context for the broker→VV smile under test.
 fn eurusd_1y() -> MarketContext {
     let conv = resolve(CcyPair::parse("EURUSD").unwrap(), Tenor::Years(1)).record;
-    MarketContext::new(1.10, 0.02, 0.01, 1.0, conv)
+    MarketContext::new(
+        1.10,
+        celnet_types::Carry::FxRates {
+            r_dom: 0.02,
+            r_for: 0.01,
+        },
+        1.0,
+        conv,
+    )
 }
 
 /// A log-spaced strike grid straddling the forward for the static checks.

@@ -542,7 +542,12 @@ impl RebuildFixture {
             .into_iter()
             .map(|tq| {
                 let record = resolve(pair, tq.tenor).record;
-                let ctx = MarketContext::new(spot, r_dom, r_for, tq.t, record);
+                let ctx = MarketContext::new(
+                    spot,
+                    celnet_types::Carry::FxRates { r_dom, r_for },
+                    tq.t,
+                    record,
+                );
                 (ctx, tq.quotes)
             })
             .collect();

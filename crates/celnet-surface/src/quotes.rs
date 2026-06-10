@@ -20,7 +20,7 @@
 
 use celnet_conventions::ConventionRecord;
 use celnet_core::math::sqrt;
-use celnet_types::{AtmConvention, DeltaConvention, OptionType, VanillaInputs};
+use celnet_types::{AtmConvention, Carry, DeltaConvention, OptionType, VanillaInputs};
 use celnet_vanilla::{atm_strike, strike_from_delta};
 
 /// A delta pillar at which a risk-reversal / butterfly pair is quoted.
@@ -137,21 +137,26 @@ impl MarketQuotes {
 }
 
 /// The convention-aware market context for one smile slice: the diffusion state
-/// (spot, the two rates, vol-time) and the resolved FX conventions.
+/// (spot, the cost-of-carry model, vol-time) and the resolved FX conventions.
 ///
 /// This is the single object the calibration ([`crate::strangle`]) and the smile
 /// model ([`crate::market_hedge`]) consult to turn a delta pillar into a strike and
 /// to price a benchmark option. It owns no quotes — those live in
 /// [`MarketQuotes`] — only the *market state* and *conventions* that determine
 /// the delta↔strike map.
+///
+/// The forward and discounting are parameterized by [`Carry`] (ADR-0008): an FX
+/// slice carries [`Carry::FxRates`] and reproduces the FX two-rate arithmetic
+/// **bit-for-bit** ([`Self::forward`] and [`Self::template`] read the stored
+/// `r_dom`/`r_for` verbatim through the seam accessors); a non-FX slice carries
+/// [`Carry::CostOfCarry`] and lowers through the generalized `(r, q = r − b)`
+/// form.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MarketContext {
-    /// Spot FX rate (quote per 1 unit of base).
+    /// Spot price of the underlying (quote per 1 unit of base, for FX).
     pub spot: f64,
-    /// Continuously-compounded domestic (quote) rate.
-    pub r_dom: f64,
-    /// Continuously-compounded foreign (base) rate.
-    pub r_for: f64,
+    /// The cost-of-carry model behind the slice's forward and discounting.
+    pub carry: Carry,
     /// Vol-time to expiry in years.
     pub t: f64,
     /// Resolved FX conventions for this `(pair, tenor)` (delta + ATM styles).
@@ -161,11 +166,10 @@ pub struct MarketContext {
 impl MarketContext {
     /// Construct a context from market state and resolved conventions.
     #[must_use]
-    pub fn new(spot: f64, r_dom: f64, r_for: f64, t: f64, conventions: ConventionRecord) -> Self {
+    pub fn new(spot: f64, carry: Carry, t: f64, conventions: ConventionRecord) -> Self {
         Self {
             spot,
-            r_dom,
-            r_for,
+            carry,
             t,
             conventions,
         }
@@ -183,10 +187,14 @@ impl MarketContext {
         self.conventions.atm
     }
 
-    /// Outright forward `F = S·e^{(r_dom−r_for)·t}`.
+    /// Outright forward `F = S·e^{b·t}`, delegated to [`Carry::forward_factor`].
+    ///
+    /// For an FX [`Carry::FxRates`] carry this is `S·e^{(r_dom−r_for)·t}` with
+    /// the identical IEEE-754 op sequence as [`VanillaInputs::forward`] —
+    /// byte-identical to the pre-seam FX form.
     #[must_use]
     pub fn forward(&self) -> f64 {
-        self.template(self.spot, 0.0).forward()
+        self.spot * self.carry.forward_factor(self.t)
     }
 
     /// Total ATM variance `σ_ATM²·t` — the natural calendar coordinate.
@@ -197,9 +205,29 @@ impl MarketContext {
 
     /// A [`VanillaInputs`] template carrying this context's market state at a
     /// given `strike` and `vol`. The pricing/delta layers consume it directly.
+    ///
+    /// Lowers the [`Carry`] through the sanctioned seam accessors — the rate
+    /// pair is `(discount_rate, yield_rate)`, exactly the field copy
+    /// `celnet_core::fx_vanilla_inputs` performs for the FX arm:
+    ///
+    /// * [`Carry::FxRates`] reads the **stored** `r_dom`/`r_for` **verbatim**
+    ///   ([`Carry::discount_rate`] / [`Carry::yield_rate`] — never the
+    ///   `r_dom − b` reconstruction, which would not round-trip bit-for-bit),
+    ///   so the emitted [`VanillaInputs`] is byte-identical to the pre-seam FX
+    ///   form;
+    /// * [`Carry::CostOfCarry`] lowers to the generalized `(r, q = r − b)`
+    ///   discount/yield form — the standard generalized-Black-Scholes-Merton
+    ///   parameterization the vanilla leaf prices under.
     #[must_use]
     pub fn template(&self, strike: f64, vol: f64) -> VanillaInputs {
-        VanillaInputs::new(self.spot, strike, vol, self.t, self.r_dom, self.r_for)
+        VanillaInputs::new(
+            self.spot,
+            strike,
+            vol,
+            self.t,
+            self.carry.discount_rate(),
+            self.carry.yield_rate(),
+        )
     }
 
     /// The ATM strike for the configured ATM/delta conventions at `atm_vol`.
@@ -254,7 +282,11 @@ mod tests {
     fn eurusd_1y_ctx(spot: f64, atm: f64) -> MarketContext {
         let conv = resolve(CcyPair::parse("EURUSD").unwrap(), Tenor::Years(1)).record;
         let _ = atm;
-        MarketContext::new(spot, 0.02, 0.01, 1.0, conv)
+        let carry = Carry::FxRates {
+            r_dom: 0.02,
+            r_for: 0.01,
+        };
+        MarketContext::new(spot, carry, 1.0, conv)
     }
 
     #[test]
@@ -302,6 +334,47 @@ mod tests {
         assert!(kp25 < f && f < kc25, "25Δ strikes straddle forward");
         assert!(kc10 > kc25, "10Δ call beyond 25Δ call");
         assert!(kp10 < kp25, "10Δ put beyond 25Δ put");
+    }
+
+    /// FX byte-identity (ADR-0008 Wave S): a [`Carry::FxRates`] context's
+    /// `forward()` and `template()` reproduce the legacy two-rate FX forms
+    /// **bit-for-bit** across a rate/tenor grid — `to_bits` equality, not
+    /// epsilon. The legacy oracle is [`VanillaInputs`] built directly from the
+    /// same `(r_dom, r_for)` scalars, exactly as the pre-seam struct did.
+    #[test]
+    fn fx_carry_context_is_byte_identical_to_two_rate_form() {
+        let conv = resolve(CcyPair::parse("EURUSD").unwrap(), Tenor::Years(1)).record;
+        let spot = 1.1037;
+        let strike = 1.1525;
+        let vol = 0.1042;
+        for r_dom in [-0.012, 0.0, 0.0223, 0.0525] {
+            for r_for in [-0.0075, 0.0, 0.0149, 0.0481] {
+                for t in [0.0192, 0.25, 1.0, 5.0] {
+                    let ctx = MarketContext::new(spot, Carry::FxRates { r_dom, r_for }, t, conv);
+                    let legacy = VanillaInputs::new(spot, strike, vol, t, r_dom, r_for);
+                    assert_eq!(
+                        ctx.forward().to_bits(),
+                        legacy.forward().to_bits(),
+                        "forward drifted at r_dom={r_dom} r_for={r_for} t={t}"
+                    );
+                    let lowered = ctx.template(strike, vol);
+                    assert_eq!(
+                        lowered.r_dom.to_bits(),
+                        r_dom.to_bits(),
+                        "r_dom not verbatim"
+                    );
+                    assert_eq!(
+                        lowered.r_for.to_bits(),
+                        r_for.to_bits(),
+                        "r_for not verbatim"
+                    );
+                    assert_eq!(
+                        lowered, legacy,
+                        "template drifted at r_dom={r_dom} r_for={r_for} t={t}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
