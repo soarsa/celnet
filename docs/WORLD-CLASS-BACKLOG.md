@@ -147,10 +147,8 @@ Status legend: OPEN / IN-PROGRESS / DONE / ENV (deploy-bound, not a gap). Each i
   adapters), ranking best bid/offer, audited panel. Oracle: in-repo loopback ≥3 synthetic LP
   responders (best-price selection, tie-break, timeout/last-look; `lp_count`/`lp_won`
   consistency). Parity: GUI/CLI/SDK see identical ranked panel. Live LP conn + MAS-RMO = ENV.
-  Effort XL. **DONE (engine+proto+server)** (`6b00940` MultiDealerEngine + loopback FIX;
-  `1484fb0` `RequestMultiDealerQuote` RPC + `AcceptQuote(quote_id,lp_id)` wired to the live
-  pricer). **The client ranked-panel surfacing split out → `clients/rfq-panel-surfacing` OPEN
-  below** (no client renders the panel yet — verified by grep 2026-06-10).
+  Effort XL. **DONE** (`6b00940` engine; `1484fb0` RPC; panel surfacing across all 4 clients
+  2026-06-10 — see `clients/rfq-panel-surfacing` below).
 
 ## P1/P2 — Cross-asset risk & further leaves
 
@@ -214,9 +212,12 @@ Status legend: OPEN / IN-PROGRESS / DONE / ENV (deploy-bound, not a gap). Each i
   CLI no subcommand, GUI/Excel no panel view; `AcceptQuote.lp_id` unreachable from clients.
   Surface the identical ranked panel in SDK/CLI/GUI(+Excel) with last-look countdown + book-by-
   `(quote_id,lp_id)`. Oracle: loopback ≥3-LP panel — every client shows the same ranking
-  bit-identically; booking the winner == server execution record. Effort M. **OPEN**
-  (sequencing: touches `celnet-client`/`celnet-cli` — schedule AFTER the ADR-0008 Wave S
-  blast radius clears to avoid colliding on those crates).
+  bit-identically; booking the winner == server execution record. Effort M. **DONE**
+  (2026-06-10 session-B: server LpPanelConfig synthetic-LP panel + pinning + book-any-row +
+  WS mirror; SDK RankedPanel handle (in-test law re-derivation, non-circular); CLI panel mode;
+  GUI panel + LastLookRing (axe-clean); Excel panel spill. Adversarial verdict: law==spec,
+  booking==pinned row, cross-client bit-identical. cargo 30/30 targets; GUI e2e 14/14;
+  Excel e2e 93/93).
 - **[W3+] surface/crypto-leaf** — Split from `crypto/digital-asset-class`. The crypto SURFACE
   (strike/log-moneyness quoting, no RR/BF delta-space) needs the `surface/asset-class-neutral-core`
   split first; both deferred together. Oracle: re-mark every FX surface byte-identical; a crypto
