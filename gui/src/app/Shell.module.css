@@ -80,8 +80,12 @@
 /* --- main column --- */
 .main {
   display: grid;
-  /* title bar · pair strip · workspace canvas · status ribbon */
-  grid-template-rows: 44px auto 1fr 28px;
+  /* title bar · workspace canvas · status ribbon. GW1 removed the pair strip
+   * (its row went with it): with a stale 4th row the canvas fell into an `auto`
+   * row and collapsed to 0 (its panes are absolutely positioned), while the
+   * ribbon stretched across the leftover `1fr` — the rows MUST mirror the three
+   * rendered children. */
+  grid-template-rows: 44px 1fr 28px;
   min-width: 0;
   min-height: 0;
 }

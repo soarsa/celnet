@@ -147,6 +147,14 @@
   color: var(--text-tertiary);
 }
 
+/* A11y (WCAG 2.1 AA): on the selected card's accent-soft tint the 11px summary
+ * needs the small-text 4.5:1 ratio — text-tertiary composites to only ~4.39:1
+ * there, so the selected summary steps up to text-secondary (the same treatment
+ * as the rail's active label in Shell.module.css). */
+.card.selected .cardSummary {
+  color: var(--text-secondary);
+}
+
 .empty {
   font-family: var(--font-ui);
   font-size: var(--type-callout);

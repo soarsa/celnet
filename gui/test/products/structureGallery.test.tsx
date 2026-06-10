@@ -13,7 +13,7 @@ import { StructureGallery } from "../../src/products/StructureGallery";
 import { PRODUCT_REGISTRY, PRODUCT_GROUP_ORDER, registryByGroup } from "../../src/products/index";
 
 describe("StructureGallery", () => {
-  it("renders every registered spec, grouped under its ProductGroup heading", () => {
+  it("renders every registered spec, grouped under its labelled ProductGroup", () => {
     render(<StructureGallery value={PRODUCT_REGISTRY[0]!.id} onSelect={() => {}} />);
 
     const options = screen.getAllByRole("option");
@@ -22,12 +22,21 @@ describe("StructureGallery", () => {
       expect(screen.getByText(spec.label)).toBeInTheDocument();
     }
 
-    // One group section per non-empty ProductGroup, in canonical order.
+    // One group section per non-empty ProductGroup, in canonical order. The
+    // group labels are PRESENTATIONAL (a listbox may only own group/option
+    // children — axe aria-required-children), so they are read off each group's
+    // aria-labelledby target, NOT a heading role.
     const expectedGroups = registryByGroup().map((g) => g.group);
-    const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
-    expect(headings).toEqual(expectedGroups);
-    // Every rendered heading is a real ProductGroup.
-    for (const h of headings) expect(PRODUCT_GROUP_ORDER).toContain(h);
+    const labels = screen.getAllByRole("group").map((grp) => {
+      const labelEl = document.getElementById(grp.getAttribute("aria-labelledby")!);
+      expect(labelEl).toHaveAttribute("role", "presentation");
+      return labelEl?.textContent;
+    });
+    expect(labels).toEqual(expectedGroups);
+    // Every rendered group label is a real ProductGroup.
+    for (const l of labels) expect(PRODUCT_GROUP_ORDER).toContain(l);
+    // The corrected ARIA contract: NO heading role may leak inside the listbox.
+    expect(screen.queryAllByRole("heading")).toHaveLength(0);
   });
 
   it("marks exactly the selected card aria-selected=true", () => {
