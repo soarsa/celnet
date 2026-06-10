@@ -3,7 +3,8 @@
 // tests prove the add-in shapes each product into the EXACT wire shape the
 // server's `crates/celnet-server/src/ws/codec.rs` decodes (the product oneof keys
 // `variance_swap` / `volatility_swap` / `asian_option` carrying field numbers
-// 13 / 14 / 15), and that the CELNET.VARSWAP / VOLSWAP / ASIAN functions decode
+// 13 / 14 / 15), and that the VARSWAP / VOLSWAP / ASIAN families (the polymorphic
+// CELNET.INSTRUMENT + verb path) decode
 // the server's reply into the right spill geometry. No pricing math lives in the
 // add-in — the numbers are the server's libm-core values, so a cell is
 // bit-identical to the SDK/CLI (whose own gate tests reconcile the server pricer
@@ -13,7 +14,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_CONVENTIONS,
   ShapingError,
-  formatAsianSpill,
+  formatPremiumSpill,
   formatVarSwapSpill,
   formatVolSwapSpill,
   parseAsianMethod,
@@ -285,7 +286,7 @@ describe("swap / Asian spill formatting", () => {
   });
 
   it("ASIAN spill leads with the premium, then the 13 risk Greeks, then a footer", () => {
-    const m = formatAsianSpill({
+    const m = formatPremiumSpill({
       premium: SAMPLE_GREEKS.price,
       greeks: SAMPLE_GREEKS,
       conventions: DEFAULT_CONVENTIONS,
@@ -357,7 +358,7 @@ function replyQuote(sock: FakeSocket, body: Record<string, unknown>): void {
   });
 }
 
-// These drive the EXACT request_quote → quote round-trip the CELNET.VARSWAP /
+// These drive the EXACT request_quote → quote round-trip the VARSWAP /
 // VOLSWAP / ASIAN bodies compose (shape → conn.requestQuote → format), over the
 // real Connection + WS codec against a FakeSocket. This proves the new oneof
 // reaches the wire with the right field key/body and the server reply decodes
@@ -432,7 +433,7 @@ describe("Asian end-to-end over the WS mirror", () => {
       resolved_strike: 1.1,
     });
     const quote = await p;
-    const m = formatAsianSpill({
+    const m = formatPremiumSpill({
       premium: quote.greeks.price,
       greeks: quote.greeks,
       conventions: quote.conventions,
