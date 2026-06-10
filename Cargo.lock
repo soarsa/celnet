@@ -411,6 +411,7 @@ dependencies = [
  "celnet-types",
  "celnet-vanilla",
  "clap",
+ "time",
  "tokio",
 ]
 

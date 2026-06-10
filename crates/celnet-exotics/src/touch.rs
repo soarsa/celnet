@@ -557,11 +557,12 @@ mod tests {
         for h in [105.0_f64, 95.0] {
             let mut prev_gap = f64::INFINITY;
             for k in [1e-4, 1e-6, 1e-8] {
-                let s = if h > 100.0 { h * (1.0 - k) } else { h * (1.0 + k) };
-                let i = ExoticInputs {
-                    spot: s,
-                    ..base()
+                let s = if h > 100.0 {
+                    h * (1.0 - k)
+                } else {
+                    h * (1.0 + k)
                 };
+                let i = ExoticInputs { spot: s, ..base() };
                 let v = one_touch_price(&i, h, 1.0, RebateTiming::AtHit);
                 let gap = 1.0 - v;
                 assert!(gap >= -1e-12, "value {v} may not exceed the rebate (H={h})");

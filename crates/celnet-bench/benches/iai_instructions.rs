@@ -131,7 +131,10 @@ fn soft_regression_limits() -> Callgrind {
     Callgrind::default()
         .soft_limits([
             (EventKind::Ir, SOFT_INSTRUCTION_REGRESSION_PCT),
-            (EventKind::EstimatedCycles, SOFT_ESTIMATED_CYCLES_REGRESSION_PCT),
+            (
+                EventKind::EstimatedCycles,
+                SOFT_ESTIMATED_CYCLES_REGRESSION_PCT,
+            ),
         ])
         .clone()
 }
