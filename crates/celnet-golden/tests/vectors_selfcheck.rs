@@ -505,9 +505,11 @@ fn redrive_touch(v: &GoldenVector) -> f64 {
     let kind = v.term_str("kind");
     let lower = v.term_f64("lower_barrier");
     let upper = v.term_f64("upper_barrier");
-    // ONE_TOUCH is the at-hit product (Reiner-Rubinstein), re-derived independently
-    // — the QuantLib touch CSV is the at-expiry product, so it is NOT the oracle
-    // for the single one-touch (only for no-touch / DNT / double-one-touch).
+    // ONE_TOUCH is the at-hit product — re-driven by the independent
+    // discounted-first-passage-density quadrature (no λ / Φ-pairing, so it is
+    // structurally unable to reproduce the engine's historical flipped-pairing
+    // defect). The QuantLib touch CSV is the at-expiry product, so it is NOT the
+    // oracle for the single one-touch (only for no-touch / DNT / double-one-touch).
     if kind == "ONE_TOUCH" {
         return oracle::one_touch_at_hit_price(
             m.spot,

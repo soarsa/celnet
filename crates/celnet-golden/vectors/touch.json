@@ -48,9 +48,9 @@
       "upper_barrier": 0.0
     },
     "expected": {
-      "price": 0.0561744592212154,
+      "price": 0.04378018727495735,
       "price_std_error": null,
-      "oracle": "Reiner-Rubinstein at-hit one-touch closed form (independent)"
+      "oracle": "discounted first-passage density quadrature (independent at-hit route)"
     },
     "tolerance": {
       "rel": 1e-6,
@@ -222,9 +222,9 @@
       "upper_barrier": 0.0
     },
     "expected": {
-      "price": 0.00011562220480909844,
+      "price": 5.5470234111495214e-5,
       "price_std_error": null,
-      "oracle": "Reiner-Rubinstein at-hit one-touch closed form (independent)"
+      "oracle": "discounted first-passage density quadrature (independent at-hit route)"
     },
     "tolerance": {
       "rel": 1e-6,

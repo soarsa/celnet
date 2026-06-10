@@ -290,17 +290,32 @@ pub fn floating_lookback_price(cp: Cp, spot: f64, vol: f64, t: f64, r_dom: f64, 
     }
 }
 
-/// **At-hit** one-touch present value (Reiner-Rubinstein 1991): pays `rebate` at
-/// the moment of the first touch of `barrier`. Re-derived here from the published
-/// closed form (independent of `celnet-exotics::one_touch_price`) — the server's
-/// wire one-touch uses at-hit timing, so the QuantLib at-expiry touch CSV is *not*
-/// the right oracle for it; this is.
+/// **At-hit** one-touch present value: pays `rebate` at the moment of the first
+/// touch of `barrier`. The server's wire one-touch uses at-hit timing, so the
+/// QuantLib at-expiry touch CSV is *not* the right oracle for it; this is.
 ///
-/// `OT = R·[ (H/S)^{μ+λ}·Φ(η·a₁) + (H/S)^{μ−λ}·Φ(η·a₂) ]`, with `μ = (b−½σ²)/σ²`,
-/// `λ = √(μ²+2r_d/σ²)`, `b = r_dom−r_for`, `η = −1` for an upper barrier (above
-/// spot) / `+1` for a lower barrier, and `a₁/a₂` the first-passage normal
-/// arguments. If spot already sits at/through the barrier the payout is certain
-/// (`= rebate`).
+/// **Route — deliberately disjoint from the production closed form**: numerical
+/// quadrature of the *discounted first-passage density*
+///
+/// ```text
+///   OT = R·∫₀ᵀ e^{−r_dom·t}·f_τ(t) dt,
+///   f_τ(t) = |z| / (σ·√(2π)·t^{3/2}) · exp(−(z − ν·t)² / (2σ²t)),
+///   z = ln(H/S),   ν = (r_dom − r_for) − ½σ²,
+/// ```
+///
+/// the reflection-principle density of the first passage of drifted Brownian
+/// motion to a single level (Shreve 2004 §8.3; provenance doc-only). No
+/// `λ`-exponent, no `Φ`, no power×CDF pairing appears anywhere in this route, so
+/// the closed form's historical failure mode — pairing `(H/S)^{μ±λ}` with the
+/// wrong CDF argument, the P0 at-hit defect that a previous revision of this
+/// oracle inherited as a structural copy of the engine — *cannot be expressed
+/// here*. The oracle is structurally able to disagree with `celnet-exotics`,
+/// which is exactly what the anti-circularity rule requires.
+///
+/// Accuracy: panel-doubling stable to the last bit and agreeing with the
+/// corrected published closed form (double-precision `erfc` evaluation) to
+/// ~2e-15 relative on the frozen touch markets — see the unit tests. If spot
+/// already sits at/through the barrier the payout is certain (`= rebate`).
 #[must_use]
 pub fn one_touch_at_hit_price(
     spot: f64,
@@ -318,34 +333,115 @@ pub fn one_touch_at_hit_price(
         spot <= barrier
     };
     if through {
-        return rebate; // at-hit, hit is immediate
+        return rebate; // at-hit: the touch is immediate and certain
     }
-    let b = r_dom - r_for;
-    let sig2 = vol * vol;
-    let mu = (b - 0.5 * sig2) / sig2;
-    let lam = (mu * mu + 2.0 * r_dom / sig2).sqrt();
-    let vsqt = vol * sqrt(t);
     let z = ln(barrier / spot); // >0 upper, <0 lower
-    // Side orientation (mirrors the canonical reflected-normal pair): for an upper
-    // barrier the running-max tail uses base = −z/vsqt with a +drift; a lower
-    // barrier the running-min with base = +z/vsqt and a −drift.
-    let side_sign = if upper { -1.0 } else { 1.0 };
-    let drift_sign = -side_sign;
-    let base = side_sign * z / vsqt;
-    let a1 = base + drift_sign * lam * vsqt;
-    let a2 = base - drift_sign * lam * vsqt;
-    let pow_cdf = |p: f64, arg: f64| -> f64 {
-        let phi = norm_cdf(arg);
-        if phi <= 0.0 {
-            0.0
-        } else {
-            exp(p * z + ln(phi))
-        }
-    };
-    let v = rebate * (pow_cdf(mu + lam, a1) + pow_cdf(mu - lam, a2));
-    let max_df = exp(-r_dom * t).max(1.0);
-    v.clamp(0.0, rebate.max(0.0) * max_df)
+    let nu = (r_dom - r_for) - 0.5 * vol * vol;
+    rebate * discounted_first_passage_integral(z, nu, vol, r_dom, t, 48)
 }
+
+/// `∫₀ᵀ e^{−r·t}·f_τ(t) dt` for the first passage of `ν·t + σ·W_t` to level `z`,
+/// by composite fixed-order quadrature: the 24-node Gauss-Legendre rule
+/// ([`QUAD_NODES`]/[`QUAD_WEIGHTS`]) on each geometric panel `[T/2^{k+1}, T/2^k]`,
+/// `k = 0..panels`, refining toward `t → 0` where the density is smooth but
+/// increasingly steep (it vanishes as `e^{−z²/(2σ²t)}`). The untouched
+/// `[0, T/2^panels]` head contributes less than `e^{−z²·2^{panels−1}/(2σ²T)}` —
+/// identically zero in double precision at the default 48 panels for any market
+/// in the corpus. Exposed with an explicit `panels` so the self-tests can assert
+/// panel-doubling convergence.
+fn discounted_first_passage_integral(
+    z: f64,
+    nu: f64,
+    vol: f64,
+    r: f64,
+    t: f64,
+    panels: u32,
+) -> f64 {
+    let scale = z.abs() / (vol * sqrt(2.0 * std::f64::consts::PI));
+    // e^{−r·t}·f_τ(t); the exponent is evaluated first and cut at −700 (below
+    // e^{−700} ≈ 1e−304 the term cannot move a double-precision sum, and the cut
+    // prevents the `t^{−3/2}` prefactor from manufacturing `Inf·0`).
+    let integrand = |tt: f64| -> f64 {
+        if tt <= 0.0 {
+            return 0.0;
+        }
+        let dev = z - nu * tt;
+        let e = -dev * dev / (2.0 * vol * vol * tt) - r * tt;
+        if e < -700.0 {
+            return 0.0;
+        }
+        scale * exp(e) / (tt * sqrt(tt))
+    };
+    let mut total = 0.0;
+    let mut hi = t;
+    for _ in 0..panels {
+        let lo = 0.5 * hi;
+        let c = 0.5 * (lo + hi);
+        let h = 0.5 * (hi - lo);
+        for (x, w) in QUAD_NODES.iter().zip(QUAD_WEIGHTS.iter()) {
+            total += w * h * integrand(c + h * x);
+        }
+        hi = lo;
+    }
+    total
+}
+
+/// 24-node Gauss-Legendre abscissae on `[−1, 1]` (symmetric Newton-refined
+/// Legendre-polynomial roots; the matching weights are `2/((1−x²)·P′ₙ(x)²)`).
+const QUAD_NODES: [f64; 24] = [
+    0.995_187_219_997_021_3,
+    0.974_728_555_971_309_5,
+    0.938_274_552_002_732_8,
+    0.886_415_527_004_401_1,
+    0.820_001_985_973_903,
+    0.740_124_191_578_554_4,
+    0.648_093_651_936_975_5,
+    0.545_421_471_388_839_6,
+    0.433_793_507_626_045_2,
+    0.315_042_679_696_163_4,
+    0.191_118_867_473_616_3,
+    0.064_056_892_862_605_63,
+    -0.064_056_892_862_605_63,
+    -0.191_118_867_473_616_3,
+    -0.315_042_679_696_163_4,
+    -0.433_793_507_626_045_2,
+    -0.545_421_471_388_839_6,
+    -0.648_093_651_936_975_5,
+    -0.740_124_191_578_554_4,
+    -0.820_001_985_973_903,
+    -0.886_415_527_004_401_1,
+    -0.938_274_552_002_732_8,
+    -0.974_728_555_971_309_5,
+    -0.995_187_219_997_021_3,
+];
+
+/// The weights paired with [`QUAD_NODES`] (sum = 2 to 4 ulp).
+const QUAD_WEIGHTS: [f64; 24] = [
+    0.012_341_229_799_985_648,
+    0.028_531_388_628_933_813,
+    0.044_277_438_817_419_676,
+    0.059_298_584_915_436_66,
+    0.073_346_481_411_080_27,
+    0.086_190_161_531_953_22,
+    0.097_618_652_104_113_68,
+    0.107_444_270_115_965_62,
+    0.115_505_668_053_725_61,
+    0.121_670_472_927_803_35,
+    0.125_837_456_346_828_39,
+    0.127_938_195_346_752_24,
+    0.127_938_195_346_752_24,
+    0.125_837_456_346_828_39,
+    0.121_670_472_927_803_35,
+    0.115_505_668_053_725_61,
+    0.107_444_270_115_965_62,
+    0.097_618_652_104_113_68,
+    0.086_190_161_531_953_22,
+    0.073_346_481_411_080_27,
+    0.059_298_584_915_436_66,
+    0.044_277_438_817_419_676,
+    0.028_531_388_628_933_813,
+    0.012_341_229_799_985_648,
+];
 
 // ===========================================================================
 // Code-disjoint Monte-Carlo oracle (path-dependent families)
@@ -1365,5 +1461,73 @@ pub fn window_barrier_mc(
     McEstimate {
         price: acc.mean(),
         std_error: acc.std_error(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **P0 pairing-regression pin + convergence.** The density quadrature
+    /// reproduces the corrected at-hit values on the frozen `touch-1` /
+    /// `touch-3` markets (cross-checked against the published closed form,
+    /// `erfc` double evaluation, agreement ~2e-15 relative), and doubling the
+    /// geometric panel count moves nothing. The historical flipped-pairing
+    /// values — 0.0561744592212154 (+28.3%) and 0.00011562220480909844 (×2.08),
+    /// frozen into the corpus by the structural-copy oracle this route
+    /// replaced — are excluded by construction.
+    #[test]
+    fn at_hit_quadrature_pins_corrected_values_and_is_converged() {
+        let t = 0.082_191_780_821_917_8;
+        let v105 = one_touch_at_hit_price(100.0, 105.0, 1.0, 0.08, t, 0.05, 0.01);
+        assert!(
+            (v105 - 0.043_780_187_274_957_35).abs() <= 1e-13 * v105,
+            "touch-1 at-hit: got {v105}"
+        );
+        let v110 = one_touch_at_hit_price(100.0, 110.0, 1.0, 0.08, t, 0.05, 0.01);
+        assert!(
+            (v110 - 5.547_023_411_149_521_4e-5).abs() <= 1e-12 * v110,
+            "touch-3 at-hit: got {v110}"
+        );
+        // Panel-doubling convergence (48 → 96) on the touch-1 market.
+        let z = ln(105.0 / 100.0);
+        let nu = (0.05 - 0.01) - 0.5 * 0.08 * 0.08;
+        let i48 = discounted_first_passage_integral(z, nu, 0.08, 0.05, t, 48);
+        let i96 = discounted_first_passage_integral(z, nu, 0.08, 0.05, t, 96);
+        assert!(
+            (i48 - i96).abs() <= 1e-15,
+            "panel doubling moved the integral: {i48} vs {i96}"
+        );
+    }
+
+    /// **Zero-rate identity:** with `r = 0` the discounted first-passage
+    /// integral is the plain hit probability, which has its own independent
+    /// reflection-principle CDF form (drift `ν`, Girsanov factor `e^{2νz/σ²}`
+    /// — *not* the λ machinery the engine's at-hit form uses). Both barrier
+    /// sides are exercised.
+    #[test]
+    fn zero_rate_quadrature_recovers_reflection_hit_probability() {
+        let (s, vol, t, r_for) = (100.0, 0.2, 2.0, 0.01);
+        let nu = (0.0 - r_for) - 0.5 * vol * vol;
+        let vsqt = vol * sqrt(t);
+        // Lower barrier (z < 0): P = Φ((z−νT)/σ√T) + e^{2νz/σ²}·Φ((z+νT)/σ√T).
+        let z_lo = ln(90.0 / s);
+        let q_lo = discounted_first_passage_integral(z_lo, nu, vol, 0.0, t, 48);
+        let p_lo = norm_cdf((z_lo - nu * t) / vsqt)
+            + exp(2.0 * nu * z_lo / (vol * vol)) * norm_cdf((z_lo + nu * t) / vsqt);
+        assert!((q_lo - p_lo).abs() <= 1e-12, "lower: {q_lo} vs {p_lo}");
+        // Upper barrier (z > 0): P = Φ((−z+νT)/σ√T) + e^{2νz/σ²}·Φ((−z−νT)/σ√T).
+        let z_up = ln(115.0 / s);
+        let q_up = discounted_first_passage_integral(z_up, nu, vol, 0.0, t, 48);
+        let p_up = norm_cdf((-z_up + nu * t) / vsqt)
+            + exp(2.0 * nu * z_up / (vol * vol)) * norm_cdf((-z_up - nu * t) / vsqt);
+        assert!((q_up - p_up).abs() <= 1e-12, "upper: {q_up} vs {p_up}");
+    }
+
+    /// A breached barrier pays the rebate immediately (certain, undiscounted).
+    #[test]
+    fn at_hit_through_barrier_pays_rebate() {
+        let v = one_touch_at_hit_price(120.0, 110.0, 2.5, 0.1, 1.0, 0.05, 0.01);
+        assert!((v - 2.5).abs() < 1e-15);
     }
 }
