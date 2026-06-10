@@ -58,8 +58,9 @@
 //! structuring — Wystup (2017). Identifiers are purpose-named & vendor-neutral.
 
 use celnet_core::math::{exp, ln, sqrt};
-use celnet_types::{OptionType, VanillaInputs};
+use celnet_types::OptionType;
 
+use crate::inputs::ExoticInputs;
 use crate::normal::inverse_cdf;
 use crate::rng::CounterRng;
 use crate::tarf::RedemptionStyle; // reuse the frozen gap-risk enum — no duplication
@@ -195,15 +196,19 @@ struct PivotDynamics {
 }
 
 impl PivotDynamics {
-    fn new(i: &VanillaInputs, n: usize) -> Self {
+    fn new(i: &ExoticInputs, n: usize) -> Self {
         let dt = i.t / n as f64;
         let ln_s0 = ln(i.spot);
-        let drift_step = (i.r_dom - i.r_for - 0.5 * i.vol * i.vol) * dt;
+        // Carry accessors read ONCE, outside the path loop; byte-identical to the
+        // FX two-rate form for `Carry::FxRates` (`carry_rate()` is the same
+        // `r_dom − r_for` two flops, `discount_df_at(t_k)` the identical
+        // `exp(−r_dom·t_k)` call).
+        let drift_step = (i.carry_rate() - 0.5 * i.vol * i.vol) * dt;
         let vol_sqrt_dt = i.vol * sqrt(dt);
         let mut dfs = vec![0.0f64; n];
         for (k, df) in dfs.iter_mut().enumerate() {
             let t_k = (k + 1) as f64 * dt;
-            *df = exp(-i.r_dom * t_k);
+            *df = i.discount_df_at(t_k);
         }
         Self {
             ln_s0,
@@ -222,7 +227,7 @@ impl PivotDynamics {
 /// `to_bits`-identical to [`crate::tarf::tarf_price`]: the same RNG coordinates and
 /// the same arithmetic order as `tarf.rs`.
 #[must_use]
-pub fn pivot_tra_price(i: &VanillaInputs, spec: PivotTra, cfg: PivotTraMcConfig) -> PivotTraResult {
+pub fn pivot_tra_price(i: &ExoticInputs, spec: PivotTra, cfg: PivotTraMcConfig) -> PivotTraResult {
     spec.validate();
     let n = spec.fixings;
     let dyn_ = PivotDynamics::new(i, n);
@@ -257,14 +262,16 @@ pub fn pivot_tra_price(i: &VanillaInputs, spec: PivotTra, cfg: PivotTraMcConfig)
 /// Greeks tests.
 ///
 /// The control is the same strip with the target disabled and no kink — a plain
-/// forward strip `X = Σ_k g·(S_k − K)·e^{−r_d·t_k}` whose expectation is closed
-/// form: `E[X] = Σ_k g·(S_0·e^{−r_for·t_k} − K·e^{−r_d·t_k})` (each leg a forward,
-/// `F_k·e^{−r_d·t_k} = S_0·e^{−r_for·t_k}`). The optimal coefficient is the
-/// regression `β = Cov(pivot_pv, X)/Var(X)` estimated from the same sample; the
-/// guard `β = 0` when `Var(X) = 0` degrades gracefully to antithetic-only.
+/// forward strip `X = Σ_k g·(S_k − K)·e^{−r·t_k}` whose expectation is closed
+/// form: `E[X] = Σ_k g·(S_0·e^{−q·t_k} − K·e^{−r·t_k})` (each leg a forward,
+/// `F_k·e^{−r·t_k} = S_0·e^{−q·t_k}`, with `r = discount_rate()` and
+/// `q = yield_rate()` read through the carry seam — for FX the stored `r_dom`
+/// and `r_for` verbatim). The optimal coefficient is the regression
+/// `β = Cov(pivot_pv, X)/Var(X)` estimated from the same sample; the guard
+/// `β = 0` when `Var(X) = 0` degrades gracefully to antithetic-only.
 #[must_use]
 pub fn pivot_tra_price_cv(
-    i: &VanillaInputs,
+    i: &ExoticInputs,
     spec: PivotTra,
     cfg: PivotTraMcConfig,
 ) -> PivotTraResult {
@@ -273,12 +280,15 @@ pub fn pivot_tra_price_cv(
     let dyn_ = PivotDynamics::new(i, n);
     let g = spec.favourable_side.sign();
 
-    // Closed-form control mean E[X] = Σ_k g·(S_0·e^{−r_for·t_k} − K·e^{−r_d·t_k}).
+    // Closed-form control mean E[X] = Σ_k g·(S_0·e^{−q·t_k} − K·e^{−r·t_k}). The
+    // yield leg reads the STORED yield via `Carry::yield_rate` (`carry_df_at`) —
+    // never a `discount_rate() − carry_rate()` reconstruction, which would break
+    // FX byte-identity (spec §8 sharp edge).
     let dt = i.t / n as f64;
     let mut control_mean = 0.0f64;
     for k in 0..n {
         let t_k = (k + 1) as f64 * dt;
-        let fwd_leg = i.spot * exp(-i.r_for * t_k);
+        let fwd_leg = i.spot * i.carry_df_at(t_k);
         let strike_leg = spec.strike * dyn_.dfs[k];
         control_mean += g * (fwd_leg - strike_leg);
     }
@@ -341,7 +351,7 @@ struct PathOutcome {
     redeem_index: f64,
     /// Realised gain overshoot beyond the target at the redeeming fixing.
     overshoot: f64,
-    /// The forward-strip control value `X = Σ_k g·(S_k − K)·e^{−r_d·t_k}` along the
+    /// The forward-strip control value `X = Σ_k g·(S_k − K)·e^{−r·t_k}` along the
     /// **full** strip (no target, no kink) — used only by [`pivot_tra_price_cv`].
     control: f64,
 }
@@ -428,8 +438,8 @@ fn walk_path(dyn_: &PivotDynamics, z: &[f64], spec: PivotTra, sign: f64) -> Path
 mod tests {
     use super::*;
 
-    fn base() -> VanillaInputs {
-        VanillaInputs::new(1.30, 1.30, 0.10, 1.0, 0.03, 0.01)
+    fn base() -> ExoticInputs {
+        celnet_types::VanillaInputs::new(1.30, 1.30, 0.10, 1.0, 0.03, 0.01).into()
     }
 
     /// A dead-band call-favourable pivot TRA (`P > K`).
@@ -599,7 +609,7 @@ mod tests {
             seed: 0xBEEF,
         };
         let p = pivot_tra_price(&i, piv, pcfg);
-        let t = tarf_price(&(&i).into(), tarf, tcfg);
+        let t = tarf_price(&i, tarf, tcfg);
         assert_eq!(
             p.price.to_bits(),
             t.price.to_bits(),

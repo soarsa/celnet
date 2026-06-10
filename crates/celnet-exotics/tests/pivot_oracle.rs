@@ -18,6 +18,7 @@
 
 use std::f64::consts::PI;
 
+use celnet_exotics::ExoticInputs;
 use celnet_exotics::pivot::{PivotTra, PivotTraMcConfig, pivot_tra_price, pivot_tra_price_cv};
 use celnet_exotics::tarf::{RedemptionStyle, Tarf, TarfMcConfig, tarf_price};
 use celnet_types::{OptionType, VanillaInputs};
@@ -166,7 +167,7 @@ fn oracle_price(
 
 #[test]
 fn pivot_collapses_to_tarf_when_pivot_equals_strike() {
-    let i = VanillaInputs::new(1.30, 1.30, 0.10, 1.0, 0.03, 0.01);
+    let i: ExoticInputs = VanillaInputs::new(1.30, 1.30, 0.10, 1.0, 0.03, 0.01).into();
     let cfg_t = TarfMcConfig {
         pairs: 200_000,
         seed: 0x7A4F,
@@ -186,7 +187,7 @@ fn pivot_collapses_to_tarf_when_pivot_equals_strike() {
             redemption: style,
         };
         let piv = PivotTra::as_tarf_slice(1.32, 12, 0.06, 2.0, OptionType::Put, 1.0, style); // pivot == strike == 1.32
-        let t = tarf_price(&(&i).into(), tarf, cfg_t);
+        let t = tarf_price(&i, tarf, cfg_t);
         let p = pivot_tra_price(&i, piv, cfg_p);
         assert_eq!(
             p.price.to_bits(),
@@ -231,7 +232,7 @@ fn pivot_matches_independent_oracle() {
                     redemption: style,
                 };
                 let prod = pivot_tra_price_cv(
-                    &i,
+                    &(&i).into(),
                     spec,
                     PivotTraMcConfig {
                         pairs: 300_000,
@@ -293,18 +294,20 @@ fn pivot_greeks_finite_difference() {
     };
     let h = 1e-3 * i.spot;
     let up = pivot_tra_price_cv(
-        &VanillaInputs {
+        &(&VanillaInputs {
             spot: i.spot + h,
             ..i
-        },
+        })
+            .into(),
         spec,
         cfg,
     );
     let dn = pivot_tra_price_cv(
-        &VanillaInputs {
+        &(&VanillaInputs {
             spot: i.spot - h,
             ..i
-        },
+        })
+            .into(),
         spec,
         cfg,
     );
@@ -350,18 +353,20 @@ fn pivot_greeks_finite_difference() {
         seed: 0xDDEE,
     };
     let vup = pivot_tra_price_cv(
-        &VanillaInputs {
+        &(&VanillaInputs {
             vol: i.vol + hv,
             ..i
-        },
+        })
+            .into(),
         spec,
         cfgv,
     );
     let vdn = pivot_tra_price_cv(
-        &VanillaInputs {
+        &(&VanillaInputs {
             vol: i.vol - hv,
             ..i
-        },
+        })
+            .into(),
         spec,
         cfgv,
     );
@@ -405,7 +410,7 @@ fn pivot_greeks_finite_difference() {
 
 #[test]
 fn pivot_away_from_strike_changes_price() {
-    let i = VanillaInputs::new(1.30, 1.30, 0.12, 1.0, 0.03, 0.01);
+    let i: ExoticInputs = VanillaInputs::new(1.30, 1.30, 0.12, 1.0, 0.03, 0.01).into();
     let base_spec = PivotTra {
         strike: 1.28,
         pivot: 1.28,
