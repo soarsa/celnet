@@ -219,52 +219,36 @@ same mapping uses Excel's RTD topic model: one topic per `(instrument, conv)` ke
 acting as the RTD server fed by the `StreamSession`. Snapshot → first value; Update → cell
 refresh; Resync → silent re-snapshot (no flicker); StreamEnd → see §5.
 
-### 3.3 Read — the exotic / structured / multi-asset catalogue (dynamic-array spill)
+### 3.3 Read — the exotic / structured / multi-asset catalogue (one polymorphic surface)
 
-Every product on the `Instrument` `oneof` (`docs/API-CLIENTS.md` §3) has a dedicated read
-function — the same vocabulary as the SDK builders and the CLI `exotic` subcommands, so a cell
-prices exactly the structure the GUI TicketWorkspace prices. Each returns the premium / PV, the
-13-Greek vector where it exists in closed form, and a convention footer; the **Monte-Carlo
-products carry a `std_error` line in the spill** (never "machine precision" — these are MC
-estimates).
+Every product on the `Instrument` `oneof` (`docs/API-CLIENTS.md` §3), on **any of the five
+asset classes**, prices through ONE composable surface — the former ~20 per-product functions
+were retired at byte-identical wire parity (guardrail #10; the parity proof lives in
+`excel/test/instrumentPolymorphic.test.ts`):
 
 ```
-=CELNET.BARRIER(pair, tenor, strikeOrDelta, callPut, notional, barrier(s), kind, …)
-    → single OR double barrier (selected by params): premium + 13 Greeks + footer
-=CELNET.WINDOWBARRIER(pair, tenor, …, windowStart, windowEnd, …)
-    → window (partial-time) KO barrier under PRICING_MODEL_LOCAL_STOCH_VOL (LSV PDE):
-      premium + (std_error) + footer
-=CELNET.DIGITAL(pair, tenor, strikeOrDelta, callPut, notional, style)
-    → digital (binary) option: premium + 13 Greeks + footer
-=CELNET.TOUCH(pair, tenor, level(s), kind)
-    → one-/no-/double-no-/double-one-touch: premium + Greeks + footer
-=CELNET.ASIAN(pair, tenor, strike, callPut, notional, fixings…)
-    → arithmetic-average-rate Asian: spill [premium, PV] + 13 Greeks + footer
-=CELNET.FORWARDSTART(pair, tenor, resetT, moneyness, callPut, notional)
-    → forward-start vanilla: spill [premium, PV] + 13 Greeks + footer
-=CELNET.CLIQUET(pair, tenor, resets…, [cap], [floor])
-    → cliquet / ratchet: spill [premium, PV], (std_error if clamped/MC), 13 Greeks + footer
-=CELNET.QUANTO(pair, tenor, strikeOrDelta, callPut, notional, quantoFx)
-    → quanto vanilla / digital: spill [premium, PV] + 13 Greeks + footer
-=CELNET.TARF(pair, tenor, fixings…, target, gearing, …)
-    → target-redemption forward (Monte-Carlo): spill [premium, PV], [std_error], 13 Greeks + footer
-=CELNET.ACCUMULATOR(pair, tenor, fixings…, pivot, barrier, …)
-    → accumulator (Monte-Carlo): spill [premium, PV], [std_error], 13 Greeks + footer
-=CELNET.LOOKBACK(pair, tenor, kind, callPut, notional, [fixings])
-    → lookback (floating/fixed): spill [premium, PV], (std_error if discrete/MC), 13 Greeks + footer
-=CELNET.AMERICAN(pair, tenor, strike, callPut, notional, [lsmPaths])
-    → American / Bermudan early-exercise: premium + (std_error if LSM/MC) + 13 Greeks + footer
-=CELNET.VARSWAP(pair, tenor, …)
-    → variance swap: spill [fair_variance, K_var] / [fair_vol, √K_var] + convention footer
-=CELNET.VOLSWAP(pair, tenor, …)
-    → volatility swap: spill [fair_vol, K_vol] (convexity-adjusted) + convention footer
-=CELNET.BASKET(legs…, weights, correlation, callPut, kind)
-    → correlated multi-asset basket / best-of / worst-of: premium + MC std_error + footer
+=CELNET.INSTRUMENT(underlier, product, terms, [tenor], [notional])
+    → an opaque instrument token (the canonical wire frame). `underlier` is one string
+      across all classes: FX "EURUSD"; metal "XAUUSD"/"XAU/EUR" (metal-vs-FIAT only —
+      metal-vs-metal ratios are rejected with a typed error); equity "AAPL@XNAS:USD";
+      commodity "BRENT@:USD"; crypto "BTC/USD" with optional ":inverse"/":linear".
+      `product` is the family name ("VANILLA","BARRIER","ASIAN","TARF",…); `terms` is an
+      order-free 2-column key/value range whose keys mirror the family's parameters —
+      a missing/unknown key is a typed error naming the family's key set.
+=CELNET.PRICE(instrumentOrPair, …)   → premium / PV spill + the 13-Greek vector where it
+      exists in closed form + convention footer; Monte-Carlo products carry a std_error
+      line (never "machine precision"). The legacy vanilla positional form
+      (pair, tenor, strikeOrDelta, callPut, notional) is unchanged.
+=CELNET.GREEKS(instrumentOrPair, …)  → the full Greek strip for any family/class.
+=CELNET.RFQ(instrumentOrPair, …)     → tradable two-way quote on any structure.
+=CELNET.SUBSCRIBE(instrumentOrPair, …) → streaming, same coalescing/RTD model as §3.2.
 ```
 
-These map one-to-one onto the `Instrument` `oneof` arms and the parity rows in
-`docs/CLIENT-PARITY-MATRIX.md`. (LSV is exposed only as a *priced product* — e.g. the window
-barrier — never as raw calibration, exactly as the parity matrix records for the GUI/Excel.)
+The token + verbs map one-to-one onto the `Instrument` `oneof` arms and the parity rows in
+`docs/CLIENT-PARITY-MATRIX.md`; the per-family terms keys mirror the SDK builders and the CLI
+`exotic` subcommands, so a cell prices exactly the structure the GUI TicketWorkspace prices.
+(LSV is exposed only as a *priced product* — e.g. the window barrier — never as raw
+calibration, exactly as the parity matrix records for the GUI/Excel.)
 
 ### 3.4 Read — risk, book & observability (dynamic-array spill)
 
