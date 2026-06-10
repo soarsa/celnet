@@ -44,3 +44,4 @@ gui/**/*.tsbuildinfo
 .playwright-mcp/
 docs/celnet-capabilities.standalone.html
 docs/_capabilities-build/
+node_modules/

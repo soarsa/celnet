@@ -2,7 +2,18 @@
  * Panel — the workspace material primitive (GUI-DESIGN §3.3). A `bg-raised`
  * surface with a hairline top highlight and a soft 1-level shadow. Depth, not
  * chrome (principle 7): hierarchy comes from the material, not gridlines.
+ *
+ * Keyboard access (WCAG 2.1.1 / axe `scrollable-region-focusable`): the body is
+ * an `overflow: auto` scroll container, so whenever its content GENUINELY
+ * overflows it must be reachable and scrollable from the keyboard — some panel
+ * bodies (the surface mesh, the vega ladder) contain no focusable content at
+ * all. The body therefore self-measures (a ResizeObserver for container
+ * resizes + a per-commit re-measure for content changes) and, only while it
+ * actually overflows, takes `tabIndex=0` and exposes itself as a `region`
+ * named by the panel title. Non-overflowing panels add no tab stops.
  */
+
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 
 import styles from "./Panel.module.css";
 
@@ -17,6 +28,11 @@ export interface PanelProps {
   noPadding?: boolean;
 }
 
+/** Does this element's content overflow its scrollport (either axis)? */
+function overflows(el: HTMLElement): boolean {
+  return el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth;
+}
+
 export function Panel({
   title,
   glyph,
@@ -26,6 +42,30 @@ export function Panel({
   className,
   noPadding,
 }: PanelProps): React.ReactElement {
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [scrollable, setScrollable] = useState(false);
+  const titleId = useId();
+
+  // Re-measure on EVERY commit: content changes only land through React renders
+  // of the panel subtree, so a per-commit scrollHeight read (one cheap forced
+  // layout on a single element) keeps the flag honest as data streams in. The
+  // state setter bails out when the value is unchanged — no render loop.
+  useLayoutEffect(() => {
+    const el = bodyRef.current;
+    if (el) setScrollable(overflows(el));
+  });
+
+  // Container resizes (window/grid-track changes) happen WITHOUT a React
+  // commit — a ResizeObserver on the body covers those.
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setScrollable(overflows(el)));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const hasTitle = title !== undefined;
   return (
     <section
       className={[
@@ -37,14 +77,27 @@ export function Panel({
         .filter(Boolean)
         .join(" ")}
     >
-      {title !== undefined && (
+      {hasTitle && (
         <header className={styles.header}>
           {glyph && <span className={styles.glyph}>{glyph}</span>}
-          <h2 className={styles.title}>{title}</h2>
+          <h2 id={titleId} className={styles.title}>
+            {title}
+          </h2>
           {actions && <div className={styles.actions}>{actions}</div>}
         </header>
       )}
-      <div className={styles.body}>{children}</div>
+      <div
+        ref={bodyRef}
+        className={styles.body}
+        {...(scrollable
+          ? {
+              tabIndex: 0,
+              ...(hasTitle ? { role: "region", "aria-labelledby": titleId } : {}),
+            }
+          : {})}
+      >
+        {children}
+      </div>
     </section>
   );
 }

@@ -179,7 +179,12 @@ export function StructureGallery({
                 role="group"
                 aria-labelledby={groupId}
               >
-                <h3 id={groupId} className={styles.groupLabel}>
+                {/* ARIA: a listbox may only own group/option children, so the
+                  * visual group label is PRESENTATIONAL (no heading role inside
+                  * the listbox — the WAI-ARIA APG grouped-listbox pattern); the
+                  * group still takes its accessible name from it via
+                  * aria-labelledby. */}
+                <h3 id={groupId} role="presentation" className={styles.groupLabel}>
                   {g.group}
                 </h3>
                 <div className={styles.cards}>
