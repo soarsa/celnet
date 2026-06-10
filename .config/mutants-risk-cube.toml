@@ -10,20 +10,69 @@
 #
 # How the gate works
 # ------------------
-# `cargo mutants -p celnet-risk-cube --config .config/mutants-risk-cube.toml`
-# applies a syntactic mutant per operator/comparison/return value and re-runs
-# the suite; a MISSED mutant is a test gap. cargo-mutants exits non-zero on ANY
-# survivor, so the gate enforces ZERO non-equivalent survivors — a future edit
-# that weakens the suite below the kill bar fails the build. See HARDENING.md s2.
+# `just mutants-gate-risk-cube` runs
+#   cargo mutants -p celnet-risk-cube --test-tool=cargo --jobs 3 \
+#       --minimum-test-timeout=120 --config .config/mutants-risk-cube.toml
+# applying a syntactic mutant per operator/comparison/return value and
+# re-running the suite; a MISSED mutant is a test gap. cargo-mutants exits
+# non-zero on ANY survivor, so the gate enforces ZERO non-equivalent survivors
+# — a future edit that weakens the suite below the kill bar fails the build.
+# See docs/HARDENING.md §2 for the measured baseline.
 #
+# Kill strategy (W6 rigor wave §3.3): every mutant is killed by an INDEPENDENT
+# oracle — `tests/frtb_param_provenance.rs` (every FRTB parameter pinned to a
+# hand-typed BCBS MAR21 paragraph literal, the anti-circular 0.75ρ-lesson guard,
+# + hand-built bucket-assignment pins), `tests/longhand_oracle.rs` (naive
+# double-loop firm aggregate over all 11 NetGreeks lines + the ladder, partition
+# conservation across all six dimensions, bit-exact VaR/ES quantile/tie/floor
+# boundaries through a linear in-test pricer, a hand Taylor-expansion pin,
+# curvature legs vs two longhand revaluations, the combined vanilla+exotic tail),
+# `tests/fx_invariance.rs` (FX to_bits non-regression), and in-module pins
+# (48-bit pair packing typed from hand ASCII bytes + frozen-bits FNV group keys,
+# bit-exact additive sums, scenario algebra byte-for-byte vs the raw FX two-rate
+# arithmetic, the MAR21.6 alternative-S_b branch hand-derived end-to-end, the
+# far-barrier vanilla-limit oracle for the full exotic FD Greek set, row-major
+# grid indexing and the reconciliation band).
+#
+# MEASURED baseline (this session, aarch64-apple-darwin, cargo-mutants 27.0.0,
+# toolchain 1.96.0)
+# ------------------------------------------------------------------------------
+# File-scoped waves (R1 dimension/additive/cube, R2 frtb_params/frtb,
+# R3 nonadditive, R4 exotic/scenario_grid), each run to zero non-equivalent
+# survivors, then ONE full-crate confirm run with this config. The raw R1 wave
+# (121 mutants) surfaced exactly two survivors, both `|`→`^` in
+# `underlying_group_value`:
+#   * dimension.rs:168 (the bit-63 force) — a GENUINE gap: both original frozen
+#     pin inputs happened to have raw-hash bit 63 clear, where OR and XOR agree.
+#     KILLED by pinning OTHR/USD (raw hash 0xCA84_… carries bit 63, asserted via
+#     the hasher in-test so the property is re-checked if the upstream Hash
+#     layout ever changes) — on that input XOR clears the bit and breaks the pin.
+#   * dimension.rs:159 (the byte fold) — provably equivalent, EXCLUDED below.
+# Subsequent waves' dispositions and the full-crate confirm summary line are
+# recorded in docs/HARDENING.md §2.
+#
+# Runner settings (mirrored by the `mutants-gate-risk-cube` recipe flags): plain
+# `cargo test` (reproducible independent of the workspace nextest profile; a
+# concurrent session may `pkill -f nextest`) and a generous per-mutant
+# test-timeout floor (the documented macOS first-launch stall of freshly linked
+# test binaries; the suite itself runs in ~1s plus one multi-second
+# GPU/Monte-Carlo scenario-grid test).
+test_tool = "cargo"
+minimum_test_timeout = 120
+
 # Equivalence exclusions
 # ----------------------
-# `exclude_re` lists ONLY provably semantically-equivalent mutants, each
-# justified inline with WHY it cannot change an observable result — never to hide
-# a real survivor. This crate's baseline (kill-rate + per-cluster equivalence
-# argument) is CI-run via `mutation-gate-numerics` (full local mutation of every
-# numerics crate in one session is impractical; recorded in HARDENING.md s2). It
-# starts empty: the gate runs strict until the CI baseline identifies a genuinely
-# equivalent cluster, at which point each member is added here WITH justification.
+# `exclude_re` lists ONLY mutants that are provably *semantically equivalent*
+# to the original — each justified inline with WHY it cannot change an
+# observable result — never to hide a real survivor. Policy here is STRICT.
+# Every member was hand-reproduced: full suite green with the mutant applied.
 exclude_re = [
+  # --- underlying_group_value: byte fold on disjoint bits ---
+  # `v = (v << 8) | u64::from(x)` vs `^`: bits 0–7 of `v << 8` are always zero
+  # and `x` is a byte (≤ 0xFF), so OR and XOR act on disjoint bit positions and
+  # are identical for EVERY input — a pure operator identity, not a test gap
+  # (the same identity class as the qmc owen_scramble prefix exclusion).
+  # Verified: full suite green with the mutant applied (all three packed-pair
+  # pins and all three frozen FNV pins bit-identical).
+  "dimension\\.rs:159:26: replace \\| with \\^ in underlying_group_value",
 ]
