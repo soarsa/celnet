@@ -67,6 +67,34 @@
   min-height: 0;
 }
 
+/* The honest per-asset-class unavailable state: a non-FX scope has no marked
+   surface today — typed, centred, never a fabricated mesh. */
+.classEmpty {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  text-align: center;
+  padding: var(--space-6);
+}
+.classEmptyTitle {
+  font-family: var(--font-brand);
+  font-size: var(--type-headline);
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+  margin: 0;
+}
+.classEmptyBody {
+  max-width: 52ch;
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--type-callout);
+  line-height: 1.5;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .viewChip {
     transition: none;

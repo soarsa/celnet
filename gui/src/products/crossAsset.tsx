@@ -98,6 +98,61 @@ export function crossAssetSettlement(v: CrossAssetInputs): SettlementStyle {
   return v.assetKind === "CRYPTO" ? v.settlementStyle : "LINEAR";
 }
 
+/**
+ * The INVERSE of {@link crossAssetUnderlying}: seed the ticket inputs from a
+ * contract `Underlying` arm (the universe-navigator → ticket pre-target path),
+ * so a selection re-uses this spec's one wire-building seam rather than
+ * duplicating it. Returns `null` for the FX arm — an FX underlier never
+ * re-points the ticket at the cross-asset spec (FX flows are untouched).
+ * Round-trip law (gated by tests): for every non-FX `u`,
+ * `crossAssetUnderlying(crossAssetInputsFor(u, s)!) === u` and
+ * `crossAssetSettlement(...)` reproduces `s` (crypto) / LINEAR (other classes).
+ */
+export function crossAssetInputsFor(
+  underlying: Underlying,
+  settlementStyle: SettlementStyle,
+): CrossAssetInputs | null {
+  switch (underlying.kind) {
+    case "fx":
+      return null;
+    case "metal":
+      return {
+        ...DEFAULT_CROSS_ASSET,
+        assetKind: "METAL",
+        metal: underlying.metal.metal,
+        currency: underlying.metal.quote,
+        settlementStyle: "LINEAR",
+      };
+    case "equity":
+      return {
+        ...DEFAULT_CROSS_ASSET,
+        assetKind: "EQUITY",
+        symbol: underlying.equity.symbol.ticker,
+        venue: underlying.equity.symbol.venue,
+        currency: underlying.equity.currency,
+        settlementStyle: "LINEAR",
+      };
+    case "commodity":
+      return {
+        ...DEFAULT_CROSS_ASSET,
+        assetKind: "COMMODITY",
+        symbol: underlying.commodity.symbol.ticker,
+        venue: underlying.commodity.symbol.venue,
+        currency: underlying.commodity.currency,
+        settlementStyle: "LINEAR",
+      };
+    case "digitalAsset":
+      return {
+        ...DEFAULT_CROSS_ASSET,
+        assetKind: "CRYPTO",
+        symbol: underlying.digitalAsset.base,
+        currency: underlying.digitalAsset.quote,
+        venue: "",
+        settlementStyle,
+      };
+  }
+}
+
 const ASSET_LABEL: Record<CrossAssetKind, string> = {
   EQUITY: "Equity",
   COMMODITY: "Commodity",
