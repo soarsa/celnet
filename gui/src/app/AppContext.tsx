@@ -19,7 +19,9 @@ import type {
   Conventions,
   Instrument,
   MarkedSurface,
+  SettlementStyle,
   SmileModel,
+  Underlying,
 } from "../data/contract";
 import type { CelnetTransport } from "../data/transport";
 import { resolveTransport } from "../data/transportConfig";
@@ -30,7 +32,15 @@ import {
   seedSubscriptions,
   type PairContext,
 } from "../data/seed";
-import { buildUniverse, pairId, type Universe } from "../lib/universe";
+import { buildUniverse, pairId, pairLabel, type Universe } from "../lib/universe";
+import {
+  buildAssetUniverse,
+  underlierAssetClass,
+  type AssetUniverse,
+  type UnderlierRow,
+} from "../lib/assetUniverse";
+import { ASSET_UNDERLIERS } from "../data/assetUniverse";
+import type { AssetClass } from "../products/types";
 import { useStreamSession, type StreamApi } from "../hooks/useStreamSession";
 import {
   currentLevel,
@@ -61,11 +71,37 @@ export type WorkspaceId = "ticket" | "stream" | "surface" | "risk" | "book";
 export type { ScopeLevel, ScopeNode, ScopeGroupBy };
 export { FIRM_SCOPE_ROOT };
 
-export interface TicketSeed {
-  pair: CcyPair;
-  /** A structure name to preload into the ticket (from "Stream this"/"Add"). */
+// --- active underlier (the cross-class terminal scope dimension) ------------
+
+/**
+ * The ACTIVE underlier the terminal scope crumb points at — the cross-class
+ * generalisation of "the active pair". FX is the resting/default class (derived
+ * from `pairCtx`, so every FX flow is byte-identical to before); a non-FX
+ * selection in the universe leaf overlays this with the selected `Underlying`.
+ * The FX `pairCtx` (market context, surface keying, streams) is NOT disturbed by
+ * a non-FX selection — FX-keyed data paths stay honest (they never pretend to
+ * cover a class they don't), and re-selecting an FX pair restores the overlay.
+ */
+export interface ActiveUnderlier {
+  /** The asset class the underlier belongs to (drives class-aware workspaces). */
+  assetClass: AssetClass;
+  /** The contract identity (what a ticket books / a pre-target seeds). */
+  underlying: Underlying;
+  /** The scope-crumb / display label ("EUR/USD", "XAU/USD", "AAPL", "BTC/USDT"). */
   label: string;
-  expiryYears: number;
+  /** Stable id (the projected pair id — one id space across classes). */
+  id: string;
+}
+
+/**
+ * A one-shot ticket pre-target armed by a non-FX underlier selection: the
+ * TicketWorkspace consumes it (re-pointing itself at the cross-asset vanilla
+ * spec seeded with exactly this `Underlying` + settlement mechanics) and clears
+ * it. FX selections never arm it — the FX ticket flow is untouched.
+ */
+export interface TicketTarget {
+  underlying: Underlying;
+  settlementStyle: SettlementStyle;
 }
 
 // --- scope (P0-6: entitlement-ready "what slice of the firm" seam) ----------
@@ -123,10 +159,35 @@ interface AppState {
    * (P1-10) feeds a larger list here with zero downstream rework.
    */
   universe: Universe;
-  /** The user's favourite pair ids (persisted in-memory for the session). */
+  /**
+   * The NON-FX underlier universes (metals / equity / commodity / crypto) the
+   * scope drill's asset-class rail navigates, built over the seeded
+   * `ASSET_UNDERLIERS` (honest scope: today's seeded set — an estate feed drops
+   * a larger list in with zero rework). The FX class stays `universe` above.
+   */
+  assetUniverse: AssetUniverse;
+  /**
+   * The active underlier (cross-class): FX = the active pair (default, derived
+   * from `pairCtx`); non-FX = the last universe-leaf selection. Class-aware
+   * workspaces (Surface family switch) read `assetClass` from here.
+   */
+  underlier: ActiveUnderlier;
+  /**
+   * Select a non-FX underlier from the universe leaf: overlays the active
+   * underlier, keeps a terminal `pair` crumb in lock-step (the cross-class
+   * twin of `setPair`'s invariant), and arms the one-shot ticket pre-target.
+   */
+  selectUnderlier: (row: UnderlierRow) => void;
+  /** The armed ticket pre-target (non-FX selection), or `null`. */
+  ticketTarget: TicketTarget | null;
+  /** Consume the ticket pre-target (the TicketWorkspace clears it on apply). */
+  clearTicketTarget: () => void;
+  /** The user's favourite underlier ids (persisted in-memory for the session). */
   favourites: ReadonlySet<string>;
   /** Toggle a pair's favourite status (keyed by `pairId`). */
   toggleFavourite: (pair: CcyPair) => void;
+  /** Toggle a favourite by its universe id (any class — pairs share the id space). */
+  toggleFavouriteId: (id: string) => void;
   /**
    * Recently-activated pair ids, most-recent first (driven by `setPair`).
    * Bounded; the active pair is excluded from the head so "recents" means
@@ -254,6 +315,13 @@ export function AppProvider({
   // service exists). `recents` is most-recent-first, excluding the active pair.
   const [favourites, setFavourites] = useState<ReadonlySet<string>>(() => new Set());
   const [recents, setRecents] = useState<readonly string[]>([]);
+  // The non-FX active-underlier OVERLAY: null = FX (the resting/default class,
+  // derived from pairCtx below). Set by a universe-leaf non-FX selection; cleared
+  // by any FX pair selection. The FX pairCtx is never disturbed.
+  const [nonFxUnderlier, setNonFxUnderlier] = useState<ActiveUnderlier | null>(null);
+  // The one-shot ticket pre-target a non-FX selection arms (consumed by the
+  // TicketWorkspace, which seeds the cross-asset spec from it and clears it).
+  const [ticketTarget, setTicketTarget] = useState<TicketTarget | null>(null);
   const [surface, setSurface] = useState<MarkedSurface | null>(null);
   // The smile-calibration model the surface is marked under (default = the desk's
   // market-hedge construction; the server's default when the field is absent).
@@ -274,6 +342,21 @@ export function AppProvider({
 
   // The registry-ready universe over the current seeded pairs (pure; memoized).
   const universe = useMemo(() => buildUniverse(PAIRS), []);
+  // The non-FX underlier universes (metals/equity/commodity/crypto) the scope
+  // drill's asset-class rail navigates (pure; memoized; seeded — honest scope).
+  const assetUniverse = useMemo(() => buildAssetUniverse(ASSET_UNDERLIERS), []);
+
+  // The active underlier: the non-FX overlay when set, else the active FX pair.
+  const underlier: ActiveUnderlier = useMemo(
+    () =>
+      nonFxUnderlier ?? {
+        assetClass: "FX",
+        underlying: { kind: "fx", fx: pairCtx.pair, settlementCcy: pairCtx.pair.quote },
+        label: pairLabel(pairCtx.pair),
+        id: pairId(pairCtx.pair),
+      },
+    [nonFxUnderlier, pairCtx.pair],
+  );
 
   const seed = useMemo(
     () =>
@@ -358,7 +441,24 @@ export function AppProvider({
   const setPair = (pair: CcyPair) => {
     const idx = PAIRS.findIndex((p) => p.pair.base === pair.base && p.pair.quote === pair.quote);
     if (idx < 0) return;
-    if (idx === pairIndex) return;
+    // Any FX pair selection re-targets the active underlier back to FX (clears a
+    // non-FX overlay). Purely additive: a no-op in pure-FX flows.
+    setNonFxUnderlier(null);
+    if (idx === pairIndex) {
+      // Same FX pair re-selected — possibly RETURNING from a non-FX underlier,
+      // whose label sits on the terminal crumb: re-sync it to the pair label.
+      // (Identical-label relabels return the same state — zero extra renders in
+      // the pure-FX path, preserving the prior behavior exactly.)
+      setScopeState((s) => {
+        if (currentLevel(s) !== "pair") return s;
+        const label = pairLabel(pair);
+        if (s.path[s.path.length - 1]!.label === label) return s;
+        const path = [...s.path];
+        path[path.length - 1] = { level: "pair", label };
+        return { path, groupBy: s.groupBy };
+      });
+      return;
+    }
     // Push the pair we are LEAVING onto recents (most-recent first, deduped,
     // bounded to 6) so "recents" reflects navigation history.
     const leaving = pairId(pairCtx.pair);
@@ -377,15 +477,42 @@ export function AppProvider({
     });
   };
 
-  const toggleFavourite = (pair: CcyPair) => {
-    const id = pairId(pair);
+  // Favourites are keyed by the universe id — pairs and non-FX underliers share
+  // one id space (the pair projection), so ONE favourites affordance covers every
+  // class (extension, not a fork).
+  const toggleFavouriteId = useCallback((id: string) => {
     setFavourites((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
-  };
+  }, []);
+
+  const toggleFavourite = (pair: CcyPair) => toggleFavouriteId(pairId(pair));
+
+  // Select a non-FX underlier (the universe leaf's cross-class twin of setPair):
+  // overlay the active underlier, keep a terminal `pair` crumb in lock-step (the
+  // same invariant setPair maintains for FX), and arm the one-shot ticket
+  // pre-target with the exact contract identity + settlement mechanics.
+  const selectUnderlier = useCallback((row: UnderlierRow) => {
+    setNonFxUnderlier({
+      assetClass: underlierAssetClass(row.underlying),
+      underlying: row.underlying,
+      label: row.label,
+      id: row.id,
+    });
+    setTicketTarget({ underlying: row.underlying, settlementStyle: row.settlementStyle });
+    setScopeState((s) => {
+      if (currentLevel(s) !== "pair") return s;
+      if (s.path[s.path.length - 1]!.label === row.label) return s;
+      const path = [...s.path];
+      path[path.length - 1] = { level: "pair", label: row.label };
+      return { path, groupBy: s.groupBy };
+    });
+  }, []);
+
+  const clearTicketTarget = useCallback(() => setTicketTarget(null), []);
 
   // The active scope: the reducer's path + group-by, wrapped with the (grant-all)
   // entitlement principal. `groupBy` is now REAL — driven by the scope reducer.
@@ -522,8 +649,14 @@ export function AppProvider({
     setPair,
     pairs: PAIRS,
     universe,
+    assetUniverse,
+    underlier,
+    selectUnderlier,
+    ticketTarget,
+    clearTicketTarget,
     favourites,
     toggleFavourite,
+    toggleFavouriteId,
     recents,
     scopeSwitcherOpen,
     setScopeSwitcherOpen,

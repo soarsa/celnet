@@ -69,6 +69,40 @@
   outline-offset: 1px;
 }
 
+/* The asset-class rail (book → ASSET CLASS → underlier): ordinary buttons
+   OUTSIDE the listbox, styled as a segmented chip row. */
+.classRail {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-5);
+  border-bottom: var(--hairline);
+}
+.classChip {
+  font-family: var(--font-brand);
+  font-size: var(--type-caption);
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+  padding: var(--space-1) var(--space-3);
+  border: none;
+  background: transparent;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: background-color 90ms var(--ease-out), color 90ms var(--ease-out);
+}
+.classChip:hover {
+  color: var(--text-primary);
+  background: var(--accent-soft);
+}
+.classChip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.classActive,
+.classActive:hover {
+  background: var(--brand);
+  color: var(--bg-base);
+}
+
 .list {
   flex: 1;
   min-height: 0;
@@ -155,6 +189,16 @@
 }
 .rowActive .mark {
   color: var(--brand);
+}
+.rowDetail {
+  flex: none;
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+  letter-spacing: 0.02em;
+}
+.rowCursor .rowDetail,
+.rowActive .rowDetail {
+  color: var(--text-secondary);
 }
 .rowSpot {
   flex: none;
