@@ -376,7 +376,11 @@ mod tests {
         assert_eq!(config.max_message_size, Some(TRANSPORT_MESSAGE_CAP_BYTES));
         assert_eq!(config.max_frame_size, Some(TRANSPORT_MESSAGE_CAP_BYTES));
         assert_eq!(config.max_write_buffer_size, MAX_WRITE_BUFFER_BYTES);
-        assert!(MAX_CONTRACT_MESSAGE_BYTES < TRANSPORT_MESSAGE_CAP_BYTES);
+        // Compile-time law: the largest legitimate contract frame must fit under the
+        // transport cap with headroom (a const relation — checked statically so the
+        // cap can never be tightened below the contract's own maximum).
+        const _CONTRACT_FITS_UNDER_CAP: () =
+            assert!(MAX_CONTRACT_MESSAGE_BYTES < TRANSPORT_MESSAGE_CAP_BYTES);
         assert!(MAX_WRITE_BUFFER_BYTES > config.write_buffer_size + MAX_CONTRACT_MESSAGE_BYTES);
     }
 }
