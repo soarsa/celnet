@@ -506,17 +506,29 @@ mod tests {
     /// **Curvature legs = two revaluations net of the leg's own FD delta**,
     /// re-derived longhand from the closed form (the MAR21 CVR± arithmetic), and
     /// `exotic_curvature_legs` sums leg pairs element-wise.
+    ///
+    /// The barrier sits at 1.50 so the +15% shock (1.10 → 1.265) keeps the option
+    /// ALIVE with a materially nonzero up price — a mutant that corrupts the
+    /// up-shocked spot (e.g. `spot·(1.0·rw)`) then moves the up leg by orders of
+    /// magnitude instead of comparing knocked-out ≈ 0 against deep-OTM ≈ 0 (the
+    /// gap the first mutation run exposed). A digital leg is pinned the same way:
+    /// its value moves in BOTH shock directions.
     #[test]
     fn exotic_curvature_legs_match_independent_reprice() {
         let inputs = VanillaInputs::new(1.10, 1.10, 0.10, 1.0, 0.04, 0.02);
         let n = 10_000_000.0;
         let rw = 0.15;
-        let leg = ExoticLeg::new(
-            eurusd(),
-            ExoticKind::SingleBarrier(up_out_call()),
-            n,
-            inputs,
-        );
+        let spec = SingleBarrier {
+            kind: BarrierKind {
+                up: true,
+                style: BarrierStyle::KnockOut,
+                option: OptionType::Call,
+            },
+            strike: 1.10,
+            barrier: 1.50, // alive at the +15% shocked spot 1.265
+            rebate: 0.0,
+        };
+        let leg = ExoticLeg::new(eurusd(), ExoticKind::SingleBarrier(spec), n, inputs);
 
         let pr = |spot: f64| {
             single_barrier_price(
@@ -529,12 +541,13 @@ mod tests {
                     inputs.r_for,
                 ))
                     .into(),
-                up_out_call(),
+                spec,
             )
         };
         let base = pr(inputs.spot) * n;
         let up = pr(inputs.spot * (1.0 + rw)) * n;
         let down = pr(inputs.spot * (1.0 - rw)) * n;
+        assert!(up > 1e-3 * n, "the up-shocked barrier price must be alive");
         // The leg's linear term uses its own central-FD delta; re-derive it with
         // the same documented bump (relative 1e-4, absolute floor 1e-7).
         let h = (inputs.spot.abs() * 1e-4).max(1e-7);
@@ -549,13 +562,43 @@ mod tests {
             "CVR+ {got_up} vs {want_up}"
         );
         assert!(is_close(got_down, want_down, 1e-9, 1e-3));
-        // An up-and-out call near its barrier is exotic: the up-shock leg differs in
-        // SIGN/shape from a vanilla's (the vanilla CVR+ would be negative for a long
-        // call; the knock-out destroys value on the way up).
+
+        // The digital's curvature legs, pinned the same longhand way (its price
+        // moves in both directions, so each shocked-spot expression is pinned).
+        let dk = DigitalKind::cash(OptionType::Put);
+        let d_inputs = VanillaInputs::new(1.10, 1.09, 0.11, 0.5, 0.03, 0.01);
+        let dn = -4_000_000.0;
+        let dleg = ExoticLeg::new(eurusd(), ExoticKind::Digital(dk), dn, d_inputs);
+        let dpr = |spot: f64| {
+            digital_price(
+                dk,
+                &(&VanillaInputs::new(
+                    spot,
+                    d_inputs.strike,
+                    d_inputs.vol,
+                    d_inputs.t,
+                    d_inputs.r_dom,
+                    d_inputs.r_for,
+                ))
+                    .into(),
+            )
+        };
+        let d_base = dpr(d_inputs.spot) * dn;
+        let d_up = dpr(d_inputs.spot * (1.0 + rw)) * dn;
+        let d_down = dpr(d_inputs.spot * (1.0 - rw)) * dn;
+        let dh = (d_inputs.spot.abs() * 1e-4).max(1e-7);
+        let d_fd = (dpr(d_inputs.spot + dh) - dpr(d_inputs.spot - dh)) / (2.0 * dh);
+        let d_linear = d_fd * dn * rw * d_inputs.spot;
+        let d_want_up = -((d_up - d_base) - d_linear);
+        let d_want_down = -((d_down - d_base) + d_linear);
+        let (d_got_up, d_got_down) = dleg.curvature_legs(rw);
         assert!(
-            got_up > 0.0,
-            "up-and-out call must be charged on the up-shock"
+            is_close(d_got_up, d_want_up, 1e-9, 1e-3),
+            "digital CVR+ {d_got_up} vs {d_want_up}"
         );
+        assert!(is_close(d_got_down, d_want_down, 1e-9, 1e-3));
+        // Vacuity guards: both shocked digital values genuinely differ from base.
+        assert!((d_up - d_base).abs() > 1.0 && (d_down - d_base).abs() > 1.0);
 
         // The summed pair is element-wise across legs.
         let leg2 = ExoticLeg::new(
