@@ -16,43 +16,66 @@ commercial add-in SDK).
 
 ## Worksheet functions (`CELNET.*`)
 
-There are **27** custom functions (the manifest is `src/functions/functions.json`,
-the registered set is `src/functions/functions.ts`), grouped below by purpose.
-Every one shapes a request in the single `celnet.wire` contract and renders the
-server's typed result — the add-in adds no pricing.
+There are **13** custom functions (the manifest is `src/functions/functions.json`,
+the registered set is `src/functions/functions.ts`). Every one shapes a request in
+the single `celnet.wire` contract and renders the server's typed result — the
+add-in adds no pricing. Product pricing is **one composable polymorphic surface**:
+`CELNET.INSTRUMENT` builds an opaque instrument token for ANY product family on
+ANY asset class, and the four verbs (`PRICE`/`GREEKS`/`RFQ`/`SUBSCRIBE`) price it.
+The former per-product function table (`CELNET.BARRIER`, `CELNET.TARF`, …) is
+retired at proven wire parity (`test/instrumentPolymorphic.test.ts` asserts the
+spec path emits the byte-identical frame for every retired function and every
+golden-corpus family).
 
-### Vanilla pricing & quoting
+### The polymorphic pricing surface
 
 | Function | Shape | Contract path |
 |---|---|---|
-| `=CELNET.PRICE(pair, tenor, strikeOrDelta, callPut, notional)` | scalar premium (two-way mid) | `request_quote` |
-| `=CELNET.GREEKS(pair, tenor, strikeOrDelta, callPut, notional)` | 13×2 spill `[name, value]` + convention footer | `request_quote` (Greeks) |
-| `=CELNET.RFQ(pair, tenor, strikeOrDelta, callPut, notional)` | 1×4 spill `[bid, offer, quoteId, validUntil]` + footer | `request_quote` |
+| `=CELNET.INSTRUMENT(underlier, product, terms, [tenor], [notional])` | the opaque instrument token (a deterministic value, not an API) | — (pure shaping) |
+| `=CELNET.PRICE(pairOrInstrument, [tenor], [strikeOrDelta], [callPut], [notional])` | positional vanilla: scalar mid premium (unchanged); token: the family's labelled spill (`premium`, honest `std_error` only when MC-priced, 13 Greeks, convention footer; swaps spill their fair strikes) | `request_quote` |
+| `=CELNET.GREEKS(pairOrInstrument, …)` | 13×2 spill `[name, value]` + convention footer — any family/class via a token | `request_quote` (Greeks) |
+| `=CELNET.RFQ(pairOrInstrument, …)` | 1×4 spill `[bid, offer, quoteId, validUntil]` + footer — any family/class via a token | `request_quote` |
+| `=CELNET.SUBSCRIBE(pairOrInstrument, …)` | **streaming** live two-way; re-ticks; stale-aware — any family/class via a token | `subscribe`/`update` (multiplexed) |
 
-### Exotics & structured products (the `Product` oneof)
+**The underlier grammar** (one string, five asset classes): FX `EURUSD`/`EUR/USD`;
+metal `XAUUSD`/`XAU/EUR` (a metal-X-code base leg vs a FIAT quote —
+metal-vs-metal ratios are not priceable and rejected with a typed error); equity
+`AAPL@XNAS:USD` (`ticker@venue:ccy` — venue present); commodity `BRENT@:USD`
+(empty venue); crypto `BTC/USD`/`ETH-USDT`/`DOGEUSDT` with an optional
+`:inverse`/`:linear` settlement suffix (`:inverse` = the coin-margined `1/S_T`
+convention). A 3-letter/3-letter pair is FX unless its base is a metal X-code or
+a known liquid coin; any other coin uses a non-3-letter leg (`FOO/USDT`) or an
+explicit suffix (`FOO/USD:linear`).
 
-Each exotic spills `[premium, PV]`, the 13 Greeks, and a convention footer; the
-Monte-Carlo–priced products additionally spill a `std_error` row (a price
-standard error, never a "machine-precision" claim). All route over the single
-`request_quote` contract path carrying the structure's `Product` arm.
+**The terms range** is a named, order-free 2-column key/value range — e.g.
+`("strike",1.12; "callPut","C"; "barrier",1.20; "kind","KNOCK_OUT")` — whose keys
+mirror the family's parameters exactly (a missing/unknown key is a typed error
+naming the key). `tenor`/`notional` may be terms instead of arguments (notional
+defaults to 1). Per family (optional keys bracketed):
 
-| Function | Shape |
+| `product` | terms keys |
 |---|---|
-| `=CELNET.BARRIER(pair, tenor, strikeOrDelta, callPut, notional, barrier, [kind], [side], [upperBarrier], [rebate], [monitoring], [model])` | single **or** double barrier (supply `upperBarrier` ⇒ double); `model` = `ANALYTIC` (default) or `LSV` (local-stoch-vol, single-barrier) |
-| `=CELNET.WINDOWBARRIER(pair, tenor, strikeOrDelta, callPut, notional, barrier, [side], [windowStart], [windowEnd], [mcPairs], [mcSteps], [mcSeed])` | window (partial-time) knock-out under LSV; exact ADI-PDE (`mcPairs=0`) or MC (`std_error`) |
-| `=CELNET.DIGITAL(pair, tenor, strike, callPut, notional, [style], [payout])` | digital (binary); `style` = `CASH_OR_NOTHING` (default) or `ASSET_OR_NOTHING` |
-| `=CELNET.TOUCH(pair, tenor, kind, barrier, notional, [rebate], [upperBarrier], [monitoring])` | touch family: `OT`/`NT`/`DNT`/`DOT` (`upperBarrier` required for `DNT`/`DOT`) |
-| `=CELNET.ASIAN(pair, tenor, strike, callPut, notional, [averaging], [observations], [method], [elapsedAvg], [elapsedWeight])` | arithmetic-average-rate Asian; `method` = `CURRAN` (default) or `TW`; seasoning via `elapsedAvg`/`elapsedWeight` |
-| `=CELNET.LOOKBACK(pair, tenor, callPut, notional, [style], [monitoring], [strike], [observations], [mcPairs], [mcSeed])` | lookback; `style` = `FLOATING` (default) or `FIXED`; `CONTINUOUS` closed-form or `DISCRETE` MC |
-| `=CELNET.FORWARDSTART(pair, tenor, callPut, moneyness, reset, notional)` | forward-start vanilla (strike fixes at `reset`, proportional `moneyness`) |
-| `=CELNET.CLIQUET(pair, tenor, callPut, moneyness, periods, notional, [localFloor], [localCap], [globalFloor], [globalCap], [mcPairs], [mcSeed])` | cliquet / ratchet; clamped variants priced by MC (`std_error`) |
-| `=CELNET.VARSWAP(pair, tenor, notional, [strikeVol])` | variance swap: spill `[fair_variance, K_var]` / `[fair_vol, √K_var]` |
-| `=CELNET.VOLSWAP(pair, tenor, notional, [strikeVol])` | volatility swap (convexity-adjusted `K_vol`) |
-| `=CELNET.AMERICAN(pair, tenor, strike, callPut, notional, [style], [bermudanSteps], [lsmPaths], [lsmExerciseDates], [lsmSeed])` | American / Bermudan early-exercise; exact FD or Longstaff-Schwartz MC (`std_error`) |
-| `=CELNET.QUANTO(pair, tenor, callPut, strike, notional, conversionVol, correlation, [payoff])` | quanto; `payoff` = `VANILLA` (default) or `DIGITAL` |
-| `=CELNET.TARF(pair, tenor, callPut, strike, target, leverage, fixings, notional, [redemption], [fixingNotional], [mcPairs], [mcSeed])` | Target-Redemption Forward (MC); `redemption` = `FULL_GAIN` (default) or `CAPPED_GAIN` |
-| `=CELNET.ACCUMULATOR(pair, tenor, pivot, barrier, leverage, fixings, notional, [monitoring], [fixingNotional], [mcPairs], [mcSeed])` | accumulator with an up-and-out knock-out (MC) |
-| `=CELNET.BASKET(pair, tenor, callPut, strike, notional, legs, correlations, [kind], [mcPaths], [mcReplications], [mcSteps], [mcSeed])` | correlated basket / best-of / worst-of (scrambled-Sobol MC); `legs` = `[pair, weight, spot, vol, rFor]` rows, `correlations` = N×N matrix; `kind` = `BASKET` (default) / `BEST_OF` / `WORST_OF` |
+| `VANILLA` | `strike` (level or delta `25dP`/`ATM`), `callPut` |
+| `BARRIER` | `strike`, `callPut`, `barrier`, `[kind]`, `[side]`, `[upperBarrier]` (⇒ double), `[rebate]`, `[monitoring]`, `[model]` (`ANALYTIC`/`LSV`) |
+| `WINDOWBARRIER` | `strike`, `callPut`, `barrier`, `[side]`, `[windowStart]`, `[windowEnd]`, `[mcPairs]`, `[mcSteps]`, `[mcSeed]` |
+| `DIGITAL` | `strike`, `callPut`, `[style]`, `[payout]` |
+| `TOUCH` | `kind` (`OT`/`NT`/`DNT`/`DOT`), `barrier`, `[rebate]`, `[upperBarrier]`, `[monitoring]` |
+| `VARSWAP` / `VOLSWAP` | `[strikeVol]` |
+| `ASIAN` | `strike`, `callPut`, `[averaging]`, `[observations]`, `[method]`, `[elapsedAvg]`, `[elapsedWeight]` |
+| `FORWARDSTART` | `callPut`, `moneyness`, `reset` |
+| `CLIQUET` | `callPut`, `moneyness`, `periods`, `[localFloor]`, `[localCap]`, `[globalFloor]`, `[globalCap]`, `[mcPairs]`, `[mcSeed]` |
+| `QUANTO` | `callPut`, `strike`, `conversionVol`, `correlation`, `[payoff]` |
+| `TARF` | `callPut`, `strike`, `target`, `leverage`, `fixings`, `[redemption]`, `[fixingNotional]`, `[mcPairs]`, `[mcSeed]` |
+| `ACCUMULATOR` | `pivot`, `barrier`, `leverage`, `fixings`, `[monitoring]`, `[fixingNotional]`, `[mcPairs]`, `[mcSeed]` |
+| `LOOKBACK` | `callPut`, `[style]`, `[monitoring]`, `[strike]` (FIXED only), `[observations]`, `[mcPairs]`, `[mcSeed]` |
+| `AMERICAN` | `strike`, `callPut`, `[style]`, `[bermudanSteps]`, `[lsmPaths]`, `[lsmExerciseDates]`, `[lsmSeed]` |
+| `BASKET` | `callPut`, `strike`, `[kind]`, `[mcPaths]`, `[mcReplications]`, `[mcSteps]`, `[mcSeed]`, plus repeated rows `("legs", pair, weight, spot, vol, rFor)` and `("correlations", ρ…)` |
+| `FORWARD` | `rate`, `[side]` |
+| `SWAP` | `rate`, `[nearSide]` |
+| `NDF` | `rate`, `fixing` (e.g. `BRL.PTAX`), `[settlementCcy]`, `[side]` |
+
+The proto product-arm names (`single_barrier`, `variance_swap`, `fx_forward`, …)
+are accepted as `product` aliases, so corpus/family tokens work verbatim.
 
 ### Surface (marking & smile)
 
@@ -66,7 +89,7 @@ standard error, never a "machine-precision" claim). All route over the single
 
 | Function | Shape | Contract path |
 |---|---|---|
-| `=CELNET.SUBSCRIBE(pair, tenor, strikeOrDelta, callPut, notional)` | **streaming** live two-way; re-ticks; stale-aware | `subscribe`/`update` (multiplexed) |
+| `=CELNET.SUBSCRIBE(pairOrInstrument, …)` | **streaming** live two-way (vanilla positional or any instrument token); re-ticks; stale-aware | `subscribe`/`update` (multiplexed) |
 | `=CELNET.SERIES(pair, observable, [tenor], [delta])` | **streaming** live market-observable trend (ATM/SPOT/RR/BF/FWD); re-ticks | `market_series_subscribe`/`…_point` (multiplexed) |
 
 ### Hierarchical risk & operations (`RiskService` + observability)

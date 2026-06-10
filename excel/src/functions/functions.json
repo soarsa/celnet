@@ -2,74 +2,121 @@
   "$schema": "https://developer.microsoft.com/json-schemas/office-js/custom-functions.schema.json",
   "functions": [
     {
-      "id": "PRICE",
-      "name": "PRICE",
-      "description": "Price one structure (premium in the convention's premium-ccy/style).",
+      "id": "INSTRUMENT",
+      "name": "INSTRUMENT",
+      "description": "Build the opaque instrument token the polymorphic verbs price: one underlier grammar across FX/metal/equity/commodity/crypto + a product family + a named key/value terms range.",
       "result": {
         "dimensionality": "scalar",
-        "type": "number"
+        "type": "string"
       },
       "parameters": [
         {
-          "name": "pair",
-          "description": "Currency pair, e.g. EURUSD.",
+          "name": "underlier",
+          "description": "Underlier: EURUSD, XAUUSD, AAPL@XNAS:USD, BRENT@:USD, BTC/USD[:inverse|:linear].",
           "type": "string"
+        },
+        {
+          "name": "product",
+          "description": "Product family: VANILLA, BARRIER, WINDOWBARRIER, DIGITAL, TOUCH, VARSWAP, VOLSWAP, ASIAN, FORWARDSTART, CLIQUET, QUANTO, TARF, ACCUMULATOR, LOOKBACK, AMERICAN, BASKET, FORWARD, SWAP, NDF.",
+          "type": "string"
+        },
+        {
+          "name": "terms",
+          "description": "2-column key/value terms range; keys mirror the family's parameters (legs/correlations rows repeat).",
+          "type": "any",
+          "dimensionality": "matrix"
         },
         {
           "name": "tenor",
-          "description": "Tenor, e.g. 1Y, 3M, ON.",
-          "type": "string"
-        },
-        {
-          "name": "strikeOrDelta",
-          "description": "Absolute strike (1.12) or delta (25dP, ATM).",
-          "type": "string"
-        },
-        {
-          "name": "callPut",
-          "description": "C for call, P for put.",
-          "type": "string"
+          "description": "Tenor, e.g. 1Y (or a (\"tenor\", ...) term).",
+          "type": "string",
+          "optional": true
         },
         {
           "name": "notional",
-          "description": "Trade notional in the base currency.",
-          "type": "number"
+          "description": "Notional in the base/asset leg (or a (\"notional\", ...) term; default 1).",
+          "type": "number",
+          "optional": true
         }
       ]
     },
     {
-      "id": "GREEKS",
-      "name": "GREEKS",
-      "description": "The 13-Greek vector as a vertical spill [name, value] with a convention footer.",
+      "id": "PRICE",
+      "name": "PRICE",
+      "description": "Price one structure: the vanilla positional mid premium, or the full family spill for a CELNET.INSTRUMENT token (any product, any asset class).",
       "result": {
         "dimensionality": "matrix",
         "type": "any"
       },
       "parameters": [
         {
-          "name": "pair",
-          "description": "Currency pair, e.g. EURUSD.",
+          "name": "pairOrInstrument",
+          "description": "Currency pair (e.g. EURUSD) or a CELNET.INSTRUMENT token.",
           "type": "string"
         },
         {
           "name": "tenor",
-          "description": "Tenor, e.g. 1Y.",
-          "type": "string"
+          "description": "Tenor, e.g. 1Y (positional form only).",
+          "type": "string",
+          "optional": true
         },
         {
           "name": "strikeOrDelta",
-          "description": "Absolute strike or delta.",
-          "type": "string"
+          "description": "Absolute strike (1.12) or delta (25dP, ATM) (positional form only).",
+          "type": "string",
+          "optional": true
         },
         {
           "name": "callPut",
-          "description": "C or P.",
-          "type": "string"
+          "description": "C for call, P for put (positional form only).",
+          "type": "string",
+          "optional": true
         },
         {
           "name": "notional",
-          "description": "Trade notional in the base currency.",
-          "type": "number"
+          "description": "Trade notional in the base currency (positional form only).",
+          "type": "number",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "id": "GREEKS",
+      "name": "GREEKS",
+      "description": "The 13-Greek vector spill [name, value] with a convention footer; accepts the legacy vanilla positional form or a CELNET.INSTRUMENT token.",
+      "result": {
+        "dimensionality": "matrix",
+        "type": "any"
+      },
+      "parameters": [
+        {
+          "name": "pairOrInstrument",
+          "description": "Currency pair (e.g. EURUSD) or a CELNET.INSTRUMENT token.",
+          "type": "string"
+        },
+        {
+          "name": "tenor",
+          "description": "Tenor, e.g. 1Y (positional form only).",
+          "type": "string",
+          "optional": true
+        },
+        {
+          "name": "strikeOrDelta",
+          "description": "Absolute strike (1.12) or delta (25dP, ATM) (positional form only).",
+          "type": "string",
+          "optional": true
+        },
+        {
+          "name": "callPut",
+          "description": "C for call, P for put (positional form only).",
+          "type": "string",
+          "optional": true
+        },
+        {
+          "name": "notional",
+          "description": "Trade notional in the base currency (positional form only).",
+          "type": "number",
+          "optional": true
         }
       ]
     },
@@ -156,946 +203,38 @@
     {
       "id": "RFQ",
       "name": "RFQ",
-      "description": "RFQ for a structure: spill [bid, offer, quoteId, validUntil] + convention footer.",
+      "description": "RFQ for a structure: spill [bid, offer, quoteId, validUntil] + convention footer; accepts the legacy vanilla positional form or a CELNET.INSTRUMENT token.",
       "result": {
         "dimensionality": "matrix",
         "type": "any"
       },
       "parameters": [
         {
-          "name": "pair",
-          "description": "Currency pair, e.g. EURUSD.",
+          "name": "pairOrInstrument",
+          "description": "Currency pair (e.g. EURUSD) or a CELNET.INSTRUMENT token.",
           "type": "string"
         },
         {
           "name": "tenor",
-          "description": "Tenor, e.g. 1Y.",
-          "type": "string"
+          "description": "Tenor, e.g. 1Y (positional form only).",
+          "type": "string",
+          "optional": true
         },
         {
           "name": "strikeOrDelta",
-          "description": "Absolute strike or delta.",
-          "type": "string"
+          "description": "Absolute strike (1.12) or delta (25dP, ATM) (positional form only).",
+          "type": "string",
+          "optional": true
         },
         {
           "name": "callPut",
-          "description": "C or P.",
-          "type": "string"
-        },
-        {
-          "name": "notional",
-          "description": "Trade notional in the base currency.",
-          "type": "number"
-        }
-      ]
-    },
-    {
-      "id": "BARRIER",
-      "name": "BARRIER",
-      "description": "Price a barrier option (single OR double via params): premium + 13 Greeks + footer.",
-      "result": {
-        "dimensionality": "matrix",
-        "type": "any"
-      },
-      "parameters": [
-        {
-          "name": "pair",
-          "description": "Currency pair, e.g. EURUSD.",
-          "type": "string"
-        },
-        {
-          "name": "tenor",
-          "description": "Tenor, e.g. 1Y.",
-          "type": "string"
-        },
-        {
-          "name": "strikeOrDelta",
-          "description": "Absolute strike or delta (25dP, ATM) of the vanilla payoff.",
-          "type": "string"
-        },
-        {
-          "name": "callPut",
-          "description": "C for call, P for put.",
-          "type": "string"
-        },
-        {
-          "name": "notional",
-          "description": "Trade notional in the base currency.",
-          "type": "number"
-        },
-        {
-          "name": "barrier",
-          "description": "Barrier level (single: the sole barrier; double: the LOWER barrier).",
-          "type": "number"
-        },
-        {
-          "name": "kind",
-          "description": "Optional KNOCK_IN (default) or KNOCK_OUT.",
+          "description": "C for call, P for put (positional form only).",
           "type": "string",
           "optional": true
         },
         {
-          "name": "side",
-          "description": "Optional UP (default) or DOWN; single-barrier only (omit for a double barrier).",
-          "type": "string",
-          "optional": true
-        },
-        {
-          "name": "upperBarrier",
-          "description": "Optional upper barrier; supplying it makes the ticket a DOUBLE barrier.",
-          "type": "number",
-          "optional": true
-        },
-        {
-          "name": "rebate",
-          "description": "Optional rebate paid on the barrier event (omit => 0).",
-          "type": "number",
-          "optional": true
-        },
-        {
-          "name": "monitoring",
-          "description": "Optional CONTINUOUS (default) or DISCRETE crossing.",
-          "type": "string",
-          "optional": true
-        },
-        {
-          "name": "model",
-          "description": "Optional booking model: ANALYTIC (default, closed-form) or LSV (local-stoch-vol; single-barrier only).",
-          "type": "string",
-          "optional": true
-        }
-      ]
-    },
-    {
-      "id": "WINDOWBARRIER",
-      "name": "WINDOWBARRIER",
-      "description": "Price a window (partial-time) barrier under the LOCAL_STOCH_VOL model: premium + (std_error if MC) + 13 Greeks + footer.",
-      "result": {
-        "dimensionality": "matrix",
-        "type": "any"
-      },
-      "parameters": [
-        {
-          "name": "pair",
-          "description": "Currency pair, e.g. EURUSD.",
-          "type": "string"
-        },
-        {
-          "name": "tenor",
-          "description": "Tenor, e.g. 1Y.",
-          "type": "string"
-        },
-        {
-          "name": "strikeOrDelta",
-          "description": "Absolute strike or delta (25dP, ATM) of the vanilla payoff.",
-          "type": "string"
-        },
-        {
-          "name": "callPut",
-          "description": "C for call, P for put.",
-          "type": "string"
-        },
-        {
           "name": "notional",
-          "description": "Trade notional in the base currency.",
-          "type": "number"
-        },
-        {
-          "name": "barrier",
-          "description": "Knock-out barrier level (quote per 1 unit of base), e.g. 1.30.",
-          "type": "number"
-        },
-        {
-          "name": "side",
-          "description": "Optional UP (default, up-and-out) or DOWN (down-and-out).",
-          "type": "string",
-          "optional": true
-        },
-        {
-          "name": "windowStart",
-          "description": "Optional active-window start in years (>= 0; default 0 => front partial).",
-          "type": "number",
-          "optional": true
-        },
-        {
-          "name": "windowEnd",
-          "description": "Optional active-window end in years (> windowStart, <= expiry; default expiry => back partial).",
-          "type": "number",
-          "optional": true
-        },
-        {
-          "name": "mcPairs",
-          "description": "Optional Monte-Carlo antithetic pairs (0 => exact ADI-PDE, no std-error).",
-          "type": "number",
-          "optional": true
-        },
-        {
-          "name": "mcSteps",
-          "description": "Optional Monte-Carlo time steps (ignored when mcPairs = 0; 0 => server default).",
-          "type": "number",
-          "optional": true
-        },
-        {
-          "name": "mcSeed",
-          "description": "Optional Monte-Carlo seed (bit-reproducible; ignored when mcPairs = 0).",
-          "type": "number",
-          "optional": true
-        }
-      ]
-    },
-    {
-      "id": "DIGITAL",
-      "name": "DIGITAL",
-      "description": "Price a digital (binary) option: premium + 13 Greeks + convention footer.",
-      "result": {
-        "dimensionality": "matrix",
-        "type": "any"
-      },
-      "parameters": [
-        {
-          "name": "pair",
-          "description": "Currency pair, e.g. EURUSD.",
-          "type": "string"
-        },
-        {
-          "name": "tenor",
-          "description": "Tenor, e.g. 1Y.",
-          "type": "string"
-        },
-        {
-          "name": "strike",
-          "description": "Absolute strike level, e.g. 1.10.",
-          "type": "number"
-        },
-        {
-          "name": "callPut",
-          "description": "C for the above-strike payoff, P for the below-strike payoff.",
-          "type": "string"
-        },
-        {
-          "name": "notional",
-          "description": "Trade notional in the base currency.",
-          "type": "number"
-        },
-        {
-          "name": "style",
-          "description": "Optional CASH_OR_NOTHING (default) or ASSET_OR_NOTHING.",
-          "type": "string",
-          "optional": true
-        },
-        {
-          "name": "payout",
-          "description": "Optional fixed payout amount (omit => 0/unit).",
-          "type": "number",
-          "optional": true
-        }
-      ]
-    },
-    {
-      "id": "TOUCH",
-      "name": "TOUCH",
-      "description": "Price a touch structure (one-/no-/double-no-/double-one-touch): premium + Greeks + footer.",
-      "result": {
-        "dimensionality": "matrix",
-        "type": "any"
-      },
-      "parameters": [
-        {
-          "name": "pair",
-          "description": "Currency pair, e.g. EURUSD.",
-          "type": "string"
-        },
-        {
-          "name": "tenor",
-          "description": "Tenor, e.g. 1Y.",
-          "type": "string"
-        },
-        {
-          "name": "kind",
-          "description": "Touch family: OT, NT, DNT (double-no-touch) or DOT (double-one-touch).",
-          "type": "string"
-        },
-        {
-          "name": "barrier",
-          "description": "The (lower / sole) barrier level.",
-          "type": "number"
-        },
-        {
-          "name": "notional",
-          "description": "Trade notional in the base currency.",
-          "type": "number"
-        },
-        {
-          "name": "rebate",
-          "description": "Optional rebate paid when the touch condition is satisfied (omit => 0).",
-          "type": "number",
-          "optional": true
-        },
-        {
-          "name": "upperBarrier",
-          "description": "Optional upper barrier (required for DNT/DOT; rejected for OT/NT).",
-          "type": "number",
-          "optional": true
-        },
-        {
-          "name": "monitoring",
-          "description": "Optional CONTINUOUS (default) or DISCRETE monitoring.",
-          "type": "string",
-          "optional": true
-        }
-      ]
-    },
-    {
-      "id": "VARSWAP",
-      "name": "VARSWAP",
-      "description": "Price a variance swap: spill [fair_variance, K_var] / [fair_vol, sqrt(K_var)] + convention footer.",
-      "result": {
-        "dimensionality": "matrix",
-        "type": "any"
-      },
-      "parameters": [
-        {
-          "name": "pair",
-          "description": "Currency pair, e.g. EURUSD.",
-          "type": "string"
-        },
-        {
-          "name": "tenor",
-          "description": "Tenor, e.g. 1Y.",
-          "type": "string"
-        },
-        {
-          "name": "notional",
-          "description": "Trade notional in the base currency.",
-          "type": "number"
-        },
-        {
-          "name": "strikeVol",
-          "description": "Optional fixed strike vol to pin (absolute, e.g. 0.11); omit for the fair strike.",
-          "type": "number",
-          "optional": true
-        }
-      ]
-    },
-    {
-      "id": "VOLSWAP",
-      "name": "VOLSWAP",
-      "description": "Price a volatility swap: spill [fair_vol, K_vol] (convexity-adjusted) + convention footer.",
-      "result": {
-        "dimensionality": "matrix",
-        "type": "any"
-      },
-      "parameters": [
-        {
-          "name": "pair",
-          "description": "Currency pair, e.g. EURUSD.",
-          "type": "string"
-        },
-        {
-          "name": "tenor",
-          "description": "Tenor, e.g. 1Y.",
-          "type": "string"
-        },
-        {
-          "name": "notional",
-          "description": "Trade notional in the base currency.",
-          "type": "number"
-        },
-        {
-          "name": "strikeVol",
-          "description": "Optional fixed strike vol to pin (absolute, e.g. 0.11); omit for the fair strike.",
-          "type": "number",
-          "optional": true
-        }
-      ]
-    },
-    {
-      "id": "ASIAN",
-      "name": "ASIAN",
-      "description": "Price an arithmetic-average-rate Asian option: spill [premium, PV], the 13 Greeks, + convention footer.",
-      "result": {
-        "dimensionality": "matrix",
-        "type": "any"
-      },
-      "parameters": [
-        {
-          "name": "pair",
-          "description": "Currency pair, e.g. EURUSD.",
-          "type": "string"
-        },
-        {
-          "name": "tenor",
-          "description": "Tenor, e.g. 1Y.",
-          "type": "string"
-        },
-        {
-          "name": "strike",
-          "description": "Absolute strike level, e.g. 1.10.",
-          "type": "number"
-        },
-        {
-          "name": "callPut",
-          "description": "C for call, P for put.",
-          "type": "string"
-        },
-        {
-          "name": "notional",
-          "description": "Trade notional in the base currency.",
-          "type": "number"
-        },
-        {
-          "name": "averaging",
-          "description": "Optional averaging style: DISCRETE (default) or CONTINUOUS.",
-          "type": "string",
-          "optional": true
-        },
-        {
-          "name": "observations",
-          "description": "Number of equally-spaced fixings (DISCRETE; >= 1).",
-          "type": "number",
-          "optional": true
-        },
-        {
-          "name": "method",
-          "description": "Optional analytic estimator: CURRAN (default) or TW.",
-          "type": "string",
-          "optional": true
-        },
-        {
-          "name": "elapsedAvg",
-          "description": "Optional realised running average of the fixed observations (seasoning).",
-          "type": "number",
-          "optional": true
-        },
-        {
-          "name": "elapsedWeight",
-          "description": "Optional fraction in [0,1) of the average already accumulated.",
-          "type": "number",
-          "optional": true
-        }
-      ]
-    },
-    {
-      "id": "FORWARDSTART",
-      "name": "FORWARDSTART",
-      "description": "Price a forward-start vanilla: spill [premium, PV], the 13 Greeks, + convention footer.",
-      "result": {
-        "dimensionality": "matrix",
-        "type": "any"
-      },
-      "parameters": [
-        {
-          "name": "pair",
-          "description": "Currency pair, e.g. EURUSD.",
-          "type": "string"
-        },
-        {
-          "name": "tenor",
-          "description": "Tenor, e.g. 1Y.",
-          "type": "string"
-        },
-        {
-          "name": "callPut",
-          "description": "C for call, P for put.",
-          "type": "string"
-        },
-        {
-          "name": "moneyness",
-          "description": "Proportional strike multiplier on the reset-date spot (e.g. 1.0).",
-          "type": "number"
-        },
-        {
-          "name": "reset",
-          "description": "Reset (strike-fixing) date as a year fraction in [0, expiry], e.g. 0.25.",
-          "type": "number"
-        },
-        {
-          "name": "notional",
-          "description": "Trade notional in the base currency.",
-          "type": "number"
-        }
-      ]
-    },
-    {
-      "id": "CLIQUET",
-      "name": "CLIQUET",
-      "description": "Price a cliquet (ratchet): spill [premium, PV], (std_error if MC-priced/clamped), the 13 Greeks, + footer.",
-      "result": {
-        "dimensionality": "matrix",
-        "type": "any"
-      },
-      "parameters": [
-        {
-          "name": "pair",
-          "description": "Currency pair, e.g. EURUSD.",
-          "type": "string"
-        },
-        {
-          "name": "tenor",
-          "description": "Tenor, e.g. 1Y.",
-          "type": "string"
-        },
-        {
-          "name": "callPut",
-          "description": "C for call, P for put.",
-          "type": "string"
-        },
-        {
-          "name": "moneyness",
-          "description": "Proportional strike multiplier for each period leg (e.g. 1.0).",
-          "type": "number"
-        },
-        {
-          "name": "periods",
-          "description": "Number of equal ratchet sub-periods (>= 1).",
-          "type": "number"
-        },
-        {
-          "name": "notional",
-          "description": "Trade notional in the base currency.",
-          "type": "number"
-        },
-        {
-          "name": "localFloor",
-          "description": "Optional per-period return floor (omit => unconstrained).",
-          "type": "number",
-          "optional": true
-        },
-        {
-          "name": "localCap",
-          "description": "Optional per-period return cap (omit => unconstrained).",
-          "type": "number",
-          "optional": true
-        },
-        {
-          "name": "globalFloor",
-          "description": "Optional summed-payoff floor (omit => unconstrained).",
-          "type": "number",
-          "optional": true
-        },
-        {
-          "name": "globalCap",
-          "description": "Optional summed-payoff cap (omit => unconstrained).",
-          "type": "number",
-          "optional": true
-        },
-        {
-          "name": "mcPairs",
-          "description": "Optional Monte-Carlo antithetic pairs for the clamped case (0 => server default).",
-          "type": "number",
-          "optional": true
-        },
-        {
-          "name": "mcSeed",
-          "description": "Optional Monte-Carlo seed for the clamped case (bit-reproducible).",
-          "type": "number",
-          "optional": true
-        }
-      ]
-    },
-    {
-      "id": "QUANTO",
-      "name": "QUANTO",
-      "description": "Price a quanto option: spill [premium, PV], the 13 Greeks, + convention footer.",
-      "result": {
-        "dimensionality": "matrix",
-        "type": "any"
-      },
-      "parameters": [
-        {
-          "name": "pair",
-          "description": "Currency pair, e.g. EURUSD.",
-          "type": "string"
-        },
-        {
-          "name": "tenor",
-          "description": "Tenor, e.g. 1Y.",
-          "type": "string"
-        },
-        {
-          "name": "callPut",
-          "description": "C for call, P for put.",
-          "type": "string"
-        },
-        {
-          "name": "strike",
-          "description": "Absolute strike level, e.g. 1.10.",
-          "type": "number"
-        },
-        {
-          "name": "notional",
-          "description": "Trade notional in the base currency.",
-          "type": "number"
-        },
-        {
-          "name": "conversionVol",
-          "description": "Volatility of the settlement-FX conversion rate (absolute, e.g. 0.09).",
-          "type": "number"
-        },
-        {
-          "name": "correlation",
-          "description": "Correlation in [-1, 1] between the underlying and the settlement-FX rate.",
-          "type": "number"
-        },
-        {
-          "name": "payoff",
-          "description": "Optional payoff: VANILLA (default) or DIGITAL.",
-          "type": "string",
-          "optional": true
-        }
-      ]
-    },
-    {
-      "id": "TARF",
-      "name": "TARF",
-      "description": "Price a Target-Redemption Forward (Monte-Carlo): spill [premium, PV], [std_error], the 13 Greeks, + footer.",
-      "result": {
-        "dimensionality": "matrix",
-        "type": "any"
-      },
-      "parameters": [
-        {
-          "name": "pair",
-          "description": "Currency pair, e.g. EURUSD.",
-          "type": "string"
-        },
-        {
-          "name": "tenor",
-          "description": "Tenor, e.g. 1Y.",
-          "type": "string"
-        },
-        {
-          "name": "callPut",
-          "description": "C for the favourable-up direction, P for the classic exporter (favourable-down) TARF.",
-          "type": "string"
-        },
-        {
-          "name": "strike",
-          "description": "Absolute strike level of every fixing, e.g. 1.10.",
-          "type": "number"
-        },
-        {
-          "name": "target",
-          "description": "Cumulative client-gain target that redeems the structure (> 0).",
-          "type": "number"
-        },
-        {
-          "name": "leverage",
-          "description": "Gearing on the adverse (loss) leg (>= 0).",
-          "type": "number"
-        },
-        {
-          "name": "fixings",
-          "description": "Number of equally-spaced fixings (>= 1).",
-          "type": "number"
-        },
-        {
-          "name": "notional",
-          "description": "Trade notional in the base currency.",
-          "type": "number"
-        },
-        {
-          "name": "redemption",
-          "description": "Optional gap-risk settlement: FULL_GAIN (default) or CAPPED_GAIN.",
-          "type": "string",
-          "optional": true
-        },
-        {
-          "name": "fixingNotional",
-          "description": "Optional notional that accrues at each fixing (omit => 1.0).",
-          "type": "number",
-          "optional": true
-        },
-        {
-          "name": "mcPairs",
-          "description": "Optional Monte-Carlo antithetic pairs (0 => server default).",
-          "type": "number",
-          "optional": true
-        },
-        {
-          "name": "mcSeed",
-          "description": "Optional Monte-Carlo seed (bit-reproducible).",
-          "type": "number",
-          "optional": true
-        }
-      ]
-    },
-    {
-      "id": "ACCUMULATOR",
-      "name": "ACCUMULATOR",
-      "description": "Price an accumulator (Monte-Carlo): spill [premium, PV], [std_error], the 13 Greeks, + footer.",
-      "result": {
-        "dimensionality": "matrix",
-        "type": "any"
-      },
-      "parameters": [
-        {
-          "name": "pair",
-          "description": "Currency pair, e.g. EURUSD.",
-          "type": "string"
-        },
-        {
-          "name": "tenor",
-          "description": "Tenor, e.g. 1Y.",
-          "type": "string"
-        },
-        {
-          "name": "pivot",
-          "description": "Absolute pivot strike level at which the client accumulates, e.g. 1.10.",
-          "type": "number"
-        },
-        {
-          "name": "barrier",
-          "description": "Absolute up-and-out knock-out barrier (> pivot), e.g. 1.15.",
-          "type": "number"
-        },
-        {
-          "name": "leverage",
-          "description": "Gearing on the below-pivot (loss) leg (>= 0).",
-          "type": "number"
-        },
-        {
-          "name": "fixings",
-          "description": "Number of equally-spaced fixings (>= 1).",
-          "type": "number"
-        },
-        {
-          "name": "notional",
-          "description": "Trade notional in the base currency.",
-          "type": "number"
-        },
-        {
-          "name": "monitoring",
-          "description": "Optional knock-out monitoring: DISCRETE (default) or CONTINUOUS.",
-          "type": "string",
-          "optional": true
-        },
-        {
-          "name": "fixingNotional",
-          "description": "Optional notional that accrues at each fixing (omit => 1.0).",
-          "type": "number",
-          "optional": true
-        },
-        {
-          "name": "mcPairs",
-          "description": "Optional Monte-Carlo antithetic pairs (0 => server default).",
-          "type": "number",
-          "optional": true
-        },
-        {
-          "name": "mcSeed",
-          "description": "Optional Monte-Carlo seed (bit-reproducible).",
-          "type": "number",
-          "optional": true
-        }
-      ]
-    },
-    {
-      "id": "LOOKBACK",
-      "name": "LOOKBACK",
-      "description": "Price a lookback option: spill [premium, PV], (std_error if DISCRETE/MC), the 13 Greeks, + footer.",
-      "result": {
-        "dimensionality": "matrix",
-        "type": "any"
-      },
-      "parameters": [
-        {
-          "name": "pair",
-          "description": "Currency pair, e.g. EURUSD.",
-          "type": "string"
-        },
-        {
-          "name": "tenor",
-          "description": "Tenor, e.g. 1Y.",
-          "type": "string"
-        },
-        {
-          "name": "callPut",
-          "description": "C for call, P for put.",
-          "type": "string"
-        },
-        {
-          "name": "notional",
-          "description": "Trade notional in the base currency.",
-          "type": "number"
-        },
-        {
-          "name": "style",
-          "description": "Optional FLOATING (default, settle vs path extremum) or FIXED.",
-          "type": "string",
-          "optional": true
-        },
-        {
-          "name": "monitoring",
-          "description": "Optional CONTINUOUS (default, exact closed form) or DISCRETE (Monte-Carlo).",
-          "type": "string",
-          "optional": true
-        },
-        {
-          "name": "strike",
-          "description": "Optional absolute strike level (required for FIXED; rejected for FLOATING).",
-          "type": "any",
-          "optional": true
-        },
-        {
-          "name": "observations",
-          "description": "Optional monitoring observations for the DISCRETE variant (0 => server default).",
-          "type": "number",
-          "optional": true
-        },
-        {
-          "name": "mcPairs",
-          "description": "Optional Monte-Carlo antithetic pairs for the DISCRETE variant (0 => server default).",
-          "type": "number",
-          "optional": true
-        },
-        {
-          "name": "mcSeed",
-          "description": "Optional Monte-Carlo seed for the DISCRETE variant (bit-reproducible).",
-          "type": "number",
-          "optional": true
-        }
-      ]
-    },
-    {
-      "id": "AMERICAN",
-      "name": "AMERICAN",
-      "description": "Price an American / Bermudan early-exercise vanilla: premium + (std_error if LSM/MC) + 13 Greeks + footer.",
-      "result": {
-        "dimensionality": "matrix",
-        "type": "any"
-      },
-      "parameters": [
-        {
-          "name": "pair",
-          "description": "Currency pair, e.g. EURUSD.",
-          "type": "string"
-        },
-        {
-          "name": "tenor",
-          "description": "Tenor, e.g. 1Y.",
-          "type": "string"
-        },
-        {
-          "name": "strike",
-          "description": "Absolute strike level, e.g. 1.10.",
-          "type": "any"
-        },
-        {
-          "name": "callPut",
-          "description": "C for call, P for put.",
-          "type": "string"
-        },
-        {
-          "name": "notional",
-          "description": "Trade notional in the base currency.",
-          "type": "number"
-        },
-        {
-          "name": "style",
-          "description": "Optional AMERICAN (default, continuous) or BERMUDAN (discrete dates).",
-          "type": "string",
-          "optional": true
-        },
-        {
-          "name": "bermudanSteps",
-          "description": "Optional number of equally-spaced Bermudan exercise dates (k/n*T); >0 selects BERMUDAN (0 => continuous AMERICAN).",
-          "type": "number",
-          "optional": true
-        },
-        {
-          "name": "lsmPaths",
-          "description": "Optional Longstaff-Schwartz path count (0 => exact FD, no std-error; >0 => Monte-Carlo).",
-          "type": "number",
-          "optional": true
-        },
-        {
-          "name": "lsmExerciseDates",
-          "description": "Optional LSM AMERICAN exercise resolution (0 => server default; ignored for FD/BERMUDAN).",
-          "type": "number",
-          "optional": true
-        },
-        {
-          "name": "lsmSeed",
-          "description": "Optional LSM scramble seed (bit-reproducible; ignored by FD).",
-          "type": "number",
-          "optional": true
-        }
-      ]
-    },
-    {
-      "id": "BASKET",
-      "name": "BASKET",
-      "description": "Price a correlated multi-asset basket / best-of / worst-of option: premium + MC std_error + 13 Greeks (deferred => 0) + footer.",
-      "result": {
-        "dimensionality": "matrix",
-        "type": "any"
-      },
-      "parameters": [
-        {
-          "name": "pair",
-          "description": "Settlement / numeraire currency pair, e.g. EURUSD.",
-          "type": "string"
-        },
-        {
-          "name": "tenor",
-          "description": "Tenor, e.g. 1Y.",
-          "type": "string"
-        },
-        {
-          "name": "callPut",
-          "description": "C for call, P for put on the aggregated underlying.",
-          "type": "string"
-        },
-        {
-          "name": "strike",
-          "description": "Absolute strike level on the aggregated underlying, e.g. 1.18.",
-          "type": "number"
-        },
-        {
-          "name": "notional",
-          "description": "Trade notional in the base currency.",
-          "type": "number"
-        },
-        {
-          "name": "legs",
-          "description": "The legs as a range, one row per leg: [pair, weight, spot, vol, rFor].",
-          "type": "any",
-          "dimensionality": "matrix"
-        },
-        {
-          "name": "correlations",
-          "description": "The N x N correlation matrix as a range (row-major), for the N legs.",
-          "type": "number",
-          "dimensionality": "matrix"
-        },
-        {
-          "name": "kind",
-          "description": "Optional aggregation: BASKET (default, weighted sum), BEST_OF (max) or WORST_OF (min).",
-          "type": "string",
-          "optional": true
-        },
-        {
-          "name": "mcPaths",
-          "description": "Optional scrambled-Sobol points per replication (0 => server default).",
-          "type": "number",
-          "optional": true
-        },
-        {
-          "name": "mcReplications",
-          "description": "Optional independent randomized scrambles (0 => server default).",
-          "type": "number",
-          "optional": true
-        },
-        {
-          "name": "mcSteps",
-          "description": "Optional time steps per path (0 => server default).",
-          "type": "number",
-          "optional": true
-        },
-        {
-          "name": "mcSeed",
-          "description": "Optional base scramble seed (bit-reproducible; 0 => default).",
+          "description": "Trade notional in the base currency (positional form only).",
           "type": "number",
           "optional": true
         }
@@ -1104,7 +243,7 @@
     {
       "id": "SUBSCRIBE",
       "name": "SUBSCRIBE",
-      "description": "Stream a live two-way for a structure (multiplexed, coalesced, stale-aware).",
+      "description": "Stream a live two-way for a structure (multiplexed, coalesced, stale-aware); accepts the legacy vanilla positional form or a CELNET.INSTRUMENT token.",
       "options": {
         "stream": true,
         "cancelable": true
@@ -1115,29 +254,33 @@
       },
       "parameters": [
         {
-          "name": "pair",
-          "description": "Currency pair, e.g. EURUSD.",
+          "name": "pairOrInstrument",
+          "description": "Currency pair (e.g. EURUSD) or a CELNET.INSTRUMENT token.",
           "type": "string"
         },
         {
           "name": "tenor",
-          "description": "Tenor, e.g. 1Y.",
-          "type": "string"
+          "description": "Tenor, e.g. 1Y (positional form only).",
+          "type": "string",
+          "optional": true
         },
         {
           "name": "strikeOrDelta",
-          "description": "Absolute strike or delta.",
-          "type": "string"
+          "description": "Absolute strike (1.12) or delta (25dP, ATM) (positional form only).",
+          "type": "string",
+          "optional": true
         },
         {
           "name": "callPut",
-          "description": "C or P.",
-          "type": "string"
+          "description": "C for call, P for put (positional form only).",
+          "type": "string",
+          "optional": true
         },
         {
           "name": "notional",
-          "description": "Trade notional in the base currency.",
-          "type": "number"
+          "description": "Trade notional in the base currency (positional form only).",
+          "type": "number",
+          "optional": true
         }
       ]
     },

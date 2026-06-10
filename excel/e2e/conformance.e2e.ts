@@ -4,8 +4,9 @@
  *
  * For every FROZEN golden vector (`crates/celnet-golden/vectors/*.json`) whose
  * product family the Excel `CELNET.*` worksheet functions expose, this:
- *   1. builds the EXACT `Instrument` the add-in's production `shape*` function
- *      produces (the same code `CELNET.PRICE` / `CELNET.BARRIER` / … run);
+ *   1. builds the EXACT `Instrument` the add-in's production polymorphic spec
+ *      produces (the same `CELNET.INSTRUMENT` shaping + token codec a
+ *      `CELNET.PRICE(token)` cell runs, token round-trip included);
  *   2. prices it through the REAL add-in `Connection` (the same transport + wire
  *      codec the worksheet functions use) over a REAL WebSocket to a REAL booted
  *      `celnet-server` demo edge — NO FakeSocket, NO mock — against the vector's

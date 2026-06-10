@@ -21,7 +21,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_CONVENTIONS,
   ShapingError,
-  formatPathDependentSpill,
+  formatPremiumSpill,
   parseBasketKind,
   shapeBasket,
 } from "../src/functions/shaping";
@@ -269,7 +269,7 @@ describe("basket end-to-end over the WS mirror — server emits the MC std-error
     expect(quote.greeks.vega).toBe(0);
     expect(quote.greeks.gamma).toBe(0);
 
-    const m = formatPathDependentSpill({
+    const m = formatPremiumSpill({
       premium: quote.greeks.price,
       stdError: quote.priceStdError,
       greeks: quote.greeks,

@@ -30,7 +30,7 @@ import {
   DEFAULT_CONVENTIONS,
   ShapingError,
   americanIsMonteCarlo,
-  formatPathDependentSpill,
+  formatPremiumSpill,
   parseExerciseStyle,
   shapeAmerican,
   shapeLookback,
@@ -310,7 +310,7 @@ const SAMPLE_GREEKS: Greeks = {
 
 describe("american spill formatting", () => {
   it("the exact FD route spills premium + 13 Greeks + footer (NO std-error row)", () => {
-    const m = formatPathDependentSpill({
+    const m = formatPremiumSpill({
       premium: SAMPLE_GREEKS.price,
       stdError: undefined,
       greeks: SAMPLE_GREEKS,
@@ -324,7 +324,7 @@ describe("american spill formatting", () => {
   });
 
   it("the Longstaff-Schwartz route inserts an honest std-error row after the premium", () => {
-    const m = formatPathDependentSpill({
+    const m = formatPremiumSpill({
       premium: SAMPLE_GREEKS.price,
       stdError: 9e-3,
       greeks: SAMPLE_GREEKS,
@@ -427,7 +427,7 @@ describe("american end-to-end over the WS mirror", () => {
     const isMc =
       instr.product.kind === "american" &&
       americanIsMonteCarlo((instr.product as { american: AmericanOption }).american);
-    const m = formatPathDependentSpill({
+    const m = formatPremiumSpill({
       premium: quote.greeks.price,
       stdError: isMc ? quote.priceStdError : undefined,
       greeks: quote.greeks,
@@ -470,7 +470,7 @@ describe("american end-to-end over the WS mirror", () => {
     const isMc =
       instr.product.kind === "american" &&
       americanIsMonteCarlo((instr.product as { american: AmericanOption }).american);
-    const m = formatPathDependentSpill({
+    const m = formatPremiumSpill({
       premium: quote.greeks.price,
       stdError: isMc ? quote.priceStdError : undefined,
       greeks: quote.greeks,
