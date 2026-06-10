@@ -26,6 +26,18 @@ if (typeof globalThis.ResizeObserver === "undefined") {
   };
 }
 
+/**
+ * jsdom also does not implement `Element.scrollIntoView` (no layout engine to
+ * scroll), so list components that reveal the keyboard-cursor row (the scope
+ * switcher's listbox, the structure gallery) would throw inside `act(...)`.
+ * Provide the same inert, standards-shaped gap fill: the call exists and does
+ * nothing — jsdom has no scroll geometry for it to affect anyway. An environment
+ * gap fill, not a mock of any Celnet functionality.
+ */
+if (typeof Element.prototype.scrollIntoView !== "function") {
+  Element.prototype.scrollIntoView = (): void => {};
+}
+
 afterEach(() => {
   cleanup();
 });
