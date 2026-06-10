@@ -16,10 +16,11 @@
 //! in the engine docs) — the Wave-C finite-difference set — the 1-D
 //! Crank-Nicolson/Rannacher PDE, the 2-D Hundsdorfer-Verwer ADI LSV solver, and
 //! the American/Bermudan PSOR + Longstaff-Schwartz engines including the full
-//! FD Greek strip with the §3.4 rate re-tag — and the Wave-D composite set —
+//! FD Greek strip with the §3.4 rate re-tag — the Wave-D composite set —
 //! the variance/volatility-swap replication strips, the quanto closed forms +
 //! MC, the correlated multi-asset basket QMC engine, and the LSV orchestration
-//! (MC + ADI, vanilla / knock-out / window barrier).
+//! (MC + ADI, vanilla / knock-out / window barrier) — and the ADR-0008 tail:
+//! the pivot target-redemption accumulator MC engine (plain + control-variate).
 
 use celnet_exotics::ExoticInputs;
 use celnet_exotics::asian::{AnalyticAsian, AveragingSchedule, geometric_average_price};
@@ -27,10 +28,11 @@ use celnet_exotics::mc::{McConfig, geometric_asian_price, price_asian, price_bar
 use celnet_exotics::payoff::{ArithmeticAsian, DiscreteBarrier};
 use celnet_exotics::{
     Accumulator, AccumulatorMcConfig, Cliquet, CliquetMcConfig, CliquetSchedule, ForwardStart,
-    Lookback, LookbackMcConfig, LookbackStyle, Monitoring, RedemptionStyle, Tarf, TarfMcConfig,
-    accumulator_price, cliquet_price_capped_mc, cliquet_price_plain, cliquet_price_plain_mc,
-    curran_price, fixed_lookback_price, floating_lookback_price, forward_start_price, lookback_mc,
-    mc::price_barrier_bgk_shifted, tarf_price, turnbull_wakeman_price,
+    Lookback, LookbackMcConfig, LookbackStyle, Monitoring, PivotTra, PivotTraMcConfig,
+    RedemptionStyle, Tarf, TarfMcConfig, accumulator_price, cliquet_price_capped_mc,
+    cliquet_price_plain, cliquet_price_plain_mc, curran_price, fixed_lookback_price,
+    floating_lookback_price, forward_start_price, lookback_mc, mc::price_barrier_bgk_shifted,
+    pivot_tra_price, pivot_tra_price_cv, tarf_price, turnbull_wakeman_price,
 };
 use celnet_types::{OptionType, VanillaInputs};
 
@@ -178,6 +180,83 @@ fn tarf_byte_identical() {
     );
     let capped = tarf_price(&a, spec(RedemptionStyle::CappedGain), cfg);
     gate("tarf_capped_price", capped.price, 0x3fe1f514ecf9569b);
+}
+
+/// ADR-0008 tail (the verifier-caught straggler): the pivot target-redemption
+/// accumulator MC engine onto the carry seam. Every frozen value below was
+/// captured from the pre-migration FX-only (`VanillaInputs` two-rate) engine on
+/// this exact grid — both redemption styles × plain/control-variate × two
+/// market points × two fixing counts. The control-variate gates guard the §8
+/// sharp edge directly: the closed-form control mean reads the stored `r_for`
+/// via `Carry::yield_rate` (never `discount_rate() − carry_rate()`).
+#[test]
+fn pivot_tra_byte_identical() {
+    let a = fx_a();
+    let c = fx_c();
+    // Dead-band call-favourable (P > K) on the EURUSD-like point.
+    let spec_a = |fixings: usize, r: RedemptionStyle| PivotTra {
+        strike: 1.28,
+        pivot: 1.33,
+        fixings,
+        target: 0.08,
+        leverage: 2.0,
+        favourable_side: OptionType::Call,
+        notional: 1.0,
+        redemption: r,
+    };
+    // Overlap put-favourable (P < K) on the negative-rate long-dated point.
+    let spec_c = |r: RedemptionStyle| PivotTra {
+        strike: 0.87,
+        pivot: 0.83,
+        fixings: 6,
+        target: 0.05,
+        leverage: 1.5,
+        favourable_side: OptionType::Put,
+        notional: 1.0,
+        redemption: r,
+    };
+    let cfg = PivotTraMcConfig {
+        pairs: 4_000,
+        seed: 0x9147,
+    };
+
+    // EURUSD-like, 12 fixings, FullGain — plain + CV.
+    let p = pivot_tra_price(&a, spec_a(12, RedemptionStyle::FullGain), cfg);
+    gate("pivot_a12_full_price", p.price, 0x3fcf48502cee20bd);
+    gate("pivot_a12_full_se", p.std_error, 0x3f7e9ea150acb80a);
+    gate(
+        "pivot_a12_full_overshoot",
+        p.expected_overshoot,
+        0x3fa06218c37727e7,
+    );
+    let v = pivot_tra_price_cv(&a, spec_a(12, RedemptionStyle::FullGain), cfg);
+    gate("pivot_a12_full_cv_price", v.price, 0x3fd0696cfa369314);
+    gate("pivot_a12_full_cv_se", v.std_error, 0x3f721bc5cca5d631);
+
+    // EURUSD-like, 12 fixings, CappedGain — plain + CV.
+    let p = pivot_tra_price(&a, spec_a(12, RedemptionStyle::CappedGain), cfg);
+    gate("pivot_a12_capped_price", p.price, 0x3fd1ac4be80c17ad);
+    let v = pivot_tra_price_cv(&a, spec_a(12, RedemptionStyle::CappedGain), cfg);
+    gate("pivot_a12_capped_cv_price", v.price, 0x3fd27049d7ee35ff);
+
+    // EURUSD-like, 26 fixings, FullGain — plain + CV.
+    let p = pivot_tra_price(&a, spec_a(26, RedemptionStyle::FullGain), cfg);
+    gate("pivot_a26_full_price", p.price, 0x3fdbcd322da8dd30);
+    let v = pivot_tra_price_cv(&a, spec_a(26, RedemptionStyle::FullGain), cfg);
+    gate("pivot_a26_full_cv_price", v.price, 0x3fdc2f03799864ea);
+
+    // Negative-rate long-dated, 6 fixings, FullGain — plain + CV.
+    let p = pivot_tra_price(&c, spec_c(RedemptionStyle::FullGain), cfg);
+    gate("pivot_c6_full_price", p.price, 0x3fb11a145a1cb449);
+    gate("pivot_c6_full_se", p.std_error, 0x3f6f3395f21fb017);
+    let v = pivot_tra_price_cv(&c, spec_c(RedemptionStyle::FullGain), cfg);
+    gate("pivot_c6_full_cv_price", v.price, 0x3fb298df92e852e4);
+
+    // Negative-rate long-dated, 6 fixings, CappedGain — plain + CV.
+    let p = pivot_tra_price(&c, spec_c(RedemptionStyle::CappedGain), cfg);
+    gate("pivot_c6_capped_price", p.price, 0x3fbaf6ca5fda66a1);
+    let v = pivot_tra_price_cv(&c, spec_c(RedemptionStyle::CappedGain), cfg);
+    gate("pivot_c6_capped_cv_price", v.price, 0x3fbc74c47053804e);
 }
 
 #[test]
