@@ -689,7 +689,7 @@ mod tests {
             // the no-arbitrage sandwich intrinsic ≤ V ≤ K.
             let put = perpetual_price(OptionType::Put, &i).unwrap();
             assert!(
-                put.is_finite() && put >= 0.0 && put <= 100.0,
+                put.is_finite() && (0.0..=100.0).contains(&put),
                 "put must stay finite/bounded at r={r} b={b}: {put}"
             );
         }
