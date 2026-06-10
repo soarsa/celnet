@@ -256,8 +256,11 @@ mutants-gate-risk-cube:
         --minimum-test-timeout=120 --config .config/mutants-risk-cube.toml
 
 # XVA crate (CVA/DVA/FVA over exposure + survival curve + netting).
+# Plain-cargo runner + jobs 3 + the 240s per-mutant floor (macOS first-launch
+# stall guard) — W6 rigor protocol, measured green locally (see HARDENING.md s2).
 mutants-gate-xva:
-    timeout 1800 {{_cargo}} mutants -p celnet-xva --config .config/mutants-xva.toml
+    timeout 1800 {{_cargo}} mutants -p celnet-xva --test-tool=cargo --jobs 3 \
+        --minimum-test-timeout=240 --config .config/mutants-xva.toml
 
 # Mutation GATE on the low-discrepancy sequence crate (zero non-equivalent survivors).
 # `--minimum-test-timeout=240`: the auto-set 20s floor misclassifies mutants as

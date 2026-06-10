@@ -2,26 +2,89 @@
 #
 # Mirrors `.config/mutants.toml` (the celnet-vanilla gate) for the XVA crate:
 # CVA/DVA/FVA over the exposure profile, the survival-probability curve
-# (hazard-rate bootstrap), and synthetic netting-set aggregation. Counterparty
-# valuation adjustments feed regulatory and accounting numbers — a silently
-# weakened suite here could let a discounting/survival/exposure error ship.
+# (piecewise-constant hazard), the low-discrepancy exposure simulation, and
+# synthetic netting-set aggregation. Counterparty valuation adjustments feed
+# regulatory and accounting numbers — a silently weakened suite here could let
+# a discounting/survival/exposure error ship.
 #
 # How the gate works
 # ------------------
-# `cargo mutants -p celnet-xva --config .config/mutants-xva.toml` applies a
-# syntactic mutant per operator/comparison/return value and re-runs the suite; a
-# MISSED mutant is a test gap. cargo-mutants exits non-zero on ANY survivor, so
-# the gate enforces ZERO non-equivalent survivors — a future edit that weakens
-# the suite below the kill bar fails the build. See HARDENING.md s2.
+# `just mutants-gate-xva` runs
+#   cargo mutants -p celnet-xva --test-tool=cargo --jobs 3 \
+#       --minimum-test-timeout=240 --config .config/mutants-xva.toml
+# applying a syntactic mutant per operator/comparison/return value and
+# re-running the suite; a MISSED mutant is a test gap. cargo-mutants exits
+# non-zero on ANY survivor, so the gate enforces ZERO non-equivalent survivors
+# — a future edit that weakens the suite below the kill bar fails the build.
+# See docs/HARDENING.md §2 for the measured baseline.
 #
+# Kill strategy (W6 rigor wave): every mutant is killed by an INDEPENDENT
+# oracle in `tests/closed_form_oracle.rs` + the in-module tests — the
+# documented CVA/DVA/FVA quadrature re-derived longhand with raw std `exp` on
+# single-interval/non-uniform/101-node grids, exact survival identities (flat
+# Λ = λ·t to bits, knot-overlap partial sums, S = exp(−Λ) to bits), the
+# total-adjustment decomposition to bits, a from-scratch two-rate vanilla
+# re-derivation (Φ via erfc) for every netting mark incl. the τ ≤ 0 boundary,
+# frozen-bits exposure rows for two fixed netting sets (the house
+# fx_byte_identity pattern), and the full panic contract of every constructor
+# assert driven on both sides of its boundary.
+#
+# MEASURED baseline (this session, aarch64-apple-darwin, cargo-mutants 27.0.0,
+# toolchain 1.96.0)
+# ------------------------------------------------------------------------------
+# Raw crate-wide run (no exclusions, RUSTC_WRAPPER=""): `170 mutants tested in
+# 2m: 3 missed, 161 caught, 6 unviable` — zero timeouts. All 3 raw survivors
+# are members of ONE equivalence cluster (the `cumulative_hazard` early-return
+# optimization, below); none is a value gap. The 6 unviable are
+# `Default::default()` replacements on types that implement no `Default`.
+# Canonical gate run after the exclusions: see docs/HARDENING.md §2 for the
+# recorded summary line (zero missed, real exit 0).
+#
+# Runner settings (mirrored by the `mutants-gate-xva` recipe flags, and picked
+# up as-is by the CI `mutation-gate-numerics` matrix leg which passes only
+# `--config`): plain `cargo test` (reproducible independent of the workspace
+# nextest profile; a concurrent session may `pkill -f nextest`) and a generous
+# per-mutant test-timeout floor (the documented macOS first-launch stall of
+# freshly linked test binaries trips the auto-set 20s floor; the suite itself
+# runs in <0.2s and has no value-dependent loop that could genuinely hang).
+test_tool = "cargo"
+minimum_test_timeout = 240
+
 # Equivalence exclusions
 # ----------------------
-# `exclude_re` lists ONLY provably semantically-equivalent mutants, each
-# justified inline with WHY it cannot change an observable result — never to hide
-# a real survivor. This crate's baseline (kill-rate + per-cluster equivalence
-# argument) is CI-run via `mutation-gate-numerics` (full local mutation of every
-# numerics crate in one session is impractical; recorded in HARDENING.md s2). It
-# starts empty: the gate runs strict until the CI baseline identifies a genuinely
-# equivalent cluster, at which point each member is added here WITH justification.
+# `exclude_re` lists ONLY mutants that are provably *semantically equivalent*
+# to the original — each justified inline with WHY it cannot change an
+# observable result — never to hide a real survivor. Policy here is STRICT.
+# Every member was hand-reproduced: full suite green with the mutant applied
+# (including every frozen-bits pin — empirically bit-identical, not merely
+# tolerance-identical).
+#
+# --- cluster: `cumulative_hazard` segment-scan early-return optimization ---
+# The scan accumulates `h_i · (min(p_i, t) − lo)` per segment and returns early
+# once `t ≤ p_i`. Two reachability invariants make all three members
+# unobservable (`survival.rs`, validated inputs: pillars strictly increasing
+# from > 0, `t` finite ≥ 0):
+#   (I) segment i > 0 is entered only when the previous check `t ≤ p_{i−1}`
+#       was false, so `t > p_{i−1} = lo` AND `p_i > p_{i−1} = lo` ⇒
+#       `hi = min(p_i, t) > lo` STRICTLY; `hi == lo` occurs only in the first
+#       segment at exactly `t = 0` (hi = min(p_0, 0) = 0 = lo, acc = 0).
+#   (II) the post-loop extrapolation line executes only if NO in-loop return
+#       fired, i.e. `t > p_i` for EVERY pillar — in particular
+#       `t > last_pillar`, and `last_pillar < t < ∞` forces
+#       `last_pillar.is_finite()`. (Curves holding an infinite pillar — the
+#       `flat` representation — always return inside the loop, so the line is
+#       unreachable for them.)
 exclude_re = [
+  # `hi > lo` vs `>=`: by (I) they differ only at t = 0 in the first segment,
+  # where the mutant adds `h·(0.0 − 0.0) = +0.0` to `acc = 0.0` — bit-identical
+  # (+0.0 + +0.0 = +0.0; h is finite ≥ 0 by the constructor assert).
+  "survival\\.rs:83:19: replace > with >= in SurvivalCurve::cumulative_hazard",
+  # `is_finite() && t > last_pillar` vs `||`: by (II) BOTH conjuncts are true
+  # whenever the line is reachable, so `&&` and `||` evaluate identically
+  # (true) and the same extrapolation term is added.
+  "survival\\.rs:93:36: replace && with \\|\\| in SurvivalCurve::cumulative_hazard",
+  # `t > last_pillar` vs `>=`: by (II) `t > last_pillar` holds STRICTLY at
+  # every reachable evaluation, so `>` and `>=` agree (both true); the
+  # boundary `t == last_pillar` returns inside the loop and never gets here.
+  "survival\\.rs:93:41: replace > with >= in SurvivalCurve::cumulative_hazard",
 ]
