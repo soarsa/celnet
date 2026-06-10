@@ -38,14 +38,14 @@
 use celnet_core::is_close;
 use celnet_core::math::{exp, ln, sqrt};
 use celnet_exotics::{
-    AnalyticAsian, ArithmeticAsian, AveragingSchedule, McConfig, curran_price,
+    AnalyticAsian, ArithmeticAsian, AveragingSchedule, ExoticInputs, McConfig, curran_price,
     geometric_asian_price, geometric_average_price, price_asian, turnbull_wakeman_price,
 };
 use celnet_types::{OptionType, VanillaInputs};
 use celnet_vanilla::price as vanilla_price;
 
-fn inputs(spot: f64, strike: f64, vol: f64, t: f64, r_dom: f64, r_for: f64) -> VanillaInputs {
-    VanillaInputs::new(spot, strike, vol, t, r_dom, r_for)
+fn inputs(spot: f64, strike: f64, vol: f64, t: f64, r_dom: f64, r_for: f64) -> ExoticInputs {
+    VanillaInputs::new(spot, strike, vol, t, r_dom, r_for).into()
 }
 
 /// A converged Monte-Carlo run of the arithmetic Asian via the crate's existing
@@ -54,13 +54,7 @@ fn inputs(spot: f64, strike: f64, vol: f64, t: f64, r_dom: f64, r_for: f64) -> V
 /// genuinely different method from the analytic moment-matching/conditioning
 /// pricers under test, so its agreement is a real cross-validation. 400k pairs
 /// keeps the control-corrected standard error at ~1e-3–1e-4.
-fn mc_oracle(
-    i: &VanillaInputs,
-    option: OptionType,
-    strike: f64,
-    n: usize,
-    seed: u64,
-) -> (f64, f64) {
+fn mc_oracle(i: &ExoticInputs, option: OptionType, strike: f64, n: usize, seed: u64) -> (f64, f64) {
     let est = price_asian(
         i,
         ArithmeticAsian {
@@ -90,7 +84,7 @@ fn exact_limit_single_observation_is_vanilla() {
         let i = inputs(spot, 100.0, vol, 1.0, 0.05, 0.02);
         for opt in [OptionType::Call, OptionType::Put] {
             let spec = AnalyticAsian::fresh_discrete(opt, 100.0, 1);
-            let vanilla = vanilla_price(opt, &i);
+            let vanilla = vanilla_price(opt, &i.as_fx_vanilla(i.strike).unwrap());
             let tw = turnbull_wakeman_price(&i, spec);
             let cur = curran_price(&i, spec);
             assert!(
@@ -112,13 +106,13 @@ fn exact_limit_zero_vol_is_discounted_intrinsic() {
     let mut i = inputs(100.0, 95.0, 0.0, 1.0, 0.05, 0.02);
     i.vol = 0.0;
     let n = 12usize;
-    let b = i.r_dom - i.r_for;
+    let b = i.carry_rate();
     let mut a = 0.0;
     for k in 1..=n {
         a += i.spot * exp(b * (k as f64) * i.t / n as f64);
     }
     a /= n as f64;
-    let df = exp(-i.r_dom * i.t);
+    let df = i.discount_df();
     for opt in [OptionType::Call, OptionType::Put] {
         let expected = df * (opt.sign() * (a - i.strike)).max(0.0);
         let spec = AnalyticAsian::fresh_discrete(opt, i.strike, n);
@@ -363,12 +357,12 @@ fn seasoned_average_matches_independent_mc() {
 /// self-contained log-Euler simulation (a different code path from both the
 /// analytic pricers under test and from `price_asian`'s control-variate machinery)
 /// so the agreement is a genuine cross-check. Returns `(price, std_error)`.
-fn seasoned_mc(i: &VanillaInputs, spec: AnalyticAsian, paths: u64, seed: u64) -> (f64, f64) {
+fn seasoned_mc(i: &ExoticInputs, spec: AnalyticAsian, paths: u64, seed: u64) -> (f64, f64) {
     let n = match spec.schedule {
         AveragingSchedule::Discrete { future_obs } => future_obs,
         AveragingSchedule::Continuous => 256,
     };
-    let b = i.r_dom - i.r_for;
+    let b = i.carry_rate();
     let v2 = i.vol * i.vol;
     // The future fixings sit at ABSOLUTE calendar times t_k = t_start + k·dt
     // (k = 1..=n), measured from now (time 0), where the spot is S0. So
@@ -378,7 +372,7 @@ fn seasoned_mc(i: &VanillaInputs, spec: AnalyticAsian, paths: u64, seed: u64) ->
     // window [0, t_start] is correctly present (the pricer's model includes it).
     let dt = (i.t - spec.t_start) / n as f64;
     let ln_s0 = ln(i.spot);
-    let df = exp(-i.r_dom * i.t);
+    let df = i.discount_df();
     let fixed = spec.elapsed_weight * spec.elapsed_avg;
     let rand_w = 1.0 - spec.elapsed_weight;
     let inv_n = 1.0 / n as f64;

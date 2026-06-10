@@ -253,6 +253,9 @@ pub(crate) struct ExoticResult {
 /// ignore the strike.
 #[must_use]
 pub(crate) fn run(spec: ExoticSpec, inputs: &VanillaInputs) -> ExoticResult {
+    // The agnostic carry-seam view of the FX market input — every exotics engine
+    // consumes `ExoticInputs` (byte-identical for FX).
+    let einputs: celnet_exotics::ExoticInputs = inputs.into();
     // The clamped cliquet is Monte-Carlo and carries a standard error; handle it
     // up front so the closed-form arms below can all be `std_error: None`.
     if let ExoticSpec::Cliquet {
@@ -279,12 +282,12 @@ pub(crate) fn run(spec: ExoticSpec, inputs: &VanillaInputs) -> ExoticResult {
         if spec.is_plain() {
             // Exact closed form (Σ forward-start legs).
             return ExoticResult {
-                price: cliquet_price_plain(inputs, &spec),
+                price: cliquet_price_plain(&einputs, &spec),
                 std_error: None,
             };
         }
         let estimate = cliquet_price_capped_mc(
-            inputs,
+            &einputs,
             &spec,
             CliquetMcConfig {
                 pairs: mc_pairs,
@@ -311,7 +314,7 @@ pub(crate) fn run(spec: ExoticSpec, inputs: &VanillaInputs) -> ExoticResult {
             mc_seed,
         } => {
             let estimate = tarf_price(
-                inputs,
+                &einputs,
                 Tarf {
                     strike,
                     fixings: fixings as usize,
@@ -346,7 +349,7 @@ pub(crate) fn run(spec: ExoticSpec, inputs: &VanillaInputs) -> ExoticResult {
             mc_seed,
         } => {
             let estimate = accumulator_price(
-                inputs,
+                &einputs,
                 Accumulator {
                     pivot,
                     barrier,
@@ -378,7 +381,10 @@ pub(crate) fn run(spec: ExoticSpec, inputs: &VanillaInputs) -> ExoticResult {
             mc_pairs,
             mc_seed,
         } => {
-            let lb_inputs = VanillaInputs { strike, ..*inputs };
+            let lb_inputs = celnet_exotics::ExoticInputs {
+                strike,
+                ..einputs.clone()
+            };
             let estimate = lookback_mc(
                 &lb_inputs,
                 Lookback {
@@ -427,9 +433,6 @@ pub(crate) fn run(spec: ExoticSpec, inputs: &VanillaInputs) -> ExoticResult {
         }
         _ => {}
     }
-    // The agnostic carry-seam view of the FX market input, for the exotics engines
-    // already migrated onto `ExoticInputs` (byte-identical for FX).
-    let einputs: celnet_exotics::ExoticInputs = inputs.into();
     let price = match spec {
         ExoticSpec::Vanilla { option } => celnet_vanilla::price(option, inputs),
         ExoticSpec::Digital(kind) => digital_price(kind, &einputs),
@@ -501,7 +504,10 @@ pub(crate) fn run(spec: ExoticSpec, inputs: &VanillaInputs) -> ExoticResult {
             };
             // Price at the strike the spec carries (the CLI `inputs.strike` is the
             // digital/barrier strike; the Asian strike is its own field).
-            let asian_inputs = VanillaInputs { strike, ..*inputs };
+            let asian_inputs = celnet_exotics::ExoticInputs {
+                strike,
+                ..einputs.clone()
+            };
             if turnbull_wakeman {
                 turnbull_wakeman_price(&asian_inputs, spec)
             } else {
@@ -513,7 +519,7 @@ pub(crate) fn run(spec: ExoticSpec, inputs: &VanillaInputs) -> ExoticResult {
             moneyness,
             reset,
         } => forward_start_price(
-            inputs,
+            &einputs,
             ForwardStart {
                 option,
                 moneyness,
@@ -546,10 +552,13 @@ pub(crate) fn run(spec: ExoticSpec, inputs: &VanillaInputs) -> ExoticResult {
             ..
         } => {
             if fixed {
-                let lb_inputs = VanillaInputs { strike, ..*inputs };
+                let lb_inputs = celnet_exotics::ExoticInputs {
+                    strike,
+                    ..einputs.clone()
+                };
                 fixed_lookback_price(&lb_inputs, option)
             } else {
-                floating_lookback_price(inputs, option)
+                floating_lookback_price(&einputs, option)
             }
         }
         // American / Bermudan via the projected-SOR free-boundary finite
@@ -967,7 +976,10 @@ mod tests {
         };
         let r = run(spec, &i);
         let direct = curran_price(
-            &VanillaInputs { strike: 1.10, ..i },
+            &celnet_exotics::ExoticInputs {
+                strike: 1.10,
+                ..(&i).into()
+            },
             AnalyticAsian::fresh_discrete(OptionType::Call, 1.10, 12),
         );
         assert!(is_close(r.price, direct, 1e-12, 1e-12));
@@ -988,7 +1000,10 @@ mod tests {
         };
         let r = run(spec, &i);
         let direct = turnbull_wakeman_price(
-            &VanillaInputs { strike: 1.12, ..i },
+            &celnet_exotics::ExoticInputs {
+                strike: 1.12,
+                ..(&i).into()
+            },
             AnalyticAsian::fresh_continuous(OptionType::Put, 1.12),
         );
         assert!(is_close(r.price, direct, 1e-12, 1e-12));
@@ -1004,7 +1019,7 @@ mod tests {
         };
         let r = run(spec, &i);
         let direct = forward_start_price(
-            &i,
+            &(&i).into(),
             ForwardStart {
                 option: OptionType::Call,
                 moneyness: 1.0,
@@ -1038,7 +1053,7 @@ mod tests {
         let mut sum = 0.0;
         for k in 1..=periods {
             sum += forward_start_price(
-                &i,
+                &(&i).into(),
                 ForwardStart {
                     option: OptionType::Call,
                     moneyness: 1.0,
@@ -1081,7 +1096,7 @@ mod tests {
             global_floor: None,
             global_cap: None,
         };
-        let direct = cliquet_price_capped_mc(&i, &spec, CliquetMcConfig { pairs, seed });
+        let direct = cliquet_price_capped_mc(&(&i).into(), &spec, CliquetMcConfig { pairs, seed });
         assert!(is_close(r.price, direct.price, 1e-12, 1e-12));
         let stderr = r.std_error.expect("clamped cliquet carries std-error");
         assert!(is_close(stderr, direct.std_error, 1e-12, 1e-12));
@@ -1183,7 +1198,7 @@ mod tests {
             &i,
         );
         let direct = tarf_price(
-            &i,
+            &(&i).into(),
             Tarf {
                 strike: 1.10,
                 fixings: 8,
@@ -1237,7 +1252,7 @@ mod tests {
             &i,
         );
         let direct = accumulator_price(
-            &i,
+            &(&i).into(),
             Accumulator {
                 pivot: 1.10,
                 barrier: 1.16,
@@ -1267,7 +1282,7 @@ mod tests {
             },
             &i,
         );
-        let direct = floating_lookback_price(&i, OptionType::Call);
+        let direct = floating_lookback_price(&(&i).into(), OptionType::Call);
         assert!(is_close(r.price, direct, 1e-13, 1e-13));
         assert!(r.std_error.is_none(), "continuous lookback is closed-form");
         // A lookback dominates the equivalent vanilla.
@@ -1294,7 +1309,10 @@ mod tests {
             },
             &i,
         );
-        let lb_inputs = VanillaInputs { strike, ..i };
+        let lb_inputs = celnet_exotics::ExoticInputs {
+            strike,
+            ..(&i).into()
+        };
         let direct = lookback_mc(
             &lb_inputs,
             Lookback {

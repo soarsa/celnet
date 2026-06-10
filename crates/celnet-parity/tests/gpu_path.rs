@@ -186,7 +186,7 @@ fn geometric_qmc_matches_closed_form() {
         spec.r_for,
     );
     let exact = geometric_average_price(
-        &inputs,
+        &(&inputs).into(),
         AnalyticAsian::fresh_discrete(OptionType::Call, spec.strike, m),
     );
     // QMC over 2^16 Brownian-bridged Sobol' points converges to the exact
@@ -281,7 +281,7 @@ fn arithmetic_gpu_matches_plain_mc_and_brackets_geometric() {
         spec.r_for,
     );
     let geo = geometric_average_price(
-        &inputs,
+        &(&inputs).into(),
         AnalyticAsian::fresh_discrete(OptionType::Call, spec.strike, m),
     );
     assert!(

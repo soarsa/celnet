@@ -599,7 +599,7 @@ mod tests {
             seed: 0xBEEF,
         };
         let p = pivot_tra_price(&i, piv, pcfg);
-        let t = tarf_price(&i, tarf, tcfg);
+        let t = tarf_price(&(&i).into(), tarf, tcfg);
         assert_eq!(
             p.price.to_bits(),
             t.price.to_bits(),

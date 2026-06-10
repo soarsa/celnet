@@ -1,7 +1,9 @@
-//! Monte-Carlo pricing engine for path-dependent FX-options payoffs.
+//! Monte-Carlo pricing engine for path-dependent option payoffs.
 //!
-//! The engine simulates the Garman-Kohlhagen log-spot under the domestic
-//! risk-neutral measure and prices barrier and Asian payoffs with the full set of
+//! The engine simulates the lognormal log-spot under the numeraire risk-neutral
+//! measure through the agnostic carry seam ([`crate::inputs::ExoticInputs`] /
+//! `Carry` — the Garman-Kohlhagen two-rate dynamics for FX, byte-identical) and
+//! prices barrier and Asian payoffs with the full set of
 //! variance-reduction and bias-correction techniques the spec mandates:
 //!
 //! * **Counter-based RNG** ([`crate::rng::CounterRng`]) seeded by
@@ -29,9 +31,9 @@
 //! (1990) for the geometric-Asian control. Identifiers are purpose-named.
 
 use celnet_core::math::{exp, ln, sqrt};
-use celnet_types::VanillaInputs;
-use celnet_vanilla::price as vanilla_price;
+use celnet_types::Carry;
 
+use crate::inputs::{ExoticInputs, carry_vanilla_price};
 use crate::normal::inverse_cdf;
 use crate::payoff::{ArithmeticAsian, DiscreteBarrier};
 use crate::rng::CounterRng;
@@ -64,7 +66,14 @@ pub struct McEstimate {
     pub std_error: f64,
 }
 
-/// Pre-computed per-step Garman-Kohlhagen log-spot dynamics.
+/// Pre-computed per-step lognormal log-spot dynamics under the numeraire
+/// risk-neutral measure.
+///
+/// The carry accessors are read **once** here, outside the path loop — the hot
+/// per-step stepping below touches only the precomputed floats (no `Carry`
+/// dispatch in the hot path, ADR-0008). For an FX [`Carry::FxRates`] every field
+/// is byte-identical to the historical two-rate form
+/// (`drift = (r_dom − r_for − ½σ²)dt`, `df = e^{−r_dom·t}`).
 struct Dynamics {
     ln_s0: f64,
     drift_step: f64,
@@ -73,13 +82,13 @@ struct Dynamics {
 }
 
 impl Dynamics {
-    fn new(i: &VanillaInputs, steps: usize) -> Self {
+    fn new(i: &ExoticInputs, steps: usize) -> Self {
         let dt = i.t / steps as f64;
         Self {
             ln_s0: ln(i.spot),
-            drift_step: (i.r_dom - i.r_for - 0.5 * i.vol * i.vol) * dt,
+            drift_step: (i.carry_rate() - 0.5 * i.vol * i.vol) * dt,
             vol_step: i.vol * sqrt(dt),
-            df: exp(-i.r_dom * i.t),
+            df: i.discount_df(),
         }
     }
 }
@@ -130,7 +139,7 @@ impl Welford {
 /// by parity inside [`crate::payoff::DiscreteBarrier::terminal`] via the touched
 /// flag.
 #[must_use]
-pub fn price_barrier(i: &VanillaInputs, spec: DiscreteBarrier, cfg: McConfig) -> McEstimate {
+pub fn price_barrier(i: &ExoticInputs, spec: DiscreteBarrier, cfg: McConfig) -> McEstimate {
     let dyn_ = Dynamics::new(i, cfg.steps);
 
     // Continuous monitoring is recovered by the Brownian-bridge crossing
@@ -221,7 +230,7 @@ fn barrier_payoff(dyn_: &Dynamics, spec: DiscreteBarrier, ln_h: f64, z: &[f64], 
 /// agree with both the bridge estimator and the analytic closed form.
 #[must_use]
 pub fn price_barrier_bgk_shifted(
-    i: &VanillaInputs,
+    i: &ExoticInputs,
     spec: DiscreteBarrier,
     cfg: McConfig,
 ) -> McEstimate {
@@ -274,7 +283,7 @@ fn barrier_payoff_discrete(
 /// The optimal control coefficient is estimated from the same sample (the
 /// regression `β = Cov(arith, geo)/Var(geo)`), the standard unbiased estimator.
 #[must_use]
-pub fn price_asian(i: &VanillaInputs, spec: ArithmeticAsian, cfg: McConfig) -> McEstimate {
+pub fn price_asian(i: &ExoticInputs, spec: ArithmeticAsian, cfg: McConfig) -> McEstimate {
     assert!(spec.observations >= 1, "Asian needs ≥1 observation");
     let steps = spec.observations;
     let dyn_ = Dynamics::new(i, steps);
@@ -360,37 +369,44 @@ fn asian_payoff(dyn_: &Dynamics, spec: ArithmeticAsian, z: &[f64], s: f64) -> (f
 /// evaluated at the running discrete dynamics; the resulting effective forward
 /// and vol are plugged into the Garman-Kohlhagen vanilla formula.
 #[must_use]
-pub fn geometric_asian_price(i: &VanillaInputs, spec: ArithmeticAsian) -> f64 {
+pub fn geometric_asian_price(i: &ExoticInputs, spec: ArithmeticAsian) -> f64 {
     let n = spec.observations as f64;
     let t = i.t;
-    let b = i.r_dom - i.r_for;
+    let b = i.carry_rate();
 
     // Effective (adjusted) volatility and carry of the geometric average.
     let sig2 = i.vol * i.vol * (n + 1.0) * (2.0 * n + 1.0) / (6.0 * n * n);
     let eff_vol = sqrt(sig2);
     let eff_b = 0.5 * (b - 0.5 * i.vol * i.vol) * (n + 1.0) / n + 0.5 * sig2;
 
-    // Recast as a Garman-Kohlhagen vanilla: choose r_for so that carry = eff_b
-    // (r_dom − r_for = eff_b ⇒ r_for = r_dom − eff_b), keep r_dom for discounting.
-    let synthetic = VanillaInputs {
+    // Recast as a synthetic cost-of-carry vanilla: keep the numeraire discount
+    // rate `r`, set the net carry to `eff_b`. Asset-class-agnostic, and for FX
+    // byte-identical to the historical `r_for = r_dom − eff_b` recast because
+    // the carry-seam vanilla prices in the `(r, q = r − b)` form (see
+    // [`carry_vanilla_price`]).
+    let synthetic = ExoticInputs {
         spot: i.spot,
         strike: spec.strike,
         vol: eff_vol,
         t,
-        r_dom: i.r_dom,
-        r_for: i.r_dom - eff_b,
+        underlying: i.underlying.clone(),
+        carry: Carry::CostOfCarry {
+            r: i.discount_rate(),
+            b: eff_b,
+        },
     };
-    vanilla_price(spec.option, &synthetic)
+    carry_vanilla_price(spec.option, &synthetic)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{BarrierKind, BarrierStyle, SingleBarrier, single_barrier_price};
-    use celnet_types::OptionType;
+    use celnet_types::{OptionType, VanillaInputs};
+    use celnet_vanilla::price as vanilla_price;
 
-    fn base() -> VanillaInputs {
-        VanillaInputs::new(100.0, 100.0, 0.20, 1.0, 0.05, 0.02)
+    fn base() -> ExoticInputs {
+        VanillaInputs::new(100.0, 100.0, 0.20, 1.0, 0.05, 0.02).into()
     }
 
     /// Determinism: identical seed ⇒ bit-identical MC price (the engine's
@@ -473,7 +489,7 @@ mod tests {
             },
         );
         let analytic = single_barrier_price(
-            &(&i).into(),
+            &i,
             SingleBarrier {
                 kind: BarrierKind {
                     up: true,
@@ -519,7 +535,7 @@ mod tests {
         let bgk = price_barrier_bgk_shifted(&i, spec, cfg);
         let bridge = price_barrier(&i, spec, cfg);
         let analytic = single_barrier_price(
-            &(&i).into(),
+            &i,
             SingleBarrier {
                 kind: BarrierKind {
                     up: true,
@@ -610,7 +626,10 @@ mod tests {
             mc_vanilla
         );
         // And the MC vanilla itself is close to the analytic value (sanity).
-        let analytic = vanilla_price(OptionType::Call, &VanillaInputs { strike: k, ..i });
+        let analytic = vanilla_price(
+            OptionType::Call,
+            &i.as_fx_vanilla(k).expect("FX test fixture"),
+        );
         assert!(
             (mc_vanilla - analytic).abs() < 3.0 * dyn_.df * acc.std_error() + 1e-3,
             "MC vanilla {mc_vanilla} vs analytic {analytic}"
@@ -707,7 +726,10 @@ mod tests {
                 seed: 11,
             },
         );
-        let vanilla = vanilla_price(OptionType::Call, &i);
+        let vanilla = vanilla_price(
+            OptionType::Call,
+            &i.as_fx_vanilla(i.strike).expect("FX test fixture"),
+        );
         // With one observation the geometric control equals the arithmetic payoff
         // exactly ⇒ β≈1 ⇒ the estimator collapses onto the closed form: tiny SE.
         assert!(

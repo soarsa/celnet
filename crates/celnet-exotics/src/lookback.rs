@@ -1,5 +1,5 @@
 //! Lookback options — fixed-strike and floating-strike — on the running extremum
-//! of the Garman-Kohlhagen spot path.
+//! of the lognormal carry-driven spot path (Garman-Kohlhagen for FX).
 //!
 //! A **floating-strike** lookback lets the holder buy at the path minimum (call)
 //! or sell at the path maximum (put): the payoffs are `S_T − m` and `M − S_T`
@@ -10,7 +10,7 @@
 //! # Closed form (continuous monitoring)
 //!
 //! For continuous monitoring under geometric Brownian motion with carry
-//! `b = r_d − r_f`, volatility `σ` and `b ≠ 0`, the lookback values are known in
+//! `b` (`= r_d − r_f` for FX), volatility `σ` and `b ≠ 0`, the lookback values are known in
 //! closed form (Goldman-Sosin-Gatto for the floating strike, Conze-Viswanathan
 //! for the fixed strike). Writing `a₁ = [ln(S/ξ) + (b + ½σ²)T]/(σ√T)`,
 //! `a₂ = a₁ − σ√T` and `Y = −2(b − ½σ²)/σ²` for the running extremum `ξ` (the
@@ -37,8 +37,9 @@
 //! §6.4). Identifiers are purpose-named and vendor/research-neutral.
 
 use celnet_core::math::{exp, ln, norm_cdf, sqrt};
-use celnet_types::{OptionType, VanillaInputs};
+use celnet_types::OptionType;
 
+use crate::inputs::ExoticInputs;
 use crate::normal::inverse_cdf;
 use crate::rng::CounterRng;
 
@@ -67,14 +68,16 @@ pub struct Lookback {
 ///
 /// Call pays `S_T − min`, put pays `max − S_T`.
 #[must_use]
-pub fn floating_lookback_price(i: &VanillaInputs, option: OptionType) -> f64 {
+pub fn floating_lookback_price(i: &ExoticInputs, option: OptionType) -> f64 {
     let s = i.spot;
     let t = i.t;
     let sig = i.vol;
     let sst = sig * sqrt(t);
-    let b = i.r_dom - i.r_for;
-    let df_dom = exp(-i.r_dom * t);
-    let df_for = exp(-i.r_for * t);
+    // Carry seam: `b = carry_rate()`, numeraire df = `discount_df()`, yield df =
+    // `carry_df()` (stored `r_for` read verbatim) — byte-identical for FX.
+    let b = i.carry_rate();
+    let df_dom = i.discount_df();
+    let df_for = i.carry_df();
 
     // At-inception, the running extremum ξ = S. a1 = (b + ½σ²)T / (σ√T).
     let a1 = (b + 0.5 * sig * sig) * t / sst;
@@ -113,15 +116,16 @@ pub fn floating_lookback_price(i: &VanillaInputs, option: OptionType) -> f64 {
 /// Call pays `(max − K)⁺`, put pays `(K − min)⁺`. Implements the Conze-Viswanathan
 /// representation, split on whether the strike is below/above the current spot.
 #[must_use]
-pub fn fixed_lookback_price(i: &VanillaInputs, option: OptionType) -> f64 {
+pub fn fixed_lookback_price(i: &ExoticInputs, option: OptionType) -> f64 {
     let s = i.spot;
     let k = i.strike;
     let t = i.t;
     let sig = i.vol;
     let sst = sig * sqrt(t);
-    let b = i.r_dom - i.r_for;
-    let df_dom = exp(-i.r_dom * t);
-    let df_for = exp(-i.r_for * t);
+    // Carry seam (see `floating_lookback_price`) — byte-identical for FX.
+    let b = i.carry_rate();
+    let df_dom = i.discount_df();
+    let df_for = i.carry_df();
     let two_b_over_sig2 = 2.0 * b / (sig * sig);
 
     // d1/d2 against the fixed strike K.
@@ -234,14 +238,16 @@ pub struct LookbackEstimate {
 /// maximum is the sign-flipped analogue. Tracking the running min/max of these
 /// per-step bridge extrema gives an unbiased continuous-monitoring extremum.
 #[must_use]
-pub fn lookback_mc(i: &VanillaInputs, spec: Lookback, cfg: LookbackMcConfig) -> LookbackEstimate {
+pub fn lookback_mc(i: &ExoticInputs, spec: Lookback, cfg: LookbackMcConfig) -> LookbackEstimate {
     assert!(cfg.steps >= 1, "lookback MC needs ≥1 step");
     let dt = i.t / cfg.steps as f64;
     let ln_s0 = ln(i.spot);
-    let drift = (i.r_dom - i.r_for - 0.5 * i.vol * i.vol) * dt;
+    // Carry accessors read ONCE, outside the path loop (no `Carry` dispatch in the
+    // hot path, ADR-0008); byte-identical to the FX two-rate form.
+    let drift = (i.carry_rate() - 0.5 * i.vol * i.vol) * dt;
     let vol_sqrt_dt = i.vol * sqrt(dt);
     let var_step = vol_sqrt_dt * vol_sqrt_dt;
-    let df = exp(-i.r_dom * i.t);
+    let df = i.discount_df();
 
     let mut acc = Welford::default();
     // Per path we need `steps` normals for the spot increments and `steps`
@@ -337,9 +343,10 @@ fn lookback_payoff(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use celnet_types::VanillaInputs;
 
-    fn base() -> VanillaInputs {
-        VanillaInputs::new(100.0, 100.0, 0.20, 1.0, 0.05, 0.02)
+    fn base() -> ExoticInputs {
+        VanillaInputs::new(100.0, 100.0, 0.20, 1.0, 0.05, 0.02).into()
     }
 
     /// A floating-strike lookback is always at least as valuable as the
@@ -350,7 +357,7 @@ mod tests {
         let i = base();
         for opt in [OptionType::Call, OptionType::Put] {
             let lb = floating_lookback_price(&i, opt);
-            let vanilla = celnet_vanilla::price(opt, &i);
+            let vanilla = celnet_vanilla::price(opt, &i.as_fx_vanilla(i.strike).unwrap());
             assert!(lb > 0.0, "floating lookback must be positive, got {lb}");
             assert!(
                 lb >= vanilla - 1e-9,
@@ -461,9 +468,9 @@ mod tests {
         // Node-only MC of the same floating call (running extremum = sampled nodes).
         let dt = i.t / cfg.steps as f64;
         let ln_s0 = ln(i.spot);
-        let drift = (i.r_dom - i.r_for - 0.5 * i.vol * i.vol) * dt;
+        let drift = (i.carry_rate() - 0.5 * i.vol * i.vol) * dt;
         let vol_sqrt_dt = i.vol * sqrt(dt);
-        let df = exp(-i.r_dom * i.t);
+        let df = i.discount_df();
         let mut acc = Welford::default();
         let mut z = vec![0.0f64; cfg.steps];
         for pair in 0..cfg.pairs as u64 {

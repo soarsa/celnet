@@ -186,7 +186,7 @@ fn pivot_collapses_to_tarf_when_pivot_equals_strike() {
             redemption: style,
         };
         let piv = PivotTra::as_tarf_slice(1.32, 12, 0.06, 2.0, OptionType::Put, 1.0, style); // pivot == strike == 1.32
-        let t = tarf_price(&i, tarf, cfg_t);
+        let t = tarf_price(&(&i).into(), tarf, cfg_t);
         let p = pivot_tra_price(&i, piv, cfg_p);
         assert_eq!(
             p.price.to_bits(),
