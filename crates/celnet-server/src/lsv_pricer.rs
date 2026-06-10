@@ -198,7 +198,7 @@ fn calibrate_leverage_for(
         market.r_for(),
     );
     let spot_grid = leverage_spot_grid(market.spot, grids.leverage_nodes);
-    let model = LsvModel::calibrate(inputs, var, &iv, &spot_grid, grids.particle);
+    let model = LsvModel::calibrate((&inputs).into(), var, &iv, &spot_grid, grids.particle);
     (inputs, var, model.leverage().clone())
 }
 
@@ -275,7 +275,7 @@ fn reprice(
         market.r_dom(),
         market.r_for(),
     );
-    let model = LsvModel::from_leverage(inputs, var, leverage.clone());
+    let model = LsvModel::from_leverage((&inputs).into(), var, leverage.clone());
     match *payoff {
         LsvPayoff::Vanilla { option, strike } => model.price_european_pde(option, strike, grid),
         LsvPayoff::Knockout {
@@ -556,7 +556,7 @@ pub fn price_window_barrier_lsv(
 
     if w.mc_pairs > 0 {
         // Monte-Carlo engine: price + honest standard error.
-        let model = LsvModel::from_leverage(inputs, var, leverage.clone());
+        let model = LsvModel::from_leverage((&inputs).into(), var, leverage.clone());
         let steps = if w.mc_steps > 0 {
             w.mc_steps as usize
         } else {

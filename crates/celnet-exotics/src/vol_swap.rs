@@ -194,7 +194,7 @@ mod tests {
 
     fn ctx() -> VarSwapContext {
         let i = VanillaInputs::new(1.30, 1.30, 0.10, 1.0, 0.03, 0.01);
-        VarSwapContext::from_inputs(&i)
+        VarSwapContext::from_inputs(&(&i).into())
     }
 
     #[test]

@@ -8,10 +8,11 @@
 //!
 //! # The model
 //!
-//! The spot follows, under the domestic risk-neutral measure,
+//! The spot follows, under the numeraire risk-neutral measure, with
+//! `b = `[`celnet_types::Carry::carry_rate`] (FX: `r_d − r_f`, byte-identical),
 //!
 //! ```text
-//!   dS_t/S_t = (r_d − r_f) dt + L(S_t, t) √v_t dW^S_t ,
+//!   dS_t/S_t = b dt + L(S_t, t) √v_t dW^S_t ,
 //!   dv_t     = κ(θ − v_t) dt + ξ √v_t dW^v_t ,
 //!   d⟨W^S, W^v⟩_t = ρ dt ,
 //! ```
@@ -46,9 +47,10 @@
 //! Identifiers are purpose-named; provenance lives only in documentation.
 
 use celnet_core::math::{exp, ln, sqrt};
-use celnet_types::{OptionType, VanillaInputs};
+use celnet_types::OptionType;
 
 use crate::adi::{self, AdiGrid, AdiProblem};
+use crate::inputs::ExoticInputs;
 use crate::leverage::{ImpliedVolSurface, LeverageSurface};
 use crate::mc::{McConfig, McEstimate};
 use crate::normal::inverse_cdf;
@@ -121,7 +123,7 @@ where
 /// and the particle-calibrated leverage surface, ready to price on either engine.
 #[derive(Debug, Clone)]
 pub struct LsvModel {
-    inputs: VanillaInputs,
+    inputs: ExoticInputs,
     var: VarianceParams,
     leverage: LeverageSurface,
 }
@@ -130,12 +132,12 @@ impl LsvModel {
     /// Calibrate an LSV model to an implied-volatility surface by the particle
     /// method, returning the model with its leverage surface filled in.
     ///
-    /// `inputs` carries spot, carry rates and horizon `T` (its `vol`/`strike`
+    /// `inputs` carries spot, carry and horizon `T` (its `vol`/`strike`
     /// fields are placeholders — the smile lives in `iv`). `var` are the
     /// stochastic-variance parameters; `spot_grid` are the leverage spot nodes.
     #[must_use]
     pub fn calibrate<S: ImpliedVolSurface>(
-        inputs: VanillaInputs,
+        inputs: ExoticInputs,
         var: VarianceParams,
         iv: &S,
         spot_grid: &[f64],
@@ -153,7 +155,7 @@ impl LsvModel {
     /// pure-local-vol seed, or a leverage surface produced once and reused).
     #[must_use]
     pub fn from_leverage(
-        inputs: VanillaInputs,
+        inputs: ExoticInputs,
         var: VarianceParams,
         leverage: LeverageSurface,
     ) -> Self {
@@ -174,7 +176,7 @@ impl LsvModel {
     #[must_use]
     pub fn price_european_pde(&self, option: OptionType, strike: f64, grid: AdiGrid) -> f64 {
         adi::solve(
-            &(&self.inputs).into(),
+            &self.inputs,
             &self.var,
             &self.leverage,
             AdiProblem {
@@ -198,7 +200,7 @@ impl LsvModel {
         grid: AdiGrid,
     ) -> f64 {
         adi::solve(
-            &(&self.inputs).into(),
+            &self.inputs,
             &self.var,
             &self.leverage,
             AdiProblem {
@@ -232,7 +234,7 @@ impl LsvModel {
         // the terminal condition. To keep the grid identical across phases the
         // solver exposes a staged entry point.
         adi::solve_window(
-            &(&self.inputs).into(),
+            &self.inputs,
             &self.var,
             &self.leverage,
             adi::WindowSpec {
@@ -289,8 +291,11 @@ impl LsvModel {
     ) -> McEstimate {
         let i = &self.inputs;
         let dt = i.t / cfg.steps as f64;
-        let df = exp(-i.r_dom * i.t);
-        let carry = i.r_dom - i.r_for;
+        // Seam accessors read ONCE before the path loop (no per-step dispatch);
+        // FX: `discount_df = e^{−r_dom·T}`, `carry_rate = r_dom − r_for`,
+        // byte-identical to the historical two-rate form.
+        let df = i.discount_df();
+        let carry = i.carry_rate();
         let ln_h = window.map(|w| ln(w.barrier));
 
         let mut acc = Welford::default();
@@ -448,6 +453,7 @@ impl Welford {
 mod tests {
     use super::*;
     use crate::leverage::ImpliedVolSurface;
+    use celnet_types::VanillaInputs;
     use celnet_vanilla::price as vanilla_price;
 
     /// A constant (flat) implied-vol surface adapter for the LV-limit tests.
@@ -494,7 +500,7 @@ mod tests {
         let var = VarianceParams::new(sigma * sigma, 1.0, sigma * sigma, 0.0, 0.0);
         let grid = spot_grid(i.spot);
         let model = LsvModel::calibrate(
-            i,
+            (&i).into(),
             var,
             &iv,
             &grid,
@@ -542,7 +548,7 @@ mod tests {
         let var = VarianceParams::new(sigma * sigma, 2.0, sigma * sigma, 0.10, -0.3);
         let grid = spot_grid(i.spot);
         let model = LsvModel::calibrate(
-            i,
+            (&i).into(),
             var,
             &iv,
             &grid,
@@ -585,7 +591,7 @@ mod tests {
         let var = VarianceParams::new(sigma * sigma, 2.0, sigma * sigma, 0.08, -0.2);
         let grid = spot_grid(i.spot);
         let model = LsvModel::calibrate(
-            i,
+            (&i).into(),
             var,
             &iv,
             &grid,
@@ -670,7 +676,7 @@ mod tests {
             .map(|k| spot * exp(-0.6 + 0.03 * k as f64))
             .collect();
         let model = LsvModel::calibrate(
-            i,
+            (&i).into(),
             var,
             &target,
             &grid,
@@ -749,7 +755,7 @@ mod tests {
             carry: i.r_dom - i.r_for,
         };
         let model = LsvModel::calibrate(
-            i,
+            (&i).into(),
             var,
             &iv,
             &grid,

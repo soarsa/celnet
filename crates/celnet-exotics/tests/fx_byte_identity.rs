@@ -1,4 +1,5 @@
-//! FX byte-identity gate for the ADR-0008 Wave-B/C carry-seam migration (spec §6).
+//! FX byte-identity gate for the ADR-0008 Wave-B/C/D carry-seam migration
+//! (spec §6).
 //!
 //! Every reference value below was captured from the **pre-migration** engines
 //! (the FX-only `VanillaInputs` two-rate forms) as raw `f64::to_bits`, on this
@@ -12,10 +13,13 @@
 //! accumulator, the TARF, the lookback closed forms + MC, the forward-start /
 //! cliquet family, and the analytic Asian estimators (Turnbull-Wakeman-style
 //! moment matching, geometric-conditioning, geometric closed forms — provenance
-//! in the engine docs) — and the Wave-C finite-difference set — the 1-D
+//! in the engine docs) — the Wave-C finite-difference set — the 1-D
 //! Crank-Nicolson/Rannacher PDE, the 2-D Hundsdorfer-Verwer ADI LSV solver, and
 //! the American/Bermudan PSOR + Longstaff-Schwartz engines including the full
-//! FD Greek strip with the §3.4 rate re-tag.
+//! FD Greek strip with the §3.4 rate re-tag — and the Wave-D composite set —
+//! the variance/volatility-swap replication strips, the quanto closed forms +
+//! MC, the correlated multi-asset basket QMC engine, and the LSV orchestration
+//! (MC + ADI, vanilla / knock-out / window barrier).
 
 use celnet_exotics::ExoticInputs;
 use celnet_exotics::asian::{AnalyticAsian, AveragingSchedule, geometric_average_price};
@@ -763,4 +767,405 @@ fn equity_pde_and_american_price_on_the_carry_seam() {
             panic!("equity cost-of-carry input must report RateSensitivities::Carry")
         }
     }
+}
+
+// ===========================================================================
+// Wave D — composite / specialized engines (spec §3.3 Wave D): variance /
+// volatility swap replication, quanto, correlated multi-asset basket, and the
+// LSV orchestration. Every frozen value below was captured from the
+// pre-migration FX-only engines on this exact grid immediately before the
+// carry-seam rewiring. The quanto gates guard the §8 sharp edge directly: the
+// carry shift is realised on the yield side via Carry::yield_rate (the stored
+// r_for verbatim), reproducing the historical r_for ← r_for − adjustment
+// arithmetic bit-for-bit.
+// ===========================================================================
+
+#[test]
+fn var_vol_swap_byte_identical() {
+    use celnet_core::FlatSmile;
+    use celnet_exotics::{VarSwapContext, fair_variance, fair_volatility};
+    use celnet_surface::MarketHedgeSmile;
+
+    let ctx = VarSwapContext::from_inputs(&fx_a());
+    let fv = fair_variance(&FlatSmile::new(0.10), &ctx);
+    gate(
+        "varswap_flat_fair_variance",
+        fv.fair_variance,
+        0x3f847ae147ae1488,
+    );
+    gate("varswap_flat_put_leg", fv.put_leg, 0x3f7506491bf3bc0e);
+    gate("varswap_flat_call_leg", fv.call_leg, 0x3f73ef7973686d01);
+    let f = ctx.forward;
+    let convex = MarketHedgeSmile::new([f / 1.10, f, f * 1.10], [0.115, 0.10, 0.115], f, ctx.t);
+    gate(
+        "varswap_convex_fair_variance",
+        fair_variance(&convex, &ctx).fair_variance,
+        0x3f8c563c794c8588,
+    );
+    let wings = MarketHedgeSmile::new([f / 1.10, f, f * 1.10], [0.13, 0.10, 0.13], f, ctx.t);
+    let vs = fair_volatility(&wings, &ctx);
+    gate("volswap_convex_fair_vol", vs.fair_vol, 0x3fbf7be1698beda4);
+    gate(
+        "volswap_convex_correction",
+        vs.convexity_correction,
+        0x3f8ac9439c58b6cd,
+    );
+    gate(
+        "volswap_convex_vov",
+        vs.variance_of_variance,
+        0x3f3145f0fd42b040,
+    );
+    gate(
+        "volswap_flat_fair_vol",
+        fair_volatility(&FlatSmile::new(0.10), &ctx).fair_vol,
+        0x3fb99999999999a2,
+    );
+}
+
+#[test]
+fn quanto_byte_identical() {
+    use celnet_exotics::{
+        QuantoMcConfig, QuantoParams, quanto_digital_mc, quanto_digital_price, quanto_vanilla_mc,
+        quanto_vanilla_price,
+    };
+
+    let qi: ExoticInputs = VanillaInputs::new(1.30, 1.30, 0.12, 1.0, 0.03, 0.01).into();
+    let qv = QuantoParams::new(0.18, 0.55);
+    gate(
+        "quanto_vanilla_call",
+        quanto_vanilla_price(OptionType::Call, &qi, qv),
+        0x3fb0ddf6d850f4c8,
+    );
+    gate(
+        "quanto_vanilla_put",
+        quanto_vanilla_price(OptionType::Put, &qi, qv),
+        0x3fac77c1fa051fd0,
+    );
+    let qd = QuantoParams::new(0.14, -0.30);
+    gate(
+        "quanto_digital_call",
+        quanto_digital_price(OptionType::Call, &qi, qd),
+        0x3fe15cb7972f63f3,
+    );
+    gate(
+        "quanto_digital_put",
+        quanto_digital_price(OptionType::Put, &qi, qd),
+        0x3fdb625866ea2fba,
+    );
+    let qmc = quanto_vanilla_mc(
+        OptionType::Call,
+        &qi,
+        qv,
+        QuantoMcConfig {
+            pairs: 50_000,
+            seed: 0x5EED,
+        },
+    );
+    gate("quanto_mc_vanilla_price", qmc.price, 0x3fb0df662bfcfa38);
+    gate("quanto_mc_vanilla_se", qmc.std_error, 0x3f2ea1056b8d8c31);
+    let dmc = quanto_digital_mc(
+        OptionType::Put,
+        &qi,
+        qd,
+        QuantoMcConfig {
+            pairs: 50_000,
+            seed: 0xD161,
+        },
+    );
+    gate("quanto_mc_digital_price", dmc.price, 0x3fdb614243e3b84f);
+}
+
+#[test]
+fn basket_byte_identical() {
+    use celnet_exotics::{BasketKind, BasketLeg, BasketMcConfig, BasketSpec, price_basket};
+    use celnet_types::Carry;
+
+    // FX legs under a shared settlement numeraire: the per-leg carry is the
+    // same r_dom − r_for float op the engine performed pre-migration, and the
+    // settlement-cash numeraire (forward 1 ⇒ b = 0) discounts at r_dom.
+    let r_dom = 0.02;
+    let numeraire = Carry::CostOfCarry { r: r_dom, b: 0.0 };
+    let spec = BasketSpec {
+        legs: vec![
+            BasketLeg::new(1.0, 0.10, r_dom - 0.01, 1.0),
+            BasketLeg::new(1.2, 0.12, r_dom - 0.015, 1.0),
+        ],
+        correlation: vec![vec![1.0, 0.3], vec![0.3, 1.0]],
+        option_type: OptionType::Call,
+        strike: 2.2,
+        kind: BasketKind::Basket,
+    };
+    let est = price_basket(
+        &spec,
+        numeraire,
+        1.0,
+        BasketMcConfig {
+            budget: 512,
+            replications: 4,
+            steps: 1,
+            seed: 7,
+        },
+    )
+    .unwrap();
+    gate("basket_call_price", est.price, 0x3fb6002db31d6bc8);
+    gate("basket_call_se", est.std_error, 0x3f113f77d196a145);
+
+    let r_dom = 0.025;
+    let worst = BasketSpec {
+        legs: vec![
+            BasketLeg::new(1.0, 0.15, r_dom - 0.010, 1.0),
+            BasketLeg::new(1.0, 0.18, r_dom - 0.012, 1.0),
+        ],
+        correlation: vec![vec![1.0, 0.4], vec![0.4, 1.0]],
+        option_type: OptionType::Call,
+        strike: 1.0,
+        kind: BasketKind::WorstOf,
+    };
+    let west = price_basket(
+        &worst,
+        Carry::CostOfCarry { r: r_dom, b: 0.0 },
+        1.0,
+        BasketMcConfig {
+            budget: 1024,
+            replications: 4,
+            steps: 2,
+            seed: 9,
+        },
+    )
+    .unwrap();
+    gate("basket_worstof_price", west.price, 0x3fa001039c58902d);
+}
+
+/// Unit leverage surface on an LSV-scale (FX) spot grid — fixed scaffolding for
+/// the LSV gates (identical pre/post migration; the migration touches only the
+/// rate/carry reads of the orchestration layer).
+fn lsv_unit_leverage() -> celnet_exotics::LeverageSurface {
+    let spots: Vec<f64> = (0..41)
+        .map(|k| 1.30 * celnet_core::math::exp(-0.6 + 0.03 * k as f64))
+        .collect();
+    let mut lev = celnet_exotics::LeverageSurface::new(spots, vec![0.0, 0.5, 1.0]);
+    for j in 0..lev.time_len() {
+        for s in 0..lev.spot_len() {
+            lev.set(s, j, 1.0);
+        }
+    }
+    lev
+}
+
+#[test]
+fn lsv_model_byte_identical() {
+    use celnet_exotics::stochvol::VarianceParams;
+    use celnet_exotics::{AdiGrid, LsvModel, WindowBarrier};
+
+    let var = VarianceParams::new(0.01, 2.0, 0.01, 0.18, -0.30);
+    let model = LsvModel::from_leverage(fx_a(), var, lsv_unit_leverage());
+    let mc_cfg = McConfig {
+        pairs: 2_000,
+        steps: 16,
+        seed: 0xB17,
+    };
+    let emc = model.price_european_mc(OptionType::Call, 1.30, mc_cfg);
+    gate("lsv_mc_european_price", emc.price, 0x3fafa4f5ba484b90);
+    gate("lsv_mc_european_se", emc.std_error, 0x3f4cc436966cb775);
+    let agrid = AdiGrid {
+        x_steps: 64,
+        v_steps: 20,
+        time_steps: 24,
+        ..AdiGrid::default()
+    };
+    gate(
+        "lsv_pde_european_price",
+        model.price_european_pde(OptionType::Call, 1.30, agrid),
+        0x3fac9eef8c35f3f0,
+    );
+    gate(
+        "lsv_pde_barrier_price",
+        model.price_barrier_pde(OptionType::Call, 1.30, 1.45, true, agrid),
+        0x3f94f5fa15db0f1c,
+    );
+    let window = WindowBarrier {
+        option: OptionType::Call,
+        strike: 1.30,
+        barrier: 1.45,
+        up: true,
+        start: 0.25,
+        end: 0.75,
+    };
+    gate(
+        "lsv_pde_window_price",
+        model.price_window_barrier_pde(window, agrid),
+        0x3f9bfc239a0ad83d,
+    );
+    let wmc = model.price_window_barrier_mc(window, mc_cfg);
+    gate("lsv_mc_window_price", wmc.price, 0x3fa0204d08c44b54);
+    gate("lsv_mc_window_se", wmc.std_error, 0x3f44f71518056c86);
+}
+
+// ===========================================================================
+// Wave D cross-asset enablement (spec §6): the same composite engines price a
+// non-FX carry against independently re-derived oracles — no engine code (and
+// no carry-accessor arithmetic) shared with the assertion side.
+// ===========================================================================
+
+/// An equity **quanto** vanilla on `Carry::CostOfCarry { r, b = r − q }`
+/// reconciled to a hand-rederived generalized closed form at the shifted carry
+/// `b_Q = b − ρ σ_S σ_Z`: `e^{−r t}·[S e^{b_Q t} Φ(d1) − K Φ(d2)]`.
+#[test]
+fn equity_quanto_matches_hand_derived_closed_form() {
+    use celnet_exotics::{QuantoParams, quanto_vanilla_price};
+    use celnet_types::{Carry, Ccy, EquityRef, Symbol, Underlying};
+
+    let (s0, k, vol, t, r, q) = (50.0, 52.0, 0.25, 0.75, 0.04, 0.015);
+    let (conv_vol, rho) = (0.18, 0.55);
+    let b = r - q;
+    let inputs = ExoticInputs::new(
+        s0,
+        k,
+        vol,
+        t,
+        Underlying::Equity(EquityRef::new(
+            Symbol::new("ACME", "XLON"),
+            Ccy::parse("GBP").unwrap(),
+        )),
+        Carry::CostOfCarry { r, b },
+    );
+    let engine = quanto_vanilla_price(OptionType::Call, &inputs, QuantoParams::new(conv_vol, rho));
+
+    // Hand re-derivation (no engine code shared).
+    let b_q = b - rho * vol * conv_vol;
+    let f_q = s0 * (b_q * t).exp();
+    let sd = vol * t.sqrt();
+    let d1 = ((f_q / k).ln() + 0.5 * vol * vol * t) / sd;
+    let d2 = d1 - sd;
+    let phi = |x: f64| 0.5 * libm::erfc(-x / std::f64::consts::SQRT_2);
+    let hand = (-r * t).exp() * (f_q * phi(d1) - k * phi(d2));
+
+    assert!(
+        (engine - hand).abs() < 1e-12,
+        "equity quanto vanilla: engine {engine} vs hand-derived {hand}"
+    );
+}
+
+/// A flat smile must replicate to `K_var = σ²` for **any** carry — the
+/// model-free log-contract identity is carry-independent, so an equity
+/// cost-of-carry context recovers σ² exactly like the FX context does.
+#[test]
+fn equity_var_swap_flat_smile_recovers_sigma_squared() {
+    use celnet_core::FlatSmile;
+    use celnet_exotics::{VarSwapContext, fair_variance};
+    use celnet_types::Carry;
+
+    let (s0, t, r, q, sigma) = (50.0, 0.75, 0.04, 0.015, 0.20);
+    let b = r - q;
+    let ctx = VarSwapContext::new(s0 * f64::exp(b * t), t, Carry::CostOfCarry { r, b });
+    let res = fair_variance(&FlatSmile::new(sigma), &ctx);
+    assert!(
+        (res.fair_variance - sigma * sigma).abs() < 1e-7,
+        "equity flat-smile fair variance {} vs σ² {}",
+        res.fair_variance,
+        sigma * sigma
+    );
+}
+
+/// A single-leg equity **basket** (`b = r − q` leg under an `r`-discounting
+/// settlement numeraire) is a plain generalized-BSM vanilla: the QMC estimate
+/// must reconcile with the hand-derived closed form within its measured error.
+#[test]
+fn equity_basket_single_leg_matches_hand_derived_closed_form() {
+    use celnet_exotics::{BasketKind, BasketLeg, BasketMcConfig, BasketSpec, price_basket};
+    use celnet_types::Carry;
+
+    let (s0, k, vol, t, r, q) = (50.0, 52.0, 0.25, 0.75, 0.04, 0.015);
+    let b = r - q;
+    let spec = BasketSpec {
+        legs: vec![BasketLeg::new(s0, vol, b, 1.0)],
+        correlation: vec![vec![1.0]],
+        option_type: OptionType::Call,
+        strike: k,
+        kind: BasketKind::Basket,
+    };
+    let est = price_basket(
+        &spec,
+        Carry::CostOfCarry { r, b: 0.0 },
+        t,
+        BasketMcConfig {
+            budget: 8_192,
+            replications: 8,
+            steps: 1,
+            seed: 0xE9,
+        },
+    )
+    .unwrap();
+
+    let f = s0 * (b * t).exp();
+    let sd = vol * t.sqrt();
+    let d1 = ((f / k).ln() + 0.5 * vol * vol * t) / sd;
+    let d2 = d1 - sd;
+    let phi = |x: f64| 0.5 * libm::erfc(-x / std::f64::consts::SQRT_2);
+    let hand = (-r * t).exp() * (f * phi(d1) - k * phi(d2));
+
+    let tol = 4.0 * est.std_error + 1e-4;
+    assert!(
+        (est.price - hand).abs() < tol,
+        "equity single-leg basket: QMC {} vs hand-derived {hand} (se {}, tol {tol})",
+        est.price,
+        est.std_error
+    );
+}
+
+/// The **LSV orchestration** prices an equity carry: in the pure-local-vol
+/// limit (`ξ = 0`, `v0 = θ = σ²`, unit leverage) the 2-D ADI engine must
+/// recover the hand-derived generalized-BSM vanilla within grid tolerance.
+#[test]
+fn equity_lsv_pure_local_vol_limit_matches_closed_form() {
+    use celnet_exotics::stochvol::VarianceParams;
+    use celnet_exotics::{AdiGrid, LsvModel};
+    use celnet_types::{Carry, Ccy, EquityRef, Symbol, Underlying};
+
+    let (s0, k, vol, t, r, q) = (50.0, 50.0, 0.20, 1.0, 0.04, 0.015);
+    let b = r - q;
+    let inputs = ExoticInputs::new(
+        s0,
+        k,
+        vol,
+        t,
+        Underlying::Equity(EquityRef::new(
+            Symbol::new("ACME", "XLON"),
+            Ccy::parse("GBP").unwrap(),
+        )),
+        Carry::CostOfCarry { r, b },
+    );
+    let spots: Vec<f64> = (0..41)
+        .map(|j| s0 * celnet_core::math::exp(-0.6 + 0.03 * j as f64))
+        .collect();
+    let mut lev = celnet_exotics::LeverageSurface::new(spots, vec![0.0, 0.5, 1.0]);
+    for j in 0..lev.time_len() {
+        for s in 0..lev.spot_len() {
+            lev.set(s, j, 1.0);
+        }
+    }
+    let var = VarianceParams::new(vol * vol, 1.0, vol * vol, 0.0, 0.0);
+    let model = LsvModel::from_leverage(inputs, var, lev);
+    let pde = model.price_european_pde(
+        OptionType::Call,
+        k,
+        AdiGrid {
+            x_steps: 140,
+            v_steps: 30,
+            time_steps: 80,
+            ..AdiGrid::default()
+        },
+    );
+
+    let f = s0 * (b * t).exp();
+    let sd = vol * t.sqrt();
+    let d1 = ((f / k).ln() + 0.5 * vol * vol * t) / sd;
+    let d2 = d1 - sd;
+    let phi = |x: f64| 0.5 * libm::erfc(-x / std::f64::consts::SQRT_2);
+    let hand = (-r * t).exp() * (f * phi(d1) - k * phi(d2));
+
+    assert!(
+        (pde - hand).abs() < 5e-3,
+        "equity LSV pure-LV limit: ADI {pde} vs hand-derived {hand}"
+    );
 }

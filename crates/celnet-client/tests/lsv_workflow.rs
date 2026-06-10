@@ -73,7 +73,7 @@ fn oracle_model(spot: f64, vol: f64, r_dom: f64, r_for: f64) -> LsvModel {
         seed: 0x0001_0CA1,
         ..ParticleConfig::default()
     };
-    LsvModel::calibrate(inputs, var, &iv, &spot_grid, particle)
+    LsvModel::calibrate((&inputs).into(), var, &iv, &spot_grid, particle)
 }
 
 fn oracle_price_grid() -> AdiGrid {

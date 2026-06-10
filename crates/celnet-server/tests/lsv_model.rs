@@ -146,7 +146,7 @@ fn oracle_model(m: &MarketContext) -> LsvModel {
         seed: 0x0001_0CA1,
         ..ParticleConfig::default()
     };
-    LsvModel::calibrate(inputs, var, &iv, &spot_grid, particle)
+    LsvModel::calibrate((&inputs).into(), var, &iv, &spot_grid, particle)
 }
 
 fn oracle_price_grid() -> AdiGrid {

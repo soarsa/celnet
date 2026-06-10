@@ -17,11 +17,20 @@
 //! ```
 //!
 //! Concretely, under the settlement-currency (`M`) risk-neutral measure the spot
-//! grows at the carry `b_Q = (r_dom − r_for) − ρ σ_S σ_Z` while discounting still
-//! uses the settlement (domestic-equivalent) rate `r_dom`. Everything else is the
-//! ordinary Garman-Kohlhagen / Black-Scholes machinery evaluated at that shifted
-//! carry — so the quanto vanilla and the quanto digital both have **exact closed
-//! forms**, which the Monte-Carlo engine here is cross-validated against.
+//! grows at the shifted carry `b_Q = b − ρ σ_S σ_Z` (FX: `b = r_dom − r_for`)
+//! while discounting still uses the settlement (numeraire) rate
+//! `r = `[`Carry::discount_rate`]. Everything else is the ordinary
+//! generalized-Black-Scholes machinery evaluated at that shifted carry — so the
+//! quanto vanilla and the quanto digital both have **exact closed forms**, which
+//! the Monte-Carlo engine here is cross-validated against.
+//!
+//! The carry shift is realised on the **yield side** of the two-rate
+//! `(discount, yield)` carry: `q_Q = q − adjustment` with `q` read **verbatim**
+//! through [`Carry::yield_rate`] (FX: the stored `r_for`), so the FX path
+//! reproduces the historical `r_for ← r_for − adjustment` arithmetic
+//! bit-for-bit, and a generalized `(r, b)` carry shifts to exactly
+//! `b_Q = b + adjustment` (since `b = r − q`). The settlement discount rate is
+//! untouched.
 //!
 //! Provenance (doc-only): the change-of-numéraire / Girsanov derivation of the
 //! quanto drift in Reiner (1992) "Quanto Mechanics"; the textbook treatment in
@@ -30,13 +39,14 @@
 //! vendor/research-neutral.
 
 use celnet_core::math::{exp, ln, norm_cdf, sqrt};
-use celnet_types::{OptionType, VanillaInputs};
+use celnet_types::{Carry, OptionType};
 
+use crate::inputs::{ExoticInputs, carry_vanilla_price};
 use crate::normal::inverse_cdf;
 use crate::rng::CounterRng;
 
 /// The market data the quanto correction needs beyond the underlying's own
-/// [`VanillaInputs`]: the settlement-conversion-rate volatility and its
+/// [`ExoticInputs`]: the settlement-conversion-rate volatility and its
 /// correlation with the underlying.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct QuantoParams {
@@ -76,27 +86,38 @@ impl QuantoParams {
 }
 
 /// Build the quanto-adjusted view of the underlying: the same inputs but with the
-/// carry shifted by the quanto correction. The shift is realised by adjusting the
-/// *foreign* rate so that `r_dom − r_for_adj = (r_dom − r_for) + adjustment`,
-/// while the (settlement) `r_dom` used for discounting is untouched.
+/// carry shifted by the quanto correction, `b_Q = b + adjustment`, while the
+/// settlement discount rate is untouched.
+///
+/// The shift is realised on the **yield side** of the two-rate
+/// `(discount, yield)` carry — `q_Q = q − adjustment`, so `b_Q = r − q_Q
+/// = b + adjustment` exactly — with `q` read **verbatim** through
+/// [`Carry::yield_rate`] (the §8 sharp edge: never the
+/// `discount_rate() − carry_rate()` reconstruction). For an FX
+/// [`Carry::FxRates`] this reproduces the historical
+/// `r_for ← r_for − adjustment` float arithmetic bit-for-bit.
 #[inline]
-fn quanto_adjusted_inputs(i: &VanillaInputs, q: QuantoParams) -> VanillaInputs {
+fn quanto_adjusted_inputs(i: &ExoticInputs, q: QuantoParams) -> ExoticInputs {
     let adjustment = q.drift_adjustment(i.vol);
-    VanillaInputs {
-        // carry_new = carry_old + adjustment  ⇒  r_for_new = r_for − adjustment
-        r_for: i.r_for - adjustment,
-        ..*i
+    ExoticInputs {
+        // carry_new = carry_old + adjustment  ⇒  yield_new = yield − adjustment
+        carry: Carry::FxRates {
+            r_dom: i.discount_rate(),
+            r_for: i.yield_rate() - adjustment,
+        },
+        ..i.clone()
     }
 }
 
 /// Closed-form price of a **quanto vanilla** (cash-settled in the fixed settlement
 /// currency at unit conversion), per one unit of base notional.
 ///
-/// This is the ordinary Garman-Kohlhagen vanilla evaluated at the quanto-adjusted
-/// carry. The settlement-currency discounting uses `i.r_dom`.
+/// This is the ordinary generalized-Black-Scholes vanilla evaluated at the
+/// quanto-adjusted carry. The settlement-currency discounting uses
+/// `i.discount_rate()`.
 #[must_use]
-pub fn quanto_vanilla_price(option: OptionType, i: &VanillaInputs, q: QuantoParams) -> f64 {
-    celnet_vanilla::price(option, &quanto_adjusted_inputs(i, q))
+pub fn quanto_vanilla_price(option: OptionType, i: &ExoticInputs, q: QuantoParams) -> f64 {
+    carry_vanilla_price(option, &quanto_adjusted_inputs(i, q))
 }
 
 /// What a quanto digital pays when in the money — here always **one unit of the
@@ -108,17 +129,16 @@ pub fn quanto_vanilla_price(option: OptionType, i: &VanillaInputs, q: QuantoPara
 ///
 /// The exercise probability is taken under the settlement-currency measure (so it
 /// uses the quanto-adjusted drift), but the payout is a fixed unit of settlement
-/// cash, so the price is `e^{−r_dom T}·Φ(±d₂_Q)` with `d₂_Q` formed at the
+/// cash, so the price is `e^{−r·T}·Φ(±d₂_Q)` with `d₂_Q` formed at the
 /// adjusted carry.
 #[must_use]
-pub fn quanto_digital_price(option: OptionType, i: &VanillaInputs, q: QuantoParams) -> f64 {
+pub fn quanto_digital_price(option: OptionType, i: &ExoticInputs, q: QuantoParams) -> f64 {
     let adj = quanto_adjusted_inputs(i, q);
     let vsqt = adj.vol * sqrt(adj.t);
-    let d1 = (ln(adj.spot / adj.strike)
-        + (adj.r_dom - adj.r_for + 0.5 * adj.vol * adj.vol) * adj.t)
-        / vsqt;
+    let d1 =
+        (ln(adj.spot / adj.strike) + (adj.carry_rate() + 0.5 * adj.vol * adj.vol) * adj.t) / vsqt;
     let d2 = d1 - vsqt;
-    let df = exp(-adj.r_dom * adj.t);
+    let df = adj.discount_df();
     match option {
         OptionType::Call => df * norm_cdf(d2),
         OptionType::Put => df * norm_cdf(-d2),
@@ -180,15 +200,15 @@ pub struct QuantoMcConfig {
 #[must_use]
 pub fn quanto_vanilla_mc(
     option: OptionType,
-    i: &VanillaInputs,
+    i: &ExoticInputs,
     q: QuantoParams,
     cfg: QuantoMcConfig,
 ) -> QuantoEstimate {
     let adj = quanto_adjusted_inputs(i, q);
     let ln_s0 = ln(adj.spot);
-    let drift = (adj.r_dom - adj.r_for - 0.5 * adj.vol * adj.vol) * adj.t;
+    let drift = (adj.carry_rate() - 0.5 * adj.vol * adj.vol) * adj.t;
     let vol_sqrt_t = adj.vol * sqrt(adj.t);
-    let df = exp(-adj.r_dom * adj.t);
+    let df = adj.discount_df();
     let sign = option.sign();
 
     let mut acc = Welford::default();
@@ -213,15 +233,15 @@ pub fn quanto_vanilla_mc(
 #[must_use]
 pub fn quanto_digital_mc(
     option: OptionType,
-    i: &VanillaInputs,
+    i: &ExoticInputs,
     q: QuantoParams,
     cfg: QuantoMcConfig,
 ) -> QuantoEstimate {
     let adj = quanto_adjusted_inputs(i, q);
     let ln_s0 = ln(adj.spot);
-    let drift = (adj.r_dom - adj.r_for - 0.5 * adj.vol * adj.vol) * adj.t;
+    let drift = (adj.carry_rate() - 0.5 * adj.vol * adj.vol) * adj.t;
     let vol_sqrt_t = adj.vol * sqrt(adj.t);
-    let df = exp(-adj.r_dom * adj.t);
+    let df = adj.discount_df();
 
     let mut acc = Welford::default();
     for pair in 0..cfg.pairs as u64 {
@@ -247,9 +267,14 @@ pub fn quanto_digital_mc(
 mod tests {
     use super::*;
     use celnet_core::assert_close;
+    use celnet_types::VanillaInputs;
 
-    fn base() -> VanillaInputs {
+    fn base_fx() -> VanillaInputs {
         VanillaInputs::new(1.30, 1.30, 0.12, 1.0, 0.03, 0.01)
+    }
+
+    fn base() -> ExoticInputs {
+        (&base_fx()).into()
     }
 
     /// Zero correlation (or zero conversion vol) ⇒ the quanto adjustment vanishes
@@ -258,7 +283,7 @@ mod tests {
     fn zero_correlation_collapses_to_vanilla() {
         let i = base();
         for opt in [OptionType::Call, OptionType::Put] {
-            let plain = celnet_vanilla::price(opt, &i);
+            let plain = celnet_vanilla::price(opt, &base_fx());
             let q0 = quanto_vanilla_price(opt, &i, QuantoParams::new(0.10, 0.0));
             let qz = quanto_vanilla_price(opt, &i, QuantoParams::new(0.0, 0.7));
             assert_close!(q0, plain, 1e-13, 1e-13);
@@ -268,25 +293,32 @@ mod tests {
 
     /// The quanto correction has the documented sign and magnitude: shifting the
     /// carry by `−ρ σ_S σ_Z` is exactly repricing a vanilla at an adjusted foreign
-    /// rate. Verify against a hand-built adjusted-rate vanilla.
+    /// rate. Verify against a hand-built adjusted-rate FX vanilla — for an FX
+    /// carry the yield-side shift reproduces it **bit-for-bit**.
     #[test]
     fn drift_adjustment_matches_adjusted_rate_vanilla() {
+        let fx = base_fx();
         let i = base();
         let q = QuantoParams::new(0.15, 0.4);
-        let adjustment = -0.4 * i.vol * 0.15;
+        let adjustment = -0.4 * fx.vol * 0.15;
         let by_hand = VanillaInputs {
-            r_for: i.r_for - adjustment,
-            ..i
+            r_for: fx.r_for - adjustment,
+            ..fx
         };
         for opt in [OptionType::Call, OptionType::Put] {
             let via_quanto = quanto_vanilla_price(opt, &i, q);
             let direct = celnet_vanilla::price(opt, &by_hand);
-            assert_close!(via_quanto, direct, 1e-14, 1e-14);
+            assert_eq!(
+                via_quanto.to_bits(),
+                direct.to_bits(),
+                "quanto carry shift must equal the adjusted-rate FX vanilla \
+                 bit-for-bit: {via_quanto} vs {direct}"
+            );
         }
         // Positive correlation lowers the call value (drift correction is
         // negative ⇒ lower forward), the documented direction.
         let call_q = quanto_vanilla_price(OptionType::Call, &i, q);
-        let call_plain = celnet_vanilla::price(OptionType::Call, &i);
+        let call_plain = celnet_vanilla::price(OptionType::Call, &fx);
         assert!(
             call_q < call_plain,
             "ρ>0 must lower the quanto call: {call_q} < {call_plain}"
@@ -346,7 +378,7 @@ mod tests {
         let q = QuantoParams::new(0.16, 0.25);
         let c = quanto_digital_price(OptionType::Call, &i, q);
         let p = quanto_digital_price(OptionType::Put, &i, q);
-        assert_close!(c + p, exp(-i.r_dom * i.t), 1e-13, 1e-13);
+        assert_close!(c + p, i.discount_df(), 1e-13, 1e-13);
     }
 
     /// Reproducibility: identical seed ⇒ bit-identical MC price.

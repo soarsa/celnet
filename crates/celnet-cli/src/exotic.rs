@@ -474,11 +474,11 @@ pub(crate) fn run(spec: ExoticSpec, inputs: &VanillaInputs) -> ExoticResult {
         // The wire market input carries a single Black vol, so the smile here is
         // the flat smile at that vol (a flat σ replicates to K_var = σ² exactly).
         ExoticSpec::VarianceSwap => {
-            let ctx = VarSwapContext::from_inputs(inputs);
+            let ctx = VarSwapContext::from_inputs(&einputs);
             fair_variance(&FlatSmile::new(inputs.vol), &ctx).fair_variance
         }
         ExoticSpec::VolatilitySwap => {
-            let ctx = VarSwapContext::from_inputs(inputs);
+            let ctx = VarSwapContext::from_inputs(&einputs);
             fair_volatility(&FlatSmile::new(inputs.vol), &ctx).fair_vol
         }
         ExoticSpec::Asian {
@@ -537,7 +537,10 @@ pub(crate) fn run(spec: ExoticSpec, inputs: &VanillaInputs) -> ExoticResult {
             conversion_vol,
             correlation,
         } => {
-            let quanto_inputs = VanillaInputs { strike, ..*inputs };
+            let quanto_inputs = celnet_exotics::ExoticInputs {
+                strike,
+                ..einputs.clone()
+            };
             let params = QuantoParams::new(conversion_vol, correlation);
             if digital {
                 quanto_digital_price(option, &quanto_inputs, params)
@@ -732,7 +735,7 @@ fn lsv_model(inputs: &VanillaInputs) -> LsvModel {
         seed: 0x0001_0CA1,
         ..ParticleConfig::default()
     };
-    LsvModel::calibrate(*inputs, var, &iv, &spot_grid, particle)
+    LsvModel::calibrate(inputs.into(), var, &iv, &spot_grid, particle)
 }
 
 /// The fine ADI grid for the LSV headline price (matches the server default).
@@ -950,7 +953,7 @@ mod tests {
     fn variance_swap_matches_direct_and_flat_sigma_oracle() {
         let i = inputs();
         let r = run(ExoticSpec::VarianceSwap, &i);
-        let ctx = VarSwapContext::from_inputs(&i);
+        let ctx = VarSwapContext::from_inputs(&(&i).into());
         let direct = fair_variance(&FlatSmile::new(i.vol), &ctx).fair_variance;
         assert!(is_close(r.price, direct, 1e-12, 1e-12));
         // Flat-σ closed-form limit oracle: K_var == σ².
@@ -961,7 +964,7 @@ mod tests {
     fn volatility_swap_matches_direct_and_flat_sigma_oracle() {
         let i = inputs();
         let r = run(ExoticSpec::VolatilitySwap, &i);
-        let ctx = VarSwapContext::from_inputs(&i);
+        let ctx = VarSwapContext::from_inputs(&(&i).into());
         let direct = fair_volatility(&FlatSmile::new(i.vol), &ctx).fair_vol;
         assert!(is_close(r.price, direct, 1e-12, 1e-12));
         // Flat smile ⇒ zero convexity gap ⇒ K_vol == σ.
@@ -1140,7 +1143,7 @@ mod tests {
         );
         let direct = quanto_vanilla_price(
             OptionType::Call,
-            &VanillaInputs { strike: 1.10, ..i },
+            &(&VanillaInputs { strike: 1.10, ..i }).into(),
             QuantoParams::new(0.09, -0.3),
         );
         assert!(is_close(r.price, direct, 1e-13, 1e-13));
@@ -1178,7 +1181,7 @@ mod tests {
         );
         let direct = quanto_digital_price(
             OptionType::Put,
-            &VanillaInputs { strike: 1.12, ..i },
+            &(&VanillaInputs { strike: 1.12, ..i }).into(),
             QuantoParams::new(0.07, 0.4),
         );
         assert!(is_close(r.price, direct, 1e-13, 1e-13));

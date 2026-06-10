@@ -44,7 +44,12 @@ use celnet_core::math::{exp, ln, sqrt};
 use celnet_exotics::{
     BasketKind, BasketLeg, BasketMcConfig, BasketSpec, CorrelationError, price_basket,
 };
-use celnet_types::{OptionType, VanillaInputs};
+use celnet_types::{Carry, OptionType, VanillaInputs};
+
+/// The settlement-cash numeraire carry at rate `r` (forward 1 ⇒ b = 0).
+fn numeraire(r: f64) -> Carry {
+    Carry::CostOfCarry { r, b: 0.0 }
+}
 
 /// A shared, well-converged MC config for the limit / pinned-reference gates.
 fn cfg(seed: u64) -> BasketMcConfig {
@@ -91,13 +96,13 @@ fn degenerate_one_leg_basket_matches_gk_vanilla() {
         (OptionType::Put, 1.15),
     ] {
         let spec = BasketSpec {
-            legs: vec![BasketLeg::new(spot, vol, r_for, 1.0)],
+            legs: vec![BasketLeg::new(spot, vol, r_dom - r_for, 1.0)],
             correlation: vec![vec![1.0]],
             option_type: kind_opt,
             strike,
             kind: BasketKind::Basket,
         };
-        let est = price_basket(&spec, r_dom, t, cfg(0xA11CE)).unwrap();
+        let est = price_basket(&spec, numeraire(r_dom), t, cfg(0xA11CE)).unwrap();
 
         // Oracle: the production GK closed form (golden-gated vs QuantLib).
         let gk = celnet_vanilla::price(
@@ -128,9 +133,9 @@ fn structural_sandwich_worst_le_single_le_best_basket_between() {
     // weighted BASKET carries weights summing to 1 (0.5 each), so its aggregate
     // (S1 + S2)/2 is a convex combination of the legs and therefore lies between
     // min(S1, S2) and max(S1, S2) path-wise ⇒ worst ≤ basket ≤ best.
-    let unit_leg = BasketLeg::new(1.0, 0.16, 0.01, 1.0);
-    let half_leg = BasketLeg::new(1.0, 0.16, 0.01, 0.5);
     let r_dom = 0.02;
+    let unit_leg = BasketLeg::new(1.0, 0.16, r_dom - 0.01, 1.0);
+    let half_leg = BasketLeg::new(1.0, 0.16, r_dom - 0.01, 0.5);
     let t = 1.0;
     let strike = 1.0;
 
@@ -145,21 +150,21 @@ fn structural_sandwich_worst_le_single_le_best_basket_between() {
         };
         let best = price_basket(
             &mk(vec![unit_leg, unit_leg], BasketKind::BestOf),
-            r_dom,
+            numeraire(r_dom),
             t,
             cfg_light(0xB00),
         )
         .unwrap();
         let worst = price_basket(
             &mk(vec![unit_leg, unit_leg], BasketKind::WorstOf),
-            r_dom,
+            numeraire(r_dom),
             t,
             cfg_light(0xB00),
         )
         .unwrap();
         let basket = price_basket(
             &mk(vec![half_leg, half_leg], BasketKind::Basket),
-            r_dom,
+            numeraire(r_dom),
             t,
             cfg_light(0xB00),
         )
@@ -174,7 +179,7 @@ fn structural_sandwich_worst_le_single_le_best_basket_between() {
                 strike,
                 kind: BasketKind::Basket,
             },
-            r_dom,
+            numeraire(r_dom),
             t,
             cfg_light(0xB00),
         )
@@ -215,9 +220,9 @@ fn comonotonic_limit_best_and_worst_collapse_to_single() {
     // so max → min → the single leg's value. ρ = exactly 1 is a singular
     // (PSD-but-not-PD) matrix, correctly rejected by the Cholesky factor, so the
     // limit is taken at ρ = 1 − ε.
-    let leg = BasketLeg::new(1.0, 0.15, 0.012, 1.0);
-    let legs = vec![leg, leg];
     let r_dom = 0.02;
+    let leg = BasketLeg::new(1.0, 0.15, r_dom - 0.012, 1.0);
+    let legs = vec![leg, leg];
     let t = 1.0;
     let strike = 1.0;
     let rho = 1.0 - 1e-6;
@@ -229,8 +234,8 @@ fn comonotonic_limit_best_and_worst_collapse_to_single() {
         strike,
         kind,
     };
-    let best = price_basket(&mk(BasketKind::BestOf), r_dom, t, cfg(0xC0)).unwrap();
-    let worst = price_basket(&mk(BasketKind::WorstOf), r_dom, t, cfg(0xC0)).unwrap();
+    let best = price_basket(&mk(BasketKind::BestOf), numeraire(r_dom), t, cfg(0xC0)).unwrap();
+    let worst = price_basket(&mk(BasketKind::WorstOf), numeraire(r_dom), t, cfg(0xC0)).unwrap();
     let single = price_basket(
         &BasketSpec {
             legs: vec![leg],
@@ -239,7 +244,7 @@ fn comonotonic_limit_best_and_worst_collapse_to_single() {
             strike,
             kind: BasketKind::Basket,
         },
-        r_dom,
+        numeraire(r_dom),
         t,
         cfg(0xC0),
     )
@@ -331,14 +336,14 @@ fn hand_pinned_two_asset_basket_within_levy_band() {
     let spec = BasketSpec {
         legs: legs
             .iter()
-            .map(|&(w, s, v, rf)| BasketLeg::new(s, v, rf, w))
+            .map(|&(w, s, v, rf)| BasketLeg::new(s, v, r_dom - rf, w))
             .collect(),
         correlation: corr,
         option_type: OptionType::Call,
         strike,
         kind: BasketKind::Basket,
     };
-    let est = price_basket(&spec, r_dom, t, cfg(0xD00D)).unwrap();
+    let est = price_basket(&spec, numeraire(r_dom), t, cfg(0xD00D)).unwrap();
 
     // Levy is a moment-matching APPROXIMATION (not an exact oracle): gate at a
     // band that comfortably covers its documented error for this regime while
@@ -363,8 +368,8 @@ fn hand_pinned_two_asset_basket_within_levy_band() {
 fn non_psd_correlation_is_a_domain_error() {
     let spec = BasketSpec {
         legs: vec![
-            BasketLeg::new(1.10, 0.11, 0.015, 0.5),
-            BasketLeg::new(1.27, 0.13, 0.020, 0.5),
+            BasketLeg::new(1.10, 0.11, 0.02 - 0.015, 0.5),
+            BasketLeg::new(1.27, 0.13, 0.02 - 0.020, 0.5),
         ],
         // ρ = 1.01 > 1 ⇒ indefinite ⇒ not a valid correlation matrix.
         correlation: vec![vec![1.0, 1.01], vec![1.01, 1.0]],
@@ -372,7 +377,7 @@ fn non_psd_correlation_is_a_domain_error() {
         strike: 1.18,
         kind: BasketKind::Basket,
     };
-    match price_basket(&spec, 0.02, 1.0, cfg(0xE)) {
+    match price_basket(&spec, numeraire(0.02), 1.0, cfg(0xE)) {
         Err(CorrelationError::NotPositiveDefinite) => {}
         other => panic!("expected NotPositiveDefinite, got {other:?}"),
     }
