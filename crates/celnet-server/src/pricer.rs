@@ -289,7 +289,7 @@ fn fx_wire_greeks(g: &CarryGreeks) -> Greeks {
 /// from the wire market context and the instrument expiry. The forward is
 /// `F = S·e^{(r_d−r_f)T}`, derived via [`VanillaInputs::from_inputs`] semantics.
 fn var_swap_context(market: &WireMarketContext, expiry_years: f64) -> VarSwapContext {
-    let template = inputs_at(market, expiry_years, market.spot, market.vol);
+    let template = exotic_inputs_at(market, expiry_years, market.spot, market.vol);
     VarSwapContext::from_inputs(&template)
 }
 
@@ -1109,7 +1109,7 @@ pub fn price_instrument(
             // Closed-form quanto-drift-adjusted vanilla / cash-or-nothing digital.
             // Full Greek strip via FD over the closed form.
             let price = move |m: &WireMarketContext| -> f64 {
-                let inputs = inputs_at(m, expiry, strike, m.vol);
+                let inputs = exotic_inputs_at(m, expiry, strike, m.vol);
                 match payoff {
                     celnet_proto::QuantoPayoff::Vanilla => {
                         quanto_vanilla_price(option, &inputs, params)
@@ -1120,7 +1120,7 @@ pub fn price_instrument(
                 }
             };
             let price_at = move |t: f64, m: &WireMarketContext| -> f64 {
-                let inputs = inputs_at(m, t, strike, m.vol);
+                let inputs = exotic_inputs_at(m, t, strike, m.vol);
                 match payoff {
                     celnet_proto::QuantoPayoff::Vanilla => {
                         quanto_vanilla_price(option, &inputs, params)
@@ -1496,7 +1496,12 @@ pub fn price_instrument(
                 if !leg.r_for.is_finite() {
                     return Err(PriceError::Domain("basket leg r_for must be finite"));
                 }
-                legs.push(ExBasketLeg::new(leg.spot, leg.vol, leg.r_for, leg.weight));
+                legs.push(ExBasketLeg::new(
+                    leg.spot,
+                    leg.vol,
+                    market.r_dom() - leg.r_for,
+                    leg.weight,
+                ));
             }
             // The correlation array is the row-major N×N matrix.
             if b.correlations.len() != n * n {
@@ -1539,7 +1544,14 @@ pub fn price_instrument(
             // The shared domestic (numeraire / settlement-currency) rate is the
             // request market context's r_dom; the SPD-correlation check rejects a
             // non-PSD matrix as INVALID_ARGUMENT rather than regularising it.
-            let estimate = price_basket(&spec, market.r_dom(), expiry, cfg)
+            // Settlement-cash numeraire carry: one unit of settlement cash has
+            // forward 1 (zero net carry) and discounts at the context's r_dom —
+            // `discount_df` is byte-identical to the historical e^{−r_dom·t}.
+            let numeraire = celnet_types::Carry::CostOfCarry {
+                r: market.r_dom(),
+                b: 0.0,
+            };
+            let estimate = price_basket(&spec, numeraire, expiry, cfg)
                 .map_err(|_| PriceError::Domain("basket correlation matrix is not valid SPD"))?;
             // Greek deferral: multi-asset basket sensitivities are a distinct
             // larger increment (per-leg N×{spot,vol} Jacobian + cross-gammas).
@@ -2423,7 +2435,7 @@ mod tests {
         let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
         // Independent oracle: the exotics closed form on the same flat smile/ctx.
         let template = VanillaInputs::new(m.spot, m.spot, m.vol, 1.0, m.r_dom(), m.r_for());
-        let ctx = VarSwapContext::from_inputs(&template);
+        let ctx = VarSwapContext::from_inputs(&(&template).into());
         let oracle = fair_variance(&FlatSmile::new(m.vol), &ctx);
         assert!(
             is_close(priced.greeks.price, oracle.fair_variance, 1e-9, 1e-12),
@@ -2478,7 +2490,7 @@ mod tests {
         }));
         let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
         let template = VanillaInputs::new(m.spot, m.spot, m.vol, 1.0, m.r_dom(), m.r_for());
-        let ctx = VarSwapContext::from_inputs(&template);
+        let ctx = VarSwapContext::from_inputs(&(&template).into());
         let oracle = fair_volatility(&FlatSmile::new(m.vol), &ctx);
         assert!(
             is_close(priced.greeks.price, oracle.fair_vol, 1e-9, 1e-12),
@@ -2824,7 +2836,11 @@ mod tests {
         }));
         let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
         let inputs = VanillaInputs::new(m.spot, strike, m.vol, 1.0, m.r_dom(), m.r_for());
-        let oracle = quanto_vanilla_price(OptionType::Call, &inputs, QuantoParams::new(0.09, -0.3));
+        let oracle = quanto_vanilla_price(
+            OptionType::Call,
+            &(&inputs).into(),
+            QuantoParams::new(0.09, -0.3),
+        );
         assert!(
             is_close(priced.greeks.price, oracle, 1e-9, 1e-12),
             "server quanto vanilla {} vs oracle {}",
@@ -2848,7 +2864,11 @@ mod tests {
         }));
         let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
         let inputs = VanillaInputs::new(m.spot, strike, m.vol, 1.0, m.r_dom(), m.r_for());
-        let oracle = quanto_digital_price(OptionType::Put, &inputs, QuantoParams::new(0.07, 0.4));
+        let oracle = quanto_digital_price(
+            OptionType::Put,
+            &(&inputs).into(),
+            QuantoParams::new(0.07, 0.4),
+        );
         assert!(
             is_close(priced.greeks.price, oracle, 1e-9, 1e-12),
             "server quanto digital {} vs oracle {}",

@@ -156,6 +156,18 @@ impl Lognormal {
 | `quanto.rs:83-98,114-121,183-224` | `quanto_adjusted_inputs` mutates `r_for ← r_for − adjustment`; downstream `r_dom − r_for`, `exp(−r_dom·t)` | adjust the **carry** not the rate: produce `Carry::CostOfCarry { r: i.discount_rate(), b: i.carry_rate() + adjustment }` (FX byte-identity: when `adjustment=0`, `b = r_dom−r_for` exactly; settlement discount still `i.discount_rate()=r_dom`). Replaces the `r_for ← r_for − adjustment` trick with the **mathematically primary** carry shift the module-doc already describes (`quanto.rs:20`). |
 | `multiasset.rs:87-100,299,315,322` | per-leg `r_for`; basket drift `(r_dom − leg.r_for − ½σ²)t`; `exp(−r_dom·t)` | per-leg carry `b_leg`; shared `Carry` for discount: `(b_leg − ½σ²)t`, `i.carry.discount_df(t)`. Each leg carries its own `carry_rate`; numeraire `discount_rate` shared. |
 
+> **Wave-D implementation note (as landed):** the quanto carry shift is realised on the
+> **yield side** of the two-rate `(discount, yield)` carry — `Carry::FxRates { r_dom: i.discount_rate(),
+> r_for: i.yield_rate() − adjustment }` — rather than the `CostOfCarry { r, b + adjustment }` sketch
+> above. Both are the same carry shift (`b_Q = b + adjustment` exactly, since `b = r − q`), but only the
+> yield-side form reproduces the historical FX `r_for ← r_for − adjustment` float arithmetic
+> **bit-for-bit** for a *non-zero* adjustment (`(r_dom ⊖ r_for) ⊕ c` does not round-trip through
+> `r ⊖ (r ⊖ b)`), which the §6 headline gate and the §8 sharp edge (read the stored yield via
+> `Carry::yield_rate()`) make mandatory. The to_bits gates in
+> `crates/celnet-exotics/tests/fx_byte_identity.rs` (`quanto_byte_identical`) freeze this. The basket's
+> shared discount landed as a `Carry` parameter on `price_basket` (the settlement-cash numeraire,
+> forward 1 ⇒ `b = 0`, discounting at `r_dom`); each `BasketLeg` carries its own `carry_rate` `b_a`.
+
 ### 3.4 Rate Greeks — `RateSensitivities::Carry` (american.rs:255-301)
 
 `american.rs` is the only exotics engine reporting rate rhos (finite-diff, `fd_greeks`). Today it bumps `r_dom`/`r_for` and packs `Greeks { rho_dom, rho_for }`. Migrate to the generalized strip:

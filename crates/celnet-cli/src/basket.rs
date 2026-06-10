@@ -11,13 +11,21 @@ use celnet_exotics::{
 };
 use celnet_types::OptionType;
 
-/// A parsed leg: a label plus its market data and weight.
+/// A parsed leg: a label plus its market data and weight. The engine
+/// [`BasketLeg`] (whose `carry_rate` needs the request-level shared `r_dom`)
+/// is built at pricing time in [`run`].
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ParsedLeg {
     /// The pair label (e.g. `EURUSD`), purely for the report.
     pub(crate) label: String,
-    /// The leg engine inputs.
-    pub(crate) leg: BasketLeg,
+    /// The leg weight `w_a`.
+    pub(crate) weight: f64,
+    /// Spot level `S_a(0)`.
+    pub(crate) spot: f64,
+    /// Annualised lognormal volatility `σ_a`.
+    pub(crate) vol: f64,
+    /// Continuously-compounded foreign (base) rate `r_f,a` of the leg.
+    pub(crate) r_for: f64,
 }
 
 /// Parse a `--leg PAIR:WEIGHT:SPOT:VOL:R_FOR` flag value.
@@ -60,7 +68,10 @@ pub(crate) fn parse_leg(s: &str) -> Result<ParsedLeg, String> {
     }
     Ok(ParsedLeg {
         label,
-        leg: BasketLeg::new(spot, vol, r_for, weight),
+        weight,
+        spot,
+        vol,
+        r_for,
     })
 }
 
@@ -121,13 +132,24 @@ pub(crate) struct BasketResult {
 /// count.
 pub(crate) fn run(req: &BasketRequest) -> Result<BasketResult, CorrelationError> {
     let spec = BasketSpec {
-        legs: req.legs.iter().map(|p| p.leg).collect(),
+        // Per-leg net carry under the shared settlement measure:
+        // b_a = r_dom − r_f,a (the same float op the FX engine performed).
+        legs: req
+            .legs
+            .iter()
+            .map(|p| BasketLeg::new(p.spot, p.vol, req.r_dom - p.r_for, p.weight))
+            .collect(),
         correlation: req.correlation.clone(),
         option_type: req.option,
         strike: req.strike,
         kind: req.kind,
     };
-    let est = price_basket(&spec, req.r_dom, req.t, req.cfg)?;
+    // Settlement-cash numeraire: forward 1 (zero net carry), discounts at r_dom.
+    let numeraire = celnet_types::Carry::CostOfCarry {
+        r: req.r_dom,
+        b: 0.0,
+    };
+    let est = price_basket(&spec, numeraire, req.t, req.cfg)?;
     Ok(BasketResult {
         price: est.price,
         std_error: est.std_error,
@@ -156,7 +178,7 @@ pub(crate) fn format_report(req: &BasketRequest, r: &BasketResult) -> String {
     for p in &req.legs {
         s.push_str(&format!(
             "  leg {:<8} weight {:+.4}  spot {:.6}  vol {:.4}  r_for {:.4}\n",
-            p.label, p.leg.weight, p.leg.spot, p.leg.vol, p.leg.r_for
+            p.label, p.weight, p.spot, p.vol, p.r_for
         ));
     }
     s.push_str(&format!(
@@ -174,10 +196,10 @@ mod tests {
     fn parse_leg_round_trips() {
         let p = parse_leg("EURUSD:0.5:1.10:0.11:0.015").unwrap();
         assert_eq!(p.label, "EURUSD");
-        assert_eq!(p.leg.weight.to_bits(), 0.5_f64.to_bits());
-        assert_eq!(p.leg.spot.to_bits(), 1.10_f64.to_bits());
-        assert_eq!(p.leg.vol.to_bits(), 0.11_f64.to_bits());
-        assert_eq!(p.leg.r_for.to_bits(), 0.015_f64.to_bits());
+        assert_eq!(p.weight.to_bits(), 0.5_f64.to_bits());
+        assert_eq!(p.spot.to_bits(), 1.10_f64.to_bits());
+        assert_eq!(p.vol.to_bits(), 0.11_f64.to_bits());
+        assert_eq!(p.r_for.to_bits(), 0.015_f64.to_bits());
     }
 
     #[test]

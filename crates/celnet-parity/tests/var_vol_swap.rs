@@ -62,17 +62,21 @@ fn otm_forward<S: Smile>(smile: &S, ctx: &VarSwapContext, k: f64) -> f64 {
         OptionType::Call
     };
     let sigma = smile.implied_vol(k, ctx.forward, ctx.t).0;
-    let spot = ctx.forward * (-(ctx.r_dom - ctx.r_for) * ctx.t).exp();
+    // The oracle reads the FX two-rate projection of the context's carry
+    // (discount = r_dom, yield = r_for) and prices via celnet-vanilla — a
+    // genuinely different code path from the production carry-seam strip.
+    let (r_dom, r_for) = (ctx.carry.discount_rate(), ctx.carry.yield_rate());
+    let spot = ctx.forward * (-(r_dom - r_for) * ctx.t).exp();
     let inputs = VanillaInputs {
         spot,
         strike: k,
         vol: sigma,
         t: ctx.t,
-        r_dom: ctx.r_dom,
-        r_for: ctx.r_for,
+        r_dom,
+        r_for,
     };
     let pv = vanilla_price(opt, &inputs);
-    pv * (ctx.r_dom * ctx.t).exp()
+    pv * (r_dom * ctx.t).exp()
 }
 
 /// The fair-variance integrand in **strike space**: `2/(T·K²)·Õ(K)`. Integrating
@@ -148,7 +152,7 @@ fn oracle_fair_variance<S: Smile>(smile: &S, ctx: &VarSwapContext) -> f64 {
 
 fn ctx(spot: f64, t: f64, r_dom: f64, r_for: f64) -> VarSwapContext {
     let i = VanillaInputs::new(spot, spot, 0.10, t, r_dom, r_for);
-    VarSwapContext::from_inputs(&i)
+    VarSwapContext::from_inputs(&(&i).into())
 }
 
 // (i) Production strip == independent adaptive quadrature to ~1e-6.

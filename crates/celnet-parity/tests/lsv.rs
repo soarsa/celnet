@@ -199,7 +199,7 @@ fn calibrated_lsv_reprices_surface_vanilla_pde_and_mc() {
     let var = VarianceParams::new(SIGMA * SIGMA, 2.0, SIGMA * SIGMA, 0.10, -0.3);
     let grid = spot_grid();
     let model = LsvModel::calibrate(
-        i,
+        (&i).into(),
         var,
         &iv,
         &grid,
@@ -321,7 +321,7 @@ fn xi_zero_limit_matches_hand_pinned_gk() {
     let var = VarianceParams::new(SIGMA * SIGMA, 1.0, SIGMA * SIGMA, 0.0, 0.0);
     let grid = spot_grid();
     let model = LsvModel::calibrate(
-        i,
+        (&i).into(),
         var,
         &iv,
         &grid,
@@ -387,7 +387,7 @@ fn local_vol_limit_approach_is_second_order_in_vol_of_var() {
     let deviation = |xi: f64| -> f64 {
         let var = VarianceParams::new(SIGMA * SIGMA, 2.0, SIGMA * SIGMA, xi, -0.3);
         let model = LsvModel::calibrate(
-            i,
+            (&i).into(),
             var,
             &iv,
             &grid,
@@ -444,7 +444,7 @@ fn window_barrier_pde_matches_mc() {
     let var = VarianceParams::new(SIGMA * SIGMA, 2.0, SIGMA * SIGMA, 0.08, -0.2);
     let grid = spot_grid();
     let model = LsvModel::calibrate(
-        i,
+        (&i).into(),
         var,
         &iv,
         &grid,
@@ -515,7 +515,7 @@ fn structural_invariants() {
     let var = VarianceParams::new(SIGMA * SIGMA, 2.0, SIGMA * SIGMA, 0.08, -0.2);
     let grid = spot_grid();
     let model = LsvModel::calibrate(
-        i,
+        (&i).into(),
         var,
         &iv,
         &grid,

@@ -185,14 +185,30 @@ impl ExoticInputs {
 /// Gated to_bits against `celnet_vanilla::price` in this module's tests.
 #[must_use]
 pub(crate) fn carry_vanilla_price(opt: OptionType, i: &ExoticInputs) -> f64 {
-    let r = i.discount_rate();
-    let q = i.yield_rate();
-    let sqt = sqrt(i.t);
-    let vsqt = i.vol * sqt;
-    let d1 = (ln(i.spot / i.strike) + (r - q + 0.5 * i.vol * i.vol) * i.t) / vsqt;
+    carry_vanilla_price_at(opt, i.spot, i.strike, i.vol, i.t, &i.carry)
+}
+
+/// [`carry_vanilla_price`] at an explicit `(spot, strike, vol, t)` market state —
+/// the same `(r, q)` closed form for callers (the variance-swap replication
+/// strip) that price a whole strike continuum against one [`Carry`] without
+/// materializing per-strike [`ExoticInputs`]. Identical IEEE-754 op sequence.
+#[must_use]
+pub(crate) fn carry_vanilla_price_at(
+    opt: OptionType,
+    spot: f64,
+    strike: f64,
+    vol: f64,
+    t: f64,
+    carry: &Carry,
+) -> f64 {
+    let r = carry.discount_rate();
+    let q = carry.yield_rate();
+    let sqt = sqrt(t);
+    let vsqt = vol * sqt;
+    let d1 = (ln(spot / strike) + (r - q + 0.5 * vol * vol) * t) / vsqt;
     let d2 = d1 - vsqt;
-    let s_disc = i.spot * exp(-q * i.t);
-    let k_disc = i.strike * exp(-r * i.t);
+    let s_disc = spot * exp(-q * t);
+    let k_disc = strike * exp(-r * t);
     match opt {
         OptionType::Call => s_disc * norm_cdf(d1) - k_disc * norm_cdf(d2),
         OptionType::Put => k_disc * norm_cdf(-d2) - s_disc * norm_cdf(-d1),

@@ -1,23 +1,27 @@
-//! Correlated multi-asset FX options — weighted **basket**, **best-of-N** and
-//! **worst-of-N** (rainbow) calls and puts over a portfolio of currency pairs,
-//! priced by a Cholesky-correlated multi-asset geometric-Brownian-motion
-//! Monte-Carlo engine over the scrambled-Sobol / Brownian-bridge quasi-random
-//! stack ([`celnet_qmc`]).
+//! Correlated multi-asset options — weighted **basket**, **best-of-N** and
+//! **worst-of-N** (rainbow) calls and puts over a portfolio of underlyings
+//! (currency pairs, or any carry-parametrised asset), priced by a
+//! Cholesky-correlated multi-asset geometric-Brownian-motion Monte-Carlo engine
+//! over the scrambled-Sobol / Brownian-bridge quasi-random stack
+//! ([`celnet_qmc`]).
 //!
 //! # Model
 //!
-//! Each leg `a ∈ {0..N}` is a lognormal Garman-Kohlhagen underlying with its own
-//! spot `S_a(0)`, volatility `σ_a` and foreign rate `r_f,a`, all discounted under
-//! one **shared domestic (numeraire) rate** `r_d` — the settlement currency of
-//! the basket (the instrument's top-level pair). Under the domestic
-//! risk-neutral measure each leg evolves as
+//! Each leg `a ∈ {0..N}` is a lognormal underlying with its own spot `S_a(0)`,
+//! volatility `σ_a` and net cost-of-carry `b_a` (FX: `b_a = r_d − r_f,a`), all
+//! discounted under one **shared numeraire** [`Carry`] — the settlement currency
+//! of the basket (the instrument's top-level pair), whose
+//! [`Carry::discount_rate`] is the historical domestic rate `r_d`. Under the
+//! settlement risk-neutral measure each leg evolves as
 //!
 //! ```text
-//! dS_a / S_a = (r_d − r_f,a) dt + σ_a dW_a,   dW_a · dW_b = ρ_ab dt
+//! dS_a / S_a = b_a dt + σ_a dW_a,   dW_a · dW_b = ρ_ab dt
 //! ```
 //!
-//! so `S_a(T) = S_a(0) · exp[(r_d − r_f,a − ½σ_a²) T + σ_a W_a(T)]`, where the
+//! so `S_a(T) = S_a(0) · exp[(b_a − ½σ_a²) T + σ_a W_a(T)]`, where the
 //! Brownian vector `W = (W_0..W_{N−1})` has instantaneous correlation `ρ`.
+//! For FX legs `b_a = r_d − r_f,a` computed with the same two flops as the
+//! historical form, so the FX drift is byte-identical.
 //!
 //! # Correlated path construction (Cholesky + Brownian bridge)
 //!
@@ -61,7 +65,7 @@
 
 use celnet_core::math::{exp, sqrt};
 use celnet_qmc::{BrownianBridge, SobolSequence, inv_norm_cdf};
-use celnet_types::OptionType;
+use celnet_types::{Carry, OptionType};
 
 /// How the per-leg terminal levels combine into the option underlying.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,16 +79,18 @@ pub enum BasketKind {
     WorstOf,
 }
 
-/// One leg of a correlated multi-asset option: an FX underlying with its own
+/// One leg of a correlated multi-asset option: an underlying with its own
 /// market data and basket weight.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BasketLeg {
-    /// Spot FX level `S_a(0)` (quote per unit base).
+    /// Spot level `S_a(0)` (quote per unit base, for FX).
     pub spot: f64,
     /// Annualised lognormal volatility `σ_a` (absolute, e.g. `0.10` = 10 vol).
     pub vol: f64,
-    /// Continuously-compounded foreign (base) rate `r_f,a` of the leg.
-    pub r_for: f64,
+    /// Net cost-of-carry `b_a` of the leg under the shared settlement measure
+    /// (FX: `b_a = r_d − r_f,a`; equity: `r − q_a`; commodity:
+    /// `r − convenience_a`).
+    pub carry_rate: f64,
     /// The leg weight `w_a` applied to `S_a(T)` in the basket / rainbow
     /// aggregation. May be negative (a short basket leg).
     pub weight: f64,
@@ -93,11 +99,11 @@ pub struct BasketLeg {
 impl BasketLeg {
     /// Convenience constructor.
     #[must_use]
-    pub const fn new(spot: f64, vol: f64, r_for: f64, weight: f64) -> Self {
+    pub const fn new(spot: f64, vol: f64, carry_rate: f64, weight: f64) -> Self {
         Self {
             spot,
             vol,
-            r_for,
+            carry_rate,
             weight,
         }
     }
@@ -106,7 +112,7 @@ impl BasketLeg {
 /// The full specification of a correlated multi-asset option.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BasketSpec {
-    /// The legs (one FX underlying each); `legs.len() == N ≥ 1`.
+    /// The legs (one underlying each); `legs.len() == N ≥ 1`.
     pub legs: Vec<BasketLeg>,
     /// The `N × N` instantaneous correlation matrix, row-major. Must be
     /// symmetric with unit diagonal and **positive-definite**.
@@ -282,7 +288,9 @@ pub fn cholesky(sigma: &[Vec<f64>], n: usize) -> Result<CholeskyFactor, Correlat
 /// by Cholesky-correlated multi-asset GBM Monte-Carlo over the scrambled-Sobol /
 /// Brownian-bridge QMC stack.
 ///
-/// `r_dom` is the shared domestic (numeraire / settlement-currency) rate; `t` is
+/// `carry` is the shared numeraire (settlement-currency) carry — only its
+/// discount side is read (`discount_df`; FX: `e^{−r_d·t}`, byte-identical to the
+/// historical form). Each leg supplies its own [`BasketLeg::carry_rate`]. `t` is
 /// the expiry in vol-time years.
 ///
 /// # Errors
@@ -296,7 +304,7 @@ pub fn cholesky(sigma: &[Vec<f64>], n: usize) -> Result<CholeskyFactor, Correlat
 /// replication / step count (caller-side invariants the server validates first).
 pub fn price_basket(
     spec: &BasketSpec,
-    r_dom: f64,
+    carry: Carry,
     t: f64,
     cfg: BasketMcConfig,
 ) -> Result<BasketEstimate, CorrelationError> {
@@ -312,14 +320,14 @@ pub fn price_basket(
     let bridge = BrownianBridge::new(m, t);
     let dim = n * m;
     let seq = SobolSequence::new(dim);
-    let df = exp(-r_dom * t);
+    let df = carry.discount_df(t);
 
     // Per-leg deterministic drift and diffusion scale at the terminal horizon.
-    // S_a(T) = S_a(0) · exp[(r_d − r_f,a − ½σ_a²) T + σ_a W_a(T)].
+    // S_a(T) = S_a(0) · exp[(b_a − ½σ_a²) T + σ_a W_a(T)].
     let drift: Vec<f64> = spec
         .legs
         .iter()
-        .map(|leg| (r_dom - leg.r_for - 0.5 * leg.vol * leg.vol) * t)
+        .map(|leg| (leg.carry_rate - 0.5 * leg.vol * leg.vol) * t)
         .collect();
 
     let mut rep_means = Vec::with_capacity(cfg.replications);
@@ -451,6 +459,12 @@ mod tests {
         vec![vec![1.0, rho], vec![rho, 1.0]]
     }
 
+    /// The settlement-cash numeraire carry at rate `r`: one unit of settlement
+    /// cash has forward 1 (zero net carry) and discounts at `r`.
+    fn numeraire(r: f64) -> Carry {
+        Carry::CostOfCarry { r, b: 0.0 }
+    }
+
     #[test]
     fn cholesky_recovers_matrix() {
         let sigma = corr2(0.5);
@@ -482,10 +496,11 @@ mod tests {
 
     #[test]
     fn reproducible_bit_identical() {
+        let r_dom = 0.02;
         let spec = BasketSpec {
             legs: vec![
-                BasketLeg::new(1.0, 0.1, 0.01, 1.0),
-                BasketLeg::new(1.2, 0.12, 0.015, 1.0),
+                BasketLeg::new(1.0, 0.1, r_dom - 0.01, 1.0),
+                BasketLeg::new(1.2, 0.12, r_dom - 0.015, 1.0),
             ],
             correlation: corr2(0.3),
             option_type: OptionType::Call,
@@ -498,8 +513,8 @@ mod tests {
             steps: 1,
             seed: 7,
         };
-        let a = price_basket(&spec, 0.02, 1.0, cfg).unwrap();
-        let b = price_basket(&spec, 0.02, 1.0, cfg).unwrap();
+        let a = price_basket(&spec, numeraire(r_dom), 1.0, cfg).unwrap();
+        let b = price_basket(&spec, numeraire(r_dom), 1.0, cfg).unwrap();
         assert_eq!(a.price.to_bits(), b.price.to_bits());
         assert_eq!(a.std_error.to_bits(), b.std_error.to_bits());
     }
@@ -507,9 +522,10 @@ mod tests {
     #[test]
     fn structural_sandwich_worst_le_best() {
         // worst-of ≤ best-of for a call on identical legs, any correlation.
+        let r_dom = 0.02;
         let legs = vec![
-            BasketLeg::new(1.0, 0.15, 0.01, 1.0),
-            BasketLeg::new(1.0, 0.18, 0.01, 1.0),
+            BasketLeg::new(1.0, 0.15, r_dom - 0.01, 1.0),
+            BasketLeg::new(1.0, 0.18, r_dom - 0.01, 1.0),
         ];
         let cfg = BasketMcConfig {
             budget: 4096,
@@ -524,10 +540,10 @@ mod tests {
             strike: 1.0,
             kind,
         };
-        let best = price_basket(&mk(BasketKind::BestOf), 0.02, 1.0, cfg)
+        let best = price_basket(&mk(BasketKind::BestOf), numeraire(r_dom), 1.0, cfg)
             .unwrap()
             .price;
-        let worst = price_basket(&mk(BasketKind::WorstOf), 0.02, 1.0, cfg)
+        let worst = price_basket(&mk(BasketKind::WorstOf), numeraire(r_dom), 1.0, cfg)
             .unwrap()
             .price;
         assert!(worst <= best, "worst {worst} should be ≤ best {best}");

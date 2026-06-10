@@ -24,10 +24,11 @@
 //! variance equals `−(2/T)·E^Q[ln(S_T/F)]`, and the Carr–Madan identity rewrites
 //! that expectation as the OTM strip of **expectations** `E^Q[(K−S_T)^+]` /
 //! `E^Q[(S_T−K)^+]`. Those are forward (undiscounted) option values; the present
-//! value priced by [`celnet_vanilla::price`] carries the domestic discount factor
-//! `e^{−r_d T}`, which we divide out. Equivalently the whole integral may be
-//! discounted and then re-inflated by `e^{r_d T}`; we do the per-option division
-//! so the integrand is measure-correct term by term.
+//! value priced by the carry-seam closed form carries the numeraire discount
+//! factor `e^{−r·T}` (`r = `[`Carry::discount_rate`]; FX: `r_dom`), which we
+//! divide out. Equivalently the whole integral may be discounted and then
+//! re-inflated by `e^{r·T}`; we do the per-option division so the integrand is
+//! measure-correct term by term.
 //!
 //! # Numerical strip — convergent, adaptive-wing, fixed-resolution
 //!
@@ -57,11 +58,14 @@
 
 use celnet_core::Smile;
 use celnet_core::math::exp;
-use celnet_types::{OptionType, VanillaInputs};
-use celnet_vanilla::price as vanilla_price;
+use celnet_types::{Carry, OptionType};
+
+use crate::inputs::{ExoticInputs, carry_vanilla_price_at};
 
 /// Inputs that fix the variance-swap valuation context: the forward, expiry,
-/// and the domestic/foreign carry needed to price the replicating options.
+/// and the [`Carry`] (numeraire discount + net carry) needed to price the
+/// replicating options. For an FX [`Carry::FxRates`] every read below is
+/// byte-identical to the historical two-rate (`r_dom`/`r_for`) form.
 ///
 /// The smile itself is passed separately (as any [`Smile`]) so the same context
 /// can be evaluated against different surfaces.
@@ -71,34 +75,26 @@ pub struct VarSwapContext {
     pub forward: f64,
     /// Time to expiry in years `T` (vol-time).
     pub t: f64,
-    /// Continuously-compounded domestic (quote) rate `r_d`.
-    pub r_dom: f64,
-    /// Continuously-compounded foreign (base) rate `r_f`.
-    pub r_for: f64,
+    /// The cost-of-carry model behind the forward and the numeraire discount.
+    pub carry: Carry,
 }
 
 impl VarSwapContext {
-    /// Build a context from a forward, expiry and rates.
+    /// Build a context from a forward, expiry and carry.
     #[must_use]
-    pub const fn new(forward: f64, t: f64, r_dom: f64, r_for: f64) -> Self {
-        Self {
-            forward,
-            t,
-            r_dom,
-            r_for,
-        }
+    pub const fn new(forward: f64, t: f64, carry: Carry) -> Self {
+        Self { forward, t, carry }
     }
 
-    /// Build a context from a [`VanillaInputs`] template: the forward is derived
-    /// from spot and carry, expiry and rates are copied. The template's
+    /// Build a context from an [`ExoticInputs`] template: the forward is derived
+    /// from spot and carry, expiry and carry are copied. The template's
     /// `strike`/`vol` fields are ignored (the smile supplies per-strike vols).
     #[must_use]
-    pub fn from_inputs(i: &VanillaInputs) -> Self {
+    pub fn from_inputs(i: &ExoticInputs) -> Self {
         Self {
             forward: i.forward(),
             t: i.t,
-            r_dom: i.r_dom,
-            r_for: i.r_for,
+            carry: i.carry,
         }
     }
 }
@@ -162,24 +158,17 @@ impl VarSwapResult {
 /// `E^Q[(K−S_T)^+]` for a put (`K ≤ F`) or `E^Q[(S_T−K)^+]` for a call
 /// (`K ≥ F`), priced at the smile vol `σ(K)`.
 ///
-/// The present value from [`celnet_vanilla::price`] carries `e^{−r_d T}`; we
-/// divide it out to land in the forward measure the replication is stated in.
+/// The present value from the carry-seam closed form carries `e^{−r T}`
+/// (`r = `[`Carry::discount_rate`]); we divide it out to land in the forward
+/// measure the replication is stated in.
 #[inline]
 fn otm_forward_value<S: Smile>(smile: &S, ctx: &VarSwapContext, k: f64, opt: OptionType) -> f64 {
     let sigma = smile.implied_vol(k, ctx.forward, ctx.t).0;
-    // Spot consistent with the forward: F = S·e^{(r_d−r_f)T} ⇒ S = F·e^{−(r_d−r_f)T}.
-    let spot = ctx.forward * exp(-(ctx.r_dom - ctx.r_for) * ctx.t);
-    let inputs = VanillaInputs {
-        spot,
-        strike: k,
-        vol: sigma,
-        t: ctx.t,
-        r_dom: ctx.r_dom,
-        r_for: ctx.r_for,
-    };
-    let pv = vanilla_price(opt, &inputs);
-    // Undiscount to the forward measure (divide out the domestic discount).
-    pv * exp(ctx.r_dom * ctx.t)
+    // Spot consistent with the forward: F = S·e^{b·T} ⇒ S = F·e^{−b·T}.
+    let spot = ctx.forward * exp(-ctx.carry.carry_rate() * ctx.t);
+    let pv = carry_vanilla_price_at(opt, spot, k, sigma, ctx.t, &ctx.carry);
+    // Undiscount to the forward measure (divide out the numeraire discount).
+    pv * exp(ctx.carry.discount_rate() * ctx.t)
 }
 
 /// Composite-Simpson integral of one block `[u_lo, u_hi]` of a strip leg in
@@ -316,11 +305,12 @@ mod tests {
     use super::*;
     use celnet_core::FlatSmile;
     use celnet_surface::MarketHedgeSmile;
+    use celnet_types::VanillaInputs;
 
     fn ctx() -> VarSwapContext {
-        // EURUSD-like 1Y, F ≈ spot·e^{(r_d−r_f)T}.
+        // EURUSD-like 1Y, F ≈ spot·e^{(r_d−r_f)T}, through the FX carry seam.
         let i = VanillaInputs::new(1.30, 1.30, 0.10, 1.0, 0.03, 0.01);
-        VarSwapContext::from_inputs(&i)
+        VarSwapContext::from_inputs(&(&i).into())
     }
 
     #[test]

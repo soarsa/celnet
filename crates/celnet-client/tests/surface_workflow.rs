@@ -347,7 +347,7 @@ async fn wave1_swaps_and_asian_price_through_sdk() {
             market.r_dom,
             market.r_for,
         );
-        let ctx = VarSwapContext::from_inputs(&template);
+        let ctx = VarSwapContext::from_inputs(&(&template).into());
         let flat = celnet_core::FlatSmile::new(market.vol);
 
         // Variance swap: headline price == fair variance strike K_var; vol == √K_var.
@@ -666,14 +666,15 @@ async fn wave2_forward_start_cliquet_quanto_price_through_sdk() {
                 .expect("quanto vanilla price succeeds");
         let qv_oracle = quanto_vanilla_price(
             OptionType::Call,
-            &VanillaInputs::new(
+            &(&VanillaInputs::new(
                 market.spot,
                 quanto_strike,
                 market.vol,
                 1.0,
                 market.r_dom,
                 market.r_for,
-            ),
+            ))
+                .into(),
             QuantoParams::new(0.09, -0.3),
         );
         assert!(
@@ -698,14 +699,15 @@ async fn wave2_forward_start_cliquet_quanto_price_through_sdk() {
                 .expect("quanto digital price succeeds");
         let qd_oracle = quanto_digital_price(
             OptionType::Put,
-            &VanillaInputs::new(
+            &(&VanillaInputs::new(
                 market.spot,
                 1.12,
                 market.vol,
                 1.0,
                 market.r_dom,
                 market.r_for,
-            ),
+            ))
+                .into(),
             QuantoParams::new(0.07, 0.4),
         );
         assert!(
@@ -1057,16 +1059,22 @@ async fn basket_prices_through_sdk_with_std_error() {
         // Oracle: the same multi-asset MC at the same config ⇒ bit-reproducible.
         let oracle = price_basket(
             &BasketSpec {
+                // Per-leg carry b = r_dom − r_f,a; settlement-cash numeraire
+                // (forward 1 ⇒ b = 0) discounting at r_dom — both exactly the
+                // float ops the server arm performs.
                 legs: vec![
-                    ExBasketLeg::new(leg_a.1, leg_a.2, leg_a.3, leg_a.0),
-                    ExBasketLeg::new(leg_b.1, leg_b.2, leg_b.3, leg_b.0),
+                    ExBasketLeg::new(leg_a.1, leg_a.2, market.r_dom - leg_a.3, leg_a.0),
+                    ExBasketLeg::new(leg_b.1, leg_b.2, market.r_dom - leg_b.3, leg_b.0),
                 ],
                 correlation: vec![vec![1.0, rho], vec![rho, 1.0]],
                 option_type: OptionType::Call,
                 strike,
                 kind: ExBasketKind::WorstOf,
             },
-            market.r_dom,
+            celnet_types::Carry::CostOfCarry {
+                r: market.r_dom,
+                b: 0.0,
+            },
             1.0,
             BasketMcConfig {
                 budget: paths as usize,

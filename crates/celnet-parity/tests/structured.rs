@@ -40,6 +40,7 @@ const BOTH: [OptionType; 2] = [OptionType::Call, OptionType::Put];
 #[test]
 fn quanto_closed_form_matches_mc_and_collapses_at_zero_correlation() {
     let i = VanillaInputs::new(1.10, 1.10, 0.12, 1.0, 0.03, 0.01);
+    let e: celnet_exotics::ExoticInputs = (&i).into();
     let q = QuantoParams::new(0.10, -0.30); // conversion vol 10%, correlation −0.3
     let cfg = QuantoMcConfig {
         pairs: 300_000,
@@ -48,8 +49,8 @@ fn quanto_closed_form_matches_mc_and_collapses_at_zero_correlation() {
 
     for opt in BOTH {
         // Vanilla quanto: MC reproduces the closed form within Monte-Carlo error.
-        let closed_v = quanto_vanilla_price(opt, &i, q);
-        let mc_v = quanto_vanilla_mc(opt, &i, q, cfg);
+        let closed_v = quanto_vanilla_price(opt, &e, q);
+        let mc_v = quanto_vanilla_mc(opt, &e, q, cfg);
         let tol_v = 4.0 * mc_v.std_error + 1e-6;
         assert!(
             (mc_v.price - closed_v).abs() < tol_v,
@@ -59,8 +60,8 @@ fn quanto_closed_form_matches_mc_and_collapses_at_zero_correlation() {
         );
 
         // Digital quanto: same independent cross-check.
-        let closed_d = quanto_digital_price(opt, &i, q);
-        let mc_d = quanto_digital_mc(opt, &i, q, cfg);
+        let closed_d = quanto_digital_price(opt, &e, q);
+        let mc_d = quanto_digital_mc(opt, &e, q, cfg);
         let tol_d = 4.0 * mc_d.std_error + 1e-6;
         assert!(
             (mc_d.price - closed_d).abs() < tol_d,
@@ -73,7 +74,7 @@ fn quanto_closed_form_matches_mc_and_collapses_at_zero_correlation() {
         // price is *exactly* the plain (non-quanto) price — the defining property.
         let q0 = QuantoParams::new(0.10, 0.0);
         let plain = vanilla_price(opt, &i);
-        let quanto0 = quanto_vanilla_price(opt, &i, q0);
+        let quanto0 = quanto_vanilla_price(opt, &e, q0);
         assert!(
             is_close(quanto0, plain, 1e-12, 1e-12),
             "zero-correlation quanto {opt:?} {quanto0} must equal plain {plain}"
