@@ -9,17 +9,26 @@
 //! vector's tolerance for closed-form families, or within `k · stderr` for the
 //! Monte-Carlo families.
 //!
-//! Scope: the CLI's local-compute surface — `price` (vanilla), `exotic`
-//! (digital / one-touch / single-barrier / var-swap / vol-swap / asian /
-//! forward-start / quanto / cliquet / tarf / accumulator / lookback / american),
-//! `basket`, the linear book `forward` / `swap` / `ndf`, and the new payoff
-//! shapes `perpetual` / `future-option` (which are additionally gated three-way
+//! Scope — the TRUE corpus-covered set, every family asserted reachable through
+//! the argv seam: `price` (vanilla), `exotic` (digital / one-touch /
+//! single-barrier / var-swap / vol-swap / asian / forward-start / quanto /
+//! cliquet / tarf / accumulator / lookback / american — the Monte-Carlo
+//! families driven with the vector's own `mc_*` terms and gated on the corpus'
+//! `k · stderr` band), `basket` (engine-default MC terms, mirroring the server
+//! arm), the linear book `forward` / `swap` / `ndf`, and the new payoff shapes
+//! `perpetual` / `future-option` (which are additionally gated three-way
 //! against a live in-process edge below: CLI == server == golden, the corpus
-//! being the independent oracle for both legs). Networked subcommands
-//! are out of scope for the vector corpus: `risk` / `stream` are gated by the
-//! four-client parity test, and the `rfq` multi-dealer panel is gated below
-//! against an in-process multi-dealer edge (CLI ladder == SDK panel, bit for
-//! bit). Every family covered here is asserted reachable through the CLI.
+//! being the independent oracle for both legs). NOT corpus-covered here:
+//! `strategy`, `double_barrier`, the corridor touches (`NO_TOUCH` /
+//! `DOUBLE_NO_TOUCH` / `DOUBLE_ONE_TOUCH`), and `window_barrier` (LSV-only) —
+//! those have no single-flag CLI argv shape and are gated by the SDK
+//! conformance harness — plus the cross-asset vanilla vector families
+//! (`equity_option` / `commodity_option` / `crypto_option`), which the
+//! dedicated three-way cross-asset gate below covers through the `--asset`
+//! selector instead. Networked subcommands are out of scope for the vector
+//! corpus: `risk` / `stream` are gated by the four-client parity test, and the
+//! `rfq` multi-dealer panel is gated below against an in-process multi-dealer
+//! edge (CLI ladder == SDK panel, bit for bit).
 
 use std::process::Command;
 
@@ -29,20 +38,27 @@ use celnet_golden::{GoldenVector, load_vectors};
 /// SDK conformance harness).
 const K_STDERR: f64 = 4.0;
 
-/// The families the CLI prices locally (and therefore this test covers). The other
-/// oneof arms (strategy, double-barrier, touch corridors, window-barrier) either
-/// have no single-flag CLI surface or are LSV-only; they are gated by the SDK
-/// conformance harness, which exercises every one of the 21 families.
-const CLI_FAMILIES: [&str; 14] = [
+/// The families the CLI prices locally (and therefore this test covers). The
+/// other oneof arms (strategy, double-barrier, touch corridors, window-barrier,
+/// the cross-asset vanillas) either have no single-flag CLI argv shape, are
+/// LSV-only, or are gated by the dedicated cross-asset test below; the SDK
+/// conformance harness exercises every corpus family.
+const CLI_FAMILIES: [&str; 20] = [
     "vanilla",
     "digital",
     "touch", // only the single ONE_TOUCH (the CLI's `one-touch`)
     "single_barrier",
     "variance_swap",
     "volatility_swap",
+    "asian_option",
     "forward_start",
+    "cliquet",
     "quanto",
+    "tarf",
+    "accumulator",
+    "lookback",
     "american",
+    "basket",
     "fx_forward",
     "fx_swap",
     "ndf",
@@ -272,6 +288,31 @@ fn argv_for(v: &GoldenVector) -> Option<Vec<String>> {
             a.push("vol-swap".into());
             Some(a)
         }
+        "asian_option" => {
+            // The CLI prices the closed-form Curran / Turnbull-Wakeman
+            // estimator; the corpus expectation is a code-disjoint MC oracle
+            // whose stderr sets the band.
+            let mut a = vec!["exotic".into()];
+            a.extend(market_flags(v, Some(v.term_f64("strike"))));
+            a.extend([
+                "asian".into(),
+                "--option".into(),
+                opt_token(v, "option_type").into(),
+                "--observations".into(),
+                v.term_u64("observations").to_string(),
+                "--elapsed-avg".into(),
+                s(v.term_f64("elapsed_avg")),
+                "--elapsed-weight".into(),
+                s(v.term_f64("elapsed_weight")),
+            ]);
+            if v.term_str("averaging") == "CONTINUOUS" {
+                a.push("--continuous".into());
+            }
+            if v.term_str("method") == "TURNBULL_WAKEMAN" {
+                a.push("--turnbull-wakeman".into());
+            }
+            Some(a)
+        }
         "forward_start" => {
             let mut a = vec!["exotic".into()];
             a.extend(market_flags(v, None));
@@ -284,6 +325,38 @@ fn argv_for(v: &GoldenVector) -> Option<Vec<String>> {
                 "--reset".into(),
                 s(v.term_f64("reset")),
             ]);
+            Some(a)
+        }
+        "cliquet" => {
+            // Plain (uncapped) cliquets price closed-form; any local/global
+            // clamp routes to the Monte-Carlo engine with the vector's own
+            // `mc_*` terms (a std-error-carrying estimate).
+            let mut a = vec!["exotic".into()];
+            a.extend(market_flags(v, None));
+            a.extend([
+                "cliquet".into(),
+                "--option".into(),
+                opt_token(v, "option_type").into(),
+                "--moneyness".into(),
+                s(v.term_f64("moneyness")),
+                "--periods".into(),
+                v.term_u64("periods").to_string(),
+                "--mc-pairs".into(),
+                v.term_u64("mc_pairs").to_string(),
+                "--mc-seed".into(),
+                v.term_u64("mc_seed").to_string(),
+            ]);
+            for (flag, key) in [
+                ("--local-floor", "local_floor"),
+                ("--local-cap", "local_cap"),
+                ("--global-floor", "global_floor"),
+                ("--global-cap", "global_cap"),
+            ] {
+                if let Some(x) = v.term_opt_f64(key) {
+                    // `=` form so a negative clamp is not parsed as a flag.
+                    a.push(format!("{flag}={}", s(x)));
+                }
+            }
             Some(a)
         }
         "quanto" => {
@@ -303,9 +376,91 @@ fn argv_for(v: &GoldenVector) -> Option<Vec<String>> {
             }
             Some(a)
         }
+        "tarf" => {
+            // Monte-Carlo (the vector's own `mc_*` terms; std-error-banded).
+            let mut a = vec!["exotic".into()];
+            a.extend(market_flags(v, Some(v.term_f64("strike"))));
+            a.extend([
+                "tarf".into(),
+                "--option".into(),
+                opt_token(v, "option_type").into(),
+                "--target".into(),
+                s(v.term_f64("target")),
+                "--leverage".into(),
+                s(v.term_f64("leverage")),
+                "--fixings".into(),
+                v.term_u64("fixings").to_string(),
+                "--fixing-notional".into(),
+                s(v.term_f64("fixing_notional")),
+                "--mc-pairs".into(),
+                v.term_u64("mc_pairs").to_string(),
+                "--mc-seed".into(),
+                v.term_u64("mc_seed").to_string(),
+            ]);
+            if v.term_str("redemption") == "CAPPED_GAIN" {
+                a.push("--capped-gain".into());
+            }
+            Some(a)
+        }
+        "accumulator" => {
+            // Monte-Carlo (the vector's own `mc_*` terms; std-error-banded).
+            // An accumulator is struck at its pivot/barrier, not a strike.
+            let mut a = vec!["exotic".into()];
+            a.extend(market_flags(v, None));
+            a.extend([
+                "accumulator".into(),
+                "--pivot".into(),
+                s(v.term_f64("pivot")),
+                "--barrier".into(),
+                s(v.term_f64("barrier")),
+                "--leverage".into(),
+                s(v.term_f64("leverage")),
+                "--fixings".into(),
+                v.term_u64("fixings").to_string(),
+                "--fixing-notional".into(),
+                s(v.term_f64("fixing_notional")),
+                "--mc-pairs".into(),
+                v.term_u64("mc_pairs").to_string(),
+                "--mc-seed".into(),
+                v.term_u64("mc_seed").to_string(),
+            ]);
+            if v.term_str("monitoring") == "CONTINUOUS" {
+                a.push("--continuous".into());
+            }
+            Some(a)
+        }
+        "lookback" => {
+            // Discrete monitoring is Monte-Carlo (the vector's own `mc_*`
+            // terms); continuous is closed-form. Only the fixed-strike family
+            // takes a strike — the floating strike IS the realised extremum.
+            let fixed = v.term_str("style") == "FIXED";
+            let mut a = vec!["exotic".into()];
+            a.extend(market_flags(v, fixed.then(|| v.term_f64("strike"))));
+            a.extend([
+                "lookback".into(),
+                "--option".into(),
+                opt_token(v, "option_type").into(),
+            ]);
+            if fixed {
+                a.push("--fixed".into());
+            }
+            if v.term_str("monitoring") == "DISCRETE" {
+                a.extend([
+                    "--discrete".into(),
+                    "--observations".into(),
+                    v.term_u64("observations").to_string(),
+                    "--mc-pairs".into(),
+                    v.term_u64("mc_pairs").to_string(),
+                    "--mc-seed".into(),
+                    v.term_u64("mc_seed").to_string(),
+                ]);
+            }
+            Some(a)
+        }
         "american" => {
             // FD engine (lsm_paths == 0). The CLI `american` exotic with no
-            // bermudan/LSM flags prices on the projected-SOR free-boundary FD grid.
+            // bermudan/LSM flags prices on the projected-SOR free-boundary FD
+            // grid; its strike is the common `exotic --strike` grammar.
             if v.term_u64("lsm_paths") != 0 {
                 return None;
             }
@@ -315,9 +470,82 @@ fn argv_for(v: &GoldenVector) -> Option<Vec<String>> {
                 "american".into(),
                 "--option".into(),
                 opt_token(v, "option_type").into(),
+            ]);
+            Some(a)
+        }
+        "basket" => {
+            // The correlated multi-asset Monte-Carlo. The vector's zeroed
+            // `mc_*` terms mean "engine defaults": the CLI defaults mirror the
+            // server arm (16 384 scrambled-Sobol points × 24 replications,
+            // seed 0), so the flags are passed only when a vector pins them.
+            let mut a = vec!["basket".into()];
+            for leg in v
+                .terms
+                .get("legs")
+                .and_then(|l| l.as_array())
+                .unwrap_or_else(|| panic!("vector {} missing legs", v.id))
+            {
+                let part = |key: &str| {
+                    leg.get(key)
+                        .and_then(|x| x.as_f64())
+                        .unwrap_or_else(|| panic!("vector {} leg missing `{key}`", v.id))
+                };
+                let pair = leg
+                    .get("pair")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or_else(|| panic!("vector {} leg missing `pair`", v.id));
+                a.extend([
+                    "--leg".into(),
+                    format!(
+                        "{pair}:{}:{}:{}:{}",
+                        s(part("weight")),
+                        s(part("spot")),
+                        s(part("vol")),
+                        s(part("r_for"))
+                    ),
+                ]);
+            }
+            for c in v
+                .terms
+                .get("correlations")
+                .and_then(|x| x.as_array())
+                .unwrap_or_else(|| panic!("vector {} missing correlations", v.id))
+            {
+                // `=` form so a negative correlation is not parsed as a flag.
+                a.push(format!(
+                    "--correlation={}",
+                    s(c.as_f64().expect("correlation entries are numbers"))
+                ));
+            }
+            let kind = match v.term_str("kind") {
+                "BEST_OF" => "best-of",
+                "WORST_OF" => "worst-of",
+                "BASKET" => "basket",
+                other => panic!("unknown basket kind `{other}`"),
+            };
+            a.extend([
+                "--option".into(),
+                opt_token(v, "option_type").into(),
                 "--strike".into(),
                 s(v.term_f64("strike")),
+                "--kind".into(),
+                kind.into(),
+                "--r-dom".into(),
+                s(v.market.r_dom),
+                "--t".into(),
+                s(v.term_f64("expiry_years")),
             ]);
+            for (flag, key) in [
+                ("--mc-paths", "mc_paths"),
+                ("--mc-replications", "mc_replications"),
+                ("--mc-steps", "mc_steps"),
+                ("--mc-seed", "mc_seed"),
+            ] {
+                let pinned = v.term_u64(key);
+                if pinned != 0 {
+                    a.extend([flag.into(), pinned.to_string()]);
+                }
+            }
             Some(a)
         }
         "fx_forward" => {
@@ -415,13 +643,23 @@ fn argv_for(v: &GoldenVector) -> Option<Vec<String>> {
     }
 }
 
-/// Assert a CLI-priced vector against its independent-oracle expectation.
-fn assert_cli(v: &GoldenVector, got: f64) {
+/// Assert a CLI-priced report against its vector's independent-oracle
+/// expectation, returning the parsed headline price.
+///
+/// A Monte-Carlo vector (one whose oracle reports a `price_std_error`) is gated
+/// on the corpus' stated `k · stderr` band — `K_STDERR · (oracle stderr + the
+/// CLI's own reported stderr)`, exactly mirroring the SDK conformance harness —
+/// never the wider closed-form rel/abs fallback. A closed-form vector uses its
+/// stated rel/abs tolerance.
+fn assert_cli(v: &GoldenVector, stdout: &str) -> f64 {
+    let got = cli_price(stdout);
     let want = v.expected.price;
     if let Some(oracle_se) = v.expected.price_std_error {
-        // CLI MC families would report their own std-error too, but the families
-        // covered here are all closed-form on the CLI; keep the band for safety.
-        let band = K_STDERR * oracle_se.max(1e-12);
+        // A CLI-side Monte-Carlo report carries its own `std_error` line; a
+        // closed-form CLI price against an MC oracle (e.g. the Curran Asian)
+        // contributes none.
+        let cli_se = field(stdout, "std_error").unwrap_or(0.0);
+        let band = K_STDERR * (oracle_se + cli_se).max(1e-12);
         assert!(
             (got - want).abs() <= band,
             "CLI MC vector {} : price {got} vs oracle {want} band {band:e}",
@@ -437,6 +675,7 @@ fn assert_cli(v: &GoldenVector, got: f64) {
             v.tolerance.abs
         );
     }
+    got
 }
 
 #[test]
@@ -447,8 +686,7 @@ fn cli_prices_match_the_golden_corpus() {
     for v in &vectors {
         let Some(argv) = argv_for(v) else { continue };
         let stdout = run(&argv);
-        let got = cli_price(&stdout);
-        assert_cli(v, got);
+        assert_cli(v, &stdout);
         exercised.insert(v.family.clone());
         count += 1;
     }
@@ -753,9 +991,8 @@ async fn cli_new_payoff_shapes_equal_server_equal_golden() {
         let stdout = tokio::task::spawn_blocking(move || run(&argv))
             .await
             .expect("CLI run completes");
-        let cli = cli_price(&stdout);
         // CLI == golden (the independent oracle, within the vector's band).
-        assert_cli(v, cli);
+        let cli = assert_cli(v, &stdout);
 
         // (2) The SAME instrument priced through the typed SDK against the real
         // server, under the vector's own market context.

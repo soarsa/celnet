@@ -2,10 +2,14 @@
  * TicketWorkspace — THE differentiator (GUI-DESIGN §4.1). One card that is the
  * analytics surface AND the executable: build a structure (vanilla, a multi-leg
  * strategy, or any exotic family), see a live two-way + the full 14-Greek set +
- * the conventions on the FACE, and hit it without changing screens. Solve
- * (zero-cost) is inline; the last-look window is a visible depleting ring; "Stream
- * this" promotes the exact Instrument into the blotter and "Add to risk" drops it
- * in the scenario grid — the same Instrument object, no re-keying.
+ * the conventions on the FACE, and hit it without changing screens. The strike
+ * solve is inline: a delta-keyed leg (25dC / 25dP / ATM) rides the wire's
+ * `StrikeOrDelta.delta` arm, is solved to a level server-side under the request
+ * conventions, and the solved strike comes back on the quote's `resolvedStrike`
+ * (rendered beside the priced two-way). The last-look window is a visible
+ * depleting ring; "Stream this" promotes the exact Instrument into the blotter
+ * and "Add to risk" drops it in the scenario grid — the same Instrument object,
+ * no re-keying.
  *
  * GW2: the structurable catalogue lives in the {@link PRODUCT_REGISTRY}, not in
  * this shell. The shell owns the market/contract context (pair, tenor, expiry,
@@ -205,15 +209,30 @@ function netStructureLegs(instrument: Instrument): NetStructureLeg[] {
 /**
  * The primary strike a {@link PayoffChart} draws its kink at. The type-erased
  * registry inputs are not statically known here, so we read a numeric `strike`
- * field if the active family exposes one (the vanilla/strategy and most exotic
- * families do, with `0` ⇒ "default to ATMF"), and fall back to the ATM-forward
- * level otherwise. This is a faithful payoff SHAPE preview (kink location), not a
- * priced P&L — the chart's accessible label says so.
+ * field if the active family exposes one (most exotic families do, with `0` ⇒
+ * "default to ATMF"), or the first ABSOLUTE leg strike of a leg-ladder family
+ * (the vanilla/strategy editor — a typed level moves the kink; delta-keyed legs
+ * resolve server-side, so they honestly fall through), and fall back to the
+ * ATM-forward level otherwise. This is a faithful payoff SHAPE preview (kink
+ * location), not a priced P&L — the chart's accessible label says so.
  */
 function previewStrike(inputs: unknown, atmForward: number): number {
-  if (inputs && typeof inputs === "object" && "strike" in inputs) {
-    const k = (inputs as { strike?: unknown }).strike;
-    if (typeof k === "number" && k > 0) return k;
+  if (inputs && typeof inputs === "object") {
+    if ("strike" in inputs) {
+      const k = (inputs as { strike?: unknown }).strike;
+      if (typeof k === "number" && k > 0) return k;
+    }
+    if ("legs" in inputs) {
+      const legs = (inputs as { legs?: unknown }).legs;
+      if (Array.isArray(legs)) {
+        for (const leg of legs) {
+          const k = (leg as { strike?: { kind?: unknown; strike?: unknown } } | null)?.strike;
+          if (k && k.kind === "strike" && typeof k.strike === "number" && k.strike > 0) {
+            return k.strike;
+          }
+        }
+      }
+    }
   }
   return atmForward;
 }
@@ -339,6 +358,13 @@ export function TicketWorkspace(): React.ReactElement {
     : allowedModels[0]!;
   const effectiveCtx: ProductBuildCtx = { ...ctx, pricingModel: effectiveModel };
 
+  // The family's structure law (e.g. the strategy leg templates): a violating
+  // ladder still BUILDS (the editor renders the honest messages inline), but a
+  // quote request is gated — booking a structure that belies its declared
+  // template is never offered.
+  const structureViolations = spec.validate?.(inputs as never, effectiveCtx) ?? [];
+  const structureLawful = structureViolations.length === 0;
+
   // A trader-facing expiry label that is honest for every mode: a declared
   // no-expiry family (the perpetual) reads "PERP" (it has no expiry date to
   // label); a broken date reads as its calendar date, never coerced into a
@@ -416,6 +442,10 @@ export function TicketWorkspace(): React.ReactElement {
       setFill("Local-Stoch-Vol pricing is server-side — run against the live server.");
       return;
     }
+    // The structure law gates pricing: the violations are already rendered
+    // inline by the family's input block (and the button is disabled), so a
+    // race-through here simply never dials.
+    if (!structureLawful) return;
     setBusy(true);
     setFill(null);
     const inst = spec.toInstrument(inputs as never, effectiveCtx);
@@ -438,7 +468,7 @@ export function TicketWorkspace(): React.ReactElement {
       setDealerPanel(null);
     }
     setBusy(false);
-  }, [app, spec, inputs, effectiveCtx, lsvUnavailableOffline, rfqMode]);
+  }, [app, spec, inputs, effectiveCtx, lsvUnavailableOffline, rfqMode, structureLawful]);
 
   const accept = useCallback(
     async (side: "BUY" | "SELL") => {
@@ -508,14 +538,14 @@ export function TicketWorkspace(): React.ReactElement {
       } else if (e.key === "Enter" && !e.metaKey && !e.ctrlKey) {
         const tag = (e.target as HTMLElement)?.tagName;
         if (tag === "INPUT" || tag === "BUTTON") return;
-        if (!expiryReady) return;
+        if (!expiryReady || !structureLawful) return;
         e.preventDefault();
         void requestQuote();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [accept, requestQuote, app.paletteOpen, expiryReady]);
+  }, [accept, requestQuote, app.paletteOpen, expiryReady, structureLawful]);
 
   /** Replace the active family's inputs and clear any stale quote/panel against them. */
   const updateInputs = useCallback(
@@ -786,6 +816,15 @@ export function TicketWorkspace(): React.ReactElement {
             <span className={styles.unit}>
               {structure === "ASIAN" ? `% ${app.pairCtx.pair.base} prem (avg-rate)` : `% ${app.pairCtx.pair.base} prem`}
             </span>
+            {(instrument.product.kind === "vanilla" || instrument.product.kind === "strategy") &&
+              quote.resolvedStrike > 0 && (
+                // The inline strike solve, made visible: a delta-keyed leg (25dC /
+                // ATM) was solved to this level server-side (the first leg's K is
+                // the headline; absolute strikes echo back unchanged).
+                <span className={`num ${styles.solveChip}`} aria-label="resolved strike">
+                  solved K {quote.resolvedStrike.toFixed(pipDecimals)}
+                </span>
+              )}
             {quote.priceStdError !== undefined && (
               <span className={`num ${styles.stdError}`} aria-label="price std error">
                 Monte-Carlo · std error ±{(quote.priceStdError * 100).toFixed(4)} (
@@ -837,19 +876,21 @@ export function TicketWorkspace(): React.ReactElement {
             size="lg"
             onClick={requestQuote}
             kbd="⏎"
-            disabled={busy || !expiryReady || lsvUnavailableOffline}
+            disabled={busy || !expiryReady || lsvUnavailableOffline || !structureLawful}
           >
             {busy
               ? "Pricing…"
               : !expiryReady
                 ? "Pick a date"
-                : lsvUnavailableOffline
-                  ? "LSV — live server only"
-                  : quote || dealerPanel
-                    ? "Re-request"
-                    : rfqMode === "PANEL"
-                      ? "Request panel"
-                      : "Request quote"}
+                : !structureLawful
+                  ? "Fix structure"
+                  : lsvUnavailableOffline
+                    ? "LSV — live server only"
+                    : quote || dealerPanel
+                      ? "Re-request"
+                      : rfqMode === "PANEL"
+                        ? "Request panel"
+                        : "Request quote"}
           </Button>
           {quote && (
             <>
@@ -887,9 +928,10 @@ export function TicketWorkspace(): React.ReactElement {
       </Panel>
 
       <p className={styles.caption}>
-        One card = analytics + executable. Conventions on the face, Solve inline,
-        last-look visible. Promote the exact structure to the blotter or the risk
-        grid — same Instrument, no re-keying.
+        One card = analytics + executable. Conventions on the face, the strike solve
+        inline (25dC / 25dP / ATM legs price to a server-solved K, echoed on the
+        quote), last-look visible. Promote the exact structure to the blotter or the
+        risk grid — same Instrument, no re-keying.
       </p>
     </div>
   );

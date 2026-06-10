@@ -1,47 +1,119 @@
 /**
- * The vanilla + multi-leg strategy family (GW2) — the leg-ladder, last to migrate
- * out of the former `TicketWorkspace` monolith. Extracted verbatim so the wire
- * output is byte-identical: the monolith built these from fixed templates
- * (`vanillaInstrument(pair, t, "CALL", 0.25, mm)` for the lone vanilla; the
- * `strategyLegs(kind)` ladder for each strategy) and rendered the resulting legs
- * as a READ-ONLY ladder — the strikes are convention deltas, resolved to levels
- * server-side. We preserve exactly that: the legs are template-fixed, NOT freely
- * edited, so the inputs carry only the template identity and the block exposes
- * what the monolith exposed (a labelled ladder + the zero-cost solve affordance),
- * inventing no editability the monolith lacks.
+ * The vanilla + multi-leg strategy family (GW2) — the leg ladder. Round 2: the
+ * ladder is EDITABLE per leg (side / call-put / strike / ratio, add & remove),
+ * so a trader can structure a custom-strike vanilla (any level, call OR put) or
+ * reshape a strategy's legs within the template's structure law. Strikes accept
+ * the platform grammar — an absolute level (`1.0850`), a convention delta
+ * (`25dC` / `25dP`), or `ATM` — and a delta-keyed strike rides the wire's
+ * `StrikeOrDelta.delta` arm, SOLVED to a level server-side (the engine's
+ * delta→strike inversion under the request conventions) and echoed back on the
+ * quote's `resolvedStrike`: the inline strike solve.
+ *
+ * The wire build still goes through the existing `data/seed` builders for the
+ * frame (`vanillaInstrument` / `strategyInstrument` — pair, tenor, quantity,
+ * side) with the edited legs riding the same proto `Strategy` (it carries
+ * arbitrary legs; `kind` records the template). Each template's defaults
+ * reproduce the original fixed ladders byte-for-byte, so an unedited ticket's
+ * wire output is unchanged.
  */
-import type { Instrument, Leg, StrategyKind } from "../data/contract";
+import type { Instrument, StrategyKind } from "../data/contract";
 import { strategyInstrument, vanillaInstrument } from "../data/seed";
 import styles from "../workspaces/TicketWorkspace.module.css";
-import { defineProduct, withTenorAndModel, type InputBlockProps } from "./types";
+import { defineProduct, withTenorAndModel, type InputBlockProps, type ProductSpec } from "./types";
+import {
+  legLawMessage,
+  legLawViolations,
+  StrategyLegEditor,
+  strikeEntryMessage,
+  strikeEntryViolations,
+  type StrategyLegInputs,
+  type StrategyTemplate,
+} from "./strategyLegEditor";
 
 /**
- * The vanilla / strategy ticket inputs. The legs are template-fixed (derived from
- * the structure identity, exactly as the monolith's `buildInstrument`), so the
- * editable surface is the template selector itself — `"VANILLA"` for the lone
- * 25Δ call, or a {@link StrategyKind} for the four multi-leg templates. There is
- * no per-leg editing in the monolith, so none is exposed here.
+ * The vanilla / strategy ticket inputs: the template identity plus the editable
+ * legs. The committed legs are always wire-valid (the editor commits a strike
+ * only once it parses), so `toInstrument` is total; the template's structure
+ * law is enforced separately through {@link legLawViolations} (the spec's
+ * `validate`), which gates the shell's Request quote with honest messages.
  */
-export type StrategyInputs =
-  | { template: "VANILLA" }
-  | { template: StrategyKind };
+export interface StrategyInputs {
+  template: StrategyTemplate;
+  legs: StrategyLegInputs[];
+}
 
-/** Default inputs for the lone vanilla (the monolith's hardcoded 25Δ call). */
-export const DEFAULT_VANILLA: StrategyInputs = { template: "VANILLA" };
-/** Default inputs for the risk-reversal template. */
-export const DEFAULT_RISK_REVERSAL: StrategyInputs = { template: "RISK_REVERSAL" };
-/** Default inputs for the strangle template. */
-export const DEFAULT_STRANGLE: StrategyInputs = { template: "STRANGLE" };
-/** Default inputs for the straddle template. */
-export const DEFAULT_STRADDLE: StrategyInputs = { template: "STRADDLE" };
-/** Default inputs for the seagull template. */
-export const DEFAULT_SEAGULL: StrategyInputs = { template: "SEAGULL" };
+/** The vanilla default leg — the original hardcoded bought 25Δ call. */
+const VANILLA_DEFAULT_LEG: StrategyLegInputs = {
+  optionType: "CALL",
+  strike: { kind: "delta", delta: 0.25 },
+  side: "BUY",
+  ratio: 1,
+};
 
 /**
- * Build the wire instrument for a vanilla / strategy template, reproducing the
- * monolith's `buildInstrument` VANILLA + strategy branches byte-for-byte: the
- * lone vanilla is the fixed 25Δ (`delta: 0.25`) call; every strategy delegates to
- * `strategyInstrument(pair, t, kind, mm)` (its `strategyLegs(kind)` ladder).
+ * The fixed convention-delta ladder each strategy template seeds with — mirrors
+ * `data/seed`'s `strategyLegs` exactly (the round-trip test pins each template's
+ * default build to `strategyInstrument` byte-for-byte, so any drift fails).
+ */
+function templateDefaultLegs(kind: StrategyKind): StrategyLegInputs[] {
+  switch (kind) {
+    case "RISK_REVERSAL":
+      return [
+        { optionType: "CALL", strike: { kind: "delta", delta: 0.25 }, side: "BUY", ratio: 1 },
+        { optionType: "PUT", strike: { kind: "delta", delta: -0.25 }, side: "SELL", ratio: 1 },
+      ];
+    case "STRANGLE":
+      return [
+        { optionType: "CALL", strike: { kind: "delta", delta: 0.1 }, side: "BUY", ratio: 1 },
+        { optionType: "PUT", strike: { kind: "delta", delta: -0.1 }, side: "BUY", ratio: 1 },
+      ];
+    case "STRADDLE":
+      return [
+        { optionType: "CALL", strike: { kind: "delta", delta: 0.5 }, side: "BUY", ratio: 1 },
+        { optionType: "PUT", strike: { kind: "delta", delta: -0.5 }, side: "BUY", ratio: 1 },
+      ];
+    case "SEAGULL":
+      return [
+        { optionType: "CALL", strike: { kind: "delta", delta: 0.25 }, side: "BUY", ratio: 1 },
+        { optionType: "CALL", strike: { kind: "delta", delta: 0.1 }, side: "SELL", ratio: 1 },
+        { optionType: "PUT", strike: { kind: "delta", delta: -0.25 }, side: "SELL", ratio: 1 },
+      ];
+  }
+}
+
+/** Default inputs for the lone vanilla (the original 25Δ call, fully editable). */
+export const DEFAULT_VANILLA: StrategyInputs = {
+  template: "VANILLA",
+  legs: [VANILLA_DEFAULT_LEG],
+};
+/** Default inputs for the risk-reversal template. */
+export const DEFAULT_RISK_REVERSAL: StrategyInputs = {
+  template: "RISK_REVERSAL",
+  legs: templateDefaultLegs("RISK_REVERSAL"),
+};
+/** Default inputs for the strangle template. */
+export const DEFAULT_STRANGLE: StrategyInputs = {
+  template: "STRANGLE",
+  legs: templateDefaultLegs("STRANGLE"),
+};
+/** Default inputs for the straddle template. */
+export const DEFAULT_STRADDLE: StrategyInputs = {
+  template: "STRADDLE",
+  legs: templateDefaultLegs("STRADDLE"),
+};
+/** Default inputs for the seagull template. */
+export const DEFAULT_SEAGULL: StrategyInputs = {
+  template: "SEAGULL",
+  legs: templateDefaultLegs("SEAGULL"),
+};
+
+/**
+ * Build the wire instrument from the template + edited legs. The frame (pair,
+ * tenor, quantity, two-way side) comes from the existing `data/seed` builders;
+ * the product payload carries the EDITED legs — the proto `Strategy` supports
+ * arbitrary legs, and the vanilla arm carries the leg's call/put + strike
+ * directly. With the template defaults this reproduces the original
+ * `vanillaInstrument` / `strategyInstrument` output byte-for-byte.
  */
 function strategyBase(
   inputs: StrategyInputs,
@@ -50,149 +122,159 @@ function strategyBase(
   notionalMm: number,
 ): Instrument {
   if (inputs.template === "VANILLA") {
-    return vanillaInstrument(pair, tenorYears, "CALL", 0.25, notionalMm);
+    // The vanilla wire arm carries exactly one payoff; the editor keeps exactly
+    // one leg (no add/remove), and the canonical default leg is the total-function
+    // read of a structurally impossible empty ladder.
+    const leg = inputs.legs[0] ?? VANILLA_DEFAULT_LEG;
+    const base = vanillaInstrument(pair, tenorYears, leg.optionType, 0.25, notionalMm);
+    return {
+      ...base,
+      product: {
+        kind: "vanilla",
+        vanilla: { optionType: leg.optionType, strike: leg.strike },
+      },
+    };
   }
-  return strategyInstrument(pair, tenorYears, inputs.template, notionalMm);
-}
-
-/** Extract the option legs the wire instrument carries, for the read-only ladder. */
-function instrumentLegs(instrument: Instrument): Leg[] {
-  if (instrument.product.kind === "vanilla") {
-    const v = instrument.product.vanilla;
-    return [{ optionType: v.optionType, strike: v.strike, side: "BUY", ratio: 1 }];
-  }
-  if (instrument.product.kind === "strategy") {
-    return instrument.product.strategy.legs;
-  }
-  return [];
-}
-
-/** Trader-facing delta label for a leg strike (e.g. `25Δ`, or `abs` for a level). */
-function legDeltaLabel(leg: Leg): string {
-  return leg.strike.kind === "delta"
-    ? `${Math.round(Math.abs(leg.strike.delta) * 100)}Δ`
-    : "abs";
+  const base = strategyInstrument(pair, tenorYears, inputs.template, notionalMm);
+  return {
+    ...base,
+    product: {
+      kind: "strategy",
+      strategy: {
+        kind: inputs.template,
+        // Pure wire legs: the editor's in-progress `strikeDraft` never reaches
+        // the contract object (the committed strike is the booked one).
+        legs: inputs.legs.map((l) => ({
+          optionType: l.optionType,
+          strike: l.strike,
+          side: l.side,
+          ratio: l.ratio,
+        })),
+      },
+    },
+  };
 }
 
 /**
- * The leg-ladder input block. The legs are template-fixed (the monolith never
- * edited them inline — it rendered the derived ladder and offered an inline
- * zero-cost strike solve), so this is a faithful read-only ladder: side / type /
- * convention-delta per leg. Strikes resolve to levels server-side against the
- * marked surface, so the ladder honestly shows the convention delta rather than a
- * fabricated client-side level.
+ * The structure gate the shell reads: display-ready violation messages, empty ⇔
+ * every quote request is honest about what it books. Composes (1) unparseable
+ * in-progress strike entries (a visible bad entry must never silently price the
+ * previously committed strike) and (2) the template's structure law.
  */
-function StrategyInputBlock({ value, ctx }: InputBlockProps<StrategyInputs>) {
-  const instrument = strategyBase(value, ctx.pair, ctx.tenorYears, ctx.notionalMm);
-  const legs = instrumentLegs(instrument);
+function strategyValidate(inputs: StrategyInputs): readonly string[] {
+  const entries = strikeEntryViolations(inputs.legs).map(
+    (v) => `leg ${v.legIndex + 1} strike: ${strikeEntryMessage(v.error)}`,
+  );
+  const laws = legLawViolations(inputs.template, inputs.legs).map(legLawMessage);
+  return [...entries, ...laws];
+}
+
+/**
+ * The leg-ladder input block: the editable per-leg ladder plus the honest
+ * pricing note. Delta / ATM strikes resolve to levels server-side against the
+ * marked surface (the inline strike solve); the solved strike is echoed on the
+ * quote's `resolvedStrike`, which the shell renders beside the priced two-way.
+ */
+function StrategyInputBlock({ value, onChange, ctx }: InputBlockProps<StrategyInputs>) {
   const isVanilla = value.template === "VANILLA";
   return (
     <div className={styles.legs}>
-      <ul className={styles.legs} role="list" aria-label="strategy legs">
-        {legs.map((leg, i) => (
-          <li className={styles.leg} key={i} role="listitem">
-            <span className={styles.legNo}>LEG {i + 1}</span>
-            <span
-              className={`${styles.legSide} ${leg.side === "SELL" ? styles.sell : styles.buy}`}
-            >
-              {leg.side === "SELL" ? "SELL" : "BUY"}
-            </span>
-            <span className={styles.legType}>{leg.optionType === "CALL" ? "Call" : "Put"}</span>
-            <span className={`num ${styles.legDelta}`}>{legDeltaLabel(leg)}</span>
-            <span className={styles.legArrow} aria-hidden="true">
-              ▸
-            </span>
-            <span className={`num ${styles.legStrike}`} aria-label="strike">
-              K —
-            </span>
-          </li>
-        ))}
-      </ul>
+      <StrategyLegEditor
+        template={value.template}
+        legs={value.legs}
+        onChange={(legs) => onChange({ ...value, legs })}
+      />
       <p className={styles.productNote}>
         {isVanilla
-          ? "Vanilla — a single 25Δ call. Strike resolves to a level server-side against the marked surface."
-          : "Template strategy — fixed convention-delta legs. Strikes resolve to levels server-side against the marked surface."}
+          ? `European vanilla — set call/put and the strike as a level (e.g. ${ctx.atmForward.toFixed(ctx.pipDecimals)}), a convention delta (25dC / 25dP) or ATM. `
+          : "Strategy legs — edit each leg's side, type, strike (level, 25dC / 25dP delta, or ATM) and ratio within the template's structure law. "}
+        Delta-keyed strikes solve to levels server-side under the request's delta
+        convention; the solved K is echoed on the quote.
       </p>
     </div>
   );
 }
 
-/** The lone vanilla {@link ProductSpec} (the monolith's hardcoded 25Δ call). */
+/** Shared spec body for the five templates (identity/metadata vary per spec). */
+function strategySpecBody(): Pick<
+  ProductSpec<StrategyInputs>,
+  "toInstrument" | "InputBlock" | "validate"
+> {
+  return {
+    toInstrument: (inputs: StrategyInputs, ctx): Instrument =>
+      withTenorAndModel(strategyBase(inputs, ctx.pair, ctx.tenorYears, ctx.notionalMm), ctx),
+    InputBlock: StrategyInputBlock,
+    validate: (inputs: StrategyInputs): readonly string[] => strategyValidate(inputs),
+  };
+}
+
+/** The vanilla {@link ProductSpec} — custom strike (level / delta / ATM), call or put. */
 export const vanillaSpec = defineProduct<StrategyInputs>({
   id: "VANILLA",
   label: "Vanilla",
   group: "Vanilla & strategies",
   assetClass: "FX",
-  summary: "Single-leg European vanilla — a 25Δ call against the marked surface.",
-  keywords: ["vanilla", "european", "call", "put", "single leg", "25 delta"],
+  summary: "Single-leg European vanilla — call or put at a custom strike (level, delta or ATM).",
+  keywords: ["vanilla", "european", "call", "put", "single leg", "25 delta", "custom strike"],
   kind: "vanilla",
   defaults: DEFAULT_VANILLA,
   allowedModels: ["DEFAULT", "LOCAL_STOCH_VOL"],
-  toInstrument: (inputs: StrategyInputs, ctx): Instrument =>
-    withTenorAndModel(strategyBase(inputs, ctx.pair, ctx.tenorYears, ctx.notionalMm), ctx),
-  InputBlock: StrategyInputBlock,
+  ...strategySpecBody(),
 });
 
-/** The risk-reversal {@link ProductSpec} (25Δ call vs 25Δ put). */
+/** The risk-reversal {@link ProductSpec} (a call against a put, one bought one sold). */
 export const riskReversalSpec = defineProduct<StrategyInputs>({
   id: "RISK_REVERSAL",
   label: "Risk Reversal",
   group: "Vanilla & strategies",
   assetClass: "FX",
-  summary: "Long 25Δ call vs short 25Δ put — the smile-skew structure.",
+  summary: "Long 25Δ call vs short 25Δ put — the smile-skew structure; legs editable.",
   keywords: ["risk reversal", "rr", "skew", "collar", "25 delta"],
   kind: "strategy",
   defaults: DEFAULT_RISK_REVERSAL,
   allowedModels: ["DEFAULT"],
-  toInstrument: (inputs: StrategyInputs, ctx): Instrument =>
-    withTenorAndModel(strategyBase(inputs, ctx.pair, ctx.tenorYears, ctx.notionalMm), ctx),
-  InputBlock: StrategyInputBlock,
+  ...strategySpecBody(),
 });
 
-/** The strangle {@link ProductSpec} (long 10Δ call + long 10Δ put). */
+/** The strangle {@link ProductSpec} (a call and a put, same side, distinct strikes). */
 export const strangleSpec = defineProduct<StrategyInputs>({
   id: "STRANGLE",
   label: "Strangle",
   group: "Vanilla & strategies",
   assetClass: "FX",
-  summary: "Long 10Δ call + long 10Δ put — the smile-convexity (wing) structure.",
+  summary: "Long 10Δ call + long 10Δ put — the smile-convexity (wing) structure; legs editable.",
   keywords: ["strangle", "wings", "convexity", "butterfly", "10 delta"],
   kind: "strategy",
   defaults: DEFAULT_STRANGLE,
   allowedModels: ["DEFAULT"],
-  toInstrument: (inputs: StrategyInputs, ctx): Instrument =>
-    withTenorAndModel(strategyBase(inputs, ctx.pair, ctx.tenorYears, ctx.notionalMm), ctx),
-  InputBlock: StrategyInputBlock,
+  ...strategySpecBody(),
 });
 
-/** The straddle {@link ProductSpec} (long ATM call + long ATM put). */
+/** The straddle {@link ProductSpec} (a call and a put sharing one strike). */
 export const straddleSpec = defineProduct<StrategyInputs>({
   id: "STRADDLE",
   label: "Straddle",
   group: "Vanilla & strategies",
   assetClass: "FX",
-  summary: "Long ATM call + long ATM put — the at-the-money volatility structure.",
+  summary: "Long ATM call + long ATM put — the at-the-money volatility structure; legs editable.",
   keywords: ["straddle", "atm", "volatility", "vega", "50 delta"],
   kind: "strategy",
   defaults: DEFAULT_STRADDLE,
   allowedModels: ["DEFAULT"],
-  toInstrument: (inputs: StrategyInputs, ctx): Instrument =>
-    withTenorAndModel(strategyBase(inputs, ctx.pair, ctx.tenorYears, ctx.notionalMm), ctx),
-  InputBlock: StrategyInputBlock,
+  ...strategySpecBody(),
 });
 
-/** The seagull {@link ProductSpec} (long 25Δ call / short 10Δ call / short 25Δ put). */
+/** The seagull {@link ProductSpec} (three legs mixing calls/puts and buys/sells). */
 export const seagullSpec = defineProduct<StrategyInputs>({
   id: "SEAGULL",
   label: "Seagull",
   group: "Vanilla & strategies",
   assetClass: "FX",
-  summary: "Long 25Δ call, short 10Δ call, short 25Δ put — a financed directional structure.",
+  summary:
+    "Long 25Δ call, short 10Δ call, short 25Δ put — a financed directional structure; legs editable.",
   keywords: ["seagull", "three leg", "financed", "collar", "ratio"],
   kind: "strategy",
   defaults: DEFAULT_SEAGULL,
   allowedModels: ["DEFAULT"],
-  toInstrument: (inputs: StrategyInputs, ctx): Instrument =>
-    withTenorAndModel(strategyBase(inputs, ctx.pair, ctx.tenorYears, ctx.notionalMm), ctx),
-  InputBlock: StrategyInputBlock,
+  ...strategySpecBody(),
 });

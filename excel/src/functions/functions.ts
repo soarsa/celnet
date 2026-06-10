@@ -111,12 +111,13 @@ function toCfError(err: unknown): CustomFunctions.Error {
  * `terms` is a 2-column key/value range whose keys mirror the family's
  * parameters exactly (order-free, self-documenting), e.g. for a knock-out
  * barrier: ("strike",1.12) ("callPut","C") ("barrier",1.20) ("kind","KNOCK_OUT").
- * The BASKET matrix keys repeat one row per matrix row: ("legs", pair, weight,
- * spot, vol, rFor) and ("correlations", ρ₁, ρ₂, …). `tenor`/`notional` may be
+ * The matrix keys repeat one row per matrix row: BASKET's ("legs", pair, weight,
+ * spot, vol, rFor) and ("correlations", ρ₁, ρ₂, …); STRATEGY's ("legs", callPut,
+ * strike, side, ratio?) — one row per option leg. `tenor`/`notional` may be
  * given positionally or as terms (not both); notional defaults to 1.
  * @customfunction INSTRUMENT
  * @param underlier Underlier: FX EURUSD, metal XAUUSD, equity AAPL@XNAS:USD, commodity BRENT@:USD, crypto BTC/USD (optionally :inverse / :linear).
- * @param product Product family: VANILLA, BARRIER, WINDOWBARRIER, DIGITAL, TOUCH, VARSWAP, VOLSWAP, ASIAN, FORWARDSTART, CLIQUET, QUANTO, TARF, ACCUMULATOR, LOOKBACK, AMERICAN, BASKET, FORWARD, SWAP, NDF, PERPETUAL, FUTUREOPTION.
+ * @param product Product family: VANILLA, STRATEGY (or RISK_REVERSAL / STRADDLE / STRANGLE / SEAGULL), BARRIER, WINDOWBARRIER, DIGITAL, TOUCH, VARSWAP, VOLSWAP, ASIAN, FORWARDSTART, CLIQUET, QUANTO, TARF, ACCUMULATOR, LOOKBACK, AMERICAN, BASKET, FORWARD, SWAP, NDF, PERPETUAL, FUTUREOPTION.
  * @param terms The 2-column key/value terms range (keys mirror the family's parameters).
  * @param tenor Optional tenor, e.g. 1Y (or supply a ("tenor", …) term).
  * @param notional Optional notional in the base/asset leg (or a ("notional", …) term; default 1).

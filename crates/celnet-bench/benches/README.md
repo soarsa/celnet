@@ -182,6 +182,18 @@ with a tight baseline and no flake. It counts three quantities over the shared
 fixtures: `price` (single PV), `greeks` (PV + full 13-Greek set — the §1.2
 quantity), and `batch_greeks` (the 64-strike slice).
 
+This is a **gate that can fail**, not a report: every benchmark carries
+**soft limits** (instructions `Ir` +5 %, `EstimatedCycles` +10 % vs the
+previous run — thresholds and rationale in `benches/iai_instructions.rs`) and
+an **absolute per-benchmark `Ir` ceiling** (hard limit, enforced even on a
+first run with no baseline). On any breach the `iai-callgrind` runner exits
+non-zero and `cargo bench` — hence the CI job — fails. The comparison baseline
+is the previous run's output in `target/iai`; the CI lane persists it via a
+dedicated `actions/cache` entry that is saved **only on green runs**, so the
+baseline is always "the last green run", a regression never advances it, and
+an *intended* count change re-baselines automatically on its first green run.
+Locally, delete `target/iai` (or run twice) to re-baseline.
+
 Callgrind is part of **Valgrind (Linux/Unix-only — no Windows, no macOS Apple
 Silicon)**, so this is a dedicated **Linux CI lane** (`.github/workflows/ci.yml`
 → `iai-instructions`). Benches are **not** nextest targets, so adding the

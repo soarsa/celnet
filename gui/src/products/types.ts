@@ -108,9 +108,20 @@ export interface ProductSpec<I> {
    */
   noExpiry?: { reason: string };
   /**
+   * Validate the inputs against the family's structure laws (e.g. the strategy
+   * leg-ladder templates: a risk reversal pairs a call against a put). Returns
+   * display-ready violation messages; non-empty gates the shell's Request quote
+   * (the wire would otherwise carry a structure that belies its declared
+   * template). The family's InputBlock renders the same messages inline. Absent
+   * ⇒ every input state the block can produce is lawful.
+   */
+  validate?: (inputs: I, ctx: ProductBuildCtx) => readonly string[];
+  /**
    * Build the wire {@link Instrument} from the trader inputs + market context.
    * MUST match the legacy `buildInstrument` output byte-for-byte. Use
    * {@link withTenorAndModel} to stamp the tenor + booking model identically.
+   * Total for EVERY committed input state (the shell builds on every render),
+   * including states `validate` flags — law violations gate pricing, not build.
    */
   toInstrument: (inputs: I, ctx: ProductBuildCtx) => Instrument;
   /** The input block UI for this family. */

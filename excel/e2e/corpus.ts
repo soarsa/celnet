@@ -105,13 +105,15 @@ export const ALL_FAMILIES = [
 /**
  * The families the polymorphic Excel surface prices over the FX WS path: every
  * one is reachable as `CELNET.INSTRUMENT(underlier, family, terms)` + a verb
- * (`CELNET.PRICE`/`GREEKS`/`RFQ`/`SUBSCRIBE`). The one family present in the
- * corpus but NOT expressible as a single instrument spec is `strategy` (a
- * multi-leg structure — built leg-by-leg in the GUI ticket / SDK, not as one
- * Excel cell). It is reported in `FAMILIES_NOT_EXPOSED`, never silently skipped.
+ * (`CELNET.PRICE`/`GREEKS`/`RFQ`/`SUBSCRIBE`). The multi-leg `strategy` family
+ * is expressed with repeated ("legs", callPut, strike, side, ratio) terms rows
+ * (exactly like BASKET's matrix keys), so every WS-priceable corpus family is
+ * exposed; the remaining `FAMILIES_NOT_EXPOSED` are the three cross-asset
+ * vanilla arms whose generalized carry the FX-WS price path does not transport.
  */
 export const EXCEL_FAMILIES = [
   "vanilla",
+  "strategy",
   "single_barrier",
   "double_barrier",
   "digital",
@@ -190,7 +192,7 @@ const barrierSide = (token: string): "UP" | "DOWN" => {
   throw new Error(`unknown barrier side \`${token}\``);
 };
 
-/** The corpus directional side (`BUY`/`SELL`) the linear shapers parse. */
+/** The corpus directional side (`BUY`/`SELL`) the linear shapers and strategy legs parse. */
 const linearSide = (token: string): "BUY" | "SELL" => {
   if (token === "BUY" || token === "SELL") return token;
   throw new Error(`unknown side \`${token}\``);
@@ -280,6 +282,22 @@ export function specOf(v: GoldenVector): InstrumentSpecArgs {
     case "vanilla":
       rows.push(["strike", num(v.terms, "strike")], ["callPut", cp(str(v.terms, "option_type"))]);
       break;
+    case "strategy": {
+      // The template kind + one ("legs", callPut, strike, side, ratio) row per
+      // leg — the same repeated-matrix-row terms grammar BASKET uses.
+      rows.push(["kind", str(v.terms, "kind")]);
+      const legsRaw = v.terms["legs"] as Array<Record<string, unknown>>;
+      for (const leg of legsRaw) {
+        rows.push([
+          "legs",
+          cp(String(leg["option_type"])),
+          Number(leg["strike"]),
+          linearSide(String(leg["side"])),
+          Number(leg["ratio"]),
+        ]);
+      }
+      break;
+    }
     case "single_barrier":
       rows.push(
         ["strike", num(v.terms, "strike")],

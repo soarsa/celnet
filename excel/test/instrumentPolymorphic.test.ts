@@ -35,6 +35,8 @@ import type {
   Instrument,
   Margining,
   OptionType,
+  Side,
+  StrategyKind,
   Tenor,
   Underlying,
 } from "../src/contract/contract";
@@ -139,10 +141,12 @@ function tenorFor(t: number): string {
  * reference). It calls the same production shapers those functions called, with
  * the same arguments.
  *
- * The two post-retirement arms (`perpetual_option` 30 / `listed_future_option`
- * 31) never had a per-product worksheet function — their reference instruments
- * are HAND-BUILT typed literals (no production shaper involved), so the parity
- * proof for them is spec-path == hand-built frame, the strongest form.
+ * Three families never had a per-product worksheet function — `strategy` (the
+ * GUI/SDK leg-ladder, now the STRATEGY family's repeated ("legs", …) terms
+ * rows) and the two post-retirement arms (`perpetual_option` 30 /
+ * `listed_future_option` 31). Their reference instruments are HAND-BUILT typed
+ * literals (no production shaper involved), so the parity proof for them is
+ * spec-path == hand-built frame, the strongest form.
  */
 function legacyInstrumentOf(v: GoldenVector): Instrument {
   const t = num(v.terms, "expiry_years");
@@ -159,6 +163,34 @@ function legacyInstrumentOf(v: GoldenVector): Instrument {
         callPut: cp(str(v.terms, "option_type")),
         notional,
       });
+    case "strategy": {
+      // HAND-BUILT reference (no retired function): strategy never had a single
+      // `CELNET.*` worksheet function (it was the GUI/SDK leg-ladder), so the
+      // parity proof is spec-path == hand-built frame, the strongest form.
+      const legsRaw = v.terms["legs"] as Array<Record<string, unknown>>;
+      const months = Math.round(t * 12);
+      const handTenor: Tenor =
+        months % 12 === 0 ? { unit: "YEARS", count: months / 12 } : { unit: "MONTHS", count: months };
+      return {
+        pair: { base: pair.slice(0, 3), quote: pair.slice(3, 6) },
+        tenor: handTenor,
+        expiryYears: t,
+        quantity: { notional, baseCcy: true },
+        side: "TWO_WAY",
+        product: {
+          kind: "strategy",
+          strategy: {
+            kind: str(v.terms, "kind") as StrategyKind,
+            legs: legsRaw.map((leg) => ({
+              optionType: String(leg["option_type"]) as OptionType,
+              strike: { kind: "strike", strike: Number(leg["strike"]) },
+              side: String(leg["side"]) as Side,
+              ratio: Number(leg["ratio"]),
+            })),
+          },
+        },
+      };
+    }
     case "single_barrier":
       return shapeBarrier({
         pair,

@@ -79,6 +79,40 @@ CPU-starved `nextest` list/exec phase can sit at 0% CPU forever; observed 2026-0
 3. **Never two full-workspace builds at once.** Stagger heavy gates; coordinate the window via §6.
 4. **Async only.** Coordinate through this board + git; never spin-wait holding compute.
 
+### 4.2 Tiered gates — one T1 per batch, T2 only at landing (all sessions)
+
+Observed this program: bespoke full gates (~60–90 min) that re-verified unchanged crates,
+died at session-spend walls losing the whole run, and collided with the parallel session.
+The tiers below are mandatory; `check`/`check-crate`/`check-changed` remain valid aliases
+at their tier.
+
+1. **T0 — per-edit (seconds): `just t0 <crate>`** (`cargo check -p`). Agents iterate on T0
+   only; no test/clippy inside the edit loop.
+2. **T1 — per-lane-batch (ONE invocation): `just t1 [<crate>…]`** — a SINGLE multi-`-p`
+   `cargo test` over the union of every crate changed since the last green T1 (one
+   invocation avoids feature-unification rebuilds), + scoped `clippy --all-targets
+   -D warnings` on the same set, + `fmt --check`. No args ⇒ the set is derived from the
+   gate ledger's last green T1. **Accumulate edits — one T1 settles the batch; never gate
+   per-fix.**
+3. **T2 — landing only: `just t2`** — the full `check` gate set + the live GUI (Playwright
+   + axe) and Excel e2e suites, ONCE per push milestone, never per fix-iteration.
+   gui-touching ⇒ the live e2e is NOT skippable (the deferred-e2e lesson: a deferred suite
+   is a defect reservoir).
+4. **Resumable ledger is mandatory for any gate > 10 min.** T1/T2 run through
+   `tools/gate-runner.sh`: every step's PASS/FAIL, REAL exit code (never pipe-masked — the
+   hard lesson stands: verify the literal output line, not a wrapper's exit), and literal
+   last output line are journaled to `.gate-ledger.jsonl` (gitignored), keyed on
+   HEAD + a dirty-tree content hash. A killed gate re-invoked on the identical tree
+   resumes from the last green step instead of restarting.
+5. **Spend-wall corollary: every long-running agent/gate must be checkpoint-resumable.**
+   Commit early and often under `wip(checkpoint): …` on your lane branch; resume from
+   cache/journal/ledger (sccache + cargo incremental + the gate ledger), so a session wall
+   costs minutes, not the run. Losing >10 min of work to a wall is a protocol violation,
+   not bad luck.
+6. **CI-class work stays off the M4 interactive loop.** Mutation/fuzz/iai are batch lanes:
+   run bounded (`timeout`, `--jobs 3`) and yield-on-gate per §4.1 — the spend limit makes
+   long interactive runs doubly wasteful.
+
 ## 5. Live lane board
 
 > Status: `OPEN` (claimable now) · `BLOCKED:<dep>` (opens when the dep lands) · `CLAIMED` ·

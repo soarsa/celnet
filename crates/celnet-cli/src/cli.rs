@@ -8,7 +8,7 @@
 
 use std::io::Write;
 
-use celnet_types::{AtmConvention, CcyPair};
+use celnet_types::{AtmConvention, CcyPair, Tenor};
 use clap::{Args, Parser, Subcommand};
 
 use crate::args::{
@@ -182,12 +182,17 @@ pub(crate) struct StreamArgs {
     /// Currency pair, e.g. EURUSD.
     #[arg(long)]
     pub(crate) pair: String,
-    /// Tenor shorthand, e.g. 1Y, 3M, ON.
-    #[arg(long, default_value = "1Y")]
+    /// Tenor shorthand, e.g. 1Y, 3M, ON — the instrument's pillar label. The
+    /// priced expiry derives from it on the pair's conventions calendar unless
+    /// `--expiry-years` pins it explicitly.
+    #[arg(long)]
     pub(crate) tenor: String,
-    /// Time to expiry in years (authoritative for pricing).
-    #[arg(long, default_value_t = 1.0)]
-    pub(crate) expiry_years: f64,
+    /// Time to expiry in years (authoritative for pricing). Omitted ⇒ derived
+    /// from `--tenor` by the conventions resolver, anchored at today; given ⇒
+    /// must agree with the tenor label (a contradictory pair is an error — the
+    /// label and the priced expiry never drift apart silently).
+    #[arg(long)]
+    pub(crate) expiry_years: Option<f64>,
     /// Call or put.
     #[arg(long, value_enum, default_value = "call")]
     pub(crate) option: CliOptionType,
@@ -214,12 +219,17 @@ pub(crate) struct RfqArgs {
     /// Currency pair, e.g. EURUSD.
     #[arg(long)]
     pub(crate) pair: String,
-    /// Tenor shorthand, e.g. 1Y, 3M, ON.
-    #[arg(long, default_value = "1Y")]
+    /// Tenor shorthand, e.g. 1Y, 3M, ON — the instrument's pillar label. The
+    /// priced expiry derives from it on the pair's conventions calendar unless
+    /// `--expiry-years` pins it explicitly.
+    #[arg(long)]
     pub(crate) tenor: String,
-    /// Time to expiry in years (authoritative for pricing).
-    #[arg(long, default_value_t = 1.0)]
-    pub(crate) expiry_years: f64,
+    /// Time to expiry in years (authoritative for pricing). Omitted ⇒ derived
+    /// from `--tenor` by the conventions resolver, anchored at today; given ⇒
+    /// must agree with the tenor label (a contradictory pair is an error — the
+    /// label and the priced expiry never drift apart silently).
+    #[arg(long)]
+    pub(crate) expiry_years: Option<f64>,
     /// Call or put.
     #[arg(long, value_enum, default_value = "call")]
     pub(crate) option: CliOptionType,
@@ -399,9 +409,14 @@ pub(crate) struct ExoticArgs {
     /// Shared market inputs.
     #[command(flatten)]
     pub(crate) market: MarketArgs,
-    /// Strike (used by `digital` and `single-barrier`; ignored by touches).
-    #[arg(long, default_value_t = 0.0)]
-    pub(crate) strike: f64,
+    /// Strike `K` (absolute level). REQUIRED by the struck families — vanilla,
+    /// digital, barrier, window-barrier, asian, quanto, tarf, american, and the
+    /// fixed-strike lookback (`--fixed`): a missing strike is a typed error,
+    /// never a degenerate K = 0 price. The unstruck families (touches, var/vol
+    /// swaps, forward-start, cliquet, accumulator, floating lookback) take no
+    /// strike and ignore the flag.
+    #[arg(long)]
+    pub(crate) strike: Option<f64>,
     /// The booking / pricing model. `analytic` (default) uses the product's
     /// closed form; `lsv` routes the supported products (vanilla, barrier,
     /// window-barrier) through the local-stochastic-volatility engine.
@@ -660,18 +675,16 @@ pub(crate) enum ExoticKind {
         #[arg(long, default_value_t = 0)]
         mc_seed: u64,
     },
-    /// An American / Bermudan early-exercise vanilla. Priced by the projected-SOR
-    /// free-boundary finite difference by default (exact); pass `--lsm-paths` to
-    /// price by the Longstaff-Schwartz regression Monte-Carlo (reports a standard
-    /// error). `--bermudan-steps n` (n > 0) prices a Bermudan with n equally-spaced
+    /// An American / Bermudan early-exercise vanilla, struck at the common
+    /// `exotic --strike`. Priced by the projected-SOR free-boundary finite
+    /// difference by default (exact); pass `--lsm-paths` to price by the
+    /// Longstaff-Schwartz regression Monte-Carlo (reports a standard error).
+    /// `--bermudan-steps n` (n > 0) prices a Bermudan with n equally-spaced
     /// exercise dates; 0 (the default) is continuous American.
     American {
         /// Call or put.
         #[arg(long, value_enum)]
         option: CliOptionType,
-        /// Strike `K` (absolute level).
-        #[arg(long)]
-        strike: f64,
         /// `0` (default) ⇒ continuous American; `n > 0` ⇒ Bermudan with `n`
         /// equally-spaced exercise dates over the option life.
         #[arg(long, default_value_t = 0)]
@@ -934,6 +947,12 @@ pub(crate) enum DispatchError {
     /// A `forward` / `swap` / `ndf` linear-product failure (bad input or a
     /// product × underlying validity-matrix violation).
     Linear(linear::LinearError),
+    /// A struck exotic family was requested without the required `--strike`
+    /// (a missing strike must never price a degenerate K = 0 contract).
+    MissingStrike {
+        /// The struck family that refused to price.
+        family: &'static str,
+    },
     /// An argument was out of its valid domain.
     Invalid(String),
 }
@@ -947,6 +966,11 @@ impl core::fmt::Display for DispatchError {
             DispatchError::Surface(e) => write!(f, "surface calibration failed: {e:?}"),
             DispatchError::Risk(e) => write!(f, "{e}"),
             DispatchError::Linear(e) => write!(f, "{e}"),
+            DispatchError::MissingStrike { family } => write!(
+                f,
+                "the {family} exotic requires --strike: it is struck at an absolute \
+                 level and has no default"
+            ),
             DispatchError::Invalid(s) => write!(f, "invalid argument: {s}"),
         }
     }
@@ -968,6 +992,85 @@ fn default_underlying(asset: CliAsset) -> String {
         CliAsset::Crypto => "BTCUSDT",
     }
     .to_owned()
+}
+
+/// Today's civil date (UTC) — the horizon the live networked subcommands anchor
+/// tenor resolution at (a streamed `3M` means three months from now).
+fn today_utc() -> time::Date {
+    time::OffsetDateTime::now_utc().date()
+}
+
+/// The absolute slack when reconciling an explicit `--expiry-years` with its
+/// `--tenor` label: two calendar days of vol-time, covering the spot-lag /
+/// business-day-roll wobble at the very short end (an ON expiry over a weekend).
+const TENOR_EXPIRY_ABS_TOL_YEARS: f64 = 2.0 / 365.0;
+
+/// The relative slack for the same reconciliation: 5% — wider than any
+/// day-count / settlement-roll gap between a pillar's nominal and
+/// calendar-resolved expiry, yet under the ~8% spacing of adjacent monthly
+/// pillars, so a wrong-pillar pair always errs.
+const TENOR_EXPIRY_REL_TOL: f64 = 0.05;
+
+/// The flat (calendar-free) year fraction a tenor pillar nominally spans — the
+/// spelling flat-time callers quote expiries in (e.g. `1.0` for 1Y). `None` for
+/// a broken date, whose only year fraction is the calendar-resolved one.
+fn nominal_tenor_years(tenor: Tenor) -> Option<f64> {
+    match tenor {
+        Tenor::Overnight => Some(1.0 / 365.0),
+        Tenor::TomNext => Some(2.0 / 365.0),
+        Tenor::SpotNext => Some(3.0 / 365.0),
+        Tenor::Weeks(n) => Some(f64::from(n) * 7.0 / 365.0),
+        Tenor::Months(n) => Some(f64::from(n) / 12.0),
+        Tenor::Years(n) => Some(f64::from(n)),
+        // The n-th quarterly IMM sits ≈ n quarters out (nominal only; the
+        // calendar-resolved route carries the exact IMM Wednesday).
+        Tenor::Imm(n) => Some(f64::from(n) * 0.25),
+        Tenor::BrokenDate(_) => None,
+    }
+}
+
+/// The priced expiry for a dated networked instrument (`stream` / `rfq`).
+///
+/// With only `--tenor` given the expiry derives from the tenor on the pair's
+/// conventions calendar ([`celnet_conventions::vol_year_fraction`] — the same
+/// resolver the market-data normalization price path uses), anchored at
+/// `horizon`. An explicit `--expiry-years` is authoritative when it agrees with
+/// the tenor label — within two calendar days plus 5% of either the
+/// calendar-resolved or the nominal pillar time (both spellings are real:
+/// calendar-exact and flat-time clients). A contradictory pair is a typed
+/// error: the label and the priced expiry never drift apart silently.
+fn resolve_priced_expiry(
+    pair: CcyPair,
+    tenor: Tenor,
+    explicit: Option<f64>,
+    horizon: time::Date,
+) -> Result<f64, DispatchError> {
+    let derived = celnet_conventions::vol_year_fraction(pair, horizon, tenor).map_err(|e| {
+        DispatchError::Invalid(format!(
+            "--tenor {} does not resolve to an expiry on the {pair} conventions calendar: {e}",
+            crate::tenor::format_tenor(tenor)
+        ))
+    })?;
+    let Some(explicit) = explicit else {
+        return Ok(derived);
+    };
+    if !(explicit.is_finite() && explicit > 0.0) {
+        return Err(DispatchError::Invalid(
+            "--expiry-years must be finite and positive".to_owned(),
+        ));
+    }
+    let agrees = |anchor: f64| {
+        (explicit - anchor).abs() <= TENOR_EXPIRY_ABS_TOL_YEARS + TENOR_EXPIRY_REL_TOL * anchor
+    };
+    if agrees(derived) || nominal_tenor_years(tenor).is_some_and(agrees) {
+        return Ok(explicit);
+    }
+    Err(DispatchError::Invalid(format!(
+        "--expiry-years {explicit} contradicts --tenor {} (≈{derived:.4}y on the {pair} \
+         conventions calendar): pass a consistent pair, or omit --expiry-years to derive \
+         the expiry from the tenor",
+        crate::tenor::format_tenor(tenor)
+    )))
 }
 
 /// Run a parsed [`Cli`], writing the formatted report to `out`.
@@ -1056,12 +1159,29 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
             Ok(())
         }
         Command::Exotic(a) => {
-            let inputs = a.market.to_market().inputs(a.strike);
+            // The struck families refuse to price without an explicit strike —
+            // a missing `--strike` is a typed error naming the family, never a
+            // silently-priced degenerate K = 0 contract. The unstruck families
+            // never read the strike (their engines ignore the field), so the
+            // shared inputs carry 0.0 for them, exactly as before.
+            let strike_flag = a.strike;
+            let strike_for = move |family: &'static str| {
+                strike_flag.ok_or(DispatchError::MissingStrike { family })
+            };
+            let inputs = a.market.to_market().inputs(a.strike.unwrap_or(0.0));
             let spec = match a.kind {
-                ExoticKind::Vanilla { option } => exotic::ExoticSpec::Vanilla {
-                    option: option.into(),
-                },
-                ExoticKind::Digital { kind } => exotic::ExoticSpec::Digital(kind.into()),
+                ExoticKind::Vanilla { option } => {
+                    // Struck at `inputs.strike`.
+                    strike_for("vanilla")?;
+                    exotic::ExoticSpec::Vanilla {
+                        option: option.into(),
+                    }
+                }
+                ExoticKind::Digital { kind } => {
+                    // The cash-or-nothing payout is struck at `inputs.strike`.
+                    strike_for("digital")?;
+                    exotic::ExoticSpec::Digital(kind.into())
+                }
                 ExoticKind::OneTouch {
                     barrier,
                     rebate,
@@ -1095,7 +1215,7 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
                 } => exotic::ExoticSpec::SingleBarrier {
                     option: option.into(),
                     topology,
-                    strike: a.strike,
+                    strike: strike_for("barrier")?,
                     barrier,
                     rebate,
                 },
@@ -1121,7 +1241,7 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
                     }
                     exotic::ExoticSpec::WindowBarrier {
                         option: option.into(),
-                        strike: a.strike,
+                        strike: strike_for("window-barrier")?,
                         barrier,
                         up,
                         start: window_start,
@@ -1156,7 +1276,7 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
                         continuous,
                         observations,
                         turnbull_wakeman,
-                        strike: a.strike,
+                        strike: strike_for("asian")?,
                         elapsed_avg,
                         elapsed_weight,
                     }
@@ -1224,7 +1344,7 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
                     exotic::ExoticSpec::Quanto {
                         option: option.into(),
                         digital,
-                        strike: a.strike,
+                        strike: strike_for("quanto")?,
                         conversion_vol,
                         correlation,
                     }
@@ -1261,7 +1381,7 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
                     }
                     exotic::ExoticSpec::Tarf {
                         option: option.into(),
-                        strike: a.strike,
+                        strike: strike_for("tarf")?,
                         target,
                         leverage,
                         fixings,
@@ -1326,10 +1446,18 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
                                 .to_owned(),
                         ));
                     }
+                    // Only the fixed-strike family is struck; the floating
+                    // lookback's strike IS the realised extremum, so its
+                    // engines never read this field.
+                    let strike = if fixed {
+                        strike_for("fixed-strike lookback")?
+                    } else {
+                        strike_flag.unwrap_or(0.0)
+                    };
                     exotic::ExoticSpec::Lookback {
                         option: option.into(),
                         fixed,
-                        strike: a.strike,
+                        strike,
                         discrete,
                         observations,
                         mc_pairs,
@@ -1338,11 +1466,11 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
                 }
                 ExoticKind::American {
                     option,
-                    strike,
                     bermudan_steps,
                     lsm_paths,
                     lsm_seed,
                 } => {
+                    let strike = strike_for("american")?;
                     if !(strike.is_finite() && strike > 0.0) {
                         return Err(DispatchError::Invalid(
                             "american --strike must be positive".to_owned(),
@@ -1561,6 +1689,7 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
         Command::Stream(a) => {
             let pair = parse_pair(&a.pair)?;
             let tenor = parse_tenor(&a.tenor).map_err(DispatchError::BadTenor)?;
+            let expiry_years = resolve_priced_expiry(pair, tenor, a.expiry_years, today_utc())?;
             let strike = if let Some(k) = a.strike {
                 StrikeSpec::Absolute(k)
             } else if let Some(d) = a.delta {
@@ -1574,7 +1703,7 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
                 endpoint: a.endpoint,
                 pair,
                 tenor,
-                expiry_years: a.expiry_years,
+                expiry_years,
                 option: a.option.into(),
                 strike,
                 notional_base: a.notional,
@@ -1586,6 +1715,7 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
         Command::Rfq(a) => {
             let pair = parse_pair(&a.pair)?;
             let tenor = parse_tenor(&a.tenor).map_err(DispatchError::BadTenor)?;
+            let expiry_years = resolve_priced_expiry(pair, tenor, a.expiry_years, today_utc())?;
             let strike = if let Some(k) = a.strike {
                 StrikeSpec::Absolute(k)
             } else if let Some(d) = a.delta {
@@ -1599,7 +1729,7 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
                 endpoint: a.endpoint,
                 pair,
                 tenor,
-                expiry_years: a.expiry_years,
+                expiry_years,
                 option: a.option.into(),
                 strike,
                 notional_base: a.notional,
@@ -2009,7 +2139,8 @@ mod tests {
     #[test]
     fn rfq_requires_a_strike_spec() {
         // Rejected in dispatch before any network round-trip.
-        let err = run_to_string(&["celnet", "rfq", "--pair", "EURUSD"]).unwrap_err();
+        let err =
+            run_to_string(&["celnet", "rfq", "--pair", "EURUSD", "--tenor", "1Y"]).unwrap_err();
         assert!(matches!(err, DispatchError::Invalid(_)));
     }
 
@@ -2018,7 +2149,212 @@ mod tests {
         // Clap's own arg-group rejection (structural, pre-dispatch).
         assert!(
             Cli::try_parse_from([
-                "celnet", "rfq", "--pair", "EURUSD", "--strike", "1.12", "--delta", "0.25",
+                "celnet", "rfq", "--pair", "EURUSD", "--tenor", "1Y", "--strike", "1.12",
+                "--delta", "0.25",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn stream_and_rfq_require_a_tenor() {
+        // The pillar label is the instrument identity: no default, no drift.
+        for cmd in ["stream", "rfq"] {
+            assert!(
+                Cli::try_parse_from(["celnet", cmd, "--pair", "EURUSD", "--strike", "1.12"])
+                    .is_err(),
+                "{cmd} without --tenor must be a structural parse error"
+            );
+        }
+    }
+
+    // ---- the tenor → priced-expiry resolution (`stream` / `rfq`) ------------
+
+    /// A pinned horizon (a Wednesday) so the resolution tests are deterministic
+    /// regardless of when they run.
+    fn pinned_wednesday() -> time::Date {
+        time::macros::date!(2026 - 06 - 10)
+    }
+
+    #[test]
+    fn priced_expiry_derives_from_tenor_via_the_conventions_calendar() {
+        let pair = CcyPair::parse("EURUSD").unwrap();
+        let horizon = pinned_wednesday();
+        let derived = resolve_priced_expiry(pair, Tenor::Months(3), None, horizon).unwrap();
+        let direct =
+            celnet_conventions::vol_year_fraction(pair, horizon, Tenor::Months(3)).unwrap();
+        assert_eq!(derived.to_bits(), direct.to_bits());
+        // A 3M label prices ≈ a quarter out — never the old defaulted 1Y.
+        assert!((0.2..0.35).contains(&derived), "3M derived {derived}");
+    }
+
+    #[test]
+    fn priced_expiry_accepts_a_consistent_explicit_pair_verbatim() {
+        let pair = CcyPair::parse("EURUSD").unwrap();
+        // The flat-time spelling of the pillar: authoritative when consistent.
+        let t =
+            resolve_priced_expiry(pair, Tenor::Years(1), Some(1.0), pinned_wednesday()).unwrap();
+        assert_eq!(t.to_bits(), 1.0_f64.to_bits());
+        // The short end over a weekend: ON from a Friday resolves to Monday
+        // (≈ 3/365) on the calendar, while the nominal pillar time is 1/365 —
+        // both spellings are accepted, neither is a contradiction.
+        let friday = time::macros::date!(2026 - 06 - 12);
+        let nominal = 1.0 / 365.0;
+        let t = resolve_priced_expiry(pair, Tenor::Overnight, Some(nominal), friday).unwrap();
+        assert_eq!(t.to_bits(), nominal.to_bits());
+    }
+
+    #[test]
+    fn priced_expiry_rejects_a_contradictory_or_out_of_domain_pair() {
+        let pair = CcyPair::parse("EURUSD").unwrap();
+        let horizon = pinned_wednesday();
+        // The defect shape: a 3M label on a 1Y-priced expiry.
+        let err = resolve_priced_expiry(pair, Tenor::Months(3), Some(1.0), horizon).unwrap_err();
+        match err {
+            DispatchError::Invalid(msg) => {
+                assert!(msg.contains("contradicts"), "actionable message: {msg}");
+            }
+            other => panic!("expected the typed contradiction, got {other:?}"),
+        }
+        // Adjacent short pillars never conflate: a 2W expiry on a 1W label errs.
+        assert!(resolve_priced_expiry(pair, Tenor::Weeks(1), Some(14.0 / 365.0), horizon).is_err());
+        // Out-of-domain explicit expiries are typed refusals, never priced.
+        for bad in [0.0, -1.0, f64::NAN] {
+            assert!(resolve_priced_expiry(pair, Tenor::Years(1), Some(bad), horizon).is_err());
+        }
+    }
+
+    #[test]
+    fn stream_and_rfq_reject_a_contradictory_tenor_expiry_pair() {
+        // Through the full dispatch: rejected before any network round-trip.
+        for cmd in ["stream", "rfq"] {
+            let err = run_to_string(&[
+                "celnet",
+                cmd,
+                "--pair",
+                "EURUSD",
+                "--tenor",
+                "3M",
+                "--expiry-years",
+                "1.0",
+                "--strike",
+                "1.12",
+            ])
+            .unwrap_err();
+            match err {
+                DispatchError::Invalid(msg) => {
+                    assert!(msg.contains("contradicts"), "{cmd}: {msg}");
+                }
+                other => panic!("{cmd}: expected the typed contradiction, got {other:?}"),
+            }
+        }
+    }
+
+    // ---- the struck-exotic strike grammar ------------------------------------
+
+    #[test]
+    fn exotic_struck_families_require_a_strike() {
+        let base = [
+            "celnet", "exotic", "--spot", "1.10", "--vol", "0.10", "--t", "1.0", "--r-dom", "0.02",
+            "--r-for", "0.01",
+        ];
+        let cases: [(&str, &[&str]); 9] = [
+            ("vanilla", &["vanilla", "--option", "call"]),
+            ("digital", &["digital", "--kind", "digital-call"]),
+            (
+                "barrier",
+                &[
+                    "barrier",
+                    "--option",
+                    "call",
+                    "--topology",
+                    "down-and-out",
+                    "--barrier",
+                    "0.95",
+                ],
+            ),
+            (
+                "window-barrier",
+                &[
+                    "window-barrier",
+                    "--option",
+                    "call",
+                    "--barrier",
+                    "1.20",
+                    "--window-start",
+                    "0.1",
+                    "--window-end",
+                    "0.5",
+                ],
+            ),
+            ("asian", &["asian", "--option", "call"]),
+            (
+                "quanto",
+                &[
+                    "quanto",
+                    "--option",
+                    "call",
+                    "--conversion-vol",
+                    "0.09",
+                    "--correlation",
+                    "0.1",
+                ],
+            ),
+            ("tarf", &["tarf", "--option", "put", "--target", "0.3"]),
+            (
+                "fixed-strike lookback",
+                &["lookback", "--option", "call", "--fixed"],
+            ),
+            ("american", &["american", "--option", "put"]),
+        ];
+        for (family, tail) in cases {
+            let argv: Vec<&str> = base.iter().chain(tail.iter()).copied().collect();
+            let err = run_to_string(&argv).unwrap_err();
+            match err {
+                DispatchError::MissingStrike { family: got } => assert_eq!(got, family),
+                other => panic!("{family}: expected MissingStrike, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn exotic_unstruck_families_price_without_a_strike() {
+        let base = [
+            "celnet", "exotic", "--spot", "1.10", "--vol", "0.10", "--t", "1.0", "--r-dom", "0.02",
+            "--r-for", "0.01",
+        ];
+        // The floating lookback's strike is the realised extremum.
+        let argv: Vec<&str> = base
+            .iter()
+            .chain(["lookback", "--option", "call"].iter())
+            .copied()
+            .collect();
+        let out = run_to_string(&argv).unwrap();
+        assert!(out.contains("lookback-continuous") && out.contains("price"));
+        // A touch is struck at its barrier, not a strike.
+        let argv: Vec<&str> = base
+            .iter()
+            .chain(["one-touch", "--barrier", "1.20"].iter())
+            .copied()
+            .collect();
+        let out = run_to_string(&argv).unwrap();
+        assert!(out.contains("one-touch") && out.contains("price"));
+    }
+
+    #[test]
+    fn exotic_american_uses_the_common_strike_grammar() {
+        // The unified grammar: the strike is the common pre-subcommand flag.
+        let out = run_to_string(&[
+            "celnet", "exotic", "--spot", "1.10", "--vol", "0.10", "--t", "1.0", "--r-dom", "0.02",
+            "--r-for", "0.01", "--strike", "1.10", "american", "--option", "put",
+        ])
+        .unwrap();
+        assert!(out.contains("american-fd") && out.contains("price"));
+        // The old per-subcommand flag is a structural parse error, not an alias.
+        assert!(
+            Cli::try_parse_from([
+                "celnet", "exotic", "--spot", "1.10", "--vol", "0.10", "--t", "1.0", "--r-dom",
+                "0.02", "--r-for", "0.01", "american", "--option", "put", "--strike", "1.10",
             ])
             .is_err()
         );

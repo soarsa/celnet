@@ -22,8 +22,9 @@
  *  2. The TERMS range — a named, order-free 2-column key/value range whose keys
  *     mirror the per-family parameters exactly (e.g. BARRIER: strike, callPut,
  *     barrier, kind, side, upperBarrier, rebate, monitoring, model). The two
- *     matrix keys (`legs`, `correlations` — BASKET) repeat one row per matrix row
- *     with the payload in the cells to the right of the key. A missing/unknown
+ *     matrix keys (`legs` — BASKET's weighted underliers and STRATEGY's option
+ *     ladder — and `correlations`, BASKET) repeat one row per matrix row with
+ *     the payload in the cells to the right of the key. A missing/unknown
  *     key is a typed error NAMING the key and listing the family's key set.
  *
  *  3. The TOKEN — `CELNET.INSTRUMENT` returns the canonical compact JSON of the
@@ -42,6 +43,7 @@ import type {
   CcyPair,
   Instrument,
   SettlementStyle,
+  StrategyKind,
   Underlying,
 } from "../contract/contract";
 import {
@@ -53,6 +55,7 @@ import { instrumentToWire, type WireObject } from "../contract/wsCodec";
 import {
   ShapingError,
   parsePair,
+  parseStrategyKind,
   shapeAccumulator,
   shapeAmerican,
   shapeAsianOption,
@@ -72,6 +75,7 @@ import {
   shapePerpetual,
   shapeQuanto,
   shapeSettlementStyle,
+  shapeStrategy,
   shapeSwap,
   shapeTarf,
   shapeTouch,
@@ -423,6 +427,47 @@ interface FamilySpec {
 }
 
 /**
+ * The multi-leg STRATEGY family build, shared by the generic family (the
+ * template comes from a ("kind", …) term) and the four template-named families
+ * (RISK_REVERSAL / STRADDLE / STRANGLE / SEAGULL — the template is bound by the
+ * product name itself; a ("kind", …) term may restate it, but a CONTRADICTORY
+ * kind is a typed error, never a silent override). The legs repeat as terms
+ * rows exactly like BASKET's matrix keys: ("legs", callPut, strike, side,
+ * ratio?) — one row per leg, delta strikes (`25dC`, `ATM`) resolved server-side.
+ */
+function strategyFamily(family: string, boundKind?: StrategyKind): FamilySpec {
+  return {
+    keys: ["kind", "legs"],
+    build: (t, c) => {
+      const kindTerm = t.optStr("kind");
+      if (
+        boundKind !== undefined &&
+        kindTerm !== undefined &&
+        parseStrategyKind(kindTerm) !== boundKind
+      ) {
+        throw new ShapingError(
+          `${family} binds the strategy kind — the ("kind", ${kindTerm}) term contradicts it`,
+        );
+      }
+      const kind = boundKind ?? kindTerm;
+      if (kind === undefined) {
+        throw new ShapingError(
+          "STRATEGY requires the term `kind` (RISK_REVERSAL, STRADDLE, STRANGLE, SEAGULL) " +
+            "— or name the template as the product",
+        );
+      }
+      const legs = t.matrixRows("legs");
+      if (legs === undefined) {
+        throw new ShapingError(
+          `${family} requires \`legs\` rows: ("legs", callPut, strike, side, ratio?) — one per leg`,
+        );
+      }
+      return shapeStrategy({ ...c, kind, legs });
+    },
+  };
+}
+
+/**
  * The product-family table. Canonical names are the retired worksheet-function
  * names traders know; each family also answers to its proto product-arm name
  * (e.g. `single_barrier` → BARRIER) so the golden-corpus family tokens work
@@ -441,6 +486,14 @@ const FAMILIES: ReadonlyMap<string, FamilySpec> = new Map<string, FamilySpec>([
         }),
     },
   ],
+  // The multi-leg vol strategies (proto product field 8): the generic family +
+  // the four template names, sharing ONE build (the template-name forms bind
+  // their kind).
+  ["STRATEGY", strategyFamily("STRATEGY")],
+  ["RISKREVERSAL", strategyFamily("RISKREVERSAL", "RISK_REVERSAL")],
+  ["STRADDLE", strategyFamily("STRADDLE", "STRADDLE")],
+  ["STRANGLE", strategyFamily("STRANGLE", "STRANGLE")],
+  ["SEAGULL", strategyFamily("SEAGULL", "SEAGULL")],
   [
     "BARRIER",
     {

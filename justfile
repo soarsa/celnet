@@ -96,6 +96,76 @@ check-changed:
 check: workspace-deps verification-coverage fmt-check lint test deny
     @echo "All gates passed."
 
+# ---------------------------------------------------------------------------
+# Tiered gates (docs/PARALLEL-SESSIONS.md §4.2): T0 per edit, ONE T1 per
+# accumulated lane batch, T2 once per push milestone — never bespoke full gates
+# per fix-iteration. T1/T2 run through the resumable runner
+# (tools/gate-runner.sh → .gate-ledger.jsonl): each step's PASS/FAIL + literal
+# output line + REAL exit code is journaled, keyed on HEAD + a dirty-tree hash,
+# so a killed/spend-walled gate resumes from the last green step.
+# ---------------------------------------------------------------------------
+
+# T0 — per-edit (seconds): does the crate still compile? Iterate on T0 only;
+# no test/clippy in the edit loop.
+t0 CRATE:
+    {{_cargo}} check -p {{CRATE}}
+
+# T1 — per-lane-batch: ONE invocation settles the whole accumulated batch.
+# Pass the union of every crate changed since the last green T1; with no args
+# it derives the set itself (diff vs the last green T1's HEAD from the gate
+# ledger, else vs HEAD, plus untracked files). A SINGLE multi-`-p` cargo test
+# avoids feature-unification rebuilds between per-crate invocations. Plain
+# `cargo test` (NOT nextest: its orchestration wedges under load on this M4
+# and a parallel session may `pkill -f nextest`).
+t1 *CRATES:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source "$HOME/.cargo/env"
+    crates=( {{CRATES}} )
+    if [ ${#crates[@]} -eq 0 ]; then
+        base=$(bash tools/gate-runner.sh last-green t1 || true)
+        diffbase=HEAD
+        if [ -n "$base" ] && git rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
+            diffbase=$base
+        fi
+        mapfile -t crates < <( { git diff --name-only "$diffbase" --; git ls-files --others --exclude-standard; } \
+            | grep -oE '^crates/[^/]+/' | sed 's#crates/##; s#/##' | sort -u )
+    fi
+    if [ ${#crates[@]} -eq 0 ]; then
+        echo "t1: no crate changed since the last green T1 (base $diffbase) — nothing to gate."
+        echo "    (non-Rust changes gate via their own suites; landings gate via t2;"
+        echo "     pass crates explicitly to force: just t1 <crate> …)"
+        exit 0
+    fi
+    echo "t1 batch: ${crates[*]}"
+    pflags=""
+    for c in "${crates[@]}"; do pflags="$pflags -p $c"; done
+    exec bash tools/gate-runner.sh t1 \
+        "fmt::source \"\$HOME/.cargo/env\" && cargo fmt$pflags -- --check" \
+        "clippy::source \"\$HOME/.cargo/env\" && cargo clippy$pflags --all-targets --all-features -- -D warnings" \
+        "test::source \"\$HOME/.cargo/env\" && cargo test$pflags"
+
+# T2 — landing-only: the full `check` gate set (same steps, decomposed so the
+# resumable ledger can skip the already-green ones after a kill) + the live
+# GUI/Excel e2e suites. Run ONCE per push milestone, never per fix-iteration.
+# demo_edge is pre-built first (env lesson: the e2e ready-timeout silently
+# covers a cold `cargo run --example` build). gui-touching work ⇒ the
+# Playwright+axe suite is NOT skippable (deferred-e2e lesson: a deferred suite
+# is a defect reservoir). Plain `cargo test` — see t1.
+t2:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    exec bash tools/gate-runner.sh t2 \
+        "workspace-deps::just workspace-deps" \
+        "verification-coverage::node tools/check-verification-coverage.mjs" \
+        "fmt::source \"\$HOME/.cargo/env\" && cargo fmt --all -- --check" \
+        "clippy::source \"\$HOME/.cargo/env\" && cargo clippy --workspace --all-targets --all-features -- -D warnings" \
+        "test::source \"\$HOME/.cargo/env\" && cargo test --workspace --all-features" \
+        "deny::source \"\$HOME/.cargo/env\" && cargo deny check" \
+        "build-edge::source \"\$HOME/.cargo/env\" && cargo build -p celnet-server --example demo_edge" \
+        "gui-e2e::npm --prefix gui run e2e:install && npm --prefix gui run e2e" \
+        "excel-e2e::npm --prefix excel run test:e2e"
+
 # Verification-contract coverage lint (docs/VERIFICATION-CONTRACT.md gates (b)/(a)+(c)):
 # parse the `oneof product` arms in crates/celnet-proto/proto/celnet.proto and assert
 # EVERY product family has BOTH a frozen cross-client golden vector

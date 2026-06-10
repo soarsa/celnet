@@ -41,6 +41,7 @@ import type {
   Greeks,
   Heartbeat,
   Instrument,
+  Leg,
   Lookback,
   LookbackMonitoring,
   LookbackStyle,
@@ -57,6 +58,7 @@ import type {
   Side,
   SingleBarrier,
   SmileModel,
+  StrategyKind,
   StrikeOrDelta,
   Tarf,
   TarfRedemption,
@@ -191,6 +193,31 @@ export function parseStrikeOrDelta(raw: string | number): StrikeOrDelta {
   const magnitude = pct / 100;
   const signed = m[2] === "C" ? magnitude : -magnitude;
   return { kind: "delta", delta: signed };
+}
+
+/**
+ * Parse a strategy-template kind into the contract `StrategyKind`. Accepts the
+ * canonical contract names (`RISK_REVERSAL`, `STRADDLE`, `STRANGLE`, `SEAGULL`)
+ * case-/separator-insensitively ("risk reversal" works), plus the desk
+ * shorthand `RR` for the risk reversal.
+ */
+export function parseStrategyKind(raw: string): StrategyKind {
+  const s = raw.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+  switch (s) {
+    case "RISKREVERSAL":
+    case "RR":
+      return "RISK_REVERSAL";
+    case "STRADDLE":
+      return "STRADDLE";
+    case "STRANGLE":
+      return "STRANGLE";
+    case "SEAGULL":
+      return "SEAGULL";
+    default:
+      throw new ShapingError(
+        `invalid strategy kind \`${raw}\` (expected RISK_REVERSAL, STRADDLE, STRANGLE, SEAGULL)`,
+      );
+  }
 }
 
 /**
@@ -496,6 +523,94 @@ export function shapeVanillaInstrument(args: VanillaArgs): Instrument {
         strike: parseStrikeOrDelta(args.strikeOrDelta),
       },
     },
+  };
+}
+
+/**
+ * The fixed leg count each strategy template books (proto `Strategy`: "A risk
+ * reversal has 2; a seagull has 3" — the four desk templates are booked as one
+ * contract with exactly their ladder).
+ */
+const STRATEGY_TEMPLATE_LEGS: Record<StrategyKind, number> = {
+  RISK_REVERSAL: 2,
+  STRADDLE: 2,
+  STRANGLE: 2,
+  SEAGULL: 3,
+};
+
+export interface StrategyArgs {
+  readonly pair: string | CcyPair;
+  readonly tenor: string;
+  readonly notional: number;
+  /** The strategy template the legs realize (RISK_REVERSAL / STRADDLE / STRANGLE / SEAGULL). */
+  readonly kind: string;
+  /**
+   * The legs as a row-per-leg matrix `[callPut, strike, side, ratio?]` (an Excel
+   * range). `callPut` is `C`/`P`; `strike` is an absolute level (1.12) or a
+   * convention delta (`25dC`, `25dP`, `ATM`); `side` is `BUY`/`SELL`; `ratio` is
+   * the leg ratio relative to the base notional (defaults to 1; 2 for a 1x2).
+   */
+  readonly legs: ReadonlyArray<ReadonlyArray<string | number>>;
+}
+
+/**
+ * Shape a recognized multi-leg vol strategy (proto `Strategy`, product field 8)
+ * from the cell arguments. Each leg row is `[callPut, strike, side, ratio?]` —
+ * exactly the `Leg` fields the server's `leg_from_json` decodes; delta strikes
+ * resolve to levels server-side against the marked surface, per leg, and the
+ * priced value is the server's signed `side·ratio` leg sum. The template `kind`
+ * fixes the leg count (risk reversal / straddle / strangle book 2 legs, the
+ * seagull 3); a mismatched ladder is a typed error, never a silently mislabeled
+ * structure. `side` is TWO_WAY (the cell reads a market, not a directional
+ * ticket), exactly like every other product cell.
+ */
+export function shapeStrategy(args: StrategyArgs): Instrument {
+  if (!Number.isFinite(args.notional) || args.notional <= 0) {
+    throw new ShapingError(`invalid notional \`${args.notional}\``);
+  }
+  const kind = parseStrategyKind(args.kind);
+  const expected = STRATEGY_TEMPLATE_LEGS[kind];
+  if (!Array.isArray(args.legs) || args.legs.length !== expected) {
+    throw new ShapingError(
+      `${kind} books exactly ${expected} legs [callPut, strike, side, ratio?], got ${
+        Array.isArray(args.legs) ? args.legs.length : 0
+      }`,
+    );
+  }
+  const legs: Leg[] = args.legs.map((row, i) => {
+    if (!Array.isArray(row) || row.length < 3 || row.length > 4) {
+      throw new ShapingError(
+        `strategy leg ${i + 1} must be [callPut, strike, side, ratio?]; got ${JSON.stringify(row)}`,
+      );
+    }
+    const ratioCell = row[3];
+    const ratio =
+      ratioCell === undefined
+        ? 1.0
+        : typeof ratioCell === "number"
+          ? ratioCell
+          : Number(String(ratioCell).trim());
+    if (!Number.isFinite(ratio) || ratio <= 0) {
+      throw new ShapingError(
+        `strategy leg ${i + 1} ratio \`${ratioCell}\` must be a positive number ` +
+          "(the direction lives on `side`, never a negative ratio)",
+      );
+    }
+    return {
+      optionType: parseOptionType(String(row[0])),
+      strike: parseStrikeOrDelta(row[1] as string | number),
+      side: shapeForwardSide(String(row[2])),
+      ratio,
+    };
+  });
+  const { tenor, expiryYears } = parseTenor(args.tenor);
+  return {
+    pair: resolvePair(args.pair),
+    tenor,
+    expiryYears,
+    quantity: { notional: args.notional, baseCcy: true },
+    side: "TWO_WAY" as Side,
+    product: { kind: "strategy", strategy: { kind, legs } },
   };
 }
 
@@ -3264,7 +3379,18 @@ function canonicalProduct(p: Product): unknown {
     case "vanilla":
       return { k: "v", ot: p.vanilla.optionType, s: canonicalStrike(p.vanilla.strike) };
     case "strategy":
-      return { k: "s", kind: p.strategy.kind };
+      // The ladder is the structure's identity: two same-kind strategies with
+      // different legs must NOT coalesce onto one subscription.
+      return {
+        k: "s",
+        kind: p.strategy.kind,
+        legs: p.strategy.legs.map((l) => ({
+          ot: l.optionType,
+          s: canonicalStrike(l.strike),
+          side: l.side,
+          r: l.ratio,
+        })),
+      };
     case "singleBarrier":
       return {
         k: "sbar",

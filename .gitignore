@@ -45,3 +45,7 @@ gui/**/*.tsbuildinfo
 docs/celnet-capabilities.standalone.html
 docs/_capabilities-build/
 node_modules/
+
+# Resumable gate-runner step journal (machine-local, per-worktree; MUST stay ignored
+# so ledger appends never perturb the tree fingerprint — see tools/gate-runner.sh)
+.gate-ledger.jsonl
