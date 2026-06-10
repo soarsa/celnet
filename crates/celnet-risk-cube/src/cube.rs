@@ -322,3 +322,296 @@ impl Cube {
         correlation_weighted_vega(&weighted_vegas, rho)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::additive::VegaPillar;
+    use crate::dimension::{BookId, DeskId, EntityId, FactKey, LocationId, TraderId};
+    use crate::exotic::ExoticKind;
+    use celnet_risk_normalize::{AssetPricer, CanonicalGreeks, canonicalize};
+    use celnet_types::{
+        Ccy, CcyPair, DeltaConvention, OptionType, PremiumStyle, Underlying, VanillaInputs,
+    };
+
+    struct OnePillar;
+    impl VegaPillarMap for OnePillar {
+        fn pillar_of(&self, _leaf: &CanonicalLeaf, _pos: &PositionRisk) -> VegaPillar {
+            VegaPillar::new(365, 5000)
+        }
+    }
+
+    fn eurusd() -> CcyPair {
+        CcyPair::new(Ccy::EUR, Ccy::USD)
+    }
+
+    fn pos(n: f64, vi: VanillaInputs) -> PositionRisk {
+        PositionRisk::fx(
+            eurusd(),
+            OptionType::Call,
+            n,
+            vi,
+            DeltaConvention::SpotUnadjusted,
+            PremiumStyle::DomesticPips,
+        )
+    }
+
+    fn fact(id: u32, keys: (u32, u32, u32, u32, u32), p: &PositionRisk) -> RiskFact {
+        let (trader, book, desk, location, entity) = keys;
+        RiskFact {
+            position_id: crate::dimension::PositionId(id),
+            key: FactKey {
+                trader: TraderId(trader),
+                book: BookId(book),
+                desk: DeskId(desk),
+                underlying: p.underlying.clone(),
+                location: LocationId(location),
+                entity: EntityId(entity),
+            },
+            measure: crate::dimension::FactMeasure {
+                leaf: canonicalize(p).unwrap(),
+                position: p.clone(),
+                exotic: None,
+            },
+            surface_version: 1,
+        }
+    }
+
+    /// A node aggregate with distinct dyadic values in EVERY additive line and
+    /// non-empty constituent vectors, for the merge pins.
+    fn hand_node(group: u64, m: f64, pillar: VegaPillar) -> NodeAggregate {
+        let leaf = CanonicalLeaf {
+            underlying: Underlying::Fx(eurusd()),
+            spot: 1.25,
+            greeks: CanonicalGreeks {
+                delta_base: 1.0 * m,
+                gamma: 2.0 * m,
+                vega: 4.0 * m,
+                theta: 8.0 * m,
+                vanna: 16.0 * m,
+                volga: 32.0 * m,
+                charm: 64.0 * m,
+                speed: 128.0 * m,
+                zomma: 256.0 * m,
+                color: 512.0 * m,
+            },
+            premium_quote: 1024.0 * m,
+            vega_premium_ccy: Ccy::USD,
+            quoted_was_premium_adjusted: false,
+        };
+        let mut agg = NodeAggregate::empty(group);
+        agg.net_greeks.add_leaf(&leaf);
+        agg.vega_ladder.add(pillar, 4.0 * m);
+        agg.leaves.push(leaf);
+        agg.positions.push(pos(
+            m,
+            VanillaInputs::new(1.10, 1.12, 0.10, 1.0, 0.04, 0.02),
+        ));
+        agg
+    }
+
+    /// `merge_additive` sums EVERY `NetGreeks` field and the ladder element-wise,
+    /// and concatenates positions/exotic legs/leaves (self first) — the §3.4
+    /// shard-merge seam, pinned bit-exactly per field.
+    #[test]
+    fn merge_additive_sums_every_field_and_concatenates() {
+        let p1y = VegaPillar::new(365, 5000);
+        let p6m = VegaPillar::new(183, 5000);
+        let mut a = hand_node(1, 1.0, p1y);
+        let mut b = hand_node(2, 0.25, p6m);
+        b.vega_ladder.add(p1y, 0.5); // overlap to prove element-wise netting
+        a.merge_additive(&b);
+
+        let got = [
+            a.net_greeks.delta_base,
+            a.net_greeks.gamma,
+            a.net_greeks.vega,
+            a.net_greeks.theta,
+            a.net_greeks.vanna,
+            a.net_greeks.volga,
+            a.net_greeks.charm,
+            a.net_greeks.speed,
+            a.net_greeks.zomma,
+            a.net_greeks.color,
+            a.net_greeks.premium_quote,
+        ];
+        let want: [f64; 11] = [
+            1.25, 2.5, 5.0, 10.0, 20.0, 40.0, 80.0, 160.0, 320.0, 640.0, 1280.0,
+        ];
+        for (i, (g, w)) in got.iter().zip(want).enumerate() {
+            assert_eq!(g.to_bits(), w.to_bits(), "merged field #{i}");
+        }
+        assert_eq!(a.vega_ladder.vega_in(p1y).to_bits(), 4.5_f64.to_bits());
+        assert_eq!(a.vega_ladder.vega_in(p6m).to_bits(), 1.0_f64.to_bits());
+        assert_eq!(a.positions.len(), 2);
+        assert_eq!(a.leaves.len(), 2);
+        // Self-first concatenation order (drill-down provenance).
+        assert_eq!(a.positions[0].notional_base.to_bits(), 1.0_f64.to_bits());
+        assert_eq!(a.positions[1].notional_base.to_bits(), 0.25_f64.to_bits());
+        // The group key of the receiving node is untouched by a merge.
+        assert_eq!(a.group, 1);
+    }
+
+    /// `upsert` keeps ONE live fact per position id; `fact()` retrieves by id;
+    /// `len`/`is_empty` track the live set.
+    #[test]
+    fn upsert_fact_len_and_lookup() {
+        let mut cube = Cube::new();
+        assert!(cube.is_empty());
+        assert_eq!(cube.len(), 0);
+        assert!(cube.fact(crate::dimension::PositionId(1)).is_none());
+
+        let p1 = pos(1.0, VanillaInputs::new(1.10, 1.12, 0.10, 1.0, 0.04, 0.02));
+        let p2 = pos(2.0, VanillaInputs::new(1.10, 1.08, 0.11, 0.5, 0.04, 0.02));
+        cube.upsert(fact(1, (1, 1, 1, 1, 1), &p1));
+        cube.upsert(fact(2, (2, 2, 2, 2, 2), &p2));
+        assert!(!cube.is_empty());
+        assert_eq!(cube.len(), 2);
+        // Supersede id 1: the same id must REPLACE, not duplicate, and lookup must
+        // return the NEW fact (not first-inserted).
+        let p1b = pos(4.0, VanillaInputs::new(1.10, 1.12, 0.10, 1.0, 0.04, 0.02));
+        cube.upsert(fact(1, (1, 1, 1, 1, 1), &p1b));
+        assert_eq!(cube.len(), 2);
+        let f = cube.fact(crate::dimension::PositionId(1)).unwrap();
+        assert_eq!(
+            f.measure.position.notional_base.to_bits(),
+            4.0_f64.to_bits()
+        );
+        // And id 2 still resolves to ITS fact (the find matches on id, not always-first).
+        let f2 = cube.fact(crate::dimension::PositionId(2)).unwrap();
+        assert_eq!(
+            f2.measure.position.notional_base.to_bits(),
+            2.0_f64.to_bits()
+        );
+    }
+
+    /// `group_by` buckets by the dimension's group key in FIRST-SEEN order with the
+    /// group value carried on the node, and an exotic fact routes its leg to
+    /// `exotic_legs` (the real-exotic re-derivation source) while a vanilla fact
+    /// routes to `positions`.
+    #[test]
+    fn group_by_orders_first_seen_and_routes_exotic_legs() {
+        let mut cube = Cube::new();
+        let p1 = pos(1.0, VanillaInputs::new(1.10, 1.12, 0.10, 1.0, 0.04, 0.02));
+        let p2 = pos(2.0, VanillaInputs::new(1.10, 1.08, 0.11, 0.5, 0.04, 0.02));
+        cube.upsert(fact(1, (9, 1, 1, 1, 1), &p1)); // trader 9 first
+        cube.upsert(fact(2, (3, 1, 1, 1, 1), &p2)); // trader 3 second
+        // An exotic digital fact under trader 9.
+        let leg = crate::exotic::ExoticLeg::new(
+            eurusd(),
+            ExoticKind::Digital(celnet_exotics::DigitalKind::cash(OptionType::Call)),
+            5.0,
+            VanillaInputs::new(1.10, 1.11, 0.10, 0.25, 0.04, 0.02),
+        );
+        let meta = pos(5.0, leg.inputs);
+        let mut ef = fact(3, (9, 1, 1, 1, 1), &meta);
+        ef.measure.leaf = leg.canonical_leaf();
+        ef.measure.exotic = Some(leg);
+        cube.upsert(ef);
+
+        let by_trader = cube.group_by(crate::dimension::DimensionId::Trader, &OnePillar);
+        assert_eq!(by_trader.len(), 2);
+        assert_eq!(by_trader[0].group, 9, "first-seen group order");
+        assert_eq!(by_trader[1].group, 3);
+        // Trader 9 holds one vanilla position AND one exotic leg, three leaves total
+        // across both nodes.
+        assert_eq!(by_trader[0].positions.len(), 1);
+        assert_eq!(by_trader[0].exotic_legs.len(), 1);
+        assert_eq!(by_trader[0].leaves.len(), 2);
+        assert_eq!(by_trader[1].positions.len(), 1);
+        assert_eq!(by_trader[1].exotic_legs.len(), 0);
+        // The exotic's REAL Greek leaf contributes to the additive roll-up.
+        let want_vega = canonicalize(&p1).unwrap().greeks.vega
+            + by_trader[0].exotic_legs[0].canonical_leaf().greeks.vega;
+        assert!(
+            celnet_core::is_close(by_trader[0].net_greeks.vega, want_vega, 1e-12, 1e-9),
+            "exotic leaf vega must be in the node roll-up"
+        );
+    }
+
+    /// The Entity dimension resolves location→entity through the configured parent
+    /// pointer, and falls back to the fact's own entity key when unconfigured (an
+    /// unmapped location is its own regulatory unit, never silently entity 0).
+    #[test]
+    fn entity_rollup_resolves_parent_with_fallback() {
+        let mut h = Hierarchy::new();
+        h.set_location_entity(LocationId(4), EntityId(99));
+        let mut cube = Cube::with_hierarchy(h);
+        let p1 = pos(1.0, VanillaInputs::new(1.10, 1.12, 0.10, 1.0, 0.04, 0.02));
+        let p2 = pos(2.0, VanillaInputs::new(1.10, 1.08, 0.11, 0.5, 0.04, 0.02));
+        // Fact 1: location 4 → configured entity 99 (its own entity key 7 is stale).
+        cube.upsert(fact(1, (1, 1, 1, 4, 7), &p1));
+        // Fact 2: location 5 unconfigured → falls back to its own entity key 8.
+        cube.upsert(fact(2, (2, 2, 2, 5, 8), &p2));
+        let by_entity = cube.group_by(crate::dimension::DimensionId::Entity, &OnePillar);
+        let groups: Vec<u64> = by_entity.iter().map(|n| n.group).collect();
+        assert_eq!(groups, vec![99, 8]);
+        // hierarchy_mut genuinely exposes the live hierarchy: re-point and re-group.
+        cube.hierarchy_mut()
+            .set_location_entity(LocationId(5), EntityId(99));
+        let regrouped = cube.group_by(crate::dimension::DimensionId::Entity, &OnePillar);
+        assert_eq!(regrouped.len(), 1);
+        assert_eq!(regrouped[0].group, 99);
+    }
+
+    /// `node_correlation_weighted_vega` applies the caller's pillar weighting to
+    /// each ladder bucket IN ORDER before the quadratic form — pinned against the
+    /// hand-computed `√(Σw² + 2ρ w_i w_j)` on distinct per-pillar weights.
+    #[test]
+    fn correlation_weighted_vega_applies_pillar_weights() {
+        let mut node = NodeAggregate::empty(0);
+        node.vega_ladder.add(VegaPillar::new(365, 5000), 3.0);
+        node.vega_ladder.add(VegaPillar::new(183, 5000), 4.0);
+        // Weight = vega × (tenor/365), so the two buckets get DISTINCT weights and
+        // a pillar/vega confusion changes the value.
+        let weighted = |p: VegaPillar, v: f64| v * (f64::from(p.tenor_days) / 365.0);
+        let w1 = 3.0_f64; // 3.0 × 365/365
+        let w2 = 4.0 * (183.0 / 365.0);
+        let rho = 0.5;
+        let want = (w1 * w1 + w2 * w2 + 2.0 * rho * w1 * w2).sqrt();
+        let got = Cube::node_correlation_weighted_vega(&node, weighted, |_, _| rho);
+        assert!(celnet_core::is_close(got, want, 1e-12, 1e-12));
+        // Reconciles to the free function on the same weighted inputs.
+        let free = crate::nonadditive::correlation_weighted_vega(&[w1, w2], |_, _| rho);
+        assert_eq!(got.to_bits(), free.to_bits());
+    }
+
+    /// The non-additive delegates pass the node's BOTH constituent classes through:
+    /// with no exotic legs they reduce exactly to the free functions over
+    /// `node.positions`.
+    #[test]
+    fn node_var_es_delegates_reduce_to_free_functions() {
+        let mut node = NodeAggregate::empty(0);
+        let p = pos(
+            1_000_000.0,
+            VanillaInputs::new(1.10, 1.10, 0.10, 0.5, 0.03, 0.01),
+        );
+        node.positions.push(p.clone());
+        let scen: Vec<Scenario> = (-5..=5)
+            .filter(|i| *i != 0)
+            .map(|i| Scenario::spot(f64::from(i) * 0.01))
+            .collect();
+        let oracle = Cube::node_var_es(&AssetPricer, &node, &scen, 0.9);
+        let free = crate::nonadditive::historical_var_es(
+            &AssetPricer,
+            std::slice::from_ref(&p),
+            &scen,
+            0.9,
+        );
+        assert_eq!(oracle.var.to_bits(), free.var.to_bits());
+        assert_eq!(oracle.es.to_bits(), free.es.to_bits());
+        let fast = Cube::node_var_es_sensitivity(&AssetPricer, &node, &scen, 0.9);
+        let free_fast = crate::nonadditive::sensitivity_var_es(
+            &AssetPricer,
+            std::slice::from_ref(&p),
+            &scen,
+            0.9,
+        );
+        assert_eq!(fast.var.to_bits(), free_fast.var.to_bits());
+        assert_eq!(fast.es.to_bits(), free_fast.es.to_bits());
+        let cvr = Cube::node_curvature_spot(&AssetPricer, &node, 0.15);
+        let free_cvr =
+            crate::nonadditive::sbm_curvature_spot(&AssetPricer, std::slice::from_ref(&p), 0.15);
+        assert_eq!(cvr.to_bits(), free_cvr.to_bits());
+    }
+}

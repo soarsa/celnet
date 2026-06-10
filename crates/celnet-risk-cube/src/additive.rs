@@ -198,3 +198,135 @@ impl VegaLadder {
         self.buckets.iter().map(|(_, v)| *v).sum()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use celnet_risk_normalize::CanonicalGreeks;
+    use celnet_types::{Ccy, CcyPair, Underlying};
+
+    /// A leaf whose 11 measure lines carry DISTINCT dyadic values scaled by `m`
+    /// (so every per-field sum below is float-exact and a mutation of any single
+    /// field's accumulation is caught by that field's bit assert).
+    fn leaf(m: f64) -> CanonicalLeaf {
+        CanonicalLeaf {
+            underlying: Underlying::Fx(CcyPair::new(Ccy::EUR, Ccy::USD)),
+            spot: 1.25,
+            greeks: CanonicalGreeks {
+                delta_base: 1.0 * m,
+                gamma: 2.0 * m,
+                vega: 4.0 * m,
+                theta: 8.0 * m,
+                vanna: 16.0 * m,
+                volga: 32.0 * m,
+                charm: 64.0 * m,
+                speed: 128.0 * m,
+                zomma: 256.0 * m,
+                color: 512.0 * m,
+            },
+            premium_quote: 1024.0 * m,
+            vega_premium_ccy: Ccy::USD,
+            quoted_was_premium_adjusted: false,
+        }
+    }
+
+    fn fields(n: &NetGreeks) -> [f64; 11] {
+        [
+            n.delta_base,
+            n.gamma,
+            n.vega,
+            n.theta,
+            n.vanna,
+            n.volga,
+            n.charm,
+            n.speed,
+            n.zomma,
+            n.color,
+            n.premium_quote,
+        ]
+    }
+
+    /// `zero()` is exactly all-zero, `add_leaf` accumulates EVERY field by `+`
+    /// (bit-exact dyadic sums), and the `Add` operator agrees field-for-field with
+    /// the fold.
+    #[test]
+    fn net_greeks_accumulate_every_field_exactly() {
+        assert_eq!(fields(&NetGreeks::zero()), [0.0; 11]);
+
+        let mut acc = NetGreeks::zero();
+        acc.add_leaf(&leaf(1.0));
+        acc.add_leaf(&leaf(0.25));
+        // Hand sums: base weights × (1 + 0.25) = ×1.25 exactly.
+        let want: [f64; 11] = [
+            1.25, 2.5, 5.0, 10.0, 20.0, 40.0, 80.0, 160.0, 320.0, 640.0, 1280.0,
+        ];
+        for (i, (g, w)) in fields(&acc).iter().zip(want).enumerate() {
+            assert_eq!(g.to_bits(), w.to_bits(), "add_leaf field #{i}");
+        }
+
+        // The Add operator: a + b == the same fold, every field bit-equal.
+        let mut a = NetGreeks::zero();
+        a.add_leaf(&leaf(1.0));
+        let mut b = NetGreeks::zero();
+        b.add_leaf(&leaf(0.25));
+        let sum = a + b;
+        for (i, (g, w)) in fields(&sum).iter().zip(want).enumerate() {
+            assert_eq!(g.to_bits(), w.to_bits(), "Add field #{i}");
+        }
+        // A negative leaf genuinely subtracts (catches an `abs`-style mutation).
+        let mut c = acc;
+        c.add_leaf(&leaf(-0.25));
+        let back: [f64; 11] = [
+            1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0, 512.0, 1024.0,
+        ];
+        for (i, (g, w)) in fields(&c).iter().zip(back).enumerate() {
+            assert_eq!(g.to_bits(), w.to_bits(), "signed field #{i}");
+        }
+    }
+
+    /// The ladder nets same-pillar adds, keeps distinct pillars apart (tenor OR
+    /// delta differing), merges element-wise, reports absent pillars as exactly
+    /// 0.0, iterates in insertion order, and totals by plain sum.
+    #[test]
+    fn vega_ladder_buckets_merge_and_total_exactly() {
+        let p1y = VegaPillar::new(365, 5000);
+        let p6m = VegaPillar::new(183, 5000);
+        let p1y25d = VegaPillar::new(365, 2500); // same tenor, different delta
+
+        let mut l = VegaLadder::new();
+        l.add(p1y, 2.0);
+        l.add(p6m, 8.0);
+        l.add(p1y, 0.5); // nets into p1y
+        l.add(p1y25d, 16.0); // distinct bucket despite equal tenor
+        assert_eq!(l.vega_in(p1y).to_bits(), 2.5_f64.to_bits());
+        assert_eq!(l.vega_in(p6m).to_bits(), 8.0_f64.to_bits());
+        assert_eq!(l.vega_in(p1y25d).to_bits(), 16.0_f64.to_bits());
+        // Absent pillar reads exactly 0.0.
+        assert_eq!(
+            l.vega_in(VegaPillar::new(30, 5000)).to_bits(),
+            0.0_f64.to_bits()
+        );
+        assert_eq!(l.total().to_bits(), 26.5_f64.to_bits());
+        // Insertion order is the documented iteration order.
+        let order: Vec<VegaPillar> = l.pillars().map(|(p, _)| p).collect();
+        assert_eq!(order, vec![p1y, p6m, p1y25d]);
+
+        // Merge: overlapping pillar nets, new pillar appends.
+        let mut other = VegaLadder::new();
+        other.add(p6m, -4.0);
+        other.add(VegaPillar::new(30, 5000), 1.0);
+        l.merge(&other);
+        assert_eq!(l.vega_in(p6m).to_bits(), 4.0_f64.to_bits());
+        assert_eq!(
+            l.vega_in(VegaPillar::new(30, 5000)).to_bits(),
+            1.0_f64.to_bits()
+        );
+        assert_eq!(l.total().to_bits(), 23.5_f64.to_bits());
+        assert_eq!(l.pillars().count(), 4);
+
+        // The pillar constructor stores its coordinates as given.
+        let p = VegaPillar::new(91, -2500);
+        assert_eq!(p.tenor_days, 91);
+        assert_eq!(p.delta_bp, -2500);
+    }
+}
