@@ -90,15 +90,15 @@ function boot(): void {
           callPut: val("rfq-cp"),
           notional: Number(val("rfq-notional")),
         });
-        const quote = await conn.requestQuote(
-          instrument,
-          DEFAULT_CONVENTIONS,
-          `taskpane-rfq:${Date.now()}`,
-        );
+        // One key per ticket: the server's accept is request-matched, so the
+        // SAME key must be echoed when the trader clicks Trade (see ticketModel).
+        const idempotencyKey = `taskpane-rfq:${Date.now()}`;
+        const quote = await conn.requestQuote(instrument, DEFAULT_CONVENTIONS, idempotencyKey);
         rfq = rfqQuoted({
           bid: quote.price.bid,
           offer: quote.price.offer,
           quoteId: quote.quoteId,
+          idempotencyKey,
           validUntilNanos: quote.validUntilNanos,
         });
         setState("rfq-state", "quoted", "ok");
@@ -114,13 +114,15 @@ function boot(): void {
       if (rfq.phase !== "pending") return;
       try {
         setState("trade-state", `accepting ${side}…`, "warn");
-        const reply = await conn.request(
-          "accept_quote",
-          { quote_id: Number(rfq.quoteId), idempotency_key: `taskpane-exec:${rfq.quoteId}`, side: side === "BUY" ? 0 : 1 },
-          "execution",
-        );
-        const premium = typeof reply["traded_premium"] === "number" ? reply["traded_premium"] : 0;
-        rfq = rfqExecuted(rfq, side, premium);
+        // The one canonical accept path (also the multi-dealer panel's, where an
+        // `lpId` selects the dealer line); the single-dealer ticket omits it, so
+        // the frame stays byte-identical to the pre-panel contract.
+        const exec = await conn.acceptQuote({
+          quoteId: rfq.quoteId,
+          side,
+          idempotencyKey: rfq.idempotencyKey,
+        });
+        rfq = rfqExecuted(rfq, side, exec.tradedPremium);
         setState("trade-state", "executed", "ok");
         renderRfq();
       } catch (err) {

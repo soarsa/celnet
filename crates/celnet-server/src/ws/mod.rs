@@ -15,7 +15,9 @@
 //! `"type"` discriminator naming the operation (mirroring the gRPC method / stream
 //! `oneof` variant):
 //!
-//! * **RFQ** — `request_quote` → `quote`, `accept_quote` → `execution`,
+//! * **RFQ** — `request_quote` → `quote`, `request_multi_dealer_quote` →
+//!   `multi_dealer_quote` (the ranked LP panel; the matching `accept_quote` may
+//!   carry a panel row's `lp_id`), `accept_quote` → `execution`,
 //!   `reject_quote` → `reject_ack`;
 //! * **pricing** — `price` → `price_response`;
 //! * **surface** — `get_smile` → `smile`, `mark_surface` → `mark_surface_response`,
@@ -62,7 +64,7 @@ use crate::clock::Clock;
 use crate::core_link::CoreLink;
 use crate::readiness::{InFlightGuard, ReadinessGate};
 use crate::services::pricing::PricingEdge;
-use crate::services::quote::QuoteEdge;
+use crate::services::quote::{LpPanelConfig, QuoteEdge};
 use crate::services::risk::RiskEdge;
 use crate::services::risk::store::PositionStore;
 use crate::services::stream::{StreamEdge, run_session};
@@ -106,6 +108,7 @@ impl WsServices {
         store: Arc<PositionStore>,
         risk: Arc<RiskEdge>,
         fleet: Option<Arc<crate::services::risk::federate::Fleet>>,
+        panel: LpPanelConfig,
     ) -> Self {
         // The SAME shared backend fleet the gRPC edges use (or `None` in-process), so
         // the WS unary mirror forwards owned-pair requests identically (API-first
@@ -125,6 +128,7 @@ impl WsServices {
             clock.clone(),
             Arc::clone(&surface_book),
             fleet.clone(),
+            panel,
         ));
         let stream = Arc::new(StreamEdge::with_store(
             Arc::clone(&link),
@@ -478,6 +482,14 @@ async fn handle_unary(
                 services.quote.request_quote(Request::new(req)),
                 "quote",
                 codec::quote_to_json
+            )
+        }
+        "request_multi_dealer_quote" => {
+            let req = decode!(codec::quote_request_from_json(o));
+            call!(
+                services.quote.request_multi_dealer_quote(Request::new(req)),
+                "multi_dealer_quote",
+                codec::multi_dealer_quote_to_json
             )
         }
         "accept_quote" => {

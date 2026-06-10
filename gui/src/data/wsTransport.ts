@@ -35,6 +35,7 @@ import type {
   ListPositionsResponse,
   MarkedSurface,
   MarketContext,
+  MultiDealerQuote,
   Quote,
   RiskBucketRequest,
   ScenarioResult,
@@ -65,7 +66,9 @@ import {
   marketSeriesSubscribeToWire,
   marketSeriesUnsubscribeToWire,
   marketToWire,
+  multiDealerQuoteFromWire,
   parseFrame,
+  quoteAcceptToWire,
   quoteFromWire,
   riskBucketRequestToWire,
   scenarioResultFromWire,
@@ -681,19 +684,40 @@ export class WsTransport implements CelnetTransport {
     return quote;
   }
 
+  async requestMultiDealerQuote(
+    instrument: Instrument,
+    conventions: Conventions,
+    idempotencyKey: string,
+  ): Promise<MultiDealerQuote> {
+    // The SAME QuoteRequest body as `request_quote` — only the frame type selects
+    // the multi-dealer fan-out; the reply is the ranked panel frame.
+    const reply = await this.conn.request(
+      "request_multi_dealer_quote",
+      {
+        idempotency_key: idempotencyKey,
+        instrument: instrumentToWire(instrument),
+        conventions: conventionsToWire(conventions),
+      },
+      "multi_dealer_quote",
+    );
+    const panel = multiDealerQuoteFromWire(reply);
+    // Remember the instrument this panel priced so a subsequent acceptQuote (with
+    // any row's lpId) can return a complete Execution, exactly as requestQuote.
+    this.quoteInstruments.set(panel.quoteId, instrument);
+    return panel;
+  }
+
   async acceptQuote(
     quoteId: bigint,
     side: "BUY" | "SELL",
     idempotencyKey: string,
+    lpId?: string,
   ): Promise<Execution> {
     const reply = await this.conn.request(
       "accept_quote",
-      {
-        quote_id: Number(quoteId),
-        idempotency_key: idempotencyKey,
-        // Side enum: BUY=0, SELL=1 (proto `Side`).
-        side: side === "BUY" ? 0 : 1,
-      },
+      // `lp_id` is emitted only when a panel row is named; the single-dealer
+      // accept stays byte-identical to the pre-panel frame (quoteAcceptToWire).
+      quoteAcceptToWire(quoteId, side, idempotencyKey, lpId),
       "execution",
     );
     const partial = executionFromWire(reply);
@@ -711,7 +735,10 @@ export class WsTransport implements CelnetTransport {
     this.quoteInstruments.delete(quoteId);
     await this.conn.request(
       "reject_quote",
-      { quote_id: Number(quoteId), reason },
+      // The exact 64-bit minted quote id, as a `bigint` so `serializeFrame`
+      // writes the full-precision literal (a lossy `Number(quoteId)` rounds ids
+      // beyond MAX_SAFE and the server refuses them as unknown).
+      { quote_id: quoteId, reason },
       "reject_ack",
     );
   }

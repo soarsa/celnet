@@ -29,11 +29,13 @@ import type {
   CcyPair,
   Conventions,
   Executed,
+  Execution,
   Heartbeat,
   Instrument,
   MarketObservable,
   MarketSeriesPoint,
   MarketSeriesSnapshot,
+  MultiDealerQuote,
   Quote,
   Snapshot,
   StreamHealth,
@@ -45,13 +47,17 @@ import {
   ccyPairToWire,
   conventionsToWire,
   executedFromWire,
+  executionFromWire,
   greeksFromWire,
   heartbeatFromWire,
   instrumentToWire,
   marketSeriesPointFromWire,
   marketSeriesSnapshotFromWire,
   marketToWire,
+  multiDealerQuoteFromWire,
+  parseFrame,
   quoteFromWire,
+  serializeFrame,
   snapshotFromWire,
   streamRejectFromWire,
   updateFromWire,
@@ -286,7 +292,10 @@ export class Connection {
   private dispatch(raw: string): void {
     let frame: WireObject;
     try {
-      const parsed: unknown = JSON.parse(raw);
+      // Lossless parse: 64-bit identity fields (minted quote ids / tokens /
+      // nanos) beyond the JS safe range are kept exact; `numToBigInt` recovers
+      // them as `bigint` — a plain JSON.parse would silently round them.
+      const parsed: unknown = parseFrame(raw);
       if (!parsed || typeof parsed !== "object") return;
       frame = parsed as WireObject;
     } catch {
@@ -329,7 +338,11 @@ export class Connection {
 
   /** Send a fire-and-forget control frame (queued if the socket is down). */
   send(frame: WireObject): void {
-    const text = JSON.stringify(frame);
+    // `serializeFrame` writes any `bigint` field (a minted `quote_id`, a
+    // tradable `token`) as the bare full-precision integer literal the server
+    // minted — `JSON.stringify` would throw on a bigint, and a pre-converted
+    // `Number()` would round it.
+    const text = serializeFrame(frame);
     if (this.isOpen() && this.ws) {
       this.ws.send(text);
     } else {
@@ -405,7 +418,10 @@ export class Connection {
     this.send({
       type: "execute",
       subscription: { value: Number(subscriptionId) },
-      token: Number(token),
+      // The token is the maker's exact 64-bit identity; pass it as a `bigint` so
+      // `serializeFrame` writes the full-precision integer literal the server
+      // minted. (A lossy `Number(token)` would be rejected `UNKNOWN_TOKEN`.)
+      token,
       idempotency_key: idempotencyKey,
     });
   }
@@ -710,6 +726,60 @@ export class Connection {
       "quote",
     );
     return quoteFromWire(reply);
+  }
+
+  /**
+   * RFQ-to-many: request the ranked multi-dealer panel for an instrument over
+   * the same `QuoteRequest` body as `requestQuote` (the contract's
+   * `request_multi_dealer_quote` verb). The reply's `dealers` arrive in the
+   * server aggregator's ranking order (best-first) and are preserved verbatim;
+   * `acceptQuote` then books a chosen line by `(quoteId, lpId)`.
+   */
+  async requestMultiDealerQuote(
+    instrument: Instrument,
+    conventions: Conventions,
+    idempotencyKey: string,
+  ): Promise<MultiDealerQuote> {
+    const reply = await this.request(
+      "request_multi_dealer_quote",
+      {
+        idempotency_key: idempotencyKey,
+        instrument: instrumentToWire(instrument),
+        conventions: conventionsToWire(conventions),
+      },
+      "multi_dealer_quote",
+    );
+    return multiDealerQuoteFromWire(reply);
+  }
+
+  /**
+   * Accept (click-to-trade) a previously issued quote: BUY lifts the offer,
+   * SELL hits the bid. `idempotencyKey` must be the SAME key the quote was
+   * requested under (the server's request-matched accept contract — a retry is
+   * deduplicated; a key mismatch is refused). `lpId` selects a multi-dealer
+   * panel line by its `DealerQuote.lpId`; it is emitted ONLY when set, so a
+   * single-dealer accept stays byte-identical to the pre-panel frame (the
+   * server reads an absent `lp_id` as the native single-dealer quote).
+   */
+  async acceptQuote(args: {
+    quoteId: bigint;
+    side: "BUY" | "SELL";
+    idempotencyKey: string;
+    lpId?: string;
+  }): Promise<Omit<Execution, "instrument">> {
+    const body: WireObject = {
+      // The quote_id is the server's exact 64-bit minted identity (splitmix64
+      // over the full u64 range, so it routinely exceeds MAX_SAFE_INTEGER).
+      // Pass it as a `bigint` so `serializeFrame` writes the full-precision
+      // literal back verbatim — a lossy `Number()` rounds the id and the server
+      // refuses the accept as `unknown quote_id`.
+      quote_id: args.quoteId,
+      idempotency_key: args.idempotencyKey,
+      side: enums.side.toWire(args.side),
+    };
+    if (args.lpId !== undefined && args.lpId !== "") body["lp_id"] = args.lpId;
+    const reply = await this.request("accept_quote", body, "execution");
+    return executionFromWire(reply);
   }
 
   async getSmile(

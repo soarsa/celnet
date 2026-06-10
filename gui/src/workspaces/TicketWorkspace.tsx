@@ -22,6 +22,7 @@ import type {
   BrokenDate,
   Instrument,
   Leg,
+  MultiDealerQuote,
   PricingModel,
   Quote,
   Tenor,
@@ -29,6 +30,7 @@ import type {
 import { Panel } from "../components/Panel";
 import { Button } from "../components/Button";
 import { DatePicker } from "../components/DatePicker";
+import { DealerPanel } from "../components/DealerPanel";
 import { TwoWayQuote } from "../components/TwoWayQuote";
 import { GreeksStrip } from "../components/GreeksStrip";
 import { ConventionRow } from "../components/ConventionChip";
@@ -65,6 +67,13 @@ function isSwap(structure: string): boolean {
 
 /** Which expiry input the trader is using: a standard tenor or an arbitrary date. */
 type ExpiryMode = "TENOR" | "DATE";
+
+/**
+ * How the RFQ is dealt: against the edge's own maker (the single-dealer quote,
+ * byte-identical to the pre-panel flow) or fanned across the edge's LP panel
+ * (the ranked multi-dealer `MultiDealerQuote`, booked per-line by `lpId`).
+ */
+type RfqMode = "SINGLE" | "PANEL";
 
 /**
  * A standard-tenor choice — the trader-facing `Tenor` plus its year fraction on
@@ -218,6 +227,10 @@ export function TicketWorkspace(): React.ReactElement {
   const [brokenDate, setBrokenDate] = useState<BrokenDate | null>(null);
   const [notionalMm, setNotionalMm] = useState(10);
   const [quote, setQuote] = useState<Quote | null>(null);
+  // The multi-dealer RFQ state: the dealing mode and the live ranked panel (the
+  // panel and the single-dealer quote are mutually exclusive priced states).
+  const [rfqMode, setRfqMode] = useState<RfqMode>("SINGLE");
+  const [dealerPanel, setDealerPanel] = useState<MultiDealerQuote | null>(null);
   const [busy, setBusy] = useState(false);
   const [fill, setFill] = useState<string | null>(null);
   // The per-family input state, keyed by structure id and seeded from each spec's
@@ -234,6 +247,13 @@ export function TicketWorkspace(): React.ReactElement {
   // own `toInstrument`.
   const [pricingModel, setPricingModel] = useState<PricingModel>("DEFAULT");
 
+  // Drop any priced state (single-dealer quote AND multi-dealer panel) — every
+  // contract edit (structure/expiry/inputs/model) invalidates both equally.
+  const clearPriced = useCallback(() => {
+    setQuote(null);
+    setDealerPanel(null);
+  }, []);
+
   // Universe → ticket pre-target: a non-FX underlier selection arms a one-shot
   // target; on arrival (mount or while open) we re-point the ticket at the
   // cross-asset vanilla spec seeded with that EXACT `Underlying` + settlement
@@ -247,10 +267,10 @@ export function TicketWorkspace(): React.ReactElement {
     if (seeded) {
       setStructure(crossAssetSpec.id);
       setInputsByStructure((m) => ({ ...m, [crossAssetSpec.id]: seeded }));
-      setQuote(null);
+      clearPriced();
     }
     app.clearTicketTarget();
-  }, [app, app.ticketTarget]);
+  }, [app, app.ticketTarget, clearPriced]);
 
   const today = useMemo(() => todayUtc(), []);
   // Selectable broken-date window: from spot (~2 calendar days) out to ~3 years.
@@ -393,14 +413,26 @@ export function TicketWorkspace(): React.ReactElement {
     setBusy(true);
     setFill(null);
     const inst = spec.toInstrument(inputs as never, effectiveCtx);
-    const q = await app.transport.requestQuote(
-      inst,
-      app.conventions,
-      `tkt-${Date.now()}`,
-    );
-    setQuote(q);
+    if (rfqMode === "PANEL") {
+      // Fan the RFQ across the edge's LP panel; the reply is the ranked lines.
+      const p = await app.transport.requestMultiDealerQuote(
+        inst,
+        app.conventions,
+        `tkt-${Date.now()}`,
+      );
+      setDealerPanel(p);
+      setQuote(null);
+    } else {
+      const q = await app.transport.requestQuote(
+        inst,
+        app.conventions,
+        `tkt-${Date.now()}`,
+      );
+      setQuote(q);
+      setDealerPanel(null);
+    }
     setBusy(false);
-  }, [app, spec, inputs, effectiveCtx, lsvUnavailableOffline]);
+  }, [app, spec, inputs, effectiveCtx, lsvUnavailableOffline, rfqMode]);
 
   const accept = useCallback(
     async (side: "BUY" | "SELL") => {
@@ -410,11 +442,54 @@ export function TicketWorkspace(): React.ReactElement {
         setQuote(null);
         return;
       }
-      const exec = await app.transport.acceptQuote(quote.quoteId, side, quote.idempotencyKey);
-      setFill(`Filled ${sideVerb(side)} @ ${exec.tradedPremium.toFixed(3)} · exec #${exec.executionId}`);
-      setQuote(null);
+      try {
+        const exec = await app.transport.acceptQuote(quote.quoteId, side, quote.idempotencyKey);
+        setFill(
+          `Filled ${sideVerb(side)} @ ${exec.tradedPremium.toFixed(3)} · exec #${exec.executionId}`,
+        );
+        setQuote(null);
+      } catch (err) {
+        // A server refusal (expired last-look, already booked, …) is a real
+        // trading outcome: render it on the fill line, never a silent swallow.
+        setFill(`Refused — ${err instanceof Error ? err.message : String(err)}`);
+      }
     },
     [app, quote],
+  );
+
+  /**
+   * Book one dealer line off the ranked panel: `acceptQuote` carrying the row's
+   * `lpId` trades exactly that pinned line. The expiry gate reads the ROW's own
+   * last-look deadline (each line carries its own window), mirroring `accept`.
+   */
+  const bookDealerLine = useCallback(
+    async (quoteId: bigint, lpId: string, side: "BUY" | "SELL") => {
+      if (!dealerPanel) return;
+      const row = dealerPanel.dealers.find((d) => d.lpId === lpId);
+      if (!row) return;
+      if (row.validUntilNanos <= nowNanos()) {
+        setFill("Dealer line expired — re-request the panel");
+        return;
+      }
+      try {
+        const exec = await app.transport.acceptQuote(
+          quoteId,
+          side,
+          dealerPanel.idempotencyKey,
+          lpId,
+        );
+        setFill(
+          `Filled ${sideVerb(side)} ${lpId} @ ${exec.tradedPremium.toFixed(3)} · exec #${exec.executionId}`,
+        );
+        setDealerPanel(null);
+      } catch (err) {
+        // The server refused the line (expired, already booked, unknown row):
+        // surface the refusal beside the panel — never a silent swallow. The
+        // panel stays mounted so the trader can re-request or pick another line.
+        setFill(`Refused ${lpId} — ${err instanceof Error ? err.message : String(err)}`);
+      }
+    },
+    [app, dealerPanel],
   );
 
   // ⏎ requests, ⌘⏎ accepts the offered side (keyboard-first, §4.1).
@@ -436,13 +511,13 @@ export function TicketWorkspace(): React.ReactElement {
     return () => window.removeEventListener("keydown", onKey);
   }, [accept, requestQuote, app.paletteOpen, expiryReady]);
 
-  /** Replace the active family's inputs and clear any stale quote against them. */
+  /** Replace the active family's inputs and clear any stale quote/panel against them. */
   const updateInputs = useCallback(
     (next: unknown) => {
       setInputsByStructure((m) => ({ ...m, [structure]: next }));
-      setQuote(null);
+      clearPriced();
     },
-    [structure],
+    [structure, clearPriced],
   );
 
   const strikePreview = previewStrike(inputs, atmForward);
@@ -476,7 +551,7 @@ export function TicketWorkspace(): React.ReactElement {
           value={structure}
           onSelect={(id) => {
             setStructure(id);
-            setQuote(null);
+            clearPriced();
           }}
         />
 
@@ -494,7 +569,7 @@ export function TicketWorkspace(): React.ReactElement {
                     disabled={allowedModels.length === 1}
                     onClick={() => {
                       setPricingModel(m);
-                      setQuote(null);
+                      clearPriced();
                     }}
                   >
                     {pricingModelLabel(m)}
@@ -515,6 +590,44 @@ export function TicketWorkspace(): React.ReactElement {
           </div>
         ) : null}
 
+        <div className={styles.modelBlock}>
+          <div className={styles.modelRow}>
+            <span className={styles.modelLabel}>RFQ mode</span>
+            <div className={styles.modeToggle} role="tablist" aria-label="rfq mode">
+              <button
+                role="tab"
+                aria-selected={rfqMode === "SINGLE"}
+                className={`${styles.modeTab} ${rfqMode === "SINGLE" ? styles.modeActive : ""}`}
+                onClick={() => {
+                  setRfqMode("SINGLE");
+                  clearPriced();
+                }}
+              >
+                Single-dealer
+              </button>
+              <button
+                role="tab"
+                aria-selected={rfqMode === "PANEL"}
+                className={`${styles.modeTab} ${rfqMode === "PANEL" ? styles.modeActive : ""}`}
+                onClick={() => {
+                  setRfqMode("PANEL");
+                  clearPriced();
+                }}
+              >
+                LP panel
+              </button>
+            </div>
+          </div>
+          {rfqMode === "PANEL" && (
+            <p className={styles.modelNote}>
+              Fans the RFQ across the edge's LP panel and ranks the lines (best bid /
+              best offer); book a row to trade exactly that dealer's price. In-repo
+              dealers are the native maker plus deterministic synthetic demo LPs
+              (SYNTH-LP-k) — live bank LP connectivity is environment-provisioned.
+            </p>
+          )}
+        </div>
+
         <div className={styles.expiryBlock}>
           <div className={styles.expiryModeRow}>
             <span className={styles.expiryModeLabel}>Expiry</span>
@@ -525,7 +638,7 @@ export function TicketWorkspace(): React.ReactElement {
                 className={`${styles.modeTab} ${expiryMode === "TENOR" ? styles.modeActive : ""}`}
                 onClick={() => {
                   setExpiryMode("TENOR");
-                  setQuote(null);
+                  clearPriced();
                 }}
               >
                 Tenor
@@ -536,7 +649,7 @@ export function TicketWorkspace(): React.ReactElement {
                 className={`${styles.modeTab} ${expiryMode === "DATE" ? styles.modeActive : ""}`}
                 onClick={() => {
                   setExpiryMode("DATE");
-                  setQuote(null);
+                  clearPriced();
                 }}
               >
                 Broken date
@@ -552,7 +665,7 @@ export function TicketWorkspace(): React.ReactElement {
                   className={`${styles.tenorPill} ${i === tenorIdx ? styles.tenorActive : ""}`}
                   onClick={() => {
                     setTenorIdx(i);
-                    setQuote(null);
+                    clearPriced();
                   }}
                 >
                   {c.label}
@@ -567,7 +680,7 @@ export function TicketWorkspace(): React.ReactElement {
                 max={dateMax}
                 onChange={(d) => {
                   setBrokenDate(d);
-                  setQuote(null);
+                  clearPriced();
                 }}
               />
               <div className={styles.dateResolve}>
@@ -625,7 +738,15 @@ export function TicketWorkspace(): React.ReactElement {
           />
         )}
 
-        {quote && isSwap(structure) ? (
+        {dealerPanel ? (
+          <div className={styles.dealerPanelBlock}>
+            <DealerPanel
+              panel={dealerPanel}
+              windowSeconds={8}
+              onBook={(quoteId, lpId, side) => void bookDealerLine(quoteId, lpId, side)}
+            />
+          </div>
+        ) : quote && isSwap(structure) ? (
           <SwapResult structure={structure} quote={quote} />
         ) : quote ? (
           <div className={styles.quoted}>
@@ -700,9 +821,11 @@ export function TicketWorkspace(): React.ReactElement {
                 ? "Pick a date"
                 : lsvUnavailableOffline
                   ? "LSV — live server only"
-                  : quote
+                  : quote || dealerPanel
                     ? "Re-request"
-                    : "Request quote"}
+                    : rfqMode === "PANEL"
+                      ? "Request panel"
+                      : "Request quote"}
           </Button>
           {quote && (
             <>

@@ -322,6 +322,23 @@ export function parseDeltaWing(raw: string | number): number {
   return wing;
 }
 
+/**
+ * Parse the optional `CELNET.RFQ` panel-mode flag. Absent / FALSE / `""` ⇒ the
+ * unchanged single-dealer RFQ (byte-identical to the contract before the panel
+ * existed); TRUE or the word `PANEL` (case-insensitive) selects the multi-dealer
+ * ranked panel (`request_multi_dealer_quote`). Anything else is a typo and is
+ * rejected loudly, never silently treated as single-dealer.
+ */
+export function parseRfqPanelFlag(raw: boolean | string | undefined): boolean {
+  if (raw === undefined || raw === false) return false;
+  if (raw === true) return true;
+  const s = raw.trim().toUpperCase();
+  if (s === "") return false;
+  if (s === "PANEL" || s === "TRUE") return true;
+  if (s === "FALSE") return false;
+  throw new ShapingError(`invalid RFQ panel flag \`${raw}\` (expected TRUE or "PANEL")`);
+}
+
 // ---------------------------------------------------------------------------
 // risk shaping (RiskService — server-side hierarchical risk)
 // ---------------------------------------------------------------------------
@@ -2609,19 +2626,64 @@ export interface RfqResult {
   readonly epochNanos: bigint;
 }
 
+/** Render a last-look deadline (nanos since the epoch) as ISO-8601; `0` ⇒ `—`. */
+function validUntilIso(nanos: bigint): string {
+  return nanos === 0n ? "—" : new Date(Number(nanos / 1_000_000n)).toISOString();
+}
+
 /**
  * Format CELNET.RFQ as a 1×4 horizontal spill `[bid, offer, quoteId, validUntil]`
  * followed by a convention footer row. `quoteId`/`validUntil` are rendered as
  * strings to avoid JS number precision loss on the 64-bit wire ids.
  */
 export function formatRfqSpill(r: RfqResult): SpillMatrix {
-  const validIso = r.validUntilNanos === 0n
-    ? "—"
-    : new Date(Number(r.validUntilNanos / 1_000_000n)).toISOString();
   return [
-    [r.bid, r.offer, r.quoteId.toString(), validIso],
+    [r.bid, r.offer, r.quoteId.toString(), validUntilIso(r.validUntilNanos)],
     [conventionFooter(r.conventions, r.surfaceVersion, r.epochNanos)],
   ];
+}
+
+/** One ranked LP line a CELNET.RFQ panel spill renders (server ranking order). */
+export interface RfqPanelLine {
+  readonly lpId: string;
+  readonly bid: number;
+  readonly offer: number;
+  readonly validUntilNanos: bigint;
+}
+
+/** The decoded fields a CELNET.RFQ multi-dealer panel spill renders. */
+export interface RfqPanelResult {
+  /** The aggregate request id an accept echoes together with a line's `lpId`. */
+  readonly quoteId: bigint;
+  /** The dealer lines VERBATIM in the server aggregator's order (best-first). */
+  readonly lines: readonly RfqPanelLine[];
+  /** The touch dealers the aggregator named (empty ⇒ no quote on that side). */
+  readonly bestBidLpId: string;
+  readonly bestOfferLpId: string;
+  readonly conventions: Conventions;
+  readonly surfaceVersion: bigint | undefined;
+  readonly epochNanos: bigint;
+}
+
+/**
+ * Format a CELNET.RFQ multi-dealer panel as a labelled spill: a header row
+ * `[lp_id, bid, offer, valid_until, best]`, then ONE ROW PER LP in the server's
+ * ranking order (never re-sorted client-side), the touch rows marked `BEST_BID`
+ * / `BEST_OFFER` (one row may be both), then a `["quote_id", id]` row (the id as
+ * a string — 64-bit precision — referenceable by an accept workflow together
+ * with a row's `lp_id`), then the convention footer.
+ */
+export function formatRfqPanelSpill(r: RfqPanelResult): SpillMatrix {
+  const rows: SpillMatrix = [["lp_id", "bid", "offer", "valid_until", "best"]];
+  for (const line of r.lines) {
+    const markers: string[] = [];
+    if (line.lpId === r.bestBidLpId) markers.push("BEST_BID");
+    if (line.lpId === r.bestOfferLpId) markers.push("BEST_OFFER");
+    rows.push([line.lpId, line.bid, line.offer, validUntilIso(line.validUntilNanos), markers.join("+")]);
+  }
+  rows.push(["quote_id", r.quoteId.toString()]);
+  rows.push([conventionFooter(r.conventions, r.surfaceVersion, r.epochNanos)]);
+  return rows;
 }
 
 /** The decoded fields a VARSWAP-family spill renders (fair variance + fair vol). */

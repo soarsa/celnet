@@ -34,7 +34,10 @@ export function LastLookRing({
   const dash = c * frac;
 
   return (
-    <span className={styles.wrap} aria-label={`${label} ${remaining.toFixed(1)} seconds`}>
+    // A live countdown is an ARIA `timer` (the APG role for a ticking numerical
+    // counter); the explicit role also makes the accessible name valid here —
+    // `aria-label` is prohibited on a generic <span>.
+    <span role="timer" className={styles.wrap} aria-label={`${label} ${remaining.toFixed(1)} seconds`}>
       <svg width={size} height={size} className={styles.svg}>
         <circle
           cx={size / 2}

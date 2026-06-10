@@ -15,10 +15,12 @@ describe("RFQ ticket state machine", () => {
   it("idle -> quoted (pending, tradable) -> executed (confirmed)", () => {
     let s = IDLE_RFQ;
     expect(s.phase).toBe("idle");
-    s = rfqQuoted({ bid: 0.039, offer: 0.041, quoteId: 7n, validUntilNanos: 123n });
+    s = rfqQuoted({ bid: 0.039, offer: 0.041, quoteId: 7n, idempotencyKey: "tk-7", validUntilNanos: 123n });
     expect(s.phase).toBe("pending");
     expect(s.tradable).toBe(true);
     expect(s.status).toContain("id 7");
+    // The minted key is carried to the accept (the server's request-matched contract).
+    expect(s.idempotencyKey).toBe("tk-7");
     s = rfqExecuted(s, "BUY", 0.041);
     expect(s.phase).toBe("confirmed");
     expect(s.tradable).toBe(false);
@@ -26,12 +28,15 @@ describe("RFQ ticket state machine", () => {
   });
 
   it("a degenerate two-way is not tradable", () => {
-    const s = rfqQuoted({ bid: 0, offer: 0, quoteId: 1n, validUntilNanos: 0n });
+    const s = rfqQuoted({ bid: 0, offer: 0, quoteId: 1n, idempotencyKey: "tk-1", validUntilNanos: 0n });
     expect(s.tradable).toBe(false);
   });
 
   it("quoted -> rejected on a stale/forged token", () => {
-    const s = rfqRejected(rfqQuoted({ bid: 0.039, offer: 0.041, quoteId: 9n, validUntilNanos: 1n }), "ALREADY_CONSUMED");
+    const s = rfqRejected(
+      rfqQuoted({ bid: 0.039, offer: 0.041, quoteId: 9n, idempotencyKey: "tk-9", validUntilNanos: 1n }),
+      "ALREADY_CONSUMED",
+    );
     expect(s.phase).toBe("rejected");
     expect(s.tradable).toBe(false);
     expect(s.status).toContain("ALREADY_CONSUMED");

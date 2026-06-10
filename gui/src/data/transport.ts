@@ -10,6 +10,7 @@
  * The shapes here mirror the contract's RPCs (`celnet.proto` services):
  *   - PricingService.Price            → price()
  *   - QuoteService.RequestQuote/...   → requestQuote/acceptQuote/rejectQuote()
+ *   - QuoteService.RequestMultiDealerQuote → requestMultiDealerQuote()
  *   - StreamService.StreamSession     → openStreamSession() (multiplexed)
  *   - SurfaceService.GetSmile/Mark/Scenario → getSmile/markSurface/scenario()
  */
@@ -36,6 +37,7 @@ import type {
   MarketObservable,
   MarketSeriesPoint,
   MarketSeriesSnapshot,
+  MultiDealerQuote,
   Quote,
   RiskBucketRequest,
   ScenarioResult,
@@ -130,8 +132,31 @@ export interface CelnetTransport {
     idempotencyKey: string,
   ): Promise<Quote>;
 
-  /** QuoteService.AcceptQuote (books an execution on the chosen side). */
-  acceptQuote(quoteId: bigint, side: "BUY" | "SELL", idempotencyKey: string): Promise<Execution>;
+  /**
+   * QuoteService.RequestMultiDealerQuote — fan the RFQ across the edge's LP
+   * panel and return the ranked lines (one row per responding dealer, the touch
+   * winners named). Booking a row goes through `acceptQuote` with the row's
+   * `lpId`. Honest boundary: in-repo dealers are the native maker plus
+   * deterministic synthetic demo LPs; live bank LP connectivity is
+   * environment-provisioned, never claimed in-repo.
+   */
+  requestMultiDealerQuote(
+    instrument: Instrument,
+    conventions: Conventions,
+    idempotencyKey: string,
+  ): Promise<MultiDealerQuote>;
+
+  /**
+   * QuoteService.AcceptQuote (books an execution on the chosen side). An absent/
+   * empty `lpId` books the single-dealer quote (byte-identical to the pre-panel
+   * wire frame); a panel row's `lpId` books exactly that pinned dealer line.
+   */
+  acceptQuote(
+    quoteId: bigint,
+    side: "BUY" | "SELL",
+    idempotencyKey: string,
+    lpId?: string,
+  ): Promise<Execution>;
 
   /** QuoteService.RejectQuote (declines to trade). */
   rejectQuote(quoteId: bigint, reason: string): Promise<void>;

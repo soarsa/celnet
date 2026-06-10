@@ -23,7 +23,7 @@ use celnet_client::{
     Client, Conventions, InstrumentSpec, MarketContext, Quantity, Side, StrikeSpec,
 };
 use celnet_engine::testing::make_state;
-use celnet_server::{Clock, CoreLink, Edge, SpreadModel};
+use celnet_server::{Clock, CoreLink, Edge, LpPanelConfig, SpreadModel};
 use celnet_types::{CcyPair, OptionType, Tenor};
 
 /// The hard wall-clock ceiling for any single client integration test. A
@@ -76,6 +76,35 @@ pub async fn start_ready_edge(clock: Clock) -> (Edge, SocketAddr) {
     edge.gate().mark_ready();
     let addr = edge.grpc_addr();
     (edge, addr)
+}
+
+/// Start a ready edge with an explicit clock AND a deterministic synthetic
+/// LP-panel breadth (native maker + `synthetic_lps` labeled demo/test dealers),
+/// returning the edge and a connected typed [`Client`]. Uses the explicit-panel
+/// boot path ([`Edge::start_on_with_panel`]) so the multi-dealer tests never
+/// mutate process-global env, matching the server's own panel-test harness.
+pub async fn start_panel_edge_and_client(clock: Clock, synthetic_lps: u32) -> (Edge, Client) {
+    let initial = make_state(FIXTURE_SPOT, eurusd_conv());
+    let link = CoreLink::start(initial, None);
+    let grpc: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let ws: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let edge = Edge::start_on_with_panel(
+        grpc,
+        ws,
+        Arc::clone(&link),
+        SpreadModel::default(),
+        clock,
+        LpPanelConfig { synthetic_lps },
+    )
+    .await
+    .expect("edge binds on an ephemeral port");
+    edge.gate().mark_ready();
+    let addr = edge.grpc_addr();
+    let client = tokio::time::timeout(STEP_DEADLINE, Client::connect(format!("http://{addr}")))
+        .await
+        .expect("client connects in time")
+        .expect("client connects");
+    (edge, client)
 }
 
 /// The wire/typed conventions used across the tests — EURUSD spot-unadjusted /

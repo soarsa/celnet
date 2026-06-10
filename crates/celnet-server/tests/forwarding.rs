@@ -35,7 +35,7 @@ use celnet_proto::{
 };
 use celnet_risk_fleet::FleetTopology;
 use celnet_router::{PartitionKey, PartitionMap, Replica, ReplicaId, ReplicaSet};
-use celnet_server::{Clock, CoreLink, Edge, SpreadModel};
+use celnet_server::{Clock, CoreLink, Edge, LpPanelConfig, SpreadModel};
 use celnet_types::{Ccy, CcyPair};
 use tonic::Request;
 use tonic::transport::Channel;
@@ -140,6 +140,7 @@ async fn front_edge(backends: &[Backend]) -> Edge {
         SpreadModel::default(),
         Clock::system(),
         FleetTopology::Distributed { endpoints },
+        LpPanelConfig::default(),
     )
     .await
     .expect("distributed front edge binds + dials backends");

@@ -962,6 +962,53 @@ export interface Quote {
   priceStdError?: number;
 }
 
+/**
+ * One liquidity provider's line in a multi-dealer (RFQ-to-many) panel (proto
+ * `DealerQuote`). The aggregate `MultiDealerQuote.quoteId` keys the request; this
+ * line's `lpId` disambiguates which dealer's price a `QuoteAccept` lifts/hits.
+ * The in-repo demo panel is the native maker plus deterministic synthetic
+ * dealers (`SYNTH-LP-k`) quoting around the same edge mid — live LP connectivity
+ * is environment-provided, never claimed by these types.
+ */
+export interface DealerQuote {
+  /** The liquidity provider's stable identifier (the dealer/LP key). */
+  lpId: string;
+  /** This dealer's two-way premium in the request's premium-style units. */
+  price: TwoWayPrice;
+  /**
+   * The full Greek set — present ONLY on the native maker's line (proto
+   * `optional`; an LP discloses a price, not its greeks). Absent ⇒ `undefined`,
+   * so a panel row never fabricates a zero Greek strip.
+   */
+  greeks?: Greeks;
+  /** The strike this dealer resolved (if the request used a delta / solve). */
+  resolvedStrike: number;
+  /** This dealer's last-look deadline, nanoseconds since the Unix epoch (UTC). */
+  validUntilNanos: bigint;
+  /** MC standard error of this dealer's premium (presence-tracked; native-only). */
+  priceStdError?: number;
+}
+
+/**
+ * The multi-dealer (RFQ-to-many) panel response (proto `MultiDealerQuote`): the
+ * competing dealer lines for one request, PRE-RANKED by the server's aggregator
+ * (`dealers` is ordered best-first; a client never re-sorts). `bestBidLpId` /
+ * `bestOfferLpId` name the touch dealers (empty ⇒ no dealer quoted that side).
+ * A `QuoteAccept` echoes the aggregate `quoteId` with the chosen line's `lpId`.
+ */
+export interface MultiDealerQuote {
+  quoteId: bigint;
+  idempotencyKey: string;
+  /** The competing dealer lines in the server's ranking order (best-first). */
+  dealers: DealerQuote[];
+  bestBidLpId: string;
+  bestOfferLpId: string;
+  conventions: Conventions;
+  epochNanos: bigint;
+  correlationId?: bigint;
+  surfaceVersion?: bigint;
+}
+
 export interface Execution {
   executionId: bigint;
   quoteId: bigint;

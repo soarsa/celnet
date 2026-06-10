@@ -6,10 +6,10 @@
 //! core functions in [`price`], [`surface`], [`exotic`], [`convention`], and
 //! [`risk`]. The local-compute cores route every number through the underlying
 //! Celnet crates, and the networked [`risk`] (`risk aggregate`/`drill`/`positions`/
-//! `limits`) and `stream` commands route every number through the typed
-//! `celnet-client` SDK against a running edge — the SAME contract the GUI and Excel
-//! add-in consume — so the CLI adds no pricing/aggregation of its own (four-client
-//! parity).
+//! `limits`), `stream`, and [`rfq`] (multi-dealer panel + pinned-row accept)
+//! commands route every number through the typed `celnet-client` SDK against a
+//! running edge — the SAME contract the GUI and Excel add-in consume — so the CLI
+//! adds no pricing/aggregation of its own (four-client parity).
 
 #![forbid(unsafe_code)]
 
@@ -20,6 +20,7 @@ mod convention;
 mod exotic;
 mod linear;
 mod price;
+mod rfq;
 mod risk;
 mod surface;
 mod tenor;

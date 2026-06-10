@@ -1,5 +1,6 @@
-//! The RFQ lifecycle service: `RequestQuote` → `Quote`, `AcceptQuote` →
-//! `Execution`, `RejectQuote` → `RejectAck`.
+//! The RFQ lifecycle service: `RequestQuote` → `Quote` (and
+//! `RequestMultiDealerQuote` → `MultiDealerQuote`, the ranked LP panel),
+//! `AcceptQuote` → `Execution`, `RejectQuote` → `RejectAck`.
 //!
 //! This is the request-for-quote half of the trader workflow. A client sends a
 //! [`celnet_proto::QuoteRequest`] carrying an [`celnet_proto::Instrument`], a
@@ -42,6 +43,17 @@
 //! secret — so the id space is sparse and unenumerable: only a party that received
 //! the quote (and thus holds its id) can decline it. A re-reject is idempotent.
 //!
+//! # Multi-dealer panel (RFQ-to-many)
+//!
+//! `RequestMultiDealerQuote` runs the same priced quote through the `celnet-rfq`
+//! `MultiDealerEngine` over the edge's LP panel — the native maker auto-pricer
+//! plus the configured deterministic synthetic demo/test dealers
+//! ([`LpPanelConfig`]; live LP connectivity is ENV, never claimed in-repo) — and
+//! **pins** the ranked rows onto the stored quote record. An `AcceptQuote`
+//! carrying a row's `lp_id` then books exactly that pinned line (its price,
+//! validity, and LP attribution), side- and line-matched on retry; an empty
+//! `lp_id` stays the single-dealer path byte-identical.
+//!
 //! # Market context
 //!
 //! An RFQ does not carry a `MarketContext` on the wire (the request is a trader
@@ -63,8 +75,8 @@ use crate::tick::TickSource;
 
 use celnet_proto::quote_service_server::QuoteService;
 use celnet_proto::{
-    DealerQuote, Execution, MarketContext, MultiDealerQuote, Quote, QuoteAccept, QuoteReject,
-    QuoteRequest, RejectAck, Side, TwoWayPrice,
+    AttributionRecord, BookId, DealerQuote, Execution, MarketContext, MultiDealerQuote, Owner,
+    Quote, QuoteAccept, QuoteReject, QuoteRequest, RejectAck, Side, TwoWayPrice, owner,
 };
 use tokio::sync::Mutex;
 use tonic::{Request, Response, Status};
@@ -92,6 +104,96 @@ const QUOTE_VALIDITY_NANOS: i64 = 5_000_000_000;
 /// the external FIX LP legs (when an ENV-configured panel is present).
 const RFQ_PANEL_DEADLINE: std::time::Duration = std::time::Duration::from_millis(250);
 
+/// The deterministic synthetic LP panel an edge fans a multi-dealer RFQ across,
+/// in addition to the always-present native maker auto-pricer.
+///
+/// **Honest boundary:** live LP connectivity (real bank sessions over WAN FIX)
+/// is ENV — designed and seamed in-repo, validated at deploy, never claimed
+/// in-repo. The in-repo panel is the native maker plus `synthetic_lps`
+/// **deterministic synthetic** dealers (`SYNTH-LP-1` … `SYNTH-LP-N`), each
+/// quoting around the SAME edge-priced mid with fixed per-dealer spread/skew
+/// offsets ([`synthetic_lp_two_way`]) — a labeled demo/test panel that exercises
+/// the full aggregation → ranking → pinning → booking path with real ranked
+/// quotes, never faked fills.
+///
+/// `synthetic_lps == 0` (the default) keeps the panel native-only, so every
+/// single-dealer path is byte-identical to the panel-less edge.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LpPanelConfig {
+    /// How many deterministic synthetic demo/test dealers join the panel beside
+    /// the native maker.
+    pub synthetic_lps: u32,
+}
+
+impl LpPanelConfig {
+    /// The deploy-time env knob naming the synthetic demo/test panel breadth.
+    pub const ENV_VAR: &str = "CELNET_DEMO_LPS";
+
+    /// Read the panel breadth from [`Self::ENV_VAR`]; absent or unparseable ⇒
+    /// `0` (native-only — the byte-identical single-dealer edge).
+    #[must_use]
+    pub fn from_env() -> Self {
+        Self::from_env_or(0)
+    }
+
+    /// Read the panel breadth from [`Self::ENV_VAR`] with an explicit default for
+    /// when the variable is absent/unparseable (the demo edge boots a 3-LP panel
+    /// by default so the live e2e suites exercise the multi-dealer path).
+    #[must_use]
+    pub fn from_env_or(default_lps: u32) -> Self {
+        let synthetic_lps = std::env::var(Self::ENV_VAR)
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(default_lps);
+        Self { synthetic_lps }
+    }
+}
+
+/// The stable audit `lp_id` of synthetic demo/test dealer `k` (1-based).
+fn synthetic_lp_id(k: u32) -> String {
+    format!("SYNTH-LP-{k}")
+}
+
+/// The deterministic `(mid, half_spread)` synthetic demo/test dealer `k`
+/// (1-based) quotes around the SAME edge-priced maker mid.
+///
+/// Per-dealer offsets are fixed by construction so the ranked panel is
+/// reproducible and independently checkable:
+/// * **spread** — dealer `k` quotes `5%·k` wider than the maker half-spread
+///   (`half_k = half·(1 + 0.05·k)`): a synthetic dealer never charges less risk
+///   compensation than the engine's own spread model;
+/// * **skew** — dealer `k` shades its mid by a quarter maker half-spread, odd
+///   dealers up (`+0.25·half` ⇒ a stronger bid), even dealers down
+///   (`−0.25·half` ⇒ a cheaper offer). For any panel of ≥ 2 the engine's
+///   best-bid/best-offer law therefore selects `SYNTH-LP-1` (bid
+///   `mid − 0.80·half`) and `SYNTH-LP-2` (offer `mid + 0.85·half`)
+///   deterministically, and the panel touch is never crossed.
+fn synthetic_lp_two_way(k: u32, mid: f64, half_spread: f64) -> (f64, f64) {
+    let widen = 1.0 + 0.05 * f64::from(k);
+    let shade = 0.25 * half_spread;
+    let skew = if k % 2 == 1 { shade } else { -shade };
+    (mid + skew, half_spread * widen)
+}
+
+/// The attribution stamped on a synthetic dealer's panel line: the synthetic LP's
+/// own auto-pricer seat quoted it, and the client's requesting seat (when supplied
+/// on the originating request) holds a booking of it — mirroring how the maker
+/// line is attributed by [`super::attribution::resolve`]. A booked dealer line's
+/// execution therefore carries the LP identity, never an anonymous fill.
+fn synthetic_lp_attribution(lp_id: &str, held_by: Option<BookId>) -> AttributionRecord {
+    AttributionRecord {
+        quoted_by: Some(BookId {
+            book: lp_id.to_owned(),
+            owner: Some(Owner {
+                seat: Some(owner::Seat::AutoPricer(lp_id.to_owned())),
+            }),
+        }),
+        held_by,
+        won: None,
+        lp_count: None,
+    }
+}
+
 /// A booked, immutable quote record kept for idempotent re-request and accept.
 #[derive(Debug, Clone)]
 struct QuoteRecord {
@@ -104,6 +206,16 @@ struct QuoteRecord {
     /// Whether the quote has been declined (rejected). A rejected quote can no
     /// longer be accepted; a re-reject is idempotent.
     rejected: bool,
+    /// The multi-dealer panel rows pinned for this `quote_id` (empty until a
+    /// `RequestMultiDealerQuote` ran a panel over the quote). An `AcceptQuote`
+    /// naming a non-native `lp_id` books against the matching pinned row — the
+    /// exact price/validity/attribution the client was shown — never a re-price.
+    dealers: Vec<DealerQuote>,
+    /// The dealer line the booking traded on: the normalized `lp_id` (an empty
+    /// accept normalizes to the native maker). Meaningful only once `execution`
+    /// is set; polices accept-retries (a retry naming a different line is a
+    /// different trade intent, not a retry).
+    booked_lp_id: String,
 }
 
 /// The in-memory RFQ store: idempotency-key → quote_id, and quote_id → record.
@@ -149,10 +261,15 @@ pub struct QuoteEdge {
     /// backend's secret). Bounded by the live-quote rate over a session, like the
     /// backend's own `QuoteStore`.
     quote_owners: Mutex<HashMap<u64, ReplicaId>>,
+    /// The synthetic demo/test LP panel joined to the native maker on a
+    /// `RequestMultiDealerQuote` (see [`LpPanelConfig`]; `0` ⇒ native-only,
+    /// byte-identical single-dealer behaviour).
+    panel: LpPanelConfig,
 }
 
 impl QuoteEdge {
-    /// Construct the RFQ service in the in-process topology (quotes locally).
+    /// Construct the RFQ service in the in-process topology (quotes locally,
+    /// native-only multi-dealer panel).
     #[must_use]
     pub fn new(
         link: Arc<CoreLink>,
@@ -161,14 +278,23 @@ impl QuoteEdge {
         clock: Clock,
         surface_book: Arc<SurfaceBook>,
     ) -> Self {
-        Self::with_fleet(link, gate, spread, clock, surface_book, None)
+        Self::with_fleet(
+            link,
+            gate,
+            spread,
+            clock,
+            surface_book,
+            None,
+            LpPanelConfig::default(),
+        )
     }
 
-    /// Construct the RFQ service with an optional connected backend [`Fleet`]:
-    /// `Some(fleet)` ⇒ distributed (forward `RequestQuote` by the instrument's pair,
-    /// and route the matching `AcceptQuote` / `RejectQuote` back to the issuing
-    /// backend); `None` ⇒ in-process (quote locally), exactly [`QuoteEdge::new`]'s
-    /// prior behaviour.
+    /// Construct the RFQ service with an optional connected backend [`Fleet`]
+    /// (`Some(fleet)` ⇒ distributed: forward `RequestQuote` by the instrument's
+    /// pair, and route the matching `AcceptQuote` / `RejectQuote` back to the
+    /// issuing backend; `None` ⇒ in-process, exactly [`QuoteEdge::new`]'s prior
+    /// behaviour) and an explicit synthetic LP-panel breadth for the
+    /// multi-dealer path (resolved once at edge boot — env or caller-chosen).
     #[must_use]
     pub fn with_fleet(
         link: Arc<CoreLink>,
@@ -177,6 +303,7 @@ impl QuoteEdge {
         clock: Clock,
         surface_book: Arc<SurfaceBook>,
         fleet: Option<Arc<Fleet>>,
+        panel: LpPanelConfig,
     ) -> Self {
         // Mint a process-unique unguessable secret from the OS-seeded hasher. This
         // is a control-plane identity concern, *not* a pricing path, so OS entropy
@@ -195,6 +322,7 @@ impl QuoteEdge {
             surface_book,
             fleet,
             quote_owners: Mutex::new(HashMap::new()),
+            panel,
         }
     }
 
@@ -401,6 +529,8 @@ impl QuoteService for QuoteEdge {
                     instrument,
                     execution: None,
                     rejected: false,
+                    dealers: Vec::new(),
+                    booked_lp_id: String::new(),
                 },
             );
             if !req.idempotency_key.is_empty() {
@@ -417,14 +547,16 @@ impl QuoteService for QuoteEdge {
     ) -> Result<Response<MultiDealerQuote>, Status> {
         // Multi-dealer (RFQ-to-many) aggregation through the real `celnet-rfq`
         // `MultiDealerEngine`: this edge's auto-pricer is the native in-process LP
-        // (so a market always exists), fanned concurrently with any configured
-        // external FIX LP panel; the two-sided responses are ranked (best-bid /
-        // best-offer, deterministic tie-break, timeout/last-look) into the audited
-        // panel. The honest boundary holds: live WAN LP endpoints are ENV-selected
-        // and absent in-process, so the panel here is the native dealer — a genuine
-        // one-LP ranked panel, never a placeholder. The aggregate `quote_id` keys
-        // the stored quote so a later `AcceptQuote` carrying the winning `lp_id`
-        // books that dealer's line.
+        // (so a market always exists), fanned concurrently with the configured
+        // deterministic synthetic dealer panel ([`LpPanelConfig`]); the two-sided
+        // responses are ranked (best-bid / best-offer, deterministic tie-break,
+        // timeout/last-look) into the audited panel, and the ranked rows are
+        // **pinned** onto the stored quote record so a later `AcceptQuote`
+        // carrying any row's `lp_id` books exactly that dealer's line. The honest
+        // boundary holds: live WAN LP endpoints are ENV-selected and absent
+        // in-process — the in-repo panel is the native dealer plus labeled
+        // synthetic demo/test dealers quoting around the same edge mid, real
+        // ranked quotes, never faked fills or placeholder rows.
         let req = request.into_inner();
         let correlation_id = req.correlation_id;
         // Reuse the full single-dealer pricing/idempotency/pinning path verbatim, so
@@ -447,7 +579,7 @@ impl QuoteService for QuoteEdge {
         let valid_for =
             u64::try_from((quote.valid_until_nanos - quote.epoch_nanos).max(0)).unwrap_or(0);
 
-        let panel: Vec<Box<dyn celnet_rfq::QuoteSource>> =
+        let mut sources: Vec<Box<dyn celnet_rfq::QuoteSource>> =
             vec![Box::new(celnet_rfq::InternalPricerSource::new(
                 lp_id.clone(),
                 mid,
@@ -455,7 +587,26 @@ impl QuoteService for QuoteEdge {
                 epoch,
                 valid_for,
             ))];
-        let engine = celnet_rfq::MultiDealerEngine::new(panel);
+        // The synthetic demo/test dealers join only on a serving (in-process)
+        // edge: each is a deterministic in-process quoter over the SAME edge mid
+        // with its fixed per-dealer spread/skew offsets, stamped with the quote's
+        // epoch and last-look window. In a distributed topology the accept routes
+        // back to the issuing backend (which owns the booking store), so a
+        // forwarding edge keeps the panel native-only — the backend's own line —
+        // exactly as before.
+        if !matches!(serve_mode(self.fleet.as_ref()), Serve::Forward(_)) {
+            for k in 1..=self.panel.synthetic_lps {
+                let (synth_mid, synth_half) = synthetic_lp_two_way(k, mid, half_spread);
+                sources.push(Box::new(celnet_rfq::InternalPricerSource::new(
+                    synthetic_lp_id(k),
+                    synth_mid,
+                    synth_half,
+                    epoch,
+                    valid_for,
+                )));
+            }
+        }
+        let engine = celnet_rfq::MultiDealerEngine::new(sources);
         // The RFQ descriptor is the aggregation key (audit correlation); the price
         // is the source's job (already injected via the native source's mid).
         let rfq = celnet_rfq::RfqRequest::new(
@@ -471,10 +622,13 @@ impl QuoteService for QuoteEdge {
             .await
             .map_err(|e| Status::internal(e.to_string()))?;
 
-        // Project the ranked panel rows onto wire `DealerQuote`s. The native row
-        // carries the edge-priced greeks / resolved strike / MC std-error (the
-        // pricing belongs to the maker; the engine owns only the aggregation). An
-        // external FIX LP row would carry only its quoted price (greeks absent).
+        // Project the ranked panel rows onto wire `DealerQuote`s. Every row quotes
+        // the SAME resolved line (the maker-priced strike); the native row carries
+        // the edge-priced greeks / MC std-error (the pricing belongs to the maker;
+        // the engine owns only the aggregation), while a synthetic dealer row
+        // carries only its quoted price and its own auto-pricer attribution (an LP
+        // discloses a price, not its greeks).
+        let held_by = quote.attribution.as_ref().and_then(|a| a.held_by.clone());
         let dealers: Vec<DealerQuote> = ranked
             .rows
             .iter()
@@ -484,16 +638,12 @@ impl QuoteService for QuoteEdge {
                     lp_id: row.lp_id.clone(),
                     price: Some(row.price.to_wire()),
                     greeks: if is_native { quote.greeks } else { None },
-                    resolved_strike: if is_native {
-                        quote.resolved_strike
-                    } else {
-                        0.0
-                    },
+                    resolved_strike: quote.resolved_strike,
                     valid_until_nanos: i64::try_from(row.valid_until_nanos).unwrap_or(i64::MAX),
                     attribution: if is_native {
                         quote.attribution.clone()
                     } else {
-                        None
+                        Some(synthetic_lp_attribution(&row.lp_id, held_by.clone()))
                     },
                     price_std_error: if is_native {
                         quote.price_std_error
@@ -503,6 +653,19 @@ impl QuoteService for QuoteEdge {
                 }
             })
             .collect();
+
+        // Pin the issued panel rows onto the stored quote record so an accept
+        // naming any `lp_id` books exactly the line the client was shown. The
+        // sources are deterministic over the stored quote, so an idempotent
+        // re-request re-pins identical rows. (A forwarding edge stores no local
+        // record — the issuing backend owns the booking — so this is a no-op
+        // there, matching the accept routing.)
+        {
+            let mut store = self.store.lock().await;
+            if let Some(rec) = store.by_id.get_mut(&quote.quote_id) {
+                rec.dealers = dealers.clone();
+            }
+        }
 
         let multi = MultiDealerQuote {
             quote_id: quote.quote_id,
@@ -567,11 +730,21 @@ impl QuoteService for QuoteEdge {
             return Err(accept_key_mismatch(acc.quote_id));
         }
 
+        // The dealer line this accept trades: an empty `lp_id` (or the native
+        // maker's own id) is the single-dealer quote — byte-identical to a
+        // single-dealer accept — so it normalizes to the maker line.
+        let requested_line: &str = if acc.lp_id.is_empty() {
+            super::attribution::MAKER_AUTO_PRICER_ID
+        } else {
+            &acc.lp_id
+        };
+
         // Idempotent accept: a retry returns the already-booked execution — but
-        // only when the retry's traded side matches the booked side. A second
-        // accept that flips the side is a different trade intent, not a retry, so
-        // it is refused (`failed_precondition`) rather than handed a booking it did
-        // not ask for. The key already matched above.
+        // only when the retry's traded side AND dealer line match the booked
+        // ones. A second accept that flips the side, or names a different dealer
+        // line, is a different trade intent, not a retry, so it is refused
+        // (`failed_precondition`) rather than handed a booking it did not ask
+        // for. The key already matched above.
         if let Some(exec) = &rec.execution {
             let retry_side = Side::try_from(acc.side).unwrap_or(Side::Buy);
             let booked_side = Side::try_from(exec.side).unwrap_or(Side::Buy);
@@ -587,6 +760,13 @@ impl QuoteService for QuoteEdge {
                     acc.quote_id
                 )));
             }
+            if requested_line != rec.booked_lp_id {
+                return Err(Status::failed_precondition(format!(
+                    "quote {} already booked on dealer line {:?}; \
+                     accept-retry requested line {requested_line:?}",
+                    acc.quote_id, rec.booked_lp_id
+                )));
+            }
             return Ok(Response::new(exec.clone()));
         }
 
@@ -598,33 +778,54 @@ impl QuoteService for QuoteEdge {
             )));
         }
 
-        // Multi-dealer panel-winner selection: in an RFQ-to-many flow the
+        // Multi-dealer panel-line selection: in an RFQ-to-many flow the
         // `quote_id` keys the aggregate request and `lp_id` disambiguates which
-        // dealer's line is being lifted/hit. An empty `lp_id` selects the
-        // single-dealer quote (byte-identical to a single-dealer accept). A
-        // non-empty `lp_id` must name a bookable dealer on this edge — the native
-        // maker auto-pricer (the in-process panel LP); a foreign LP's line is not
-        // bookable here (its execution belongs to that LP's venue), so it is
-        // refused rather than silently booked against the native price.
-        if !acc.lp_id.is_empty() && acc.lp_id != super::attribution::MAKER_AUTO_PRICER_ID {
-            return Err(Status::failed_precondition(format!(
-                "quote {} has no bookable dealer line for lp_id {:?} on this edge",
-                acc.quote_id, acc.lp_id
-            )));
-        }
+        // dealer's line is being lifted/hit. The native maker line books the
+        // stored single-dealer quote (byte-identical to a single-dealer accept);
+        // any other `lp_id` must name a row of the panel **pinned** for this
+        // `quote_id` when it was issued — the accept then books exactly the
+        // price/validity/attribution the client was shown, never a re-price. A
+        // line that was never on this quote's panel is not bookable on this edge,
+        // so it is refused rather than silently booked against the native price.
+        let panel_row: Option<&DealerQuote> =
+            if requested_line == super::attribution::MAKER_AUTO_PRICER_ID {
+                None
+            } else {
+                Some(
+                    rec.dealers
+                        .iter()
+                        .find(|d| d.lp_id == requested_line)
+                        .ok_or_else(|| {
+                            Status::failed_precondition(format!(
+                                "quote {} has no bookable dealer line for lp_id {:?} on this edge",
+                                acc.quote_id, acc.lp_id
+                            ))
+                        })?,
+                )
+            };
 
-        // Last-look: an accept after the validity deadline is rejected as expired.
+        // Last-look: an accept after the traded line's validity deadline is
+        // rejected as expired — the engine law (`valid_until_nanos` lapsed ⇒ the
+        // line is no longer liftable), applied to the exact line being booked.
         let now = self.clock.now_nanos();
-        if now > rec.quote.valid_until_nanos {
+        let line_valid_until =
+            panel_row.map_or(rec.quote.valid_until_nanos, |row| row.valid_until_nanos);
+        if now > line_valid_until {
             return Err(Status::deadline_exceeded(format!(
-                "quote {} expired at {} (now {now})",
-                acc.quote_id, rec.quote.valid_until_nanos
+                "quote {} expired at {line_valid_until} (now {now})",
+                acc.quote_id
             )));
         }
 
-        // Resolve the traded side and the lifted/hit premium of the two-way.
+        // Resolve the traded side and the lifted/hit premium of the traded line's
+        // two-way: the pinned panel row's price for a dealer line, the stored
+        // single-dealer quote's otherwise.
         let side = Side::try_from(acc.side).unwrap_or(Side::Buy);
-        let price = rec.quote.price.as_ref().copied().unwrap_or(TwoWayPrice {
+        let line_price = match panel_row {
+            Some(row) => row.price,
+            None => rec.quote.price,
+        };
+        let price = line_price.unwrap_or(TwoWayPrice {
             bid: 0.0,
             offer: 0.0,
         });
@@ -642,13 +843,21 @@ impl QuoteService for QuoteEdge {
             traded_premium,
             instrument: Some(rec.instrument.clone()),
             epoch_nanos: now,
-            // Carry the quote's attribution chain onto the booking.
-            attribution: rec.quote.attribution.clone(),
+            // Carry the traded line's attribution chain onto the booking: the
+            // pinned dealer row's (so a dealer-line fill is attributed to that
+            // LP), or the single-dealer quote's for the native line.
+            attribution: match panel_row {
+                Some(row) => row.attribution.clone(),
+                None => rec.quote.attribution.clone(),
+            },
         };
 
-        // Book it back into the record so a retry is idempotent.
+        // Book it back into the record (with the traded line) so a retry is
+        // idempotent and line-matched.
+        let booked_line = requested_line.to_owned();
         if let Some(stored) = store.by_id.get_mut(&acc.quote_id) {
             stored.execution = Some(execution.clone());
+            stored.booked_lp_id = booked_line;
         }
 
         Ok(Response::new(execution))

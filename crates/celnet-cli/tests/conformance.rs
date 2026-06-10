@@ -13,9 +13,10 @@
 //! (digital / one-touch / single-barrier / var-swap / vol-swap / asian /
 //! forward-start / quanto / cliquet / tarf / accumulator / lookback / american),
 //! `basket`, and the linear book `forward` / `swap` / `ndf`. Networked subcommands
-//! (`risk`, `stream`) are out of scope for the vector corpus (they are gated by the
-//! four-client parity test). Every family covered here is asserted reachable
-//! through the CLI.
+//! are out of scope for the vector corpus: `risk` / `stream` are gated by the
+//! four-client parity test, and the `rfq` multi-dealer panel is gated below
+//! against an in-process multi-dealer edge (CLI ladder == SDK panel, bit for
+//! bit). Every family covered here is asserted reachable through the CLI.
 
 use std::process::Command;
 
@@ -403,7 +404,7 @@ use celnet_client::{
     Ccy, Client, Conventions, InstrumentSpec, MarketContext, Quantity, Side, StrikeSpec,
 };
 use celnet_engine::testing::make_state;
-use celnet_server::{Clock, CoreLink, Edge, SpreadModel};
+use celnet_server::{Clock, CoreLink, Edge, LpPanelConfig, SpreadModel};
 use celnet_types::{CcyPair, OptionType, Tenor, VanillaInputs};
 
 /// Boot a ready in-process edge on an ephemeral port over the EURUSD fixture.
@@ -543,6 +544,249 @@ async fn cli_cross_asset_vanilla_equals_server_equals_oracle() {
             "{asset} CLI price {cli} vs server price {server}"
         );
     }
+
+    drop(client);
+    drop(edge);
+}
+
+// ---- Multi-dealer panel: CLI ladder == SDK panel, bit-identical -------------
+//
+// The `rfq` subcommand surfaces the server's ranked multi-dealer panel verbatim
+// through the typed SDK, printing each price with shortest-round-trip precision.
+// This gate boots ONE in-process edge with a deterministic synthetic LP panel
+// (native maker + 3 labeled demo/test dealers — live LP connectivity is ENV,
+// never claimed here), takes the SDK panel as the reference, then drives the real
+// `celnet` binary against the same edge and asserts:
+//
+//  1. row-per-LP parity — every SDK dealer row prints exactly once;
+//  2. the parsed bid/offer/strike columns equal the SDK panel's f64s **to the
+//     bit** (the maker prices a pure function of the frozen engine state, so a
+//     second RFQ over the same edge reproduces the rows bit-for-bit — the SDK's
+//     own multi-dealer suite gates that same property between two SDK requests);
+//  3. the `native` / `BEST_BID` / `BEST_OFFER` markers sit exactly where the SDK
+//     panel puts them (greeks-bearing maker row / ranked winners);
+//  4. every row prints a live last-look countdown at issue time; and
+//  5. `--accept <lp_id>` books the pinned row: the printed `traded_premium`
+//     equals that row's printed offer — and the SDK row's offer — bit-for-bit
+//     (never a re-price), attributed to the winning LP.
+
+/// One parsed `dealer` row of the CLI `rfq` ladder.
+#[derive(Debug)]
+struct CliPanelRow {
+    lp_id: String,
+    bid: f64,
+    offer: f64,
+    last_look: String,
+    native: bool,
+    best_bid: bool,
+    best_offer: bool,
+}
+
+/// Parse the `dealer` rows out of the CLI `rfq` report
+/// (`  dealer <lp_id>  bid <f64>  offer <f64>  last_look <window>  [markers…]`).
+fn parse_panel_rows(stdout: &str) -> Vec<CliPanelRow> {
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let rest = line.trim_start().strip_prefix("dealer ")?;
+            let tokens: Vec<&str> = rest.split_whitespace().collect();
+            let after = |label: &str| -> Option<&str> {
+                let at = tokens.iter().position(|t| *t == label)?;
+                tokens.get(at + 1).copied()
+            };
+            Some(CliPanelRow {
+                lp_id: tokens.first()?.to_string(),
+                bid: after("bid")?.parse().ok()?,
+                offer: after("offer")?.parse().ok()?,
+                last_look: after("last_look")?.to_owned(),
+                native: tokens.contains(&"native"),
+                best_bid: tokens.contains(&"BEST_BID"),
+                best_offer: tokens.contains(&"BEST_OFFER"),
+            })
+        })
+        .collect()
+}
+
+/// Boot a ready in-process edge on ephemeral ports with a deterministic
+/// synthetic LP panel (native maker + `synthetic_lps` labeled demo/test dealers)
+/// over the EURUSD fixture, using the explicit-panel boot path so no
+/// process-global env is mutated.
+async fn start_panel_edge(synthetic_lps: u32) -> (Edge, SocketAddr) {
+    let eurusd = CcyPair::parse("EURUSD").unwrap();
+    let conv = celnet_conventions::resolve(eurusd, Tenor::Years(1)).record;
+    let initial = make_state(1.10, conv);
+    let link = CoreLink::start(initial, None);
+    let grpc: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let ws: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let edge = Edge::start_on_with_panel(
+        grpc,
+        ws,
+        Arc::clone(&link),
+        SpreadModel::default(),
+        Clock::system(),
+        LpPanelConfig { synthetic_lps },
+    )
+    .await
+    .expect("edge binds on ephemeral ports");
+    edge.gate().mark_ready();
+    let addr = edge.grpc_addr();
+    (edge, addr)
+}
+
+#[tokio::test]
+async fn cli_rfq_panel_matches_the_sdk_panel_bit_for_bit() {
+    const SYNTHETIC_LPS: u32 = 3;
+    let (edge, addr) = start_panel_edge(SYNTHETIC_LPS).await;
+
+    // (1) The SDK reference panel from the edge — the same instrument the CLI
+    // requests below (1Y EURUSD vanilla call @ 1.12, 1mm EUR, two-way).
+    let client = Client::connect(format!("http://{addr}"))
+        .await
+        .expect("SDK connects to the edge");
+    let instrument = InstrumentSpec::vanilla(
+        CcyPair::parse("EURUSD").unwrap(),
+        Tenor::Years(1),
+        1.0,
+        Quantity::base(1_000_000.0),
+        Side::TwoWay,
+        OptionType::Call,
+        StrikeSpec::Absolute(1.12),
+    );
+    let md = client.request_multi_dealer_quote(instrument, Conventions::major_default());
+    let sdk = tokio::time::timeout(Duration::from_secs(30), md.request())
+        .await
+        .expect("SDK panel request in time")
+        .expect("SDK panel request succeeds");
+    assert_eq!(
+        sdk.dealers.len(),
+        1 + SYNTHETIC_LPS as usize,
+        "native maker + {SYNTHETIC_LPS} synthetic demo dealers"
+    );
+
+    // (2) The CLI ladder from the SAME edge. The edge serves on THIS test's
+    // runtime, so the blocking child-process wait runs on a blocking thread —
+    // never on the reactor it is calling back into.
+    let argv: Vec<String> = vec![
+        "rfq".into(),
+        "--endpoint".into(),
+        format!("http://{addr}"),
+        "--pair".into(),
+        "EURUSD".into(),
+        "--tenor".into(),
+        "1Y".into(),
+        "--expiry-years".into(),
+        s(1.0),
+        "--option".into(),
+        "call".into(),
+        "--strike".into(),
+        s(1.12),
+        "--notional".into(),
+        s(1_000_000.0),
+    ];
+    let cli_argv = argv.clone();
+    let stdout = tokio::task::spawn_blocking(move || run(&cli_argv))
+        .await
+        .expect("CLI run completes");
+    let rows = parse_panel_rows(&stdout);
+
+    // Row-per-LP parity, then per-row bit-identity + marker parity by lp_id.
+    assert_eq!(
+        rows.len(),
+        sdk.dealers.len(),
+        "one printed row per SDK dealer row:\n{stdout}"
+    );
+    let strike = field(&stdout, "line strike=").expect("the resolved line prints");
+    for row in &rows {
+        let sdk_row = sdk
+            .dealer(&row.lp_id)
+            .unwrap_or_else(|| panic!("CLI row `{}` is an SDK panel row", row.lp_id));
+        assert_eq!(
+            row.bid.to_bits(),
+            sdk_row.price.bid.to_bits(),
+            "{}: CLI bid {} == SDK bid {} bit-for-bit",
+            row.lp_id,
+            row.bid,
+            sdk_row.price.bid
+        );
+        assert_eq!(
+            row.offer.to_bits(),
+            sdk_row.price.offer.to_bits(),
+            "{}: CLI offer {} == SDK offer {} bit-for-bit",
+            row.lp_id,
+            row.offer,
+            sdk_row.price.offer
+        );
+        assert_eq!(
+            strike.to_bits(),
+            sdk_row.resolved_strike.to_bits(),
+            "{}: the printed line strike is the SDK resolved strike",
+            row.lp_id
+        );
+        assert_eq!(
+            row.native,
+            sdk_row.greeks.is_some(),
+            "{}: `native` marks exactly the greeks-bearing maker row",
+            row.lp_id
+        );
+        assert_eq!(
+            row.best_bid,
+            sdk.best_bid_lp_id.as_deref() == Some(row.lp_id.as_str()),
+            "{}: BEST_BID sits on the SDK panel's bid winner",
+            row.lp_id
+        );
+        assert_eq!(
+            row.best_offer,
+            sdk.best_offer_lp_id.as_deref() == Some(row.lp_id.as_str()),
+            "{}: BEST_OFFER sits on the SDK panel's offer winner",
+            row.lp_id
+        );
+        // The 5s last-look window is open at issue time on a system clock, so
+        // every row prints a live countdown, never `expired`.
+        assert!(
+            row.last_look.ends_with('s') && row.last_look != "expired",
+            "{}: a live last-look countdown prints, got `{}`",
+            row.lp_id,
+            row.last_look
+        );
+    }
+    assert_eq!(
+        rows.iter().filter(|r| r.native).count(),
+        1,
+        "exactly one native maker row"
+    );
+
+    // (3) `--accept <lp_id>` books the pinned best-offer row: the printed
+    // execution's premium equals the same invocation's printed offer — and the
+    // SDK reference row's offer — bit-for-bit, attributed to the winning LP.
+    let lp = sdk
+        .best_offer_lp_id
+        .clone()
+        .expect("a best offer exists on a ≥3-LP panel");
+    let mut accept_argv = argv.clone();
+    accept_argv.extend(["--accept".into(), lp.clone(), "--side".into(), "buy".into()]);
+    let booked = tokio::task::spawn_blocking(move || run(&accept_argv))
+        .await
+        .expect("CLI accept run completes");
+    let premium = field(&booked, "traded_premium").expect("the execution prints its premium");
+    let booked_row = parse_panel_rows(&booked)
+        .into_iter()
+        .find(|r| r.lp_id == lp)
+        .expect("the booked LP is on the printed ladder");
+    assert_eq!(
+        premium.to_bits(),
+        booked_row.offer.to_bits(),
+        "BUY books the printed row's offer bit-for-bit: {premium} vs {}",
+        booked_row.offer
+    );
+    assert_eq!(
+        premium.to_bits(),
+        sdk.dealer(&lp).expect("winner row").price.offer.to_bits(),
+        "the booked premium reproduces the SDK reference row's offer"
+    );
+    assert!(
+        booked.contains(&format!("quoted_by {lp}")),
+        "the execution is attributed to the winning LP:\n{booked}"
+    );
 
     drop(client);
     drop(edge);

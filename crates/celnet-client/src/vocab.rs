@@ -3,8 +3,8 @@
 //!
 //! A caller builds requests from [`celnet_types`] vocabulary (a [`CcyPair`], a
 //! [`Tenor`], the convention enums) and an [`InstrumentSpec`], and receives typed
-//! result structs ([`Quote`], [`Execution`], [`Smile`], [`ScenarioGrid`],
-//! [`PricedLine`]) whose numeric fields are plain `f64`s carrying
+//! result structs ([`Quote`], [`RankedPanel`], [`Execution`], [`Smile`],
+//! [`ScenarioGrid`], [`PricedLine`]) whose numeric fields are plain `f64`s carrying
 //! [`celnet_types::Greeks`] — not `Option<…>`-wrapped proto messages. The mapping
 //! between this vocabulary and the wire ([`celnet_proto`]) lives entirely here, so
 //! the proto types never leak into a caller's code and the two layers cannot
@@ -3331,6 +3331,158 @@ impl Quote {
             surface_version: w.surface_version,
             attribution,
             price_std_error: w.price_std_error,
+        })
+    }
+}
+
+/// One liquidity provider's line in a multi-dealer (RFQ-to-many) panel — the
+/// typed form of the wire `DealerQuote`: the dealer's identity, its firm two-way,
+/// and the per-line validity (last-look) deadline.
+///
+/// Every row quotes the same resolved line (the maker-priced strike). The native
+/// maker row carries the edge-priced [`Greeks`] (and MC std-error where the
+/// product is MC-priced); a non-native dealer discloses its price and identity,
+/// never its greeks — so `greeks` is `Some` exactly on the maker's own line.
+#[derive(Debug, Clone)]
+pub struct DealerQuote {
+    /// The responding liquidity provider's stable identifier (e.g. `"SYNTH-LP-1"`).
+    pub lp_id: String,
+    /// This dealer's two-way bid/offer premium in the request's premium units.
+    pub price: TwoWay,
+    /// The full Greek set for this line — `Some` only on the native maker's row
+    /// (an LP discloses a price, not its greeks).
+    pub greeks: Option<Greeks>,
+    /// The strike this dealer resolved (every panel row quotes the same line).
+    pub resolved_strike: f64,
+    /// This line's validity deadline (last-look), nanoseconds since the Unix
+    /// epoch (UTC). An accept of this dealer after the instant is rejected.
+    pub valid_until_nanos: i64,
+    /// Who quoted this line (the dealer's own seat), if attributed.
+    pub attribution: Option<Attribution>,
+    /// Monte-Carlo standard error of this dealer's premium: `Some` only for an
+    /// MC-priced product on the native maker's row, so an MC dealer price is
+    /// never presented as exact.
+    pub price_std_error: Option<f64>,
+}
+
+impl DealerQuote {
+    /// The last-look window remaining on this line at `now_nanos` (nanoseconds
+    /// since the Unix epoch): `Some(remaining)` while the line is still liftable,
+    /// `None` once `valid_until_nanos` has passed and an accept would be refused.
+    #[must_use]
+    pub fn last_look_remaining(&self, now_nanos: i64) -> Option<std::time::Duration> {
+        u64::try_from(self.valid_until_nanos.saturating_sub(now_nanos))
+            .ok()
+            .filter(|&remaining| remaining > 0)
+            .map(std::time::Duration::from_nanos)
+    }
+
+    pub(crate) fn from_wire(w: celnet_proto::DealerQuote) -> ClientResult<Self> {
+        let price = w
+            .price
+            .as_ref()
+            .map(TwoWay::from_wire)
+            .ok_or(ClientError::MissingField("DealerQuote.price"))?;
+        let attribution = w
+            .attribution
+            .as_ref()
+            .map(Attribution::from_wire)
+            .transpose()?;
+        Ok(Self {
+            lp_id: w.lp_id,
+            price,
+            greeks: w.greeks.as_ref().map(greeks_from_wire),
+            resolved_strike: w.resolved_strike,
+            valid_until_nanos: w.valid_until_nanos,
+            attribution,
+            price_std_error: w.price_std_error,
+        })
+    }
+}
+
+/// The ranked multi-dealer (RFQ-to-many) panel returned for one request — the
+/// typed form of the wire `MultiDealerQuote`: the competing [`DealerQuote`] rows
+/// (responders only — a timed-out / declining source has no row), the engine-
+/// ranked touch on each side, and the aggregate `quote_id` an accept books
+/// against (with the chosen row's `lp_id` disambiguating the line).
+///
+/// The winners follow the engine law — best bid = **max** bid, best offer =
+/// **min** offer over the liftable rows, deterministic tie-break — and are
+/// `None` only when no responder showed a liftable price on that side.
+#[derive(Debug, Clone)]
+pub struct RankedPanel {
+    /// The server-assigned aggregate request id (the handle for accept/reject —
+    /// the request, not a single dealer line).
+    pub quote_id: u64,
+    /// The idempotency key this panel was issued under.
+    pub idempotency_key: String,
+    /// The competing dealer rows (responders only).
+    pub dealers: Vec<DealerQuote>,
+    /// The `lp_id` showing the best (highest) bid — the row a SELL hits — if any
+    /// responder quoted a liftable bid.
+    pub best_bid_lp_id: Option<String>,
+    /// The `lp_id` showing the best (lowest) offer — the row a BUY lifts — if
+    /// any responder quoted a liftable offer.
+    pub best_offer_lp_id: Option<String>,
+    /// The conventions every dealer line is expressed under.
+    pub conventions: Conventions,
+    /// Publication time, nanoseconds since the Unix epoch (UTC).
+    pub epoch_nanos: i64,
+    /// Echo of the originating request's correlation id, if one was supplied.
+    pub correlation_id: Option<u64>,
+    /// The marked-surface version the dealer lines were priced against, if the
+    /// server reported one.
+    pub surface_version: Option<u64>,
+}
+
+impl RankedPanel {
+    /// The panel row quoted by `lp_id`, if that dealer responded.
+    #[must_use]
+    pub fn dealer(&self, lp_id: &str) -> Option<&DealerQuote> {
+        self.dealers.iter().find(|d| d.lp_id == lp_id)
+    }
+
+    /// The row showing the best (highest) bid — the line a SELL hits — if any.
+    #[must_use]
+    pub fn best_bid(&self) -> Option<&DealerQuote> {
+        self.best_bid_lp_id
+            .as_deref()
+            .and_then(|id| self.dealer(id))
+    }
+
+    /// The row showing the best (lowest) offer — the line a BUY lifts — if any.
+    #[must_use]
+    pub fn best_offer(&self) -> Option<&DealerQuote> {
+        self.best_offer_lp_id
+            .as_deref()
+            .and_then(|id| self.dealer(id))
+    }
+
+    pub(crate) fn from_wire(w: celnet_proto::MultiDealerQuote) -> ClientResult<Self> {
+        let conventions = w
+            .conventions
+            .as_ref()
+            .ok_or(ClientError::MissingField("MultiDealerQuote.conventions"))
+            .and_then(Conventions::from_wire)?;
+        let dealers = w
+            .dealers
+            .into_iter()
+            .map(DealerQuote::from_wire)
+            .collect::<ClientResult<Vec<_>>>()?;
+        // The wire encodes "no liftable price on this side" as an empty winner id;
+        // the typed form is presence-tracked.
+        let best_bid_lp_id = (!w.best_bid_lp_id.is_empty()).then_some(w.best_bid_lp_id);
+        let best_offer_lp_id = (!w.best_offer_lp_id.is_empty()).then_some(w.best_offer_lp_id);
+        Ok(Self {
+            quote_id: w.quote_id,
+            idempotency_key: w.idempotency_key,
+            dealers,
+            best_bid_lp_id,
+            best_offer_lp_id,
+            conventions,
+            epoch_nanos: w.epoch_nanos,
+            correlation_id: w.correlation_id,
+            surface_version: w.surface_version,
         })
     }
 }
