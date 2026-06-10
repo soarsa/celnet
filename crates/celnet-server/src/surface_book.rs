@@ -248,7 +248,15 @@ mod tests {
     }
 
     fn marked_smile(tenor: f64) -> (CalibratedSmile, f64) {
-        let ctx = MarketContext::new(1.10, 0.02, 0.01, tenor, record());
+        let ctx = MarketContext::new(
+            1.10,
+            celnet_types::Carry::FxRates {
+                r_dom: 0.02,
+                r_for: 0.01,
+            },
+            tenor,
+            record(),
+        );
         let quotes = MarketQuotes::three_point(0.10, -0.004, 0.002);
         let smile =
             build_model_smile(SmileModel::MarketHedge, &ctx, &quotes).expect("smile calibrates");

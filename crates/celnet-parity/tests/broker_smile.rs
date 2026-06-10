@@ -26,7 +26,7 @@ use celnet_vanilla::price;
 /// Build a per-slice context from a pair / tenor / market state.
 fn ctx(pair: &str, tenor: Tenor, spot: f64, r_dom: f64, r_for: f64, t: f64) -> MarketContext {
     let conv = resolve(CcyPair::parse(pair).unwrap(), tenor).record;
-    MarketContext::new(spot, r_dom, r_for, t, conv)
+    MarketContext::new(spot, celnet_types::Carry::FxRates { r_dom, r_for }, t, conv)
 }
 
 /// Core assertion: the constructed smile, evaluated at the broker strangle

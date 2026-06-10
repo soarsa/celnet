@@ -44,7 +44,7 @@ use celnet_surface::{
     MarketContext as SurfaceContext, MarketQuotes, SmileModel, build_model_smile,
 };
 use celnet_types::{
-    AtmConvention, CcyPair, Cut, DayCount, DeltaConvention, PremiumStyle, Settlement, Tenor,
+    AtmConvention, Carry, CcyPair, Cut, DayCount, DeltaConvention, PremiumStyle, Settlement, Tenor,
 };
 
 /// Parse a socket address from an env var, falling back to `default`.
@@ -127,7 +127,7 @@ fn pre_mark_eurusd_1y(edge: &Edge) -> u64 {
         DayCount::Act365Fixed,
         Settlement::Deliverable,
     );
-    let ctx = SurfaceContext::new(spot, r_dom, r_for, t, record);
+    let ctx = SurfaceContext::new(spot, Carry::FxRates { r_dom, r_for }, t, record);
     // Mild EURUSD-like skew (ATM 10.5%, 25Δ RR +1.5%, 25Δ BF 0.35%) — the same
     // quotes the engine fixture uses, so the marked smile is representative.
     let quotes = MarketQuotes::three_point(0.105, 0.015, 0.0035);

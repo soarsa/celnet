@@ -167,12 +167,12 @@ mod tests {
     use super::*;
     use celnet_conventions::resolve;
     use celnet_core::{Smile, is_close};
-    use celnet_types::{CcyPair, OptionType, Tenor};
+    use celnet_types::{Carry, CcyPair, OptionType, Tenor};
     use celnet_vanilla::price;
 
     fn ctx(pair: &str, tenor: Tenor, spot: f64, r_dom: f64, r_for: f64, t: f64) -> MarketContext {
         let conv = resolve(CcyPair::parse(pair).unwrap(), tenor).record;
-        MarketContext::new(spot, r_dom, r_for, t, conv)
+        MarketContext::new(spot, Carry::FxRates { r_dom, r_for }, t, conv)
     }
 
     /// The full pipeline produces a smile that reprices ATM, both 25Δ wings, and

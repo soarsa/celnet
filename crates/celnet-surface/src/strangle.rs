@@ -480,11 +480,11 @@ mod tests {
     use crate::quotes::MarketQuotes;
     use celnet_conventions::resolve;
     use celnet_core::is_close;
-    use celnet_types::{CcyPair, Tenor};
+    use celnet_types::{Carry, CcyPair, Tenor};
 
     fn ctx(spot: f64, r_dom: f64, r_for: f64) -> MarketContext {
         let conv = resolve(CcyPair::parse("EURUSD").unwrap(), Tenor::Years(1)).record;
-        MarketContext::new(spot, r_dom, r_for, 1.0, conv)
+        MarketContext::new(spot, Carry::FxRates { r_dom, r_for }, 1.0, conv)
     }
 
     /// NON-VACUOUS reprice: the *constructed smile*, evaluated at the **broker**
@@ -614,7 +614,15 @@ mod tests {
         // smile constructor with a put_vol ≈ −0.0107. It must now be a clean Err
         // (or, if calibratable with positive wings, a valid Ok — never a panic).
         let conv = resolve(CcyPair::parse("EURUSD").unwrap(), Tenor::Years(1)).record;
-        let c2 = MarketContext::new(0.5, 0.0, 0.0, 2.26, conv);
+        let c2 = MarketContext::new(
+            0.5,
+            Carry::FxRates {
+                r_dom: 0.0,
+                r_for: 0.0,
+            },
+            2.26,
+            conv,
+        );
         let q2 = MarketQuotes::three_point(0.2936, 0.173, 0.0005);
         match calibrate_pillar(&c2, q2.atm_vol, q2.inner) {
             Ok(cal) => {
@@ -686,9 +694,15 @@ mod tests {
     /// below the admissible σ_ss floor, so no well-posed smile exists.
     #[test]
     fn expansion_floor_blocked_quote_is_degenerate() {
-        let c = MarketContext::new(0.5, 0.02, 0.01, 3.0, {
-            resolve(CcyPair::parse("EURUSD").unwrap(), Tenor::Years(1)).record
-        });
+        let c = MarketContext::new(
+            0.5,
+            Carry::FxRates {
+                r_dom: 0.02,
+                r_for: 0.01,
+            },
+            3.0,
+            resolve(CcyPair::parse("EURUSD").unwrap(), Tenor::Years(1)).record,
+        );
         // atm = 0.10, |RR| = 0.001 → floor ½|RR| − atm + 1e-4 ≈ −0.0994, seed
         // bf = 0.0005 is far above it (immediate guard passes), but the reprice
         // root is below the floor → degenerate via the expansion path.
@@ -754,7 +768,7 @@ mod tests {
         ];
         for (atm, rr, bf, t) in cases {
             let c = ctx(1.0, 0.02, 0.01);
-            let c = MarketContext::new(c.spot, c.r_dom, c.r_for, t, c.conventions);
+            let c = MarketContext::new(c.spot, c.carry, t, c.conventions);
             let q = MarketQuotes::three_point(atm, rr, bf);
             let cal = calibrate_pillar(&c, q.atm_vol, q.inner).unwrap_or_else(|e| {
                 panic!("expansion case (atm={atm},rr={rr},bf={bf},t={t}) failed: {e:?}")
@@ -827,7 +841,7 @@ mod tests {
         ) {
             let rr = rr_frac * atm;
             let conv = resolve(CcyPair::parse("EURUSD").unwrap(), Tenor::Years(1)).record;
-            let c = MarketContext::new(spot, r_dom, r_for, t, conv);
+            let c = MarketContext::new(spot, Carry::FxRates { r_dom, r_for }, t, conv);
             let q = MarketQuotes::three_point(atm, rr, bf);
             if let (Ok(cal), Ok(ms)) =
                 (calibrate_pillar(&c, q.atm_vol, q.inner), market_strangle(&c, q.atm_vol, q.inner))

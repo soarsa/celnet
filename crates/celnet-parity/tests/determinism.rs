@@ -295,7 +295,15 @@ fn smile_and_exotics_are_bit_identical() {
         let conv = resolve(CcyPair::parse("EURUSD").unwrap(), Tenor::Years(1)).record;
         let mut it = s.split('|').map(|f| f.parse::<f64>().expect("round-trips"));
         let mut n = || it.next().expect("field");
-        let ctx = MarketContext::new(n(), n(), n(), n(), conv);
+        let ctx = MarketContext::new(
+            n(),
+            celnet_types::Carry::FxRates {
+                r_dom: n(),
+                r_for: n(),
+            },
+            n(),
+            conv,
+        );
         let quotes = MarketQuotes::five_point(n(), n(), n(), n(), n());
         (ctx, quotes)
     }

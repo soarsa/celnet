@@ -170,7 +170,15 @@ mod tests {
             DayCount::Act365Fixed,
             Settlement::Deliverable,
         );
-        let ctx = SurfCtx::new(1.25, 0.02, 0.01, 1.0, record);
+        let ctx = SurfCtx::new(
+            1.25,
+            celnet_types::Carry::FxRates {
+                r_dom: 0.02,
+                r_for: 0.01,
+            },
+            1.0,
+            record,
+        );
         let smile = build_model_smile(
             SmileModel::MarketHedge,
             &ctx,

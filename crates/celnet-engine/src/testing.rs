@@ -28,7 +28,11 @@ pub fn smile(
     conv: ConventionRecord,
     t: f64,
 ) -> MarketHedgeSmile {
-    let ctx = MarketContext::new(spot, 0.02, 0.01, t, conv);
+    let carry = celnet_types::Carry::FxRates {
+        r_dom: 0.02,
+        r_for: 0.01,
+    };
+    let ctx = MarketContext::new(spot, carry, t, conv);
     let q = MarketQuotes::three_point(atm, rr, bf);
     build_smile(&ctx, &q).expect("calibration converges for mild EURUSD quotes")
 }
