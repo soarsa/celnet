@@ -447,6 +447,12 @@
   cursor: not-allowed;
 }
 
+/* --- multi-dealer (RFQ-to-many) ranked LP panel ----------------------------- */
+
+.dealerPanelBlock {
+  padding: var(--space-4) var(--space-6);
+}
+
 /* --- variance / volatility swap fair-strike result ------------------------- */
 
 .swapResult {

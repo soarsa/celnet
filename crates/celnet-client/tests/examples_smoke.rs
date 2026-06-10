@@ -1,6 +1,7 @@
 //! Gate for the runnable SDK quickstart examples (`examples/quote_and_trade.rs`,
-//! `examples/stream_blotter.rs`, `examples/price_exotic.rs`,
-//! `examples/price_linear.rs`, `examples/price_cross_asset.rs`).
+//! `examples/multi_dealer_trade.rs`, `examples/stream_blotter.rs`,
+//! `examples/price_exotic.rs`, `examples/price_linear.rs`,
+//! `examples/price_cross_asset.rs`).
 //!
 //! The examples themselves are the canonical onboarding affordance (`cargo run -p
 //! celnet-client --example <x>` against a `demo_edge`); booting two OS processes is
@@ -31,7 +32,9 @@ use celnet_client::{
 };
 use celnet_types::{CcyPair, OptionType, Tenor};
 
-use common::{conventions, eurusd, start_edge_and_client};
+use celnet_server::Clock;
+
+use common::{conventions, eurusd, start_edge_and_client, start_panel_edge_and_client};
 
 // These smoke tests each boot a fresh REAL edge AND price compute-heavy products
 // (e.g. the American PSOR free-boundary FD). Under full-suite parallel-nextest
@@ -91,6 +94,64 @@ async fn example_quote_and_trade_path_quotes_and_books() {
         // The example's runtime guard: a real booking id.
         assert!(execution.execution_id >= 1, "a real execution booked");
         assert_eq!(execution.side, Side::Buy);
+
+        edge.shutdown(Duration::from_secs(5)).await;
+    })
+    .await
+    .expect("test must not hang");
+}
+
+/// `multi_dealer_trade.rs` — fan one RFQ across the demo edge's LP panel (native
+/// maker + 3 synthetic demo dealers, the `demo_edge` default), then BUY the
+/// best-offer dealer's pinned line. Asserts a full ranked panel with an uncrossed
+/// touch and a booking at exactly the pinned offer — the same guards the example
+/// exits non-zero on.
+#[tokio::test]
+async fn example_multi_dealer_trade_path_ranks_and_books_best_lp() {
+    tokio::time::timeout(SMOKE_TEST, async {
+        // The same panel breadth `demo_edge` boots with, on an in-process edge
+        // (explicit panel — no env mutation).
+        let (edge, client) = start_panel_edge_and_client(Clock::system(), 3).await;
+
+        let instrument = InstrumentSpec::vanilla(
+            eurusd(),
+            Tenor::Years(1),
+            1.0,
+            Quantity::base(1_000_000.0),
+            Side::TwoWay,
+            OptionType::Call,
+            StrikeSpec::Absolute(1.12),
+        );
+        let md = client.request_multi_dealer_quote(instrument, Conventions::major_default());
+
+        let panel = tokio::time::timeout(SMOKE_STEP, md.request())
+            .await
+            .expect("panel in time")
+            .expect("panel ok");
+        // The example's runtime guards: a full ranked panel, an uncrossed touch.
+        assert_eq!(panel.dealers.len(), 4, "native maker + 3 synthetic dealers");
+        let best_bid = panel.best_bid().expect("a liftable bid");
+        let best_offer = panel.best_offer().expect("a liftable offer");
+        assert!(
+            best_offer.price.offer.is_finite() && best_bid.price.bid <= best_offer.price.offer,
+            "non-degenerate touch: bid {} offer {}",
+            best_bid.price.bid,
+            best_offer.price.offer
+        );
+
+        let lp = best_offer.lp_id.clone();
+        let offer = best_offer.price.offer;
+        let execution = tokio::time::timeout(SMOKE_STEP, md.accept_dealer(&panel, Side::Buy, &*lp))
+            .await
+            .expect("accept in time")
+            .expect("accept ok");
+        // The example's runtime guards: a real booking at the pinned offer.
+        assert!(execution.execution_id >= 1, "a real execution booked");
+        assert_eq!(
+            execution.traded_premium.to_bits(),
+            offer.to_bits(),
+            "booked exactly the pinned panel offer"
+        );
 
         edge.shutdown(Duration::from_secs(5)).await;
     })

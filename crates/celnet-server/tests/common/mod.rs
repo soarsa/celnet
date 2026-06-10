@@ -17,7 +17,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use celnet_engine::testing::make_state;
-use celnet_server::{Clock, CoreLink, Edge, SpreadModel};
+use celnet_risk_fleet::FleetTopology;
+use celnet_server::{Clock, CoreLink, Edge, LpPanelConfig, SpreadModel};
 use celnet_types::{CcyPair, Tenor};
 
 /// The hard wall-clock ceiling for any single edge integration test. A correctness
@@ -48,6 +49,43 @@ pub async fn start_edge_with(ready: bool, clock: Clock) -> (Edge, SocketAddr) {
     let edge = Edge::start(grpc, Arc::clone(&link), SpreadModel::default(), clock)
         .await
         .expect("edge binds on an ephemeral port");
+    if ready {
+        edge.gate().mark_ready();
+    }
+    let addr = edge.grpc_addr();
+    (edge, addr)
+}
+
+/// Start a ready edge whose multi-dealer RFQ panel carries `synthetic_lps`
+/// deterministic synthetic demo dealers beside the native maker, with a system
+/// clock. Explicit config — race-free, no process-global env mutation.
+pub async fn start_ready_panel_edge(synthetic_lps: u32) -> (Edge, SocketAddr) {
+    start_panel_edge_with(true, Clock::system(), synthetic_lps).await
+}
+
+/// Start an edge with an explicit ready flag, clock, and synthetic LP-panel
+/// breadth (so a test can drive a panel row past its last-look deadline with a
+/// manual clock). Uses the explicit-topology/panel boot path — no env mutation.
+pub async fn start_panel_edge_with(
+    ready: bool,
+    clock: Clock,
+    synthetic_lps: u32,
+) -> (Edge, SocketAddr) {
+    let initial = make_state(1.10, eurusd_conv());
+    let link = CoreLink::start(initial, None);
+    let grpc: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let ws: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let edge = Edge::start_on_with_topology(
+        grpc,
+        ws,
+        Arc::clone(&link),
+        SpreadModel::default(),
+        clock,
+        FleetTopology::InProcess,
+        LpPanelConfig { synthetic_lps },
+    )
+    .await
+    .expect("edge binds on an ephemeral port");
     if ready {
         edge.gate().mark_ready();
     }

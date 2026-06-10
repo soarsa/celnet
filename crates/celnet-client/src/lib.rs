@@ -25,9 +25,11 @@
 //! ```text
 //! cargo run -p celnet-server --example demo_edge          # gRPC :50551
 //! cargo run -p celnet-client --example quote_and_trade    # RFQ: request → BUY → book
+//! cargo run -p celnet-client --example multi_dealer_trade # RFQ-to-many: ranked panel → book best LP
 //! cargo run -p celnet-client --example stream_blotter     # one session, 3 streamed lines
 //! cargo run -p celnet-client --example price_exotic       # Asian (closed-form) + American (FD)
 //! cargo run -p celnet-client --example price_cross_asset  # equity / commodity / crypto vanilla
+//! cargo run -p celnet-client --example price_linear       # FX forward / swap / NDF
 //! ```
 //!
 //! Each example reads `CELNET_GRPC_ADDR` (default `http://127.0.0.1:50551`) so it
@@ -41,6 +43,18 @@
 //! idempotency key (minted per client, see [`idempotency`]); a retried
 //! [`Rfq::request`] returns the *same* [`Quote`], and a retried [`Rfq::accept`]
 //! returns the *same* [`Execution`] — a network retry can never double-book.
+//!
+//! ## Multi-dealer RFQ — one request, a ranked LP panel
+//!
+//! [`Client::request_multi_dealer_quote`] builds the RFQ-to-many counterpart, a
+//! [`MultiDealerRfq`]: [`MultiDealerRfq::request`] fans the RFQ across the edge's
+//! LP panel and returns a [`RankedPanel`] of competing [`DealerQuote`] rows with
+//! the engine-ranked touch on each side ([`RankedPanel::best_bid_lp_id`] /
+//! [`RankedPanel::best_offer_lp_id`]) and per-row last-look
+//! ([`DealerQuote::last_look_remaining`]). [`MultiDealerRfq::accept_dealer`]
+//! books any pinned row at exactly the price the panel showed;
+//! [`MultiDealerRfq::accept`] (no `lp_id`) books the native maker line,
+//! byte-identical to the single-dealer path.
 //!
 //! ## RFS — one multiplexed session, many subscriptions, click-to-trade
 //!
@@ -131,12 +145,12 @@ pub use surface_vocab::{
 pub use vocab::{
     AccumulatorMonitoring, AccumulatorTerms, AmericanTerms, AsianMethod, AsianTerms, Attribution,
     AveragingStyle, BarrierKind, BarrierSide, BarrierTerms, BasketKind, BasketLegTerms,
-    BasketTerms, BookId, Calibration, CliquetTerms, Conventions, DigitalStyle, DigitalTerms,
-    DoubleBarrierTerms, Execution, ExerciseStyle, FixingSource, ForwardSide, ForwardStartTerms,
-    ForwardTerms, InstrumentSpec, Leg, LookbackMonitoring, LookbackStyle, LookbackTerms, NdfTerms,
-    PricedLine, PricingModel, Product, Quantity, QuantoPayoff, QuantoTerms, Quote, RejectAck, Seat,
-    Side, StrategyKind, StrikeSpec, SwapTerms, TarfRedemption, TarfTerms, TouchKind, TouchTerms,
-    TwoWay,
+    BasketTerms, BookId, Calibration, CliquetTerms, Conventions, DealerQuote, DigitalStyle,
+    DigitalTerms, DoubleBarrierTerms, Execution, ExerciseStyle, FixingSource, ForwardSide,
+    ForwardStartTerms, ForwardTerms, InstrumentSpec, Leg, LookbackMonitoring, LookbackStyle,
+    LookbackTerms, NdfTerms, PricedLine, PricingModel, Product, Quantity, QuantoPayoff,
+    QuantoTerms, Quote, RankedPanel, RejectAck, Seat, Side, StrategyKind, StrikeSpec, SwapTerms,
+    TarfRedemption, TarfTerms, TouchKind, TouchTerms, TwoWay,
 };
 // The cross-asset underlying vocabulary the instrument builders speak — re-exported
 // from `celnet-types` so a caller names an equity / commodity / crypto underlying
@@ -217,6 +231,28 @@ impl Client {
     #[must_use]
     pub fn request_quote(&self, instrument: InstrumentSpec, conventions: Conventions) -> Rfq {
         Rfq {
+            client: self.clone(),
+            idempotency_key: self.keys.next_key(),
+            instrument,
+            conventions,
+            attribution: None,
+        }
+    }
+
+    /// Begin a multi-dealer (RFQ-to-many) request for `instrument` under
+    /// `conventions`, returning a [`MultiDealerRfq`] handle that owns a stable
+    /// idempotency key for the whole request→accept lifecycle. Building the
+    /// handle does not yet hit the wire; call [`MultiDealerRfq::request`] for the
+    /// ranked [`RankedPanel`], then book any pinned row with
+    /// [`MultiDealerRfq::accept_dealer`] (or the native maker line with the
+    /// single-dealer-compatible [`MultiDealerRfq::accept`]).
+    #[must_use]
+    pub fn request_multi_dealer_quote(
+        &self,
+        instrument: InstrumentSpec,
+        conventions: Conventions,
+    ) -> MultiDealerRfq {
+        MultiDealerRfq {
             client: self.clone(),
             idempotency_key: self.keys.next_key(),
             instrument,
@@ -674,5 +710,122 @@ impl Rfq {
         };
         let resp = svc.reject_quote(request).await?.into_inner();
         Ok(RejectAck::from_wire(resp))
+    }
+}
+
+/// A multi-dealer (RFQ-to-many) request handle: owns a stable idempotency key so
+/// the whole request→accept lifecycle is safe to retry, exactly like [`Rfq`].
+///
+/// [`MultiDealerRfq::request`] fans the RFQ across the edge's LP panel and
+/// returns the ranked [`RankedPanel`]; a retried request returns the *same*
+/// aggregate quote re-ranked over the same deterministic panel.
+/// [`MultiDealerRfq::accept_dealer`] books exactly one pinned panel row (the
+/// price/validity/attribution the panel showed, never a re-price), and a retried
+/// accept returns the same [`Execution`] — line- and side-matched, so a network
+/// retry can never double-book or book a different dealer's line.
+///
+/// **Honest boundary:** the panel beyond the native maker is the edge's
+/// configured deterministic **synthetic** demo/test dealers; live LP connectivity
+/// is an environment concern, never claimed by the SDK.
+#[derive(Debug, Clone)]
+pub struct MultiDealerRfq {
+    client: Client,
+    idempotency_key: String,
+    instrument: InstrumentSpec,
+    conventions: Conventions,
+    attribution: Option<Attribution>,
+}
+
+impl MultiDealerRfq {
+    /// The stable idempotency key this RFQ relays on every request / accept.
+    #[must_use]
+    pub fn idempotency_key(&self) -> &str {
+        &self.idempotency_key
+    }
+
+    /// Declare the requesting book/seat this RFQ is sent on behalf of (exactly
+    /// [`Rfq::with_attribution`]): the server resolves the who's-trading chain and
+    /// echoes it on the native maker row and the booked [`Execution`].
+    #[must_use]
+    pub fn with_attribution(mut self, attribution: Attribution) -> Self {
+        self.attribution = Some(attribution);
+        self
+    }
+
+    /// Request the ranked multi-dealer panel: the edge fans the RFQ across its LP
+    /// panel and returns every responder's firm two-way ranked by the engine law
+    /// (best bid = max bid, best offer = min offer, deterministic tie-break, with
+    /// last-look applied). Idempotent: a retry under this handle re-ranks the
+    /// same stored aggregate quote, never re-pricing the maker line.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure or a malformed panel.
+    pub async fn request(&self) -> ClientResult<RankedPanel> {
+        let mut svc = QuoteServiceClient::new(self.client.channel.clone());
+        let request = QuoteRequest {
+            idempotency_key: self.idempotency_key.clone(),
+            instrument: Some(self.instrument.to_wire()),
+            conventions: Some(self.conventions.to_wire()),
+            correlation_id: None,
+            surface_version: None,
+            attribution: self.attribution.as_ref().map(Attribution::to_wire),
+        };
+        let resp = svc.request_multi_dealer_quote(request).await?.into_inner();
+        RankedPanel::from_wire(resp)
+    }
+
+    /// Accept the **native maker line** of a previously issued panel on `side`
+    /// (`Buy` lifts the offer, `Sell` hits the bid) — the single-dealer-compatible
+    /// default, byte-identical on the wire to an [`Rfq::accept`] of the same
+    /// aggregate quote (the accept carries no `lp_id`). Idempotent: a retry
+    /// returns the same [`Execution`].
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::Status`] (`deadline_exceeded`) if the maker line's last-look
+    /// window has expired, `not_found` for an unknown id, plus transport failures.
+    pub async fn accept(&self, panel: &RankedPanel, side: Side) -> ClientResult<Execution> {
+        self.accept_line(panel, side, String::new()).await
+    }
+
+    /// Accept one **pinned dealer row** of a previously issued panel: book the
+    /// line `lp_id` quoted (e.g. [`RankedPanel::best_offer_lp_id`] for a BUY) at
+    /// exactly the price/validity the panel showed — never a re-price. Idempotent
+    /// and line-matched: a retry naming the same side and line returns the same
+    /// [`Execution`]; a different side or line is a different trade intent and is
+    /// refused.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::Status`] — `deadline_exceeded` if that row's last-look
+    /// window has expired, `failed_precondition` for a line that was never on
+    /// this panel, `not_found` for an unknown id — plus transport failures.
+    pub async fn accept_dealer(
+        &self,
+        panel: &RankedPanel,
+        side: Side,
+        lp_id: impl Into<String>,
+    ) -> ClientResult<Execution> {
+        self.accept_line(panel, side, lp_id.into()).await
+    }
+
+    /// The one wire accept: an empty `lp_id` selects the native maker line (the
+    /// single-dealer path), a named one the matching pinned panel row.
+    async fn accept_line(
+        &self,
+        panel: &RankedPanel,
+        side: Side,
+        lp_id: String,
+    ) -> ClientResult<Execution> {
+        let mut svc = QuoteServiceClient::new(self.client.channel.clone());
+        let request = QuoteAccept {
+            quote_id: panel.quote_id,
+            idempotency_key: self.idempotency_key.clone(),
+            side: side.to_wire() as i32,
+            lp_id,
+        };
+        let resp = svc.accept_quote(request).await?.into_inner();
+        Execution::from_wire(resp)
     }
 }

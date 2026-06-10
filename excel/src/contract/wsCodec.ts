@@ -12,11 +12,13 @@
  *
  * Numbers on the wire are plain JSON numbers; identifiers that the proto types as
  * 64-bit (`uint64`/`int64` — token, sequence, ids, nanos) are carried as JSON
- * numbers by the server's `serde_json` (it does not stringify them), so we read
- * them with `numToBigInt` to recover the GUI's `bigint` shape and emit them as
- * plain numbers (their magnitude stays within JS safe-integer range for the
- * session-scoped ids and ms-resolution nanos the mirror produces). Optional
- * presence-tracked fields are `null`/absent ⇒ `undefined`.
+ * numbers by the server's `serde_json` (it does not stringify them). Minted
+ * identities (quote ids, tradable tokens — `splitmix64` over the full u64 range)
+ * and wall-clock nanos routinely exceed `Number.MAX_SAFE_INTEGER`, so frames are
+ * parsed with `parseFrame` (oversized integer literals kept exact; `numToBigInt`
+ * recovers the `bigint`) and sent with `serializeFrame` (a `bigint` is written as
+ * the bare full-precision literal). Optional presence-tracked fields are
+ * `null`/absent ⇒ `undefined`.
  */
 
 import type {
@@ -30,6 +32,7 @@ import type {
   Cliquet,
   Conventions,
   CrossGamma,
+  DealerQuote,
   Digital,
   DoubleBarrier,
   Executed,
@@ -41,6 +44,7 @@ import type {
   Instrument,
   Leg,
   Lookback,
+  MultiDealerQuote,
   SingleBarrier,
   Touch,
   Vanilla,
@@ -71,6 +75,131 @@ import * as e from "./enums";
 
 /** A decoded server frame is a JSON object with a `type` discriminator. */
 export type WireObject = Record<string, unknown>;
+
+// ---------------------------------------------------------------------------
+// 64-bit-exact frame parse / serialize — the SAME wire text, no precision loss
+// ---------------------------------------------------------------------------
+//
+// The server (`serde_json`) emits proto `uint64`/`int64` fields (tradable
+// `token`, minted `quote_id`s, `valid_until_nanos`, `epoch_nanos`, `sequence`)
+// as full-precision JSON integer literals — and the minted ids (`splitmix64`
+// over the full u64 range) routinely exceed `Number.MAX_SAFE_INTEGER`. Plain
+// `JSON.parse` rounds those to the nearest f64, which silently corrupts a
+// `quote_id` so an `accept_quote` echo is refused `unknown quote_id` (and a
+// `token` so an `execute` is rejected `UNKNOWN_TOKEN`). We therefore parse
+// inbound frames keeping any oversized integer literal exact (requoted; the
+// decoders' `numToBigInt` recovers the `bigint`) and serialize outbound frames
+// writing `bigint` fields as bare integer literals. This is NOT a second
+// contract — it is the SAME type-tagged JSON, only read/printed without losing
+// the 64-bit identities the contract already defines. Semantics-identical
+// mirror of `gui/src/data/wsCodec.ts` (one contract, one parse discipline).
+
+/** Max integer that survives a JS `Number` round-trip without rounding. */
+const MAX_SAFE = "9007199254740991";
+
+/** True iff a positive integer's digit string exceeds `Number.MAX_SAFE_INTEGER`. */
+function exceedsSafeInteger(digits: string): boolean {
+  const d = digits.replace(/^0+(?=\d)/, "");
+  if (d.length !== MAX_SAFE.length) return d.length > MAX_SAFE.length;
+  return d > MAX_SAFE;
+}
+
+/**
+ * Parse a JSON text frame WITHOUT losing 64-bit integer precision: any integer
+ * literal beyond the JS safe range is requoted into a JSON string before the
+ * parse, and `numToBigInt` recovers it as the exact `bigint` at field use.
+ */
+export function parseFrame(raw: string): unknown {
+  return JSON.parse(requoteLargeIntegers(raw));
+}
+
+/**
+ * Rewrite JSON `value` positions whose integer literal exceeds the JS safe range
+ * into quoted strings, leaving string contents, smaller numbers and structure
+ * intact. A small state machine tracks whether we are inside a string so digits
+ * inside string values are never touched.
+ */
+function requoteLargeIntegers(raw: string): string {
+  let out = "";
+  let i = 0;
+  let inString = false;
+  const n = raw.length;
+  while (i < n) {
+    const ch = raw[i]!;
+    if (inString) {
+      out += ch;
+      if (ch === "\\") {
+        // Copy the escaped character verbatim.
+        if (i + 1 < n) out += raw[i + 1]!;
+        i += 2;
+        continue;
+      }
+      if (ch === '"') inString = false;
+      i += 1;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      out += ch;
+      i += 1;
+      continue;
+    }
+    // A number literal can start with `-` or a digit. Consume the WHOLE JSON
+    // number (integer + optional fraction + optional exponent) in one pass — never
+    // re-scan the fractional/exponent tail as a separate integer — then requote
+    // ONLY when the literal is a pure integer beyond the JS safe range.
+    if (ch === "-" || (ch >= "0" && ch <= "9")) {
+      let j = i;
+      if (raw[j] === "-") j += 1;
+      const intStart = j;
+      while (j < n && raw[j]! >= "0" && raw[j]! <= "9") j += 1;
+      const intDigits = raw.slice(intStart, j);
+      let isInteger = intDigits.length > 0;
+      // Optional fraction.
+      if (raw[j] === ".") {
+        isInteger = false;
+        j += 1;
+        while (j < n && raw[j]! >= "0" && raw[j]! <= "9") j += 1;
+      }
+      // Optional exponent.
+      if (raw[j] === "e" || raw[j] === "E") {
+        isInteger = false;
+        j += 1;
+        if (raw[j] === "+" || raw[j] === "-") j += 1;
+        while (j < n && raw[j]! >= "0" && raw[j]! <= "9") j += 1;
+      }
+      const literal = raw.slice(i, j);
+      if (isInteger && exceedsSafeInteger(intDigits)) {
+        // Quote it so JSON.parse yields a string; numToBigInt recovers the bigint.
+        out += `"${literal}"`;
+      } else {
+        out += literal;
+      }
+      i = j;
+      continue;
+    }
+    out += ch;
+    i += 1;
+  }
+  return out;
+}
+
+/**
+ * Serialize an outbound frame, writing any `bigint` value as a bare integer
+ * literal (JSON has no bigint, and `JSON.stringify` throws on one) — so an
+ * echoed `quote_id` or tradable `token` keeps the exact 64-bit identity the
+ * server minted.
+ */
+export function serializeFrame(frame: WireObject): string {
+  // Tag a bigint as a string `@celnet-bigint@<digits>@`, then unwrap the quoted
+  // tag into a bare integer literal. The delimiters are pure ASCII (no whitespace,
+  // no JSON-escapable character), so the unwrap regex matches deterministically and
+  // the tag cannot collide with any contract string field.
+  const text = JSON.stringify(frame, (_key, value: unknown) =>
+    typeof value === "bigint" ? `@celnet-bigint@${value.toString()}@` : value,
+  );
+  return text.replace(/"@celnet-bigint@(-?\d+)@"/g, "$1");
+}
 
 // ---------------------------------------------------------------------------
 // scalar accessors (decode side) — defensive against a malformed frame
@@ -665,6 +794,52 @@ export function quoteFromWire(o: WireObject): Quote {
   const stdErr = optNum(o, "price_std_error");
   if (stdErr !== undefined) q.priceStdError = stdErr;
   return q;
+}
+
+/**
+ * Decode one liquidity provider's line of a multi-dealer panel — the exact
+ * mirror of the server's `dealer_quote_to_json` (snake_case keys). `greeks` /
+ * `price_std_error` are presence-tracked (`null` for a synthetic dealer line —
+ * an LP discloses a price, not its greeks) and decode to `undefined`, never a
+ * fabricated zero strip.
+ */
+function dealerQuoteFromWire(o: WireObject): DealerQuote {
+  const d: DealerQuote = {
+    lpId: str(o, "lp_id"),
+    price: twoWayFromWire(child(o, "price")),
+    resolvedStrike: num(o, "resolved_strike"),
+    validUntilNanos: numToBigInt(o, "valid_until_nanos"),
+  };
+  const g = o["greeks"];
+  if (g !== null && g !== undefined && typeof g === "object") {
+    d.greeks = greeksFromWire(g as WireObject);
+  }
+  const stdErr = optNum(o, "price_std_error");
+  if (stdErr !== undefined) d.priceStdError = stdErr;
+  return d;
+}
+
+/**
+ * Decode a `multi_dealer_quote` frame — the exact mirror of the server's
+ * `multi_dealer_quote_to_json`. The `dealers` array order IS the server's
+ * ranking (best-first); it is preserved verbatim so the spilled panel shows the
+ * aggregator's order, never a client re-sort.
+ */
+export function multiDealerQuoteFromWire(o: WireObject): MultiDealerQuote {
+  const m: MultiDealerQuote = {
+    quoteId: numToBigInt(o, "quote_id"),
+    idempotencyKey: str(o, "idempotency_key"),
+    dealers: array(o, "dealers").map(dealerQuoteFromWire),
+    bestBidLpId: str(o, "best_bid_lp_id"),
+    bestOfferLpId: str(o, "best_offer_lp_id"),
+    conventions: conventionsFromWire(child(o, "conventions")),
+    epochNanos: numToBigInt(o, "epoch_nanos"),
+  };
+  const corr = optBigInt(o, "correlation_id");
+  if (corr !== undefined) m.correlationId = corr;
+  const surf = optBigInt(o, "surface_version");
+  if (surf !== undefined) m.surfaceVersion = surf;
+  return m;
 }
 
 export function executionFromWire(o: WireObject): Omit<Execution, "instrument"> {

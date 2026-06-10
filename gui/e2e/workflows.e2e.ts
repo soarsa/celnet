@@ -15,7 +15,7 @@
  */
 import { expect, test } from "@playwright/test";
 
-import { gotoWorkspace, openLive } from "./helpers";
+import { expectNoSeriousA11y, gotoWorkspace, openLive } from "./helpers";
 
 test.describe("Celnet GUI — live trader workflows (real demo edge)", () => {
   test("ticket → price: a requested quote returns a server-priced two-way + Greeks", async ({
@@ -34,6 +34,42 @@ test.describe("Celnet GUI — live trader workflows (real demo edge)", () => {
     await expect(pane.getByTitle("delta (spot)")).toBeVisible({ timeout: 20_000 });
     // The priced premium-unit label appears alongside it (e.g. "% EUR prem").
     await expect(pane.getByText(/% .* prem/).first()).toBeVisible();
+  });
+
+  test("ticket → LP panel: a multi-dealer RFQ ranks the dealer lines and books the best offer", async ({
+    page,
+  }) => {
+    await openLive(page);
+    const pane = await gotoWorkspace(page, "ticket");
+
+    // Flip the RFQ mode to the LP panel (multi-dealer) and fan the request. The
+    // demo edge boots ≥3 deterministic synthetic demo LPs beside the native
+    // maker (`CELNET_DEMO_LPS`, default 3 — honest boundary: live bank LP
+    // connectivity is environment-provisioned, never claimed in-repo).
+    await pane.getByRole("tab", { name: "LP panel" }).click();
+    await pane.getByRole("button", { name: /Request panel/ }).click();
+
+    // The ranked panel renders as a real table: one row per responding LP
+    // (native maker + ≥3 synthetic dealers), each a row-headed LP identity.
+    const panel = pane.getByRole("table", { name: "multi-dealer quote panel" });
+    await expect(panel).toBeVisible({ timeout: 20_000 });
+    expect(await panel.locator("tbody th").count()).toBeGreaterThanOrEqual(4);
+    await expect(panel.getByText("SYNTH-LP-1")).toBeVisible();
+    await expect(panel.getByText("celnet-auto-pricer")).toBeVisible();
+
+    // Book the highlighted best offer: `accept_quote` carries (quote_id, lp_id)
+    // and a REAL server execution renders as the fill. The synthetic-dealer law
+    // makes SYNTH-LP-2's offer the deterministic panel touch.
+    await panel.getByRole("button", { name: / — best offer$/ }).click();
+    await expect(pane.getByText(/Filled Buy SYNTH-LP-2 @/).first()).toBeVisible({
+      timeout: 20_000,
+    });
+
+    // Re-request a fresh panel and axe-scan it in place — the panel is a proper
+    // APG data table (serious/critical = 0).
+    await pane.getByRole("button", { name: /Request panel/ }).click();
+    await expect(panel).toBeVisible({ timeout: 20_000 });
+    await expectNoSeriousA11y(page, "ticket LP panel");
   });
 
   test("surface: marking publishes a fresh, pinned surface version", async ({ page }) => {

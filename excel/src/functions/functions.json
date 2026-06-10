@@ -203,7 +203,7 @@
     {
       "id": "RFQ",
       "name": "RFQ",
-      "description": "RFQ for a structure: spill [bid, offer, quoteId, validUntil] + convention footer; accepts the legacy vanilla positional form or a CELNET.INSTRUMENT token.",
+      "description": "RFQ for a structure: spill [bid, offer, quoteId, validUntil] + convention footer; accepts the legacy vanilla positional form or a CELNET.INSTRUMENT token. Pass TRUE (or PANEL) as the trailing panel flag to spill the ranked multi-dealer panel (one row per LP with BEST markers) instead.",
       "result": {
         "dimensionality": "matrix",
         "type": "any"
@@ -236,6 +236,12 @@
           "name": "notional",
           "description": "Trade notional in the base currency (positional form only).",
           "type": "number",
+          "optional": true
+        },
+        {
+          "name": "panel",
+          "description": "Optional: TRUE or PANEL for the ranked multi-dealer panel spill (lp_id, bid, offer, valid_until, BEST markers).",
+          "type": "any",
           "optional": true
         }
       ]

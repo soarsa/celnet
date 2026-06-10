@@ -19,7 +19,7 @@ use crate::risk::{
     self, AggregateReq, CliDimension, DrillReq, LimitsReq, PositionsReq, RiskCommon, StreamReq,
 };
 use crate::tenor::parse_tenor;
-use crate::{convention, exotic, linear, price, surface};
+use crate::{convention, exotic, linear, price, rfq, surface};
 
 use celnet_client::{OrgDimension, Scope, StrikeSpec};
 
@@ -67,6 +67,13 @@ pub(crate) enum Command {
     /// print the sequenced ticks, then unsubscribe cleanly (the `celnet-client`
     /// multiplexed session — the same stream the GUI blotter consumes).
     Stream(StreamArgs),
+    /// Fan one RFQ across a running edge's multi-dealer LP panel via the
+    /// `celnet-client` SDK and print the ranked dealer ladder (lp_id, firm
+    /// bid/offer, last-look countdown, BEST_BID/BEST_OFFER markers);
+    /// `--accept <LP_ID>` then books that pinned row and prints the execution.
+    /// In-repo panels are the native maker plus labeled deterministic synthetic
+    /// demo/test dealers — live LP connectivity is an environment concern.
+    Rfq(RfqArgs),
 }
 
 /// Arguments to `risk` — the edge endpoint, the entitlement scope flags, and one
@@ -186,6 +193,43 @@ pub(crate) struct StreamArgs {
     /// The number of post-snapshot ticks to print before unsubscribing.
     #[arg(long, default_value_t = 3)]
     pub(crate) ticks: u32,
+}
+
+/// Arguments to `rfq`.
+#[derive(Debug, Args)]
+pub(crate) struct RfqArgs {
+    /// The gRPC endpoint of the edge.
+    #[arg(long, default_value = "http://127.0.0.1:50551")]
+    pub(crate) endpoint: String,
+    /// Currency pair, e.g. EURUSD.
+    #[arg(long)]
+    pub(crate) pair: String,
+    /// Tenor shorthand, e.g. 1Y, 3M, ON.
+    #[arg(long, default_value = "1Y")]
+    pub(crate) tenor: String,
+    /// Time to expiry in years (authoritative for pricing).
+    #[arg(long, default_value_t = 1.0)]
+    pub(crate) expiry_years: f64,
+    /// Call or put.
+    #[arg(long, value_enum, default_value = "call")]
+    pub(crate) option: CliOptionType,
+    /// Explicit strike (mutually exclusive with `--delta`).
+    #[arg(long, group = "rfq_strike")]
+    pub(crate) strike: Option<f64>,
+    /// A signed convention delta resolved to a strike server-side.
+    #[arg(long, group = "rfq_strike", allow_hyphen_values = true)]
+    pub(crate) delta: Option<f64>,
+    /// Base-currency notional.
+    #[arg(long, default_value_t = 1_000_000.0)]
+    pub(crate) notional: f64,
+    /// Book the named panel row (an `lp_id` from the printed ladder) after the
+    /// panel prints; omit to print the ranked panel only.
+    #[arg(long, value_name = "LP_ID")]
+    pub(crate) accept: Option<String>,
+    /// The accept direction: buy lifts the chosen row's offer, sell hits its bid
+    /// (used only with `--accept`).
+    #[arg(long, value_enum, default_value = "buy")]
+    pub(crate) side: rfq::CliAcceptSide,
 }
 
 /// Shared Garman-Kohlhagen market inputs accepted by `price` and `exotic`.
@@ -795,7 +839,8 @@ pub(crate) enum DispatchError {
     Price(price::PriceError),
     /// A `surface` calibration failure.
     Surface(celnet_surface::CalibrationError),
-    /// A `risk` / `stream` networked-command failure (connect, status, timeout).
+    /// A `risk` / `stream` / `rfq` networked-command failure (connect, status,
+    /// timeout).
     Risk(risk::RiskError),
     /// A `forward` / `swap` / `ndf` linear-product failure (bad input or a
     /// product × underlying validity-matrix violation).
@@ -1345,6 +1390,32 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
             risk::run_stream(&req, out).map_err(DispatchError::Risk)?;
             Ok(())
         }
+        Command::Rfq(a) => {
+            let pair = parse_pair(&a.pair)?;
+            let tenor = parse_tenor(&a.tenor).map_err(DispatchError::BadTenor)?;
+            let strike = if let Some(k) = a.strike {
+                StrikeSpec::Absolute(k)
+            } else if let Some(d) = a.delta {
+                StrikeSpec::Delta(d)
+            } else {
+                return Err(DispatchError::Invalid(
+                    "specify exactly one of --strike or --delta".to_owned(),
+                ));
+            };
+            let req = rfq::RfqReq {
+                endpoint: a.endpoint,
+                pair,
+                tenor,
+                expiry_years: a.expiry_years,
+                option: a.option.into(),
+                strike,
+                notional_base: a.notional,
+                accept: a.accept,
+                side: a.side.into(),
+            };
+            rfq::run(&req, out).map_err(DispatchError::Risk)?;
+            Ok(())
+        }
     }
 }
 
@@ -1573,5 +1644,23 @@ mod tests {
         let err = run_to_string(&["celnet", "convention", "--pair", "NOPE", "--tenor", "1Y"])
             .unwrap_err();
         assert!(matches!(err, DispatchError::BadPair(_)));
+    }
+
+    #[test]
+    fn rfq_requires_a_strike_spec() {
+        // Rejected in dispatch before any network round-trip.
+        let err = run_to_string(&["celnet", "rfq", "--pair", "EURUSD"]).unwrap_err();
+        assert!(matches!(err, DispatchError::Invalid(_)));
+    }
+
+    #[test]
+    fn rfq_strike_and_delta_are_mutually_exclusive() {
+        // Clap's own arg-group rejection (structural, pre-dispatch).
+        assert!(
+            Cli::try_parse_from([
+                "celnet", "rfq", "--pair", "EURUSD", "--strike", "1.12", "--delta", "0.25",
+            ])
+            .is_err()
+        );
     }
 }

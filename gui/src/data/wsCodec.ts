@@ -29,6 +29,7 @@ import type {
   CcyPair,
   Conventions,
   CrossGamma,
+  DealerQuote,
   DrillRiskRequest,
   DrillRiskResponse,
   EntitlementPrincipal,
@@ -50,6 +51,7 @@ import type {
   MarketObservable,
   MarketSeriesPoint,
   MarketSeriesSnapshot,
+  MultiDealerQuote,
   NonAdditiveRisk,
   NumeraireRate,
   OrgKey,
@@ -64,6 +66,7 @@ import type {
   ScenarioPoint,
   ScenarioResult,
   ShockAxis,
+  Side,
   Smile,
   SmilePoint,
   SmileModel,
@@ -877,6 +880,78 @@ export function executionFromWire(o: WireObject): Omit<Execution, "instrument"> 
   const attribution = attributionFromWire(o);
   if (attribution !== undefined) ex.attribution = attribution;
   return ex;
+}
+
+/**
+ * Decode one liquidity provider's panel line, the mirror of the server codec's
+ * `dealer_quote_to_json` (snake_case keys; presence-tracked `greeks`/
+ * `price_std_error` are `null` on a non-native row — decoded to `undefined`, an
+ * honest absence, never zeros).
+ */
+function dealerQuoteFromWire(o: WireObject): DealerQuote {
+  const d: DealerQuote = {
+    lpId: str(o, "lp_id"),
+    price: twoWayFromWire(child(o, "price")),
+    resolvedStrike: num(o, "resolved_strike"),
+    validUntilNanos: numToBigInt(o, "valid_until_nanos"),
+  };
+  const g = o["greeks"];
+  if (g && typeof g === "object") d.greeks = greeksFromWire(g as WireObject);
+  const attribution = attributionFromWire(o);
+  if (attribution !== undefined) d.attribution = attribution;
+  const stdErr = optNum(o, "price_std_error");
+  if (stdErr !== undefined) d.priceStdError = stdErr;
+  return d;
+}
+
+/**
+ * Decode the multi-dealer (RFQ-to-many) panel frame, the mirror of the server
+ * codec's `multi_dealer_quote_to_json`. The `dealers` array is kept in FRAME
+ * ORDER (the server's deterministic audit order) — a consumer renders it as-is;
+ * the ranking rides in `best_bid_lp_id`/`best_offer_lp_id`.
+ */
+export function multiDealerQuoteFromWire(o: WireObject): MultiDealerQuote {
+  const m: MultiDealerQuote = {
+    quoteId: numToBigInt(o, "quote_id"),
+    idempotencyKey: str(o, "idempotency_key"),
+    dealers: array(o, "dealers").map(dealerQuoteFromWire),
+    bestBidLpId: str(o, "best_bid_lp_id"),
+    bestOfferLpId: str(o, "best_offer_lp_id"),
+    conventions: conventionsFromWire(child(o, "conventions")),
+    epochNanos: numToBigInt(o, "epoch_nanos"),
+  };
+  const corr = optBigInt(o, "correlation_id");
+  if (corr !== undefined) m.correlationId = corr;
+  const surf = optBigInt(o, "surface_version");
+  if (surf !== undefined) m.surfaceVersion = surf;
+  return m;
+}
+
+/**
+ * Encode the `accept_quote` body, the mirror of the server codec's
+ * `quote_accept_from_json`. The multi-dealer line selector `lp_id` is emitted
+ * ONLY when a non-empty `lpId` names a panel row — an absent key selects the
+ * single-dealer quote, keeping that path byte-identical to the pre-panel frame
+ * (the server's `string_or_empty` reads an absent key as `""`).
+ */
+export function quoteAcceptToWire(
+  quoteId: bigint,
+  side: Side,
+  idempotencyKey: string,
+  lpId?: string,
+): WireObject {
+  const w: WireObject = {
+    // The quote_id is the server's exact 64-bit minted identity (splitmix64 over
+    // the full u64 range, so it routinely exceeds Number.MAX_SAFE_INTEGER). Pass
+    // it as a `bigint` so `serializeFrame` writes the full-precision integer
+    // literal back verbatim — a lossy `Number(quoteId)` rounds the id and the
+    // server refuses the accept as `unknown quote_id`.
+    quote_id: quoteId,
+    idempotency_key: idempotencyKey,
+    side: e.side.toWire(side),
+  };
+  if (lpId !== undefined && lpId.length > 0) w["lp_id"] = lpId;
+  return w;
 }
 
 // ---------------------------------------------------------------------------

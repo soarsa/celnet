@@ -19,6 +19,13 @@ export interface RfqState {
   readonly bid: number;
   readonly offer: number;
   readonly quoteId: bigint;
+  /**
+   * The idempotency key the quote was REQUESTED under. The server's accept is
+   * request-matched (an accept must echo the originating key, so a learned
+   * `quote_id` alone is never an authority token); the ticket carries the key
+   * from request to accept.
+   */
+  readonly idempotencyKey: string;
   readonly validUntilNanos: bigint;
   /** A human-readable status line shown under the ticket. */
   readonly status: string;
@@ -31,6 +38,7 @@ export const IDLE_RFQ: RfqState = {
   bid: 0,
   offer: 0,
   quoteId: 0n,
+  idempotencyKey: "",
   validUntilNanos: 0n,
   status: "",
   tradable: false,
@@ -41,6 +49,8 @@ export interface QuotedTwoWay {
   readonly bid: number;
   readonly offer: number;
   readonly quoteId: bigint;
+  /** The key the quote was requested under (echoed verbatim on the accept). */
+  readonly idempotencyKey: string;
   readonly validUntilNanos: bigint;
 }
 
@@ -51,6 +61,7 @@ export function rfqQuoted(q: QuotedTwoWay): RfqState {
     bid: q.bid,
     offer: q.offer,
     quoteId: q.quoteId,
+    idempotencyKey: q.idempotencyKey,
     validUntilNanos: q.validUntilNanos,
     status: `quoted ${q.bid.toFixed(5)} / ${q.offer.toFixed(5)} — id ${q.quoteId.toString()}`,
     tradable: q.bid > 0 && q.offer > 0 && q.offer >= q.bid,

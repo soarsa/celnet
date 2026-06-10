@@ -88,6 +88,7 @@ pub use core_link::{
 pub use pricer::{ConventionSet, PriceError, Priced, price_instrument};
 pub use readiness::{ReadinessGate, ServiceState};
 pub use services::pricefanout::{PriceTick, pair_seed, spot_at};
+pub use services::quote::LpPanelConfig;
 pub use spread::SpreadModel;
 pub use surface_book::{PinError, SurfaceBook};
 pub use tick::TickSource;
@@ -237,23 +238,55 @@ impl Edge {
         spread: SpreadModel,
         clock: Clock,
     ) -> std::io::Result<Self> {
-        // Resolve the fleet-risk deploy-time topology from the environment, then
-        // delegate. Reading the env (the only I/O) happens here, once, at boot.
+        // Resolve the deploy-time knobs from the environment, then delegate.
+        // Reading the env (the only I/O) happens here, once, at boot: the
+        // fleet-risk topology and the synthetic demo/test LP-panel breadth
+        // (`CELNET_DEMO_LPS`; absent ⇒ 0 ⇒ the byte-identical single-dealer edge).
+        Self::start_on_with_panel(
+            grpc_addr,
+            ws_addr,
+            link,
+            spread,
+            clock,
+            LpPanelConfig::from_env(),
+        )
+        .await
+    }
+
+    /// Like [`Edge::start_on`], but with an **explicit** synthetic demo/test
+    /// LP-panel breadth ([`LpPanelConfig`]) instead of reading `CELNET_DEMO_LPS`
+    /// from the environment (the fleet topology is still resolved from the
+    /// environment, exactly as [`Edge::start_on`]).
+    ///
+    /// This is the boot path for the local demo edge, which defaults to a ≥3-LP
+    /// panel (env-overridable) so live e2e suites exercise the multi-dealer path.
+    ///
+    /// # Errors
+    /// Returns an [`std::io::Error`] if either listener cannot bind, or if a
+    /// distributed backend endpoint cannot be dialled.
+    pub async fn start_on_with_panel(
+        grpc_addr: SocketAddr,
+        ws_addr: SocketAddr,
+        link: Arc<CoreLink>,
+        spread: SpreadModel,
+        clock: Clock,
+        panel: LpPanelConfig,
+    ) -> std::io::Result<Self> {
         let topology = fleet_topology_from_env();
-        Self::start_on_with_topology(grpc_addr, ws_addr, link, spread, clock, topology).await
+        Self::start_on_with_topology(grpc_addr, ws_addr, link, spread, clock, topology, panel).await
     }
 
     /// Like [`Edge::start_on`], but binds the edge under an **explicit**
-    /// [`FleetTopology`] instead of reading `CELNET_FLEET_MODE` / `CELNET_FLEET_BACKENDS`
-    /// from the environment.
+    /// [`FleetTopology`] and synthetic LP-panel breadth instead of reading
+    /// `CELNET_FLEET_MODE` / `CELNET_FLEET_BACKENDS` / `CELNET_DEMO_LPS` from the
+    /// environment.
     ///
-    /// This is the race-free entry point for a federation test that boots backend
-    /// edges on ephemeral ports and then a [`FleetTopology::Distributed`] front edge
-    /// over their URLs, without mutating process-global env (the env path is
-    /// [`Edge::start_on`]). The semantics are otherwise identical: a distributed
-    /// topology connects the shared backend [`Fleet`] once at boot (so the unary
-    /// pricing/quote/surface services forward by owned pair and the risk edge
-    /// federates), and a dial failure surfaces here as an `io::Error`.
+    /// This is the race-free entry point for a federation / multi-dealer test that
+    /// boots edges on ephemeral ports without mutating process-global env (the env
+    /// path is [`Edge::start_on`]). The semantics are otherwise identical: a
+    /// distributed topology connects the shared backend [`Fleet`] once at boot (so
+    /// the unary pricing/quote/surface services forward by owned pair and the risk
+    /// edge federates), and a dial failure surfaces here as an `io::Error`.
     ///
     /// # Errors
     /// Returns an [`std::io::Error`] if either listener cannot bind, or if a
@@ -265,6 +298,7 @@ impl Edge {
         spread: SpreadModel,
         clock: Clock,
         topology: FleetTopology,
+        panel: LpPanelConfig,
     ) -> std::io::Result<Self> {
         let gate = Arc::new(ReadinessGate::new());
         // The single versioned marked-surface registry every service shares: the
@@ -310,6 +344,7 @@ impl Edge {
             clock.clone(),
             Arc::clone(&surface_book),
             fleet.clone(),
+            panel,
         ));
         let stream = StreamServiceServer::new(StreamEdge::with_store_and_fleet(
             Arc::clone(&link),
@@ -373,6 +408,7 @@ impl Edge {
             Arc::clone(&store),
             Arc::clone(&risk_edge),
             fleet.clone(),
+            panel,
         );
         let ws_mirror = ws::WsMirror::start(ws_addr, ws_services).await?;
 

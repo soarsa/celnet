@@ -24,7 +24,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { Connection } from "../src/transport/connection";
-import { DEFAULT_CONVENTIONS } from "../src/functions/shaping";
+import {
+  DEFAULT_CONVENTIONS,
+  formatRfqPanelSpill,
+  shapeVanillaInstrument,
+} from "../src/functions/shaping";
 import {
   EXCEL_FAMILIES,
   FAMILIES_NOT_EXPOSED,
@@ -180,6 +184,107 @@ describe("Excel real-edge conformance (frozen golden corpus over a REAL WebSocke
       }
     });
   }
+
+  // ---- multi-dealer ranked panel (RFQ-to-many) over the REAL ≥3-LP edge -----
+  //
+  // The demo edge boots with `CELNET_DEMO_LPS=3` (pinned in demoEdge.ts): the
+  // native maker + 3 labeled DETERMINISTIC SYNTHETIC dealers quoting around the
+  // SAME edge mid (live LP connectivity is environment-provided, never claimed
+  // here). The spec drives the exact path a `=CELNET.RFQ(…, TRUE)` cell runs —
+  // `request_multi_dealer_quote` → ranked `multi_dealer_quote` → spill — then
+  // books a chosen line via `accept_quote` carrying `(quote_id, lp_id)`.
+  describe("multi-dealer ranked panel (real ≥3-LP demo edge)", () => {
+    const PANEL_INSTRUMENT = shapeVanillaInstrument({
+      pair: "EURUSD",
+      tenor: "1Y",
+      strikeOrDelta: 1.12,
+      callPut: "C",
+      notional: 1_000_000,
+    });
+
+    it("returns a 4-line ranked panel (native + 3 synthetic LPs) with coherent touch winners", async () => {
+      const md = await conn.requestMultiDealerQuote(
+        PANEL_INSTRUMENT,
+        DEFAULT_CONVENTIONS,
+        `e2e-panel:${Date.now()}`,
+      );
+      // Exactly the pinned breadth: the native maker line + SYNTH-LP-1..3.
+      expect(md.dealers.length).toBe(4);
+      const ids = md.dealers.map((d) => d.lpId);
+      expect(new Set(ids).size).toBe(4);
+      for (const k of [1, 2, 3]) expect(ids).toContain(`SYNTH-LP-${k}`);
+      const native = md.dealers.filter((d) => !d.lpId.startsWith("SYNTH-LP-"));
+      expect(native.length).toBe(1);
+      // Only the native maker discloses greeks; a synthetic LP discloses a price.
+      expect(native[0]!.greeks).toBeDefined();
+      for (const d of md.dealers.filter((x) => x.lpId.startsWith("SYNTH-LP-"))) {
+        expect(d.greeks).toBeUndefined();
+      }
+      // Every dealer line is a coherent two-way with a live last-look window.
+      for (const d of md.dealers) {
+        expect(d.price.bid).toBeGreaterThan(0);
+        expect(d.price.offer).toBeGreaterThanOrEqual(d.price.bid);
+        expect(d.validUntilNanos > md.epochNanos).toBe(true);
+      }
+      // The aggregator's touch winners are real panel rows holding the touch.
+      const byId = new Map(md.dealers.map((d) => [d.lpId, d]));
+      const bestBid = byId.get(md.bestBidLpId);
+      const bestOffer = byId.get(md.bestOfferLpId);
+      expect(bestBid, `best_bid_lp_id ${md.bestBidLpId} not on the panel`).toBeDefined();
+      expect(bestOffer, `best_offer_lp_id ${md.bestOfferLpId} not on the panel`).toBeDefined();
+      expect(bestBid!.price.bid).toBe(Math.max(...md.dealers.map((d) => d.price.bid)));
+      expect(bestOffer!.price.offer).toBe(Math.min(...md.dealers.map((d) => d.price.offer)));
+
+      // The spill a `=CELNET.RFQ(…, TRUE)` cell renders preserves the server's
+      // ranking order row-for-row and exposes the (quote_id, lp_id) accept key.
+      const spill = formatRfqPanelSpill({
+        quoteId: md.quoteId,
+        lines: md.dealers.map((d) => ({
+          lpId: d.lpId,
+          bid: d.price.bid,
+          offer: d.price.offer,
+          validUntilNanos: d.validUntilNanos,
+        })),
+        bestBidLpId: md.bestBidLpId,
+        bestOfferLpId: md.bestOfferLpId,
+        conventions: md.conventions,
+        surfaceVersion: md.surfaceVersion,
+        epochNanos: md.epochNanos,
+      });
+      expect(spill.length).toBe(1 + 4 + 2); // header + 4 LP rows + quote_id + footer
+      expect(spill.slice(1, 5).map((r) => r[0])).toEqual(ids);
+      expect(spill[5]).toEqual(["quote_id", md.quoteId.toString()]);
+    });
+
+    it("books a chosen panel line by (quote_id, lp_id) at exactly the shown price", async () => {
+      const key = `e2e-panel-accept:${Date.now()}`;
+      const md = await conn.requestMultiDealerQuote(PANEL_INSTRUMENT, DEFAULT_CONVENTIONS, key);
+      // Lift the best OFFER dealer's line (BUY) — the pinned panel row books at
+      // the price the client was shown, never a re-price.
+      const chosen = md.dealers.find((d) => d.lpId === md.bestOfferLpId)!;
+      const exec = await conn.acceptQuote({
+        quoteId: md.quoteId,
+        side: "BUY",
+        idempotencyKey: md.idempotencyKey,
+        lpId: chosen.lpId,
+      });
+      expect(exec.quoteId).toBe(md.quoteId);
+      expect(exec.side).toBe("BUY");
+      expect(exec.tradedPremium).toBe(chosen.price.offer);
+
+      // A different dealer line on the SAME quote is a different trade intent,
+      // not a retry — the server refuses it rather than double-booking.
+      const other = md.dealers.find((d) => d.lpId !== chosen.lpId)!;
+      await expect(
+        conn.acceptQuote({
+          quoteId: md.quoteId,
+          side: "BUY",
+          idempotencyKey: md.idempotencyKey,
+          lpId: other.lpId,
+        }),
+      ).rejects.toThrow(/already booked/);
+    });
+  });
 
   it("reports (does not skip) the corpus families Excel does not expose", () => {
     // Documentation-as-assertion (CLAUDE.md rule 2 — no silent gap). The corpus

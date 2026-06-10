@@ -20,9 +20,12 @@ import {
   conventionsToWire,
   marketFromWire,
   marketToWire,
+  multiDealerQuoteFromWire,
   parseFrame,
+  quoteAcceptToWire,
   serializeFrame,
   smileModelToWire,
+  type WireObject,
 } from "../src/data/wsCodec";
 import type {
   AttributionRecord,
@@ -191,5 +194,170 @@ describe("wsCodec — SmileModel codec (proto-number alignment)", () => {
     expect(smileModelToWire("EXTENDED_SURFACE")).toBe(4);
     expect(e.smileModel.toWire("EXTENDED_SURFACE")).toBe(4);
     expect(e.smileModel.fromWire(4)).toBe("EXTENDED_SURFACE");
+  });
+});
+
+describe("wsCodec — MultiDealerQuote panel frame (the server-emitted shape)", () => {
+  // The exact snake_case Greeks body the server's `greeks_to_json` emits.
+  const GREEKS_WIRE = {
+    price: 0.0123,
+    delta_spot: 0.51,
+    delta_forward: 0.52,
+    gamma: 0.03,
+    vega: 0.21,
+    theta: -0.01,
+    rho_dom: 0.05,
+    rho_for: -0.04,
+    vanna: 0.002,
+    volga: 0.011,
+    charm: -0.0005,
+    speed: 0.0001,
+    zomma: 0.0004,
+    color: -0.0002,
+  };
+
+  /**
+   * The exact panel frame shape `multi_dealer_quote_to_json` emits: dealers in
+   * the server's deterministic audit order, the native maker row carrying the
+   * greeks / MC std-error, and a synthetic dealer row carrying `null` for both
+   * (an LP discloses a price, not its greeks).
+   */
+  function panelFrame(): WireObject {
+    return {
+      quote_id: 42,
+      idempotency_key: "tkt-1",
+      dealers: [
+        {
+          lp_id: "SYNTH-LP-1",
+          price: { bid: 0.1206, offer: 0.1296 },
+          greeks: null,
+          resolved_strike: 1.0921,
+          valid_until_nanos: 1_700_000_008_000_000_000,
+          attribution: {
+            quotedBy: { book: "SYNTH-LP-1", owner: { autoPricer: "SYNTH-LP-1" } },
+          },
+          price_std_error: null,
+        },
+        {
+          lp_id: "SYNTH-LP-2",
+          price: { bid: 0.1182, offer: 0.1292 },
+          greeks: null,
+          resolved_strike: 1.0921,
+          valid_until_nanos: 1_700_000_008_000_000_000,
+          attribution: {
+            quotedBy: { book: "SYNTH-LP-2", owner: { autoPricer: "SYNTH-LP-2" } },
+          },
+          price_std_error: null,
+        },
+        {
+          lp_id: "celnet-auto-pricer",
+          price: { bid: 0.12, offer: 0.13 },
+          greeks: GREEKS_WIRE,
+          resolved_strike: 1.0921,
+          valid_until_nanos: 1_700_000_008_000_000_000,
+          attribution: {
+            quotedBy: { book: "AUTO", owner: { autoPricer: "celnet-auto-pricer" } },
+          },
+          price_std_error: 0.0004,
+        },
+      ],
+      best_bid_lp_id: "SYNTH-LP-1",
+      best_offer_lp_id: "SYNTH-LP-2",
+      conventions: conventionsToWire(DEFAULT_CONVENTIONS),
+      epoch_nanos: 1_700_000_000_000_000_000,
+      correlation_id: null,
+      surface_version: 7,
+    };
+  }
+
+  it("decodes the panel field-for-field, keeping the dealers in FRAME order", () => {
+    const m = multiDealerQuoteFromWire(panelFrame());
+    expect(m.quoteId).toBe(42n);
+    expect(m.idempotencyKey).toBe("tkt-1");
+    expect(m.dealers.map((d) => d.lpId)).toEqual([
+      "SYNTH-LP-1",
+      "SYNTH-LP-2",
+      "celnet-auto-pricer",
+    ]);
+    expect(m.bestBidLpId).toBe("SYNTH-LP-1");
+    expect(m.bestOfferLpId).toBe("SYNTH-LP-2");
+    expect(m.conventions).toEqual(DEFAULT_CONVENTIONS);
+    expect(m.epochNanos).toBe(1_700_000_000_000_000_000n);
+    // Presence-tracked optionals: a `null` correlation is honestly absent.
+    expect(m.correlationId).toBeUndefined();
+    expect(m.surfaceVersion).toBe(7n);
+  });
+
+  it("keeps the native row's greeks/std-error and a synthetic row's honest absences", () => {
+    const m = multiDealerQuoteFromWire(panelFrame());
+    const native = m.dealers.find((d) => d.lpId === "celnet-auto-pricer")!;
+    expect(native.greeks?.deltaSpot).toBe(0.51);
+    expect(native.greeks?.rhoDom).toBe(0.05);
+    expect(native.priceStdError).toBe(0.0004);
+    expect(native.price).toEqual({ bid: 0.12, offer: 0.13 });
+    const synth = m.dealers.find((d) => d.lpId === "SYNTH-LP-2")!;
+    // `null` on the wire ⇒ undefined in the GUI — never a fabricated zero row.
+    expect(synth.greeks).toBeUndefined();
+    expect(synth.priceStdError).toBeUndefined();
+    expect(synth.attribution?.quotedBy?.owner).toEqual({
+      kind: "autoPricer",
+      autoPricer: "SYNTH-LP-2",
+    });
+    expect(synth.validUntilNanos).toBe(1_700_000_008_000_000_000n);
+  });
+
+  it("recovers a 64-bit valid_until_nanos beyond MAX_SAFE through parseFrame", () => {
+    // Build the raw frame TEXT (a JS number literal would already have rounded),
+    // exactly as the server serializes it: a bare 64-bit integer literal.
+    const big = "9223372036854775806"; // i64::MAX - 1
+    const raw =
+      `{"quote_id":42,"idempotency_key":"k","dealers":[{"lp_id":"SYNTH-LP-1",` +
+      `"price":{"bid":0.1,"offer":0.2},"greeks":null,"resolved_strike":1.09,` +
+      `"valid_until_nanos":${big},"attribution":null,"price_std_error":null}],` +
+      `"best_bid_lp_id":"SYNTH-LP-1","best_offer_lp_id":"SYNTH-LP-1",` +
+      `"conventions":{},"epoch_nanos":1,"correlation_id":null,"surface_version":null}`;
+    const m = multiDealerQuoteFromWire(parseFrame(raw) as WireObject);
+    expect(m.dealers[0]!.validUntilNanos).toBe(BigInt(big));
+    expect(m.surfaceVersion).toBeUndefined();
+  });
+});
+
+describe("wsCodec — accept_quote body (the multi-dealer line selector)", () => {
+  it("emits the byte-identical pre-panel body when no lpId is named", () => {
+    const w = quoteAcceptToWire(42n, "BUY", "tkt-1");
+    // EXACT key set: no `lp_id` key at all (the server reads absent as "").
+    expect(Object.keys(w).sort()).toEqual(["idempotency_key", "quote_id", "side"]);
+    // The quote_id stays the exact 64-bit identity (a `bigint`); on the wire
+    // `serializeFrame` writes it as the same bare integer literal as before.
+    expect(w).toEqual({ quote_id: 42n, idempotency_key: "tkt-1", side: 0 });
+    expect(serializeFrame(w)).toBe('{"quote_id":42,"idempotency_key":"tkt-1","side":0}');
+  });
+
+  it("treats an empty lpId exactly like an absent one (single-dealer accept)", () => {
+    expect(quoteAcceptToWire(42n, "SELL", "tkt-1", "")).toEqual({
+      quote_id: 42n,
+      idempotency_key: "tkt-1",
+      side: 1,
+    });
+  });
+
+  it("carries a named panel row's lp_id (book exactly that dealer line)", () => {
+    expect(quoteAcceptToWire(42n, "BUY", "tkt-1", "SYNTH-LP-2")).toEqual({
+      quote_id: 42n,
+      idempotency_key: "tkt-1",
+      side: 0,
+      lp_id: "SYNTH-LP-2",
+    });
+  });
+
+  it("preserves a minted quote_id beyond MAX_SAFE bit-for-bit through the wire text", () => {
+    // The server mints quote ids over the FULL u64 range (splitmix64), so almost
+    // every real id exceeds Number.MAX_SAFE_INTEGER. A lossy `Number()` here
+    // rounds the id and the server refuses the accept as `unknown quote_id` —
+    // the exact failure the live LP-panel e2e caught. Round-trip the literal.
+    const id = 4385739192607958123n; // > 2^53; rounds to …958000 as a double
+    const w = quoteAcceptToWire(id, "BUY", "tkt-1", "SYNTH-LP-2");
+    expect(w["quote_id"]).toBe(id);
+    expect(serializeFrame(w)).toContain('"quote_id":4385739192607958123,');
   });
 });

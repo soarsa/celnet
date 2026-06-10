@@ -20,7 +20,9 @@
 //! current-thread tokio runtime built inside the (otherwise synchronous) dispatch;
 //! the binary needs no global async runtime. Every network await is bounded by a
 //! deadline so a misconfigured endpoint / unreachable edge fails fast rather than
-//! hanging the terminal.
+//! hanging the terminal. The runtime/connect/deadline plumbing ([`block_on`],
+//! [`connect`], [`bounded`]) and [`RiskError`] are shared crate-wide by every
+//! networked subcommand — the `rfq` panel command ([`crate::rfq`]) reuses them.
 
 use std::fmt::Write as _;
 use std::time::Duration;
@@ -36,8 +38,8 @@ use celnet_types::{CcyPair, OptionType, Tenor};
 /// never-arriving reply (unreachable edge, dead service) fails fast.
 const CALL_DEADLINE: Duration = Duration::from_secs(10);
 
-/// A `risk` / `stream` command failure: a connect/transport error, a server
-/// status, a bad argument, or a deadline.
+/// A networked-command (`risk` / `stream` / `rfq`) failure: a connect/transport
+/// error, a server status, a bad argument, or a deadline.
 #[derive(Debug)]
 pub(crate) enum RiskError {
     /// The endpoint URI or an argument was invalid before any round-trip.
@@ -330,7 +332,7 @@ pub(crate) struct StreamReq {
 /// completion. The networked risk/stream commands are async; the rest of the CLI
 /// is synchronous, so each command owns its runtime rather than the binary
 /// carrying a global one.
-fn block_on<T>(fut: impl std::future::Future<Output = T>) -> Result<T, RiskError> {
+pub(crate) fn block_on<T>(fut: impl std::future::Future<Output = T>) -> Result<T, RiskError> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -339,7 +341,7 @@ fn block_on<T>(fut: impl std::future::Future<Output = T>) -> Result<T, RiskError
 }
 
 /// Connect to the edge, bounded by [`CALL_DEADLINE`].
-async fn connect(endpoint: &str) -> Result<Client, RiskError> {
+pub(crate) async fn connect(endpoint: &str) -> Result<Client, RiskError> {
     tokio::time::timeout(CALL_DEADLINE, Client::connect(endpoint.to_owned()))
         .await
         .map_err(|_| RiskError::Timeout("the edge connection"))?
@@ -496,7 +498,7 @@ pub(crate) fn run_stream<W: std::io::Write>(
 }
 
 /// Bound one SDK call by [`CALL_DEADLINE`], tagging a timeout with `what`.
-async fn bounded<T>(
+pub(crate) async fn bounded<T>(
     what: &'static str,
     fut: impl std::future::Future<Output = celnet_client::ClientResult<T>>,
 ) -> Result<T, RiskError> {

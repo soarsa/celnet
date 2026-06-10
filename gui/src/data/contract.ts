@@ -977,6 +977,51 @@ export interface Execution {
   attribution?: AttributionRecord;
 }
 
+/**
+ * One liquidity provider's line of a multi-dealer panel (`celnet.wire
+ * .DealerQuote`). Every line quotes the SAME resolved instrument (the
+ * maker-priced strike); `greeks`/`priceStdError` are present on the NATIVE maker
+ * line only — an LP discloses a price, not its greeks — so their absence on a
+ * dealer row is honest, never a row of zeros.
+ */
+export interface DealerQuote {
+  /** The dealer's stable audit identity; echoed on `acceptQuote` to book this line. */
+  lpId: string;
+  price: TwoWayPrice;
+  /** The edge-priced Greeks — the native maker line only. */
+  greeks?: Greeks;
+  resolvedStrike: number;
+  /** This line's own last-look deadline, nanoseconds since the Unix epoch (UTC). */
+  validUntilNanos: bigint;
+  /** The LP seat that quoted this line (+ the requesting holder), if emitted. */
+  attribution?: AttributionRecord;
+  /** MC standard error — the native maker line of an MC-priced product only. */
+  priceStdError?: number;
+}
+
+/**
+ * The ranked multi-dealer (RFQ-to-many) panel (`celnet.wire.MultiDealerQuote`):
+ * one row per responding LP plus the touch winners. `dealers` arrives in the
+ * server's deterministic audit order and is rendered AS-IS (frame order ==
+ * render order); the ranking is surfaced by `bestBidLpId`/`bestOfferLpId`
+ * (empty ⇒ no live line won that side). An `acceptQuote` carrying a row's
+ * `lpId` books exactly that pinned dealer line.
+ */
+export interface MultiDealerQuote {
+  quoteId: bigint;
+  idempotencyKey: string;
+  /** Responding dealer lines, in the server's deterministic audit order. */
+  dealers: DealerQuote[];
+  /** The `lpId` whose bid won the panel (highest bid; empty ⇒ none live). */
+  bestBidLpId: string;
+  /** The `lpId` whose offer won the panel (lowest offer; empty ⇒ none live). */
+  bestOfferLpId: string;
+  conventions: Conventions;
+  epochNanos: bigint;
+  correlationId?: bigint;
+  surfaceVersion?: bigint;
+}
+
 // --- stream (RFS) -----------------------------------------------------------
 
 /** Per-row stream health, derived from the contract's seq/resync semantics. */

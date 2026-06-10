@@ -22,6 +22,12 @@
 //!     real FIX acceptor binds there and serves RFQ→Quote→lift→ExecutionReport over the
 //!     same pricing + click-to-trade token path as gRPC/WS. The bound address is
 //!     printed alongside the WS address when set.
+//!   * `CELNET_DEMO_LPS`  — how many **deterministic synthetic** demo/test dealers
+//!     join the native maker on the multi-dealer RFQ panel (default **3** for this
+//!     demo edge, so the live e2e suites exercise the ranked panel; `0` ⇒ the
+//!     byte-identical single-dealer edge). Honest boundary: live LP connectivity is
+//!     ENV — the in-repo panel is labeled synthetic dealers quoting around the same
+//!     edge mid, never faked external fills.
 //!
 //! The WS mirror binds on its own ephemeral port *inside* [`Edge::start`]; to expose
 //! it on a fixed port we bind the WS listener address from `CELNET_WS_ADDR`. The
@@ -39,7 +45,7 @@ use std::time::Duration;
 
 use celnet_conventions::ConventionRecord;
 use celnet_engine::testing::make_state;
-use celnet_server::{Clock, CoreLink, Edge, SpreadModel};
+use celnet_server::{Clock, CoreLink, Edge, LpPanelConfig, SpreadModel};
 use celnet_surface::{
     MarketContext as SurfaceContext, MarketQuotes, SmileModel, build_model_smile,
 };
@@ -70,13 +76,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Start the pinned pricing core + async bridge.
     let link = CoreLink::start(initial, None);
 
-    // Bring up the edge with the WS mirror bound to the fixed `ws_addr`.
-    let edge = Edge::start_on(
+    // Bring up the edge with the WS mirror bound to the fixed `ws_addr`. The demo
+    // edge defaults to a 3-LP multi-dealer panel (native maker + 3 deterministic
+    // synthetic demo dealers), env-overridable via `CELNET_DEMO_LPS`, so live e2e
+    // suites exercise the ranked-panel → accept-with-lp_id path out of the box.
+    let panel = LpPanelConfig::from_env_or(3);
+    let edge = Edge::start_on_with_panel(
         grpc_addr,
         ws_addr,
         Arc::clone(&link),
         SpreadModel::default(),
         Clock::system(),
+        panel,
     )
     .await?;
     edge.gate().mark_ready();
@@ -93,11 +104,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None => String::new(),
     };
     eprintln!(
-        "celnet-server demo edge ready — gRPC {} | WS-mirror ws://{}{} | pre-marked surface_version={}",
+        "celnet-server demo edge ready — gRPC {} | WS-mirror ws://{}{} | \
+         pre-marked surface_version={} | LP panel: native maker + {} synthetic demo dealer(s)",
         edge.grpc_addr(),
         edge.ws_addr(),
         fix_note,
-        pre_marked_version
+        pre_marked_version,
+        panel.synthetic_lps
     );
 
     // Run until Ctrl-C / SIGTERM, then drain gracefully.

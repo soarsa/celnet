@@ -17,19 +17,19 @@ use serde_json::{Map, Value, json};
 use celnet_proto::{
     Accumulator, AdditiveRisk, AggregateRiskRequest, AggregateRiskResponse, AmericanOption,
     ArbReport, AsianOption, BasketLeg, BasketOption, BrokerQuoteSet, BucketedRisk, CcyExposureLeg,
-    CcyPair, Cliquet, Conventions, CrossGamma, Digital, DoubleBarrier, DrillRiskRequest,
-    DrillRiskResponse, EntitlementPrincipal, EntitlementRule, Execute, Executed, Execution,
-    FixingSchedule, ForwardStart, FxForward, FxSwap, GetSmileRequest, Greeks, Instrument, Leg,
-    LimitStatusRequest, LimitStatusResponse, LimitUtilization, ListPositionsRequest,
-    ListPositionsResponse, Lookback, MarkSurfaceRequest, MarkSurfaceResponse, MarketContext,
-    Modify, Ndf, NonAdditiveRisk, NumeraireRate, OrgKey, PriceRequest, PriceResponse, Quantity,
-    Quanto, Quote, QuoteAccept, QuoteReject, QuoteRequest, RejectAck, ReportingNumeraire, Resync,
-    RiskBucketRequest, RiskNode, RiskPosition, RiskScope, ScenarioPoint, ScenarioRequest,
-    ScenarioResponse, ShockAxis, SingleBarrier, Smile, SmilePoint, Snapshot, Solve, Strategy,
-    StrategyKind, StreamEnd, StreamReject, StrikeOrDelta, Subscribe, SubscriptionId, Tarf, Tenor,
-    Touch, TradableToken, TwoWayPrice, Unsubscribe, Update, Vanilla, VanillaInputs, VarianceSwap,
-    VegaLadderBucket, VegaPillar, VolatilitySwap, WindowBarrier, instrument, shock_axis,
-    strike_or_delta, tenor,
+    CcyPair, Cliquet, Conventions, CrossGamma, DealerQuote, Digital, DoubleBarrier,
+    DrillRiskRequest, DrillRiskResponse, EntitlementPrincipal, EntitlementRule, Execute, Executed,
+    Execution, FixingSchedule, ForwardStart, FxForward, FxSwap, GetSmileRequest, Greeks,
+    Instrument, Leg, LimitStatusRequest, LimitStatusResponse, LimitUtilization,
+    ListPositionsRequest, ListPositionsResponse, Lookback, MarkSurfaceRequest, MarkSurfaceResponse,
+    MarketContext, Modify, MultiDealerQuote, Ndf, NonAdditiveRisk, NumeraireRate, OrgKey,
+    PriceRequest, PriceResponse, Quantity, Quanto, Quote, QuoteAccept, QuoteReject, QuoteRequest,
+    RejectAck, ReportingNumeraire, Resync, RiskBucketRequest, RiskNode, RiskPosition, RiskScope,
+    ScenarioPoint, ScenarioRequest, ScenarioResponse, ShockAxis, SingleBarrier, Smile, SmilePoint,
+    Snapshot, Solve, Strategy, StrategyKind, StreamEnd, StreamReject, StrikeOrDelta, Subscribe,
+    SubscriptionId, Tarf, Tenor, Touch, TradableToken, TwoWayPrice, Unsubscribe, Update, Vanilla,
+    VanillaInputs, VarianceSwap, VegaLadderBucket, VegaPillar, VolatilitySwap, WindowBarrier,
+    instrument, shock_axis, strike_or_delta, tenor,
 };
 
 /// A codec error: a malformed or out-of-contract JSON message. Carries a
@@ -942,7 +942,10 @@ pub(super) fn quote_accept_from_json(o: &Map<String, Value>) -> Result<QuoteAcce
         quote_id: u64_field(o, "quote_id")?,
         idempotency_key: string_or_empty(o, "idempotency_key"),
         side: enum_or_zero(o, "side"),
-        lp_id: String::new(),
+        // The multi-dealer line selector, mirroring the gRPC field exactly:
+        // absent/empty selects the single-dealer quote (byte-identical to the
+        // pre-panel contract); a `DealerQuote.lp_id` books that pinned panel row.
+        lp_id: string_or_empty(o, "lp_id"),
     })
 }
 
@@ -969,6 +972,39 @@ pub(super) fn quote_to_json(q: &Quote) -> Value {
         // Presence-tracked MC standard error (set only for MC-priced products);
         // the WS quote path must carry it so GUI/Excel disclose MC uncertainty.
         "price_std_error": q.price_std_error,
+    })
+}
+
+/// Encode one liquidity provider's line of a multi-dealer panel field-for-field
+/// with the wire [`DealerQuote`] (snake_case keys; presence-tracked fields are
+/// `null` when `None`) — the WS mirror of the gRPC message, never a fork.
+fn dealer_quote_to_json(d: &DealerQuote) -> Value {
+    json!({
+        "lp_id": d.lp_id,
+        "price": d.price.as_ref().map(two_way_to_json),
+        "greeks": d.greeks.as_ref().map(greeks_to_json),
+        "resolved_strike": d.resolved_strike,
+        "valid_until_nanos": d.valid_until_nanos,
+        "attribution": d.attribution.as_ref().map(attribution_to_json),
+        "price_std_error": d.price_std_error,
+    })
+}
+
+/// Encode the multi-dealer (RFQ-to-many) panel response field-for-field with the
+/// wire [`MultiDealerQuote`]: the ranked dealer lines plus the touch winners, so
+/// a WS client (GUI / Excel) can lift/hit a specific dealer's line by echoing its
+/// `lp_id` on `accept_quote` — exactly the gRPC contract, second encoding.
+pub(super) fn multi_dealer_quote_to_json(m: &MultiDealerQuote) -> Value {
+    json!({
+        "quote_id": m.quote_id,
+        "idempotency_key": m.idempotency_key,
+        "dealers": Value::Array(m.dealers.iter().map(dealer_quote_to_json).collect()),
+        "best_bid_lp_id": m.best_bid_lp_id,
+        "best_offer_lp_id": m.best_offer_lp_id,
+        "conventions": m.conventions.as_ref().map(conventions_to_json),
+        "epoch_nanos": m.epoch_nanos,
+        "correlation_id": m.correlation_id,
+        "surface_version": m.surface_version,
     })
 }
 

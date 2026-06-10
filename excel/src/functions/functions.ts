@@ -45,6 +45,7 @@ import {
   formatMarkStatusSpill,
   formatPositionsSpill,
   formatPremiumSpill,
+  formatRfqPanelSpill,
   formatRfqSpill,
   formatRiskSpill,
   formatSeriesCell,
@@ -55,6 +56,7 @@ import {
   lookbackIsMonteCarlo,
   parseObservable,
   parsePair,
+  parseRfqPanelFlag,
   parseRiskDimension,
   parseRiskScope,
   parseSmileModel,
@@ -334,13 +336,22 @@ export async function GREEKS(
  * convention footer. The quoteId binds the task-pane Trade ticket (W4/W6).
  * POLYMORPHIC: pass a CELNET.INSTRUMENT token as the single argument for ANY
  * family on ANY asset class; the legacy vanilla positional form is unchanged.
+ *
+ * PANEL MODE: pass TRUE (or "PANEL") as the trailing `panel` flag to RFQ the
+ * multi-dealer ranked panel instead (`request_multi_dealer_quote` on the one
+ * contract): the cell spills one row per competing LP — `lp_id, bid, offer,
+ * valid_until, BEST_BID/BEST_OFFER markers` — in the server aggregator's ranking
+ * order, plus the aggregate `quote_id` row an accept echoes together with the
+ * chosen row's `lp_id`. An omitted/FALSE flag keeps the single-dealer RFQ
+ * byte-identical to the pre-panel contract.
  * @customfunction RFQ
  * @param pairOrInstrument Currency pair (e.g. "EURUSD") — or a CELNET.INSTRUMENT token.
  * @param tenor Tenor, e.g. "1Y" (positional form only).
  * @param strikeOrDelta Absolute strike or delta ("25dP", "ATM") (positional form only).
  * @param callPut "C" or "P" (positional form only).
  * @param notional Trade notional in the base currency (positional form only).
- * @returns A spill with the two-way market, quote id, and validity.
+ * @param panel Optional: TRUE or "PANEL" for the ranked multi-dealer panel spill.
+ * @returns A spill with the two-way market, quote id, and validity — or the ranked LP panel.
  */
 export async function RFQ(
   pairOrInstrument: string,
@@ -348,8 +359,10 @@ export async function RFQ(
   strikeOrDelta?: string,
   callPut?: string,
   notional?: number,
+  panel?: boolean | string,
 ): Promise<SpillMatrix> {
   try {
+    const wantPanel = parseRfqPanelFlag(panel);
     let instrument: Instrument;
     let key: string;
     if (isInstrumentToken(pairOrInstrument)) {
@@ -365,6 +378,30 @@ export async function RFQ(
         callPut,
         notional,
       ));
+    }
+    if (wantPanel) {
+      // A panel request is a distinct trade intent (RFQ-to-many), so it carries
+      // its own idempotency key — never colliding with a single-dealer RFQ cell
+      // for the same arguments.
+      const md = await getConnection().requestMultiDealerQuote(
+        instrument,
+        DEFAULT_CONVENTIONS,
+        `panel:${key}`,
+      );
+      return formatRfqPanelSpill({
+        quoteId: md.quoteId,
+        lines: md.dealers.map((d) => ({
+          lpId: d.lpId,
+          bid: d.price.bid,
+          offer: d.price.offer,
+          validUntilNanos: d.validUntilNanos,
+        })),
+        bestBidLpId: md.bestBidLpId,
+        bestOfferLpId: md.bestOfferLpId,
+        conventions: md.conventions,
+        surfaceVersion: md.surfaceVersion,
+        epochNanos: md.epochNanos,
+      });
     }
     const quote = await getConnection().requestQuote(instrument, DEFAULT_CONVENTIONS, key);
     return formatRfqSpill({

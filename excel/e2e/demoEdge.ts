@@ -49,6 +49,12 @@ export function startDemoEdge(opts?: {
       ...process.env,
       CELNET_WS_ADDR: wsAddr,
       CELNET_GRPC_ADDR: grpcAddr,
+      // Pin the multi-dealer panel breadth (resolved ONCE at edge boot): the
+      // native maker + 3 DETERMINISTIC SYNTHETIC demo dealers (`SYNTH-LP-k`,
+      // labeled as such — live LP connectivity is environment-provided, never
+      // claimed by this e2e). Pinning makes the panel spec deterministic even
+      // if the ambient shell carries its own CELNET_DEMO_LPS.
+      CELNET_DEMO_LPS: "3",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

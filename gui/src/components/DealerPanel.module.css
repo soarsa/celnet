@@ -1,0 +1,105 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.colHead {
+  font-family: var(--font-brand);
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+  font-weight: var(--weight-emphasis);
+  text-align: left;
+  padding: var(--space-1) var(--space-3);
+  border-bottom: var(--hairline);
+}
+
+.lp {
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+  font-weight: var(--weight-emphasis);
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+}
+
+.priceCell {
+  padding: var(--space-1) var(--space-2);
+}
+
+.validityCell {
+  padding: var(--space-1) var(--space-3);
+  white-space: nowrap;
+}
+
+.book {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--r-sm);
+  font-size: var(--type-callout);
+  background: transparent;
+}
+.book:not(:disabled) {
+  transition: background-color 120ms var(--ease-out), box-shadow 120ms var(--ease-out);
+  cursor: pointer;
+}
+.bid {
+  color: var(--bid);
+}
+.bid:not(:disabled):hover {
+  background: oklch(from var(--bid) l c h / 0.14);
+  box-shadow: inset 0 0 0 1px oklch(from var(--bid) l c h / 0.36);
+}
+.offer {
+  color: var(--offer);
+}
+.offer:not(:disabled):hover {
+  background: oklch(from var(--offer) l c h / 0.14);
+  box-shadow: inset 0 0 0 1px oklch(from var(--offer) l c h / 0.36);
+}
+.book:disabled {
+  cursor: default;
+  color: var(--text-tertiary);
+}
+
+/* The touch winners: a soft side-tinted wash on the WINNING cell, always paired
+   with the textual "best" badge (never colour alone). */
+.bestBid {
+  background: oklch(from var(--bid) l c h / 0.1);
+}
+.bestOffer {
+  background: oklch(from var(--offer) l c h / 0.1);
+}
+.best {
+  font-family: var(--font-brand);
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0 var(--space-2);
+  border-radius: var(--r-full);
+  background: var(--bg-inset);
+  border: var(--hairline);
+}
+
+.expiredRow .lp {
+  color: var(--text-tertiary);
+}
+.expiredReason {
+  font-size: var(--type-caption);
+  color: var(--danger);
+}
+
+.note {
+  font-size: var(--type-micro);
+  color: var(--text-tertiary);
+  line-height: var(--type-body-lh);
+  margin: 0;
+}

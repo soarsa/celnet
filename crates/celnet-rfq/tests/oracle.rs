@@ -376,6 +376,105 @@ async fn all_stale_yields_no_winner_but_counts_responders() {
     .expect("test timed out");
 }
 
+/// Gate 2c — adversarial tie × last-look interaction: two LPs tie on BOTH price
+/// and epoch, and the tie-break-preferred one (lexicographically smallest
+/// `lp_id`) is last-look-stale. The promotion must go to the **tied sibling**
+/// (same best price, next-smallest `lp_id`), never to a lower-priced fresh LP —
+/// the last-look filter applies BEFORE the tie-break, not after it. (The
+/// property sweep draws continuous prices, so an exact tie has measure zero
+/// there; this pins the case deterministically.)
+#[tokio::test]
+async fn stale_tie_break_preferred_winner_promotes_tied_sibling() {
+    tokio::time::timeout(DEADLINE, async {
+        let req = sample_request();
+        let now: u64 = 1_000;
+
+        // AAA and BBB tie exactly (bid 0.0090, epoch 100); AAA would win the
+        // tie-break but expired at t=500 < now=1000. CCC is fresh with an
+        // EARLIER epoch but a worse bid — it must not be promoted over BBB.
+        let aaa = LadderSource::firm("AAA", 0.0090, 0.0100, 100).valid_until(500);
+        let bbb = LadderSource::firm("BBB", 0.0090, 0.0100, 100).valid_until(u64::MAX);
+        let ccc = LadderSource::firm("CCC", 0.0089, 0.0101, 50).valid_until(u64::MAX);
+
+        let engine = MultiDealerEngine::new(vec![Box::new(aaa), Box::new(bbb), Box::new(ccc)]);
+        let panel = engine.request(&req, PANEL_DEADLINE, now).await.unwrap();
+
+        // AAA responded ⇒ it counts and its row is present — it just cannot WIN.
+        assert_eq!(panel.lp_count, 3);
+        assert!(panel.rows.iter().any(|r| r.lp_id == "AAA"));
+        // The tied sibling is promoted at the SAME best price.
+        assert_eq!(panel.lp_won_bid.as_deref(), Some("BBB"));
+        assert!((panel.best_bid.unwrap() - 0.0090).abs() < 1e-12);
+        // Offer side promotes identically (AAA's 0.0100 is stale; BBB ties it).
+        assert_eq!(panel.lp_won_offer.as_deref(), Some("BBB"));
+        assert!((panel.best_offer.unwrap() - 0.0100).abs() < 1e-12);
+    })
+    .await
+    .expect("test timed out");
+}
+
+/// Gate 5 — combined `lp_count`-vs-responders accounting in ONE panel: a
+/// timed-out source and a declining source are dropped (absent from `rows`,
+/// excluded from `lp_count`), a last-look-stale source IS a responder (counted,
+/// row present) yet cannot win, and the winners come from the liftable rows per
+/// the law — all interacting in the same fan-out.
+#[tokio::test]
+async fn mixed_timeout_decline_stale_accounting_in_one_panel() {
+    tokio::time::timeout(DEADLINE, async {
+        let req = sample_request();
+        let now: u64 = 1_000;
+
+        // TIMEOUT holds the best bid but sleeps past the 200ms panel deadline.
+        let timeout =
+            LadderSource::firm("TIMEOUT", 0.0099, 0.0098, 100).with_delay(Duration::from_secs(2));
+        // DECLINE holds the next-best bid but returns NoQuote.
+        let mut decline = LadderSource::firm("DECLINE", 0.0098, 0.0097, 100);
+        decline.decline = true;
+        // STALE responds with the best surviving bid AND offer, but expired.
+        let stale = LadderSource::firm("STALE", 0.0097, 0.0090, 100).valid_until(500);
+        // The liftable market.
+        let fresh_a = LadderSource::firm("FRESH-A", 0.0095, 0.0099, 200).valid_until(u64::MAX);
+        let fresh_b = LadderSource::firm("FRESH-B", 0.0080, 0.0101, 300).valid_until(u64::MAX);
+
+        let engine = MultiDealerEngine::new(vec![
+            Box::new(timeout),
+            Box::new(decline),
+            Box::new(stale),
+            Box::new(fresh_a),
+            Box::new(fresh_b),
+        ]);
+        let panel = engine
+            .request(&req, Duration::from_millis(200), now)
+            .await
+            .unwrap();
+
+        // Responders = STALE + FRESH-A + FRESH-B; dropped = TIMEOUT + DECLINE.
+        assert_eq!(panel.lp_count, 3);
+        assert_eq!(panel.rows.len(), 3);
+        assert!(
+            panel
+                .rows
+                .iter()
+                .all(|r| r.lp_id != "TIMEOUT" && r.lp_id != "DECLINE")
+        );
+        assert!(panel.rows.iter().any(|r| r.lp_id == "STALE"));
+
+        // Winners per the law over the LIFTABLE rows only: STALE's better bid
+        // (0.0097) and offer (0.0090) cannot win; FRESH-A takes both sides.
+        assert_eq!(panel.lp_won_bid.as_deref(), Some("FRESH-A"));
+        assert!((panel.best_bid.unwrap() - 0.0095).abs() < 1e-12);
+        assert_eq!(panel.lp_won_offer.as_deref(), Some("FRESH-A"));
+        assert!((panel.best_offer.unwrap() - 0.0099).abs() < 1e-12);
+
+        // Consistency invariant: both winners are real responder rows.
+        for won in [&panel.lp_won_bid, &panel.lp_won_offer] {
+            assert!(panel.rows.iter().any(|r| Some(&r.lp_id) == won.as_ref()));
+        }
+    })
+    .await
+    .expect("test timed out");
+}
+
 /// Gate 3b — a declining LP (`NoQuote`) is dropped exactly like a timeout, and
 /// the native in-process dealer guarantees a market still exists.
 #[tokio::test]

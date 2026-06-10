@@ -18,6 +18,7 @@ import type {
   CcyExposureLeg,
   CcyPair,
   Conventions,
+  DealerQuote,
   DrillRiskRequest,
   DrillRiskResponse,
   Executed,
@@ -32,6 +33,7 @@ import type {
   MarkedSurface,
   MarketContext,
   MarketSeriesPoint,
+  MultiDealerQuote,
   NonAdditiveRisk,
   Quote,
   ReportingNumeraire,
@@ -83,6 +85,63 @@ function findPair(pair: CcyPair): PairContext {
 /** A premium two-way around a mid, with a convention-appropriate spread. */
 function twoWayAround(midPct: number, spreadPct: number): TwoWayPrice {
   return { bid: midPct - spreadPct / 2, offer: midPct + spreadPct / 2 };
+}
+
+// ---------------------------------------------------------------------------
+// multi-dealer panel (offline) — the SAME deterministic synthetic-LP law the
+// server's LpPanelConfig demo panel applies (services/quote.rs), so the offline
+// panel ranks identically to the live demo edge. Honest boundary: these are
+// labeled deterministic synthetic demo dealers quoting around the SAME mock-
+// priced mid — never a claim of live bank LP connectivity (that is ENV).
+// ---------------------------------------------------------------------------
+
+/** The native maker's audit `lpId` (mirrors the server's auto-pricer seat id). */
+const MAKER_LP_ID = "celnet-auto-pricer";
+
+/** Offline synthetic demo panel breadth (mirrors the demo edge's 3-LP default). */
+const MOCK_SYNTHETIC_LPS = 3;
+
+/** The stable audit `lpId` of synthetic demo dealer `k` (1-based). */
+function syntheticLpId(k: number): string {
+  return `SYNTH-LP-${k}`;
+}
+
+/**
+ * The deterministic two-way synthetic demo dealer `k` (1-based) quotes around
+ * the maker mid — the server's `synthetic_lp_two_way` law verbatim: dealer `k`
+ * quotes `5%·k` wider than the maker half-spread and shades its mid by a quarter
+ * half-spread (odd dealers up, even dealers down), so the panel is reproducible
+ * and the touch is never crossed.
+ */
+function syntheticLpTwoWay(k: number, mid: number, halfSpread: number): TwoWayPrice {
+  const widen = 1 + 0.05 * k;
+  const shade = 0.25 * halfSpread;
+  const skew = k % 2 === 1 ? shade : -shade;
+  const m = mid + skew;
+  const h = halfSpread * widen;
+  return { bid: m - h, offer: m + h };
+}
+
+/**
+ * The touch winner of one panel side — the engine's ranking law: highest bid /
+ * lowest offer, deterministic lexicographic `lpId` tie-break. Empty ⇒ no rows.
+ */
+function rankSide(rows: readonly DealerQuote[], side: "BID" | "OFFER"): string {
+  let won: DealerQuote | undefined;
+  for (const row of rows) {
+    if (!won) {
+      won = row;
+      continue;
+    }
+    const better =
+      side === "BID"
+        ? row.price.bid > won.price.bid ||
+          (row.price.bid === won.price.bid && row.lpId < won.lpId)
+        : row.price.offer < won.price.offer ||
+          (row.price.offer === won.price.offer && row.lpId < won.lpId);
+    if (better) won = row;
+  }
+  return won?.lpId ?? "";
 }
 
 /**
@@ -523,7 +582,11 @@ export class MockTransport implements CelnetTransport {
   private readonly tickMs: number;
   private surfaceVersion = 1n;
   private quoteSeq = 1n;
-  private readonly quotes = new Map<bigint, { quote: Quote; instrument: Instrument }>();
+  /** Stored quotes; `dealers` is pinned by a multi-dealer request so an accept naming an `lpId` books exactly the line shown. */
+  private readonly quotes = new Map<
+    bigint,
+    { quote: Quote; instrument: Instrument; dealers?: DealerQuote[] }
+  >();
   private readonly idempotency = new Map<string, Quote>();
 
   constructor(opts: { seed?: bigint; tickMs?: number } = {}) {
@@ -582,16 +645,74 @@ export class MockTransport implements CelnetTransport {
     return quote;
   }
 
+  async requestMultiDealerQuote(
+    instrument: Instrument,
+    conventions: Conventions,
+    idempotencyKey: string,
+  ): Promise<MultiDealerQuote> {
+    // Reuse the single-dealer pricing/idempotency path verbatim — the native
+    // maker line is byte-identical to the `requestQuote` it mirrors — then fan
+    // the deterministic synthetic demo dealers around the SAME mid (the server's
+    // LpPanelConfig law) and rank them.
+    const quote = await this.requestQuote(instrument, conventions, idempotencyKey);
+    const mid = (quote.price.bid + quote.price.offer) / 2;
+    const halfSpread = (quote.price.offer - quote.price.bid) / 2;
+    const native: DealerQuote = {
+      lpId: MAKER_LP_ID,
+      price: quote.price,
+      greeks: quote.greeks,
+      resolvedStrike: quote.resolvedStrike,
+      validUntilNanos: quote.validUntilNanos,
+    };
+    if (quote.priceStdError !== undefined) native.priceStdError = quote.priceStdError;
+    const dealers: DealerQuote[] = [native];
+    for (let k = 1; k <= MOCK_SYNTHETIC_LPS; k += 1) {
+      // A synthetic dealer discloses a price, not its greeks (honest absence).
+      dealers.push({
+        lpId: syntheticLpId(k),
+        price: syntheticLpTwoWay(k, mid, halfSpread),
+        resolvedStrike: quote.resolvedStrike,
+        validUntilNanos: quote.validUntilNanos,
+      });
+    }
+    // The engine's deterministic audit order: rows sorted by lpId.
+    dealers.sort((a, b) => (a.lpId < b.lpId ? -1 : a.lpId > b.lpId ? 1 : 0));
+    // Pin the issued rows on the stored record so an accept naming any lpId
+    // books exactly the line shown (mirrors the server's quote-record pinning).
+    const entry = this.quotes.get(quote.quoteId);
+    if (entry) entry.dealers = dealers;
+    const panel: MultiDealerQuote = {
+      quoteId: quote.quoteId,
+      idempotencyKey: quote.idempotencyKey,
+      dealers,
+      bestBidLpId: rankSide(dealers, "BID"),
+      bestOfferLpId: rankSide(dealers, "OFFER"),
+      conventions,
+      epochNanos: quote.epochNanos,
+    };
+    if (quote.surfaceVersion !== undefined) panel.surfaceVersion = quote.surfaceVersion;
+    return panel;
+  }
+
   async acceptQuote(
     quoteId: bigint,
     side: "BUY" | "SELL",
     _idempotencyKey: string,
+    lpId?: string,
   ): Promise<Execution> {
     const entry = this.quotes.get(quoteId);
     if (!entry) throw new Error(`unknown quote ${quoteId}`);
     const now = nowNanos();
-    if (entry.quote.validUntilNanos <= now) throw new Error("quote expired (last-look)");
-    const premium = side === "BUY" ? entry.quote.price.offer : entry.quote.price.bid;
+    // A non-empty, non-native lpId books that pinned panel row's line; an absent/
+    // empty/native lpId books the single-dealer quote (the server's accept law).
+    let line: { price: TwoWayPrice; validUntilNanos: bigint } = entry.quote;
+    if (lpId !== undefined && lpId.length > 0 && lpId !== MAKER_LP_ID) {
+      const row = entry.dealers?.find((d) => d.lpId === lpId);
+      if (!row) throw new Error(`unknown dealer line ${lpId} on quote ${quoteId}`);
+      line = row;
+    }
+    if (line.validUntilNanos <= now) throw new Error("quote expired (last-look)");
+    const premium = side === "BUY" ? line.price.offer : line.price.bid;
     return {
       executionId: quoteId ^ 0xfacen,
       quoteId,
