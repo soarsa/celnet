@@ -75,4 +75,16 @@ exclude_re = [
   # Verified: full suite green with the mutant applied (all three packed-pair
   # pins and all three frozen FNV pins bit-identical).
   "dimension\\.rs:159:26: replace \\| with \\^ in underlying_group_value",
+
+  # --- curvature_class: the MAR21.5.2(4) ψ both-negative test at exactly 0.0 ---
+  # `ψ = if cvr_sel[b] < 0 && cvr_sel[c] < 0 { 0 } else { 1 }` with either `<`
+  # replaced by `<=`: the branch outcome differs ONLY when that selected CVR is
+  # exactly 0.0 (and the other is negative) — but ψ multiplies the cross term
+  # `γ²·ψ·CVR_b·CVR_c`, which is identically zero whenever either factor is
+  # 0.0, so the flipped ψ multiplies zero and the charge is unchanged for every
+  # input. A structural unobservability proof, not a measure-zero hand-wave:
+  # the boundary case zeroes the very product ψ gates. Verified for BOTH
+  # positions: full suite green with each mutant applied.
+  "frtb\\.rs:369:41: replace < with <= in curvature_class",
+  "frtb\\.rs:369:61: replace < with <= in curvature_class",
 ]

@@ -796,6 +796,31 @@ mod tests {
         );
     }
 
+    /// The MAR21.6 alternative-`S_b` clamp binds on its **negative** floor too:
+    /// a bucket with a negative signed sum must clamp to `−K_b` (not `+K_b`), so
+    /// the sign of the cross term is preserved through the alternative branch.
+    ///
+    /// Longhand (MEDIUM, γ = +0.9): bucket A ws = [−1, −1] (ρ=0) ⇒ K_A = √2,
+    /// S_A = −2; bucket B ws = [1.5, 1.5] ⇒ K_B = 1.5√2, S_B = 3; plain cross =
+    /// 2·0.9·(−6) = −10.8, ΣK² = 6.5 ⇒ radicand −4.3 < 0 ⇒ alternative:
+    /// S_A → max(min(−2, √2), −√2) = **−√2** (the negative floor binds),
+    /// S_B → 1.5√2 ⇒ cross_alt = 2·0.9·(−√2·1.5√2) = −5.4 ⇒ K = √1.1.
+    /// A mutant that drops the minus (`.max(K_b)`) flips S_A to +√2 ⇒ K = √11.9.
+    #[test]
+    fn alternative_s_b_clamps_to_negative_floor() {
+        let a = RiskBucket::new(1, vec![-1.0, -1.0], 0.0);
+        let b = RiskBucket::new(2, vec![1.5, 1.5], 0.0);
+        assert!(is_close(a.signed_sum(), -2.0, 0.0, 1e-15));
+        let params = SbmParams::new(vec![a, b], |_, _| 0.9);
+        let got = params.class_charge(CorrelationScenario::Medium);
+        assert!(
+            is_close(got, 1.1_f64.sqrt(), 1e-12, 1e-12),
+            "negative-floor alternative charge {got} vs hand √1.1 (a dropped \
+             −K_b floor gives √11.9)"
+        );
+        assert!((got - 11.9_f64.sqrt()).abs() > 1.0);
+    }
+
     /// The cross-bucket double sum visits ordered pairs `b ≠ c` only — pinned with
     /// UNEQUAL buckets and positive γ where a diagonal-inclusion mutant
     /// (`b == c` → `b != c`) produces a different value: hand K =
