@@ -986,4 +986,263 @@ mod tests {
             1e-9
         ));
     }
+
+    // ----- W6 rigor §3.3: scenario algebra + seam-defensive-arm pins -----
+
+    use celnet_core::carry::{CarryPriceError, CarryPricer as CarryPricerTrait};
+    use celnet_types::{EquityRef, Symbol, Underlying};
+
+    fn fx_carry_inputs() -> CarryInputs {
+        let pair = eurusd();
+        CarryInputs::new(
+            1.10,
+            1.12,
+            0.10,
+            1.0,
+            Underlying::Fx(pair),
+            Carry::FxRates {
+                r_dom: 0.04,
+                r_for: 0.02,
+            },
+        )
+    }
+
+    fn equity_carry_inputs() -> CarryInputs {
+        let u = Underlying::Equity(EquityRef::new(Symbol::new("ACME", ""), Ccy::USD));
+        CarryInputs::new(
+            100.0,
+            105.0,
+            0.20,
+            1.0,
+            u,
+            Carry::CostOfCarry { r: 0.03, b: 0.01 },
+        )
+    }
+
+    /// `Scenario::base().apply(i)` reproduces EVERY field `to_bits`-equal:
+    /// `x·(1+0) = x` and `x+0.0 = x` are exact for the finite positive market
+    /// inputs this cube prices (the documented domain), and the carry shift by
+    /// `(0, 0)` is the identity on both carry arms.
+    #[test]
+    fn base_scenario_is_bitwise_identity() {
+        for i in [fx_carry_inputs(), equity_carry_inputs()] {
+            let out = Scenario::base().apply(&i);
+            assert_eq!(out.spot.to_bits(), i.spot.to_bits());
+            assert_eq!(out.strike.to_bits(), i.strike.to_bits());
+            assert_eq!(out.vol.to_bits(), i.vol.to_bits());
+            assert_eq!(out.t.to_bits(), i.t.to_bits());
+            assert_eq!(out.underlying, i.underlying);
+            match (out.carry, i.carry) {
+                (Carry::FxRates { r_dom: a, r_for: b }, Carry::FxRates { r_dom: c, r_for: d }) => {
+                    assert_eq!(a.to_bits(), c.to_bits());
+                    assert_eq!(b.to_bits(), d.to_bits());
+                }
+                (Carry::CostOfCarry { r: a, b }, Carry::CostOfCarry { r: c, b: d }) => {
+                    assert_eq!(a.to_bits(), c.to_bits());
+                    assert_eq!(b.to_bits(), d.to_bits());
+                }
+                _ => panic!("carry arm must be preserved"),
+            }
+        }
+        // The named constructors build exactly the documented field layouts.
+        let s = Scenario::spot(0.25);
+        assert_eq!(
+            (s.spot_rel, s.vol_abs, s.discount_abs, s.carry_abs),
+            (0.25, 0.0, 0.0, 0.0)
+        );
+        let v = Scenario::vol(0.125);
+        assert_eq!(
+            (v.spot_rel, v.vol_abs, v.discount_abs, v.carry_abs),
+            (0.0, 0.125, 0.0, 0.0)
+        );
+    }
+
+    /// `Scenario::fx_rates(s, v, Δr_dom, Δr_for)` then `apply` reproduces the
+    /// pre-generalization FX two-rate shock arithmetic **byte-for-byte**: the
+    /// shocked inputs equal `spot·(1+s)`, `vol+v`, `r_dom+Δr_dom`, `r_for+Δr_for`
+    /// computed directly on the FX coordinates (the ADR-0008/W5-A contract — the
+    /// oracle works on the raw rates, no carry coordinates anywhere).
+    #[test]
+    fn fx_rate_mapping_reproduces_two_rate_shock() {
+        let i = fx_carry_inputs();
+        // Dyadic shocks so every sum below is float-exact.
+        let (s, v, dr_dom, dr_for) = (0.03125, 0.015625, 0.0078125, -0.001953125);
+        let out = Scenario::fx_rates(s, v, dr_dom, dr_for).apply(&i);
+        assert_eq!(out.spot.to_bits(), (1.10_f64 * (1.0 + s)).to_bits());
+        assert_eq!(out.vol.to_bits(), (0.10_f64 + v).to_bits());
+        assert_eq!(out.strike.to_bits(), i.strike.to_bits());
+        assert_eq!(out.t.to_bits(), i.t.to_bits());
+        let Carry::FxRates { r_dom, r_for } = out.carry else {
+            panic!("FX carry arm must be preserved");
+        };
+        // Byte-for-byte against the raw FX two-rate arithmetic. (r_dom + Δr_dom is
+        // one addition on both routes; r_for travels via b = r_dom − r_for, whose
+        // round trip Δr_dom − (Δr_dom − Δr_for) = Δr_for is exact on dyadics.)
+        assert_eq!(r_dom.to_bits(), (0.04_f64 + dr_dom).to_bits());
+        assert_eq!(r_for.to_bits(), (0.02_f64 + dr_for).to_bits());
+        // The packed carry shocks themselves: Δr = Δr_dom, Δb = Δr_dom − Δr_for.
+        let sc = Scenario::fx_rates(s, v, dr_dom, dr_for);
+        assert_eq!(sc.discount_abs.to_bits(), dr_dom.to_bits());
+        assert_eq!(sc.carry_abs.to_bits(), (dr_dom - dr_for).to_bits());
+    }
+
+    /// `shift_carry` is the exact coordinate arithmetic per `Carry` arm: FxRates
+    /// shifts `r_dom += Δr`, `r_for += Δr − Δb` (so `b = r_dom − r_for` shifts by
+    /// exactly Δb); CostOfCarry shifts `(r, b)` directly. Dyadic pins, bit-exact.
+    #[test]
+    fn shift_carry_matches_coordinate_arithmetic() {
+        // Fully dyadic rates AND shocks so every sum/difference below is
+        // float-exact and the pins are bit-level.
+        let (dr, db) = (0.03125, -0.0078125);
+        let (rd0, rf0) = (0.0625, 0.03125);
+        let Carry::FxRates { r_dom, r_for } = shift_carry(
+            Carry::FxRates {
+                r_dom: rd0,
+                r_for: rf0,
+            },
+            dr,
+            db,
+        ) else {
+            panic!("arm must be preserved");
+        };
+        assert_eq!(r_dom.to_bits(), (rd0 + dr).to_bits());
+        assert_eq!(r_for.to_bits(), (rf0 + (dr - db)).to_bits());
+        // The carry coordinate genuinely moved by Δb (the defining contract).
+        assert_eq!(
+            ((r_dom - r_for) - (rd0 - rf0)).to_bits(),
+            db.to_bits(),
+            "b must shift by exactly Δb"
+        );
+        let Carry::CostOfCarry { r, b } =
+            shift_carry(Carry::CostOfCarry { r: 0.03, b: 0.01 }, dr, db)
+        else {
+            panic!("arm must be preserved");
+        };
+        assert_eq!(r.to_bits(), (0.03_f64 + dr).to_bits());
+        assert_eq!(b.to_bits(), (0.01_f64 + db).to_bits());
+    }
+
+    /// A seam leaf that reports an **FX-tagged** rate strip for a cost-of-carry
+    /// underlying — exercising the defensive normalization arm in
+    /// `PositionSensitivity::from_position` (which must map it onto the carry basis
+    /// `(rho_dom, −rho_for)`, the same transform the FX fast path applies).
+    struct FxTaggedStripPricer;
+    impl CarryPricerTrait for FxTaggedStripPricer {
+        fn price(&self, _o: OptionType, i: &CarryInputs) -> Result<f64, CarryPriceError> {
+            Ok(i.spot)
+        }
+        fn price_greeks(
+            &self,
+            _o: OptionType,
+            i: &CarryInputs,
+        ) -> Result<celnet_core::carry::CarryGreeks, CarryPriceError> {
+            Ok(celnet_core::carry::CarryGreeks {
+                price: i.spot,
+                delta_spot: 2.0,
+                delta_forward: 2.0,
+                gamma: 3.0,
+                vega: 5.0,
+                theta: -1.0,
+                rates: celnet_types::RateSensitivities::Fx {
+                    rho_dom: 7.0,
+                    rho_for: 11.0,
+                },
+                vanna: 13.0,
+                volga: 17.0,
+                charm: 0.0,
+                speed: 0.0,
+                zomma: 0.0,
+                color: 0.0,
+            })
+        }
+    }
+
+    /// A seam leaf that prices nothing (every position rejected).
+    struct RejectingPricer;
+    impl CarryPricerTrait for RejectingPricer {
+        fn price(&self, _o: OptionType, _i: &CarryInputs) -> Result<f64, CarryPriceError> {
+            Err(CarryPriceError::UnsupportedUnderlying)
+        }
+        fn price_greeks(
+            &self,
+            _o: OptionType,
+            _i: &CarryInputs,
+        ) -> Result<celnet_core::carry::CarryGreeks, CarryPriceError> {
+            Err(CarryPriceError::UnsupportedUnderlying)
+        }
+    }
+
+    /// The defensive FX-tagged-strip arm normalizes to the carry basis
+    /// `(discount_rho, carry_rho) = (rho_dom, −rho_for)`, scaled by notional, and
+    /// the strip's other Greeks pass through notional-scaled.
+    #[test]
+    fn fx_tagged_strip_normalizes_to_carry_basis() {
+        let u = Underlying::Equity(EquityRef::new(Symbol::new("ACME", ""), Ccy::USD));
+        let p = PositionRisk::carry(
+            u.clone(),
+            OptionType::Call,
+            4.0,
+            CarryInputs::new(
+                100.0,
+                105.0,
+                0.20,
+                1.0,
+                u,
+                Carry::CostOfCarry { r: 0.03, b: 0.01 },
+            ),
+        );
+        let s = PositionSensitivity::from_position(&FxTaggedStripPricer, &p);
+        assert_eq!(s.spot.to_bits(), 100.0_f64.to_bits());
+        assert_eq!(s.delta_spot.to_bits(), 8.0_f64.to_bits());
+        assert_eq!(s.gamma.to_bits(), 12.0_f64.to_bits());
+        assert_eq!(s.vega.to_bits(), 20.0_f64.to_bits());
+        assert_eq!(s.volga.to_bits(), 68.0_f64.to_bits());
+        assert_eq!(s.vanna.to_bits(), 52.0_f64.to_bits());
+        assert_eq!(s.discount_rho.to_bits(), 28.0_f64.to_bits(), "rho_dom·n");
+        assert_eq!(s.carry_rho.to_bits(), (-44.0_f64).to_bits(), "−rho_for·n");
+    }
+
+    /// A position its leaf rejects contributes an ALL-ZERO profile (spot retained
+    /// for unit bookkeeping) and zero P&L — the no-silent-FX-proxy contract.
+    #[test]
+    fn unpriceable_position_contributes_zero() {
+        let u = Underlying::Equity(EquityRef::new(Symbol::new("ACME", ""), Ccy::USD));
+        let p = PositionRisk::carry(
+            u.clone(),
+            OptionType::Call,
+            4.0,
+            CarryInputs::new(
+                100.0,
+                105.0,
+                0.20,
+                1.0,
+                u,
+                Carry::CostOfCarry { r: 0.03, b: 0.01 },
+            ),
+        );
+        let s = PositionSensitivity::from_position(&RejectingPricer, &p);
+        assert_eq!(s.spot.to_bits(), 100.0_f64.to_bits());
+        for v in [
+            s.delta_spot,
+            s.gamma,
+            s.vega,
+            s.volga,
+            s.vanna,
+            s.discount_rho,
+            s.carry_rho,
+        ] {
+            assert_eq!(v.to_bits(), 0.0_f64.to_bits());
+        }
+        let shock = Scenario {
+            spot_rel: 0.05,
+            vol_abs: 0.01,
+            discount_abs: 0.002,
+            carry_abs: 0.001,
+        };
+        assert_eq!(s.taylor_pnl(shock).to_bits(), 0.0_f64.to_bits());
+        assert_eq!(
+            position_pnl(&RejectingPricer, &p, shock).to_bits(),
+            0.0_f64.to_bits()
+        );
+    }
 }

@@ -741,6 +741,256 @@ mod tests {
         assert_eq!(fx_default_risk_charge(250), 0.0);
     }
 
+    /// The MAR21.6 **alternative S_b** branch, hand-derived end-to-end: two unequal
+    /// two-factor buckets under a strongly negative γ drive the standard radicand
+    /// negative, so the class charge must clamp each `S_b` into `[−K_b, K_b]` and
+    /// recompute — and under the HIGH scenario even the alternative radicand goes
+    /// negative, exercising the final zero floor.
+    ///
+    /// Longhand (MEDIUM): bucket A ws = [1, 1] (ρ=0) ⇒ K_A = √2, S_A = 2; bucket B
+    /// ws = [1.5, 1.5] (ρ=0) ⇒ K_B = 1.5·√2, S_B = 3; γ = −0.9 ⇒ cross =
+    /// 2·(−0.9)·2·3 = −10.8; ΣK² = 2 + 4.5 = 6.5 ⇒ radicand −4.3 < 0 ⇒ alternative:
+    /// S_A → √2, S_B → 1.5√2 ⇒ cross_alt = 2·(−0.9)·(√2·1.5√2) = −0.9·6 = −5.4 ⇒
+    /// K = √(6.5 − 5.4) = √1.1.
+    /// HIGH: γ → min(1.25·(−0.9), 1) = −1.125 ⇒ cross_alt = −1.125·6 = −6.75 ⇒
+    /// 6.5 − 6.75 < 0 ⇒ floored to 0 ⇒ K = 0.
+    /// LOW: γ → max(2(−0.9)−1, 0.75·(−0.9)) = max(−2.8, −0.675) = −0.675 ⇒ plain
+    /// cross = 2·(−0.675)·6 = −8.1 ⇒ radicand −1.6 < 0 ⇒ alt cross = −0.675·6 =
+    /// −4.05 ⇒ K = √(6.5 − 4.05) = √2.45.
+    #[test]
+    fn class_charge_uses_mar216_alternative_when_radicand_negative() {
+        let a = RiskBucket::new(1, vec![1.0, 1.0], 0.0);
+        let b = RiskBucket::new(2, vec![1.5, 1.5], 0.0);
+        assert!(is_close(a.signed_sum(), 2.0, 0.0, 1e-15));
+        assert!(is_close(b.signed_sum(), 3.0, 0.0, 1e-15));
+        let params = SbmParams::new(vec![a, b], |_, _| -0.9);
+        let charge = delta_vega_class(&params);
+        assert!(
+            is_close(charge.medium, 1.1_f64.sqrt(), 1e-12, 1e-12),
+            "MEDIUM alternative-S_b charge {} vs hand √1.1",
+            charge.medium
+        );
+        assert_eq!(
+            charge.high.to_bits(),
+            0.0_f64.to_bits(),
+            "HIGH must floor the alternative radicand at zero"
+        );
+        assert!(
+            is_close(charge.low, 2.45_f64.sqrt(), 1e-12, 1e-12),
+            "LOW alternative-S_b charge {} vs hand √2.45",
+            charge.low
+        );
+        assert!(is_close(charge.capital(), 2.45_f64.sqrt(), 1e-12, 1e-12));
+        // `under` names the scenarios faithfully.
+        assert_eq!(
+            charge.under(CorrelationScenario::High).to_bits(),
+            charge.high.to_bits()
+        );
+        assert_eq!(
+            charge.under(CorrelationScenario::Medium).to_bits(),
+            charge.medium.to_bits()
+        );
+        assert_eq!(
+            charge.under(CorrelationScenario::Low).to_bits(),
+            charge.low.to_bits()
+        );
+    }
+
+    /// The cross-bucket double sum visits ordered pairs `b ≠ c` only — pinned with
+    /// UNEQUAL buckets and positive γ where a diagonal-inclusion mutant
+    /// (`b == c` → `b != c`) produces a different value: hand K =
+    /// √(ΣK² + 2γ·S₁S₂) = √(4 + 9 + 2·0.5·6) = √19.
+    #[test]
+    fn cross_term_excludes_diagonal_exactly() {
+        // Single-factor buckets: K_b = |WS|, S_b = WS.
+        let params = SbmParams::new(
+            vec![
+                RiskBucket::new(1, vec![2.0], 0.0),
+                RiskBucket::new(2, vec![3.0], 0.0),
+            ],
+            |_, _| 0.5,
+        );
+        let want = 19.0_f64.sqrt();
+        assert!(is_close(
+            params.class_charge(CorrelationScenario::Medium),
+            want,
+            1e-12,
+            1e-12
+        ));
+        // HIGH scales γ to min(1.25·0.5, 1) = 0.625 ⇒ √(13 + 2·0.625·6) = √20.5.
+        assert!(is_close(
+            params.class_charge(CorrelationScenario::High),
+            20.5_f64.sqrt(),
+            1e-12,
+            1e-12
+        ));
+        // LOW: max(2·0.5−1, 0.75·0.5) = 0.375 ⇒ √(13 + 4.5) = √17.5.
+        assert!(is_close(
+            params.class_charge(CorrelationScenario::Low),
+            17.5_f64.sqrt(),
+            1e-12,
+            1e-12
+        ));
+    }
+
+    /// Curvature cross-bucket aggregation, hand-derived: γ² weighting, the ψ
+    /// both-negative zero-out (MAR21.5.2(4)), and the scenario scaling of γ —
+    /// pinned on a two-bucket mixed-sign book.
+    ///
+    /// Longhand (MEDIUM, γ = 0.5): bucket A (CVR⁺ 3, CVR⁻ 1) ⇒ K_A = 3, CVR_sel 3;
+    /// bucket B (CVR⁺ −1, CVR⁻ −2) ⇒ K_B = max(0, 0) = 0, CVR_sel = −1 (the
+    /// up-direction is "worse": both floors are 0 and `k_up >= k_down` selects up).
+    /// ψ(3, −1) = 1 ⇒ cross = 2·γ²·3·(−1) = 2·0.25·(−3) = −1.5 ⇒
+    /// K = √(9 + 0 − 1.5) = √7.5.
+    #[test]
+    fn curvature_class_applies_gamma_squared_and_psi() {
+        let a = CurvatureBucket {
+            id: 1,
+            cvr_up: 3.0,
+            cvr_down: 1.0,
+            rho_intra: 0.0,
+        };
+        let b = CurvatureBucket {
+            id: 2,
+            cvr_up: -1.0,
+            cvr_down: -2.0,
+            rho_intra: 0.0,
+        };
+        let charge = curvature_class(&[a, b], |_, _| 0.5);
+        assert!(is_close(charge.medium, 7.5_f64.sqrt(), 1e-12, 1e-12));
+        // HIGH: γ → 0.625 ⇒ cross = 2·0.625²·(−3) = −2.34375 ⇒ K = √6.65625.
+        assert!(is_close(charge.high, 6.65625_f64.sqrt(), 1e-12, 1e-12));
+        // LOW: γ → 0.375 ⇒ cross = 2·0.140625·(−3) = −0.84375 ⇒ K = √8.15625.
+        assert!(is_close(charge.low, 8.15625_f64.sqrt(), 1e-12, 1e-12));
+        // The LOW scenario maximises this decorrelated book.
+        assert!(is_close(charge.capital(), 8.15625_f64.sqrt(), 1e-12, 1e-12));
+
+        // ψ zero-out: BOTH selected CVRs negative ⇒ the cross term vanishes
+        // entirely and each bucket contributes only its floored K_b (here 0).
+        let c = CurvatureBucket {
+            id: 3,
+            cvr_up: -4.0,
+            cvr_down: -5.0,
+            rho_intra: 0.0,
+        };
+        let both_neg = curvature_class(&[b, c], |_, _| 0.5);
+        assert_eq!(both_neg.medium.to_bits(), 0.0_f64.to_bits());
+        assert_eq!(both_neg.high.to_bits(), 0.0_f64.to_bits());
+        assert_eq!(both_neg.low.to_bits(), 0.0_f64.to_bits());
+        // ψ active (mixed signs) genuinely changes the charge vs ψ ≡ 0: with the
+        // mixed pair the cross term reduced K below the no-cross √9 = 3.
+        assert!(charge.medium < 3.0);
+    }
+
+    /// `sbm_total` is the maximum over scenarios of the SUM of class charges (one
+    /// scenario for the whole SbM, MAR21.6) — hand-pinned where the per-class maxima
+    /// sit in DIFFERENT scenarios, so max-of-sums ≠ sum-of-maxes; and `total` adds
+    /// RRAO + DRC linearly.
+    #[test]
+    fn sbm_total_is_max_of_scenario_sums() {
+        let delta = SbmCharge {
+            high: 10.0,
+            medium: 1.0,
+            low: 1.0,
+        };
+        let vega = SbmCharge {
+            high: 1.0,
+            medium: 8.0,
+            low: 1.0,
+        };
+        let curvature = SbmCharge {
+            high: 0.0,
+            medium: 0.0,
+            low: 9.0,
+        };
+        let cap = FrtbCapital {
+            delta,
+            vega,
+            curvature,
+            rrao: 0.5,
+            drc: 0.25,
+        };
+        // Scenario sums: HIGH 11, MEDIUM 9, LOW 11 ⇒ sbm_total = 11 (NOT the
+        // sum-of-maxes 10+8+9 = 27).
+        assert_eq!(cap.sbm_total().to_bits(), 11.0_f64.to_bits());
+        assert_eq!(cap.total().to_bits(), 11.75_f64.to_bits());
+        // Per-class capital() remains the per-class max (the breakdown view).
+        assert_eq!(delta.capital().to_bits(), 10.0_f64.to_bits());
+        assert_eq!(vega.capital().to_bits(), 8.0_f64.to_bits());
+        assert_eq!(curvature.capital().to_bits(), 9.0_f64.to_bits());
+    }
+
+    /// `assemble_capital` wires each component faithfully: the class charges equal
+    /// the standalone reductions, RRAO the linear add-on, DRC the documented zero.
+    #[test]
+    fn assemble_capital_wires_components_faithfully() {
+        let delta_buckets = vec![RiskBucket::new(1, vec![2.0], 0.0)];
+        let vega_buckets = vec![RiskBucket::new(1, vec![1.0, -0.5], 0.6)];
+        let curv = [CurvatureBucket {
+            id: 1,
+            cvr_up: 2.0,
+            cvr_down: -1.0,
+            rho_intra: 0.0,
+        }];
+        let rrao_inst = [ResidualInstrument {
+            notional: -3_000_000.0,
+            kind: ResidualKind::OtherResidual,
+        }];
+        let cap = assemble_capital(
+            &SbmParams::new(delta_buckets.clone(), |_, _| 0.0),
+            &SbmParams::new(vega_buckets.clone(), |_, _| 0.0),
+            &curv,
+            |_, _| 0.0,
+            &rrao_inst,
+            42,
+        );
+        let want_delta = delta_vega_class(&SbmParams::new(delta_buckets, |_, _| 0.0));
+        let want_vega = delta_vega_class(&SbmParams::new(vega_buckets, |_, _| 0.0));
+        let want_curv = curvature_class(&curv, |_, _| 0.0);
+        assert_eq!(cap.delta, want_delta);
+        assert_eq!(cap.vega, want_vega);
+        assert_eq!(cap.curvature, want_curv);
+        assert_eq!(cap.rrao.to_bits(), (3_000_000.0_f64 * 0.001).to_bits());
+        assert_eq!(cap.drc.to_bits(), 0.0_f64.to_bits());
+        // The residual weights themselves, hand-typed from MAR23.4/.5.
+        assert_eq!(
+            ResidualKind::ExoticUnderlying.weight().to_bits(),
+            0.01_f64.to_bits()
+        );
+        assert_eq!(
+            ResidualKind::OtherResidual.weight().to_bits(),
+            0.001_f64.to_bits()
+        );
+        assert_eq!(ResidualKind::None.weight().to_bits(), 0.0_f64.to_bits());
+    }
+
+    /// `k_b` under a non-trivial intra-bucket ρ, hand-derived (ws = [3, 4], ρ = 0.5
+    /// ⇒ K = √(9 + 16 + 2·0.5·12) = √37), and its three scenario transforms.
+    #[test]
+    fn k_b_matches_hand_quadratic_form_under_scenarios() {
+        let b = RiskBucket::new(1, vec![3.0, 4.0], 0.5);
+        assert!(is_close(
+            b.k_b(CorrelationScenario::Medium),
+            37.0_f64.sqrt(),
+            1e-12,
+            1e-12
+        ));
+        // HIGH: ρ → 0.625 ⇒ √(25 + 2·0.625·12) = √40.
+        assert!(is_close(
+            b.k_b(CorrelationScenario::High),
+            40.0_f64.sqrt(),
+            1e-12,
+            1e-12
+        ));
+        // LOW: ρ → max(0, 0.375) = 0.375 ⇒ √(25 + 9) = √34.
+        assert!(is_close(
+            b.k_b(CorrelationScenario::Low),
+            34.0_f64.sqrt(),
+            1e-12,
+            1e-12
+        ));
+    }
+
     /// Curvature bucket selects the worse of up/down and carries its sign.
     #[test]
     fn curvature_bucket_selects_worse_direction() {

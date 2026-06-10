@@ -287,6 +287,172 @@ mod tests {
         assert_eq!(grid.n_vol, 5);
     }
 
+    /// **Asymmetric-grid indexing is row-major `i·n_vol + j` exactly**: on a 2×3
+    /// grid every node PV is pinned against a direct closed-form evaluation at its
+    /// own `(spot_mult, vol_bump)` — an index-arithmetic mutant (`*`→`+`, swapped
+    /// strides) relocates off-diagonal nodes and is caught because all six nodes
+    /// carry distinct shocks (and `n_spot ≠ n_vol`).
+    #[test]
+    fn asymmetric_grid_indexing_is_row_major() {
+        let positions = [pos(
+            OptionType::Call,
+            3_000_000.0,
+            VanillaInputs::new(1.10, 1.12, 0.10, 0.5, 0.03, 0.01),
+        )];
+        let axes = ScenarioAxes::new(vec![0.98, 1.03], vec![-0.005, 0.0, 0.0125]);
+        let grid = analytic_pv_grid(&positions, &axes);
+        assert_eq!(grid.n_spot, 2);
+        assert_eq!(grid.n_vol, 3);
+        assert_eq!(grid.pv.len(), 6);
+        for (i, &sm) in axes.spot_mult.iter().enumerate() {
+            for (j, &vb) in axes.vol_bump.iter().enumerate() {
+                let want: f64 = positions
+                    .iter()
+                    .map(|p| {
+                        let b = celnet_core::carry::fx_vanilla_inputs(&p.inputs).unwrap();
+                        let s = VanillaInputs::new(
+                            b.spot * f64::from(sm),
+                            b.strike,
+                            b.vol + f64::from(vb),
+                            b.t,
+                            b.r_dom,
+                            b.r_for,
+                        );
+                        price(p.option, &s) * p.notional_base
+                    })
+                    .sum();
+                let got = grid.pv(i as u32, j as u32);
+                assert!(
+                    is_close(got, want, 1e-12, 1e-6),
+                    "node ({i},{j}): grid {got} vs direct {want}"
+                );
+                // std_err is uniformly zero on the exact path, via BOTH accessors.
+                assert_eq!(
+                    grid.std_err(i as u32, j as u32).to_bits(),
+                    0.0_f64.to_bits()
+                );
+            }
+        }
+        // All six nodes are distinct (the pin genuinely constrains the layout).
+        for a in 0..grid.pv.len() {
+            for b in (a + 1)..grid.pv.len() {
+                assert_ne!(grid.pv[a].to_bits(), grid.pv[b].to_bits());
+            }
+        }
+        assert!(!grid.on_gpu, "the analytic oracle is the CPU path");
+    }
+
+    /// **The reconciliation band logic is exact**: a corrupted node fails with its
+    /// own coordinates and the `k·σ + abs` band; a within-band deviation passes and
+    /// is reported as the worst observation; the band genuinely scales with `k`
+    /// when `std_err > 0`.
+    #[test]
+    fn reconciliation_band_detects_and_reports_exactly() {
+        let positions = [pos(
+            OptionType::Put,
+            2_000_000.0,
+            VanillaInputs::new(1.10, 1.08, 0.11, 0.5, 0.03, 0.01),
+        )];
+        let axes = ScenarioAxes::ladders(1, 0.01, 1, 0.005); // 3×3
+        let exact = analytic_pv_grid(&positions, &axes);
+
+        // Corrupt node (1, 2) by +0.5 on the exact path (std_err = 0, abs = 1e-6):
+        // must fail AT that node with d = 0.5 and band = 1e-6.
+        let mut bad = exact.clone();
+        bad.pv[5] += 0.5; // flat index 5 = row 1 · n_vol 3 + col 2
+        let err = bad
+            .reconciles_to_analytic(&positions, &axes, 6.0, 1e-6)
+            .expect_err("a 0.5 deviation must breach a 1e-6 band");
+        assert_eq!((err.0, err.1), (1, 2), "must report the offending node");
+        assert!(is_close(err.2, 0.5, 1e-9, 1e-12), "|Δ| = 0.5");
+        assert!(is_close(err.3, 1e-6, 1e-9, 1e-18), "band = k·0 + abs");
+
+        // A within-band deviation passes and is the reported worst. (The recovered
+        // |Δ| is 5e-7 up to the rounding of `pv + 5e-7` at PV scale ~1e4, i.e. a
+        // few e-12 — far above a broken-worst-tracking 0.0 and far below the band.)
+        let mut close = exact.clone();
+        close.pv[4] += 5e-7;
+        let (worst_d, worst_se) = close
+            .reconciles_to_analytic(&positions, &axes, 6.0, 1e-6)
+            .expect("5e-7 < 1e-6 must reconcile");
+        assert!(is_close(worst_d, 5e-7, 2e-2, 1e-11), "worst |Δ| {worst_d}");
+        assert_eq!(worst_se.to_bits(), 0.0_f64.to_bits());
+
+        // With std_err > 0 the band is k·σ + abs: a 3σ deviation passes at k = 5
+        // and fails at k = 2 (the k-term is load-bearing).
+        let mut mc = exact.clone();
+        mc.pv[0] += 3.0;
+        mc.std_err = vec![1.0; mc.pv.len()];
+        assert!(
+            mc.reconciles_to_analytic(&positions, &axes, 5.0, 0.1)
+                .is_ok()
+        );
+        let err2 = mc
+            .reconciles_to_analytic(&positions, &axes, 2.0, 0.1)
+            .expect_err("3σ must breach a 2σ+0.1 band");
+        assert_eq!((err2.0, err2.1), (0, 0));
+        assert!(is_close(err2.3, 2.1, 1e-12, 1e-12), "band = 2·1 + 0.1");
+    }
+
+    /// **The batched path's std_err propagates in quadrature and the GPU flag is
+    /// honest**: the per-position standard errors add as variances (two identical
+    /// positions ⇒ exactly √2× the one-position σ per node), `on_gpu` mirrors the
+    /// pricer, and the same seed reproduces the grid bit-for-bit.
+    #[test]
+    fn batched_grid_std_err_quadrature_and_determinism() {
+        let one = [pos(
+            OptionType::Call,
+            1_000_000.0,
+            VanillaInputs::new(1.10, 1.12, 0.10, 0.5, 0.03, 0.01),
+        )];
+        let two = [one[0].clone(), one[0].clone()];
+        let axes = ScenarioAxes::ladders(1, 0.01, 1, 0.005);
+        let pricer = ScenarioPricer::new();
+        let g1 = gpu_pv_grid(&pricer, &one, &axes, 1 << 12, 0xFEED);
+        let g2 = gpu_pv_grid(&pricer, &two, &axes, 1 << 12, 0xFEED);
+        assert_eq!(g1.on_gpu, pricer.is_gpu());
+        for idx in 0..g1.pv.len() {
+            // PV doubles exactly (same CRN bitstream per position).
+            assert!(is_close(g2.pv[idx], 2.0 * g1.pv[idx], 1e-12, 1e-9));
+            // σ adds in quadrature: √(σ² + σ²) = √2·σ.
+            assert!(is_close(
+                g2.std_err[idx],
+                core::f64::consts::SQRT_2 * g1.std_err[idx],
+                1e-12,
+                1e-12
+            ));
+        }
+        // Same seed ⇒ bit-identical grid (the documented reproducibility contract).
+        let g1b = gpu_pv_grid(&pricer, &one, &axes, 1 << 12, 0xFEED);
+        for idx in 0..g1.pv.len() {
+            assert_eq!(g1.pv[idx].to_bits(), g1b.pv[idx].to_bits());
+            assert_eq!(g1.std_err[idx].to_bits(), g1b.std_err[idx].to_bits());
+        }
+        // A non-FX position is skipped (no silent proxy): the grid is unchanged.
+        let mut with_eq = two.to_vec();
+        let u = celnet_types::Underlying::Equity(celnet_types::EquityRef::new(
+            celnet_types::Symbol::new("ACME", ""),
+            Ccy::USD,
+        ));
+        with_eq.push(PositionRisk::carry(
+            u.clone(),
+            OptionType::Call,
+            1_000.0,
+            celnet_core::carry::CarryInputs::new(
+                100.0,
+                105.0,
+                0.20,
+                1.0,
+                u,
+                celnet_types::Carry::CostOfCarry { r: 0.03, b: 0.01 },
+            ),
+        ));
+        let g3 = gpu_pv_grid(&pricer, &with_eq, &axes, 1 << 12, 0xFEED);
+        for idx in 0..g2.pv.len() {
+            assert_eq!(g3.pv[idx].to_bits(), g2.pv[idx].to_bits());
+        }
+    }
+
     /// **The centre node is the unshocked node PV.** The (centre,centre) rung is
     /// `spot_mult = 1.0`, `vol_bump = 0.0`, so its analytic PV equals the node's
     /// base value exactly (the bump-and-revalue base in `nonadditive`).
