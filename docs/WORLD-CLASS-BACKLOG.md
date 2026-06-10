@@ -185,11 +185,11 @@ Status legend: OPEN / IN-PROGRESS / DONE / ENV (deploy-bound, not a gap). Each i
 - **[W1/W3+] clients/excel-polymorphic** — 27 one-per-product fns; BARRIER 12 positional args;
   no composition. Polymorphic `CELNET.PRICE/QUOTE/SURFACE/RISK(underlying,product,terms-range)`
   + `CELNET.INSTRUMENT(…)` spec token. Retire per-product table per #10 at parity. Oracle:
-  headless suite asserts polymorphic fn == SDK == server per class. Effort L. **IN-PROGRESS**
-  (narrowed 2026-06-10: `CELNET.PRICE`/`RFQ`/`SURFACE`/`RISK` exist; the remaining gap is the
-  `CELNET.INSTRUMENT` spec token + retiring the ~20 per-product fns per #10 at parity —
-  CLAIMED session-B 2026-06-10, excel/-only lane, staying clear of the contract MarketContext
-  mirror per the Wave-S protocol).
+  headless suite asserts polymorphic fn == SDK == server per class. Effort L. **DONE**
+  (2026-06-10 session-B: `CELNET.INSTRUMENT` token + polymorphic PRICE/GREEKS/RFQ/SUBSCRIBE;
+  18 per-product fns retired at byte-identical wire parity (all 20 golden families + 22
+  optional-param cases + 4 cross-asset shapers; net −1,859 lines); metal-metal underliers
+  rejected with a typed error (honesty); vitest 309 + LIVE real-edge e2e 91/91).
 - **[W1/W3+] clients/gui-structuring-and-universe** — No structuring workspace (Ticket
   hardcodes per-product forms); universe is FX-pair-only. Asset-class-aware UniverseNavigator +
   composable contract-derived leg-builder Structuring workspace + surface-family switch. Oracle:
