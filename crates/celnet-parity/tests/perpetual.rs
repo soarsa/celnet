@@ -190,3 +190,32 @@ fn carry_dominated_perpetual_call_is_spot_exactly() {
         1.25f64.to_bits()
     );
 }
+
+/// (iii) The sub-ulp edge of the `b ≥ r` law: with `b` strictly below `r` by
+/// 1..64 ulps the finite-precision characteristic root collapses to exactly
+/// `y₁ = 1.0` on BOTH disjoint routes (the engine's cancellation-free pairing
+/// and the oracle's product-form bisection), and both must take the exact
+/// `y₁ → 1⁺` limit arm — finite, no-arbitrage-sandwiched, on the spot limit —
+/// never the `1/0` boundary whose value is `∞·0 = NaN` (adversarial-verify
+/// regression: both unguarded routes returned NaN at `b = r − 1 ulp`).
+#[test]
+fn sub_ulp_carry_window_is_finite_on_both_routes() {
+    let (s, k, vol, r) = (100.0, 100.0, 0.2, 0.05f64);
+    for ulps in 1..=64u64 {
+        let b = f64::from_bits(r.to_bits() - ulps);
+        assert!(b < r, "scan must stay strictly inside b < r");
+        let i = PerpetualInputs::new(s, k, vol, Carry::CostOfCarry { r, b });
+        let engine = perpetual_price(OptionType::Call, &i);
+        let reference = oracle::perpetual_american_price(Cp::Call, s, k, vol, r, b);
+        assert!(
+            engine.is_finite() && reference.is_finite(),
+            "non-finite at b = r - {ulps} ulps: engine {engine}, oracle {reference}"
+        );
+        // Both sit on the y₁ → 1⁺ spot limit (measured collapse error ≤ 3e-11
+        // across the window) and inside the no-arbitrage sandwich.
+        assert!((0.0..=s).contains(&engine));
+        assert_close!(engine, s, 1e-9, 1e-9);
+        assert_close!(reference, s, 1e-9, 1e-9);
+        assert_close!(engine, reference, 1e-9, 1e-9);
+    }
+}

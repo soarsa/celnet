@@ -1208,6 +1208,14 @@ pub fn perpetual_american_price(cp: Cp, spot: f64, strike: f64, vol: f64, r: f64
                 hi *= 2.0;
             }
             let y = bisect(1.0, hi);
+            // In the sub-ulp window b ∈ (r − O(ulp·r), r) the bisected root
+            // collapses to exactly 1.0 even though b < r strictly: the exact
+            // arm is the y₁ → 1⁺ limit (V = spot, no finite boundary) — the
+            // same law as b ≥ r, never a 1/0 boundary evaluation. (Exact
+            // structural comparison; the bisection's invariant keeps y ≥ 1.)
+            if y == 1.0 {
+                return spot;
+            }
             let boundary = strike * y / (y - 1.0);
             if spot >= boundary {
                 return spot - strike; // stopped: immediate exercise, intrinsic
