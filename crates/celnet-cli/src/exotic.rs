@@ -416,7 +416,10 @@ pub(crate) fn run(spec: ExoticSpec, inputs: &VanillaInputs) -> ExoticResult {
             lsm_paths,
             lsm_seed,
         } if lsm_paths > 0 => {
-            let am_inputs = VanillaInputs { strike, ..*inputs };
+            let am_inputs = celnet_exotics::ExoticInputs {
+                strike,
+                ..einputs.clone()
+            };
             let estimate = american_lsm(
                 &am_inputs,
                 &american_spec(option, strike, bermudan_steps, inputs.t),
@@ -571,7 +574,10 @@ pub(crate) fn run(spec: ExoticSpec, inputs: &VanillaInputs) -> ExoticResult {
             lsm_paths: 0,
             ..
         } => {
-            let am_inputs = VanillaInputs { strike, ..*inputs };
+            let am_inputs = celnet_exotics::ExoticInputs {
+                strike,
+                ..einputs.clone()
+            };
             american_fd(
                 &am_inputs,
                 &american_spec(option, strike, bermudan_steps, inputs.t),
@@ -1409,7 +1415,7 @@ mod tests {
         let r = run(spec, &i);
         assert!(r.std_error.is_none(), "the FD engine reports no std-error");
         let direct = american_fd(
-            &VanillaInputs { strike: 100.0, ..i },
+            &(&VanillaInputs { strike: 100.0, ..i }).into(),
             &american_spec(OptionType::Put, 100.0, 0, i.t),
             AmericanGrid::default(),
         );

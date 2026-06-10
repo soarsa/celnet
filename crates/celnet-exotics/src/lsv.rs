@@ -174,7 +174,7 @@ impl LsvModel {
     #[must_use]
     pub fn price_european_pde(&self, option: OptionType, strike: f64, grid: AdiGrid) -> f64 {
         adi::solve(
-            &self.inputs,
+            &(&self.inputs).into(),
             &self.var,
             &self.leverage,
             AdiProblem {
@@ -198,7 +198,7 @@ impl LsvModel {
         grid: AdiGrid,
     ) -> f64 {
         adi::solve(
-            &self.inputs,
+            &(&self.inputs).into(),
             &self.var,
             &self.leverage,
             AdiProblem {
@@ -232,7 +232,7 @@ impl LsvModel {
         // the terminal condition. To keep the grid identical across phases the
         // solver exposes a staged entry point.
         adi::solve_window(
-            &self.inputs,
+            &(&self.inputs).into(),
             &self.var,
             &self.leverage,
             adi::WindowSpec {

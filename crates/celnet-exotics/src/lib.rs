@@ -427,7 +427,7 @@ mod cross_validation {
         let analytic = vanilla_price(OptionType::Call, &i);
 
         let pde = pde_solve(
-            &i,
+            &(&i).into(),
             PdeProblem {
                 option: OptionType::Call,
                 strike: 100.0,
@@ -492,7 +492,7 @@ mod cross_validation {
         );
 
         let pde = pde_solve(
-            &i,
+            &(&i).into(),
             PdeProblem {
                 option: OptionType::Call,
                 strike: k,

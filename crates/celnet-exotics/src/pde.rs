@@ -1,4 +1,4 @@
-//! One-dimensional finite-difference PDE solver for the Garman-Kohlhagen
+//! One-dimensional finite-difference PDE solver for the lognormal cost-of-carry
 //! pricing equation, on a **log-spot** grid with **barrier-aligned** nodes and
 //! **Crank-Nicolson** time-stepping started by a short **Rannacher** (fully
 //! implicit) phase that damps the oscillations a discontinuous terminal or
@@ -10,8 +10,12 @@
 //! expiry) solves the constant-coefficient convection-diffusion PDE
 //!
 //! ```text
-//!   ∂V/∂τ = ½σ² ∂²V/∂x² + (b − ½σ²) ∂V/∂x − r_d V ,   b = r_d − r_f .
+//!   ∂V/∂τ = ½σ² ∂²V/∂x² + (b − ½σ²) ∂V/∂x − r V ,
 //! ```
+//!
+//! where `b = carry_rate()` is the net cost-of-carry and `r = discount_rate()`
+//! the numeraire rate of the input's [`celnet_types::Carry`] (FX: `b = r_d −
+//! r_f`, `r = r_d` — byte-identical to the historical two-rate form).
 //!
 //! Constant coefficients in `x` make a uniform grid second-order accurate and let
 //! the per-step operator be a single tridiagonal solve.
@@ -39,7 +43,9 @@
 //! literature (Tavella-Randall 2000; Duffy 2006). Identifiers are purpose-named.
 
 use celnet_core::math::{exp, ln, sqrt};
-use celnet_types::{OptionType, VanillaInputs};
+use celnet_types::OptionType;
+
+use crate::inputs::ExoticInputs;
 
 /// Boundary/terminal specification of a 1-D PDE pricing problem on the log-spot
 /// axis.
@@ -85,7 +91,7 @@ impl Default for PdeGrid {
     }
 }
 
-/// Solve the 1-D Garman-Kohlhagen PDE for the present value at spot `i.spot`.
+/// Solve the 1-D lognormal carry PDE for the present value at spot `i.spot`.
 ///
 /// Returns the price interpolated at the spot node (the grid is constructed so
 /// the initial log-spot is a node, so this is an exact grid read, not an
@@ -95,7 +101,7 @@ impl Default for PdeGrid {
 /// The hot path allocates four working vectors of length `nodes` once and reuses
 /// them across all time steps (no per-step allocation).
 #[must_use]
-pub fn solve(i: &VanillaInputs, problem: PdeProblem, grid: PdeGrid) -> f64 {
+pub fn solve(i: &ExoticInputs, problem: PdeProblem, grid: PdeGrid) -> f64 {
     let layout = GridLayout::new(i, problem, grid);
     let n = layout.nodes;
 
@@ -165,9 +171,9 @@ struct GridLayout {
 }
 
 impl GridLayout {
-    fn new(i: &VanillaInputs, problem: PdeProblem, grid: PdeGrid) -> Self {
+    fn new(i: &ExoticInputs, problem: PdeProblem, grid: PdeGrid) -> Self {
         let ln_s = ln(i.spot);
-        let mu = (i.r_dom - i.r_for - 0.5 * i.vol * i.vol) * i.t;
+        let mu = (i.carry_rate() - 0.5 * i.vol * i.vol) * i.t;
         let std = i.vol * sqrt(i.t);
         let half = grid.width_in_std * std;
         let centre = ln_s + mu;
@@ -280,7 +286,7 @@ impl GridLayout {
 ///
 /// As `S → ∞` (and `S → 0`) the vanilla/knock-out value approaches the
 /// **discounted forward intrinsic**: for a call the deep-ITM upper edge tends to
-/// `S·e^{−r_f τ} − K·e^{−r_d τ}` (the exercise is certain, so the value is the
+/// `S·e^{−q τ} − K·e^{−r τ}` (the exercise is certain, so the value is the
 /// present value of receiving the asset and paying the strike at expiry) and the
 /// deep-OTM lower edge tends to `0`; for a put the roles swap. Freezing the edge
 /// at the *undiscounted terminal intrinsic* `max(φ(S−K), 0)` instead — as a naive
@@ -289,33 +295,40 @@ impl GridLayout {
 /// a narrower domain (audit finding `pde.rs:250-262`). Refreshing these edges each
 /// step with the correct asymptotic removes that error.
 ///
+/// The asset-growth leg discounts at the carry's yield rate `q` read **verbatim**
+/// via [`celnet_types::Carry::yield_rate`] (FX: the stored `r_for` — never the
+/// `discount_rate() − carry_rate()` reconstruction, which would not round-trip
+/// bit-for-bit); the strike leg discounts at the numeraire `discount_rate()`.
+///
 /// A knock-out wall keeps its zero Dirichlet value (re-imposed separately); only
 /// the genuinely-free outer edges are touched here.
 struct FarField {
     option: OptionType,
     strike: f64,
-    r_dom: f64,
-    r_for: f64,
+    /// Numeraire discount rate `r` (FX: `r_dom`), read once at construction.
+    discount_rate: f64,
+    /// Yield/foreign rate `q` (FX: the stored `r_for`), read once at construction.
+    yield_rate: f64,
 }
 
 impl FarField {
-    fn new(i: &VanillaInputs, problem: PdeProblem) -> Self {
+    fn new(i: &ExoticInputs, problem: PdeProblem) -> Self {
         Self {
             option: problem.option,
             strike: problem.strike,
-            r_dom: i.r_dom,
-            r_for: i.r_for,
+            discount_rate: i.discount_rate(),
+            yield_rate: i.yield_rate(),
         }
     }
 
     /// Discounted-forward intrinsic at log-spot `x` with `tau` years remaining:
-    /// `max(φ·(S·e^{−r_f τ} − K·e^{−r_d τ}), 0)`. In the deep tails exactly one of
+    /// `max(φ·(S·e^{−q τ} − K·e^{−r τ}), 0)`. In the deep tails exactly one of
     /// the two payoff branches dominates, so this is the certain-exercise present
     /// value the edge converges to.
     #[inline]
     fn value(&self, x: f64, tau: f64) -> f64 {
         let s = exp(x);
-        let fwd = s * exp(-self.r_for * tau) - self.strike * exp(-self.r_dom * tau);
+        let fwd = s * exp(-self.yield_rate * tau) - self.strike * exp(-self.discount_rate * tau);
         (self.option.sign() * fwd).max(0.0)
     }
 
@@ -336,7 +349,7 @@ impl FarField {
 }
 
 /// Constant tridiagonal stencil coefficients of the spatial operator
-/// `L V = ½σ² V_xx + (b−½σ²) V_x − r_d V` discretised with centred differences.
+/// `L V = ½σ² V_xx + (b−½σ²) V_x − r V` discretised with centred differences.
 struct Coeff {
     /// Sub-diagonal weight (coefficient of `V_{j-1}`).
     lower: f64,
@@ -347,14 +360,14 @@ struct Coeff {
 }
 
 impl Coeff {
-    fn new(i: &VanillaInputs, dx: f64) -> Self {
+    fn new(i: &ExoticInputs, dx: f64) -> Self {
         let var = i.vol * i.vol;
-        let drift = i.r_dom - i.r_for - 0.5 * var;
+        let drift = i.carry_rate() - 0.5 * var;
         let diff = 0.5 * var / (dx * dx);
         let conv = drift / (2.0 * dx);
         Self {
             lower: diff - conv,
-            diag: -2.0 * diff - i.r_dom,
+            diag: -2.0 * diff - i.discount_rate(),
             upper: diff + conv,
         }
     }
@@ -455,6 +468,7 @@ fn thomas(
 mod tests {
     use super::*;
     use crate::{BarrierKind, BarrierStyle, SingleBarrier, single_barrier_price};
+    use celnet_types::VanillaInputs;
     use celnet_vanilla::price as vanilla_price;
 
     fn base() -> VanillaInputs {
@@ -480,7 +494,7 @@ mod tests {
                     strike: k,
                     knock_out: None,
                 };
-                let pde = solve(&i, problem, grid);
+                let pde = solve(&(&i).into(), problem, grid);
                 let exact = vanilla_price(option, &VanillaInputs { strike: k, ..i });
                 assert!(
                     (pde - exact).abs() < 5e-3,
@@ -507,7 +521,7 @@ mod tests {
             strike: k,
             knock_out: Some((h, true)),
         };
-        let pde = solve(&i, problem, grid);
+        let pde = solve(&(&i).into(), problem, grid);
         let analytic = single_barrier_price(
             &(&i).into(),
             SingleBarrier {
@@ -544,7 +558,7 @@ mod tests {
             strike: k,
             knock_out: Some((h, false)),
         };
-        let pde = solve(&i, problem, grid);
+        let pde = solve(&(&i).into(), problem, grid);
         let analytic = single_barrier_price(
             &(&i).into(),
             SingleBarrier {
@@ -576,8 +590,9 @@ mod tests {
     fn far_field_is_discounted_forward_not_frozen_intrinsic() {
         let i = VanillaInputs::new(100.0, 100.0, 0.20, 1.0, 0.20, 0.02);
         let tau = 1.0;
+        let e: ExoticInputs = (&i).into();
         let call = FarField::new(
-            &i,
+            &e,
             PdeProblem {
                 option: OptionType::Call,
                 strike: 70.0,
@@ -606,7 +621,7 @@ mod tests {
         );
 
         let put = FarField::new(
-            &i,
+            &e,
             PdeProblem {
                 option: OptionType::Put,
                 strike: 140.0,
@@ -634,7 +649,7 @@ mod tests {
         for option in [OptionType::Call, OptionType::Put] {
             for k in [70.0, 100.0, 140.0] {
                 let pde = solve(
-                    &i,
+                    &(&i).into(),
                     PdeProblem {
                         option,
                         strike: k,
@@ -662,7 +677,7 @@ mod tests {
             strike: 100.0,
             knock_out: Some((130.0, true)),
         };
-        let layout = GridLayout::new(&i, problem, PdeGrid::default());
+        let layout = GridLayout::new(&(&i).into(), problem, PdeGrid::default());
         let (idx, _up) = layout.wall.unwrap();
         let ln_h_node = layout.x(idx);
         assert!(

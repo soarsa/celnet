@@ -31,7 +31,7 @@ use celnet_types::{
     RateSensitivities, Settlement, SettlementStyle, Underlying, VanillaInputs,
 };
 
-use celnet_core::FlatSmile;
+use celnet_core::{CarryGreeks, FlatSmile};
 use celnet_exotics::{
     Accumulator as ExAccumulator, AccumulatorMcConfig, AmericanGrid, AmericanOption as ExAmerican,
     AnalyticAsian, AveragingSchedule, BarrierKind as ExBarrierKind, BarrierStyle,
@@ -251,6 +251,38 @@ fn exotic_inputs_at(
     vol: f64,
 ) -> celnet_exotics::ExoticInputs {
     (&inputs_at(market, expiry_years, strike, vol)).into()
+}
+
+/// Lower the American engine's generalized [`CarryGreeks`] strip onto the FX wire
+/// [`Greeks`] shape. The FX arm is a verbatim field copy (byte-identical to the
+/// pre-ADR-0008 strip); the generalized arm maps by the documented projection
+/// `rho_dom = discount_rho + carry_rho`, `rho_for = −carry_rho`
+/// ([`RateSensitivities`] docs) — unreachable from the FX-only wire
+/// `MarketContext` until ADR-0008 Wave S, but total by construction.
+fn fx_wire_greeks(g: &CarryGreeks) -> Greeks {
+    let (rho_dom, rho_for) = match g.rates {
+        RateSensitivities::Fx { rho_dom, rho_for } => (rho_dom, rho_for),
+        RateSensitivities::Carry {
+            discount_rho,
+            carry_rho,
+        } => (discount_rho + carry_rho, -carry_rho),
+    };
+    Greeks {
+        price: g.price,
+        delta_spot: g.delta_spot,
+        delta_forward: g.delta_forward,
+        gamma: g.gamma,
+        vega: g.vega,
+        theta: g.theta,
+        rho_dom,
+        rho_for,
+        vanna: g.vanna,
+        volga: g.volga,
+        charm: g.charm,
+        speed: g.speed,
+        zomma: g.zomma,
+        color: g.color,
+    }
 }
 
 /// Build a [`VarSwapContext`] (forward + carry) for the swap/replication math
@@ -1387,8 +1419,11 @@ pub fn price_instrument(
                 // Default engine: projected-SOR free-boundary finite difference.
                 // Exact to grid tolerance; the full Greek strip is central FD over
                 // the FD price (each bumped axis re-solves the free boundary).
-                let greeks =
-                    american_fd_greeks(&inputs_at(market, expiry, strike, market.vol), &spec, grid);
+                let greeks = fx_wire_greeks(&american_fd_greeks(
+                    &exotic_inputs_at(market, expiry, strike, market.vol),
+                    &spec,
+                    grid,
+                ));
                 Ok(Priced {
                     greeks,
                     resolved_strike: strike,
@@ -1410,9 +1445,9 @@ pub fn price_instrument(
                     },
                     seed: a.lsm_seed,
                 };
-                let inputs = inputs_at(market, expiry, strike, market.vol);
+                let inputs = exotic_inputs_at(market, expiry, strike, market.vol);
                 let estimate = american_lsm(&inputs, &spec, cfg);
-                let mut greeks = american_fd_greeks(&inputs, &spec, grid);
+                let mut greeks = fx_wire_greeks(&american_fd_greeks(&inputs, &spec, grid));
                 // Report the LSM price (with its std-error) as the headline; the
                 // FD-derived risk sensitivities ride alongside.
                 greeks.price = estimate.price;

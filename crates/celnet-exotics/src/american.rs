@@ -1,4 +1,6 @@
-//! American and Bermudan early-exercise vanilla pricing for FX options.
+//! American and Bermudan early-exercise vanilla pricing on the agnostic carry
+//! seam (FX two-rate carry byte-identically; equity/commodity/crypto
+//! cost-of-carry for free).
 //!
 //! Physically-settled FX options DO trade American-style: the holder may exercise
 //! at any time up to expiry (American) or on a discrete set of permitted dates
@@ -15,7 +17,7 @@
 //!    ```
 //!
 //!    where `g = max(φ·(S − K), 0)` is the exercise (intrinsic) payoff and `ℒ` is
-//!    the Garman-Kohlhagen operator discretised exactly as in [`crate::pde`]
+//!    the lognormal cost-of-carry operator discretised exactly as in [`crate::pde`]
 //!    (log-spot, Crank-Nicolson with a Rannacher fully-implicit start-up). Each
 //!    backward time step is solved by **projected successive over-relaxation
 //!    (PSOR)**: the Gauss-Seidel/SOR sweep of the implicit tridiagonal system is
@@ -49,10 +51,11 @@
 //!
 //! # No early-exercise premium ⇒ European (the discriminating invariant)
 //!
-//! Early exercise is never optimal for an American FX **call** when the foreign
-//! rate `r_f = 0` (no dividend / carry benefit to holding the asset early), nor
-//! for an American **put** when the domestic rate `r_d = 0`. In those regimes the
-//! American value equals the European Garman-Kohlhagen value to grid tolerance —
+//! Early exercise is never optimal for an American **call** when the carry's
+//! yield rate `q = 0` (FX foreign rate / dividend: no carry benefit to holding
+//! the asset early), nor for an American **put** when the discount rate `r = 0`.
+//! In those regimes the American value equals the European closed-form value to
+//! grid tolerance —
 //! a structural oracle the tests pin directly (American ≥ European always; equal
 //! when exercise is provably never optimal).
 //!
@@ -66,9 +69,12 @@
 //! identifiers here are purpose-named and vendor/research-neutral; provenance
 //! lives only in documentation.
 
+use celnet_core::CarryGreeks;
 use celnet_core::math::{exp, ln, sqrt};
 use celnet_qmc::{BrownianBridge, SobolSequence, inv_norm_cdf};
-use celnet_types::{Greeks, OptionType, VanillaInputs};
+use celnet_types::{Carry, OptionType, RateSensitivities};
+
+use crate::inputs::ExoticInputs;
 
 /// Whether the option may be exercised continuously (American) or only on a
 /// discrete set of permitted dates (Bermudan).
@@ -155,7 +161,7 @@ fn intrinsic(option: OptionType, s: f64, strike: f64) -> f64 {
 /// log-spot is a node (exact read, no interpolation). The strike inside `i` is
 /// ignored in favour of `spec.strike`.
 #[must_use]
-pub fn american_fd(i: &VanillaInputs, spec: &AmericanOption, grid: AmericanGrid) -> f64 {
+pub fn american_fd(i: &ExoticInputs, spec: &AmericanOption, grid: AmericanGrid) -> f64 {
     let layout = FdLayout::new(i, grid);
     let n = layout.nodes;
 
@@ -169,7 +175,7 @@ pub fn american_fd(i: &VanillaInputs, spec: &AmericanOption, grid: AmericanGrid)
 
     let dtau = i.t / grid.time_steps as f64;
     let coeff = Coeff::new(i, layout.dx);
-    let far = FarField::new(spec.option, spec.strike, i.r_dom, i.r_for);
+    let far = FarField::new(spec.option, spec.strike, i);
 
     // Resolve the set of step indices at which exercise is permitted (the layer
     // *reached* after the step completes carries remaining time τ = t − k·dtau).
@@ -201,28 +207,47 @@ pub fn american_fd(i: &VanillaInputs, spec: &AmericanOption, grid: AmericanGrid)
     layout.read_at_spot(&v)
 }
 
-/// The full 13-member Greek strip of an American/Bermudan vanilla by central
+/// The full generalized Greek strip of an American/Bermudan vanilla by central
 /// finite differences of [`american_fd`] (the same FD-Greek scheme the server's
 /// exotic router uses for the closed-form exotics). Each bumped axis re-solves
 /// the PSOR grid, so the early-exercise boundary moves consistently with the
 /// shocked market.
+///
+/// Rate sensitivities are carry-tagged ([`RateSensitivities`]): an FX
+/// [`Carry::FxRates`] input is bumped along `r_dom`/`r_for` **natively** (the
+/// identical finite-difference perturbations the historical FX engine used, so
+/// the FX rhos are byte-identical) and reported as [`RateSensitivities::Fx`]; a
+/// [`Carry::CostOfCarry`] input is bumped along `(r, b)` and reported as
+/// [`RateSensitivities::Carry`]. The bump *basis* is carry-native by design —
+/// re-expressing the FX bumps in `(r, b)` would change the rounding of the
+/// central differences (ADR-0008 §3.4 decision).
 #[must_use]
-pub fn american_fd_greeks(i: &VanillaInputs, spec: &AmericanOption, grid: AmericanGrid) -> Greeks {
-    let price = |x: &VanillaInputs| american_fd(x, spec, grid);
+pub fn american_fd_greeks(
+    i: &ExoticInputs,
+    spec: &AmericanOption,
+    grid: AmericanGrid,
+) -> CarryGreeks {
+    let price = |x: &ExoticInputs| american_fd(x, spec, grid);
     fd_greeks(i, &price)
 }
 
 /// Central-finite-difference Greek strip over a re-pricing closure. Shared by the
 /// FD pricer; bumps spot/vol/rates/time the same way the analytic exotic router
 /// does (1 bp spot, 1 vol-point, 1 bp rate, relative time).
-fn fd_greeks(i: &VanillaInputs, price: &dyn Fn(&VanillaInputs) -> f64) -> Greeks {
+fn fd_greeks(i: &ExoticInputs, price: &dyn Fn(&ExoticInputs) -> f64) -> CarryGreeks {
     const H_S_REL: f64 = 1e-4;
     const H_V: f64 = 1e-4;
     const H_R: f64 = 1e-4;
     const H_T_REL: f64 = 1e-4;
 
-    let with_spot = |s: f64| VanillaInputs { spot: s, ..*i };
-    let with_vol = |sig: f64| VanillaInputs { vol: sig, ..*i };
+    let with_spot = |s: f64| ExoticInputs {
+        spot: s,
+        ..i.clone()
+    };
+    let with_vol = |sig: f64| ExoticInputs {
+        vol: sig,
+        ..i.clone()
+    };
 
     let base = price(i);
     let h_s = i.spot * H_S_REL;
@@ -239,10 +264,10 @@ fn fd_greeks(i: &VanillaInputs, price: &dyn Fn(&VanillaInputs) -> f64) -> Greeks
     let vega = (v_up - v_dn) / (2.0 * H_V);
     let volga = (v_up - 2.0 * base + v_dn) / (H_V * H_V);
 
-    let bump = |ds: f64, dv: f64| VanillaInputs {
+    let bump = |ds: f64, dv: f64| ExoticInputs {
         spot: i.spot + ds,
         vol: i.vol + dv,
-        ..*i
+        ..i.clone()
     };
     let vanna = (price(&bump(h_s, H_V)) - price(&bump(h_s, -H_V)) - price(&bump(-h_s, H_V))
         + price(&bump(-h_s, -H_V)))
@@ -251,34 +276,54 @@ fn fd_greeks(i: &VanillaInputs, price: &dyn Fn(&VanillaInputs) -> f64) -> Greeks
     let gamma_vd = (price(&bump(h_s, -H_V)) - 2.0 * v_dn + price(&bump(-h_s, -H_V))) / (h_s * h_s);
     let zomma = (gamma_vu - gamma_vd) / (2.0 * H_V);
 
-    let rho_dom = {
-        let up = price(&VanillaInputs {
-            r_dom: i.r_dom + H_R,
-            ..*i
-        });
-        let dn = price(&VanillaInputs {
-            r_dom: i.r_dom - H_R,
-            ..*i
-        });
-        (up - dn) / (2.0 * H_R)
-    };
-    let rho_for = {
-        let up = price(&VanillaInputs {
-            r_for: i.r_for + H_R,
-            ..*i
-        });
-        let dn = price(&VanillaInputs {
-            r_for: i.r_for - H_R,
-            ..*i
-        });
-        (up - dn) / (2.0 * H_R)
+    // Carry-native rate bumps (ADR-0008 §3.4): the bump basis follows the carry
+    // arm so the FX finite-diff perturbations are the historical ones bit-for-bit
+    // (re-expressing them in `(r, b)` would change the central-difference
+    // rounding). This is sanctioned per-request setup — the per-node hot path
+    // (the PSOR sweeps inside each `price` call) never dispatches on `Carry`.
+    let with_carry = |carry: Carry| ExoticInputs { carry, ..i.clone() };
+    let central =
+        |up: Carry, dn: Carry| (price(&with_carry(up)) - price(&with_carry(dn))) / (2.0 * H_R);
+    let rates = match i.carry {
+        Carry::FxRates { r_dom, r_for } => RateSensitivities::Fx {
+            rho_dom: central(
+                Carry::FxRates {
+                    r_dom: r_dom + H_R,
+                    r_for,
+                },
+                Carry::FxRates {
+                    r_dom: r_dom - H_R,
+                    r_for,
+                },
+            ),
+            rho_for: central(
+                Carry::FxRates {
+                    r_dom,
+                    r_for: r_for + H_R,
+                },
+                Carry::FxRates {
+                    r_dom,
+                    r_for: r_for - H_R,
+                },
+            ),
+        },
+        Carry::CostOfCarry { r, b } => RateSensitivities::Carry {
+            discount_rho: central(
+                Carry::CostOfCarry { r: r + H_R, b },
+                Carry::CostOfCarry { r: r - H_R, b },
+            ),
+            carry_rho: central(
+                Carry::CostOfCarry { r, b: b + H_R },
+                Carry::CostOfCarry { r, b: b - H_R },
+            ),
+        },
     };
 
     let h_t = i.t * H_T_REL;
-    let at_t = |t: f64, ds: f64| VanillaInputs {
+    let at_t = |t: f64, ds: f64| ExoticInputs {
         spot: i.spot + ds,
         t,
-        ..*i
+        ..i.clone()
     };
     let t_up = i.t + h_t;
     let t_dn = (i.t - h_t).max(f64::MIN_POSITIVE);
@@ -298,17 +343,18 @@ fn fd_greeks(i: &VanillaInputs, price: &dyn Fn(&VanillaInputs) -> f64) -> Greeks
         (g_up - g_dn) / (2.0 * h_t)
     };
 
-    let delta_forward = delta_spot * exp(i.r_for * i.t);
+    // Forward-delta scaling reads the STORED yield/foreign rate verbatim
+    // (Carry::yield_rate — never the discount−carry reconstruction).
+    let delta_forward = delta_spot * exp(i.yield_rate() * i.t);
 
-    Greeks {
+    CarryGreeks {
         price: base,
         delta_spot,
         delta_forward,
         gamma,
         vega,
         theta,
-        rho_dom,
-        rho_for,
+        rates,
         vanna,
         volga,
         charm,
@@ -379,9 +425,9 @@ struct FdLayout {
 }
 
 impl FdLayout {
-    fn new(i: &VanillaInputs, grid: AmericanGrid) -> Self {
+    fn new(i: &ExoticInputs, grid: AmericanGrid) -> Self {
         let ln_s = ln(i.spot);
-        let mu = (i.r_dom - i.r_for - 0.5 * i.vol * i.vol) * i.t;
+        let mu = (i.carry_rate() - 0.5 * i.vol * i.vol) * i.t;
         let std = i.vol * sqrt(i.t);
         let half = grid.width_in_std * std;
         let centre = ln_s + mu;
@@ -414,32 +460,38 @@ impl FdLayout {
 /// In the deep tails the American value coincides with the European
 /// discounted-forward intrinsic: deep-ITM exercise is certain, and the
 /// early-exercise premium vanishes far from the boundary, so the edge is the same
-/// `max(φ·(S·e^{−r_f τ} − K·e^{−r_d τ}), 0)` asymptotic [`crate::pde`] uses — but
+/// `max(φ·(S·e^{−q τ} − K·e^{−r τ}), 0)` asymptotic [`crate::pde`] uses — but
 /// floored at the immediate-exercise intrinsic `g` (an American value can never
 /// be below its exercise payoff, which dominates the discounted forward at the
 /// very deep-ITM edge when carry is adverse). This keeps the edge consistent with
 /// the LCP `V ≥ g` everywhere.
+///
+/// The yield rate `q` is read **verbatim** via [`celnet_types::Carry::yield_rate`]
+/// (FX: the stored `r_for` — never the `discount_rate() − carry_rate()`
+/// reconstruction, which would not round-trip bit-for-bit).
 struct FarField {
     option: OptionType,
     strike: f64,
-    r_dom: f64,
-    r_for: f64,
+    /// Numeraire discount rate `r` (FX: `r_dom`), read once at construction.
+    discount_rate: f64,
+    /// Yield/foreign rate `q` (FX: the stored `r_for`), read once at construction.
+    yield_rate: f64,
 }
 
 impl FarField {
-    fn new(option: OptionType, strike: f64, r_dom: f64, r_for: f64) -> Self {
+    fn new(option: OptionType, strike: f64, i: &ExoticInputs) -> Self {
         Self {
             option,
             strike,
-            r_dom,
-            r_for,
+            discount_rate: i.discount_rate(),
+            yield_rate: i.yield_rate(),
         }
     }
 
     #[inline]
     fn value(&self, x: f64, tau: f64, floor_intrinsic: bool) -> f64 {
         let s = exp(x);
-        let fwd = s * exp(-self.r_for * tau) - self.strike * exp(-self.r_dom * tau);
+        let fwd = s * exp(-self.yield_rate * tau) - self.strike * exp(-self.discount_rate * tau);
         let european = (self.option.sign() * fwd).max(0.0);
         if floor_intrinsic {
             european.max(intrinsic(self.option, s, self.strike))
@@ -464,14 +516,14 @@ struct Coeff {
 }
 
 impl Coeff {
-    fn new(i: &VanillaInputs, dx: f64) -> Self {
+    fn new(i: &ExoticInputs, dx: f64) -> Self {
         let var = i.vol * i.vol;
-        let drift = i.r_dom - i.r_for - 0.5 * var;
+        let drift = i.carry_rate() - 0.5 * var;
         let diff = 0.5 * var / (dx * dx);
         let conv = drift / (2.0 * dx);
         Self {
             lower: diff - conv,
-            diag: -2.0 * diff - i.r_dom,
+            diag: -2.0 * diff - i.discount_rate(),
             upper: diff + conv,
         }
     }
@@ -600,7 +652,7 @@ pub struct LsmEstimate {
 /// (Longstaff-Schwartz: only ITM paths inform the boundary), and the path is
 /// stopped where intrinsic ≥ estimated continuation.
 #[must_use]
-pub fn american_lsm(i: &VanillaInputs, spec: &AmericanOption, cfg: LsmConfig) -> LsmEstimate {
+pub fn american_lsm(i: &ExoticInputs, spec: &AmericanOption, cfg: LsmConfig) -> LsmEstimate {
     let dates = exercise_dates(spec, i.t, cfg.exercise_dates);
     let m = dates.len();
     let n_paths = cfg.paths.max(1);
@@ -617,7 +669,9 @@ pub fn american_lsm(i: &VanillaInputs, spec: &AmericanOption, cfg: LsmConfig) ->
         .map(|t| ((t / dt).round().max(1.0) as usize).min(steps) - 1)
         .collect();
 
-    let drift = i.r_dom - i.r_for - 0.5 * i.vol * i.vol;
+    // Carry accessors read ONCE before the path loops (no per-path dispatch).
+    let drift = i.carry_rate() - 0.5 * i.vol * i.vol;
+    let discount_rate = i.discount_rate();
     let bridge = BrownianBridge::new(steps, i.t);
     let sobol = SobolSequence::new(steps);
 
@@ -626,7 +680,7 @@ pub fn american_lsm(i: &VanillaInputs, spec: &AmericanOption, cfg: LsmConfig) ->
     // between the requested date and its grid node).
     let df: Vec<f64> = node_of_date
         .iter()
-        .map(|&node| exp(-i.r_dom * (node + 1) as f64 * dt))
+        .map(|&node| exp(-discount_rate * (node + 1) as f64 * dt))
         .collect();
 
     // Simulate the spot matrix: paths × exercise-dates (only the exercise-date
@@ -859,6 +913,7 @@ fn solve4(a: &mut [[f64; 4]; 4], b: &mut [f64; 4]) -> [f64; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use celnet_types::VanillaInputs;
     use celnet_vanilla::price as vanilla_price;
 
     fn base() -> VanillaInputs {
@@ -881,7 +936,7 @@ mod tests {
         let grid = AmericanGrid::default();
         for option in [OptionType::Call, OptionType::Put] {
             for k in [80.0, 100.0, 120.0] {
-                let am = american_fd(&i, &amr(option, k), grid);
+                let am = american_fd(&(&i).into(), &amr(option, k), grid);
                 let eu = vanilla_price(option, &VanillaInputs { strike: k, ..i });
                 // Dominance holds up to the FD discretisation error (~1e-3): the
                 // American value is never materially below the European closed
@@ -906,7 +961,7 @@ mod tests {
             ..AmericanGrid::default()
         };
         for k in [80.0, 100.0, 120.0] {
-            let am = american_fd(&i, &amr(OptionType::Call, k), grid);
+            let am = american_fd(&(&i).into(), &amr(OptionType::Call, k), grid);
             let eu = vanilla_price(OptionType::Call, &VanillaInputs { strike: k, ..i });
             assert!(
                 (am - eu).abs() < 5e-3,
@@ -926,7 +981,7 @@ mod tests {
             ..AmericanGrid::default()
         };
         for k in [80.0, 100.0, 120.0] {
-            let am = american_fd(&i, &amr(OptionType::Put, k), grid);
+            let am = american_fd(&(&i).into(), &amr(OptionType::Put, k), grid);
             let eu = vanilla_price(OptionType::Put, &VanillaInputs { strike: k, ..i });
             assert!(
                 (am - eu).abs() < 5e-3,
@@ -942,7 +997,7 @@ mod tests {
     fn american_put_has_positive_premium_when_optimal() {
         let i = VanillaInputs::new(100.0, 100.0, 0.30, 1.0, 0.10, 0.0);
         let grid = AmericanGrid::default();
-        let am = american_fd(&i, &amr(OptionType::Put, 110.0), grid);
+        let am = american_fd(&(&i).into(), &amr(OptionType::Put, 110.0), grid);
         let eu = vanilla_price(OptionType::Put, &VanillaInputs { strike: 110.0, ..i });
         assert!(
             am > eu + 1e-2,
@@ -967,7 +1022,7 @@ mod tests {
             ..AmericanGrid::default()
         };
         let spec = amr(OptionType::Put, 40.0);
-        let fd = american_fd(&i, &spec, grid);
+        let fd = american_fd(&(&i).into(), &spec, grid);
         const PUBLISHED_FD: f64 = 2.314;
         assert!(
             (fd - PUBLISHED_FD).abs() < 1e-2,
@@ -980,9 +1035,9 @@ mod tests {
     fn fd_matches_lsm_within_stderr() {
         let i = VanillaInputs::new(100.0, 100.0, 0.25, 1.0, 0.08, 0.0);
         let spec = amr(OptionType::Put, 100.0);
-        let fd = american_fd(&i, &spec, AmericanGrid::default());
+        let fd = american_fd(&(&i).into(), &spec, AmericanGrid::default());
         let lsm = american_lsm(
-            &i,
+            &(&i).into(),
             &spec,
             LsmConfig {
                 paths: 200_000,
@@ -1013,7 +1068,7 @@ mod tests {
             strike: 110.0,
             style: ExerciseStyle::Bermudan { dates: vec![1.0] },
         };
-        let berm_one = american_fd(&i, &one, grid);
+        let berm_one = american_fd(&(&i).into(), &one, grid);
         let eu = vanilla_price(OptionType::Put, &VanillaInputs { strike: 110.0, ..i });
         assert!(
             (berm_one - eu).abs() < 5e-3,
@@ -1027,8 +1082,8 @@ mod tests {
             strike: 110.0,
             style: ExerciseStyle::Bermudan { dates: dense_dates },
         };
-        let berm_dense = american_fd(&i, &dense, grid);
-        let american = american_fd(&i, &amr(OptionType::Put, 110.0), grid);
+        let berm_dense = american_fd(&(&i).into(), &dense, grid);
+        let american = american_fd(&(&i).into(), &amr(OptionType::Put, 110.0), grid);
         // 50 exercise dates approach (but do not reach) the continuous-exercise
         // American value; the residual is the coarser exercise frequency.
         assert!(
@@ -1044,7 +1099,11 @@ mod tests {
     #[test]
     fn fd_greeks_are_sane() {
         let i = base();
-        let g = american_fd_greeks(&i, &amr(OptionType::Call, 100.0), AmericanGrid::default());
+        let g = american_fd_greeks(
+            &(&i).into(),
+            &amr(OptionType::Call, 100.0),
+            AmericanGrid::default(),
+        );
         assert!(g.price > 0.0 && g.price.is_finite());
         assert!(g.delta_spot > 0.0, "call delta {}", g.delta_spot);
         assert!(g.gamma > 0.0, "gamma {}", g.gamma);

@@ -9,10 +9,13 @@
 //!
 //! ```text
 //!   ∂U/∂τ = ½ L²(x,τ) v U_xx + ρ ξ L(x,τ) v U_xv + ½ ξ² v U_vv
-//!           + (b − ½ L² v) U_x + κ(θ − v) U_v − r_d U ,
+//!           + (b − ½ L² v) U_x + κ(θ − v) U_v − r U ,
 //! ```
 //!
-//! where `b = r_d − r_f`, `L(x,τ)` is the [`crate::leverage`] function, and
+//! where `b = carry_rate()` is the net cost-of-carry and `r = discount_rate()`
+//! the numeraire rate of the input's [`celnet_types::Carry`] (FX: `b = r_d − r_f`,
+//! `r = r_d` — byte-identical to the historical two-rate form),
+//! `L(x,τ)` is the [`crate::leverage`] function, and
 //! `(κ, θ, ξ, ρ)` are the stochastic-variance parameters of [`crate::stochvol`].
 //! The cross term `U_xv` (present whenever `ρ ≠ 0`) is what makes a naive
 //! direction-by-direction implicit scheme inconsistent — it must be handled
@@ -66,8 +69,9 @@
 //! purpose-named; provenance lives only in documentation.
 
 use celnet_core::math::{exp, ln, sqrt};
-use celnet_types::{OptionType, VanillaInputs};
+use celnet_types::OptionType;
 
+use crate::inputs::ExoticInputs;
 use crate::leverage::LeverageSurface;
 use crate::stochvol::VarianceParams;
 
@@ -132,8 +136,9 @@ struct Lsv2d<'a> {
     wall: Option<(usize, bool)>,
     /// Whether the (aligned) wall is currently active.
     wall_active: bool,
-    // Model parameters.
-    r_dom: f64,
+    // Model parameters (carry accessors read ONCE at construction — no per-step
+    // dispatch on the hot path).
+    discount_rate: f64,
     carry: f64,
     var: VarianceParams,
     lev: &'a LeverageSurface,
@@ -141,7 +146,7 @@ struct Lsv2d<'a> {
 
 impl<'a> Lsv2d<'a> {
     fn new(
-        i: &VanillaInputs,
+        i: &ExoticInputs,
         var: &VarianceParams,
         lev: &'a LeverageSurface,
         p: AdiProblem,
@@ -149,7 +154,7 @@ impl<'a> Lsv2d<'a> {
     ) -> Self {
         let ln_s = ln(i.spot);
         let atm_vol = sqrt(var.v0);
-        let mu = (i.r_dom - i.r_for - 0.5 * var.v0) * i.t;
+        let mu = (i.carry_rate() - 0.5 * var.v0) * i.t;
         let std = atm_vol * sqrt(i.t);
         let half = g.width_in_std * std;
         let centre = ln_s + mu;
@@ -190,8 +195,8 @@ impl<'a> Lsv2d<'a> {
             v0_index,
             wall,
             wall_active: wall.is_some(),
-            r_dom: i.r_dom,
-            carry: i.r_dom - i.r_for,
+            discount_rate: i.discount_rate(),
+            carry: i.carry_rate(),
             var: *var,
             lev,
         }
@@ -249,7 +254,7 @@ impl<'a> Lsv2d<'a> {
 /// every variance level.
 #[must_use]
 pub fn solve(
-    i: &VanillaInputs,
+    i: &ExoticInputs,
     var: &VarianceParams,
     lev: &LeverageSurface,
     problem: AdiProblem,
@@ -335,7 +340,7 @@ pub struct WindowSpec {
 /// phases in proportion to their calendar length.
 #[must_use]
 pub fn solve_window(
-    i: &VanillaInputs,
+    i: &ExoticInputs,
     var: &VarianceParams,
     lev: &LeverageSurface,
     spec: WindowSpec,
@@ -575,7 +580,7 @@ fn hv_step(g: &Lsv2d, u: &mut [f64], dtau: f64, cal_t: f64, w: &mut Workspace) {
     apply_wall(g, u);
 }
 
-/// Apply the full spatial operator `A U = (A0 + A1 + A2) U − r_d U` over the
+/// Apply the full spatial operator `A U = (A0 + A1 + A2) U − r U` over the
 /// interior, leaving boundary rows/cols zeroed (they are Dirichlet/handled).
 fn apply_full(g: &Lsv2d, u: &[f64], cal_t: f64, out: &mut [f64]) {
     for o in out.iter_mut() {
@@ -621,14 +626,14 @@ fn apply_full(g: &Lsv2d, u: &[f64], cal_t: f64, out: &mut [f64]) {
                 / (4.0 * dx * dv);
             let a0 = rho * xi * l * v * uxv;
 
-            out[c] = a0 + a1 + a2 - g.r_dom * uij;
+            out[c] = a0 + a1 + a2 - g.discount_rate * uij;
         }
     }
 }
 
 /// Implicit `x`-sweep: solve `(I − ϑΔτ A1) Y = src − ϑΔτ A1 base` for every
 /// variance row, where `A1` is the `x`-direction convection-diffusion-reaction
-/// operator. The reaction `−r_d` is folded entirely into the `x`-direction stage
+/// operator. The reaction `−r` is folded entirely into the `x`-direction stage
 /// (a standard, stable allocation of the zeroth-order term).
 fn implicit_x(
     g: &Lsv2d,
@@ -650,7 +655,7 @@ fn implicit_x(
             let s = exp(g.x(i));
             let l = g.lev.leverage(s, cal_t);
             let l2v = l * l * v;
-            let (lo, di, up) = x_stencil(l2v, g.carry, g.r_dom, dx);
+            let (lo, di, up) = x_stencil(l2v, g.carry, g.discount_rate, dx);
             let c = g.idx(i, j);
             let a1_base = lo * base[g.idx(i - 1, j)] + di * base[c] + up * base[g.idx(i + 1, j)];
             ls.rhs[i] = src[c] - im * a1_base;
@@ -735,12 +740,12 @@ fn implicit_v(
 }
 
 /// `x`-direction tridiagonal stencil weights `(lower, diag, upper)` of
-/// `A1 = ½L²v ∂²_x + (b−½L²v) ∂_x − r_d`.
+/// `A1 = ½L²v ∂²_x + (b−½L²v) ∂_x − r`.
 #[inline]
-fn x_stencil(l2v: f64, carry: f64, r_dom: f64, dx: f64) -> (f64, f64, f64) {
+fn x_stencil(l2v: f64, carry: f64, discount_rate: f64, dx: f64) -> (f64, f64, f64) {
     let diff = 0.5 * l2v / (dx * dx);
     let conv = (carry - 0.5 * l2v) / (2.0 * dx);
-    (diff - conv, -2.0 * diff - r_dom, diff + conv)
+    (diff - conv, -2.0 * diff - discount_rate, diff + conv)
 }
 
 /// `v`-direction tridiagonal stencil weights `(lower, diag, upper)` of
@@ -841,6 +846,7 @@ fn apply_wall(g: &Lsv2d, u: &mut [f64]) {
 mod tests {
     use super::*;
     use crate::leverage::{ImpliedVolSurface, LocalVolSurface};
+    use celnet_types::VanillaInputs;
     use celnet_vanilla::price as vanilla_price;
 
     fn base() -> VanillaInputs {
@@ -873,7 +879,7 @@ mod tests {
         for opt in [OptionType::Call, OptionType::Put] {
             for k in [90.0, 100.0, 115.0] {
                 let pde = solve(
-                    &i,
+                    &(&i).into(),
                     &var,
                     &lev,
                     AdiProblem {
