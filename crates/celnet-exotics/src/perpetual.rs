@@ -35,7 +35,10 @@
 //!   and the value is the spot itself — the exact `y₁ → 1⁺` limit of the
 //!   closed form (for `b = r` it is also the `T → ∞` limit of the European
 //!   call). This arm is handled exactly (`V = S`), never as a near-singular
-//!   evaluation of the power form.
+//!   evaluation of the power form. The same exact arm catches the **sub-ulp
+//!   window** `b ∈ (r − O(ulp·r), r)` where the finite-precision root collapses
+//!   to exactly `y₁ = 1` even though `b < r` strictly — the rounding-collapsed
+//!   root takes the limit arm, never a `1/0` boundary evaluation.
 //! * **Put** (uses `y₂ < 0`, which exists iff `r > 0`, or `r = 0` with
 //!   `b > ½σ²`): exercise boundary `S** = K·y₂/(y₂−1) ∈ (0, K)`, and on the
 //!   continuation region `S > S**`
@@ -238,6 +241,16 @@ fn valuation(opt: OptionType, i: &PerpetualInputs) -> Valuation {
             }
             let roots = characteristic_roots(i.vol, r, b);
             let y = roots.y_high; // > 1, since ψ(1) = b − r < 0 here
+            // ψ(1) = b − r < 0 puts the TRUE root strictly above 1, but in the
+            // sub-ulp window b ∈ (r − O(ulp·r), r) the finite-precision root
+            // collapses to exactly 1.0 — the same structural rounding collapse
+            // the put handles at y₂ == 0. The exact arm is the documented
+            // y₁ → 1⁺ limit (V = S, no finite boundary); evaluating the power
+            // form there would form the 1/0 boundary and a NaN value.
+            // (Exact-zero structural comparison, not a tolerance.)
+            if y == 1.0 {
+                return Valuation::NeverExercisedCall;
+            }
             let boundary = i.strike * y / (y - 1.0);
             if i.spot >= boundary {
                 return Valuation::Exercised;
@@ -302,6 +315,11 @@ pub fn perpetual_exercise_boundary(opt: OptionType, i: &PerpetualInputs) -> f64 
                 return f64::INFINITY;
             }
             let y = characteristic_roots(i.vol, r, b).y_high;
+            // Rounding-collapsed y₁ == 1.0 (the sub-ulp b → r⁻ window): no
+            // finite boundary — the exact y₁ → 1⁺ limit, mirroring `valuation`.
+            if y == 1.0 {
+                return f64::INFINITY;
+            }
             i.strike * y / (y - 1.0)
         }
         OptionType::Put => {
@@ -553,6 +571,35 @@ mod tests {
         let p = perpetual_price(OptionType::Call, &near);
         assert!(p.is_finite());
         assert_close!(p, 100.0, 1e-4, 1e-4);
+    }
+
+    /// The sub-ulp law: `b` strictly below `r` by as little as ONE ulp keeps
+    /// the valuation finite and on the `y₁ → 1⁺` limit arm. In that window the
+    /// finite-precision root collapses to exactly `y₁ = 1.0`, and the engine
+    /// must take the exact limit arm (`V = S`, boundary `+∞`), never the `1/0`
+    /// boundary evaluation whose value is `∞·0 = NaN` (adversarial-verify
+    /// regression: the unguarded power form returned NaN at `b = r − 1 ulp`).
+    #[test]
+    fn call_sub_ulp_below_r_takes_the_limit_arm() {
+        let r = 0.05f64;
+        for ulps in 1..=64u64 {
+            let b = f64::from_bits(r.to_bits() - ulps);
+            assert!(b < r, "scan must stay strictly inside b < r");
+            let i = inp(100.0, 100.0, 0.2, r, b);
+            let p = perpetual_price(OptionType::Call, &i);
+            assert!(p.is_finite(), "NaN/inf at b = r - {ulps} ulps: {p}");
+            // No-arbitrage sandwich: intrinsic ≤ V ≤ S, and the value sits on
+            // the S limit to within the closed form's own collapse error
+            // (measured ≤ 3e-11 absolute across the 64-ulp window).
+            assert!((0.0..=100.0).contains(&p));
+            assert_close!(p, 100.0, 1e-9, 1e-9);
+            let g = perpetual_greeks(OptionType::Call, &i);
+            assert!(
+                g.delta.is_finite() && g.gamma.is_finite() && g.vega.is_finite(),
+                "non-finite Greeks at b = r - {ulps} ulps"
+            );
+            assert!(perpetual_exercise_boundary(OptionType::Call, &i) > 100.0);
+        }
     }
 
     /// Degenerate law: spot beyond the free boundary ⇒ the value is the
