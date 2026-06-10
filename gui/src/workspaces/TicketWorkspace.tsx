@@ -41,6 +41,7 @@ import {
   type NetStructureLeg,
   type ProductBuildCtx,
 } from "../products";
+import { crossAssetInputsFor, crossAssetSpec } from "../products/crossAsset";
 import { forward as forwardRate } from "../data/pricing";
 import { impliedVolForInstrument, sampleSurface } from "../data/surface";
 import {
@@ -232,6 +233,24 @@ export function TicketWorkspace(): React.ReactElement {
   // supported product; the window barrier locks it to LOCAL_STOCH_VOL inside its
   // own `toInstrument`.
   const [pricingModel, setPricingModel] = useState<PricingModel>("DEFAULT");
+
+  // Universe → ticket pre-target: a non-FX underlier selection arms a one-shot
+  // target; on arrival (mount or while open) we re-point the ticket at the
+  // cross-asset vanilla spec seeded with that EXACT `Underlying` + settlement
+  // mechanics — through the spec's own input/wire seam (`crossAssetInputsFor` is
+  // the inverse of `crossAssetUnderlying`; no duplicated wire-building) — then
+  // consume the target. FX selections never arm it, so FX flows are untouched.
+  useEffect(() => {
+    const target = app.ticketTarget;
+    if (!target) return;
+    const seeded = crossAssetInputsFor(target.underlying, target.settlementStyle);
+    if (seeded) {
+      setStructure(crossAssetSpec.id);
+      setInputsByStructure((m) => ({ ...m, [crossAssetSpec.id]: seeded }));
+      setQuote(null);
+    }
+    app.clearTicketTarget();
+  }, [app, app.ticketTarget]);
 
   const today = useMemo(() => todayUtc(), []);
   // Selectable broken-date window: from spot (~2 calendar days) out to ~3 years.

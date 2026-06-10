@@ -26,6 +26,8 @@ import { fmtVol, fmtVolPoint, fmtClock } from "../lib/format";
 import { tenorLabel } from "../lib/trend";
 import { nowNanos } from "../hooks/useClock";
 import { samePair } from "../lib/universe";
+import { ASSET_CLASS_LABEL } from "../lib/assetUniverse";
+import type { AssetClass } from "../products/types";
 import { CubeWorkspace, type CubeDrill } from "./CubeWorkspace";
 import styles from "./SurfaceWorkspace.module.css";
 
@@ -54,6 +56,26 @@ const SMILE_MODELS: { id: SmileModel; label: string; hint: string }[] = [
     hint: "Extended whole-surface fit with a maturity-dependent skew",
   },
 ];
+
+/**
+ * The smile-calibration families marked PER ASSET CLASS — the asset-class-aware
+ * family switch, as a DATA table: a future non-FX surface family (a crypto
+ * delta-space family, an equity strike-space family) is an entry here, never a
+ * workspace rewrite. Today ONLY FX carries marked surfaces (the five delta-space
+ * calibration families above); every other class is an honest empty list and the
+ * workspace renders the typed unavailable state — a non-FX surface is NEVER
+ * fabricated (CLAUDE.md rule 2).
+ */
+const CLASS_SMILE_FAMILIES: Record<
+  AssetClass,
+  readonly { id: SmileModel; label: string; hint: string }[]
+> = {
+  FX: SMILE_MODELS,
+  METAL: [],
+  EQUITY: [],
+  COMMODITY: [],
+  CRYPTO: [],
+};
 
 /**
  * The stable, vendor-/method-neutral family label for a TYPED [`SmileModel`] —
@@ -184,6 +206,32 @@ export function SurfaceWorkspace(): React.ReactElement {
     }
     return Number.isFinite(min) && Number.isFinite(max) && max > min ? { min, max } : undefined;
   }, [preview]);
+
+  // The asset-class family gate: the families marked for the ACTIVE underlier's
+  // class. FX → the five delta-space families (everything below renders exactly
+  // as before); a class with no marked family → the typed, honest unavailable
+  // state (the marked surfaces AND the cube are FX-keyed today — no fake data).
+  const families = CLASS_SMILE_FAMILIES[app.underlier.assetClass];
+  if (families.length === 0) {
+    const className = ASSET_CLASS_LABEL[app.underlier.assetClass];
+    return (
+      <div className={styles.cubeShell}>
+        <section className={styles.classEmpty} role="status" aria-label="surface unavailable">
+          <h2 className={styles.classEmptyTitle}>No marked surface for {className}</h2>
+          <p className={styles.classEmptyBody}>
+            <span className="num">{app.underlier.label}</span> is a {className} underlier. Marked
+            vol surfaces are FX-only today — the calibration families here are FX delta-space
+            (market-hedge / stochastic-vol / parametric / parametric-surface / eSSVI), marked off
+            FX broker ladders. A {className} surface family will appear as data when its marking
+            engine lands; nothing is fabricated in the meantime.
+          </p>
+          <Button variant="secondary" onClick={() => app.setScopeSwitcherOpen(true)}>
+            Switch underlier
+          </Button>
+        </section>
+      </div>
+    );
+  }
 
   // The cube pivot is reachable regardless of the marking-surface state (it loads
   // its own per-pair surfaces through `useCube`), so this branch sits AFTER all
@@ -318,9 +366,13 @@ export function SurfaceWorkspace(): React.ReactElement {
             calibration engine; selecting a model re-marks the live surface under it
             and bumps `surface_version`. The model used is read back from the marked
             smile's `arbitrage.note` provenance channel (`model=<family>`). */}
+        {/* The asset-class-aware family switch: the chips render the ACTIVE
+            class's marked families (`CLASS_SMILE_FAMILIES`) — for FX, exactly the
+            five delta-space families as before; a future non-FX family joins as
+            data and its chips appear here with zero rewrite. */}
         <div className={styles.modelSelect} role="group" aria-label="smile calibration model">
           <span className={styles.provLabel}>model</span>
-          {SMILE_MODELS.map((m) => {
+          {families.map((m) => {
             const active = m.id === app.surfaceModel;
             return (
               <button

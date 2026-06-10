@@ -7,24 +7,33 @@
  *
  * What it shows depends on the child level being drilled into (from the scope
  * tail, via `lib/scope.childLevel`):
- *   • PAIR (terminal — book→pair drill, or re-selecting the active underlier):
- *     the live pair universe — favourites + recents + Majors/Crosses/Emerging
- *     buckets, fuzzy-searchable, real seeded spots. Selecting a pair re-targets
- *     the global underlier AND, if the scope is at-or-above book, drills the path
- *     to a `pair` crumb (FX terminal == active pair).
+ *   • PAIR (terminal — book→ASSET CLASS→underlier drill, or re-selecting the
+ *     active underlier): the underlier universe behind an asset-class rail
+ *     (FX · Metals · Equity · Commodity · Crypto). The FX class is the live pair
+ *     universe exactly as before — favourites + recents + Majors/Crosses/Emerging
+ *     buckets, fuzzy-searchable, real seeded spots (byte/behavior-identical). A
+ *     non-FX class lists that class's seeded underliers (pair-projected rows for
+ *     metals/crypto; ticker + venue · ccy for equity/commodity; the crypto rows
+ *     note linear vs inverse settlement). Selecting an underlier re-targets the
+ *     global underlier (FX: `setPair`; non-FX: `selectUnderlier`, which also arms
+ *     the ticket pre-target) AND, if the scope is at-or-above book, drills the
+ *     path to a `pair` crumb (terminal == active underlier).
  *   • DESK / BOOK (non-terminal org drill): the entitlement-ready org scaffold
  *     (`ORG_SCAFFOLD`) — the desk/book child nodes — filtered by the same fuzzy
  *     search. Selecting one drills the scope DOWN one level with that label.
  *
  * Keyboard grammar (unchanged from the absorbed navigator): type to filter; ↑/↓
- * move the highlight; Enter activates; ⌘D toggles favourite (pair mode only); Esc
- * closes. The active option is announced via `aria-activedescendant` (combobox /
- * listbox roving pattern — the rows are `role="option"` with no nested focusable
- * controls, so no `nested-interactive` a11y violation).
+ * move the highlight; Enter activates; ⌘D toggles favourite (underlier mode, any
+ * class); Esc closes. The class rail chips are ordinary buttons (Tab + Enter /
+ * click) OUTSIDE the listbox. The active option is announced via
+ * `aria-activedescendant` (combobox / listbox roving pattern — the rows are
+ * `role="option"` with no nested focusable controls, so no `nested-interactive`
+ * a11y violation).
  *
- * HONESTY (CLAUDE.md rule 2): pair mode navigates TODAY'S seeded pairs (the full
- * P1-10 registry is not built); the org scaffold is the grant-all entitlement seam
- * (a real org/entitlement feed replaces it with zero rework). Nothing is fabricated.
+ * HONESTY (CLAUDE.md rule 2): every class navigates TODAY'S seeded universe (the
+ * FX P1-10 registry / the estate market feeds are not built — the footer says so
+ * per class); the org scaffold is the grant-all entitlement seam (a real
+ * org/entitlement feed replaces it with zero rework). Nothing is fabricated.
  */
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
@@ -36,6 +45,14 @@ import {
   type UniverseHit,
   type UniversePair,
 } from "../lib/universe";
+import {
+  ASSET_CLASSES,
+  ASSET_CLASS_LABEL,
+  searchUnderliers,
+  type UnderlierHit,
+  type UnderlierRow,
+} from "../lib/assetUniverse";
+import type { AssetClass } from "../products/types";
 import { childLevel, currentLevel } from "../lib/scope";
 import { ORG_SCAFFOLD } from "../data/seed";
 import { fuzzyMatch } from "../lib/fuzzy";
@@ -45,7 +62,17 @@ import styles from "./ScopeSwitcher.module.css";
 type NavItem =
   | { kind: "header"; key: string; label: string; count: number }
   | { kind: "pair"; key: string; pair: UniversePair; indices: number[] }
+  | { kind: "underlier"; key: string; row: UnderlierRow; indices: number[] }
   | { kind: "org"; key: string; label: string; indices: number[] };
+
+/** The per-class search placeholder (FX keeps its original text verbatim). */
+const CLASS_PLACEHOLDER: Record<AssetClass, string> = {
+  FX: "Search pairs — EUR, usdjpy, jpy…",
+  METAL: "Search metals — XAU, xagusd, gold crosses…",
+  EQUITY: "Search equities — AAPL, SX5E, xnas…",
+  COMMODITY: "Search commodities — BRENT, copper…",
+  CRYPTO: "Search crypto — BTC, ethusdt, inverse…",
+};
 
 /** Highlight a label given the fuzzy-matched character indices. */
 function Highlighted({ text, indices }: { text: string; indices: number[] }): React.ReactElement {
@@ -88,14 +115,20 @@ export function ScopeSwitcher(): React.ReactElement | null {
   const targetLevel = tailLevel === "pair" ? "pair" : (childLevel(tailLevel) ?? "pair");
   const mode: "pair" | "org" = targetLevel === "pair" ? "pair" : "org";
 
+  // The asset-class dimension of the terminal leaf (book → ASSET CLASS →
+  // underlier): FX is the resting class; the rail re-targets it. Reset to the
+  // ACTIVE underlier's class on open so reopening lands where you are.
+  const [assetClass, setAssetClass] = useState<AssetClass>("FX");
+
   // Reset transient state each time the switcher opens; focus the search box.
   useEffect(() => {
     if (!open) return;
     setQuery("");
     setCursor(0);
+    setAssetClass(app.underlier.assetClass);
     const t = requestAnimationFrame(() => inputRef.current?.focus());
     return () => cancelAnimationFrame(t);
-  }, [open]);
+  }, [open, app.underlier.assetClass]);
 
   const close = useCallback(() => app.setScopeSwitcherOpen(false), [app]);
 
@@ -103,7 +136,8 @@ export function ScopeSwitcher(): React.ReactElement | null {
   const { items, selectable } = useMemo(() => {
     const out: NavItem[] = [];
 
-    if (mode === "pair") {
+    if (mode === "pair" && assetClass === "FX") {
+      // FX class — the original pair-universe leaf, byte/behavior-identical.
       const hits = searchUniverse(app.universe, query);
       const hitById = new Map<string, UniverseHit>(hits.map((h) => [h.pair.id, h]));
 
@@ -127,6 +161,39 @@ export function ScopeSwitcher(): React.ReactElement | null {
         pushSection("Recent", "recent", recentHits);
       }
       for (const g of groupHits(hits)) pushSection(g.label, g.bucket, g.hits);
+    } else if (mode === "pair") {
+      // A non-FX class — that class's seeded underlier rows, the same grammar:
+      // favourites first (shared id space), then the class section, fuzzy-filtered.
+      const rows = app.assetUniverse.byClass.get(assetClass) ?? [];
+      const hits = searchUnderliers(rows, query);
+      const hitById = new Map<string, UnderlierHit>(hits.map((h) => [h.row.id, h]));
+
+      const pushSection = (label: string, key: string, sectionHits: UnderlierHit[]): void => {
+        if (sectionHits.length === 0) return;
+        out.push({ kind: "header", key: `h-${key}`, label, count: sectionHits.length });
+        for (const h of sectionHits) {
+          out.push({
+            kind: "underlier",
+            key: `${key}-${h.row.id}`,
+            row: h.row,
+            indices: h.indices,
+          });
+        }
+      };
+
+      if (query.trim().length === 0) {
+        const favHits = [...app.favourites]
+          .map((id) => hitById.get(id))
+          .filter((h): h is UnderlierHit => Boolean(h));
+        pushSection("Favourites", "fav", favHits);
+        pushSection(
+          ASSET_CLASS_LABEL[assetClass],
+          "class",
+          hits.filter((h) => !app.favourites.has(h.row.id)),
+        );
+      } else {
+        pushSection(ASSET_CLASS_LABEL[assetClass], "class", hits);
+      }
     } else if (targetLevel === "desk" || targetLevel === "book") {
       // Org drill: the child nodes for the level being entered. At `desk` we list
       // every desk; at `book` we list the books under the desk the path is in.
@@ -151,7 +218,17 @@ export function ScopeSwitcher(): React.ReactElement | null {
       (i): i is Exclude<NavItem, { kind: "header" }> => i.kind !== "header",
     );
     return { items: out, selectable: selectableOnly };
-  }, [mode, targetLevel, app.universe, app.favourites, app.recents, app.scope.path, query]);
+  }, [
+    mode,
+    targetLevel,
+    assetClass,
+    app.universe,
+    app.assetUniverse,
+    app.favourites,
+    app.recents,
+    app.scope.path,
+    query,
+  ]);
 
   useEffect(() => {
     setCursor((c) => Math.max(0, Math.min(c, Math.max(0, selectable.length - 1))));
@@ -171,6 +248,12 @@ export function ScopeSwitcher(): React.ReactElement | null {
         // underlier selection IS the leaf drill — append the pair crumb. If already
         // at a pair crumb, `setPair` re-targeted it in lock-step (no extra drill).
         if (currentLevel(app.scope) !== "pair") app.drillScopeDown(item.pair.label);
+      } else if (item.kind === "underlier") {
+        // Non-FX terminal == active underlier: the same crumb invariant —
+        // `selectUnderlier` re-labels an existing pair crumb in lock-step (and
+        // arms the ticket pre-target); above the pair level we append the crumb.
+        app.selectUnderlier(item.row);
+        if (currentLevel(app.scope) !== "pair") app.drillScopeDown(item.row.label);
       } else {
         app.drillScopeDown(item.label);
       }
@@ -193,14 +276,19 @@ export function ScopeSwitcher(): React.ReactElement | null {
         e.preventDefault();
         setCursor((c) => Math.max(0, c - 1));
       } else if (e.key === "Enter") {
+        // A focused real button (a class-rail chip) handles its own Enter
+        // natively — never hijack it for the cursor row.
+        if ((e.target as HTMLElement | null)?.tagName === "BUTTON") return;
         e.preventDefault();
         const item = selectable[cursor];
         if (item) activate(item);
       } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "d" && mode === "pair") {
-        // ⌘D toggles the highlighted pair's favourite without closing (pair mode).
+        // ⌘D toggles the highlighted underlier's favourite without closing
+        // (underlier mode, any class — one favourites affordance, one id space).
         e.preventDefault();
         const item = selectable[cursor];
         if (item && item.kind === "pair") app.toggleFavourite(item.pair.pair);
+        else if (item && item.kind === "underlier") app.toggleFavouriteId(item.row.id);
       }
     },
     [selectable, cursor, activate, app, close, mode],
@@ -209,10 +297,19 @@ export function ScopeSwitcher(): React.ReactElement | null {
   if (!open) return null;
 
   const activePair = app.pairCtx.pair;
-  const title = mode === "pair" ? "Pairs" : targetLevel === "desk" ? "Desks" : "Books";
+  // Title per leaf: the FX class keeps its original "Pairs"; a non-FX class is
+  // titled by its class label; the org levels stay "Desks"/"Books".
+  const title =
+    mode === "pair"
+      ? assetClass === "FX"
+        ? "Pairs"
+        : ASSET_CLASS_LABEL[assetClass]
+      : targetLevel === "desk"
+        ? "Desks"
+        : "Books";
   const placeholder =
     mode === "pair"
-      ? "Search pairs — EUR, usdjpy, jpy…"
+      ? CLASS_PLACEHOLDER[assetClass]
       : `Search ${targetLevel === "desk" ? "desks" : "books"}…`;
 
   return (
@@ -246,12 +343,44 @@ export function ScopeSwitcher(): React.ReactElement | null {
           />
         </header>
 
+        {/* The asset-class rail (the book → ASSET CLASS → underlier dimension).
+            Ordinary buttons OUTSIDE the listbox (Tab + Enter / click) so the
+            combobox roving pattern below stays violation-free. FX is the resting
+            class — its list is the original pair leaf, untouched. */}
+        {mode === "pair" && (
+          <div className={styles.classRail} role="group" aria-label="asset class">
+            {ASSET_CLASSES.map((c) => (
+              <button
+                key={c}
+                type="button"
+                className={`${styles.classChip} ${assetClass === c ? styles.classActive : ""}`}
+                aria-pressed={assetClass === c}
+                onClick={() => {
+                  setAssetClass(c);
+                  setQuery("");
+                  setCursor(0);
+                  inputRef.current?.focus();
+                }}
+                title={`Browse ${ASSET_CLASS_LABEL[c]} underliers`}
+              >
+                {ASSET_CLASS_LABEL[c]}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div
           className={styles.list}
           ref={listRef}
           id={listId}
           role="listbox"
-          aria-label={mode === "pair" ? "currency pairs" : "scope nodes"}
+          aria-label={
+            mode === "pair"
+              ? assetClass === "FX"
+                ? "currency pairs"
+                : `${ASSET_CLASS_LABEL[assetClass].toLowerCase()} underliers`
+              : "scope nodes"
+          }
         >
           {selectable.length === 0 ? (
             <p className={styles.empty}>No match for “{query.trim()}”.</p>
@@ -288,8 +417,56 @@ export function ScopeSwitcher(): React.ReactElement | null {
                   </div>
                 );
               }
+              if (item.kind === "underlier") {
+                const r = item.row;
+                const isActive = r.id === app.underlier.id;
+                const isFav = app.favourites.has(r.id);
+                return (
+                  <div
+                    key={item.key}
+                    id={optId(item.key)}
+                    ref={(el) => {
+                      rowRefs.current.set(item.key, el);
+                    }}
+                    role="option"
+                    aria-selected={isCursor}
+                    aria-label={`${r.label} (${r.detail})${isFav ? " (favourite)" : ""} — set active underlier, ⌘D to ${
+                      isFav ? "unfavourite" : "favourite"
+                    }`}
+                    className={[
+                      styles.row,
+                      isActive ? styles.rowActive : "",
+                      isCursor ? styles.rowCursor : "",
+                    ].join(" ")}
+                    onClick={() => activate(item)}
+                    onMouseMove={() => setCursor(flatIndex)}
+                  >
+                    <span
+                      className={`${styles.star} ${isFav ? styles.starOn : ""}`}
+                      aria-hidden="true"
+                      title={isFav ? `Unfavourite ${r.label} (⌘D)` : `Favourite ${r.label} (⌘D)`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        app.toggleFavouriteId(r.id);
+                      }}
+                    >
+                      {isFav ? "★" : "☆"}
+                    </span>
+                    <span className={styles.rowPair}>
+                      <Highlighted text={r.label} indices={item.indices} />
+                    </span>
+                    <span className={styles.rowDetail}>{r.detail}</span>
+                    <span className={`num ${styles.rowSpot}`}>
+                      {r.refLevel.toFixed(r.decimals)}
+                    </span>
+                    {isActive && <span className={styles.activeDot} aria-hidden="true" />}
+                  </div>
+                );
+              }
               const u = item.pair;
-              const isActive = samePair(u.pair, activePair);
+              // An FX row is "active" only while the active underlier IS FX — a
+              // non-FX overlay honestly un-marks the resting pair.
+              const isActive = app.underlier.assetClass === "FX" && samePair(u.pair, activePair);
               const isFav = app.favourites.has(u.id);
               return (
                 <div
@@ -346,9 +523,13 @@ export function ScopeSwitcher(): React.ReactElement | null {
             <kbd className={styles.kbd}>esc</kbd> close
           </span>
           <span className={styles.scope}>
-            {mode === "pair"
-              ? `${app.universe.all.length} pairs · seeded set (full registry: Phase 1)`
-              : "grant-all org scaffold (entitlement feed: Phase 1)"}
+            {mode !== "pair"
+              ? "grant-all org scaffold (entitlement feed: Phase 1)"
+              : assetClass === "FX"
+                ? `${app.universe.all.length} pairs · seeded set (full registry: Phase 1)`
+                : `${(app.assetUniverse.byClass.get(assetClass) ?? []).length} ${ASSET_CLASS_LABEL[
+                    assetClass
+                  ].toLowerCase()} underliers · seeded set (estate market feed: backlog)`}
           </span>
         </footer>
       </div>
