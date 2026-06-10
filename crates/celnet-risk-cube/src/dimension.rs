@@ -401,12 +401,33 @@ mod tests {
         assert_eq!(acme, ACME_USD_GROUP, "ACME/USD frozen group key");
         assert_eq!(brent, BRENT_USD_GROUP, "BRENT/USD frozen group key");
         assert_ne!(acme, brent);
+        // OTHR/USD's RAW hash already carries bit 63 (asserted via the hasher
+        // directly so the property is re-checked if the upstream `Hash` layout ever
+        // changes), so the top-bit force must be an OR — an XOR would CLEAR the bit
+        // here and re-open the packed-pair range. This is the input class on which
+        // `|` and `^` genuinely diverge; the frozen pin makes it mutant-killing.
+        let raw_othr = {
+            use core::hash::{Hash, Hasher};
+            let mut h = FnvHasher::new();
+            Underlying::Equity(EquityRef::new(Symbol::new("OTHR", ""), Ccy::USD)).hash(&mut h);
+            h.finish()
+        };
+        assert!(
+            raw_othr >> 63 == 1,
+            "OTHR/USD raw hash must carry bit 63 (re-pick the pin input if the \
+             upstream Hash layout changed)"
+        );
+        assert_eq!(othr, OTHR_USD_GROUP, "OTHR/USD frozen group key (top bit OR)");
+        assert!(othr & (1u64 << 63) != 0);
     }
 
     /// Frozen group keys for the cross-asset hash pins above (captured once from
     /// the unmutated build on this toolchain; deterministic by construction).
     const ACME_USD_GROUP: u64 = 0xD095_3180_2EA3_7AB8;
     const BRENT_USD_GROUP: u64 = 0x8CB6_F3CC_498F_509E;
+    /// Raw FNV already has bit 63 set for this input (`0xCA84_…`), so the group
+    /// key equals the raw hash — the case that distinguishes the OR from an XOR.
+    const OTHR_USD_GROUP: u64 = 0xCA84_4C62_F805_9A5D;
 
     /// Parent pointers resolve, supersede on re-set, and answer `None` when
     /// unconfigured — for BOTH chains (book→desk, location→entity).
@@ -452,3 +473,4 @@ mod tests {
         assert_eq!(EntityId::from(12).raw(), 12);
     }
 }
+
