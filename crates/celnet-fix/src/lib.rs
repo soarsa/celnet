@@ -32,3 +32,4 @@ pub mod transport;
 pub use dictionary::MsgType;
 pub use framing::{FrameCursor, FrameEncoder, FrameError};
 pub use session::{Role, Session, SessionConfig, SessionState};
+pub use transport::MAX_FIX_MESSAGE_BYTES;

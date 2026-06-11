@@ -91,41 +91,36 @@ export const ALL_FAMILIES = [
   "ndf",
   "perpetual_option",
   "listed_future_option",
-  // Cross-asset vanilla underlyings (W1 `Underlying` oneof) — NOT priced by the
-  // Excel WS corpus path (declared in `FAMILIES_NOT_EXPOSED`). The gap is NOT the
-  // market: their vectors' `{spot, vol, r_dom, r_for}` IS the FX two-rate
-  // projection (`r_dom` = discount rate, `r_for` = the carry yield — dividend+repo
-  // / convenience / funding) the WS `MarketContext` transports and the server's
-  // carry guard reads as `b = r_dom − r_for`, proven end-to-end by
-  // `crates/celnet-server/tests/cross_asset_ws.rs`. The REAL gap is the instrument
-  // seam: the add-in's `instrumentToWire` always emits the legacy FX `pair`
-  // projection BESIDE `underlying` (keeping the FX-keyed surfaces total), and the
-  // server's WS decoder gives `pair` precedence (`instrument_underlying_from_json`)
-  // — so a client-emitted cross-asset frame routes down the FX path. That is
-  // numerically invisible for the linear payoffs (a green row would prove the FX
-  // path, not the cross-asset decode) and WRONG for the INVERSE_COIN crypto
-  // vectors (`settlement_style` is ignored: the LINEAR USD value, not the
-  // coin-margined `1/S_T` oracle) — pinned server-side by
-  // `ws_legacy_pair_precedence_routes_client_shaped_frames_to_the_fx_path`. The
-  // polymorphic `CELNET.INSTRUMENT` underlier grammar DOES shape these onto the
-  // wire (gated by `crossAssetProducts.test.ts` and the polymorphic parity suite);
-  // they move into `EXCEL_FAMILIES` the moment the codec seam prefers `underlying`
-  // over the `pair` projection (the server pin fails loudly when it does).
+  // Cross-asset vanilla underlyings (W1 `Underlying` oneof) — now WS-priced by the
+  // Excel corpus path (in `EXCEL_FAMILIES`). Their vectors' `{spot, vol, r_dom,
+  // r_for}` IS the FX two-rate projection (`r_dom` = discount rate, `r_for` = the
+  // carry yield — dividend+repo / convenience / funding) the WS `MarketContext`
+  // transports and the server's carry guard reads as `b = r_dom − r_for`. The
+  // polymorphic `CELNET.INSTRUMENT` underlier grammar shapes each onto the wire
+  // (equity `TICKER@VENUE:CCY`, commodity `TICKER@:CCY`, crypto `BASE/QUOTE`
+  // [`:inverse`]), carrying the asset-class-discriminated `underlying` oneof +
+  // `settlement_style` BESIDE the legacy FX `pair` projection. The server's WS
+  // decoder now treats the richer `underlying` as authoritative over `pair`
+  // (`instrument_underlying_from_json`), so the cross-asset arm — and the coin-
+  // margined INVERSE_COIN crypto economics — survives end-to-end, proven by
+  // `crates/celnet-server/tests/cross_asset_ws.rs`
+  // (`ws_underlying_precedence_routes_client_shaped_frames_to_the_cross_asset_arm`).
   "equity_option",
   "commodity_option",
   "crypto_option",
 ] as const;
 
 /**
- * The families the polymorphic Excel surface prices over the FX WS path: every
- * one is reachable as `CELNET.INSTRUMENT(underlier, family, terms)` + a verb
+ * The families the polymorphic Excel surface prices over the WS path: every one
+ * is reachable as `CELNET.INSTRUMENT(underlier, family, terms)` + a verb
  * (`CELNET.PRICE`/`GREEKS`/`RFQ`/`SUBSCRIBE`). The multi-leg `strategy` family
  * is expressed with repeated ("legs", callPut, strike, side, ratio) terms rows
- * (exactly like BASKET's matrix keys), so every WS-priceable corpus family is
- * exposed; the remaining `FAMILIES_NOT_EXPOSED` are the three cross-asset
- * vanilla arms (`equity_option`/`commodity_option`/`crypto_option`), blocked by
- * the server WS decoder's legacy-`pair` precedence over the `underlying` object
- * the add-in emits beside it — see the rationale on `ALL_FAMILIES` above.
+ * (exactly like BASKET's matrix keys). The three cross-asset vanilla arms
+ * (`equity_option`/`commodity_option`/`crypto_option`) are exposed via the
+ * polymorphic underlier grammar (a cross-asset underlier + the `vanilla` product),
+ * now that the server WS decoder routes by the authoritative `underlying` oneof
+ * rather than the legacy FX `pair` projection — so every corpus family is priced
+ * and `FAMILIES_NOT_EXPOSED` is empty.
  */
 export const EXCEL_FAMILIES = [
   "vanilla",
@@ -152,9 +147,12 @@ export const EXCEL_FAMILIES = [
   "ndf",
   "perpetual_option",
   "listed_future_option",
+  "equity_option",
+  "commodity_option",
+  "crypto_option",
 ] as const;
 
-/** Families in the corpus that the Excel price path does not (yet) expose. */
+/** Families in the corpus that the Excel price path does not expose (now empty). */
 export const FAMILIES_NOT_EXPOSED = ALL_FAMILIES.filter(
   (f) => !(EXCEL_FAMILIES as readonly string[]).includes(f),
 );
@@ -262,6 +260,42 @@ const listedFutureUnderlier = (token: string): string => {
 };
 
 /**
+ * The polymorphic `CELNET.INSTRUMENT` underlier string for an EQUITY vector — the
+ * `TICKER@VENUE:CCY` grammar (a present venue selects the equity arm). The listing
+ * venue/currency are contract identity only (ADR-0008 — the price is venue/ccy-
+ * independent over the carry seam); the same SPX=XCBO / AAPL=XNAS / STOXX=XEUR map
+ * the server gate (`cross_asset_ws.rs`) and the GUI corpus use, so all three client
+ * gates book the identical `Underlying` arm.
+ */
+const equityUnderlier = (ticker: string): string => {
+  switch (ticker) {
+    case "SPX":
+      return "SPX@XCBO:USD";
+    case "AAPL":
+      return "AAPL@XNAS:USD";
+    case "STOXX":
+      return "STOXX@XEUR:EUR";
+    default:
+      throw new Error(`unmapped equity underlying \`${ticker}\``);
+  }
+};
+
+/**
+ * The polymorphic underlier string for a CRYPTO vector — the `BASE/QUOTE` grammar
+ * with the `:inverse` settlement suffix for a coin-margined contract (INVERSE_COIN
+ * selects the `1/S_T` payoff, priced in coins). The 6-letter corpus tokens
+ * (`BTCUSD`) split 3+3 into the base coin and the fiat/stablecoin numeraire.
+ */
+const cryptoUnderlier = (token: string, settlementStyle: string): string => {
+  if (token.length !== 6) throw new Error(`crypto underlying \`${token}\` is not a 3+3 pair token`);
+  const base = token.slice(0, 3);
+  const quote = token.slice(3);
+  if (settlementStyle === "INVERSE_COIN") return `${base}/${quote}:inverse`;
+  if (settlementStyle === "LINEAR") return `${base}/${quote}`;
+  throw new Error(`unknown crypto settlement_style \`${settlementStyle}\``);
+};
+
+/**
  * A display tenor for an arbitrary expiry year-fraction. The PRICED maturity is the
  * vector's exact `expiry_years` (we override `expiryYears` below); the tenor is a
  * coarse display label only (the server prices off `expiry_years`, never the tenor),
@@ -294,6 +328,12 @@ export function specOf(v: GoldenVector): InstrumentSpecArgs {
   let underlier = v.underlying;
   const rows: TermsRow[] = [];
   let notional = 1.0;
+  // The proto product-arm name passed to `CELNET.INSTRUMENT`. It is the corpus
+  // family verbatim for every product-keyed family; the three cross-asset families
+  // (`equity_option`/`commodity_option`/`crypto_option`) are NOT product arms — they
+  // are underlying CLASSES wrapping the `vanilla` product, so they pass `vanilla`
+  // and carry their asset class on the cross-asset underlier string instead.
+  let product: string = v.family;
 
   switch (v.family) {
     case "vanilla":
@@ -525,13 +565,33 @@ export function specOf(v: GoldenVector): InstrumentSpecArgs {
       );
       break;
     }
+    // The three cross-asset vanilla arms: an underlying CLASS over the `vanilla`
+    // product. The asset class rides on the polymorphic underlier string (so the
+    // server decodes the `Underlying` oneof + `settlement_style`); the terms are
+    // the plain vanilla strike + callPut.
+    case "equity_option":
+      product = "vanilla";
+      underlier = equityUnderlier(v.underlying);
+      rows.push(["strike", num(v.terms, "strike")], ["callPut", cp(str(v.terms, "option_type"))]);
+      break;
+    case "commodity_option":
+      product = "vanilla";
+      // Venue-less contract identity (`TICKER@:CCY`); the corpus commodities quote USD.
+      underlier = `${v.underlying}@:USD`;
+      rows.push(["strike", num(v.terms, "strike")], ["callPut", cp(str(v.terms, "option_type"))]);
+      break;
+    case "crypto_option":
+      product = "vanilla";
+      underlier = cryptoUnderlier(v.underlying, str(v.terms, "settlement_style"));
+      rows.push(["strike", num(v.terms, "strike")], ["callPut", cp(str(v.terms, "option_type"))]);
+      break;
     default:
       throw new Error(`family \`${v.family}\` is not exposed by Excel`);
   }
 
   return tenor === undefined
-    ? { underlier, product: v.family, terms: rows, notional }
-    : { underlier, product: v.family, terms: rows, tenor, notional };
+    ? { underlier, product, terms: rows, notional }
+    : { underlier, product, terms: rows, tenor, notional };
 }
 
 /**
