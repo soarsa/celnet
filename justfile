@@ -156,12 +156,16 @@ t1 *CRATES:
     exec bash tools/gate-runner.sh t1 "${steps[@]}"
 
 # T2 — landing-only: the full `check` gate set (same steps, decomposed so the
-# resumable ledger can skip the already-green ones after a kill) + the live
-# GUI/Excel e2e suites. Run ONCE per push milestone, never per fix-iteration.
-# demo_edge is pre-built first (env lesson: the e2e ready-timeout silently
-# covers a cold `cargo run --example` build). gui-touching work ⇒ the
-# Playwright+axe suite is NOT skippable (deferred-e2e lesson: a deferred suite
-# is a defect reservoir). Plain `cargo test` — see t1.
+# resumable ledger can skip the already-green ones after a kill) + the GUI/Excel
+# typecheck + unit vitest + the live e2e suites. Run ONCE per push milestone,
+# never per fix-iteration. demo_edge is pre-built first (env lesson: the e2e
+# ready-timeout silently covers a cold `cargo run --example` build). gui-touching
+# work ⇒ the Playwright+axe suite is NOT skippable (deferred-e2e lesson: a deferred
+# suite is a defect reservoir). The web typecheck + unit suites are gated here too:
+# they are NOT covered by the e2e (which exercises a live build, not `tsc --noEmit`
+# nor the unit vitest), and a unit/type regression that the e2e can't see — e.g. a
+# corpus family added without its legacy-parity case — must fail the landing gate,
+# not lurk. Plain `cargo test` — see t1.
 t2:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -175,6 +179,10 @@ t2:
         "test-integration::source \"\$HOME/.cargo/env\" && cargo test --workspace --all-features --test '*'" \
         "test-docs::source \"\$HOME/.cargo/env\" && cargo test --workspace --all-features --doc" \
         "deny::source \"\$HOME/.cargo/env\" && cargo deny check" \
+        "gui-typecheck::npm --prefix gui run typecheck" \
+        "gui-unit::npm --prefix gui run test" \
+        "excel-typecheck::npm --prefix excel run typecheck" \
+        "excel-unit::npm --prefix excel run test" \
         "build-edge::source \"\$HOME/.cargo/env\" && cargo build -p celnet-server --example demo_edge" \
         "gui-e2e::npm --prefix gui run e2e:install && npm --prefix gui run e2e" \
         "excel-e2e::npm --prefix excel run test:e2e"

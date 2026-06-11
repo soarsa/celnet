@@ -18,7 +18,9 @@
 //!   handles + the [`CcyPair`]); [`Scope`] pins one `(dimension, value)` subtree.
 //! * [`Entitlements`] is the read principal applied as a pre-aggregation pruning
 //!   predicate — the default ([`Entitlements::grant_all`]) is the show-all-now
-//!   posture (a request that omits a principal is treated as grant-all server-side).
+//!   posture, sent as an **explicit** grant-all when a query asserts none (so the
+//!   workflow clears the server's production deny-by-default boundary, which denies
+//!   a genuinely absent principal).
 //! * [`Numeraire`] is the reporting currency + the per-currency spot rates a node's
 //!   per-ccy exposure legs collapse through — so the aggregate is in ONE currency,
 //!   not "native premium units" (the historical GUI caveat this work resolved).
@@ -196,8 +198,11 @@ impl EntitlementScope {
 /// `(grant_all OR some grant covers) AND no deny covers`.
 ///
 /// The default is **grant-all** ([`Entitlements::grant_all`]) — the show-all-now
-/// posture matching the GUI's `principal: "grant-all"`. A request that passes no
-/// principal at all is also treated as grant-all server-side. A scoped principal
+/// posture every client shares. A query that calls no `.entitled(..)` sends an
+/// **explicit** grant-all principal on the wire (the client asserts it; the server
+/// audits and honors it), so the headline workflow works against the production
+/// **deny-by-default** edge, which denies a *genuinely* absent principal — the SDK
+/// never relies on the server granting an absent request. A scoped principal
 /// ([`Entitlements::scoped`]) is deny-by-default: it sees only what a grant covers.
 /// `denies` are information barriers that win over any grant (Chinese walls), and
 /// may be layered onto a grant-all firm view.
@@ -252,6 +257,21 @@ impl Entitlements {
             denies: self.denies.iter().map(EntitlementScope::to_wire).collect(),
         }
     }
+}
+
+/// The wire principal a risk request carries: the caller's asserted principal, or
+/// — when they passed none — an **explicit grant-all** (the audited show-all-now
+/// default). Every client (SDK / CLI / GUI / Excel) asserts this same default, so
+/// the headline risk workflow works against the production **deny-by-default**
+/// (`AccessMode::Enforce`) edge, which denies a *genuinely* absent principal: the
+/// default is a real, logged `PrincipalAsserted` grant, not a reliance on the
+/// server granting an absent request (it no longer does). A deployment's
+/// authenticating gateway injects/validates the real principal in production.
+fn principal_or_grant_all(principal: Option<&Entitlements>) -> EntitlementPrincipal {
+    principal.map_or_else(
+        || Entitlements::grant_all().to_wire(),
+        Entitlements::to_wire,
+    )
 }
 
 // ===========================================================================
@@ -952,7 +972,7 @@ impl AggregateQuery {
         AggregateRiskRequest {
             dimension: self.dimension.to_tag(),
             numeraire: Some(self.numeraire.to_wire()),
-            principal: self.principal.as_ref().map(Entitlements::to_wire),
+            principal: Some(principal_or_grant_all(self.principal.as_ref())),
             scope: self.scope.map(Scope::to_wire),
             vega_pillars: self.vega_pillars.iter().map(|p| p.to_wire()).collect(),
             var_spot_shocks: self.var_spot_shocks.clone(),
@@ -1036,7 +1056,7 @@ impl DrillQuery {
             node: Some(self.node.to_wire()),
             child_dimension: self.child_dimension.to_tag(),
             numeraire: Some(self.numeraire.to_wire()),
-            principal: self.principal.as_ref().map(Entitlements::to_wire),
+            principal: Some(principal_or_grant_all(self.principal.as_ref())),
             vega_pillars: self.vega_pillars.iter().map(|p| p.to_wire()).collect(),
             include_children: self.include_children,
             include_positions: self.include_positions,
@@ -1111,7 +1131,7 @@ impl LimitQuery {
         LimitStatusRequest {
             scope: Some(self.scope.to_wire()),
             numeraire: Some(self.numeraire.to_wire()),
-            principal: self.principal.as_ref().map(Entitlements::to_wire),
+            principal: Some(principal_or_grant_all(self.principal.as_ref())),
             vega_pillars: self.vega_pillars.iter().map(|p| p.to_wire()).collect(),
             var_spot_shocks: self.var_spot_shocks.clone(),
             var_alpha: self.var_alpha,
@@ -1161,7 +1181,7 @@ impl PositionQuery {
     fn to_wire(&self) -> ListPositionsRequest {
         ListPositionsRequest {
             scope: self.scope.map(Scope::to_wire),
-            principal: self.principal.as_ref().map(Entitlements::to_wire),
+            principal: Some(principal_or_grant_all(self.principal.as_ref())),
             correlation_id: self.correlation_id,
         }
     }

@@ -47,6 +47,12 @@ export function startDemoEdge(opts?: {
       ...process.env,
       CELNET_WS_ADDR: wsAddr,
       CELNET_GRPC_ADDR: grpcAddr,
+      // Run the demo edge under the PRODUCTION deny-by-default posture, not its
+      // friendly Permissive dev default — so this live suite verifies the GUI's
+      // entitlement default end-to-end: the Book/Risk views send an explicit
+      // grant-all principal and are served, exactly as against a real edge. (A
+      // genuinely absent principal would be denied; the GUI never sends one.)
+      CELNET_ACCESS_MODE: "enforce",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

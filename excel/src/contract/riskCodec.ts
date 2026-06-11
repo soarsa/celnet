@@ -181,7 +181,11 @@ export interface EntitlementRule {
   readonly scopes: readonly RiskScope[];
 }
 
-/** The entitlement principal (default = grant-all; deny wins). */
+/**
+ * The entitlement principal. Default = grant-all, sent as an **explicit** grant-all
+ * when a request carries none (see `applyCommon`) so the workflow clears the
+ * server's production deny-by-default edge; deny wins over any grant.
+ */
 export interface EntitlementPrincipal {
   readonly grantAll: boolean;
   readonly grants: readonly EntitlementRule[];
@@ -482,11 +486,18 @@ export interface RiskCommon {
   readonly scope?: RiskScope;
 }
 
-/** Apply the optional principal/scope onto a request body, omitting when absent. */
+/**
+ * Apply the principal/scope onto a request body. A risk request always carries a
+ * principal: the caller's, or — when absent — an **explicit** grant-all (the
+ * audited show-all-now default every client shares), so the headline risk function
+ * clears the server's production deny-by-default boundary (`AccessMode::Enforce`),
+ * which denies a *genuinely* absent principal. A deployment gateway injects the
+ * real principal in production. Scope stays optional (absent ⇒ the firm root).
+ */
 function applyCommon(body: WireObject, common: RiskCommon): WireObject {
-  if (common.principal !== undefined) {
-    body["principal"] = entitlementPrincipalToWire(common.principal);
-  }
+  body["principal"] = entitlementPrincipalToWire(
+    common.principal ?? { grantAll: true, grants: [], denies: [] },
+  );
   if (common.scope !== undefined) body["scope"] = riskScopeToWire(common.scope);
   return body;
 }

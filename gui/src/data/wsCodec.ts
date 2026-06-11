@@ -1350,6 +1350,19 @@ export function principalToWire(p: EntitlementPrincipal): WireObject {
   };
 }
 
+/**
+ * The wire principal a risk request carries: the asserted principal, or — when the
+ * caller passed none — an **explicit** grant-all (the audited show-all-now default
+ * every client shares). The headline risk workflow therefore clears the server's
+ * production deny-by-default boundary (`AccessMode::Enforce`), which denies a
+ * *genuinely* absent principal; the GUI never relies on the server granting an
+ * absent request. A deployment's authenticating gateway injects/validates the real
+ * principal in production.
+ */
+export function principalOrGrantAllToWire(p: EntitlementPrincipal | undefined): WireObject {
+  return principalToWire(p ?? { grantAll: true, grants: [], denies: [] });
+}
+
 function numeraireRateToWire(r: NumeraireRate): WireObject {
   return { ccy: r.ccy, rate: r.rate };
 }
@@ -1482,7 +1495,7 @@ function limitUtilizationFromWire(o: WireObject): LimitUtilization {
 export function listPositionsRequestToWire(r: ListPositionsRequest): WireObject {
   const w: WireObject = {};
   if (r.scope) w["scope"] = riskScopeToWire(r.scope);
-  if (r.principal) w["principal"] = principalToWire(r.principal);
+  w["principal"] = principalOrGrantAllToWire(r.principal);
   return w;
 }
 
@@ -1495,7 +1508,7 @@ export function aggregateRiskRequestToWire(r: AggregateRiskRequest): WireObject 
     var_alpha: r.varAlpha,
     curvature_risk_weight: r.curvatureRiskWeight,
   };
-  if (r.principal) w["principal"] = principalToWire(r.principal);
+  w["principal"] = principalOrGrantAllToWire(r.principal);
   if (r.scope) w["scope"] = riskScopeToWire(r.scope);
   return w;
 }
@@ -1509,7 +1522,7 @@ export function drillRiskRequestToWire(r: DrillRiskRequest): WireObject {
     include_children: r.includeChildren,
     include_positions: r.includePositions,
   };
-  if (r.principal) w["principal"] = principalToWire(r.principal);
+  w["principal"] = principalOrGrantAllToWire(r.principal);
   return w;
 }
 
@@ -1521,7 +1534,7 @@ export function limitStatusRequestToWire(r: LimitStatusRequest): WireObject {
     var_spot_shocks: r.varSpotShocks,
     var_alpha: r.varAlpha,
   };
-  if (r.principal) w["principal"] = principalToWire(r.principal);
+  w["principal"] = principalOrGrantAllToWire(r.principal);
   return w;
 }
 

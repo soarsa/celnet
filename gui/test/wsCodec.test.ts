@@ -12,12 +12,16 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  aggregateRiskRequestToWire,
   attributionFromWire,
   attributionToWire,
   ccyPairFromWire,
   ccyPairToWire,
   conventionsFromWire,
   conventionsToWire,
+  drillRiskRequestToWire,
+  limitStatusRequestToWire,
+  listPositionsRequestToWire,
   marketFromWire,
   marketToWire,
   multiDealerQuoteFromWire,
@@ -34,6 +38,8 @@ import type {
   DeltaConvention,
   MarketContext,
   PremiumStyle,
+  ReportingNumeraire,
+  RiskScope,
   SmileModel,
 } from "../src/data/contract";
 import * as e from "../src/data/enums";
@@ -359,5 +365,69 @@ describe("wsCodec — accept_quote body (the multi-dealer line selector)", () =>
     const w = quoteAcceptToWire(id, "BUY", "tkt-1", "SYNTH-LP-2");
     expect(w["quote_id"]).toBe(id);
     expect(serializeFrame(w)).toContain('"quote_id":4385739192607958123,');
+  });
+});
+
+// The regression guard for the entitlements client-default propagation: with the
+// server now deny-by-default (`AccessMode::Enforce`), every risk request the GUI
+// sends MUST carry a principal. When the caller asserts none, the encoder emits an
+// EXPLICIT grant-all (the audited show-all-now default), so the Book/Risk view
+// clears the production boundary — never relying on a removed server-side
+// absent-⇒-grant-all. A genuinely absent principal would be denied server-side.
+describe("wsCodec — risk requests always carry an explicit grant-all principal by default", () => {
+  const GRANT_ALL = { grant_all: true, grants: [], denies: [] };
+  const usd: ReportingNumeraire = { numeraire: "USD", rates: [{ ccy: "EUR", rate: 1.1 }] };
+  const firm: RiskScope = { dimension: "FIRM", value: 0n };
+
+  it("aggregate_risk defaults to grant-all when no principal is asserted", () => {
+    const w = aggregateRiskRequestToWire({
+      dimension: "FIRM",
+      numeraire: usd,
+      vegaPillars: [],
+      varSpotShocks: [],
+      varAlpha: 0,
+      curvatureRiskWeight: 0,
+    });
+    expect(w["principal"]).toEqual(GRANT_ALL);
+  });
+
+  it("list_positions / drill_risk / limit_status all default to grant-all", () => {
+    expect(listPositionsRequestToWire({})["principal"]).toEqual(GRANT_ALL);
+    expect(
+      drillRiskRequestToWire({
+        node: firm,
+        childDimension: "BOOK",
+        numeraire: usd,
+        vegaPillars: [],
+        includeChildren: true,
+        includePositions: false,
+      })["principal"],
+    ).toEqual(GRANT_ALL);
+    expect(
+      limitStatusRequestToWire({
+        scope: firm,
+        numeraire: usd,
+        vegaPillars: [],
+        varSpotShocks: [],
+        varAlpha: 0,
+      })["principal"],
+    ).toEqual(GRANT_ALL);
+  });
+
+  it("honors an asserted scoped principal instead of the grant-all default", () => {
+    const w = aggregateRiskRequestToWire({
+      dimension: "FIRM",
+      numeraire: usd,
+      principal: { grantAll: false, grants: [{ scopes: [{ dimension: "BOOK", value: 7n }] }], denies: [] },
+      vegaPillars: [],
+      varSpotShocks: [],
+      varAlpha: 0,
+      curvatureRiskWeight: 0,
+    });
+    expect(w["principal"]).toEqual({
+      grant_all: false,
+      grants: [{ scopes: [{ dimension: 2, value: 7n }] }],
+      denies: [],
+    });
   });
 });
