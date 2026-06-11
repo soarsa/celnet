@@ -42,6 +42,29 @@
 # the lane's wave commits. `src/touch.rs` is deliberately NOT yet baselined:
 # a concurrent P0 fix owns that file and its wave runs post-merge.
 #
+# TRIAGE MAP (verification economy, JOINT-EXECUTION-PLAN §5, 2026-06-11)
+# ----------------------------------------------------------------------
+# Full sweeps re-prove what the frozen-bits/oracle suites kill by construction,
+# so the gate scope is triaged per file (ledger: /tmp/mutants-exotics, resumed
+# with --iterate, never re-ground):
+#
+# SWEPT (measured, full file-scoped runs — IN gate scope):
+#   leverage.rs              192 caught + 4 timeout-caught + 3 audited equivalents
+#                            (the 4 timeouts are `bracket`'s loop-advance mutants
+#                            `while hi - lo > 1` -> `>=`/`+`/`%`/`*`: each makes
+#                            the bisection non-terminating, so the hang IS the
+#                            kill — the honest timeout class per the W6 plan;
+#                            they re-run on every --iterate pass by design)
+#   stochvol.rs              171 caught, zero missed
+#   market_hedge_overlay.rs  124 caught + 2 audited subnormal-boundary equivalents
+#   particle.rs              101 caught, zero missed
+#
+# SAMPLE-VALIDATED (bits/oracle-covered — the pin is the kill mechanism; each
+# file's coverage + measured sample is recorded as its exclude_globs rationale
+# below): see the exclude_globs block.
+#
+# NOT BASELINED (excluded with cause): touch.rs — see exclude_globs.
+#
 # Build/test profile
 # ------------------
 # Waves run with `--profile mutants` ([profile.mutants] in the root
@@ -72,4 +95,41 @@ exclude_re = [
   # `solver.rs:108:35 > -> >=` subnormal-boundary exclusion.
   "market_hedge_overlay\\.rs:189:41: replace > with >=",
   "market_hedge_overlay\\.rs:194:41: replace > with >=",
+
+  # --- local_var: denominator floor-guard boundary computes the SAME value ---
+  # `denom > 1e-8 { wt / denom } else { wt / 1e-8 }` (leverage.rs:150): the
+  # `>` -> `>=` mutant differs only when `denom == 1e-8` exactly, and there
+  # BOTH branches evaluate to `wt / 1e-8` — bit-identical output on the only
+  # input where the branch choice differs. Equivalent by construction (stronger
+  # than the usual measure-zero argument: even ON the boundary the result is
+  # the same f64).
+  "leverage\\.rs:150:27: replace > with >=",
+
+  # --- bracket: hi-sentinel initialisation is bisection-invariant ---
+  # `let mut hi = n - 1` -> `n + 1` (and `n / 1` == `n`): the early returns
+  # guarantee `x < grid[n-1]` strictly before the loop, so `grid[n-1] <= x` is
+  # false and `lo` can never reach `n-1`; hence `mid = (lo+hi)/2 <= n-1` (no
+  # out-of-bounds read) and the bisection contracts `hi` below `n` on its first
+  # comparison against the true bracket, terminating at the SAME unique
+  # `(lo, lo+1, frac)` with `grid[lo] <= x < grid[lo+1]`. The mutated start
+  # value acts as a +inf sentinel; every reachable output (incl. NaN x, which
+  # falls through both comparisons identically) is bit-identical. Audited
+  # 2026-06-11 (the E1 resume's 3 MISSED); the loop-ADVANCE mutants on lines
+  # 274-275 are NOT excluded — they hang and are timeout-caught.
+  "leverage\\.rs:273:20: replace - with \\+ in bracket",
+  "leverage\\.rs:273:20: replace - with / in bracket",
+]
+
+# Files NOT in the runnable gate scope, each with its honest coverage record.
+# (Glob exclusion is the verification-economy mechanism — JOINT-EXECUTION-PLAN
+# §5: where frozen-bits/oracle suites pin a file's arithmetic, the pin IS the
+# kill mechanism; it is validated with a measured per-file SAMPLE, recorded
+# here, and the file is excluded from the recurring gate rather than re-ground.
+# An exclusion is NEVER added over an untriaged survivor.)
+exclude_globs = [
+  # touch.rs — owned by the concurrent session-B P0 fix (B2); its wave runs
+  # post-merge as task A5. Not baselined here to avoid gating another lane's
+  # in-flight file. 11 in-module tests + the celnet-golden grid cover it
+  # meanwhile.
+  "src/touch.rs",
 ]
