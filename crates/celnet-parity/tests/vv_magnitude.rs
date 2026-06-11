@@ -602,7 +602,10 @@ fn window_barrier_smile_adjustment_agrees_with_lsv_in_sign_and_order() {
     // ONE exposure measurement (larger-stencil oracle FD on the smooth MC,
     // CRN), fed to BOTH overlay constructions — see the row header for why
     // the engine's tiny closed-form stencil cannot be used on an MC pricer.
-    let exposures = smile_exposures_fd(&price, SPOT, SIGMA);
+    // Take the flat reference price first (the last use of the `price` closure),
+    // then hand the closure by value to the FD exposure stencil.
+    let flat = price(SPOT, SIGMA);
+    let exposures = smile_exposures_fd(price, SPOT, SIGMA);
     let x = ExoticSensitivities {
         vanna: exposures.vanna,
         volga: exposures.volga,
@@ -618,7 +621,6 @@ fn window_barrier_smile_adjustment_agrees_with_lsv_in_sign_and_order() {
     let i = exotic_inputs(SPOT, SIGMA);
     let strikes = smile.benchmark_strikes();
     let market = market_price_of_hedge_smile(&smile, &i, strikes[0], strikes[2]);
-    let flat = price(SPOT, SIGMA);
     let cost_engine =
         hedge_smile_overlay(flat, x, market, SurvivalWeight::EUROPEAN).hedge_smile_cost;
     let cost_oracle = hedge_smile_overlay_cost(
