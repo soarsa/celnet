@@ -36,10 +36,16 @@ import type {
   MarketContext,
   OptionType,
   Product,
+  SettlementStyle,
   Side,
   StrategyKind,
+  Underlying,
 } from "../src/data/contract";
-import { equalFixingSchedule, tenorYearsToTenor } from "../src/data/seed";
+import {
+  crossAssetVanillaInstrument,
+  equalFixingSchedule,
+  tenorYearsToTenor,
+} from "../src/data/seed";
 
 // ---------------------------------------------------------------------------
 // corpus location — read the FROZEN vectors in place (never copied / mutated)
@@ -109,11 +115,18 @@ export function loadCorpus(): Map<string, GoldenVector[]> {
 
 /**
  * Every corpus family the GUI books onto the wire AND the server prices over the
- * FX-two-rate WS `price` path — the real-edge conformance set. This includes the
- * families the GUI's OFFLINE lane declares not-exposed-offline but the server
- * prices exactly (`lookback` with the continuous-within-segment extremum
- * correction, `window_barrier` under LOCAL_STOCH_VOL, and the three linear DCF
- * products) — closing exactly the gap that lane documents.
+ * cross-asset-capable WS `price` path — the real-edge conformance set. This
+ * includes the families the GUI's OFFLINE lane declares not-exposed-offline but
+ * the server prices exactly (`lookback` with the continuous-within-segment
+ * extremum correction, `window_barrier` under LOCAL_STOCH_VOL, and the three
+ * linear DCF products), AND the three cross-asset vanilla arms
+ * (`equity_option` / `commodity_option` / `crypto_option`): the GUI books each
+ * over the `Underlying` oneof + `settlement_style` (`crossAssetVanillaInstrument`)
+ * and the server's WS decoder now treats the richer `underlying` as authoritative
+ * over the legacy FX `pair` projection the GUI also emits — so the cross-asset arm
+ * (and the coin-margined INVERSE_COIN crypto economics) survives end-to-end,
+ * proven by `crates/celnet-server/tests/cross_asset_ws.rs`
+ * (`ws_underlying_precedence_routes_client_shaped_frames_to_the_cross_asset_arm`).
  */
 export const WS_PRICED_FAMILIES = [
   "vanilla",
@@ -140,37 +153,22 @@ export const WS_PRICED_FAMILIES = [
   "ndf",
   "perpetual_option",
   "listed_future_option",
-] as const;
-
-/**
- * The corpus families this gate does NOT price over the WS path, each with a
- * concrete reason (never a silent gap — the conformance spec asserts this set):
- *  - `equity_option` / `commodity_option` / `crypto_option` — the gap is NOT the
- *    market: their vectors' `{spot, vol, rDom, rFor}` IS the FX two-rate
- *    projection (`rDom` = discount rate, `rFor` = the carry yield — dividend+repo
- *    / convenience / funding) the WS `MarketContext` transports and the server's
- *    carry guard reads as `b = rDom − rFor`, proven end-to-end by
- *    `crates/celnet-server/tests/cross_asset_ws.rs`. The REAL gap is the
- *    instrument seam: the GUI's production `instrumentToWire` always emits the
- *    legacy FX `pair` projection BESIDE `underlying` (keeping the FX-keyed
- *    surfaces total), and the server's WS decoder gives `pair` precedence
- *    (`instrument_underlying_from_json`) — a GUI-emitted cross-asset frame
- *    routes down the FX path: numerically invisible for the linear payoffs (a
- *    green row would prove the FX path, not the cross-asset decode) and WRONG
- *    for the INVERSE_COIN crypto vectors (`settlement_style` ignored — the
- *    LINEAR USD value, not the coin-margined `1/S_T` oracle; the precedence is
- *    pinned server-side and fails loudly when the seam flips). The GUI DOES book
- *    these faithfully onto the wire (the `crossAssetSpec` over the `Underlying`
- *    oneof + `settlement_style`, gated by `gui/test/crossAssetProducts.test.ts`,
- *    and quoted live in the browser half of the conformance spec); they move
- *    into `WS_PRICED_FAMILIES` the moment the codec seam prefers `underlying`.
- *    Identical boundary to `excel/e2e/corpus.ts`.
- */
-export const FAMILIES_NOT_EXPOSED_ON_FX_WS = [
   "equity_option",
   "commodity_option",
   "crypto_option",
 ] as const;
+
+/**
+ * The corpus families this gate does NOT price over the WS path, each with a
+ * concrete reason (never a silent gap — the conformance spec asserts this set).
+ * The set is currently EMPTY: every corpus family — including the three
+ * cross-asset vanilla arms, now that the server WS decoder routes by the
+ * authoritative `underlying` oneof rather than the legacy FX `pair` projection —
+ * is priced over the WS path. If a future family is genuinely not WS-priceable,
+ * it lands here with a TRUE reason (never the routing bug). Identical boundary to
+ * `excel/e2e/corpus.ts`.
+ */
+export const FAMILIES_NOT_EXPOSED_ON_FX_WS = [] as const;
 
 // ---------------------------------------------------------------------------
 // conformance conventions + per-vector market context
@@ -766,6 +764,93 @@ function buildListedFutureOption(v: GoldenVector): Instrument {
   });
 }
 
+// ---------------------------------------------------------------------------
+// cross-asset vanilla builders (equity / commodity / digital-asset)
+// ---------------------------------------------------------------------------
+
+/**
+ * The listing venue MIC for each corpus equity underlying — the contract identity
+ * the `EquityRef.symbol.venue` carries (the price is venue-independent; the venue
+ * is identity only, ADR-0008). Mirrors the server gate's `underlying_json` map so
+ * the GUI books the identical `Underlying` arm the server-side test exercises.
+ */
+const EQUITY_VENUE: Record<string, { venue: string; currency: string }> = {
+  SPX: { venue: "XCBO", currency: "USD" },
+  AAPL: { venue: "XNAS", currency: "USD" },
+  STOXX: { venue: "XEUR", currency: "EUR" },
+};
+
+/**
+ * Wrap a `crossAssetVanillaInstrument` to the conformance discipline: the vector's
+ * EXACT `expiry_years` is the authoritative pricing maturity (the seed builder
+ * derives it from the coarse display tenor) and `quantity.notional = 1` matches
+ * the per-unit oracle (`USD/coin per notional-1`), exactly as the FX `instrumentOf`
+ * does. The `underlying` oneof is authoritative; the FX `pair` projection rides
+ * alongside (the GUI keeps the FX-keyed surfaces total), and the server's WS
+ * decoder now prefers `underlying` — so the cross-asset arm prices, not its FX
+ * projection.
+ */
+function crossAssetInstrumentOf(
+  v: GoldenVector,
+  underlying: Underlying,
+  settlementStyle: SettlementStyle,
+): Instrument {
+  const t = num(v.terms, "expiry_years");
+  const inst = crossAssetVanillaInstrument(t, 1, {
+    optionType: optionType(v.terms),
+    strike: { kind: "strike", strike: num(v.terms, "strike") },
+    underlying,
+    settlementStyle,
+  });
+  return { ...inst, expiryYears: t, quantity: { notional: 1, baseCcy: true } };
+}
+
+function buildEquityOption(v: GoldenVector): Instrument {
+  const map = EQUITY_VENUE[v.underlying];
+  if (!map) throw new Error(`unmapped equity underlying ${v.underlying}`);
+  return crossAssetInstrumentOf(
+    v,
+    {
+      kind: "equity",
+      equity: { symbol: { ticker: v.underlying, venue: map.venue }, currency: map.currency },
+      settlementCcy: map.currency,
+    },
+    "LINEAR",
+  );
+}
+
+function buildCommodityOption(v: GoldenVector): Instrument {
+  // Venue-less contract identity (the corpus commodities quote in USD); the venue
+  // lives on a listed-future's `future_symbol`, never on the spot commodity arm.
+  return crossAssetInstrumentOf(
+    v,
+    {
+      kind: "commodity",
+      commodity: { symbol: { ticker: v.underlying, venue: "" }, currency: "USD" },
+      settlementCcy: "USD",
+    },
+    "LINEAR",
+  );
+}
+
+function buildCryptoOption(v: GoldenVector): Instrument {
+  const u = v.underlying;
+  if (u.length !== 6) throw new Error(`crypto underlying ${u} is not a 3+3 pair token`);
+  const base = u.slice(0, 3);
+  const quote = u.slice(3);
+  const style = str(v.terms, "settlement_style");
+  if (style !== "LINEAR" && style !== "INVERSE_COIN") {
+    throw new Error(`crypto settlement_style ${style}`);
+  }
+  // The settlement currency is the pair's numeraire (quote) leg; INVERSE_COIN
+  // selects the coin-margined `1/S_T` payoff (priced in coins, the oracle's unit).
+  return crossAssetInstrumentOf(
+    v,
+    { kind: "digitalAsset", digitalAsset: { base, quote }, settlementCcy: quote },
+    style,
+  );
+}
+
 /** Dispatch a vector to the GUI `Instrument` its family books. */
 const BUILDERS: Record<(typeof WS_PRICED_FAMILIES)[number], (v: GoldenVector) => Instrument> = {
   vanilla: buildVanilla,
@@ -792,6 +877,9 @@ const BUILDERS: Record<(typeof WS_PRICED_FAMILIES)[number], (v: GoldenVector) =>
   ndf: buildNdf,
   perpetual_option: buildPerpetual,
   listed_future_option: buildListedFutureOption,
+  equity_option: buildEquityOption,
+  commodity_option: buildCommodityOption,
+  crypto_option: buildCryptoOption,
 };
 
 /** Build the EXACT GUI `Instrument` for a WS-priced vector. */
