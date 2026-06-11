@@ -45,7 +45,7 @@ bench-gated latency budgets.
 | R6 | `exotics/vanna-volga-overlay-magnitude-unvalidated` | an unvalidated smile overlay on quoted exotics is a pricing-risk hole | session-B | ✅ DONE (`3005e59`; VV magnitude oracle) |
 | R7 | W6-ANALYTICS mutation floor (exotics/surface/risk-cube/xva/MC) | the pricing core's test depth must match the infra floor | session-A (banked qmc; spend-paused) | resumes on capacity |
 | R8 | `surface/crypto-leaf` + `asset-class-neutral-core` | crypto without a quotable surface is half-shipped | session-A (spec banked) | resumes on capacity |
-| R9 | Convergence Round 4 verdict carries **zero P0/P1** (R3's P1s now fixed-not-frozen) | the release-readiness oracle | session-B | in flight (post-`3005e59`) |
+| R9 | Convergence carries **zero P0/P1** | the release-readiness oracle | session-B | Round 4 found 1 P1 (client entitlement default) → FIXED `87c6f77`; **Round 5 must confirm zero P0/P1** |
 | R10 | Final joint T2 + ledger/capabilities-doc sync + the release tag note | the cut itself | both | last |
 
 **Explicitly NOT blocking (post-RC roadmap, tracked OPEN):** QMC pathwise wiring
