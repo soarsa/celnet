@@ -522,17 +522,29 @@ function legacyInstrumentOf(v: GoldenVector): Instrument {
 }
 
 describe("corpus-wide wire parity: INSTRUMENT spec == retired per-product functions", () => {
-  const exposed = new Set<string>(EXCEL_FAMILIES);
-  const vectors = loadVectors().filter((v) => exposed.has(v.family));
+  // The cross-asset classes (equity / commodity / crypto) were born on the
+  // polymorphic INSTRUMENT spec — they never had a retired per-product function, so
+  // there is no legacy frame to compare them against here. Their wire encoding is
+  // covered by the polymorphic round-trip tests above and the live e2e corpus. This
+  // parity check is therefore scoped to the families that DID have a retired
+  // per-product function (the legacy-parity invariant the INSTRUMENT spec preserves).
+  const POLYMORPHIC_NATIVE = new Set<string>([
+    "equity_option",
+    "commodity_option",
+    "crypto_option",
+  ]);
+  const LEGACY_FAMILIES = EXCEL_FAMILIES.filter((f) => !POLYMORPHIC_NATIVE.has(f));
+  const legacy = new Set<string>(LEGACY_FAMILIES);
+  const vectors = loadVectors().filter((v) => legacy.has(v.family));
 
   it("covers every retired family with at least one frozen vector", () => {
     const seen = new Set(vectors.map((v) => v.family));
-    for (const family of EXCEL_FAMILIES) {
+    for (const family of LEGACY_FAMILIES) {
       expect(seen.has(family), `corpus has no \`${family}\` vector`).toBe(true);
     }
   });
 
-  for (const family of EXCEL_FAMILIES) {
+  for (const family of LEGACY_FAMILIES) {
     it(`emits byte-identical frames for every \`${family}\` vector`, () => {
       const familyVectors = vectors.filter((v) => v.family === family);
       expect(familyVectors.length).toBeGreaterThan(0);

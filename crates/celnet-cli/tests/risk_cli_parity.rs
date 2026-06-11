@@ -126,13 +126,14 @@ async fn start_ready_edge() -> (Edge, SocketAddr) {
     )
     .await
     .expect("edge binds on an ephemeral port");
-    // In-process dev/test edge: no auth gateway binds a wire principal, so run the
-    // documented Permissive dev-mode (mirrors `examples/demo_edge.rs`, the same edge
-    // these CLI-vs-SDK parity tests reconcile against). An absent principal is
-    // granted-all here. Deny-by-default (`AccessMode::Enforce`, the production boot
-    // default) is the production posture and is tested server-side
-    // (`absent_principal_denied_on_every_entitlement_gated_service`).
-    edge.store().set_access_mode(AccessMode::Permissive);
+    // Run the **production deny-by-default posture** (`AccessMode::Enforce`, set
+    // explicitly so no future edit silently re-masks it). These CLI-vs-SDK parity
+    // tests verify the trader-facing default end-to-end: with no `--grant`/`--deny`
+    // flags the CLI asserts the SDK's explicit grant-all principal, so `risk
+    // aggregate` is served against the real edge; a genuinely absent principal is
+    // denied (covered server-side by
+    // `absent_principal_denied_on_every_entitlement_gated_service`).
+    edge.store().set_access_mode(AccessMode::Enforce);
     edge.gate().mark_ready();
     let addr = edge.grpc_addr();
     (edge, addr)

@@ -49,6 +49,11 @@ export function startDemoEdge(opts?: {
       ...process.env,
       CELNET_WS_ADDR: wsAddr,
       CELNET_GRPC_ADDR: grpcAddr,
+      // Run the demo edge under the PRODUCTION deny-by-default posture (not its
+      // friendly Permissive dev default) so this live suite verifies the Excel
+      // add-in's entitlement default end-to-end: a risk function with no principal
+      // sends an explicit grant-all and is served, as against a real edge.
+      CELNET_ACCESS_MODE: "enforce",
       // Pin the multi-dealer panel breadth (resolved ONCE at edge boot): the
       // native maker + 3 DETERMINISTIC SYNTHETIC demo dealers (`SYNTH-LP-k`,
       // labeled as such — live LP connectivity is environment-provided, never

@@ -94,14 +94,16 @@ describe("risk codec — enum round-trip and request shaping", () => {
     expect(body["var_spot_shocks"]).toEqual([]);
     expect(body["var_alpha"]).toBe(0);
     expect(body["curvature_risk_weight"]).toBe(0);
-    // No principal sent ⇒ server grant-all default (key omitted).
-    expect("principal" in body).toBe(false);
+    // No principal sent ⇒ the client encodes an EXPLICIT grant-all (the audited
+    // show-all-now default), so the request clears the server's production
+    // deny-by-default edge, which denies a genuinely absent principal.
+    expect(body["principal"]).toEqual({ grant_all: true, grants: [], denies: [] });
   });
 
-  it("omits scope/principal when absent (grant-all show-all-now)", () => {
+  it("sends an explicit grant-all principal when absent (show-all-now); scope omitted", () => {
     const body = listPositionsRequest({});
     expect("scope" in body).toBe(false);
-    expect("principal" in body).toBe(false);
+    expect(body["principal"]).toEqual({ grant_all: true, grants: [], denies: [] });
   });
 
   it("encodes an explicit entitlement principal (deny-wins, scoped)", () => {

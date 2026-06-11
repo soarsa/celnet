@@ -1458,10 +1458,13 @@ export interface EntitlementRule {
 
 /**
  * The entitlement principal (`celnet.wire.EntitlementPrincipal`, mirrors
- * `celnet_entitlements`). DEFAULT = grant-all: a request that OMITS the principal
- * is treated by the server as grant-all (the GUI's show-all-now posture). A
- * present principal with `grantAll=false` and no grants is deny-by-default; a
- * `deny` rule applies to any principal (deny wins).
+ * `celnet_entitlements`). DEFAULT = grant-all: a request that carries no principal
+ * is encoded with an **explicit** grant-all (the GUI's show-all-now posture — see
+ * `principalOrGrantAllToWire`), so the headline view clears the server's production
+ * deny-by-default boundary (`AccessMode::Enforce`), which denies a *genuinely*
+ * absent principal. A present principal with `grantAll=false` and no grants is
+ * deny-by-default; a `deny` rule applies to any principal (deny wins). A deployment
+ * gateway injects/validates the real principal in production.
  */
 export interface EntitlementPrincipal {
   grantAll: boolean;

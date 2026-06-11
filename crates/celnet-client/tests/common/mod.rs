@@ -73,24 +73,25 @@ pub async fn start_ready_edge(clock: Clock) -> (Edge, SocketAddr) {
     let edge = Edge::start(grpc, Arc::clone(&link), SpreadModel::default(), clock)
         .await
         .expect("edge binds on an ephemeral port");
-    mark_dev_ready(&edge);
+    mark_ready_enforcing(&edge);
     let addr = edge.grpc_addr();
     (edge, addr)
 }
 
-/// Put a freshly-bound in-process test edge into the documented **Permissive**
-/// dev-mode and mark it ready, at the sanctioned seam — after the listener binds,
-/// before it is marked ready (mirrors `examples/demo_edge.rs`).
+/// Mark a freshly-bound in-process test edge ready under the **production
+/// deny-by-default posture** (`AccessMode::Enforce`, set explicitly so a future
+/// edit can't silently re-mask the boundary with Permissive).
 ///
-/// In-process tests have no auth gateway binding a wire principal, so an absent
-/// principal is granted-all here — the posture the risk-cube workflow tests assert
-/// against. Deny-by-default (`AccessMode::Enforce`, the production boot default) is
-/// enforced independently and tested server-side
-/// (`absent_principal_denied_on_every_entitlement_gated_service` + the
-/// `services::access` boundary tests). An *asserted* scoped principal is still
-/// honored here, so the SDK entitlement-pruning workflow exercises real pruning.
-fn mark_dev_ready(edge: &Edge) {
-    edge.store().set_access_mode(AccessMode::Permissive);
+/// These tests deliberately run against `Enforce` — the real production edge — so
+/// they verify the trader-facing default end-to-end: the typed SDK sends an
+/// **explicit grant-all** principal when a query asserts none, so the headline
+/// risk workflow is served, while a *genuinely* absent principal would be denied
+/// (covered server-side by `absent_principal_denied_on_every_entitlement_gated_service`).
+/// A scoped principal is honored, so the entitlement-pruning workflow exercises
+/// real pruning. (The dev demo edge runs Permissive for raw/un-principalled
+/// clients; the SDK never needs it.)
+fn mark_ready_enforcing(edge: &Edge) {
+    edge.store().set_access_mode(AccessMode::Enforce);
     edge.gate().mark_ready();
 }
 
@@ -114,7 +115,7 @@ pub async fn start_panel_edge_and_client(clock: Clock, synthetic_lps: u32) -> (E
     )
     .await
     .expect("edge binds on an ephemeral port");
-    mark_dev_ready(&edge);
+    mark_ready_enforcing(&edge);
     let addr = edge.grpc_addr();
     let client = tokio::time::timeout(STEP_DEADLINE, Client::connect(format!("http://{addr}")))
         .await
