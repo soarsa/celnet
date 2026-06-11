@@ -824,9 +824,11 @@ version = "0.0.0"
 dependencies = [
  "celnet-conventions",
  "celnet-core",
+ "celnet-crypto-vanilla",
  "celnet-testkit",
  "celnet-types",
  "celnet-vanilla",
+ "libm",
  "proptest",
 ]
 
