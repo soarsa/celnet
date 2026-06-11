@@ -198,9 +198,15 @@ spec text.
   each value cross-checked by the parity oracle; the inverse family carries a positive
   `price_std_error`). Add the family→test map entries to `tools/check-verification-coverage.mjs`.
   *Gate:* `just verification-coverage` green; `cargo nextest -p celnet-parity` green.
-- **S6 (crypto surface leaf):** strike/log-moneyness smile leaf in `celnet-surface` over the W1
-  surface core; SVI/SSVI fit reused. *Gate:* `just check-crate celnet-surface`; a crypto-smile
-  no-arb (butterfly/calendar) parity row reusing the existing density/calendar checks.
+- **S6 (crypto surface leaf): ✅ BUILT** (lane/crypto-surface, spec
+  `docs/plan/CRYPTO-SURFACE-LEAF-SPEC.md`): `celnet-surface::strike_quotes` — the strike/
+  log-moneyness front-end (`StrikeQuoteSlice`/`StrikeSliceContext` → `(k, w)` → quasi-explicit
+  raw-SVI via the hoisted `fitmath` solver kit, Durrleman-admitted) onto the neutral surface
+  core; funding-carry forwards through the `Carry` seam; 24×7 `CalendarClock` term structure
+  (`strike_surface`). FX byte-identity gated by the 50-pin `tests/fx_fit_pin.rs` `to_bits`
+  regression. *Gates run:* `cargo test -p celnet-surface` (102 unit + pin + 7-leg oracle +
+  properties) + full `-p celnet-parity` (incl. the new 256-case
+  `tests/strike_surface.rs` no-arb/reproduction row) + scoped clippy/fmt + cargo-deny, all green.
 - **S7 (proto + convert):** add `CryptoPair`/`SettlementStyle` to the W1 `Underlying` oneof; codec
   round-trip; **FX projection `to_bits`-identical** (no-regression gate). `protobuf` skill for enum
   hygiene. *Gate:* `just check-crate celnet-proto` + convert round-trip + W0 conformance corpus
