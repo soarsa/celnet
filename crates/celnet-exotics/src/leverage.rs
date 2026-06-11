@@ -313,6 +313,99 @@ mod tests {
         }
     }
 
+    /// Quantitative Dupire oracle: a total-variance surface QUADRATIC in
+    /// log-moneyness and LINEAR in maturity, `w(y,t) = (a + b·y + c·y²)·t`
+    /// (i.e. `σ(K,t) = √(a + b·y + c·y²)`, constant forward), makes BOTH
+    /// finite-difference stencils exact (central differences are exact for
+    /// quadratics; the time difference for linears), so the extraction must
+    /// reproduce the hand-derived closed form
+    ///
+    /// ```text
+    ///   ∂w/∂y = (b + 2cy)·t,  ∂²w/∂y² = 2c·t,  ∂w/∂t = a + by + cy²
+    ///   σ_loc² = wt / [1 − (y/w)·wy + ¼(−¼ − 1/w + y²/w²)·wy² + ½·wyy]
+    /// ```
+    ///
+    /// to rounding (≲1e-11 relative, from the `exp`/`ln` moneyness
+    /// round-trip). Expected values evaluated OUT-OF-BAND at double precision
+    /// and typed in as literals; points include `y = 0`, both wings (`y ≠ 0`
+    /// activates the `(y/w)` and `y²/w²` terms), long maturity, and the
+    /// `t ≤ dt` forward-difference branch. Kills every magnitude mutant in the
+    /// Gatheral denominator that the flat-surface degeneracy (`wy = wyy = 0`)
+    /// is blind to.
+    #[test]
+    fn dupire_matches_hand_derived_smile_closed_form() {
+        struct SmileQuadratic;
+        impl ImpliedVolSurface for SmileQuadratic {
+            fn implied_vol(&self, k: f64, _t: f64) -> f64 {
+                let y = ln(k / 1.25);
+                sqrt(0.04 + -0.012 * y + 0.025 * y * y)
+            }
+            fn forward(&self, _t: f64) -> f64 {
+                1.25
+            }
+        }
+        let iv = SmileQuadratic;
+        let lv = LocalVolSurface::new(&iv);
+        for &(s, t, var, vol) in &[
+            // (spot, t, σ_loc², σ_loc) — hand-derived closed form.
+            (
+                1.25,
+                0.5,
+                0.039_523_826_815_483_755,
+                0.198_806_002_966_418_9,
+            ),
+            (
+                1.10,
+                0.5,
+                0.043_862_959_126_171_85,
+                0.209_434_856_521_477_47,
+            ),
+            (
+                1.45,
+                1.75,
+                0.036_536_704_029_267_4,
+                0.191_145_766_443_485_22,
+            ),
+            // t = 0 clamps to tt = dt and takes the forward-difference branch.
+            (
+                1.25,
+                0.0,
+                0.039_999_036_023_591_825,
+                0.199_997_590_044_459_86,
+            ),
+            (
+                1.32,
+                0.000_4,
+                0.038_918_834_782_555_4,
+                0.197_278_571_524_013_73,
+            ),
+        ] {
+            assert_close!(lv.local_var(s, t), var, 1e-9, 1e-12);
+            assert_close!(lv.local_vol(s, t), vol, 1e-9, 1e-12);
+        }
+    }
+
+    /// Grid container contracts: node writes read back exactly (`set`/`at`),
+    /// the dimension accessors report the grid sizes, and the grid slices
+    /// round-trip — direct value pins for the accessors the interpolation
+    /// tests exercise only indirectly.
+    #[test]
+    fn grid_accessors_round_trip() {
+        let mut lev = LeverageSurface::new(vec![90.0, 100.0, 110.0], vec![0.5, 1.0]);
+        assert_eq!(lev.spot_len(), 3);
+        assert_eq!(lev.time_len(), 2);
+        assert_eq!(lev.spots(), &[90.0, 100.0, 110.0]);
+        assert_eq!(lev.times(), &[0.5, 1.0]);
+        // Fresh surface is unit leverage at every node.
+        assert_close!(lev.at(2, 1), 1.0, 1e-15, 1e-15);
+        // Row-major write/read at distinct nodes (kills index-arithmetic mutants).
+        lev.set(0, 1, 1.25);
+        lev.set(2, 0, 0.85);
+        assert_close!(lev.at(0, 1), 1.25, 1e-15, 1e-15);
+        assert_close!(lev.at(2, 0), 0.85, 1e-15, 1e-15);
+        assert_close!(lev.at(0, 0), 1.0, 1e-15, 1e-15);
+    }
+
     /// Bilinear interpolation reproduces grid nodes exactly and interpolates
     /// linearly between them; flat-extrapolates outside.
     #[test]

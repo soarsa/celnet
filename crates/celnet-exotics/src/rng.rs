@@ -229,6 +229,74 @@ mod tests {
         }
     }
 
+    /// The 4×32/10-round keyed bijection pinned against the PUBLISHED
+    /// known-answer vectors of the reference implementation (Salmon, Moraes,
+    /// Dror & Shaw 2011, the Random123 `kat_vectors` file, `philox4x32 10`
+    /// rows), independently cross-verified against a from-the-paper
+    /// re-implementation before being typed in. Any mutant of the round
+    /// arithmetic (multiplier lanes, hi/lo split, xor-mix wiring, key
+    /// schedule, round count) changes these words — the determinism anchor the
+    /// `same_seed` self-consistency test alone cannot provide (a mutant
+    /// perturbs both replicas identically).
+    #[test]
+    fn block_matches_published_known_answer_vectors() {
+        assert_eq!(
+            block([0, 0, 0, 0], 0, 0),
+            [0x6627_e8d5, 0xe169_c58d, 0xbc57_ac4c, 0x9b00_dbd8]
+        );
+        assert_eq!(
+            block([u32::MAX; 4], u32::MAX, u32::MAX),
+            [0x408f_276d, 0x41c8_3b0e, 0xa20b_c7c6, 0x6d54_51fd]
+        );
+        assert_eq!(
+            block(
+                [0x243f_6a88, 0x85a3_08d3, 0x1319_8a2e, 0x0370_7344],
+                0xa409_3822,
+                0x299f_31d0
+            ),
+            [0xd16c_fe09, 0x94fd_cceb, 0x5001_e420, 0x2412_6ea1]
+        );
+    }
+
+    /// The `(seed, stream, path, step)` → `(counter, key)` layout contract and
+    /// the `u32 → (0,1)` scaling, pinned end-to-end through the public API:
+    ///
+    /// * the zero tuple reproduces the zero known-answer block word-by-word in
+    ///   document order, then continues into the `draw = 1` block (so the
+    ///   refill/cache indexing and the draw advance are all value-pinned);
+    /// * a non-trivial tuple matches `block()` applied to the documented
+    ///   layout `[path_lo, path_hi, step, 0]`, key `(seed_lo, seed_hi ⊕ stream)`
+    ///   — a mutant anywhere in `new`/`refill`/`next_u01` breaks the
+    ///   correspondence (while `block` itself is pinned externally above).
+    #[test]
+    fn stream_layout_and_scaling_match_known_answer() {
+        let scale = |w: u32| (f64::from(w) + 0.5) / 4_294_967_296.0;
+        let mut s = CounterRng::new(0, 0, 0, 0);
+        for w in [0x6627_e8d5u32, 0xe169_c58d, 0xbc57_ac4c, 0x9b00_dbd8] {
+            assert_eq!(s.next_u01().to_bits(), scale(w).to_bits());
+        }
+        // Fifth draw: word 0 of the draw=1 block.
+        let next = block([0, 0, 0, 1], 0, 0);
+        assert_eq!(s.next_u01().to_bits(), scale(next[0]).to_bits());
+
+        // Layout: path → words 0–1, step → word 2, seed splits into the key,
+        // stream XORs into the high key word.
+        let mut t = CounterRng::new(
+            0x1122_3344_5566_7788,
+            0xA0B0_C0D0,
+            0x0102_0304_0506_0708,
+            0x99AA_0011,
+        );
+        let kat = block(
+            [0x0506_0708, 0x0102_0304, 0x99AA_0011, 0],
+            0x5566_7788,
+            0x1122_3344 ^ 0xA0B0_C0D0,
+        );
+        for w in kat {
+            assert_eq!(t.next_u01().to_bits(), scale(w).to_bits());
+        }
+    }
+
     /// Output lies strictly in `(0,1)` — never 0 or 1 (so the inverse-CDF is
     /// always finite).
     #[test]
