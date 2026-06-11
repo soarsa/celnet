@@ -43,10 +43,10 @@ bench-gated latency budgets.
 | R4 | `entitlements-trust-boundary-audit` | client-asserted principal + grant-all-on-absent is not commercially shippable | session-B | ✅ DONE (`3005e59`; deny-by-default `Enforce` + per-decision audit; both P1s fixed at root) |
 | R5 | GUI WS family-conformance suite RUNS green at T2 (authored, 135 specs) | proves every GUI-bookable family against the live edge | session-B | ✅ DONE (`3005e59`; gui-e2e 165/165 axe-clean) |
 | R6 | `exotics/vanna-volga-overlay-magnitude-unvalidated` | an unvalidated smile overlay on quoted exotics is a pricing-risk hole | session-B | ✅ DONE (`3005e59`; VV magnitude oracle) |
-| R7 | W6-ANALYTICS mutation floor (exotics/surface/risk-cube/xva/MC) | the pricing core's test depth must match the infra floor | session-A (banked qmc; spend-paused) | resumes on capacity |
-| R8 | `surface/crypto-leaf` + `asset-class-neutral-core` | crypto without a quotable surface is half-shipped | session-A (spec banked) | resumes on capacity |
-| R9 | Convergence carries **zero P0/P1** | the release-readiness oracle | session-B | Round 4 found 1 P1 (client entitlement default) → FIXED `87c6f77`; **Round 5 must confirm zero P0/P1** |
-| R10 | Final joint T2 + ledger/capabilities-doc sync + the release tag note | the cut itself | both | last |
+| R7 | W6-ANALYTICS mutation floor (exotics/surface/risk-cube/xva/MC) | the pricing core's test depth must match the infra floor | session-A | ✅ **R7-core DONE** (`c58ae02`; qmc/xva/risk-cube MEASURED zero-missed + surface pre-kill); exotics-tail mutation waves spend-paused (not R7-core-blocking) |
+| R8 | `surface/crypto-leaf` + `asset-class-neutral-core` | crypto without a quotable surface is half-shipped | session-A | ⚠️ **PARTIAL** — analytics + 256-case parity DONE (`c5a5efc`); the **strike-axis surface SURFACING (proto `quote_basis`/`StrikeQuoteSet` + server + clients) is unbuilt** ⇒ **criterion-#2 operator re-scope call** (crypto vanilla pricing already works via the FX-style surface) |
+| R9 | Convergence carries **zero P0/P1** | the release-readiness oracle | session-B | ✅ **DONE** — Round 4 found 1 P1 (client entitlement default) → FIXED `87c6f77`; **Round 5 = DRY** over the full cut (zero new P0/P1) |
+| R10 | Final joint T2 + ledger/capabilities-doc sync + the release tag note | the cut itself | both | ✅ **t2 16/16 on the cut `a0817d6`**; ledger/§6 synced; capabilities/ARCHITECTURE doc-sync + tag pending the R8 call |
 
 **Explicitly NOT blocking (post-RC roadmap, tracked OPEN):** QMC pathwise wiring
 (P2 perf-quality; Philox MC is correct, Sobol is better), LSV market-calibration
