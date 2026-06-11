@@ -207,6 +207,70 @@ mod tests {
         );
     }
 
+    /// The curvature and total variance match raw in-test recomputations of the
+    /// published closed forms (power-law `φ = η/θ^γ`; the surface SVI variance
+    /// form), with std float math as the independent direction.
+    #[test]
+    fn curvature_and_variance_match_raw_recomputation() {
+        let s = ParametricSurface::new(-0.25, 0.8, 0.4);
+        for &theta in &[0.004_f64, 0.011, 0.05] {
+            let p = s.eta / theta.powf(s.gamma);
+            assert!(
+                is_close(s.phi(theta), p, 1e-14, 1e-16),
+                "phi({theta}): got {}, want {p}",
+                s.phi(theta)
+            );
+            for &k in &[-0.4_f64, 0.0, 0.07, 0.3] {
+                let pk = p * k + s.rho;
+                let want =
+                    0.5 * theta * (1.0 + s.rho * p * k + (pk * pk + (1.0 - s.rho * s.rho)).sqrt());
+                assert!(
+                    is_close(s.total_variance(k, theta), want, 1e-13, 1e-15),
+                    "w({k},{theta})"
+                );
+            }
+            // The exact SSVI→raw map: each raw parameter against its closed form.
+            let slice = s.to_slice(theta, 1.10, 1.0);
+            assert!(is_close(
+                slice.a,
+                0.5 * theta * (1.0 - s.rho * s.rho),
+                1e-14,
+                1e-16
+            ));
+            assert!(is_close(slice.b, 0.5 * theta * p, 1e-14, 1e-16));
+            assert!(is_close(slice.rho, s.rho, 0.0, 0.0));
+            assert!(is_close(slice.m, -s.rho / p, 1e-14, 1e-16));
+            assert!(is_close(
+                slice.sigma,
+                (1.0 - s.rho * s.rho).sqrt() / p,
+                1e-14,
+                1e-16
+            ));
+        }
+    }
+
+    /// The two closed-form butterfly conditions reject independently: a surface
+    /// failing ONLY the curvature bound `θφ²(1+|ρ|) ≤ 4`, and one failing ONLY
+    /// the large-strike bound `θφ(1+|ρ|) < 4`, are both flagged — driving each
+    /// side of the conjunction with decisive margins.
+    #[test]
+    fn butterfly_conditions_reject_independently() {
+        // γ = ½, ρ = 0 ⇒ θφ = η√θ and θφ² = η².
+        // (a) η = 3, θ = 0.5: large-strike 3·√0.5 ≈ 2.12 < 4 holds; curvature
+        //     9 > 4 fails ⇒ flagged.
+        let curv_bad = ParametricSurface::new(0.0, 3.0, 0.5);
+        assert!(!curv_bad.is_butterfly_free(0.5), "curvature-only violation");
+        // (b) η = 1.852, θ = 7: φ ≈ 0.70; large-strike θφ ≈ 4.9 ≥ 4 fails;
+        //     curvature θφ² ≈ 3.43 ≤ 4 holds ⇒ flagged.
+        let wing_bad = ParametricSurface::new(0.0, 1.852, 0.5);
+        assert!(
+            !wing_bad.is_butterfly_free(7.0),
+            "large-strike-only violation"
+        );
+        // (c) both hold decisively at a mild θ.
+        assert!(wing_bad.is_butterfly_free(0.05));
+    }
+
     /// A surface pushed past the butterfly bound (huge η at a long maturity) is
     /// flagged: `θ·φ·(1+|ρ|) ≥ 4` breaks the closed-form sufficient condition.
     #[test]

@@ -325,6 +325,80 @@ mod tests {
         );
     }
 
+    /// The total variance, its two derivatives, and the butterfly density
+    /// factor match raw in-test recomputations of the published closed forms on
+    /// a slice with every parameter active (`m ≠ 0`, skewed). The derivative
+    /// oracles are the analytic forms, not finite differences, so every
+    /// operator mutant — including ones below FD tolerance — is killed.
+    #[test]
+    fn slice_forms_match_raw_recomputation() {
+        let s = ParametricSlice::new(0.008, 0.04, -0.3, 0.05, 0.10, 1.10, 1.0);
+        for &k in &[-0.5_f64, -0.12, 0.0, 0.05, 0.21, 0.6] {
+            let d = k - s.m;
+            let r = (d * d + s.sigma * s.sigma).sqrt();
+            let w = s.a + s.b * (s.rho * d + r);
+            let wp = s.b * (s.rho + d / r);
+            let wpp = s.b * s.sigma * s.sigma / (r * r * r);
+            assert!(is_close(s.total_variance(k), w, 1e-15, 1e-16), "w({k})");
+            assert!(is_close(s.d_total_variance(k), wp, 1e-15, 1e-16), "w'({k})");
+            assert!(
+                is_close(s.d2_total_variance(k), wpp, 1e-15, 1e-16),
+                "w''({k})"
+            );
+            // Durrleman density factor from the (independently pinned) w, w', w''.
+            let term1 = {
+                let inner = 1.0 - k * wp / (2.0 * w);
+                inner * inner
+            };
+            let g = term1 - (wp * wp / 4.0) * (1.0 / w + 0.25) + wpp / 2.0;
+            assert!(
+                is_close(s.butterfly_density_factor(k), g, 1e-14, 1e-16),
+                "g({k}): got {}, want {g}",
+                s.butterfly_density_factor(k)
+            );
+        }
+        // log_moneyness and vol_at: k = ln(K/F), σ = √(w(k)/t).
+        let strike = 1.23;
+        let k = (strike / s.forward).ln();
+        assert!(is_close(s.log_moneyness(strike), k, 1e-15, 1e-16));
+        assert!(is_close(
+            s.vol_at(strike),
+            (s.total_variance(k) / s.t).sqrt(),
+            1e-15,
+            1e-16
+        ));
+    }
+
+    /// The density-factor scan reproduces an in-test scan with the identical
+    /// grid (`±span` around the vertex `m`, `samples` equispaced points) — pins
+    /// the grid arithmetic and the min-fold of `min_butterfly_density_factor`.
+    #[test]
+    fn density_scan_matches_in_test_grid() {
+        let s = ParametricSlice::new(0.005, 0.30, -0.6, 0.08, 0.05, 1.0, 1.0);
+        let (span, samples) = (1.5_f64, 33_usize);
+        let mut want = f64::INFINITY;
+        for i in 0..samples {
+            let k = (s.m - span) + 2.0 * span * (i as f64) / ((samples - 1) as f64);
+            want = want.min(s.butterfly_density_factor(k));
+        }
+        let got = s.min_butterfly_density_factor(span, samples);
+        assert!(
+            is_close(got, want, 1e-15, 1e-16),
+            "scan min {got} must reproduce the in-test grid min {want}"
+        );
+    }
+
+    /// The wing bound is inclusive at exactly the cap: `b(1+|ρ|) = 2` passes
+    /// (Lee's bound is `≤ 2`), and an infinitesimally larger slope fails — the
+    /// exact-boundary drive for the `≤` comparison.
+    #[test]
+    fn wing_bound_boundary_is_inclusive() {
+        let at_cap = ParametricSlice::new(0.30, 2.0, 0.0, 0.0, 0.10, 1.0, 1.0);
+        assert!(at_cap.satisfies_wing_bound(), "slope exactly 2 must pass");
+        let just_over = ParametricSlice::new(0.30, 2.0 + 1e-12, 0.0, 0.0, 0.10, 1.0, 1.0);
+        assert!(!just_over.satisfies_wing_bound(), "slope 2+ε must fail");
+    }
+
     /// Negative-rho slice is downward-skewed: put-wing vol exceeds call-wing vol.
     #[test]
     fn negative_rho_is_downward_skewed() {
