@@ -15,17 +15,21 @@
 //! admitted  ⇔  (grant-all  ∨  some grant covers the fact)  ∧  no deny covers it
 //! ```
 //!
-//! # The grant-all default = zero-rework entitlement migration
+//! # Deny by default — grant-all is an explicit, audited choice
 //!
-//! The crate default principal is [`Principal::grant_all`]: it admits **every**
-//! fact, exactly mirroring the GUI's `ScopeContext { principal: "grant-all" }`
-//! (today's show-all firm-wide view, `docs/EXPERIENCE-ARCHITECTURE.md` §3). The
-//! design contract is that the server flows the fact stream through
-//! [`EntitlementFilter`] **now**, while the principal is grant-all and the
-//! predicate is the identity (the entitled cube equals the unfiltered cube). When a
-//! real scoped principal is slotted in later, **only which facts the predicate
-//! admits changes** — no aggregation call site, no GUI code, and no wire contract
-//! moves. That is the "entitlement-ready, zero-rework" guarantee P2-8 requires.
+//! The crate default principal is [`Principal::scoped`] with no grants: it admits
+//! **nothing** until a grant is added (the §4 separation-of-duties posture).
+//! [`Principal::grant_all`] still exists — it is the firm-wide view a caller may
+//! *explicitly assert* (and the substitute the server's **explicit permissive
+//! dev-mode** applies for a demo edge) — but it is never an implicit fallback.
+//! The [`decision`] module carries the trust-boundary vocabulary the server's
+//! service edge decides and audits with: [`AccessMode`] (deny-by-default
+//! [`AccessMode::Enforce`] vs the loud dev-only [`AccessMode::Permissive`]),
+//! [`AccessDecision`] (allow/deny) and the typed [`AccessReason`] behind it.
+//! Because every aggregation path flows the fact stream through
+//! [`EntitlementFilter`], slotting a differently-scoped principal in changes
+//! *only which facts the predicate admits* — no aggregation call site and no wire
+//! contract moves.
 //!
 //! # How it composes with the cube's group-by
 //!
@@ -46,15 +50,19 @@
 //!
 //! # Honest scope
 //!
-//! This crate owns the **model + predicate** only. The **audit** of every
-//! entitlement decision (§4: "every entitlement decision logged via
-//! `celnet-observability`") is the server's responsibility at the call site — this
-//! crate is pure and does **no** IO, so it neither logs nor allocates a logger; it
-//! returns the decision the server records. Role↔principal *assignment* and
-//! user-admin (P2-8's GUI half) live above this crate at the server/GUI edge; this
-//! crate is the deterministic kernel they build on. There is no stub or fake
-//! depth: the predicate is complete and the deferred audit/admin surface is named,
-//! not pretended.
+//! This crate owns the **model + predicate + decision vocabulary** only. The
+//! **audit** of every entitlement decision (§4: "every entitlement decision
+//! logged via `celnet-observability`") is implemented at the server's service
+//! boundary (`celnet-server::services::access`), which makes the allow/deny
+//! decision in this crate's [`decision`] vocabulary and emits one structured
+//! security-class record per decision — this crate is pure and does **no** IO,
+//! so it neither logs nor allocates a logger; it defines the decision the server
+//! records. Transport-level **authentication** (binding the asserted principal
+//! to a real caller identity) is the deployment environment's job — mTLS / an
+//! authenticating gateway — and is deliberately not faked here.
+//! Role↔principal *assignment* and user-admin (P2-8's GUI half) live above this
+//! crate at the server/GUI edge; this crate is the deterministic kernel they
+//! build on.
 //!
 //! # Determinism
 //!
@@ -73,10 +81,12 @@
 
 #![forbid(unsafe_code)]
 
+pub mod decision;
 pub mod filter;
 pub mod principal;
 pub mod scope;
 
+pub use decision::{AccessDecision, AccessMode, AccessReason};
 pub use filter::EntitlementFilter;
 pub use principal::Principal;
 pub use scope::{Rule, Scope};
@@ -235,10 +245,19 @@ mod tests {
         assert_eq!(firm_delta(&entitled), firm_delta(&unfiltered));
     }
 
-    /// The crate default principal is grant-all (matches the GUI default).
+    /// The crate default principal is deny-by-default: scoped with no grants, it
+    /// admits **nothing** until explicitly granted. Firm-wide visibility is only
+    /// ever the explicit [`Principal::grant_all`] constructor.
     #[test]
-    fn default_principal_is_grant_all() {
-        assert!(Principal::default().is_grant_all());
+    fn default_principal_admits_nothing() {
+        let principal = Principal::default();
+        assert!(!principal.is_grant_all());
+        let (h, facts) = sample();
+        let filter = EntitlementFilter::new(&principal, &h);
+        assert!(
+            filter.prune(&facts).is_empty(),
+            "the default principal must admit nothing (deny-by-default)"
+        );
     }
 
     /// A scoped principal is PRUNED TO ITS SUBTREE BEFORE AGGREGATION — and

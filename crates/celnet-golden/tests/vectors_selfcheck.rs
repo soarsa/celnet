@@ -3,7 +3,7 @@
 //! This proves the committed `vectors/*.json` cannot silently drift: every vector
 //! is **re-derived** from its independent oracle (the same oracle the generator
 //! uses) and asserted equal to the frozen `expected.price` within its tolerance.
-//! It also asserts the corpus is well-formed: all 23 product-oneof families
+//! It also asserts the corpus is well-formed: all 24 product-oneof families
 //! present, unique ids, valid family tags, MC families carry a positive standard
 //! error, closed-form families carry `null`.
 //!
@@ -54,7 +54,7 @@ fn all_families_present_and_unique() {
     for fam in FAMILIES {
         assert!(
             present.contains(fam),
-            "family `{fam}` has no golden vectors (all 23 oneof arms must be covered)"
+            "family `{fam}` has no golden vectors (all 24 oneof arms must be covered)"
         );
     }
     assert_eq!(
@@ -591,6 +591,65 @@ fn redrive_mc(v: &GoldenVector) -> McEstimate {
             SELFCHECK_MC_PAIRS,
             0x5E1F_0002,
         ),
+        "pivot" => {
+            let est = oracle::pivot_tra_bank_pv_mc(
+                cp_of(v, "option_type"),
+                m.spot,
+                v.term_f64("strike"),
+                v.term_f64("pivot"),
+                v.term_f64("target"),
+                v.term_f64("leverage"),
+                v.term_f64("fixing_notional"),
+                if v.term_str("redemption") == "FULL_GAIN" {
+                    TarfRedemption::FullGain
+                } else {
+                    TarfRedemption::CappedGain
+                },
+                v.term_u64("fixings") as usize,
+                m.vol,
+                t,
+                m.r_dom,
+                m.r_for,
+                SELFCHECK_MC_PAIRS,
+                0x5E1F_0008,
+            );
+            // The degeneracy LAW row (`pivot == strike`) is additionally
+            // re-derived against the PLAIN TARF oracle — a code-disjoint payoff
+            // coding of the same product — so the frozen corpus keeps pinning
+            // the pivot→TARF collapse, not merely its own oracle.
+            if v.term_f64("pivot") == v.term_f64("strike") {
+                let tarf = oracle::tarf_bank_pv_mc(
+                    cp_of(v, "option_type"),
+                    m.spot,
+                    v.term_f64("strike"),
+                    v.term_f64("target"),
+                    v.term_f64("leverage"),
+                    v.term_f64("fixing_notional"),
+                    if v.term_str("redemption") == "FULL_GAIN" {
+                        TarfRedemption::FullGain
+                    } else {
+                        TarfRedemption::CappedGain
+                    },
+                    v.term_u64("fixings") as usize,
+                    m.vol,
+                    t,
+                    m.r_dom,
+                    m.r_for,
+                    SELFCHECK_MC_PAIRS,
+                    0x5E1F_1707,
+                );
+                let se_frozen = v.expected.price_std_error.expect("pivot is MC");
+                let band = 6.0 * (se_frozen + tarf.std_error).max(1e-12);
+                assert!(
+                    (v.expected.price - tarf.price).abs() <= band,
+                    "pivot degeneracy law drifted for {}: frozen {} vs TARF oracle {} (band {band:e})",
+                    v.id,
+                    v.expected.price,
+                    tarf.price
+                );
+            }
+            est
+        }
         "accumulator" => oracle::accumulator_client_pv_mc(
             m.spot,
             v.term_f64("pivot"),

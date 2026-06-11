@@ -1070,6 +1070,52 @@ message Tarf {
   uint64 mc_seed = 8;
 }
 
+// A pivot Target-Redemption Accumulator: a strip of periodic FX fixings whose
+// per-fixing payoff is piecewise-linear with a kink at a `pivot` level DISTINCT
+// from the `strike` the intrinsic is measured against. On the favourable side of
+// the pivot the client receives the un-geared intrinsic `g·(S_k − strike)`
+// (accruing toward the cumulative `target`, which knocks the structure out —
+// exactly the TARF redemption mechanic, including the `TarfRedemption` gap-risk
+// convention); on the adverse side the leg is geared by `leverage`. Setting
+// `pivot == strike` collapses the product exactly to the plain `Tarf`. Priced by
+// Monte-Carlo (the terminal law per fixing is exact, so the only error is
+// statistical), so the reported `price` carries a standard error
+// (`PriceResponse.price_std_error`). The value is the **bank's** present value
+// (positive = value to the bank). The expiry `T` is the enclosing
+// `Instrument.expiry_years`.
+message Pivot {
+  // The single payoff direction whose favourable side accrues client gains: a
+  // PUT means the client gains when `S_k < strike` (the classic exporter
+  // orientation), a CALL when `S_k > strike`.
+  OptionType option_type = 1;
+  // The target strike `K`: the level the per-fixing intrinsic `S_k − K` is
+  // measured against, and the reference for the cumulative gain that accrues
+  // toward `target`.
+  double strike = 2;
+  // The pivot `P`: the kink at which the per-fixing leg switches from the
+  // un-geared favourable leg to the `leverage`-geared adverse leg. `P` away
+  // from `K` opens a dead band (`P > K`, call-favourable) or an overlap
+  // (`P < K`); `P == K` recovers the plain TARF exactly.
+  double pivot = 3;
+  // The cumulative gain target; accumulated client gain at or above it redeems.
+  double target = 4;
+  // The gearing/leverage multiplier on the adverse leg (the far side of the
+  // pivot; `≥ 0`).
+  double leverage = 5;
+  // The gap-risk settlement convention of the redeeming fixing (shared with
+  // `Tarf` — the identical redemption mechanic).
+  TarfRedemption redemption = 6;
+  // The fixing schedule. The number of fixings is `fixing_years.len()` (the
+  // exotics engine spaces them equally over `[0, expiry_years]`); the per-fixing
+  // notional is `fixing_notional`.
+  FixingSchedule schedule = 7;
+  // The number of antithetic Monte-Carlo path pairs; `0` selects a server
+  // default.
+  uint32 mc_pairs = 8;
+  // The counter-RNG seed (identical seeds reproduce results bit-for-bit).
+  uint64 mc_seed = 9;
+}
+
 // An accumulator: periodic accumulation at a `pivot` strike with an up-and-out
 // knock-out `barrier` (`barrier > pivot`) and `leverage` gearing on the
 // below-pivot (loss) leg. Priced by Monte-Carlo, so the reported `price` carries
@@ -1332,6 +1378,11 @@ message Instrument {
     // future must outlive the option: `future_expiry_years >= expiry_years > 0`
     // is validity-checked, INVALID_ARGUMENT otherwise.
     ListedFutureOption listed_future_option = 31;
+    // A pivot Target-Redemption Accumulator (a TARF generalized with a distinct
+    // pivot kink: two-level piecewise-linear fixings with the cumulative-target
+    // knock-out; `pivot == strike` collapses exactly to `Tarf`). Monte-Carlo,
+    // carries a price standard error.
+    Pivot pivot = 32;
   }
 }
 

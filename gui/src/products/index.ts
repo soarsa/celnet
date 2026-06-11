@@ -31,6 +31,7 @@ import { forwardStartSpec } from "./forwardStart";
 import { cliquetSpec } from "./cliquet";
 import { quantoSpec } from "./quanto";
 import { tarfSpec } from "./tarf";
+import { pivotSpec } from "./pivot";
 import { accumulatorSpec } from "./accumulator";
 import { lookbackSpec } from "./lookback";
 import { windowBarrierSpec } from "./windowBarrier";
@@ -84,6 +85,9 @@ export const PRODUCT_REGISTRY: readonly AnyProductSpec[] = [
   cliquetSpec,
   quantoSpec,
   tarfSpec,
+  // The pivot TRA (arm 32): the TARF generalized with a distinct pivot kink;
+  // pivot == strike is the exact TARF slice.
+  pivotSpec,
   accumulatorSpec,
   lookbackSpec,
   windowBarrierSpec,

@@ -65,7 +65,7 @@ export interface GoldenVector {
   tolerance: VectorTolerance;
 }
 
-/** The 23 product-oneof family names that may appear in the corpus. */
+/** The 24 product-oneof family names that may appear in the corpus. */
 export const ALL_FAMILIES = [
   "vanilla",
   "strategy",
@@ -80,6 +80,7 @@ export const ALL_FAMILIES = [
   "cliquet",
   "quanto",
   "tarf",
+  "pivot",
   "accumulator",
   "lookback",
   "window_barrier",
@@ -90,13 +91,26 @@ export const ALL_FAMILIES = [
   "ndf",
   "perpetual_option",
   "listed_future_option",
-  // Cross-asset vanilla underlyings (W1 `Underlying` oneof). The frozen golden
-  // vectors the Rust cross-asset leaf lanes produce carry the GENERALIZED carry
-  // (`q`/`repo`/`funding`/`convenience`) the FX-two-rate WS price path does not yet
-  // transport, so these are NOT priced by the FX-WS Excel corpus path (declared in
-  // `FAMILIES_NOT_EXPOSED`); the polymorphic `CELNET.INSTRUMENT` underlier grammar
-  // DOES shape them onto the wire (gated by `crossAssetProducts.test.ts` and the
-  // polymorphic parity suite).
+  // Cross-asset vanilla underlyings (W1 `Underlying` oneof) — NOT priced by the
+  // Excel WS corpus path (declared in `FAMILIES_NOT_EXPOSED`). The gap is NOT the
+  // market: their vectors' `{spot, vol, r_dom, r_for}` IS the FX two-rate
+  // projection (`r_dom` = discount rate, `r_for` = the carry yield — dividend+repo
+  // / convenience / funding) the WS `MarketContext` transports and the server's
+  // carry guard reads as `b = r_dom − r_for`, proven end-to-end by
+  // `crates/celnet-server/tests/cross_asset_ws.rs`. The REAL gap is the instrument
+  // seam: the add-in's `instrumentToWire` always emits the legacy FX `pair`
+  // projection BESIDE `underlying` (keeping the FX-keyed surfaces total), and the
+  // server's WS decoder gives `pair` precedence (`instrument_underlying_from_json`)
+  // — so a client-emitted cross-asset frame routes down the FX path. That is
+  // numerically invisible for the linear payoffs (a green row would prove the FX
+  // path, not the cross-asset decode) and WRONG for the INVERSE_COIN crypto
+  // vectors (`settlement_style` is ignored: the LINEAR USD value, not the
+  // coin-margined `1/S_T` oracle) — pinned server-side by
+  // `ws_legacy_pair_precedence_routes_client_shaped_frames_to_the_fx_path`. The
+  // polymorphic `CELNET.INSTRUMENT` underlier grammar DOES shape these onto the
+  // wire (gated by `crossAssetProducts.test.ts` and the polymorphic parity suite);
+  // they move into `EXCEL_FAMILIES` the moment the codec seam prefers `underlying`
+  // over the `pair` projection (the server pin fails loudly when it does).
   "equity_option",
   "commodity_option",
   "crypto_option",
@@ -109,7 +123,9 @@ export const ALL_FAMILIES = [
  * is expressed with repeated ("legs", callPut, strike, side, ratio) terms rows
  * (exactly like BASKET's matrix keys), so every WS-priceable corpus family is
  * exposed; the remaining `FAMILIES_NOT_EXPOSED` are the three cross-asset
- * vanilla arms whose generalized carry the FX-WS price path does not transport.
+ * vanilla arms (`equity_option`/`commodity_option`/`crypto_option`), blocked by
+ * the server WS decoder's legacy-`pair` precedence over the `underlying` object
+ * the add-in emits beside it — see the rationale on `ALL_FAMILIES` above.
  */
 export const EXCEL_FAMILIES = [
   "vanilla",
@@ -125,6 +141,7 @@ export const EXCEL_FAMILIES = [
   "cliquet",
   "quanto",
   "tarf",
+  "pivot",
   "accumulator",
   "lookback",
   "window_barrier",
@@ -385,6 +402,18 @@ export function specOf(v: GoldenVector): InstrumentSpecArgs {
       rows.push(
         ["callPut", cp(str(v.terms, "option_type"))],
         ["strike", num(v.terms, "strike")],
+        ["target", num(v.terms, "target")],
+        ["leverage", num(v.terms, "leverage")],
+        ["fixings", num(v.terms, "fixings")],
+        ["redemption", str(v.terms, "redemption")],
+        ["fixingNotional", num(v.terms, "fixing_notional")],
+      );
+      break;
+    case "pivot":
+      rows.push(
+        ["callPut", cp(str(v.terms, "option_type"))],
+        ["strike", num(v.terms, "strike")],
+        ["pivot", num(v.terms, "pivot")],
         ["target", num(v.terms, "target")],
         ["leverage", num(v.terms, "leverage")],
         ["fixings", num(v.terms, "fixings")],

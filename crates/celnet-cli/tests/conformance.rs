@@ -12,7 +12,7 @@
 //! Scope — the TRUE corpus-covered set, every family asserted reachable through
 //! the argv seam: `price` (vanilla), `exotic` (digital / one-touch /
 //! single-barrier / var-swap / vol-swap / asian / forward-start / quanto /
-//! cliquet / tarf / accumulator / lookback / american — the Monte-Carlo
+//! cliquet / tarf / pivot / accumulator / lookback / american — the Monte-Carlo
 //! families driven with the vector's own `mc_*` terms and gated on the corpus'
 //! `k · stderr` band), `basket` (engine-default MC terms, mirroring the server
 //! arm), the linear book `forward` / `swap` / `ndf`, and the new payoff shapes
@@ -43,7 +43,7 @@ const K_STDERR: f64 = 4.0;
 /// the cross-asset vanillas) either have no single-flag CLI argv shape, are
 /// LSV-only, or are gated by the dedicated cross-asset test below; the SDK
 /// conformance harness exercises every corpus family.
-const CLI_FAMILIES: [&str; 20] = [
+const CLI_FAMILIES: [&str; 21] = [
     "vanilla",
     "digital",
     "touch", // only the single ONE_TOUCH (the CLI's `one-touch`)
@@ -55,6 +55,7 @@ const CLI_FAMILIES: [&str; 20] = [
     "cliquet",
     "quanto",
     "tarf",
+    "pivot",
     "accumulator",
     "lookback",
     "american",
@@ -384,6 +385,36 @@ fn argv_for(v: &GoldenVector) -> Option<Vec<String>> {
                 "tarf".into(),
                 "--option".into(),
                 opt_token(v, "option_type").into(),
+                "--target".into(),
+                s(v.term_f64("target")),
+                "--leverage".into(),
+                s(v.term_f64("leverage")),
+                "--fixings".into(),
+                v.term_u64("fixings").to_string(),
+                "--fixing-notional".into(),
+                s(v.term_f64("fixing_notional")),
+                "--mc-pairs".into(),
+                v.term_u64("mc_pairs").to_string(),
+                "--mc-seed".into(),
+                v.term_u64("mc_seed").to_string(),
+            ]);
+            if v.term_str("redemption") == "CAPPED_GAIN" {
+                a.push("--capped-gain".into());
+            }
+            Some(a)
+        }
+        "pivot" => {
+            // Monte-Carlo (the vector's own `mc_*` terms; std-error-banded).
+            // The strike rides the common `exotic --strike` grammar; the pivot
+            // level is the subcommand's own flag.
+            let mut a = vec!["exotic".into()];
+            a.extend(market_flags(v, Some(v.term_f64("strike"))));
+            a.extend([
+                "pivot".into(),
+                "--option".into(),
+                opt_token(v, "option_type").into(),
+                "--pivot".into(),
+                s(v.term_f64("pivot")),
                 "--target".into(),
                 s(v.term_f64("target")),
                 "--leverage".into(),

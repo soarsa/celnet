@@ -39,15 +39,15 @@ use celnet_exotics::{
     CliquetMcConfig, CliquetSchedule, DigitalKind, DoubleBarrierKnockOut, DoubleNoTouch,
     ExerciseStyle as ExExerciseStyle, ForwardStart, Lookback as ExLookback, LookbackMcConfig,
     LookbackStyle as ExLookbackStyle, LsmConfig, Monitoring as ExMonitoring, PerpetualInputs,
-    QuantoParams, RebateTiming, RedemptionStyle as ExRedemptionStyle,
-    SingleBarrier as ExSingleBarrier, Tarf as ExTarf, TarfMcConfig, VarSwapContext,
-    accumulator_price, american_fd_greeks, american_lsm, cliquet_price_capped_mc,
-    cliquet_price_plain, curran_price, digital_price, double_knock_out_price,
-    double_no_touch_price, double_touch_price, fair_variance, fair_volatility,
-    fixed_lookback_price, floating_lookback_price, forward_start_price, lookback_mc,
-    no_touch_price, one_touch_price, perpetual_greeks, perpetual_price, price_basket,
-    quanto_digital_price, quanto_vanilla_price, single_barrier_price, tarf_price,
-    turnbull_wakeman_price,
+    PivotTra, PivotTraMcConfig, QuantoParams, RebateTiming,
+    RedemptionStyle as ExRedemptionStyle, SingleBarrier as ExSingleBarrier, Tarf as ExTarf,
+    TarfMcConfig, VarSwapContext, accumulator_price, american_fd_greeks, american_lsm,
+    cliquet_price_capped_mc, cliquet_price_plain, curran_price, digital_price,
+    double_knock_out_price, double_no_touch_price, double_touch_price, fair_variance,
+    fair_volatility, fixed_lookback_price, floating_lookback_price, forward_start_price,
+    lookback_mc, no_touch_price, one_touch_price, perpetual_greeks, perpetual_price,
+    pivot_tra_price, price_basket, quanto_digital_price, quanto_vanilla_price,
+    single_barrier_price, tarf_price, turnbull_wakeman_price,
 };
 use celnet_linear::{LinearInputs, LinearTerms, Side as LinearSide, ndf::Ndf as LinearNdf, swap};
 
@@ -349,6 +349,10 @@ const DEFAULT_CLIQUET_MC_PAIRS: usize = 200_000;
 /// Default antithetic Monte-Carlo path pairs for a TARF when the wire request
 /// leaves `mc_pairs` unset.
 const DEFAULT_TARF_MC_PAIRS: usize = 200_000;
+/// Default antithetic Monte-Carlo path pairs for a pivot Target-Redemption
+/// Accumulator when the wire request leaves `mc_pairs` unset (the same budget as
+/// its degenerate `pivot == strike` TARF slice, so the two arms are comparable).
+const DEFAULT_PIVOT_MC_PAIRS: usize = 200_000;
 /// Default antithetic Monte-Carlo path pairs for an accumulator when the wire
 /// request leaves `mc_pairs` unset.
 const DEFAULT_ACCUMULATOR_MC_PAIRS: usize = 200_000;
@@ -1215,6 +1219,93 @@ pub fn price_instrument(
             let greeks = exotic_greeks(&price, &price_at, market, expiry);
             let inputs = exotic_inputs_at(market, expiry, market.spot, market.vol);
             let estimate = tarf_price(&inputs, spec_at(fixings), cfg);
+            Ok(Priced {
+                greeks,
+                resolved_strike: strike,
+                vol: market.vol,
+                std_error: Some(estimate.std_error),
+            })
+        }
+        instrument::Product::Pivot(p) => {
+            // The pivot Target-Redemption Accumulator: the TARF mechanic with a
+            // distinct pivot kink (`pivot == strike` ⇒ the exact TARF slice, the
+            // engine's gated bit-identity). Decode/validity mirrors the TARF arm
+            // as its sibling, plus the pivot level's own domain checks.
+            let favourable_side = decode_option_type(p.option_type)?;
+            let redemption = match celnet_proto::TarfRedemption::try_from(p.redemption) {
+                Ok(celnet_proto::TarfRedemption::FullGain) => ExRedemptionStyle::FullGain,
+                Ok(celnet_proto::TarfRedemption::CappedGain) => ExRedemptionStyle::CappedGain,
+                Err(_) => {
+                    return Err(PriceError::UnknownEnum {
+                        kind: "TarfRedemption",
+                        tag: p.redemption,
+                    });
+                }
+            };
+            let schedule = p
+                .schedule
+                .as_ref()
+                .ok_or(PriceError::MissingField("pivot.schedule"))?;
+            let fixings = schedule.fixing_years.len();
+            if fixings < 1 {
+                return Err(PriceError::Domain("pivot TRA needs at least one fixing"));
+            }
+            if !p.target.is_finite() || p.target <= 0.0 {
+                return Err(PriceError::Domain("pivot TRA target must be positive"));
+            }
+            if p.leverage < 0.0 {
+                return Err(PriceError::Domain("pivot TRA leverage must be non-negative"));
+            }
+            if !p.strike.is_finite() || p.strike <= 0.0 {
+                return Err(PriceError::Domain("pivot TRA strike must be positive"));
+            }
+            if !p.pivot.is_finite() || p.pivot <= 0.0 {
+                return Err(PriceError::Domain("pivot TRA pivot must be positive"));
+            }
+            if !schedule.fixing_notional.is_finite() || schedule.fixing_notional <= 0.0 {
+                return Err(PriceError::Domain(
+                    "pivot TRA fixing notional must be positive",
+                ));
+            }
+            let strike = p.strike;
+            let pivot = p.pivot;
+            let target = p.target;
+            let leverage = p.leverage;
+            let notional = schedule.fixing_notional;
+            let cfg = PivotTraMcConfig {
+                pairs: if p.mc_pairs == 0 {
+                    DEFAULT_PIVOT_MC_PAIRS
+                } else {
+                    p.mc_pairs as usize
+                },
+                seed: p.mc_seed,
+            };
+            let spec_at = move |fx: usize| PivotTra {
+                strike,
+                pivot,
+                fixings: fx,
+                target,
+                leverage,
+                favourable_side,
+                notional,
+                redemption,
+            };
+            // The MC estimator is bit-reproducible from (seed, pairs), so the FD
+            // Greek strip is a deterministic function of the market context — the
+            // differences are real, not RNG jitter. The plain antithetic pricer
+            // (not the control-variate entry point) keeps the `pivot == strike`
+            // slice to_bits-identical to the TARF arm.
+            let price = move |m: &WireMarketContext| -> f64 {
+                let inputs = exotic_inputs_at(m, expiry, m.spot, m.vol);
+                pivot_tra_price(&inputs, spec_at(fixings), cfg).price
+            };
+            let price_at = move |t: f64, m: &WireMarketContext| -> f64 {
+                let inputs = exotic_inputs_at(m, t, m.spot, m.vol);
+                pivot_tra_price(&inputs, spec_at(fixings), cfg).price
+            };
+            let greeks = exotic_greeks(&price, &price_at, market, expiry);
+            let inputs = exotic_inputs_at(market, expiry, market.spot, market.vol);
+            let estimate = pivot_tra_price(&inputs, spec_at(fixings), cfg);
             Ok(Priced {
                 greeks,
                 resolved_strike: strike,
@@ -2378,6 +2469,7 @@ fn product_name(product: &instrument::Product) -> &'static str {
         instrument::Product::Cliquet(_) => "cliquet",
         instrument::Product::Quanto(_) => "quanto",
         instrument::Product::Tarf(_) => "tarf",
+        instrument::Product::Pivot(_) => "pivot",
         instrument::Product::Accumulator(_) => "accumulator",
         instrument::Product::Lookback(_) => "lookback",
         instrument::Product::WindowBarrier(_) => "window_barrier",
@@ -3311,6 +3403,142 @@ mod tests {
         assert!(matches!(
             price_instrument(&instr, &m, &conv_set()),
             Err(PriceError::MissingField(_))
+        ));
+    }
+
+    #[test]
+    fn pivot_matches_exotics_mc_and_carries_std_error() {
+        // The pivot TRA arm (32): server == celnet-exotics MC with the SAME
+        // (seed, pairs) ⇒ bit-reproducible ⇒ exact agreement, std-error surfaced.
+        let m = market();
+        let strike = 1.08;
+        let pivot = 1.13; // dead band P > K, call-favourable
+        let target = 0.20;
+        let leverage = 2.5;
+        let pairs = 20_000u32;
+        let seed = 0x9_1707_BEEF_u64;
+        let instr = base_instrument(Product::Pivot(celnet_proto::Pivot {
+            option_type: celnet_proto::OptionType::Call as i32,
+            strike,
+            pivot,
+            target,
+            leverage,
+            redemption: celnet_proto::TarfRedemption::FullGain as i32,
+            schedule: Some(tarf_schedule()),
+            mc_pairs: pairs,
+            mc_seed: seed,
+        }));
+        let priced = price_instrument(&instr, &m, &conv_set()).unwrap();
+        let inputs = VanillaInputs::new(m.spot, m.spot, m.vol, 1.0, m.r_dom(), m.r_for());
+        let oracle = pivot_tra_price(
+            &(&inputs).into(),
+            PivotTra {
+                strike,
+                pivot,
+                fixings: 4,
+                target,
+                leverage,
+                favourable_side: OptionType::Call,
+                notional: 1.0,
+                redemption: ExRedemptionStyle::FullGain,
+            },
+            PivotTraMcConfig {
+                pairs: pairs as usize,
+                seed,
+            },
+        );
+        assert!(
+            is_close(priced.greeks.price, oracle.price, 1e-12, 1e-12),
+            "server pivot TRA {} vs exotics MC {}",
+            priced.greeks.price,
+            oracle.price
+        );
+        let stderr = priced.std_error.expect("pivot TRA must carry MC std-error");
+        assert!(
+            is_close(stderr, oracle.std_error, 1e-12, 1e-12) && stderr > 0.0,
+            "surfaced stderr {stderr} vs oracle {} (must be positive)",
+            oracle.std_error
+        );
+    }
+
+    #[test]
+    fn pivot_at_strike_is_bit_identical_to_tarf_arm() {
+        // The degeneracy law on the WIRE: a Pivot arm with `pivot == strike`
+        // must price bit-for-bit equal to the Tarf arm with the same terms
+        // (engine identity: same RNG coordinates, same arithmetic order).
+        let m = market();
+        let strike = 1.10;
+        let target = 0.30;
+        let leverage = 2.0;
+        let pairs = 20_000u32;
+        let seed = 0x7A2F_0099_u64;
+        let pivot_instr = base_instrument(Product::Pivot(celnet_proto::Pivot {
+            option_type: celnet_proto::OptionType::Put as i32,
+            strike,
+            pivot: strike,
+            target,
+            leverage,
+            redemption: celnet_proto::TarfRedemption::FullGain as i32,
+            schedule: Some(tarf_schedule()),
+            mc_pairs: pairs,
+            mc_seed: seed,
+        }));
+        let tarf_instr = base_instrument(Product::Tarf(celnet_proto::Tarf {
+            option_type: celnet_proto::OptionType::Put as i32,
+            strike,
+            target,
+            leverage,
+            redemption: celnet_proto::TarfRedemption::FullGain as i32,
+            schedule: Some(tarf_schedule()),
+            mc_pairs: pairs,
+            mc_seed: seed,
+        }));
+        let p = price_instrument(&pivot_instr, &m, &conv_set()).unwrap();
+        let t = price_instrument(&tarf_instr, &m, &conv_set()).unwrap();
+        assert_eq!(
+            p.greeks.price.to_bits(),
+            t.greeks.price.to_bits(),
+            "pivot(P=K) {} must equal TARF {} bit-for-bit on the wire path",
+            p.greeks.price,
+            t.greeks.price
+        );
+        assert_eq!(
+            p.std_error.unwrap().to_bits(),
+            t.std_error.unwrap().to_bits()
+        );
+    }
+
+    #[test]
+    fn pivot_rejects_missing_schedule_and_bad_domain() {
+        let m = market();
+        let mk = |strike: f64, pivot: f64, target: f64, schedule| {
+            base_instrument(Product::Pivot(celnet_proto::Pivot {
+                option_type: celnet_proto::OptionType::Put as i32,
+                strike,
+                pivot,
+                target,
+                leverage: 2.0,
+                redemption: celnet_proto::TarfRedemption::FullGain as i32,
+                schedule,
+                mc_pairs: 0,
+                mc_seed: 0,
+            }))
+        };
+        assert!(matches!(
+            price_instrument(&mk(1.10, 1.13, 0.30, None), &m, &conv_set()),
+            Err(PriceError::MissingField("pivot.schedule"))
+        ));
+        assert!(matches!(
+            price_instrument(&mk(1.10, 1.13, 0.0, Some(tarf_schedule())), &m, &conv_set()),
+            Err(PriceError::Domain(_))
+        ));
+        assert!(matches!(
+            price_instrument(&mk(1.10, 0.0, 0.30, Some(tarf_schedule())), &m, &conv_set()),
+            Err(PriceError::Domain(_))
+        ));
+        assert!(matches!(
+            price_instrument(&mk(0.0, 1.13, 0.30, Some(tarf_schedule())), &m, &conv_set()),
+            Err(PriceError::Domain(_))
         ));
     }
 

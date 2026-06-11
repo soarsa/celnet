@@ -109,6 +109,7 @@ const FAMILY_TO_PARITY_FILE = {
   cliquet: 'forward_start.rs', //  plain cliquet == Σ forward-start legs; clamped vs independent clamped MC
   quanto: 'structured.rs', //  quanto vanilla/digital closed form vs independent MC + ρ=0→plain limit
   tarf: 'structured.rs', //  TARF gap-risk decomposition (FullGain > CappedGain, expected overshoot)
+  pivot: 'pivot_wire.rs', //  pivot-TRA engine vs code-disjoint splitmix64 indicator-form MC oracle + the P==K→TARF degeneracy law (bitwise engine pair + disjoint golden codings) + two-route gearing monotonicity
   accumulator: 'structured.rs', //  continuous vs discrete knock-out monitoring correctness
   lookback: 'structured.rs', //  floating-/fixed-strike closed form vs MC + lookback-dominates-vanilla
   window_barrier: 'lsv.rs', //  window knock-out under LOCAL_STOCH_VOL (ξ=0→Dupire limit, PDE≈MC)

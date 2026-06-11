@@ -148,9 +148,9 @@ pub use vocab::{
     BasketTerms, BookId, Calibration, CliquetTerms, Conventions, DealerQuote, DigitalStyle,
     DigitalTerms, DoubleBarrierTerms, Execution, ExerciseStyle, FixingSource, ForwardSide,
     ForwardStartTerms, ForwardTerms, InstrumentSpec, Leg, ListedFutureTerms, LookbackMonitoring,
-    LookbackStyle, LookbackTerms, Margining, NdfTerms, PricedLine, PricingModel, Product, Quantity,
-    QuantoPayoff, QuantoTerms, Quote, RankedPanel, RejectAck, Seat, Side, StrategyKind, StrikeSpec,
-    SwapTerms, TarfRedemption, TarfTerms, TouchKind, TouchTerms, TwoWay,
+    LookbackStyle, LookbackTerms, Margining, NdfTerms, PivotTerms, PricedLine, PricingModel,
+    Product, Quantity, QuantoPayoff, QuantoTerms, Quote, RankedPanel, RejectAck, Seat, Side,
+    StrategyKind, StrikeSpec, SwapTerms, TarfRedemption, TarfTerms, TouchKind, TouchTerms, TwoWay,
 };
 // The cross-asset underlying vocabulary the instrument builders speak — re-exported
 // from `celnet-types` so a caller names an equity / commodity / crypto underlying

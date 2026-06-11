@@ -581,6 +581,36 @@ export interface Tarf {
 }
 
 /**
+ * A pivot Target-Redemption Accumulator (proto `Pivot`): the TARF mechanic with
+ * a distinct `pivot` kink — each fixing's leg is SELECTED by the pivot and
+ * VALUED by the strike intrinsic, the favourable leg accruing toward `target`
+ * (knock-out on target, the shared `TarfRedemption` gap-risk convention), the
+ * adverse leg geared by `leverage`. `pivot === strike` is the exact plain-TARF
+ * slice. Monte-Carlo priced — the premium carries a standard error
+ * (`price_std_error`).
+ */
+export interface Pivot {
+  /** The favourable direction (PUT = the exporter orientation, gains below `strike`). */
+  optionType: OptionType;
+  /** The target strike `K` intrinsic is measured against. */
+  strike: number;
+  /** The pivot `P` at which the geared adverse leg engages (`P === K` ⇒ TARF). */
+  pivot: number;
+  /** The cumulative gain target; accumulated client gain at/above it redeems. */
+  target: number;
+  /** The gearing/leverage multiplier on the adverse leg (`≥ 0`). */
+  leverage: number;
+  /** The gap-risk settlement convention of the redeeming fixing. */
+  redemption: TarfRedemption;
+  /** The fixing schedule (count + per-fixing notional). */
+  schedule: FixingSchedule;
+  /** Monte-Carlo antithetic pairs (`0` ⇒ server default). */
+  mcPairs: number;
+  /** Monte-Carlo seed (bit-reproducible). */
+  mcSeed: bigint;
+}
+
+/**
  * An accumulator (proto `Accumulator`): periodic accumulation at a `pivot` strike
  * with an up-and-out knock-out `barrier` (`barrier > pivot`) and `leverage`
  * gearing on the below-pivot (loss) leg. Monte-Carlo priced — the premium carries
@@ -942,6 +972,7 @@ export type Product =
   | { kind: "cliquet"; cliquet: Cliquet }
   | { kind: "quanto"; quanto: Quanto }
   | { kind: "tarf"; tarf: Tarf }
+  | { kind: "pivot"; pivot: Pivot }
   | { kind: "accumulator"; accumulator: Accumulator }
   | { kind: "lookback"; lookback: Lookback }
   | { kind: "windowBarrier"; windowBarrier: WindowBarrier }

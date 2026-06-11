@@ -28,6 +28,15 @@
 //!     byte-identical single-dealer edge). Honest boundary: live LP connectivity is
 //!     ENV — the in-repo panel is labeled synthetic dealers quoting around the same
 //!     edge mid, never faked external fills.
+//!   * `CELNET_ACCESS_MODE` — the entitlements trust-boundary mode for the risk
+//!     services (`"permissive"` / `"enforce"`). **This demo edge defaults to
+//!     `permissive`** — the explicit dev affordance that lets unauthenticated
+//!     local harnesses (the GUI, the Excel add-in, raw WS clients) read the demo
+//!     book without asserting a principal — and prints a loud banner saying so.
+//!     Every absent-principal admission is still audited per decision. Set
+//!     `CELNET_ACCESS_MODE=enforce` to exercise the production deny-by-default
+//!     posture (every other boot path — `src/main.rs`, `Edge::start*` — is
+//!     **always** enforce; permissive is never silent production behaviour).
 //!
 //! The WS mirror binds on its own ephemeral port *inside* [`Edge::start`]; to expose
 //! it on a fixed port we bind the WS listener address from `CELNET_WS_ADDR`. The
@@ -90,6 +99,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         panel,
     )
     .await?;
+
+    // The entitlements trust boundary: this DEMO edge defaults to the explicit
+    // permissive dev-mode (env-overridable via CELNET_ACCESS_MODE) so local
+    // unauthenticated harnesses keep working — set BEFORE mark_ready so no
+    // request ever races the policy, and announced loudly below. Every other
+    // boot path stays deny-by-default (AccessMode::Enforce).
+    let access_mode = celnet_server::services::access::mode_from_env_or(
+        celnet_entitlements::AccessMode::Permissive,
+    );
+    edge.store().set_access_mode(access_mode);
+    if access_mode.is_permissive() {
+        eprintln!(
+            "celnet-server demo edge: ENTITLEMENTS PERMISSIVE DEV-MODE — risk requests \
+             asserting NO principal are admitted as grant-all (audited per decision). \
+             This is a demo-only affordance; production boots deny by default. \
+             Set CELNET_ACCESS_MODE=enforce to exercise the production posture."
+        );
+    }
+
     edge.gate().mark_ready();
 
     // Pre-mark the surface book with one calibrated EURUSD 1Y smile under a fresh
@@ -105,12 +133,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     eprintln!(
         "celnet-server demo edge ready — gRPC {} | WS-mirror ws://{}{} | \
-         pre-marked surface_version={} | LP panel: native maker + {} synthetic demo dealer(s)",
+         pre-marked surface_version={} | LP panel: native maker + {} synthetic demo dealer(s) | \
+         entitlements access mode: {}",
         edge.grpc_addr(),
         edge.ws_addr(),
         fix_note,
         pre_marked_version,
-        panel.synthetic_lps
+        panel.synthetic_lps,
+        access_mode.label()
     );
 
     // Run until Ctrl-C / SIGTERM, then drain gracefully.

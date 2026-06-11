@@ -19,8 +19,9 @@
  *      wire-level gate, not a documentation claim.
  *
  * Every Excel-exposed family is asserted reachable; the corpus families Excel does
- * not expose (the three cross-asset vanilla arms) are reported, not silently
- * skipped. No assertion is lowered.
+ * not expose (the three cross-asset vanilla arms, blocked by the server WS
+ * decoder's legacy-`pair` precedence — see `corpus.ts`) are reported, not
+ * silently skipped. No assertion is lowered.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -289,15 +290,20 @@ describe("Excel real-edge conformance (frozen golden corpus over a REAL WebSocke
 
   it("reports (does not skip) the corpus families Excel does not expose", () => {
     // Documentation-as-assertion (CLAUDE.md rule 2 — no silent gap). The corpus
-    // families the FX-WS Excel price path does NOT expose:
-    //  - `equity_option` / `commodity_option` / `crypto_option` carry the GENERALIZED
-    //    cost-of-carry (`q`/`repo`/`funding`/`convenience`) the FX-two-rate WS price
-    //    path does not yet transport; the add-in DOES shape them onto the wire (the
-    //    cross-asset `Underlying` + `settlement_style` shapers, gated by
-    //    `test/crossAssetProducts.test.ts`).
+    // families the WS Excel price path does NOT expose:
+    //  - `equity_option` / `commodity_option` / `crypto_option`: their vector
+    //    markets ARE WS-transportable (the FX two-rate projection; proven
+    //    end-to-end by `crates/celnet-server/tests/cross_asset_ws.rs`), but the
+    //    add-in's `instrumentToWire` emits the legacy FX `pair` projection beside
+    //    `underlying` and the server WS decoder gives `pair` precedence — a
+    //    client frame routes down the FX path (numerically invisible for linear
+    //    payoffs, WRONG for INVERSE_COIN; the precedence is pinned server-side).
+    //    The add-in DOES shape them onto the wire (the cross-asset `Underlying`
+    //    + `settlement_style` shapers, gated by `test/crossAssetProducts.test.ts`).
+    //    Full rationale on `corpus.ts` `ALL_FAMILIES`.
     // (`strategy` joined EXCEL_FAMILIES via the STRATEGY family's repeated
     // ("legs", …) terms rows — it is priced above like every other family.)
-    // If a family becomes FX-WS-exposed, this pins the honest gap so it cannot drift.
+    // If a family becomes WS-exposed, this pins the honest gap so it cannot drift.
     expect(FAMILIES_NOT_EXPOSED).toEqual([
       "equity_option",
       "commodity_option",

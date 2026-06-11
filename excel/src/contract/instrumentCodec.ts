@@ -26,6 +26,7 @@ import type {
   Lookback,
   Ndf,
   PerpetualOption,
+  Pivot,
   Product,
   Quanto,
   SingleBarrier,
@@ -267,6 +268,21 @@ function tarfFromWire(o: WireObject): Tarf {
   };
 }
 
+function pivotFromWire(o: WireObject): Pivot {
+  const where = "pivot";
+  return {
+    optionType: e.optionType.fromWire(enumOrZero(o, "option_type")),
+    strike: reqNum(o, "strike", where),
+    pivot: reqNum(o, "pivot", where),
+    target: reqNum(o, "target", where),
+    leverage: reqNum(o, "leverage", where),
+    redemption: e.tarfRedemption.fromWire(enumOrZero(o, "redemption")),
+    schedule: fixingScheduleFromWire(child(o, "schedule", where), where),
+    mcPairs: optNumOrZero(o, "mc_pairs"),
+    mcSeed: u64(o, "mc_seed"),
+  };
+}
+
 function accumulatorFromWire(o: WireObject): Accumulator {
   const where = "accumulator";
   return {
@@ -472,6 +488,7 @@ const PRODUCT_DECODERS: ReadonlyArray<readonly [string, (o: WireObject) => Produ
   ["cliquet", (o) => ({ kind: "cliquet", cliquet: cliquetFromWire(o) })],
   ["quanto", (o) => ({ kind: "quanto", quanto: quantoFromWire(o) })],
   ["tarf", (o) => ({ kind: "tarf", tarf: tarfFromWire(o) })],
+  ["pivot", (o) => ({ kind: "pivot", pivot: pivotFromWire(o) })],
   ["accumulator", (o) => ({ kind: "accumulator", accumulator: accumulatorFromWire(o) })],
   ["lookback", (o) => ({ kind: "lookback", lookback: lookbackFromWire(o) })],
   ["window_barrier", (o) => ({ kind: "windowBarrier", windowBarrier: windowBarrierFromWire(o) })],

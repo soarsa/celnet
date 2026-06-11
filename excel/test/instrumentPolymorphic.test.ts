@@ -68,6 +68,7 @@ import {
   shapeLookback,
   shapeMetalVanilla,
   shapeNdf,
+  shapePivot,
   shapeQuanto,
   shapeSwap,
   shapeTarf,
@@ -141,12 +142,12 @@ function tenorFor(t: number): string {
  * reference). It calls the same production shapers those functions called, with
  * the same arguments.
  *
- * Three families never had a per-product worksheet function — `strategy` (the
+ * Four families never had a per-product worksheet function — `strategy` (the
  * GUI/SDK leg-ladder, now the STRATEGY family's repeated ("legs", …) terms
- * rows) and the two post-retirement arms (`perpetual_option` 30 /
- * `listed_future_option` 31). Their reference instruments are HAND-BUILT typed
- * literals (no production shaper involved), so the parity proof for them is
- * spec-path == hand-built frame, the strongest form.
+ * rows) and the three post-retirement arms (`perpetual_option` 30 /
+ * `listed_future_option` 31 / `pivot` 32). Their reference instruments are
+ * HAND-BUILT typed literals (no production shaper involved), so the parity
+ * proof for them is spec-path == hand-built frame, the strongest form.
  */
 function legacyInstrumentOf(v: GoldenVector): Instrument {
   const t = num(v.terms, "expiry_years");
@@ -307,6 +308,43 @@ function legacyInstrumentOf(v: GoldenVector): Instrument {
         redemption: str(v.terms, "redemption"),
         fixingNotional: num(v.terms, "fixing_notional"),
       });
+    case "pivot": {
+      // HAND-BUILT reference (post-retirement arm 32 — there was never a
+      // `CELNET.PIVOT` worksheet function): the strongest parity form,
+      // spec-path == hand-built typed frame. The equally-spaced k/n fixing
+      // grid is written out literally (bit-identical to the SDK's
+      // `equal_fixing_years`).
+      const fixings = num(v.terms, "fixings");
+      const fixingYears: number[] = [];
+      for (let k = 1; k <= fixings; k += 1) fixingYears.push(k / fixings);
+      const months = Math.round(t * 12);
+      const handTenor: Tenor =
+        months % 12 === 0 ? { unit: "YEARS", count: months / 12 } : { unit: "MONTHS", count: months };
+      return {
+        pair: { base: pair.slice(0, 3), quote: pair.slice(3, 6) },
+        tenor: handTenor,
+        expiryYears: t,
+        quantity: { notional, baseCcy: true },
+        side: "TWO_WAY",
+        product: {
+          kind: "pivot",
+          pivot: {
+            optionType: str(v.terms, "option_type") as OptionType,
+            strike: num(v.terms, "strike"),
+            pivot: num(v.terms, "pivot"),
+            target: num(v.terms, "target"),
+            leverage: num(v.terms, "leverage"),
+            redemption: str(v.terms, "redemption") as "FULL_GAIN" | "CAPPED_GAIN",
+            schedule: {
+              fixingYears,
+              fixingNotional: num(v.terms, "fixing_notional"),
+            },
+            mcPairs: 0,
+            mcSeed: 0n,
+          },
+        },
+      };
+    }
     case "accumulator":
       return shapeAccumulator({
         pair,
@@ -786,6 +824,40 @@ const CASES: readonly ParityCase[] = [
         fixingNotional: 0.5,
         mcPairs: 30000,
         mcSeed: 7,
+      }),
+  },
+  {
+    name: "PIVOT — overlap geometry, capped gain + MC knobs",
+    product: "PIVOT",
+    terms: [
+      ["callPut", "P"],
+      ["strike", 1.12],
+      ["pivot", 1.08],
+      ["target", 0.12],
+      ["leverage", 2.5],
+      ["fixings", 12],
+      ["redemption", "CAPPED_GAIN"],
+      ["fixingNotional", 0.5],
+      ["mcPairs", 30000],
+      ["mcSeed", 1707],
+    ],
+    tenor: "1Y",
+    notional: 1e6,
+    legacy: () =>
+      shapePivot({
+        pair: FX,
+        tenor: "1Y",
+        callPut: "P",
+        strike: 1.12,
+        pivot: 1.08,
+        target: 0.12,
+        leverage: 2.5,
+        fixings: 12,
+        notional: 1e6,
+        redemption: "CAPPED_GAIN",
+        fixingNotional: 0.5,
+        mcPairs: 30000,
+        mcSeed: 1707,
       }),
   },
   {
