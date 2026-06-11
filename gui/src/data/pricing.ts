@@ -29,6 +29,7 @@ import type {
   MarketContext,
   Ndf,
   PerpetualOption,
+  Pivot,
   Quanto,
   Side,
   SingleBarrier,
@@ -335,6 +336,8 @@ export function priceInstrument(
       return priceQuanto(instrument.product.quanto, m, t);
     case "tarf":
       return priceTarf(instrument.product.tarf, m, t);
+    case "pivot":
+      return pricePivot(instrument.product.pivot, m, t);
     case "accumulator":
       return priceAccumulator(instrument.product.accumulator, m, t);
     case "lookback":
@@ -1652,6 +1655,89 @@ function priceTarf(spec: Tarf, m: MarketContext, t: number): PriceOutcome {
     for (let k = 0; k < n; k += 1) z[k] = rng.normal();
     const up = tarfPathBankPv(spec, m, z, 1, dtYears);
     const dn = tarfPathBankPv(spec, m, z, -1, dtYears);
+    acc.push(0.5 * (up + dn));
+  }
+
+  const greeks = zeroGreeks();
+  greeks.price = acc.value;
+  return { greeks, resolvedStrike: spec.strike, priceStdError: acc.stdError };
+}
+
+// ---------------------------------------------------------------------------
+// pivot TRA — the TARF mechanic with a distinct pivot kink, always Monte-Carlo
+// ---------------------------------------------------------------------------
+//
+// Each fixing's per-unit client cash flow is piecewise-linear with the kink at
+// the PIVOT and the intrinsic measured against the STRIKE: on the favourable
+// side of the pivot the leg is the un-geared intrinsic g·(S−K); on the adverse
+// side it is the leverage-geared L·g·(S−K). Positive flows accrue toward the
+// target and redeem exactly as the TARF (FULL_GAIN keeps the overshoot,
+// CAPPED_GAIN redeems exactly). pivot === strike reproduces the TARF path math
+// term-for-term. The reported value is the BANK's present value. No closed form
+// ⇒ antithetic Monte-Carlo with a real standard error, mirroring celnet-exotics
+// `pivot_tra_price` per-unit path math.
+
+/** Default antithetic path-pairs for a pivot TRA when the trader leaves `mcPairs = 0`. */
+const PIVOT_DEFAULT_PAIRS = 20_000;
+
+/** One pivot-TRA path's discounted bank PV for antithetic sign `s` (per unit). */
+function pivotPathBankPv(
+  spec: Pivot,
+  m: MarketContext,
+  z: number[],
+  s: number,
+  dtYears: number,
+): number {
+  const n = z.length;
+  const gainSign = spec.optionType === "CALL" ? 1 : -1;
+  const drift = (m.rDom - m.rFor - 0.5 * m.vol * m.vol) * dtYears;
+  const diffusionScale = m.vol * Math.sqrt(dtYears);
+  let lnS = Math.log(m.spot);
+  let accumulatedGain = 0;
+  let bankPv = 0;
+  for (let k = 0; k < n; k += 1) {
+    lnS += drift + diffusionScale * s * z[k]!;
+    const sK = Math.exp(lnS);
+    const df = Math.exp(-m.rDom * (k + 1) * dtYears);
+    // Leg SELECTED by the pivot, VALUED by the strike intrinsic.
+    const intrinsic = gainSign * (sK - spec.strike);
+    const c = gainSign * (sK - spec.pivot) >= 0 ? intrinsic : spec.leverage * intrinsic;
+    if (c > 0) {
+      const remaining = spec.target - accumulatedGain;
+      if (c >= remaining) {
+        // Breaching (redeeming) fixing: settle per the gap-risk convention.
+        const settled = spec.redemption === "FULL_GAIN" ? c : remaining;
+        bankPv -= settled * df;
+        return bankPv; // structure redeems — no further fixings.
+      }
+      bankPv -= c * df;
+      accumulatedGain += c;
+    } else if (c < 0) {
+      // Adverse fixing (gearing already folded in): the bank receives −c.
+      bankPv += -c * df;
+    }
+  }
+  return bankPv;
+}
+
+/**
+ * Price a pivot TRA by antithetic Monte-Carlo over the equally-spaced fixing
+ * grid, reporting the discounted bank PV AND its standard error (an honest
+ * precision band — there is no closed form). The MC uses the deterministic
+ * seeded `Rng`, so a fixed seed reproduces bit-for-bit.
+ */
+function pricePivot(spec: Pivot, m: MarketContext, t: number): PriceOutcome {
+  const n = Math.max(1, spec.schedule.fixingYears.length);
+  const dtYears = t / n;
+  const pairs = spec.mcPairs > 0 ? Math.trunc(spec.mcPairs) : PIVOT_DEFAULT_PAIRS;
+  const rng = new Rng(spec.mcSeed === 0n ? 0x91_707n : spec.mcSeed);
+
+  const acc = new McAccumulator();
+  const z = new Array<number>(n).fill(0);
+  for (let p = 0; p < pairs; p += 1) {
+    for (let k = 0; k < n; k += 1) z[k] = rng.normal();
+    const up = pivotPathBankPv(spec, m, z, 1, dtYears);
+    const dn = pivotPathBankPv(spec, m, z, -1, dtYears);
     acc.push(0.5 * (up + dn));
   }
 

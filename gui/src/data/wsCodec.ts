@@ -557,6 +557,27 @@ export function instrumentToWire(i: Instrument): WireObject {
       };
       break;
     }
+    // The pivot TRA, appended additively at pivot=32 (one current contract, no
+    // schema_version, no renumber; CLAUDE.md rule 9): the TARF body plus the
+    // distinct `pivot` level, reusing the SAME nested `FixingSchedule` and
+    // `TarfRedemption` vocabulary. Fields match the server WS codec's
+    // `pivot_from_json` (option_type=1, strike=2, pivot=3, target=4, leverage=5,
+    // redemption=6, schedule=7, mc_pairs=8, mc_seed=9). Always Monte-Carlo.
+    case "pivot": {
+      const p = i.product.pivot;
+      base["pivot"] = {
+        option_type: e.optionType.toWire(p.optionType),
+        strike: p.strike,
+        pivot: p.pivot,
+        target: p.target,
+        leverage: p.leverage,
+        redemption: e.tarfRedemption.toWire(p.redemption),
+        schedule: fixingScheduleToWire(p.schedule),
+        mc_pairs: p.mcPairs,
+        mc_seed: p.mcSeed,
+      };
+      break;
+    }
     case "accumulator": {
       const a = i.product.accumulator;
       base["accumulator"] = {

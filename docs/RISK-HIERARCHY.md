@@ -66,7 +66,9 @@ credit-linked or EM-sovereign wrapper is present — see §2.4).
 > green** — `celnet-risk-cube` (dimension model + group-by/reduce roll-up + per-node non-additive
 > re-derivation), `celnet-risk-normalize` (convention canonicalization + common-numeraire conversion),
 > `celnet-limits` (limit tree + utilization/RAG + pre/post-trade checks), `celnet-entitlements`
-> (server-side pre-aggregation pruning, grant-all default). They are exposed over the **one
+> (server-side pre-aggregation pruning; deny-by-default — an absent principal is refused at the
+> server's audited trust boundary, `celnet-server::services::access`, and grant-all is only ever an
+> explicit assertion or the demo edge's loud permissive dev-mode). They are exposed over the **one
 > `celnet-proto` contract** as `RiskService` (`ListPositions` / `AggregateRisk` / `DrillRisk` /
 > `LimitStatus`) and **served by `celnet-server`** over both gRPC and the WS mirror, off a shared live
 > `PositionStore` the RFS click-to-trade path books vanilla fills into — so aggregation is now done

@@ -292,11 +292,24 @@ async fn federated_edge(backends: &[Backend]) -> RiskEdge {
 // request builders
 // ---------------------------------------------------------------------------
 
+/// An explicitly **asserted** grant-all principal. The deny-by-default trust
+/// boundary refuses a request with NO principal (`tests/entitlements_boundary.rs`
+/// proves that), so every federation request here asserts the firm-wide view it
+/// always meant — and the federated frontend forwards the same assertion to the
+/// backends, which re-authorize it at their own trait entry.
+fn asserted_grant_all() -> Option<EntitlementPrincipal> {
+    Some(EntitlementPrincipal {
+        grant_all: true,
+        grants: vec![],
+        denies: vec![],
+    })
+}
+
 fn firm_request_with_risk() -> AggregateRiskRequest {
     AggregateRiskRequest {
         dimension: RiskDimension::Firm as i32,
         numeraire: Some(usd_numeraire()),
-        principal: None,
+        principal: asserted_grant_all(),
         scope: None,
         vega_pillars: vec![],
         var_spot_shocks: vec![-0.02, -0.01, 0.0, 0.01, 0.02],
@@ -310,7 +323,7 @@ fn ccy_pair_request() -> AggregateRiskRequest {
     AggregateRiskRequest {
         dimension: RiskDimension::Underlying as i32,
         numeraire: Some(usd_numeraire()),
-        principal: None,
+        principal: asserted_grant_all(),
         scope: None,
         vega_pillars: vec![],
         var_spot_shocks: vec![-0.02, 0.0, 0.02],
@@ -500,10 +513,10 @@ async fn federated_list_positions_equals_oracle() {
             v
         };
 
-        // Grant-all: the whole book.
+        // Asserted grant-all: the whole book.
         let req = ListPositionsRequest {
             scope: None,
-            principal: None,
+            principal: asserted_grant_all(),
             correlation_id: Some(1),
         };
         let f = RiskService::list_positions(&fed, Request::new(req.clone()))
@@ -568,7 +581,7 @@ async fn federated_drill_reconciles() {
             }),
             child_dimension: RiskDimension::Underlying as i32,
             numeraire: Some(usd_numeraire()),
-            principal: None,
+            principal: asserted_grant_all(),
             vega_pillars: vec![],
             include_children: true,
             include_positions: true,
@@ -642,7 +655,7 @@ async fn federated_limit_status_reconciles() {
                 value: 22,
             }),
             numeraire: Some(usd_numeraire()),
-            principal: None,
+            principal: asserted_grant_all(),
             vega_pillars: vec![],
             var_spot_shocks: vec![],
             var_alpha: 0.0,

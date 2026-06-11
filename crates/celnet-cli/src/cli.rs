@@ -410,11 +410,11 @@ pub(crate) struct ExoticArgs {
     #[command(flatten)]
     pub(crate) market: MarketArgs,
     /// Strike `K` (absolute level). REQUIRED by the struck families — vanilla,
-    /// digital, barrier, window-barrier, asian, quanto, tarf, american, and the
-    /// fixed-strike lookback (`--fixed`): a missing strike is a typed error,
-    /// never a degenerate K = 0 price. The unstruck families (touches, var/vol
-    /// swaps, forward-start, cliquet, accumulator, floating lookback) take no
-    /// strike and ignore the flag.
+    /// digital, barrier, window-barrier, asian, quanto, tarf, pivot, american,
+    /// and the fixed-strike lookback (`--fixed`): a missing strike is a typed
+    /// error, never a degenerate K = 0 price. The unstruck families (touches,
+    /// var/vol swaps, forward-start, cliquet, accumulator, floating lookback)
+    /// take no strike and ignore the flag.
     #[arg(long)]
     pub(crate) strike: Option<f64>,
     /// The booking / pricing model. `analytic` (default) uses the product's
@@ -604,6 +604,40 @@ pub(crate) enum ExoticKind {
         #[arg(long)]
         target: f64,
         /// Gearing/leverage on the adverse (loss) leg.
+        #[arg(long, default_value_t = 1.0)]
+        leverage: f64,
+        /// Number of equally-spaced fixings over `[0, expiry]`.
+        #[arg(long, default_value_t = 12)]
+        fixings: u32,
+        /// Per-fixing notional.
+        #[arg(long, default_value_t = 1.0)]
+        fixing_notional: f64,
+        /// Settle the breaching fixing at the capped (remaining-target) gain
+        /// instead of the full intrinsic (the default carries the gap exposure).
+        #[arg(long, default_value_t = false)]
+        capped_gain: bool,
+        /// Antithetic Monte-Carlo path pairs.
+        #[arg(long, default_value_t = 200_000)]
+        mc_pairs: usize,
+        /// Counter-RNG seed for the Monte-Carlo estimator.
+        #[arg(long, default_value_t = 0)]
+        mc_seed: u64,
+    },
+    /// A pivot Target-Redemption Accumulator (Monte-Carlo; reports a standard
+    /// error): the TARF mechanic with a distinct pivot kink — the leg is
+    /// selected by `--pivot`, valued by the common `exotic --strike`;
+    /// `--pivot == --strike` is the exact TARF slice.
+    Pivot {
+        /// The favourable-side direction (put = client gains when S < strike).
+        #[arg(long, value_enum)]
+        option: CliOptionType,
+        /// The pivot level at which the geared adverse leg engages.
+        #[arg(long)]
+        pivot: f64,
+        /// The cumulative gain target; reaching it redeems (knocks out).
+        #[arg(long)]
+        target: f64,
+        /// Gearing/leverage on the adverse leg (the far side of the pivot).
         #[arg(long, default_value_t = 1.0)]
         leverage: f64,
         /// Number of equally-spaced fixings over `[0, expiry]`.
@@ -1382,6 +1416,55 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
                     exotic::ExoticSpec::Tarf {
                         option: option.into(),
                         strike: strike_for("tarf")?,
+                        target,
+                        leverage,
+                        fixings,
+                        fixing_notional,
+                        capped_gain,
+                        mc_pairs,
+                        mc_seed,
+                    }
+                }
+                ExoticKind::Pivot {
+                    option,
+                    pivot,
+                    target,
+                    leverage,
+                    fixings,
+                    fixing_notional,
+                    capped_gain,
+                    mc_pairs,
+                    mc_seed,
+                } => {
+                    if target <= 0.0 {
+                        return Err(DispatchError::Invalid(
+                            "pivot --target must be positive".to_owned(),
+                        ));
+                    }
+                    if pivot <= 0.0 {
+                        return Err(DispatchError::Invalid(
+                            "pivot --pivot must be positive".to_owned(),
+                        ));
+                    }
+                    if fixings < 1 {
+                        return Err(DispatchError::Invalid(
+                            "pivot --fixings must be ≥ 1".to_owned(),
+                        ));
+                    }
+                    if leverage < 0.0 {
+                        return Err(DispatchError::Invalid(
+                            "pivot --leverage must be non-negative".to_owned(),
+                        ));
+                    }
+                    if fixing_notional <= 0.0 {
+                        return Err(DispatchError::Invalid(
+                            "pivot --fixing-notional must be positive".to_owned(),
+                        ));
+                    }
+                    exotic::ExoticSpec::Pivot {
+                        option: option.into(),
+                        strike: strike_for("pivot")?,
+                        pivot,
                         target,
                         leverage,
                         fixings,
@@ -2258,7 +2341,7 @@ mod tests {
             "celnet", "exotic", "--spot", "1.10", "--vol", "0.10", "--t", "1.0", "--r-dom", "0.02",
             "--r-for", "0.01",
         ];
-        let cases: [(&str, &[&str]); 9] = [
+        let cases: [(&str, &[&str]); 10] = [
             ("vanilla", &["vanilla", "--option", "call"]),
             ("digital", &["digital", "--kind", "digital-call"]),
             (
@@ -2301,6 +2384,18 @@ mod tests {
                 ],
             ),
             ("tarf", &["tarf", "--option", "put", "--target", "0.3"]),
+            (
+                "pivot",
+                &[
+                    "pivot",
+                    "--option",
+                    "put",
+                    "--pivot",
+                    "1.05",
+                    "--target",
+                    "0.3",
+                ],
+            ),
             (
                 "fixed-strike lookback",
                 &["lookback", "--option", "call", "--fixed"],

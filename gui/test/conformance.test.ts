@@ -150,6 +150,11 @@ const FAMILIES_COVERED = [
   "cliquet",
   "quanto",
   "tarf",
+  // The pivot TRA (arm 32): the TARF mechanic with a distinct pivot kink — the
+  // GUI's offline antithetic MC mirrors celnet-exotics `pivot_tra_price` path
+  // math term-for-term (pivot == strike reproduces the TARF path exactly), so
+  // it conforms within the MC sigma-band like the TARF/accumulator.
+  "pivot",
   "accumulator",
   "american",
   "basket",
@@ -514,6 +519,28 @@ function buildTarf(v: GoldenVector): Instrument {
   });
 }
 
+function buildPivot(v: GoldenVector): Instrument {
+  const redemption = str(v.terms, "redemption");
+  if (redemption !== "FULL_GAIN" && redemption !== "CAPPED_GAIN") {
+    throw new Error(`pivot redemption ${redemption}`);
+  }
+  const t = num(v.terms, "expiry_years");
+  return instrumentOf(v, {
+    kind: "pivot",
+    pivot: {
+      optionType: optionType(v.terms),
+      strike: num(v.terms, "strike"),
+      pivot: num(v.terms, "pivot"),
+      target: num(v.terms, "target"),
+      leverage: num(v.terms, "leverage"),
+      redemption,
+      schedule: equalFixingSchedule(num(v.terms, "fixings"), t, num(v.terms, "fixing_notional")),
+      mcPairs: num(v.terms, "mc_pairs"),
+      mcSeed: BigInt(num(v.terms, "mc_seed")),
+    },
+  });
+}
+
 function buildAccumulator(v: GoldenVector): Instrument {
   const monitoring = str(v.terms, "monitoring");
   if (monitoring !== "DISCRETE" && monitoring !== "CONTINUOUS") {
@@ -650,6 +677,7 @@ const BUILDERS: Record<(typeof FAMILIES_COVERED)[number], (v: GoldenVector) => I
   cliquet: buildCliquet,
   quanto: buildQuanto,
   tarf: buildTarf,
+  pivot: buildPivot,
   accumulator: buildAccumulator,
   american: buildAmerican,
   basket: buildBasket,

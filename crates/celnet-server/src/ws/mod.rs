@@ -32,6 +32,20 @@
 //! A malformed or out-of-contract frame is answered with a typed `error` frame
 //! (echoing any `correlation_id`); it never tears the connection down.
 //!
+//! # Entitlements trust boundary (WS = same boundary as gRPC)
+//!
+//! The risk frames (`list_positions` / `aggregate_risk` / `drill_risk` /
+//! `limit_status`) dispatch onto the **same** `RiskService` trait methods the
+//! gRPC server hosts, so the deny-by-default authorization boundary
+//! ([`crate::services::access`]) covers both encodings with one decision + one
+//! audit record per request: a frame asserting **no** entitlement principal is
+//! refused with a typed `error` frame carrying code `Unauthenticated` (the
+//! `status_error` mapping), unless the edge runs the explicit, loudly-banner'd
+//! permissive dev-mode. Transport-level authentication of the WS peer (TLS /
+//! an authenticating gateway binding the asserted principal to a caller) is
+//! deployment configuration — in-repo, the WS entry enforces the authorization
+//! *decision* boundary, identically to gRPC.
+//!
 //! # Resource caps
 //!
 //! The accept path applies the explicit transport bounds in [`limits`] — never
