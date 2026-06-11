@@ -73,6 +73,13 @@ const GUI_STRUCTURES: readonly {
   label: string;
   corpusFamilies: readonly string[];
   marker: PricedMarker;
+  /**
+   * The edge prices this family's registry-DEFAULT ticket by Monte-Carlo/LSM
+   * (200k-pair MC strips for TARF/accumulator; LSM + FD-grid Greeks for the
+   * American) — its rendered-quote wait is the MC hang-detector deadline, not
+   * the closed-form one.
+   */
+  mcPriced?: true;
 }[] = [
   { id: "VANILLA", label: "Vanilla", corpusFamilies: ["vanilla"], marker: "greeks" },
   { id: "RISK_REVERSAL", label: "Risk Reversal", corpusFamilies: ["strategy"], marker: "greeks" },
@@ -108,11 +115,23 @@ const GUI_STRUCTURES: readonly {
   { id: "FORWARD_START", label: "Forward Start", corpusFamilies: ["forward_start"], marker: "greeks" },
   { id: "CLIQUET", label: "Cliquet", corpusFamilies: ["cliquet"], marker: "greeks" },
   { id: "QUANTO", label: "Quanto", corpusFamilies: ["quanto"], marker: "greeks" },
-  { id: "TARF", label: "TARF", corpusFamilies: ["tarf"], marker: "greeks" },
-  { id: "ACCUMULATOR", label: "Accumulator", corpusFamilies: ["accumulator"], marker: "greeks" },
+  { id: "TARF", label: "TARF", corpusFamilies: ["tarf"], marker: "greeks", mcPriced: true },
+  {
+    id: "ACCUMULATOR",
+    label: "Accumulator",
+    corpusFamilies: ["accumulator"],
+    marker: "greeks",
+    mcPriced: true,
+  },
   { id: "LOOKBACK", label: "Lookback", corpusFamilies: ["lookback"], marker: "greeks" },
   { id: "WINDOW_BARRIER", label: "Window Barrier", corpusFamilies: ["window_barrier"], marker: "greeks" },
-  { id: "AMERICAN", label: "American / Bermudan", corpusFamilies: ["american"], marker: "greeks" },
+  {
+    id: "AMERICAN",
+    label: "American / Bermudan",
+    corpusFamilies: ["american"],
+    marker: "greeks",
+    mcPriced: true,
+  },
   { id: "PERPETUAL", label: "Perpetual (no expiry)", corpusFamilies: ["perpetual_option"], marker: "greeks" },
   {
     id: "BASKET",
@@ -144,6 +163,19 @@ const BROWSER_DECLARED_SKIPS: Readonly<Record<string, string>> = {
 
 /** A rendered-quote wait generous enough for the LSV window barrier on a warm edge. */
 const QUOTE_RENDER_TIMEOUT_MS = 30_000;
+
+/**
+ * The rendered-quote wait for the `mcPriced` default tickets (TARF, accumulator,
+ * American). Like `PRICE_DEADLINE` in the Rust SDK gate
+ * (`celnet-client/tests/conformance.rs`), this is a HANG detector, not a latency
+ * gate — latency budgets are gated in `celnet-bench` on a quiet machine. The e2e
+ * edge shares one box with the dev server, the browser and any parallel gates,
+ * and the heaviest MC/LSM defaults (200k antithetic pairs + bump/FD Greeks; the
+ * wire half clocked a single contended American price at ~33s) legitimately
+ * exceed the closed-form wait there. 120s still fails fast on a genuine hang
+ * (stalled stream, deadlock) while never failing a merely-contended box.
+ */
+const MC_QUOTE_RENDER_TIMEOUT_MS = 120_000;
 
 /** The Monte-Carlo standard-error multiplier — identical to the Rust SDK / Excel gates. */
 const K_STDERR = 4.0;
@@ -196,14 +228,23 @@ test.describe("gallery → ticket → live RFQ: every registered family quotes o
   for (const s of GUI_STRUCTURES) {
     if (s.id in BROWSER_DECLARED_SKIPS) continue;
     test(`${s.id}: structure via gallery defaults → live server quote renders`, async () => {
+      // MC/LSM-priced defaults get the hang-detector deadline (rationale on the
+      // constant); the test budget tracks it with interaction headroom.
+      const renderTimeoutMs = s.mcPriced ? MC_QUOTE_RENDER_TIMEOUT_MS : QUOTE_RENDER_TIMEOUT_MS;
+      if (s.mcPriced) test.setTimeout(MC_QUOTE_RENDER_TIMEOUT_MS + 30_000);
+
       // Select the family card; the shell clears any prior priced state on a
       // structure change, so the previous family's render cannot satisfy this
-      // family's assertion (asserted before requesting).
+      // family's assertion (asserted before requesting). The swap heads are
+      // matched EXACTLY: the swap tickets' own field hint legitimately CONTAINS
+      // the phrase ("Fair variance strike K_var = strike_vol². Leave 0 …"),
+      // while the priced `SwapResult` head span is exactly the phrase.
       const card = galleryCard(s.label);
       await card.click();
       await expect(card).toHaveAttribute("aria-selected", "true");
       await expect(pane.getByTitle("delta (spot)")).toHaveCount(0);
-      await expect(pane.getByText(/Fair (variance|volatility) strike/)).toHaveCount(0);
+      await expect(pane.getByText("Fair variance strike", { exact: true })).toHaveCount(0);
+      await expect(pane.getByText("Fair volatility strike", { exact: true })).toHaveCount(0);
 
       // RFQ the registry-default structure against the live edge.
       await pane.getByRole("button", { name: /Request quote/ }).click();
@@ -212,16 +253,32 @@ test.describe("gallery → ticket → live RFQ: every registered family quotes o
       // (it mounts only once a quote lands), or the priced fair strike for the
       // variance/volatility swaps (quoted as a fair strike, not a premium).
       if (s.marker === "fair-variance") {
-        await expect(pane.getByText("Fair variance strike")).toBeVisible({
-          timeout: QUOTE_RENDER_TIMEOUT_MS,
+        // The TRUE variance-swap render (`TicketWorkspace` `SwapResult`): the
+        // exact head, the server-resolved fair variance strike K_var to six
+        // decimals (non-zero — a 0.000000 means the fair strike never resolved),
+        // and its √K_var vol-terms sub-line. The fair-strike panel REPLACES the
+        // premium two-way: no premium-unit label, no Greeks strip.
+        await expect(pane.getByText("Fair variance strike", { exact: true })).toBeVisible({
+          timeout: renderTimeoutMs,
         });
+        await expect(pane.getByText(/^K_var (?!0\.000000$)\d+\.\d{6}$/)).toBeVisible();
+        await expect(pane.getByText(/^√K_var = \d+\.\d{2}$/)).toBeVisible();
+        await expect(pane.getByText(/% .* prem/)).toHaveCount(0);
+        await expect(pane.getByTitle("delta (spot)")).toHaveCount(0);
       } else if (s.marker === "fair-volatility") {
-        await expect(pane.getByText("Fair volatility strike")).toBeVisible({
-          timeout: QUOTE_RENDER_TIMEOUT_MS,
+        // Same contract in vol-swap shape: the exact head, the non-zero fair
+        // (convexity-adjusted) volatility strike K_vol in vol points, and the
+        // convexity-adjusted marker — again a fair strike, never a premium.
+        await expect(pane.getByText("Fair volatility strike", { exact: true })).toBeVisible({
+          timeout: renderTimeoutMs,
         });
+        await expect(pane.getByText(/^K_vol (?!0\.00$)\d+\.\d{2}$/)).toBeVisible();
+        await expect(pane.getByText("convexity-adjusted", { exact: true })).toBeVisible();
+        await expect(pane.getByText(/% .* prem/)).toHaveCount(0);
+        await expect(pane.getByTitle("delta (spot)")).toHaveCount(0);
       } else {
         await expect(pane.getByTitle("delta (spot)")).toBeVisible({
-          timeout: QUOTE_RENDER_TIMEOUT_MS,
+          timeout: renderTimeoutMs,
         });
         // The priced premium-unit label renders beside the two-way.
         await expect(pane.getByText(/% .* prem/).first()).toBeVisible();

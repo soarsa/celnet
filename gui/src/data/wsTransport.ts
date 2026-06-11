@@ -105,6 +105,21 @@ const DEFAULT_BASE_BACKOFF_MS = 250;
 const DEFAULT_MAX_BACKOFF_MS = 5_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 
+/**
+ * The per-call deadline for PRICING-class requests (`price`, `request_quote`,
+ * `request_multi_dealer_quote`, `scenario`) — the calls whose latency is the
+ * server's pricing engines, not the wire. The Monte-Carlo/LSM families (TARF,
+ * accumulator, American) legitimately price in tens of seconds on a contended
+ * box; at the 10s default the transport abandoned the waiter and DISCARDED the
+ * server's later (correct) quote, so the heavy families could never quote from
+ * the live ticket at all. 90s matches the per-call pricing deadline of the
+ * other clients on the one contract (Excel `wsClient`, the GUI e2e
+ * `edgeClient`) — a HANG detector covering the heaviest MC family, not a
+ * latency gate (latency budgets are gated in `celnet-bench` on a quiet
+ * machine).
+ */
+const PRICING_REQUEST_TIMEOUT_MS = 90_000;
+
 /** An error surfaced when a request/response call cannot complete. */
 export class WsTransportError extends Error {
   constructor(message: string) {
@@ -283,8 +298,15 @@ class WsConnection {
    * Issue a request/response call: mint a correlation id, send the request, and
    * resolve when the matching reply arrives (or reject on timeout / drop / error
    * frame). Never hangs — a closed connection fails the waiter immediately.
+   * `timeoutMs` overrides the connection default for pricing-class calls (see
+   * `PRICING_REQUEST_TIMEOUT_MS`).
    */
-  request(type: string, body: WireObject, expect: string): Promise<WireObject> {
+  request(
+    type: string,
+    body: WireObject,
+    expect: string,
+    timeoutMs?: number,
+  ): Promise<WireObject> {
     if (this.closed) {
       return Promise.reject(new WsTransportError("transport closed"));
     }
@@ -294,7 +316,7 @@ class WsConnection {
         if (this.waiters.delete(correlationId)) {
           reject(new WsTransportError(`request \`${type}\` timed out`));
         }
-      }, this.requestTimeoutMs);
+      }, timeoutMs ?? this.requestTimeoutMs);
       this.waiters.set(correlationId, { expect, resolve, reject, timer });
       this.send({ ...body, type, correlation_id: Number(correlationId) });
     });
@@ -646,6 +668,7 @@ export class WsTransport implements CelnetTransport {
         conventions: conventionsToWire(conventions),
       },
       "price_response",
+      PRICING_REQUEST_TIMEOUT_MS,
     );
     const greeks = greeksFromWire(asChild(reply, "greeks"));
     const resolvedStrike = numField(reply, "resolved_strike");
@@ -676,6 +699,7 @@ export class WsTransport implements CelnetTransport {
         conventions: conventionsToWire(conventions),
       },
       "quote",
+      PRICING_REQUEST_TIMEOUT_MS,
     );
     const quote = quoteFromWire(reply);
     // Remember the instrument this quote priced so a subsequent acceptQuote can
@@ -699,6 +723,7 @@ export class WsTransport implements CelnetTransport {
         conventions: conventionsToWire(conventions),
       },
       "multi_dealer_quote",
+      PRICING_REQUEST_TIMEOUT_MS,
     );
     const panel = multiDealerQuoteFromWire(reply);
     // Remember the instrument this panel priced so a subsequent acceptQuote (with
@@ -794,7 +819,8 @@ export class WsTransport implements CelnetTransport {
     // The book-shaped risk decomposition is computed by the server ONLY when the
     // request carries a `risk_buckets` block — otherwise `bucketed_risk` is null.
     if (riskBuckets) body["risk_buckets"] = riskBucketRequestToWire(riskBuckets);
-    const reply = await this.conn.request("scenario", body, "scenario_response");
+    // Scenario grids revalue through the same pricing engines — pricing-class deadline.
+    const reply = await this.conn.request("scenario", body, "scenario_response", PRICING_REQUEST_TIMEOUT_MS);
     return scenarioResultFromWire(reply);
   }
 

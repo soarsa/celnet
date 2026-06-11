@@ -449,25 +449,34 @@ export function TicketWorkspace(): React.ReactElement {
     setBusy(true);
     setFill(null);
     const inst = spec.toInstrument(inputs as never, effectiveCtx);
-    if (rfqMode === "PANEL") {
-      // Fan the RFQ across the edge's LP panel; the reply is the ranked lines.
-      const p = await app.transport.requestMultiDealerQuote(
-        inst,
-        app.conventions,
-        `tkt-${Date.now()}`,
-      );
-      setDealerPanel(p);
-      setQuote(null);
-    } else {
-      const q = await app.transport.requestQuote(
-        inst,
-        app.conventions,
-        `tkt-${Date.now()}`,
-      );
-      setQuote(q);
-      setDealerPanel(null);
+    try {
+      if (rfqMode === "PANEL") {
+        // Fan the RFQ across the edge's LP panel; the reply is the ranked lines.
+        const p = await app.transport.requestMultiDealerQuote(
+          inst,
+          app.conventions,
+          `tkt-${Date.now()}`,
+        );
+        setDealerPanel(p);
+        setQuote(null);
+      } else {
+        const q = await app.transport.requestQuote(
+          inst,
+          app.conventions,
+          `tkt-${Date.now()}`,
+        );
+        setQuote(q);
+        setDealerPanel(null);
+      }
+    } catch (err) {
+      // A pricing failure (server refusal, transport deadline, drop) is a real
+      // trading outcome: render it on the fill line and RE-ARM the ticket —
+      // never a silent swallow, never a "Pricing…" button stuck forever (the
+      // pre-fix behaviour: an unhandled rejection here leaked `busy=true`).
+      setFill(`Pricing failed — ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
   }, [app, spec, inputs, effectiveCtx, lsvUnavailableOffline, rfqMode, structureLawful]);
 
   const accept = useCallback(
