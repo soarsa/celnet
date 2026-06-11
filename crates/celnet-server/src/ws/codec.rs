@@ -2168,7 +2168,9 @@ mod tests {
         });
         let fx_instr = instrument_from_json(&fx_only).expect("decode");
         let fx_underlying = fx_instr.underlying.expect("an underlying is decoded");
-        let pair = fx_underlying.as_fx().expect("a pure-`pair` frame decodes to FX");
+        let pair = fx_underlying
+            .as_fx()
+            .expect("a pure-`pair` frame decodes to FX");
         assert_eq!(pair.base, "EUR");
         assert_eq!(pair.quote, "USD");
     }
