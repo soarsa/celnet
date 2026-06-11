@@ -33,6 +33,10 @@ Acklam refit w/ byte-identity re-freeze) → next window; tracked in WORLD-CLASS
   pushes lane branches to origin every 5 min. A crash/limit loses ≤1 unit's tail.
 - **Graph-first:** agents scope gates via `detect_changes`, find code via `search_graph` —
   no grep/file-dump exploration (token economy + speed).
+- **Model economy (operator, 2026-06-11):** workflow agents pick models by task profile —
+  math-judgment → fable (small bankable units only); mechanical/pattern/spec-following →
+  sonnet; adversarial verify → opus (cross-model diversity); trivial lookups → haiku.
+  Measured basis in auto-memory `model-selection-policy`.
 - **Session limits are expected:** on hitting one, bank → post §6 state → resume from
   workflow cache at reset. Never leave uncommitted work >1 unit.
 
