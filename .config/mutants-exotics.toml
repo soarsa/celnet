@@ -53,4 +53,23 @@
 profile = "mutants"
 
 exclude_re = [
+  # --- market_price_of_hedge_smile: division-guard subnormal boundary ---
+  # `rr_vanna.abs() > 1e-300` vs `>=` (and the `bf_volga` twin on line 194):
+  # the mutant differs from the original ONLY when the guarded quantity equals
+  # the single f64 value 1e-300 EXACTLY. `rr_vanna = call.vanna - put.vanna`
+  # (resp. `bf_volga = call.volga + put.volga`) is an f64 add/sub whose result
+  # is either 0.0 or at least one ulp of its larger operand, so a result of
+  # exactly 1e-300 (~2^-996.5) requires BOTH wing Greeks themselves to have
+  # magnitude < ~1e-292 — reached only after phi(d1) has underflowed
+  # (|d1| > ~37, strikes astronomically far from the forward), and even in
+  # that regime landing on that one bit pattern is a measure-zero
+  # float-equality boundary that cannot be constructed through the public API
+  # (the operands are internal Black-Scholes Greeks, not caller-supplied).
+  # Re-audited 2026-06-10: the prior wave's "timeout" on these two was
+  # build-contention noise; a clean re-run reports MISSED, i.e. the suite
+  # passes because the mutant is behaviourally identical on every reachable
+  # input. Same equivalence class as the vanilla gate's
+  # `solver.rs:108:35 > -> >=` subnormal-boundary exclusion.
+  "market_hedge_overlay\\.rs:189:41: replace > with >=",
+  "market_hedge_overlay\\.rs:194:41: replace > with >=",
 ]
