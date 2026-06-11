@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Celnet FX volatility surface — arbitrage-free smile construction and term-structure interpolation."
+description = "Celnet volatility surface — asset-class-neutral arbitrage-free smile construction (FX delta-pillar + strike-axis quote front-ends) and term-structure interpolation."
 publish = false
 
 [lints]
@@ -20,3 +20,10 @@ celnet-conventions.workspace = true
 [dev-dependencies]
 celnet-testkit.workspace = true
 proptest.workspace = true
+# The crypto vanilla leaf — used ONLY by tests as (1) the funding-carry assembler
+# exercised through the seam and (2) the published venue-convention pins
+# (the `deribit` identity constants). NOT a runtime dependency: leaves are siblings.
+celnet-crypto-vanilla.workspace = true
+# Independent libm access for the carry-seam byte-identity oracle (the test
+# recomputes S·e^{(r−funding)t} without the seam accessors or celnet-core wrappers).
+libm.workspace = true
