@@ -331,21 +331,87 @@ async fn asserted_principals_are_authorized_and_pruned_under_enforcement() {
 // 4. per-decision audit: allow AND deny each emit one structured record
 // ---------------------------------------------------------------------------
 
-/// A cloneable line sink the real JSON subscriber writes into, so the test
-/// reads back exactly what an operator's log pipeline would receive.
-#[derive(Clone)]
-struct CapturedLog(Arc<Mutex<Vec<u8>>>);
+// --- Deterministic capture through the *real* JSON pipeline ----------------
+//
+// `tracing` registers each callsite's `Interest` (and the process-global max
+// level) **once, globally**, the first time the callsite is evaluated. The
+// `AccessAudit::emit` callsite is exercised by four tests in this binary; the
+// three that drive decisions without capturing run under the default no-op
+// `NoSubscriber`, which would register the callsite as `Interest::never()` and
+// pin the global max level to `OFF`. Because that cache is global, a per-test
+// thread-local `set_default(info-subscriber)` does **not** re-enable the
+// callsite — `tracing::info!` is short-circuited before our subscriber is ever
+// consulted, so the capture races to 0 records (proven: 0-byte buffer on the
+// failing runs, `--test-threads=1` always green).
+//
+// Production never hits this: `init_json_subscriber` installs the real INFO
+// subscriber **globally** at boot, before any decision callsite is registered,
+// so the callsite is always enabled. We reproduce that property in-test by
+// installing ONE process-global INFO JSON subscriber for the whole binary,
+// built by the same `build_json_subscriber`, whose writer routes to a
+// per-thread sink. Its `EnvFilter` keeps interest `sometimes` and the global
+// max level permanently INFO, so the callsite is never poisoned regardless of
+// test order/parallelism; each capturing test plugs its own buffer into its
+// thread's sink and the decisions it drives on that thread land there.
 
-impl std::io::Write for CapturedLog {
+thread_local! {
+    /// The buffer (if any) the global subscriber routes this thread's events
+    /// into. Unset on the sibling decision tests' threads ⇒ their emits are
+    /// discarded, while still keeping the callsite globally enabled.
+    static THREAD_SINK: std::cell::RefCell<Option<Arc<Mutex<Vec<u8>>>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// A line writer that appends to the calling thread's currently-installed
+/// [`THREAD_SINK`] buffer, discarding when none is set. `build_json_subscriber`
+/// takes any `MakeWriter`; a `Fn() -> impl Write` closure is one, so the global
+/// subscriber is built from `|| ThreadRoutedSink` (no `tracing-subscriber`
+/// trait import needed in this dev target).
+struct ThreadRoutedSink;
+
+impl std::io::Write for ThreadRoutedSink {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0
-            .lock()
-            .expect("log buffer lock")
-            .extend_from_slice(buf);
+        THREAD_SINK.with(|cell| {
+            if let Some(sink) = cell.borrow().as_ref() {
+                sink.lock().expect("log buffer lock").extend_from_slice(buf);
+            }
+        });
         Ok(buf.len())
     }
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
+    }
+}
+
+/// Install the binary's one global INFO subscriber (idempotent), then route
+/// **this thread's** events into a fresh buffer, returned for assertion. The
+/// guard restores the previous thread sink (none) on drop, so threads reused by
+/// the test harness don't leak a buffer into later tests.
+fn capture_this_thread() -> (Arc<Mutex<Vec<u8>>>, ThreadSinkGuard) {
+    static INSTALL: std::sync::Once = std::sync::Once::new();
+    INSTALL.call_once(|| {
+        let subscriber = build_json_subscriber(
+            &LogConfig {
+                filter: Some("info".to_owned()),
+                ..LogConfig::default()
+            },
+            || ThreadRoutedSink,
+        );
+        tracing::subscriber::set_global_default(subscriber)
+            .expect("no global subscriber installed in this test binary");
+    });
+    let buf = Arc::new(Mutex::new(Vec::<u8>::new()));
+    THREAD_SINK.with(|cell| *cell.borrow_mut() = Some(Arc::clone(&buf)));
+    (buf, ThreadSinkGuard)
+}
+
+/// Clears the calling thread's sink on drop (RAII), keeping the global
+/// subscriber installed but isolating captures per test.
+struct ThreadSinkGuard;
+
+impl Drop for ThreadSinkGuard {
+    fn drop(&mut self) {
+        THREAD_SINK.with(|cell| *cell.borrow_mut() = None);
     }
 }
 
@@ -370,18 +436,12 @@ fn decision_records(buf: &Arc<Mutex<Vec<u8>>>) -> Vec<serde_json::Value> {
 /// assertions read what an operator would, not internal counters.
 #[tokio::test]
 async fn audit_records_emitted_for_allow_and_deny() {
-    let buf = Arc::new(Mutex::new(Vec::<u8>::new()));
-    let sink = CapturedLog(Arc::clone(&buf));
-    let subscriber = build_json_subscriber(
-        &LogConfig {
-            filter: Some("info".to_owned()),
-            ..LogConfig::default()
-        },
-        move || sink.clone(),
-    );
-    // Thread-scoped install: the current-thread test runtime executes the
-    // service futures on this thread, so every decision lands in `buf`.
-    let _guard = tracing::subscriber::set_default(subscriber);
+    // Capture this thread's events through the binary's one global INFO JSON
+    // subscriber (see `capture_this_thread`); the current-thread tokio runtime
+    // polls the service futures on this same thread, so every decision's
+    // `AccessAudit::emit` lands in `buf` — and the global subscriber keeps the
+    // callsite enabled regardless of the sibling tests' no-subscriber emits.
+    let (buf, _sink_guard) = capture_this_thread();
 
     let (edge, _book_a) = ready_edge();
 
