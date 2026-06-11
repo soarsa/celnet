@@ -99,7 +99,7 @@ fn pivot_engine_matches_code_disjoint_golden_oracle() {
                     i.r_dom,
                     i.r_for,
                     300_000,
-                    0xA11CE_1707,
+                    0x000A_11CE_1707,
                 );
                 let band = 4.0 * (engine.std_error + reference.std_error) + 1e-9;
                 assert!(
@@ -271,7 +271,7 @@ fn higher_gearing_raises_bank_pv_on_both_routes() {
             i.r_dom,
             i.r_for,
             200_000,
-            0xC0FF_EE,
+            0x00C0_FFEE,
         )
     };
     let o1 = oracle_at(1.0);
