@@ -23,7 +23,7 @@ use celnet_client::{
     Client, Conventions, InstrumentSpec, MarketContext, Quantity, Side, StrikeSpec,
 };
 use celnet_engine::testing::make_state;
-use celnet_server::{Clock, CoreLink, Edge, LpPanelConfig, SpreadModel};
+use celnet_server::{AccessMode, Clock, CoreLink, Edge, LpPanelConfig, SpreadModel};
 use celnet_types::{CcyPair, OptionType, Tenor};
 
 /// The hard wall-clock ceiling for any single client integration test. A
@@ -73,9 +73,25 @@ pub async fn start_ready_edge(clock: Clock) -> (Edge, SocketAddr) {
     let edge = Edge::start(grpc, Arc::clone(&link), SpreadModel::default(), clock)
         .await
         .expect("edge binds on an ephemeral port");
-    edge.gate().mark_ready();
+    mark_dev_ready(&edge);
     let addr = edge.grpc_addr();
     (edge, addr)
+}
+
+/// Put a freshly-bound in-process test edge into the documented **Permissive**
+/// dev-mode and mark it ready, at the sanctioned seam — after the listener binds,
+/// before it is marked ready (mirrors `examples/demo_edge.rs`).
+///
+/// In-process tests have no auth gateway binding a wire principal, so an absent
+/// principal is granted-all here — the posture the risk-cube workflow tests assert
+/// against. Deny-by-default (`AccessMode::Enforce`, the production boot default) is
+/// enforced independently and tested server-side
+/// (`absent_principal_denied_on_every_entitlement_gated_service` + the
+/// `services::access` boundary tests). An *asserted* scoped principal is still
+/// honored here, so the SDK entitlement-pruning workflow exercises real pruning.
+fn mark_dev_ready(edge: &Edge) {
+    edge.store().set_access_mode(AccessMode::Permissive);
+    edge.gate().mark_ready();
 }
 
 /// Start a ready edge with an explicit clock AND a deterministic synthetic
@@ -98,7 +114,7 @@ pub async fn start_panel_edge_and_client(clock: Clock, synthetic_lps: u32) -> (E
     )
     .await
     .expect("edge binds on an ephemeral port");
-    edge.gate().mark_ready();
+    mark_dev_ready(&edge);
     let addr = edge.grpc_addr();
     let client = tokio::time::timeout(STEP_DEADLINE, Client::connect(format!("http://{addr}")))
         .await
