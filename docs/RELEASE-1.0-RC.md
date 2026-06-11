@@ -37,15 +37,15 @@ bench-gated latency budgets.
 
 | # | Item (backlog dedup-key) | Why blocking | Owner | Status |
 |---|---|---|---|---|
-| R1 | THIS landing: T2 green → push (arms 30/31 + P0 touch + fan-out batch + SDLC + batch C) | the RC's content | session-B | T2 mid-run |
-| R2 | `pivot-wire-surfacing` | an engine a counterparty cannot reach is not a capability; the last unreachable engine | session-B (proto window) | batch D |
-| R3 | `cross-asset-client-priced-vectors-ws-e2e` | the cross-asset DONE claims must be e2e-true before commercial onboarding | session-B | batch D |
-| R4 | `entitlements-trust-boundary-audit` | client-asserted principal + grant-all-on-absent is not commercially shippable | session-B | batch D |
-| R5 | GUI WS family-conformance suite RUNS green at T2 (authored, 135 specs) | proves every GUI-bookable family against the live edge | session-B | rides R1's T2 |
-| R6 | `exotics/vanna-volga-overlay-magnitude-unvalidated` | an unvalidated smile overlay on quoted exotics is a pricing-risk hole | session-B | batch D |
+| R1 | THIS landing: T2 green → push (arms 30/31 + P0 touch + fan-out batch + SDLC + batch C) | the RC's content | session-B | ✅ DONE (`fd0a5bf` t2 12/12) |
+| R2 | `pivot-wire-surfacing` | an engine a counterparty cannot reach is not a capability; the last unreachable engine | session-B (proto window) | ✅ DONE (`3005e59`; gate `99f9d4f` T1 11/11 + T2 12/12) |
+| R3 | `cross-asset-client-priced-vectors-ws-e2e` | the cross-asset DONE claims must be e2e-true before commercial onboarding | session-B | ✅ DONE (`3005e59`; equity/commodity/crypto live through gui-e2e 165/165 + excel-e2e) |
+| R4 | `entitlements-trust-boundary-audit` | client-asserted principal + grant-all-on-absent is not commercially shippable | session-B | ✅ DONE (`3005e59`; deny-by-default `Enforce` + per-decision audit; both P1s fixed at root) |
+| R5 | GUI WS family-conformance suite RUNS green at T2 (authored, 135 specs) | proves every GUI-bookable family against the live edge | session-B | ✅ DONE (`3005e59`; gui-e2e 165/165 axe-clean) |
+| R6 | `exotics/vanna-volga-overlay-magnitude-unvalidated` | an unvalidated smile overlay on quoted exotics is a pricing-risk hole | session-B | ✅ DONE (`3005e59`; VV magnitude oracle) |
 | R7 | W6-ANALYTICS mutation floor (exotics/surface/risk-cube/xva/MC) | the pricing core's test depth must match the infra floor | session-A (banked qmc; spend-paused) | resumes on capacity |
 | R8 | `surface/crypto-leaf` + `asset-class-neutral-core` | crypto without a quotable surface is half-shipped | session-A (spec banked) | resumes on capacity |
-| R9 | Convergence Round 3 verdict carries **zero P0/P1** | the release-readiness oracle | session-B | after R1–R6 |
+| R9 | Convergence Round 4 verdict carries **zero P0/P1** (R3's P1s now fixed-not-frozen) | the release-readiness oracle | session-B | in flight (post-`3005e59`) |
 | R10 | Final joint T2 + ledger/capabilities-doc sync + the release tag note | the cut itself | both | last |
 
 **Explicitly NOT blocking (post-RC roadmap, tracked OPEN):** QMC pathwise wiring
