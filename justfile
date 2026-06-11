@@ -234,15 +234,19 @@ mutants-gate-vanilla:
 # belt-and-braces wedge guard (cargo-mutants also self-times-out per mutant).
 
 # Surface calibration crate (VV/SABR/SVI/SSVI/eSSVI + arbitrage + strangle).
+# Plain-cargo runner (nextest-kill-proof, the W6 §5 protocol); the proptest
+# suite in strangle.rs must fail fast under a killing mutant, not shrink.
 mutants-gate-surface:
-    timeout 3600 {{_cargo}} mutants -p celnet-surface --config .config/mutants-surface.toml
+    PROPTEST_MAX_SHRINK_ITERS=0 timeout 7200 {{_cargo}} mutants -p celnet-surface --test-tool=cargo --jobs 3 \
+        --minimum-test-timeout=120 --config .config/mutants-surface.toml
 
 # Surface arbitrage module ONLY — the locally-proven-green slice (PC-MUT-WIDEN).
 # Drives the gate over src/arbitrage.rs (no-arbitrage report numerics) to zero
 # survivors, exercising the enforceable mechanism end-to-end quickly. The full
 # crate-wide gate (mutants-gate-surface) is CI-run.
 mutants-gate-surface-arbitrage:
-    timeout 600 {{_cargo}} mutants -p celnet-surface --file '**/arbitrage.rs' --config .config/mutants-surface.toml
+    PROPTEST_MAX_SHRINK_ITERS=0 timeout 600 {{_cargo}} mutants -p celnet-surface --test-tool=cargo --jobs 3 \
+        --minimum-test-timeout=120 --file '**/arbitrage.rs' --config .config/mutants-surface.toml
 
 # Exotics pricing crate (digitals/barriers/Asian/TARF/... + PDE/MC/particle/LSV).
 mutants-gate-exotics:
