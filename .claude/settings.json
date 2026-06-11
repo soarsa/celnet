@@ -51,7 +51,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "nohup \"$HOME/.local/bin/codebase-memory-mcp\" cli index_repository '{\"repo_path\":\"/Users/adrian/code/celeroption\",\"mode\":\"fast\"}' >/dev/null 2>&1 & exit 0"
+            "command": "nohup bash -c '{ echo \"[$(date +%F\\ %T)] stop-hook index\"; \"$HOME/.local/bin/codebase-memory-mcp\" cli index_repository '\"'\"'{\"repo_path\":\"/Users/adrian/code/celeroption\",\"mode\":\"fast\"}'\"'\"' 2>&1 | tail -1; } >> /Users/adrian/code/celeroption/.codebase-memory/index.log 2>&1' >/dev/null 2>&1 & exit 0"
           }
         ]
       }
