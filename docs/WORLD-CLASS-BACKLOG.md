@@ -13,6 +13,24 @@ Status legend: OPEN / IN-PROGRESS / DONE / ENV (deploy-bound, not a gap). Each i
 `{wave, dedup-key, title, oracle, client-parity, effort, priority, status}`.
 
 ## Convergence ledger
+- **Round 5 — DRY (2026-06-11, session-B; 7-lens + adversarial synthesis, workflow-driven over the FULL RC cut `a0817d6` = R1–R8):**
+  the release-decision round. **`genuineNew: []`, `rejected: []` — ZERO genuinely-new findings.** Four lenses
+  (sota-scope / numerical-correctness / performance / api-ux) returned EMPTY — math core, priced-arm
+  completeness, hot-path budgets, API ergonomics all clean at the cut. The Round-4 client-entitlement P1 did
+  NOT re-surface (clients assert grant-all; verified vs an Enforce edge). **No new P0/P1 in the freshly-landed
+  R7/R8 surface-leaf / mutation code; nothing ships a wrong price.** The 4 non-empty findings all ABSORBED by
+  existing tracked items (by semantics): (1) **R8 crypto strike-axis surface leaf is built + 256-case
+  parity-gated but NOT wired to proto/server/clients** (no `quote_basis`/`StrikeQuoteSet`; gui CRYPTO:[]) →
+  the OPEN `surface/crypto-leaf` item's unbuilt *surfacing* half; **NOT a defect** (crypto vanilla pricing
+  works via the FX-style surface) — a capability gap that RC cut-criterion #2 explicitly routes to the
+  operator ("R7+R8 DONE or re-scoped"). (2) cross-asset leaf crates lack a mutation floor → the IN-PROGRESS
+  `rigor/mutation-fuzz-coverage-floor` broadened (P3; leaves are oracle-verified TODAY). (3)+(4)
+  ARCHITECTURE/API-CLIENTS/RELEASE-RC/CONVENTIONS stale FX-only counts (34-vs-39 crates, 18/23-vs-24 arms,
+  pair universe missing XPT/XPD) → the same guardrail-#10 stale-docs class already filed thrice
+  (capabilities-fx-only-stale + interfaces-registry-lags-contract + client-parity-matrix-stale); P2 doc
+  accuracy, no wrong price. **R9 cut criterion (convergence carries zero NEW P0/P1) = SATISFIED.** Dry-counter
+  1/2 (a 2nd consecutive dry round = full-program convergence; NOT required for the RC cut, whose bar is
+  zero-P0/P1). Gate: `GATE: a0817d6 T2 16/16` (web typecheck+unit + e2e under `enforce`).
 - **Round 4 — NOT DRY (2026-06-11, session-B; 7-lens + adversarial synthesis, workflow-driven over the RC batch-D landing):**
   The two Round-3 P1 blockers did NOT re-surface (correctly fixed-at-root, not re-counted); sota-scope /
   numerical-correctness / completeness lenses all returned EMPTY (the math core + product completeness are
