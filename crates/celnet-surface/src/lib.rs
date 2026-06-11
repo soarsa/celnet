@@ -82,6 +82,7 @@ pub mod strangle;
 pub mod surface;
 pub mod termstructure;
 
+mod fitmath;
 mod mathx;
 
 pub use arbitrage::{ArbitrageReport, check_slice, implied_density};
