@@ -23,3 +23,6 @@ celnet-qmc.workspace = true
 # libm the rest of the stack pins (celnet-types itself uses it directly). Not a
 # celnet peer crate, so the leaf dependency graph stays {vanilla, types, qmc}.
 libm.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
