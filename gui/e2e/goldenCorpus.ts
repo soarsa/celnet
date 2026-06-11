@@ -129,6 +129,7 @@ export const WS_PRICED_FAMILIES = [
   "cliquet",
   "quanto",
   "tarf",
+  "pivot",
   "accumulator",
   "lookback",
   "window_barrier",
@@ -142,17 +143,28 @@ export const WS_PRICED_FAMILIES = [
 ] as const;
 
 /**
- * The corpus families this gate does NOT price over the FX WS path, each with a
+ * The corpus families this gate does NOT price over the WS path, each with a
  * concrete reason (never a silent gap — the conformance spec asserts this set):
- *  - `equity_option` / `commodity_option` / `crypto_option` — their frozen vectors
- *    pin the GENERALIZED cost-of-carry (dividend / convenience / funding), which
- *    the GUI's FX-two-rate `MarketContext` (`{spot, vol, rDom, rFor}`) cannot
- *    transport. The GUI DOES book these faithfully onto the wire (the
- *    `crossAssetSpec` over the `Underlying` oneof + `settlement_style`, gated by
- *    `gui/test/crossAssetProducts.test.ts`, and quoted live in the browser half of
- *    the conformance spec); their NUMERICAL conformance is the server-side leaf
- *    gate (the cross-asset crates vs their independent generalized-BSM / Black-76
- *    oracles). Identical boundary to `excel/e2e/corpus.ts` and the GUI offline lane.
+ *  - `equity_option` / `commodity_option` / `crypto_option` — the gap is NOT the
+ *    market: their vectors' `{spot, vol, rDom, rFor}` IS the FX two-rate
+ *    projection (`rDom` = discount rate, `rFor` = the carry yield — dividend+repo
+ *    / convenience / funding) the WS `MarketContext` transports and the server's
+ *    carry guard reads as `b = rDom − rFor`, proven end-to-end by
+ *    `crates/celnet-server/tests/cross_asset_ws.rs`. The REAL gap is the
+ *    instrument seam: the GUI's production `instrumentToWire` always emits the
+ *    legacy FX `pair` projection BESIDE `underlying` (keeping the FX-keyed
+ *    surfaces total), and the server's WS decoder gives `pair` precedence
+ *    (`instrument_underlying_from_json`) — a GUI-emitted cross-asset frame
+ *    routes down the FX path: numerically invisible for the linear payoffs (a
+ *    green row would prove the FX path, not the cross-asset decode) and WRONG
+ *    for the INVERSE_COIN crypto vectors (`settlement_style` ignored — the
+ *    LINEAR USD value, not the coin-margined `1/S_T` oracle; the precedence is
+ *    pinned server-side and fails loudly when the seam flips). The GUI DOES book
+ *    these faithfully onto the wire (the `crossAssetSpec` over the `Underlying`
+ *    oneof + `settlement_style`, gated by `gui/test/crossAssetProducts.test.ts`,
+ *    and quoted live in the browser half of the conformance spec); they move
+ *    into `WS_PRICED_FAMILIES` the moment the codec seam prefers `underlying`.
+ *    Identical boundary to `excel/e2e/corpus.ts`.
  */
 export const FAMILIES_NOT_EXPOSED_ON_FX_WS = [
   "equity_option",
@@ -519,6 +531,28 @@ function buildTarf(v: GoldenVector): Instrument {
   });
 }
 
+function buildPivot(v: GoldenVector): Instrument {
+  const redemption = str(v.terms, "redemption");
+  if (redemption !== "FULL_GAIN" && redemption !== "CAPPED_GAIN") {
+    throw new Error(`pivot redemption ${redemption}`);
+  }
+  const t = num(v.terms, "expiry_years");
+  return instrumentOf(v, {
+    kind: "pivot",
+    pivot: {
+      optionType: optionType(v.terms),
+      strike: num(v.terms, "strike"),
+      pivot: num(v.terms, "pivot"),
+      target: num(v.terms, "target"),
+      leverage: num(v.terms, "leverage"),
+      redemption,
+      schedule: equalFixingSchedule(num(v.terms, "fixings"), t, num(v.terms, "fixing_notional")),
+      mcPairs: num(v.terms, "mc_pairs"),
+      mcSeed: BigInt(num(v.terms, "mc_seed")),
+    },
+  });
+}
+
 function buildAccumulator(v: GoldenVector): Instrument {
   const monitoring = str(v.terms, "monitoring");
   if (monitoring !== "DISCRETE" && monitoring !== "CONTINUOUS") {
@@ -747,6 +781,7 @@ const BUILDERS: Record<(typeof WS_PRICED_FAMILIES)[number], (v: GoldenVector) =>
   cliquet: buildCliquet,
   quanto: buildQuanto,
   tarf: buildTarf,
+  pivot: buildPivot,
   accumulator: buildAccumulator,
   lookback: buildLookback,
   window_barrier: buildWindowBarrier,

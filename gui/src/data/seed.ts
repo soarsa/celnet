@@ -513,6 +513,40 @@ function tarfInstrument(
   };
 }
 
+/**
+ * The inputs for a pivot Target-Redemption Accumulator (`product.pivot`, arm 32):
+ * the TARF terms plus the distinct `pivot` level at which the geared adverse leg
+ * engages (`pivot === strike` is the exact plain-TARF slice).
+ */
+export interface PivotTerms {
+  optionType: OptionType;
+  strike: number;
+  pivot: number;
+  target: number;
+  leverage: number;
+  redemption: TarfRedemption;
+  schedule: FixingSchedule;
+  mcPairs: number;
+  mcSeed: bigint;
+}
+
+/** A pivot-TRA instrument (`product.pivot`). */
+function pivotInstrument(
+  pair: CcyPair,
+  tenorYears: number,
+  notionalMm: number,
+  terms: PivotTerms,
+): Instrument {
+  return {
+    pair,
+    tenor: tenorYearsToTenor(tenorYears),
+    expiryYears: tenorYears,
+    quantity: { notional: notionalMm * 1e6, baseCcy: true },
+    side: "TWO_WAY",
+    product: { kind: "pivot", pivot: { ...terms, schedule: { ...terms.schedule } } },
+  };
+}
+
 /** The inputs for an accumulator (`product.accumulator`). */
 export interface AccumulatorTerms {
   pivot: number;
@@ -1078,6 +1112,7 @@ export {
   cliquetInstrument,
   quantoInstrument,
   tarfInstrument,
+  pivotInstrument,
   accumulatorInstrument,
   lookbackInstrument,
   windowBarrierInstrument,

@@ -1258,6 +1258,81 @@ impl TarfTerms {
     }
 }
 
+/// The terms of a pivot Target-Redemption Accumulator: the TARF economics plus
+/// the distinct `pivot` level at which the geared adverse leg engages (the leg
+/// is selected by the pivot, valued by the strike; `pivot == strike` is the
+/// exact plain-TARF slice). Always priced by Monte-Carlo, surfacing a standard
+/// error on [`PricedLine::price_std_error`]. Built via [`PivotTerms::new`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PivotTerms {
+    /// The favourable-side direction (PUT = client gains when `S < strike`).
+    pub option: OptionType,
+    /// The target strike `K` intrinsic is measured against (and the reference
+    /// for the cumulative gain accruing toward `target`).
+    pub strike: f64,
+    /// The pivot `P`: the kink at which the leg switches from the un-geared
+    /// favourable leg to the geared adverse leg. `P == K` ⇒ plain TARF.
+    pub pivot: f64,
+    /// The cumulative gain target; accumulated client gain at/above it redeems.
+    pub target: f64,
+    /// The gearing/leverage on the adverse leg (the far side of the pivot, `≥ 0`).
+    pub leverage: f64,
+    /// The gap-risk settlement convention of the redeeming fixing.
+    pub redemption: TarfRedemption,
+    /// The number of equally-spaced fixings over `[0, expiry]` (`≥ 1`).
+    pub fixings: u32,
+    /// The per-fixing notional.
+    pub fixing_notional: f64,
+    /// Antithetic Monte-Carlo path pairs; `0` ⇒ server default.
+    pub mc_pairs: u32,
+    /// Counter-RNG seed for the Monte-Carlo estimator (bit-reproducible).
+    pub mc_seed: u64,
+}
+
+impl PivotTerms {
+    /// A pivot TRA with the given economics, an equally-spaced `fixings`-point
+    /// schedule of unit per-fixing notional, and a server-default MC budget.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)] // mirrors the product's full term sheet
+    pub fn new(
+        option: OptionType,
+        strike: f64,
+        pivot: f64,
+        target: f64,
+        leverage: f64,
+        redemption: TarfRedemption,
+        fixings: u32,
+    ) -> Self {
+        Self {
+            option,
+            strike,
+            pivot,
+            target,
+            leverage,
+            redemption,
+            fixings,
+            fixing_notional: 1.0,
+            mc_pairs: 0,
+            mc_seed: 0,
+        }
+    }
+
+    /// Set the per-fixing notional.
+    #[must_use]
+    pub fn fixing_notional(mut self, notional: f64) -> Self {
+        self.fixing_notional = notional;
+        self
+    }
+
+    /// Configure the Monte-Carlo path pairs and seed.
+    #[must_use]
+    pub fn monte_carlo(mut self, pairs: u32, seed: u64) -> Self {
+        self.mc_pairs = pairs;
+        self.mc_seed = seed;
+        self
+    }
+}
+
 /// The terms of an accumulator: the pivot strike, the up-and-out knock-out
 /// barrier, the below-pivot gearing, the monitoring convention, the fixing
 /// schedule, and the Monte-Carlo knobs (an accumulator is always priced by MC,
@@ -1789,6 +1864,32 @@ pub enum Product {
         /// Counter-RNG seed for the Monte-Carlo estimator.
         mc_seed: u64,
     },
+    /// A pivot Target-Redemption Accumulator (the TARF mechanic with a distinct
+    /// pivot kink; `pivot == strike` is the exact TARF slice). Always priced by
+    /// Monte-Carlo; the std-error is surfaced on
+    /// [`PricedLine::price_std_error`].
+    Pivot {
+        /// The favourable-side direction.
+        option: OptionType,
+        /// The target strike `K` intrinsic is measured against.
+        strike: f64,
+        /// The pivot `P` at which the geared adverse leg engages.
+        pivot: f64,
+        /// The cumulative gain target.
+        target: f64,
+        /// The gearing on the adverse leg (the far side of the pivot).
+        leverage: f64,
+        /// The gap-risk settlement convention of the redeeming fixing.
+        redemption: TarfRedemption,
+        /// The number of equally-spaced fixings over `[0, expiry]`.
+        fixings: u32,
+        /// The per-fixing notional.
+        fixing_notional: f64,
+        /// Antithetic Monte-Carlo path pairs (`0` ⇒ server default).
+        mc_pairs: u32,
+        /// Counter-RNG seed for the Monte-Carlo estimator.
+        mc_seed: u64,
+    },
     /// An accumulator (periodic pivot accumulation with an up-and-out barrier).
     /// Always priced by Monte-Carlo; the std-error is surfaced on
     /// [`PricedLine::price_std_error`].
@@ -2175,6 +2276,34 @@ impl Product {
             } => instrument::Product::Tarf(celnet_proto::Tarf {
                 option_type: celnet_proto::OptionType::from(*option) as i32,
                 strike: *strike,
+                target: *target,
+                leverage: *leverage,
+                redemption: match redemption {
+                    TarfRedemption::FullGain => celnet_proto::TarfRedemption::FullGain,
+                    TarfRedemption::CappedGain => celnet_proto::TarfRedemption::CappedGain,
+                } as i32,
+                schedule: Some(celnet_proto::FixingSchedule {
+                    fixing_years: equal_fixing_years(*fixings),
+                    fixing_notional: *fixing_notional,
+                }),
+                mc_pairs: *mc_pairs,
+                mc_seed: *mc_seed,
+            }),
+            Product::Pivot {
+                option,
+                strike,
+                pivot,
+                target,
+                leverage,
+                redemption,
+                fixings,
+                fixing_notional,
+                mc_pairs,
+                mc_seed,
+            } => instrument::Product::Pivot(celnet_proto::Pivot {
+                option_type: celnet_proto::OptionType::from(*option) as i32,
+                strike: *strike,
+                pivot: *pivot,
                 target: *target,
                 leverage: *leverage,
                 redemption: match redemption {
@@ -3115,6 +3244,43 @@ impl InstrumentSpec {
             product: Product::Tarf {
                 option: terms.option,
                 strike: terms.strike,
+                target: terms.target,
+                leverage: terms.leverage,
+                redemption: terms.redemption,
+                fixings: terms.fixings,
+                fixing_notional: terms.fixing_notional,
+                mc_pairs: terms.mc_pairs,
+                mc_seed: terms.mc_seed,
+            },
+        }
+    }
+
+    /// A pivot Target-Redemption Accumulator on the given pair / tenor / expiry
+    /// / notional, carrying a [`PivotTerms`] spec (the TARF mechanic with a
+    /// distinct pivot kink; `pivot == strike` is the exact TARF slice). Always
+    /// priced by Monte-Carlo: the standard error is surfaced on
+    /// [`PricedLine::price_std_error`] / [`Quote::price_std_error`].
+    #[must_use]
+    pub fn pivot(
+        pair: CcyPair,
+        tenor: Tenor,
+        expiry_years: f64,
+        quantity: Quantity,
+        side: Side,
+        terms: PivotTerms,
+    ) -> Self {
+        Self {
+            underlying: Underlying::Fx(pair),
+            tenor: Some(tenor),
+            expiry_years,
+            quantity,
+            side,
+            settlement_style: SettlementStyle::Linear,
+            pricing_model: PricingModel::Default,
+            product: Product::Pivot {
+                option: terms.option,
+                strike: terms.strike,
+                pivot: terms.pivot,
                 target: terms.target,
                 leverage: terms.leverage,
                 redemption: terms.redemption,

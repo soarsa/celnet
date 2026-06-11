@@ -47,6 +47,7 @@ import type {
   Lookback,
   MultiDealerQuote,
   PerpetualOption,
+  Pivot,
   SingleBarrier,
   Touch,
   Vanilla,
@@ -472,8 +473,8 @@ export function instrumentToWire(i: Instrument): WireObject {
   // asian_option=15, forward_start=16, cliquet=17, quanto=18, tarf=19,
   // accumulator=20, lookback=21, window_barrier=23, american=24, basket=25,
   // fx_forward=26, fx_swap=27, ndf=28, perpetual_option=30,
-  // listed_future_option=31. The WS JSON mirror keys by name, exactly like
-  // `crates/celnet-server/src/ws/codec.rs` decodes.
+  // listed_future_option=31, pivot=32. The WS JSON mirror keys by name, exactly
+  // like `crates/celnet-server/src/ws/codec.rs` decodes.
   switch (i.product.kind) {
     case "vanilla":
       base["vanilla"] = vanillaToWire(i.product.vanilla);
@@ -534,6 +535,9 @@ export function instrumentToWire(i: Instrument): WireObject {
       break;
     case "tarf":
       base["tarf"] = tarfToWire(i.product.tarf);
+      break;
+    case "pivot":
+      base["pivot"] = pivotToWire(i.product.pivot);
       break;
     case "accumulator":
       base["accumulator"] = accumulatorToWire(i.product.accumulator);
@@ -699,6 +703,24 @@ function tarfToWire(t: Tarf): WireObject {
     schedule: fixingScheduleToWire(t.schedule),
     mc_pairs: t.mcPairs,
     mc_seed: Number(t.mcSeed),
+  };
+}
+
+/**
+ * Encode a pivot-TRA body (proto field 32) — the TARF shape plus the distinct
+ * `pivot` level; see `tarfToWire` for the schedule / 64-bit conventions.
+ */
+function pivotToWire(p: Pivot): WireObject {
+  return {
+    option_type: e.optionType.toWire(p.optionType),
+    strike: p.strike,
+    pivot: p.pivot,
+    target: p.target,
+    leverage: p.leverage,
+    redemption: e.tarfRedemption.toWire(p.redemption),
+    schedule: fixingScheduleToWire(p.schedule),
+    mc_pairs: p.mcPairs,
+    mc_seed: Number(p.mcSeed),
   };
 }
 

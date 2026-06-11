@@ -117,7 +117,7 @@ function toCfError(err: unknown): CustomFunctions.Error {
  * given positionally or as terms (not both); notional defaults to 1.
  * @customfunction INSTRUMENT
  * @param underlier Underlier: FX EURUSD, metal XAUUSD, equity AAPL@XNAS:USD, commodity BRENT@:USD, crypto BTC/USD (optionally :inverse / :linear).
- * @param product Product family: VANILLA, STRATEGY (or RISK_REVERSAL / STRADDLE / STRANGLE / SEAGULL), BARRIER, WINDOWBARRIER, DIGITAL, TOUCH, VARSWAP, VOLSWAP, ASIAN, FORWARDSTART, CLIQUET, QUANTO, TARF, ACCUMULATOR, LOOKBACK, AMERICAN, BASKET, FORWARD, SWAP, NDF, PERPETUAL, FUTUREOPTION.
+ * @param product Product family: VANILLA, STRATEGY (or RISK_REVERSAL / STRADDLE / STRANGLE / SEAGULL), BARRIER, WINDOWBARRIER, DIGITAL, TOUCH, VARSWAP, VOLSWAP, ASIAN, FORWARDSTART, CLIQUET, QUANTO, TARF, PIVOT, ACCUMULATOR, LOOKBACK, AMERICAN, BASKET, FORWARD, SWAP, NDF, PERPETUAL, FUTUREOPTION.
  * @param terms The 2-column key/value terms range (keys mirror the family's parameters).
  * @param tenor Optional tenor, e.g. 1Y (or supply a ("tenor", …) term).
  * @param notional Optional notional in the base/asset leg (or a ("notional", …) term; default 1).
@@ -203,6 +203,8 @@ function stdErrorFor(instrument: Instrument, quote: Quote): number | undefined {
     case "doubleBarrier":
     case "windowBarrier":
     case "tarf":
+    // The pivot TRA (arm 32) is always Monte-Carlo, exactly like its TARF slice.
+    case "pivot":
     case "accumulator":
     case "basket":
     case "fxForward":

@@ -51,6 +51,7 @@ import type {
   MetalPair,
   MonitoringStyle,
   OptionType,
+  Pivot,
   PricingModel,
   Product,
   QuantoPayoff,
@@ -2042,6 +2043,75 @@ export function shapeTarf(args: TarfArgs): Instrument {
   };
 }
 
+/** The fully-parsed inputs the PIVOT family (CELNET.INSTRUMENT spec) shapes into a request. */
+export interface PivotArgs {
+  readonly pair: string | CcyPair;
+  readonly tenor: string;
+  readonly callPut: string;
+  readonly strike: string | number;
+  readonly pivot: number;
+  readonly target: number;
+  readonly leverage: number;
+  readonly fixings: number;
+  readonly notional: number;
+  readonly redemption?: string | undefined;
+  readonly fixingNotional?: number | undefined;
+  readonly mcPairs?: number | undefined;
+  readonly mcSeed?: number | undefined;
+}
+
+/**
+ * Shape a pivot Target-Redemption Accumulator from the cell arguments — the TARF
+ * shape plus the distinct `pivot` level at which the geared adverse leg engages
+ * (`pivot === strike` is the exact plain-TARF slice). The strike must be an
+ * absolute level; `pivot > 0` is the kink; `target > 0` is the cumulative gain
+ * that redeems; `leverage ≥ 0` gears the adverse leg; `fixings ≥ 1` is the
+ * (equally-spaced) fixing count. Always Monte-Carlo priced — the premium carries
+ * a standard error, surfaced honestly in the spill. `side` is TWO_WAY.
+ */
+export function shapePivot(args: PivotArgs): Instrument {
+  const { pair, tenor, expiryYears } = shapeSwapBase(args);
+  const strike = parseStrikeOrDelta(args.strike);
+  if (strike.kind !== "strike") {
+    throw new ShapingError(
+      `PIVOT strike must be an absolute level (e.g. 1.10), not a delta \`${args.strike}\``,
+    );
+  }
+  if (!Number.isFinite(args.pivot) || args.pivot <= 0) {
+    throw new ShapingError(`PIVOT pivot \`${args.pivot}\` must be a positive level`);
+  }
+  if (!Number.isFinite(args.target) || args.target <= 0) {
+    throw new ShapingError(`PIVOT target \`${args.target}\` must be a positive cumulative gain`);
+  }
+  if (!Number.isFinite(args.leverage) || args.leverage < 0) {
+    throw new ShapingError(`PIVOT leverage \`${args.leverage}\` must be ≥ 0`);
+  }
+  const fixings = shapeFixings(args.fixings, "PIVOT fixings");
+  const schedule: FixingSchedule = {
+    fixingYears: equalFixingYears(fixings),
+    fixingNotional: shapeFixingNotional(args.fixingNotional),
+  };
+  const pivot: Pivot = {
+    optionType: parseOptionType(args.callPut),
+    strike: strike.strike,
+    pivot: args.pivot,
+    target: args.target,
+    leverage: args.leverage,
+    redemption: parseTarfRedemption(args.redemption),
+    schedule,
+    mcPairs: shapeMcPairs(args.mcPairs),
+    mcSeed: shapeMcSeed(args.mcSeed),
+  };
+  return {
+    pair,
+    tenor,
+    expiryYears,
+    quantity: { notional: args.notional, baseCcy: true },
+    side: "TWO_WAY" as Side,
+    product: { kind: "pivot", pivot },
+  };
+}
+
 /** The fully-parsed inputs the ACCUMULATOR family (CELNET.INSTRUMENT spec) shapes into a request. */
 export interface AccumulatorArgs {
   readonly pair: string | CcyPair;
@@ -3005,18 +3075,19 @@ export function formatVolSwapSpill(r: VolSwapResult): SpillMatrix {
  * (the server's `greeks.price`), the OPTIONAL Monte-Carlo standard error, the 13
  * risk Greeks, and the convention footer. This is the ONE shared spill geometry
  * for every product whose headline is a premium (barrier, window barrier, digital,
- * touch, Asian, forward-start, cliquet, quanto, TARF, accumulator, lookback,
- * American, basket, forward/swap/NDF, and a vanilla priced via an instrument
- * token). The swaps (variance/volatility) keep their fair-strike spills.
+ * touch, Asian, forward-start, cliquet, quanto, TARF, pivot TRA, accumulator,
+ * lookback, American, basket, forward/swap/NDF, and a vanilla priced via an
+ * instrument token). The swaps (variance/volatility) keep their fair-strike spills.
  */
 export interface PremiumResult {
   /** The discounted premium (the server's `greeks.price`). */
   readonly premium: number;
   /**
    * The Monte-Carlo standard error of the premium (the server's
-   * `price_std_error`), present ONLY for an MC-priced request (TARF / accumulator
-   * / basket always; clamped cliquet, DISCRETE lookback, LSM American, MC window
-   * barrier, LSV-MC barrier when stamped); absent/`undefined` for every exact
+   * `price_std_error`), present ONLY for an MC-priced request (TARF / pivot TRA
+   * / accumulator / basket always; clamped cliquet, DISCRETE lookback, LSM
+   * American, MC window barrier, LSV-MC barrier when stamped); absent/`undefined`
+   * for every exact
    * closed-form / PDE / FD price. Surfaced honestly so an MC premium is never
    * mistaken for closed-form precision — and vice-versa.
    */
@@ -3488,6 +3559,21 @@ function canonicalProduct(p: Product): unknown {
         mcp: p.tarf.mcPairs,
         // The MC seed is a bigint; stringify so the coalescing key is JSON-serialisable.
         mcs: p.tarf.mcSeed.toString(),
+      };
+    case "pivot":
+      return {
+        k: "pvt",
+        ot: p.pivot.optionType,
+        strike: p.pivot.strike,
+        pv: p.pivot.pivot,
+        tgt: p.pivot.target,
+        lev: p.pivot.leverage,
+        red: p.pivot.redemption,
+        fy: p.pivot.schedule.fixingYears,
+        fn: p.pivot.schedule.fixingNotional,
+        mcp: p.pivot.mcPairs,
+        // The MC seed is a bigint; stringify so the coalescing key is JSON-serialisable.
+        mcs: p.pivot.mcSeed.toString(),
       };
     case "accumulator":
       return {

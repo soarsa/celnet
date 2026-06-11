@@ -15,10 +15,14 @@
 //! * [`pin`] — shared `surface_version` pinning: resolve a request's optional
 //!   pinned surface version into the marked vol it prices against.
 //! * [`surface`] — `SurfaceService`: `GetSmile` / `MarkSurface` / `Scenario`.
+//! * [`access`] — the entitlements **trust boundary**: the deny-by-default
+//!   authorization decision (+ per-decision security audit) every
+//!   entitlement-gated `RiskService` RPC passes before serving.
 //!
 //! Every RPC enters the readiness gate (bumping the in-flight drain counter) and
 //! refuses new work with `UNAVAILABLE` while the edge is starting or draining.
 
+pub mod access;
 pub mod pricing;
 pub mod quote;
 pub mod risk;

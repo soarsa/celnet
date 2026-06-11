@@ -646,6 +646,16 @@ fn utilization_to_wire(u: &Utilization) -> LimitUtilization {
     }
 }
 
+// The four entitlement-gated RPCs of the contract — the **complete** set: no
+// other service's request carries an `EntitlementPrincipal` (verified against
+// `celnet.proto`; pricing/quote/stream/surface serve market data and lifecycle,
+// not entitlement-scoped book reads). Each passes the deny-by-default
+// authorization boundary ([`crate::services::access::authorize`]) — which
+// audits every allow AND deny — before any serving mode is resolved. The WS
+// mirror dispatches onto these same trait methods, so one boundary covers both
+// encodings; the federated frontend authorizes here once and forwards the
+// asserted principal to the backends, which re-authorize it at their own
+// trait entry.
 #[tonic::async_trait]
 impl RiskService for RiskEdge {
     async fn list_positions(
@@ -655,6 +665,12 @@ impl RiskService for RiskEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
+        crate::services::access::authorize(
+            self.store.access_mode(),
+            req.principal.as_ref(),
+            "RiskService/ListPositions",
+            req.correlation_id,
+        )?;
         let resp = match self.serve_mode()? {
             Serve::Direct => self.list_positions_impl(&req)?,
             Serve::Federate(fleet) => self.federated_list_positions(fleet, &req).await?,
@@ -669,6 +685,12 @@ impl RiskService for RiskEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
+        crate::services::access::authorize(
+            self.store.access_mode(),
+            req.principal.as_ref(),
+            "RiskService/AggregateRisk",
+            req.correlation_id,
+        )?;
         let resp = match self.serve_mode()? {
             Serve::Direct => self.aggregate_risk_impl(&req)?,
             Serve::Federate(fleet) => self.federated_aggregate_risk(fleet, &req).await?,
@@ -683,6 +705,12 @@ impl RiskService for RiskEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
+        crate::services::access::authorize(
+            self.store.access_mode(),
+            req.principal.as_ref(),
+            "RiskService/DrillRisk",
+            req.correlation_id,
+        )?;
         let resp = match self.serve_mode()? {
             Serve::Direct => self.drill_risk_impl(&req)?,
             Serve::Federate(fleet) => self.federated_drill_risk(fleet, &req).await?,
@@ -697,6 +725,12 @@ impl RiskService for RiskEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
+        crate::services::access::authorize(
+            self.store.access_mode(),
+            req.principal.as_ref(),
+            "RiskService/LimitStatus",
+            req.correlation_id,
+        )?;
         let resp = match self.serve_mode()? {
             Serve::Direct => self.limit_status_impl(&req)?,
             Serve::Federate(fleet) => self.federated_limit_status(fleet, &req).await?,
@@ -1116,13 +1150,22 @@ mod tests {
         );
 
         // Every served RPC (gRPC trait surface — WS dispatches through the same
-        // methods) returns Unavailable BEFORE serving the local book.
+        // methods) returns Unavailable BEFORE serving the local book. The
+        // requests assert an explicit grant-all principal so they pass the
+        // deny-by-default authorization boundary and reach the serve-mode guard
+        // (the absent-principal deny itself is proven in
+        // `tests/entitlements_boundary.rs`).
+        let asserted = EntitlementPrincipal {
+            grant_all: true,
+            grants: vec![],
+            denies: vec![],
+        };
         let agg = RiskService::aggregate_risk(
             &edge,
             Request::new(AggregateRiskRequest {
                 dimension: RiskDimension::Firm as i32,
                 numeraire: Some(usd_numeraire()),
-                principal: None,
+                principal: Some(asserted.clone()),
                 scope: None,
                 vega_pillars: vec![],
                 var_spot_shocks: vec![],
@@ -1138,7 +1181,7 @@ mod tests {
             &edge,
             Request::new(ListPositionsRequest {
                 scope: None,
-                principal: None,
+                principal: Some(asserted),
                 correlation_id: None,
             }),
         )

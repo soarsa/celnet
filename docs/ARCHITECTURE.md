@@ -132,7 +132,7 @@ celnet/
     ├── celnet-risk-fleet      # cross-shard risk fan-out ALGEBRA over the celnet-router HRW map; fan-out == single-node (transport designed-only)
     ├── celnet-router          # fleet router — shard-by-pair/tenant HRW partition map, stateless replica routing, hot-standby failover
     ├── celnet-limits          # hierarchical limit tree (greek/vega/VaR/concentration/tenor/stop-loss) + RAG + pre/post-trade breach checks
-    ├── celnet-entitlements    # principal role-grants + deny rules (information barriers); pre-aggregation pruning predicate (grant-all default)
+    ├── celnet-entitlements    # principal role-grants + deny rules (information barriers); pre-aggregation pruning predicate (deny-by-default; grant-all only as an explicit, audited assertion)
     ├── celnet-xva             # XVA engine — EPE/ENE exposure profiles + CVA/DVA/FVA over a hazard-rate survival curve (synthetic netting sets)
     # ── Layer 7: plugin host ──
     ├── celnet-plugin-host     # tiered host: Tier-0 native registry + Tier-2 wasmi fuel-metered sandbox + deterministic replay harness

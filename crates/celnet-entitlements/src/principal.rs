@@ -14,16 +14,18 @@
 //! requires (a desk head granted their whole desk is still walled out of a named
 //! sub-book under investigation).
 //!
-//! # The default principal is grant-all (zero-rework migration)
+//! # The default principal is deny-by-default
 //!
-//! [`Principal::grant_all`] admits **every** fact and is the crate default. This
-//! mirrors the GUI's `ScopeContext { principal: "grant-all" }` (today's show-all
-//! firm-wide view, `docs/EXPERIENCE-ARCHITECTURE.md` §3). Every server-side
-//! aggregation path flows the fact stream through [`crate::EntitlementFilter`]
-//! **now**, while the principal is grant-all and the predicate is the identity, so
-//! slotting a real scoped principal in later changes *only which facts the
-//! predicate admits* — not a single call site. That is the explicit
-//! "entitlement-ready, zero-rework" contract from §3.
+//! The crate default is [`Principal::scoped`] with no grants: it admits
+//! **nothing** until explicitly granted (the §4 separation-of-duties posture —
+//! an unscoped principal must be granted a subtree before it sees risk).
+//! [`Principal::grant_all`] remains available as the firm-wide view a caller
+//! *explicitly asserts* (or the server's explicit permissive dev-mode
+//! substitutes for a demo edge, audited per decision — see [`crate::decision`]),
+//! but it is never an implicit fallback. Every server-side aggregation path
+//! flows the fact stream through [`crate::EntitlementFilter`], so a
+//! differently-scoped principal changes *only which facts the predicate admits*
+//! — not a single call site.
 
 use celnet_risk_cube::{FactKey, Hierarchy};
 
@@ -47,14 +49,14 @@ pub struct Principal {
     denies: Vec<Rule>,
 }
 
-/// The default principal is **grant-all** — the show-all-now anchor that mirrors
-/// the GUI's `ScopeContext.principal = "grant-all"`. This is deliberately **not**
-/// the derived all-`false` default: a fresh `Principal` must see everything so the
-/// pre-aggregation filter is wired in as the identity today and swapping in a real
-/// scoped principal later is zero-rework (module docs).
+/// The default principal is **scoped with no grants** — it admits **nothing**
+/// (module docs: the deny-by-default §4 posture). A fresh `Principal` must be
+/// explicitly granted a subtree (or explicitly constructed via
+/// [`Principal::grant_all`]) before it sees any risk; firm-wide visibility is an
+/// audited, asserted choice, never an implicit default.
 impl Default for Principal {
     fn default() -> Self {
-        Self::grant_all()
+        Self::scoped()
     }
 }
 

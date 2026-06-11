@@ -485,6 +485,34 @@ mod tests {
         };
         round_trip(&tarf);
 
+        // The pivot TRA (arm 32): the TARF generalized with a distinct pivot
+        // kink — same schedule/redemption vocabulary, one extra level.
+        let pivot = Instrument {
+            underlying: Some(sample_underlying()),
+            tenor: Some(sample_tenor()),
+            expiry_years: 1.0,
+            quantity: Some(sample_quantity()),
+            side: Side::Sell as i32,
+            solve: None,
+            pricing_model: PricingModel::Default as i32,
+            settlement_style: SettlementStyle::Linear as i32,
+            product: Some(instrument::Product::Pivot(Pivot {
+                option_type: OptionType::Call as i32,
+                strike: 1.08,
+                pivot: 1.13,
+                target: 0.20,
+                leverage: 2.5,
+                redemption: TarfRedemption::CappedGain as i32,
+                schedule: Some(FixingSchedule {
+                    fixing_years: vec![0.25, 0.5, 0.75, 1.0],
+                    fixing_notional: 1.0,
+                }),
+                mc_pairs: 4096,
+                mc_seed: 0x9_1707_0001,
+            })),
+        };
+        round_trip(&pivot);
+
         let accumulator = Instrument {
             underlying: Some(sample_underlying()),
             tenor: Some(sample_tenor()),

@@ -26,9 +26,9 @@ use celnet_client::{
     BarrierSide, BarrierTerms, BasketKind, BasketLegTerms, BasketTerms, Ccy, CliquetTerms,
     CommodityRef, Conventions, DigitalTerms, DoubleBarrierTerms, EquityRef, FixingSource,
     ForwardSide, ForwardStartTerms, ForwardTerms, InstrumentSpec, Leg, ListedFutureTerms,
-    LookbackStyle, Margining, MarketContext, NdfTerms, PricedLine, Quantity, QuantoPayoff,
-    QuantoTerms, Side, StrategyKind, StrikeSpec, SwapTerms, Symbol, TarfRedemption, TarfTerms,
-    TouchTerms, Underlying,
+    LookbackStyle, Margining, MarketContext, NdfTerms, PivotTerms, PricedLine, Quantity,
+    QuantoPayoff, QuantoTerms, Side, StrategyKind, StrikeSpec, SwapTerms, Symbol, TarfRedemption,
+    TarfTerms, TouchTerms, Underlying,
 };
 use celnet_golden::{FAMILIES, GoldenVector, load_vectors};
 use celnet_types::{CcyPair, OptionType, Tenor};
@@ -257,6 +257,24 @@ fn instrument_of(v: &GoldenVector) -> InstrumentSpec {
             )
             .fixing_notional(v.term_f64("fixing_notional"));
             InstrumentSpec::tarf(pair, tenor, t, qty, side, terms)
+        }
+        "pivot" => {
+            let redemption = match v.term_str("redemption") {
+                "CAPPED_GAIN" => TarfRedemption::CappedGain,
+                _ => TarfRedemption::FullGain,
+            };
+            let terms = PivotTerms::new(
+                cp(v.term_str("option_type")),
+                v.term_f64("strike"),
+                v.term_f64("pivot"),
+                v.term_f64("target"),
+                v.term_f64("leverage"),
+                redemption,
+                v.term_u64("fixings") as u32,
+            )
+            .fixing_notional(v.term_f64("fixing_notional"))
+            .monte_carlo(v.term_u64("mc_pairs") as u32, v.term_u64("mc_seed"));
+            InstrumentSpec::pivot(pair, tenor, t, qty, side, terms)
         }
         "accumulator" => {
             let monitoring = match v.term_str("monitoring") {
@@ -635,6 +653,14 @@ async fn sdk_conforms_mc_tarf_accumulator() {
     run_conformance(&["tarf", "accumulator"]).await;
 }
 
+/// The pivot TRA (arm 32) — the TARF sibling with the distinct pivot kink. Its
+/// corpus includes the `pivot == strike` degeneracy LAW vector, so this run
+/// also pins SDK == server == the plain-TARF value on that slice.
+#[tokio::test]
+async fn sdk_conforms_mc_pivot() {
+    run_conformance(&["pivot"]).await;
+}
+
 #[tokio::test]
 async fn sdk_conforms_mc_cliquet_basket() {
     run_conformance(&["cliquet", "basket"]).await;
@@ -787,7 +813,7 @@ async fn sdk_conforms_cross_asset_vanilla() {
     drop(edge);
 }
 
-/// Reachability backstop: every one of the 23 product-oneof families appears in
+/// Reachability backstop: every one of the 24 product-oneof families appears in
 /// the corpus (the conformance tests above collectively price them all).
 #[tokio::test]
 async fn corpus_covers_all_families() {

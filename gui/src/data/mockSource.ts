@@ -1082,6 +1082,7 @@ function freezeStrikes(instrument: Instrument, m: MarketContext): Instrument {
     case "cliquet":
     case "quanto":
     case "tarf":
+    case "pivot":
     case "accumulator":
     case "lookback":
     case "american":
