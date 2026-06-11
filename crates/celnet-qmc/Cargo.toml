@@ -13,3 +13,8 @@ workspace = true
 
 [dependencies]
 celnet-core.workspace = true
+
+[dev-dependencies]
+# Independent reference Φ(x) = ½·erfc(−x/√2) for the inverse-normal oracle test
+# (code-disjoint from the rational-approximation implementation under test).
+libm.workspace = true

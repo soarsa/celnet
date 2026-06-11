@@ -367,7 +367,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        crate: [celnet-surface, celnet-exotics, celnet-risk-cube, celnet-xva]
+        crate: [celnet-surface, celnet-exotics, celnet-risk-cube, celnet-xva, celnet-qmc]
     steps:
       - uses: actions/checkout@v4
 

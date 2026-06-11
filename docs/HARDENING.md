@@ -141,22 +141,23 @@ audited config and a CI matrix leg:
 |-------|--------|-------------|--------|--------|
 | `celnet-surface`   | `.config/mutants-surface.toml`   | `just mutants-gate-surface` (`-arbitrage` for the proven slice) | `mutation-gate-numerics` (matrix leg) | arbitrage.rs **MEASURED green locally**; crate-wide CI-run |
 | `celnet-exotics`   | `.config/mutants-exotics.toml`   | `just mutants-gate-exotics`   | `mutation-gate-numerics` (matrix leg) | wired; baseline CI-run |
-| `celnet-risk-cube` | `.config/mutants-risk-cube.toml` | `just mutants-gate-risk-cube` | `mutation-gate-numerics` (matrix leg) | wired; baseline CI-run |
-| `celnet-xva`       | `.config/mutants-xva.toml`       | `just mutants-gate-xva`       | `mutation-gate-numerics` (matrix leg) | wired; baseline CI-run |
+| `celnet-risk-cube` | `.config/mutants-celnet-risk-cube.toml` | `just mutants-gate-risk-cube` | `mutation-gate-numerics` (matrix leg) | **MEASURED green locally** (W6 — see below) |
+| `celnet-xva`       | `.config/mutants-xva.toml`       | `just mutants-gate-xva`       | `mutation-gate-numerics` (matrix leg) | **MEASURED green locally** (W6 — see below) |
+| `celnet-qmc`       | `.config/mutants-qmc.toml`       | `just mutants-gate-qmc`       | `mutation-gate-numerics` (matrix leg) | **MEASURED green locally** (W6 — see below) |
 
 Each config exits non-zero on ANY non-equivalent survivor, exactly like the
 vanilla gate, so a future edit that weakens any of these suites below the kill
-bar fails the build. `just mutants-gate-numerics` runs all five in sequence.
+bar fails the build. `just mutants-gate-numerics` runs all six in sequence.
 
 **Honesty note on scope.** cargo-mutants is slow (the vanilla crate alone is ~8
 minutes for 469 mutants; `celnet-surface` is ~2 300 mutants and the exotics
 PDE/MC engines are larger still), so running a full local baseline on all four
 crates in one session is impractical. The enforceable gates, recipes, configs,
 and the CI matrix job are committed for all four; the canonical crate-wide
-baselines for exotics / risk-cube / xva are **established by the CI
-`mutation-gate-numerics` job** (recorded as CI-run here — no kill-rate number is
-fabricated for a run that was not performed). One crate was driven to a **real,
-MEASURED green** locally to prove the mechanism end-to-end:
+baseline for exotics is **established by the CI `mutation-gate-numerics` job**
+(recorded as CI-run here — no kill-rate number is fabricated for a run that was
+not performed); risk-cube, xva and qmc have since been driven to **real,
+MEASURED green** locally (W6 — see below). The first crate proven end-to-end:
 
 #### `celnet-surface` — measured baseline (arbitrage module)
 
@@ -192,19 +193,215 @@ clusters before it was scoped:
 
 - **`calibrate.rs` — the iterative-fit internals** (the damped Gauss-Newton /
   Levenberg-Marquardt fitters `fit_sabr`/`fit_svi`/`fit_ssvi`/`fit_essvi` +
-  `gauss_newton_{2,3,4}`). The bulk of these survivors are SEED / Jacobian
-  finite-difference / step-direction internals of a *converging* optimizer that
-  only accepts a step when it strictly lowers the cost, so the converged
-  parameters (and every smile assertion downstream) are unchanged by the
-  perturbation — the same equivalent class as the vanilla solver's "initial
-  guess / expansion factor" exclusions. Auditing each of these ~300 members
-  individually (genuinely-equivalent vs a real tighten-the-fit-assertion gap) is
-  the CI-scoped follow-on; the crate-wide gate runs in the
-  `mutation-gate-numerics` CI job, which surfaces any non-converging-internal
-  survivor. Until each member is individually audited and listed (with
-  justification) in `.config/mutants-surface.toml`, the locally-proven slice is
-  `arbitrage.rs` and the config's `exclude_re` is deliberately **empty** (no
-  survivor is hidden behind an unjustified exclusion).
+  `gauss_newton_{2,3,4}`): the formerly-documented ~300-member
+  "converging-optimizer" debt. **Audited and closed by the W6 analytics-rigor
+  wave** — see the W6 subsection below.
+
+#### `celnet-surface` — W6 analytics-rigor wave (file-scoped waves to zero)
+
+Per `docs/plan/W6-ANALYTICS-RIGOR-PLAN.md` §3.4 the remaining crate was driven
+to zero non-equivalent survivors in file-scoped waves, **pre-kill-first**. The
+lever against the calibrate.rs converging-optimizer cluster is the crate's own
+documented determinism (fixed-iteration libm-only fits, bit-reproducible):
+
+- **`tests/fit_pins.rs`** — on two frozen fixtures per fitter (a benign
+  three-point smile and a stressed five-point skew): (a) the achieved
+  least-squares cost is pinned (`≤ frozen + 1e-12`, the degradation catch);
+  (b) the **converged parameters are frozen to bits** (`to_bits` equality —
+  any trajectory perturbation that moves the optimum at all is killed);
+  (c) the fit reprices its anchors (benign: 1e-7 exact-fit; stressed: the
+  frozen least-squares residual + 1e-12 — the economic assertion). Anchors are
+  re-derived in-test from the published recipe through `calibrate_pillar`
+  (the independent direction), never read back from the fitted object.
+- **In-module solver pins** (calibrate.rs): the 2/3/4-parameter damped solvers
+  driven directly on synthetic zero-residual least-squares problems with
+  closed-form optima (`±1e-9`), an active-projection drive, and
+  `gaussian_eliminate`/`solve3`/`solve4` vs an independently re-implemented
+  textbook pivoted elimination (`±1e-10`) + singular-`None` paths; `clamp` /
+  `sumsq` / `project_svi` boundary drives.
+- **Module oracles** (pre-kill for the other waves): the published
+  stochastic-vol expansion re-derived raw in-test on a `β < 1` slice (every
+  term active) + the CEV small-ν density closed form + **frozen-bits pins on
+  the wing crossover band and density-implied wing vols** (kills the
+  wing-density quadrature internals that band/monotonicity properties
+  tolerate); raw-recomputation pins for the parametric slice forms
+  (analytic `w/w'/w''`/density-factor, scan-grid fold) and the surface-form
+  curvature/variance/raw-map closed forms; butterfly/calendar
+  clause-independence drives (slice, surface and report levels) with decisive
+  margins; term-structure hand-interpolation pins (interior linear-in-τ, both
+  extrapolation regimes incl. the negative-rate flat clamp, log-linear
+  forward, fixed-strike calendar scan with differing pillar forwards);
+  delta→strike round-trip through the convention-delta evaluator and the
+  ATM-convention closed forms; the vanna-volga second-approximation
+  multi-strike exact oracle.
+- A representative damping mutant (`λ·0.5 → λ+0.5` in `gauss_newton_3`) was
+  hand-applied before the waves: caught (`cargo test -p celnet-surface` real
+  exit 101) — the mechanism kills trajectory-class mutants, not just
+  value-class ones.
+
+Measured wave baselines (aarch64-apple-darwin, cargo-mutants 27.0.0, toolchain
+1.96.0, `--test-tool=cargo --jobs 2 --minimum-test-timeout=120`,
+`PROPTEST_MAX_SHRINK_ITERS=0`, `RUSTC_WRAPPER=""`) are recorded per wave below
+as each runs to green.
+
+#### `celnet-qmc` — measured baseline (W6 analytics-rigor wave, crate-wide green)
+
+The quasi-Monte-Carlo crate (gray-code Joe-Kuo Sobol + Owen-style nested
+scramble + Brownian bridge + inverse-normal CDF + RQMC estimator) feeds
+exotics, xva, the GPU path and parity, but had only 10 thin in-module tests.
+Per the W6 plan (`docs/plan/W6-ANALYTICS-RIGOR-PLAN.md` §3.1) the gap was
+closed **pre-kill-first**: `tests/sequence_oracle.rs` pins every module
+against an independent oracle *before* the expensive run — exact dyadic
+radical-inverse rationals (`to_bits`), an in-test `m_k`-domain re-derivation
+of the direction-number recurrence fed with rows typed from the published
+Joe-Kuo data file, published normal quantiles + a code-disjoint
+`½·erfc(−x/√2)` round-trip (libm dev-dep), the exact bridge covariance
+`L·Lᵀ = min(t_i,t_j)` + the hand-derived m=3 weight matrix, closed-form
+monomial integrals through the full pipeline, an independent plain-loop
+std-error re-derivation that simultaneously pins the per-replication seed
+derivation, and frozen-bits rows (the fx_byte_identity house pattern) for the
+hash/scramble internals that any distributional property tolerates. In-module
+additions pin the nested-permutation prefix law and top-byte bijectivity of
+the Owen scramble.
+
+- **Raw crate-wide run** (no exclusions, aarch64-apple-darwin, cargo-mutants
+  27.0.0, toolchain 1.96.0): **`359 mutants tested in 16m: 7 missed, 295
+  caught, 2 unviable, 55 timeouts`**. Dispositions of the 7 raw survivors
+  (full inline detail in `.config/mutants-qmc.toml`): 1 KILLED
+  (`bisect` floor-midpoint pivot — covariance-invariant but
+  plan-observable; pinned by the hand-derived m=3 weight matrix), 3 KILLED
+  (`inv_norm_cdf` Halley-polish internals — sub-ULP centrally, ≥1 ULP at
+  extreme tails; pinned by a frozen-bits ladder incl. the subnormal floor),
+  1 ELIMINATED structurally (`point_u32` early-exit guard observable only as
+  an OOB panic past the 2^32 period; loop made structurally total and the
+  period documented), 2 EXCLUDED as provably equivalent (domain-guard
+  short-circuit whose divergent path still NaNs through `ln(negative)`; OR vs
+  XOR on disjoint bits) — each hand-reproduced: **full suite green with the
+  mutant applied**.
+- **Canonical gate run** (clean slate, `.config/mutants-qmc.toml`,
+  `--test-tool=cargo --jobs 2 --minimum-test-timeout=240`,
+  `RUSTC_WRAPPER=""`): **`350 mutants tested in 9m: 348 caught, 2 unviable`**
+  — **zero missed, zero timeouts, real exit 0**. The enforceable bar
+  (`just mutants-gate-qmc`, CI matrix leg) is **zero non-equivalent
+  survivors** with both exclusions line-anchored and justified inline.
+- **Environment lessons** (recorded for the other W6 crate gates): (a) the
+  raw run's 55 timeout-class results were artifacts — macOS stalls the first
+  launch of freshly linked test binaries under build churn, tripping the
+  auto-set 20s floor (the suite runs in ~1s and the crate has no
+  value-dependent loop that could hang); the 240s floor reclassifies all of
+  them as caught. (b) One run wedged indefinitely on a stalled
+  `sccache`-wrapped rustc (cargo-mutants sets no build timeout) —
+  `RUSTC_WRAPPER=""` de-wedges and is also ~2× faster per mutant. (c) A
+  line-anchored exclusion silently stopped matching when an unrelated
+  refactor in the same file shifted its line (242→241); the survivor
+  reappeared as MISSED on the next run — the gate caught its own stale
+  anchor, but after ANY edit to a gated file, re-verify the `exclude_re`
+  line anchors.
+
+#### `celnet-xva` — measured baseline (W6 analytics-rigor wave, crate-wide green)
+
+The XVA crate (CVA/DVA/FVA aggregation + piecewise-hazard survival curve +
+low-discrepancy exposure simulation + synthetic netting sets) computes
+regulatory/accounting numbers but had only 13 thin in-module tests. Per the W6
+plan (`docs/plan/W6-ANALYTICS-RIGOR-PLAN.md` §3.2) the gap was closed
+**pre-kill-first**: `tests/closed_form_oracle.rs` (32 tests) pins every module
+against an independent oracle *before* the run — the documented CVA/DVA/FVA
+quadrature re-derived longhand with raw std `exp` (single-interval,
+non-uniform, and 101-node grids; both FVA signs), exact survival identities
+(flat `Λ(t) = λ·t` to bits, an independent knot-overlap partial-sum
+recomputation of the piecewise hazard integral, `S = exp(−Λ)` and
+`S(a) − S(b)` to bits), the total-adjustment decomposition `CVA − DVA + FVA`
+to bits, a from-scratch two-rate vanilla re-derivation (`Φ` via `erfc`, std
+logs/exps) for every netting-set mark including the matured `τ ≤ 0 ⇒ 0`
+boundary and signed notionals, frozen-bits exposure rows (the fx_byte_identity
+house pattern) for two fixed netting sets chosen so BOTH `max(·, 0)` exposure
+floors bite at the pinned nodes, and the full panic contract of every
+constructor/aggregator assert driven on both sides of its boundary
+(out-of-range LGD, negative hazards, non-increasing pillars/grids, zero
+steps/paths/horizon).
+
+- **Raw crate-wide run** (no exclusions, aarch64-apple-darwin, cargo-mutants
+  27.0.0, toolchain 1.96.0, `RUSTC_WRAPPER=""`): **`170 mutants tested in 2m:
+  3 missed, 161 caught, 6 unviable`** — zero timeouts. All 3 raw survivors
+  belong to ONE equivalence cluster: the `cumulative_hazard` segment-scan
+  early-return optimization (`survival.rs:83` `hi > lo` → `>=`, which differs
+  only at `t = 0` where it adds exactly `+0.0`; `survival.rs:93` `&&` → `||`
+  and `>` → `>=` on the post-loop extrapolation guard, whose both conjuncts
+  are provably true whenever the line is reachable). Each was EXCLUDED with
+  the reachability proof inline in `.config/mutants-xva.toml` and
+  hand-reproduced — **full suite green with the mutant applied** — never to
+  hide a value gap. The 6 unviable are `Default::default()` replacements on
+  types that implement no `Default`.
+- **Canonical gate run** (clean slate, `.config/mutants-xva.toml`,
+  `--test-tool=cargo --jobs 3 --minimum-test-timeout=240`,
+  `RUSTC_WRAPPER=""`): **`167 mutants tested in 3m: 161 caught, 6 unviable`**
+  — **zero missed, zero timeouts, real exit 0**. The enforceable bar
+  (`just mutants-gate-xva`, CI matrix leg) is **zero non-equivalent
+  survivors** with all three exclusions line-anchored and justified inline.
+
+#### `celnet-risk-cube` — measured baseline (W6 analytics-rigor wave, crate-wide green)
+
+The risk-cube crate (hierarchical additive roll-up of per-ccy NetGreeks +
+VegaLadder, the non-additive bump-and-revalue / sensitivity-Taylor VaR/ES lens,
+FRTB-SA SbM/curvature/RRAO/DRC capital aggregation, the GPU spot×vol scenario
+grid, and exotic risk-cube aggregation) is safety-critical capital arithmetic.
+Per the W6 plan (`docs/plan/W6-ANALYTICS-RIGOR-PLAN.md` §3.3) the gap was
+closed **pre-kill-first**: `tests/frtb_param_provenance.rs` pins every FRTB
+parameter `to_bits` against a literal typed from the published BCBS MAR21 text
+(paragraph cited per constant — the anti-circular 0.75ρ-lesson guard) plus
+hand-built bucket-assignment pins; `tests/longhand_oracle.rs` re-derives the
+firm aggregate with a naive double loop over all 11 NetGreeks lines + the
+ladder, proves partition conservation across all six dimensions, drives the
+VaR/ES quantile/tie/floor boundaries bit-exactly through a linear in-test
+pricer, pins a hand Taylor expansion, recomputes the curvature legs from two
+longhand revaluations (both down- and up-dominant combined regimes, with
+in-test regime guards against fixture rot), and folds the combined
+vanilla+exotic tail; `tests/fx_invariance.rs` keeps the FX `to_bits`
+non-regression; in-module pins cover the 48-bit pair packing typed from hand
+ASCII bytes + frozen-bits FNV group keys, scenario algebra byte-for-byte vs
+the raw FX two-rate arithmetic, the MAR21.6 alternative-S_b branch hand-derived
+end-to-end, the far-barrier vanilla-limit analytic oracle for the full exotic
+FD Greek set (including an ultra-short-tenor leg proving the FD time bump
+stays strictly inside the tenor), and row-major grid indexing with the
+inclusive reconciliation band + worst-tie diagnostics.
+
+- **File-scoped waves** (R1 dimension/additive/cube, R2 frtb_params/frtb,
+  R3 nonadditive, R4 exotic/scenario_grid), each run to zero non-equivalent
+  survivors. The raw R1 wave (121 mutants) surfaced exactly two `|`→`^`
+  survivors in `underlying_group_value`: the bit-63 force was a GENUINE gap
+  (both original pin inputs had raw-hash bit 63 clear) — killed by pinning
+  OTHR/USD whose raw hash carries bit 63, asserted in-test; the byte fold is
+  provably equivalent (disjoint bit positions) and excluded.
+- **Full-crate discovery run** (no exclusions beyond the wave audits,
+  aarch64-apple-darwin, cargo-mutants 27.0.0, toolchain 1.96.0,
+  `RUSTC_WRAPPER=""`): **`961 mutants tested in 31m: 14 missed, 899 caught,
+  48 unviable`**. Of the 14 survivors the file-scoped fixtures had not seen,
+  9 GENUINE gaps were KILLED with oracle-pinned tests (the exotic FD time-bump
+  `t/2` clamp via the ultra-short-tenor far-barrier vanilla-limit pin;
+  `sbm_total`'s curvature term via a nonzero-curvature max-of-sums hand pin;
+  the combined curvature UP-sum via an up-dominant long-digital regime; the
+  scenario-grid `std_err` row-major stride, inclusive band boundary, and
+  worst-tie diagnostics via hand-built grid literals against the
+  identically-zero empty-book reference; the `std_err` notional-scaling
+  quadrature via a bit-exact recomputation of the propagation chain) and 5
+  audited equivalents were EXCLUDED with inline proofs in
+  `.config/mutants-celnet-risk-cube.toml` (the `ccy_id` byte fold on disjoint
+  bits; the ψ both-negative `<`→`<=` pair whose flipped branch multiplies an
+  identically-zero cross term; the documented-zero MAR22 FX DRC body→`0.0`
+  differing only in an uncontractual zero sign; and the `fx_vega_rw` cluster
+  where the MAR21.93/.94 cap provably binds — anchored by an `uncapped > 1.0`
+  assertion in the provenance suite so a future MAR revision forces re-audit).
+  Each exclusion was hand-reproduced: **full suite green with the mutant
+  applied**.
+- **Canonical gate run** (clean slate, `.config/mutants-celnet-risk-cube.toml`,
+  `--test-tool=cargo --jobs 2 --minimum-test-timeout=120`, `RUSTC_WRAPPER=""`):
+  **`956 mutants tested in 27m: 908 caught, 48 unviable`** — **zero missed,
+  zero timeouts, real exit 0**, disposition counts verified from the
+  `mutants.out` ground truth at completion (908/0/0/48); an independent
+  same-session clean-slate run reproduced the identical summary (39m under
+  heavier concurrent-lane contention). The enforceable bar
+  (`just mutants-gate-risk-cube`, CI matrix leg) is **zero non-equivalent
+  survivors** with all 8 exclusions line-anchored and justified inline.
 
 ### Infra-crate mutation gate — `celnet-fanout` (W6, MEASURED green locally)
 

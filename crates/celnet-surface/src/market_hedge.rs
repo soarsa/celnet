@@ -388,6 +388,50 @@ mod tests {
         let _ = MarketHedgeSmile::new([1.0, 1.1, 1.2], [-0.01, 0.11, 0.118], 1.1, 1.0);
     }
 
+    /// The reference-path `vol_at` matches a raw in-test re-derivation of the
+    /// published second-approximation closed form (weights `p`/`q`, the two
+    /// correction terms, the `d₁d₂` radicand) at strikes spanning the interior,
+    /// both wings and the degenerate near-pillar region — every term active.
+    /// INDEPENDENT ORACLE: std float math, asserted exactly (the existing
+    /// re-evaluation test established bit-agreement of the two directions).
+    #[test]
+    fn vol_at_matches_published_second_approximation() {
+        let s = smile();
+        let strikes = s.benchmark_strikes();
+        let vols = s.benchmark_vols();
+        let (fwd, t) = (s.forward(), s.reference_t());
+        let s0 = vols[1];
+        let [k1, k2, k3] = strikes;
+        let d12 = |strike: f64, vol: f64| -> (f64, f64) {
+            let vsqt = vol * t.sqrt();
+            let d1 = ((fwd / strike).ln() + 0.5 * vol * vol * t) / vsqt;
+            (d1, d1 - vsqt)
+        };
+        for k in [0.55_f64, 0.95, 1.05, 1.11, 1.16, 1.45, 2.4] {
+            let p = ((k2 / k).ln() * (k3 / k).ln()) / ((k2 / k1).ln() * (k3 / k1).ln());
+            let q = ((k / k1).ln() * (k / k2).ln()) / ((k3 / k1).ln() * (k3 / k2).ln());
+            let big_d1 = p * (vols[0] - s0) + q * (vols[2] - s0);
+            let (a1, a2) = d12(k1, s0);
+            let (c1, c2) = d12(k3, s0);
+            let dv1 = vols[0] - s0;
+            let dv3 = vols[2] - s0;
+            let big_d2 = p * a1 * a2 * dv1 * dv1 + q * c1 * c2 * dv3 * dv3;
+            let (d1, d2) = d12(k, s0);
+            let prod = d1 * d2;
+            let expect = if prod.abs() < 1e-14 {
+                s0 + big_d1
+            } else {
+                let radicand = s0 * s0 + prod * (2.0 * s0 * big_d1 + big_d2);
+                s0 + (-s0 + radicand.max(0.0).sqrt()) / prod
+            };
+            assert!(
+                is_close(s.vol_at(k), expect, 0.0, 0.0),
+                "K={k}: vol_at {} must equal the closed-form oracle {expect} exactly",
+                s.vol_at(k)
+            );
+        }
+    }
+
     /// The `Smile` trait re-evaluates the smile against a caller-supplied
     /// forward/time that differs from the reference, recomputing the
     /// Castagna-Mercurio second-approximation corrections at that forward while

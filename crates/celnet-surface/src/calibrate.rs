@@ -41,6 +41,7 @@ use celnet_core::Smile;
 use celnet_core::math::{ln, sqrt};
 use celnet_types::Vol;
 
+use crate::fitmath::{clamp, gauss_newton_2, gauss_newton_3, gauss_newton_4};
 use crate::market_hedge::MarketHedgeSmile;
 use crate::parametric::ParametricSlice;
 use crate::parametric_surface::ParametricSurface;
@@ -216,10 +217,6 @@ pub fn build_model_smile(
 
 /// FX lognormal SABR backbone exponent.
 const SABR_BETA: f64 = 1.0;
-/// Maximum Gauss-Newton iterations for the SABR / SVI fits.
-const FIT_ITERS: usize = 60;
-/// Finite-difference step for the parameter Jacobians.
-const FIT_FD_H: f64 = 1e-6;
 
 /// Fit a SABR slice to the anchors. With β = 1 the at-forward vol is `α·B_atm`
 /// with `B_atm → 1` for small `t`, so `α₀ = σ_ATM` is an excellent initialiser;
@@ -551,285 +548,18 @@ fn fit_essvi(
     Ok(slice.to_slice(forward, t))
 }
 
-// ===========================================================================
-// Deterministic damped Gauss-Newton solvers (libm only).
-//
-// Each solver minimises the sum of squared residuals over a fixed parameter set
-// by repeatedly forming the finite-difference Jacobian Jᵀ, solving the normal
-// equations (JᵀJ + λI)·δ = −Jᵀr with a small Levenberg damping λ, projecting the
-// step into the admissible box, and accepting it only if it reduces the residual
-// norm (otherwise the damping is increased). The iteration count is fixed so the
-// solve is bit-reproducible; the residual-decrease guard makes it robust.
-// ===========================================================================
-
-/// Clamp a value into `[lo, hi]` (deterministic; libm-free).
-#[inline]
-fn clamp(x: f64, lo: f64, hi: f64) -> f64 {
-    if x < lo {
-        lo
-    } else if x > hi {
-        hi
-    } else {
-        x
-    }
-}
-
-/// Sum of squares of a residual vector.
-fn sumsq(r: &[f64]) -> f64 {
-    r.iter().map(|x| x * x).sum()
-}
-
-/// A 2-parameter damped Gauss-Newton solve with a projection.
-fn gauss_newton_2<R, P>(p0: &mut f64, p1: &mut f64, residuals: R, _b0: (f64, f64), project: P)
-where
-    R: Fn(f64, f64) -> Vec<f64>,
-    P: Fn(f64, f64) -> (f64, f64),
-{
-    let mut lambda = 1e-3;
-    let mut r = residuals(*p0, *p1);
-    let mut cost = sumsq(&r);
-    for _ in 0..FIT_ITERS {
-        let n = r.len();
-        // Jacobian columns by forward differences.
-        let r0 = residuals(*p0 + FIT_FD_H, *p1);
-        let r1 = residuals(*p0, *p1 + FIT_FD_H);
-        let mut jtj = [[0.0_f64; 2]; 2];
-        let mut jtr = [0.0_f64; 2];
-        for i in 0..n {
-            let j0 = (r0[i] - r[i]) / FIT_FD_H;
-            let j1 = (r1[i] - r[i]) / FIT_FD_H;
-            jtj[0][0] += j0 * j0;
-            jtj[0][1] += j0 * j1;
-            jtj[1][0] += j1 * j0;
-            jtj[1][1] += j1 * j1;
-            jtr[0] += j0 * r[i];
-            jtr[1] += j1 * r[i];
-        }
-        // (JᵀJ + λI) δ = −Jᵀr.
-        let a = jtj[0][0] + lambda;
-        let d = jtj[1][1] + lambda;
-        let bc = jtj[0][1];
-        let det = a * d - bc * bc;
-        if det.abs() < 1e-300 {
-            break;
-        }
-        let dx0 = -(d * jtr[0] - bc * jtr[1]) / det;
-        let dx1 = -(a * jtr[1] - bc * jtr[0]) / det;
-        let (np0, np1) = project(*p0 + dx0, *p1 + dx1);
-        let nr = residuals(np0, np1);
-        let ncost = sumsq(&nr);
-        if ncost < cost {
-            *p0 = np0;
-            *p1 = np1;
-            r = nr;
-            cost = ncost;
-            lambda = (lambda * 0.5).max(1e-9);
-        } else {
-            lambda *= 4.0;
-            if lambda > 1e12 {
-                break;
-            }
-        }
-    }
-}
-
-/// A 3-parameter damped Gauss-Newton solve with per-parameter box clamps.
-fn gauss_newton_3<R>(
-    p0: &mut f64,
-    p1: &mut f64,
-    p2: &mut f64,
-    residuals: R,
-    b0: (f64, f64),
-    b1: (f64, f64),
-    b2: (f64, f64),
-) where
-    R: Fn(f64, f64, f64) -> Vec<f64>,
-{
-    let project = |a: f64, b: f64, c: f64| {
-        (
-            clamp(a, b0.0, b0.1),
-            clamp(b, b1.0, b1.1),
-            clamp(c, b2.0, b2.1),
-        )
-    };
-    let mut lambda = 1e-3;
-    let mut r = residuals(*p0, *p1, *p2);
-    let mut cost = sumsq(&r);
-    for _ in 0..FIT_ITERS {
-        let n = r.len();
-        let ra = residuals(*p0 + FIT_FD_H, *p1, *p2);
-        let rb = residuals(*p0, *p1 + FIT_FD_H, *p2);
-        let rc = residuals(*p0, *p1, *p2 + FIT_FD_H);
-        let mut jtj = [[0.0_f64; 3]; 3];
-        let mut jtr = [0.0_f64; 3];
-        for i in 0..n {
-            let j = [
-                (ra[i] - r[i]) / FIT_FD_H,
-                (rb[i] - r[i]) / FIT_FD_H,
-                (rc[i] - r[i]) / FIT_FD_H,
-            ];
-            for a in 0..3 {
-                jtr[a] += j[a] * r[i];
-                for b in 0..3 {
-                    jtj[a][b] += j[a] * j[b];
-                }
-            }
-        }
-        for (a, row) in jtj.iter_mut().enumerate() {
-            row[a] += lambda;
-        }
-        let Some(delta) = solve3(&jtj, &[-jtr[0], -jtr[1], -jtr[2]]) else {
-            break;
-        };
-        let (np0, np1, np2) = project(*p0 + delta[0], *p1 + delta[1], *p2 + delta[2]);
-        let nr = residuals(np0, np1, np2);
-        let ncost = sumsq(&nr);
-        if ncost < cost {
-            *p0 = np0;
-            *p1 = np1;
-            *p2 = np2;
-            r = nr;
-            cost = ncost;
-            lambda = (lambda * 0.5).max(1e-9);
-        } else {
-            lambda *= 4.0;
-            if lambda > 1e12 {
-                break;
-            }
-        }
-    }
-}
-
-/// A 4-parameter damped Gauss-Newton solve with a custom projection.
-fn gauss_newton_4<R, P>(
-    p0: &mut f64,
-    p1: &mut f64,
-    p2: &mut f64,
-    p3: &mut f64,
-    residuals: R,
-    project: P,
-) where
-    R: Fn(f64, f64, f64, f64) -> Vec<f64>,
-    P: Fn(f64, f64, f64, f64) -> (f64, f64, f64, f64),
-{
-    let mut lambda = 1e-3;
-    let mut r = residuals(*p0, *p1, *p2, *p3);
-    let mut cost = sumsq(&r);
-    for _ in 0..FIT_ITERS {
-        let n = r.len();
-        let rcols = [
-            residuals(*p0 + FIT_FD_H, *p1, *p2, *p3),
-            residuals(*p0, *p1 + FIT_FD_H, *p2, *p3),
-            residuals(*p0, *p1, *p2 + FIT_FD_H, *p3),
-            residuals(*p0, *p1, *p2, *p3 + FIT_FD_H),
-        ];
-        let mut jtj = [[0.0_f64; 4]; 4];
-        let mut jtr = [0.0_f64; 4];
-        for i in 0..n {
-            let mut j = [0.0_f64; 4];
-            for (c, col) in rcols.iter().enumerate() {
-                j[c] = (col[i] - r[i]) / FIT_FD_H;
-            }
-            for a in 0..4 {
-                jtr[a] += j[a] * r[i];
-                for b in 0..4 {
-                    jtj[a][b] += j[a] * j[b];
-                }
-            }
-        }
-        for (a, row) in jtj.iter_mut().enumerate() {
-            row[a] += lambda;
-        }
-        let Some(delta) = solve4(&jtj, &[-jtr[0], -jtr[1], -jtr[2], -jtr[3]]) else {
-            break;
-        };
-        let (np0, np1, np2, np3) = project(
-            *p0 + delta[0],
-            *p1 + delta[1],
-            *p2 + delta[2],
-            *p3 + delta[3],
-        );
-        let nr = residuals(np0, np1, np2, np3);
-        let ncost = sumsq(&nr);
-        if ncost < cost {
-            *p0 = np0;
-            *p1 = np1;
-            *p2 = np2;
-            *p3 = np3;
-            r = nr;
-            cost = ncost;
-            lambda = (lambda * 0.5).max(1e-9);
-        } else {
-            lambda *= 4.0;
-            if lambda > 1e12 {
-                break;
-            }
-        }
-    }
-}
-
-/// Solve a 3×3 linear system by Gaussian elimination with partial pivoting.
-fn solve3(a: &[[f64; 3]; 3], b: &[f64; 3]) -> Option<[f64; 3]> {
-    let mut m = [
-        [a[0][0], a[0][1], a[0][2], b[0]],
-        [a[1][0], a[1][1], a[1][2], b[1]],
-        [a[2][0], a[2][1], a[2][2], b[2]],
-    ];
-    gaussian_eliminate::<3, 4>(&mut m)
-}
-
-/// Solve a 4×4 linear system by Gaussian elimination with partial pivoting.
-fn solve4(a: &[[f64; 4]; 4], b: &[f64; 4]) -> Option<[f64; 4]> {
-    let mut m = [[0.0_f64; 5]; 4];
-    for (i, row) in m.iter_mut().enumerate() {
-        row[..4].copy_from_slice(&a[i]);
-        row[4] = b[i];
-    }
-    gaussian_eliminate::<4, 5>(&mut m)
-}
-
-/// Gaussian elimination with partial pivoting on an augmented `N×C` matrix
-/// (`C == N + 1`), returning the `N` solution components or `None` for a singular
-/// system. Const-generic so the 3- and 4-parameter normal equations share one
-/// numerically-careful implementation (the elimination uses a copied pivot row so
-/// the row updates are disjoint borrows — no aliasing, no index-loop lint).
-fn gaussian_eliminate<const N: usize, const C: usize>(m: &mut [[f64; C]; N]) -> Option<[f64; N]> {
-    for col in 0..N {
-        // Partial pivot: swap in the row with the largest magnitude in this column.
-        let mut piv = col;
-        for row in (col + 1)..N {
-            if m[row][col].abs() > m[piv][col].abs() {
-                piv = row;
-            }
-        }
-        m.swap(col, piv);
-        if m[col][col].abs() < 1e-300 {
-            return None;
-        }
-        let pivot_row = m[col];
-        let denom = pivot_row[col];
-        for row in m.iter_mut().skip(col + 1) {
-            let f = row[col] / denom;
-            for (rk, &pk) in row.iter_mut().zip(pivot_row.iter()).skip(col) {
-                *rk -= f * pk;
-            }
-        }
-    }
-    // Back-substitution.
-    let mut x = [0.0_f64; N];
-    for col in (0..N).rev() {
-        let mut s = m[col][N];
-        for (k, &xk) in x.iter().enumerate().skip(col + 1) {
-            s -= m[col][k] * xk;
-        }
-        x[col] = s / m[col][col];
-    }
-    Some(x)
-}
+// The deterministic damped Gauss-Newton solver kit (clamp / sumsq /
+// gauss_newton_2/3/4 / solve3 / solve4 / gaussian_eliminate, FIT_ITERS,
+// FIT_FD_H) lives in [`crate::fitmath`] — hoisted there verbatim so the
+// strike-axis front-end shares it (CRYPTO-SURFACE-LEAF-SPEC §2.3; byte
+// identity of this FX path across the move is gated by `tests/fx_fit_pin.rs`).
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The solver kit was hoisted into `fitmath` (crypto-surface leaf D1); these
+    // survivor-kill tests (W6 risk floor) exercise it directly.
+    use crate::fitmath::{solve3, solve4, sumsq};
     use celnet_conventions::resolve;
     use celnet_core::is_close;
     use celnet_types::{Carry, CcyPair, Tenor};
@@ -950,6 +680,289 @@ mod tests {
                 "{model:?} fitted slice must be butterfly-free"
             );
         }
+    }
+
+    /// The 2-parameter damped least-squares solver converges to the known
+    /// closed-form optimum of a consistent linear model. INDEPENDENT ORACLE:
+    /// data generated from known coefficients `(A, B)`; the zero-residual least
+    /// squares optimum *is* `(A, B)` exactly, so the solver must land there.
+    /// Kills Jacobian-direction, normal-equation and step-acceptance mutants in
+    /// `gauss_newton_2` directly (no fitter in the loop).
+    #[test]
+    fn damped_solver_2_converges_to_known_optimum() {
+        let xs = [-1.0, -0.5, 0.0, 0.5, 1.0, 2.0];
+        let (a_true, b_true) = (0.7, -0.3);
+        let residuals = |p0: f64, p1: f64| -> Vec<f64> {
+            xs.iter()
+                .map(|&x| p0 * x + p1 - (a_true * x + b_true))
+                .collect()
+        };
+        let mut p0 = 0.0;
+        let mut p1 = 0.0;
+        gauss_newton_2(&mut p0, &mut p1, residuals, (0.0, 0.0), |a, b| (a, b));
+        assert!(
+            (p0 - a_true).abs() <= 1e-9 && (p1 - b_true).abs() <= 1e-9,
+            "2-param solve must converge to the exact optimum: got ({p0}, {p1})"
+        );
+        let cost = sumsq(
+            &(0..xs.len())
+                .map(|i| p0 * xs[i] + p1 - (a_true * xs[i] + b_true))
+                .collect::<Vec<_>>(),
+        );
+        assert!(cost <= 1e-18, "converged cost must vanish: {cost:e}");
+    }
+
+    /// The 2-parameter solver honours its projection at every accepted step:
+    /// with a box that excludes the unconstrained optimum, the solve lands on
+    /// the box boundary closest to it (the constrained least-squares solution).
+    #[test]
+    fn damped_solver_2_respects_projection() {
+        let xs = [-1.0, 0.0, 1.0, 2.0];
+        let residuals =
+            |p0: f64, p1: f64| -> Vec<f64> { xs.iter().map(|&x| p0 * x + p1 - x).collect() };
+        // Unconstrained optimum (1, 0); project p0 into [-0.5, 0.5].
+        let mut p0 = 0.0;
+        let mut p1 = 0.0;
+        gauss_newton_2(&mut p0, &mut p1, residuals, (0.0, 0.0), |a, b| {
+            (clamp(a, -0.5, 0.5), b)
+        });
+        assert!(
+            (p0 - 0.5).abs() <= 1e-9,
+            "projected solve must sit on the active box boundary: p0={p0}"
+        );
+    }
+
+    /// The 3-parameter damped solver converges to the known quadratic-model
+    /// coefficients (zero-residual consistent data ⇒ the optimum is exact).
+    /// Kills `gauss_newton_3` + `solve3` internals directly.
+    #[test]
+    fn damped_solver_3_converges_to_known_optimum() {
+        let xs = [-1.5, -1.0, -0.4, 0.0, 0.3, 0.9, 1.4];
+        let (c2, c1, c0) = (0.4, -0.2, 0.05);
+        let model = |a: f64, b: f64, c: f64, x: f64| a * x * x + b * x + c;
+        let residuals = |a: f64, b: f64, c: f64| -> Vec<f64> {
+            xs.iter()
+                .map(|&x| model(a, b, c, x) - model(c2, c1, c0, x))
+                .collect()
+        };
+        let mut a = 0.0;
+        let mut b = 0.0;
+        let mut c = 0.0;
+        gauss_newton_3(
+            &mut a,
+            &mut b,
+            &mut c,
+            residuals,
+            (-10.0, 10.0),
+            (-10.0, 10.0),
+            (-10.0, 10.0),
+        );
+        assert!(
+            (a - c2).abs() <= 1e-9 && (b - c1).abs() <= 1e-9 && (c - c0).abs() <= 1e-9,
+            "3-param solve must converge to ({c2}, {c1}, {c0}): got ({a}, {b}, {c})"
+        );
+    }
+
+    /// The 4-parameter damped solver converges to the known cubic-model
+    /// coefficients. Kills `gauss_newton_4` + `solve4` internals directly.
+    #[test]
+    fn damped_solver_4_converges_to_known_optimum() {
+        let xs = [-1.5, -1.0, -0.6, -0.2, 0.0, 0.4, 0.8, 1.2, 1.7];
+        let want = [0.3, -0.5, 0.2, -0.05];
+        let model = |p: &[f64; 4], x: f64| ((p[0] * x + p[1]) * x + p[2]) * x + p[3];
+        let residuals = |a: f64, b: f64, c: f64, d: f64| -> Vec<f64> {
+            xs.iter()
+                .map(|&x| model(&[a, b, c, d], x) - model(&want, x))
+                .collect()
+        };
+        let mut a = 0.0;
+        let mut b = 0.0;
+        let mut c = 0.0;
+        let mut d = 0.0;
+        gauss_newton_4(&mut a, &mut b, &mut c, &mut d, residuals, |a, b, c, d| {
+            (a, b, c, d)
+        });
+        for (got, want) in [a, b, c, d].iter().zip(want.iter()) {
+            assert!(
+                (got - want).abs() <= 1e-9,
+                "4-param solve drifted: got {got}, want {want}"
+            );
+        }
+    }
+
+    /// The shared elimination solver matches an in-test textbook dense solve
+    /// (partial pivoting re-implemented independently) on random
+    /// well-conditioned systems, for both the 3×3 and 4×4 paths; a singular
+    /// system returns `None`.
+    #[test]
+    fn gaussian_eliminate_matches_dense_reference() {
+        // Deterministic LCG so the systems are reproducible.
+        let mut state = 0x2545F4914F6CDD1D_u64;
+        let mut next = move || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((state >> 11) as f64) / ((1_u64 << 53) as f64)
+        };
+        // Independent textbook reference: full pivoted elimination on a copy.
+        fn reference(a: &[Vec<f64>], b: &[f64]) -> Vec<f64> {
+            let n = b.len();
+            let mut m: Vec<Vec<f64>> = (0..n)
+                .map(|i| {
+                    let mut row = a[i].clone();
+                    row.push(b[i]);
+                    row
+                })
+                .collect();
+            for col in 0..n {
+                let piv = (col..n)
+                    .max_by(|&i, &j| m[i][col].abs().total_cmp(&m[j][col].abs()))
+                    .unwrap();
+                m.swap(col, piv);
+                let pivot_row = m[col].clone();
+                for row in m.iter_mut().skip(col + 1) {
+                    let f = row[col] / pivot_row[col];
+                    for (cell, &pk) in row.iter_mut().zip(pivot_row.iter()).skip(col) {
+                        *cell -= f * pk;
+                    }
+                }
+            }
+            let mut x = vec![0.0; n];
+            for col in (0..n).rev() {
+                let mut s = m[col][n];
+                for k in (col + 1)..n {
+                    s -= m[col][k] * x[k];
+                }
+                x[col] = s / m[col][col];
+            }
+            x
+        }
+        for _ in 0..32 {
+            // Diagonally dominant ⇒ well-conditioned.
+            let a3: Vec<Vec<f64>> = (0..3)
+                .map(|i| {
+                    (0..3)
+                        .map(|j| next() + if i == j { 3.0 } else { 0.0 })
+                        .collect()
+                })
+                .collect();
+            let b3: Vec<f64> = (0..3).map(|_| next() * 2.0 - 1.0).collect();
+            let got = solve3(
+                &[
+                    [a3[0][0], a3[0][1], a3[0][2]],
+                    [a3[1][0], a3[1][1], a3[1][2]],
+                    [a3[2][0], a3[2][1], a3[2][2]],
+                ],
+                &[b3[0], b3[1], b3[2]],
+            )
+            .expect("well-conditioned 3x3 must solve");
+            let want = reference(&a3, &b3);
+            for i in 0..3 {
+                assert!(
+                    (got[i] - want[i]).abs() <= 1e-10,
+                    "3x3 solve component {i}: got {}, want {}",
+                    got[i],
+                    want[i]
+                );
+            }
+
+            let a4: Vec<Vec<f64>> = (0..4)
+                .map(|i| {
+                    (0..4)
+                        .map(|j| next() + if i == j { 4.0 } else { 0.0 })
+                        .collect()
+                })
+                .collect();
+            let b4: Vec<f64> = (0..4).map(|_| next() * 2.0 - 1.0).collect();
+            let got = solve4(
+                &[
+                    [a4[0][0], a4[0][1], a4[0][2], a4[0][3]],
+                    [a4[1][0], a4[1][1], a4[1][2], a4[1][3]],
+                    [a4[2][0], a4[2][1], a4[2][2], a4[2][3]],
+                    [a4[3][0], a4[3][1], a4[3][2], a4[3][3]],
+                ],
+                &[b4[0], b4[1], b4[2], b4[3]],
+            )
+            .expect("well-conditioned 4x4 must solve");
+            let want = reference(&a4, &b4);
+            for i in 0..4 {
+                assert!(
+                    (got[i] - want[i]).abs() <= 1e-10,
+                    "4x4 solve component {i}: got {}, want {}",
+                    got[i],
+                    want[i]
+                );
+            }
+        }
+        // Singular systems are rejected as None, never a NaN solution.
+        assert!(
+            solve3(
+                &[[1.0, 2.0, 3.0], [2.0, 4.0, 6.0], [0.5, 1.0, 1.5]],
+                &[1.0, 2.0, 0.5]
+            )
+            .is_none(),
+            "rank-1 3x3 must be singular"
+        );
+        assert!(
+            solve4(
+                &[
+                    [1.0, 0.0, 0.0, 0.0],
+                    [0.0, 1.0, 1.0, 0.0],
+                    [0.0, 2.0, 2.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0]
+                ],
+                &[1.0, 1.0, 2.0, 1.0]
+            )
+            .is_none(),
+            "rank-deficient 4x4 must be singular"
+        );
+    }
+
+    /// The deterministic clamp and sum-of-squares helpers match their closed
+    /// forms (interior, both boundaries, both saturations).
+    #[test]
+    fn clamp_and_sumsq_match_closed_forms() {
+        assert_eq!(clamp(-5.0, 0.0, 1.0), 0.0);
+        assert_eq!(clamp(5.0, 0.0, 1.0), 1.0);
+        assert_eq!(clamp(0.25, 0.0, 1.0), 0.25);
+        assert_eq!(clamp(0.0, 0.0, 1.0), 0.0);
+        assert_eq!(clamp(1.0, 0.0, 1.0), 1.0);
+        assert_eq!(sumsq(&[3.0, 4.0]), 25.0);
+        assert_eq!(sumsq(&[]), 0.0);
+        assert_eq!(sumsq(&[-2.0]), 4.0);
+    }
+
+    /// The SVI no-arbitrage projection: each clamp is active exactly where its
+    /// bound binds, and the wing-slope cap `b ≤ 2/(1+|ρ|)` plus the
+    /// negative-floor shrink keep the projected slice admissible.
+    #[test]
+    fn svi_projection_enforces_the_no_arbitrage_box() {
+        let w_atm = 0.01;
+        // Interior point passes through untouched.
+        let (b, rho, m, sigma) = project_svi(0.05, -0.2, 0.1, 0.2, w_atm);
+        assert_eq!((b, rho, m, sigma), (0.05, -0.2, 0.1, 0.2));
+        // ρ clamps to ±0.999, σ to [1e-3, 5], m to [−2, 2].
+        let (_, rho, m, sigma) = project_svi(0.05, -3.0, 7.0, 9.0, w_atm);
+        assert_eq!(rho, -0.999);
+        assert_eq!(m, 2.0);
+        assert_eq!(sigma, 5.0);
+        // The wing-slope cap: b requested above 2/(1+|ρ|) is cut to the cap.
+        let (b, rho, ..) = project_svi(5.0, 0.5, 0.0, 0.5, 0.5);
+        assert!(
+            (b - 2.0 / (1.0 + rho.abs())).abs() <= 1e-12,
+            "b must sit on the wing-slope cap: b={b}, cap={}",
+            2.0 / (1.0 + rho.abs())
+        );
+        // Negative-floor shrink: parameters that would push the minimum total
+        // variance negative get b reduced until w_min ≥ 0.
+        let (b, rho, m, sigma) = project_svi(1.0, 0.9, -1.5, 1.0, 0.01);
+        let d0 = -m;
+        let level = 0.01 - b * (rho * d0 + (d0 * d0 + sigma * sigma).sqrt());
+        let w_min = level + b * sigma * (1.0 - rho * rho).sqrt();
+        assert!(
+            w_min >= -1e-15,
+            "projected slice must keep the variance floor non-negative: w_min={w_min:e}"
+        );
     }
 
     /// Calibration is deterministic: the same inputs yield a bit-identical fit.
