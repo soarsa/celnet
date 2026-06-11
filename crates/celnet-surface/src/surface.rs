@@ -267,6 +267,75 @@ mod tests {
         assert!(rep.min_calendar_increment >= -1e-9);
     }
 
+    /// Each clause of `is_arbitrage_free` rejects independently: a violation of
+    /// any one of density / vertical / calendar — with the other two clean —
+    /// must flip the verdict (drives the three-clause conjunction arm by arm).
+    #[test]
+    fn report_clauses_reject_independently() {
+        let clean = SurfaceArbitrageReport {
+            min_density: 0.5,
+            max_vertical_increase: -1e-6,
+            min_calendar_increment: 1e-4,
+        };
+        assert!(clean.is_arbitrage_free(1e-8));
+        let bad_density = SurfaceArbitrageReport {
+            min_density: -1e-3,
+            ..clean.clone()
+        };
+        assert!(!bad_density.is_arbitrage_free(1e-8), "density clause");
+        let bad_vertical = SurfaceArbitrageReport {
+            max_vertical_increase: 1e-3,
+            ..clean.clone()
+        };
+        assert!(!bad_vertical.is_arbitrage_free(1e-8), "vertical clause");
+        let bad_calendar = SurfaceArbitrageReport {
+            min_calendar_increment: -1e-3,
+            ..clean.clone()
+        };
+        assert!(!bad_calendar.is_arbitrage_free(1e-8), "calendar clause");
+        // The tolerance is honoured on each side of each boundary.
+        let at_tol = SurfaceArbitrageReport {
+            min_density: -1e-8,
+            max_vertical_increase: 1e-8,
+            min_calendar_increment: -1e-8,
+        };
+        assert!(at_tol.is_arbitrage_free(1e-8), "exact-tolerance boundary");
+    }
+
+    /// A surface whose LATE pillar is butterfly-arbitrageable (and whose early
+    /// pillar is clean) is flagged by the consolidated report — the per-slice
+    /// worst case must be accumulated across the whole maturity grid, not just
+    /// the first maturity. Kills the maturity-grid arithmetic and the min-fold.
+    #[test]
+    fn late_maturity_arbitrage_is_detected() {
+        let clean = ParametricSlice::new(0.004, 0.02, -0.15, 0.0, 0.10, 1.10, 0.25);
+        // The pathological slice from the parametric tests: negative density.
+        let bad = ParametricSlice::new(0.005, 0.9, -0.95, 0.0, 0.02, 1.10, 2.0);
+        let s = VolSurface::new(
+            SmileModel::Parametric,
+            vec![
+                TenorPillar::new(clean, 1.10, 0.25),
+                TenorPillar::new(bad, 1.10, 2.0),
+            ],
+        );
+        let rep = s.arbitrage_report(0.5, 81, 8, 1e-3);
+        assert!(
+            rep.min_density < -1e-4,
+            "the late pillar's negative density must surface in the report: {rep:?}"
+        );
+        // The early maturity alone is clean — proving the violation genuinely
+        // comes from the deeper maturities of the scan.
+        let early_only = VolSurface::new(
+            SmileModel::Parametric,
+            vec![TenorPillar::new(clean, 1.10, 0.25)],
+        );
+        let early_rep = early_only.arbitrage_report(0.5, 81, 2, 1e-3);
+        assert!(
+            early_rep.min_density > -1e-6,
+            "the early slice alone must be clean: {early_rep:?}"
+        );
+    }
+
     /// At a pillar maturity, the surface vol equals the pillar slice's own vol.
     #[test]
     fn pillar_maturity_matches_slice() {

@@ -704,6 +704,7 @@ name = "celnet-qmc"
 version = "0.0.0"
 dependencies = [
  "celnet-core",
+ "libm",
 ]
 
 [[package]]
@@ -823,9 +824,11 @@ version = "0.0.0"
 dependencies = [
  "celnet-conventions",
  "celnet-core",
+ "celnet-crypto-vanilla",
  "celnet-testkit",
  "celnet-types",
  "celnet-vanilla",
+ "libm",
  "proptest",
 ]
 
@@ -861,6 +864,7 @@ dependencies = [
 name = "celnet-xva"
 version = "0.0.0"
 dependencies = [
+ "celnet-core",
  "celnet-qmc",
  "celnet-types",
  "celnet-vanilla",

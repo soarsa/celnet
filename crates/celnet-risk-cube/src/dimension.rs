@@ -316,3 +316,163 @@ fn upsert<K: PartialEq, V>(v: &mut Vec<(K, V)>, key: K, value: V) {
         v.push((key, value));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use celnet_types::{Ccy, CcyPair, CommodityRef, EquityRef, Metal, MetalPair, Symbol};
+
+    fn key() -> FactKey {
+        FactKey {
+            trader: TraderId(11),
+            book: BookId(22),
+            desk: DeskId(33),
+            underlying: Underlying::Fx(CcyPair::new(Ccy::EUR, Ccy::USD)),
+            location: LocationId(44),
+            entity: EntityId(55),
+        }
+    }
+
+    /// Each org dimension reads ITS OWN key (all five distinct, so any arm swap in
+    /// the `group_value` match is caught).
+    #[test]
+    fn org_dimension_group_values_are_their_own_keys() {
+        let k = key();
+        assert_eq!(k.group_value(DimensionId::Trader), 11);
+        assert_eq!(k.group_value(DimensionId::Book), 22);
+        assert_eq!(k.group_value(DimensionId::Desk), 33);
+        assert_eq!(k.group_value(DimensionId::Location), 44);
+        assert_eq!(k.group_value(DimensionId::Entity), 55);
+    }
+
+    /// The FX/metal pair group key is the documented 48-bit two-code byte packing —
+    /// pinned against hand-typed ASCII byte values (`'E'=0x45, 'U'=0x55, 'R'=0x52,
+    /// 'S'=0x53, 'D'=0x44, 'J'=0x4A, 'P'=0x50, 'Y'=0x59, 'X'=0x58, 'A'=0x41`), so
+    /// the shift/or fold and its byte order are all load-bearing. No packed pair
+    /// ever sets bits ≥ 48.
+    #[test]
+    fn fx_pair_group_value_is_the_documented_48bit_packing() {
+        let eurusd = key().group_value(DimensionId::Underlying);
+        assert_eq!(eurusd, 0x4555_5255_5344, "EURUSD = E U R U S D bytes");
+        let mut k = key();
+        k.underlying = Underlying::Fx(CcyPair::new(Ccy::USD, Ccy::JPY));
+        assert_eq!(
+            k.group_value(DimensionId::Underlying),
+            0x5553_444A_5059,
+            "USDJPY = U S D J P Y bytes"
+        );
+        // A metal pair packs through the SAME projection (XAUUSD byte-identical to
+        // its pre-generalization CcyPair packing).
+        k.underlying = Underlying::Metal(MetalPair::new(Metal::Gold, Ccy::USD));
+        assert_eq!(
+            k.group_value(DimensionId::Underlying),
+            0x5841_5555_5344,
+            "XAUUSD = X A U U S D bytes"
+        );
+        assert!(eurusd < (1u64 << 48), "packed pairs never reach bit 48");
+    }
+
+    /// A cross-asset (no-pair) underlying groups by the deterministic FNV-1a hash
+    /// with the top bit forced — frozen-bits pins (the house `fx_byte_identity`
+    /// pattern: captured once from the unmutated build) make the hash constants,
+    /// the fold arithmetic and the top-bit force all load-bearing; the disjointness
+    /// and same-key-same-group contracts are asserted structurally.
+    #[test]
+    fn cross_asset_group_value_is_stable_and_disjoint() {
+        let mut k = key();
+        k.underlying = Underlying::Equity(EquityRef::new(Symbol::new("ACME", ""), Ccy::USD));
+        let acme = k.group_value(DimensionId::Underlying);
+        let mut k2 = key();
+        k2.underlying = Underlying::Equity(EquityRef::new(Symbol::new("ACME", ""), Ccy::USD));
+        // Deterministic: the same underlying always lands in the same group.
+        assert_eq!(acme, k2.group_value(DimensionId::Underlying));
+        // Disjoint from every 48-bit packed pair: the top bit is forced.
+        assert!(acme & (1u64 << 63) != 0, "cross-asset keys must set bit 63");
+        // A different symbol is a different group (the hash genuinely hashes).
+        k2.underlying = Underlying::Equity(EquityRef::new(Symbol::new("OTHR", ""), Ccy::USD));
+        let othr = k2.group_value(DimensionId::Underlying);
+        assert_ne!(acme, othr);
+        // Frozen-bits pins (captured from the unmutated FNV-1a fold; a change to
+        // the offset/prime/xor/multiply or the top-bit force shifts these).
+        let mut k3 = key();
+        k3.underlying =
+            Underlying::Commodity(CommodityRef::new(Symbol::new("BRENT", ""), Ccy::USD));
+        let brent = k3.group_value(DimensionId::Underlying);
+        assert_eq!(acme, ACME_USD_GROUP, "ACME/USD frozen group key");
+        assert_eq!(brent, BRENT_USD_GROUP, "BRENT/USD frozen group key");
+        assert_ne!(acme, brent);
+        // OTHR/USD's RAW hash already carries bit 63 (asserted via the hasher
+        // directly so the property is re-checked if the upstream `Hash` layout ever
+        // changes), so the top-bit force must be an OR — an XOR would CLEAR the bit
+        // here and re-open the packed-pair range. This is the input class on which
+        // `|` and `^` genuinely diverge; the frozen pin makes it mutant-killing.
+        let raw_othr = {
+            use core::hash::{Hash, Hasher};
+            let mut h = FnvHasher::new();
+            Underlying::Equity(EquityRef::new(Symbol::new("OTHR", ""), Ccy::USD)).hash(&mut h);
+            h.finish()
+        };
+        assert!(
+            raw_othr >> 63 == 1,
+            "OTHR/USD raw hash must carry bit 63 (re-pick the pin input if the \
+             upstream Hash layout changed)"
+        );
+        assert_eq!(
+            othr, OTHR_USD_GROUP,
+            "OTHR/USD frozen group key (top bit OR)"
+        );
+        assert!(othr & (1u64 << 63) != 0);
+    }
+
+    /// Frozen group keys for the cross-asset hash pins above (captured once from
+    /// the unmutated build on this toolchain; deterministic by construction).
+    const ACME_USD_GROUP: u64 = 0xD095_3180_2EA3_7AB8;
+    const BRENT_USD_GROUP: u64 = 0x8CB6_F3CC_498F_509E;
+    /// Raw FNV already has bit 63 set for this input (`0xCA84_…`), so the group
+    /// key equals the raw hash — the case that distinguishes the OR from an XOR.
+    const OTHR_USD_GROUP: u64 = 0xCA84_4C62_F805_9A5D;
+
+    /// Parent pointers resolve, supersede on re-set, and answer `None` when
+    /// unconfigured — for BOTH chains (book→desk, location→entity).
+    #[test]
+    fn hierarchy_parent_pointers_resolve_and_supersede() {
+        let mut h = Hierarchy::new();
+        assert_eq!(h.desk_of(BookId(1)), None);
+        assert_eq!(h.entity_of(LocationId(1)), None);
+
+        h.set_book_desk(BookId(1), DeskId(10));
+        h.set_book_desk(BookId(2), DeskId(20));
+        assert_eq!(h.desk_of(BookId(1)), Some(DeskId(10)));
+        assert_eq!(h.desk_of(BookId(2)), Some(DeskId(20)));
+        // Re-setting an existing book REPLACES (one live mapping per key — a
+        // push-instead-of-replace mutant would keep answering 10 via first-match).
+        h.set_book_desk(BookId(1), DeskId(11));
+        assert_eq!(h.desk_of(BookId(1)), Some(DeskId(11)));
+        assert_eq!(
+            h.desk_of(BookId(2)),
+            Some(DeskId(20)),
+            "other keys untouched"
+        );
+        assert_eq!(h.desk_of(BookId(3)), None);
+
+        h.set_location_entity(LocationId(7), EntityId(70));
+        h.set_location_entity(LocationId(8), EntityId(80));
+        assert_eq!(h.entity_of(LocationId(7)), Some(EntityId(70)));
+        assert_eq!(h.entity_of(LocationId(8)), Some(EntityId(80)));
+        h.set_location_entity(LocationId(8), EntityId(81));
+        assert_eq!(h.entity_of(LocationId(8)), Some(EntityId(81)));
+        assert_eq!(h.entity_of(LocationId(9)), None);
+    }
+
+    /// The interned-handle plumbing: `raw()` and `From<u32>` are the identity on
+    /// the handle for every key type.
+    #[test]
+    fn interned_handles_round_trip() {
+        assert_eq!(PositionId::from(7).raw(), 7);
+        assert_eq!(TraderId::from(8).raw(), 8);
+        assert_eq!(BookId::from(9).raw(), 9);
+        assert_eq!(DeskId::from(10).raw(), 10);
+        assert_eq!(LocationId::from(11).raw(), 11);
+        assert_eq!(EntityId::from(12).raw(), 12);
+    }
+}

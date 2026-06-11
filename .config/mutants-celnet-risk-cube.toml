@@ -1,0 +1,152 @@
+# cargo-mutants gate configuration — celnet-risk-cube mutation-testing policy.
+#
+# Mirrors `.config/mutants.toml` (the celnet-vanilla gate) for the risk-cube
+# crate: hierarchical additive roll-up (per-ccy NetGreeks + VegaLadder), the
+# non-additive bump-and-revalue / sensitivity-Taylor VaR/ES lens, FRTB-SA
+# (SbM/curvature/RRAO/DRC) capital aggregation, the GPU spot x vol scenario grid,
+# and the exotic risk-cube aggregation. This is safety-critical capital
+# arithmetic: a silently-weakened suite here could let a VaR/ES or FRTB capital
+# error ship.
+#
+# How the gate works
+# ------------------
+# `just mutants-gate-risk-cube` runs
+#   cargo mutants -p celnet-risk-cube --test-tool=cargo --jobs 2 \
+#       --minimum-test-timeout=120 --config .config/mutants-celnet-risk-cube.toml
+# applying a syntactic mutant per operator/comparison/return value and
+# re-running the suite; a MISSED mutant is a test gap. cargo-mutants exits
+# non-zero on ANY survivor, so the gate enforces ZERO non-equivalent survivors
+# — a future edit that weakens the suite below the kill bar fails the build.
+# See docs/HARDENING.md §2 for the measured baseline.
+#
+# Kill strategy (W6 rigor wave §3.3): every mutant is killed by an INDEPENDENT
+# oracle — `tests/frtb_param_provenance.rs` (every FRTB parameter pinned to a
+# hand-typed BCBS MAR21 paragraph literal, the anti-circular 0.75ρ-lesson guard,
+# + hand-built bucket-assignment pins), `tests/longhand_oracle.rs` (naive
+# double-loop firm aggregate over all 11 NetGreeks lines + the ladder, partition
+# conservation across all six dimensions, bit-exact VaR/ES quantile/tie/floor
+# boundaries through a linear in-test pricer, a hand Taylor-expansion pin,
+# curvature legs vs two longhand revaluations, the combined vanilla+exotic tail),
+# `tests/fx_invariance.rs` (FX to_bits non-regression), and in-module pins
+# (48-bit pair packing typed from hand ASCII bytes + frozen-bits FNV group keys,
+# bit-exact additive sums, scenario algebra byte-for-byte vs the raw FX two-rate
+# arithmetic, the MAR21.6 alternative-S_b branch hand-derived end-to-end, the
+# far-barrier vanilla-limit oracle for the full exotic FD Greek set, row-major
+# grid indexing and the reconciliation band).
+#
+# MEASURED baseline (this session, aarch64-apple-darwin, cargo-mutants 27.0.0,
+# toolchain 1.96.0)
+# ------------------------------------------------------------------------------
+# File-scoped waves (R1 dimension/additive/cube, R2 frtb_params/frtb,
+# R3 nonadditive, R4 exotic/scenario_grid), each run to zero non-equivalent
+# survivors, then a FULL-CRATE discovery run + the canonical confirm run with
+# this config. The raw R1 wave (121 mutants) surfaced exactly two survivors,
+# both `|`→`^` in `underlying_group_value`:
+#   * dimension.rs:168 (the bit-63 force) — a GENUINE gap: both original frozen
+#     pin inputs happened to have raw-hash bit 63 clear, where OR and XOR agree.
+#     KILLED by pinning OTHR/USD (raw hash 0xCA84_… carries bit 63, asserted via
+#     the hasher in-test so the property is re-checked if the upstream Hash
+#     layout ever changes) — on that input XOR clears the bit and breaks the pin.
+#   * dimension.rs:159 (the byte fold) — provably equivalent, EXCLUDED below.
+# The FULL-CRATE discovery run (`961 mutants tested in 31m: 14 missed, 899
+# caught, 48 unviable`, RUSTC_WRAPPER="") surfaced 14 survivors the file-scoped
+# waves' fixtures had not: 9 GENUINE gaps were KILLED with oracle-pinned tests
+# (the exotic FD time-bump `t/2` clamp via an ultra-short-tenor far-barrier
+# vanilla-limit pin; `sbm_total`'s curvature term via a nonzero-curvature
+# max-of-sums hand pin; the combined curvature UP-sum via an up-dominant
+# long-digital regime with in-test regime guards; the scenario-grid std_err
+# stride / inclusive band boundary / worst-tie diagnostics via hand-built grid
+# literals against the identically-zero empty-book reference; the std_err
+# notional-scaling quadrature via a bit-exact recomputation of the propagation
+# chain) and 5 audited equivalents were EXCLUDED below. Full dispositions:
+# docs/HARDENING.md §2.
+# Canonical gate run with this config (clean slate, single segment, no
+# interruption): `956 mutants tested in 27m: 908 caught, 48 unviable` — ZERO
+# missed, zero timeouts, real exit 0, with the identical disposition counts
+# verified from the mutants.out ground truth at completion (908/0/0/48); an
+# independent same-session clean-slate run reproduced the identical summary
+# (`956 mutants tested in 39m: 908 caught, 48 unviable`, exit 0). (An earlier
+# confirm was interrupted at 744/956 by an external kill and resumed with
+# `--iterate`; segment sums 704+204 caught, 40+8 unviable — superseded.)
+#
+# Runner settings (mirrored by the `mutants-gate-risk-cube` recipe flags): plain
+# `cargo test` (reproducible independent of the workspace nextest profile; a
+# concurrent session may `pkill -f nextest`) and a generous per-mutant
+# test-timeout floor (the documented macOS first-launch stall of freshly linked
+# test binaries; the suite itself runs in ~1s plus one multi-second
+# GPU/Monte-Carlo scenario-grid test).
+test_tool = "cargo"
+minimum_test_timeout = 120
+
+# Equivalence exclusions
+# ----------------------
+# `exclude_re` lists ONLY mutants that are provably *semantically equivalent*
+# to the original — each justified inline with WHY it cannot change an
+# observable result — never to hide a real survivor. Policy here is STRICT.
+# Every member was hand-reproduced: full suite green with the mutant applied.
+exclude_re = [
+  # --- underlying_group_value: byte fold on disjoint bits ---
+  # `v = (v << 8) | u64::from(x)` vs `^`: bits 0–7 of `v << 8` are always zero
+  # and `x` is a byte (≤ 0xFF), so OR and XOR act on disjoint bit positions and
+  # are identical for EVERY input — a pure operator identity, not a test gap
+  # (the same identity class as the qmc owen_scramble prefix exclusion).
+  # Verified: full suite green with the mutant applied (all three packed-pair
+  # pins and all three frozen FNV pins bit-identical).
+  "dimension\\.rs:159:26: replace \\| with \\^ in underlying_group_value",
+
+  # --- curvature_class: the MAR21.5.2(4) ψ both-negative test at exactly 0.0 ---
+  # `ψ = if cvr_sel[b] < 0 && cvr_sel[c] < 0 { 0 } else { 1 }` with either `<`
+  # replaced by `<=`: the branch outcome differs ONLY when that selected CVR is
+  # exactly 0.0 (and the other is negative) — but ψ multiplies the cross term
+  # `γ²·ψ·CVR_b·CVR_c`, which is identically zero whenever either factor is
+  # 0.0, so the flipped ψ multiplies zero and the charge is unchanged for every
+  # input. A structural unobservability proof, not a measure-zero hand-wave:
+  # the boundary case zeroes the very product ψ gates. Verified for BOTH
+  # positions: full suite green with each mutant applied.
+  "frtb\\.rs:369:41: replace < with <= in curvature_class",
+  "frtb\\.rs:369:61: replace < with <= in curvature_class",
+
+  # --- fx_default_risk_charge: the documented-zero MAR22 DRC contract ---
+  # The function's CONTRACT is the constant zero: a deliverable-FX position has
+  # no issuer security, so its gross JTD is identically 0 and the explicit fold
+  # `(0..n).map(|_| 0.0).sum()` exists purely to document that arithmetic (see
+  # the function's "Why this is correctly zero, not a stubbed zero" doc).
+  # Replacing the body with the literal `0.0` is value-identical for every
+  # input: for n ≥ 1 the sum of `+0.0`s is `+0.0`; for n = 0 the iterator-sum
+  # identity differs from the literal only in the ZERO'S SIGN BIT, which is not
+  # contractual house-wide (the exotic_node_pnl empty-sum pin states the same)
+  # and is unobservable through the only consumer, the `total()` ADDITION
+  # (`x + ±0.0` differ only when x is itself −0.0, again a zero-sign case).
+  # The zero VALUE stays gated: `-> 1.0` on this site is killed by the
+  # `fx_default_risk_charge == 0.0` pins (n = 0 and n = 250). Verified: full
+  # suite green with the mutant applied.
+  "frtb\\.rs:567:5: replace fx_default_risk_charge -> f64 with 0\\.0",
+
+  # --- fx_vega_rw: the MAR21.93/.94 cap BINDS for the cited constants ---
+  # `RW_vega = min(RW_σ·√(LH_FX/10), 1.0)` with RW_σ = 0.55, LH_FX = 40 (both
+  # pinned to_bits against hand-typed MAR21 literals in the provenance suite):
+  # the uncapped product is 0.55·2 = 1.10 > 1, so the cap binds and the result
+  # is EXACTLY 1.0. Each mutant's pre-cap value also lands above the cap
+  # (`-> 1.0` trivially; `*`→`+` gives 2.55; `/`→`*` gives 0.55·√400 = 11.0),
+  # so all three collapse through `min(·, 1.0)` to the identical 1.0 — value-
+  # identical for every reachable input (the constants are compile-time cited
+  # literals; `liquid_fx` does not enter this accessor). The equivalence is
+  # ANCHORED, not assumed: `standard_frtb_params_match_cited_text` re-derives
+  # the uncapped 1.10 from hand literals and asserts `uncapped > 1.0` — if a
+  # MAR revision ever moves the constants below the cap, that anchor fails and
+  # forces this exclusion cluster to be re-audited. Verified for all three:
+  # full suite green with each mutant applied.
+  "frtb_params\\.rs:136:9: replace StandardFrtbParams::fx_vega_rw -> f64 with 1\\.0",
+  "frtb_params\\.rs:136:33: replace \\* with \\+ in StandardFrtbParams::fx_vega_rw",
+  "frtb_params\\.rs:136:67: replace / with \\* in StandardFrtbParams::fx_vega_rw",
+
+  # --- ccy_id: byte fold on disjoint bits ---
+  # `v = (v << 8) | u32::from(x)` vs `^`: bits 0–7 of `v << 8` are always zero
+  # and `x` is an ASCII byte (≤ 0xFF), so OR and XOR act on disjoint bit
+  # positions and are identical for EVERY input — the same pure operator
+  # identity as the dimension.rs byte fold above (and the qmc owen_scramble
+  # prefix). The fold VALUE stays gated: the provenance suite reconstructs
+  # every bucket id through an independent hand-typed `hand_ccy_id`.
+  # Verified: full suite green with the mutant applied.
+  "frtb_params\\.rs:340:22: replace \\| with \\^ in ccy_id",
+]

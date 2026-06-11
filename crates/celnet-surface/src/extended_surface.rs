@@ -705,6 +705,50 @@ mod tests {
         assert!(!bad.is_butterfly_free());
     }
 
+    /// The per-slice butterfly conditions reject independently in the `(θ,ρ,ψ)`
+    /// variables: a curvature-only violation `(ψ²/θ)(1+|ρ|) > 4` and a
+    /// large-strike-only violation `ψ(1+|ρ|) ≥ 4` are each flagged, with
+    /// decisive margins — driving both sides of the conjunction.
+    #[test]
+    fn butterfly_conditions_reject_independently() {
+        // ρ = 0: (a) ψ = 1, θ = 0.04: large-strike 1 < 4 holds; curvature
+        // 1/0.04 = 25 > 4 fails ⇒ flagged.
+        let curv_bad = ExtendedSlice::new(0.04, 0.0, 1.0);
+        assert!(!curv_bad.is_butterfly_free(), "curvature-only violation");
+        // (b) ψ = 4.9, θ = 7: large-strike 4.9 ≥ 4 fails; curvature
+        // 4.9²/7 ≈ 3.43 ≤ 4 holds ⇒ flagged.
+        let wing_bad = ExtendedSlice::new(7.0, 0.0, 4.9);
+        assert!(!wing_bad.is_butterfly_free(), "large-strike-only violation");
+        // (c) a mild slice holds both decisively.
+        assert!(ExtendedSlice::new(0.02, -0.3, 0.2).is_butterfly_free());
+    }
+
+    /// The butterfly ψ-cap matches its closed form
+    /// `(1−1e-9)·min(4/(1+|ρ|), √(4θ/(1+|ρ|)))` — re-derived in-test — on both
+    /// sides of the regime switch (large-strike-binding vs curvature-binding),
+    /// and the capped slice is always admitted by `is_butterfly_free`.
+    #[test]
+    fn butterfly_psi_cap_matches_closed_form() {
+        for &(theta, rho) in &[
+            (0.01_f64, -0.25_f64), // curvature cap binds (√(4θ/..) small)
+            (9.0, -0.25),          // large-strike cap binds (4/(1+|ρ|) small)
+            (0.5, 0.0),
+            (2.0, 0.9),
+        ] {
+            let one_p = 1.0 + rho.abs();
+            let want = (1.0 - 1e-9) * (4.0 / one_p).min((4.0 * theta / one_p).sqrt());
+            let got = ExtendedSlice::butterfly_psi_cap(theta, rho);
+            assert!(
+                is_close(got, want, 1e-14, 1e-16),
+                "cap({theta},{rho}): got {got}, want {want}"
+            );
+            assert!(
+                ExtendedSlice::new(theta, rho, got).is_butterfly_free(),
+                "the capped slice must be admissible"
+            );
+        }
+    }
+
     /// Calendar: a non-decreasing-θ, compatible-skew pair passes; a crossing pair
     /// (skew gap exceeding the ψ-gap) fails.
     #[test]
@@ -724,6 +768,23 @@ mod tests {
             "skew gap {} exceeds psi gap {}",
             (s3.rho * s3.psi - s1.rho * s1.psi).abs(),
             s3.psi - s1.psi
+        );
+
+        // A DECREASING ψ with increasing θ trips the second early-exit clause
+        // (`ψ_next < ψ` — the eSSVI calendar condition needs ψ non-decreasing),
+        // independently of the θ and skew clauses (ρ = 0 ⇒ both skews zero).
+        let p1 = ExtendedSlice::new(0.006, 0.0, 0.30);
+        let p2 = ExtendedSlice::new(0.011, 0.0, 0.10);
+        assert!(
+            !p1.is_calendar_free_with(&p2),
+            "decreasing psi must be flagged"
+        );
+        // And a DECREASING θ trips the first clause alone (ψ and skews equal).
+        let q1 = ExtendedSlice::new(0.011, 0.0, 0.20);
+        let q2 = ExtendedSlice::new(0.006, 0.0, 0.20);
+        assert!(
+            !q1.is_calendar_free_with(&q2),
+            "decreasing theta must be flagged"
         );
     }
 

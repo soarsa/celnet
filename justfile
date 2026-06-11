@@ -242,30 +242,50 @@ mutants-gate-vanilla:
 # belt-and-braces wedge guard (cargo-mutants also self-times-out per mutant).
 
 # Surface calibration crate (VV/SABR/SVI/SSVI/eSSVI + arbitrage + strangle).
+# Plain-cargo runner (nextest-kill-proof, the W6 §5 protocol); the proptest
+# suite in strangle.rs must fail fast under a killing mutant, not shrink.
 mutants-gate-surface:
-    timeout 3600 {{_cargo}} mutants -p celnet-surface --config .config/mutants-surface.toml
+    PROPTEST_MAX_SHRINK_ITERS=0 timeout 7200 {{_cargo}} mutants -p celnet-surface --test-tool=cargo --jobs 3 \
+        --minimum-test-timeout=120 --config .config/mutants-surface.toml
 
 # Surface arbitrage module ONLY — the locally-proven-green slice (PC-MUT-WIDEN).
 # Drives the gate over src/arbitrage.rs (no-arbitrage report numerics) to zero
 # survivors, exercising the enforceable mechanism end-to-end quickly. The full
 # crate-wide gate (mutants-gate-surface) is CI-run.
 mutants-gate-surface-arbitrage:
-    timeout 600 {{_cargo}} mutants -p celnet-surface --file '**/arbitrage.rs' --config .config/mutants-surface.toml
+    PROPTEST_MAX_SHRINK_ITERS=0 timeout 600 {{_cargo}} mutants -p celnet-surface --test-tool=cargo --jobs 3 \
+        --minimum-test-timeout=120 --file '**/arbitrage.rs' --config .config/mutants-surface.toml
 
 # Exotics pricing crate (digitals/barriers/Asian/TARF/... + PDE/MC/particle/LSV).
 mutants-gate-exotics:
     timeout 5400 {{_cargo}} mutants -p celnet-exotics --config .config/mutants-exotics.toml
 
 # Risk-cube crate (additive roll-up + non-additive VaR/ES + FRTB-SA capital).
+# Plain-cargo runner + jobs 2 (the joint-window bounded-compute cap) + a generous
+# per-mutant test-timeout floor (the macOS first-launch stall guard) — W6 rigor
+# protocol, measured green locally (see HARDENING.md s2).
 mutants-gate-risk-cube:
-    timeout 3600 {{_cargo}} mutants -p celnet-risk-cube --config .config/mutants-risk-cube.toml
+    timeout 7200 {{_cargo}} mutants -p celnet-risk-cube --test-tool=cargo --jobs 2 \
+        --minimum-test-timeout=120 --config .config/mutants-celnet-risk-cube.toml
 
 # XVA crate (CVA/DVA/FVA over exposure + survival curve + netting).
+# Plain-cargo runner + jobs 3 + the 240s per-mutant floor (macOS first-launch
+# stall guard) — W6 rigor protocol, measured green locally (see HARDENING.md s2).
 mutants-gate-xva:
-    timeout 1800 {{_cargo}} mutants -p celnet-xva --config .config/mutants-xva.toml
+    timeout 1800 {{_cargo}} mutants -p celnet-xva --test-tool=cargo --jobs 3 \
+        --minimum-test-timeout=240 --config .config/mutants-xva.toml
 
-# All numerics mutation gates in sequence (vanilla + the four widened crates).
-mutants-gate-numerics: mutants-gate-vanilla mutants-gate-surface mutants-gate-exotics mutants-gate-risk-cube mutants-gate-xva
+# Mutation GATE on the low-discrepancy sequence crate (zero non-equivalent survivors).
+# `--minimum-test-timeout=240`: the auto-set 20s floor misclassifies mutants as
+# timeouts when macOS stalls the first launch of freshly linked test binaries
+# under build churn (the suite itself runs in ~1s; the crate has no
+# value-dependent loops that could genuinely hang).
+mutants-gate-qmc:
+    timeout 3600 {{_cargo}} mutants -p celnet-qmc --test-tool=cargo --jobs 3 \
+        --minimum-test-timeout=240 --config .config/mutants-qmc.toml
+
+# All numerics mutation gates in sequence (vanilla + the five widened crates).
+mutants-gate-numerics: mutants-gate-vanilla mutants-gate-surface mutants-gate-exotics mutants-gate-risk-cube mutants-gate-xva mutants-gate-qmc
     @echo "All numerics mutation gates passed."
 
 # ---------------------------------------------------------------------------

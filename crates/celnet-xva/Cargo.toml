@@ -23,3 +23,8 @@ celnet-qmc.workspace = true
 # libm the rest of the stack pins (celnet-types itself uses it directly). Not a
 # celnet peer crate, so the leaf dependency graph stays {vanilla, types, qmc}.
 libm.workspace = true
+
+[dev-dependencies]
+# `assert_close!` for the independent closed-form oracle suite
+# (tests/closed_form_oracle.rs — the W6 mutation-gate killing tests).
+celnet-core.workspace = true
