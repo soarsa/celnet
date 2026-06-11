@@ -13,6 +13,33 @@ Status legend: OPEN / IN-PROGRESS / DONE / ENV (deploy-bound, not a gap). Each i
 `{wave, dedup-key, title, oracle, client-parity, effort, priority, status}`.
 
 ## Convergence ledger
+- **Round 4 — NOT DRY (2026-06-11, session-B; 7-lens + adversarial synthesis, workflow-driven over the RC batch-D landing):**
+  The two Round-3 P1 blockers did NOT re-surface (correctly fixed-at-root, not re-counted); sota-scope /
+  numerical-correctness / completeness lenses all returned EMPTY (the math core + product completeness are
+  genuinely covered at Round 4). **1 genuine P1 — now FIXED (`87c6f77`):**
+  `entitlements/client-default-omits-principal-stale-grant-all-docs` — the server deny-by-default (Enforce)
+  landing was not propagated to the clients: all four (SDK/CLI/GUI/Excel) OMITTED the principal by default and
+  documented "omit ⇒ grant-all", so the headline risk workflow was denied against a production edge, masked
+  only because demo_edge + the harnesses ran Permissive. FIX (operator-chosen): every client now asserts an
+  EXPLICIT grant-all by default (audited; the boundary still denies a genuinely-absent principal); harnesses +
+  gui/excel e2e demo_edge run Enforce to unmask; regression guards added. **3 P2 + 1 P3 → post-RC backlog:**
+  `bench/core-throughput-floor-ungated` (P2 — §1.2 ≥1M/core sustained measured but no gating floor; only the 3
+  latency percentiles gate), `rigor/fix-frame-decode-fuzz-target-not-wired-into-ci` (P2 — fuzz/Cargo.toml
+  declares 9 targets, ci.yml runs 6; FrameReader's only adversarial coverage unexecuted + false README "every
+  target" claim), `docs/capabilities-fx-only-stale-vs-24-arm-multiasset` (P2 — CELNET-CAPABILITIES.md still
+  "FX-only 18-product" across ~11 captions), `rigor/plugin-host-wasm-decode-no-fuzz-or-honesty-stmt` (P3 —
+  Module::new on untrusted Wasm with no fuzz target + no VERIFICATION-CONTRACT clause-(f) statement; thin
+  residual behind audited wasmi). The registry-doc finding ABSORBED by the open `interfaces-registry-lags-contract`.
+  **Also fixed in the P1 landing (pre-existing defects uncovered while verifying):** excel
+  `instrumentPolymorphic.test` threw for the cross-asset families (born polymorphic, no retired per-product
+  function) — scoped the legacy-parity check to LEGACY_FAMILIES; and the **GATE GAP** that hid it — gui/excel
+  typecheck + unit vitest were not in T2 — closed (added to the t2 recipe). Gate evidence: `GATE: 87c6f77
+  T2 16/16` (web typecheck+unit + e2e under `CELNET_ACCESS_MODE=enforce`). **Test-hygiene item filed**
+  (`test-hygiene/raft-snapshot-convergence-deadline-flakes-under-t2-load`, P3): `celnet-parity
+  raft_snapshot::snapshot_plus_tail_equals_full_log_single_node_replay` flaked once on its 30s `wait_until`
+  convergence deadline under T2 parallel-test CPU contention (passed clean on resume, same code) — the
+  load-flake class in the `cargo-gate-environment-pitfalls` memory; harden the deadline / reduce in-test
+  contention so a landing gate can't be blocked by a transient. Dry-counter RESET 0/2.
 - **Round 3 — NOT DRY (2026-06-11, session-B; 7-lens + security-deep + batch-D adversarial verify):**
   batch-D = LAND (pivot/entitlements/VV all confirmed). **2 genuine P1 blockers** (releaseReady=False):
   (1) `cross-asset-ws-pair-precedence` — ws/codec.rs:203 gives `pair` precedence over `underlying`,
