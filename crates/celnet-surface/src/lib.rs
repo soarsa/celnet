@@ -1,7 +1,22 @@
-//! Celnet FX volatility surface — arbitrage-aware delta-space smile construction
-//! from broker market quotes (work-stream WS-C, gate G2).
+//! Celnet volatility surface — asset-class-neutral, arbitrage-aware smile
+//! construction with two typed quote-basis front-ends (work-stream WS-C, gate
+//! G2; strike-axis leaf per CRYPTO-SURFACE-LEAF-SPEC).
 //!
-//! # What this crate builds
+//! The core machine — the `(k = ln(K/F), w = σ²·t)` total-variance plane, the
+//! parametric slice/surface families, the static no-arbitrage checks, and the
+//! business-clock term structure — is quote-convention-agnostic. Two **typed
+//! front-ends** lower market quotes onto it, selecting the quote basis at
+//! compile time (no runtime basis enum, no per-asset-class `match` in the
+//! calibration path):
+//!
+//! * the **FX delta front-end** (the pipeline below) — broker ATM + RR/BF
+//!   delta-pillar quotes;
+//! * the **strike front-end** ([`strike_quotes`]) — exchange-chain
+//!   strike-gridded quotes (digital-asset venues), forwards through the
+//!   [`celnet_types::Carry`] seam, 24×7 semantics on the identity
+//!   [`CalendarClock`].
+//!
+//! # The FX delta front-end
 //!
 //! An FX smile is quoted in **delta space** under a sticky-delta assumption
 //! (`docs/ANALYTICS-SPEC.md` §3): per `(pair, tenor)` the market gives an
@@ -54,6 +69,15 @@
 //! * [`surface`] — the unified [`VolSurface`] that selects the smile model and
 //!   exposes `implied_vol(strike, t)` plus a consolidated arbitrage report.
 //!
+//! # The strike-axis leaf
+//!
+//! [`strike_quotes`] calibrates a raw-SVI slice per expiry directly off a
+//! strike grid ([`fit_strike_slice`]) and assembles the per-expiry fits into
+//! the same [`VolSurface`] ([`strike_surface`]). Everything downstream of the
+//! fit — density/wing no-arbitrage, calendar monotonicity, re-striking — is
+//! the shared neutral machinery above; the FX path is byte-identical across
+//! this addition (gated by the frozen-bits regression in `tests/fx_fit_pin.rs`).
+//!
 //! # Method provenance (doc-only)
 //!
 //! The market-hedge baseline uses the vanna-volga method (Castagna & Mercurio,
@@ -79,6 +103,7 @@ pub mod parametric_surface;
 pub mod quotes;
 pub mod stochvol;
 pub mod strangle;
+pub mod strike_quotes;
 pub mod surface;
 pub mod termstructure;
 
@@ -95,6 +120,10 @@ pub use quotes::{DeltaPillar, MarketContext, MarketQuotes, RiskReversalButterfly
 pub use stochvol::{StochasticVolParams, StochasticVolSmile, WingDensity};
 pub use strangle::{
     CalibratedPillar, CalibrationError, MarketStrangle, calibrate_pillar, market_strangle,
+};
+pub use strike_quotes::{
+    MIN_STRIKE_QUOTES, StrikeQuote, StrikeQuoteSlice, StrikeSliceContext, StrikeSliceFit,
+    fit_strike_slice, strike_surface,
 };
 pub use surface::{SmileModel, SurfaceArbitrageReport, VolSurface};
 pub use termstructure::{BusinessClock, CalendarClock, TenorPillar, TermStructure};

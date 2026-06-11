@@ -99,7 +99,9 @@ pub enum CalibrationError {
     /// A delta→strike inversion failed inside the calibration (wing unreachable
     /// in the convention, or solver non-convergence).
     StrikeInversion,
-    /// The smile-strangle fixed point did not converge within the budget.
+    /// An iterative calibration (the strangle fixed point, or a strike-axis
+    /// slice fit gated by [`crate::strike_quotes::strike_surface`]) did not
+    /// converge / reproduce its quotes within budget.
     NoConvergence,
     /// The quote is economically degenerate / uncalibratable: it forces a
     /// non-positive smile wing volatility (e.g. `|RR|` too large relative to the
