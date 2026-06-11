@@ -216,15 +216,14 @@ const ADMISSION_SCAN_TOL: f64 = 1e-9;
 /// resolves the ray parameter to 2⁻³²).
 const ADMISSION_SHRINK_ITERS: usize = 32;
 
-/// Map a projected inner solution to the validated raw-SVI slice — `b = d/σ`,
-/// `ρ = c/d` (`0` for a flat slice; clamped to the open constructor domain, a
-/// no-op for any market-plausible fit) — with the well-posedness guards
-/// mirroring `fit_svi`, computed exactly as the validating constructor computes
-/// them so construction cannot panic. `None` only for an ill-posed candidate.
+/// Map a projected inner solution `(a, c, d)` to the validated raw-SVI slice —
+/// `b = d/σ`, `ρ = c/d` (`0` for a flat slice; clamped to the open constructor
+/// domain, a no-op for any market-plausible fit) — with the well-posedness
+/// guards mirroring `fit_svi`, computed exactly as the validating constructor
+/// computes them so construction cannot panic. `None` only for an ill-posed
+/// candidate.
 fn well_posed_slice(
-    a: f64,
-    c: f64,
-    d: f64,
+    (a, c, d): (f64, f64, f64),
     m: f64,
     sigma: f64,
     forward: f64,
@@ -284,9 +283,7 @@ fn passes_admission_scan(slice: &ParametricSlice) -> bool {
 /// the chase, surfacing the misfit through the reported vol errors instead of
 /// through an arbitrageable surface.
 fn admit_or_shrink(
-    a: f64,
-    c: f64,
-    d: f64,
+    (a, c, d): (f64, f64, f64),
     a_flat: f64,
     m: f64,
     sigma: f64,
@@ -295,9 +292,7 @@ fn admit_or_shrink(
 ) -> Option<ParametricSlice> {
     let candidate = |s: f64| {
         well_posed_slice(
-            (1.0 - s) * a_flat + s * a,
-            s * c,
-            s * d,
+            ((1.0 - s) * a_flat + s * a, s * c, s * d),
             m,
             sigma,
             forward,
@@ -475,7 +470,7 @@ pub fn fit_strike_slice(
         return Err(CalibrationError::DegenerateQuote);
     };
     let (a, c, d) = project_inner(a, c, d, sigma);
-    let Some(slice) = admit_or_shrink(a, c, d, a_flat, m, sigma, forward, t) else {
+    let Some(slice) = admit_or_shrink((a, c, d), a_flat, m, sigma, forward, t) else {
         return Err(CalibrationError::DegenerateQuote);
     };
 
