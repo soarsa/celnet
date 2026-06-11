@@ -567,6 +567,56 @@ mod tests {
         );
     }
 
+    /// The asymptotic Black vol matches a raw in-test recomputation of the
+    /// published singular-perturbation expansion (general-strike branch), on a
+    /// CEV backbone `β < 1` so every term — the `(F·K)^{(1−β)/2}` prefactor,
+    /// the bracketed time-correction, the log-moneyness denominator series and
+    /// the `z/x(z)` curvature factor — is active. INDEPENDENT ORACLE: the
+    /// formula is re-derived with std float math (a different transcendental
+    /// implementation), so any operator/constant mutant in `black_vol` breaks
+    /// the match far beyond the cross-implementation tolerance.
+    #[test]
+    fn black_vol_matches_published_expansion_oracle() {
+        let p = StochasticVolParams::new(0.20, 0.7, -0.35, 0.55, 1.25, 1.5);
+        for &k in &[0.85_f64, 1.05, 1.20, 1.45, 1.80] {
+            let got = p.black_vol(k);
+            // Raw re-derivation (std math; provenance: the 2002 expansion).
+            let (alpha, beta, rho, nu, f, t) = (p.alpha, p.beta, p.rho, p.nu, p.forward, p.t);
+            let omb = 1.0 - beta;
+            let log_fk = (f / k).ln();
+            let fk_pow = (f * k).powf(0.5 * omb);
+            let a_over = alpha / fk_pow;
+            let b_factor = 1.0
+                + (omb * omb / 24.0 * a_over * a_over
+                    + 0.25 * rho * beta * nu * a_over
+                    + (2.0 - 3.0 * rho * rho) / 24.0 * nu * nu)
+                    * t;
+            let z = (nu / alpha) * fk_pow * log_fk;
+            let x_z = (((1.0 - 2.0 * rho * z + z * z).sqrt() + z - rho) / (1.0 - rho)).ln();
+            let lm2 = log_fk * log_fk;
+            let denom = fk_pow * (1.0 + omb * omb / 24.0 * lm2 + omb.powi(4) / 1920.0 * lm2 * lm2);
+            let want = (alpha / denom) * (z / x_z) * b_factor;
+            assert!(
+                is_close(got, want, 1e-12, 1e-14),
+                "K={k}: black_vol {got} must match the published expansion {want}"
+            );
+        }
+        // The ATM closed-form branch on the same CEV slice: α/F^{1−β}·B.
+        let got_atm = p.black_vol(p.forward);
+        let a_over = p.alpha / p.forward.powf(1.0 - p.beta);
+        let omb = 1.0 - p.beta;
+        let b_factor = 1.0
+            + (omb * omb / 24.0 * a_over * a_over
+                + 0.25 * p.rho * p.beta * p.nu * a_over
+                + (2.0 - 3.0 * p.rho * p.rho) / 24.0 * p.nu * p.nu)
+                * p.t;
+        assert!(
+            is_close(got_atm, a_over * b_factor, 1e-12, 1e-14),
+            "ATM branch {got_atm} must match the closed form {}",
+            a_over * b_factor
+        );
+    }
+
     /// A non-zero negative rho produces a downward skew: put-wing vol exceeds
     /// call-wing vol.
     #[test]
@@ -733,6 +783,63 @@ mod tests {
             assert!(
                 is_close(got, expect, 0.0, 0.0),
                 "small-ν density {got} at K={k} must equal the Gaussian oracle {expect} exactly"
+            );
+        }
+    }
+
+    /// The CEV (`β < 1`) branch of the transformed coordinate in the small-ν
+    /// limit: `y(K) = (K^{1−β} − F^{1−β})/(α(1−β))` and the density collapses
+    /// to `φ(y/√t)·(1/√t)·(1/(α·Kᵝ))`. INDEPENDENT ORACLE re-derived in-test
+    /// with std math — pins the `β ≠ 1` arm of `y_coordinate` (the β = 1 arm is
+    /// pinned by `small_nu_density_matches_transformed_gaussian_oracle`).
+    #[test]
+    fn small_nu_cev_density_matches_transformed_gaussian_oracle() {
+        let p = StochasticVolParams::new(0.15, 0.5, 0.1, 1e-12, 1.20, 0.8);
+        for &k in &[0.8_f64, 1.0, 1.20, 1.45, 1.7] {
+            let got = p.risk_neutral_density(k);
+            let omb = 1.0 - p.beta;
+            let y = (k.powf(omb) - p.forward.powf(omb)) / (p.alpha * omb);
+            let std_t = p.t.sqrt();
+            let phi = norm_pdf(y / std_t) / std_t;
+            let dy_dk = 1.0 / (p.alpha * k.powf(p.beta));
+            let want = phi * dy_dk;
+            assert!(
+                is_close(got, want, 1e-12, 1e-15),
+                "K={k}: CEV small-ν density {got} must equal the Gaussian oracle {want}"
+            );
+        }
+    }
+
+    /// Frozen-bits regression on the arbitrage-free wing machinery: the
+    /// two-sided crossover band and the density-implied wing vols of the
+    /// strong-curvature reference slice are pinned to the bit. Any arithmetic
+    /// perturbation in `find_density_floor` (scan step, second-difference
+    /// spacing), `WingDensity::from_params` (support, cell count, mass
+    /// renormalisation, the martingale rescale λ), `forward_call`, or the
+    /// implied-vol inversion moves these values and is killed here. Captured on
+    /// the reference toolchain; all arithmetic is libm-deterministic.
+    #[test]
+    fn wing_band_and_density_implied_vols_are_pinned() {
+        let p = StochasticVolParams::new(0.25, 1.0, 0.0, 2.5, 1.10, 2.0);
+        let s = StochasticVolSmile::new(p);
+        let (lo, hi) = s.core_band();
+        assert_eq!(lo.to_bits(), 0.8799999999999999_f64.to_bits(), "lo={lo:?}");
+        assert_eq!(hi.to_bits(), 1.3640000000000003_f64.to_bits(), "hi={hi:?}");
+        for (k, want) in [
+            (0.50_f64, 0.6269687034272868_f64),
+            (0.65, 0.5602919006672265),
+            (2.10, 0.5523870650159763),
+            (2.60, 0.5641103881568017),
+        ] {
+            assert!(
+                k < lo || k > hi,
+                "pin strikes must lie in the wings: K={k} band=[{lo},{hi}]"
+            );
+            let got = s.implied_vol(k, p.forward, p.t).0;
+            assert_eq!(
+                got.to_bits(),
+                want.to_bits(),
+                "wing vol at K={k} drifted: got {got:?}, frozen {want:?}"
             );
         }
     }

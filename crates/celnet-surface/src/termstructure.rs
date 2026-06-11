@@ -271,7 +271,7 @@ impl<S: Smile + Clone, C: BusinessClock> TermStructure<S, C> {
 mod tests {
     use super::*;
     use crate::parametric::ParametricSlice;
-    use celnet_core::FlatSmile;
+    use celnet_core::{FlatSmile, is_close};
 
     /// Two flat-smile pillars with increasing total variance produce a
     /// calendar-arbitrage-free surface; total variance interpolates linearly in t.
@@ -316,6 +316,156 @@ mod tests {
         assert!(celnet_core::is_close(v, 0.12, 1e-9, 1e-11));
         let mid = ts.implied_vol(1.05, 0.75).0;
         assert!(mid.is_finite() && mid > 0.0);
+    }
+
+    /// Interior interpolation, both extrapolation regimes and the exact-pillar
+    /// boundaries match hand-computed closed forms (linear-in-τ total variance;
+    /// flat-forward-variance extension), with three pillars so the bracketing
+    /// search is exercised past the first interval.
+    #[test]
+    fn total_variance_matches_hand_interpolation() {
+        let (v0, v1, v2) = (0.10_f64, 0.12_f64, 0.13_f64);
+        let (t0, t1, t2) = (0.5_f64, 1.0_f64, 2.0_f64);
+        let ts = TermStructure::new(vec![
+            TenorPillar::new(FlatSmile::new(v0), 1.10, t0),
+            TenorPillar::new(FlatSmile::new(v1), 1.10, t1),
+            TenorPillar::new(FlatSmile::new(v2), 1.10, t2),
+        ]);
+        let (w0, w1, w2) = (v0 * v0 * t0, v1 * v1 * t1, v2 * v2 * t2);
+
+        // Exact pillar times reproduce the pillar total variances.
+        assert!(is_close(ts.total_variance(0.0, t0), w0, 1e-14, 1e-16));
+        assert!(is_close(ts.total_variance(0.0, t1), w1, 1e-14, 1e-16));
+        assert!(is_close(ts.total_variance(0.0, t2), w2, 1e-14, 1e-16));
+
+        // Interior of the SECOND interval: linear in τ between (t1,w1),(t2,w2).
+        let t = 1.6;
+        let want = w1 + (t - t1) / (t2 - t1) * (w2 - w1);
+        assert!(
+            is_close(ts.total_variance(0.0, t), want, 1e-14, 1e-16),
+            "interior: got {}, want {want}",
+            ts.total_variance(0.0, t)
+        );
+
+        // Before the first pillar: constant forward variance back to zero.
+        let t = 0.2;
+        assert!(is_close(
+            ts.total_variance(0.0, t),
+            w0 * (t / t0),
+            1e-14,
+            1e-16
+        ));
+
+        // After the last pillar: extend at the last inter-pillar variance rate.
+        let t = 3.0;
+        let rate = (w2 - w1) / (t2 - t1);
+        assert!(is_close(
+            ts.total_variance(0.0, t),
+            w2 + rate * (t - t2),
+            1e-14,
+            1e-16
+        ));
+
+        // implied_vol is √(w/t) against the interpolated forward.
+        let v = ts.implied_vol(1.10, 1.6).0;
+        assert!(is_close(v, (want / 1.6).sqrt(), 1e-14, 1e-16));
+    }
+
+    /// A DECREASING pillar total variance clamps the beyond-last-pillar
+    /// extension rate at zero (flat, never decreasing) — pins the `.max(0.0)`
+    /// on the forward-variance rate.
+    #[test]
+    fn negative_terminal_rate_is_clamped_flat() {
+        let p0 = TenorPillar::new(FlatSmile::new(0.15), 1.10, 0.5); // w = 0.01125
+        let p1 = TenorPillar::new(FlatSmile::new(0.10), 1.10, 1.0); // w = 0.01
+        let ts = TermStructure::new(vec![p0, p1]);
+        let w_last = 0.10 * 0.10 * 1.0;
+        assert!(
+            is_close(ts.total_variance(0.0, 5.0), w_last, 1e-14, 1e-16),
+            "a negative terminal variance rate must extend flat: got {}",
+            ts.total_variance(0.0, 5.0)
+        );
+    }
+
+    /// A single-pillar structure extends past the pillar at the rate w/τ
+    /// anchored at zero (the `(0,0)` synthetic previous pillar).
+    #[test]
+    fn single_pillar_extends_at_its_own_rate() {
+        let ts = TermStructure::new(vec![TenorPillar::new(FlatSmile::new(0.10), 1.10, 1.0)]);
+        let w = 0.01;
+        assert!(is_close(ts.total_variance(0.0, 2.5), w * 2.5, 1e-14, 1e-16));
+        assert!(is_close(ts.total_variance(0.0, 0.4), w * 0.4, 1e-14, 1e-16));
+    }
+
+    /// The interpolated forward is log-linear between pillars and flat outside
+    /// — against an in-test closed form, including a mid-point of the second
+    /// interval (bracket search past the first interval).
+    #[test]
+    fn forward_interpolation_matches_log_linear_closed_form() {
+        let p0 = TenorPillar::new(FlatSmile::new(0.10), 1.05, 0.5);
+        let p1 = TenorPillar::new(FlatSmile::new(0.11), 1.10, 1.0);
+        let p2 = TenorPillar::new(FlatSmile::new(0.12), 1.22, 2.0);
+        let ts = TermStructure::new(vec![p0, p1, p2]);
+        assert!(is_close(ts.forward_at(0.1), 1.05, 0.0, 0.0), "flat before");
+        assert!(is_close(ts.forward_at(5.0), 1.22, 0.0, 0.0), "flat after");
+        assert!(
+            is_close(ts.forward_at(1.0), 1.10, 1e-15, 1e-16),
+            "at pillar"
+        );
+        let t = 1.5;
+        let frac = (t - 1.0) / (2.0 - 1.0);
+        let want = (1.10_f64.ln() + frac * (1.22_f64.ln() - 1.10_f64.ln())).exp();
+        assert!(
+            is_close(ts.forward_at(t), want, 1e-14, 1e-16),
+            "log-linear mid: got {}, want {want}",
+            ts.forward_at(t)
+        );
+    }
+
+    /// `TenorPillar::total_variance` is `σ(F·eᵏ)²·t` — pinned against a direct
+    /// recomputation through the pillar's own smile.
+    #[test]
+    fn pillar_total_variance_matches_definition() {
+        let s = ParametricSlice::new(0.004, 0.03, -0.2, 0.0, 0.08, 1.10, 0.5);
+        let p = TenorPillar::new(s, 1.10, 0.5);
+        for &k in &[-0.3_f64, 0.0, 0.25] {
+            let strike = 1.10 * k.exp();
+            let sigma = s.vol_at(strike);
+            assert!(
+                is_close(p.total_variance(k), sigma * sigma * 0.5, 1e-13, 1e-15),
+                "k={k}"
+            );
+        }
+    }
+
+    /// The fixed-strike calendar scan agrees with an in-test re-derivation on a
+    /// surface whose pillar forwards DIFFER (the strike↔log-moneyness
+    /// conversion per maturity is load-bearing, not an identity).
+    #[test]
+    fn calendar_increment_matches_in_test_scan_with_differing_forwards() {
+        let p0 = TenorPillar::new(FlatSmile::new(0.10), 1.05, 0.5);
+        let p1 = TenorPillar::new(FlatSmile::new(0.12), 1.15, 1.5);
+        let ts = TermStructure::new(vec![p0, p1]);
+        let (k, samples) = (0.1_f64, 16_usize);
+        let strike = 1.05 * k.exp();
+        let w_at = |t: f64| {
+            let k_t = (strike / ts.forward_at(t)).ln();
+            ts.total_variance(k_t, t)
+        };
+        let (t0, t1) = (0.5, 1.5);
+        let mut prev = w_at(t0);
+        let mut want = f64::INFINITY;
+        for i in 1..samples {
+            let t = t0 + (t1 - t0) * (i as f64) / ((samples - 1) as f64);
+            let w = w_at(t);
+            want = want.min(w - prev);
+            prev = w;
+        }
+        let got = ts.min_calendar_increment(k, samples);
+        assert!(
+            is_close(got, want, 1e-13, 1e-15),
+            "calendar scan: got {got}, want {want}"
+        );
     }
 
     /// Decreasing pillar total variance is detected as calendar arbitrage.

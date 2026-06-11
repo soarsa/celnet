@@ -386,4 +386,74 @@ mod tests {
         let f = ctx.forward();
         assert!((k_atm / f - 1.0).abs() < 0.05);
     }
+
+    /// `strike_at_delta` round-trips through the INDEPENDENT direction: the
+    /// convention delta of the returned strike (recomputed through the
+    /// convention-aware delta evaluator, not the solver) reproduces the signed
+    /// pillar target to solver tolerance — for both option types and both
+    /// pillars. Kills sign/argument mutants in the pillar plumbing
+    /// (`DeltaPillar::signed`, the template wiring) that the geometry-only
+    /// assertions cannot see.
+    #[test]
+    fn strike_at_delta_round_trips_through_the_delta_oracle() {
+        let ctx = eurusd_1y_ctx(1.10, 0.10);
+        let vol = 0.10;
+        for pillar in [DeltaPillar::TWENTY_FIVE, DeltaPillar::TEN] {
+            for opt in [OptionType::Call, OptionType::Put] {
+                let strike = ctx.strike_at_delta(opt, pillar, vol).unwrap();
+                let delta = celnet_vanilla::convention_delta(
+                    ctx.delta_convention(),
+                    opt,
+                    &ctx.template(strike, vol),
+                );
+                let target = pillar.signed(opt);
+                assert!(
+                    (delta - target).abs() <= 1e-8,
+                    "{opt:?}@{}Δ: solved strike {strike} re-evaluates to delta {delta}, \
+                     want {target}",
+                    pillar.magnitude
+                );
+            }
+        }
+    }
+
+    /// The ATM strike matches the published convention closed forms, re-derived
+    /// in-test from the resolved conventions: `K = F` for ATM-forward;
+    /// `K = F·e^{+σ²t/2}` (premium-unadjusted) / `K = F·e^{−σ²t/2}`
+    /// (premium-adjusted) for the delta-neutral straddle.
+    #[test]
+    fn atm_strike_matches_convention_closed_form() {
+        let ctx = eurusd_1y_ctx(1.10, 0.10);
+        let vol = 0.1042;
+        let f = ctx.forward();
+        let want = match ctx.atm_convention() {
+            AtmConvention::AtmForward => f,
+            AtmConvention::DeltaNeutralStraddle => match ctx.delta_convention() {
+                DeltaConvention::SpotUnadjusted | DeltaConvention::ForwardUnadjusted => {
+                    f * (0.5 * vol * vol * ctx.t).exp()
+                }
+                DeltaConvention::SpotPremiumAdjusted | DeltaConvention::ForwardPremiumAdjusted => {
+                    f * (-0.5 * vol * vol * ctx.t).exp()
+                }
+            },
+        };
+        let got = ctx.atm_strike(vol);
+        assert!(
+            celnet_core::is_close(got, want, 1e-12, 1e-14),
+            "ATM strike {got} must match the convention closed form {want}"
+        );
+        // And the atm_total_variance / atm_std_dev helpers match their forms.
+        assert!(celnet_core::is_close(
+            ctx.atm_total_variance(vol),
+            vol * vol * ctx.t,
+            1e-15,
+            1e-16
+        ));
+        assert!(celnet_core::is_close(
+            ctx.atm_std_dev(vol),
+            vol * ctx.t.sqrt(),
+            1e-15,
+            1e-16
+        ));
+    }
 }
