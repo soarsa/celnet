@@ -253,11 +253,12 @@ mutants-gate-exotics:
     timeout 5400 {{_cargo}} mutants -p celnet-exotics --config .config/mutants-exotics.toml
 
 # Risk-cube crate (additive roll-up + non-additive VaR/ES + FRTB-SA capital).
-# Plain-cargo runner + jobs 3 (the audited courteous cap) + a generous per-mutant
-# test-timeout floor (the macOS first-launch stall guard) — W6 rigor protocol.
+# Plain-cargo runner + jobs 2 (the joint-window bounded-compute cap) + a generous
+# per-mutant test-timeout floor (the macOS first-launch stall guard) — W6 rigor
+# protocol, measured green locally (see HARDENING.md s2).
 mutants-gate-risk-cube:
-    timeout 7200 {{_cargo}} mutants -p celnet-risk-cube --test-tool=cargo --jobs 3 \
-        --minimum-test-timeout=120 --config .config/mutants-risk-cube.toml
+    timeout 7200 {{_cargo}} mutants -p celnet-risk-cube --test-tool=cargo --jobs 2 \
+        --minimum-test-timeout=120 --config .config/mutants-celnet-risk-cube.toml
 
 # XVA crate (CVA/DVA/FVA over exposure + survival curve + netting).
 # Plain-cargo runner + jobs 3 + the 240s per-mutant floor (macOS first-launch

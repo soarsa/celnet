@@ -453,6 +453,105 @@ mod tests {
         }
     }
 
+    /// Hand-built grid literals + the exact CPU oracle pin three boundary
+    /// behaviours the reconciliation lens depends on:
+    /// (a) the `std_err` accessor's row-major stride on an asymmetric grid
+    ///     (`i·n_vol + j`, distinct rungs — an index mutant relocates the node);
+    /// (b) the band is INCLUSIVE — the documented contract is `|Δ| ≤ k·σ + abs`,
+    ///     so `|Δ| == band` PASSES: the exact oracle grid vs itself has `|Δ| = 0`
+    ///     bit-exactly at every node, and with `abs = 0` the band is also exactly
+    ///     0 — a strict-vs-nonstrict flip turns the whole exact path into a
+    ///     false breach;
+    /// (c) the worst-node diagnostic keeps the FIRST node on an exact `|Δ|` tie
+    ///     (the strict `>` running max — deterministic reporting; an empty book
+    ///     makes the analytic reference identically zero, so two hand `pv`
+    ///     entries `±7.0` tie bit-exactly while carrying different `std_err`).
+    #[test]
+    fn band_boundary_stride_and_worst_tie_are_exact() {
+        // (a) std_err row-major stride on a 2×3 grid.
+        let g = NodeScenarioGrid {
+            n_spot: 2,
+            n_vol: 3,
+            pv: vec![0.0; 6],
+            std_err: vec![0.5, 1.5, 2.5, 3.5, 4.5, 5.5],
+            on_gpu: false,
+        };
+        assert_eq!(g.std_err(1, 2).to_bits(), 5.5_f64.to_bits());
+        assert_eq!(g.std_err(1, 0).to_bits(), 3.5_f64.to_bits());
+        assert_eq!(g.std_err(0, 2).to_bits(), 2.5_f64.to_bits());
+
+        // (b) inclusive band boundary: d == band == 0 must reconcile.
+        let positions = [pos(
+            OptionType::Put,
+            2_000_000.0,
+            VanillaInputs::new(1.10, 1.08, 0.11, 0.5, 0.03, 0.01),
+        )];
+        let axes = ScenarioAxes::ladders(1, 0.01, 1, 0.005);
+        let exact = analytic_pv_grid(&positions, &axes);
+        let worst = exact
+            .reconciles_to_analytic(&positions, &axes, 6.0, 0.0)
+            .expect("an exact grid reconciles to itself at a zero band (|Δ| ≤ band)");
+        assert_eq!(worst.0.to_bits(), 0.0_f64.to_bits());
+        assert_eq!(worst.1.to_bits(), 0.0_f64.to_bits());
+
+        // (c) exact-tie worst tracking keeps the first node's diagnostics.
+        let axes12 = ScenarioAxes::new(vec![1.0_f32], vec![0.0_f32, 0.005]);
+        let tied = NodeScenarioGrid {
+            n_spot: 1,
+            n_vol: 2,
+            pv: vec![7.0, -7.0],
+            std_err: vec![3.0, 4.0],
+            on_gpu: false,
+        };
+        let worst = tied
+            .reconciles_to_analytic(&[], &axes12, 10.0, 1.0)
+            .expect("both nodes sit inside their 10σ + 1 bands");
+        assert_eq!(worst.0.to_bits(), 7.0_f64.to_bits());
+        assert_eq!(
+            worst.1.to_bits(),
+            3.0_f64.to_bits(),
+            "an exact |Δ| tie keeps the FIRST node's se (strict running max)"
+        );
+    }
+
+    /// **`std_err` propagation is the quadrature of the NOTIONAL-SCALED kernel
+    /// errors** — pinned bit-exactly against an in-test recomputation of the
+    /// documented chain `√(Σ (se_unit·notional)²)` from the same reproducible
+    /// kernel batch (same spec/payoff/axes/paths/seed). The notional is NEGATIVE
+    /// so the scaling factor is sign-bearing: the variance step must SQUARE it
+    /// away (`(se·n)² = (|se·n|)²`), never absorb it additively — an `se·n → se+n`
+    /// corruption yields `|se+n| ≈ |n|` per node (on the exact CPU path: exactly
+    /// `|n|` instead of exactly 0) and breaks the bit identity on BOTH paths.
+    /// The √2-quadrature test above cannot see that mutant on the CPU path
+    /// (`0+n` per position also scales by √2); this chain identity can.
+    #[test]
+    fn std_err_is_quadrature_of_notional_scaled_kernel_errors() {
+        let p = pos(
+            OptionType::Call,
+            -5_000_000.0,
+            VanillaInputs::new(1.10, 1.12, 0.10, 0.5, 0.03, 0.01),
+        );
+        let axes = ScenarioAxes::new(vec![0.99_f32, 1.02], vec![-0.005_f32, 0.0125]);
+        let pricer = ScenarioPricer::new();
+        let (paths, seed) = (1 << 14, 0xFEED_u64);
+        let grid = gpu_pv_grid(&pricer, std::slice::from_ref(&p), &axes, paths, seed);
+        // Recompute the single-position propagation chain from the same batch.
+        let b = celnet_core::carry::fx_vanilla_inputs(&p.inputs).unwrap();
+        let spec = PathSpec::gbm(b.spot, b.vol, b.t, b.r_dom, b.r_for, paths, 1, seed);
+        let payoff = PayoffKernel::call(b.strike);
+        let r = pricer.price_scenario_batch(&spec, &payoff, &axes);
+        for idx in 0..4 {
+            let pv = r.nodes[idx].price() * p.notional_base;
+            assert_eq!(grid.pv[idx].to_bits(), pv.to_bits(), "pv node {idx}");
+            let se = r.nodes[idx].std_error() * p.notional_base;
+            assert_eq!(
+                grid.std_err[idx].to_bits(),
+                (se * se).sqrt().to_bits(),
+                "std_err node {idx} must be the squared-away notional-scaled σ"
+            );
+        }
+    }
+
     /// **The centre node is the unshocked node PV.** The (centre,centre) rung is
     /// `spot_mult = 1.0`, `vol_bump = 0.0`, so its analytic PV equals the node's
     /// base value exactly (the bump-and-revalue base in `nonadditive`).

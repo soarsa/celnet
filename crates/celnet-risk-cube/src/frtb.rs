@@ -943,6 +943,27 @@ mod tests {
         assert_eq!(delta.capital().to_bits(), 10.0_f64.to_bits());
         assert_eq!(vega.capital().to_bits(), 8.0_f64.to_bits());
         assert_eq!(curvature.capital().to_bits(), 9.0_f64.to_bits());
+
+        // A second capital where EVERY scenario carries a NONZERO curvature
+        // charge: the winning HIGH sum 10 + 1 + 2 = 13 *includes* curvature, so
+        // corrupting the curvature term inside the scenario sum (`+` → `−`:
+        // 10 + 1 − 2 = 9) moves the reported total. The (0, 0, 9) pin above
+        // cannot see that mutant — its maximal scenarios carry zero curvature,
+        // where `+0` and `−0` coincide.
+        let cap2 = FrtbCapital {
+            delta,
+            vega,
+            curvature: SbmCharge {
+                high: 2.0,
+                medium: 3.0,
+                low: 9.0,
+            },
+            rrao: 0.5,
+            drc: 0.25,
+        };
+        // Scenario sums: HIGH 10+1+2 = 13, MEDIUM 1+8+3 = 12, LOW 1+1+9 = 11.
+        assert_eq!(cap2.sbm_total().to_bits(), 13.0_f64.to_bits());
+        assert_eq!(cap2.total().to_bits(), 13.75_f64.to_bits());
     }
 
     /// `assemble_capital` wires each component faithfully: the class charges equal

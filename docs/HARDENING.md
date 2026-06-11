@@ -141,7 +141,7 @@ audited config and a CI matrix leg:
 |-------|--------|-------------|--------|--------|
 | `celnet-surface`   | `.config/mutants-surface.toml`   | `just mutants-gate-surface` (`-arbitrage` for the proven slice) | `mutation-gate-numerics` (matrix leg) | arbitrage.rs **MEASURED green locally**; crate-wide CI-run |
 | `celnet-exotics`   | `.config/mutants-exotics.toml`   | `just mutants-gate-exotics`   | `mutation-gate-numerics` (matrix leg) | wired; baseline CI-run |
-| `celnet-risk-cube` | `.config/mutants-risk-cube.toml` | `just mutants-gate-risk-cube` | `mutation-gate-numerics` (matrix leg) | wired; baseline CI-run |
+| `celnet-risk-cube` | `.config/mutants-celnet-risk-cube.toml` | `just mutants-gate-risk-cube` | `mutation-gate-numerics` (matrix leg) | **MEASURED green locally** (W6 — see below) |
 | `celnet-xva`       | `.config/mutants-xva.toml`       | `just mutants-gate-xva`       | `mutation-gate-numerics` (matrix leg) | **MEASURED green locally** (W6 — see below) |
 | `celnet-qmc`       | `.config/mutants-qmc.toml`       | `just mutants-gate-qmc`       | `mutation-gate-numerics` (matrix leg) | **MEASURED green locally** (W6 — see below) |
 
@@ -154,10 +154,10 @@ minutes for 469 mutants; `celnet-surface` is ~2 300 mutants and the exotics
 PDE/MC engines are larger still), so running a full local baseline on all four
 crates in one session is impractical. The enforceable gates, recipes, configs,
 and the CI matrix job are committed for all four; the canonical crate-wide
-baselines for exotics / risk-cube / xva are **established by the CI
-`mutation-gate-numerics` job** (recorded as CI-run here — no kill-rate number is
-fabricated for a run that was not performed). One crate was driven to a **real,
-MEASURED green** locally to prove the mechanism end-to-end:
+baseline for exotics is **established by the CI `mutation-gate-numerics` job**
+(recorded as CI-run here — no kill-rate number is fabricated for a run that was
+not performed); risk-cube, xva and qmc have since been driven to **real,
+MEASURED green** locally (W6 — see below). The first crate proven end-to-end:
 
 #### `celnet-surface` — measured baseline (arbitrage module)
 
@@ -338,6 +338,70 @@ steps/paths/horizon).
   — **zero missed, zero timeouts, real exit 0**. The enforceable bar
   (`just mutants-gate-xva`, CI matrix leg) is **zero non-equivalent
   survivors** with all three exclusions line-anchored and justified inline.
+
+#### `celnet-risk-cube` — measured baseline (W6 analytics-rigor wave, crate-wide green)
+
+The risk-cube crate (hierarchical additive roll-up of per-ccy NetGreeks +
+VegaLadder, the non-additive bump-and-revalue / sensitivity-Taylor VaR/ES lens,
+FRTB-SA SbM/curvature/RRAO/DRC capital aggregation, the GPU spot×vol scenario
+grid, and exotic risk-cube aggregation) is safety-critical capital arithmetic.
+Per the W6 plan (`docs/plan/W6-ANALYTICS-RIGOR-PLAN.md` §3.3) the gap was
+closed **pre-kill-first**: `tests/frtb_param_provenance.rs` pins every FRTB
+parameter `to_bits` against a literal typed from the published BCBS MAR21 text
+(paragraph cited per constant — the anti-circular 0.75ρ-lesson guard) plus
+hand-built bucket-assignment pins; `tests/longhand_oracle.rs` re-derives the
+firm aggregate with a naive double loop over all 11 NetGreeks lines + the
+ladder, proves partition conservation across all six dimensions, drives the
+VaR/ES quantile/tie/floor boundaries bit-exactly through a linear in-test
+pricer, pins a hand Taylor expansion, recomputes the curvature legs from two
+longhand revaluations (both down- and up-dominant combined regimes, with
+in-test regime guards against fixture rot), and folds the combined
+vanilla+exotic tail; `tests/fx_invariance.rs` keeps the FX `to_bits`
+non-regression; in-module pins cover the 48-bit pair packing typed from hand
+ASCII bytes + frozen-bits FNV group keys, scenario algebra byte-for-byte vs
+the raw FX two-rate arithmetic, the MAR21.6 alternative-S_b branch hand-derived
+end-to-end, the far-barrier vanilla-limit analytic oracle for the full exotic
+FD Greek set (including an ultra-short-tenor leg proving the FD time bump
+stays strictly inside the tenor), and row-major grid indexing with the
+inclusive reconciliation band + worst-tie diagnostics.
+
+- **File-scoped waves** (R1 dimension/additive/cube, R2 frtb_params/frtb,
+  R3 nonadditive, R4 exotic/scenario_grid), each run to zero non-equivalent
+  survivors. The raw R1 wave (121 mutants) surfaced exactly two `|`→`^`
+  survivors in `underlying_group_value`: the bit-63 force was a GENUINE gap
+  (both original pin inputs had raw-hash bit 63 clear) — killed by pinning
+  OTHR/USD whose raw hash carries bit 63, asserted in-test; the byte fold is
+  provably equivalent (disjoint bit positions) and excluded.
+- **Full-crate discovery run** (no exclusions beyond the wave audits,
+  aarch64-apple-darwin, cargo-mutants 27.0.0, toolchain 1.96.0,
+  `RUSTC_WRAPPER=""`): **`961 mutants tested in 31m: 14 missed, 899 caught,
+  48 unviable`**. Of the 14 survivors the file-scoped fixtures had not seen,
+  9 GENUINE gaps were KILLED with oracle-pinned tests (the exotic FD time-bump
+  `t/2` clamp via the ultra-short-tenor far-barrier vanilla-limit pin;
+  `sbm_total`'s curvature term via a nonzero-curvature max-of-sums hand pin;
+  the combined curvature UP-sum via an up-dominant long-digital regime; the
+  scenario-grid `std_err` row-major stride, inclusive band boundary, and
+  worst-tie diagnostics via hand-built grid literals against the
+  identically-zero empty-book reference; the `std_err` notional-scaling
+  quadrature via a bit-exact recomputation of the propagation chain) and 5
+  audited equivalents were EXCLUDED with inline proofs in
+  `.config/mutants-celnet-risk-cube.toml` (the `ccy_id` byte fold on disjoint
+  bits; the ψ both-negative `<`→`<=` pair whose flipped branch multiplies an
+  identically-zero cross term; the documented-zero MAR22 FX DRC body→`0.0`
+  differing only in an uncontractual zero sign; and the `fx_vega_rw` cluster
+  where the MAR21.93/.94 cap provably binds — anchored by an `uncapped > 1.0`
+  assertion in the provenance suite so a future MAR revision forces re-audit).
+  Each exclusion was hand-reproduced: **full suite green with the mutant
+  applied**.
+- **Canonical gate run** (clean slate, `.config/mutants-celnet-risk-cube.toml`,
+  `--test-tool=cargo --jobs 2 --minimum-test-timeout=120`, `RUSTC_WRAPPER=""`):
+  **`956 mutants tested in 27m: 908 caught, 48 unviable`** — **zero missed,
+  zero timeouts, real exit 0**, disposition counts verified from the
+  `mutants.out` ground truth at completion (908/0/0/48); an independent
+  same-session clean-slate run reproduced the identical summary (39m under
+  heavier concurrent-lane contention). The enforceable bar
+  (`just mutants-gate-risk-cube`, CI matrix leg) is **zero non-equivalent
+  survivors** with all 8 exclusions line-anchored and justified inline.
 
 ### Infra-crate mutation gate — `celnet-fanout` (W6, MEASURED green locally)
 
