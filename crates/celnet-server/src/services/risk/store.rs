@@ -213,7 +213,8 @@ impl PositionStore {
     /// ever flips this to [`AccessMode::Permissive`]. The production boot
     /// (`src/main.rs` / `Edge::start*`) never calls this.
     pub fn set_access_mode(&self, mode: AccessMode) {
-        self.permissive_access.store(mode.is_permissive(), Ordering::Relaxed);
+        self.permissive_access
+            .store(mode.is_permissive(), Ordering::Relaxed);
     }
 
     /// A fresh store that **inherits this store's firm configuration** — the org

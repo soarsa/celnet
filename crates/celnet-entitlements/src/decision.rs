@@ -156,10 +156,22 @@ mod tests {
     /// documented semantics (asserted/permissive ⇒ allow; absent/malformed ⇒ deny).
     #[test]
     fn reason_determines_decision() {
-        assert_eq!(AccessReason::PrincipalAsserted.decision(), AccessDecision::Allow);
-        assert_eq!(AccessReason::PermissiveAbsent.decision(), AccessDecision::Allow);
-        assert_eq!(AccessReason::PrincipalAbsent.decision(), AccessDecision::Deny);
-        assert_eq!(AccessReason::MalformedPrincipal.decision(), AccessDecision::Deny);
+        assert_eq!(
+            AccessReason::PrincipalAsserted.decision(),
+            AccessDecision::Allow
+        );
+        assert_eq!(
+            AccessReason::PermissiveAbsent.decision(),
+            AccessDecision::Allow
+        );
+        assert_eq!(
+            AccessReason::PrincipalAbsent.decision(),
+            AccessDecision::Deny
+        );
+        assert_eq!(
+            AccessReason::MalformedPrincipal.decision(),
+            AccessDecision::Deny
+        );
     }
 
     /// Labels are stable, distinct snake_case identifiers (audit fields key on

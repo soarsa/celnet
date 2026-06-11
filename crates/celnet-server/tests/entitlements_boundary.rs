@@ -27,8 +27,8 @@ use celnet_observability::{LogConfig, build_json_subscriber};
 use celnet_proto::risk_service_server::RiskService;
 use celnet_proto::{
     AggregateRiskRequest, AttributionRecord, BookId as WireBookId, DrillRiskRequest,
-    EntitlementPrincipal, EntitlementRule, LimitStatusRequest, ListPositionsRequest,
-    NumeraireRate, Owner, ReportingNumeraire, RiskDimension, RiskScope, owner,
+    EntitlementPrincipal, EntitlementRule, LimitStatusRequest, ListPositionsRequest, NumeraireRate,
+    Owner, ReportingNumeraire, RiskDimension, RiskScope, owner,
 };
 use celnet_server::ReadinessGate;
 use celnet_server::services::risk::RiskEdge;
@@ -302,7 +302,11 @@ async fn asserted_principals_are_authorized_and_pruned_under_enforcement() {
             .await
             .expect("asserted scoped principal is authorized")
             .into_inner();
-    assert_eq!(scoped.positions.len(), 1, "the BOOK-A principal sees exactly its book");
+    assert_eq!(
+        scoped.positions.len(),
+        1,
+        "the BOOK-A principal sees exactly its book"
+    );
     assert_eq!(scoped.positions[0].position_id, 1);
 
     // A malformed assertion (unknown dimension) is refused loudly at the
@@ -334,7 +338,10 @@ struct CapturedLog(Arc<Mutex<Vec<u8>>>);
 
 impl std::io::Write for CapturedLog {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().expect("log buffer lock").extend_from_slice(buf);
+        self.0
+            .lock()
+            .expect("log buffer lock")
+            .extend_from_slice(buf);
         Ok(buf.len())
     }
     fn flush(&mut self) -> std::io::Result<()> {
@@ -395,7 +402,11 @@ async fn audit_records_emitted_for_allow_and_deny() {
         .expect("allowed under permissive dev-mode");
 
     let records = decision_records(&buf);
-    assert_eq!(records.len(), 3, "exactly one audit record per decision: {records:#?}");
+    assert_eq!(
+        records.len(),
+        3,
+        "exactly one audit record per decision: {records:#?}"
+    );
 
     let deny = &records[0];
     assert_eq!(deny["class"], "security");

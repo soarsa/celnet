@@ -790,6 +790,7 @@ dependencies = [
  "celnet-exotics",
  "celnet-fanout",
  "celnet-fix",
+ "celnet-golden",
  "celnet-integration",
  "celnet-limits",
  "celnet-linear",
@@ -813,6 +814,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "tonic",
+ "tracing",
 ]
 
 [[package]]

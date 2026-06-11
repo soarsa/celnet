@@ -124,7 +124,11 @@ fn principal_label(principal: Option<&EntitlementPrincipal>) -> String {
     match principal {
         None => "absent".to_owned(),
         Some(p) if p.grant_all => format!("grant-all(+{} denies)", p.denies.len()),
-        Some(p) => format!("scoped({} grants, {} denies)", p.grants.len(), p.denies.len()),
+        Some(p) => format!(
+            "scoped({} grants, {} denies)",
+            p.grants.len(),
+            p.denies.len()
+        ),
     }
 }
 
@@ -213,8 +217,13 @@ mod tests {
     /// Permissive dev-mode + absent principal ⇒ the explicit, audited grant.
     #[test]
     fn permissive_allows_absent_principal() {
-        authorize(AccessMode::Permissive, None, "RiskService/ListPositions", Some(7))
-            .expect("permissive dev-mode explicitly admits an absent principal");
+        authorize(
+            AccessMode::Permissive,
+            None,
+            "RiskService/ListPositions",
+            Some(7),
+        )
+        .expect("permissive dev-mode explicitly admits an absent principal");
     }
 
     /// An asserted well-formed principal is honored as asserted, in both modes.
@@ -245,8 +254,13 @@ mod tests {
             }],
             denies: vec![],
         };
-        let err = authorize(AccessMode::Enforce, Some(&malformed), "RiskService/LimitStatus", None)
-            .expect_err("a malformed principal must be rejected");
+        let err = authorize(
+            AccessMode::Enforce,
+            Some(&malformed),
+            "RiskService/LimitStatus",
+            None,
+        )
+        .expect_err("a malformed principal must be rejected");
         assert_eq!(err.code(), tonic::Code::InvalidArgument);
     }
 
