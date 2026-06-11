@@ -11,8 +11,11 @@
 //!         RNG + Box–Muller normals + the indicator-form piecewise-linear
 //!         payoff — sharing neither the production counter RNG (Philox), nor
 //!         its Acklam inverse-CDF normal, nor its branch-on-`d_pivot` payoff
-//!         coding, nor its antithetic+control-variate estimator. `celnet-golden`
-//!         does not depend on `celnet-exotics`, so the routes share no code.
+//!         coding, nor its antithetic+control-variate estimator. The oracle in
+//!         `celnet_golden::oracle` references **no** `celnet_exotics` symbol —
+//!         the crate's manifest dep on `celnet-exotics` exists only for
+//!         celnet-golden's own engine-vs-oracle grid self-checks, never for this
+//!         oracle — so the engine and oracle routes here share no code.
 //!         The oracle is free to disagree; these rows assert it does not,
 //!         within Monte-Carlo confidence bands, across sides × redemption
 //!         styles × {dead-band `P > K`, overlap `P < K`} geometries.

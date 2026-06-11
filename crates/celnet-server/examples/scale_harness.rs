@@ -482,6 +482,9 @@ async fn drive_all(edge_url: &str) -> Observations {
     let firm_q = AggregateQuery::new(OrgDimension::Firm, usd_numeraire())
         .value_at_risk([-0.02, -0.01, 0.0, 0.01, 0.02], 0.99)
         .curvature(0.18)
+        // The fleet edges run the production deny-by-default posture; a real
+        // distributed client asserts its entitlement grant (here grant-all).
+        .entitled(Entitlements::grant_all())
         .correlation_id(7);
     let agg = tokio::time::timeout(RPC_TIMEOUT, client.aggregate_risk(&firm_q))
         .await
@@ -508,6 +511,7 @@ async fn drive_all(edge_url: &str) -> Observations {
     let drill_q = DrillQuery::new(Scope::firm(), OrgDimension::CcyPair, usd_numeraire())
         .children()
         .positions()
+        .entitled(Entitlements::grant_all())
         .correlation_id(9);
     let drill = tokio::time::timeout(RPC_TIMEOUT, client.drill_risk(&drill_q))
         .await
@@ -519,7 +523,8 @@ async fn drive_all(edge_url: &str) -> Observations {
     );
 
     // ---- RiskService: LimitStatus (a firm-level scope) ----
-    let limit_q = LimitQuery::new(Scope::firm(), usd_numeraire());
+    let limit_q =
+        LimitQuery::new(Scope::firm(), usd_numeraire()).entitled(Entitlements::grant_all());
     let limits = tokio::time::timeout(RPC_TIMEOUT, client.limit_status(&limit_q))
         .await
         .expect("limit within timeout")
@@ -705,7 +710,11 @@ async fn assert_unavailable_on_uncovered_slice(edge_url: &str) {
         .expect("connect to degraded edge");
     let firm_q = AggregateQuery::new(OrgDimension::Firm, usd_numeraire())
         .value_at_risk([-0.02, 0.0, 0.02], 0.99)
-        .curvature(0.18);
+        .curvature(0.18)
+        // Assert the grant so the request clears the entitlements boundary and the
+        // failure under test is the genuine federation `unavailable` (a down,
+        // un-re-homed backend), never an auth artifact masking it.
+        .entitled(Entitlements::grant_all());
     let err = tokio::time::timeout(RPC_TIMEOUT, client.aggregate_risk(&firm_q))
         .await
         .expect("the degraded aggregate returns promptly (no hang)")

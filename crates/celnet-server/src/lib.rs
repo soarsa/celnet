@@ -81,6 +81,12 @@ pub mod tick;
 pub mod ws;
 
 pub use clock::Clock;
+// The edge's entitlements trust-boundary posture, re-exported on the server facade
+// because `store().set_access_mode` takes it: any consumer configuring the edge's
+// access mode (a dev/test edge flipping to `Permissive`) needs the type without
+// reaching into `celnet-entitlements` directly. Production boot never flips it —
+// the construction default is `AccessMode::Enforce` (deny-by-default).
+pub use celnet_entitlements::AccessMode;
 pub use core_link::{
     BarrierTopology, CoreLink, CoreLinkError, ExoticQuery, MarketSnapshot, Observable,
     ObservableQuery, SurfaceQuery, SurfaceVol,

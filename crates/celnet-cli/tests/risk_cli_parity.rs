@@ -34,7 +34,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use celnet_engine::testing::make_state;
-use celnet_server::{Clock, CoreLink, Edge, SpreadModel};
+use celnet_server::{AccessMode, Clock, CoreLink, Edge, SpreadModel};
 
 /// The hard wall-clock ceiling for the whole test body.
 const TEST_DEADLINE: Duration = Duration::from_secs(30);
@@ -126,6 +126,13 @@ async fn start_ready_edge() -> (Edge, SocketAddr) {
     )
     .await
     .expect("edge binds on an ephemeral port");
+    // In-process dev/test edge: no auth gateway binds a wire principal, so run the
+    // documented Permissive dev-mode (mirrors `examples/demo_edge.rs`, the same edge
+    // these CLI-vs-SDK parity tests reconcile against). An absent principal is
+    // granted-all here. Deny-by-default (`AccessMode::Enforce`, the production boot
+    // default) is the production posture and is tested server-side
+    // (`absent_principal_denied_on_every_entitlement_gated_service`).
+    edge.store().set_access_mode(AccessMode::Permissive);
     edge.gate().mark_ready();
     let addr = edge.grpc_addr();
     (edge, addr)
