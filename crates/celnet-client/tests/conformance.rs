@@ -39,8 +39,14 @@ use celnet_types::{CcyPair, OptionType, Tenor};
 /// that a correct independent MC virtually never spuriously fails.
 const K_STDERR: f64 = 4.0;
 
-/// A generous per-test deadline covering the heaviest MC family on the server.
-const PRICE_DEADLINE: Duration = Duration::from_secs(60);
+/// A per-vector HANG detector — not a latency gate (latency budgets are gated
+/// in `celnet-bench`, on a quiet machine). Sized for the heaviest MC family
+/// under FULL `cargo test --workspace` parallel load, where every test binary
+/// competes for the same cores: at 60s the MC families flaked repeatedly at
+/// the T1/T2 gates (3 incidents journaled 2026-06-10/11) while passing
+/// isolated in ~100s wall under load. 300s still catches a genuine hang
+/// (stalled stream, deadlock) while never failing a merely-contended box.
+const PRICE_DEADLINE: Duration = Duration::from_secs(300);
 
 fn cp(token: &str) -> OptionType {
     match token {
