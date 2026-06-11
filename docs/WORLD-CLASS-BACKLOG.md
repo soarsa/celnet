@@ -31,6 +31,13 @@ Status legend: OPEN / IN-PROGRESS / DONE / ENV (deploy-bound, not a gap). Each i
   accuracy, no wrong price. **R9 cut criterion (convergence carries zero NEW P0/P1) = SATISFIED.** Dry-counter
   1/2 (a 2nd consecutive dry round = full-program convergence; NOT required for the RC cut, whose bar is
   zero-P0/P1). Gate: `GATE: a0817d6 T2 16/16` (web typecheck+unit + e2e under `enforce`).
+  **OPERATOR DECISION (2026-06-11): `releaseReady` = TRUE; cut `1.0-RC` = `a0817d6`.** R8-surfacing
+  re-scoped (criterion #2) to the first post-RC fast-follow — new tracked OPEN item
+  `surface/crypto-strike-axis-surfacing` (proto `quote_basis`/`StrikeQuoteSet` oneof on
+  `MarkSurfaceRequest` + server strike-slice ingestion → `strike_surface` + SDK/GUI/Excel
+  mark-by-strike + an independent (k,w) parity row; session-A's `surface/crypto-leaf` lane,
+  on capacity). Post-RC backlog also carries the 4 Round-4/5 docs-sync + mutation-floor-broadening
+  + raft-flake items (none P0/P1).
 - **Round 4 — NOT DRY (2026-06-11, session-B; 7-lens + adversarial synthesis, workflow-driven over the RC batch-D landing):**
   The two Round-3 P1 blockers did NOT re-surface (correctly fixed-at-root, not re-counted); sota-scope /
   numerical-correctness / completeness lenses all returned EMPTY (the math core + product completeness are
