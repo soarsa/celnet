@@ -20,8 +20,11 @@ Greenfield, started 30 May 2026.
    `get_code_snippet`, `query_graph`, `get_architecture`, `detect_changes`, `manage_adr`);
    fall back to Grep/Read only for non-code text. The graph **auto-indexes** (git post-commit
    hook + a Stop hook in `.claude/settings.json`, both running `codebase-memory-mcp cli
-   index_repository … mode:fast`), so its scope always covers new files — no manual
-   re-indexing needed. Use `detect_changes` to scope builds/tests; keep ADRs current via
+   index_repository … mode:fast`, logging to `.codebase-memory/index.log`), so its scope
+   always covers new files. **Health probe before trusting it** (a 2026-06-10 indexer crash
+   silently dropped ~70% of the graph while hashes said "no changes"): `index_status` should
+   report ≈17k nodes; a sharp drop or missing hot symbols (`price_instrument`) ⇒
+   `delete_project` + `mode:full` re-index (~3s). Use `detect_changes` to scope builds/tests; keep ADRs current via
    `manage_adr`. Saves tokens, stays exact, never forgets.
 4. **LSP for code intel.** Use the LSP tool (rust-analyzer) for goToDefinition,
    findReferences, hover, document/workspace symbols, call hierarchy — not guesswork.
