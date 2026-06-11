@@ -54,3 +54,19 @@ Acklam refit w/ byte-identity re-freeze) → next window; tracked in WORLD-CLASS
 Build → adversarial-verify stays the law: mutation lanes get the laundering-hunt verifier;
 the crypto leaf gets the oracle-independence + seam-discipline verifier; B-lanes get their
 own (session-B runs the same pattern). ACCEPT verdicts recorded in commit messages or §6.
+
+## 5. Verification economy (operator-directed, 2026-06-11) — verify only what's needed
+
+Exhaustive full-crate mutation sweeps re-prove what the frozen-bits/oracle suites already
+kill by construction. The triage criterion — **verification is NEEDED where**:
+1. **New code this window** (the crypto leaf) → full build→adversarial-verify. 
+2. **A finding flagged weakness** (Round-2 items) → targeted oracle + kill tests.
+3. **No independent oracle/frozen-bits coverage exists** for the file → file-scoped mutants.
+
+**Everywhere else** (files whose arithmetic is pinned bit-for-bit by `fx_byte_identity`-class
+suites or solver/fit pins): the pin IS the kill mechanism. Validate it with a per-file
+**sample** (not a sweep), record the coverage rationale inline in the mutants config, move on.
+Already-measured gates (qmc/xva/risk-cube: zero-missed full runs) are DONE — never re-run
+them in later windows; the config + ledger entry is the record. Merges ride `check-changed`
++ the window's single gate ledger (§3). Partial mutants outcomes are always resumed with
+`--iterate`, never re-ground.
