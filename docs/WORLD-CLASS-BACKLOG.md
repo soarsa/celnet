@@ -13,6 +13,17 @@ Status legend: OPEN / IN-PROGRESS / DONE / ENV (deploy-bound, not a gap). Each i
 `{wave, dedup-key, title, oracle, client-parity, effort, priority, status}`.
 
 ## Convergence ledger
+- **Round 3 — NOT DRY (2026-06-11, session-B; 7-lens + security-deep + batch-D adversarial verify):**
+  batch-D = LAND (pivot/entitlements/VV all confirmed). **2 genuine P1 blockers** (releaseReady=False):
+  (1) `cross-asset-ws-pair-precedence` — ws/codec.rs:203 gives `pair` precedence over `underlying`,
+  so equity/commodity/crypto are WS-unreachable and INVERSE_COIN misprices 4 orders of magnitude;
+  **batch-D D2 FROZE the bug** (cross_asset_ws.rs:388 pins the wrong value; gui/excel declared
+  not-exposed) instead of fixing the routing — workaround, not coverage (guardrail #2). FIX: let
+  `underlying` win (or reject ambiguity); flip the pin test to assert CORRECT pricing; un-freeze the
+  3 families in gui/excel WS corpora. (2) `dos/fix-frame-accumulation-unbounded` — celnet-fix
+  acceptor has no message-size cap (the WS edge got one; FIX didn't). 8 P2/P3 → post-RC. Dry-counter
+  RESET 0/2. Also: entitlements audit TEST capture bug (production emits correctly per the verifier;
+  the test's subscriber capture is broken — separate fix in flight).
 - **Round 2 — NOT DRY (2026-06-10, session-B; 7-lens + adversarial synthesis, workflow-driven):**
   22 genuine findings survived the judge (1 absorbed, 1 rejected). Headline **P0:
   `exotics/one-touch-at-hit-pairing-flip-circular-oracle`** — the at-hit one-touch closed form
