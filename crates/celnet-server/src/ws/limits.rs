@@ -95,11 +95,21 @@ pub(super) fn oversize_reject_text(message_bytes: usize) -> String {
 }
 
 /// The typed RFC 6455 §7.4.1 close (1009 "Message Too Big") for an oversize
-/// message, carrying the offending size and the documented cap in the reason.
+/// message. A close frame is a CONTROL frame: its payload is capped at 125
+/// bytes (2-byte code + ≤123-byte reason, RFC 6455 §5.5) — a longer reason
+/// makes the close itself malformed (`ControlFrameTooBig` at the peer) and
+/// breaks the clean closing handshake. The reason therefore carries only the
+/// compact size/cap facts; the FULL explanatory text travels in the preceding
+/// typed `error` DATA frame ([`oversize_reject_text`]), which has no such cap.
 pub(super) fn oversize_close(message_bytes: usize) -> CloseFrame<'static> {
+    let reason = format!("{message_bytes} bytes > {MAX_CONTRACT_MESSAGE_BYTES}-byte message cap");
+    debug_assert!(
+        reason.len() <= 123,
+        "close reason must fit the RFC 6455 control-frame budget: {reason}"
+    );
     CloseFrame {
         code: CloseCode::Size,
-        reason: oversize_reject_text(message_bytes).into(),
+        reason: reason.into(),
     }
 }
 
