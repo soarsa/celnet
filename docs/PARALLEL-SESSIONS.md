@@ -77,6 +77,13 @@ CPU-starved `nextest` list/exec phase can sit at 0% CPU forever; observed 2026-0
    announces a gate run (note in §6), background lanes (W6/W5-A/W4-A) **pause their builds** until
    it reports green. One bottleneck moving > N lanes half-starved.
 3. **Never two full-workspace builds at once.** Stagger heavy gates; coordinate the window via §6.
+   **3a. Conflate, never repeat (the 4×-T1 lesson, 2026-06-11):** (i) gate steps are journaled at
+   the finest useful grain — T1 tests per CRATE, T2 tests per PHASE (libs/integration/doc) over one
+   cached `--no-run` build — so a fix re-runs only the failed unit; (ii) before resuming any gate,
+   re-run the SPECIFIC failing test alone first (seconds) — never use a full gate as the probe;
+   (iii) ONE milestone gate per merge window (the §4.2.4 ledger entry) — every later merge in the
+   window rides `check-changed`/scoped-T1 + the ledger reference, and exactly ONE closing gate runs
+   at the window's end by the last merger. A second full gate inside a window is a protocol smell.
 4. **Async only.** Coordinate through this board + git; never spin-wait holding compute.
 
 ### 4.2 Tiered gates — one T1 per batch, T2 only at landing (all sessions)

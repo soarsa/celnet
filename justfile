@@ -140,10 +140,20 @@ t1 *CRATES:
     echo "t1 batch: ${crates[*]}"
     pflags=""
     for c in "${crates[@]}"; do pflags="$pflags -p $c"; done
-    exec bash tools/gate-runner.sh t1 \
+    # Test execution is journaled PER CRATE (after one union --no-run build) so a
+    # single failing crate re-runs ONLY itself on resume — the monolithic test
+    # step re-ran all 9 crates per fix-iteration before this (4x T1 churn,
+    # journaled 2026-06-11). The union build keeps feature unification
+    # consistent; per-crate runs are warm (observed: seconds) because every
+    # crate uses the workspace dep registry with uniform features.
+    steps=( \
         "fmt::source \"\$HOME/.cargo/env\" && cargo fmt$pflags -- --check" \
         "clippy::source \"\$HOME/.cargo/env\" && cargo clippy$pflags --all-targets --all-features -- -D warnings" \
-        "test::source \"\$HOME/.cargo/env\" && cargo test$pflags"
+        "build-tests::source \"\$HOME/.cargo/env\" && cargo test$pflags --no-run" )
+    for c in "${crates[@]}"; do
+        steps+=( "test-$c::source \"\$HOME/.cargo/env\" && cargo test -p $c" )
+    done
+    exec bash tools/gate-runner.sh t1 "${steps[@]}"
 
 # T2 — landing-only: the full `check` gate set (same steps, decomposed so the
 # resumable ledger can skip the already-green ones after a kill) + the live
@@ -160,7 +170,10 @@ t2:
         "verification-coverage::node tools/check-verification-coverage.mjs" \
         "fmt::source \"\$HOME/.cargo/env\" && cargo fmt --all -- --check" \
         "clippy::source \"\$HOME/.cargo/env\" && cargo clippy --workspace --all-targets --all-features -- -D warnings" \
-        "test::source \"\$HOME/.cargo/env\" && cargo test --workspace --all-features" \
+        "build-tests::source \"\$HOME/.cargo/env\" && cargo test --workspace --all-features --no-run" \
+        "test-libs::source \"\$HOME/.cargo/env\" && cargo test --workspace --all-features --lib --bins" \
+        "test-integration::source \"\$HOME/.cargo/env\" && cargo test --workspace --all-features --test '*'" \
+        "test-docs::source \"\$HOME/.cargo/env\" && cargo test --workspace --all-features --doc" \
         "deny::source \"\$HOME/.cargo/env\" && cargo deny check" \
         "build-edge::source \"\$HOME/.cargo/env\" && cargo build -p celnet-server --example demo_edge" \
         "gui-e2e::npm --prefix gui run e2e:install && npm --prefix gui run e2e" \
