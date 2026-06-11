@@ -2387,13 +2387,7 @@ mod tests {
             (
                 "pivot",
                 &[
-                    "pivot",
-                    "--option",
-                    "put",
-                    "--pivot",
-                    "1.05",
-                    "--target",
-                    "0.3",
+                    "pivot", "--option", "put", "--pivot", "1.05", "--target", "0.3",
                 ],
             ),
             (

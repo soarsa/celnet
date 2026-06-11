@@ -15,9 +15,9 @@ use celnet_exotics::{
     TarfMcConfig, VarSwapContext, accumulator_price, american_fd, american_lsm,
     cliquet_price_capped_mc, cliquet_price_plain, curran_price, digital_price,
     double_no_touch_price, fair_variance, fair_volatility, fixed_lookback_price,
-    floating_lookback_price, forward_start_price, lookback_mc, one_touch_price,
-    pivot_tra_price, quanto_digital_price, quanto_vanilla_price, single_barrier_price,
-    tarf_price, turnbull_wakeman_price,
+    floating_lookback_price, forward_start_price, lookback_mc, one_touch_price, pivot_tra_price,
+    quanto_digital_price, quanto_vanilla_price, single_barrier_price, tarf_price,
+    turnbull_wakeman_price,
 };
 use celnet_types::{OptionType, VanillaInputs};
 

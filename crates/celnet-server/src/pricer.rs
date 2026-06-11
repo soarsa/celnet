@@ -39,15 +39,15 @@ use celnet_exotics::{
     CliquetMcConfig, CliquetSchedule, DigitalKind, DoubleBarrierKnockOut, DoubleNoTouch,
     ExerciseStyle as ExExerciseStyle, ForwardStart, Lookback as ExLookback, LookbackMcConfig,
     LookbackStyle as ExLookbackStyle, LsmConfig, Monitoring as ExMonitoring, PerpetualInputs,
-    PivotTra, PivotTraMcConfig, QuantoParams, RebateTiming,
-    RedemptionStyle as ExRedemptionStyle, SingleBarrier as ExSingleBarrier, Tarf as ExTarf,
-    TarfMcConfig, VarSwapContext, accumulator_price, american_fd_greeks, american_lsm,
-    cliquet_price_capped_mc, cliquet_price_plain, curran_price, digital_price,
-    double_knock_out_price, double_no_touch_price, double_touch_price, fair_variance,
-    fair_volatility, fixed_lookback_price, floating_lookback_price, forward_start_price,
-    lookback_mc, no_touch_price, one_touch_price, perpetual_greeks, perpetual_price,
-    pivot_tra_price, price_basket, quanto_digital_price, quanto_vanilla_price,
-    single_barrier_price, tarf_price, turnbull_wakeman_price,
+    PivotTra, PivotTraMcConfig, QuantoParams, RebateTiming, RedemptionStyle as ExRedemptionStyle,
+    SingleBarrier as ExSingleBarrier, Tarf as ExTarf, TarfMcConfig, VarSwapContext,
+    accumulator_price, american_fd_greeks, american_lsm, cliquet_price_capped_mc,
+    cliquet_price_plain, curran_price, digital_price, double_knock_out_price,
+    double_no_touch_price, double_touch_price, fair_variance, fair_volatility,
+    fixed_lookback_price, floating_lookback_price, forward_start_price, lookback_mc,
+    no_touch_price, one_touch_price, perpetual_greeks, perpetual_price, pivot_tra_price,
+    price_basket, quanto_digital_price, quanto_vanilla_price, single_barrier_price, tarf_price,
+    turnbull_wakeman_price,
 };
 use celnet_linear::{LinearInputs, LinearTerms, Side as LinearSide, ndf::Ndf as LinearNdf, swap};
 
@@ -1254,7 +1254,9 @@ pub fn price_instrument(
                 return Err(PriceError::Domain("pivot TRA target must be positive"));
             }
             if p.leverage < 0.0 {
-                return Err(PriceError::Domain("pivot TRA leverage must be non-negative"));
+                return Err(PriceError::Domain(
+                    "pivot TRA leverage must be non-negative",
+                ));
             }
             if !p.strike.is_finite() || p.strike <= 0.0 {
                 return Err(PriceError::Domain("pivot TRA strike must be positive"));
