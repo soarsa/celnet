@@ -1,7 +1,7 @@
 //! Generator for the frozen golden-vector corpus.
 //!
 //! Run with `cargo run -p celnet-golden --bin gen_vectors`. Emits
-//! `crates/celnet-golden/vectors/<family>.json` for all 23 product-oneof families,
+//! `crates/celnet-golden/vectors/<family>.json` for all 24 product-oneof families,
 //! every `expected.price` produced by an oracle **independent of the production
 //! wire/server path** (see `celnet_golden::vectors` module docs and the per-family
 //! comments below). The output is a frozen artifact, committed to disk; the
@@ -87,6 +87,7 @@ fn main() {
     gen_cliquet();
     gen_quanto();
     gen_tarf();
+    gen_pivot();
     gen_accumulator();
     gen_lookback();
     gen_window_barrier();
@@ -1754,6 +1755,177 @@ fn gen_tarf() {
         ));
     }
     write_family("tarf", &out);
+}
+
+// ===========================================================================
+// pivot — MC family: code-disjoint pivot-TRA bank-PV Monte-Carlo (the TARF
+// mechanic with a distinct pivot kink). The `pivot == strike` vector is the
+// degeneracy LAW row: at generation time its pivot-oracle value is asserted to
+// agree with the plain TARF oracle on the same terms (two disjoint payoff
+// codings of the same product), so the frozen corpus itself pins the law.
+// ===========================================================================
+
+fn gen_pivot() {
+    struct Case {
+        id: &'static str,
+        cp: Cp,
+        spot: f64,
+        strike: f64,
+        pivot: f64,
+        target: f64,
+        leverage: f64,
+        redemption: TarfRedemption,
+        fixings: usize,
+        vol: f64,
+        r_dom: f64,
+        r_for: f64,
+        t: f64,
+    }
+    let cases = [
+        // Dead band (P > K, call-favourable): the gearing engages only below
+        // the pivot, leaving a mildly-long corridor [K, P].
+        Case {
+            id: "pivot-eurusd-1y-call-deadband-fullgain",
+            cp: Cp::Call,
+            spot: 1.30,
+            strike: 1.28,
+            pivot: 1.33,
+            target: 0.08,
+            leverage: 2.0,
+            redemption: TarfRedemption::FullGain,
+            fixings: 12,
+            vol: 0.12,
+            r_dom: 0.03,
+            r_for: 0.01,
+            t: 1.0,
+        },
+        // Overlap (P < K, call-favourable): the client pays geared intrinsic
+        // before the strike is reached.
+        Case {
+            id: "pivot-eurusd-1y-call-overlap-cappedgain",
+            cp: Cp::Call,
+            spot: 1.30,
+            strike: 1.33,
+            pivot: 1.28,
+            target: 0.08,
+            leverage: 2.0,
+            redemption: TarfRedemption::CappedGain,
+            fixings: 12,
+            vol: 0.12,
+            r_dom: 0.03,
+            r_for: 0.01,
+            t: 1.0,
+        },
+        // Put-favourable dead band (P < K for a put): the exporter orientation.
+        Case {
+            id: "pivot-eurusd-1y-put-deadband-fullgain",
+            cp: Cp::Put,
+            spot: 1.30,
+            strike: 1.32,
+            pivot: 1.27,
+            target: 0.10,
+            leverage: 2.0,
+            redemption: TarfRedemption::FullGain,
+            fixings: 12,
+            vol: 0.10,
+            r_dom: 0.03,
+            r_for: 0.01,
+            t: 1.0,
+        },
+        // The degeneracy LAW row: pivot == strike collapses exactly to the
+        // plain TARF — cross-asserted against the TARF oracle below.
+        Case {
+            id: "pivot-eurusd-1y-put-tarf-degenerate",
+            cp: Cp::Put,
+            spot: 1.30,
+            strike: 1.30,
+            pivot: 1.30,
+            target: 0.10,
+            leverage: 2.0,
+            redemption: TarfRedemption::FullGain,
+            fixings: 12,
+            vol: 0.10,
+            r_dom: 0.03,
+            r_for: 0.01,
+            t: 1.0,
+        },
+    ];
+    let mut out = Vec::new();
+    for (n, c) in cases.iter().enumerate() {
+        let est = oracle::pivot_tra_bank_pv_mc(
+            c.cp,
+            c.spot,
+            c.strike,
+            c.pivot,
+            c.target,
+            c.leverage,
+            1.0,
+            c.redemption,
+            c.fixings,
+            c.vol,
+            c.t,
+            c.r_dom,
+            c.r_for,
+            MC_PAIRS,
+            0x9170_7000 + n as u64,
+        );
+        if c.pivot == c.strike {
+            // The degeneracy law, pinned at generation time: the pivot oracle's
+            // P == K slice must agree with the PLAIN TARF oracle on the same
+            // terms (two code-disjoint payoff codings, distinct seeds — a
+            // genuinely cross-checked law, not a self-comparison).
+            let tarf = oracle::tarf_bank_pv_mc(
+                c.cp,
+                c.spot,
+                c.strike,
+                c.target,
+                c.leverage,
+                1.0,
+                c.redemption,
+                c.fixings,
+                c.vol,
+                c.t,
+                c.r_dom,
+                c.r_for,
+                MC_PAIRS,
+                0x7A1F_1707,
+            );
+            let band = 6.0 * (est.std_error + tarf.std_error);
+            assert!(
+                (est.price - tarf.price).abs() <= band,
+                "pivot degeneracy law violated: pivot(P=K) {} vs TARF {} (band {band})",
+                est.price,
+                tarf.price
+            );
+        }
+        let redemption = match c.redemption {
+            TarfRedemption::FullGain => "FULL_GAIN",
+            TarfRedemption::CappedGain => "CAPPED_GAIN",
+        };
+        out.push(mc_vector(
+            c.id,
+            "pivot",
+            &underlying_for(c.spot),
+            c.t,
+            market(c.spot, c.vol, c.r_dom, c.r_for),
+            json!({
+                "option_type": cp_token(c.cp),
+                "strike": c.strike,
+                "pivot": c.pivot,
+                "target": c.target,
+                "leverage": c.leverage,
+                "redemption": redemption,
+                "fixings": c.fixings,
+                "fixing_notional": 1.0,
+                "mc_pairs": SERVER_MC_PAIRS,
+                "mc_seed": 1707,
+                "expiry_years": c.t,
+            }),
+            est,
+            "code-disjoint splitmix64 pivot-TRA bank-PV Monte-Carlo",
+        ));
+    }
+    write_family("pivot", &out);
 }
 
 // ===========================================================================

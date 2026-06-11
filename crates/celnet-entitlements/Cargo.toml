@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Celnet entitlement model + server-side pre-aggregation pruning predicate: a principal carries role grants scoped to dimension subtrees plus deny rules (information barriers); the filter admits only the facts the principal may see, applied BEFORE any roll-up so a node total can never leak the magnitude of an invisible subtree. Default principal is grant-all (the GUI's show-all-now behaviour), so swapping in real principals later is zero-rework."
+description = "Celnet entitlement model + server-side pre-aggregation pruning predicate: a principal carries role grants scoped to dimension subtrees plus deny rules (information barriers); the filter admits only the facts the principal may see, applied BEFORE any roll-up so a node total can never leak the magnitude of an invisible subtree. Deny-by-default: the default principal admits nothing, an absent principal is refused at the service trust boundary (decision vocabulary in `decision`), and grant-all is only ever an explicit, audited assertion."
 publish = false
 
 [lints]

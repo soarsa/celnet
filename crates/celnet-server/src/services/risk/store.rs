@@ -44,7 +44,9 @@
 
 use std::collections::HashMap;
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
+use celnet_entitlements::AccessMode;
 use celnet_proto::{AttributionRecord, BookId, Owner, owner};
 use celnet_risk_cube::{
     BookId as CubeBookId, DeskId, EntityId, FactKey, FactMeasure, Hierarchy, LocationId,
@@ -143,6 +145,14 @@ pub struct BookedExotic {
 #[derive(Debug)]
 pub struct PositionStore {
     inner: RwLock<StoreInner>,
+    /// The entitlements **trust-boundary mode** guarding this book
+    /// ([`crate::services::access`]): `false` ⇒ [`AccessMode::Enforce`] (the
+    /// deny-by-default production posture and the construction default),
+    /// `true` ⇒ the explicit [`AccessMode::Permissive`] dev-mode (set only by
+    /// the demo edge, loudly). Lives on the shared store — not per edge — so
+    /// the gRPC server, the WS mirror and a federating frontend all read one
+    /// coherent policy, lock-free per request.
+    permissive_access: AtomicBool,
 }
 
 #[derive(Debug, Default)]
@@ -174,12 +184,36 @@ impl Default for PositionStore {
 }
 
 impl PositionStore {
-    /// An empty store: no positions, an empty hierarchy, an empty limit tree.
+    /// An empty store: no positions, an empty hierarchy, an empty limit tree —
+    /// and the deny-by-default [`AccessMode::Enforce`] trust-boundary mode.
     #[must_use]
     pub fn new() -> Self {
         Self {
             inner: RwLock::new(StoreInner::default()),
+            permissive_access: AtomicBool::new(false),
         }
+    }
+
+    /// The entitlements trust-boundary [`AccessMode`] guarding this book — read
+    /// per request by every entitlement-gated RPC (a single relaxed atomic
+    /// load; the decision itself runs on the async edge, never the pinned
+    /// pricing core).
+    #[must_use]
+    pub fn access_mode(&self) -> AccessMode {
+        if self.permissive_access.load(Ordering::Relaxed) {
+            AccessMode::Permissive
+        } else {
+            AccessMode::Enforce
+        }
+    }
+
+    /// Set the entitlements trust-boundary [`AccessMode`]. The construction
+    /// default is [`AccessMode::Enforce`] (deny-by-default); only an explicit
+    /// dev affordance — the demo edge, with a loud startup banner, or a test —
+    /// ever flips this to [`AccessMode::Permissive`]. The production boot
+    /// (`src/main.rs` / `Edge::start*`) never calls this.
+    pub fn set_access_mode(&self, mode: AccessMode) {
+        self.permissive_access.store(mode.is_permissive(), Ordering::Relaxed);
     }
 
     /// A fresh store that **inherits this store's firm configuration** — the org
@@ -202,6 +236,9 @@ impl PositionStore {
                 wire_ids: HashMap::new(),
                 limits: g.limits.clone(),
             }),
+            // Carried for coherence; a staged store only ever backs the
+            // post-boundary `*_impl` internals, which no longer re-authorize.
+            permissive_access: AtomicBool::new(self.permissive_access.load(Ordering::Relaxed)),
         }
     }
 

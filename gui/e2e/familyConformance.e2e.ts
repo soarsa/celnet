@@ -34,9 +34,10 @@
  *    pair. That reason is PROVEN below (the edge refuses an EURUSD NDF with the
  *    typed message), and the NDF's numerical conformance runs in the wire half
  *    on its real USDBRL/USDCOP/USDINR underlyings.
- *  - wire half: the three cross-asset vanilla arms are not priceable over the
- *    FX-two-rate `MarketContext` (their vectors pin the generalized carry);
- *    asserted as an exact set, mirroring `excel/e2e/corpus.ts`.
+ *  - wire half: the three cross-asset vanilla arms are blocked by the server WS
+ *    decoder's legacy-`pair` precedence over the `underlying` object the GUI
+ *    codec emits beside it (their vector MARKETS are WS-transportable — see
+ *    `goldenCorpus.ts`); asserted as an exact set, mirroring `excel/e2e/corpus.ts`.
  */
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
@@ -109,6 +110,7 @@ const GUI_STRUCTURES: readonly {
   { id: "CLIQUET", label: "Cliquet", corpusFamilies: ["cliquet"], marker: "greeks" },
   { id: "QUANTO", label: "Quanto", corpusFamilies: ["quanto"], marker: "greeks" },
   { id: "TARF", label: "TARF", corpusFamilies: ["tarf"], marker: "greeks" },
+  { id: "PIVOT", label: "Pivot TRA", corpusFamilies: ["pivot"], marker: "greeks" },
   { id: "ACCUMULATOR", label: "Accumulator", corpusFamilies: ["accumulator"], marker: "greeks" },
   { id: "LOOKBACK", label: "Lookback", corpusFamilies: ["lookback"], marker: "greeks" },
   { id: "WINDOW_BARRIER", label: "Window Barrier", corpusFamilies: ["window_barrier"], marker: "greeks" },
@@ -392,13 +394,18 @@ test.describe("golden-vector wire conformance: GUI codec → real edge == frozen
 
   test("reports (does not skip) the corpus families not priced over the FX WS path", () => {
     // Documentation-as-assertion (CLAUDE.md rule 2 — no silent gap): the three
-    // cross-asset vanilla arms pin the GENERALIZED cost-of-carry their leaf
-    // crates gate server-side; the FX-two-rate `MarketContext` cannot transport
-    // it. The GUI still BOOKS and live-quotes them (the cross-asset spec is
-    // covered in the browser half above; booking gated by
-    // `gui/test/crossAssetProducts.test.ts`). Identical boundary to the Excel
-    // gate. If a family becomes FX-WS-priceable, this pins the honest gap so it
-    // cannot drift.
+    // cross-asset vanilla arms' vector MARKETS are WS-transportable (the FX
+    // two-rate projection, proven end-to-end by
+    // `crates/celnet-server/tests/cross_asset_ws.rs`), but the GUI's production
+    // codec emits the legacy FX `pair` projection beside `underlying` and the
+    // server WS decoder gives `pair` precedence — a GUI frame routes down the FX
+    // path (numerically invisible for linear payoffs, WRONG for INVERSE_COIN;
+    // the precedence is pinned server-side and fails loudly when the seam
+    // flips). Full rationale on `goldenCorpus.ts`. The GUI still BOOKS and
+    // live-quotes them (the cross-asset spec is covered in the browser half
+    // above; booking gated by `gui/test/crossAssetProducts.test.ts`). Identical
+    // boundary to the Excel gate. If a family becomes WS-priceable, this pins
+    // the honest gap so it cannot drift.
     expect([...FAMILIES_NOT_EXPOSED_ON_FX_WS]).toEqual([
       "equity_option",
       "commodity_option",

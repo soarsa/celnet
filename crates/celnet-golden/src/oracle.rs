@@ -759,6 +759,102 @@ pub fn tarf_bank_pv_mc(
     }
 }
 
+/// Pivot Target-Redemption Accumulator **bank** present value by code-disjoint
+/// Monte-Carlo (antithetic). The TARF mechanic with a distinct `pivot` kink: on
+/// each fixing the per-unit client cash flow is the piecewise-linear indicator
+/// form
+///
+/// ```text
+/// c = 𝟙[g·(S−P) ≥ 0] · g·(S−K)  +  𝟙[g·(S−P) < 0] · L·g·(S−K)
+/// ```
+///
+/// (`g` the favourable-side sign, `K = strike`, `P = pivot`, `L = leverage`) —
+/// the leg is **selected** by the pivot and **valued** by the strike. Positive
+/// flows accrue toward `target` and knock the structure out under the shared
+/// [`TarfRedemption`] gap-risk convention; the bank receives the adverse legs.
+/// `pivot == strike` reduces this oracle exactly to [`tarf_bank_pv_mc`]'s payoff
+/// (the degeneracy law the corpus pins). `notional` is the per-fixing notional.
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn pivot_tra_bank_pv_mc(
+    favourable: Cp,
+    spot: f64,
+    strike: f64,
+    pivot: f64,
+    target: f64,
+    leverage: f64,
+    notional: f64,
+    redemption: TarfRedemption,
+    fixings: usize,
+    vol: f64,
+    t: f64,
+    r_dom: f64,
+    r_for: f64,
+    pairs: usize,
+    seed: u64,
+) -> McEstimate {
+    let n = fixings.max(1);
+    let dt = t / n as f64;
+    let drift = (r_dom - r_for - 0.5 * vol * vol) * dt;
+    let diff = vol * sqrt(dt);
+    let mut dfs = vec![0.0f64; n];
+    for (k, d) in dfs.iter_mut().enumerate() {
+        *d = exp(-r_dom * (k + 1) as f64 * dt);
+    }
+    let gain_sign = favourable.sign();
+    let mut rng = SplitMix64::new(seed);
+    let mut acc = Welford::default();
+    let mut z = vec![0.0f64; n];
+    let walk = |z: &[f64], sign: f64| -> f64 {
+        let mut ln_s = ln(spot);
+        let mut accumulated = 0.0f64;
+        let mut bank_pv = 0.0f64;
+        for (k, &zk) in z.iter().enumerate() {
+            ln_s += drift + diff * sign * zk;
+            let s_k = exp(ln_s);
+            // Leg SELECTED by the pivot, VALUED by the strike intrinsic.
+            let intrinsic = gain_sign * (s_k - strike);
+            let c = if gain_sign * (s_k - pivot) >= 0.0 {
+                intrinsic
+            } else {
+                leverage * intrinsic
+            };
+            if c > 0.0 {
+                let remaining = target - accumulated;
+                if c >= remaining {
+                    let settled = match redemption {
+                        TarfRedemption::FullGain => c,
+                        TarfRedemption::CappedGain => remaining,
+                    };
+                    bank_pv -= settled * notional * dfs[k];
+                    return bank_pv;
+                }
+                bank_pv -= c * notional * dfs[k];
+                accumulated += c;
+            } else if c < 0.0 {
+                bank_pv += (-c) * notional * dfs[k];
+            }
+        }
+        bank_pv
+    };
+    for _ in 0..pairs {
+        let mut i = 0;
+        while i < n {
+            let (a, b) = rng.next_normal_pair();
+            z[i] = a;
+            if i + 1 < n {
+                z[i + 1] = b;
+            }
+            i += 2;
+        }
+        acc.push(0.5 * (walk(&z, 1.0) + walk(&z, -1.0)));
+    }
+    McEstimate {
+        price: acc.mean(),
+        std_error: acc.std_error(),
+    }
+}
+
 /// Accumulator monitoring convention.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccumulatorMonitoring {
@@ -1463,6 +1559,354 @@ pub fn window_barrier_mc(
     }
 }
 
+// ===========================================================================
+// Smile-overlay magnitude oracle (replicating-portfolio route)
+// ===========================================================================
+//
+// The production smile overlay (`celnet-exotics::market_hedge_overlay`) prices
+// the smile cost of an exotic by the COLLAPSED projection route: it reads a
+// "market price of one unit of vanna / volga" off the risk-reversal and
+// butterfly surpluses (each LINEARIZED as `vega·(σ_wing − σ₀)`) and charges
+// `x.vanna·λ_vanna + x.volga·λ_volga`. Until now that route had only
+// flat-smile / sign / scaling tests — no quantitative magnitude reference.
+//
+// The functions below re-derive the overlay **from first principles** as the
+// market cost of the exact replicating portfolio: the unique weights
+// `(w₁, w₂, w₃)` on the three benchmark vanillas that match the exotic's flat-vol
+// **vega, vanna and volga** simultaneously — the full 3×3 linear system — and
+// the overlay cost as the exact (NOT linearized) market-over-flat reprice of
+// that portfolio, `Σ wᵢ·[V(Kᵢ, σᵢ) − V(Kᵢ, σ₀)]`. Provenance (doc-only):
+// Castagna & Mercurio (2007), "The vanna-volga method for implied
+// volatilities"; Bossens, Rayée, Skantzos & Deelstra (2010), "Vanna-volga
+// methods applied to FX derivatives", IJTAF 13(8) §2.1.
+//
+// ## Why this route is structurally disjoint from the engine
+//
+// * **Different construction**: the engine never forms a linear system — it
+//   projects two surplus ratios. This oracle solves the full 3×3 system by
+//   explicit cofactor determinants (Cramer's rule; provenance doc-only), so no
+//   solver code or algebraic shortcut is shared.
+// * **Exact wing reprices**: the engine charges first-order `vega·Δσ`
+//   surpluses; the oracle reprices the wings with the full closed form at the
+//   wing vols.
+// * **Different special functions**: normal CDF via the `erf` route
+//   ([`xerf_norm_cdf`]) and an explicitly recomputed `φ` (Gaussian density)
+//   constant, with `libm` transcendentals — the engine path is
+//   `celnet_core::math` (`erfc`-route CDF).
+// * **One consistent measure**: pillar AND target sensitivities are all
+//   spot-measure (`∂/∂S`). The engine mixes forward-measure pillar vanna with
+//   the exotic's spot-measure vanna — a documented ≈`e^{b·t}` structural
+//   difference the parity band absorbs (it can disagree; that is the point).
+
+/// `1/√(2π)`, recomputed independently (`1/math.sqrt(2*math.pi)` in IEEE-754
+/// double precision) rather than copied from any production constant.
+const INV_SQRT_TWO_PI: f64 = 0.398_942_280_401_432_7;
+
+/// Standard normal density `φ(x)` via `libm::exp` and the independently
+/// recomputed [`INV_SQRT_TWO_PI`] — no shared code with the production
+/// `celnet_core::math::norm_pdf`.
+#[inline]
+fn xerf_norm_pdf(x: f64) -> f64 {
+    libm::exp(-0.5 * x * x) * INV_SQRT_TWO_PI
+}
+
+/// The three smile-risk exposures the replicating hedge matches: Black-Scholes
+/// vega `∂V/∂σ`, vanna `∂²V/∂S∂σ` and volga `∂²V/∂σ²`, all in the **spot**
+/// measure at the flat (ATM) vol.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SmileExposures {
+    /// `∂V/∂σ` at the flat vol.
+    pub vega: f64,
+    /// `∂²V/∂S∂σ` at the flat vol (spot measure).
+    pub vanna: f64,
+    /// `∂²V/∂σ²` at the flat vol.
+    pub volga: f64,
+}
+
+/// Spot-measure [`SmileExposures`] of a vanilla benchmark at strike `strike`,
+/// flat vol `flat_vol`, with outright `forward`, numeraire discount `df_dom`
+/// and the spot→forward Jacobian `spot_to_forward = ∂F/∂S = e^{b·t}`.
+///
+/// Forward-measure Black Greeks are re-derived from `d₁/d₂` first
+/// (`vega = F·DF·φ(d₁)·√t`, `vanna_F = −DF·φ(d₁)·d₂/σ`,
+/// `volga = vega·d₁·d₂/σ`), then vanna is mapped to the spot measure by the
+/// chain rule `vanna_S = e^{b·t}·vanna_F` (vega and volga are measure-free).
+#[must_use]
+pub fn vanilla_smile_exposures(
+    forward: f64,
+    strike: f64,
+    flat_vol: f64,
+    t: f64,
+    df_dom: f64,
+    spot_to_forward: f64,
+) -> SmileExposures {
+    let sqt = libm::sqrt(t);
+    let vsqt = flat_vol * sqt;
+    let d1 = (libm::log(forward / strike) + 0.5 * flat_vol * flat_vol * t) / vsqt;
+    let d2 = d1 - vsqt;
+    let pdf = xerf_norm_pdf(d1);
+    let vega = forward * df_dom * pdf * sqt;
+    let vanna = spot_to_forward * (-df_dom * pdf * d2 / flat_vol);
+    let volga = vega * d1 * d2 / flat_vol;
+    SmileExposures { vega, vanna, volga }
+}
+
+/// [`SmileExposures`] of an arbitrary flat-vol pricer `price(spot, vol)` by
+/// central finite differences — deliberately a DIFFERENT numerical route than
+/// the production `exotic_sensitivities_fd` (which uses `h_v = 1e-4` and a
+/// 3-point volga): larger steps `h_v = 5e-4`, a fourth-order 5-point volga
+/// stencil, and an explicit vega row (the production projection never forms
+/// vega at all).
+pub fn smile_exposures_fd<F: Fn(f64, f64) -> f64>(price: F, spot: f64, vol: f64) -> SmileExposures {
+    let hs = 5e-4 * spot;
+    let hv = 5e-4;
+    let vega = (price(spot, vol + hv) - price(spot, vol - hv)) / (2.0 * hv);
+    let vanna =
+        (price(spot + hs, vol + hv) - price(spot + hs, vol - hv) - price(spot - hs, vol + hv)
+            + price(spot - hs, vol - hv))
+            / (4.0 * hs * hv);
+    let volga = (-price(spot, vol + 2.0 * hv) + 16.0 * price(spot, vol + hv)
+        - 30.0 * price(spot, vol)
+        + 16.0 * price(spot, vol - hv)
+        - price(spot, vol - 2.0 * hv))
+        / (12.0 * hv * hv);
+    SmileExposures { vega, vanna, volga }
+}
+
+/// Typed failure of the replicating-hedge construction.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HedgeOverlayOracleError {
+    /// The 3×3 benchmark-exposure matrix is numerically singular (degenerate
+    /// pillars — e.g. coincident strikes), so no unique replicating portfolio
+    /// exists. Carries the offending determinant.
+    SingularHedgeMatrix {
+        /// The near-zero determinant of the benchmark-exposure matrix.
+        det: f64,
+    },
+}
+
+impl std::fmt::Display for HedgeOverlayOracleError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SingularHedgeMatrix { det } => write!(
+                f,
+                "benchmark-exposure matrix is singular (det = {det}); \
+                 pillars do not span vega/vanna/volga"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for HedgeOverlayOracleError {}
+
+/// The replicating-portfolio overlay, fully decomposed for cross-checking.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HedgeOverlayBreakdown {
+    /// Hedge weights `(w₁, w₂, w₃)` on the (put-wing, ATM, call-wing) pillars.
+    pub weights: [f64; 3],
+    /// Per-pillar market-over-flat reprice `wᵢ·[V(Kᵢ, σᵢ) − V(Kᵢ, σ₀)]`. The
+    /// ATM entry is identically zero when `σ₂ = σ₀` (the ATM pillar carries no
+    /// smile surplus).
+    pub pillar_reprice_gains: [f64; 3],
+    /// Determinant of the 3×3 benchmark-exposure matrix (diagnostic).
+    pub hedge_matrix_det: f64,
+    /// The unweighted (European, survival `p = 1`) overlay cost
+    /// `Σᵢ wᵢ·[V(Kᵢ, σᵢ) − V(Kᵢ, σ₀)]`. Callers apply survival damping by
+    /// multiplying with the same probability the production overlay uses.
+    pub cost: f64,
+}
+
+/// Explicit 3×3 determinant by cofactor expansion along the first row — the
+/// deliberate "different linear-solve route" (the production overlay performs
+/// a two-ratio projection and never forms a matrix).
+fn det3(m: &[[f64; 3]; 3]) -> f64 {
+    m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+        - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+        + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
+}
+
+/// First-principles smile-overlay cost of an exotic with flat-vol smile
+/// exposures `target`, replicated on the three benchmark pillars
+/// `pillar_strikes` (put wing, ATM, call wing — strictly increasing) carrying
+/// smile vols `pillar_vols` (`pillar_vols[1]` **is** the flat ATM vol `σ₀`).
+///
+/// Construction (re-derived here; see the section docs for provenance and the
+/// engine-disjointness argument):
+///
+/// 1. benchmark exposures `Aᵢⱼ` of each pillar vanilla at `σ₀`
+///    ([`vanilla_smile_exposures`], spot measure);
+/// 2. weights from the full 3×3 system `A·w = target` by explicit Cramer
+///    determinants ([`det3`]);
+/// 3. cost as the exact market-over-flat reprice of the weighted portfolio,
+///    each leg priced by the `erf`-route closed form ([`equity_bsm_price`]
+///    with `q = r_for`, `repo = 0` — the Garman-Kohlhagen degenerate). The
+///    call/put choice is immaterial: by put-call parity the parity terms
+///    cancel in `V(σᵢ) − V(σ₀)`, so calls are used throughout.
+///
+/// A flat smile (`pillar_vols` all equal to `σ₀`) yields an exactly zero cost:
+/// every reprice difference is `0.0` by construction.
+///
+/// # Errors
+///
+/// [`HedgeOverlayOracleError::SingularHedgeMatrix`] when the pillar exposures
+/// do not span vega/vanna/volga (`|det| < 1e-12` — degenerate pillars; for
+/// well-separated FX pillars the determinant is `O(1)`).
+pub fn hedge_smile_overlay_cost(
+    spot: f64,
+    t: f64,
+    r_dom: f64,
+    r_for: f64,
+    pillar_strikes: [f64; 3],
+    pillar_vols: [f64; 3],
+    target: SmileExposures,
+) -> Result<HedgeOverlayBreakdown, HedgeOverlayOracleError> {
+    let forward = spot * libm::exp((r_dom - r_for) * t);
+    let df_dom = libm::exp(-r_dom * t);
+    let spot_to_forward = libm::exp((r_dom - r_for) * t);
+    let flat_vol = pillar_vols[1];
+
+    let e = pillar_strikes
+        .map(|k| vanilla_smile_exposures(forward, k, flat_vol, t, df_dom, spot_to_forward));
+    let a = [
+        [e[0].vega, e[1].vega, e[2].vega],
+        [e[0].vanna, e[1].vanna, e[2].vanna],
+        [e[0].volga, e[1].volga, e[2].volga],
+    ];
+    let det = det3(&a);
+    if det.abs() < 1e-12 {
+        return Err(HedgeOverlayOracleError::SingularHedgeMatrix { det });
+    }
+
+    let g = [target.vega, target.vanna, target.volga];
+    let mut weights = [0.0_f64; 3];
+    for (j, w) in weights.iter_mut().enumerate() {
+        let mut aj = a;
+        for (r, &gr) in g.iter().enumerate() {
+            aj[r][j] = gr;
+        }
+        *w = det3(&aj) / det;
+    }
+
+    let mut pillar_reprice_gains = [0.0_f64; 3];
+    let mut cost = 0.0_f64;
+    for i in 0..3 {
+        let gain = weights[i]
+            * (equity_bsm_price(
+                Cp::Call,
+                spot,
+                pillar_strikes[i],
+                pillar_vols[i],
+                t,
+                r_dom,
+                r_for,
+                0.0,
+            ) - equity_bsm_price(
+                Cp::Call,
+                spot,
+                pillar_strikes[i],
+                flat_vol,
+                t,
+                r_dom,
+                r_for,
+                0.0,
+            ));
+        pillar_reprice_gains[i] = gain;
+        cost += gain;
+    }
+
+    Ok(HedgeOverlayBreakdown {
+        weights,
+        pillar_reprice_gains,
+        hedge_matrix_det: det,
+        cost,
+    })
+}
+
+/// Window knock-out barrier as [`window_barrier_mc`], but with the per-step
+/// **Brownian-bridge survival weight** instead of the hard crossing indicator:
+/// for each monitored step the path survives with probability
+/// `1 − exp(−2·a·b/(σ²·Δt))`, `a`/`b` the log-distances of the step endpoints
+/// to the barrier (exact for the constant-drift log-space bridge of GBM;
+/// provenance doc-only: Beaglehole-Dybvig-Zhou 1997; Glasserman 2004 §6.4).
+///
+/// Two properties the hard-indicator estimator lacks, both load-bearing for
+/// the smile-overlay magnitude tests:
+///
+/// * the estimate is a **smooth** function of `(spot, vol)` for fixed draws,
+///   so central finite-difference vanna/volga under common random numbers
+///   (same `seed`) are well-posed — the indicator estimator's second
+///   differences are flip-noise dominated;
+/// * it estimates the **continuously monitored** barrier (no discrete-touch
+///   undercount), matching the continuous-barrier closed-form/PDE world the
+///   overlay engines price in.
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn window_barrier_smooth_mc(
+    cp: Cp,
+    up: bool,
+    spot: f64,
+    strike: f64,
+    barrier: f64,
+    window_start: f64,
+    window_end: f64,
+    vol: f64,
+    t: f64,
+    r_dom: f64,
+    r_for: f64,
+    steps: usize,
+    pairs: usize,
+    seed: u64,
+) -> McEstimate {
+    let n = steps.max(2);
+    let dt = t / n as f64;
+    let drift = (r_dom - r_for - 0.5 * vol * vol) * dt;
+    let diff = vol * sqrt(dt);
+    let bridge_scale = 2.0 / (vol * vol * dt);
+    let df = exp(-r_dom * t);
+    let phi = cp.sign();
+    let ln_barrier = ln(barrier);
+    let mut rng = SplitMix64::new(seed);
+    let mut acc = Welford::default();
+    let mut z = vec![0.0f64; n];
+    let walk = |z: &[f64], sign: f64| -> f64 {
+        let mut ln_s = ln(spot);
+        let mut survival = 1.0;
+        for (k, &zk) in z.iter().enumerate() {
+            let ln_prev = ln_s;
+            ln_s += drift + diff * sign * zk;
+            let time = (k + 1) as f64 * dt;
+            if time >= window_start && time <= window_end {
+                let (a, b) = if up {
+                    (ln_barrier - ln_prev, ln_barrier - ln_s)
+                } else {
+                    (ln_prev - ln_barrier, ln_s - ln_barrier)
+                };
+                if a <= 0.0 || b <= 0.0 {
+                    return 0.0; // an endpoint at/through the barrier: knocked
+                }
+                survival *= 1.0 - exp(-bridge_scale * a * b);
+            }
+        }
+        survival * (phi * (exp(ln_s) - strike)).max(0.0) * df
+    };
+    for _ in 0..pairs {
+        let mut i = 0;
+        while i < n {
+            let (a, b) = rng.next_normal_pair();
+            z[i] = a;
+            if i + 1 < n {
+                z[i + 1] = b;
+            }
+            i += 2;
+        }
+        acc.push(0.5 * (walk(&z, 1.0) + walk(&z, -1.0)));
+    }
+    McEstimate {
+        price: acc.mean(),
+        std_error: acc.std_error(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1535,5 +1979,167 @@ mod tests {
         // 120 vs a 110 level = an alive LOWER touch, not a breach.
         let alive = one_touch_at_hit_price(120.0, 110.0, 2.5, 0.1, 1.0, 0.05, 0.01);
         assert!(alive > 0.0 && alive < 2.5, "alive lower touch: {alive}");
+    }
+
+    /// The replicating-hedge solve is exact on its own basis: a target that IS
+    /// pillar `i`'s exposure vector must come back as the unit weight `eᵢ`.
+    /// This validates the explicit Cramer determinants without reference to
+    /// any production code.
+    #[test]
+    fn hedge_weights_recover_a_pure_pillar_target() {
+        let (spot, t, r_dom, r_for) = (1.30, 1.0, 0.03, 0.01);
+        let strikes = [1.2400, 1.3263, 1.4220];
+        let vols = [0.1115, 0.1000, 0.0965];
+        let forward = spot * libm::exp((r_dom - r_for) * t);
+        let df_dom = libm::exp(-r_dom * t);
+        let ebt = libm::exp((r_dom - r_for) * t);
+        for unit in 0..3 {
+            let target = vanilla_smile_exposures(forward, strikes[unit], vols[1], t, df_dom, ebt);
+            let b = hedge_smile_overlay_cost(spot, t, r_dom, r_for, strikes, vols, target)
+                .expect("well-separated pillars must be non-singular");
+            for (j, w) in b.weights.iter().enumerate() {
+                let expect = if j == unit { 1.0 } else { 0.0 };
+                assert!(
+                    (w - expect).abs() < 1e-9,
+                    "pure pillar {unit}: weight[{j}] = {w}, expected {expect}"
+                );
+            }
+        }
+    }
+
+    /// Flat pillar vols (no smile) make every market-over-flat reprice exactly
+    /// `0.0`, so the overlay cost is exactly zero — the zero-adjustment law,
+    /// independent of the weights.
+    #[test]
+    fn flat_pillar_vols_produce_exactly_zero_overlay_cost() {
+        let target = SmileExposures {
+            vega: 4.0,
+            vanna: -3.8,
+            volga: -45.0,
+        };
+        let b = hedge_smile_overlay_cost(
+            1.30,
+            1.0,
+            0.03,
+            0.01,
+            [1.2400, 1.3263, 1.4220],
+            [0.10, 0.10, 0.10],
+            target,
+        )
+        .expect("flat smile is non-singular");
+        assert!(
+            celnet_core::is_close(b.cost, 0.0, 0.0, 0.0),
+            "flat smile must cost exactly zero, got {}",
+            b.cost
+        );
+        for g in b.pillar_reprice_gains {
+            assert!(celnet_core::is_close(g, 0.0, 0.0, 0.0));
+        }
+    }
+
+    /// Coincident pillars collapse the exposure matrix; the construction must
+    /// surface the typed singularity, never a panic or a NaN weight.
+    #[test]
+    fn degenerate_pillars_surface_a_typed_singularity() {
+        let target = SmileExposures {
+            vega: 1.0,
+            vanna: 0.0,
+            volga: 0.0,
+        };
+        let err = hedge_smile_overlay_cost(
+            1.30,
+            1.0,
+            0.03,
+            0.01,
+            [1.30, 1.30, 1.30],
+            [0.10, 0.10, 0.10],
+            target,
+        )
+        .expect_err("coincident pillars must be singular");
+        let HedgeOverlayOracleError::SingularHedgeMatrix { det } = err;
+        assert!(det.abs() < 1e-12, "det should be ~0, got {det}");
+    }
+
+    /// Bridge-survival window MC self-checks, all against this module's own
+    /// routes (no production code):
+    /// * continuous (bridge) monitoring knocks more than the hard
+    ///   discrete-step indicator ⇒ smooth ≤ hard within MC noise;
+    /// * widening the monitored window can only lower the price — with
+    ///   identical draws this holds PATHWISE, so it is asserted exactly;
+    /// * a window entirely after expiry never monitors ⇒ the estimator
+    ///   degenerates to the discounted vanilla, cross-checked against the
+    ///   closed-form [`gk_price`];
+    /// * fixed seed ⇒ bit-reproducible.
+    #[test]
+    fn window_barrier_smooth_mc_dominance_vanilla_limit_and_reproducibility() {
+        let (spot, k, h, vol, t, rd, rf) = (1.30, 1.30, 1.40, 0.10, 1.0, 0.03, 0.01);
+        let (steps, pairs, seed) = (120, 20_000, 0x5EED);
+        let smooth = |start: f64, end: f64| {
+            window_barrier_smooth_mc(
+                Cp::Call,
+                true,
+                spot,
+                k,
+                h,
+                start,
+                end,
+                vol,
+                t,
+                rd,
+                rf,
+                steps,
+                pairs,
+                seed,
+            )
+        };
+
+        let smooth_full = smooth(0.0, 1.0);
+        let hard_full = window_barrier_mc(
+            Cp::Call,
+            true,
+            spot,
+            k,
+            h,
+            0.0,
+            1.0,
+            vol,
+            t,
+            rd,
+            rf,
+            steps,
+            pairs,
+            seed,
+        );
+        assert!(
+            smooth_full.price
+                <= hard_full.price + 3.0 * (smooth_full.std_error + hard_full.std_error),
+            "bridge monitoring must knock at least as much as the step indicator: \
+             smooth {} vs hard {}",
+            smooth_full.price,
+            hard_full.price
+        );
+
+        // Pathwise window-widening dominance under common draws.
+        let smooth_back_half = smooth(0.5, 1.0);
+        assert!(
+            smooth_full.price <= smooth_back_half.price,
+            "wider window must not raise the KO price pathwise: full {} vs back-half {}",
+            smooth_full.price,
+            smooth_back_half.price
+        );
+
+        // Never-active window ⇒ plain vanilla; oracle GK closed form is the pin.
+        let never = smooth(2.0, 3.0);
+        let vanilla = gk_price(Cp::Call, spot, k, vol, t, rd, rf);
+        assert!(
+            (never.price - vanilla).abs() <= 4.0 * never.std_error,
+            "never-active window must reprice the vanilla: MC {} (se {}) vs GK {vanilla}",
+            never.price,
+            never.std_error
+        );
+
+        // Bit reproducibility for a fixed seed.
+        let again = smooth(0.0, 1.0);
+        assert_eq!(smooth_full.price.to_bits(), again.price.to_bits());
     }
 }

@@ -11,12 +11,13 @@ use celnet_exotics::{
     Accumulator, AccumulatorMcConfig, AmericanGrid, AmericanOption, AnalyticAsian,
     AveragingSchedule, Cliquet, CliquetMcConfig, CliquetSchedule, DigitalKind, DoubleNoTouch,
     ExerciseStyle, ForwardStart, Lookback, LookbackMcConfig, LookbackStyle, LsmConfig, Monitoring,
-    QuantoParams, RebateTiming, RedemptionStyle, SingleBarrier, Tarf, TarfMcConfig, VarSwapContext,
-    accumulator_price, american_fd, american_lsm, cliquet_price_capped_mc, cliquet_price_plain,
-    curran_price, digital_price, double_no_touch_price, fair_variance, fair_volatility,
-    fixed_lookback_price, floating_lookback_price, forward_start_price, lookback_mc,
-    one_touch_price, quanto_digital_price, quanto_vanilla_price, single_barrier_price, tarf_price,
-    turnbull_wakeman_price,
+    PivotTra, PivotTraMcConfig, QuantoParams, RebateTiming, RedemptionStyle, SingleBarrier, Tarf,
+    TarfMcConfig, VarSwapContext, accumulator_price, american_fd, american_lsm,
+    cliquet_price_capped_mc, cliquet_price_plain, curran_price, digital_price,
+    double_no_touch_price, fair_variance, fair_volatility, fixed_lookback_price,
+    floating_lookback_price, forward_start_price, lookback_mc, one_touch_price,
+    pivot_tra_price, quanto_digital_price, quanto_vanilla_price, single_barrier_price,
+    tarf_price, turnbull_wakeman_price,
 };
 use celnet_types::{OptionType, VanillaInputs};
 
@@ -164,6 +165,32 @@ pub(crate) enum ExoticSpec {
         /// The cumulative gain target (reaching it redeems).
         target: f64,
         /// Gearing on the adverse (loss) leg.
+        leverage: f64,
+        /// Number of equally-spaced fixings over `[0, expiry]`.
+        fixings: u32,
+        /// Per-fixing notional.
+        fixing_notional: f64,
+        /// Settle the breaching fixing at the capped (remaining-target) gain
+        /// instead of the full intrinsic.
+        capped_gain: bool,
+        /// Antithetic Monte-Carlo path pairs.
+        mc_pairs: usize,
+        /// Counter-RNG seed for the Monte-Carlo estimator.
+        mc_seed: u64,
+    },
+    /// A pivot Target-Redemption Accumulator (Monte-Carlo; carries a standard
+    /// error). The TARF mechanic with a distinct pivot kink: the leg is selected
+    /// by `pivot`, valued by `strike`; `pivot == strike` is the exact TARF slice.
+    Pivot {
+        /// The favourable-side direction.
+        option: OptionType,
+        /// The target strike `K` intrinsic is measured against.
+        strike: f64,
+        /// The pivot `P` at which the geared adverse leg engages.
+        pivot: f64,
+        /// The cumulative gain target (reaching it redeems).
+        target: f64,
+        /// Gearing on the adverse leg (the far side of the pivot).
         leverage: f64,
         /// Number of equally-spaced fixings over `[0, expiry]`.
         fixings: u32,
@@ -329,6 +356,44 @@ pub(crate) fn run(spec: ExoticSpec, inputs: &VanillaInputs) -> ExoticResult {
                     },
                 },
                 TarfMcConfig {
+                    pairs: mc_pairs,
+                    seed: mc_seed,
+                },
+            );
+            return ExoticResult {
+                price: estimate.price,
+                std_error: Some(estimate.std_error),
+            };
+        }
+        ExoticSpec::Pivot {
+            option,
+            strike,
+            pivot,
+            target,
+            leverage,
+            fixings,
+            fixing_notional,
+            capped_gain,
+            mc_pairs,
+            mc_seed,
+        } => {
+            let estimate = pivot_tra_price(
+                &einputs,
+                PivotTra {
+                    strike,
+                    pivot,
+                    fixings: fixings as usize,
+                    target,
+                    leverage,
+                    favourable_side: option,
+                    notional: fixing_notional,
+                    redemption: if capped_gain {
+                        RedemptionStyle::CappedGain
+                    } else {
+                        RedemptionStyle::FullGain
+                    },
+                },
+                PivotTraMcConfig {
                     pairs: mc_pairs,
                     seed: mc_seed,
                 },
@@ -590,6 +655,7 @@ pub(crate) fn run(spec: ExoticSpec, inputs: &VanillaInputs) -> ExoticResult {
         // Handled up front (the Monte-Carlo / std-error-carrying arms).
         ExoticSpec::Cliquet { .. }
         | ExoticSpec::Tarf { .. }
+        | ExoticSpec::Pivot { .. }
         | ExoticSpec::Accumulator { .. }
         | ExoticSpec::Lookback { discrete: true, .. }
         | ExoticSpec::American { .. } => {
@@ -642,6 +708,7 @@ pub(crate) fn format_report(spec: ExoticSpec, r: &ExoticResult) -> String {
         ExoticSpec::Quanto { digital: false, .. } => "quanto-vanilla",
         ExoticSpec::Quanto { digital: true, .. } => "quanto-digital",
         ExoticSpec::Tarf { .. } => "tarf",
+        ExoticSpec::Pivot { .. } => "pivot",
         ExoticSpec::Accumulator { .. } => "accumulator",
         ExoticSpec::Lookback {
             discrete: false, ..
@@ -849,6 +916,7 @@ pub(crate) fn lsv_run(spec: ExoticSpec, inputs: &VanillaInputs) -> Result<Exotic
         ExoticSpec::Cliquet { .. } => Err(lsv_unsupported("cliquet")),
         ExoticSpec::Quanto { .. } => Err(lsv_unsupported("quanto")),
         ExoticSpec::Tarf { .. } => Err(lsv_unsupported("tarf")),
+        ExoticSpec::Pivot { .. } => Err(lsv_unsupported("pivot")),
         ExoticSpec::Accumulator { .. } => Err(lsv_unsupported("accumulator")),
         ExoticSpec::Lookback { .. } => Err(lsv_unsupported("lookback")),
         ExoticSpec::American { .. } => Err(lsv_unsupported("american")),
@@ -1239,6 +1307,83 @@ mod tests {
                 &r
             )
             .contains("std_error")
+        );
+    }
+
+    #[test]
+    fn pivot_matches_direct_mc_and_collapses_to_tarf_at_strike() {
+        let i = inputs();
+        let seed = 0x9170_C111_u64;
+        let pairs = 4_000usize;
+        // Dead band P > K, call-favourable: CLI == direct engine MC bit-for-bit.
+        let r = run(
+            ExoticSpec::Pivot {
+                option: OptionType::Call,
+                strike: 1.08,
+                pivot: 1.13,
+                target: 0.20,
+                leverage: 2.5,
+                fixings: 8,
+                fixing_notional: 1.0,
+                capped_gain: false,
+                mc_pairs: pairs,
+                mc_seed: seed,
+            },
+            &i,
+        );
+        let direct = pivot_tra_price(
+            &(&i).into(),
+            PivotTra {
+                strike: 1.08,
+                pivot: 1.13,
+                fixings: 8,
+                target: 0.20,
+                leverage: 2.5,
+                favourable_side: OptionType::Call,
+                notional: 1.0,
+                redemption: RedemptionStyle::FullGain,
+            },
+            PivotTraMcConfig { pairs, seed },
+        );
+        // Same (seed, pairs) ⇒ bit-reproducible ⇒ exact agreement.
+        assert!(is_close(r.price, direct.price, 1e-12, 1e-12));
+        let stderr = r.std_error.expect("pivot (MC) must carry a std-error");
+        assert!(stderr > 0.0);
+        // The degeneracy law through the CLI seam: pivot == strike equals the
+        // TARF run on the same terms, bit-for-bit.
+        let p_eq = run(
+            ExoticSpec::Pivot {
+                option: OptionType::Put,
+                strike: 1.10,
+                pivot: 1.10,
+                target: 0.30,
+                leverage: 2.0,
+                fixings: 8,
+                fixing_notional: 1.0,
+                capped_gain: false,
+                mc_pairs: pairs,
+                mc_seed: seed,
+            },
+            &i,
+        );
+        let t_eq = run(
+            ExoticSpec::Tarf {
+                option: OptionType::Put,
+                strike: 1.10,
+                target: 0.30,
+                leverage: 2.0,
+                fixings: 8,
+                fixing_notional: 1.0,
+                capped_gain: false,
+                mc_pairs: pairs,
+                mc_seed: seed,
+            },
+            &i,
+        );
+        assert_eq!(p_eq.price.to_bits(), t_eq.price.to_bits());
+        assert_eq!(
+            p_eq.std_error.unwrap().to_bits(),
+            t_eq.std_error.unwrap().to_bits()
         );
     }
 

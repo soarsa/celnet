@@ -23,8 +23,8 @@ use celnet_proto::{
     Instrument, Leg, LimitStatusRequest, LimitStatusResponse, LimitUtilization,
     ListPositionsRequest, ListPositionsResponse, ListedFutureOption, Lookback, MarkSurfaceRequest,
     MarkSurfaceResponse, MarketContext, Modify, MultiDealerQuote, Ndf, NonAdditiveRisk,
-    NumeraireRate, OrgKey, PerpetualOption, PriceRequest, PriceResponse, Quantity, Quanto, Quote,
-    QuoteAccept, QuoteReject, QuoteRequest, RejectAck, ReportingNumeraire, Resync,
+    NumeraireRate, OrgKey, PerpetualOption, Pivot, PriceRequest, PriceResponse, Quantity, Quanto,
+    Quote, QuoteAccept, QuoteReject, QuoteRequest, RejectAck, ReportingNumeraire, Resync,
     RiskBucketRequest, RiskNode, RiskPosition, RiskScope, ScenarioPoint, ScenarioRequest,
     ScenarioResponse, ShockAxis, SingleBarrier, Smile, SmilePoint, Snapshot, Solve, Strategy,
     StrategyKind, StreamEnd, StreamReject, StrikeOrDelta, Subscribe, SubscriptionId, Tarf, Tenor,
@@ -581,6 +581,30 @@ fn tarf_from_json(v: &Value) -> Result<Tarf> {
     })
 }
 
+/// Decode a pivot Target-Redemption Accumulator (`pivot`) — the TARF sibling
+/// with the distinct pivot kink. Mirrors `tarf_from_json` field-for-field plus
+/// the `pivot` level (`pivot == strike` is the exact TARF slice).
+fn pivot_from_json(v: &Value) -> Result<Pivot> {
+    let o = obj(v, "pivot")?;
+    let mc_pairs = u32::try_from(u64_or_zero(o, "mc_pairs"))
+        .map_err(|_| err("pivot.mc_pairs out of range"))?;
+    let schedule = o
+        .get("schedule")
+        .map(fixing_schedule_from_json)
+        .transpose()?;
+    Ok(Pivot {
+        option_type: enum_or_zero(o, "option_type"),
+        strike: f64_field(o, "strike")?,
+        pivot: f64_field(o, "pivot")?,
+        target: f64_field(o, "target")?,
+        leverage: f64_or_zero(o, "leverage"),
+        redemption: enum_or_zero(o, "redemption"),
+        schedule,
+        mc_pairs,
+        mc_seed: u64_or_zero(o, "mc_seed"),
+    })
+}
+
 fn accumulator_from_json(v: &Value) -> Result<Accumulator> {
     let o = obj(v, "accumulator")?;
     let mc_pairs = u32::try_from(u64_or_zero(o, "mc_pairs"))
@@ -775,10 +799,10 @@ fn listed_future_option_from_json(v: &Value) -> Result<ListedFutureOption> {
 /// Decode the instrument `product` oneof. The JSON carries exactly one of the
 /// product keys (`vanilla`, `strategy`, `single_barrier`, `double_barrier`,
 /// `digital`, `touch`, `variance_swap`, `volatility_swap`, `asian_option`,
-/// `forward_start`, `cliquet`, `quanto`, `tarf`, `accumulator`, `lookback`,
-/// `window_barrier`, `american`, `basket`, `fx_forward`, `fx_swap`, `ndf`,
-/// `perpetual_option`, `listed_future_option`) — the same shape as the proto
-/// oneof.
+/// `forward_start`, `cliquet`, `quanto`, `tarf`, `pivot`, `accumulator`,
+/// `lookback`, `window_barrier`, `american`, `basket`, `fx_forward`, `fx_swap`,
+/// `ndf`, `perpetual_option`, `listed_future_option`) — the same shape as the
+/// proto oneof.
 fn product_from_json(o: &Map<String, Value>) -> Result<instrument::Product> {
     // Each product variant nests its body under its own key (mirroring the proto
     // oneof field names); descend into that body before decoding.
@@ -818,6 +842,8 @@ fn product_from_json(o: &Map<String, Value>) -> Result<instrument::Product> {
         Ok(instrument::Product::Quanto(quanto_from_json(v)?))
     } else if let Some(v) = o.get("tarf") {
         Ok(instrument::Product::Tarf(tarf_from_json(v)?))
+    } else if let Some(v) = o.get("pivot") {
+        Ok(instrument::Product::Pivot(pivot_from_json(v)?))
     } else if let Some(v) = o.get("accumulator") {
         Ok(instrument::Product::Accumulator(accumulator_from_json(v)?))
     } else if let Some(v) = o.get("lookback") {
@@ -849,8 +875,9 @@ fn product_from_json(o: &Map<String, Value>) -> Result<instrument::Product> {
             "instrument needs exactly one product (vanilla / strategy / \
              single_barrier / double_barrier / digital / touch / variance_swap / \
              volatility_swap / asian_option / forward_start / cliquet / quanto / \
-             tarf / accumulator / lookback / window_barrier / american / basket / \
-             fx_forward / fx_swap / ndf / perpetual_option / listed_future_option)",
+             tarf / pivot / accumulator / lookback / window_barrier / american / \
+             basket / fx_forward / fx_swap / ndf / perpetual_option / \
+             listed_future_option)",
         ))
     }
 }
@@ -2242,9 +2269,10 @@ mod tests {
         }
     }
 
-    /// The Wave-3 products (TARF / accumulator / lookback) decode from a browser
-    /// client's JSON into the correct `product` oneof arms — including the nested
-    /// `FixingSchedule` body on the TARF/accumulator and the MC knobs.
+    /// The Wave-3 products (TARF / pivot TRA / accumulator / lookback) decode
+    /// from a browser client's JSON into the correct `product` oneof arms —
+    /// including the nested `FixingSchedule` body on the TARF/pivot/accumulator
+    /// and the MC knobs.
     #[test]
     fn wave3_products_decode_from_json() {
         let base = |product: Value| {
@@ -2281,6 +2309,36 @@ mod tests {
                 assert_eq!(t.mc_seed, 999);
             }
             other => panic!("expected tarf, got {other:?}"),
+        }
+
+        // The pivot TRA (arm 32): the TARF body plus the distinct `pivot` level.
+        let piv = instrument_from_json(&base(json!({
+            "pivot": {
+                "option_type": 0, "strike": 1.08, "pivot": 1.13, "target": 0.20,
+                "leverage": 2.5, "redemption": 1,
+                "schedule": { "fixing_years": [0.25, 0.5, 0.75, 1.0], "fixing_notional": 1.0 },
+                "mc_pairs": 30000, "mc_seed": 1707
+            }
+        })))
+        .expect("decode pivot");
+        match piv.product {
+            Some(instrument::Product::Pivot(p)) => {
+                assert_eq!(p.option_type, celnet_proto::OptionType::Call as i32);
+                assert_eq!(p.strike.to_bits(), 1.08_f64.to_bits());
+                assert_eq!(p.pivot.to_bits(), 1.13_f64.to_bits());
+                assert_eq!(p.target.to_bits(), 0.20_f64.to_bits());
+                assert_eq!(p.leverage.to_bits(), 2.5_f64.to_bits());
+                assert_eq!(
+                    p.redemption,
+                    celnet_proto::TarfRedemption::CappedGain as i32
+                );
+                let s = p.schedule.expect("pivot carries a schedule");
+                assert_eq!(s.fixing_years.len(), 4);
+                assert_eq!(s.fixing_notional.to_bits(), 1.0_f64.to_bits());
+                assert_eq!(p.mc_pairs, 30_000);
+                assert_eq!(p.mc_seed, 1707);
+            }
+            other => panic!("expected pivot, got {other:?}"),
         }
 
         let acc = instrument_from_json(&base(json!({

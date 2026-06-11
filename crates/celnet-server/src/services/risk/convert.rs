@@ -76,16 +76,24 @@ pub fn scope_to_rule(scope: &RiskScope) -> Result<Rule, Status> {
     }
 }
 
-/// Resolve the request's optional [`EntitlementPrincipal`] into a
-/// [`Principal`], applying the **grant-all default**: a request that *omits* the
-/// principal (or whose `grant_all` is true) is grant-all (the show-all-now posture).
-/// A present principal with `grant_all=false` and no grants is deny-by-default.
+/// Resolve a request's optional [`EntitlementPrincipal`] into a [`Principal`].
+///
+/// **Post-boundary semantics**: this mapping runs strictly *after* the
+/// authorization decision boundary ([`crate::services::access::authorize`]) has
+/// allowed the request — the service trait entry denies an absent principal by
+/// default, so the absent ⇒ grant-all arm here is reachable from a client only
+/// through the explicit, audited permissive dev-mode, or internally from the
+/// federation's staged re-derivation (whose gathered set was already
+/// entitlement-pruned at the backends, so grant-all over it is exact, not a
+/// bypass). A present principal with `grant_all=false` and no grants admits
+/// nothing (deny-by-default predicate).
 ///
 /// # Errors
 /// `invalid_argument` if any rule's scope carries an unknown dimension.
 pub fn principal_of(principal: Option<&EntitlementPrincipal>) -> Result<Principal, Status> {
     let Some(p) = principal else {
-        // Omitted ⇒ grant-all (the GUI `ScopeContext.principal = "grant-all"`).
+        // Absent ⇒ grant-all, ONLY post-boundary (permissive dev-mode or the
+        // federation's already-pruned staged set — doc comment above).
         return Ok(Principal::grant_all());
     };
     if p.grant_all {
