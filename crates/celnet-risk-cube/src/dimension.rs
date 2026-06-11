@@ -417,7 +417,10 @@ mod tests {
             "OTHR/USD raw hash must carry bit 63 (re-pick the pin input if the \
              upstream Hash layout changed)"
         );
-        assert_eq!(othr, OTHR_USD_GROUP, "OTHR/USD frozen group key (top bit OR)");
+        assert_eq!(
+            othr, OTHR_USD_GROUP,
+            "OTHR/USD frozen group key (top bit OR)"
+        );
         assert!(othr & (1u64 << 63) != 0);
     }
 
@@ -473,4 +476,3 @@ mod tests {
         assert_eq!(EntityId::from(12).raw(), 12);
     }
 }
-

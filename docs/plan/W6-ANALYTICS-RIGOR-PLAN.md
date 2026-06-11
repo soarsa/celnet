@@ -48,7 +48,7 @@ compute courtesy §4.1: session-B holds the proto window).
 | `mutants.toml` | celnet-vanilla | 35 audited equivalents | **green** (469 mutants, 100 % non-equiv kill) |
 | `mutants-surface.toml` | celnet-surface | **empty** | `arbitrage.rs` green locally (79 mutants, 0 missed); ~300-member `calibrate.rs` converging-optimizer cluster **documented but unaudited**; crate-wide CI-run |
 | `mutants-exotics.toml` | celnet-exotics | **empty** | wired, baseline CI-run, never locally measured |
-| `mutants-risk-cube.toml` | celnet-risk-cube | **empty** | wired, baseline CI-run, never locally measured |
+| `mutants-celnet-risk-cube.toml` (then `mutants-risk-cube.toml`) | celnet-risk-cube | **empty** | wired, baseline CI-run, never locally measured |
 | `mutants-xva.toml` | celnet-xva | **empty** | wired, baseline CI-run, never locally measured |
 | `mutants-fanout/-journal/-celnet-router/-celnet-replog.toml` | infra | audited | green (W6 infra wave — the house playbook this plan follows) |
 | *(none)* | **celnet-qmc** | — | **no config, no recipe, no CI leg — must be created** |

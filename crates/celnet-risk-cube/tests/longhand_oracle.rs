@@ -896,6 +896,41 @@ fn curvature_legs_match_two_revaluations() {
     // The exotic genuinely moves the node charge (vacuity guard) and the combined
     // charge is NOT the sum of two independent maxes when directions disagree.
     assert!((got_combined - charge).abs() > 1e-3);
+
+    // UP-DOMINANT combined regime. The fixture above resolves its max on the
+    // DOWN side (the short near-the-money digital is linear-term dominated:
+    // CVR⁻ ≫ CVR⁺), so the UP sum `Σ CVR⁺` never decides the reduction there —
+    // a corrupted up-leg combination (`+` → `−`/`×`) would survive it. Mirror
+    // the digital LONG (+50M): its CVR⁺ is strongly positive (the +15% shock
+    // loss net of the large positive delta hedge) and CVR⁻ strongly negative,
+    // so the UP side wins the max outright — ASSERTED below, not assumed, so
+    // the fixture cannot silently rot back into the down regime.
+    let long_digital = ExoticLeg::new(
+        eurusd(),
+        ExoticKind::Digital(celnet_exotics::DigitalKind::cash(OptionType::Call)),
+        50_000_000.0,
+        VanillaInputs::new(1.10, 1.11, 0.10, 0.25, 0.04, 0.02),
+    );
+    let (e2_up, e2_down) = long_digital.curvature_legs(rw);
+    let up_sum = up + e2_up;
+    let down_sum = down + e2_down;
+    // Fixture-regime guards (vacuity): the exotic up contribution is material
+    // and the up sum wins by a wide margin, so a corrupted up sum MUST move
+    // the reported node charge.
+    assert!(e2_up.abs() > 1.0e5, "exotic CVR+ must be material: {e2_up}");
+    assert!(
+        up_sum > down_sum.max(0.0) + 1.0e5,
+        "the UP sum must win outright: up {up_sum} vs down {down_sum}"
+    );
+    let got_up = sbm_curvature_spot_combined(
+        &AssetPricer,
+        &positions,
+        std::slice::from_ref(&long_digital),
+        rw,
+    );
+    // Bit-exact: the production reduction and this recomputation evaluate the
+    // identical float ops on identical leg values (same pub leg functions).
+    assert_eq!(got_up.to_bits(), up_sum.to_bits());
 }
 
 /// **Combined VaR/ES folds the exotic tail in**: the vanilla+exotic node VaR equals

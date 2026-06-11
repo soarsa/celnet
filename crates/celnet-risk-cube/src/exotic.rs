@@ -669,6 +669,75 @@ mod tests {
         assert!(!leaf.quoted_was_premium_adjusted);
     }
 
+    /// The FD time bump stays strictly inside the tenor: `canonical_greeks` caps
+    /// `dt` at `t/2`, so even an ultra-short-dated leg (here `t = 4e-7`y ≈ 12.6 s,
+    /// below the `1e-6` absolute floor, so the `t/2` cap BINDS at `dt = 2e-7`)
+    /// reprices every `t − dt` leg at a strictly positive time. Breaking the cap
+    /// arithmetic (`t·0.5` → `t + 0.5` or `t / 0.5`) drives `t − dt` negative and
+    /// `√t` poisons the time-direction Greeks (theta/charm/color) with NaN —
+    /// pinned by finiteness of the FULL Greek set plus the far-barrier
+    /// vanilla-limit analytic oracle on the two non-degenerate time Greeks of a
+    /// saturated deep-ITM call (at `d₁ ≈ 3.3e3`, `N(d₁) = 1` and `n(d₁) = 0` to
+    /// double precision, so per unit `θ → ±(r_f·S·e^{−r_f t} − r_d·K·e^{−r_d t})`
+    /// ≈ ∓0.0188 and charm → `−r_f·e^{−r_f t}` ≈ −0.02 — both nonzero).
+    #[test]
+    fn ultra_short_tenor_time_bump_stays_inside_the_tenor() {
+        let inputs = VanillaInputs::new(1.30, 1.12, 0.10, 4e-7, 0.04, 0.02);
+        let n = 5_000_000.0;
+        let far = SingleBarrier {
+            kind: BarrierKind {
+                up: true,
+                style: BarrierStyle::KnockOut,
+                option: OptionType::Call,
+            },
+            strike: 1.12,
+            barrier: 5.0, // knock probability ≈ 0 ⇒ the vanilla limit
+            rebate: 0.0,
+        };
+        let leg = ExoticLeg::new(eurusd(), ExoticKind::SingleBarrier(far), n, inputs);
+        let g = leg.canonical_leaf().greeks;
+        // Kill core: a broken dt cap reprices at t − dt < 0, and the closed
+        // forms' √t turns theta/charm/color into NaN. Every Greek must be finite.
+        for (name, v) in [
+            ("delta", g.delta_base),
+            ("gamma", g.gamma),
+            ("vega", g.vega),
+            ("theta", g.theta),
+            ("vanna", g.vanna),
+            ("volga", g.volga),
+            ("charm", g.charm),
+            ("speed", g.speed),
+            ("zomma", g.zomma),
+            ("color", g.color),
+        ] {
+            assert!(v.is_finite(), "{name} must be finite, got {v}");
+        }
+        let a = celnet_vanilla::greeks(OptionType::Call, &inputs);
+        assert!(a.theta.abs() > 1e-3, "theta oracle must not be vacuous");
+        assert!(a.charm.abs() > 1e-3, "charm oracle must not be vacuous");
+        // Theta: the FD signal `V(t+dt) − V(t−dt)` ≈ 7.5e-9 against ~1e-16 of
+        // f64 rounding in the ~0.18-scale prices ⇒ expected FD error ~1e-8 rel.
+        assert!(
+            is_close(g.theta, a.theta * n, 5e-4, 1e-9 * n),
+            "theta: FD {} vs analytic {}",
+            g.theta,
+            a.theta * n
+        );
+        // Charm carries the documented cross-difference cancellation budget: the
+        // outer signal is ~2.1e-12 against ~2e-16 absolute rounding noise in the
+        // ~2.6e-4-scale inner spot differences ⇒ ~1e-4 expected relative error;
+        // 1e-3 keeps an order of magnitude of margin and can never pass a NaN.
+        assert!(
+            is_close(g.charm, a.charm * n, 1e-3, 1e-9 * n),
+            "charm: FD {} vs analytic {}",
+            g.charm,
+            a.charm * n
+        );
+        // Delta saturates at e^{−r_f·t}·N(d₁) ≈ 1 — pinned so the leg provably
+        // sits in the vanilla limit the time-Greek oracle above relies on.
+        assert!(is_close(g.delta_base, a.delta_spot * n, 5e-4, 1e-9 * n));
+    }
+
     /// `exotic_node_pnl` is the plain sum of the legs' P&L (two-leg pin + empty
     /// set exactly zero), and a digital leg's value line is the closed-form digital
     /// price × notional.
