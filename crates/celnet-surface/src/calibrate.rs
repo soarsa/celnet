@@ -557,6 +557,9 @@ fn fit_essvi(
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The solver kit was hoisted into `fitmath` (crypto-surface leaf D1); these
+    // survivor-kill tests (W6 risk floor) exercise it directly.
+    use crate::fitmath::{solve3, solve4, sumsq};
     use celnet_conventions::resolve;
     use celnet_core::is_close;
     use celnet_types::{Carry, CcyPair, Tenor};
