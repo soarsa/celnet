@@ -17,6 +17,8 @@
 #       - `replog_wire_message` celnet_replog::Message::decode (the Raft RPC frame)
 #       - `journal_recover`     celnet_journal::Journal::open + replay (torn-tail recovery)
 #       - `proto_convert`       prost decode of the wire contract + convert.rs TryFrom mapping
+#       - `fix_frame_decode`    celnet_fix FrameReader (stream delimiter) + FrameCursor::parse
+#                               — the ONLY parser fed bytes by an EXTERNAL counterparty
 #
 # It depends on the product crates by relative path; it never re-implements any
 # product logic.
@@ -47,6 +49,9 @@ celnet-replog = { path = "../crates/celnet-replog" }
 celnet-journal = { path = "../crates/celnet-journal" }
 # The wire-contract decode path (prost) + the convert.rs domain mapping.
 celnet-proto = { path = "../crates/celnet-proto" }
+# The FIX engine — the only parser fed bytes by an EXTERNAL counterparty (LP /
+# client FIX sessions over TCP): the async stream delimiter + the frame parser.
+celnet-fix = { path = "../crates/celnet-fix" }
 # The lock-free SPMC fan-out ring + the deterministic fleet router — fuzzed not
 # as byte parsers but as PROPERTY surfaces (operation interleavings / membership
 # + key combinations) driving the real code with no re-implementation.
@@ -54,6 +59,11 @@ celnet-fanout = { path = "../crates/celnet-fanout" }
 celnet-router = { path = "../crates/celnet-router" }
 # Same protobuf runtime the contract is generated against (workspace pin 0.13).
 prost = "0.13"
+# Runtime driving the async-edge FIX stream delimiter (`FrameReader` is
+# AsyncRead-based). `io-util` is declared explicitly rather than relied on via
+# cross-crate feature unification, matching the celnet-fix manifest's own
+# discipline (workspace pin: tokio 1).
+tokio = { version = "1", features = ["rt", "io-util"] }
 
 [[bin]]
 name = "vanilla_inputs"
@@ -98,6 +108,13 @@ bench = false
 [[bin]]
 name = "proto_convert"
 path = "fuzz_targets/proto_convert.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fix_frame_decode"
+path = "fuzz_targets/fix_frame_decode.rs"
 test = false
 doc = false
 bench = false

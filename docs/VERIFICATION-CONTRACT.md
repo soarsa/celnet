@@ -29,8 +29,11 @@ and any deploy-bound aspect carries an explicit **validation-scope statement**.
 Each sub-section below is a hard gate. The CI lint
 `tools/check-verification-coverage.mjs` (recipe `just verification-coverage`,
 wired into `just check`) mechanically enforces gates **(b)/(a)** and **(c)** for
-every oneof arm; the remaining gates are enforced by the named test suites and
-the milestone checklist in MASTER-EVOLUTION-PROGRAM.md §7.
+every oneof arm, plus the **client-exposure half of (d)** — every family is
+either exposed by each client conformance suite or explicitly declared
+not-exposed with a reason in that client's manifest; the remaining gates are
+enforced by the named test suites and the milestone checklist in
+MASTER-EVOLUTION-PROGRAM.md §7.
 
 ---
 
@@ -217,7 +220,7 @@ every in-repo gate is green.
 
 ---
 
-## How the lint enforces (b)/(a) and (c)
+## How the lint enforces (b)/(a), (c) and the client-exposure half of (d)
 
 `tools/check-verification-coverage.mjs` (run by `just verification-coverage`,
 itself a dependency of `just check`):
@@ -230,41 +233,43 @@ itself a dependency of `just check`):
    whose every record's `family` tag matches, **and (ii)** a curated
    family → `crates/celnet-parity/tests/<file>.rs` mapping that resolves to a real
    file containing `#[test]` rows that reference the family;
-3. exits non-zero listing any arm missing a vector and/or a parity row.
+3. repeats both assertions for every cross-asset option family derived from the
+   non-FX `Underlying.ref` oneof arms (`equity_option` / `commodity_option` /
+   `crypto_option`) — a new cross-asset underlying cannot ship uncovered;
+4. enforces the **CLIENT axis**: every product arm and cross-asset family must
+   be accounted for in each client exposure manifest — **exposed** by the
+   client suite (`FAMILIES_COVERED` in `gui/test/conformance.test.ts`;
+   `EXCEL_FAMILIES` in `excel/e2e/corpus.ts`) or **explicitly declared
+   not-exposed with a reason** (`FAMILIES_NOT_EXPOSED_BY_GUI`, every member
+   named in its per-family reason doc block; the Excel suite's own derived
+   `FAMILIES_NOT_EXPOSED = ALL_FAMILIES \ EXCEL_FAMILIES`, every not-exposed
+   `ALL_FAMILIES` entry headed by a rationale comment). A family in neither
+   list — one that would carry a vector and a parity row yet ship with **no
+   client able to price it** — fails the lint naming the family and the client;
+5. exits non-zero listing any arm missing a vector, a parity row, and/or an
+   honest client-exposure declaration.
 
 **Adding a new product arm therefore requires, in one change:** the proto oneof
-field, the golden vector, the parity row, and the one-line map entry pointing at
-that row. The lint then keeps the trio honest forever. There is intentionally no
-catch-all — an unmapped arm fails. **The lint is never weakened to pass; the
-missing artifact is added.**
+field, the golden vector, the parity row, the one-line map entry pointing at
+that row, and a deliberate per-client exposure decision (a client suite row, or
+a reasoned not-exposed declaration in that client's manifest). The lint then
+keeps them honest forever. There is intentionally no catch-all — an unmapped
+arm fails. **The lint is never weakened to pass; the missing artifact is
+added.**
 
 ### Current coverage status (as enforced today)
 
-The lint is REAL — it parses the proto and checks disk on every run. At the time
-of writing it reports **16 / 18** oneof arms fully covered by **both** a golden
-vector and a `celnet-parity` row, and flags **two genuine gaps**:
-
-| Arm | Golden vector | Independent oracle present | `celnet-parity` row | Lint verdict |
-|-----|---------------|----------------------------|---------------------|--------------|
-| `strategy` (field 8)  | ✅ `vectors/strategy.json` | ✅ in `crates/celnet-golden/tests/vectors_selfcheck.rs` (`redrive_strategy` — leg-wise GK sum) | ❌ none | **uncovered** |
-| `american` (field 24) | ✅ `vectors/american.json` | ✅ in `vectors_selfcheck.rs` (European-GK limit for `r_f=0`; hand-pinned LS-2001 published constant otherwise) + extensive unit tests in `crates/celnet-exotics/src/american.rs` | ❌ none | **uncovered** |
-
-Both arms **are** independently oracle-validated and frozen — but that validation
-lives in the **golden corpus self-check**, not in a **`celnet-parity` row**, which
-is the artifact gate (d)'s cross-client harness and this contract require. The
-honest, contract-correct remediation (tracked in
-[WORLD-CLASS-BACKLOG.md](WORLD-CLASS-BACKLOG.md), do **not** weaken the lint):
-
-- add `crates/celnet-parity/tests/strategy.rs` — a multi-leg-strategy parity row
-  (risk-reversal / strangle / straddle / seagull) gated against an independent
-  leg-decomposition oracle and the frozen `strategy.json` vector; and
-- add `crates/celnet-parity/tests/american.rs` — an American/Bermudan parity row
-  (PSOR free-boundary FD ⇄ Longstaff-Schwartz MC cross-check, the `r_f=0`→European
-  GK limit, and the hand-pinned LS-2001 Table-1 published constant),
-
-then add the two map entries to `tools/check-verification-coverage.mjs`. After
-that the lint goes green at **18 / 18** and `just check` enforces the full
-contract for every product arm.
+The lint is REAL — it parses the proto and the client manifests and checks disk
+on every run. At the time of writing it is **green on every axis**: all **23**
+product-oneof arms and all **3** cross-asset option families carry both a
+golden vector and a `celnet-parity` row (the historical `strategy` / `american`
+gaps were closed by `crates/celnet-parity/tests/strategy.rs` and `american.rs`),
+and every family is accounted for on the client axis — GUI: 18 exposed + 8
+declared not-exposed with per-family reasons; Excel: 23 exposed + 3 declared
+not-exposed with a rationale comment. A future gap on any axis fails
+`just verification-coverage` (and therefore `just check`) naming the family —
+the remediation is always to add the missing artifact or the honest reasoned
+declaration, never to weaken the lint.
 
 ---
 
@@ -279,5 +284,6 @@ contract for every product arm.
 - [ ] (f) Mutation gate (numeric core) and/or fuzz target (byte decoder) — or an
       explicit "neither applies".
 - [ ] (g) Honest validation-scope statement for any deploy-bound aspect.
-- [ ] `just verification-coverage` green (arm ⇄ vector ⇄ parity-row), `just check`
+- [ ] `just verification-coverage` green (arm ⇄ vector ⇄ parity-row ⇄ per-client
+      exposure declaration), `just check`
       prints `All gates passed.`

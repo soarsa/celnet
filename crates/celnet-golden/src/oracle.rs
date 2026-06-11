@@ -326,13 +326,12 @@ pub fn one_touch_at_hit_price(
     r_dom: f64,
     r_for: f64,
 ) -> f64 {
-    let upper = barrier > spot;
-    let through = if upper {
-        spot >= barrier
-    } else {
-        spot <= barrier
-    };
-    if through {
+    // Sideless convention, mirroring the engine's `TouchSide::from_levels`
+    // (`barrier >= spot ⇒ Upper`): with only (spot, barrier) on the signature a
+    // "breached" state is inexpressible — spot strictly beyond the level simply
+    // means the OTHER side's alive contract. The touch is certain exactly at
+    // `spot == barrier` (boundary continuity is law-tested in the engine).
+    if spot == barrier {
         return rebate; // at-hit: the touch is immediate and certain
     }
     let z = ln(barrier / spot); // >0 upper, <0 lower
@@ -1524,10 +1523,17 @@ mod tests {
         assert!((q_up - p_up).abs() <= 1e-12, "upper: {q_up} vs {p_up}");
     }
 
-    /// A breached barrier pays the rebate immediately (certain, undiscounted).
+    /// At `spot == barrier` the touch is certain and the at-hit rebate pays
+    /// immediately (undiscounted). Spot strictly beyond the level is NOT a
+    /// "breach" under the sideless signature — it is the other side's alive
+    /// contract (the engine's `TouchSide::from_levels` convention), so it must
+    /// price strictly inside `(0, rebate)`.
     #[test]
-    fn at_hit_through_barrier_pays_rebate() {
-        let v = one_touch_at_hit_price(120.0, 110.0, 2.5, 0.1, 1.0, 0.05, 0.01);
+    fn at_hit_at_barrier_pays_rebate_certain() {
+        let v = one_touch_at_hit_price(110.0, 110.0, 2.5, 0.1, 1.0, 0.05, 0.01);
         assert!((v - 2.5).abs() < 1e-15);
+        // 120 vs a 110 level = an alive LOWER touch, not a breach.
+        let alive = one_touch_at_hit_price(120.0, 110.0, 2.5, 0.1, 1.0, 0.05, 0.01);
+        assert!(alive > 0.0 && alive < 2.5, "alive lower touch: {alive}");
     }
 }
