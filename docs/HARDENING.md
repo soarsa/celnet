@@ -193,19 +193,56 @@ clusters before it was scoped:
 
 - **`calibrate.rs` — the iterative-fit internals** (the damped Gauss-Newton /
   Levenberg-Marquardt fitters `fit_sabr`/`fit_svi`/`fit_ssvi`/`fit_essvi` +
-  `gauss_newton_{2,3,4}`). The bulk of these survivors are SEED / Jacobian
-  finite-difference / step-direction internals of a *converging* optimizer that
-  only accepts a step when it strictly lowers the cost, so the converged
-  parameters (and every smile assertion downstream) are unchanged by the
-  perturbation — the same equivalent class as the vanilla solver's "initial
-  guess / expansion factor" exclusions. Auditing each of these ~300 members
-  individually (genuinely-equivalent vs a real tighten-the-fit-assertion gap) is
-  the CI-scoped follow-on; the crate-wide gate runs in the
-  `mutation-gate-numerics` CI job, which surfaces any non-converging-internal
-  survivor. Until each member is individually audited and listed (with
-  justification) in `.config/mutants-surface.toml`, the locally-proven slice is
-  `arbitrage.rs` and the config's `exclude_re` is deliberately **empty** (no
-  survivor is hidden behind an unjustified exclusion).
+  `gauss_newton_{2,3,4}`): the formerly-documented ~300-member
+  "converging-optimizer" debt. **Audited and closed by the W6 analytics-rigor
+  wave** — see the W6 subsection below.
+
+#### `celnet-surface` — W6 analytics-rigor wave (file-scoped waves to zero)
+
+Per `docs/plan/W6-ANALYTICS-RIGOR-PLAN.md` §3.4 the remaining crate was driven
+to zero non-equivalent survivors in file-scoped waves, **pre-kill-first**. The
+lever against the calibrate.rs converging-optimizer cluster is the crate's own
+documented determinism (fixed-iteration libm-only fits, bit-reproducible):
+
+- **`tests/fit_pins.rs`** — on two frozen fixtures per fitter (a benign
+  three-point smile and a stressed five-point skew): (a) the achieved
+  least-squares cost is pinned (`≤ frozen + 1e-12`, the degradation catch);
+  (b) the **converged parameters are frozen to bits** (`to_bits` equality —
+  any trajectory perturbation that moves the optimum at all is killed);
+  (c) the fit reprices its anchors (benign: 1e-7 exact-fit; stressed: the
+  frozen least-squares residual + 1e-12 — the economic assertion). Anchors are
+  re-derived in-test from the published recipe through `calibrate_pillar`
+  (the independent direction), never read back from the fitted object.
+- **In-module solver pins** (calibrate.rs): the 2/3/4-parameter damped solvers
+  driven directly on synthetic zero-residual least-squares problems with
+  closed-form optima (`±1e-9`), an active-projection drive, and
+  `gaussian_eliminate`/`solve3`/`solve4` vs an independently re-implemented
+  textbook pivoted elimination (`±1e-10`) + singular-`None` paths; `clamp` /
+  `sumsq` / `project_svi` boundary drives.
+- **Module oracles** (pre-kill for the other waves): the published
+  stochastic-vol expansion re-derived raw in-test on a `β < 1` slice (every
+  term active) + the CEV small-ν density closed form + **frozen-bits pins on
+  the wing crossover band and density-implied wing vols** (kills the
+  wing-density quadrature internals that band/monotonicity properties
+  tolerate); raw-recomputation pins for the parametric slice forms
+  (analytic `w/w'/w''`/density-factor, scan-grid fold) and the surface-form
+  curvature/variance/raw-map closed forms; butterfly/calendar
+  clause-independence drives (slice, surface and report levels) with decisive
+  margins; term-structure hand-interpolation pins (interior linear-in-τ, both
+  extrapolation regimes incl. the negative-rate flat clamp, log-linear
+  forward, fixed-strike calendar scan with differing pillar forwards);
+  delta→strike round-trip through the convention-delta evaluator and the
+  ATM-convention closed forms; the vanna-volga second-approximation
+  multi-strike exact oracle.
+- A representative damping mutant (`λ·0.5 → λ+0.5` in `gauss_newton_3`) was
+  hand-applied before the waves: caught (`cargo test -p celnet-surface` real
+  exit 101) — the mechanism kills trajectory-class mutants, not just
+  value-class ones.
+
+Measured wave baselines (aarch64-apple-darwin, cargo-mutants 27.0.0, toolchain
+1.96.0, `--test-tool=cargo --jobs 2 --minimum-test-timeout=120`,
+`PROPTEST_MAX_SHRINK_ITERS=0`, `RUSTC_WRAPPER=""`) are recorded per wave below
+as each runs to green.
 
 #### `celnet-qmc` — measured baseline (W6 analytics-rigor wave, crate-wide green)
 

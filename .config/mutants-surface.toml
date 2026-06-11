@@ -10,8 +10,14 @@
 #
 # How the gate works
 # ------------------
-# `cargo mutants -p celnet-surface --config .config/mutants-surface.toml`
-# applies a syntactic mutant per operator/comparison/return value and re-runs
+# `just mutants-gate-surface` runs
+#   PROPTEST_MAX_SHRINK_ITERS=0 cargo mutants -p celnet-surface \
+#       --test-tool=cargo --jobs 3 --minimum-test-timeout=120 \
+#       --config .config/mutants-surface.toml
+# (the runner settings are also pinned below so the CI `mutation-gate-numerics`
+# leg, which passes only `--config`, uses the identical plain-cargo runner; the
+# shrink-iter cap makes a killing proptest case fail fast instead of shrinking).
+# It applies a syntactic mutant per operator/comparison/return value and re-runs
 # the suite; a MISSED mutant is a test gap. cargo-mutants exits non-zero on ANY
 # survivor, so the gate enforces ZERO non-equivalent survivors — a future edit
 # that weakens the suite below the kill bar fails the build. See HARDENING.md s2.
@@ -57,3 +63,12 @@
 # audits each one.
 exclude_re = [
 ]
+
+# Runner settings (mirrored by the `mutants-gate-surface` recipe flags; the CI
+# `mutation-gate-numerics` leg passes only `--config` and picks these up):
+# plain `cargo test` (reproducible independent of the workspace nextest
+# profile; a concurrent session may `pkill -f nextest`) and a per-mutant
+# test-timeout floor guarding the documented macOS first-launch stall of
+# freshly linked test binaries (the suite itself runs in ~1s).
+test_tool = "cargo"
+minimum_test_timeout = 120
