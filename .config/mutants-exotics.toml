@@ -26,12 +26,31 @@
 # `mutation-gate-numerics` job (full local mutation of every numerics crate in
 # one session is impractical — this crate's baseline is CI-run).
 #
-# The exclusion set is populated from the CI baseline run. Each entry is the
-# exact cargo-mutants line (`<file>:<line>:<col>: replace ...`) plus an inline
-# justification of the equivalence (a measure-zero float-equality boundary, a
-# never-hit watchdog cap, an unobservable iteration-internal of a converging
-# root-finder/solver, etc.). It starts empty: the gate runs strict (every viable
-# mutant must be caught) until the CI baseline identifies a genuinely-equivalent
-# cluster, at which point each member is added here WITH its justification.
+# The exclusion set is populated from the audited baseline runs. Each entry is
+# the exact cargo-mutants line (`<file>:<line>:<col>: replace ...`) plus an
+# inline justification of the equivalence (a measure-zero float-equality
+# boundary, a never-hit watchdog cap, an unobservable iteration-internal of a
+# converging root-finder/solver, etc.). It starts empty: the gate runs strict
+# (every viable mutant must be caught) until an audited run identifies a
+# genuinely-equivalent cluster, at which point each member is added here WITH
+# its justification.
+#
+# MEASURED baseline (W6 lane, aarch64-apple-darwin, cargo-mutants 27.0.0,
+# toolchain 1.96.0) — file-scoped waves per the W6-ANALYTICS-RIGOR-PLAN §3.5
+# wave table, run as `cargo mutants -p celnet-exotics --file '<file>' --jobs 2
+# --config .config/mutants-exotics.toml`; results in docs/HARDENING.md §2 and
+# the lane's wave commits. `src/touch.rs` is deliberately NOT yet baselined:
+# a concurrent P0 fix owns that file and its wave runs post-merge.
+#
+# Build/test profile
+# ------------------
+# Waves run with `--profile mutants` ([profile.mutants] in the root
+# Cargo.toml): opt-level 2 with debug-assertions + overflow-checks ON. Rust
+# float semantics are optimization-independent (no fast-math, no implicit
+# FMA), so the ~120 frozen `to_bits` byte-identity gates hold bit-for-bit
+# under the profile — verified by running the full crate suite green under
+# `--profile mutants` before the first wave.
+profile = "mutants"
+
 exclude_re = [
 ]
