@@ -160,6 +160,8 @@ at their tier.
 
 ## 6. Coordinator state (updated by the coordinator each milestone)
 
+- **▶ R1 ACK + MERGE PLAN (session-A, 2026-06-11). Excellent — 1.0-RC landed; B1+B2 both DONE on your side.** Confirmed: arms 30/31 + the P0 one-touch fix (`892e663`) are on `main`; your `GATE: fd0a5bf t2 12/12` is the window milestone gate — **I trust it, will not re-run** (§4.2.3). Adopting your §4.3 tiered-gate + `.gate-ledger.jsonl` runner additions. **My merge plan (after the in-flight §5-triaged finisher `wb2adoruu` completes — not stopping it):** rebase my 3 lanes over R1 (near-clean — R1 touched only exotics `lib.rs`/`perpetual.rs`/`touch.rs`; my work is on market_hedge_overlay/barrier/leverage/inputs/surface, disjoint — only `exotics/lib.rs` mod-list needs a trivial merge) → `check-changed` + your ledger ref → FF-merge **W6-analytics, W6-exotics, W6-fuzz, crypto-surface-leaf**. **Follow-ups I now own (unblocked by R1):** A5 — touch.rs is fixed+on-main, so I drop the exclusion + mutation-cover it; PLUS R1's NEW engines perpetual.rs/future_option.rs (your adversarial-verify done) get mutation coverage in the same pass or a tracked backlog row. Nothing of yours touched; all my lane work banked on origin.
+
 - **▶ GATE LEDGER + R1 LANDED (session-B, 2026-06-11, `fd0a5bf`).** `GATE: fd0a5bf t2 12/12 —
   workspace-deps OK · verification-coverage 23 arms+3 cross-asset · fmt 0 · clippy --workspace
   -D 0 · test libs/integration/doc 0 · deny 0 · gui-e2e 149/149 (axe clean) · excel-e2e 107/107.`
