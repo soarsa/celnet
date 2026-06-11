@@ -34,10 +34,12 @@
  *    pair. That reason is PROVEN below (the edge refuses an EURUSD NDF with the
  *    typed message), and the NDF's numerical conformance runs in the wire half
  *    on its real USDBRL/USDCOP/USDINR underlyings.
- *  - wire half: the three cross-asset vanilla arms are blocked by the server WS
- *    decoder's legacy-`pair` precedence over the `underlying` object the GUI
- *    codec emits beside it (their vector MARKETS are WS-transportable — see
- *    `goldenCorpus.ts`); asserted as an exact set, mirroring `excel/e2e/corpus.ts`.
+ *  - wire half: the three cross-asset vanilla arms are now WS-priced — the server
+ *    WS decoder routes by the authoritative `underlying` oneof the GUI codec emits
+ *    (over the legacy FX `pair` projection it also carries), so the cross-asset arm
+ *    and the coin-margined INVERSE_COIN crypto economics survive end-to-end. The
+ *    not-exposed set is therefore empty and asserted so, mirroring
+ *    `excel/e2e/corpus.ts`.
  */
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
@@ -449,24 +451,17 @@ test.describe("golden-vector wire conformance: GUI codec → real edge == frozen
     expect(String((outcome as Error).message)).toMatch(/deliverable/);
   });
 
-  test("reports (does not skip) the corpus families not priced over the FX WS path", () => {
+  test("every corpus family is WS-priced — no family is excluded from the WS path", () => {
     // Documentation-as-assertion (CLAUDE.md rule 2 — no silent gap): the three
-    // cross-asset vanilla arms' vector MARKETS are WS-transportable (the FX
-    // two-rate projection, proven end-to-end by
-    // `crates/celnet-server/tests/cross_asset_ws.rs`), but the GUI's production
-    // codec emits the legacy FX `pair` projection beside `underlying` and the
-    // server WS decoder gives `pair` precedence — a GUI frame routes down the FX
-    // path (numerically invisible for linear payoffs, WRONG for INVERSE_COIN;
-    // the precedence is pinned server-side and fails loudly when the seam
-    // flips). Full rationale on `goldenCorpus.ts`. The GUI still BOOKS and
-    // live-quotes them (the cross-asset spec is covered in the browser half
-    // above; booking gated by `gui/test/crossAssetProducts.test.ts`). Identical
-    // boundary to the Excel gate. If a family becomes WS-priceable, this pins
-    // the honest gap so it cannot drift.
-    expect([...FAMILIES_NOT_EXPOSED_ON_FX_WS]).toEqual([
-      "equity_option",
-      "commodity_option",
-      "crypto_option",
-    ]);
+    // cross-asset vanilla arms are now WS-priced (above), because the server WS
+    // decoder routes by the authoritative `underlying` oneof rather than the
+    // legacy FX `pair` projection the GUI also emits — proven end-to-end by
+    // `crates/celnet-server/tests/cross_asset_ws.rs`
+    // (`ws_underlying_precedence_routes_client_shaped_frames_to_the_cross_asset_arm`).
+    // The not-exposed set is therefore empty; if a future family is genuinely not
+    // WS-priceable it lands there with a TRUE reason (never the routing bug), and
+    // this assertion pins that the gap cannot silently reappear. Identical
+    // boundary to the Excel gate.
+    expect([...FAMILIES_NOT_EXPOSED_ON_FX_WS]).toEqual([]);
   });
 });

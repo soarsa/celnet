@@ -190,23 +190,37 @@ fn underlying_to_json(u: &celnet_proto::Underlying) -> Value {
 }
 
 /// Decode an instrument's underlying for the WS mirror, supporting every wire
-/// arm — FX (the legacy `pair` key, unchanged for the GUI/Excel contract) plus the
-/// cross-asset arms carried on a richer `underlying` object: `{"fx": {base,quote}}`,
-/// `{"metal": {metal, quote}}`, `{"equity": {symbol:{ticker,venue}, currency}}`,
-/// `{"commodity": {...}}`, `{"digital_asset": {base, quote}}`. The legacy FX `pair`
-/// key takes precedence so existing browser requests are byte-identical; a request
-/// carrying neither yields `None` (the same as the prior `opt_nested("pair")`).
+/// arm — the cross-asset arms carried on a richer `underlying` object
+/// (`{"fx": {base,quote}}`, `{"metal": {metal, quote}}`,
+/// `{"equity": {symbol:{ticker,venue}, currency}}`, `{"commodity": {...}}`,
+/// `{"digital_asset": {base, quote}}`) plus the legacy FX `pair` key.
+///
+/// **Precedence — `underlying` is authoritative.** The production GUI/Excel
+/// encoders always emit the legacy FX `pair` projection BESIDE the richer
+/// `underlying` oneof so the FX-keyed surfaces stay total (`instrumentToWire` in
+/// both clients). The `pair` is therefore the legacy FX *projection* of the same
+/// instrument, while `underlying` is the asset-class-discriminated, richer form:
+/// when both are present the `underlying` oneof wins and the `pair` is ignored.
+/// This is the only rule that routes a legitimate cross-asset frame (e.g. an
+/// INVERSE_COIN digital-asset frame, which carries `digital_asset` +
+/// `settlement_style` + the `{base,quote}` leg-string `pair`) to its correct arm
+/// rather than mis-decoding it as FX and pricing the LINEAR (USD) value. A
+/// pure-FX legacy frame carries `pair` only (no `underlying`), so it still
+/// decodes to the FX arm byte-identically. A frame carrying neither yields `None`
+/// (the same as the prior `opt_nested("pair")`).
 fn instrument_underlying_from_json(
     o: &Map<String, Value>,
 ) -> Result<Option<celnet_proto::Underlying>> {
-    // Legacy FX `pair` key (the unchanged GUI/Excel contract).
-    if let Some(v) = o.get("pair").filter(|v| !v.is_null()) {
-        return Ok(Some(celnet_proto::Underlying::fx(ccy_pair_from_json(v)?)));
+    // The richer cross-asset `underlying` oneof is authoritative when present — it
+    // carries the asset-class discriminator a legacy `pair` projection cannot.
+    if let Some(v) = o.get("underlying").filter(|v| !v.is_null()) {
+        return underlying_object_from_json(v).map(Some);
     }
-    // The cross-asset `underlying` object mirrors the wire oneof.
-    match o.get("underlying") {
+    // The legacy FX `pair` key is the FX projection, consulted only when no richer
+    // `underlying` is present (the unchanged pure-FX GUI/Excel contract).
+    match o.get("pair") {
         None | Some(Value::Null) => Ok(None),
-        Some(v) => underlying_object_from_json(v).map(Some),
+        Some(v) => Ok(Some(celnet_proto::Underlying::fx(ccy_pair_from_json(v)?))),
     }
 }
 
@@ -2106,6 +2120,57 @@ mod tests {
             }
             other => panic!("expected a listed_future_option product, got {other:?}"),
         }
+    }
+
+    /// The instrument-underlying decode treats the richer cross-asset `underlying`
+    /// oneof as AUTHORITATIVE over the legacy FX `pair` projection when BOTH are
+    /// present — the exact shape the production GUI/Excel encoders emit (the FX
+    /// `pair` projection rides beside `underlying` so the FX-keyed surfaces stay
+    /// total). A digital-asset frame must decode to the `DigitalAsset` arm, not be
+    /// mis-decoded as FX from its `{base,quote}` projection — the root-cause fix for
+    /// the cross-asset WS routing defect (without it, an INVERSE_COIN frame would
+    /// price the LINEAR value four orders of magnitude away). A pure-FX legacy frame
+    /// (`pair` only) still decodes to the FX arm, byte-identically.
+    #[test]
+    fn underlying_oneof_takes_precedence_over_legacy_pair_projection() {
+        // Both keys present (the production cross-asset frame): `underlying` wins.
+        let both = json!({
+            "pair": { "base": "BTC", "quote": "USD" },
+            "underlying": { "digital_asset": { "base": "BTC", "quote": "USD" } },
+            "expiry_years": 0.5,
+            "side": 0,
+            "settlement_style": celnet_proto::SettlementStyle::InverseCoin as i32,
+            "vanilla": { "option_type": 0, "strike": { "strike": 31000.0 } }
+        });
+        let instr = instrument_from_json(&both).expect("decode");
+        let underlying = instr.underlying.expect("an underlying is decoded");
+        assert!(
+            underlying.as_digital_asset().is_some(),
+            "the richer `underlying` oneof must win over the legacy `pair` projection, \
+             got {underlying:?}"
+        );
+        assert!(
+            underlying.as_fx().is_none(),
+            "a cross-asset frame must NOT be mis-decoded as FX from its `pair` projection"
+        );
+        // The INVERSE_COIN settlement style rides through to select the coin payoff.
+        assert_eq!(
+            instr.settlement_style,
+            celnet_proto::SettlementStyle::InverseCoin as i32
+        );
+
+        // Pure-FX legacy frame (`pair` only): still the FX arm, byte-identically.
+        let fx_only = json!({
+            "pair": { "base": "EUR", "quote": "USD" },
+            "expiry_years": 1.0,
+            "side": 0,
+            "vanilla": { "option_type": 0, "strike": { "strike": 1.1 } }
+        });
+        let fx_instr = instrument_from_json(&fx_only).expect("decode");
+        let fx_underlying = fx_instr.underlying.expect("an underlying is decoded");
+        let pair = fx_underlying.as_fx().expect("a pure-`pair` frame decodes to FX");
+        assert_eq!(pair.base, "EUR");
+        assert_eq!(pair.quote, "USD");
     }
 
     /// MC-honesty on the WS wire: a `Quote` carrying a Monte-Carlo standard error

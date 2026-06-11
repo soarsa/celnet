@@ -22,12 +22,14 @@
 //!    path would resolve it — so the refusal discriminates the routing for the
 //!    linear payoffs whose price alone is numerically identical to the FX
 //!    projection (ADR-0008: asset class is payoff identity).
-//! 3. GAP PIN (current behavior): the WS decoder's legacy-`pair` precedence
-//!    routes a production client-shaped frame (which carries the FX `pair`
-//!    projection BESIDE `underlying`) down the FX path, silently dropping the
-//!    cross-asset arm — and for an INVERSE_COIN frame, the settlement economics.
-//!    This is the exact, server-asserted reason the three cross-asset families
-//!    stay excluded from the Excel/GUI WS-priced corpora.
+//! 3. PRODUCTION-FRAME ROUTING: the WS decoder treats the richer `underlying`
+//!    oneof as authoritative over the legacy FX `pair` projection. A production
+//!    client-shaped frame carries the FX `pair` projection BESIDE `underlying`
+//!    (so the FX-keyed surfaces stay total — `instrumentToWire` in both clients);
+//!    it now decodes to the cross-asset arm and prices to the cross-asset oracle.
+//!    The INVERSE_COIN frame is the sharpest proof: it routes to the digital-asset
+//!    arm with its `settlement_style` honoured and prices to the coin-margined
+//!    `1/S_T` oracle, NOT the LINEAR (USD) value four orders of magnitude away.
 //!
 //! Helpers mirror the `ws_mirror.rs` harness pattern: every body is hard
 //! wall-clock bounded and every socket await is bounded, so a regression fails
@@ -366,26 +368,24 @@ async fn ws_routes_every_cross_asset_arm_to_the_cross_asset_path() {
     .expect("test must not hang");
 }
 
-/// GAP PIN (current behavior — coordinate with the codec lane before changing):
-/// the WS instrument decoder gives the legacy FX `pair` key precedence over the
-/// cross-asset `underlying` object (`instrument_underlying_from_json`), and the
-/// production GUI/Excel encoders ALWAYS emit the FX `pair` projection beside
-/// `underlying` (so the FX-keyed surfaces stay total). A client-shaped
-/// cross-asset frame therefore decodes as its FX projection and routes down the
-/// FX path: numerically invisible for the linear payoffs, but an INVERSE_COIN
-/// crypto frame has its `settlement_style` ignored and prices to the LINEAR
-/// (USD-margined) value instead of the coin-margined `1/S_T` value.
+/// The production client frame routes by the AUTHORITATIVE `underlying` oneof,
+/// never the legacy FX `pair` projection. The GUI/Excel encoders ALWAYS emit the
+/// FX `pair` projection beside `underlying` (so the FX-keyed surfaces stay total —
+/// `instrumentToWire` in both clients); the server's WS decoder
+/// (`instrument_underlying_from_json`) now treats the richer `underlying` as
+/// authoritative when both are present.
 ///
-/// This pins that exact divergence with the frozen corpus as the reference: the
-/// inverse-call frame WITH the legacy `pair` prices to the LINEAR call vector's
-/// oracle, NOT to the inverse vector's. It is the server-asserted reason
-/// `equity_option`/`commodity_option`/`crypto_option` stay excluded from the
-/// Excel/GUI WS-priced corpora (`excel/e2e/corpus.ts`, `gui/e2e/goldenCorpus.ts`).
-/// The moment the codec seam prefers `underlying` over the `pair` projection,
-/// this test FAILS — forcing the inversion of this pin and the move of the three
-/// families into the client corpora.
+/// The INVERSE_COIN crypto call is the sharpest proof of correct routing: an
+/// FX-path misroute would honour neither the digital-asset arm NOR the
+/// `settlement_style`, returning the LINEAR (USD-margined) value — four orders of
+/// magnitude away from the coin-margined `1/S_T` oracle the frame asks for. This
+/// asserts the frame WITH the legacy `pair` prices to the INVERSE_COIN vector's
+/// own coin oracle (within its 1e-9 band) and is nowhere near the LINEAR call's
+/// value. It is the server-asserted reason `equity_option`/`commodity_option`/
+/// `crypto_option` are WS-priced in the Excel/GUI corpora (`excel/e2e/corpus.ts`,
+/// `gui/e2e/goldenCorpus.ts`): the cross-asset arm survives the FX projection.
 #[tokio::test]
-async fn ws_legacy_pair_precedence_routes_client_shaped_frames_to_the_fx_path() {
+async fn ws_underlying_precedence_routes_client_shaped_frames_to_the_cross_asset_arm() {
     tokio::time::timeout(SUITE_DEADLINE, async {
         let vectors = load_cross_asset_vectors().expect("the cross-asset corpus loads");
         let inverse_call = vectors
@@ -404,8 +404,9 @@ async fn ws_legacy_pair_precedence_routes_client_shaped_frames_to_the_fx_path() 
                     && v.term_str("option_type") == "CALL"
             })
             .expect("the corpus carries a LINEAR crypto call");
-        // The pair must be the same contract modulo settlement style for the
-        // linear oracle to be the valid FX-path reference.
+        // The inverse/linear calls are the SAME contract modulo settlement style:
+        // the only thing that can move the price between the two oracles is the
+        // settlement economics, so the coin/linear divergence isolates the routing.
         assert_eq!(
             inverse_call.term_f64("strike"),
             linear_call.term_f64("strike"),
@@ -428,10 +429,10 @@ async fn ws_legacy_pair_precedence_routes_client_shaped_frames_to_the_fx_path() 
             .expect("WS connects in time")
             .expect("WS connects");
 
-        // The production client frame: the `underlying` arm + `settlement_style`
-        // PLUS the legacy FX `pair` projection (`underlyingPairProjection` —
-        // {base: BTC, quote: USD}, which `Ccy::parse` accepts as 3-ASCII-letter
-        // legs, so the FX route decodes cleanly).
+        // The production client frame: the `digital_asset` arm + INVERSE_COIN
+        // `settlement_style` PLUS the legacy FX `pair` projection
+        // ({base: BTC, quote: USD}, which `Ccy::parse` accepts as 3-ASCII-letter
+        // legs, so an FX misroute WOULD decode cleanly and silently mis-price).
         let mut instrument = instrument_json(inverse_call);
         let (base, quote) = inverse_call.underlying.split_at(3);
         instrument["pair"] = json!({ "base": base, "quote": quote });
@@ -440,25 +441,25 @@ async fn ws_legacy_pair_precedence_routes_client_shaped_frames_to_the_fx_path() 
         assert_eq!(
             reply["type"],
             json!("price_response"),
-            "the client-shaped frame prices (the FX path accepts it): {reply}"
+            "the client-shaped frame prices over the cross-asset path: {reply}"
         );
         let got = reply["greeks"]["price"]
             .as_f64()
             .unwrap_or_else(|| panic!("reply carries no price: {reply}"));
 
-        // CURRENT behavior: the `pair` projection wins — the reply is the LINEAR
-        // (USD-margined) value of the same contract, within the linear vector's
-        // own frozen band...
-        assert_within_band(linear_call, got);
-        // ...and nowhere near the coin-margined oracle the frame asked for (the
-        // two differ by four orders of magnitude — USD thousands vs coin
-        // fractions — so a 1.0 margin is conservative in both directions).
+        // `underlying` wins: the reply is the coin-margined `1/S_T` value of the
+        // INVERSE_COIN contract, within that vector's own frozen 1e-9 band — the
+        // `settlement_style` is honoured, the `pair` projection ignored.
+        assert_within_band(inverse_call, got);
+        // ...and nowhere near the LINEAR (USD-margined) value an FX misroute would
+        // have returned (the two differ by four orders of magnitude — coin
+        // fractions vs USD thousands — so a 1.0 margin is conservative both ways).
         assert!(
-            (got - inverse_call.expected.price).abs() > 1.0,
-            "the legacy-pair precedence gap has closed: the client-shaped INVERSE_COIN frame \
-             now prices to the coin-margined oracle ({got} vs {}) — invert this pin and move \
-             equity_option/commodity_option/crypto_option into the Excel/GUI WS-priced corpora",
-            inverse_call.expected.price
+            (got - linear_call.expected.price).abs() > 1.0,
+            "regression: the client-shaped INVERSE_COIN frame mis-routed to the FX/LINEAR \
+             path ({got} vs the LINEAR oracle {}) — `underlying` must win over the legacy \
+             `pair` projection in `instrument_underlying_from_json`",
+            linear_call.expected.price
         );
 
         close_ws(ws).await;
