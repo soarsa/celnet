@@ -20,3 +20,4 @@ celnet-conventions.workspace = true
 [dev-dependencies]
 celnet-testkit.workspace = true
 proptest.workspace = true
+libm.workspace = true
