@@ -250,6 +250,32 @@ The token + verbs map one-to-one onto the `Instrument` `oneof` arms and the pari
 (LSV is exposed only as a *priced product* — e.g. the window barrier — never as raw
 calibration, exactly as the parity matrix records for the GUI/Excel.)
 
+#### 3.3.1 Cross-asset capability matrix (which product prices on which class)
+
+The polymorphic surface accepts any (underlier × product) pairing, but the server's
+engines are not uniform across asset classes — and the add-in enforces that boundary at
+**`CELNET.INSTRUMENT` build time** (a typed `ShapingError`, like the metal-vs-metal guard),
+so a cell never emits a frame the server can only refuse at price time:
+
+| Asset class | Engine | Products priced |
+|---|---|---|
+| **FX** (`EURUSD`) | full FX desk | **all 24** arms (vanilla, strategy, barriers, digital, touch, var/vol-swap, asian, forward-start, cliquet, quanto, tarf, pivot, accumulator, lookback, american, basket, fx-forward/swap, ndf, perpetual, listed-future-option) |
+| **Metal** (`XAUUSD`) | FX engine (lease rate = FX foreign rate) | **all 24** (metal-vs-FIAT only; metal-vs-metal rejected) |
+| **Equity** (`AAPL@XNAS:USD`) | cost-of-carry leaf + agnostic arms | **VANILLA, PERPETUAL, FUTUREOPTION** |
+| **Commodity** (`BRENT@:USD`) | Black-76 carry leaf + agnostic arms | **VANILLA, PERPETUAL, FUTUREOPTION** |
+| **Crypto** (`BTC/USD`[`:inverse`]) | linear / inverse-coin leaf + agnostic arms | **VANILLA, PERPETUAL, FUTUREOPTION** |
+
+Rationale (ADR-0008): equity/commodity/crypto price through the generalized
+cost-of-carry leaves (`celnet-{equity,commodity,crypto}-vanilla`); `PERPETUAL` and
+`FUTUREOPTION` are asset-class-agnostic (the perpetual carry ODE; Black-76 on the quoted
+future), so they ride the same carry seam. The remaining exotics are FX/metal-only
+engines. Building e.g. `=CELNET.INSTRUMENT("AAPL@XNAS:USD","BARRIER",…)` fails fast with
+*"a equity underlier supports only VANILLA, PERPETUAL and FUTUREOPTION — BARRIER is an
+FX/metal-only product"*. **Verified end-to-end** against a live edge in
+`excel/test/instrumentPolymorphic.test.ts` (build-time guard) and the cross-asset vanilla
+conformance vectors (`excel/e2e/conformance.e2e.ts`). When a cross-asset exotic engine is
+added server-side, widen the guard's allowed-family set in `shapeSpecInstrument` in lockstep.
+
 ### 3.4 Read — risk, book & observability (dynamic-array spill)
 
 ```

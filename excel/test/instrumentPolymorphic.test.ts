@@ -1297,6 +1297,38 @@ describe("cross-asset underlier parity vs the per-class vanilla shapers", () => 
     expect(encodeInstrumentToken(decodeInstrumentToken(token))).toBe(token);
   });
 
+  it("rejects a cross-asset (equity/commodity/crypto) EXOTIC at build time — those classes price only VANILLA/PERPETUAL/FUTUREOPTION", () => {
+    // The cost-of-carry leaves (VANILLA) plus the two asset-class-agnostic arms
+    // (PERPETUAL, FUTUREOPTION) are the ONLY cross-asset engines on the server
+    // (`price_cross_asset`); every other family is FX/metal-only. The grammar
+    // rejects the unpriceable combination up-front — like the metal-vs-metal guard —
+    // rather than emitting a frame the server refuses at price time with the
+    // misleading "pricing model DEFAULT does not support …" error.
+    const rejected: Array<[string, string, Row[]]> = [
+      ["AAPL@XNAS:USD", "BARRIER", [["strike", 200], ["callPut", "C"], ["barrier", 240], ["kind", "KNOCK_OUT"], ["side", "UP"]]],
+      ["BRENT@:USD", "ASIAN", [["strike", 85], ["callPut", "C"], ["averaging", "DISCRETE"], ["observations", 12]]],
+      ["BTC/USDT", "TARF", [["callPut", "C"], ["strike", 70000], ["target", 0.1], ["leverage", 2], ["fixings", 12]]],
+      ["ETH/USD:inverse", "VARSWAP", [["strikeVol", 0.6]]],
+      ["AAPL@XNAS:USD", "FORWARD", [["rate", 200]]],
+    ];
+    for (const [underlier, product, terms] of rejected) {
+      expect(() => shapeSpecInstrument({ underlier, product, terms, tenor: "1Y", notional: 1 })).toThrowError(
+        /supports only VANILLA, PERPETUAL and FUTUREOPTION/,
+      );
+    }
+    // The three SUPPORTED cross-asset families build cleanly (no false rejection)…
+    expect(() => shapeSpecInstrument({ underlier: "AAPL@XNAS:USD", product: "VANILLA", terms: [["strike", 200], ["callPut", "C"]], tenor: "3M" })).not.toThrow();
+    expect(() => shapeSpecInstrument({ underlier: "BTC/USD", product: "PERPETUAL", terms: [["strike", 70000], ["callPut", "C"]] })).not.toThrow();
+    expect(() =>
+      shapeSpecInstrument({ underlier: "ES@XCME:USD", product: "FUTUREOPTION", terms: [["strike", 5000], ["callPut", "C"], ["futureSymbol", "ESZ5@XCME"], ["futureExpiry", 0.3]], tenor: "3M" }),
+    ).not.toThrow();
+    // …and METAL/FX keep the FULL product set (they route to the FX engine), so a
+    // metal barrier is NOT rejected.
+    expect(() =>
+      shapeSpecInstrument({ underlier: "XAUUSD", product: "BARRIER", terms: [["strike", 2400], ["callPut", "C"], ["barrier", 2600], ["kind", "KNOCK_OUT"], ["side", "UP"]], tenor: "1Y", notional: 100 }),
+    ).not.toThrow();
+  });
+
   it("FX byte-identity: the spec path never leaks cross-asset keys onto an FX frame", () => {
     const spec = shapeSpecInstrument({
       underlier: "EUR/USD",

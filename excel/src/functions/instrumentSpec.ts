@@ -989,6 +989,35 @@ export function shapeSpecInstrument(args: InstrumentSpecArgs): Instrument {
   const terms = new Terms(args.terms);
   const { name, spec } = familyOf(args.product);
 
+  // Cross-asset capability guard. The server prices an equity / commodity /
+  // digital-asset (crypto) underlying ONLY for the cost-of-carry leaves
+  // (VANILLA) and the two asset-class-agnostic arms (PERPETUAL — the perpetual
+  // carry ODE; FUTUREOPTION — Black-76 on the quoted future). Every other family
+  // (barrier / asian / tarf / digital / touch / var-&-vol-swap / strategy /
+  // forward / swap / ndf / …) is an FX/metal-only engine: the server refuses the
+  // combination (`price_cross_asset` → UnsupportedModel). Reject it HERE, at
+  // build time, with a clear asset-class message — exactly as a metal-vs-metal
+  // ratio is rejected in `parseUnderlier` — rather than letting the cell emit a
+  // frame the server can only refuse at price time with the misleading
+  // "pricing model DEFAULT does not support …" error. (Metal & FX underliers
+  // route to the full FX engine, so they carry no such restriction.)
+  if (
+    u.underlying !== undefined &&
+    (u.underlying.kind === "equity" ||
+      u.underlying.kind === "commodity" ||
+      u.underlying.kind === "digitalAsset") &&
+    name !== "VANILLA" &&
+    name !== "PERPETUAL" &&
+    name !== "FUTUREOPTION"
+  ) {
+    const assetClass = u.underlying.kind === "digitalAsset" ? "crypto" : u.underlying.kind;
+    throw new ShapingError(
+      `a ${assetClass} underlier (${u.label}) supports only VANILLA, PERPETUAL and ` +
+        `FUTUREOPTION — ${name} is an FX/metal-only product. Build ${name} on an FX or ` +
+        `metal underlier (e.g. EURUSD or XAUUSD), or price the ${assetClass} leg as VANILLA.`,
+    );
+  }
+
   const tenorTerm = terms.optStr("tenor");
   if (args.tenor !== undefined && args.tenor.trim() !== "" && tenorTerm !== undefined) {
     throw new ShapingError("tenor supplied twice (both the tenor argument and a (\"tenor\", …) term)");
