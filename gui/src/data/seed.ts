@@ -945,6 +945,43 @@ function ndfInstrument(
   };
 }
 
+/**
+ * The cross-asset underlier overlay an asset-class-AGNOSTIC arm (the perpetual /
+ * the listed-future-option) carries when it is structured on a non-FX underlier.
+ * It rides exactly the same additive wire keys the cross-asset vanilla uses —
+ * `Instrument.underlying` (proto field 1) + `Instrument.settlement_style` (field
+ * 29) — and projects the FX `pair` leg-string from the `Underlying` so the
+ * FX-keyed surfaces stay total. Absent ⇒ the plain FX/metal contract, BYTE-
+ * IDENTICAL to the path before the cross-asset wave (no `underlying`, no
+ * `settlement_style`, the trader's `pair` carried verbatim).
+ */
+export interface CrossAssetOverlay {
+  /** The non-FX underlying arm (equity / commodity / metal / digital-asset). */
+  underlying: Underlying;
+  /** Contract settlement mechanics (INVERSE_COIN meaningful only for digitalAsset). */
+  settlementStyle: SettlementStyle;
+}
+
+/**
+ * Apply a {@link CrossAssetOverlay} to a freshly-built FX-shaped instrument: swap
+ * the FX `pair` for the underlying's leg-string projection, attach the
+ * `underlying` arm, and attach `settlement_style` ONLY when non-LINEAR (LINEAR is
+ * the proto3 zero, presence-omitted). With no overlay the instrument is returned
+ * UNCHANGED — so the FX path is byte-identical. This is the one shared seam the
+ * agnostic arms (perpetual / listed-future-option) reuse, exactly mirroring
+ * `crossAssetVanillaInstrument`'s additive keys (no parallel wire-building).
+ */
+function withCrossAssetOverlay(base: Instrument, overlay?: CrossAssetOverlay): Instrument {
+  if (!overlay) return base;
+  const instrument: Instrument = {
+    ...base,
+    pair: underlyingPairProjection(overlay.underlying),
+    underlying: overlay.underlying,
+  };
+  if (overlay.settlementStyle !== "LINEAR") instrument.settlementStyle = overlay.settlementStyle;
+  return instrument;
+}
+
 /** The inputs for a perpetual (no-expiry) American option (`product.perpetualOption`). */
 export interface PerpetualTerms {
   optionType: OptionType;
@@ -959,22 +996,35 @@ export interface PerpetualTerms {
  * contract's canonical no-expiry shape `expiryYears = 0` exactly — the server's
  * term validator rejects any other expiry on this arm as INVALID_ARGUMENT.
  * There is deliberately no `tenorYears` parameter: a perpetual has none.
+ *
+ * An optional {@link CrossAssetOverlay} carries the perpetual onto a non-FX
+ * underlier (equity / commodity / crypto): the same additive `underlying` +
+ * `settlement_style` keys the cross-asset vanilla uses. Absent ⇒ the FX/metal
+ * contract, byte-identical to before the cross-asset wave.
  */
-function perpetualInstrument(pair: CcyPair, notionalMm: number, terms: PerpetualTerms): Instrument {
-  return {
-    pair,
-    expiryYears: 0,
-    quantity: { notional: notionalMm * 1e6, baseCcy: true },
-    side: "TWO_WAY",
-    product: {
-      kind: "perpetualOption",
-      perpetualOption: {
-        optionType: terms.optionType,
-        strike: terms.strike,
-        notional: notionalMm * 1e6,
+function perpetualInstrument(
+  pair: CcyPair,
+  notionalMm: number,
+  terms: PerpetualTerms,
+  overlay?: CrossAssetOverlay,
+): Instrument {
+  return withCrossAssetOverlay(
+    {
+      pair,
+      expiryYears: 0,
+      quantity: { notional: notionalMm * 1e6, baseCcy: true },
+      side: "TWO_WAY",
+      product: {
+        kind: "perpetualOption",
+        perpetualOption: {
+          optionType: terms.optionType,
+          strike: terms.strike,
+          notional: notionalMm * 1e6,
+        },
       },
     },
-  };
+    overlay,
+  );
 }
 
 /** The inputs for an option on a listed future (`product.listedFutureOption`). */
@@ -997,31 +1047,40 @@ export interface ListedFutureTerms {
  * (the future outlives the option — validity-checked server-side). The quoted
  * futures price already embodies the underlying's carry, so every asset class
  * prices by the same futures-measure closed form.
+ *
+ * An optional {@link CrossAssetOverlay} carries the option onto a non-FX
+ * underlier (equity / commodity / crypto): the enclosing `Instrument.underlying`
+ * names the class while `futureSymbol` names the specific listed contract. Absent
+ * ⇒ the FX/metal contract, byte-identical to before the cross-asset wave.
  */
 function listedFutureOptionInstrument(
   pair: CcyPair,
   tenorYears: number,
   notionalMm: number,
   terms: ListedFutureTerms,
+  overlay?: CrossAssetOverlay,
 ): Instrument {
-  return {
-    pair,
-    tenor: tenorYearsToTenor(tenorYears),
-    expiryYears: tenorYears,
-    quantity: { notional: notionalMm * 1e6, baseCcy: true },
-    side: "TWO_WAY",
-    product: {
-      kind: "listedFutureOption",
-      listedFutureOption: {
-        futureSymbol: terms.futureSymbol,
-        futureExpiryYears: terms.futureExpiryYears,
-        optionType: terms.optionType,
-        strike: terms.strike,
-        notional: notionalMm * 1e6,
-        margining: terms.margining,
+  return withCrossAssetOverlay(
+    {
+      pair,
+      tenor: tenorYearsToTenor(tenorYears),
+      expiryYears: tenorYears,
+      quantity: { notional: notionalMm * 1e6, baseCcy: true },
+      side: "TWO_WAY",
+      product: {
+        kind: "listedFutureOption",
+        listedFutureOption: {
+          futureSymbol: terms.futureSymbol,
+          futureExpiryYears: terms.futureExpiryYears,
+          optionType: terms.optionType,
+          strike: terms.strike,
+          notional: notionalMm * 1e6,
+          margining: terms.margining,
+        },
       },
     },
-  };
+    overlay,
+  );
 }
 
 /**

@@ -9,7 +9,7 @@
  */
 import type { ReactElement } from "react";
 import type { Instrument, PricingModel, Product, Tenor } from "../data/contract";
-import type { BrokenDate } from "../data/contract";
+import type { BrokenDate, SettlementStyle, Underlying } from "../data/contract";
 
 /**
  * Asset class of a structurable product. FX is the origin class; the cross-asset
@@ -59,6 +59,19 @@ export interface ProductBuildCtx {
    * `underlying`, never this field).
    */
   assetClass?: AssetClass;
+  /**
+   * The ACTIVE non-FX underlier identity, when one is overlaid (the universe-leaf
+   * cross-asset selection). The asset-class-AGNOSTIC arms — the perpetual and the
+   * listed-future-option, which price END-TO-END on equity/commodity/crypto via the
+   * server's cost-of-carry seam — read it to carry the cross-asset wire keys
+   * (`Instrument.underlying` + `settlement_style`) onto their built instrument,
+   * reusing the same `Underlying` the cross-asset vanilla seeds from (no parallel
+   * mechanism). Absent ⇒ FX (the resting class): every spec builds its FX/metal
+   * instrument byte-identically, the economics ride `pair` exactly as before. The
+   * FX-native exotics never read it — they are FX/metal-only and gated out of the
+   * cross-asset classes by the capability matrix.
+   */
+  underlier?: { underlying: Underlying; settlementStyle: SettlementStyle };
   /** The selected tenor (stamped onto the instrument; `expiryYears` stays authoritative). */
   tenor: Tenor;
   /** The tenor as a year fraction (the pricing-authoritative expiry). */

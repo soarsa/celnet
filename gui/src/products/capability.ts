@@ -135,6 +135,23 @@ export function priceability(kind: ProductKind, cls: AssetClass): "priceable" | 
 export const DEFAULT_BUILDER_CLASSES: readonly AssetClass[] = ["FX", "METAL"];
 
 /**
+ * Every asset class — the `applicableClasses` for the asset-class-AGNOSTIC arms
+ * (the perpetual stationary-ODE + Black-76 on a quoted future), which the server's
+ * `price_cross_asset` prices END-TO-END on equity / commodity / crypto exactly as on
+ * FX / metal (`CROSS_ASSET_PRICEABLE` ⊇ these two arms for every cross-asset class).
+ * Declaring it makes the gallery show DISTINCT perpetual / future-option cards on a
+ * cross-asset underlier (the trader can structure them there), while the spec's
+ * `toInstrument` carries the active `Underlying` via {@link crossAssetOverlayFor}.
+ */
+export const ALL_ASSET_CLASSES: readonly AssetClass[] = [
+  "FX",
+  "METAL",
+  "EQUITY",
+  "COMMODITY",
+  "CRYPTO",
+];
+
+/**
  * A discovery-gallery card's state for the active asset class:
  *  - `available`   — this spec builds a priceable instrument for the class (selectable);
  *  - `Dimmed`      — no spec of this product arm prices on the class (FX/metal-only),

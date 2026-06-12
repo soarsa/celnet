@@ -21,9 +21,18 @@ import type {
   SettlementStyle,
   Underlying,
 } from "../data/contract";
-import { bookingModelsFor, crossAssetVanillaInstrument } from "../data/seed";
+import {
+  bookingModelsFor,
+  crossAssetVanillaInstrument,
+  type CrossAssetOverlay,
+} from "../data/seed";
 import styles from "../workspaces/TicketWorkspace.module.css";
-import { defineProduct, withTenorAndModel, type InputBlockProps } from "./types";
+import {
+  defineProduct,
+  withTenorAndModel,
+  type InputBlockProps,
+  type ProductBuildCtx,
+} from "./types";
 
 /** The cross-asset class the ticket books (the populated `Underlying` arms). */
 export type CrossAssetKind = "EQUITY" | "COMMODITY" | "CRYPTO" | "METAL";
@@ -150,6 +159,33 @@ export function crossAssetInputsFor(
         venue: "",
         settlementStyle,
       };
+  }
+}
+
+/**
+ * Resolve the {@link CrossAssetOverlay} an asset-class-AGNOSTIC arm (the perpetual
+ * / the listed-future-option) carries from the active ticket context. Returns the
+ * overlay ONLY for a TRUE cross-asset underlier (equity / commodity / digital-asset)
+ * — the exact `Underlying` the universe-leaf selection seeded `ctx.underlier` with,
+ * reusing that one identity (NO parallel mechanism). Returns `undefined` for FX and
+ * for a metal underlier — both structure the agnostic arms through their FX-native
+ * shape (a metal prices on the full FX engine), so the built instrument stays
+ * BYTE-IDENTICAL to the FX path. This is the single seam the agnostic specs read so
+ * a non-FX perpetual / future-option carries `Instrument.underlying` (+ crypto's
+ * `settlement_style`) the server prices, without duplicating crossAsset.tsx's
+ * underlier machinery.
+ */
+export function crossAssetOverlayFor(ctx: ProductBuildCtx): CrossAssetOverlay | undefined {
+  const u = ctx.underlier;
+  if (!u) return undefined;
+  switch (u.underlying.kind) {
+    case "equity":
+    case "commodity":
+    case "digitalAsset":
+      return { underlying: u.underlying, settlementStyle: u.settlementStyle };
+    case "fx":
+    case "metal":
+      return undefined;
   }
 }
 

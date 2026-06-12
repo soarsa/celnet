@@ -16,6 +16,8 @@ import type { Instrument, Margining, OptionType } from "../data/contract";
 import { listedFutureOptionInstrument, type ListedFutureTerms } from "../data/seed";
 import { fmtRate } from "../lib/format";
 import styles from "../workspaces/TicketWorkspace.module.css";
+import { ALL_ASSET_CLASSES } from "./capability";
+import { crossAssetOverlayFor } from "./crossAsset";
 import { defineProduct, withTenorAndModel, type InputBlockProps } from "./types";
 
 /** The listed-future-option ticket inputs. */
@@ -187,12 +189,23 @@ export const listedFutureOptionSpec = defineProduct<ListedFutureOptionInputs>({
   label: "Future option (listed)",
   group: "Vanilla & strategies",
   assetClass: "FX",
+  // Black-76 on a quoted future is asset-class AGNOSTIC: the quoted futures price
+  // already embodies the carry, so `price_cross_asset` prices it END-TO-END on
+  // equity / commodity / crypto on the same seam as FX / metal (it is in every
+  // class's `CROSS_ASSET_PRICEABLE` set). So the builder applies to ALL classes —
+  // the gallery shows a future-option card on a cross-asset underlier, and
+  // `toInstrument` carries that underlier's identity on `Instrument.underlying`.
+  applicableClasses: ALL_ASSET_CLASSES,
   summary:
     "Vanilla on a named listed future — futures-measure closed form, equity- or futures-style premium margining.",
   keywords: ["future", "futures", "listed", "margined", "margining", "exchange", "option on future"],
   kind: "listedFutureOption",
   defaults: DEFAULT_LISTED_FUTURE_OPTION,
   allowedModels: ["DEFAULT"],
+  // On a cross-asset underlier the overlay names the class on `Instrument.underlying`
+  // (+ crypto's settlement style) via the SAME identity the cross-asset vanilla seeds
+  // (`crossAssetOverlayFor`), while `futureSymbol` names the specific listed contract;
+  // on FX / metal the overlay is `undefined`, so the wire stays byte-identical.
   toInstrument: (inputs: ListedFutureOptionInputs, ctx): Instrument =>
     withTenorAndModel(
       listedFutureOptionInstrument(
@@ -200,6 +213,7 @@ export const listedFutureOptionSpec = defineProduct<ListedFutureOptionInputs>({
         ctx.tenorYears,
         ctx.notionalMm,
         listedFutureTerms(inputs, ctx.tenorYears, ctx.atmForward),
+        crossAssetOverlayFor(ctx),
       ),
       ctx,
     ),

@@ -15,6 +15,8 @@ import type { Instrument, OptionType } from "../data/contract";
 import { perpetualInstrument, type PerpetualTerms } from "../data/seed";
 import { fmtRate } from "../lib/format";
 import styles from "../workspaces/TicketWorkspace.module.css";
+import { ALL_ASSET_CLASSES } from "./capability";
+import { crossAssetOverlayFor } from "./crossAsset";
 import { defineProduct, withModel, type InputBlockProps } from "./types";
 
 /** The perpetual-option ticket inputs. */
@@ -97,6 +99,12 @@ export const perpetualSpec = defineProduct<PerpetualInputs>({
   label: "Perpetual (no expiry)",
   group: "Path-dependent",
   assetClass: "FX",
+  // The perpetual stationary-ODE is asset-class AGNOSTIC: `price_cross_asset`
+  // prices it END-TO-END on equity / commodity / crypto on the same cost-of-carry
+  // seam as FX / metal (it is in every class's `CROSS_ASSET_PRICEABLE` set). So the
+  // builder applies to ALL classes — the gallery shows a perpetual card on a
+  // cross-asset underlier, and `toInstrument` carries that underlier's identity.
+  applicableClasses: ALL_ASSET_CLASSES,
   summary:
     "Perpetual American option — no expiry, exercisable at any time; exact free-boundary closed form.",
   keywords: ["perpetual", "no expiry", "expiryless", "american", "free boundary", "everlasting"],
@@ -108,10 +116,18 @@ export const perpetualSpec = defineProduct<PerpetualInputs>({
       "A perpetual has no expiry — the contract encodes exactly 0 with no tenor; exercise is the only way it ends.",
   },
   // The one tenorless builder: no tenor stamp (withModel, not withTenorAndModel)
-  // and the canonical `expiryYears = 0` from the seed builder.
+  // and the canonical `expiryYears = 0` from the seed builder. On a cross-asset
+  // underlier the overlay swaps in the `Underlying` arm + (crypto) settlement style
+  // via the SAME identity the cross-asset vanilla seeds (`crossAssetOverlayFor`);
+  // on FX / metal the overlay is `undefined`, so the wire stays byte-identical.
   toInstrument: (inputs: PerpetualInputs, ctx): Instrument =>
     withModel(
-      perpetualInstrument(ctx.pair, ctx.notionalMm, perpetualTerms(inputs, ctx.spot)),
+      perpetualInstrument(
+        ctx.pair,
+        ctx.notionalMm,
+        perpetualTerms(inputs, ctx.spot),
+        crossAssetOverlayFor(ctx),
+      ),
       ctx,
     ),
   InputBlock: PerpetualInputBlock,

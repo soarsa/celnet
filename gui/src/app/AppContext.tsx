@@ -87,6 +87,15 @@ export interface ActiveUnderlier {
   assetClass: AssetClass;
   /** The contract identity (what a ticket books / a pre-target seeds). */
   underlying: Underlying;
+  /**
+   * The underlier's contract settlement mechanics (`Instrument.settlementStyle`):
+   * INVERSE_COIN is meaningful only for a crypto underlier, LINEAR for every other
+   * class. Carried here so the active cross-asset identity is COMPLETE — the
+   * asset-class-agnostic ticket arms (perpetual / listed-future-option) read it to
+   * carry the right `settlement_style` onto the wire, the cross-class twin of the
+   * one-shot `ticketTarget.settlementStyle`. FX rests at LINEAR.
+   */
+  settlementStyle: SettlementStyle;
   /** The scope-crumb / display label ("EUR/USD", "XAU/USD", "AAPL", "BTC/USDT"). */
   label: string;
   /** Stable id (the projected pair id — one id space across classes). */
@@ -352,6 +361,7 @@ export function AppProvider({
       nonFxUnderlier ?? {
         assetClass: "FX",
         underlying: { kind: "fx", fx: pairCtx.pair, settlementCcy: pairCtx.pair.quote },
+        settlementStyle: "LINEAR",
         label: pairLabel(pairCtx.pair),
         id: pairId(pairCtx.pair),
       },
@@ -499,6 +509,7 @@ export function AppProvider({
     setNonFxUnderlier({
       assetClass: underlierAssetClass(row.underlying),
       underlying: row.underlying,
+      settlementStyle: row.settlementStyle,
       label: row.label,
       id: row.id,
     });

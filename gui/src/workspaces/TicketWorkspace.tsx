@@ -327,6 +327,12 @@ export function TicketWorkspace(): React.ReactElement {
       // The active underlier's class (FX for a plain pair) — already resolved by
       // AppContext from the scope crumb; the class-aware gallery/Greeks/risk read it.
       assetClass: app.underlier.assetClass,
+      // The active non-FX underlier identity (its `Underlying` arm + settlement
+      // style): the asset-class-agnostic arms (perpetual / listed-future-option)
+      // read it to carry the cross-asset wire keys; the FX-native exotics ignore it.
+      // FX rests at the fx arm + LINEAR, so the overlay resolver returns undefined
+      // and every FX/metal instrument stays byte-identical.
+      underlier: { underlying: app.underlier.underlying, settlementStyle: app.underlier.settlementStyle },
       tenor: resolved.tenor,
       tenorYears,
       notionalMm,
@@ -339,6 +345,8 @@ export function TicketWorkspace(): React.ReactElement {
     [
       app.pairCtx.pair,
       app.underlier.assetClass,
+      app.underlier.underlying,
+      app.underlier.settlementStyle,
       resolved.tenor,
       tenorYears,
       notionalMm,
