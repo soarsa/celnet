@@ -85,21 +85,40 @@ Run from `/Users/adrian/code/celeroption`. (Currently all four are UP.)
 - `excel/tools/build_trader_workbook.py` (the workbook generator);
 - `celer-logo.png` (rasterized brand mark, root — move under assets or gitignore).
 
-## Trader workbook — `~/Desktop/Celnet-Trader.xlsx`
+## Trader workbook — `~/Desktop/Celnet-Trader.xlsx` (multi-asset refresh)
 
-- Generator: `excel/tools/build_trader_workbook.py` (run with the venv:
-  `/tmp/celnet-xlsx-venv/bin/python excel/tools/build_trader_workbook.py`; venv has
-  `xlsxwriter`+`pillow`). Logo at `/tmp/celer-logo.png`.
-- **Dark Celer theme** (navy canvas, coral/indigo accents, pinwheel + wordmark,
-  Anaheim, build-stamp). 5 sheets: Market & Vol (marking + **date-based vol term-
-  structure chart**) · **Axes** (multi-pair contribute/receive board) · Structuring
-  (PRICE/GREEKS + polymorphic `INSTRUMENT`→PRICE for exotics) · Trading (RFQ +
-  SUBSCRIBE) · Risk & Book.
-- **VERIFIED:** structural — uses **only the 13 registered functions**, **no
-  `_xlfn.` prefix** (Office custom fns resolve as plain `CELNET.X`; the `_xlfn.`
-  detour was wrong); functional — `npm --prefix excel run verify:headless` PASS
-  (every `CELNET.*` returns real values vs a live edge). It will price the moment
-  the add-in's shared runtime is live.
+- Generator: `excel/tools/build_trader_workbook.py` (venv:
+  `/tmp/celnet-xlsx-venv/bin/python excel/tools/build_trader_workbook.py [out.xlsx]`;
+  venv has `xlsxwriter`+`pillow`+`openpyxl`). Logo resolved from the repo-root
+  `celer-logo.png` (graceful fallback). Designed competitor-first (Bloomberg OVDV
+  bump-and-watch, Murex one-screen term-sheets) → a SOTA multi-asset demo.
+- **Dark Celer theme** (navy canvas, coral #ff7357 / indigo #6b6bf5 accents,
+  pinwheel + Anaheim wordmark, 6px coral cap-rail, build-stamp). It tells **one
+  trading day** across **10 sheets** (tab strip = the day): Cover & Legend ·
+  Market & Vol (live observables + editable ATM/RR/BF smile marking → MARKSURFACE +
+  the vol term-structure chart + SURFACE VV-vs-SABR) · **FX Majors** (the full 24-arm
+  flow — vanilla/RR/straddle/strangle, USDJPY barrier/touch/digital, GBPUSD
+  TARF/accumulator, var/vol-swap) · **FX EM & NDF** (USDBRL/USDKRW NDFs) · **Metals**
+  (first-class full-arm: XAU seagull, XAG one-touch, XAU TARF + SABR surface) ·
+  **Equity** (vanilla/perpetual/listed-future-option + the labelled **capability-wall**
+  demo) · **Commodity** (Brent/WTI leaves) · **Crypto** (BTC LINEAR vs INVERSE_COIN
+  side-by-side + ETH perpetual) · **Cross-Asset RV** (gold-vs-USD vega, BTC-vs-AAPL) ·
+  **Risk Cockpit** (server-aggregated RISK cube + POSITIONS + LIMITS RAG in one
+  numeraire). The desk sheets share one `desk_sheet` factory (column-stable scenario
+  ladder: label | product | editable terms-range | INSTRUMENT token | INDEX-extracted
+  scalar premium/Δ/ν | one featured full PRICE+RFQ spill per desk). The capability
+  matrix is enforced in ONE place + shown as a feature.
+- **VERIFIED (validation harness, kept tooling):** `excel/tools/wb_extract.py`
+  resolves every `INSTRUMENT` cell's terms-range; `excel/scripts/wbShape.ts` runs the
+  REAL `shapeSpecInstrument` over them → **33/34 build, 1 = the intentional Equity
+  capability-wall BARRIER**. Structural: **only the 13 registered functions, no
+  `_xlfn.`**, `<calcPr fullCalcOnLoad="1">` (auto-recompute on open), all cross-asset
+  cells leaf-only (vanilla/perpetual/future-option) except the wall. Layout is
+  collision-free (the dense ladder uses non-spilling `=INDEX(CELNET.PRICE(tok),1,2)`
+  scalars; full spills get dedicated roomy blocks). It prices the moment the add-in's
+  shared runtime is live (the families are conformance-proven; cross-asset live-probed).
+  Regenerate + re-validate: `… build_trader_workbook.py /tmp/wb.xlsx && … wb_extract.py
+  /tmp/wb.xlsx && (cd excel && node --import tsx scripts/wbShape.ts)`.
 
 ## Pending (next step)
 
