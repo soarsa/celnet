@@ -871,6 +871,40 @@ function registerAll(): void {
   cf.associate("STATUS", STATUS as (...a: never[]) => unknown);
 }
 
+/**
+ * Persist "load this add-in's shared runtime when a workbook opens" so the
+ * `CELNET.*` functions are registered AT OPEN TIME — before the workbook's
+ * `fullCalcOnLoad` recompute runs — without the trader first clicking the ribbon
+ * to warm the task pane. Without this, a workbook that references the functions
+ * opens, recalculates once against an un-warmed runtime (every cell errors), and
+ * then never re-recalculates when the runtime later registers — so the desk sees
+ * a sheet of errors until a manual recalc. With it, the runtime is live on open
+ * and the cells populate their live server values straight away.
+ *
+ * Shared-runtime-only API (the manifest declares `SharedRuntime`); feature-detected
+ * and best-effort so an older/unsupported host silently falls back to the manual
+ * ribbon warm-up. The setting persists per add-in for the user, so it is set once
+ * and every subsequent open auto-warms.
+ */
+function ensureAutoLoadOnOpen(): void {
+  const office = (
+    globalThis as unknown as {
+      Office?: {
+        addin?: { setStartupBehavior?: (behavior: unknown) => Promise<void> };
+        StartupBehavior?: { load?: unknown };
+      };
+    }
+  ).Office;
+  const addin = office?.addin;
+  const setStartupBehavior = addin?.setStartupBehavior;
+  const load = office?.StartupBehavior?.load;
+  if (addin && typeof setStartupBehavior === "function" && load !== undefined) {
+    void setStartupBehavior.call(addin, load).catch(() => {
+      // Best-effort: an unsupported host/older build keeps the manual ribbon warm-up.
+    });
+  }
+}
+
 // Run registration INSIDE the Office host once office.js has defined the
 // `CustomFunctions` global — calling at bare module top-level can win the race and
 // silently no-op (the `if (!cf) return` above), leaving the registered names with
@@ -879,7 +913,12 @@ function registerAll(): void {
 // node / unit tests (no Office host) fall back to a direct call (a no-op without CF).
 const officeHost = (globalThis as unknown as { Office?: { onReady?: (cb: () => void) => void } }).Office;
 if (officeHost && typeof officeHost.onReady === "function") {
-  officeHost.onReady(() => registerAll());
+  officeHost.onReady(() => {
+    registerAll();
+    // Make every subsequent workbook open auto-warm the runtime (so fullCalcOnLoad
+    // populates live values without a manual ribbon click).
+    ensureAutoLoadOnOpen();
+  });
 } else {
   registerAll();
 }
