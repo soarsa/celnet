@@ -225,8 +225,12 @@ describe("CELNET.RFQ panel spill", () => {
     // Non-touch rows carry an empty marker, never a fabricated one.
     expect(spill[2]![4]).toBe("");
     expect(spill[3]![4]).toBe("");
-    // The aggregate quote id (a string — 64-bit precision) for the accept path.
-    expect(spill[5]).toEqual(["quote_id", "42"]);
+    // The aggregate quote id (a string — 64-bit precision) for the accept path,
+    // padded to the panel width: Office.js requires a rectangular return, so the
+    // quote_id row carries empty trailing cells rather than a short (ragged) row.
+    expect(spill[5]).toEqual(["quote_id", "42", "", "", ""]);
+    // Every row is the same width (no ragged spill → no Excel "add-in error").
+    expect(new Set(spill.map((r) => r.length)).size).toBe(1);
     // The convention-transparency footer (docs §3.4) closes the spill.
     expect(String(spill[6]![0])).toContain("conv:");
     expect(String(spill[6]![0])).toContain("surface v7");

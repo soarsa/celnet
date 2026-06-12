@@ -2842,6 +2842,27 @@ export function shapeTouch(args: TouchArgs): Instrument {
 export type SpillMatrix = (string | number)[][];
 
 /**
+ * Pad a spill to a RECTANGULAR matrix — every row to the width of the widest row,
+ * short rows right-filled with empty cells.
+ *
+ * Office.js custom functions REQUIRE a returned 2-D array to be rectangular (all
+ * rows the same column count). A ragged return — e.g. a 4-column RFQ row followed
+ * by a single-cell convention footer — fails in the Excel custom-functions runtime
+ * with an opaque "add-in error", yet passes node/unit tests and the headless e2e,
+ * which inspect the JS value directly and never round-trip it through the host's
+ * matrix serializer (the same headless-passes / webview-fails trap as the
+ * compiled-bundle root cause). Every `format*Spill` returns through here so the
+ * invariant holds for all 24 product arms + the surface/risk/observability spills.
+ */
+export function rectangular(rows: SpillMatrix): SpillMatrix {
+  let width = 0;
+  for (const row of rows) if (row.length > width) width = row.length;
+  return rows.map((row) =>
+    row.length === width ? row : [...row, ...Array<string>(width - row.length).fill("")],
+  );
+}
+
+/**
  * The 13-Greek vector in the canonical contract order (the celnet-vanilla set,
  * `Greeks` field order in `celnet.proto` / contract.ts). `price` is the premium
  * and is surfaced separately by CELNET.PRICE; CELNET.GREEKS spills the 13 risk
@@ -2893,8 +2914,8 @@ export function formatGreeksSpill(
   epochNanos: bigint,
 ): SpillMatrix {
   const rows: SpillMatrix = GREEK_ROWS.map((r) => [r.label, greeks[r.key]]);
-  rows.push([conventionFooter(conv, surfaceVersion, epochNanos), ""]);
-  return rows;
+  rows.push([conventionFooter(conv, surfaceVersion, epochNanos)]);
+  return rectangular(rows);
 }
 
 /** A decoded smile point for surface formatting (delta, vol). */
@@ -2921,7 +2942,7 @@ export function formatSmileSpill(
   const footer: (string | number)[] = [
     `${arbFree ? "arb-free" : "ARB!"} | ${conventionFooter(conv, surfaceVersion, epochNanos)}`,
   ];
-  return [header, vols, footer];
+  return rectangular([header, vols, footer]);
 }
 
 /**
@@ -2951,7 +2972,7 @@ export function formatSurfaceCubeSpill(
     rows.push(row);
   }
   rows.push([conventionFooter(conv, surfaceVersion, epochNanos)]);
-  return rows;
+  return rectangular(rows);
 }
 
 /** The decoded fields a CELNET.RFQ spill renders. */
@@ -2976,10 +2997,10 @@ function validUntilIso(nanos: bigint): string {
  * strings to avoid JS number precision loss on the 64-bit wire ids.
  */
 export function formatRfqSpill(r: RfqResult): SpillMatrix {
-  return [
+  return rectangular([
     [r.bid, r.offer, r.quoteId.toString(), validUntilIso(r.validUntilNanos)],
     [conventionFooter(r.conventions, r.surfaceVersion, r.epochNanos)],
-  ];
+  ]);
 }
 
 /** One ranked LP line a CELNET.RFQ panel spill renders (server ranking order). */
@@ -3022,7 +3043,7 @@ export function formatRfqPanelSpill(r: RfqPanelResult): SpillMatrix {
   }
   rows.push(["quote_id", r.quoteId.toString()]);
   rows.push([conventionFooter(r.conventions, r.surfaceVersion, r.epochNanos)]);
-  return rows;
+  return rectangular(rows);
 }
 
 /** The decoded fields a VARSWAP-family spill renders (fair variance + fair vol). */
@@ -3042,11 +3063,11 @@ export interface VarSwapResult {
  */
 export function formatVarSwapSpill(r: VarSwapResult): SpillMatrix {
   const fairVol = r.fairVariance >= 0 ? Math.sqrt(r.fairVariance) : Number.NaN;
-  return [
+  return rectangular([
     ["fair_variance", r.fairVariance],
     ["fair_vol", fairVol],
     [conventionFooter(r.conventions, r.surfaceVersion, r.epochNanos)],
-  ];
+  ]);
 }
 
 /** The decoded fields a VOLSWAP-family spill renders (the convexity-adjusted fair vol). */
@@ -3064,10 +3085,10 @@ export interface VolSwapResult {
  * strictly below `√K_var` for any non-degenerate smile.
  */
 export function formatVolSwapSpill(r: VolSwapResult): SpillMatrix {
-  return [
+  return rectangular([
     ["fair_vol", r.fairVol],
     [conventionFooter(r.conventions, r.surfaceVersion, r.epochNanos)],
-  ];
+  ]);
 }
 
 /**
@@ -3111,7 +3132,7 @@ export function formatPremiumSpill(r: PremiumResult): SpillMatrix {
   if (r.stdError !== undefined) rows.push(["std_error", r.stdError]);
   for (const g of GREEK_ROWS) rows.push([g.label, r.greeks[g.key]]);
   rows.push([conventionFooter(r.conventions, r.surfaceVersion, r.epochNanos)]);
-  return rows;
+  return rectangular(rows);
 }
 
 /**
@@ -3146,7 +3167,7 @@ export function formatCalibratedSmileSpill(args: {
     `model ${args.actualModel}${mismatch} | ${args.arbFree ? "arb-free" : "ARB!"} | ` +
       conventionFooter(args.conv, args.surfaceVersion, args.epochNanos),
   ];
-  return [header, vols, footer];
+  return rectangular([header, vols, footer]);
 }
 
 /** A decoded market-series tick for a single trend cell render. */
@@ -3303,7 +3324,7 @@ export function formatRiskSpill(
     rows.push(row);
   }
   rows.push([riskFooter(numeraire, dimension, nodes.length)]);
-  return rows;
+  return rectangular(rows);
 }
 
 /**
@@ -3348,7 +3369,7 @@ export function formatPositionsSpill(positions: readonly RiskPosition[]): SpillM
   } else {
     rows.push([`${positions.length} position${positions.length === 1 ? "" : "s"}`]);
   }
-  return rows;
+  return rectangular(rows);
 }
 
 /**
@@ -3398,7 +3419,7 @@ export function formatLimitsSpill(
       `scope ${scopeLabel} | worst ${worst}${hardBreach ? " | HARD BREACH" : ""}`,
     ]);
   }
-  return rows;
+  return rectangular(rows);
 }
 
 // ---------------------------------------------------------------------------

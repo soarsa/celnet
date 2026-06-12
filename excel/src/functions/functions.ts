@@ -871,4 +871,15 @@ function registerAll(): void {
   cf.associate("STATUS", STATUS as (...a: never[]) => unknown);
 }
 
-registerAll();
+// Run registration INSIDE the Office host once office.js has defined the
+// `CustomFunctions` global — calling at bare module top-level can win the race and
+// silently no-op (the `if (!cf) return` above), leaving the registered names with
+// no implementation. Office.onReady fires after the runtime is initialized, so the
+// associate() calls reliably land in the (shared) custom-functions runtime. Under
+// node / unit tests (no Office host) fall back to a direct call (a no-op without CF).
+const officeHost = (globalThis as unknown as { Office?: { onReady?: (cb: () => void) => void } }).Office;
+if (officeHost && typeof officeHost.onReady === "function") {
+  officeHost.onReady(() => registerAll());
+} else {
+  registerAll();
+}

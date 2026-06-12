@@ -4,11 +4,17 @@ import {
   GREEK_ROWS,
   ShapingError,
   conventionFooter,
+  formatCalibratedSmileSpill,
   formatGreeksSpill,
+  formatPremiumSpill,
   formatRfqSpill,
+  formatServerStatusSpill,
   formatSmileSpill,
   formatSurfaceCubeSpill,
+  formatVarSwapSpill,
+  formatVolSwapSpill,
   parseOptionType,
+  rectangular,
   parsePair,
   parseStrikeOrDelta,
   parseTenor,
@@ -176,6 +182,50 @@ describe("dynamic-array formatting", () => {
     expect(m[0]?.[1]).toBe(0.041);
     expect(m[0]?.[2]).toBe("123"); // bigint id rendered as string (no precision loss)
     expect(String(m[1]?.[0])).toContain("surface v5");
+  });
+});
+
+describe("spill matrices are rectangular (Office.js custom-function requirement)", () => {
+  // Office.js fails a ragged 2-D return in the Excel custom-functions runtime with
+  // an opaque "add-in error" (node/headless never round-trips the value through the
+  // host serializer, so it silently accepts a jagged array). Every format*Spill
+  // funnels through rectangular(); guard the chokepoint AND the workbook-exercised
+  // spills so a wide data row + single-cell footer can never regress.
+  const isRectangular = (m: (string | number)[][]): boolean =>
+    new Set(m.map((r) => r.length)).size <= 1;
+
+  it("rectangular() pads short rows and leaves equal-width rows intact", () => {
+    expect(rectangular([["a", 1, 2], ["b"]])).toEqual([["a", 1, 2], ["b", "", ""]]);
+    expect(rectangular([["a", 1], ["b", 2]])).toEqual([["a", 1], ["b", 2]]);
+    expect(rectangular([])).toEqual([]);
+  });
+
+  it("every spill the trader workbook calls returns equal-width rows", () => {
+    const c = DEFAULT_CONVENTIONS;
+    const matrices: (string | number)[][][] = [
+      formatGreeksSpill(SAMPLE_GREEKS, c, 1n, 0n),
+      formatPremiumSpill({ premium: 0.04, greeks: SAMPLE_GREEKS, conventions: c, surfaceVersion: 1n, epochNanos: 0n }),
+      // The MC variant adds a std_error row — still rectangular.
+      formatPremiumSpill({ premium: 0.04, stdError: 1e-4, greeks: SAMPLE_GREEKS, conventions: c, surfaceVersion: 1n, epochNanos: 0n }),
+      formatRfqSpill({ bid: 0.039, offer: 0.041, quoteId: 1n, validUntilNanos: 0n, conventions: c, surfaceVersion: 1n, epochNanos: 0n }),
+      formatSmileSpill([{ delta: -0.25, vol: 0.11 }, { delta: 0, vol: 0.1 }, { delta: 0.25, vol: 0.101 }], true, c, 1n, 0n),
+      formatVarSwapSpill({ fairVariance: 0.01, conventions: c, surfaceVersion: 1n, epochNanos: 0n }),
+      formatVolSwapSpill({ fairVol: 0.1, conventions: c, surfaceVersion: 1n, epochNanos: 0n }),
+      formatCalibratedSmileSpill({
+        points: [{ delta: 0, vol: 0.1 }, { delta: 0.25, vol: 0.102 }],
+        requestedModel: "MARKET_HEDGE",
+        actualModel: "STOCHASTIC_VOL",
+        arbFree: true,
+        conv: c,
+        surfaceVersion: 2n,
+        epochNanos: 0n,
+      }),
+      formatServerStatusSpill(true, undefined),
+    ];
+    for (const m of matrices) {
+      expect(m.length).toBeGreaterThan(0);
+      expect(isRectangular(m)).toBe(true);
+    }
   });
 });
 

@@ -9,7 +9,21 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Anaheim:wght@400..800&display=swap" rel="stylesheet" />
     <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+    <script>
+      // Dev bring-up: the add-in is served over HTTPS (Office requirement), so a
+      // plain ws:// to the edge is blocked as mixed content. Dial the trusted
+      // wss:// bridge (→ the plain-ws edge) on the same host. The add-in's own
+      // CELNET_WS_ENDPOINT override (taskpane.ts / functions/runtime.ts) reads this.
+      if (location.protocol === "https:") {
+        window.CELNET_WS_ENDPOINT = "wss://" + location.hostname + ":8443";
+      }
+    </script>
     <link rel="stylesheet" href="./taskpane/taskpane.css" />
+    <!-- Shared runtime: this page hosts BOTH the task-pane UI and the custom
+         functions. taskpane.ts renders the ticket; functions.ts registers the
+         CELNET.* worksheet functions (CustomFunctions.associate) in the same
+         long-lived runtime — the reliable Excel-for-Mac pattern. -->
+    <script type="module" src="./functions/functions.ts"></script>
     <script type="module" src="./taskpane/taskpane.ts"></script>
   </head>
   <body>

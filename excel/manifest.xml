@@ -22,7 +22,7 @@
   xsi:type="TaskPaneApp">
 
   <Id>b45578c3-e46b-4001-b56f-693baf323ab3</Id>
-  <Version>1.0.0.0</Version>
+  <Version>1.0.1.0</Version>
   <ProviderName>Celnet</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Celnet FX Options" />
@@ -41,7 +41,7 @@
 
   <Requirements>
     <Sets DefaultMinVersion="1.1">
-      <Set Name="CustomFunctionsRuntime" MinVersion="1.1" />
+      <Set Name="SharedRuntime" MinVersion="1.1" />
     </Sets>
   </Requirements>
 
@@ -54,13 +54,21 @@
   <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
     <Hosts>
       <Host xsi:type="Workbook">
+        <!-- SHARED RUNTIME: one long-lived runtime (the task-pane page) hosts BOTH
+             the task pane UI and the custom functions — the reliable Excel-for-Mac
+             pattern. The CustomFunctions Script/Page therefore point at the same
+             page as the task pane; that page (taskpane.html) registers the
+             functions (CustomFunctions.associate) alongside rendering the UI. -->
+        <Runtimes>
+          <Runtime resid="Celnet.Taskpane.Url" lifetime="long" />
+        </Runtimes>
         <AllFormFactors>
           <ExtensionPoint xsi:type="CustomFunctions">
             <Script>
-              <SourceLocation resid="Celnet.Functions.Script" />
+              <SourceLocation resid="Celnet.Taskpane.Url" />
             </Script>
             <Page>
-              <SourceLocation resid="Celnet.Functions.Page" />
+              <SourceLocation resid="Celnet.Taskpane.Url" />
             </Page>
             <Metadata>
               <SourceLocation resid="Celnet.Functions.Metadata" />
@@ -75,6 +83,7 @@
             <Description resid="Celnet.GetStarted.Description" />
             <LearnMoreUrl resid="Celnet.Taskpane.Url" />
           </GetStarted>
+          <FunctionFile resid="Celnet.Taskpane.Url" />
           <ExtensionPoint xsi:type="PrimaryCommandSurface">
             <OfficeTab id="TabHome">
               <Group id="Celnet.Group">
@@ -127,7 +136,7 @@
       </bt:ShortStrings>
       <bt:LongStrings>
         <bt:String id="Celnet.Taskpane.Tooltip" DefaultValue="Open the Celnet ticket: RFQ, click-to-trade, and surface contribution." />
-        <bt:String id="Celnet.GetStarted.Description" DefaultValue="Build any instrument with =CELNET.INSTRUMENT(underlier, product, terms) — FX, metals, equity, commodity, crypto — then price it with =CELNET.PRICE, =CELNET.GREEKS, =CELNET.RFQ or =CELNET.SUBSCRIBE. Also =CELNET.SURFACE, =CELNET.MARKSURFACE, =CELNET.SERIES, =CELNET.MARK, =CELNET.RISK, =CELNET.POSITIONS, =CELNET.LIMITS and =CELNET.STATUS, and the Celnet Ticket task pane." />
+        <bt:String id="Celnet.GetStarted.Description" DefaultValue="Build any instrument with =CELNET.INSTRUMENT, then price with =CELNET.PRICE, GREEKS, RFQ, SUBSCRIBE, SURFACE, RISK, POSITIONS and STATUS across FX, metals, equity, commodity and crypto — plus the Celnet Ticket task pane." />
       </bt:LongStrings>
     </Resources>
   </VersionOverrides>
