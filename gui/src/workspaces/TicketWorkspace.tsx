@@ -869,7 +869,7 @@ export function TicketWorkspace(): React.ReactElement {
 
         {quote && !isSwap(structure) && (
           <div className={styles.greeksRow}>
-            <GreeksStrip greeks={quote.greeks} />
+            <GreeksStrip greeks={quote.greeks} assetClass={app.underlier.assetClass} />
           </div>
         )}
 
