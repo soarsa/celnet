@@ -1,0 +1,436 @@
+/*
+ * celer-tokens.css — Celer brand + semantic + motion token layer for the
+ * Excel task pane.
+ *
+ * SINGLE SOURCE OF TRUTH for all hex/OKLCH values in the pane. taskpane.css
+ * imports this file and must never re-declare a raw colour: every hex that
+ * previously appeared inline (--brand #ff7357, --accent #6b6bf5, navy, etc.)
+ * lives here. A brand refresh changes only this file.
+ *
+ * TOKEN CONTRACT (mirrors gui/src/design/tokens.css — keep in sync):
+ *
+ *   --brand        coral  #ff7357 → oklch(0.72 0.17 35)
+ *                  The Celer identity colour: logo/pinwheel fill, brand pulse,
+ *                  active-underlier accent, the live last-look ring.
+ *                  NOT a semantic up/down colour. Bid/offer stay green/red.
+ *   --brand-deep   darkened coral for pressed/hover states.
+ *   --brand-soft   low-alpha coral tint for backgrounds.
+ *   --accent       indigo #6b6bf5 → oklch(0.62 0.19 280)
+ *                  Focus rings, connection-pill connected state, primary btns.
+ *   --accent-soft  low-alpha indigo for button wash.
+ *   --navy / --raised / --field  navy surface ramp.
+ *   --font-brand   "Anaheim" — Celer display/wordmark/label face.
+ *   --font-mono    tabular-nums numeric face.
+ *
+ * SEMANTIC COLOURS (bid=green, offer=coral-red — never swap these):
+ *   --bid          green   — hit (sell) side; flash-up wash on upward tick.
+ *   --offer        red     — lift (buy) side; flash-dn wash on downward tick.
+ *   --ok / --warn / --bad  status palette.
+ *
+ * MOTION TOKENS (all gated behind prefers-reduced-motion):
+ *   --flash-decay  450ms  — quote wash decay duration.
+ *   --quote-in     180ms  — new-quote entrance / quote tile appear.
+ *   --ease-out     cubic-bezier(0.22, 1, 0.36, 1)
+ *   --ease-spring  cubic-bezier(0.34, 1.56, 0.64, 1)
+ *
+ * ANIMATION CLASSES (coordinator assigns to DOM elements as noted):
+ *
+ *   .quote-flash-up / .quote-flash-dn
+ *     Apply to the #rfq-bid / #rfq-offer .v value elements on every price
+ *     tick. The coordinator removes both classes, forces a reflow (read
+ *     offsetWidth), then re-adds the appropriate one — same restart idiom as
+ *     gui/src/components/PriceTile.tsx — so consecutive same-direction ticks
+ *     also replay the decay.
+ *     Static fallback: a persistent directional background tint (data-dir attr).
+ *
+ *   .quote-appear
+ *     Apply to the entire .two-way block when a new quote arrives (replace
+ *     "—" placeholders with live numbers). Fades + slides the tile in over
+ *     --quote-in. One-shot; remove after animationend.
+ *
+ *   .brand-pulse
+ *     Apply to any element that should breathe coral while the underlier is
+ *     active (coordinator uses it on the active-pair label / underlier tag).
+ *     Gentle opacity breath at 2.4 s; not a colour change.
+ *
+ *   .mark-spin
+ *     Apply to the .mark <svg> in .hdr on every quote tick to signal liveness.
+ *     A single 360° rotation over 600ms ease-out. Coordinator removes the
+ *     class in the animationend handler so it can be re-added on the next tick.
+ *
+ *   .mark-heartbeat
+ *     Apply to .mark when the connection drops (replace .mark-spin). A slow,
+ *     calm scale-pulse at 2 s that signals "alive but disconnected" without
+ *     the directional spin of an active quote stream. Coordinator swaps to
+ *     .mark-spin the moment a new quote arrives.
+ *
+ *   .lastlook-ring
+ *     Apply to the #rfq-lastlook countdown text container. Uses a conic
+ *     background (no extra DOM; the gradient drains via a CSS custom-property
+ *     --ll-frac that the coordinator updates on each clock tick, 0→1 = full→
+ *     empty) to show the last-look window draining in brand coral. The
+ *     coordinator sets --ll-frac on the element's style attribute:
+ *       el.style.setProperty('--ll-frac', frac.toFixed(4));
+ *     where frac = remainingMs / totalWindowMs (clamped 0–1).
+ *
+ *   .pill-on / .pill-off
+ *     Connection pill states on #conn. pill-on uses --accent (indigo); pill-off
+ *     uses --bad (red). See coordinator: swap on WS open/close events.
+ *
+ *   .btn-trade-buy / .btn-trade-sell
+ *     Augmented trade-button states: spring-pop on enable + a ripple-like
+ *     brand flash on click (coordinator adds .btn-clicked, removes on
+ *     animationend). Disabled state inherits from base .btn:disabled.
+ */
+
+/* ============================================================
+   0. BRAND LAYER — raw brand values (never used outside tokens)
+   ============================================================ */
+
+:root {
+  /* Celer coral — oklch(0.72 0.17 35) ≈ #ff7357.
+   * hex fallback retained for non-oklch IE/legacy contexts (Office WebView
+   * on older Windows may not support oklch). Always prefer var(--brand). */
+  --brand:        oklch(0.72 0.17 35);
+  --brand-deep:   oklch(0.64 0.19 33);
+  --brand-soft:   oklch(0.72 0.17 35 / 0.16);
+
+  /* Celer indigo — oklch(0.62 0.19 280) ≈ #6b6bf5. */
+  --accent:       oklch(0.62 0.19 280);
+  --accent-soft:  oklch(0.62 0.19 280 / 0.20);
+
+  /* Navy surface ramp — hue ~264 to sit warm-cool-neutral under indigo. */
+  --navy:   oklch(0.255 0.018 264);   /* base bg  ≈ #1B1F2A */
+  --raised: oklch(0.315 0.022 264);   /* card bg  ≈ #282C3E */
+  --field:  oklch(0.21  0.016 264);   /* input bg ≈ #11141D */
+
+  /* Typography. */
+  --font-brand: "Anaheim", -apple-system, BlinkMacSystemFont, "Segoe UI",
+                system-ui, sans-serif;
+  --font-mono:  ui-monospace, "SF Mono", "IBM Plex Mono", "Menlo",
+                "Consolas", monospace;
+
+  /* Text ramp (periwinkle-grey secondary matches GUI --text-secondary). */
+  --text:         oklch(0.97 0.008 264);  /* primary   ≈ #EEF0F6 */
+  --muted:        oklch(0.80 0.030 276);  /* secondary ≈ #979CB7 */
+  --text-dim:     oklch(0.74 0.025 276);  /* tertiary */
+
+  /* ---- Semantic status colours ---- */
+  --ok:     oklch(0.78 0.16 155);  /* green — bid / healthy */
+  --warn:   oklch(0.82 0.16  75);  /* amber */
+  --bad:    oklch(0.70 0.17  25);  /* red   — danger / bad */
+
+  /* Bid = green (hit/sell), Offer = red (lift/buy).
+   * These are SEMANTIC directions — never coral, never brand. */
+  --bid:    oklch(0.78 0.16 155);
+  --offer:  oklch(0.70 0.17  25);
+
+  /* Quote flash washes — semi-transparent so underlying bid/offer colour
+   * shows through during the decay tail. Match GUI flash-up/flash-dn. */
+  --flash-up: oklch(0.85 0.18 155 / 0.50);
+  --flash-dn: oklch(0.78 0.19  25 / 0.50);
+
+  /* ---- Motion tokens (match gui/src/design/tokens.css exactly) ---- */
+  --flash-decay:    450ms;
+  --quote-in:       180ms;
+  --ease-out:       cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring:    cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* Structural / sizing tokens used by motion classes below. */
+  --r-sm:   6px;
+  --r-full: 999px;
+
+  /* Last-look ring: fraction of window remaining (0 = empty, 1 = full).
+   * Coordinator writes this on the element: el.style.setProperty('--ll-frac', v). */
+  --ll-frac: 1;
+}
+
+
+/* ============================================================
+   1. QUOTE FLASH — .quote-flash-up / .quote-flash-dn
+   Apply to the price value element (.v inside .qbox.bid or .qbox.offer).
+   Coordinator pattern (mirrors PriceTile.tsx restart idiom):
+     el.classList.remove('quote-flash-up', 'quote-flash-dn');
+     void el.offsetWidth;   // force reflow — restarts animation on re-add
+     el.classList.add(dir === 'up' ? 'quote-flash-up' : 'quote-flash-dn');
+     el.dataset.dir = dir;  // also set for reduced-motion static tint
+   ============================================================ */
+
+.quote-flash-up {
+  animation: celer-flash-up var(--flash-decay) var(--ease-out);
+}
+.quote-flash-dn {
+  animation: celer-flash-dn var(--flash-decay) var(--ease-out);
+}
+
+/* The wash animates background AND briefly lifts text to primary so the
+ * coloured flash-background does not collide with the same-hue bid/offer text
+ * (same fix applied in gui/PriceTile.module.css). fill-mode defaults to none
+ * so the persistent class never strands a low-contrast state at rest. */
+@keyframes celer-flash-up {
+  0% {
+    background-color: var(--flash-up);
+    color: var(--text);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+@keyframes celer-flash-dn {
+  0% {
+    background-color: var(--flash-dn);
+    color: var(--text);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+
+/* ============================================================
+   2. QUOTE APPEAR — .quote-appear
+   Apply to .two-way when a new live quote replaces the "—" placeholders.
+   One-shot: coordinator removes the class in the animationend handler.
+   ============================================================ */
+
+.quote-appear {
+  animation: celer-quote-in var(--quote-in) var(--ease-spring);
+}
+
+@keyframes celer-quote-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+
+/* ============================================================
+   3. BRAND PULSE — .brand-pulse
+   Apply to the active-underlier label / active pair tag. Gentle coral
+   opacity breath: signals a live stream without distraction.
+   ============================================================ */
+
+.brand-pulse {
+  animation: celer-brand-breath 2.4s var(--ease-out) infinite;
+  color: var(--brand);
+}
+
+@keyframes celer-brand-breath {
+  0%, 100% { opacity: 0.55; }
+  50%       { opacity: 1;    }
+}
+
+
+/* ============================================================
+   4. PINWHEEL MARK SPIN — .mark-spin
+   Apply to .hdr .mark <svg> on each quote tick (liveness signal).
+   Single 360° rotation; coordinator removes in animationend so the
+   next tick can re-add and replay.
+   ============================================================ */
+
+.mark-spin {
+  animation: celer-mark-spin 600ms var(--ease-out) 1 forwards;
+  transform-origin: center;
+}
+
+@keyframes celer-mark-spin {
+  from { transform: rotate(0deg);   }
+  to   { transform: rotate(360deg); }
+}
+
+
+/* ============================================================
+   5. MARK HEARTBEAT — .mark-heartbeat
+   Apply to .hdr .mark when the WebSocket connection drops (replaces
+   .mark-spin). Calm scale-pulse signals "alive but disconnected".
+   Coordinator swaps back to .mark-spin on the first arriving quote.
+   ============================================================ */
+
+.mark-heartbeat {
+  animation: celer-mark-beat 2s var(--ease-out) infinite;
+  transform-origin: center;
+}
+
+@keyframes celer-mark-beat {
+  0%, 100% { transform: scale(1);    opacity: 0.6; }
+  50%       { transform: scale(1.15); opacity: 1;   }
+}
+
+
+/* ============================================================
+   6. LAST-LOOK DRAINING RING — .lastlook-ring
+   Apply to #rfq-lastlook. The coordinator updates --ll-frac (0→1,
+   full→empty) on each clock tick via el.style.setProperty.
+
+   Implementation: a conic-gradient background that sweeps coral from
+   0deg (top) and transitions to the field colour at the fraction angle.
+   The track (full circle) uses the grid-line alpha as a dim overlay;
+   the live arc drains clockwise in brand coral.
+
+   The transition on background-image is intentionally omitted (CSS cannot
+   interpolate gradients without @property / Houdini, which is not
+   available in Office WebView). The coordinator fires at ~60 fps so the
+   per-frame repaint is visually smooth without a transition.
+   ============================================================ */
+
+.lastlook-ring {
+  /* Stack the draining arc (conic) over a dim full-circle track. */
+  background:
+    conic-gradient(
+      from -90deg,
+      var(--brand)  0deg,
+      var(--brand)  calc(var(--ll-frac) * 360deg),
+      oklch(1 0 0 / 0.06) calc(var(--ll-frac) * 360deg),
+      oklch(1 0 0 / 0.06) 360deg
+    );
+  /* Clip to a thin ring: inset equal to 100% minus stroke width. */
+  -webkit-mask-image: radial-gradient(
+    circle,
+    transparent calc(50% - 5px),
+    black       calc(50% - 5px),
+    black       50%,
+    transparent 50%
+  );
+  mask-image: radial-gradient(
+    circle,
+    transparent calc(50% - 5px),
+    black       calc(50% - 5px),
+    black       50%,
+    transparent 50%
+  );
+  /* Size: the coordinator can override via inline style if needed. */
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  /* Warn state: coordinator adds .lastlook-ring--warn at < 1.5 s remaining. */
+}
+
+.lastlook-ring--warn {
+  --brand: var(--warn);
+}
+
+.lastlook-ring--expired {
+  --brand: var(--bad);
+}
+
+
+/* ============================================================
+   7. TRADE BUTTON STATES — .btn-trade-buy / .btn-trade-sell
+   Augmented button states layered on top of .btn.primary / .btn.ghost.
+   The coordinator adds .btn-clicked on mousedown and removes it in
+   animationend — gives a spring-pop ripple confirming the action.
+   ============================================================ */
+
+.btn-trade-buy.btn-clicked,
+.btn-trade-sell.btn-clicked {
+  animation: celer-btn-pop 320ms var(--ease-spring);
+}
+
+@keyframes celer-btn-pop {
+  0%   { transform: scale(1);    }
+  45%  { transform: scale(0.94); }
+  100% { transform: scale(1);    }
+}
+
+/* Spring-in when buttons become enabled (coordinator adds .btn-enabled class,
+ * removes after animationend). Signals quote readiness without distraction. */
+.btn-trade-buy.btn-enabled,
+.btn-trade-sell.btn-enabled {
+  animation: celer-btn-enable var(--quote-in) var(--ease-spring);
+}
+
+@keyframes celer-btn-enable {
+  from { opacity: 0.4; transform: scale(0.96); }
+  to   { opacity: 1;   transform: scale(1);    }
+}
+
+
+/* ============================================================
+   8. CONNECTION PILL — .pill-on / .pill-off
+   These override the pill presentation from taskpane.css once this
+   file is imported. Coordinator swaps the class on #conn on WS
+   open/close. .pill-on pulses the accent indigo dot; .pill-off shows
+   a static dim-red dot (no animation — disconnected state is calm).
+   ============================================================ */
+
+.pill-on {
+  background: oklch(0.62 0.19 280 / 0.18);   /* --accent soft */
+  color: oklch(0.78 0.16 155);               /* --ok green */
+}
+
+.pill-on::before {
+  background: currentColor;
+  animation: celer-pill-dot 2.2s var(--ease-out) infinite;
+}
+
+@keyframes celer-pill-dot {
+  0%, 100% { opacity: 1;    transform: scale(1);    }
+  50%       { opacity: 0.55; transform: scale(0.85); }
+}
+
+.pill-off {
+  background: oklch(0.70 0.17 25 / 0.16);    /* --bad soft */
+  color: var(--muted);
+}
+
+.pill-off::before {
+  background: oklch(0.70 0.17 25);           /* --bad */
+  animation: none;
+}
+
+
+/* ============================================================
+   9. REDUCED-MOTION OVERRIDES
+   Every animation above is suppressed; static semantic tints replace
+   the directional flash so the state is still communicated.
+   ============================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+
+  /* Quote flash: static directional tint via data-dir rather than animation. */
+  .quote-flash-up,
+  .quote-flash-dn {
+    animation: none;
+  }
+  [data-dir="up"].quote-flash-up {
+    background-color: var(--flash-up);
+  }
+  [data-dir="down"].quote-flash-dn {
+    background-color: var(--flash-dn);
+  }
+
+  /* Suppress all other motion animations — retain structural styles. */
+  .quote-appear,
+  .brand-pulse,
+  .mark-spin,
+  .mark-heartbeat,
+  .btn-trade-buy.btn-clicked,
+  .btn-trade-sell.btn-clicked,
+  .btn-trade-buy.btn-enabled,
+  .btn-trade-sell.btn-enabled,
+  .pill-on::before {
+    animation: none;
+  }
+
+  /* Static fallback for brand-pulse: solid brand colour at reduced opacity. */
+  .brand-pulse {
+    opacity: 0.75;
+  }
+
+  /* Static fallback for mark-heartbeat: dim coral, no movement. */
+  .mark-heartbeat {
+    opacity: 0.6;
+  }
+
+  /* Connected pill dot stays solid, no pulse. */
+  .pill-on::before {
+    opacity: 1;
+    transform: none;
+  }
+}

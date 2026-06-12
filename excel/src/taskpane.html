@@ -18,6 +18,11 @@
         window.CELNET_WS_ENDPOINT = "wss://" + location.hostname + ":8443";
       }
     </script>
+    <!-- Brand + motion token layer MUST load before taskpane.css: taskpane.css
+         consumes the var(--brand / --accent / …) tokens and the .celer-* /
+         motion animation classes this file declares (single source of truth for
+         every hex/OKLCH value + keyframe in the pane). -->
+    <link rel="stylesheet" href="./taskpane/celer-tokens.css" />
     <link rel="stylesheet" href="./taskpane/taskpane.css" />
     <!-- Shared runtime: this page hosts BOTH the task-pane UI and the custom
          functions. taskpane.ts renders the ticket; functions.ts registers the
@@ -29,44 +34,114 @@
   <body>
     <main id="app" class="app">
       <header class="hdr">
-        <svg class="mark" viewBox="0 0 501 500" aria-hidden="true"><path fill="#ff7357" d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg>
+        <svg class="mark" viewBox="0 0 501 500" aria-hidden="true"><path fill="var(--brand)" d="M500.12.7H262.61V238.21C393.78,238.21,500.12,131.88,500.12.7M262.49,262V499.55H500C500,368.38,393.67,262,262.49,262M238.7,499.55V262H1.19c0,131.17,106.34,237.51,237.51,237.51M1.19,238.19H238.7V.67C107.53.67,1.19,107,1.19,238.19"/></svg>
         <h1>Celnet <span class="light">Ticket</span></h1>
-        <span id="conn" class="pill pill-off">disconnected</span>
+        <span id="conn" class="pill pill-off" role="status" aria-live="polite">disconnected</span>
       </header>
 
-      <section class="card">
-        <h2>RFQ</h2>
+      <section class="card" aria-labelledby="rfq-title">
+        <h2 id="rfq-title">RFQ · multi-dealer</h2>
+
+        <!-- Asset class → class-conditional underlier → priceable arm → terms. The
+             whole ticket builds the ONE celnet-proto contract; non-priceable arms
+             for a cross-asset class are dimmed (capability matrix) BEFORE request. -->
         <div class="frow">
-          <label>Pair <input id="rfq-pair" value="EURUSD" /></label>
-          <label>Tenor <input id="rfq-tenor" value="1Y" /></label>
-          <label>Strike / Δ <input id="rfq-strike" value="1.12" /></label>
-          <label>C / P <input id="rfq-cp" value="C" /></label>
-          <label class="full">Notional <input id="rfq-notional" value="1000000" /></label>
+          <label class="full" for="rfq-class">Asset class
+            <select id="rfq-class" aria-label="Asset class"></select>
+          </label>
         </div>
+
+        <!-- Class-conditional underlier fields. taskpane.ts shows exactly one of
+             these field-groups for the active class and wires updateUnderlier(). -->
+        <div id="und-fx" class="frow und-group" hidden>
+          <label class="full" for="und-pair">Pair
+            <input id="und-pair" autocomplete="off" spellcheck="false" placeholder="EURUSD" />
+          </label>
+        </div>
+
+        <div id="und-equity" class="frow und-group" hidden>
+          <label for="und-eq-ticker">Ticker
+            <input id="und-eq-ticker" autocomplete="off" spellcheck="false" placeholder="AAPL" />
+          </label>
+          <label for="und-eq-venue">Venue (MIC)
+            <input id="und-eq-venue" autocomplete="off" spellcheck="false" placeholder="XNAS" />
+          </label>
+          <label class="full" for="und-eq-ccy">Currency
+            <input id="und-eq-ccy" autocomplete="off" spellcheck="false" placeholder="USD" />
+          </label>
+        </div>
+
+        <div id="und-commodity" class="frow und-group" hidden>
+          <label for="und-cm-ticker">Symbol
+            <input id="und-cm-ticker" autocomplete="off" spellcheck="false" placeholder="BRENT" />
+          </label>
+          <label for="und-cm-ccy">Currency
+            <input id="und-cm-ccy" autocomplete="off" spellcheck="false" placeholder="USD" />
+          </label>
+        </div>
+
+        <div id="und-crypto" class="frow und-group" hidden>
+          <label for="und-cx-base">Base
+            <input id="und-cx-base" autocomplete="off" spellcheck="false" placeholder="BTC" />
+          </label>
+          <label for="und-cx-quote">Quote
+            <input id="und-cx-quote" autocomplete="off" spellcheck="false" placeholder="USD" />
+          </label>
+          <label class="full" for="und-cx-settle">Settlement
+            <select id="und-cx-settle" aria-label="Crypto settlement convention">
+              <option value="LINEAR">LINEAR (quote-margined)</option>
+              <option value="INVERSE_COIN">INVERSE_COIN (coin-margined 1/S)</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="frow">
+          <label for="rfq-arm">Product
+            <select id="rfq-arm" aria-label="Product arm"></select>
+          </label>
+          <label id="rfq-tenor-wrap" for="rfq-tenor">Tenor
+            <input id="rfq-tenor" autocomplete="off" spellcheck="false" placeholder="1Y" />
+          </label>
+          <label class="full" for="rfq-notional">Notional
+            <input id="rfq-notional" autocomplete="off" spellcheck="false" inputmode="decimal" placeholder="1" />
+          </label>
+          <label class="full" for="rfq-terms">Terms
+            <textarea id="rfq-terms" class="terms" rows="2" spellcheck="false"
+              aria-describedby="rfq-terms-help"
+              placeholder="strike ATM&#10;callPut C"></textarea>
+          </label>
+        </div>
+        <div id="rfq-terms-help" class="footnote terms-help">One term per line: <b>key</b> then its value(s), space-separated — the same grammar <code>CELNET.INSTRUMENT</code> reads (e.g. <code>strike ATM</code>, <code>legs C 25dC BUY</code>).</div>
+
         <div class="row">
           <button id="rfq-go" class="btn ghost">Request quote</button>
-          <span id="rfq-state" class="state"></span>
+          <span id="rfq-state" class="state" role="status" aria-live="polite"></span>
         </div>
+
+        <!-- The active two-way (touch best of the panel) — flashes on tick. -->
         <div class="two-way">
           <div class="qbox bid"><div class="k">Bid · hit (sell)</div><div id="rfq-bid" class="v">—</div></div>
           <div class="qbox offer"><div class="k">Offer · lift (buy)</div><div id="rfq-offer" class="v">—</div></div>
         </div>
-        <div id="rfq-lastlook" class="lastlook">no live quote</div>
-        <div class="btnrow">
-          <button id="trade-buy" class="btn primary" disabled>Trade BUY — lift offer</button>
-          <button id="trade-sell" class="btn ghost" disabled>Trade SELL — hit bid</button>
-        </div>
-        <div class="row"><span id="trade-state" class="state"></span></div>
+
+        <!-- The ranked multi-dealer panel: one row per LP, BEST badges, a
+             per-row draining last-look ring, and click-to-book (BUY lifts the
+             offer, SELL hits the bid). Replaces the single hardcoded dealer. -->
+        <div class="panel-head"><span>Dealer panel</span><span id="rfq-lastlook" class="state">no live quote</span></div>
+        <ul id="dealer-panel" class="dealer-panel" aria-label="Ranked dealer panel" aria-live="polite"></ul>
+
+        <div class="row"><span id="trade-state" class="state" role="status" aria-live="polite"></span></div>
+        <div class="footnote">Click a dealer's <b>BID</b> to hit (sell) or <b>OFFER</b> to lift (buy). The panel arrives pre-ranked by the server aggregator (best-first) and is never re-sorted; each line books on its own last-look window.</div>
       </section>
 
-      <section class="card">
-        <h2>Contribute mark</h2>
+      <section class="card" aria-labelledby="mk-title">
+        <h2 id="mk-title">Contribute mark</h2>
         <div class="frow">
-          <label>Pair <input id="mk-pair" value="EURUSD" /></label>
-          <label>Tenor <input id="mk-tenor" value="1Y" /></label>
-          <label>Pillar <input id="mk-pillar" value="ATM" /></label>
-          <label>Vol <input id="mk-vol" value="0.102" /></label>
-          <label class="full">Smile model
+          <label for="mk-pair">Pair <input id="mk-pair" value="EURUSD" autocomplete="off" spellcheck="false" /></label>
+          <label for="mk-tenor">Tenor <input id="mk-tenor" value="1Y" autocomplete="off" spellcheck="false" /></label>
+          <label for="mk-pillar">Pillar <input id="mk-pillar" value="ATM" autocomplete="off" spellcheck="false" /></label>
+          <label for="mk-vol">Vol <input id="mk-vol" value="0.102" autocomplete="off" spellcheck="false" inputmode="decimal" /></label>
+          <label class="full" for="mk-model">Smile model
             <select id="mk-model">
               <option value="VV">VV (market hedge)</option>
               <option value="SABR">SABR</option>
@@ -74,13 +149,13 @@
               <option value="SSVI">SSVI</option>
             </select>
           </label>
-          <label class="full">Comment <input id="mk-comment" value="" /></label>
+          <label class="full" for="mk-comment">Comment <input id="mk-comment" value="" autocomplete="off" /></label>
         </div>
         <div class="btnrow">
           <button id="mk-stage" class="btn ghost">Stage</button>
           <button id="mk-commit" class="btn primary" disabled>Confirm &amp; contribute</button>
         </div>
-        <div class="row"><span id="mk-state" class="state"></span></div>
+        <div class="row"><span id="mk-state" class="state" role="status" aria-live="polite"></span></div>
         <div id="mk-pending" class="result"></div>
         <div class="footnote">Two-phase mark: <b>Stage</b> previews the calibrated, arb-checked smile; <b>Confirm</b> deposits a new <b>surface_version</b> the whole firm pins. Re-mark under SABR / SVI / SSVI from the same panel.</div>
       </section>

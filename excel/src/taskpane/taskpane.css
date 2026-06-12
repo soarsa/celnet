@@ -6,22 +6,13 @@
  * wordmark, two-way bid/offer quote boxes, two-phase contribute card. The pane
  * renders the ONE celnet-proto contract over the shared WS mirror — no pricing
  * runs here; every number comes from the server (see taskpane.ts).
+ *
+ * ALL colour/motion tokens live in celer-tokens.css (the single source of
+ * truth, imported BEFORE this file in taskpane.html). This file only consumes
+ * the var(--brand / --accent / --bid / …) tokens and lays out the pane; it must
+ * never re-declare a raw hex/OKLCH value. A brand refresh changes only
+ * celer-tokens.css.
  */
-:root {
-  --brand: #ff7357;       /* Celer coral */
-  --brand-deep: #e85d42;
-  --accent: #6b6bf5;      /* indigo */
-  --navy: #1b1f2a;
-  --raised: #282c3e;
-  --field: #11141d;
-  --text: #eef0f6;
-  --muted: #979cb7;
-  --ok: #5fe0a0;
-  --warn: #ffcf70;
-  --bad: #ff8d76;
-  --bid: #ff8d76;         /* hit (sell) — coral-tinted */
-  --offer: #7ce6ad;       /* lift (buy) — green */
-}
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
   font-family: Anaheim, "Segoe UI", system-ui, sans-serif;
@@ -53,13 +44,25 @@ body {
 .frow { display: grid; grid-template-columns: 1fr 1fr; gap: 9px 12px; }
 label { display: block; font-size: 11px; color: var(--muted); letter-spacing: 0.4px; }
 label.full { grid-column: 1 / -1; margin-top: 9px; }
-input, select {
+input, select, textarea {
   width: 100%; margin-top: 3px; background: var(--field);
   border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 7px; height: 30px;
   padding: 0 10px; font: inherit; color: var(--text);
   font-variant-numeric: tabular-nums;
 }
+input:focus, select:focus, textarea:focus {
+  outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft);
+}
 select { appearance: none; cursor: pointer; }
+textarea.terms {
+  height: auto; min-height: 44px; padding: 7px 10px; line-height: 1.4; resize: vertical;
+  font-family: var(--font-mono);
+}
+
+/* Class-conditional underlier groups: taskpane.ts unhides exactly one. */
+.und-group[hidden] { display: none; }
+.terms-help { margin-top: 6px; }
+.terms-help code { font-family: var(--font-mono); color: var(--text); }
 
 /* ---- buttons ---- */
 .btnrow { display: flex; gap: 9px; margin-top: 12px; }
@@ -72,7 +75,7 @@ select { appearance: none; cursor: pointer; }
 .btn.primary:hover { background: var(--brand-deep); }
 .btn.ghost { background: transparent; border: 1px solid rgba(255, 255, 255, 0.16); color: var(--text); }
 .btn.ghost:hover { border-color: rgba(255, 255, 255, 0.32); }
-.btn:disabled { background: #20242f; border-color: transparent; color: var(--muted); cursor: not-allowed; }
+.btn:disabled { background: var(--raised); border-color: transparent; color: var(--muted); cursor: not-allowed; }
 
 /* ---- two-way quote boxes ---- */
 .two-way { display: flex; gap: 9px; margin: 12px 0 2px; }
@@ -83,6 +86,52 @@ select { appearance: none; cursor: pointer; }
 .qbox.offer .v { color: var(--offer); }
 .lastlook { margin-top: 8px; font-size: 11px; color: var(--muted); }
 .lastlook b { color: var(--text); }
+
+/* ---- ranked multi-dealer panel ---- */
+.panel-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  margin: 12px 0 6px; font-size: 10.5px; letter-spacing: 1px; text-transform: uppercase;
+  color: var(--muted); font-weight: 700;
+}
+.dealer-panel { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.dealer-panel:empty::after {
+  content: "Request a quote to fan out to the dealer panel.";
+  display: block; font-size: 11px; color: var(--muted); text-transform: none;
+  letter-spacing: 0; font-weight: 400; padding: 4px 2px;
+}
+.dealer-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto 44px;
+  align-items: center; gap: 9px;
+  background: var(--field); border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px; padding: 8px 10px;
+}
+.dealer-row.expired { opacity: 0.5; }
+.dealer-row .lp { font-weight: 700; font-size: 12px; color: var(--text); display: flex; align-items: center; gap: 6px; }
+.dealer-row .rank { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.badge {
+  font-size: 9px; font-weight: 800; letter-spacing: 0.6px; text-transform: uppercase;
+  padding: 1px 5px; border-radius: var(--r-full); color: var(--navy);
+}
+.badge.bid { background: var(--bid); }
+.badge.offer { background: var(--offer); }
+/* The two clickable side cells — hit the bid (sell) / lift the offer (buy). */
+.dealer-row .side-btn {
+  appearance: none; border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--field); color: var(--text); cursor: pointer;
+  border-radius: 7px; padding: 5px 9px; font: inherit; font-weight: 700;
+  font-variant-numeric: tabular-nums; text-align: right; line-height: 1.15;
+}
+.dealer-row .side-btn .lab {
+  display: block; font-size: 9px; font-weight: 600; letter-spacing: 0.4px;
+  text-transform: uppercase; color: var(--muted);
+}
+.dealer-row .side-btn.bid { color: var(--bid); }
+.dealer-row .side-btn.offer { color: var(--offer); }
+.dealer-row .side-btn:hover:not(:disabled) { border-color: var(--accent); }
+.dealer-row .side-btn:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.dealer-row .side-btn:disabled { cursor: not-allowed; opacity: 0.55; }
+.dealer-row .ring { width: 44px; height: 44px; justify-self: center; }
 
 /* ---- status + result ---- */
 .row { display: flex; align-items: center; gap: 9px; margin-top: 10px; flex-wrap: wrap; }
