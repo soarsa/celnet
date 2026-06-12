@@ -294,6 +294,11 @@ export const crossAssetSpec = defineProduct<CrossAssetInputs>({
   label: "Cross-asset vanilla",
   group: "Cross-asset (equity / commodity / crypto)",
   assetClass: "EQUITY",
+  // The cross-asset vanilla BUILDER for the three true cross-asset classes. METAL
+  // is intentionally excluded: a metal underlier structures through the FX-native
+  // specs (the full 24-arm set over the FX engine, XAUUSD-as-a-pair), so listing it
+  // here too would duplicate the vanilla card on a metal underlier.
+  applicableClasses: ["EQUITY", "COMMODITY", "CRYPTO"],
   summary:
     "European vanilla over an equity / commodity / crypto / metal underlying — the W1 cross-asset Underlying seam.",
   keywords: [

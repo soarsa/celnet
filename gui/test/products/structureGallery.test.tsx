@@ -128,3 +128,43 @@ describe("StructureGallery", () => {
     }
   });
 });
+
+/**
+ * Asset-class-aware discovery (multi-asset wave): the gallery surfaces the
+ * capability matrix as guidance — FX/metal keep the full catalogue; on a true
+ * cross-asset class the FX/metal-only families are dimmed + non-selectable with the
+ * honest reason, and a now-unpriceable selection is auto-reselected.
+ */
+describe("StructureGallery — asset-class awareness", () => {
+  const REASON = /only vanilla, perpetual and listed-future-option/i;
+
+  it("FX (and the default) keeps the full catalogue with no dimmed cards", () => {
+    render(<StructureGallery value="VANILLA" assetClass="FX" onSelect={() => {}} />);
+    expect(screen.getAllByRole("option")).toHaveLength(PRODUCT_REGISTRY.length);
+    expect(document.querySelectorAll('[aria-disabled="true"]')).toHaveLength(0);
+    expect(screen.queryAllByText(REASON)).toHaveLength(0);
+  });
+
+  it("EQUITY offers the cross-asset vanilla, dims FX-only families, and blocks selecting them", () => {
+    const onSelect = vi.fn();
+    render(<StructureGallery value="CROSS_ASSET_VANILLA" assetClass="EQUITY" onSelect={onSelect} />);
+
+    // The cross-asset vanilla is the available builder (a real, selectable option).
+    expect(screen.getByText("Cross-asset vanilla").closest('[role="option"]')).not.toBeNull();
+    // FX/metal-only families render dimmed (aria-disabled) with the honest reason.
+    const disabled = document.querySelectorAll('[aria-disabled="true"]');
+    expect(disabled.length).toBeGreaterThan(0);
+    expect(screen.queryAllByText(REASON).length).toBeGreaterThan(0);
+    // value is available ⇒ no auto-reselect on mount; a dimmed click does nothing.
+    expect(onSelect).not.toHaveBeenCalled();
+    fireEvent.click(disabled[0] as Element);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("auto-reselects an available family when the selection becomes unpriceable on the class", () => {
+    const onSelect = vi.fn();
+    render(<StructureGallery value="SINGLE_BARRIER" assetClass="EQUITY" onSelect={onSelect} />);
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect.mock.calls[0]?.[0]).not.toBe("SINGLE_BARRIER");
+  });
+});

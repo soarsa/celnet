@@ -114,6 +114,22 @@
   background: var(--accent-soft);
 }
 
+/* DIMMED: a family the active asset class cannot price (FX/metal-only). Shown in
+ * place — the capability matrix must be VISIBLE — but visibly inert: muted, no
+ * hover lift, not-allowed cursor, and skipped by the roving keyboard walk. The
+ * honest reason replaces the summary (and is the native `title` tooltip). */
+.card.dimmed {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: var(--bg-base);
+}
+.card.dimmed:hover {
+  background: var(--bg-base);
+}
+.card.dimmed .cardSummary {
+  font-style: italic;
+}
+
 .cardHead {
   display: flex;
   align-items: baseline;

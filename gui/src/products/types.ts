@@ -50,6 +50,15 @@ export const PRODUCT_GROUP_ORDER: readonly ProductGroup[] = [
 export interface ProductBuildCtx {
   /** The currency pair (base/quote 3-letter codes). */
   pair: { base: string; quote: string };
+  /**
+   * The active underlier's asset class (FX for a plain FX pair). Drives the
+   * class-aware discovery layer (the capability matrix in `capability.ts`), the
+   * Greeks / convention labels, and the risk shock axes — read ONLY by those
+   * class-aware consumers. Absent ⇒ treat as FX, so every existing ctx and the
+   * instrument a spec builds stay byte-identical (the economics ride `pair` /
+   * `underlying`, never this field).
+   */
+  assetClass?: AssetClass;
   /** The selected tenor (stamped onto the instrument; `expiryYears` stays authoritative). */
   tenor: Tenor;
   /** The tenor as a year fraction (the pricing-authoritative expiry). */
@@ -86,8 +95,17 @@ export interface ProductSpec<I> {
   label: string;
   /** Gallery group. */
   group: ProductGroup;
-  /** Asset class (FX today). */
+  /** Asset class (the spec's origin/identity class). */
   assetClass: AssetClass;
+  /**
+   * The asset classes this spec can STRUCTURE a priceable instrument for. Absent ⇒
+   * the FX-native default [FX, METAL] (the FX engine also prices a metal pair). The
+   * cross-asset vanilla gateway + the asset-class-agnostic arms (perpetual /
+   * listed-future-option) widen this. The discovery gallery reads it (via
+   * `capability.galleryCardStates`) to show only the products a trader can actually
+   * build on the active underlier, dimming the rest with the honest reason.
+   */
+  applicableClasses?: readonly AssetClass[];
   /** One-line gallery description. */
   summary: string;
   /** Extra search keywords for the gallery (method synonyms, aliases). */

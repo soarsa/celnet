@@ -324,6 +324,9 @@ export function TicketWorkspace(): React.ReactElement {
   const ctx = useMemo<ProductBuildCtx>(
     () => ({
       pair: app.pairCtx.pair,
+      // The active underlier's class (FX for a plain pair) — already resolved by
+      // AppContext from the scope crumb; the class-aware gallery/Greeks/risk read it.
+      assetClass: app.underlier.assetClass,
       tenor: resolved.tenor,
       tenorYears,
       notionalMm,
@@ -335,6 +338,7 @@ export function TicketWorkspace(): React.ReactElement {
     }),
     [
       app.pairCtx.pair,
+      app.underlier.assetClass,
       resolved.tenor,
       tenorYears,
       notionalMm,
@@ -594,6 +598,7 @@ export function TicketWorkspace(): React.ReactElement {
 
         <StructureGallery
           value={structure}
+          assetClass={app.underlier.assetClass}
           onSelect={(id) => {
             setStructure(id);
             clearPriced();
