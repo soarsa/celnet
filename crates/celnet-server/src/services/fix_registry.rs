@@ -112,7 +112,10 @@ impl FixAcceptorRegistry {
                     g.running.insert(def.id.clone(), acc);
                 }
                 Err(e) => {
-                    eprintln!("[fix-registry] could not start `{}` ({}): {e}", def.id, def.bind_addr);
+                    eprintln!(
+                        "[fix-registry] could not start `{}` ({}): {e}",
+                        def.id, def.bind_addr
+                    );
                 }
             }
         }
@@ -160,14 +163,22 @@ impl FixAcceptorRegistry {
     ///
     /// # Errors
     /// Not-found, validation, name conflict, address conflict, bind or persist failure.
-    pub async fn update(&self, id: &str, mut def: FixConnectionDef) -> Result<ConnectionStatus, String> {
+    pub async fn update(
+        &self,
+        id: &str,
+        mut def: FixConnectionDef,
+    ) -> Result<ConnectionStatus, String> {
         def.id = id.to_string();
         def.validate()?;
         let mut g = self.inner.lock().await;
         if g.store.get(id).is_none() {
             return Err(format!("no connection with id `{id}`"));
         }
-        if g.store.connections.iter().any(|c| c.id != id && c.name == def.name) {
+        if g.store
+            .connections
+            .iter()
+            .any(|c| c.id != id && c.name == def.name)
+        {
             return Err(format!("a connection named `{}` already exists", def.name));
         }
         // Drop any currently-running acceptor for this id before re-binding.
@@ -220,7 +231,11 @@ impl FixAcceptorRegistry {
     /// Apply (bind-if-enabled + store-upsert + persist) for `def`, with the guard
     /// held so the whole op is atomic w.r.t. other admin calls. On enable, an
     /// address already used by another enabled connection is rejected.
-    async fn commit(&self, g: &mut Inner, def: FixConnectionDef) -> Result<ConnectionStatus, String> {
+    async fn commit(
+        &self,
+        g: &mut Inner,
+        def: FixConnectionDef,
+    ) -> Result<ConnectionStatus, String> {
         if def.enabled {
             if let Some(other) = enabled_addr_conflict(g, &def) {
                 return Err(format!(

@@ -41,6 +41,14 @@ use celnet_proto::{
     ListFixMessagesResponse, SetFixConnectionEnabledRequest, SetFixConnectionEnabledResponse,
     UpdateFixConnectionRequest, UpdateFixConnectionResponse,
 };
+// AuthService — server-enforced sessions + user/desk administration (WS mirror).
+use celnet_proto::{
+    CreateDeskRequest, CreateDeskResponse, CreateUserRequest, CreateUserResponse,
+    DeleteDeskRequest, DeleteDeskResponse, DeleteUserRequest, DeleteUserResponse, DeskDesc,
+    ListDesksRequest, ListDesksResponse, ListUsersRequest, ListUsersResponse, LoginRequest,
+    LoginResponse, LogoutRequest, LogoutResponse, ResetPasswordRequest, ResetPasswordResponse,
+    UpdateUserRequest, UpdateUserResponse, UserDesc,
+};
 
 /// A codec error: a malformed or out-of-contract JSON message. Carries a
 /// human-readable reason echoed back to the client as a typed `error` frame.
@@ -131,6 +139,14 @@ fn string_or_empty(o: &Map<String, Value>, key: &str) -> String {
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_owned()
+}
+
+/// An optional `String` field (`null`/absent/empty ⇒ `None`).
+fn opt_string(o: &Map<String, Value>, key: &str) -> Option<String> {
+    o.get(key)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .filter(|s| !s.is_empty())
 }
 
 /// An i32 proto enum-tag field defaulting to the proto3 zero value.
@@ -2039,6 +2055,176 @@ pub(super) fn list_fix_messages_response_to_json(r: &ListFixMessagesResponse) ->
         "latest_seq": r.latest_seq,
         "correlation_id": r.correlation_id,
     })
+}
+
+// ---------------------------------------------------------------------------
+// auth: server-enforced sessions + user / desk administration
+// ---------------------------------------------------------------------------
+
+/// A user account → JSON. `role` rides by its proto enum number (mirroring the
+/// other enum frames); the password hash is never present on the wire.
+fn user_desc_to_json(u: &UserDesc) -> Value {
+    json!({
+        "id": u.id,
+        "email": u.email,
+        "display_name": u.display_name,
+        "role": u.role,
+        "desk_id": u.desk_id,
+        "disabled": u.disabled,
+    })
+}
+
+/// A desk → JSON.
+fn desk_desc_to_json(d: &DeskDesc) -> Value {
+    json!({ "id": d.id, "name": d.name })
+}
+
+pub(super) fn login_request_from_json(o: &Map<String, Value>) -> Result<LoginRequest> {
+    Ok(LoginRequest {
+        email: string_field(o, "email")?,
+        password: string_field(o, "password")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn login_response_to_json(r: &LoginResponse) -> Value {
+    json!({
+        "session_token": r.session_token,
+        "user": r.user.as_ref().map(user_desc_to_json),
+        "expires_nanos": r.expires_nanos,
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn logout_request_from_json(o: &Map<String, Value>) -> Result<LogoutRequest> {
+    Ok(LogoutRequest {
+        session_token: string_field(o, "session_token")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn logout_response_to_json(r: &LogoutResponse) -> Value {
+    json!({ "ended": r.ended, "correlation_id": r.correlation_id })
+}
+
+pub(super) fn list_users_request_from_json(o: &Map<String, Value>) -> Result<ListUsersRequest> {
+    Ok(ListUsersRequest {
+        session_token: string_field(o, "session_token")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn list_users_response_to_json(r: &ListUsersResponse) -> Value {
+    json!({
+        "users": Value::Array(r.users.iter().map(user_desc_to_json).collect()),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn create_user_request_from_json(o: &Map<String, Value>) -> Result<CreateUserRequest> {
+    Ok(CreateUserRequest {
+        session_token: string_field(o, "session_token")?,
+        email: string_field(o, "email")?,
+        display_name: string_field(o, "display_name")?,
+        role: enum_or_zero(o, "role"),
+        desk_id: opt_string(o, "desk_id"),
+        password: string_field(o, "password")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn create_user_response_to_json(r: &CreateUserResponse) -> Value {
+    json!({
+        "user": r.user.as_ref().map(user_desc_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn update_user_request_from_json(o: &Map<String, Value>) -> Result<UpdateUserRequest> {
+    Ok(UpdateUserRequest {
+        session_token: string_field(o, "session_token")?,
+        id: string_field(o, "id")?,
+        display_name: string_field(o, "display_name")?,
+        role: enum_or_zero(o, "role"),
+        desk_id: opt_string(o, "desk_id"),
+        disabled: bool_or_false(o, "disabled"),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn update_user_response_to_json(r: &UpdateUserResponse) -> Value {
+    json!({
+        "user": r.user.as_ref().map(user_desc_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn delete_user_request_from_json(o: &Map<String, Value>) -> Result<DeleteUserRequest> {
+    Ok(DeleteUserRequest {
+        session_token: string_field(o, "session_token")?,
+        id: string_field(o, "id")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn delete_user_response_to_json(r: &DeleteUserResponse) -> Value {
+    json!({ "removed": r.removed, "correlation_id": r.correlation_id })
+}
+
+pub(super) fn reset_password_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<ResetPasswordRequest> {
+    Ok(ResetPasswordRequest {
+        session_token: string_field(o, "session_token")?,
+        id: string_field(o, "id")?,
+        new_password: string_field(o, "new_password")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn reset_password_response_to_json(r: &ResetPasswordResponse) -> Value {
+    json!({ "correlation_id": r.correlation_id })
+}
+
+pub(super) fn list_desks_request_from_json(o: &Map<String, Value>) -> Result<ListDesksRequest> {
+    Ok(ListDesksRequest {
+        session_token: string_field(o, "session_token")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn list_desks_response_to_json(r: &ListDesksResponse) -> Value {
+    json!({
+        "desks": Value::Array(r.desks.iter().map(desk_desc_to_json).collect()),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn create_desk_request_from_json(o: &Map<String, Value>) -> Result<CreateDeskRequest> {
+    Ok(CreateDeskRequest {
+        session_token: string_field(o, "session_token")?,
+        name: string_field(o, "name")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn create_desk_response_to_json(r: &CreateDeskResponse) -> Value {
+    json!({
+        "desk": r.desk.as_ref().map(desk_desc_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn delete_desk_request_from_json(o: &Map<String, Value>) -> Result<DeleteDeskRequest> {
+    Ok(DeleteDeskRequest {
+        session_token: string_field(o, "session_token")?,
+        id: string_field(o, "id")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn delete_desk_response_to_json(r: &DeleteDeskResponse) -> Value {
+    json!({ "removed": r.removed, "correlation_id": r.correlation_id })
 }
 
 // ---------------------------------------------------------------------------

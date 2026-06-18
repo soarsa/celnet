@@ -193,6 +193,22 @@ mod tests {
             Arc::clone(&store),
             fix_monitor,
         ));
+        // A throwaway seeded identity store + session registry: the cap test never
+        // exercises auth, it just needs the edge the WS set now requires.
+        let mut identity = crate::config::identity::IdentityStore::default();
+        identity.ensure_seed_admin().expect("seed admin hashes");
+        let auth = Arc::new(crate::services::auth::AuthEdge::new(
+            Arc::new(std::sync::Mutex::new(identity)),
+            std::env::temp_dir().join(format!(
+                "celnet-ws-cap-identity-{}.json",
+                std::process::id()
+            )),
+            Arc::new(crate::services::sessions::SessionRegistry::new(
+                Clock::system(),
+            )),
+            Arc::clone(&gate),
+            Clock::system(),
+        ));
         let services = WsServices::new(
             link,
             gate,
@@ -202,6 +218,7 @@ mod tests {
             store,
             risk,
             fix_admin,
+            auth,
             None,
             LpPanelConfig { synthetic_lps: 0 },
         );

@@ -30,6 +30,9 @@ pub mod stream;
 pub mod surface;
 
 pub mod deploy;
+pub mod sessions;
+
+pub mod auth;
 pub mod fix;
 pub mod fix_admin;
 pub mod fix_monitor;

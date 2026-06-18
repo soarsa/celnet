@@ -206,7 +206,9 @@ impl FixAdminService for FixAdminEdge {
             req.correlation_id,
         )?;
         if req.id.trim().is_empty() {
-            return Err(Status::invalid_argument("set_enabled: missing connection id"));
+            return Err(Status::invalid_argument(
+                "set_enabled: missing connection id",
+            ));
         }
         let status = self
             .registry

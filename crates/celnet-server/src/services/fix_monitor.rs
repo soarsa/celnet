@@ -101,7 +101,13 @@ impl FixMonitor {
     /// Record one captured frame, assigning it the next capture sequence and
     /// evicting the oldest event once `capacity` is exceeded. Never blocks on the
     /// pricing core; the lock is held only for the push.
-    pub fn record(&self, connection_id: &str, direction: FixDirection, raw: &[u8], epoch_nanos: i64) {
+    pub fn record(
+        &self,
+        connection_id: &str,
+        direction: FixDirection,
+        raw: &[u8],
+        epoch_nanos: i64,
+    ) {
         let (msg_type, summary) = classify(raw);
         let event_raw = render_raw(raw);
         // A poisoned lock (a prior panic while recording) must not take down the
@@ -164,7 +170,10 @@ impl Default for FixMonitor {
 /// Render a raw FIX frame for display: SOH (`0x01`) → `|`, other bytes as UTF-8
 /// (lossy), so a monitor row shows `8=FIX.4.4|9=...|35=R|...` verbatim.
 fn render_raw(raw: &[u8]) -> String {
-    let mapped: Vec<u8> = raw.iter().map(|&b| if b == 0x01 { b'|' } else { b }).collect();
+    let mapped: Vec<u8> = raw
+        .iter()
+        .map(|&b| if b == 0x01 { b'|' } else { b })
+        .collect();
     String::from_utf8_lossy(&mapped).into_owned()
 }
 
@@ -232,7 +241,10 @@ mod tests {
         assert_eq!(events[0].summary, "QuoteRequest");
         assert_eq!(events[0].direction, FixDirection::Inbound);
         assert!(events[0].raw.contains("35=R"));
-        assert!(!events[0].raw.contains('\u{1}'), "SOH must be rendered as |");
+        assert!(
+            !events[0].raw.contains('\u{1}'),
+            "SOH must be rendered as |"
+        );
     }
 
     #[test]

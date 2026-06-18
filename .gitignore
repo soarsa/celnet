@@ -53,3 +53,8 @@ node_modules/
 # Managed inbound FIX-acceptor persisted store (runtime artifact; path from CELNET_FIX_CONFIG)
 fix-connections.json
 fix-connections.json.tmp
+
+# Operator identity store — users + desks + Argon2id password hashes (runtime
+# artifact; path from CELNET_IDENTITY_CONFIG). Never commit credentials.
+identity.json
+identity.json.tmp

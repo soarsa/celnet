@@ -107,6 +107,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 
+use celnet_proto::auth_service_server::AuthServiceServer;
 use celnet_proto::fix_admin_service_server::FixAdminServiceServer;
 use celnet_proto::pricing_service_server::PricingServiceServer;
 use celnet_proto::quote_service_server::QuoteServiceServer;
@@ -115,10 +116,13 @@ use celnet_proto::stream_service_server::StreamServiceServer;
 use celnet_proto::surface_service_server::SurfaceServiceServer;
 
 use config::fix_connections::FixConnectionStore;
+use config::identity::IdentityStore;
+use services::auth::AuthEdge;
 use services::fix::{FixAcceptor, FixContext};
 use services::fix_admin::FixAdminEdge;
 use services::fix_monitor::FixMonitor;
 use services::fix_registry::FixAcceptorRegistry;
+use services::sessions::SessionRegistry;
 
 /// The synthetic connection id the legacy env-seeded (`CELNET_FIX_ADDR`) / test-
 /// attached acceptor tags its captured frames with in the monitor — it is not a
@@ -437,6 +441,44 @@ impl Edge {
         ));
         let fix_admin = FixAdminServiceServer::from_arc(Arc::clone(&fix_admin_edge));
 
+        // The persisted operator identity (users + desks, `identity.json` / the
+        // `CELNET_IDENTITY_CONFIG` knob): loaded here (a corrupt file fails boot
+        // loudly), with the default administrator (`admin@celnet.com` / `password`)
+        // seeded and persisted on first run so a fresh edge is always administrable.
+        // ONE `AuthEdge` backs both the gRPC server and the WS mirror (shared behind
+        // an `Arc`); it mints and validates the server-enforced session tokens every
+        // administrative call carries, against the SAME session registry (process-
+        // local, emptied on restart). The registry stamps issue/expiry off the SAME
+        // edge clock every other service uses.
+        let identity_path = IdentityStore::config_path();
+        let mut identity_store = IdentityStore::load(&identity_path)
+            .map_err(|e| std::io::Error::new(e.kind(), format!("identity config: {e}")))?;
+        if identity_store
+            .ensure_seed_admin()
+            .map_err(std::io::Error::other)?
+        {
+            // The seeded admin uses a well-known default password — make its
+            // presence loud so an operator rotates it before any network exposure.
+            tracing::warn!(
+                class = celnet_observability::LogClass::Security.label(),
+                email = config::identity::SEED_ADMIN_EMAIL,
+                "SECURITY: default admin seeded with a well-known password — rotate it \
+                 via AuthService.ResetPassword before exposing the edge to any network"
+            );
+            identity_store
+                .save(&identity_path)
+                .map_err(|e| std::io::Error::new(e.kind(), format!("seed identity: {e}")))?;
+        }
+        let sessions = Arc::new(SessionRegistry::new(clock.clone()));
+        let auth_edge = Arc::new(AuthEdge::new(
+            Arc::new(std::sync::Mutex::new(identity_store)),
+            identity_path,
+            Arc::clone(&sessions),
+            Arc::clone(&gate),
+            clock.clone(),
+        ));
+        let auth = AuthServiceServer::from_arc(Arc::clone(&auth_edge));
+
         let incoming = tonic::transport::server::TcpIncoming::from_listener(listener, true, None)
             .map_err(std::io::Error::other)?;
         let grpc_task = tokio::spawn(async move {
@@ -447,6 +489,7 @@ impl Edge {
                 .add_service(surface)
                 .add_service(risk)
                 .add_service(fix_admin)
+                .add_service(auth)
                 .serve_with_incoming_shutdown(incoming, async {
                     let _ = grpc_rx.await;
                 })
@@ -470,6 +513,7 @@ impl Edge {
             Arc::clone(&store),
             Arc::clone(&risk_edge),
             Arc::clone(&fix_admin_edge),
+            Arc::clone(&auth_edge),
             fleet.clone(),
             panel,
         );

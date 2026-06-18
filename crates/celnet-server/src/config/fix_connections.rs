@@ -244,7 +244,11 @@ mod tests {
         let mut renamed = sample();
         renamed.name = "Bank A (renamed)".to_string();
         store.upsert(renamed);
-        assert_eq!(store.connections.len(), 1, "upsert must replace, not append");
+        assert_eq!(
+            store.connections.len(),
+            1,
+            "upsert must replace, not append"
+        );
         assert_eq!(store.get("opt-1").unwrap().name, "Bank A (renamed)");
         assert!(store.remove("opt-1"));
         assert!(!store.remove("opt-1"));

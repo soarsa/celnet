@@ -47,6 +47,9 @@ prost.workspace = true
 futures-util.workspace = true
 blake3.workspace = true
 getrandom.workspace = true
+# User-admin identity store (config/identity.rs): argon2id password hashing +
+# getrandom-seeded salts/session tokens (control plane, never the pricing core).
+argon2.workspace = true
 # Persisted FIX-connection definitions (config/fix_connections.rs) derive serde;
 # serde_json already serializes the contract elsewhere.
 serde = { workspace = true }

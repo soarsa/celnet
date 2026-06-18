@@ -3204,3 +3204,259 @@ service FixAdminService {
   // Poll the captured inbound/outbound session traffic for the monitor screen.
   rpc ListMessages(ListFixMessagesRequest) returns (ListFixMessagesResponse);
 }
+
+// ===========================================================================
+// AuthService — server-enforced sessions + user / desk administration.
+//
+// Login exchanges an email + password for an opaque bearer `session_token`; every
+// other RPC carries that token and the SERVER (not the client) resolves it to an
+// authenticated identity. Administrative RPCs additionally require the resolved
+// identity to be an admin. Passwords are Argon2id-hashed at rest and NEVER appear
+// on the wire in either direction.
+// ===========================================================================
+
+// A user's authority level. The proto3 zero default is the LEAST-privileged role
+// (TRADER), so a defaulted/forgotten value can never grant administration.
+enum UserRole {
+  // A desk member: sees their desk's inbound RFQ traffic. The zero default.
+  USER_ROLE_TRADER = 0;
+  // Full administration: user/desk CRUD, password resets, FIX connections.
+  USER_ROLE_ADMIN = 1;
+}
+
+// A user account as exposed on the wire. Carries NO password material.
+message UserDesc {
+  // Stable user id (the admin-API key).
+  string id = 1;
+  // Login email (unique, case-insensitive).
+  string email = 2;
+  // Human-friendly display name.
+  string display_name = 3;
+  // The user's authority level.
+  UserRole role = 4;
+  // The desk the user belongs to, by `DeskDesc.id`; absent ⇒ unassigned.
+  optional string desk_id = 5;
+  // Whether the account is disabled (retained but cannot log in).
+  bool disabled = 6;
+}
+
+// A desk: a named group traders belong to.
+message DeskDesc {
+  // Stable desk id (the admin-API key).
+  string id = 1;
+  // Human-friendly desk label.
+  string name = 2;
+}
+
+// Exchange credentials for a session token.
+message LoginRequest {
+  // The login email (case-insensitive).
+  string email = 1;
+  // The plaintext password (checked against the Argon2id hash, never stored).
+  string password = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+}
+// The issued session on success.
+message LoginResponse {
+  // The opaque bearer token to present on subsequent RPCs.
+  string session_token = 1;
+  // The authenticated user's profile.
+  UserDesc user = 2;
+  // Absolute session expiry (epoch nanos); re-login is required past it.
+  int64 expires_nanos = 3;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 4;
+}
+
+// Invalidate a session.
+message LogoutRequest {
+  // The bearer token to invalidate.
+  string session_token = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+// Logout acknowledgement.
+message LogoutResponse {
+  // Whether a live session was actually invalidated.
+  bool ended = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// List all users (admin only).
+message ListUsersRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+// The full user roster.
+message ListUsersResponse {
+  // Every user account, in creation order.
+  repeated UserDesc users = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Create a new user (admin only).
+message CreateUserRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The new user's login email (must be unique, case-insensitive).
+  string email = 2;
+  // The new user's display name.
+  string display_name = 3;
+  // The new user's authority level.
+  UserRole role = 4;
+  // The desk to assign, by `DeskDesc.id`; absent ⇒ unassigned.
+  optional string desk_id = 5;
+  // The initial plaintext password (hashed at rest, never stored in the clear).
+  string password = 6;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 7;
+}
+// The created user.
+message CreateUserResponse {
+  // The newly created account.
+  UserDesc user = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Update a user's profile / role / desk / disabled flag (admin only). Password is
+// changed only through `ResetPassword`, never here.
+message UpdateUserRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The id of the user to update.
+  string id = 2;
+  // The new display name.
+  string display_name = 3;
+  // The new authority level.
+  UserRole role = 4;
+  // The new desk assignment, by `DeskDesc.id`; absent ⇒ unassigned.
+  optional string desk_id = 5;
+  // The new disabled flag.
+  bool disabled = 6;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 7;
+}
+// The updated user.
+message UpdateUserResponse {
+  // The user after the update.
+  UserDesc user = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Delete a user (admin only).
+message DeleteUserRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The id of the user to delete.
+  string id = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+}
+// Delete acknowledgement.
+message DeleteUserResponse {
+  // Whether a user was removed.
+  bool removed = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Set a user's password (admin only). The admin may target any user, including
+// self, to rotate the seeded default credential.
+message ResetPasswordRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The id of the user whose password is set.
+  string id = 2;
+  // The new plaintext password (hashed at rest, never stored in the clear).
+  string new_password = 3;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 4;
+}
+// Reset acknowledgement.
+message ResetPasswordResponse {
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 1;
+}
+
+// List all desks (admin only).
+message ListDesksRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+// The full desk roster.
+message ListDesksResponse {
+  // Every desk, in creation order.
+  repeated DeskDesc desks = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Create a new desk (admin only).
+message CreateDeskRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The new desk's display name.
+  string name = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+}
+// The created desk.
+message CreateDeskResponse {
+  // The newly created desk.
+  DeskDesc desk = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Delete a desk (admin only). Members of the deleted desk become unassigned.
+message DeleteDeskRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The id of the desk to delete.
+  string id = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+}
+// Delete acknowledgement.
+message DeleteDeskResponse {
+  // Whether a desk was removed.
+  bool removed = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Server-enforced authentication + user/desk administration. Login mints a bearer
+// token the server validates on every subsequent RPC; administrative RPCs require
+// the resolved identity to be an admin. Accounts persist to disk and a default
+// admin is seeded on first run.
+service AuthService {
+  // Exchange email + password for a session token.
+  rpc Login(LoginRequest) returns (LoginResponse);
+  // Invalidate the caller's session token.
+  rpc Logout(LogoutRequest) returns (LogoutResponse);
+  // List all users (admin only).
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
+  // Create a user (admin only).
+  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse);
+  // Update a user's profile/role/desk/disabled flag (admin only).
+  rpc UpdateUser(UpdateUserRequest) returns (UpdateUserResponse);
+  // Delete a user (admin only).
+  rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse);
+  // Set a user's password (admin only).
+  rpc ResetPassword(ResetPasswordRequest) returns (ResetPasswordResponse);
+  // List all desks (admin only).
+  rpc ListDesks(ListDesksRequest) returns (ListDesksResponse);
+  // Create a desk (admin only).
+  rpc CreateDesk(CreateDeskRequest) returns (CreateDeskResponse);
+  // Delete a desk (admin only).
+  rpc DeleteDesk(DeleteDeskRequest) returns (DeleteDeskResponse);
+}

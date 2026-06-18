@@ -80,6 +80,7 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tonic::Request;
 
+use celnet_proto::auth_service_server::AuthService;
 use celnet_proto::fix_admin_service_server::FixAdminService;
 use celnet_proto::pricing_service_server::PricingService;
 use celnet_proto::quote_service_server::QuoteService;
@@ -90,9 +91,10 @@ use celnet_proto::{ClientStreamMessage, ServerStreamMessage, client_stream_messa
 use crate::clock::Clock;
 use crate::core_link::CoreLink;
 use crate::readiness::{InFlightGuard, ReadinessGate};
+use crate::services::auth::AuthEdge;
+use crate::services::fix_admin::FixAdminEdge;
 use crate::services::pricing::PricingEdge;
 use crate::services::quote::{LpPanelConfig, QuoteEdge};
-use crate::services::fix_admin::FixAdminEdge;
 use crate::services::risk::RiskEdge;
 use crate::services::risk::store::PositionStore;
 use crate::services::stream::{StreamEdge, run_session};
@@ -126,6 +128,7 @@ pub struct WsServices {
     surface: Arc<SurfaceEdge>,
     risk: Arc<RiskEdge>,
     fix_admin: Arc<FixAdminEdge>,
+    auth: Arc<AuthEdge>,
     gate: Arc<ReadinessGate>,
 }
 
@@ -146,6 +149,7 @@ impl WsServices {
         store: Arc<PositionStore>,
         risk: Arc<RiskEdge>,
         fix_admin: Arc<FixAdminEdge>,
+        auth: Arc<AuthEdge>,
         fleet: Option<Arc<crate::services::risk::federate::Fleet>>,
         panel: LpPanelConfig,
     ) -> Self {
@@ -193,6 +197,7 @@ impl WsServices {
             surface,
             risk,
             fix_admin,
+            auth,
             gate,
         }
     }
@@ -699,6 +704,86 @@ async fn handle_unary(
                 services.fix_admin.list_messages(Request::new(req)),
                 "fix_messages",
                 codec::list_fix_messages_response_to_json
+            )
+        }
+        "login" => {
+            let req = decode!(codec::login_request_from_json(o));
+            call!(
+                services.auth.login(Request::new(req)),
+                "login_result",
+                codec::login_response_to_json
+            )
+        }
+        "logout" => {
+            let req = decode!(codec::logout_request_from_json(o));
+            call!(
+                services.auth.logout(Request::new(req)),
+                "logout_result",
+                codec::logout_response_to_json
+            )
+        }
+        "list_users" => {
+            let req = decode!(codec::list_users_request_from_json(o));
+            call!(
+                services.auth.list_users(Request::new(req)),
+                "users",
+                codec::list_users_response_to_json
+            )
+        }
+        "create_user" => {
+            let req = decode!(codec::create_user_request_from_json(o));
+            call!(
+                services.auth.create_user(Request::new(req)),
+                "user_created",
+                codec::create_user_response_to_json
+            )
+        }
+        "update_user" => {
+            let req = decode!(codec::update_user_request_from_json(o));
+            call!(
+                services.auth.update_user(Request::new(req)),
+                "user_updated",
+                codec::update_user_response_to_json
+            )
+        }
+        "delete_user" => {
+            let req = decode!(codec::delete_user_request_from_json(o));
+            call!(
+                services.auth.delete_user(Request::new(req)),
+                "user_deleted",
+                codec::delete_user_response_to_json
+            )
+        }
+        "reset_password" => {
+            let req = decode!(codec::reset_password_request_from_json(o));
+            call!(
+                services.auth.reset_password(Request::new(req)),
+                "password_reset",
+                codec::reset_password_response_to_json
+            )
+        }
+        "list_desks" => {
+            let req = decode!(codec::list_desks_request_from_json(o));
+            call!(
+                services.auth.list_desks(Request::new(req)),
+                "desks",
+                codec::list_desks_response_to_json
+            )
+        }
+        "create_desk" => {
+            let req = decode!(codec::create_desk_request_from_json(o));
+            call!(
+                services.auth.create_desk(Request::new(req)),
+                "desk_created",
+                codec::create_desk_response_to_json
+            )
+        }
+        "delete_desk" => {
+            let req = decode!(codec::delete_desk_request_from_json(o));
+            call!(
+                services.auth.delete_desk(Request::new(req)),
+                "desk_deleted",
+                codec::delete_desk_response_to_json
             )
         }
         other => codec::error_frame(&format!("unknown request type `{other}`"), correlation_id),
