@@ -51,7 +51,7 @@ const T: &[u8] = b"20260605-12:00:00.000";
 const VENUE: &[u8] = b"CELNET";
 const CPTY: &[u8] = b"CELNET-CPTY";
 
-/// The dialect tag carrying vol-time in years (mirrors `services::fix::TAG_EXPIRY_YEARS`).
+/// The dialect tag carrying vol-time in years (mirrors `celnet_fix::dialect_fx::TAG_EXPIRY_YEARS`).
 const TAG_EXPIRY_YEARS: u32 = 7001;
 
 fn init_cfg() -> SessionConfig {

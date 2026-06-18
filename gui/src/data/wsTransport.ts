@@ -28,6 +28,8 @@ import type {
   DrillRiskRequest,
   DrillRiskResponse,
   Execution,
+  FixConnection,
+  FixConnectionSpec,
   Instrument,
   LimitStatusRequest,
   LimitStatusResponse,
@@ -49,15 +51,20 @@ import {
   ccyPairToWire,
   conventionsToWire,
   brokerQuoteSetToWire,
+  createFixConnectionRequestToWire,
+  deleteFixConnectionRequestToWire,
   drillRiskRequestToWire,
   drillRiskResponseFromWire,
   executedFromWire,
   executionFromWire,
+  fixConnectionResponseFromWire,
   greeksFromWire,
   heartbeatFromWire,
   instrumentToWire,
   limitStatusRequestToWire,
   limitStatusResponseFromWire,
+  listFixConnectionsRequestToWire,
+  listFixConnectionsResponseFromWire,
   listPositionsRequestToWire,
   listPositionsResponseFromWire,
   markedSurfaceFromWire,
@@ -73,9 +80,11 @@ import {
   riskBucketRequestToWire,
   scenarioResultFromWire,
   serializeFrame,
+  setFixConnectionEnabledRequestToWire,
   shockAxisToWire,
   smileFromWire,
   smileModelToWire,
+  updateFixConnectionRequestToWire,
   snapshotFromWire,
   streamRejectFromWire,
   updateFromWire,
@@ -655,6 +664,11 @@ export class WsTransport implements CelnetTransport {
     return this.conn.onState(listener);
   }
 
+  /** Snapshot of socket liveness (`true` iff the live socket is currently OPEN). */
+  isConnected(): boolean {
+    return this.conn.isOpen();
+  }
+
   async price(
     instrument: Instrument,
     market: MarketContext,
@@ -858,6 +872,52 @@ export class WsTransport implements CelnetTransport {
       "limit_status_response",
     );
     return limitStatusResponseFromWire(reply);
+  }
+
+  // --- FixAdminService — manage the inbound FIX acceptor connections ---------
+
+  async listFixConnections(): Promise<FixConnection[]> {
+    const reply = await this.conn.request(
+      "list_fix_connections",
+      listFixConnectionsRequestToWire(),
+      "fix_connections",
+    );
+    return listFixConnectionsResponseFromWire(reply);
+  }
+
+  async createFixConnection(spec: FixConnectionSpec): Promise<FixConnection> {
+    const reply = await this.conn.request(
+      "create_fix_connection",
+      createFixConnectionRequestToWire(spec),
+      "fix_connection_created",
+    );
+    return fixConnectionResponseFromWire(reply);
+  }
+
+  async updateFixConnection(id: string, spec: FixConnectionSpec): Promise<FixConnection> {
+    const reply = await this.conn.request(
+      "update_fix_connection",
+      updateFixConnectionRequestToWire(id, spec),
+      "fix_connection_updated",
+    );
+    return fixConnectionResponseFromWire(reply);
+  }
+
+  async deleteFixConnection(id: string): Promise<void> {
+    await this.conn.request(
+      "delete_fix_connection",
+      deleteFixConnectionRequestToWire(id),
+      "fix_connection_deleted",
+    );
+  }
+
+  async setFixConnectionEnabled(id: string, enabled: boolean): Promise<FixConnection> {
+    const reply = await this.conn.request(
+      "set_fix_connection_enabled",
+      setFixConnectionEnabledRequestToWire(id, enabled),
+      "fix_connection_enabled",
+    );
+    return fixConnectionResponseFromWire(reply);
   }
 
   /** Permanently close the underlying connection (call on app teardown). */

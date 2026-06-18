@@ -36,6 +36,9 @@ import type {
   EntitlementRule,
   Executed,
   Execution,
+  FixConnection,
+  FixConnectionKind,
+  FixConnectionSpec,
   FixingSchedule,
   Greeks,
   Heartbeat,
@@ -1585,3 +1588,88 @@ export function limitStatusResponseFromWire(o: WireObject): LimitStatusResponse 
 
 /** Re-export the `StrategyKind` type guard surface for callers that need it. */
 export type { StrategyKind };
+
+// ---------------------------------------------------------------------------
+// fix-admin: manage the inbound FIX acceptor connections
+// ---------------------------------------------------------------------------
+
+/** The wire enum tag for the FX-options dialect (`FixAcceptorKind.OPTIONS`). */
+const FIX_KIND_OPTIONS = 0;
+
+/** Domain kind → wire enum tag. Only `OPTIONS` exists today (phase-2 adds spot). */
+export function fixConnectionKindToWire(_kind: FixConnectionKind): number {
+  return FIX_KIND_OPTIONS;
+}
+
+/** Wire enum tag → domain kind (every value maps to `OPTIONS` until phase 2). */
+export function fixConnectionKindFromWire(_tag: number): FixConnectionKind {
+  return "OPTIONS";
+}
+
+/** A managed connection descriptor from its wire form. */
+export function fixConnectionFromWire(o: WireObject): FixConnection {
+  return {
+    id: str(o, "id"),
+    name: str(o, "name"),
+    kind: fixConnectionKindFromWire(enumNum(o, "kind")),
+    bindAddr: str(o, "bind_addr"),
+    senderCompId: str(o, "sender_comp_id"),
+    targetCompId: str(o, "target_comp_id"),
+    enabled: o["enabled"] === true,
+    running: o["running"] === true,
+    boundAddr: str(o, "bound_addr"),
+  };
+}
+
+/** The editable connection fields → the wire `spec` object. */
+function fixSpecToWire(spec: FixConnectionSpec): WireObject {
+  return {
+    id: spec.id ?? "",
+    name: spec.name,
+    kind: fixConnectionKindToWire(spec.kind),
+    bind_addr: spec.bindAddr,
+    sender_comp_id: spec.senderCompId,
+    target_comp_id: spec.targetCompId,
+    enabled: spec.enabled,
+  };
+}
+
+/**
+ * The GUI asserts an explicit grant-all principal on every admin call (the same
+ * stance the risk requests take), so an enforcing edge authorizes it rather than
+ * denying by default; a production gateway substitutes the real principal.
+ */
+function adminPrincipal(): WireObject {
+  return principalOrGrantAllToWire(undefined);
+}
+
+export function listFixConnectionsRequestToWire(): WireObject {
+  return { principal: adminPrincipal() };
+}
+
+export function listFixConnectionsResponseFromWire(o: WireObject): FixConnection[] {
+  const arr = o["connections"];
+  return Array.isArray(arr) ? (arr as WireObject[]).map(fixConnectionFromWire) : [];
+}
+
+/** A single-connection response (`{ connection: {...} }`) from create/update/enable. */
+export function fixConnectionResponseFromWire(o: WireObject): FixConnection {
+  const c = o["connection"];
+  return fixConnectionFromWire(c && typeof c === "object" ? (c as WireObject) : {});
+}
+
+export function createFixConnectionRequestToWire(spec: FixConnectionSpec): WireObject {
+  return { spec: fixSpecToWire(spec), principal: adminPrincipal() };
+}
+
+export function updateFixConnectionRequestToWire(id: string, spec: FixConnectionSpec): WireObject {
+  return { id, spec: fixSpecToWire(spec), principal: adminPrincipal() };
+}
+
+export function deleteFixConnectionRequestToWire(id: string): WireObject {
+  return { id, principal: adminPrincipal() };
+}
+
+export function setFixConnectionEnabledRequestToWire(id: string, enabled: boolean): WireObject {
+  return { id, enabled, principal: adminPrincipal() };
+}

@@ -32,6 +32,14 @@ use celnet_proto::{
     VegaLadderBucket, VegaPillar, VolatilitySwap, WindowBarrier, instrument, shock_axis,
     strike_or_delta, tenor,
 };
+// The FIX-admin contract (manage the inbound FIX acceptor connections). Kept in a
+// dedicated `use` so the long alphabetized list above stays undisturbed.
+use celnet_proto::{
+    CreateFixConnectionRequest, CreateFixConnectionResponse, DeleteFixConnectionRequest,
+    DeleteFixConnectionResponse, FixConnectionDesc, FixConnectionSpec, ListFixConnectionsRequest,
+    ListFixConnectionsResponse, SetFixConnectionEnabledRequest, SetFixConnectionEnabledResponse,
+    UpdateFixConnectionRequest, UpdateFixConnectionResponse,
+};
 
 /// A codec error: a malformed or out-of-contract JSON message. Carries a
 /// human-readable reason echoed back to the client as a typed `error` frame.
@@ -1870,6 +1878,125 @@ pub(super) fn limit_status_response_to_json(r: &LimitStatusResponse) -> Value {
         "limits": Value::Array(r.limits.iter().map(limit_utilization_to_json).collect()),
         "worst": r.worst,
         "hard_breach": r.hard_breach,
+        "correlation_id": r.correlation_id,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// fix-admin: manage the inbound FIX acceptor connections
+// ---------------------------------------------------------------------------
+
+/// A managed connection's runtime descriptor → JSON. `kind` is the proto enum tag
+/// (an integer), mirroring how the risk frames encode their enums.
+fn fix_connection_desc_to_json(d: &FixConnectionDesc) -> Value {
+    json!({
+        "id": d.id,
+        "name": d.name,
+        "kind": d.kind,
+        "bind_addr": d.bind_addr,
+        "sender_comp_id": d.sender_comp_id,
+        "target_comp_id": d.target_comp_id,
+        "enabled": d.enabled,
+        "running": d.running,
+        "bound_addr": d.bound_addr,
+    })
+}
+
+/// The editable connection fields (a nested `spec` object on create/update).
+fn fix_connection_spec_from_json(v: &Value) -> Result<FixConnectionSpec> {
+    let o = obj(v, "spec")?;
+    Ok(FixConnectionSpec {
+        id: string_or_empty(o, "id"),
+        name: string_field(o, "name")?,
+        kind: enum_or_zero(o, "kind"),
+        bind_addr: string_field(o, "bind_addr")?,
+        sender_comp_id: string_field(o, "sender_comp_id")?,
+        target_comp_id: string_field(o, "target_comp_id")?,
+        enabled: bool_or_false(o, "enabled"),
+    })
+}
+
+pub(super) fn list_fix_connections_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<ListFixConnectionsRequest> {
+    Ok(ListFixConnectionsRequest {
+        principal: opt_nested(o, "principal", principal_from_json)?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn list_fix_connections_response_to_json(r: &ListFixConnectionsResponse) -> Value {
+    json!({
+        "connections": Value::Array(r.connections.iter().map(fix_connection_desc_to_json).collect()),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn create_fix_connection_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<CreateFixConnectionRequest> {
+    Ok(CreateFixConnectionRequest {
+        spec: Some(nested(o, "spec", fix_connection_spec_from_json)?),
+        principal: opt_nested(o, "principal", principal_from_json)?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn create_fix_connection_response_to_json(r: &CreateFixConnectionResponse) -> Value {
+    json!({
+        "connection": r.connection.as_ref().map(fix_connection_desc_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn update_fix_connection_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<UpdateFixConnectionRequest> {
+    Ok(UpdateFixConnectionRequest {
+        id: string_field(o, "id")?,
+        spec: Some(nested(o, "spec", fix_connection_spec_from_json)?),
+        principal: opt_nested(o, "principal", principal_from_json)?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn update_fix_connection_response_to_json(r: &UpdateFixConnectionResponse) -> Value {
+    json!({
+        "connection": r.connection.as_ref().map(fix_connection_desc_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn delete_fix_connection_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<DeleteFixConnectionRequest> {
+    Ok(DeleteFixConnectionRequest {
+        id: string_field(o, "id")?,
+        principal: opt_nested(o, "principal", principal_from_json)?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn delete_fix_connection_response_to_json(r: &DeleteFixConnectionResponse) -> Value {
+    json!({ "correlation_id": r.correlation_id })
+}
+
+pub(super) fn set_fix_connection_enabled_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<SetFixConnectionEnabledRequest> {
+    Ok(SetFixConnectionEnabledRequest {
+        id: string_field(o, "id")?,
+        enabled: bool_or_false(o, "enabled"),
+        principal: opt_nested(o, "principal", principal_from_json)?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn set_fix_connection_enabled_response_to_json(
+    r: &SetFixConnectionEnabledResponse,
+) -> Value {
+    json!({
+        "connection": r.connection.as_ref().map(fix_connection_desc_to_json),
         "correlation_id": r.correlation_id,
     })
 }

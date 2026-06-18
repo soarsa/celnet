@@ -2995,3 +2995,120 @@ service SurfaceService {
   // Reprice an instrument across a spot/vol/rate shock grid.
   rpc Scenario(ScenarioRequest) returns (ScenarioResponse);
 }
+
+// ===========================================================================
+// fix-admin — manage the inbound FIX acceptor connections the edge binds
+// ===========================================================================
+
+// The dialect an inbound FIX acceptor speaks. Kind-generic: the spot dialect
+// adds a value here in phase 2 without reshaping the API.
+enum FixAcceptorKind {
+  // The FX-options dialect served by the existing acceptor.
+  FIX_ACCEPTOR_KIND_OPTIONS = 0;
+}
+
+// A managed inbound FIX-acceptor connection: the persisted definition plus its
+// live runtime status (read-only `running`/`bound_addr`).
+message FixConnectionDesc {
+  // Stable identifier (the management key).
+  string id = 1;
+  // Human-friendly label.
+  string name = 2;
+  // Which dialect the acceptor speaks.
+  FixAcceptorKind kind = 3;
+  // The host:port to bind, e.g. `127.0.0.1:9099`.
+  string bind_addr = 4;
+  // Our venue SenderCompID.
+  string sender_comp_id = 5;
+  // The expected counterparty SenderCompID (the FSM rejects any other peer).
+  string target_comp_id = 6;
+  // Whether the acceptor should be (and stay) bound.
+  bool enabled = 7;
+  // Whether an acceptor is currently listening (runtime status).
+  bool running = 8;
+  // The actually-bound address when running (resolves an ephemeral `:0`); empty
+  // when not running.
+  string bound_addr = 9;
+}
+
+// The editable fields of a connection (create/update payload). Runtime status
+// (`running`/`bound_addr`) is server-owned and not part of the spec.
+message FixConnectionSpec {
+  // On create: a client-suggested id (a slug of `name` is used when empty). On
+  // update: ignored in favour of the request's `id`.
+  string id = 1;
+  string name = 2;
+  FixAcceptorKind kind = 3;
+  string bind_addr = 4;
+  string sender_comp_id = 5;
+  string target_comp_id = 6;
+  bool enabled = 7;
+}
+
+message ListFixConnectionsRequest {
+  // The client-asserted entitlement principal (admin-gated; see RiskService).
+  optional EntitlementPrincipal principal = 1;
+  // Echoed back so a multiplexed client joins reply to request.
+  optional uint64 correlation_id = 2;
+}
+message ListFixConnectionsResponse {
+  repeated FixConnectionDesc connections = 1;
+  optional uint64 correlation_id = 2;
+}
+
+message CreateFixConnectionRequest {
+  FixConnectionSpec spec = 1;
+  optional EntitlementPrincipal principal = 2;
+  optional uint64 correlation_id = 3;
+}
+message CreateFixConnectionResponse {
+  FixConnectionDesc connection = 1;
+  optional uint64 correlation_id = 2;
+}
+
+message UpdateFixConnectionRequest {
+  string id = 1;
+  FixConnectionSpec spec = 2;
+  optional EntitlementPrincipal principal = 3;
+  optional uint64 correlation_id = 4;
+}
+message UpdateFixConnectionResponse {
+  FixConnectionDesc connection = 1;
+  optional uint64 correlation_id = 2;
+}
+
+message DeleteFixConnectionRequest {
+  string id = 1;
+  optional EntitlementPrincipal principal = 2;
+  optional uint64 correlation_id = 3;
+}
+message DeleteFixConnectionResponse {
+  optional uint64 correlation_id = 1;
+}
+
+message SetFixConnectionEnabledRequest {
+  string id = 1;
+  bool enabled = 2;
+  optional EntitlementPrincipal principal = 3;
+  optional uint64 correlation_id = 4;
+}
+message SetFixConnectionEnabledResponse {
+  FixConnectionDesc connection = 1;
+  optional uint64 correlation_id = 2;
+}
+
+// Manage the inbound FIX acceptor connections the edge binds (admin surface,
+// entitlement-gated like RiskService). Definitions persist to disk and auto-load
+// on startup; create/update/enable/delete take effect at runtime.
+service FixAdminService {
+  // List all managed connections with their live status.
+  rpc ListConnections(ListFixConnectionsRequest) returns (ListFixConnectionsResponse);
+  // Define a new connection (binds immediately when enabled).
+  rpc CreateConnection(CreateFixConnectionRequest) returns (CreateFixConnectionResponse);
+  // Replace an existing connection's definition (restarts the acceptor).
+  rpc UpdateConnection(UpdateFixConnectionRequest) returns (UpdateFixConnectionResponse);
+  // Delete a connection (stops its acceptor).
+  rpc DeleteConnection(DeleteFixConnectionRequest) returns (DeleteFixConnectionResponse);
+  // Enable or disable a connection (bind/stop its acceptor).
+  rpc SetEnabled(SetFixConnectionEnabledRequest) returns (SetFixConnectionEnabledResponse);
+}

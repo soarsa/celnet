@@ -63,7 +63,7 @@ import {
 } from "../lib/savedViews";
 import type { Density } from "../design/density";
 
-export type WorkspaceId = "ticket" | "stream" | "surface" | "risk" | "book";
+export type WorkspaceId = "ticket" | "stream" | "surface" | "risk" | "book" | "connections";
 
 // Re-export the scope vocabulary from its owning module so existing consumers
 // (riskView, riskScope tests) import it from AppContext unchanged — the types now
@@ -301,18 +301,31 @@ export function AppProvider({
   // in JS (the cascade-disjointness contract).
   density = "comfortable",
   toggleDensity = NOOP,
+  transport: providedTransport,
 }: {
   children: React.ReactNode;
   /** The active density, owned by `App.tsx`'s boot hook (the one JS touch-point). */
   density?: Density;
   /** Toggle the density axis (the boot-owned setter). */
   toggleDensity?: () => void;
+  /**
+   * The transport to run against. `App.tsx` resolves it ONCE and threads it in so
+   * the same socket backs both the provider tree and the connection monitor that
+   * drives the reconnect overlay. Defaults to `resolveTransport()` when omitted so
+   * a test/embedding can still mount the provider standalone.
+   */
+  transport?: CelnetTransport;
 }): React.ReactElement {
   // The transport is selected once at the app root: the LIVE WebSocket mirror
   // against celnet-server by default (every number is the server's), or the
   // explicit offline in-app mock when `?mock` is set (src/data/transportConfig.ts).
-  // One contract, two transports.
-  const transport = useMemo(() => resolveTransport().transport, []);
+  // One contract, two transports. `App.tsx` threads in the resolved transport so it
+  // is shared with the connection monitor; we fall back to resolving our own when
+  // mounted standalone (tests/embeddings).
+  const transport = useMemo(
+    () => providedTransport ?? resolveTransport().transport,
+    [providedTransport],
+  );
   const conventions = DEFAULT_CONVENTIONS;
 
   const [workspace, setWorkspace] = useState<WorkspaceId>("stream");

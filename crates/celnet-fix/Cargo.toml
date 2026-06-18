@@ -24,3 +24,12 @@ celnet-vanilla.workspace = true
 # golden reference tables (leaf test-data crate; not in the central dep table)
 celnet-golden.workspace = true
 proptest.workspace = true
+# The `fix_rfq_client` example is a real TCP price-taker: it needs the tokio
+# runtime, TCP sockets and the `#[tokio::main]` macro on top of the lib's
+# `io-util`. Declared as dev-deps so the library build stays minimal; feature
+# unification makes them available to the example.
+tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros"] }
+
+[[example]]
+name = "fix_rfq_client"
+path = "examples/fix_rfq_client.rs"

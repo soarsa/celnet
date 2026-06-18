@@ -172,14 +172,33 @@ mod tests {
         assert!(gate.mark_ready(), "a fresh gate promotes to ready");
         let store = Arc::new(PositionStore::new());
         let risk = Arc::new(RiskEdge::new(Arc::clone(&store), Arc::clone(&gate)));
+        let surface_book = Arc::new(SurfaceBook::new());
+        // An empty managed-acceptor registry over a throwaway config path: the cap
+        // test never exercises fix-admin, it just needs the edge the WS set requires.
+        let fix_registry = Arc::new(
+            crate::services::fix_registry::FixAcceptorRegistry::load(
+                Arc::clone(&link),
+                SpreadModel::default(),
+                Clock::system(),
+                Arc::clone(&surface_book),
+                std::env::temp_dir().join(format!("celnet-ws-cap-fix-{}.json", std::process::id())),
+            )
+            .expect("a missing config loads as an empty registry"),
+        );
+        let fix_admin = Arc::new(crate::services::fix_admin::FixAdminEdge::new(
+            fix_registry,
+            Arc::clone(&gate),
+            Arc::clone(&store),
+        ));
         let services = WsServices::new(
             link,
             gate,
             SpreadModel::default(),
             Clock::system(),
-            Arc::new(SurfaceBook::new()),
+            surface_book,
             store,
             risk,
+            fix_admin,
             None,
             LpPanelConfig { synthetic_lps: 0 },
         );

@@ -22,6 +22,7 @@ import { StreamWorkspace } from "../workspaces/StreamWorkspace";
 import { SurfaceWorkspace } from "../workspaces/SurfaceWorkspace";
 import { RiskWorkspace } from "../workspaces/RiskWorkspace";
 import { BookWorkspace } from "../workspaces/BookWorkspace";
+import { ConnectionsWorkspace } from "../workspaces/ConnectionsWorkspace";
 import { StatusRibbon } from "./StatusRibbon";
 import { CelerMark, CelnetWordmark } from "../components/CelerMark";
 import { ScopeControl } from "../components/ScopeControl";
@@ -38,6 +39,7 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   surface: SurfaceWorkspace,
   risk: RiskWorkspace,
   book: BookWorkspace,
+  connections: ConnectionsWorkspace,
 };
 
 export function Shell(): React.ReactElement {

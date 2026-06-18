@@ -23,6 +23,8 @@ import type {
   DrillRiskResponse,
   Executed,
   Execution,
+  FixConnection,
+  FixConnectionSpec,
   Greeks,
   Heartbeat,
   Instrument,
@@ -588,6 +590,25 @@ export class MockTransport implements CelnetTransport {
     { quote: Quote; instrument: Instrument; dealers?: DealerQuote[] }
   >();
   private readonly idempotency = new Map<string, Quote>();
+  /**
+   * The offline managed-FIX registry: an in-memory list mirroring the server's
+   * `FixAcceptorRegistry` semantics (unique id/name, address conflict, slug mint)
+   * so the `?mock` GUI exercises the Connections workspace + wizard offline. Seeded
+   * with one example Options acceptor.
+   */
+  private readonly fixConnections: FixConnection[] = [
+    {
+      id: "demo-options",
+      name: "Demo bank — Options",
+      kind: "OPTIONS",
+      bindAddr: "127.0.0.1:9099",
+      senderCompId: "CELNET",
+      targetCompId: "CELNET-CPTY",
+      enabled: true,
+      running: true,
+      boundAddr: "127.0.0.1:9099",
+    },
+  ];
 
   constructor(opts: { seed?: bigint; tickMs?: number } = {}) {
     this.seed = opts.seed ?? 0xce1_5eed_d00dn;
@@ -901,6 +922,90 @@ export class MockTransport implements CelnetTransport {
     if (request.correlationId !== undefined) res.correlationId = request.correlationId;
     return res;
   }
+
+  // --- FixAdminService — offline in-memory managed-acceptor registry ----------
+
+  async listFixConnections(): Promise<FixConnection[]> {
+    return this.fixConnections.map((c) => ({ ...c }));
+  }
+
+  async createFixConnection(spec: FixConnectionSpec): Promise<FixConnection> {
+    const conn = this.fixFromSpec(spec, spec.id?.trim() || mockSlugify(spec.name));
+    if (this.fixConnections.some((c) => c.id === conn.id)) {
+      throw new Error(`a connection with id \`${conn.id}\` already exists`);
+    }
+    if (this.fixConnections.some((c) => c.name === conn.name)) {
+      throw new Error(`a connection named \`${conn.name}\` already exists`);
+    }
+    this.assertNoEnabledAddrConflict(conn);
+    this.fixConnections.push(conn);
+    return { ...conn };
+  }
+
+  async updateFixConnection(id: string, spec: FixConnectionSpec): Promise<FixConnection> {
+    const idx = this.fixConnections.findIndex((c) => c.id === id);
+    if (idx < 0) throw new Error(`no connection with id \`${id}\``);
+    if (this.fixConnections.some((c) => c.id !== id && c.name === spec.name)) {
+      throw new Error(`a connection named \`${spec.name}\` already exists`);
+    }
+    const conn = this.fixFromSpec(spec, id);
+    this.assertNoEnabledAddrConflict(conn);
+    this.fixConnections.splice(idx, 1, conn);
+    return { ...conn };
+  }
+
+  async deleteFixConnection(id: string): Promise<void> {
+    const idx = this.fixConnections.findIndex((c) => c.id === id);
+    if (idx < 0) throw new Error(`no connection with id \`${id}\``);
+    this.fixConnections.splice(idx, 1);
+  }
+
+  async setFixConnectionEnabled(id: string, enabled: boolean): Promise<FixConnection> {
+    const conn = this.fixConnections.find((c) => c.id === id);
+    if (!conn) throw new Error(`no connection with id \`${id}\``);
+    if (enabled) this.assertNoEnabledAddrConflict({ ...conn, enabled });
+    conn.enabled = enabled;
+    conn.running = enabled;
+    conn.boundAddr = enabled ? conn.bindAddr : "";
+    return { ...conn };
+  }
+
+  /** Build a descriptor from a spec, reflecting `enabled` into the offline runtime status. */
+  private fixFromSpec(spec: FixConnectionSpec, id: string): FixConnection {
+    return {
+      id,
+      name: spec.name,
+      kind: spec.kind,
+      bindAddr: spec.bindAddr,
+      senderCompId: spec.senderCompId,
+      targetCompId: spec.targetCompId,
+      enabled: spec.enabled,
+      running: spec.enabled,
+      boundAddr: spec.enabled ? spec.bindAddr : "",
+    };
+  }
+
+  /** Reject an enabled acceptor sharing a bind address with another enabled one. */
+  private assertNoEnabledAddrConflict(conn: FixConnection): void {
+    if (!conn.enabled) return;
+    const clash = this.fixConnections.find(
+      (c) => c.id !== conn.id && c.enabled && c.bindAddr === conn.bindAddr,
+    );
+    if (clash) {
+      throw new Error(
+        `address \`${conn.bindAddr}\` is already used by enabled connection \`${clash.id}\``,
+      );
+    }
+  }
+}
+
+/** A lowercase, hyphen-separated slug of `name` (mirrors the server's `slugify`). */
+function mockSlugify(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug.length > 0 ? slug : "connection";
 }
 
 /**

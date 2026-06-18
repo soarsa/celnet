@@ -13,7 +13,9 @@
 use celnet_conventions::resolve;
 use celnet_types::{Ccy, CcyPair, OptionType, Settlement, Tenor, VanillaInputs};
 
-use crate::framing::FrameCursor;
+use crate::dictionary::MsgType;
+use crate::framing::{FrameCursor, FrameEncoder};
+use crate::messages::Header;
 
 /// FIX `Product(460)` value for a currency instrument.
 pub const PRODUCT_CURRENCY: u32 = 4;
@@ -37,6 +39,83 @@ pub const QUOTE_TYPE_TRADEABLE: u32 = 1;
 pub const SIDE_BUY: u8 = b'1';
 /// FIX `Side(54)` / `LegSide(624)`: sell.
 pub const SIDE_SELL: u8 = b'2';
+
+/// The custom dialect tag carrying the option's **vol-time in years** as a FIX float.
+///
+/// The platform's pricing is tenor- *and* vol-time-based; rather than depend on a
+/// calendar resolution of `MaturityDate(541)` (which would drift with the trade date),
+/// the dialect carries the exact `expiry_years` the engine prices against on a private,
+/// user-defined tag (FIX tolerates unknown tags; this is a dialect provenance field,
+/// never a vendor name — `CLAUDE.md` rule 8). It makes the RFQ instrument fully
+/// wire-specified, so the returned premium reproduces the engine/golden price to the
+/// bit, independent of any date. This is the canonical home of the tag; the server's
+/// FIX edge (`celnet-server`) reads it from here.
+pub const TAG_EXPIRY_YEARS: u32 = 7001;
+
+/// Parameters for a single-leg FX-option `QuoteRequest(R)` — the symmetric encode
+/// side of [`decode_option`]. The fields are the convention-checked instrument the
+/// acceptor will decode and price; an initiator (price-taker / test client) fills
+/// them from user input and the builder lays them onto the wire flat (no repeating
+/// group), exactly as the acceptor reads them.
+#[derive(Debug, Clone, Copy)]
+pub struct QuoteRequestParams<'a> {
+    /// `QuoteReqID(131)` — the client-minted RFQ correlation id.
+    pub quote_req_id: &'a [u8],
+    /// `Symbol(55)` — the pair, e.g. `b"EURUSD"`.
+    pub symbol: &'a [u8],
+    /// Call or put (`PutOrCall(201)`).
+    pub option_type: OptionType,
+    /// `StrikePrice(202)` — strictly positive, in the quote currency per base.
+    pub strike: f64,
+    /// The vol-time in years carried on [`TAG_EXPIRY_YEARS`] (must be `> 0`).
+    pub expiry_years: f64,
+    /// Deliverable (`FXVO`) vs non-deliverable (`FXNO`) — drives `SecurityType(167)`.
+    pub settlement: Settlement,
+    /// European or American (`ExerciseStyle(1194)`; the engine prices European vanillas).
+    pub exercise: ExerciseStyle,
+    /// `StrikeCurrency(947)` — the quote currency of the pair (e.g. `b"USD"` for EURUSD).
+    pub strike_ccy: &'a [u8],
+}
+
+/// Build a flat single-leg `QuoteRequest(R)` frame from [`QuoteRequestParams`].
+///
+/// The layout mirrors what [`decode_option`] reads: `Symbol(55)`, `Product(460)=4`,
+/// `SecurityType(167)`, `PutOrCall(201)`, `StrikePrice(202)`, `StrikeCurrency(947)`,
+/// `ExerciseStyle(1194)`, plus the dialect's [`TAG_EXPIRY_YEARS`]. Float fields are
+/// rendered round-trip-exact (`{}` emits the shortest decimal that parses back to the
+/// identical bits), so the strike and vol-time survive the wire without precision loss.
+#[must_use]
+pub fn build_quote_request(
+    hdr: &Header<'_>,
+    p: &QuoteRequestParams<'_>,
+    enc: &mut FrameEncoder,
+) -> Vec<u8> {
+    let sec_type: &[u8] = match p.settlement {
+        Settlement::Deliverable => SEC_TYPE_FXVO,
+        Settlement::NonDeliverable => SEC_TYPE_FXNO,
+    };
+    let put_or_call: &[u8] = match p.option_type {
+        OptionType::Call => b"1",
+        OptionType::Put => b"0",
+    };
+    let exercise: &[u8] = match p.exercise {
+        ExerciseStyle::European => b"0",
+        ExerciseStyle::American => b"1",
+    };
+
+    enc.clear();
+    hdr.encode(MsgType::QuoteRequest, enc);
+    enc.push(131, p.quote_req_id);
+    enc.push(55, p.symbol);
+    enc.push(460, b"4"); // Product = CURRENCY
+    enc.push(167, sec_type);
+    enc.push(201, put_or_call);
+    enc.push(202, format!("{}", p.strike).as_bytes());
+    enc.push(947, p.strike_ccy);
+    enc.push(1194, exercise);
+    enc.push(TAG_EXPIRY_YEARS, format!("{}", p.expiry_years).as_bytes());
+    enc.finish()
+}
 
 /// Exercise style as carried by the dialect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

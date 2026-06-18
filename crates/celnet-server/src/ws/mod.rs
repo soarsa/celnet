@@ -80,6 +80,7 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tonic::Request;
 
+use celnet_proto::fix_admin_service_server::FixAdminService;
 use celnet_proto::pricing_service_server::PricingService;
 use celnet_proto::quote_service_server::QuoteService;
 use celnet_proto::risk_service_server::RiskService;
@@ -91,6 +92,7 @@ use crate::core_link::CoreLink;
 use crate::readiness::{InFlightGuard, ReadinessGate};
 use crate::services::pricing::PricingEdge;
 use crate::services::quote::{LpPanelConfig, QuoteEdge};
+use crate::services::fix_admin::FixAdminEdge;
 use crate::services::risk::RiskEdge;
 use crate::services::risk::store::PositionStore;
 use crate::services::stream::{StreamEdge, run_session};
@@ -123,6 +125,7 @@ pub struct WsServices {
     stream: Arc<StreamEdge>,
     surface: Arc<SurfaceEdge>,
     risk: Arc<RiskEdge>,
+    fix_admin: Arc<FixAdminEdge>,
     gate: Arc<ReadinessGate>,
 }
 
@@ -142,6 +145,7 @@ impl WsServices {
         surface_book: Arc<SurfaceBook>,
         store: Arc<PositionStore>,
         risk: Arc<RiskEdge>,
+        fix_admin: Arc<FixAdminEdge>,
         fleet: Option<Arc<crate::services::risk::federate::Fleet>>,
         panel: LpPanelConfig,
     ) -> Self {
@@ -188,6 +192,7 @@ impl WsServices {
             stream,
             surface,
             risk,
+            fix_admin,
             gate,
         }
     }
@@ -645,6 +650,47 @@ async fn handle_unary(
                 services.risk.limit_status(Request::new(req)),
                 "limit_status_response",
                 codec::limit_status_response_to_json
+            )
+        }
+        // ---- fix-admin: manage the inbound FIX acceptor connections ----------
+        "list_fix_connections" => {
+            let req = decode!(codec::list_fix_connections_request_from_json(o));
+            call!(
+                services.fix_admin.list_connections(Request::new(req)),
+                "fix_connections",
+                codec::list_fix_connections_response_to_json
+            )
+        }
+        "create_fix_connection" => {
+            let req = decode!(codec::create_fix_connection_request_from_json(o));
+            call!(
+                services.fix_admin.create_connection(Request::new(req)),
+                "fix_connection_created",
+                codec::create_fix_connection_response_to_json
+            )
+        }
+        "update_fix_connection" => {
+            let req = decode!(codec::update_fix_connection_request_from_json(o));
+            call!(
+                services.fix_admin.update_connection(Request::new(req)),
+                "fix_connection_updated",
+                codec::update_fix_connection_response_to_json
+            )
+        }
+        "delete_fix_connection" => {
+            let req = decode!(codec::delete_fix_connection_request_from_json(o));
+            call!(
+                services.fix_admin.delete_connection(Request::new(req)),
+                "fix_connection_deleted",
+                codec::delete_fix_connection_response_to_json
+            )
+        }
+        "set_fix_connection_enabled" => {
+            let req = decode!(codec::set_fix_connection_enabled_request_from_json(o));
+            call!(
+                services.fix_admin.set_enabled(Request::new(req)),
+                "fix_connection_enabled",
+                codec::set_fix_connection_enabled_response_to_json
             )
         }
         other => codec::error_frame(&format!("unknown request type `{other}`"), correlation_id),

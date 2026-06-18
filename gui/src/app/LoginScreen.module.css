@@ -1,0 +1,147 @@
+/*
+ * LoginScreen — full-viewport centred sign-in panel on the Aurora base surface.
+ * Replaces the whole workspace (it is rendered instead of the Shell), so it owns
+ * the full background. Uses the shared design tokens; no bespoke palette.
+ */
+
+.screen {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--space-6);
+  background:
+    radial-gradient(120% 90% at 50% -10%, var(--brand-soft), transparent 60%),
+    var(--bg-base);
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  width: min(360px, 100%);
+  padding: var(--space-8) var(--space-7);
+  text-align: center;
+  background: var(--bg-raised);
+  border: 0.5px solid oklch(1 0 0 / 0.1);
+  border-radius: 16px;
+  box-shadow: var(--shadow-float);
+  animation: panel-in var(--duration-3, 240ms) var(--ease-spring) both;
+}
+
+.lockup {
+  margin-bottom: var(--space-2);
+}
+
+.heading {
+  margin: 0;
+  font-family: var(--font-brand);
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.sub {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: 100%;
+  margin-top: var(--space-3);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  text-align: left;
+}
+
+.label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+}
+
+.input {
+  padding: var(--space-3) var(--space-4);
+  font-family: var(--font-ui);
+  font-size: 0.875rem;
+  color: var(--text-primary);
+  background: var(--bg-inset);
+  border: 0.5px solid oklch(1 0 0 / 0.12);
+  border-radius: 10px;
+  transition: border-color var(--duration-1, 120ms) var(--ease-out);
+}
+
+.input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.input:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.submit {
+  margin-top: var(--space-2);
+  padding: var(--space-4);
+  font-family: var(--font-ui);
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: oklch(1 0 0);
+  cursor: pointer;
+  background: var(--accent);
+  border: none;
+  border-radius: 10px;
+  transition:
+    transform var(--duration-1, 120ms) var(--ease-out),
+    filter var(--duration-1, 120ms) var(--ease-out);
+}
+
+.submit:hover {
+  filter: brightness(1.08);
+}
+
+.submit:active {
+  transform: scale(0.98);
+}
+
+.submit:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.footnote {
+  margin: var(--space-3) 0 0;
+  font-size: 0.6875rem;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+}
+
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel {
+    animation: none;
+  }
+}

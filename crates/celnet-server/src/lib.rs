@@ -70,6 +70,7 @@
 #![forbid(unsafe_code)]
 
 pub mod clock;
+pub mod config;
 pub mod core_link;
 pub mod lsv_pricer;
 pub mod pricer;
@@ -106,13 +107,17 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 
+use celnet_proto::fix_admin_service_server::FixAdminServiceServer;
 use celnet_proto::pricing_service_server::PricingServiceServer;
 use celnet_proto::quote_service_server::QuoteServiceServer;
 use celnet_proto::risk_service_server::RiskServiceServer;
 use celnet_proto::stream_service_server::StreamServiceServer;
 use celnet_proto::surface_service_server::SurfaceServiceServer;
 
+use config::fix_connections::FixConnectionStore;
 use services::fix::{FixAcceptor, FixContext};
+use services::fix_admin::FixAdminEdge;
+use services::fix_registry::FixAcceptorRegistry;
 use services::pricing::PricingEdge;
 use services::quote::QuoteEdge;
 use services::risk::RiskEdge;
@@ -187,6 +192,12 @@ pub struct Edge {
     /// RFQ→Quote→lift→ExecutionReport lifecycle over the same pricing + click-to-trade
     /// token path the gRPC/RFS edges use. Absent ⇒ the edge is byte-identical to today.
     fix_acceptor: Option<FixAcceptor>,
+    /// The managed inbound FIX-acceptor registry: the persisted set of operator-defined
+    /// acceptor connections (`fix-connections.json`), loaded at boot with the enabled
+    /// ones bound, and mutated at runtime via `FixAdminService` (create/update/enable/
+    /// delete, each persisted). Independent of the legacy single `fix_acceptor` env seed
+    /// above. Its acceptors are stopped on [`Edge::shutdown`].
+    fix_registry: Arc<FixAcceptorRegistry>,
     /// The optional bound vendor-feed ingress: `Some` iff `CELNET_VENDOR_WS` named a
     /// reachable WS endpoint at boot (the [`DeployMode::WithVendorFeed`] inbound). It
     /// drives the resilient subscriber → normalize → [`SurfaceBook`] deposit → governed
@@ -382,6 +393,34 @@ impl Edge {
         });
         let risk = RiskServiceServer::from_arc(Arc::clone(&risk_edge));
 
+        // The managed inbound FIX-acceptor registry: the persisted set of acceptor
+        // connections (`fix-connections.json`, path from `CELNET_FIX_CONFIG`) the
+        // operator defines via `FixAdminService`. It shares the SAME pricing core,
+        // marked-surface registry, spread and edge clock every other edge uses — a
+        // managed FIX RFQ prices through the identical path. Loaded here (a corrupt
+        // config fails boot loudly); the enabled acceptors are bound below once the
+        // listeners are up. Its entitlement gate reads the same `PositionStore`
+        // access mode `RiskService` does, so gRPC and the WS mirror enforce one policy.
+        let fix_registry = Arc::new(
+            FixAcceptorRegistry::load(
+                Arc::clone(&link),
+                spread,
+                clock.clone(),
+                Arc::clone(&surface_book),
+                FixConnectionStore::config_path(),
+            )
+            .map_err(|e| std::io::Error::new(e.kind(), format!("FIX connection config: {e}")))?,
+        );
+        // ONE admin edge backs both the gRPC server and the WS mirror (shared behind an
+        // `Arc`), so the two fronts manage the SAME registry through one entitlement
+        // boundary — exactly the single-edge sharing the risk service uses.
+        let fix_admin_edge = Arc::new(FixAdminEdge::new(
+            Arc::clone(&fix_registry),
+            Arc::clone(&gate),
+            Arc::clone(&store),
+        ));
+        let fix_admin = FixAdminServiceServer::from_arc(Arc::clone(&fix_admin_edge));
+
         let incoming = tonic::transport::server::TcpIncoming::from_listener(listener, true, None)
             .map_err(std::io::Error::other)?;
         let grpc_task = tokio::spawn(async move {
@@ -391,6 +430,7 @@ impl Edge {
                 .add_service(stream)
                 .add_service(surface)
                 .add_service(risk)
+                .add_service(fix_admin)
                 .serve_with_incoming_shutdown(incoming, async {
                     let _ = grpc_rx.await;
                 })
@@ -413,10 +453,18 @@ impl Edge {
             Arc::clone(&surface_book),
             Arc::clone(&store),
             Arc::clone(&risk_edge),
+            Arc::clone(&fix_admin_edge),
             fleet.clone(),
             panel,
         );
         let ws_mirror = ws::WsMirror::start(ws_addr, ws_services).await?;
+
+        // Bind every persisted **enabled** managed acceptor now the edge's listeners
+        // are up (a per-connection bind failure is logged and skipped so one bad
+        // address can't block the rest). This is the "load on startup when saved"
+        // half of the managed-FIX feature; new acceptors created at runtime via
+        // `FixAdminService` bind immediately and persist for the next boot.
+        fix_registry.start_enabled().await;
 
         // The optional live FIX 4.4 acceptor edge: bound only when `CELNET_FIX_ADDR`
         // names an address (the deploy-time knob, mirroring `CELNET_FLEET_MODE`). It
@@ -479,6 +527,7 @@ impl Edge {
             grpc_task,
             ws_mirror,
             fix_acceptor,
+            fix_registry,
             vendor_feed,
         })
     }
@@ -633,6 +682,8 @@ impl Edge {
         if let Some(fix) = self.fix_acceptor {
             fix.abort();
         }
+        // Stop every managed acceptor (in-flight sessions run to their own close).
+        self.fix_registry.abort_all().await;
         if let Some(feed) = self.vendor_feed {
             feed.abort();
         }

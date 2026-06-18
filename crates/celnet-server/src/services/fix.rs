@@ -74,16 +74,9 @@ use crate::services::pin::{PinnedVol, resolve_pinned_vol};
 use crate::spread::SpreadModel;
 use crate::surface_book::SurfaceBook;
 
-/// The custom dialect tag carrying the option's **vol-time in years** as a FIX float.
-///
-/// The platform's pricing is tenor- *and* vol-time-based; rather than depend on a
-/// calendar resolution of `MaturityDate(541)` (which would drift with the trade
-/// date), the dialect carries the exact `expiry_years` the engine prices against on a
-/// user-defined tag (FIX tolerates unknown tags; this is a private dialect provenance
-/// field, never a vendor name — `CLAUDE.md` rule 8). It makes the RFQ instrument
-/// fully wire-specified, so the returned premium reproduces the engine/golden price to
-/// the bit, independent of any date.
-pub const TAG_EXPIRY_YEARS: u32 = 7001;
+// The custom `expiry_years` dialect tag is owned by `celnet_fix::dialect_fx`
+// ([`dialect_fx::TAG_EXPIRY_YEARS`]) — the single source of truth shared with the
+// initiator/test client that encodes it. Referenced directly below.
 
 /// How long a FIX quote's click-to-trade token stays valid for a lift, in nanoseconds
 /// (5 seconds — the typical OTC last-look window, matching the RFQ deadline).
@@ -509,7 +502,7 @@ impl FixSession {
         // The vol-time in years carried by the dialect (fully wire-specified, no date
         // dependency). Required for a deterministic, reproducible premium.
         let expiry_years = frame
-            .get(TAG_EXPIRY_YEARS)
+            .get(dialect_fx::TAG_EXPIRY_YEARS)
             .and_then(dialect_fx::parse_float)
             .filter(|t| *t > 0.0 && t.is_finite())
             .ok_or(())?;

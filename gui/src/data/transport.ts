@@ -25,6 +25,8 @@ import type {
   DrillRiskResponse,
   Executed,
   Execution,
+  FixConnection,
+  FixConnectionSpec,
   Greeks,
   Heartbeat,
   Instrument,
@@ -117,6 +119,22 @@ export interface StreamSession {
 export interface CelnetTransport {
   /** Human-readable transport label for the status ribbon (e.g. "mock/replay"). */
   readonly label: string;
+
+  /**
+   * Observe socket liveness — the listener fires `true` when the live connection
+   * is OPEN and `false` when it drops (the transport then reconnects with capped
+   * backoff). Returns a disposer. Present ONLY on transports with a remote socket
+   * (the live WS transport); ABSENT on the in-app mock, which has no connection to
+   * lose — a caller treats an absent observer as "permanently connected".
+   */
+  onConnectionState?(listener: (open: boolean) => void): () => void;
+
+  /**
+   * Snapshot of socket liveness at call time (`true` iff currently OPEN). Pairs
+   * with {@link onConnectionState} for the initial state a subscriber would
+   * otherwise miss (the observer only fires on transitions). Live transports only.
+   */
+  isConnected?(): boolean;
 
   /** PricingService.Price */
   price(
@@ -222,4 +240,26 @@ export interface CelnetTransport {
    * scope node, with the `hardBreach` escalation flag.
    */
   limitStatus(request: LimitStatusRequest): Promise<LimitStatusResponse>;
+
+  // --- FixAdminService — manage the inbound FIX acceptor connections ---------
+  //
+  // The admin surface that defines / persists / lists / enables / deletes the
+  // inbound FIX acceptors the edge binds (Options today; SPOT FX in phase 2).
+  // Entitlement-gated server-side; the GUI asserts an explicit grant-all
+  // principal (the same stance the risk calls take).
+
+  /** FixAdminService.ListConnections — all managed connections + live status. */
+  listFixConnections(): Promise<FixConnection[]>;
+
+  /** FixAdminService.CreateConnection — define a new acceptor (binds if enabled). */
+  createFixConnection(spec: FixConnectionSpec): Promise<FixConnection>;
+
+  /** FixAdminService.UpdateConnection — replace a definition (restarts the acceptor). */
+  updateFixConnection(id: string, spec: FixConnectionSpec): Promise<FixConnection>;
+
+  /** FixAdminService.DeleteConnection — remove a connection (stops its acceptor). */
+  deleteFixConnection(id: string): Promise<void>;
+
+  /** FixAdminService.SetEnabled — enable/disable a connection (bind/stop its acceptor). */
+  setFixConnectionEnabled(id: string, enabled: boolean): Promise<FixConnection>;
 }

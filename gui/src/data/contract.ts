@@ -1713,3 +1713,56 @@ export interface LimitStatusResponse {
   hardBreach: boolean;
   correlationId?: bigint;
 }
+
+// ---------------------------------------------------------------------------
+// fix-admin — manage the inbound FIX acceptor connections the edge binds
+// ---------------------------------------------------------------------------
+
+/**
+ * The dialect an inbound FIX acceptor speaks (`celnet.wire.FixAcceptorKind`).
+ * Kind-generic: `"OPTIONS"` is the FX-options dialect served today; the spot
+ * dialect adds a member in phase 2 without reshaping the contract or the UI.
+ */
+export type FixConnectionKind = "OPTIONS";
+
+/**
+ * A managed inbound FIX-acceptor connection: the persisted definition plus its
+ * live runtime status (`running`/`boundAddr` are server-owned, read-only).
+ * Mirrors `celnet.wire.FixConnectionDesc`.
+ */
+export interface FixConnection {
+  /** Stable identifier (the management key). */
+  id: string;
+  /** Human-friendly label shown in the UI. */
+  name: string;
+  /** Which dialect the acceptor speaks. */
+  kind: FixConnectionKind;
+  /** The `host:port` the acceptor binds, e.g. `127.0.0.1:9099`. */
+  bindAddr: string;
+  /** Our venue `SenderCompID`. */
+  senderCompId: string;
+  /** The expected counterparty `SenderCompID` (the FSM rejects any other peer). */
+  targetCompId: string;
+  /** Whether the acceptor should be (and stay) bound. */
+  enabled: boolean;
+  /** Whether an acceptor is currently listening (runtime status). */
+  running: boolean;
+  /** The actually-bound address when running (resolves an ephemeral `:0`); else "". */
+  boundAddr: string;
+}
+
+/**
+ * The editable fields of a connection (the create/update payload). Runtime
+ * status (`running`/`boundAddr`) is server-owned and not part of the spec.
+ * Mirrors `celnet.wire.FixConnectionSpec`.
+ */
+export interface FixConnectionSpec {
+  /** Optional client-suggested id on create (a slug of `name` is minted when absent). */
+  id?: string;
+  name: string;
+  kind: FixConnectionKind;
+  bindAddr: string;
+  senderCompId: string;
+  targetCompId: string;
+  enabled: boolean;
+}

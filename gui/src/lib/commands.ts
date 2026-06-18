@@ -25,7 +25,7 @@
 import type { Command } from "../components/CommandPalette";
 
 /** Workspace ids the rail exposes (kept in sync with `AppContext.WorkspaceId`). */
-export type WorkspaceId = "ticket" | "stream" | "surface" | "risk" | "book";
+export type WorkspaceId = "ticket" | "stream" | "surface" | "risk" | "book" | "connections";
 
 /** A logical grouping of related commands (sections the cheatsheet + palette use). */
 export type CommandGroup = "Global" | "Workspace" | "Scope" | "Action";
@@ -63,6 +63,7 @@ export const RAIL: readonly { id: WorkspaceId; glyph: string; label: string }[] 
   { id: "surface", glyph: "◷", label: "Surface" },
   { id: "risk", glyph: "⊞", label: "Risk" },
   { id: "book", glyph: "▤", label: "Book" },
+  { id: "connections", glyph: "⇄", label: "Connections" },
 ] as const;
 
 /** The `⌘N` chord hint for the rail position `index` (0-based). */

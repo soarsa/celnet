@@ -1,0 +1,152 @@
+/*
+ * ReconnectOverlay — full-screen blocking scrim + centred status card. Sits above
+ * everything (the workspace data is stale once the socket drops), uses the Aurora
+ * overlay/surface tokens, and animates the brand mark on compositor-friendly
+ * properties only (transform/opacity), gated behind prefers-reduced-motion.
+ */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: var(--space-6);
+  background: var(--bg-overlay);
+  backdrop-filter: blur(8px) saturate(115%);
+  -webkit-backdrop-filter: blur(8px) saturate(115%);
+  animation: scrim-in var(--duration-2, 180ms) var(--ease-out) both;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  width: min(420px, 100%);
+  padding: var(--space-8) var(--space-7);
+  text-align: center;
+  background: var(--bg-raised);
+  border: 0.5px solid oklch(1 0 0 / 0.1);
+  border-radius: 16px;
+  box-shadow: var(--shadow-hud);
+  animation: card-in var(--duration-3, 240ms) var(--ease-spring) both;
+}
+
+.markRing {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  color: var(--brand);
+  background: var(--brand-soft);
+}
+
+.mark {
+  animation: mark-spin 1.4s linear infinite;
+}
+
+.title {
+  margin: 0;
+  font-family: var(--font-brand);
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: 0.01em;
+}
+
+.body {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.endpoint {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  color: var(--text-primary);
+}
+
+.countdown {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--text-tertiary);
+}
+
+.count {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--brand);
+  font-variant-numeric: tabular-nums;
+}
+
+.signInNow {
+  margin-top: var(--space-3);
+  padding: var(--space-3) var(--space-6);
+  font-family: var(--font-ui);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  cursor: pointer;
+  background: var(--accent-soft);
+  border: 0.5px solid var(--accent);
+  border-radius: 10px;
+  transition:
+    transform var(--duration-1, 120ms) var(--ease-out),
+    background var(--duration-1, 120ms) var(--ease-out);
+}
+
+.signInNow:hover {
+  background: var(--accent);
+  color: oklch(1 0 0);
+}
+
+.signInNow:active {
+  transform: scale(0.97);
+}
+
+.signInNow:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@keyframes scrim-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes mark-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scrim,
+  .card {
+    animation: none;
+  }
+  .mark {
+    animation: none;
+  }
+}
