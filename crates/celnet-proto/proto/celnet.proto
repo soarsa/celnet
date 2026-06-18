@@ -3037,64 +3037,154 @@ message FixConnectionSpec {
   // On create: a client-suggested id (a slug of `name` is used when empty). On
   // update: ignored in favour of the request's `id`.
   string id = 1;
+  // Human-friendly label shown in the UI.
   string name = 2;
+  // Which dialect the acceptor speaks.
   FixAcceptorKind kind = 3;
+  // The host:port to bind, e.g. `127.0.0.1:9099`.
   string bind_addr = 4;
+  // Our venue SenderCompID.
   string sender_comp_id = 5;
+  // The expected counterparty SenderCompID (the FSM rejects any other peer).
   string target_comp_id = 6;
+  // Whether the acceptor should be (and stay) bound.
   bool enabled = 7;
 }
 
+// List all managed connections with their live status.
 message ListFixConnectionsRequest {
   // The client-asserted entitlement principal (admin-gated; see RiskService).
   optional EntitlementPrincipal principal = 1;
   // Echoed back so a multiplexed client joins reply to request.
   optional uint64 correlation_id = 2;
 }
+// The managed connections and their live status.
 message ListFixConnectionsResponse {
+  // All managed connections with their live status.
   repeated FixConnectionDesc connections = 1;
+  // Echoed request correlation id.
   optional uint64 correlation_id = 2;
 }
 
+// Define a new connection (binds immediately when enabled).
 message CreateFixConnectionRequest {
+  // The editable fields of the connection to define.
   FixConnectionSpec spec = 1;
+  // The client-asserted entitlement principal (admin-gated).
   optional EntitlementPrincipal principal = 2;
+  // Echoed request correlation id.
   optional uint64 correlation_id = 3;
 }
+// The created connection.
 message CreateFixConnectionResponse {
+  // The created connection with its server-minted id and live status.
   FixConnectionDesc connection = 1;
+  // Echoed request correlation id.
   optional uint64 correlation_id = 2;
 }
 
+// Replace an existing connection's definition (restarts the acceptor).
 message UpdateFixConnectionRequest {
+  // The id of the connection to replace.
   string id = 1;
+  // The new definition (the request `id` is authoritative).
   FixConnectionSpec spec = 2;
+  // The client-asserted entitlement principal (admin-gated).
   optional EntitlementPrincipal principal = 3;
+  // Echoed request correlation id.
   optional uint64 correlation_id = 4;
 }
+// The updated connection.
 message UpdateFixConnectionResponse {
+  // The updated connection with its live status.
   FixConnectionDesc connection = 1;
+  // Echoed request correlation id.
   optional uint64 correlation_id = 2;
 }
 
+// Delete a connection (stops its acceptor).
 message DeleteFixConnectionRequest {
+  // The id of the connection to delete.
   string id = 1;
+  // The client-asserted entitlement principal (admin-gated).
   optional EntitlementPrincipal principal = 2;
+  // Echoed request correlation id.
   optional uint64 correlation_id = 3;
 }
+// Acknowledges a delete.
 message DeleteFixConnectionResponse {
+  // Echoed request correlation id.
   optional uint64 correlation_id = 1;
 }
 
+// Enable or disable a connection (bind/stop its acceptor).
 message SetFixConnectionEnabledRequest {
+  // The id of the connection to enable or disable.
   string id = 1;
+  // The desired enabled state (true ⇒ bind, false ⇒ stop).
   bool enabled = 2;
+  // The client-asserted entitlement principal (admin-gated).
   optional EntitlementPrincipal principal = 3;
+  // Echoed request correlation id.
   optional uint64 correlation_id = 4;
 }
+// The connection with its updated status.
 message SetFixConnectionEnabledResponse {
+  // The connection with its updated live status.
   FixConnectionDesc connection = 1;
+  // Echoed request correlation id.
   optional uint64 correlation_id = 2;
+}
+
+// The travel direction of a captured frame, from the acceptor's vantage.
+enum FixMsgDirection {
+  // A frame the acceptor RECEIVED from the counterparty (proto3 zero default).
+  FIX_MSG_DIRECTION_INBOUND = 0;
+  // A frame the acceptor SENT to the counterparty.
+  FIX_MSG_DIRECTION_OUTBOUND = 1;
+}
+
+// One captured FIX frame on a managed acceptor session (the monitor screen feed).
+message FixMessage {
+  // Monotonic per-process capture sequence (the client's poll cursor).
+  uint64 seq = 1;
+  // The managing connection's id this frame was captured on.
+  string connection_id = 2;
+  // Travel direction from the acceptor's vantage.
+  FixMsgDirection direction = 3;
+  // The FIX MsgType(35) value, e.g. `R`, `S`, `A`.
+  string msg_type = 4;
+  // A human label for the MsgType, e.g. `QuoteRequest`.
+  string summary = 5;
+  // Edge capture timestamp (epoch nanos).
+  int64 epoch_nanos = 6;
+  // The raw FIX message with SOH rendered as `|`.
+  string raw = 7;
+}
+
+// Poll the captured session traffic. A cursor `after_seq` of 0 returns the whole
+// retained ring buffer; subsequent polls pass back `latest_seq` to tail only new
+// frames. `connection_id` (when set) filters to one session.
+message ListFixMessagesRequest {
+  // Filter to one session (absent ⇒ all captured sessions).
+  optional string connection_id = 1;
+  // The poll cursor: return frames with a capture sequence above this (0 ⇒ all).
+  uint64 after_seq = 2;
+  // Max frames in the page (0 ⇒ server default).
+  uint32 limit = 3;
+  // The client-asserted entitlement principal (admin-gated).
+  optional EntitlementPrincipal principal = 4;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 5;
+}
+// A cursored page of captured session traffic.
+message ListFixMessagesResponse {
+  // The captured frames after the cursor (oldest-first).
+  repeated FixMessage messages = 1;
+  // The highest capture sequence currently assigned (the next poll's `after_seq`).
+  uint64 latest_seq = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
 }
 
 // Manage the inbound FIX acceptor connections the edge binds (admin surface,
@@ -3111,4 +3201,6 @@ service FixAdminService {
   rpc DeleteConnection(DeleteFixConnectionRequest) returns (DeleteFixConnectionResponse);
   // Enable or disable a connection (bind/stop its acceptor).
   rpc SetEnabled(SetFixConnectionEnabledRequest) returns (SetFixConnectionEnabledResponse);
+  // Poll the captured inbound/outbound session traffic for the monitor screen.
+  rpc ListMessages(ListFixMessagesRequest) returns (ListFixMessagesResponse);
 }

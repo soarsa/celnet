@@ -22,6 +22,7 @@ use crate::clock::Clock;
 use crate::config::fix_connections::{FixConnectionDef, FixConnectionStore};
 use crate::core_link::CoreLink;
 use crate::services::fix::{FixAcceptor, FixContext};
+use crate::services::fix_monitor::FixMonitor;
 use crate::spread::SpreadModel;
 use crate::surface_book::SurfaceBook;
 
@@ -49,6 +50,7 @@ pub struct FixAcceptorRegistry {
     spread: SpreadModel,
     clock: Clock,
     surface_book: Arc<SurfaceBook>,
+    monitor: Arc<FixMonitor>,
     config_path: PathBuf,
 }
 
@@ -75,6 +77,7 @@ impl FixAcceptorRegistry {
         spread: SpreadModel,
         clock: Clock,
         surface_book: Arc<SurfaceBook>,
+        monitor: Arc<FixMonitor>,
         config_path: PathBuf,
     ) -> std::io::Result<Self> {
         let store = FixConnectionStore::load(&config_path)?;
@@ -87,6 +90,7 @@ impl FixAcceptorRegistry {
             spread,
             clock,
             surface_book,
+            monitor,
             config_path,
         })
     }
@@ -246,6 +250,8 @@ impl FixAcceptorRegistry {
             Arc::clone(&self.surface_book),
             def.sender_comp_id.clone().into_bytes(),
             def.target_comp_id.clone().into_bytes(),
+            Arc::clone(&self.monitor),
+            def.id.clone(),
         );
         FixAcceptor::start(addr, ctx)
             .await

@@ -54,6 +54,8 @@ use tokio::net::{TcpListener, TcpStream};
 
 use celnet_fix::dialect_fx::{self, ExerciseStyle, OptionDescriptor};
 use celnet_fix::dictionary::MsgType;
+
+use super::fix_monitor::{FixDirection, FixMonitor};
 use celnet_fix::framing::FrameCursor;
 use celnet_fix::messages::{self, EXEC_FILLED, EXEC_REJECTED, ExecReportParams, QuoteParams};
 use celnet_fix::session::{InMemoryStore, Role, Session, SessionAction, SessionConfig};
@@ -118,6 +120,12 @@ pub(crate) struct FixContext {
     /// The expected counterparty `TargetCompID` (pre-agreed initiator identity); the
     /// session FSM rejects any other peer with a CompID mismatch.
     counterparty: Vec<u8>,
+    /// The shared session-traffic capture sink (the monitor screen reads it). Every
+    /// inbound/outbound frame on this session is recorded against `connection_id`.
+    monitor: Arc<FixMonitor>,
+    /// The managing connection's id used to tag captured frames (a synthetic id for
+    /// the legacy env-seeded acceptor).
+    connection_id: String,
 }
 
 impl FixContext {
@@ -129,6 +137,8 @@ impl FixContext {
         spread: SpreadModel,
         clock: Clock,
         surface_book: Arc<SurfaceBook>,
+        monitor: Arc<FixMonitor>,
+        connection_id: String,
     ) -> Self {
         let sender = std::env::var("CELNET_FIX_SENDER")
             .unwrap_or_else(|_| DEFAULT_VENUE_COMP_ID.to_owned())
@@ -143,11 +153,14 @@ impl FixContext {
             surface_book,
             sender,
             counterparty,
+            monitor,
+            connection_id,
         }
     }
 
     /// Build a context with explicit CompIDs (the race-free path for tests, which bind
     /// ephemeral ports and must not mutate process-global env).
+    #[allow(clippy::too_many_arguments)] // the shared component set + this acceptor's identity.
     pub(crate) fn with_comp_ids(
         link: Arc<CoreLink>,
         spread: SpreadModel,
@@ -155,6 +168,8 @@ impl FixContext {
         surface_book: Arc<SurfaceBook>,
         sender: Vec<u8>,
         counterparty: Vec<u8>,
+        monitor: Arc<FixMonitor>,
+        connection_id: String,
     ) -> Self {
         Self {
             link,
@@ -163,6 +178,8 @@ impl FixContext {
             surface_book,
             sender,
             counterparty,
+            monitor,
+            connection_id,
         }
     }
 
@@ -300,9 +317,22 @@ impl FixSession {
         let (read_half, mut write_half) = tokio::io::split(stream);
         let mut reader = FrameReader::new(read_half);
         while let Some(frame) = reader.next_frame().await? {
+            // Capture the inbound frame for the monitor screen, then the responses we
+            // emit — both tagged with this acceptor's connection id (best-effort
+            // observability off the pricing core; see `fix_monitor`).
+            let now = self.ctx.clock.now_nanos();
+            self.ctx
+                .monitor
+                .record(&self.ctx.connection_id, FixDirection::Inbound, &frame, now);
             let st = self.sending_time();
             let outbound = self.handle_frame(&frame, &st).await;
             for f in outbound {
+                self.ctx.monitor.record(
+                    &self.ctx.connection_id,
+                    FixDirection::Outbound,
+                    &f,
+                    self.ctx.clock.now_nanos(),
+                );
                 write_frame(&mut write_half, &f).await?;
             }
             if self.session.state() == celnet_fix::session::SessionState::Disconnected

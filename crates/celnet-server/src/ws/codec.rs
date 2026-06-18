@@ -36,8 +36,9 @@ use celnet_proto::{
 // dedicated `use` so the long alphabetized list above stays undisturbed.
 use celnet_proto::{
     CreateFixConnectionRequest, CreateFixConnectionResponse, DeleteFixConnectionRequest,
-    DeleteFixConnectionResponse, FixConnectionDesc, FixConnectionSpec, ListFixConnectionsRequest,
-    ListFixConnectionsResponse, SetFixConnectionEnabledRequest, SetFixConnectionEnabledResponse,
+    DeleteFixConnectionResponse, FixConnectionDesc, FixConnectionSpec, FixMessage,
+    ListFixConnectionsRequest, ListFixConnectionsResponse, ListFixMessagesRequest,
+    ListFixMessagesResponse, SetFixConnectionEnabledRequest, SetFixConnectionEnabledResponse,
     UpdateFixConnectionRequest, UpdateFixConnectionResponse,
 };
 
@@ -1997,6 +1998,45 @@ pub(super) fn set_fix_connection_enabled_response_to_json(
 ) -> Value {
     json!({
         "connection": r.connection.as_ref().map(fix_connection_desc_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+/// One captured session frame → JSON. `direction` rides by its proto enum number;
+/// `seq`/`epoch_nanos` are 64-bit (the client parses them losslessly as bigints).
+fn fix_message_to_json(m: &FixMessage) -> Value {
+    json!({
+        "seq": m.seq,
+        "connection_id": m.connection_id,
+        "direction": m.direction,
+        "msg_type": m.msg_type,
+        "summary": m.summary,
+        "epoch_nanos": m.epoch_nanos,
+        "raw": m.raw,
+    })
+}
+
+pub(super) fn list_fix_messages_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<ListFixMessagesRequest> {
+    let connection_id = o
+        .get("connection_id")
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_owned);
+    Ok(ListFixMessagesRequest {
+        connection_id,
+        after_seq: opt_u64(o, "after_seq").unwrap_or(0),
+        limit: u32::try_from(opt_u64(o, "limit").unwrap_or(0)).unwrap_or(u32::MAX),
+        principal: opt_nested(o, "principal", principal_from_json)?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn list_fix_messages_response_to_json(r: &ListFixMessagesResponse) -> Value {
+    json!({
+        "messages": Value::Array(r.messages.iter().map(fix_message_to_json).collect()),
+        "latest_seq": r.latest_seq,
         "correlation_id": r.correlation_id,
     })
 }

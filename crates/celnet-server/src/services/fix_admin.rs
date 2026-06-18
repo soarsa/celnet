@@ -21,16 +21,23 @@ use std::sync::Arc;
 use celnet_proto::fix_admin_service_server::FixAdminService;
 use celnet_proto::{
     CreateFixConnectionRequest, CreateFixConnectionResponse, DeleteFixConnectionRequest,
-    DeleteFixConnectionResponse, FixAcceptorKind, FixConnectionDesc, FixConnectionSpec,
-    ListFixConnectionsRequest, ListFixConnectionsResponse, SetFixConnectionEnabledRequest,
-    SetFixConnectionEnabledResponse, UpdateFixConnectionRequest, UpdateFixConnectionResponse,
+    DeleteFixConnectionResponse, FixAcceptorKind, FixConnectionDesc, FixConnectionSpec, FixMessage,
+    FixMsgDirection, ListFixConnectionsRequest, ListFixConnectionsResponse, ListFixMessagesRequest,
+    ListFixMessagesResponse, SetFixConnectionEnabledRequest, SetFixConnectionEnabledResponse,
+    UpdateFixConnectionRequest, UpdateFixConnectionResponse,
 };
 use tonic::{Request, Response, Status};
 
 use crate::config::fix_connections::{AcceptorKind, FixConnectionDef};
 use crate::readiness::ReadinessGate;
+use crate::services::fix_monitor::{FixDirection, FixMessageEvent, FixMonitor};
 use crate::services::fix_registry::{ConnectionStatus, FixAcceptorRegistry};
 use crate::services::risk::store::PositionStore;
+
+/// The default page size when a `ListMessages` request leaves `limit` at 0.
+const DEFAULT_MESSAGE_LIMIT: usize = 500;
+/// The hard cap on a single `ListMessages` page.
+const MAX_MESSAGE_LIMIT: usize = 4096;
 
 /// The `FixAdminService` edge over the shared acceptor registry.
 ///
@@ -42,21 +49,25 @@ pub struct FixAdminEdge {
     registry: Arc<FixAcceptorRegistry>,
     gate: Arc<ReadinessGate>,
     store: Arc<PositionStore>,
+    monitor: Arc<FixMonitor>,
 }
 
 impl FixAdminEdge {
-    /// Construct the admin edge over the shared registry, readiness gate and the
-    /// access-mode-bearing position store.
+    /// Construct the admin edge over the shared registry, readiness gate, the
+    /// access-mode-bearing position store, and the session-traffic capture sink the
+    /// `ListMessages` poll serves.
     #[must_use]
     pub fn new(
         registry: Arc<FixAcceptorRegistry>,
         gate: Arc<ReadinessGate>,
         store: Arc<PositionStore>,
+        monitor: Arc<FixMonitor>,
     ) -> Self {
         Self {
             registry,
             gate,
             store,
+            monitor,
         }
     }
 
@@ -206,6 +217,56 @@ impl FixAdminService for FixAdminEdge {
             connection: Some(status_to_wire(&status)),
             correlation_id: req.correlation_id,
         }))
+    }
+
+    async fn list_messages(
+        &self,
+        request: Request<ListFixMessagesRequest>,
+    ) -> Result<Response<ListFixMessagesResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        crate::services::access::authorize(
+            self.store.access_mode(),
+            req.principal.as_ref(),
+            "FixAdminService/ListMessages",
+            req.correlation_id,
+        )?;
+        let limit = match req.limit as usize {
+            0 => DEFAULT_MESSAGE_LIMIT,
+            n => n.min(MAX_MESSAGE_LIMIT),
+        };
+        let connection_id = req
+            .connection_id
+            .as_deref()
+            .filter(|s| !s.trim().is_empty());
+        let (events, latest_seq) = self.monitor.since(connection_id, req.after_seq, limit);
+        Ok(Response::new(ListFixMessagesResponse {
+            messages: events.iter().map(event_to_wire).collect(),
+            latest_seq,
+            correlation_id: req.correlation_id,
+        }))
+    }
+}
+
+/// Map a captured [`FixMessageEvent`] onto its wire [`FixMessage`].
+fn event_to_wire(e: &FixMessageEvent) -> FixMessage {
+    FixMessage {
+        seq: e.seq,
+        connection_id: e.connection_id.clone(),
+        direction: direction_to_wire(e.direction) as i32,
+        msg_type: e.msg_type.clone(),
+        summary: e.summary.clone(),
+        epoch_nanos: e.epoch_nanos,
+        raw: e.raw.clone(),
+    }
+}
+
+/// The wire enum value for a captured frame's travel direction.
+fn direction_to_wire(direction: FixDirection) -> FixMsgDirection {
+    match direction {
+        FixDirection::Inbound => FixMsgDirection::Inbound,
+        FixDirection::Outbound => FixMsgDirection::Outbound,
     }
 }
 

@@ -693,6 +693,14 @@ async fn handle_unary(
                 codec::set_fix_connection_enabled_response_to_json
             )
         }
+        "list_fix_messages" => {
+            let req = decode!(codec::list_fix_messages_request_from_json(o));
+            call!(
+                services.fix_admin.list_messages(Request::new(req)),
+                "fix_messages",
+                codec::list_fix_messages_response_to_json
+            )
+        }
         other => codec::error_frame(&format!("unknown request type `{other}`"), correlation_id),
     }
 }

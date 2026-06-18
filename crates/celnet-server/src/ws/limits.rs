@@ -175,12 +175,14 @@ mod tests {
         let surface_book = Arc::new(SurfaceBook::new());
         // An empty managed-acceptor registry over a throwaway config path: the cap
         // test never exercises fix-admin, it just needs the edge the WS set requires.
+        let fix_monitor = Arc::new(crate::services::fix_monitor::FixMonitor::new());
         let fix_registry = Arc::new(
             crate::services::fix_registry::FixAcceptorRegistry::load(
                 Arc::clone(&link),
                 SpreadModel::default(),
                 Clock::system(),
                 Arc::clone(&surface_book),
+                Arc::clone(&fix_monitor),
                 std::env::temp_dir().join(format!("celnet-ws-cap-fix-{}.json", std::process::id())),
             )
             .expect("a missing config loads as an empty registry"),
@@ -189,6 +191,7 @@ mod tests {
             fix_registry,
             Arc::clone(&gate),
             Arc::clone(&store),
+            fix_monitor,
         ));
         let services = WsServices::new(
             link,

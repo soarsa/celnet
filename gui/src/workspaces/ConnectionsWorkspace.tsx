@@ -16,6 +16,7 @@ import { useState } from "react";
 
 import { useApp } from "../app/AppContext";
 import { FixConnectionWizard } from "../components/FixConnectionWizard";
+import { FixSessionMonitor } from "../components/FixSessionMonitor";
 import { Button } from "../components/Button";
 import { Panel } from "../components/Panel";
 import type { FixConnection } from "../data/contract";
@@ -33,6 +34,11 @@ export function ConnectionsWorkspace(): React.ReactElement {
   const [wizardOpen, setWizardOpen] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [monitorId, setMonitorId] = useState<string | null>(null);
+
+  // The monitored connection, resolved live so it reflects status/rename changes
+  // and clears itself if the connection is deleted out from under the monitor.
+  const monitored = monitorId === null ? null : (fix.connections.find((c) => c.id === monitorId) ?? null);
 
   const runAction = async (id: string, action: () => Promise<unknown>): Promise<void> => {
     setBusyId(id);
@@ -110,6 +116,13 @@ export function ConnectionsWorkspace(): React.ReactElement {
                   <td className={styles.actionsCol}>
                     <div className={styles.rowActions}>
                       <Button
+                        variant={monitorId === c.id ? "primary" : "secondary"}
+                        onClick={() => setMonitorId((id) => (id === c.id ? null : c.id))}
+                        aria-pressed={monitorId === c.id}
+                      >
+                        Monitor
+                      </Button>
+                      <Button
                         variant="secondary"
                         onClick={() =>
                           void runAction(c.id, () => fix.setEnabled(c.id, !c.enabled))
@@ -133,6 +146,14 @@ export function ConnectionsWorkspace(): React.ReactElement {
           </table>
         )}
       </Panel>
+
+      {monitored && (
+        <FixSessionMonitor
+          transport={app.transport}
+          connection={monitored}
+          onClose={() => setMonitorId(null)}
+        />
+      )}
 
       <FixConnectionWizard
         open={wizardOpen}

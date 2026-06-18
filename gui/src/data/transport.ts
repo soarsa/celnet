@@ -27,6 +27,7 @@ import type {
   Execution,
   FixConnection,
   FixConnectionSpec,
+  FixMessagePage,
   Greeks,
   Heartbeat,
   Instrument,
@@ -262,4 +263,16 @@ export interface CelnetTransport {
 
   /** FixAdminService.SetEnabled — enable/disable a connection (bind/stop its acceptor). */
   setFixConnectionEnabled(id: string, enabled: boolean): Promise<FixConnection>;
+
+  /**
+   * FixAdminService.ListMessages — poll the captured inbound/outbound session
+   * traffic for the monitor screen. `afterSeq` is the cursor (`0n` ⇒ the whole
+   * retained ring buffer); `connectionId` filters to one session; `limit` caps the
+   * page (0 ⇒ server default). The response carries `latestSeq` to advance the cursor.
+   */
+  listFixMessages(
+    connectionId: string | undefined,
+    afterSeq: bigint,
+    limit?: number,
+  ): Promise<FixMessagePage>;
 }

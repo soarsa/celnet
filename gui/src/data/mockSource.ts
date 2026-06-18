@@ -25,6 +25,8 @@ import type {
   Execution,
   FixConnection,
   FixConnectionSpec,
+  FixMessage,
+  FixMessagePage,
   Greeks,
   Heartbeat,
   Instrument,
@@ -925,6 +927,11 @@ export class MockTransport implements CelnetTransport {
 
   // --- FixAdminService — offline in-memory managed-acceptor registry ----------
 
+  /** The offline captured-traffic ring (the monitor feed); see `listFixMessages`. */
+  private readonly fixMessages: FixMessage[] = [];
+  /** Monotonic capture cursor for the synthetic monitor feed. */
+  private fixSeq = 0n;
+
   async listFixConnections(): Promise<FixConnection[]> {
     return this.fixConnections.map((c) => ({ ...c }));
   }
@@ -968,6 +975,68 @@ export class MockTransport implements CelnetTransport {
     conn.running = enabled;
     conn.boundAddr = enabled ? conn.bindAddr : "";
     return { ...conn };
+  }
+
+  async listFixMessages(
+    connectionId: string | undefined,
+    afterSeq: bigint,
+    limit = 0,
+  ): Promise<FixMessagePage> {
+    // Offline liveness: the mock has no real socket, so it synthesises a plausible
+    // session transcript. The first poll seeds a short RFQ conversation for each
+    // running acceptor; every poll then appends a heartbeat so the monitor tails.
+    if (this.fixSeq === 0n) {
+      for (const c of this.fixConnections) {
+        if (c.running) this.seedFixTranscript(c.id);
+      }
+    }
+    for (const c of this.fixConnections) {
+      if (c.running && (connectionId === undefined || connectionId === c.id)) {
+        this.pushFix(c.id, "INBOUND", "0", "Heartbeat");
+      }
+    }
+    const cap = limit > 0 ? limit : 500;
+    const messages = this.fixMessages
+      .filter((m) => m.seq > afterSeq)
+      .filter((m) => connectionId === undefined || m.connectionId === connectionId)
+      .slice(0, cap)
+      .map((m) => ({ ...m }));
+    return { messages, latestSeq: this.fixSeq };
+  }
+
+  /** Seed a short, realistic inbound/outbound RFQ transcript for `connectionId`. */
+  private seedFixTranscript(connectionId: string): void {
+    this.pushFix(connectionId, "INBOUND", "A", "Logon");
+    this.pushFix(connectionId, "OUTBOUND", "A", "Logon");
+    this.pushFix(connectionId, "INBOUND", "R", "QuoteRequest");
+    this.pushFix(connectionId, "OUTBOUND", "S", "Quote");
+    this.pushFix(connectionId, "INBOUND", "D", "NewOrderSingle");
+    this.pushFix(connectionId, "OUTBOUND", "8", "ExecutionReport");
+  }
+
+  /** Append one synthetic captured frame to the offline monitor ring (cap 500). */
+  private pushFix(
+    connectionId: string,
+    direction: FixMessage["direction"],
+    msgType: string,
+    summary: string,
+  ): void {
+    this.fixSeq += 1n;
+    const seq = this.fixSeq;
+    const inbound = direction === "INBOUND";
+    const raw =
+      `8=FIX.4.4|9=0|35=${msgType}|49=${inbound ? "CELNET-CPTY" : "CELNET"}|` +
+      `56=${inbound ? "CELNET" : "CELNET-CPTY"}|34=${seq.toString()}|10=000`;
+    this.fixMessages.push({
+      seq,
+      connectionId,
+      direction,
+      msgType,
+      summary,
+      epochNanos: BigInt(Date.now()) * 1_000_000n,
+      raw,
+    });
+    if (this.fixMessages.length > 500) this.fixMessages.shift();
   }
 
   /** Build a descriptor from a spec, reflecting `enabled` into the offline runtime status. */

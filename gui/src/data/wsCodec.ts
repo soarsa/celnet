@@ -39,6 +39,9 @@ import type {
   FixConnection,
   FixConnectionKind,
   FixConnectionSpec,
+  FixMessage,
+  FixMessagePage,
+  FixMsgDirection,
   FixingSchedule,
   Greeks,
   Heartbeat,
@@ -1672,4 +1675,49 @@ export function deleteFixConnectionRequestToWire(id: string): WireObject {
 
 export function setFixConnectionEnabledRequestToWire(id: string, enabled: boolean): WireObject {
   return { id, enabled, principal: adminPrincipal() };
+}
+
+// --- fix-admin: captured session traffic (monitor screen) -------------------
+
+/** The wire enum tags for FixMsgDirection. */
+const FIX_DIR_OUTBOUND = 1;
+
+/** Wire enum tag → domain direction. */
+export function fixMsgDirectionFromWire(tag: number): FixMsgDirection {
+  return tag === FIX_DIR_OUTBOUND ? "OUTBOUND" : "INBOUND";
+}
+
+/** A captured frame from its wire form. `seq`/`epoch_nanos` parse as bigint. */
+export function fixMessageFromWire(o: WireObject): FixMessage {
+  return {
+    seq: numToBigInt(o, "seq"),
+    connectionId: str(o, "connection_id"),
+    direction: fixMsgDirectionFromWire(enumNum(o, "direction")),
+    msgType: str(o, "msg_type"),
+    summary: str(o, "summary"),
+    epochNanos: numToBigInt(o, "epoch_nanos"),
+    raw: str(o, "raw"),
+  };
+}
+
+export function listFixMessagesRequestToWire(
+  connectionId: string | undefined,
+  afterSeq: bigint,
+  limit: number,
+): WireObject {
+  const body: WireObject = {
+    after_seq: afterSeq,
+    limit,
+    principal: adminPrincipal(),
+  };
+  if (connectionId && connectionId.length > 0) body.connection_id = connectionId;
+  return body;
+}
+
+export function listFixMessagesResponseFromWire(o: WireObject): FixMessagePage {
+  const arr = o["messages"];
+  return {
+    messages: Array.isArray(arr) ? (arr as WireObject[]).map(fixMessageFromWire) : [],
+    latestSeq: numToBigInt(o, "latest_seq"),
+  };
 }

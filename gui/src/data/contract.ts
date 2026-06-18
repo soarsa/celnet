@@ -1766,3 +1766,38 @@ export interface FixConnectionSpec {
   targetCompId: string;
   enabled: boolean;
 }
+
+/**
+ * The travel direction of a captured FIX frame, from the acceptor's vantage
+ * (`celnet.wire.FixMsgDirection`). Mirrors the wire enum (INBOUND=0/OUTBOUND=1).
+ */
+export type FixMsgDirection = "INBOUND" | "OUTBOUND";
+
+/**
+ * One captured FIX frame on a managed acceptor session — the monitor screen feed
+ * (`celnet.wire.FixMessage`). `seq` and `epochNanos` are 64-bit, carried as bigint.
+ */
+export interface FixMessage {
+  /** Monotonic per-process capture sequence (the poll cursor). */
+  seq: bigint;
+  /** The managing connection's id this frame was captured on. */
+  connectionId: string;
+  /** Travel direction from the acceptor's vantage. */
+  direction: FixMsgDirection;
+  /** The FIX MsgType(35) value, e.g. `R`, `S`, `A`. */
+  msgType: string;
+  /** A human label for the MsgType, e.g. `QuoteRequest`. */
+  summary: string;
+  /** Edge capture timestamp (epoch nanos). */
+  epochNanos: bigint;
+  /** The raw FIX message with SOH rendered as `|`. */
+  raw: string;
+}
+
+/** A cursored page of captured session traffic (`FixAdminService.ListMessages`). */
+export interface FixMessagePage {
+  /** The captured frames after the requested cursor (oldest-first). */
+  messages: FixMessage[];
+  /** The highest capture sequence assigned — the next poll's cursor. */
+  latestSeq: bigint;
+}

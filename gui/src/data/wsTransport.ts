@@ -30,6 +30,7 @@ import type {
   Execution,
   FixConnection,
   FixConnectionSpec,
+  FixMessagePage,
   Instrument,
   LimitStatusRequest,
   LimitStatusResponse,
@@ -65,6 +66,8 @@ import {
   limitStatusResponseFromWire,
   listFixConnectionsRequestToWire,
   listFixConnectionsResponseFromWire,
+  listFixMessagesRequestToWire,
+  listFixMessagesResponseFromWire,
   listPositionsRequestToWire,
   listPositionsResponseFromWire,
   markedSurfaceFromWire,
@@ -918,6 +921,19 @@ export class WsTransport implements CelnetTransport {
       "fix_connection_enabled",
     );
     return fixConnectionResponseFromWire(reply);
+  }
+
+  async listFixMessages(
+    connectionId: string | undefined,
+    afterSeq: bigint,
+    limit = 0,
+  ): Promise<FixMessagePage> {
+    const reply = await this.conn.request(
+      "list_fix_messages",
+      listFixMessagesRequestToWire(connectionId, afterSeq, limit),
+      "fix_messages",
+    );
+    return listFixMessagesResponseFromWire(reply);
   }
 
   /** Permanently close the underlying connection (call on app teardown). */

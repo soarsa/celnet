@@ -117,7 +117,13 @@ use celnet_proto::surface_service_server::SurfaceServiceServer;
 use config::fix_connections::FixConnectionStore;
 use services::fix::{FixAcceptor, FixContext};
 use services::fix_admin::FixAdminEdge;
+use services::fix_monitor::FixMonitor;
 use services::fix_registry::FixAcceptorRegistry;
+
+/// The synthetic connection id the legacy env-seeded (`CELNET_FIX_ADDR`) / test-
+/// attached acceptor tags its captured frames with in the monitor — it is not a
+/// managed `FixConnectionDef`, so it has no persisted id of its own.
+const LEGACY_FIX_CONNECTION_ID: &str = "env-default";
 use services::pricing::PricingEdge;
 use services::quote::QuoteEdge;
 use services::risk::RiskEdge;
@@ -198,6 +204,10 @@ pub struct Edge {
     /// delete, each persisted). Independent of the legacy single `fix_acceptor` env seed
     /// above. Its acceptors are stopped on [`Edge::shutdown`].
     fix_registry: Arc<FixAcceptorRegistry>,
+    /// The shared FIX session-traffic capture sink behind the monitor screen
+    /// (`FixAdminService.ListMessages`). Every managed acceptor and the legacy env
+    /// seed record their frames here; retained as a bounded ring buffer.
+    fix_monitor: Arc<FixMonitor>,
     /// The optional bound vendor-feed ingress: `Some` iff `CELNET_VENDOR_WS` named a
     /// reachable WS endpoint at boot (the [`DeployMode::WithVendorFeed`] inbound). It
     /// drives the resilient subscriber → normalize → [`SurfaceBook`] deposit → governed
@@ -401,12 +411,17 @@ impl Edge {
         // config fails boot loudly); the enabled acceptors are bound below once the
         // listeners are up. Its entitlement gate reads the same `PositionStore`
         // access mode `RiskService` does, so gRPC and the WS mirror enforce one policy.
+        // The shared session-traffic capture sink behind the monitor screen: every
+        // managed acceptor (and the legacy env seed) records its inbound/outbound
+        // frames here, and `FixAdminService.ListMessages` serves a cursored tail.
+        let fix_monitor = Arc::new(FixMonitor::new());
         let fix_registry = Arc::new(
             FixAcceptorRegistry::load(
                 Arc::clone(&link),
                 spread,
                 clock.clone(),
                 Arc::clone(&surface_book),
+                Arc::clone(&fix_monitor),
                 FixConnectionStore::config_path(),
             )
             .map_err(|e| std::io::Error::new(e.kind(), format!("FIX connection config: {e}")))?,
@@ -418,6 +433,7 @@ impl Edge {
             Arc::clone(&fix_registry),
             Arc::clone(&gate),
             Arc::clone(&store),
+            Arc::clone(&fix_monitor),
         ));
         let fix_admin = FixAdminServiceServer::from_arc(Arc::clone(&fix_admin_edge));
 
@@ -479,6 +495,8 @@ impl Edge {
                     spread,
                     fix_clock,
                     Arc::clone(&surface_book),
+                    Arc::clone(&fix_monitor),
+                    LEGACY_FIX_CONNECTION_ID.to_owned(),
                 );
                 Some(FixAcceptor::start(addr, ctx).await?)
             }
@@ -528,6 +546,7 @@ impl Edge {
             ws_mirror,
             fix_acceptor,
             fix_registry,
+            fix_monitor,
             vendor_feed,
         })
     }
@@ -573,6 +592,8 @@ impl Edge {
             Arc::clone(&self.surface_book),
             sender,
             counterparty,
+            Arc::clone(&self.fix_monitor),
+            LEGACY_FIX_CONNECTION_ID.to_owned(),
         );
         let acceptor = FixAcceptor::start(addr, ctx).await?;
         let bound = acceptor.local_addr();

@@ -32,6 +32,7 @@ pub mod surface;
 pub mod deploy;
 pub mod fix;
 pub mod fix_admin;
+pub mod fix_monitor;
 pub mod fix_registry;
 
 mod attribution;
