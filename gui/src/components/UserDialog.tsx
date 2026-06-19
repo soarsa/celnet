@@ -107,11 +107,19 @@ export function UserDialog({
 
   const needsPassword = mode === "create" || mode === "reset";
   const passwordOk = !needsPassword || password.length >= MIN_PASSWORD_LEN;
-  const emailOk = mode !== "create" || email.trim().length > 0;
-  const canSubmit = emailOk && passwordOk && !submitting;
 
   const submit = (): void => {
-    if (!canSubmit) return;
+    if (submitting) return;
+    // Validate on click so the action ALWAYS responds — a disabled button that
+    // silently does nothing reads as a broken form. Surface the exact reason.
+    if (mode === "create" && email.trim().length === 0) {
+      setError("Email is required.");
+      return;
+    }
+    if (needsPassword && password.length < MIN_PASSWORD_LEN) {
+      setError(`Password must be at least ${MIN_PASSWORD_LEN} characters.`);
+      return;
+    }
     setSubmitting(true);
     setError(null);
     const desk = deskId.trim();
@@ -269,7 +277,7 @@ export function UserDialog({
             <Button type="button" variant="ghost" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary" disabled={!canSubmit}>
+            <Button type="submit" variant="primary" disabled={submitting}>
               {submitting ? "Saving…" : mode === "create" ? "Create user" : "Save"}
             </Button>
           </div>
