@@ -18,7 +18,9 @@ import type {
   CcyExposureLeg,
   CcyPair,
   Conventions,
+  CreateUserInput,
   DealerQuote,
+  DeskDesc,
   DrillRiskRequest,
   DrillRiskResponse,
   Executed,
@@ -28,6 +30,7 @@ import type {
   FixMessage,
   FixMessagePage,
   Greeks,
+  LoginResult,
   Heartbeat,
   Instrument,
   LimitStatusRequest,
@@ -53,6 +56,8 @@ import type {
   TradableToken,
   TwoWayPrice,
   Update,
+  UpdateUserInput,
+  UserDesc,
   VegaBucket,
 } from "./contract";
 import { forward, priceInstrument, strikeFromDelta } from "./pricing";
@@ -615,11 +620,37 @@ export class MockTransport implements CelnetTransport {
 
   /**
    * The bearer session token the auth flow installs, mirroring the live
-   * transport. The offline mock does not enforce authentication, so it simply
-   * retains the token for parity (and so a `?mock` login round-trips); gated mock
-   * calls behave identically with or without it.
+   * transport. The offline mock does not enforce authentication on data RPCs, so
+   * it simply retains the token for parity (and so a `?mock` login round-trips);
+   * gated mock calls behave identically with or without it.
    */
   private sessionToken: string | null = null;
+
+  /**
+   * The offline identity store: an in-memory user/desk roster mirroring the
+   * server's `AuthService` semantics so the `?mock` GUI exercises the Admin
+   * workspace + sign-in offline. Seeded with the SAME default admin the server
+   * seeds on first run (`admin@celnet.com` / `password`). The plaintext password
+   * is held here ONLY for the offline mock — the real server stores Argon2id
+   * hashes and never round-trips a password. No desks are seeded (parity with
+   * the server seed); an admin creates them in the workspace.
+   */
+  private readonly mockUsers: { user: UserDesc; password: string }[] = [
+    {
+      user: {
+        id: "admin",
+        email: "admin@celnet.com",
+        displayName: "Administrator",
+        role: "ADMIN",
+        disabled: false,
+      },
+      password: "password",
+    },
+  ];
+  private readonly mockDesks: DeskDesc[] = [];
+  /** Issued session tokens (offline liveness for `logout`'s `ended` result). */
+  private readonly mockTokens = new Set<string>();
+  private mockTokenSeq = 0n;
 
   constructor(opts: { seed?: bigint; tickMs?: number } = {}) {
     this.seed = opts.seed ?? 0xce1_5eed_d00dn;
@@ -1081,7 +1112,141 @@ export class MockTransport implements CelnetTransport {
       );
     }
   }
+
+  // --- AuthService (offline) -------------------------------------------------
+  //
+  // An in-memory mirror of the server's session + user/desk administration so the
+  // `?mock` GUI signs in and administers offline. Validation parity: case-
+  // insensitive unique emails, a 12-char minimum on create/reset, and a
+  // no-last-admin-lockout guard (a desk delete unassigns its members), so the
+  // offline workspace surfaces the same errors the live edge would.
+
+  async login(email: string, password: string): Promise<LoginResult> {
+    const key = email.trim().toLowerCase();
+    const found = this.mockUsers.find((u) => u.user.email.toLowerCase() === key);
+    // A single opaque error for every failure mode — never leak which factor failed.
+    if (!found || found.user.disabled || found.password !== password) {
+      throw new Error("invalid email or password");
+    }
+    this.mockTokenSeq += 1n;
+    const token = `mock-session-${this.mockTokenSeq.toString()}`;
+    this.mockTokens.add(token);
+    // A 12-hour session, mirroring the server's TTL.
+    const expiresNanos = nowNanos() + 12n * 60n * 60n * 1_000_000_000n;
+    return { token, user: { ...found.user }, expiresNanos };
+  }
+
+  async logout(): Promise<boolean> {
+    const token = this.sessionToken;
+    const ended = token !== null && this.mockTokens.delete(token);
+    return ended;
+  }
+
+  async listUsers(): Promise<UserDesc[]> {
+    return this.mockUsers.map((u) => ({ ...u.user }));
+  }
+
+  async createUser(input: CreateUserInput): Promise<UserDesc> {
+    const email = input.email.trim();
+    if (email.length === 0) throw new Error("email is required");
+    if (input.password.length < MOCK_MIN_PASSWORD_LEN) {
+      throw new Error(`password must be at least ${MOCK_MIN_PASSWORD_LEN} characters`);
+    }
+    const key = email.toLowerCase();
+    if (this.mockUsers.some((u) => u.user.email.toLowerCase() === key)) {
+      throw new Error(`a user with email \`${email}\` already exists`);
+    }
+    const user: UserDesc = {
+      id: mockSlugify(email),
+      email,
+      displayName: input.displayName.trim() || email,
+      role: input.role,
+      disabled: false,
+    };
+    if (input.deskId && input.deskId.length > 0) user.deskId = input.deskId;
+    this.mockUsers.push({ user, password: input.password });
+    return { ...user };
+  }
+
+  async updateUser(id: string, input: UpdateUserInput): Promise<UserDesc> {
+    const entry = this.mockUsers.find((u) => u.user.id === id);
+    if (!entry) throw new Error(`no user with id \`${id}\``);
+    // No-last-admin-lockout: refuse to demote/disable the only remaining admin.
+    const wasActiveAdmin = entry.user.role === "ADMIN" && !entry.user.disabled;
+    const willBeActiveAdmin = input.role === "ADMIN" && !input.disabled;
+    if (wasActiveAdmin && !willBeActiveAdmin && this.activeAdminCount() <= 1) {
+      throw new Error("cannot remove the last administrator");
+    }
+    const next: UserDesc = {
+      id: entry.user.id,
+      email: entry.user.email,
+      displayName: input.displayName.trim() || entry.user.email,
+      role: input.role,
+      disabled: input.disabled,
+    };
+    if (input.deskId && input.deskId.length > 0) next.deskId = input.deskId;
+    entry.user = next;
+    return { ...next };
+  }
+
+  async deleteUser(id: string): Promise<boolean> {
+    const idx = this.mockUsers.findIndex((u) => u.user.id === id);
+    if (idx < 0) return false;
+    const entry = this.mockUsers[idx]!;
+    if (entry.user.role === "ADMIN" && !entry.user.disabled && this.activeAdminCount() <= 1) {
+      throw new Error("cannot delete the last administrator");
+    }
+    this.mockUsers.splice(idx, 1);
+    return true;
+  }
+
+  async resetPassword(id: string, newPassword: string): Promise<void> {
+    const entry = this.mockUsers.find((u) => u.user.id === id);
+    if (!entry) throw new Error(`no user with id \`${id}\``);
+    if (newPassword.length < MOCK_MIN_PASSWORD_LEN) {
+      throw new Error(`password must be at least ${MOCK_MIN_PASSWORD_LEN} characters`);
+    }
+    entry.password = newPassword;
+  }
+
+  async listDesks(): Promise<DeskDesc[]> {
+    return this.mockDesks.map((d) => ({ ...d }));
+  }
+
+  async createDesk(name: string): Promise<DeskDesc> {
+    const label = name.trim();
+    if (label.length === 0) throw new Error("desk name is required");
+    const id = mockSlugify(label);
+    if (this.mockDesks.some((d) => d.id === id)) {
+      throw new Error(`a desk with id \`${id}\` already exists`);
+    }
+    const desk: DeskDesc = { id, name: label };
+    this.mockDesks.push(desk);
+    return { ...desk };
+  }
+
+  async deleteDesk(id: string): Promise<boolean> {
+    const idx = this.mockDesks.findIndex((d) => d.id === id);
+    if (idx < 0) return false;
+    this.mockDesks.splice(idx, 1);
+    // Members of the deleted desk become unassigned (server parity).
+    for (const entry of this.mockUsers) {
+      if (entry.user.deskId === id) {
+        const { deskId: _dropped, ...rest } = entry.user;
+        entry.user = rest;
+      }
+    }
+    return true;
+  }
+
+  /** The number of enabled (non-disabled) administrators in the offline roster. */
+  private activeAdminCount(): number {
+    return this.mockUsers.filter((u) => u.user.role === "ADMIN" && !u.user.disabled).length;
+  }
 }
+
+/** The minimum password length on create/reset (mirrors the server's `MIN_PASSWORD_LEN`). */
+const MOCK_MIN_PASSWORD_LEN = 12;
 
 /** A lowercase, hyphen-separated slug of `name` (mirrors the server's `slugify`). */
 function mockSlugify(name: string): string {

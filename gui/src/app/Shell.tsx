@@ -23,11 +23,14 @@ import { SurfaceWorkspace } from "../workspaces/SurfaceWorkspace";
 import { RiskWorkspace } from "../workspaces/RiskWorkspace";
 import { BookWorkspace } from "../workspaces/BookWorkspace";
 import { ConnectionsWorkspace } from "../workspaces/ConnectionsWorkspace";
+import { AdminWorkspace } from "../workspaces/AdminWorkspace";
 import { StatusRibbon } from "./StatusRibbon";
 import { CelerMark, CelnetWordmark } from "../components/CelerMark";
 import { ScopeControl } from "../components/ScopeControl";
 import { ScopeSwitcher } from "../components/ScopeSwitcher";
 import { SavedViewsMenu } from "../components/SavedViewsMenu";
+import { AuthMenu } from "../components/AuthMenu";
+import { SignInDialog } from "../components/SignInDialog";
 import { buildCommands, RAIL, railChord, resolveChord, type WorkspaceId } from "../lib/commands";
 import { isTerminal } from "../lib/scope";
 import styles from "./Shell.module.css";
@@ -40,6 +43,7 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   risk: RiskWorkspace,
   book: BookWorkspace,
   connections: ConnectionsWorkspace,
+  admin: AdminWorkspace,
 };
 
 export function Shell(): React.ReactElement {
@@ -178,6 +182,7 @@ export function Shell(): React.ReactElement {
         onClose={() => app.setPaletteOpen(false)}
       />
       <ScopeSwitcher />
+      <SignInDialog />
       <ShortcutsOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
     </div>
   );
@@ -202,6 +207,7 @@ function TitleBar(): React.ReactElement {
         <kbd className={styles.kbd}>⌘K</kbd>
         <span>Search / command…</span>
       </button>
+      <AuthMenu />
     </header>
   );
 }

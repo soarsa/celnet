@@ -21,6 +21,8 @@ import type {
   BrokerQuoteSet,
   CcyPair,
   Conventions,
+  CreateUserInput,
+  DeskDesc,
   DrillRiskRequest,
   DrillRiskResponse,
   Executed,
@@ -29,6 +31,7 @@ import type {
   FixConnectionSpec,
   FixMessagePage,
   Greeks,
+  LoginResult,
   Heartbeat,
   Instrument,
   LimitStatusRequest,
@@ -52,6 +55,8 @@ import type {
   Tenor,
   TwoWayPrice,
   Update,
+  UpdateUserInput,
+  UserDesc,
 } from "./contract";
 
 /** A priced result for a single instrument (PricingService.Price). */
@@ -283,4 +288,41 @@ export interface CelnetTransport {
     afterSeq: bigint,
     limit?: number,
   ): Promise<FixMessagePage>;
+
+  // --- AuthService — server-enforced sessions + user/desk administration -----
+  //
+  // Login mints a bearer token the transport then installs via
+  // {@link setSessionToken}; every gated RPC carries it and the SERVER resolves
+  // the identity (admin RPCs are admin-gated on it). The admin calls below assume
+  // an installed admin token — they encode no credential themselves.
+
+  /** AuthService.Login — exchange email + password for a session + the user profile. */
+  login(email: string, password: string): Promise<LoginResult>;
+
+  /** AuthService.Logout — invalidate the installed bearer token; resolves to whether a live session ended. */
+  logout(): Promise<boolean>;
+
+  /** AuthService.ListUsers (admin) — the full user roster. */
+  listUsers(): Promise<UserDesc[]>;
+
+  /** AuthService.CreateUser (admin) — create a user; resolves to the created account. */
+  createUser(input: CreateUserInput): Promise<UserDesc>;
+
+  /** AuthService.UpdateUser (admin) — update a user's profile/role/desk/disabled flag. */
+  updateUser(id: string, input: UpdateUserInput): Promise<UserDesc>;
+
+  /** AuthService.DeleteUser (admin) — remove a user; resolves to whether one was removed. */
+  deleteUser(id: string): Promise<boolean>;
+
+  /** AuthService.ResetPassword (admin) — set a user's password (the seeded-admin rotation path). */
+  resetPassword(id: string, newPassword: string): Promise<void>;
+
+  /** AuthService.ListDesks (admin) — the full desk roster. */
+  listDesks(): Promise<DeskDesc[]>;
+
+  /** AuthService.CreateDesk (admin) — create a desk; resolves to the created desk. */
+  createDesk(name: string): Promise<DeskDesc>;
+
+  /** AuthService.DeleteDesk (admin) — remove a desk (its members become unassigned). */
+  deleteDesk(id: string): Promise<boolean>;
 }

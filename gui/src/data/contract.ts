@@ -1809,3 +1809,77 @@ export interface FixMessagePage {
   /** The highest capture sequence assigned — the next poll's cursor. */
   latestSeq: bigint;
 }
+
+// --- AuthService — server-enforced sessions + user/desk administration -------
+//
+// Login mints a bearer token the server validates on every gated RPC; admin RPCs
+// additionally require the resolved identity to be an admin. Mirrors the
+// `celnet.wire` Auth messages (`UserDesc`, `DeskDesc`, `LoginResponse`). Passwords
+// NEVER appear on a descriptor — they ride only on login / create / reset inputs.
+
+/**
+ * A user's authority level (`celnet.wire.UserRole`). `TRADER` (the wire zero
+ * default) sees their desk's inbound RFQ traffic; `ADMIN` has full user/desk/FIX
+ * administration. A defaulted/forgotten value can never grant administration.
+ */
+export type UserRole = "TRADER" | "ADMIN";
+
+/**
+ * A user account as exposed on the wire (`celnet.wire.UserDesc`) — carries NO
+ * password material.
+ */
+export interface UserDesc {
+  /** Stable user id (the admin-API key). */
+  id: string;
+  /** Login email (unique, case-insensitive). */
+  email: string;
+  /** Human-friendly display name. */
+  displayName: string;
+  /** The user's authority level. */
+  role: UserRole;
+  /** The desk the user belongs to (`DeskDesc.id`); omitted ⇒ unassigned. */
+  deskId?: string;
+  /** Whether the account is disabled (retained but cannot log in). */
+  disabled: boolean;
+}
+
+/** A desk: a named group traders belong to (`celnet.wire.DeskDesc`). */
+export interface DeskDesc {
+  /** Stable desk id (the admin-API key). */
+  id: string;
+  /** Human-friendly desk label. */
+  name: string;
+}
+
+/** The issued session on a successful login (`celnet.wire.LoginResponse`). */
+export interface LoginResult {
+  /** The opaque bearer token to present on subsequent RPCs (a secret). */
+  token: string;
+  /** The authenticated user's profile. */
+  user: UserDesc;
+  /** Absolute session expiry (epoch nanos); re-login is required past it. */
+  expiresNanos: bigint;
+}
+
+/** The create-a-user payload (`AuthService.CreateUser`). */
+export interface CreateUserInput {
+  email: string;
+  displayName: string;
+  role: UserRole;
+  /** The desk to assign (`DeskDesc.id`); omitted ⇒ unassigned. */
+  deskId?: string;
+  /** The initial plaintext password (hashed at rest; min length enforced server-side). */
+  password: string;
+}
+
+/**
+ * The update-a-user payload (`AuthService.UpdateUser`). The password is changed
+ * only through `resetPassword`, never here.
+ */
+export interface UpdateUserInput {
+  displayName: string;
+  role: UserRole;
+  /** The new desk assignment (`DeskDesc.id`); omitted ⇒ unassigned. */
+  deskId?: string;
+  disabled: boolean;
+}

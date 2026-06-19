@@ -25,6 +25,8 @@ import type {
   BrokerQuoteSet,
   CcyPair,
   Conventions,
+  CreateUserInput,
+  DeskDesc,
   DrillRiskRequest,
   DrillRiskResponse,
   Execution,
@@ -32,6 +34,7 @@ import type {
   FixConnectionSpec,
   FixMessagePage,
   Instrument,
+  LoginResult,
   LimitStatusRequest,
   LimitStatusResponse,
   ListPositionsRequest,
@@ -45,6 +48,8 @@ import type {
   ShockAxis,
   Smile,
   SmileModel,
+  UpdateUserInput,
+  UserDesc,
 } from "./contract";
 import {
   aggregateRiskRequestToWire,
@@ -68,6 +73,21 @@ import {
   listFixConnectionsResponseFromWire,
   listFixMessagesRequestToWire,
   listFixMessagesResponseFromWire,
+  createDeskRequestToWire,
+  createUserRequestToWire,
+  deleteDeskRequestToWire,
+  deleteUserRequestToWire,
+  deskResponseFromWire,
+  listDesksRequestToWire,
+  listDesksResponseFromWire,
+  listUsersRequestToWire,
+  listUsersResponseFromWire,
+  loginRequestToWire,
+  loginResultFromWire,
+  logoutRequestToWire,
+  resetPasswordRequestToWire,
+  updateUserRequestToWire,
+  userResponseFromWire,
   listPositionsRequestToWire,
   listPositionsResponseFromWire,
   markedSurfaceFromWire,
@@ -963,6 +983,85 @@ export class WsTransport implements CelnetTransport {
       "fix_messages",
     );
     return listFixMessagesResponseFromWire(reply);
+  }
+
+  // --- AuthService — sessions + user/desk administration ----------------------
+  //
+  // The bearer token rides on every gated request automatically (the connection
+  // injects it once `setSessionToken` is called); `login` is the one anonymous
+  // call. The admin RPCs below resolve the server-side identity from that token.
+
+  async login(email: string, password: string): Promise<LoginResult> {
+    const reply = await this.conn.request(
+      "login",
+      loginRequestToWire(email, password),
+      "login_result",
+    );
+    return loginResultFromWire(reply);
+  }
+
+  async logout(): Promise<boolean> {
+    const reply = await this.conn.request("logout", logoutRequestToWire(), "logout_result");
+    return reply["ended"] === true;
+  }
+
+  async listUsers(): Promise<UserDesc[]> {
+    const reply = await this.conn.request("list_users", listUsersRequestToWire(), "users");
+    return listUsersResponseFromWire(reply);
+  }
+
+  async createUser(input: CreateUserInput): Promise<UserDesc> {
+    const reply = await this.conn.request(
+      "create_user",
+      createUserRequestToWire(input),
+      "user_created",
+    );
+    return userResponseFromWire(reply);
+  }
+
+  async updateUser(id: string, input: UpdateUserInput): Promise<UserDesc> {
+    const reply = await this.conn.request(
+      "update_user",
+      updateUserRequestToWire(id, input),
+      "user_updated",
+    );
+    return userResponseFromWire(reply);
+  }
+
+  async deleteUser(id: string): Promise<boolean> {
+    const reply = await this.conn.request(
+      "delete_user",
+      deleteUserRequestToWire(id),
+      "user_deleted",
+    );
+    return reply["removed"] === true;
+  }
+
+  async resetPassword(id: string, newPassword: string): Promise<void> {
+    await this.conn.request(
+      "reset_password",
+      resetPasswordRequestToWire(id, newPassword),
+      "password_reset",
+    );
+  }
+
+  async listDesks(): Promise<DeskDesc[]> {
+    const reply = await this.conn.request("list_desks", listDesksRequestToWire(), "desks");
+    return listDesksResponseFromWire(reply);
+  }
+
+  async createDesk(name: string): Promise<DeskDesc> {
+    const reply = await this.conn.request("create_desk", createDeskRequestToWire(name), "desk_created");
+    return deskResponseFromWire(reply);
+  }
+
+  async deleteDesk(id: string): Promise<boolean> {
+    const reply = await this.conn.request(
+      "delete_desk",
+      deleteDeskRequestToWire(id),
+      "desk_deleted",
+    );
+    return reply["removed"] === true;
   }
 
   /** Permanently close the underlying connection (call on app teardown). */

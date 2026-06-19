@@ -36,10 +36,16 @@ import type {
   EntitlementRule,
   Executed,
   Execution,
+  CreateUserInput,
+  DeskDesc,
   FixConnection,
   FixConnectionKind,
   FixConnectionSpec,
   FixMessage,
+  LoginResult,
+  UpdateUserInput,
+  UserDesc,
+  UserRole,
   FixMessagePage,
   FixMsgDirection,
   FixingSchedule,
@@ -1722,4 +1728,139 @@ export function listFixMessagesResponseFromWire(o: WireObject): FixMessagePage {
     messages: Array.isArray(arr) ? (arr as WireObject[]).map(fixMessageFromWire) : [],
     latestSeq: numToBigInt(o, "latest_seq"),
   };
+}
+
+// --- auth: server-enforced sessions + user/desk admin -----------------------
+//
+// The bearer `session_token` is injected by the connection into EVERY request
+// envelope when set (exactly like the correlation id), so the admin request
+// encoders below never carry it themselves — they encode only the call's own
+// fields. `login` is the one call made while anonymous (no token to inject).
+
+/** Wire enum tags for `UserRole` (proto3 zero = least-privileged TRADER). */
+const USER_ROLE_TRADER = 0;
+const USER_ROLE_ADMIN = 1;
+
+/** Domain role → wire enum tag. */
+export function userRoleToWire(role: UserRole): number {
+  return role === "ADMIN" ? USER_ROLE_ADMIN : USER_ROLE_TRADER;
+}
+
+/** Wire enum tag → domain role (any non-admin tag is TRADER — never accidental admin). */
+export function userRoleFromWire(tag: number): UserRole {
+  return tag === USER_ROLE_ADMIN ? "ADMIN" : "TRADER";
+}
+
+/** A user descriptor from its wire form (`desk_id` absent/empty ⇒ unassigned). */
+export function userDescFromWire(o: WireObject): UserDesc {
+  const deskId = o["desk_id"];
+  const user: UserDesc = {
+    id: str(o, "id"),
+    email: str(o, "email"),
+    displayName: str(o, "display_name"),
+    role: userRoleFromWire(enumNum(o, "role")),
+    disabled: o["disabled"] === true,
+  };
+  if (typeof deskId === "string" && deskId.length > 0) user.deskId = deskId;
+  return user;
+}
+
+/** A desk descriptor from its wire form. */
+export function deskDescFromWire(o: WireObject): DeskDesc {
+  return { id: str(o, "id"), name: str(o, "name") };
+}
+
+// login / logout -------------------------------------------------------------
+
+export function loginRequestToWire(email: string, password: string): WireObject {
+  return { email, password };
+}
+
+export function loginResultFromWire(o: WireObject): LoginResult {
+  const user = o["user"];
+  if (!user || typeof user !== "object") {
+    throw new Error("login response is missing the authenticated user");
+  }
+  return {
+    token: str(o, "session_token"),
+    user: userDescFromWire(user as WireObject),
+    expiresNanos: numToBigInt(o, "expires_nanos"),
+  };
+}
+
+/** The logout body is empty — the connection injects the bearer token to invalidate. */
+export function logoutRequestToWire(): WireObject {
+  return {};
+}
+
+// user CRUD ------------------------------------------------------------------
+
+export function listUsersRequestToWire(): WireObject {
+  return {};
+}
+
+export function listUsersResponseFromWire(o: WireObject): UserDesc[] {
+  const arr = o["users"];
+  return Array.isArray(arr) ? (arr as WireObject[]).map(userDescFromWire) : [];
+}
+
+export function createUserRequestToWire(input: CreateUserInput): WireObject {
+  const body: WireObject = {
+    email: input.email,
+    display_name: input.displayName,
+    role: userRoleToWire(input.role),
+    password: input.password,
+  };
+  if (input.deskId && input.deskId.length > 0) body.desk_id = input.deskId;
+  return body;
+}
+
+export function updateUserRequestToWire(id: string, input: UpdateUserInput): WireObject {
+  const body: WireObject = {
+    id,
+    display_name: input.displayName,
+    role: userRoleToWire(input.role),
+    disabled: input.disabled,
+  };
+  if (input.deskId && input.deskId.length > 0) body.desk_id = input.deskId;
+  return body;
+}
+
+/** A single-user response (`{ user: {...} }`) from create/update. */
+export function userResponseFromWire(o: WireObject): UserDesc {
+  const u = o["user"];
+  return userDescFromWire(u && typeof u === "object" ? (u as WireObject) : {});
+}
+
+export function deleteUserRequestToWire(id: string): WireObject {
+  return { id };
+}
+
+export function resetPasswordRequestToWire(id: string, newPassword: string): WireObject {
+  return { id, new_password: newPassword };
+}
+
+// desk CRUD ------------------------------------------------------------------
+
+export function listDesksRequestToWire(): WireObject {
+  return {};
+}
+
+export function listDesksResponseFromWire(o: WireObject): DeskDesc[] {
+  const arr = o["desks"];
+  return Array.isArray(arr) ? (arr as WireObject[]).map(deskDescFromWire) : [];
+}
+
+export function createDeskRequestToWire(name: string): WireObject {
+  return { name };
+}
+
+/** A single-desk response (`{ desk: {...} }`) from create. */
+export function deskResponseFromWire(o: WireObject): DeskDesc {
+  const d = o["desk"];
+  return deskDescFromWire(d && typeof d === "object" ? (d as WireObject) : {});
+}
+
+export function deleteDeskRequestToWire(id: string): WireObject {
+  return { id };
 }

@@ -42,6 +42,7 @@ import {
 import { ASSET_UNDERLIERS } from "../data/assetUniverse";
 import type { AssetClass } from "../products/types";
 import { useStreamSession, type StreamApi } from "../hooks/useStreamSession";
+import { useAuth, type AuthApi } from "../hooks/useAuth";
 import {
   currentLevel,
   FIRM_SCOPE_ROOT,
@@ -63,7 +64,14 @@ import {
 } from "../lib/savedViews";
 import type { Density } from "../design/density";
 
-export type WorkspaceId = "ticket" | "stream" | "surface" | "risk" | "book" | "connections";
+export type WorkspaceId =
+  | "ticket"
+  | "stream"
+  | "surface"
+  | "risk"
+  | "book"
+  | "connections"
+  | "admin";
 
 // Re-export the scope vocabulary from its owning module so existing consumers
 // (riskView, riskScope tests) import it from AppContext unchanged — the types now
@@ -213,6 +221,16 @@ interface AppState {
    */
   scopeSwitcherOpen: boolean;
   setScopeSwitcherOpen: (open: boolean) => void;
+  /**
+   * The signed-in identity (server-enforced sessions). `auth.user` is `null` when
+   * anonymous; signing in installs the bearer token on the transport so gated
+   * RPCs authenticate and the FIX monitor narrows to the user's desk. Sign-in is
+   * optional — the app runs anonymously until a user signs in.
+   */
+  auth: AuthApi;
+  /** Whether the modal sign-in dialog is open (rendered once in the Shell). */
+  signInOpen: boolean;
+  setSignInOpen: (open: boolean) => void;
   stream: StreamApi;
   surface: MarkedSurface | null;
   /**
@@ -332,6 +350,7 @@ export function AppProvider({
   const [pairIndex, setPairIndex] = useState(0);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [scopeSwitcherOpen, setScopeSwitcherOpen] = useState(false);
+  const [signInOpen, setSignInOpen] = useState(false);
   // Favourites + recents are persisted in-memory for the session (no fake
   // backend store — an honest client-side preference until a server prefs
   // service exists). `recents` is most-recent-first, excluding the active pair.
@@ -391,6 +410,11 @@ export function AppProvider({
     [conventions],
   );
   const stream = useStreamSession(transport, seed);
+
+  // The signed-in identity (server-enforced sessions). One shared instance so the
+  // title-bar identity menu and the Admin workspace agree; installing the bearer
+  // token on the transport flows it onto every gated RPC.
+  const auth = useAuth(transport);
 
   const remarkSurface = useMemo(
     () => async (ladder?: BrokerQuoteSet[], model?: SmileModel) => {
@@ -684,6 +708,9 @@ export function AppProvider({
     recents,
     scopeSwitcherOpen,
     setScopeSwitcherOpen,
+    auth,
+    signInOpen,
+    setSignInOpen,
     stream,
     surface,
     remarkSurface,

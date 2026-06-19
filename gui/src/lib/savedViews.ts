@@ -26,7 +26,14 @@ import {
 } from "./scope";
 
 /** The rail workspace the view is parked on. Mirrors `commands.WorkspaceId`. */
-export type WorkspaceId = "ticket" | "stream" | "surface" | "risk" | "book" | "connections";
+export type WorkspaceId =
+  | "ticket"
+  | "stream"
+  | "surface"
+  | "risk"
+  | "book"
+  | "connections"
+  | "admin";
 
 const WORKSPACES: readonly WorkspaceId[] = [
   "ticket",
@@ -35,6 +42,7 @@ const WORKSPACES: readonly WorkspaceId[] = [
   "risk",
   "book",
   "connections",
+  "admin",
 ] as const;
 
 /**
