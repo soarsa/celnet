@@ -21,6 +21,13 @@ import { Button } from "../components/Button";
 import { Panel } from "../components/Panel";
 import type { FixConnection } from "../data/contract";
 import { useFixConnections } from "../hooks/useFixConnections";
+import {
+  buildFixClientConfig,
+  downloadText,
+  fixClientConfigFilename,
+  FIX_API_GUIDE_URL,
+  FIX_DICTIONARY_URL,
+} from "../lib/fixClientConfig";
 import styles from "./ConnectionsWorkspace.module.css";
 
 /** The display label for a connection's dialect. */
@@ -54,6 +61,23 @@ export function ConnectionsWorkspace(): React.ReactElement {
 
   const actions = (
     <div className={styles.headActions}>
+      <a
+        className={styles.specLink}
+        href={FIX_DICTIONARY_URL}
+        download
+        title="Download the QuickFIX FIX 4.4 data dictionary for building a client"
+      >
+        ⤓ FIX dictionary
+      </a>
+      <a
+        className={styles.specLink}
+        href={FIX_API_GUIDE_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        title="Open the FIX API guide (message flow + how to connect)"
+      >
+        ⤓ API guide
+      </a>
       <Button variant="ghost" onClick={() => void fix.refetch()} disabled={fix.isLoading}>
         Refresh
       </Button>
@@ -62,6 +86,11 @@ export function ConnectionsWorkspace(): React.ReactElement {
       </Button>
     </div>
   );
+
+  /** Download a ready-to-use QuickFIX client config for one acceptor. */
+  const downloadClientConfig = (c: FixConnection): void => {
+    downloadText(fixClientConfigFilename(c), buildFixClientConfig(c), "text/plain");
+  };
 
   return (
     <div className={styles.root}>
@@ -123,6 +152,13 @@ export function ConnectionsWorkspace(): React.ReactElement {
                         aria-pressed={monitorId === c.id}
                       >
                         Monitor
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        onClick={() => downloadClientConfig(c)}
+                        title="Download a QuickFIX client config to connect to this acceptor"
+                      >
+                        Client config
                       </Button>
                       <Button
                         variant="secondary"
