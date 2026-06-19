@@ -1750,9 +1750,9 @@ export interface FixConnection {
   /** The actually-bound address when running (resolves an ephemeral `:0`); else "". */
   boundAddr: string;
   /**
-   * The owning desk id (`DeskDef.id`). Empty ⇒ an unowned "house" connection
-   * (admin-only visibility). A desk-scoped (non-admin) session sees only the
-   * connections whose `desk` matches its own.
+   * The owning desk id (`DeskDef.id`). Every managed connection belongs to a
+   * desk; a desk-scoped (non-admin) session sees only the connections whose
+   * `desk` matches its own, while an admin sees all of them.
    */
   desk: string;
 }
@@ -1771,7 +1771,12 @@ export interface FixConnectionSpec {
   senderCompId: string;
   targetCompId: string;
   enabled: boolean;
-  /** The owning desk id (`DeskDef.id`); empty/omitted ⇒ an unowned connection. */
+  /**
+   * The owning desk id (`DeskDef.id`). Required by the server on create/update —
+   * every connection belongs to a desk; the wizard picks it from the desk roster.
+   * Optional in the type only because the wire codec defaults an absent value to
+   * `""`, which the server then rejects.
+   */
   desk?: string;
 }
 

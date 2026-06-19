@@ -398,6 +398,15 @@ fn def_from_spec(
             Status::invalid_argument("create: name yields no usable id; set an explicit id")
         })?,
     };
+    // Every managed FIX connection MUST belong to a desk — there are no unowned
+    // "house" acceptors. A desk-scoped trader then sees exactly its desk's
+    // connections + their RFQ traffic, and administration is always "for a desk".
+    let desk = spec.desk.trim().to_string();
+    if desk.is_empty() {
+        return Err(Status::invalid_argument(
+            "a FIX connection must belong to a desk (set the owning desk id)",
+        ));
+    }
     Ok(FixConnectionDef {
         id,
         name: spec.name.clone(),
@@ -406,7 +415,7 @@ fn def_from_spec(
         sender_comp_id: spec.sender_comp_id.clone(),
         target_comp_id: spec.target_comp_id.clone(),
         enabled: spec.enabled,
-        desk: spec.desk.trim().to_string(),
+        desk,
     })
 }
 
@@ -502,6 +511,22 @@ mod tests {
     fn unrecognised_kind_is_rejected() {
         let mut s = spec("opt-1", "Bank A");
         s.kind = 999;
+        assert_eq!(
+            def_from_spec(&s, None).unwrap_err().code(),
+            tonic::Code::InvalidArgument
+        );
+    }
+
+    #[test]
+    fn a_connection_must_belong_to_a_desk() {
+        // No unowned "house" acceptors — an absent/blank desk is rejected so every
+        // managed connection is administered for a desk.
+        let mut s = spec("opt-1", "Bank A");
+        s.desk = "   ".to_string();
+        let err = def_from_spec(&s, None).unwrap_err();
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        assert!(err.message().contains("desk"), "names the missing desk");
+        s.desk = String::new();
         assert_eq!(
             def_from_spec(&s, None).unwrap_err().code(),
             tonic::Code::InvalidArgument

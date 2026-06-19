@@ -18,7 +18,12 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
-import type { FixConnection, FixConnectionKind, FixConnectionSpec } from "../data/contract";
+import type {
+  DeskDesc,
+  FixConnection,
+  FixConnectionKind,
+  FixConnectionSpec,
+} from "../data/contract";
 import { Button } from "./Button";
 import styles from "./FixConnectionWizard.module.css";
 
@@ -41,6 +46,14 @@ const STEPS: readonly StepDef[] = [
   { key: "review", title: "Review" },
 ];
 
+/** Display label for an owning desk id: "Name (id)", or the bare id if unknown. */
+function deskLabel(desks: readonly DeskDesc[], deskId: string): string {
+  const id = deskId.trim();
+  if (id.length === 0) return "—";
+  const desk = desks.find((d) => d.id === id);
+  return desk ? `${desk.name} (${desk.id})` : id;
+}
+
 export interface FixConnectionWizardProps {
   /** Whether the modal is mounted/visible. */
   open: boolean;
@@ -50,6 +63,12 @@ export interface FixConnectionWizardProps {
   onCreate: (spec: FixConnectionSpec) => Promise<FixConnection>;
   /** The current connections, for client-side uniqueness/address pre-checks. */
   existing: readonly FixConnection[];
+  /**
+   * The desks a connection may belong to. Every managed FIX connection is owned
+   * by a desk (there are no unowned "house" acceptors), so the wizard requires
+   * selecting one of these; an empty roster blocks creation until a desk exists.
+   */
+  desks: readonly DeskDesc[];
 }
 
 export function FixConnectionWizard({
@@ -57,6 +76,7 @@ export function FixConnectionWizard({
   onClose,
   onCreate,
   existing,
+  desks,
 }: FixConnectionWizardProps): React.ReactElement | null {
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -119,8 +139,11 @@ export function FixConnectionWizard({
     if (enabled && addrClash) {
       return `Address ${bindAddr} is already used by an enabled connection.`;
     }
+    if (desk.trim().length === 0) {
+      return "Select the owning desk — every connection belongs to a desk.";
+    }
     return null;
-  }, [nameTrimmed, nameClash, host, portNum, enabled, addrClash, bindAddr]);
+  }, [nameTrimmed, nameClash, host, portNum, enabled, addrClash, bindAddr, desk]);
 
   const compIdError = useMemo((): string | null => {
     if (senderCompId.trim().length === 0) return "SenderCompID is required.";
@@ -320,13 +343,25 @@ export function FixConnectionWizard({
                 </label>
               </div>
               <label className={styles.field}>
-                <span className={styles.fieldLabel}>Owning desk (optional)</span>
-                <input
+                <span className={styles.fieldLabel}>Owning desk</span>
+                <select
                   className={styles.input}
                   value={desk}
                   onChange={(e) => setDesk(e.target.value)}
-                  placeholder="e.g. g10 — leave blank for a house (admin-only) connection"
-                />
+                >
+                  <option value="">Select a desk…</option>
+                  {desks.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name} ({d.id})
+                    </option>
+                  ))}
+                </select>
+                {desks.length === 0 && (
+                  <p className={styles.hint}>
+                    No desks yet — create one in the Admin workspace first. Every FIX
+                    connection must belong to a desk.
+                  </p>
+                )}
               </label>
               <label className={styles.checkRow}>
                 <input
@@ -392,7 +427,7 @@ export function FixConnectionWizard({
                 </div>
                 <div className={styles.summaryRow}>
                   <dt>Owning desk</dt>
-                  <dd>{desk.trim() || "— (house / admin-only)"}</dd>
+                  <dd>{deskLabel(desks, desk)}</dd>
                 </div>
                 <div className={styles.summaryRow}>
                   <dt>On create</dt>

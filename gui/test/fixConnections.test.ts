@@ -33,6 +33,8 @@ function spec(overrides: Partial<FixConnectionSpec> = {}): FixConnectionSpec {
     senderCompId: "CELNET",
     targetCompId: "CELNET-CPTY",
     enabled: true,
+    // Every managed connection belongs to a desk (no unowned "house" acceptors).
+    desk: "g10",
     ...overrides,
   };
 }
@@ -79,11 +81,16 @@ describe("fix-admin wire codec", () => {
       desk: "g10",
     });
     expect(c.desk).toBe("g10");
-    // A supplied desk rides through; an absent one encodes as "" (house).
+    // The owning desk rides through to the wire spec (every connection has one).
     const body = createFixConnectionRequestToWire(spec({ desk: "em" }));
     expect((body.spec as Record<string, unknown>).desk).toBe("em");
-    const houseBody = createFixConnectionRequestToWire(spec());
-    expect((houseBody.spec as Record<string, unknown>).desk).toBe("");
+  });
+
+  it("the mock rejects a deskless connection (no unowned house acceptors)", async () => {
+    const t = new MockTransport();
+    await expect(
+      t.createFixConnection(spec({ name: "Deskless", bindAddr: "127.0.0.1:9600", desk: "" })),
+    ).rejects.toThrow(/must belong to a desk/);
   });
 });
 

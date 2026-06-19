@@ -66,10 +66,12 @@ pub struct FixConnectionDef {
     pub target_comp_id: String,
     /// Whether the acceptor should be (and stay) bound.
     pub enabled: bool,
-    /// The owning desk id (`DeskDef::id`). Empty ⇒ an unowned "house" connection
-    /// (admins only). A desk-scoped (non-admin) session sees only connections
-    /// whose `desk` matches its own. `#[serde(default)]` keeps configs written
-    /// before desk ownership (no `desk` key) loading as unowned.
+    /// The owning desk id (`DeskDef::id`). Every connection created through the
+    /// admin API belongs to a desk (`fix_admin::def_from_spec` rejects a blank
+    /// desk); a desk-scoped (non-admin) session sees only connections whose
+    /// `desk` matches its own, while an admin sees all. `#[serde(default)]` keeps
+    /// configs written before desk ownership (no `desk` key) loading with an empty
+    /// desk rather than failing to parse.
     #[serde(default)]
     pub desk: String,
 }

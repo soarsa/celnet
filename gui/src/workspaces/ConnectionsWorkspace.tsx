@@ -12,7 +12,7 @@
  * shows it disabled), but the table is already kind-agnostic.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useApp } from "../app/AppContext";
 import { FixConnectionWizard } from "../components/FixConnectionWizard";
@@ -20,7 +20,7 @@ import { FixSessionMonitor } from "../components/FixSessionMonitor";
 import { FixSpecModal } from "../components/FixSpecModal";
 import { Button } from "../components/Button";
 import { Panel } from "../components/Panel";
-import type { FixConnection } from "../data/contract";
+import type { DeskDesc, FixConnection } from "../data/contract";
 import { useFixConnections } from "../hooks/useFixConnections";
 import {
   buildFixClientConfig,
@@ -43,6 +43,26 @@ export function ConnectionsWorkspace(): React.ReactElement {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [monitorId, setMonitorId] = useState<string | null>(null);
+  // The desks a new connection may be assigned to (every connection belongs to a
+  // desk). Loaded for the wizard's desk picker; desk admin is admin-gated, so a
+  // non-admin simply sees an empty roster (and the server rejects a deskless
+  // create anyway). Refreshed when the wizard opens so a desk just created in the
+  // Admin workspace is selectable.
+  const [desks, setDesks] = useState<DeskDesc[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void app.transport
+      .listDesks()
+      .then((d) => {
+        if (!cancelled) setDesks(d);
+      })
+      .catch(() => {
+        if (!cancelled) setDesks([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [app.transport, wizardOpen]);
 
   // The monitored connection, resolved live so it reflects status/rename changes
   // and clears itself if the connection is deleted out from under the monitor.
@@ -198,6 +218,7 @@ export function ConnectionsWorkspace(): React.ReactElement {
         onClose={() => setWizardOpen(false)}
         onCreate={fix.create}
         existing={fix.connections}
+        desks={desks}
       />
 
       <FixSpecModal open={specOpen} onClose={() => setSpecOpen(false)} />

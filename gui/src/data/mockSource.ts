@@ -1086,6 +1086,12 @@ export class MockTransport implements CelnetTransport {
 
   /** Build a descriptor from a spec, reflecting `enabled` into the offline runtime status. */
   private fixFromSpec(spec: FixConnectionSpec, id: string): FixConnection {
+    // Every managed connection belongs to a desk — no unowned "house" acceptors
+    // (server parity: `def_from_spec` rejects a blank desk with `invalid_argument`).
+    const desk = (spec.desk ?? "").trim();
+    if (desk.length === 0) {
+      throw new Error("a FIX connection must belong to a desk (select the owning desk)");
+    }
     return {
       id,
       name: spec.name,
@@ -1096,7 +1102,7 @@ export class MockTransport implements CelnetTransport {
       enabled: spec.enabled,
       running: spec.enabled,
       boundAddr: spec.enabled ? spec.bindAddr : "",
-      desk: spec.desk ?? "",
+      desk,
     };
   }
 
