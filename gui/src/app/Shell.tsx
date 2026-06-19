@@ -52,6 +52,14 @@ export function Shell(): React.ReactElement {
   // The keyboard-shortcut cheatsheet overlay (bound to `?`). Shell-local UI.
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
+  // FIX-connection management is admin-only: a non-admin sees no Connections rail
+  // button or pane, and the workspace-jump for it is dropped from the palette /
+  // keyboard. Each visible entry keeps its ORIGINAL rail index so the ⌘N numbers
+  // stay aligned with `resolveChord` (which maps digits against the full RAIL);
+  // ⌘6 (connections) simply resolves to a now-absent command and is inert.
+  const isAdmin = app.auth.isAdmin;
+  const rail = isAdmin ? RAIL : RAIL.filter((r) => r.id !== "connections");
+
   // The runnable commands, bound to live app actions — the SINGLE source the
   // palette renders and the Shell dispatches from.
   const commands = buildCommands({
@@ -71,7 +79,7 @@ export function Shell(): React.ReactElement {
     toggleAppearance,
     toggleContrast,
     canDrillScope: !isTerminal(app.scope),
-  });
+  }).filter((c) => isAdmin || c.id !== "ws-connections");
 
   // Global keyboard grammar (single source: lib/commands.ts). The Shell resolves a
   // keydown against the registry and dispatches the matched command, so what the
@@ -110,8 +118,9 @@ export function Shell(): React.ReactElement {
           <CelerMark size={30} className={styles.mark} title="Celnet — a Celer Technologies product" />
         </div>
         <nav className={styles.nav}>
-          {RAIL.map((r, i) => {
-            const kbd = railChord(i).join("");
+          {rail.map((r) => {
+            // Original RAIL index keeps the ⌘N hint aligned with resolveChord.
+            const kbd = railChord(RAIL.indexOf(r)).join("");
             return (
               <button
                 key={r.id}
@@ -158,7 +167,7 @@ export function Shell(): React.ReactElement {
          * in-progress state, no re-fired heavy effects).
          */}
         <div className={styles.canvas}>
-          {RAIL.map((r) => {
+          {rail.map((r) => {
             const View = WORKSPACE_VIEW[r.id];
             const active = app.workspace === r.id;
             return (
