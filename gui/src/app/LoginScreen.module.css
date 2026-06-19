@@ -122,6 +122,20 @@
   outline-offset: 2px;
 }
 
+.submit:disabled {
+  cursor: default;
+  filter: none;
+  opacity: 0.55;
+}
+
+.error {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  text-align: left;
+  color: var(--danger, oklch(62% 0.2 25));
+}
+
 .footnote {
   margin: var(--space-3) 0 0;
   font-size: 0.6875rem;

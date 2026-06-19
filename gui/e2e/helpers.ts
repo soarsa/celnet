@@ -25,6 +25,9 @@ const RAIL_LABEL: Record<string, string> = {
 export async function openLive(page: Page): Promise<void> {
   const ws = encodeURIComponent(readWsUrl());
   await page.goto(`/?ws=${ws}`);
+  // Server-enforced sessions: the app gates the workspace behind a mandatory
+  // login. Sign in with the seeded default admin so the rail becomes reachable.
+  await signIn(page);
   // The shell renders synchronously; wait for the workspace rail to be live.
   await expect(page.getByRole("complementary", { name: "workspaces" })).toBeVisible();
   // Confirm we are on the LIVE transport: the ribbon's transport-seam label reads
@@ -32,6 +35,26 @@ export async function openLive(page: Page): Promise<void> {
   const transportLabel = page.locator('[title="transport seam"]');
   await expect(transportLabel).toBeVisible();
   await expect(transportLabel).toContainText("ws://");
+}
+
+/**
+ * Sign in through the mandatory full-page login gate ({@link LoginView}). Fills
+ * the seeded default admin credentials and submits, then waits for the gate to
+ * clear (the login heading disappears as the Shell mounts). The server seeds
+ * `admin@celnet.com` / `password` on first run.
+ */
+export async function signIn(
+  page: Page,
+  email = "admin@celnet.com",
+  password = "password",
+): Promise<void> {
+  const heading = page.getByRole("heading", { name: "Sign in to Celnet" });
+  await expect(heading).toBeVisible();
+  await page.getByLabel("Email").fill(email);
+  await page.getByLabel("Password").fill(password);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  // The gate clears once the session is established and the Shell replaces it.
+  await expect(heading).toBeHidden();
 }
 
 /**

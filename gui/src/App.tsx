@@ -12,8 +12,9 @@
  */
 
 import { useEffect, useState } from "react";
-import { AppProvider } from "./app/AppContext";
+import { AppProvider, useApp } from "./app/AppContext";
 import { LoginScreen } from "./app/LoginScreen";
+import { LoginView } from "./app/LoginView";
 import { ReconnectOverlay } from "./app/ReconnectOverlay";
 import { Shell } from "./app/Shell";
 import { resolveTransport } from "./data/transportConfig";
@@ -58,14 +59,27 @@ export function App(): React.ReactElement {
 
   return (
     <AppProvider transport={transport} density={density} toggleDensity={toggleDensity}>
-      <Shell />
-      {connection.phase === "reconnecting" && (
-        <ReconnectOverlay
-          remainingSeconds={connection.remainingSeconds}
-          endpointLabel={transport.label}
-          onSignInNow={() => setSignedOut(true)}
-        />
-      )}
+      <AuthGate>
+        <Shell />
+        {connection.phase === "reconnecting" && (
+          <ReconnectOverlay
+            remainingSeconds={connection.remainingSeconds}
+            endpointLabel={transport.label}
+            onSignInNow={() => setSignedOut(true)}
+          />
+        )}
+      </AuthGate>
     </AppProvider>
   );
+}
+
+/**
+ * Gate the workspace behind a server-enforced session: until a user signs in
+ * (`auth.user` is set), the full-page {@link LoginView} is shown instead of the
+ * Shell. Rendered INSIDE the provider so it can read the shared `auth` state.
+ */
+function AuthGate({ children }: { children: React.ReactNode }): React.ReactElement {
+  const { auth } = useApp();
+  if (!auth.user) return <LoginView />;
+  return <>{children}</>;
 }

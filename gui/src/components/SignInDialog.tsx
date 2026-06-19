@@ -24,17 +24,22 @@ export function SignInDialog(): React.ReactElement | null {
   const { auth, signInOpen, setSignInOpen } = app;
   const titleId = useId();
   const emailRef = useRef<HTMLInputElement | null>(null);
+  // `auth.clearError` is a stable useCallback; capturing it (rather than the whole
+  // `auth` object, which `useAuth` rebuilds every render) keeps the reset effect
+  // below from re-firing on unrelated app re-renders (e.g. stream ticks) and
+  // wiping the user's keystrokes mid-type.
+  const clearError = auth.clearError;
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
-  // Reset the form (and clear any prior error) each time the dialog opens.
+  // Reset the form (and clear any prior error) only on the open transition.
   useEffect(() => {
     if (!signInOpen) return;
     setEmail("");
     setPassword("");
-    auth.clearError();
-  }, [signInOpen, auth]);
+    clearError();
+  }, [signInOpen, clearError]);
 
   // Focus the email field on open.
   useEffect(() => {
