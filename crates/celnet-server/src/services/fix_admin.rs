@@ -28,11 +28,14 @@ use celnet_proto::{
 };
 use tonic::{Request, Response, Status};
 
+use crate::clock::Clock;
 use crate::config::fix_connections::{AcceptorKind, FixConnectionDef};
 use crate::readiness::ReadinessGate;
+use crate::services::access::{RequiredAuthority, authorize_caller, resolve_caller};
 use crate::services::fix_monitor::{FixDirection, FixMessageEvent, FixMonitor};
 use crate::services::fix_registry::{ConnectionStatus, FixAcceptorRegistry};
 use crate::services::risk::store::PositionStore;
+use crate::services::sessions::SessionRegistry;
 
 /// The default page size when a `ListMessages` request leaves `limit` at 0.
 const DEFAULT_MESSAGE_LIMIT: usize = 500;
@@ -50,6 +53,12 @@ pub struct FixAdminEdge {
     gate: Arc<ReadinessGate>,
     store: Arc<PositionStore>,
     monitor: Arc<FixMonitor>,
+    /// The live session registry the entitlement boundary validates `session_token`
+    /// against. [`FixAdminEdge::new`] defaults to a fresh empty registry (consulted
+    /// only when a request presents a token); the boot path overrides it with the
+    /// edge-wide registry via [`FixAdminEdge::with_sessions`] so both fronts share
+    /// one authentication state.
+    sessions: Arc<SessionRegistry>,
 }
 
 impl FixAdminEdge {
@@ -68,7 +77,18 @@ impl FixAdminEdge {
             gate,
             store,
             monitor,
+            sessions: Arc::new(SessionRegistry::new(Clock::system())),
         }
+    }
+
+    /// Install the edge-wide [`SessionRegistry`] so this admin edge validates
+    /// session tokens against the SAME authentication state every other front
+    /// shares. The boot path calls this; the constructor otherwise defaults to an
+    /// empty registry (so principal-only tests need no session wiring).
+    #[must_use]
+    pub fn with_sessions(mut self, sessions: Arc<SessionRegistry>) -> Self {
+        self.sessions = sessions;
+        self
     }
 
     /// Refuse work unless the edge is ready (mirrors every other service).
@@ -92,10 +112,16 @@ impl FixAdminService for FixAdminEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        crate::services::access::authorize(
+        let caller = resolve_caller(
+            &self.sessions,
+            req.session_token.as_deref(),
+            req.principal.clone(),
+        )?;
+        authorize_caller(
             self.store.access_mode(),
-            req.principal.as_ref(),
+            &caller,
             "FixAdminService/ListConnections",
+            RequiredAuthority::ReadAny,
             req.correlation_id,
         )?;
         let connections = self
@@ -118,10 +144,16 @@ impl FixAdminService for FixAdminEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        crate::services::access::authorize(
+        let caller = resolve_caller(
+            &self.sessions,
+            req.session_token.as_deref(),
+            req.principal.clone(),
+        )?;
+        authorize_caller(
             self.store.access_mode(),
-            req.principal.as_ref(),
+            &caller,
             "FixAdminService/CreateConnection",
+            RequiredAuthority::Admin,
             req.correlation_id,
         )?;
         let spec = req
@@ -142,10 +174,16 @@ impl FixAdminService for FixAdminEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        crate::services::access::authorize(
+        let caller = resolve_caller(
+            &self.sessions,
+            req.session_token.as_deref(),
+            req.principal.clone(),
+        )?;
+        authorize_caller(
             self.store.access_mode(),
-            req.principal.as_ref(),
+            &caller,
             "FixAdminService/UpdateConnection",
+            RequiredAuthority::Admin,
             req.correlation_id,
         )?;
         if req.id.trim().is_empty() {
@@ -174,10 +212,16 @@ impl FixAdminService for FixAdminEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        crate::services::access::authorize(
+        let caller = resolve_caller(
+            &self.sessions,
+            req.session_token.as_deref(),
+            req.principal.clone(),
+        )?;
+        authorize_caller(
             self.store.access_mode(),
-            req.principal.as_ref(),
+            &caller,
             "FixAdminService/DeleteConnection",
+            RequiredAuthority::Admin,
             req.correlation_id,
         )?;
         if req.id.trim().is_empty() {
@@ -199,10 +243,16 @@ impl FixAdminService for FixAdminEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        crate::services::access::authorize(
+        let caller = resolve_caller(
+            &self.sessions,
+            req.session_token.as_deref(),
+            req.principal.clone(),
+        )?;
+        authorize_caller(
             self.store.access_mode(),
-            req.principal.as_ref(),
+            &caller,
             "FixAdminService/SetEnabled",
+            RequiredAuthority::Admin,
             req.correlation_id,
         )?;
         if req.id.trim().is_empty() {
@@ -228,10 +278,16 @@ impl FixAdminService for FixAdminEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        crate::services::access::authorize(
+        let caller = resolve_caller(
+            &self.sessions,
+            req.session_token.as_deref(),
+            req.principal.clone(),
+        )?;
+        authorize_caller(
             self.store.access_mode(),
-            req.principal.as_ref(),
+            &caller,
             "FixAdminService/ListMessages",
+            RequiredAuthority::ReadAny,
             req.correlation_id,
         )?;
         let limit = match req.limit as usize {

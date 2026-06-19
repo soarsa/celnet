@@ -137,6 +137,14 @@ export interface CelnetTransport {
    */
   isConnected?(): boolean;
 
+  /**
+   * Install (or clear, with `null`) the bearer session token from
+   * `AuthService.Login`. Once set, the transport authenticates every gated RPC
+   * with it server-side (and admin RPCs are role-gated on it); cleared on logout.
+   * Implemented by every transport so the auth flow is transport-agnostic.
+   */
+  setSessionToken(token: string | null): void;
+
   /** PricingService.Price */
   price(
     instrument: Instrument,

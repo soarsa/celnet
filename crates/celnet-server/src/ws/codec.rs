@@ -1820,6 +1820,7 @@ pub(super) fn list_positions_request_from_json(
         scope: opt_nested(o, "scope", risk_scope_from_json)?,
         principal: opt_nested(o, "principal", principal_from_json)?,
         correlation_id: opt_u64(o, "correlation_id"),
+        session_token: opt_string(o, "session_token"),
     })
 }
 
@@ -1843,6 +1844,7 @@ pub(super) fn aggregate_risk_request_from_json(
         var_alpha: f64_or_zero(o, "var_alpha"),
         curvature_risk_weight: f64_or_zero(o, "curvature_risk_weight"),
         correlation_id: opt_u64(o, "correlation_id"),
+        session_token: opt_string(o, "session_token"),
     })
 }
 
@@ -1865,6 +1867,7 @@ pub(super) fn drill_risk_request_from_json(o: &Map<String, Value>) -> Result<Dri
         include_children: bool_or_false(o, "include_children"),
         include_positions: bool_or_false(o, "include_positions"),
         correlation_id: opt_u64(o, "correlation_id"),
+        session_token: opt_string(o, "session_token"),
     })
 }
 
@@ -1886,6 +1889,7 @@ pub(super) fn limit_status_request_from_json(o: &Map<String, Value>) -> Result<L
         var_spot_shocks: f64_vec(o, "var_spot_shocks"),
         var_alpha: f64_or_zero(o, "var_alpha"),
         correlation_id: opt_u64(o, "correlation_id"),
+        session_token: opt_string(o, "session_token"),
     })
 }
 
@@ -1939,6 +1943,7 @@ pub(super) fn list_fix_connections_request_from_json(
     Ok(ListFixConnectionsRequest {
         principal: opt_nested(o, "principal", principal_from_json)?,
         correlation_id: opt_u64(o, "correlation_id"),
+        session_token: opt_string(o, "session_token"),
     })
 }
 
@@ -1956,6 +1961,7 @@ pub(super) fn create_fix_connection_request_from_json(
         spec: Some(nested(o, "spec", fix_connection_spec_from_json)?),
         principal: opt_nested(o, "principal", principal_from_json)?,
         correlation_id: opt_u64(o, "correlation_id"),
+        session_token: opt_string(o, "session_token"),
     })
 }
 
@@ -1974,6 +1980,7 @@ pub(super) fn update_fix_connection_request_from_json(
         spec: Some(nested(o, "spec", fix_connection_spec_from_json)?),
         principal: opt_nested(o, "principal", principal_from_json)?,
         correlation_id: opt_u64(o, "correlation_id"),
+        session_token: opt_string(o, "session_token"),
     })
 }
 
@@ -1991,6 +1998,7 @@ pub(super) fn delete_fix_connection_request_from_json(
         id: string_field(o, "id")?,
         principal: opt_nested(o, "principal", principal_from_json)?,
         correlation_id: opt_u64(o, "correlation_id"),
+        session_token: opt_string(o, "session_token"),
     })
 }
 
@@ -2006,6 +2014,7 @@ pub(super) fn set_fix_connection_enabled_request_from_json(
         enabled: bool_or_false(o, "enabled"),
         principal: opt_nested(o, "principal", principal_from_json)?,
         correlation_id: opt_u64(o, "correlation_id"),
+        session_token: opt_string(o, "session_token"),
     })
 }
 
@@ -2046,6 +2055,7 @@ pub(super) fn list_fix_messages_request_from_json(
         limit: u32::try_from(opt_u64(o, "limit").unwrap_or(0)).unwrap_or(u32::MAX),
         principal: opt_nested(o, "principal", principal_from_json)?,
         correlation_id: opt_u64(o, "correlation_id"),
+        session_token: opt_string(o, "session_token"),
     })
 }
 

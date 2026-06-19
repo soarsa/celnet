@@ -399,12 +399,21 @@ impl Edge {
         // `docs/RISK-HIERARCHY.md` §3.4). In-process ⇒ the direct single-node path. The
         // SAME connected edge backs both the gRPC server and the WS mirror, shared
         // behind an `Arc`.
-        let risk_edge = Arc::new(match &fleet {
-            Some(fleet) => {
-                RiskEdge::with_fleet(Arc::clone(&store), Arc::clone(&gate), Arc::clone(fleet))
+        // The edge-wide session registry: the ONE authentication state every front
+        // (gRPC + WS) and every gated edge (risk, fix-admin, auth) shares. Created
+        // before the edges so each is built `.with_sessions(...)` over it; the
+        // registry stamps issue/expiry off the SAME edge clock. Process-local —
+        // empty on boot, so a restart invalidates every token.
+        let sessions = Arc::new(SessionRegistry::new(clock.clone()));
+        let risk_edge = Arc::new(
+            match &fleet {
+                Some(fleet) => {
+                    RiskEdge::with_fleet(Arc::clone(&store), Arc::clone(&gate), Arc::clone(fleet))
+                }
+                None => RiskEdge::new(Arc::clone(&store), Arc::clone(&gate)),
             }
-            None => RiskEdge::new(Arc::clone(&store), Arc::clone(&gate)),
-        });
+            .with_sessions(Arc::clone(&sessions)),
+        );
         let risk = RiskServiceServer::from_arc(Arc::clone(&risk_edge));
 
         // The managed inbound FIX-acceptor registry: the persisted set of acceptor
@@ -433,12 +442,15 @@ impl Edge {
         // ONE admin edge backs both the gRPC server and the WS mirror (shared behind an
         // `Arc`), so the two fronts manage the SAME registry through one entitlement
         // boundary — exactly the single-edge sharing the risk service uses.
-        let fix_admin_edge = Arc::new(FixAdminEdge::new(
-            Arc::clone(&fix_registry),
-            Arc::clone(&gate),
-            Arc::clone(&store),
-            Arc::clone(&fix_monitor),
-        ));
+        let fix_admin_edge = Arc::new(
+            FixAdminEdge::new(
+                Arc::clone(&fix_registry),
+                Arc::clone(&gate),
+                Arc::clone(&store),
+                Arc::clone(&fix_monitor),
+            )
+            .with_sessions(Arc::clone(&sessions)),
+        );
         let fix_admin = FixAdminServiceServer::from_arc(Arc::clone(&fix_admin_edge));
 
         // The persisted operator identity (users + desks, `identity.json` / the
@@ -469,7 +481,6 @@ impl Edge {
                 .save(&identity_path)
                 .map_err(|e| std::io::Error::new(e.kind(), format!("seed identity: {e}")))?;
         }
-        let sessions = Arc::new(SessionRegistry::new(clock.clone()));
         let auth_edge = Arc::new(AuthEdge::new(
             Arc::new(std::sync::Mutex::new(identity_store)),
             identity_path,

@@ -979,6 +979,10 @@ impl AggregateQuery {
             var_alpha: self.var_alpha,
             curvature_risk_weight: self.curvature_risk_weight,
             correlation_id: self.correlation_id,
+            // Federation forwards the entitlement principal, which the backends
+            // re-authorize; session tokens are process-local and never cross the
+            // fan-out, so a forwarded request carries none.
+            session_token: None,
         }
     }
 }
@@ -1061,6 +1065,8 @@ impl DrillQuery {
             include_children: self.include_children,
             include_positions: self.include_positions,
             correlation_id: self.correlation_id,
+            // Forwarded federation calls carry no session token (see AggregateQuery).
+            session_token: None,
         }
     }
 }
@@ -1136,6 +1142,8 @@ impl LimitQuery {
             var_spot_shocks: self.var_spot_shocks.clone(),
             var_alpha: self.var_alpha,
             correlation_id: self.correlation_id,
+            // Forwarded federation calls carry no session token (see AggregateQuery).
+            session_token: None,
         }
     }
 }
@@ -1183,6 +1191,8 @@ impl PositionQuery {
             scope: self.scope.map(Scope::to_wire),
             principal: Some(principal_or_grant_all(self.principal.as_ref())),
             correlation_id: self.correlation_id,
+            // Forwarded federation calls carry no session token (see AggregateQuery).
+            session_token: None,
         }
     }
 }

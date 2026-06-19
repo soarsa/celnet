@@ -127,6 +127,7 @@ fn list_request(principal: Option<EntitlementPrincipal>) -> ListPositionsRequest
         scope: None,
         principal,
         correlation_id: Some(42),
+        session_token: None,
     }
 }
 
@@ -141,6 +142,7 @@ fn aggregate_request(principal: Option<EntitlementPrincipal>) -> AggregateRiskRe
         var_alpha: 0.0,
         curvature_risk_weight: 0.0,
         correlation_id: Some(42),
+        session_token: None,
     }
 }
 
@@ -157,6 +159,7 @@ fn drill_request(principal: Option<EntitlementPrincipal>) -> DrillRiskRequest {
         include_children: true,
         include_positions: true,
         correlation_id: Some(42),
+        session_token: None,
     }
 }
 
@@ -172,6 +175,7 @@ fn limit_request(principal: Option<EntitlementPrincipal>, book: u32) -> LimitSta
         var_spot_shocks: vec![],
         var_alpha: 0.0,
         correlation_id: Some(42),
+        session_token: None,
     }
 }
 

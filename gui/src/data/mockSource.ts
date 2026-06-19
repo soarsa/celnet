@@ -612,9 +612,22 @@ export class MockTransport implements CelnetTransport {
     },
   ];
 
+  /**
+   * The bearer session token the auth flow installs, mirroring the live
+   * transport. The offline mock does not enforce authentication, so it simply
+   * retains the token for parity (and so a `?mock` login round-trips); gated mock
+   * calls behave identically with or without it.
+   */
+  private sessionToken: string | null = null;
+
   constructor(opts: { seed?: bigint; tickMs?: number } = {}) {
     this.seed = opts.seed ?? 0xce1_5eed_d00dn;
     this.tickMs = opts.tickMs ?? 100; // 10 Hz tape; render conflates to a frame
+  }
+
+  /** Retain the bearer session token (the offline mock does not enforce auth). */
+  setSessionToken(token: string | null): void {
+    this.sessionToken = token;
   }
 
   async price(

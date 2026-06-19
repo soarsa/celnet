@@ -2401,6 +2401,10 @@ message ListPositionsRequest {
   optional EntitlementPrincipal principal = 2;
   // Optional caller correlation id, echoed on the response. Presence-tracked.
   optional uint64 correlation_id = 3;
+  // The bearer session token from `AuthService.Login`. When present and valid the
+  // server authenticates the caller; absent ⇒ the legacy client-asserted-principal
+  // path (mode-gated). A secret — never logged.
+  optional string session_token = 4;
 }
 
 // The positions admitted for the principal under the scope.
@@ -2448,6 +2452,10 @@ message AggregateRiskRequest {
   double curvature_risk_weight = 8;
   // Optional caller correlation id, echoed on the response. Presence-tracked.
   optional uint64 correlation_id = 9;
+  // The bearer session token from `AuthService.Login`. When present and valid the
+  // server authenticates the caller; absent ⇒ the legacy client-asserted-principal
+  // path (mode-gated). A secret — never logged.
+  optional string session_token = 10;
 }
 
 // The rolled-up risk node tree for the requested dimension.
@@ -2488,6 +2496,10 @@ message DrillRiskRequest {
   bool include_positions = 7;
   // Optional caller correlation id, echoed on the response. Presence-tracked.
   optional uint64 correlation_id = 8;
+  // The bearer session token from `AuthService.Login`. When present and valid the
+  // server authenticates the caller; absent ⇒ the legacy client-asserted-principal
+  // path (mode-gated). A secret — never logged.
+  optional string session_token = 9;
 }
 
 // The drill result for a node: its child sub-nodes and/or its contributing
@@ -2606,6 +2618,10 @@ message LimitStatusRequest {
   double var_alpha = 6;
   // Optional caller correlation id, echoed on the response. Presence-tracked.
   optional uint64 correlation_id = 7;
+  // The bearer session token from `AuthService.Login`. When present and valid the
+  // server authenticates the caller; absent ⇒ the legacy client-asserted-principal
+  // path (mode-gated). A secret — never logged.
+  optional string session_token = 8;
 }
 
 // The limit utilizations + worst RAG for a scope node.
@@ -3057,6 +3073,9 @@ message ListFixConnectionsRequest {
   optional EntitlementPrincipal principal = 1;
   // Echoed back so a multiplexed client joins reply to request.
   optional uint64 correlation_id = 2;
+  // The bearer session token from `AuthService.Login`; the server authenticates
+  // the caller from it. Absent ⇒ the legacy principal/mode path. A secret.
+  optional string session_token = 3;
 }
 // The managed connections and their live status.
 message ListFixConnectionsResponse {
@@ -3074,6 +3093,9 @@ message CreateFixConnectionRequest {
   optional EntitlementPrincipal principal = 2;
   // Echoed request correlation id.
   optional uint64 correlation_id = 3;
+  // The bearer session token from `AuthService.Login`; the server authenticates
+  // the caller from it and requires administrator authority. A secret.
+  optional string session_token = 4;
 }
 // The created connection.
 message CreateFixConnectionResponse {
@@ -3093,6 +3115,9 @@ message UpdateFixConnectionRequest {
   optional EntitlementPrincipal principal = 3;
   // Echoed request correlation id.
   optional uint64 correlation_id = 4;
+  // The bearer session token from `AuthService.Login`; the server authenticates
+  // the caller from it and requires administrator authority. A secret.
+  optional string session_token = 5;
 }
 // The updated connection.
 message UpdateFixConnectionResponse {
@@ -3110,6 +3135,9 @@ message DeleteFixConnectionRequest {
   optional EntitlementPrincipal principal = 2;
   // Echoed request correlation id.
   optional uint64 correlation_id = 3;
+  // The bearer session token from `AuthService.Login`; the server authenticates
+  // the caller from it and requires administrator authority. A secret.
+  optional string session_token = 4;
 }
 // Acknowledges a delete.
 message DeleteFixConnectionResponse {
@@ -3127,6 +3155,9 @@ message SetFixConnectionEnabledRequest {
   optional EntitlementPrincipal principal = 3;
   // Echoed request correlation id.
   optional uint64 correlation_id = 4;
+  // The bearer session token from `AuthService.Login`; the server authenticates
+  // the caller from it and requires administrator authority. A secret.
+  optional string session_token = 5;
 }
 // The connection with its updated status.
 message SetFixConnectionEnabledResponse {
@@ -3176,6 +3207,9 @@ message ListFixMessagesRequest {
   optional EntitlementPrincipal principal = 4;
   // Echoed request correlation id.
   optional uint64 correlation_id = 5;
+  // The bearer session token from `AuthService.Login`; the server authenticates
+  // the caller from it. Absent ⇒ the legacy principal/mode path. A secret.
+  optional string session_token = 6;
 }
 // A cursored page of captured session traffic.
 message ListFixMessagesResponse {

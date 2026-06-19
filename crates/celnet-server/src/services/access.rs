@@ -55,6 +55,7 @@ use celnet_proto::EntitlementPrincipal;
 use tonic::Status;
 
 use super::risk::convert;
+use super::sessions::{AuthenticatedUser, SessionRegistry};
 
 /// Resolve an [`AccessMode`] from the `CELNET_ACCESS_MODE` environment knob,
 /// falling back to `default` when the variable is absent or unrecognised.
@@ -196,6 +197,177 @@ pub fn authorize(
     }
 }
 
+/// The authority an entitlement-gated RPC demands of its resolved caller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequiredAuthority {
+    /// Any admitted caller may serve — the read RPCs (`RiskService`'s four reads,
+    /// `FixAdminService.ListConnections` / `ListMessages`). The no-session path
+    /// keeps honoring the asserted principal under the access mode.
+    ReadAny,
+    /// The caller must be an **administrator** — the mutating `FixAdminService`
+    /// RPCs (`CreateConnection` / `UpdateConnection` / `DeleteConnection` /
+    /// `SetEnabled`). Under [`AccessMode::Enforce`] this requires a real admin
+    /// session; permissive dev-mode still admits an absent caller (audited).
+    Admin,
+}
+
+/// The resolved caller of a gated RPC: the server-validated session identity
+/// (when a valid token accompanied the request) plus the effective entitlement
+/// principal the post-boundary aggregation prunes by.
+///
+/// Built by [`resolve_caller`] and consumed by [`authorize_caller`]. A present
+/// [`ResolvedCaller::user`] means the SERVER authenticated the caller — the
+/// strongest authority in the model; an absent one is the legacy mode-gated
+/// principal path, unchanged.
+#[derive(Debug)]
+pub struct ResolvedCaller {
+    /// The authenticated user, when the request carried a valid session token.
+    user: Option<AuthenticatedUser>,
+    /// The effective entitlement principal for data pruning (the client-asserted
+    /// one; session-derived desk scoping arrives with the desk-ownership
+    /// increment — until then a session authenticates but does not narrow the
+    /// view).
+    principal: Option<EntitlementPrincipal>,
+}
+
+impl ResolvedCaller {
+    /// The authenticated user, if a valid session token accompanied the request.
+    #[must_use]
+    pub fn user(&self) -> Option<&AuthenticatedUser> {
+        self.user.as_ref()
+    }
+
+    /// The effective pruning principal for the post-boundary aggregation path
+    /// ([`convert::principal_of`]).
+    #[must_use]
+    pub fn principal(&self) -> Option<&EntitlementPrincipal> {
+        self.principal.as_ref()
+    }
+}
+
+/// Resolve the caller of a gated RPC from its `session_token` and asserted
+/// `principal`.
+///
+/// A present, non-empty token is validated against `sessions`: an unknown or
+/// expired token is rejected with [`Status::unauthenticated`] — a bad credential
+/// is never silently downgraded to the anonymous path. An absent/empty token
+/// yields an unauthenticated caller carrying the asserted principal (the legacy
+/// mode-gated path). The asserted principal rides along either way, for the
+/// downstream pruning the boundary itself does not perform.
+///
+/// # Errors
+/// [`Status::unauthenticated`] when a token is presented but is invalid/expired.
+pub fn resolve_caller(
+    sessions: &SessionRegistry,
+    token: Option<&str>,
+    asserted: Option<EntitlementPrincipal>,
+) -> Result<ResolvedCaller, Status> {
+    match token.map(str::trim).filter(|t| !t.is_empty()) {
+        None => Ok(ResolvedCaller {
+            user: None,
+            principal: asserted,
+        }),
+        Some(t) => match sessions.validate(t) {
+            Some(user) => Ok(ResolvedCaller {
+                user: Some(user),
+                principal: asserted,
+            }),
+            None => Err(Status::unauthenticated(
+                "invalid or expired session token — re-authenticate via AuthService.Login",
+            )),
+        },
+    }
+}
+
+/// **The session-aware authorization boundary** every entitlement-gated RPC
+/// passes once a [`ResolvedCaller`] is in hand. It layers server-validated
+/// sessions over the existing [`authorize`] principal/mode decision:
+///
+/// * **A valid session authenticates the caller** (the strongest authority).
+///   For [`RequiredAuthority::Admin`] the session's role is checked: a non-admin
+///   is denied [`Status::permission_denied`]
+///   ([`AccessReason::SessionInsufficientRole`]); otherwise the call is allowed
+///   ([`AccessReason::SessionAuthenticated`]). Either way one audit record is
+///   emitted, keyed on the authenticated identity — never a fabricated one.
+/// * **No session ⇒ the legacy mode-gated path.** [`RequiredAuthority::ReadAny`]
+///   delegates verbatim to [`authorize`] (asserted principal honored, absent
+///   denied under enforce / admitted under permissive, malformed rejected).
+///   [`RequiredAuthority::Admin`] requires a real admin session under
+///   [`AccessMode::Enforce`] (absent ⇒ [`Status::unauthenticated`]); permissive
+///   dev-mode still admits the absent caller, audited, so the demo edge is
+///   unchanged.
+///
+/// Every decision — allow and deny — emits exactly one [`AccessAudit`] record,
+/// on the async edge only (the pinned pricing core is untouched).
+///
+/// # Errors
+/// [`Status::permission_denied`] for an authenticated non-admin on an
+/// [`RequiredAuthority::Admin`] resource; [`Status::unauthenticated`] for an
+/// absent caller on an admin resource under enforce; plus any error
+/// [`authorize`] returns on the no-session read path.
+pub fn authorize_caller(
+    mode: AccessMode,
+    caller: &ResolvedCaller,
+    resource: &'static str,
+    required: RequiredAuthority,
+    correlation_id: Option<u64>,
+) -> Result<(), Status> {
+    // Authenticated-session path: the server validated WHO the caller is.
+    if let Some(user) = caller.user.as_ref() {
+        let label = format!("session({}/{})", user.email, user.role.as_str());
+        let emit = |reason: AccessReason| {
+            AccessAudit {
+                resource,
+                principal: label.clone(),
+                decision: reason.decision(),
+                reason,
+                correlation_id,
+            }
+            .emit();
+        };
+        if matches!(required, RequiredAuthority::Admin) && !user.is_admin() {
+            emit(AccessReason::SessionInsufficientRole);
+            return Err(Status::permission_denied(format!(
+                "{resource}: requires an administrator session (caller is not an admin)"
+            )));
+        }
+        emit(AccessReason::SessionAuthenticated);
+        return Ok(());
+    }
+
+    // No session: the legacy mode-gated path.
+    match required {
+        RequiredAuthority::ReadAny => {
+            authorize(mode, caller.principal.as_ref(), resource, correlation_id)
+        }
+        RequiredAuthority::Admin => {
+            let emit = |reason: AccessReason| {
+                AccessAudit {
+                    resource,
+                    principal: principal_label(caller.principal.as_ref()),
+                    decision: reason.decision(),
+                    reason,
+                    correlation_id,
+                }
+                .emit();
+            };
+            match mode {
+                AccessMode::Permissive => {
+                    emit(AccessReason::PermissiveAbsent);
+                    Ok(())
+                }
+                AccessMode::Enforce => {
+                    emit(AccessReason::PrincipalAbsent);
+                    Err(Status::unauthenticated(format!(
+                        "{resource}: requires an administrator session — none presented \
+                         (log in via AuthService.Login, or run a dev edge in permissive mode)"
+                    )))
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,5 +452,172 @@ mod tests {
             denies: vec![],
         };
         assert_eq!(principal_label(Some(&scoped)), "scoped(1 grants, 0 denies)");
+    }
+
+    // --- session-aware boundary (resolve_caller / authorize_caller) -----------
+
+    use crate::clock::Clock;
+    use crate::config::identity::Role;
+
+    fn user(role: Role) -> AuthenticatedUser {
+        AuthenticatedUser {
+            user_id: "u-1".into(),
+            email: "trader@celnet.com".into(),
+            display_name: "Trader".into(),
+            role,
+            desk_id: Some("g10".into()),
+        }
+    }
+
+    /// An absent/empty token yields an unauthenticated caller carrying the
+    /// asserted principal — never an error.
+    #[test]
+    fn resolve_caller_absent_token_is_anonymous() {
+        let reg = SessionRegistry::new(Clock::manual(0));
+        let asserted = EntitlementPrincipal {
+            grant_all: true,
+            grants: vec![],
+            denies: vec![],
+        };
+        let caller = resolve_caller(&reg, None, Some(asserted.clone()))
+            .expect("absent token resolves to the anonymous path");
+        assert!(caller.user().is_none());
+        assert_eq!(caller.principal(), Some(&asserted));
+        // A whitespace-only token is treated as absent, not as a bad credential.
+        let blank = resolve_caller(&reg, Some("  "), None).expect("blank token ⇒ anonymous");
+        assert!(blank.user().is_none());
+    }
+
+    /// A presented-but-invalid token is rejected — never silently downgraded.
+    #[test]
+    fn resolve_caller_invalid_token_is_unauthenticated() {
+        let reg = SessionRegistry::new(Clock::manual(0));
+        let err = resolve_caller(&reg, Some("not-a-real-token"), None)
+            .expect_err("an invalid token must be rejected, not downgraded");
+        assert_eq!(err.code(), tonic::Code::Unauthenticated);
+    }
+
+    /// A valid token resolves to its authenticated user.
+    #[test]
+    fn resolve_caller_valid_token_authenticates() {
+        let reg = SessionRegistry::new(Clock::manual(0));
+        let token = reg.issue(user(Role::Admin)).unwrap().token;
+        let caller = resolve_caller(&reg, Some(&token), None).expect("valid token authenticates");
+        assert_eq!(
+            caller.user().map(|u| u.email.as_str()),
+            Some("trader@celnet.com")
+        );
+        assert!(caller.user().is_some_and(AuthenticatedUser::is_admin));
+    }
+
+    /// An authenticated admin passes an Admin-gated resource even under enforce.
+    #[test]
+    fn authorize_caller_admin_session_allows_admin_resource() {
+        let reg = SessionRegistry::new(Clock::manual(0));
+        let token = reg.issue(user(Role::Admin)).unwrap().token;
+        let caller = resolve_caller(&reg, Some(&token), None).unwrap();
+        authorize_caller(
+            AccessMode::Enforce,
+            &caller,
+            "FixAdminService/CreateConnection",
+            RequiredAuthority::Admin,
+            Some(1),
+        )
+        .expect("an admin session authorizes an admin RPC under enforce");
+    }
+
+    /// An authenticated trader is denied an Admin-gated resource — role-gated
+    /// `permission_denied`, distinct from an unauthenticated absence.
+    #[test]
+    fn authorize_caller_trader_session_denied_admin_resource() {
+        let reg = SessionRegistry::new(Clock::manual(0));
+        let token = reg.issue(user(Role::Trader)).unwrap().token;
+        let caller = resolve_caller(&reg, Some(&token), None).unwrap();
+        let err = authorize_caller(
+            AccessMode::Enforce,
+            &caller,
+            "FixAdminService/DeleteConnection",
+            RequiredAuthority::Admin,
+            None,
+        )
+        .expect_err("a trader session must not pass an admin RPC");
+        assert_eq!(err.code(), tonic::Code::PermissionDenied);
+    }
+
+    /// An authenticated trader passes a ReadAny resource (authentication suffices).
+    #[test]
+    fn authorize_caller_trader_session_allows_read() {
+        let reg = SessionRegistry::new(Clock::manual(0));
+        let token = reg.issue(user(Role::Trader)).unwrap().token;
+        let caller = resolve_caller(&reg, Some(&token), None).unwrap();
+        authorize_caller(
+            AccessMode::Enforce,
+            &caller,
+            "RiskService/ListPositions",
+            RequiredAuthority::ReadAny,
+            None,
+        )
+        .expect("any authenticated caller may read");
+    }
+
+    /// No session + enforce + an Admin resource ⇒ unauthenticated (a real admin
+    /// session is required; an asserted principal cannot self-grant admin).
+    #[test]
+    fn authorize_caller_no_session_enforce_admin_denied() {
+        let asserted = EntitlementPrincipal {
+            grant_all: true,
+            grants: vec![],
+            denies: vec![],
+        };
+        let caller = ResolvedCaller {
+            user: None,
+            principal: Some(asserted),
+        };
+        let err = authorize_caller(
+            AccessMode::Enforce,
+            &caller,
+            "FixAdminService/CreateConnection",
+            RequiredAuthority::Admin,
+            None,
+        )
+        .expect_err("enforce admin RPC needs a real admin session");
+        assert_eq!(err.code(), tonic::Code::Unauthenticated);
+    }
+
+    /// No session + permissive + an Admin resource ⇒ admitted (the demo edge is
+    /// unchanged).
+    #[test]
+    fn authorize_caller_no_session_permissive_admin_allowed() {
+        let caller = ResolvedCaller {
+            user: None,
+            principal: None,
+        };
+        authorize_caller(
+            AccessMode::Permissive,
+            &caller,
+            "FixAdminService/CreateConnection",
+            RequiredAuthority::Admin,
+            None,
+        )
+        .expect("permissive dev-mode admits the absent admin caller");
+    }
+
+    /// No session, ReadAny: the boundary delegates verbatim to `authorize` — an
+    /// absent principal under enforce is still denied by default.
+    #[test]
+    fn authorize_caller_no_session_read_delegates_to_authorize() {
+        let caller = ResolvedCaller {
+            user: None,
+            principal: None,
+        };
+        let err = authorize_caller(
+            AccessMode::Enforce,
+            &caller,
+            "RiskService/ListPositions",
+            RequiredAuthority::ReadAny,
+            None,
+        )
+        .expect_err("no session + no principal + enforce ⇒ deny by default");
+        assert_eq!(err.code(), tonic::Code::Unauthenticated);
     }
 }

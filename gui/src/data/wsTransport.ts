@@ -173,6 +173,13 @@ class WsConnection {
   private session: WsStreamSession | null = null;
   /** Connection-state listeners (for the status ribbon / debugging). */
   private readonly stateListeners = new Set<(open: boolean) => void>();
+  /**
+   * The bearer session token from `AuthService.Login`, injected into every
+   * request envelope when set (the server authenticates the caller from it and
+   * role-gates admin RPCs). `null` ⇒ the anonymous/legacy principal path. A
+   * secret — held only in memory, never persisted or logged.
+   */
+  private sessionToken: string | null = null;
 
   constructor(opts: WsTransportOptions) {
     this.url = opts.url;
@@ -330,8 +337,20 @@ class WsConnection {
         }
       }, timeoutMs ?? this.requestTimeoutMs);
       this.waiters.set(correlationId, { expect, resolve, reject, timer });
-      this.send({ ...body, type, correlation_id: Number(correlationId) });
+      // Inject the bearer session token (when authenticated) into every request
+      // envelope, exactly as the correlation id is — the server reads it off the
+      // gated RPCs and ignores it on the rest. Anonymous ⇒ omit the field.
+      const auth = this.sessionToken ? { session_token: this.sessionToken } : {};
+      this.send({ ...body, ...auth, type, correlation_id: Number(correlationId) });
     });
+  }
+
+  /**
+   * Set (or clear, with `null`) the bearer session token injected into every
+   * subsequent request envelope. Called by the auth flow after login/logout.
+   */
+  setSessionToken(token: string | null): void {
+    this.sessionToken = token;
   }
 
   private failAllWaiters(err: Error): void {
@@ -670,6 +689,16 @@ export class WsTransport implements CelnetTransport {
   /** Snapshot of socket liveness (`true` iff the live socket is currently OPEN). */
   isConnected(): boolean {
     return this.conn.isOpen();
+  }
+
+  /**
+   * Install (or clear, with `null`) the bearer session token the transport
+   * injects into every gated request. The auth flow calls this after a login
+   * succeeds and again on logout; it survives reconnects (held on the persistent
+   * connection, not the socket).
+   */
+  setSessionToken(token: string | null): void {
+    this.conn.setSessionToken(token);
   }
 
   async price(

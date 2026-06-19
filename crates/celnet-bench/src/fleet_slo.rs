@@ -163,6 +163,7 @@ fn firm_request() -> AggregateRiskRequest {
         var_alpha: 0.99,
         curvature_risk_weight: 0.18,
         correlation_id: Some(1),
+        session_token: None,
     }
 }
 

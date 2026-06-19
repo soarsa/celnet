@@ -486,6 +486,9 @@ impl RiskEdge {
             scope: req.scope,
             principal: req.principal.clone(),
             correlation_id: req.correlation_id,
+            // Backends re-authorize the forwarded principal; sessions don't cross
+            // the fan-out, so the gather request carries no token.
+            session_token: None,
         };
         let union = self.gather_union(&backends, &list_req).await?;
         // Rebuild the union into a transient store that carries THIS edge's firm
@@ -520,6 +523,8 @@ impl RiskEdge {
             scope: Some(scope),
             principal: req.principal.clone(),
             correlation_id: req.correlation_id,
+            // See above: forwarded gather requests carry no session token.
+            session_token: None,
         };
         let union = self.gather_union(backends, &list_req).await?;
         let staged = self.stage_union(&union)?;
@@ -537,6 +542,8 @@ impl RiskEdge {
             var_alpha: req.var_alpha,
             curvature_risk_weight: req.curvature_risk_weight,
             correlation_id: req.correlation_id,
+            // Local re-aggregation over the already-gathered staged set — no token.
+            session_token: None,
         };
         let resp = staged_edge.aggregate_risk_impl(&scoped_req)?;
         let node = resp

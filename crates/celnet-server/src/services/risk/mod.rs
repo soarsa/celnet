@@ -48,7 +48,10 @@ use celnet_risk_fleet::FleetTopology;
 use celnet_risk_normalize::SpotResolver as _;
 use tonic::{Request, Response, Status};
 
+use crate::clock::Clock;
 use crate::readiness::ReadinessGate;
+use crate::services::access::{RequiredAuthority, authorize_caller, resolve_caller};
+use crate::services::sessions::SessionRegistry;
 use aggregate::{
     NonAdditiveConfig, aggregate_nodes, cube_from_facts, entitled_cube, entitled_facts_for_scope,
 };
@@ -97,6 +100,20 @@ pub struct RiskEdge {
     /// construction via [`RiskEdge::with_topology_connected`]); `None` for in-process
     /// or a not-yet-connected distributed edge.
     fleet: Option<Arc<federate::Fleet>>,
+    /// The live session registry the entitlement boundary validates `session_token`
+    /// against. The constructors default to a fresh empty registry (consulted only
+    /// when a request actually presents a token, so the principal-only tests never
+    /// touch it); the boot path overrides it with the edge-wide registry via
+    /// [`RiskEdge::with_sessions`] so every front shares one authentication state.
+    sessions: Arc<SessionRegistry>,
+}
+
+/// A fresh, empty [`SessionRegistry`] the constructors default to. It is only ever
+/// consulted when a request presents a `session_token`, so a principal-only edge
+/// (and every principal-only test) never touches it; the boot path replaces it with
+/// the edge-wide registry via [`RiskEdge::with_sessions`].
+fn default_sessions() -> Arc<SessionRegistry> {
+    Arc::new(SessionRegistry::new(Clock::system()))
 }
 
 impl RiskEdge {
@@ -124,6 +141,7 @@ impl RiskEdge {
             gate,
             topology,
             fleet: None,
+            sessions: default_sessions(),
         }
     }
 
@@ -151,6 +169,7 @@ impl RiskEdge {
             gate,
             topology,
             fleet,
+            sessions: default_sessions(),
         })
     }
 
@@ -173,7 +192,19 @@ impl RiskEdge {
             gate,
             topology: FleetTopology::Distributed { endpoints },
             fleet: Some(fleet),
+            sessions: default_sessions(),
         }
+    }
+
+    /// Install the edge-wide [`SessionRegistry`] so this edge validates session
+    /// tokens against the SAME authentication state every other front shares (the
+    /// boot path calls this; the constructors otherwise default to an empty
+    /// registry). Builder-style so a federated edge clones the parent's registry
+    /// onto its staged sub-edges.
+    #[must_use]
+    pub fn with_sessions(mut self, sessions: Arc<SessionRegistry>) -> Self {
+        self.sessions = sessions;
+        self
     }
 
     /// The fleet topology this edge was booted under (the resolved deploy-time seam).
@@ -665,10 +696,16 @@ impl RiskService for RiskEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        crate::services::access::authorize(
+        let caller = resolve_caller(
+            &self.sessions,
+            req.session_token.as_deref(),
+            req.principal.clone(),
+        )?;
+        authorize_caller(
             self.store.access_mode(),
-            req.principal.as_ref(),
+            &caller,
             "RiskService/ListPositions",
+            RequiredAuthority::ReadAny,
             req.correlation_id,
         )?;
         let resp = match self.serve_mode()? {
@@ -685,10 +722,16 @@ impl RiskService for RiskEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        crate::services::access::authorize(
+        let caller = resolve_caller(
+            &self.sessions,
+            req.session_token.as_deref(),
+            req.principal.clone(),
+        )?;
+        authorize_caller(
             self.store.access_mode(),
-            req.principal.as_ref(),
+            &caller,
             "RiskService/AggregateRisk",
+            RequiredAuthority::ReadAny,
             req.correlation_id,
         )?;
         let resp = match self.serve_mode()? {
@@ -705,10 +748,16 @@ impl RiskService for RiskEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        crate::services::access::authorize(
+        let caller = resolve_caller(
+            &self.sessions,
+            req.session_token.as_deref(),
+            req.principal.clone(),
+        )?;
+        authorize_caller(
             self.store.access_mode(),
-            req.principal.as_ref(),
+            &caller,
             "RiskService/DrillRisk",
+            RequiredAuthority::ReadAny,
             req.correlation_id,
         )?;
         let resp = match self.serve_mode()? {
@@ -725,10 +774,16 @@ impl RiskService for RiskEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
-        crate::services::access::authorize(
+        let caller = resolve_caller(
+            &self.sessions,
+            req.session_token.as_deref(),
+            req.principal.clone(),
+        )?;
+        authorize_caller(
             self.store.access_mode(),
-            req.principal.as_ref(),
+            &caller,
             "RiskService/LimitStatus",
+            RequiredAuthority::ReadAny,
             req.correlation_id,
         )?;
         let resp = match self.serve_mode()? {
@@ -828,6 +883,7 @@ mod tests {
                 scope: None,
                 principal: None, // grant-all default
                 correlation_id: Some(42),
+                session_token: None,
             })
             .unwrap();
         assert_eq!(resp.positions.len(), 2);
@@ -877,6 +933,7 @@ mod tests {
             var_alpha: 0.0,
             curvature_risk_weight: 0.0,
             correlation_id: None,
+            session_token: None,
         };
 
         // Grant-all (omitted principal) sees the whole firm. We compare on the
@@ -967,6 +1024,7 @@ mod tests {
                 var_spot_shocks: vec![],
                 var_alpha: 0.0,
                 correlation_id: Some(7),
+                session_token: None,
             })
             .unwrap();
         assert_eq!(resp.correlation_id, Some(7));
@@ -992,6 +1050,7 @@ mod tests {
                 var_spot_shocks: vec![],
                 var_alpha: 0.0,
                 correlation_id: None,
+                session_token: None,
             })
             .unwrap();
         assert_eq!(clear.worst, celnet_proto::RagStatus::Green as i32);
@@ -1028,6 +1087,7 @@ mod tests {
                 include_children: true,
                 include_positions: true,
                 correlation_id: Some(9),
+                session_token: None,
             })
             .unwrap();
         assert_eq!(resp.correlation_id, Some(9));
@@ -1078,6 +1138,7 @@ mod tests {
             var_alpha: 0.99,
             curvature_risk_weight: 0.18,
             correlation_id: Some(123),
+            session_token: None,
         };
 
         let default_edge = edge();
@@ -1172,6 +1233,7 @@ mod tests {
                 var_alpha: 0.0,
                 curvature_risk_weight: 0.0,
                 correlation_id: None,
+                session_token: None,
             }),
         )
         .await;
@@ -1183,6 +1245,7 @@ mod tests {
                 scope: None,
                 principal: Some(asserted),
                 correlation_id: None,
+                session_token: None,
             }),
         )
         .await;

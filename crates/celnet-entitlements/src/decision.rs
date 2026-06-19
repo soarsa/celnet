@@ -111,6 +111,15 @@ pub enum AccessReason {
     /// Deny: a principal was asserted but its rule set is malformed (e.g. an
     /// unknown dimension); rejected loudly rather than partially honored.
     MalformedPrincipal,
+    /// Allow: the request carried a **server-validated session token** (issued by
+    /// `AuthService.Login`, resolved against the live session registry). The
+    /// caller's identity was authenticated by the server, not self-asserted — the
+    /// strongest admit reason in the audit stream.
+    SessionAuthenticated,
+    /// Deny: a valid session authenticated the caller, but the resource requires
+    /// administrator authority the caller's role does not hold (a role-gated
+    /// `permission_denied`, distinct from an unauthenticated absence).
+    SessionInsufficientRole,
 }
 
 impl AccessReason {
@@ -122,6 +131,8 @@ impl AccessReason {
             AccessReason::PermissiveAbsent => "permissive_dev_mode_absent_principal",
             AccessReason::PrincipalAbsent => "principal_absent",
             AccessReason::MalformedPrincipal => "malformed_principal",
+            AccessReason::SessionAuthenticated => "session_authenticated",
+            AccessReason::SessionInsufficientRole => "session_insufficient_role",
         }
     }
 
@@ -130,12 +141,12 @@ impl AccessReason {
     #[must_use]
     pub const fn decision(self) -> AccessDecision {
         match self {
-            AccessReason::PrincipalAsserted | AccessReason::PermissiveAbsent => {
-                AccessDecision::Allow
-            }
-            AccessReason::PrincipalAbsent | AccessReason::MalformedPrincipal => {
-                AccessDecision::Deny
-            }
+            AccessReason::PrincipalAsserted
+            | AccessReason::PermissiveAbsent
+            | AccessReason::SessionAuthenticated => AccessDecision::Allow,
+            AccessReason::PrincipalAbsent
+            | AccessReason::MalformedPrincipal
+            | AccessReason::SessionInsufficientRole => AccessDecision::Deny,
         }
     }
 }
@@ -172,6 +183,14 @@ mod tests {
             AccessReason::MalformedPrincipal.decision(),
             AccessDecision::Deny
         );
+        assert_eq!(
+            AccessReason::SessionAuthenticated.decision(),
+            AccessDecision::Allow
+        );
+        assert_eq!(
+            AccessReason::SessionInsufficientRole.decision(),
+            AccessDecision::Deny
+        );
     }
 
     /// Labels are stable, distinct snake_case identifiers (audit fields key on
@@ -183,6 +202,8 @@ mod tests {
             AccessReason::PermissiveAbsent.label(),
             AccessReason::PrincipalAbsent.label(),
             AccessReason::MalformedPrincipal.label(),
+            AccessReason::SessionAuthenticated.label(),
+            AccessReason::SessionInsufficientRole.label(),
         ];
         let mut sorted = reasons.to_vec();
         sorted.sort_unstable();

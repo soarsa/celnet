@@ -316,6 +316,7 @@ fn firm_request_with_risk() -> AggregateRiskRequest {
         var_alpha: 0.99,
         curvature_risk_weight: 0.18,
         correlation_id: Some(7),
+        session_token: None,
     }
 }
 
@@ -330,6 +331,7 @@ fn ccy_pair_request() -> AggregateRiskRequest {
         var_alpha: 0.975,
         curvature_risk_weight: 0.15,
         correlation_id: None,
+        session_token: None,
     }
 }
 
@@ -518,6 +520,7 @@ async fn federated_list_positions_equals_oracle() {
             scope: None,
             principal: asserted_grant_all(),
             correlation_id: Some(1),
+            session_token: None,
         };
         let f = RiskService::list_positions(&fed, Request::new(req.clone()))
             .await
@@ -545,6 +548,7 @@ async fn federated_list_positions_equals_oracle() {
             scope: None,
             principal: Some(walled),
             correlation_id: None,
+            session_token: None,
         };
         let f = RiskService::list_positions(&fed, Request::new(req.clone()))
             .await
@@ -586,6 +590,7 @@ async fn federated_drill_reconciles() {
             include_children: true,
             include_positions: true,
             correlation_id: Some(9),
+            session_token: None,
         };
         let f = RiskService::drill_risk(&fed, Request::new(req.clone()))
             .await
@@ -660,6 +665,7 @@ async fn federated_limit_status_reconciles() {
             var_spot_shocks: vec![],
             var_alpha: 0.0,
             correlation_id: Some(3),
+            session_token: None,
         };
         let f = RiskService::limit_status(&fed, Request::new(req.clone()))
             .await
