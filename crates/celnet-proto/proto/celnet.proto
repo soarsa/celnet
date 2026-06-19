@@ -3045,6 +3045,10 @@ message FixConnectionDesc {
   // The actually-bound address when running (resolves an ephemeral `:0`); empty
   // when not running.
   string bound_addr = 9;
+  // The owning desk id (`DeskDef::id`). A desk-scoped (non-admin) caller sees
+  // only connections owned by its desk; empty ⇒ an unowned "house" connection,
+  // visible to admins only.
+  string desk = 10;
 }
 
 // The editable fields of a connection (create/update payload). Runtime status
@@ -3065,6 +3069,9 @@ message FixConnectionSpec {
   string target_comp_id = 6;
   // Whether the acceptor should be (and stay) bound.
   bool enabled = 7;
+  // The owning desk id (`DeskDef::id`). Empty ⇒ an unowned "house" connection.
+  // Desk-scoped (non-admin) callers see only their own desk's connections.
+  string desk = 8;
 }
 
 // List all managed connections with their live status.

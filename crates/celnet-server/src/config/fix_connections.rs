@@ -66,6 +66,12 @@ pub struct FixConnectionDef {
     pub target_comp_id: String,
     /// Whether the acceptor should be (and stay) bound.
     pub enabled: bool,
+    /// The owning desk id (`DeskDef::id`). Empty ⇒ an unowned "house" connection
+    /// (admins only). A desk-scoped (non-admin) session sees only connections
+    /// whose `desk` matches its own. `#[serde(default)]` keeps configs written
+    /// before desk ownership (no `desk` key) loading as unowned.
+    #[serde(default)]
+    pub desk: String,
 }
 
 impl FixConnectionDef {
@@ -195,6 +201,7 @@ mod tests {
             sender_comp_id: "CELNET".to_string(),
             target_comp_id: "CELNET-CPTY".to_string(),
             enabled: true,
+            desk: "g10".to_string(),
         }
     }
 
@@ -206,6 +213,18 @@ mod tests {
         let back: FixConnectionStore = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(store, back);
         assert_eq!(back.get("opt-1").unwrap().kind, AcceptorKind::Options);
+        assert_eq!(back.get("opt-1").unwrap().desk, "g10");
+    }
+
+    #[test]
+    fn legacy_config_without_desk_loads_as_unowned() {
+        // A config written before desk ownership has no `desk` key; serde's
+        // default must fill it as an empty (unowned) string, not fail to parse.
+        let legacy = r#"{"connections":[{"id":"opt-1","name":"Bank A","kind":"options",
+            "bind_addr":"127.0.0.1:9099","sender_comp_id":"CELNET",
+            "target_comp_id":"CELNET-CPTY","enabled":true}]}"#;
+        let store: FixConnectionStore = serde_json::from_str(legacy).unwrap();
+        assert_eq!(store.get("opt-1").unwrap().desk, "");
     }
 
     #[test]

@@ -1749,6 +1749,12 @@ export interface FixConnection {
   running: boolean;
   /** The actually-bound address when running (resolves an ephemeral `:0`); else "". */
   boundAddr: string;
+  /**
+   * The owning desk id (`DeskDef.id`). Empty ⇒ an unowned "house" connection
+   * (admin-only visibility). A desk-scoped (non-admin) session sees only the
+   * connections whose `desk` matches its own.
+   */
+  desk: string;
 }
 
 /**
@@ -1765,6 +1771,8 @@ export interface FixConnectionSpec {
   senderCompId: string;
   targetCompId: string;
   enabled: boolean;
+  /** The owning desk id (`DeskDef.id`); empty/omitted ⇒ an unowned connection. */
+  desk?: string;
 }
 
 /**

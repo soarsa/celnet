@@ -31,7 +31,7 @@ use tonic::{Request, Response, Status};
 use crate::clock::Clock;
 use crate::config::fix_connections::{AcceptorKind, FixConnectionDef};
 use crate::readiness::ReadinessGate;
-use crate::services::access::{RequiredAuthority, authorize_caller, resolve_caller};
+use crate::services::access::{DeskScope, RequiredAuthority, authorize_caller, resolve_caller};
 use crate::services::fix_monitor::{FixDirection, FixMessageEvent, FixMonitor};
 use crate::services::fix_registry::{ConnectionStatus, FixAcceptorRegistry};
 use crate::services::risk::store::PositionStore;
@@ -101,6 +101,26 @@ impl FixAdminEdge {
             ))
         }
     }
+
+    /// The set of connection ids a desk-scoped caller may read traffic for: the
+    /// connections whose owning desk the `scope` admits, optionally narrowed to a
+    /// single `requested` connection (a connection outside the desk yields the
+    /// empty set, so the monitor returns no rows for it). Only reached on the
+    /// non-`All` path — an admin / no-session caller never builds this set.
+    async fn allowed_connection_ids(
+        &self,
+        scope: &DeskScope,
+        requested: Option<&str>,
+    ) -> std::collections::HashSet<String> {
+        self.registry
+            .list()
+            .await
+            .iter()
+            .filter(|s| scope.allows(&s.def.desk))
+            .map(|s| s.def.id.clone())
+            .filter(|id| requested.is_none_or(|r| r == id))
+            .collect()
+    }
 }
 
 #[tonic::async_trait]
@@ -124,11 +144,15 @@ impl FixAdminService for FixAdminEdge {
             RequiredAuthority::ReadAny,
             req.correlation_id,
         )?;
+        // Desk scoping: an admin (or the no-session demo/legacy path) sees every
+        // connection; a trader session sees only its own desk's connections.
+        let scope = caller.desk_scope();
         let connections = self
             .registry
             .list()
             .await
             .iter()
+            .filter(|s| scope.allows(&s.def.desk))
             .map(status_to_wire)
             .collect();
         Ok(Response::new(ListFixConnectionsResponse {
@@ -298,7 +322,16 @@ impl FixAdminService for FixAdminEdge {
             .connection_id
             .as_deref()
             .filter(|s| !s.trim().is_empty());
-        let (events, latest_seq) = self.monitor.since(connection_id, req.after_seq, limit);
+        // Desk scoping: an admin / no-session caller reads the whole capture
+        // (optionally narrowed to one connection); a desk-scoped trader sees only
+        // the traffic of the connections its desk owns.
+        let scope = caller.desk_scope();
+        let (events, latest_seq) = if scope.is_all() {
+            self.monitor.since(connection_id, req.after_seq, limit)
+        } else {
+            let allowed = self.allowed_connection_ids(&scope, connection_id).await;
+            self.monitor.since_in(&allowed, req.after_seq, limit)
+        };
         Ok(Response::new(ListFixMessagesResponse {
             messages: events.iter().map(event_to_wire).collect(),
             latest_seq,
@@ -343,6 +376,7 @@ fn status_to_wire(s: &ConnectionStatus) -> FixConnectionDesc {
         enabled: s.def.enabled,
         running: s.running,
         bound_addr: s.bound_addr.map(|a| a.to_string()).unwrap_or_default(),
+        desk: s.def.desk.clone(),
     }
 }
 
@@ -372,6 +406,7 @@ fn def_from_spec(
         sender_comp_id: spec.sender_comp_id.clone(),
         target_comp_id: spec.target_comp_id.clone(),
         enabled: spec.enabled,
+        desk: spec.desk.trim().to_string(),
     })
 }
 
@@ -438,6 +473,7 @@ mod tests {
             sender_comp_id: "CELNET".to_string(),
             target_comp_id: "CELNET-CPTY".to_string(),
             enabled: true,
+            desk: "g10".to_string(),
         }
     }
 
@@ -447,6 +483,7 @@ mod tests {
         assert_eq!(def.id, "opt-1");
         assert_eq!(def.kind, AcceptorKind::Options);
         assert!(def.enabled);
+        assert_eq!(def.desk, "g10", "the owning desk rides through the mapper");
     }
 
     #[test]

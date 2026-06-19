@@ -1621,6 +1621,7 @@ export function fixConnectionFromWire(o: WireObject): FixConnection {
     enabled: o["enabled"] === true,
     running: o["running"] === true,
     boundAddr: str(o, "bound_addr"),
+    desk: str(o, "desk"),
   };
 }
 
@@ -1634,6 +1635,7 @@ function fixSpecToWire(spec: FixConnectionSpec): WireObject {
     sender_comp_id: spec.senderCompId,
     target_comp_id: spec.targetCompId,
     enabled: spec.enabled,
+    desk: spec.desk ?? "",
   };
 }
 

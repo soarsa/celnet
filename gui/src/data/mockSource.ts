@@ -609,6 +609,7 @@ export class MockTransport implements CelnetTransport {
       enabled: true,
       running: true,
       boundAddr: "127.0.0.1:9099",
+      desk: "g10",
     },
   ];
 
@@ -1064,6 +1065,7 @@ export class MockTransport implements CelnetTransport {
       enabled: spec.enabled,
       running: spec.enabled,
       boundAddr: spec.enabled ? spec.bindAddr : "",
+      desk: spec.desk ?? "",
     };
   }
 

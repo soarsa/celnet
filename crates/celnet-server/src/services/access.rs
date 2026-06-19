@@ -211,6 +211,42 @@ pub enum RequiredAuthority {
     Admin,
 }
 
+/// What set of **desk-owned** resources a resolved caller may see. Desk ownership
+/// (a FIX connection owned by a desk; a trader sees only their desk's RFQ traffic)
+/// is enforced by [`FixAdminService`](super::fix_admin) reading this off the
+/// resolved caller.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeskScope {
+    /// Full visibility — an **admin** session, or the no-session legacy/demo path
+    /// (which keeps the historical "sees everything" behaviour so the permissive
+    /// demo edge and the principal-only tests are unchanged).
+    All,
+    /// Only resources owned by **this** desk — a trader session bound to a desk.
+    Desk(String),
+    /// Only **unowned** ("house") resources — a trader session with no desk
+    /// assigned sees only connections whose owning desk is empty.
+    Deskless,
+}
+
+impl DeskScope {
+    /// Whether a resource owned by `owner_desk` (empty ⇒ unowned) is visible
+    /// under this scope.
+    #[must_use]
+    pub fn allows(&self, owner_desk: &str) -> bool {
+        match self {
+            DeskScope::All => true,
+            DeskScope::Desk(d) => owner_desk == d,
+            DeskScope::Deskless => owner_desk.is_empty(),
+        }
+    }
+
+    /// Whether this scope sees everything (the fast path that skips any filtering).
+    #[must_use]
+    pub fn is_all(&self) -> bool {
+        matches!(self, DeskScope::All)
+    }
+}
+
 /// The resolved caller of a gated RPC: the server-validated session identity
 /// (when a valid token accompanied the request) plus the effective entitlement
 /// principal the post-boundary aggregation prunes by.
@@ -224,9 +260,9 @@ pub struct ResolvedCaller {
     /// The authenticated user, when the request carried a valid session token.
     user: Option<AuthenticatedUser>,
     /// The effective entitlement principal for data pruning (the client-asserted
-    /// one; session-derived desk scoping arrives with the desk-ownership
-    /// increment — until then a session authenticates but does not narrow the
-    /// view).
+    /// one). Session-derived **desk** scoping is exposed separately via
+    /// [`ResolvedCaller::desk_scope`] (consumed by the FIX-admin reads); the
+    /// principal remains the risk-aggregation pruning rule-set.
     principal: Option<EntitlementPrincipal>,
 }
 
@@ -242,6 +278,26 @@ impl ResolvedCaller {
     #[must_use]
     pub fn principal(&self) -> Option<&EntitlementPrincipal> {
         self.principal.as_ref()
+    }
+
+    /// The desk-visibility scope this caller sees over desk-owned resources:
+    ///
+    /// * an **admin** session, or **no** session (the legacy/demo path) ⇒
+    ///   [`DeskScope::All`] — full visibility, so the permissive demo edge and the
+    ///   principal-only tests keep seeing every connection;
+    /// * a **trader** session bound to a desk ⇒ [`DeskScope::Desk`] of that desk;
+    /// * a **trader** session with no desk ⇒ [`DeskScope::Deskless`] (only
+    ///   unowned "house" connections).
+    #[must_use]
+    pub fn desk_scope(&self) -> DeskScope {
+        match self.user.as_ref() {
+            None => DeskScope::All,
+            Some(u) if u.is_admin() => DeskScope::All,
+            Some(u) => match &u.desk_id {
+                Some(desk) => DeskScope::Desk(desk.clone()),
+                None => DeskScope::Deskless,
+            },
+        }
     }
 }
 
@@ -619,5 +675,60 @@ mod tests {
         )
         .expect_err("no session + no principal + enforce ⇒ deny by default");
         assert_eq!(err.code(), tonic::Code::Unauthenticated);
+    }
+
+    // --- desk-visibility scope ------------------------------------------------
+
+    /// An admin session sees every connection (full visibility).
+    #[test]
+    fn desk_scope_admin_sees_all() {
+        let reg = SessionRegistry::new(Clock::manual(0));
+        let token = reg.issue(user(Role::Admin)).unwrap().token;
+        let caller = resolve_caller(&reg, Some(&token), None).unwrap();
+        let scope = caller.desk_scope();
+        assert_eq!(scope, DeskScope::All);
+        assert!(scope.allows("g10") && scope.allows("") && scope.is_all());
+    }
+
+    /// A no-session caller keeps full visibility (the legacy/demo path).
+    #[test]
+    fn desk_scope_no_session_sees_all() {
+        let caller = ResolvedCaller {
+            user: None,
+            principal: None,
+        };
+        assert_eq!(caller.desk_scope(), DeskScope::All);
+    }
+
+    /// A trader bound to a desk sees only that desk's connections, not other
+    /// desks' nor the unowned house connections.
+    #[test]
+    fn desk_scope_trader_sees_only_their_desk() {
+        let reg = SessionRegistry::new(Clock::manual(0));
+        // `user(Role::Trader)` belongs to desk `g10`.
+        let token = reg.issue(user(Role::Trader)).unwrap().token;
+        let caller = resolve_caller(&reg, Some(&token), None).unwrap();
+        let scope = caller.desk_scope();
+        assert_eq!(scope, DeskScope::Desk("g10".into()));
+        assert!(scope.allows("g10"));
+        assert!(!scope.allows("em")); // another desk
+        assert!(!scope.allows("")); // unowned/house
+        assert!(!scope.is_all());
+    }
+
+    /// A trader with no desk sees only unowned ("house") connections.
+    #[test]
+    fn desk_scope_deskless_trader_sees_only_unowned() {
+        let reg = SessionRegistry::new(Clock::manual(0));
+        let deskless = AuthenticatedUser {
+            desk_id: None,
+            ..user(Role::Trader)
+        };
+        let token = reg.issue(deskless).unwrap().token;
+        let caller = resolve_caller(&reg, Some(&token), None).unwrap();
+        let scope = caller.desk_scope();
+        assert_eq!(scope, DeskScope::Deskless);
+        assert!(scope.allows(""));
+        assert!(!scope.allows("g10"));
     }
 }

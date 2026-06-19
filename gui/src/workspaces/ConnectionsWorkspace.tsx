@@ -88,6 +88,7 @@ export function ConnectionsWorkspace(): React.ReactElement {
                 <th>Name</th>
                 <th>Dialect</th>
                 <th>Bind address</th>
+                <th>Desk</th>
                 <th>SenderCompID</th>
                 <th>TargetCompID</th>
                 <th className={styles.actionsCol}>Actions</th>
@@ -111,6 +112,7 @@ export function ConnectionsWorkspace(): React.ReactElement {
                   <td className={styles.nameCell}>{c.name}</td>
                   <td>{kindLabel(c)}</td>
                   <td className={styles.mono}>{c.running && c.boundAddr ? c.boundAddr : c.bindAddr}</td>
+                  <td className={styles.mono}>{c.desk || "—"}</td>
                   <td className={styles.mono}>{c.senderCompId}</td>
                   <td className={styles.mono}>{c.targetCompId}</td>
                   <td className={styles.actionsCol}>

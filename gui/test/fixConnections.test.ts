@@ -64,6 +64,27 @@ describe("fix-admin wire codec", () => {
     expect((body.spec as Record<string, unknown>).kind).toBe(0);
     expect((body.principal as Record<string, unknown>).grant_all).toBe(true);
   });
+
+  it("carries the owning desk both ways (descriptor + spec)", () => {
+    const c = fixConnectionFromWire({
+      id: "opt-1",
+      name: "Bank A",
+      kind: 0,
+      bind_addr: "127.0.0.1:9099",
+      sender_comp_id: "CELNET",
+      target_comp_id: "CELNET-CPTY",
+      enabled: true,
+      running: true,
+      bound_addr: "127.0.0.1:9099",
+      desk: "g10",
+    });
+    expect(c.desk).toBe("g10");
+    // A supplied desk rides through; an absent one encodes as "" (house).
+    const body = createFixConnectionRequestToWire(spec({ desk: "em" }));
+    expect((body.spec as Record<string, unknown>).desk).toBe("em");
+    const houseBody = createFixConnectionRequestToWire(spec());
+    expect((houseBody.spec as Record<string, unknown>).desk).toBe("");
+  });
 });
 
 describe("MockTransport fix registry (offline parity)", () => {

@@ -159,6 +159,35 @@ impl FixMonitor {
             .collect();
         (matched, latest)
     }
+
+    /// Like [`since`](Self::since) but restricted to events whose
+    /// `connection_id` is in `allowed` — the **desk-scoped** poll a non-admin
+    /// session takes (`allowed` is the set of connection ids its desk owns). An
+    /// empty set matches nothing (a desk-scoped caller with no visible
+    /// connections gets an empty page), while the cursor still advances to the
+    /// latest sequence so the client keeps following the tail.
+    #[must_use]
+    pub fn since_in(
+        &self,
+        allowed: &std::collections::HashSet<String>,
+        after_seq: u64,
+        limit: usize,
+    ) -> (Vec<FixMessageEvent>, u64) {
+        let g = match self.inner.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let latest = g.seq;
+        let matched = g
+            .events
+            .iter()
+            .filter(|e| e.seq > after_seq)
+            .filter(|e| allowed.contains(&e.connection_id))
+            .take(limit)
+            .cloned()
+            .collect();
+        (matched, latest)
+    }
 }
 
 impl Default for FixMonitor {
@@ -268,6 +297,28 @@ mod tests {
         let (only_b, _) = m.since(Some("b"), 0, 100);
         assert_eq!(only_b.len(), 1);
         assert_eq!(only_b[0].connection_id, "b");
+    }
+
+    #[test]
+    fn since_in_filters_to_the_allowed_set() {
+        let m = FixMonitor::new();
+        m.record("a", FixDirection::Inbound, &frame("R"), 1);
+        m.record("b", FixDirection::Inbound, &frame("R"), 2);
+        m.record("c", FixDirection::Inbound, &frame("R"), 3);
+        let allowed = std::collections::HashSet::from(["a".to_string(), "c".to_string()]);
+        let (events, latest) = m.since_in(&allowed, 0, 100);
+        assert_eq!(
+            latest, 3,
+            "cursor advances to the latest regardless of filter"
+        );
+        let ids: Vec<&str> = events.iter().map(|e| e.connection_id.as_str()).collect();
+        assert_eq!(ids, vec!["a", "c"], "only allowed-set connections returned");
+
+        // An empty allow-set (a desk-scoped caller with no visible connections)
+        // returns no events, but still reports the latest cursor.
+        let (none, latest2) = m.since_in(&std::collections::HashSet::new(), 0, 100);
+        assert!(none.is_empty());
+        assert_eq!(latest2, 3);
     }
 
     #[test]

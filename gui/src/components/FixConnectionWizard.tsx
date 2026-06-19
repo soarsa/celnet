@@ -69,6 +69,7 @@ export function FixConnectionWizard({
   const [port, setPort] = useState("9100");
   const [senderCompId, setSenderCompId] = useState(DEFAULT_SENDER);
   const [targetCompId, setTargetCompId] = useState(DEFAULT_TARGET);
+  const [desk, setDesk] = useState("");
   const [enabled, setEnabled] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -83,6 +84,7 @@ export function FixConnectionWizard({
     setPort("9100");
     setSenderCompId(DEFAULT_SENDER);
     setTargetCompId(DEFAULT_TARGET);
+    setDesk("");
     setEnabled(true);
     setSubmitting(false);
     setError(null);
@@ -151,6 +153,7 @@ export function FixConnectionWizard({
       senderCompId: senderCompId.trim(),
       targetCompId: targetCompId.trim(),
       enabled,
+      desk: desk.trim(),
     };
     try {
       await onCreate(spec);
@@ -159,7 +162,7 @@ export function FixConnectionWizard({
       setError(e instanceof Error ? e.message : "could not create the connection");
       setSubmitting(false);
     }
-  }, [nameTrimmed, kind, bindAddr, senderCompId, targetCompId, enabled, onCreate, onClose]);
+  }, [nameTrimmed, kind, bindAddr, senderCompId, targetCompId, desk, enabled, onCreate, onClose]);
 
   const advance = useCallback((): void => {
     if (!stepValid) return;
@@ -316,6 +319,15 @@ export function FixConnectionWizard({
                   />
                 </label>
               </div>
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Owning desk (optional)</span>
+                <input
+                  className={styles.input}
+                  value={desk}
+                  onChange={(e) => setDesk(e.target.value)}
+                  placeholder="e.g. g10 — leave blank for a house (admin-only) connection"
+                />
+              </label>
               <label className={styles.checkRow}>
                 <input
                   type="checkbox"
@@ -377,6 +389,10 @@ export function FixConnectionWizard({
                 <div className={styles.summaryRow}>
                   <dt>TargetCompID</dt>
                   <dd>{targetCompId.trim()}</dd>
+                </div>
+                <div className={styles.summaryRow}>
+                  <dt>Owning desk</dt>
+                  <dd>{desk.trim() || "— (house / admin-only)"}</dd>
                 </div>
                 <div className={styles.summaryRow}>
                   <dt>On create</dt>
