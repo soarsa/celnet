@@ -17,6 +17,7 @@ import { useState } from "react";
 import { useApp } from "../app/AppContext";
 import { FixConnectionWizard } from "../components/FixConnectionWizard";
 import { FixSessionMonitor } from "../components/FixSessionMonitor";
+import { FixSpecModal } from "../components/FixSpecModal";
 import { Button } from "../components/Button";
 import { Panel } from "../components/Panel";
 import type { FixConnection } from "../data/contract";
@@ -25,7 +26,6 @@ import {
   buildFixClientConfig,
   downloadText,
   fixClientConfigFilename,
-  FIX_API_GUIDE_URL,
   FIX_DICTIONARY_URL,
 } from "../lib/fixClientConfig";
 import styles from "./ConnectionsWorkspace.module.css";
@@ -39,6 +39,7 @@ export function ConnectionsWorkspace(): React.ReactElement {
   const app = useApp();
   const fix = useFixConnections(app.transport);
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [specOpen, setSpecOpen] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [monitorId, setMonitorId] = useState<string | null>(null);
@@ -69,15 +70,14 @@ export function ConnectionsWorkspace(): React.ReactElement {
       >
         ⤓ FIX dictionary
       </a>
-      <a
+      <button
+        type="button"
         className={styles.specLink}
-        href={FIX_API_GUIDE_URL}
-        target="_blank"
-        rel="noopener noreferrer"
+        onClick={() => setSpecOpen(true)}
         title="Open the FIX API guide (message flow + how to connect)"
       >
         ⤓ API guide
-      </a>
+      </button>
       <Button variant="ghost" onClick={() => void fix.refetch()} disabled={fix.isLoading}>
         Refresh
       </Button>
@@ -199,6 +199,8 @@ export function ConnectionsWorkspace(): React.ReactElement {
         onCreate={fix.create}
         existing={fix.connections}
       />
+
+      <FixSpecModal open={specOpen} onClose={() => setSpecOpen(false)} />
     </div>
   );
 }
