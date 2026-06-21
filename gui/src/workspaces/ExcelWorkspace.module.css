@@ -1,0 +1,262 @@
+/* ExcelWorkspace — the "Celnet for Excel" integration page. */
+
+.root {
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--space-6) var(--space-6) var(--space-8);
+}
+
+.inner {
+  max-width: 72rem;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+/* Hero */
+.hero {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-bottom: var(--space-2);
+}
+.eyebrow {
+  font-size: var(--type-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+  margin: 0;
+}
+.title {
+  margin: 0;
+  font-family: var(--font-brand);
+  font-size: clamp(1.6rem, 1rem + 2.4vw, 2.6rem);
+  font-weight: var(--weight-header);
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  line-height: 1.1;
+}
+.lede {
+  margin: 0;
+  max-width: 46rem;
+  font-size: var(--type-body);
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+/* Get-started cards (bento row) */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  gap: var(--space-4);
+}
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-5);
+  border-radius: var(--r-md);
+  border: var(--hairline);
+  background: var(--bg-raised, var(--bg-inset));
+  box-shadow: var(--shadow-float);
+}
+.cardGlyph {
+  font-size: 1.5rem;
+  line-height: 1;
+  color: var(--accent);
+}
+.cardTitle {
+  margin: 0;
+  font-size: var(--type-headline);
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+}
+.cardBody {
+  margin: 0;
+  flex: 1;
+  font-size: var(--type-caption);
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+.cardActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+}
+
+/* Sections */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: var(--hairline);
+}
+.h2 {
+  margin: 0;
+  font-family: var(--font-brand);
+  font-size: 1.2rem;
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+}
+.p {
+  margin: 0;
+  max-width: 50rem;
+  font-size: var(--type-body);
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+.bullets {
+  margin: 0;
+  padding-left: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--type-body);
+  line-height: 1.5;
+}
+.bullets strong {
+  color: var(--text-primary);
+}
+
+/* Function table */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--type-caption);
+}
+.table th,
+.table td {
+  border-bottom: var(--hairline);
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  vertical-align: top;
+}
+.table th {
+  color: var(--text-secondary);
+  font-weight: var(--weight-header);
+}
+.fn {
+  font-family: var(--font-mono, monospace);
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+/* Code / formula blocks */
+.code {
+  margin: 0;
+  padding: var(--space-4);
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  background: var(--bg-inset);
+  overflow-x: auto;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.8rem;
+  line-height: 1.7;
+  color: var(--text-primary);
+}
+.inlineCode {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.85em;
+  padding: 0.05em 0.35em;
+  border-radius: 4px;
+  background: var(--bg-inset);
+  color: var(--text-primary);
+}
+
+/* Numbered setup steps */
+.steps {
+  list-style: none;
+  counter-reset: step;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.step {
+  counter-increment: step;
+  display: grid;
+  grid-template-columns: 2rem 1fr;
+  gap: var(--space-4);
+  align-items: start;
+}
+.step::before {
+  content: counter(step);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: 999px;
+  border: var(--hairline);
+  background: color-mix(in oklch, var(--accent) 16%, transparent);
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-header);
+  font-size: var(--type-caption);
+}
+.stepBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.stepTitle {
+  margin: 0;
+  font-size: var(--type-body);
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+}
+.stepText {
+  margin: 0;
+  font-size: var(--type-caption);
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.note {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-left: 2px solid var(--accent);
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+  font-size: var(--type-caption);
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+/* download anchor styled as a primary/secondary button */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  font-size: var(--type-caption);
+  font-weight: var(--weight-header);
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast, 120ms) var(--ease-out),
+    background var(--dur-fast, 120ms) var(--ease-out),
+    filter var(--dur-fast, 120ms) var(--ease-out);
+}
+.btnPrimary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: oklch(1 0 0);
+}
+.btnPrimary:hover {
+  filter: brightness(1.08);
+}
+.btnSecondary {
+  background: transparent;
+  color: var(--text-primary);
+}
+.btnSecondary:hover {
+  border-color: color-mix(in oklch, var(--accent) 45%, transparent);
+}

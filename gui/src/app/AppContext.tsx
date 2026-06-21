@@ -71,7 +71,8 @@ export type WorkspaceId =
   | "risk"
   | "book"
   | "connections"
-  | "admin";
+  | "admin"
+  | "excel";
 
 // Re-export the scope vocabulary from its owning module so existing consumers
 // (riskView, riskScope tests) import it from AppContext unchanged — the types now

@@ -24,6 +24,7 @@ import { RiskWorkspace } from "../workspaces/RiskWorkspace";
 import { BookWorkspace } from "../workspaces/BookWorkspace";
 import { ConnectionsWorkspace } from "../workspaces/ConnectionsWorkspace";
 import { AdminWorkspace } from "../workspaces/AdminWorkspace";
+import { ExcelWorkspace } from "../workspaces/ExcelWorkspace";
 import { StatusRibbon } from "./StatusRibbon";
 import { CelerMark, CelnetWordmark } from "../components/CelerMark";
 import { ScopeControl } from "../components/ScopeControl";
@@ -44,6 +45,7 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   book: BookWorkspace,
   connections: ConnectionsWorkspace,
   admin: AdminWorkspace,
+  excel: ExcelWorkspace,
 };
 
 export function Shell(): React.ReactElement {
