@@ -254,17 +254,101 @@ The research will hit decisions only the business can make. The agent collects t
 - **Market & currency scope of P0** (which RFR curves/currencies first: USD-SOFR, EUR-€STR,
   GBP-SONIA …?).
 - **Cash vs derivatives first** (bond analytics vs the swap/curve engine as the P0 wedge).
-- **Credit in scope now or later** (CDS/ISDA model is a distinct workstream).
-- **Collateral/CSA discounting depth** for v1 (single-curve OIS vs full multi-CSA).
-- **Real-time vs analytics-first** (does FI need the streaming RFS hot path on day one, or
-  request/response pricing + risk first?).
+- **Credit in scope now or later** CDS/ISDA model is a distinct workstream
+- **Collateral/CSA discounting depth** for v1 single-curve OIS and full multi-CSA
+- **Real-time vs analytics-first** FI need the streaming RFS and streaming esp
 - **Reference-data sourcing** (bond static, calendars, fixings) given the no-commercial-feed
   guardrail.
 
 ---
 
-## 10. Out of scope (for the *research brief* itself)
+## 10. Additional notes from client conversation
 
-This doc does not pick the models or commit the roadmap — that is the agent's output. It also
-does not authorise any implementation; building begins only after the corpus (§6) is reviewed
-and the operator settles §9.
+Core components
+
+1. Current starting point ( Existing Marex Infrastructure)
+ 
+Selective Principal Risk:
+
+ 
+
+Paired with agency back-to-back riskless execution, we rely on our balance sheet to provide targeted liquidity during market hours. Given our small balance-sheet risk appetite we do not compete with institutional tier-1 banks, rather tier-2 and tier-3 banks. We do not stream prices or axes; we do not engage with automation protocols such as auto-respond or auto-RFQ. Given the high level of automation at most of the top clients globally, these are non-negotiable technology requirements given the rise in electronic trading flows across all bond types.
+
+ 
+
+On a positive, we can offer cross-asset clearing and provide margin efficiencies and risk minimization across related financial products. We can cross-sell and benefit from unique liquidity access within the Capital Markets trading hubs, cash and derivatives.
+
+ 
+
+2. Modular technology embedded in Celer infrastructure
+
+ 
+
+Front-end pricing and IOIs aggregation:
+
+ 
+
+Providing a highly customizable graphical user interface (GUI) which can integrate order management (OM), execution management (EM), and post-trade (PT) allocation functionalities. We need an algorithmic engine to process automated market-making and execution workflows across multiple regional jurisdictions for a global offering.
+
+ 
+
+The GUI can be the client-facing solution in MX1, where price, axes, protocols, trade ideas can be advertised, used and executed. Highly modular. Highly customisable.
+
+ 
+
+The core trading engine (CORE) must be built around key principles, transparency, liquidity, resiliency, efficiency and security.
+
+ 
+
+It connects external price-makers via FIX protocols and APIs to identify price differentials and asset mispricing in real-time. Celer infrastructure can program algorithmic execution tools which can be tailor-made depending on products, regions and liquidity environment (Smart Order Routers).
+
+ 
+
+CORE must stream and contribute to the main fixed-income trading venues globally, namely Tradeweb, MarketAxess, Trumid and Bloomberg (+Brokertec and CME)
+
+MX1 must also connect and interact with all available liquidity pools globally.
+
+ 
+
+As discussed, a few weeks ago, we are looking at 2 proposals for MX1 :
+
+a highly automated electronic market-making workflow we can apply locally first then globally as we scale, and
+an opportunistic alpha-generating trading engine which identify mispricing, yield anomalies, and price arbitrage in both cash and FX for EM bonds.
+A third option would be to offer composite strategies such as basis trades, asset swap packages, CDS versus single name or ETF share versus underlying constituents’ arbitrage.
+
+ 
+
+We would also add some pre-trades anchors, such a real-time pricing grids that continuously scan the basis between local EM bonds, FX forwards, and offshore bonds to lock in the basis arbitrage with minimal slippage. Another product would be to aggregate illiquid bond quotes across diverse electronic venues and dark pools to identify arbitrage opportunities and create executable trade signals.
+
+ 
+
+Of course we must feed Celer with various data sources including bond data, referential and real-time (quotes and axes) and historical data so we can build real-time curves and price skewing capabilities.
+
+ 
+
+Critical to MX1 is the ability to contribute and code up to all trading venues as trading protocols have been heavily focused on low-touch to no-touch/robotic execution as well as the use of Smart Order Routing capabilities to access all liquidity pockets.
+
+Another critical point will be the internalisation of flows, especially where strategies are built on multi-legged executions which could benefit internal desks.
+
+Last but not least, our prime and clearing solutions should give us a clear edge as we work on growing MX1 into a cross-asset interface within Marex Group.
+
+ 
+
+ 
+
+Key Features  summary
+
+Low latency connectivity to external venues 
+Data is being ingested, normalised and presented as a synthetic price (bid / ask + depth)  from multiple feeds in the GUI  
+Users can interact with a price feed to skew / mark up from the raw feed  
+Pre-trade added value, tradable ideas
+Marex Market makers can view real time curve, with data feed-back Loop 
+Marex Market makers can construct synthetic contracts  
+Marex Market makers can view and manage risk on executed contracts 
+Contribution capabilities (Streaming Bid / Ask)  on Bonds Universe + auto pricing of composite / strategies 
+End-users can view and build synthetic products 
+RFQ workflow with autoquote capabilities (price to trade), including on synthetic products 
+Full Data collection  
+Trades can be passed to a post trade platform for booking purposes  
+Dashboard for MI  
+Pre- and post-trade analytics (TCA, audit trail)
