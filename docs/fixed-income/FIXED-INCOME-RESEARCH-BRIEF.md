@@ -37,7 +37,7 @@ implementation effort can execute crate-by-crate.
 1. decomposes the question map (§5) into investigations,
 2. gathers primary evidence (standards bodies, vendor docs, academic papers, open-source
    reference implementations, code search) — **research-first**, citing every source,
-3. cross-checks numerics against **open reference engines** (QuantLib, ORE, Rateslib),
+3. cross-checks numerics against **open reference engines** (QuantLib, ORE — see §3.1 / §7),
 4. synthesises findings into the corpus (§6) and surfaces operator decisions (§9).
 
 Pattern to mirror: the existing research/design workflow that produced
@@ -83,8 +83,10 @@ These bound every recommendation. A design that violates one is out of scope.
 
 1. **OSS / permissive only.** MIT/Apache-2.0/BSD software and free, academically-grounded
    methods. **No commercial products** — no Numerix/Murex/FINCAD/Bloomberg terminal/MKL as
-   runtime deps. QuantLib / ORE / Rateslib (all OSS) as oracles is fine. `cargo-deny` enforces
-   the license set.
+   runtime deps. QuantLib / ORE (both modified-BSD/permissive) as oracles is fine. **NB
+   (research pass 1): `rateslib` is source-available NON-commercial — NOT OSS — and FinancePy
+   is GPL-3.0, so neither is dependency-eligible** (FinancePy only as an out-of-process oracle).
+   `cargo-deny` enforces the license set.
 2. **Vendor-neutral, purpose-named identifiers.** No vendor/competitor/person/paper names in
    product crate/type/trait/fn identifiers (e.g. `SwaptionInputs`, not `HullWhiteInputs`).
    Mathematical-method provenance lives in **doc comments only**.
@@ -216,8 +218,10 @@ with the existing corpus (cross-reference, don't duplicate).
    pages), then academic papers, then broader web. Prefer adopting/porting a proven approach.
 2. **Open reference engines as oracle, not dependency:** read QuantLib / ORE / Rateslib /
    FinancePy to learn the canonical method and to **cross-check numbers** — never to embed a
-   commercial or GPL-incompatible runtime dep (record license findings; QuantLib is BSD-style,
-   ORE is a modified BSD, Rateslib is permissive — the agent confirms each).
+   commercial or GPL-incompatible runtime dep. **Research pass 1 confirmed:** QuantLib + ORE
+   are modified-BSD (permissive, usable); `rateslib` is source-available **non-commercial (NOT
+   OSS)** and FinancePy is **GPL-3.0** — both excluded as dependencies (FinancePy usable only as
+   a disposable out-of-process oracle, never linked).
 3. **Structured findings → synthesis.** Capture every finding with its source in
    `docs/_research/fixed-income-findings.json` (claim, evidence, source URL, confidence), then
    synthesise the human-readable specs. This is the same shape as the existing findings corpus.
