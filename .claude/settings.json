@@ -52,7 +52,7 @@
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "nohup sh -c 'lodestar index . >> .lodestar/index.log 2>&1' >/dev/null 2>&1 & exit 0"
+                        "command": "nohup sh -c 'lodestar index \"$PWD\" >> .lodestar/index.log 2>&1' >/dev/null 2>&1 & exit 0"
                     }
                 ]
             }
@@ -63,7 +63,7 @@
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "lodestar index ."
+                        "command": "nohup sh -c 'lodestar index \"$PWD\" >> .lodestar/index.log 2>&1' >/dev/null 2>&1 & exit 0"
                     }
                 ]
             }

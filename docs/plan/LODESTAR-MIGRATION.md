@@ -108,3 +108,7 @@ top for co-located developers; killing it reverts to the git-only flow.
   content-addressed knowledge events diverge between Windows (CRLF) and macOS.
 - macOS binary is ad-hoc signed (installer clears quarantine); Windows uses `install.ps1`.
 - `just` is cross-platform; verify recipes are pwsh-safe or pinned to a portable shell.
+- **Always index with an ABSOLUTE path.** `lodestar index .` (relative) records `root_path="."`
+  and corrupts the projects table (lodestar then auto-deletes the db; re-index required). All
+  hooks pass a runtime-computed absolute root (`"$PWD"` in Claude hooks where cwd = repo root;
+  `git rev-parse --show-toplevel` in the git hook) — portable, never a hardcoded home path.
