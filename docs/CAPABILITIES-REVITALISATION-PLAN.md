@@ -387,7 +387,7 @@ npm script). PNGs were produced ad-hoc via the Playwright MCP. **Land a reproduc
 the figure fixes.**
 
 **Ad-hoc per-figure (Playwright MCP), exact steps:**
-1. `browser_navigate` → `file:///Users/adrian/code/celeroption/docs/assets/celnet-capabilities/_src/<fig>.html`
+1. `browser_navigate` → `file://<absolute-path-to-repo>/docs/assets/celnet-capabilities/_src/<fig>.html` (replace `<absolute-path-to-repo>` with the absolute path of your local checkout)
 2. `browser_resize` to the figure's `diagram-meta.json` `w`×`h` (so `.canvas` fills the viewport and
    the Anaheim webfont loads).
 3. Wait for `document.fonts.ready`.
@@ -401,7 +401,7 @@ Playwright dep) wired as `just render-figures`:
 // tools/render-figures.mjs — render each _src/*.html to its PNG at the meta w×h
 import { chromium } from 'playwright';
 import { readFileSync } from 'node:fs';
-const ROOT = '/Users/adrian/code/celeroption/docs/assets/celnet-capabilities';
+const ROOT = new URL('../docs/assets/celnet-capabilities', import.meta.url).pathname; // repo-relative; adjust if the script moves
 const meta = JSON.parse(readFileSync(`${ROOT}/_src/diagram-meta.json`, 'utf8'));
 const figs = [...Object.keys(meta), 'excel-grid-branded']; // adapt to meta shape
 const browser = await chromium.launch();
@@ -513,4 +513,4 @@ appears:** eSSVI (5 models).
    re-baseline to 34 crates, graduate built rows, label deploy-gated residuals).
 4. **Hub last** (sync figure-index captions to the re-rendered figures + add boundary footer).
 5. **Showcase** (`tools/build-showcase.mjs` + `just build-showcase` → `docs/celnet-capabilities.html`).
-6. Re-index codebase-memory after structural doc changes (guardrail #10).
+6. lodestar re-indexes automatically via the filesystem watcher (guardrail #10).

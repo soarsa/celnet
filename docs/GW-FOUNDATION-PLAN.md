@@ -190,7 +190,7 @@ e2e + axe + the 5-client conformance harness green. The Rust `just check` is una
   `All gates passed.`; Playwright real-edge e2e — drill-down across Stream/Book/Risk over one
   scope path + **recall a saved view from a URL** + `⌘K` command index exercised; axe on all
   new chrome (rail, breadcrumb, Universe leaf view) zero serious/critical; conformance + 5-
-  client harness green. Commit + push. Re-index codebase-memory; reconcile
+  client harness green. Commit + push. lodestar auto-indexes; verify scope with detect_changes; reconcile
   GUI-EXPERIENCE-DESIGN §3 (areas 1/10/11 now [built]) + CLIENT-PARITY-MATRIX (unchanged
   numerics, chrome only).
 

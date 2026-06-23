@@ -207,7 +207,7 @@ No `unsafe` (matches `celnet-integration`'s `#![forbid(unsafe_code)]`).
 
 ### 1.4 ADR-0xx — *Hand-rolled `celnet-fix` over an OSS FIX engine*
 
-Record via `manage_adr` (codebase-memory): **Decision** as §1.3. **Status** accepted.
+Record via `mcp__lodestar__manage_adr`: **Decision** as §1.3. **Status** accepted.
 **Consequences:** we own the session FSM and the dialect dictionary (more code, fully gated);
 we avoid an unmaintained/initiator-only/4.2-only runtime dep and a Mongo transitive; the dialect
 is the single current contract (no FIX-version negotiation beyond the wire 4.4 framing — guardrail
@@ -384,7 +384,7 @@ last-look path is proven in a staging tenant.
 | B9 | Live-feed adapter: feed body → `VendorSmileMessage` → existing pipeline | celnet-integration | recorded bodies build a surface (extends existing tests) |
 | B10 | `celnet-proto` egress projections of the option + Greeks (the §3 estate shapes) | celnet-proto/server | round-trips; matches the §3 touch-list field-for-field |
 | B11 | Option netting-key + delta-equiv/vega exposure logic (Celnet-side reference impl) | celnet-types/integration | unit-proven key + exposure math vs golden |
-| B12 | ADRs: hand-rolled FIX (§1.4), distributor egress (§2.4), product-type plan (§3) | — (manage_adr) | recorded in codebase-memory; docs synced |
+| B12 | ADRs: hand-rolled FIX (§1.4), distributor egress (§2.4), product-type plan (§3) | — (mcp__lodestar__manage_adr) | recorded via lodestar manage_adr; docs synced |
 
 ### DEFER — LIVE-GATED (cannot be finished without a running Celer staging tenant)
 

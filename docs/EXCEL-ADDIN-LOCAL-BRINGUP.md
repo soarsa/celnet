@@ -31,7 +31,7 @@
 
 ## The local stack — how to (re)start it
 
-Run from `/Users/adrian/code/celeroption`. (Currently all four are UP.)
+Run from the repo root. (Currently all four are UP.)
 
 1. **Edge** (all services, production posture):
    `source "$HOME/.cargo/env" && CELNET_ACCESS_MODE=enforce CELNET_DEMO_LPS=3 cargo run -q -p celnet-server --example demo_edge`

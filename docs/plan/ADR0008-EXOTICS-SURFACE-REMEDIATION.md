@@ -1,7 +1,7 @@
 # ADR-0008 Remediation — `celnet-exotics` & `celnet-surface` onto the Agnostic Carry Seam
 
 **Status:** implementation-ready plan (read-only design pass; no `cargo`/git run — compute-courtesy lane).
-**Source tree:** `/Users/adrian/code/celnet-coord` @ `0f8933b` (clean worktree off `origin/main`).
+**Source tree:** a clean worktree of `origin/main` @ `0f8933b`.
 **Inputs read:** `docs/AUDIT-ADR0008-CONFORMANCE.md`; `crates/celnet-core/src/carry.rs`; `crates/celnet-types/src/lib.rs` (`Carry`/`VanillaInputs`); the ~30 drift sites across `crates/celnet-exotics/src/*`; `crates/celnet-surface/src/quotes.rs`; `crates/celnet-proto/proto/celnet.proto` (`MarketContext`); the golden vector grid (`crates/celnet-golden/vectors/*.json`).
 
 ---
@@ -242,7 +242,7 @@ Each wave compiles and passes its crate's gate **before** the next starts. FX by
 - **Wave D — exotics composite** (`var_swap`, `vol_swap`, `lsv`, `quanto`, `multiasset`). Same gate.
 - **Wave E — exotics downstream callers** (`celnet-server`, `celnet-engine` construct `ExoticInputs`). Gate: `just check-crate celnet-server celnet-engine`.
 - **Wave S — surface** (`MarketContext`→`carry`, `template` via `fx_vanilla_inputs`, §4.2) **+ the ~60 constructor call sites** (§4.4). Independent of exotics waves; can run in parallel after Wave 0. Gate: `just check-crate celnet-surface` then the full `just check` (it touches ~12 crates + GUI/Excel struct mirrors).
-- **Wave Z — milestone integration gate:** full-workspace `just check` (literal "All gates passed.") + conformance + GUI/Excel e2e. Re-index codebase-memory; ADR note via `manage_adr`.
+- **Wave Z — milestone integration gate:** full-workspace `just check` (literal "All gates passed.") + conformance + GUI/Excel e2e. lodestar auto-indexes; ADR note via `mcp__lodestar__manage_adr`.
 
 **If exotics cannot land whole** (it is the largest crate): the audit's narrowing is honored by the wave split — ship Waves 0+A+S (closed forms + surface) as the first green milestone, and record Waves B/C/D as an **explicit ADR-tracked deferral** (never silently FX-only). Each wave is independently shippable because `ExoticInputs`/`Carry` coexist with the unchanged FX numbers.
 

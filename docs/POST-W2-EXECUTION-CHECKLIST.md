@@ -278,8 +278,8 @@ cd gui   && npm test        # vitest: ticket/grid round-trips (if surfaced)
       nextest invocation in the arc; Steps 1–5 used plain cargo per the task's gate policy.
 - [ ] Re-confirm `cargo-deny` is clean (OSS-license set; no new non-permissive dep pulled in
       by the leaves — they reuse already-registered deps).
-- [ ] Re-`index_repository` (codebase-memory) so the graph covers the new arms/routes, and
-      update `manage_adr` if Step 2a changed an `Underlying` signature.
+- [ ] lodestar re-indexes automatically; run `detect_changes` to confirm the new arms/routes
+      are covered, and update `manage_adr` if Step 2a changed an `Underlying` signature.
 - [ ] Commit per lane as **separate green commits**, disjoint files, FX-byte-identity noted in
       each message (the proto edit is one commit; each leaf wiring its own).
 - [ ] Update `docs/IMPLEMENTATION-LEDGER.md` (newest-first) + the CLAUDE.md resume anchor +

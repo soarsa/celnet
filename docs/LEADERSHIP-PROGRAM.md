@@ -52,7 +52,7 @@ fully closable in this repo** (no NVIDIA / cross-host / live-JVM dependency):
 - **Experience:** GUI vitest + Playwright headless e2e + axe-core a11y gates; CLI at full
   four-client parity; saved-views/deep-link state; design corpus reconciled to shipped code.
 - **Clean:** zero mocks/placeholders; docs-in-sync; integration ADRs via `manage_adr`;
-  codebase-memory re-indexed.
+  lodestar auto-indexes.
 
 ## Waves (dependency-ordered, leverage-first)
 

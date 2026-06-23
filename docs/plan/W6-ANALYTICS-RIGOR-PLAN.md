@@ -4,7 +4,7 @@
 **Scope:** drive mutation testing to **zero non-equivalent survivors** and add fuzz
 targets for the five numerics crates now stable post-ADR-0008-tail:
 `celnet-exotics`, `celnet-surface`, `celnet-risk-cube`, `celnet-xva`, `celnet-qmc`.
-**Read base:** clean worktree `/Users/adrian/code/celnet-csurf` (origin/main, HEAD
+**Read base:** a clean worktree of origin/main (HEAD
 `7f3209a`). All counts below were measured there with `grep`/`wc` only (no cargo —
 compute courtesy §4.1: session-B holds the proto window).
 

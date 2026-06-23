@@ -3,7 +3,9 @@
         "lodestar": {
             "command": "lodestar",
             "env": {
-                "LODESTAR_PROPOSALS": "1"
+                "LODESTAR_PROPOSALS": "1",
+                "LODESTAR_JUDGE_PROVIDER": "claude-subagent",
+                "LODESTAR_AUTHOR": "claude-opus-4-8"
             }
         }
     }

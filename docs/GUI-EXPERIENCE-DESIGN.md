@@ -258,7 +258,7 @@ cohesion.** GW6 (multi-asset GUI) is gated on the master program's W1 core-contr
 - **Push milestone** (master §7): full `just check` prints literal `All gates passed.`; the
   5-client conformance harness green against a fresh edge; all suites pass (Rust nextest +
   GUI vitest + GUI Playwright real-edge e2e + Excel real-edge e2e); docs reconciled +
-  codebase-memory re-indexed.
+  lodestar re-indexes automatically.
 
 ---
 

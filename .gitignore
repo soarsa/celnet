@@ -31,8 +31,8 @@ lcov.info
 .env
 .env.local
 
-# codebase-memory-mcp local index artifact (machine-local, regenerable, not synced)
-.codebase-memory/
+# lodestar graph cache is machine-local and regenerable; it lives in ~/.cache/lodestar/,
+# not in the repo tree. The .lodestar/ knowledge dir IS committed (see rules below).
 
 # GUI incremental TS build info (regenerable)
 gui/**/*.tsbuildinfo

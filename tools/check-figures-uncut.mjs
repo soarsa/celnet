@@ -1,9 +1,11 @@
-import pkg from '/Users/adrian/code/celeroption/gui/node_modules/playwright-core/index.js';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+import pkg from '../gui/node_modules/playwright-core/index.js';
 const { chromium } = pkg;
 import { readFile } from 'node:fs/promises';
-import path from 'node:path';
 
-const SRC = '/Users/adrian/code/celeroption/docs/assets/celnet-capabilities/_src';
+const ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..');
+const SRC = path.join(ROOT, 'docs/assets/celnet-capabilities/_src');
 const meta = JSON.parse(await readFile(path.join(SRC, 'diagram-meta.json'), 'utf8'));
 
 const browser = await chromium.launch();
