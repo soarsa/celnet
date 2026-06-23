@@ -1,0 +1,1 @@
+{"author":"agent","claim_key":"6ed237185e7bab7e","hlc":{"counter":0,"physical":1782189605573},"id":"1dc4077699ff3eac","parents":[],"payload":{"to_state":"active","reason":"stage-1 gate passed"},"type":"transition"}

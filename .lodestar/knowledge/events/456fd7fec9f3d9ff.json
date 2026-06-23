@@ -1,0 +1,1 @@
+{"author":"detect_changes","claim_key":"0db64ead2da7defd","hlc":{"counter":0,"physical":1782189418497},"id":"456fd7fec9f3d9ff","parents":[],"payload":{"to_state":"stale","reason":"anchor content-hash changed"},"type":"transition"}
