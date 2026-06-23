@@ -108,9 +108,10 @@ Drive config via committed settings / env, **not** the CLI for interactive use. 
 on-connect autoindex + watcher + Stop/post-commit hooks + CI index + post-index sweep.
 
 ## Honest gaps / decisions
-- **Stage-2 judge = none** (`judge.provider=none`). Decidable directives gate without it; the
-  behavioral residue needs either `celnet-verifier` (cross-model when running Fable/other family) or
-  a wired local judge (`LODESTAR_JUDGE_PROVIDER=ollama`). DECISION PENDING.
+- **Stage-2 judge = `celnet-verifier`** (DECIDED 2026-06-22; not ollama). Wire it as lodestar's
+  `claude-subagent` judge provider: `LODESTAR_JUDGE_PROVIDER=claude-subagent` + vendor the reference
+  `tools/judge/judge-claude-subagent.sh` transport, pointed at the `celnet-verifier` agent. Decidable
+  directives still gate deterministically without any judge; the judge runs only on behavioral residue.
 - **Watcher** may stay best-effort (git-poll) on some hosts → hooks remain the deterministic guarantee.
 - **Storybook (WS-2)** is sizable and touches `gui/` — coordinate on the lane board; it is the big build.
 - The visual/planner tools (`tools/visual/*`, `tools/planner`, `tools/requirements`) live in the

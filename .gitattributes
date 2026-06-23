@@ -2,3 +2,12 @@
 .lodestar/knowledge/events/** text eol=lf
 .lodestar/knowledge/snapshot.json text eol=lf
 # <<< lodestar init <<<
+
+# --- celnet cross-platform + merge-safety (outside the lodestar-init fence) ---
+# Shell scripts & hooks MUST be LF or bash breaks on a Windows checkout; PS1 stays CRLF.
+*.sh    text eol=lf
+*.bash  text eol=lf
+*.ps1   text eol=crlf
+# Regenerable compressed graph cache: if ever tracked, never conflict (re-materializes
+# by folding the event log) — matches lodestar's reference handling.
+.lodestar/graph.db.zst merge=ours -text -diff

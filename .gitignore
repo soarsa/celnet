@@ -73,5 +73,12 @@ identity.json.tmp
 !.mcp.json
 # <<< lodestar init <<<
 
+# lodestar knowledge SNAPSHOT = machine-local. It is a single mutable freshness record
+# (a real merge hotspot across many developers) and is fully regenerable by folding the
+# content-addressed event log. Only events/ (immutable, hash-named => pure set-union, ZERO
+# textual conflict) + project-id are the shared source of truth. This overrides the
+# lodestar-init un-ignore above (a later .gitignore rule wins), and survives a re-init.
+.lodestar/knowledge/snapshot.json
+
 # Office (Excel/Word) temp lock files
 ~$*
