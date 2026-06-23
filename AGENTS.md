@@ -60,9 +60,10 @@ auto-discovered on every clone. See `.claude/agents/README.md` for the full tabl
 | `celnet-verifier` | Adversarial read-only verification (refute-default) |
 | `celnet-knowledge-curator` | Maintain lodestar verified claims + ADRs |
 
-The **judge driver** for Stage-2 knowledge review targets `celnet-verifier` as the
-isolated adversarial subagent. See `tools/judge/judge-claude-subagent.sh` and the
-verification loop canon at `.claude/skills/verification-loop/SKILL.md`.
+**No Stage-2 judge** is configured (removed by operator decision) — the deterministic
+**Stage-1 constraint gate** is the primary verifier and needs no model. The
+verification-loop canon (`.claude/skills/verification-loop/SKILL.md`) + the
+`celnet-verifier` agent cover review where a behavioral check is genuinely needed.
 
 ---
 
@@ -82,12 +83,44 @@ lodestar index "$(pwd)"
 # 4. Pull shared knowledge (committed in .lodestar/knowledge/)
 git pull   # events/ merge by set-union — no conflict
 
-# 5. Health probe
+# 5. (Claude Code) trust/enable the PROJECT .mcp.json lodestar server. It carries the
+#    cortex env (LODESTAR_PROPOSALS=1 — the proactive drift stream); without it Claude
+#    spawns the global registration (no env) and the cortex stays dark.
+#    Verify after restart:  mcp__lodestar__knowledge_config -> knowledge_log.subscribed:true
+
+# 6. Health probe
 lodestar doctor --json
 ```
 
-After bootstrap the full fleet (subagents, MCP, skills, hooks) is active.
-Knowledge authored by any agent on any machine travels via normal git push/pull.
+After bootstrap the full fleet (subagents, MCP, skills, hooks) + the shared knowledge are
+active. Knowledge authored by any agent on any machine travels via normal git push/pull.
+Optional, per developer: `lodestar --ui=true --port=9749` opens the shared-KB dashboard.
+
+---
+
+## lodestar capability set (switched on — all except the Stage-2 judge)
+
+lodestar is the single cohesive substrate — discovery → knowledge → planning → tracking →
+governance → visualization — shared cross-machine via the git-committed knowledge log.
+
+- **Discovery + graph** — auto-index (FS watcher + SessionStart/Stop hooks), all crates +
+  TS/TSX/CSS/proto, call graph + Leiden clusters.
+- **Verified knowledge** — claims (`invariant`/`spec:satisfies`/`design`/`ui`/`a11y`/`adr`),
+  the deterministic Stage-1 gate, the closed staleness loop (self-invalidating).
+- **Proactive cortex** — `LODESTAR_PROPOSALS=1` (the active→stale drift stream), derive-rules
+  (hot-core zero-alloc/non-blocking), motif discovery.
+- **Planning / scoping / tracking** — `spec:satisfies` + `*.acceptance.json` + Deliverable
+  roll-ups (`knowledge_get deliverable=`), `detect_changes` (blast radius), `tools/planner`
+  (decompose), `tools/requirements` (PM bridge: github/jira/linear/plane).
+- **Governance / export** — `manage_adr`, `knowledge_export format=sarif|markdown|llms.txt|
+  graphml` (CI gate + flat human view).
+- **Visualization** — `lodestar --ui=true --port=9749` (Trust Map, Knowledge tab, drift inbox,
+  provenance) — every developer browses the same shared KB.
+
+Knowledge is the single source of truth for facts/decisions/status; markdown holds only
+narrative (lodestar can't render prose). Updating knowledge = author/refresh a claim, not
+edit prose in N places. Engine gaps tracked upstream (never worked around): **lodestar#7**
+(CSS-module token chain), **lodestar#9** (TESTS edges).
 
 ---
 
