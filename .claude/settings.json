@@ -1,60 +1,72 @@
 {
-  "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "permissions": {
-    "allow": [
-      "Bash(source \"$HOME/.cargo/env\":*)",
-      "Bash(cargo:*)",
-      "Bash(rustc:*)",
-      "Bash(rustup:*)",
-      "Bash(rustfmt:*)",
-      "Bash(just:*)",
-      "Bash(cargo-nextest:*)",
-      "Bash(cargo-deny:*)",
-      "Bash(cargo-audit:*)",
-      "Bash(cargo-llvm-cov:*)",
-      "Bash(cargo-mutants:*)",
-      "Bash(cargo-machete:*)",
-      "Bash(sccache:*)",
-      "Bash(git status:*)",
-      "Bash(git add:*)",
-      "Bash(git commit:*)",
-      "Bash(git diff:*)",
-      "Bash(git log:*)",
-      "Bash(git branch:*)",
-      "Bash(git checkout:*)",
-      "Bash(git switch:*)",
-      "Bash(git restore:*)",
-      "Bash(git show:*)",
-      "Bash(git stash:*)",
-      "Bash(ls:*)",
-      "Bash(cat:*)",
-      "Bash(rg:*)",
-      "Bash(fd:*)",
-      "Bash(mkdir:*)",
-      "Bash(tree:*)",
-      "Bash(git remote:*)",
-      "Bash(git push:*)",
-      "Bash(git fetch:*)",
-      "Bash(git ls-remote:*)",
-      "Bash(gh:*)"
-    ],
-    "deny": [],
-    "ask": []
-  },
-  "env": {
-    "RUSTC_WRAPPER": "sccache",
-    "CARGO_TERM_COLOR": "always"
-  },
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "nohup bash -c '{ echo \"[$(date +%F\\ %T)] stop-hook index\"; \"$HOME/.local/bin/codebase-memory-mcp\" cli index_repository '\"'\"'{\"repo_path\":\"/Users/adrian/code/celeroption\",\"mode\":\"fast\"}'\"'\"' 2>&1 | tail -1; } >> /Users/adrian/code/celeroption/.codebase-memory/index.log 2>&1' >/dev/null 2>&1 & exit 0"
-          }
+    "$schema": "https://json.schemastore.org/claude-code-settings.json",
+    "permissions": {
+        "allow": [
+            "Bash(source \"$HOME/.cargo/env\":*)",
+            "Bash(cargo:*)",
+            "Bash(rustc:*)",
+            "Bash(rustup:*)",
+            "Bash(rustfmt:*)",
+            "Bash(just:*)",
+            "Bash(cargo-nextest:*)",
+            "Bash(cargo-deny:*)",
+            "Bash(cargo-audit:*)",
+            "Bash(cargo-llvm-cov:*)",
+            "Bash(cargo-mutants:*)",
+            "Bash(cargo-machete:*)",
+            "Bash(sccache:*)",
+            "Bash(git status:*)",
+            "Bash(git add:*)",
+            "Bash(git commit:*)",
+            "Bash(git diff:*)",
+            "Bash(git log:*)",
+            "Bash(git branch:*)",
+            "Bash(git checkout:*)",
+            "Bash(git switch:*)",
+            "Bash(git restore:*)",
+            "Bash(git show:*)",
+            "Bash(git stash:*)",
+            "Bash(ls:*)",
+            "Bash(cat:*)",
+            "Bash(rg:*)",
+            "Bash(fd:*)",
+            "Bash(mkdir:*)",
+            "Bash(tree:*)",
+            "Bash(git remote:*)",
+            "Bash(git push:*)",
+            "Bash(git fetch:*)",
+            "Bash(git ls-remote:*)",
+            "Bash(gh:*)",
+            "mcp__lodestar"
+        ],
+        "deny": [],
+        "ask": []
+    },
+    "env": {
+        "RUSTC_WRAPPER": "sccache",
+        "CARGO_TERM_COLOR": "always"
+    },
+    "hooks": {
+        "Stop": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "nohup sh -c 'lodestar index . >> .lodestar/index.log 2>&1' >/dev/null 2>&1 & exit 0"
+                    }
+                ]
+            }
+        ],
+        "SessionStart": [
+            {
+                "matcher": "",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "lodestar index ."
+                    }
+                ]
+            }
         ]
-      }
-    ]
-  }
+    }
 }

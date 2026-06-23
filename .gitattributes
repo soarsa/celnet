@@ -1,0 +1,4 @@
+# >>> lodestar init >>>
+.lodestar/knowledge/events/** text eol=lf
+.lodestar/knowledge/snapshot.json text eol=lf
+# <<< lodestar init <<<

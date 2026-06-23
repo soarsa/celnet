@@ -58,3 +58,20 @@ fix-connections.json.tmp
 # artifact; path from CELNET_IDENTITY_CONFIG). Never commit credentials.
 identity.json
 identity.json.tmp
+
+# >>> lodestar init >>>
+.lodestar/*
+!.lodestar/knowledge/
+!.lodestar/knowledge/events/
+!.lodestar/knowledge/events/**
+!.lodestar/knowledge/snapshot.json
+.lodestar/**/*.db
+.lodestar/**/graph.db.zst
+.lodestar/sync/key
+.lodestar/sync/sign_key
+!.lodestar/project-id
+!.mcp.json
+# <<< lodestar init <<<
+
+# Office (Excel/Word) temp lock files
+~$*

@@ -16,16 +16,20 @@ Greenfield, started 30 May 2026.
 2. **No mocks, no placeholders, no `todo!()`.** Only 100% complete, state-of-the-art
    implementations. If scope can't be finished, narrow it — never fake depth. Split large
    implementations across files/crates instead of abbreviating.
-3. **codebase-memory-mcp first** for code discovery (`search_graph`, `trace_path`,
-   `get_code_snippet`, `query_graph`, `get_architecture`, `detect_changes`, `manage_adr`);
-   fall back to Grep/Read only for non-code text. The graph **auto-indexes** (git post-commit
-   hook + a Stop hook in `.claude/settings.json`, both running `codebase-memory-mcp cli
-   index_repository … mode:fast`, logging to `.codebase-memory/index.log`), so its scope
-   always covers new files. **Health probe before trusting it** (a 2026-06-10 indexer crash
-   silently dropped ~70% of the graph while hashes said "no changes"): `index_status` should
-   report ≈17k nodes; a sharp drop or missing hot symbols (`price_instrument`) ⇒
-   `delete_project` + `mode:full` re-index (~3s). Use `detect_changes` to scope builds/tests; keep ADRs current via
-   `manage_adr`. Saves tokens, stays exact, never forgets.
+3. **lodestar first** for code discovery (`search_graph`, `trace_path`, `get_code_snippet`,
+   `query_graph`, `get_architecture`, `detect_changes`, `manage_adr`) **and the verified
+   "why" layer** (`knowledge_get`/`knowledge_put`, `evidence_pack`); fall back to Grep/Read
+   only for non-code text. The graph **auto-indexes** (lodestar's native filesystem watcher
+   + `SessionStart`/`Stop` `lodestar index` hooks in `.claude/settings.json`), so its scope
+   always covers new files. The stable project key is **`github.com-soarsa-celnet`** (pinned
+   in `.lodestar/project-id`, git-remote-derived → identical on every clone). **Health probe
+   before trusting it:** `lodestar doctor --json` must report `ok:true`/`problems:0` and the
+   hot symbol `price_instrument` must resolve (graph ≈18k nodes); a sharp drop ⇒
+   `lodestar index --full .` (~2s, deterministic & byte-identical). Use `detect_changes` to
+   scope builds/tests; keep ADRs current via `manage_adr`. The structural graph
+   (`~/.cache/lodestar/`) is machine-local & regenerable; the verified-knowledge log
+   (`.lodestar/knowledge/`) is git-committed and shared across machines. Saves tokens, stays
+   exact, self-invalidates.
 4. **LSP for code intel.** Use the LSP tool (rust-analyzer) for goToDefinition,
    findReferences, hover, document/workspace symbols, call hierarchy — not guesswork.
 5. **Every change passes the gates** before it's "done": `just check` (fmt, clippy -D
@@ -58,8 +62,8 @@ Greenfield, started 30 May 2026.
    refactor freely; upgrades deploy a single uniform version (no mixed-version window).
 10. **Always refactor to cleanest; zero legacy.** Continuously delete dead code, keep files
     in the correct crate/dir, and keep **all** docs/guides/references in sync as code evolves
-    — no stale or duplicate references anywhere. After any structural change,
-    re-`index_repository` so the codebase-memory graph always covers the full scope.
+    — no stale or duplicate references anywhere. The lodestar graph re-indexes
+    automatically (native filesystem watcher), so its scope always covers structural changes.
 11. **Trader-centric API, zero-cost observability, scale-out aware.** Ship evolving client
     SDK(s) and design the API by exercising **real-like trader/GUI/API-user workflows** as
     tests; evolve the single current contract toward the cleanest ergonomics. Instrument for
@@ -95,7 +99,7 @@ journaled keyed on HEAD + a dirty-tree hash, so a killed/spend-walled gate resum
 the last green step. `check`/`check-crate`/`check-changed` remain valid at their tier.
 The crate split exists precisely so a change rebuilds/tests a minimal subtree — keep
 crates small and dependencies pointing one way (see `docs/INTERFACES.md`). Use
-`detect_changes` (codebase-memory) to see a diff's blast radius before choosing scope.
+`detect_changes` (lodestar) to see a diff's blast radius before choosing scope.
 
 Toolchain pinned to **1.96.0** via `rust-toolchain.toml`. Edition **2024**.
 Installed tooling: cargo-nextest, cargo-deny, cargo-audit, cargo-llvm-cov, cargo-mutants,
@@ -120,8 +124,9 @@ validated in CI/containers on Linux. **GPU strategy:** `wgpu` (Metal/Vulkan/DX12
 - `docs/CONVENTIONS.md` — FX convention spec mapped to the `celnet-types` enums.
 - `docs/ROADMAP.md` — phased plan + crate-ownership workstreams for parallel sessions.
 
-Cross-session durable facts/decisions live in the auto-memory at
-`~/.claude/projects/-Users-adrian-code-celeroption/memory/` (index: `MEMORY.md`).
+Cross-session durable facts/decisions live in the Claude Code per-project auto-memory
+(`~/.claude/projects/<repo-path-slug>/memory/`, index `MEMORY.md`) — the slug is derived
+from each machine's local checkout path, so it is per-developer, not shared.
 
 ## Parallel multi-session model
 

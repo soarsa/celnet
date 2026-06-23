@@ -20,7 +20,7 @@ const RESULT = {
   },
 }
 
-const WORKTREE = '/Users/adrian/code/celnet-gw2'
+const WORKTREE = '../celnet-gw2'
 
 const COMMON = `
 You are a GW2 worker migrating product families out of the Celnet GUI ticket monolith into the new ProductSpec registry.
