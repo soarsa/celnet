@@ -1,0 +1,755 @@
+{
+  "$schema": "https://tr.designtokens.org/format/",
+  "$description": "Celnet Aurora × Celer — the single styling source of truth, W3C DTCG (Design Tokens Community Group) format. A FORMALIZATION of the existing design system (gui/src/design/tokens.css + appearance.ts + density.ts + global.css): every $value is the existing value verbatim — coral/indigo/Anaheim map to the existing variables — so this is a neurosymbolic styling asset, NOT a restyle. The default ($value) of every theme-varying token is its DARK / normal-contrast / comfortable-density value (the `:root` defaults). The orthogonal appearance(dark|light) × contrast(normal|high) × density(comfortable|compact) cascade overrides live under `$extensions['com.celer.celnet'].themes`, keyed by the exact `:root[…]` selector they map to. The CSS custom-property each token emits is in `$extensions['com.celer.celnet'].cssVar`.",
+  "$extensions": {
+    "com.celer.celnet": {
+      "system": "Celnet Aurora",
+      "brand": "Celer Technologies",
+      "spec": "GUI-DESIGN §3",
+      "color-space": "oklch",
+      "source": [
+        "gui/src/design/tokens.css",
+        "gui/src/design/appearance.ts",
+        "gui/src/design/density.ts",
+        "gui/src/design/global.css"
+      ],
+      "brand-kit": {
+        "coral": "#ff7357",
+        "indigo": "#6b6bf5",
+        "navy-base": "#1B1F2A",
+        "navy-raised": "#282C3E",
+        "secondary-text": "#979CB7",
+        "font": "Anaheim"
+      },
+      "themes": {
+        "light": ":root[data-appearance=\"light\"]",
+        "contrast-high": ":root[data-contrast=\"high\"]",
+        "light-contrast-high": ":root[data-appearance=\"light\"][data-contrast=\"high\"]",
+        "density-compact": ":root[data-density=\"compact\"]",
+        "reduced-transparency": "@media (prefers-reduced-transparency: reduce) :root"
+      }
+    }
+  },
+  "type": {
+    "$description": "Type scale (1.20 minor third, base 13px — dense-pro). Sizes and matching line-heights.",
+    "display": {
+      "size": {
+        "$type": "dimension",
+        "$value": "28px",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--type-display" } }
+      },
+      "line-height": {
+        "$type": "dimension",
+        "$value": "32px",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--type-display-lh" } }
+      }
+    },
+    "title": {
+      "size": {
+        "$type": "dimension",
+        "$value": "20px",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--type-title" } }
+      },
+      "line-height": {
+        "$type": "dimension",
+        "$value": "26px",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--type-title-lh" } }
+      }
+    },
+    "headline": {
+      "size": {
+        "$type": "dimension",
+        "$value": "16px",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--type-headline" } }
+      },
+      "line-height": {
+        "$type": "dimension",
+        "$value": "22px",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--type-headline-lh" } }
+      }
+    },
+    "body": {
+      "size": {
+        "$type": "dimension",
+        "$value": "13px",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--type-body" } }
+      },
+      "line-height": {
+        "$type": "dimension",
+        "$value": "18px",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--type-body-lh" } }
+      }
+    },
+    "callout": {
+      "size": {
+        "$type": "dimension",
+        "$value": "12px",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--type-callout" } }
+      },
+      "line-height": {
+        "$type": "dimension",
+        "$value": "16px",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--type-callout-lh" } }
+      }
+    },
+    "caption": {
+      "size": {
+        "$type": "dimension",
+        "$value": "11px",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--type-caption" } }
+      },
+      "line-height": {
+        "$type": "dimension",
+        "$value": "14px",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--type-caption-lh" } }
+      }
+    },
+    "micro": {
+      "size": {
+        "$type": "dimension",
+        "$value": "10px",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--type-micro" } }
+      },
+      "line-height": {
+        "$type": "dimension",
+        "$value": "12px",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--type-micro-lh" } }
+      }
+    }
+  },
+  "font": {
+    "$description": "Font families. Anaheim (Celer brand face) over the UI fallback; numerics ALWAYS stay on --font-mono.",
+    "family": {
+      "ui": {
+        "$type": "fontFamily",
+        "$value": [
+          "-apple-system",
+          "BlinkMacSystemFont",
+          "Inter",
+          "Segoe UI",
+          "system-ui",
+          "sans-serif"
+        ],
+        "$description": "Default UI sans stack; immediate fallback for the brand face (no layout shift).",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--font-ui" } }
+      },
+      "brand": {
+        "$type": "fontFamily",
+        "$value": ["Anaheim", "{font.family.ui}"],
+        "$description": "Celer brand typeface — display/title/headline/brand/labels. Anaheim loads via the Google Fonts <link> in index.html; --font-ui is the immediate fallback. Numerics NEVER use this.",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--font-brand" } }
+      },
+      "mono": {
+        "$type": "fontFamily",
+        "$value": [
+          "ui-monospace",
+          "SF Mono",
+          "IBM Plex Mono",
+          "Menlo",
+          "Consolas",
+          "monospace"
+        ],
+        "$description": "The only face for ALL numerics (prices, greeks, spots). Tabular, slashed-zero figures.",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--font-mono" } }
+      }
+    },
+    "weight": {
+      "regular": {
+        "$type": "fontWeight",
+        "$value": 400,
+        "$extensions": { "com.celer.celnet": { "cssVar": "--weight-regular" } }
+      },
+      "emphasis": {
+        "$type": "fontWeight",
+        "$value": 500,
+        "$extensions": { "com.celer.celnet": { "cssVar": "--weight-emphasis" } }
+      },
+      "header": {
+        "$type": "fontWeight",
+        "$value": 600,
+        "$extensions": { "com.celer.celnet": { "cssVar": "--weight-header" } }
+      }
+    },
+    "label": {
+      "letter-spacing": {
+        "$type": "dimension",
+        "$value": "0.06em",
+        "$description": "The Celer label treatment — uppercase + ~0.06em tracking (.brand-label).",
+        "$extensions": { "com.celer.celnet": { "selector": ".brand-label" } }
+      }
+    },
+    "num": {
+      "letter-spacing": {
+        "$type": "dimension",
+        "$value": "-0.01em",
+        "$description": "Tabular numeric tracking (.num — tabular-nums slashed-zero).",
+        "$extensions": { "com.celer.celnet": { "selector": ".num" } }
+      }
+    }
+  },
+  "space": {
+    "$description": "Spacing scale, 4px base.",
+    "1": {
+      "$type": "dimension",
+      "$value": "2px",
+      "$extensions": { "com.celer.celnet": { "cssVar": "--space-1" } }
+    },
+    "2": {
+      "$type": "dimension",
+      "$value": "4px",
+      "$extensions": { "com.celer.celnet": { "cssVar": "--space-2" } }
+    },
+    "3": {
+      "$type": "dimension",
+      "$value": "8px",
+      "$extensions": { "com.celer.celnet": { "cssVar": "--space-3" } }
+    },
+    "4": {
+      "$type": "dimension",
+      "$value": "12px",
+      "$extensions": { "com.celer.celnet": { "cssVar": "--space-4" } }
+    },
+    "5": {
+      "$type": "dimension",
+      "$value": "16px",
+      "$extensions": { "com.celer.celnet": { "cssVar": "--space-5" } }
+    },
+    "6": {
+      "$type": "dimension",
+      "$value": "24px",
+      "$extensions": { "com.celer.celnet": { "cssVar": "--space-6" } }
+    },
+    "7": {
+      "$type": "dimension",
+      "$value": "32px",
+      "$extensions": { "com.celer.celnet": { "cssVar": "--space-7" } }
+    },
+    "8": {
+      "$type": "dimension",
+      "$value": "48px",
+      "$extensions": { "com.celer.celnet": { "cssVar": "--space-8" } }
+    }
+  },
+  "density": {
+    "$description": "Density axis (GW0) — the third orthogonal token axis (data-density on <html>). The $value is the `comfortable` (default) scale; the `compact` scale is in $extensions.themes['density-compact']. Components and <DataGrid> read ONLY these tokens, never the attribute in JS.",
+    "row-height": {
+      "$type": "dimension",
+      "$value": "38px",
+      "$description": "grid/blotter row height (StreamWorkspace ROW_HEIGHT origin)",
+      "$extensions": {
+        "com.celer.celnet": {
+          "cssVar": "--row-h",
+          "themes": { "density-compact": "26px" }
+        }
+      }
+    },
+    "row-gap": {
+      "$type": "dimension",
+      "$value": "{space.1}",
+      "$description": "inter-row separation in dense lists",
+      "$extensions": {
+        "com.celer.celnet": {
+          "cssVar": "--row-gap",
+          "themes": { "density-compact": "0px" }
+        }
+      }
+    },
+    "cell-pad-x": {
+      "$type": "dimension",
+      "$value": "{space.4}",
+      "$description": "horizontal cell padding",
+      "$extensions": {
+        "com.celer.celnet": {
+          "cssVar": "--cell-pad-x",
+          "themes": { "density-compact": "{space.3}" }
+        }
+      }
+    },
+    "cell-pad-y": {
+      "$type": "dimension",
+      "$value": "{space.3}",
+      "$description": "vertical cell padding",
+      "$extensions": {
+        "com.celer.celnet": {
+          "cssVar": "--cell-pad-y",
+          "themes": { "density-compact": "{space.2}" }
+        }
+      }
+    },
+    "control-height": {
+      "$type": "dimension",
+      "$value": "28px",
+      "$description": "inspector-strip / inline-control height",
+      "$extensions": {
+        "com.celer.celnet": {
+          "cssVar": "--control-h",
+          "themes": { "density-compact": "22px" }
+        }
+      }
+    }
+  },
+  "radius": {
+    "$description": "Corner radii.",
+    "sm": {
+      "$type": "dimension",
+      "$value": "6px",
+      "$extensions": { "com.celer.celnet": { "cssVar": "--r-sm" } }
+    },
+    "md": {
+      "$type": "dimension",
+      "$value": "10px",
+      "$extensions": { "com.celer.celnet": { "cssVar": "--r-md" } }
+    },
+    "lg": {
+      "$type": "dimension",
+      "$value": "16px",
+      "$extensions": { "com.celer.celnet": { "cssVar": "--r-lg" } }
+    },
+    "full": {
+      "$type": "dimension",
+      "$value": "999px",
+      "$extensions": { "com.celer.celnet": { "cssVar": "--r-full" } }
+    }
+  },
+  "motion": {
+    "$description": "Durations and easing curves.",
+    "duration": {
+      "flash-decay": {
+        "$type": "duration",
+        "$value": "450ms",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--flash-decay" } }
+      },
+      "quote-in": {
+        "$type": "duration",
+        "$value": "180ms",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--quote-in" } }
+      },
+      "workspace-switch": {
+        "$type": "duration",
+        "$value": "200ms",
+        "$extensions": { "com.celer.celnet": { "cssVar": "--workspace-switch" } }
+      }
+    },
+    "easing": {
+      "out": {
+        "$type": "cubicBezier",
+        "$value": [0.22, 1, 0.36, 1],
+        "$extensions": { "com.celer.celnet": { "cssVar": "--ease-out" } }
+      },
+      "spring": {
+        "$type": "cubicBezier",
+        "$value": [0.34, 1.56, 0.64, 1],
+        "$extensions": { "com.celer.celnet": { "cssVar": "--ease-spring" } }
+      }
+    }
+  },
+  "elevation": {
+    "$description": "Materials — shadows, hairline, and backdrop blur. Shadow $values are emitted verbatim; in the light appearance the shadow opacities lighten (see themes.light).",
+    "shadow-panel": {
+      "$type": "shadow",
+      "$value": "0 1px 2px oklch(0 0 0 / 0.18), 0 0 0 0.5px oklch(0 0 0 / 0.28)",
+      "$extensions": {
+        "com.celer.celnet": {
+          "cssVar": "--shadow-panel",
+          "themes": {
+            "light": "0 1px 2px oklch(0 0 0 / 0.08), 0 0 0 0.5px oklch(0 0 0 / 0.1)"
+          }
+        }
+      }
+    },
+    "shadow-float": {
+      "$type": "shadow",
+      "$value": "0 8px 28px oklch(0 0 0 / 0.42), 0 1px 2px oklch(0 0 0 / 0.3)",
+      "$extensions": {
+        "com.celer.celnet": {
+          "cssVar": "--shadow-float",
+          "themes": {
+            "light": "0 8px 28px oklch(0 0 0 / 0.16), 0 1px 2px oklch(0 0 0 / 0.1)"
+          }
+        }
+      }
+    },
+    "shadow-hud": {
+      "$type": "shadow",
+      "$value": "0 24px 64px oklch(0 0 0 / 0.55), 0 2px 8px oklch(0 0 0 / 0.4)",
+      "$extensions": {
+        "com.celer.celnet": {
+          "cssVar": "--shadow-hud",
+          "themes": {
+            "light": "0 24px 64px oklch(0 0 0 / 0.22), 0 2px 8px oklch(0 0 0 / 0.14)"
+          }
+        }
+      }
+    },
+    "hairline": {
+      "$type": "border",
+      "$value": "0.5px solid oklch(1 0 0 / 0.08)",
+      "$extensions": {
+        "com.celer.celnet": {
+          "cssVar": "--hairline",
+          "themes": { "light": "0.5px solid oklch(0 0 0 / 0.1)" }
+        }
+      }
+    },
+    "blur-float": {
+      "$type": "dimension",
+      "$value": "20px",
+      "$extensions": {
+        "com.celer.celnet": {
+          "cssVar": "--blur-float",
+          "themes": { "reduced-transparency": "0px" }
+        }
+      }
+    },
+    "blur-hud": {
+      "$type": "dimension",
+      "$value": "40px",
+      "$extensions": {
+        "com.celer.celnet": {
+          "cssVar": "--blur-hud",
+          "themes": { "reduced-transparency": "0px" }
+        }
+      }
+    }
+  },
+  "color": {
+    "$description": "All color is OKLCH for perceptual uniformity. The $value of every token is its DARK / normal-contrast value (`:root` default). Light, increased-contrast, and combined overrides — verbatim from the source selectors — are in each token's $extensions.themes (light / contrast-high / light-contrast-high).",
+    "bg": {
+      "$description": "Surfaces. Celer navy: base ≈ #1B1F2A, raised ≈ #282C3E, hue ~264 under the indigo accent.",
+      "base": {
+        "$type": "color",
+        "$value": "oklch(0.255 0.018 264)",
+        "$extensions": {
+          "com.celer.celnet": {
+            "cssVar": "--bg-base",
+            "themes": { "light": "oklch(0.99 0.003 264)" }
+          }
+        }
+      },
+      "raised": {
+        "$type": "color",
+        "$value": "oklch(0.315 0.022 264)",
+        "$extensions": {
+          "com.celer.celnet": {
+            "cssVar": "--bg-raised",
+            "themes": { "light": "oklch(0.975 0.004 264)" }
+          }
+        }
+      },
+      "overlay": {
+        "$type": "color",
+        "$value": "oklch(0.345 0.026 264 / 0.82)",
+        "$description": "Translucent overlay; collapses to bg-overlay-solid under increased-contrast and reduced-transparency.",
+        "$extensions": {
+          "com.celer.celnet": {
+            "cssVar": "--bg-overlay",
+            "themes": {
+              "light": "oklch(1 0 0 / 0.86)",
+              "contrast-high": "{color.bg.overlay-solid}",
+              "reduced-transparency": "{color.bg.overlay-solid}"
+            }
+          }
+        }
+      },
+      "overlay-solid": {
+        "$type": "color",
+        "$value": "oklch(0.345 0.026 264)",
+        "$extensions": {
+          "com.celer.celnet": {
+            "cssVar": "--bg-overlay-solid",
+            "themes": { "light": "oklch(1 0 0)" }
+          }
+        }
+      },
+      "inset": {
+        "$type": "color",
+        "$value": "oklch(0.21 0.016 264)",
+        "$extensions": {
+          "com.celer.celnet": {
+            "cssVar": "--bg-inset",
+            "themes": { "light": "oklch(0.96 0.005 264)" }
+          }
+        }
+      }
+    },
+    "text": {
+      "$description": "Text hierarchy. secondary > tertiary always preserved; tertiary tuned to clear WCAG AA 4.5:1 at 9–12px (axe a11y e2e).",
+      "primary": {
+        "$type": "color",
+        "$value": "oklch(0.97 0.008 264)",
+        "$extensions": {
+          "com.celer.celnet": {
+            "cssVar": "--text-primary",
+            "themes": {
+              "light": "oklch(0.22 0.02 264)",
+              "contrast-high": "oklch(1 0 0 / 1)",
+              "light-contrast-high": "oklch(0.12 0.02 264)"
+            }
+          }
+        }
+      },
+      "secondary": {
+        "$type": "color",
+        "$value": "oklch(0.8 0.03 276)",
+        "$description": "Celer secondary text ≈ #979CB7 (periwinkle-grey).",
+        "$extensions": {
+          "com.celer.celnet": {
+            "cssVar": "--text-secondary",
+            "themes": {
+              "light": "oklch(0.46 0.03 276)",
+              "contrast-high": "oklch(0.85 0.02 276)",
+              "light-contrast-high": "oklch(0.3 0.03 276)"
+            }
+          }
+        }
+      },
+      "tertiary": {
+        "$type": "color",
+        "$value": "oklch(0.74 0.025 276)",
+        "$extensions": {
+          "com.celer.celnet": {
+            "cssVar": "--text-tertiary",
+            "themes": {
+              "light": "oklch(0.6 0.025 276)",
+              "contrast-high": "oklch(0.7 0.02 276)"
+            }
+          }
+        }
+      }
+    },
+    "brand": {
+      "$description": "Celer brand coral #ff7357 — logo/pulse/active-pair marker (NOT a semantic up/down). The identity colour holds across appearances (only intensity shifts).",
+      "default": {
+        "$type": "color",
+        "$value": "oklch(0.72 0.17 35)",
+        "$extensions": {
+          "com.celer.celnet": {
+            "cssVar": "--brand",
+            "themes": {
+              "light": "oklch(0.66 0.18 35)",
+              "contrast-high": "oklch(0.76 0.19 35)",
+              "light-contrast-high": "oklch(0.58 0.2 35)"
+            }
+          }
+        }
+      },
+      "soft": {
+        "$type": "color",
+        "$value": "oklch(0.72 0.17 35 / 0.16)",
+        "$description": "Low-alpha brand tint.",
+        "$extensions": {
+          "com.celer.celnet": {
+            "cssVar": "--brand-soft",
+            "themes": {
+              "light": "oklch(0.66 0.18 35 / 0.12)",
+              "contrast-high": "oklch(0.76 0.19 35 / 0.24)"
+            }
+          }
+        }
+      }
+    },
+    "accent": {
+      "$description": "Celer indigo/periwinkle #6b6bf5 — focus rings, selection, primary buttons, links.",
+      "default": {
+        "$type": "color",
+        "$value": "oklch(0.62 0.19 280)",
+        "$extensions": {
+          "com.celer.celnet": {
+            "cssVar": "--accent",
+            "themes": {
+              "light": "oklch(0.55 0.2 280)",
+              "contrast-high": "oklch(0.7 0.2 280)",
+              "light-contrast-high": "oklch(0.48 0.22 280)"
+            }
+          }
+        }
+      },
+      "soft": {
+        "$type": "color",
+        "$value": "oklch(0.62 0.19 280 / 0.2)",
+        "$extensions": {
+          "com.celer.celnet": {
+            "cssVar": "--accent-soft",
+            "themes": {
+              "light": "oklch(0.55 0.2 280 / 0.12)",
+              "contrast-high": "oklch(0.7 0.2 280 / 0.26)",
+              "light-contrast-high": "oklch(0.48 0.22 280 / 0.16)"
+            }
+          }
+        }
+      }
+    },
+    "semantic": {
+      "$description": "Trading semantics — bid/offer stay green/red across appearances (never the brand coral).",
+      "bid": {
+        "$type": "color",
+        "$value": "oklch(0.78 0.16 155)",
+        "$extensions": {
+          "com.celer.celnet": {
+            "cssVar": "--bid",
+            "themes": {
+              "light": "oklch(0.55 0.15 155)",
+              "contrast-high": "oklch(0.85 0.18 155)",
+              "light-contrast-high": "oklch(0.45 0.16 155)"
+            }
+          }
+        }
+      },
+      "offer": {
+        "$type": "color",
+        "$value": "oklch(0.7 0.17 25)",
+        "$extensions": {
+          "com.celer.celnet": {
+            "cssVar": "--offer",
+            "themes": {
+              "light": "oklch(0.55 0.19 27)",
+              "contrast-high": "oklch(0.75 0.2 25)",
+              "light-contrast-high": "oklch(0.45 0.22 27)"
+            }
+          }
+        }
+      },
+      "warn": {
+        "$type": "color",
+        "$value": "oklch(0.82 0.16 75)",
+        "$extensions": {
+          "com.celer.celnet": {
+            "cssVar": "--warn",
+            "themes": { "light": "oklch(0.62 0.16 70)" }
+          }
+        }
+      },
+      "danger": {
+        "$type": "color",
+        "$value": "oklch(0.65 0.21 25)",
+        "$extensions": {
+          "com.celer.celnet": {
+            "cssVar": "--danger",
+            "themes": { "light": "oklch(0.52 0.22 27)" }
+          }
+        }
+      }
+    },
+    "flash": {
+      "$description": "Price-tick flash washes (decay over --flash-decay).",
+      "up": {
+        "$type": "color",
+        "$value": "oklch(0.85 0.18 155 / 0.5)",
+        "$extensions": {
+          "com.celer.celnet": {
+            "cssVar": "--flash-up",
+            "themes": { "light": "oklch(0.7 0.16 155 / 0.32)" }
+          }
+        }
+      },
+      "down": {
+        "$type": "color",
+        "$value": "oklch(0.78 0.19 25 / 0.5)",
+        "$extensions": {
+          "com.celer.celnet": {
+            "cssVar": "--flash-dn",
+            "themes": { "light": "oklch(0.68 0.18 27 / 0.32)" }
+          }
+        }
+      }
+    },
+    "ramp": {
+      "$description": "Diverging heatmap ramp (cool indigo → neutral → warm green), perceptually uniform. The cool pole tracks the Celer indigo accent hue (~280).",
+      "neg-2": {
+        "$type": "color",
+        "$value": "oklch(0.55 0.15 280)",
+        "$extensions": {
+          "com.celer.celnet": {
+            "cssVar": "--ramp-neg-2",
+            "themes": { "light": "oklch(0.6 0.16 280)" }
+          }
+        }
+      },
+      "neg-1": {
+        "$type": "color",
+        "$value": "oklch(0.68 0.09 278)",
+        "$extensions": {
+          "com.celer.celnet": {
+            "cssVar": "--ramp-neg-1",
+            "themes": { "light": "oklch(0.78 0.08 278)" }
+          }
+        }
+      },
+      "mid": {
+        "$type": "color",
+        "$value": "oklch(0.8 0.01 264)",
+        "$extensions": {
+          "com.celer.celnet": {
+            "cssVar": "--ramp-mid",
+            "themes": { "light": "oklch(0.95 0.005 264)" }
+          }
+        }
+      },
+      "pos-1": {
+        "$type": "color",
+        "$value": "oklch(0.74 0.1 145)",
+        "$extensions": {
+          "com.celer.celnet": {
+            "cssVar": "--ramp-pos-1",
+            "themes": { "light": "oklch(0.82 0.1 145)" }
+          }
+        }
+      },
+      "pos-2": {
+        "$type": "color",
+        "$value": "oklch(0.62 0.16 150)",
+        "$extensions": {
+          "com.celer.celnet": {
+            "cssVar": "--ramp-pos-2",
+            "themes": { "light": "oklch(0.62 0.16 150)" }
+          }
+        }
+      }
+    },
+    "grid-line": {
+      "$type": "color",
+      "$value": "oklch(1 0 0 / 0.06)",
+      "$extensions": {
+        "com.celer.celnet": {
+          "cssVar": "--grid-line",
+          "themes": {
+            "light": "oklch(0 0 0 / 0.07)",
+            "contrast-high": "oklch(1 0 0 / 0.16)",
+            "light-contrast-high": "oklch(0 0 0 / 0.18)"
+          }
+        }
+      }
+    },
+    "highlight-top": {
+      "$type": "color",
+      "$value": "oklch(1 0 0 / 0.06)",
+      "$extensions": {
+        "com.celer.celnet": {
+          "cssVar": "--highlight-top",
+          "themes": { "light": "oklch(1 0 0 / 0.7)" }
+        }
+      }
+    },
+    "scrollbar": {
+      "$description": "Thin, calm scrollbar thumb (global.css ::-webkit-scrollbar-thumb).",
+      "thumb": {
+        "$type": "color",
+        "$value": "oklch(0.6 0.01 250 / 0.3)",
+        "$extensions": { "com.celer.celnet": { "selector": "::-webkit-scrollbar-thumb" } }
+      },
+      "thumb-hover": {
+        "$type": "color",
+        "$value": "oklch(0.6 0.01 250 / 0.5)",
+        "$extensions": { "com.celer.celnet": { "selector": "::-webkit-scrollbar-thumb:hover" } }
+      }
+    },
+    "aurora-wash": {
+      "$description": "The deep-background aurora gradient stops (global.css body background-image). The coral + indigo poles derive from --brand / --accent at 0.07 alpha; the green bloom is a literal.",
+      "green-bloom": {
+        "$type": "color",
+        "$value": "oklch(0.78 0.16 155 / 0.04)",
+        "$extensions": { "com.celer.celnet": { "selector": "body::background-image" } }
+      }
+    }
+  }
+}
