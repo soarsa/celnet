@@ -1,22 +1,13 @@
-# lodestar.judge.toml — CelNet-scoped config surface for the host-side judge +
-# visual drivers (the single file common.sh reads; env twins override: env > file).
-# Project-scoped on purpose: this lives in the CelNet repo and must NOT leak to any
-# other lodestar-enabled project. The cortex env (LODESTAR_PROPOSALS / JUDGE_PROVIDER
-# / AUTHOR) is set on the PROJECT .mcp.json registration only — never globally — so
-# the celertech estate and any other lodestar session are unaffected.
+# lodestar.judge.toml — CelNet-scoped config surface for the host-side VISUAL drivers
+# (the single file common.sh reads; env twins override: env > file). Project-scoped on
+# purpose: it lives in the CelNet repo and must NOT leak to any other lodestar project.
+# The proactive drift stream (LODESTAR_PROPOSALS) is set on the PROJECT .mcp.json
+# registration only — never globally. NO Stage-2 judge is configured (removed for now);
+# the deterministic Stage-1 constraint gate is the primary and needs none.
 
 [engine]
 bin = "lodestar"                         # env: LODESTAR_BIN
 project = "github.com-soarsa-celnet"     # env: LODESTAR_PROJECT (git-remote key; identical on every clone)
-
-# Stage-2 cross-family judge: a Claude subagent (deny-never-self). The transport
-# tools/judge/judge-claude-subagent.sh drives the celnet-verifier agent; the engine
-# enforces never-self at the review seam. Author family is claude (LODESTAR_AUTHOR),
-# so the reviewer must be a DIFFERENT family for a non-stub verdict — honest limit
-# surfaced until a cross-family reviewer is installed.
-[judge]
-provider = "claude-subagent"             # env: LODESTAR_JUDGE_PROVIDER
-reviewer = "celnet-verifier:adversarial-subagent"
 
 [storybook]
 index_json = "gui/storybook-static/index.json"   # env: LODESTAR_STORYBOOK_INDEX (gitignored build artifact)
@@ -24,9 +15,8 @@ static_dir = "gui/storybook-static"              # env: LODESTAR_STORYBOOK_STATI
 build_cmd  = "npm --prefix gui run storybook:build"
 
 [visual]
-# ui:matches-mockup verifier — DEFAULT OFF (deterministic design gate stands alone).
+# ui:matches-mockup verifier — DEFAULT OFF (the deterministic design gate stands alone; no judge).
 provider = "off"                         # env: LODESTAR_VISUAL_PROVIDER
-reviewer_model = "celnet-verifier:adversarial-subagent"
 
 [mockup]
 # In-repo, content-addressed design targets (a new hash flips ui:matches-mockup stale).
