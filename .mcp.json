@@ -1,7 +1,10 @@
 {
     "mcpServers": {
         "lodestar": {
-            "command": "lodestar"
+            "command": "lodestar",
+            "env": {
+                "LODESTAR_PROPOSALS": "1"
+            }
         }
     }
 }
