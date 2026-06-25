@@ -1,0 +1,34 @@
+{
+  "deliverable": "rfq-multidealer",
+  "title": "Multi-dealer RFQ — concurrent fan-out + ranked best-bid/offer panel",
+  "decision": "ADR-0008-multi-asset-carry-architecture",
+  "description": "The multi-dealer RFQ capability: MultiDealerEngine fans an RfqRequest out to every registered QuoteSource concurrently, ranks the responses into a best-bid/offer panel with deterministic tie-break, and exposes the winning dealer for click-to-trade. This is the frozen-contract acceptance for the deliverable 'rfq-multidealer'.",
+  "assertions": [
+    {
+      "id": "engine-entry-present",
+      "kind": "schema",
+      "anchor": "github.com-soarsa-celnet.crates.celnet-rfq.src.panel.MultiDealerEngine.request",
+      "statement": "MultiDealerEngine::request is the single fan-out entry point that accepts an RfqRequest and returns a ranked panel.",
+      "decidable": true
+    },
+    {
+      "id": "quote-source-seam-present",
+      "kind": "schema",
+      "anchor": "github.com-soarsa-celnet.crates.celnet-rfq.src.panel.QuoteSource.request",
+      "statement": "QuoteSource::request is the per-dealer seam every liquidity provider (FixLpAdapter, InternalPricerSource) implements, so a new LP plugs in without touching the engine.",
+      "decidable": true
+    },
+    {
+      "id": "deterministic-rank-key",
+      "kind": "schema",
+      "anchor": "github.com-soarsa-celnet.crates.celnet-rfq.src.panel.SideKey.partial_cmp_total",
+      "statement": "SideKey::partial_cmp_total provides the total order used to rank quotes into the best-bid/offer panel with a deterministic tie-break.",
+      "decidable": true
+    }
+  ],
+  "anchors": [
+    "github.com-soarsa-celnet.crates.celnet-rfq.src.panel.MultiDealerEngine.request",
+    "github.com-soarsa-celnet.crates.celnet-rfq.src.panel.QuoteSource.request",
+    "github.com-soarsa-celnet.crates.celnet-rfq.src.panel.SideKey.partial_cmp_total"
+  ]
+}
