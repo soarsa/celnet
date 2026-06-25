@@ -30,5 +30,7 @@
 #![forbid(unsafe_code)]
 
 pub mod curve;
+pub mod solver;
 
 pub use curve::{Curve, CurveError};
+pub use solver::{SolverError, brent_root};
