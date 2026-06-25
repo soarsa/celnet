@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>celnet · Navigation architecture — Options &amp; Fixed Income tabs</title>
+<link rel="stylesheet" href="shared.css" />
+<style>
+  body { overflow: auto; }
+  .doc { max-width: 1400px; margin: 0 auto; padding: 36px 32px 48px; }
+  .doc-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+  .doc-head .wm { font-weight: 600; letter-spacing: 0.04em; font-size: 14px; }
+  .doc-head .wm b { color: var(--brand); }
+  .doc-head .tag { font-size: 11px; color: var(--text-tertiary); letter-spacing: 0.06em; text-transform: uppercase; }
+  .doc-title { font-size: 26px; font-weight: 600; margin: 8px 0 4px; }
+  .doc-sub { color: var(--text-tertiary); font-size: 14px; margin-bottom: 22px; max-width: 980px; }
+
+  .frames { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .frame { background: var(--bg-base); border: var(--hairline); border-radius: var(--r-lg); box-shadow: var(--shadow-panel); overflow: hidden; }
+  .fcap { display:flex; align-items:center; justify-content:space-between; padding: 12px 16px 0; }
+  .fcap .ft { font-size: 13px; font-weight: 600; }
+  .fcap .fb { font-size: 11px; color: var(--text-tertiary); }
+
+  /* shared top chrome inside the frame */
+  .f-tabs { height: 32px; display: flex; align-items: stretch; background: var(--bg-inset); border-bottom: var(--hairline); padding: 0 10px; margin-top: 10px; }
+  .f-tab { display: flex; align-items: center; gap: 6px; padding: 0 14px; font-size: 11.5px; font-weight: 600; letter-spacing: 0.03em; color: var(--text-tertiary); border-bottom: 2px solid transparent; }
+  .f-tab .d { width: 6px; height: 6px; border-radius: var(--r-full); background: currentColor; opacity: 0.55; }
+  .f-tab.on { color: var(--text-primary); border-bottom-color: var(--brand); }
+  .f-tab.on .d { background: var(--brand); opacity: 1; }
+  .f-bar { height: 30px; display:flex; align-items:center; gap:8px; padding: 0 12px; border-bottom: var(--hairline); font-size: 11px; color: var(--text-tertiary); }
+  .f-bar .wmk { color: var(--text-secondary); font-weight: 600; } .f-bar .wmk b { color: var(--brand); }
+  .f-bar .sp { opacity: 0.5; }
+  .f-bar .cmd { margin-left:auto; font-size: 10px; }
+
+  .f-main { display: flex; height: 286px; }
+  .f-rail { width: 70px; background: var(--bg-inset); border-right: var(--hairline); display:flex; flex-direction:column; align-items:center; padding: 10px 0; gap: 3px; }
+  .ri { width: 58px; padding: 6px 0 4px; border-radius: 8px; display:flex; flex-direction:column; align-items:center; gap:2px; color: var(--text-tertiary); }
+  .ri .ic { font-size: 15px; } .ri .lb { font-size: 9px; }
+  .ri.on { color: var(--text-primary); background: var(--accent-soft); border: 0.5px solid oklch(0.66 0.17 280 / 0.4); }
+
+  .f-canvas { flex:1; padding: 12px; display: grid; grid-template-columns: 1.3fr 1fr; gap: 10px; min-width:0; }
+  .ph { background: var(--bg-raised); border: var(--hairline); border-radius: var(--r-md); overflow: hidden; display:flex; flex-direction:column; }
+  .ph-h { height: 26px; display:flex; align-items:center; gap:6px; padding: 0 10px; border-bottom: var(--hairline); }
+  .ph-h .g { font-size: 12px; color: var(--accent); } .ph-h .t { font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-secondary); font-weight: 600; }
+  .ph-b { flex:1; padding: 10px; display:flex; flex-direction:column; gap:6px; }
+  .sk { height: 8px; border-radius: 4px; background: oklch(1 0 0 / 0.06); }
+  .sk.w70 { width: 70%; } .sk.w50 { width: 50%; } .sk.w85 { width: 85%; } .sk.w40 { width: 40%; }
+  .heat { display:grid; grid-template-columns: repeat(6,1fr); gap: 3px; margin-top:2px; }
+  .heat i { height: 12px; border-radius: 2px; }
+  .curve { height: 56px; }
+
+  .note { margin-top: 22px; display:grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .card { background: var(--bg-raised); border: var(--hairline); border-radius: var(--r-md); padding: 14px 16px; box-shadow: var(--shadow-panel); }
+  .card .ct { font-size: 12px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-secondary); font-weight: 600; margin-bottom: 8px; }
+  .card ul { list-style: none; font-size: 12.5px; color: var(--text-secondary); line-height: 1.9; }
+  .card li::before { content: "›"; color: var(--accent); margin-right: 8px; }
+  .card.brandc .ct { color: var(--brand); }
+  .card.brandc li::before { color: var(--brand); }
+  .foot { margin-top: 18px; font-size: 11px; color: var(--text-tertiary); }
+</style>
+</head>
+<body>
+  <div class="doc">
+    <div class="doc-head"><span class="wm">cel<b>net</b></span><span class="tag">Navigation architecture</span></div>
+    <h1 class="doc-title">One shell, two desks — Options &amp; Fixed Income tabs</h1>
+    <p class="doc-sub">A top-level asset-class tab layer sits above the workspace rail. Switching the tab swaps the
+      <b>left-rail workspace set</b> and the workspaces it renders; the surrounding chrome and the pricing engine are shared.
+      The two desks never bleed into each other, but a trader moves between them in one click.</p>
+
+    <div class="frames">
+
+      <!-- OPTIONS desk -->
+      <div class="frame">
+        <div class="fcap"><span class="ft">Tab: Options</span><span class="fb">FX-options desk · its own workspaces</span></div>
+        <div class="f-tabs">
+          <div class="f-tab on"><span class="d"></span>Options</div>
+          <div class="f-tab"><span class="d"></span>Fixed Income</div>
+        </div>
+        <div class="f-bar"><span class="wmk">cel<b>net</b></span><span class="sp">/</span>Options<span class="sp">›</span>Surface<span class="cmd kbd">⌘K</span></div>
+        <div class="f-main">
+          <div class="f-rail">
+            <div class="ri"><span class="ic">⌁</span><span class="lb">Ticket</span></div>
+            <div class="ri"><span class="ic">≋</span><span class="lb">Stream</span></div>
+            <div class="ri on"><span class="ic">◷</span><span class="lb">Surface</span></div>
+            <div class="ri"><span class="ic">⊞</span><span class="lb">Risk</span></div>
+            <div class="ri"><span class="ic">▤</span><span class="lb">Book</span></div>
+          </div>
+          <div class="f-canvas">
+            <div class="ph">
+              <div class="ph-h"><span class="g">◷</span><span class="t">Vol surface · EURUSD</span></div>
+              <div class="ph-b">
+                <div class="heat">
+                  <i style="background:var(--accent)"></i><i style="background:oklch(0.6 0.16 280)"></i><i style="background:oklch(0.66 0.12 250)"></i><i style="background:oklch(0.72 0.1 200)"></i><i style="background:oklch(0.7 0.12 150)"></i><i style="background:var(--bid)"></i>
+                  <i style="background:oklch(0.6 0.16 280)"></i><i style="background:oklch(0.64 0.13 260)"></i><i style="background:oklch(0.7 0.1 220)"></i><i style="background:oklch(0.72 0.1 180)"></i><i style="background:oklch(0.72 0.12 150)"></i><i style="background:oklch(0.74 0.13 145)"></i>
+                  <i style="background:oklch(0.64 0.13 260)"></i><i style="background:oklch(0.68 0.11 240)"></i><i style="background:oklch(0.72 0.1 200)"></i><i style="background:oklch(0.72 0.11 170)"></i><i style="background:oklch(0.74 0.12 150)"></i><i style="background:var(--bid)"></i>
+                </div>
+                <div class="sk w85"></div><div class="sk w70"></div><div class="sk w50"></div>
+              </div>
+            </div>
+            <div class="ph">
+              <div class="ph-h"><span class="g">⊞</span><span class="t">Greeks</span></div>
+              <div class="ph-b"><div class="sk w70"></div><div class="sk w85"></div><div class="sk w40"></div><div class="sk w50"></div><div class="sk w70"></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- FIXED INCOME desk -->
+      <div class="frame">
+        <div class="fcap"><span class="ft">Tab: Fixed Income</span><span class="fb">USD rates &amp; cash desk · its own workspaces</span></div>
+        <div class="f-tabs">
+          <div class="f-tab"><span class="d"></span>Options</div>
+          <div class="f-tab on"><span class="d"></span>Fixed Income</div>
+        </div>
+        <div class="f-bar"><span class="wmk">cel<b>net</b></span><span class="sp">/</span>Fixed Income<span class="sp">›</span>Pricing<span class="cmd kbd">⌘K</span></div>
+        <div class="f-main">
+          <div class="f-rail">
+            <div class="ri on"><span class="ic">◷</span><span class="lb">Pricing</span></div>
+            <div class="ri"><span class="ic">⊟</span><span class="lb">Ticket</span></div>
+            <div class="ri"><span class="ic">⇄</span><span class="lb">RFQ</span></div>
+            <div class="ri"><span class="ic">✦</span><span class="lb">IOI</span></div>
+            <div class="ri"><span class="ic">≋</span><span class="lb">RFS</span></div>
+            <div class="ri"><span class="ic">▤</span><span class="lb">Blotter</span></div>
+          </div>
+          <div class="f-canvas">
+            <div class="ph">
+              <div class="ph-h"><span class="g">◷</span><span class="t">USD SOFR curve</span></div>
+              <div class="ph-b">
+                <svg class="curve" viewBox="0 0 240 56" preserveAspectRatio="none" width="100%">
+                  <polyline fill="oklch(0.66 0.17 280 / 0.12)" stroke="none" points="6,16 40,24 80,42 130,40 180,28 234,18 234,54 6,54"/>
+                  <polyline fill="none" stroke="var(--accent)" stroke-width="2" points="6,16 40,24 80,42 130,40 180,28 234,18"/>
+                </svg>
+                <div class="sk w70"></div><div class="sk w50"></div>
+              </div>
+            </div>
+            <div class="ph">
+              <div class="ph-h"><span class="g">⊞</span><span class="t">Analytics</span></div>
+              <div class="ph-b"><div class="sk w85"></div><div class="sk w70"></div><div class="sk w40"></div><div class="sk w50"></div><div class="sk w70"></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="note">
+      <div class="card">
+        <div class="ct">Shared across both tabs</div>
+        <ul>
+          <li>Top bar — wordmark, scope/breadcrumb, command palette (⌘K), saved views, auth</li>
+          <li>The pricing / central-event-processor engine &amp; entitlements</li>
+          <li>Status ribbon, theming, keyboard model</li>
+        </ul>
+      </div>
+      <div class="card brandc">
+        <div class="ct">Swaps with the asset-class tab</div>
+        <ul>
+          <li><b>Options:</b> Ticket · Stream · Surface · Risk · Book</li>
+          <li><b>Fixed Income:</b> Pricing · Ticket · RFQ · IOI · RFS · Blotter</li>
+          <li>Per-desk scope, instruments, layout &amp; ⌘-number hotkeys</li>
+        </ul>
+      </div>
+    </div>
+
+    <p class="foot">celnet · navigation architecture (mockup) — the D2 asset-class tab layer. Each FI workspace in this set is shown on the following pages.</p>
+  </div>
+</body>
+</html>

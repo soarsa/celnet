@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>celnet · Fixed Income — pricing &amp; execution process flow</title>
+<link rel="stylesheet" href="shared.css" />
+<style>
+  body { overflow: auto; }
+  .doc { max-width: 1400px; margin: 0 auto; padding: 36px 32px 48px; }
+  .doc-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+  .doc-head .wm { font-weight: 600; letter-spacing: 0.04em; font-size: 14px; }
+  .doc-head .wm b { color: var(--brand); }
+  .doc-head .tag { font-size: 11px; color: var(--text-tertiary); letter-spacing: 0.06em; text-transform: uppercase; }
+  .doc-title { font-size: 26px; font-weight: 600; letter-spacing: 0.01em; margin: 8px 0 4px; }
+  .doc-sub { color: var(--text-tertiary); font-size: 14px; margin-bottom: 22px; }
+  .legend2 { display: flex; gap: 20px; flex-wrap: wrap; font-size: 12px; color: var(--text-secondary); margin-bottom: 14px; }
+  .legend2 span { display: inline-flex; align-items: center; gap: 7px; }
+  .sw2 { width: 13px; height: 13px; border-radius: 3px; }
+  .diagram { background: var(--bg-raised); border: var(--hairline); border-radius: var(--r-lg); box-shadow: var(--shadow-panel); padding: 24px; }
+  .flowsvg text { font-family: var(--font-ui); }
+  .stepnote { font-size: 13px; color: var(--text-secondary); line-height: 1.7; margin-top: 22px; max-width: 1100px; }
+  .stepnote b { color: var(--text-primary); }
+  .foot { margin-top: 18px; font-size: 11px; color: var(--text-tertiary); }
+</style>
+</head>
+<body>
+  <div class="doc">
+    <div class="doc-head">
+      <span class="wm">cel<b>net</b></span>
+      <span class="tag">Fixed Income · process diagram</span>
+    </div>
+    <h1 class="doc-title">Pricing &amp; execution lifecycle</h1>
+    <p class="doc-sub">Inbound RFQ · RFS · IOI → price → quote → receive &amp; execute orders. One engine, three doors.</p>
+
+    <div class="legend2">
+      <span><span class="sw2" style="background:var(--brand-soft); border:1px solid var(--brand)"></span>Client / counterparty</span>
+      <span><span class="sw2" style="background:var(--accent-soft); border:1px solid var(--accent)"></span>celnet engine — event processor · pricing · best-ex</span>
+      <span><span class="sw2" style="background:oklch(0.82 0.16 75 / 0.16); border:1px solid var(--warn)"></span>Dealer / trader</span>
+      <span><span class="sw2" style="background:var(--bid-soft); border:1px solid var(--bid)"></span>Execution · venues · book</span>
+      <span><span class="sw2" style="background:transparent; border:1px dashed var(--text-tertiary)"></span>feedback loop</span>
+    </div>
+
+    <div class="diagram">
+      <svg class="flowsvg" viewBox="0 0 1336 500" width="100%" preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <marker id="arw" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+            <path d="M0,0 L7,3 L0,6 Z" fill="oklch(0.72 0.03 276)"/>
+          </marker>
+        </defs>
+
+        <!-- ===== connectors (under boxes) ===== -->
+        <g stroke="oklch(0.72 0.03 276)" stroke-width="1.5" fill="none" marker-end="url(#arw)">
+          <path d="M162,99 L186,138"/>
+          <path d="M162,143 L186,150"/>
+          <path d="M162,187 L186,168"/>
+          <path d="M340,153 L362,153"/>
+          <path d="M524,153 L548,153"/>
+          <path d="M718,153 L706,153"/>
+          <path d="M830,153 L868,100"/>
+          <path d="M830,153 L868,234"/>
+          <path d="M1062,95 L1088,134"/>
+          <path d="M1062,239 L1088,172"/>
+          <path d="M1167,196 L1167,356"/>
+          <path d="M1092,383 L1046,383"/>
+          <path d="M872,383 L790,383"/>
+          <path d="M654,383 L644,356"/>
+          <path d="M654,383 L644,424"/>
+          <path d="M470,352 L404,377"/>
+          <path d="M470,428 L404,389"/>
+          <path d="M250,383 L224,383"/>
+        </g>
+        <!-- feedback loops (dashed) -->
+        <g stroke="oklch(0.7 0.025 276)" stroke-width="1.4" fill="none" stroke-dasharray="5 4" marker-end="url(#arw)">
+          <path d="M872,224 C740,210 700,212 635,200"/>
+          <path d="M130,350 C150,250 300,210 441,198"/>
+        </g>
+
+        <!-- arrow labels -->
+        <g font-size="10" fill="oklch(0.72 0.03 276)">
+          <text x="703" y="64" text-anchor="middle">within policy</text>
+          <text x="690" y="262" text-anchor="middle">escalate</text>
+          <text x="600" y="338" text-anchor="middle">internal</text>
+          <text x="600" y="450" text-anchor="middle">to venue</text>
+          <text x="1184" y="279">client lifts</text>
+          <text x="1184" y="292">/ accepts</text>
+          <text x="745" y="206" text-anchor="middle" font-style="italic">re-price / re-skew</text>
+          <text x="300" y="250" text-anchor="middle" font-style="italic">positions → risk &amp; re-mark</text>
+        </g>
+
+        <!-- ===== nodes ===== -->
+        <g>
+          <rect x="16" y="80" width="146" height="38" rx="8" fill="var(--brand-soft)" stroke="var(--brand)" stroke-width="1.2"/>
+          <text x="89" y="104" text-anchor="middle" font-size="12" font-weight="600" fill="oklch(0.97 0.008 264)">① RFQ / RFM in</text>
+        </g>
+        <g>
+          <rect x="16" y="124" width="146" height="38" rx="8" fill="var(--brand-soft)" stroke="var(--brand)" stroke-width="1.2"/>
+          <text x="89" y="148" text-anchor="middle" font-size="12" font-weight="600" fill="oklch(0.97 0.008 264)">① RFS subscribe</text>
+        </g>
+        <g>
+          <rect x="16" y="168" width="146" height="38" rx="8" fill="var(--brand-soft)" stroke="var(--brand)" stroke-width="1.2"/>
+          <text x="89" y="192" text-anchor="middle" font-size="12" font-weight="600" fill="oklch(0.97 0.008 264)">① IOI in</text>
+        </g>
+
+        <g>
+          <rect x="190" y="110" width="150" height="86" rx="9" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.2"/>
+          <text x="265" y="146" text-anchor="middle" font-size="12.5" font-weight="600" fill="oklch(0.97 0.008 264)">② Edge gateway</text>
+          <text x="265" y="166" text-anchor="middle" font-size="10.5" fill="oklch(0.8 0.03 276)">normalise · entitlement</text>
+          <text x="265" y="181" text-anchor="middle" font-size="10.5" fill="oklch(0.8 0.03 276)">FIX / API / SDK</text>
+        </g>
+        <g>
+          <rect x="366" y="110" width="158" height="86" rx="9" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.2"/>
+          <text x="445" y="142" text-anchor="middle" font-size="12.5" font-weight="600" fill="oklch(0.97 0.008 264)">③ Price</text>
+          <text x="445" y="161" text-anchor="middle" font-size="10.5" fill="oklch(0.8 0.03 276)">curve snapshot →</text>
+          <text x="445" y="176" text-anchor="middle" font-size="10.5" fill="oklch(0.8 0.03 276)">fair value + risk</text>
+          <text x="445" y="191" text-anchor="middle" font-size="9.5" fill="oklch(0.7 0.025 276)">one immutable snapshot</text>
+        </g>
+        <g>
+          <rect x="552" y="110" width="166" height="86" rx="9" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.2"/>
+          <text x="635" y="142" text-anchor="middle" font-size="12.5" font-weight="600" fill="oklch(0.97 0.008 264)">④ Best-execution</text>
+          <text x="635" y="161" text-anchor="middle" font-size="10.5" fill="oklch(0.8 0.03 276)">scan venues + axes</text>
+          <text x="635" y="176" text-anchor="middle" font-size="10.5" fill="oklch(0.8 0.03 276)">internalise decision</text>
+          <text x="635" y="191" text-anchor="middle" font-size="9.5" fill="oklch(0.7 0.025 276)">spread / skew policy</text>
+        </g>
+
+        <polygon points="770,113 830,153 770,193 710,153" fill="oklch(0.82 0.16 75 / 0.14)" stroke="var(--warn)" stroke-width="1.2"/>
+        <text x="770" y="150" text-anchor="middle" font-size="10.5" font-weight="600" fill="oklch(0.97 0.008 264)">auto-quote</text>
+        <text x="770" y="164" text-anchor="middle" font-size="10.5" fill="oklch(0.8 0.03 276)">within policy?</text>
+
+        <g>
+          <rect x="872" y="72" width="190" height="46" rx="9" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.2"/>
+          <text x="967" y="92" text-anchor="middle" font-size="12" font-weight="600" fill="oklch(0.97 0.008 264)">⑤a Auto-quote / stream</text>
+          <text x="967" y="108" text-anchor="middle" font-size="10" fill="oklch(0.8 0.03 276)">price machine-made, in policy</text>
+        </g>
+        <g>
+          <rect x="872" y="210" width="190" height="58" rx="9" fill="oklch(0.82 0.16 75 / 0.16)" stroke="var(--warn)" stroke-width="1.2"/>
+          <text x="967" y="232" text-anchor="middle" font-size="12" font-weight="600" fill="oklch(0.97 0.008 264)">⑤b Dealer review</text>
+          <text x="967" y="248" text-anchor="middle" font-size="10" fill="oklch(0.8 0.03 276)">skew · size · axe lean</text>
+          <text x="967" y="262" text-anchor="middle" font-size="10" fill="oklch(0.8 0.03 276)">approve / counter / pass</text>
+        </g>
+
+        <g>
+          <rect x="1092" y="110" width="150" height="86" rx="9" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.2"/>
+          <text x="1167" y="146" text-anchor="middle" font-size="12.5" font-weight="600" fill="oklch(0.97 0.008 264)">⑥ Respond</text>
+          <text x="1167" y="166" text-anchor="middle" font-size="10.5" fill="oklch(0.8 0.03 276)">quote · stream ·</text>
+          <text x="1167" y="181" text-anchor="middle" font-size="10.5" fill="oklch(0.8 0.03 276)">IOI back to client</text>
+        </g>
+
+        <g>
+          <rect x="1092" y="360" width="150" height="46" rx="9" fill="var(--brand-soft)" stroke="var(--brand)" stroke-width="1.2"/>
+          <text x="1167" y="380" text-anchor="middle" font-size="12" font-weight="600" fill="oklch(0.97 0.008 264)">⑦ Client order</text>
+          <text x="1167" y="396" text-anchor="middle" font-size="10" fill="oklch(0.8 0.03 276)">accept / lift / firm-up</text>
+        </g>
+        <g>
+          <rect x="872" y="360" width="170" height="46" rx="9" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.2"/>
+          <text x="957" y="380" text-anchor="middle" font-size="12" font-weight="600" fill="oklch(0.97 0.008 264)">⑧ Order captured</text>
+          <text x="957" y="396" text-anchor="middle" font-size="10" fill="oklch(0.8 0.03 276)">event processor</text>
+        </g>
+        <polygon points="720,351 786,383 720,415 654,383" fill="oklch(0.82 0.16 75 / 0.14)" stroke="var(--warn)" stroke-width="1.2"/>
+        <text x="720" y="380" text-anchor="middle" font-size="10.5" font-weight="600" fill="oklch(0.97 0.008 264)">internalise</text>
+        <text x="720" y="394" text-anchor="middle" font-size="10.5" fill="oklch(0.8 0.03 276)">vs route?</text>
+        <g>
+          <rect x="470" y="330" width="170" height="44" rx="9" fill="var(--bid-soft)" stroke="var(--bid)" stroke-width="1.2"/>
+          <text x="555" y="350" text-anchor="middle" font-size="11.5" font-weight="600" fill="oklch(0.97 0.008 264)">⑨a Internal x-fill</text>
+          <text x="555" y="365" text-anchor="middle" font-size="10" fill="oklch(0.8 0.03 276)">match axe / book</text>
+        </g>
+        <g>
+          <rect x="470" y="406" width="170" height="44" rx="9" fill="var(--bid-soft)" stroke="var(--bid)" stroke-width="1.2"/>
+          <text x="555" y="426" text-anchor="middle" font-size="11.5" font-weight="600" fill="oklch(0.97 0.008 264)">⑨b Route to venue</text>
+          <text x="555" y="441" text-anchor="middle" font-size="10" fill="oklch(0.8 0.03 276)">best price · hedge</text>
+        </g>
+        <g>
+          <rect x="250" y="360" width="150" height="46" rx="9" fill="var(--bid-soft)" stroke="var(--bid)" stroke-width="1.2"/>
+          <text x="325" y="380" text-anchor="middle" font-size="12" font-weight="600" fill="oklch(0.97 0.008 264)">⑩ Fills</text>
+          <text x="325" y="396" text-anchor="middle" font-size="10" fill="oklch(0.8 0.03 276)">aggregated</text>
+        </g>
+        <g>
+          <rect x="40" y="350" width="180" height="66" rx="9" fill="var(--bid-soft)" stroke="var(--bid)" stroke-width="1.2"/>
+          <text x="130" y="378" text-anchor="middle" font-size="12.5" font-weight="600" fill="oklch(0.97 0.008 264)">⑪ Book &amp; audit</text>
+          <text x="130" y="396" text-anchor="middle" font-size="10" fill="oklch(0.8 0.03 276)">position · risk · P&amp;L</text>
+          <text x="130" y="410" text-anchor="middle" font-size="10" fill="oklch(0.8 0.03 276)">best-ex audit trail</text>
+        </g>
+      </svg>
+    </div>
+
+    <p class="stepnote">
+      <b>One engine, three doors.</b> Whether the request arrives as an <b>RFQ</b>, an <b>RFS</b> stream subscription, or an
+      <b>IOI</b>, it lands on the same edge → the central event processor prices it off one immutable curve snapshot →
+      best-execution scans external venues and the internal book → if it's inside policy the price is <b>auto-quoted</b>,
+      otherwise the <b>dealer</b> reviews skew/size and approves, counters or passes. The client's order is then captured,
+      <b>internalised</b> against our axe/book where it improves the level (or routed to a venue), filled, and booked —
+      with positions feeding risk straight back into the next re-mark.
+    </p>
+    <p class="foot">celnet · Fixed Income · process diagram (mockup) — USD rates &amp; cash desk · best-ex audited end-to-end.</p>
+  </div>
+</body>
+</html>
