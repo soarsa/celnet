@@ -29,8 +29,12 @@
 
 #![forbid(unsafe_code)]
 
+pub mod bootstrap;
 pub mod curve;
+pub mod ois;
 pub mod solver;
 
+pub use bootstrap::{BootstrapError, OisQuote, bootstrap_ois};
 pub use curve::{Curve, CurveError};
+pub use ois::{FixedPeriod, OisSchedule, ScheduleError, ois_annuity, ois_par_rate, ois_pv};
 pub use solver::{SolverError, brent_root};
