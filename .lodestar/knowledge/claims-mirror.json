@@ -50,9 +50,30 @@
   "state": "draft",
   "groundedness": 0.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-risk-cube.src.frtb_params.low_scenario_075_floor_rederived",
+   "github.com-soarsa-celnet.crates.celnet-risk-cube.src.frtb_params.standard_frtb_params_match_cited_text",
+   "github.com-soarsa-celnet.crates.celnet-risk-cube.src.frtb_params.vega_maturity_kernel_matches_cited_formula"
+  ],
+  "text": "StandardFrtbParams encodes all FRTB MAR21 FX risk-weight and correlation constants with hand-typed paragraph citations and bitwise-exact assertions guarding against floating-point drift. Key values: fx_delta_rw = 0.15 (MAR21.88); fx_delta_rw_liquid = 0.15/sqrt(2) (MAR21.88 relief); fx_vega_rw = min(0.55*sqrt(40/10),1) = 1.0 (MAR21.93/.94); vega_corr_alpha = 0.01 (MAR21.94, decay kernel exp(-0.01*|T_i-T_j|/min(T_i,T_j))); fx_curvature_rw = 0.15 (MAR21.98). The Low correlation scenario scales rho as max(2rho-1, 0.75*rho) per MAR21.6(2). Any future edit to these constants must re-verify against the cited paragraphs."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-engine.src.handoff.enc_cut"
   ],
   "text": "ADR-0007 (one clean unversioned contract — engine hot-upgrade handoff, ENCODE side; the inverse of dec_cut). `enc_cut(v: Cut) -> u8` is the pure, total encoder of the expiry-Cut discriminant into the single handoff byte image: NewYork1000->0, Tokyo1500->1, with no wildcard arm, so adding a Cut variant is a compile-time break rather than a silent mis-encode. It reads only its `Cut` argument and writes nothing (pure: no side effects, no allocation). Because there is exactly ONE current contract (guardrail 9: no schema_version, no N/N-1 negotiation), enc_cut/dec_cut are a fixed mutually-inverse codec pair consumed by serialize_state/restore_state — a hot-upgrade deploys a single uniform version with no mixed-version window, so the byte mapping needs no version tag. This is the decision/trade-off: a tagless 1-byte discriminant (cheapest, deterministic) is sound precisely because the unversioned-contract rule removes any back-compat obligation."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-risk-cube.src.scenario_grid.analytic_pv_grid",
+   "github.com-soarsa-celnet.crates.celnet-risk-cube.src.scenario_grid.gpu_pv_grid"
+  ],
+  "text": "gpu_pv_grid / analytic_pv_grid produce a NodeScenarioGrid over a spot×vol Cartesian grid (ScenarioAxes). analytic_pv_grid uses the deterministic closed-form pricer (same GBM inputs as the GPU kernel, f32 axis values widened to f64 via f64::from to match GPU grid points exactly); gpu_pv_grid uses GBM Monte Carlo (PathSpec::gbm) with common random numbers, accumulating per-position variance conservatively as an upper-bound standard error. A non-FX/non-metal position returns None from fx_vanilla_inputs and is silently skipped in both paths — their grid kernels are named separate GPU workloads per docs/GPU-AT-SCALE-PLAN.md. on_gpu=true iff the ScenarioPricer is backed by a GPU device."
  },
  {
   "kind": "invariant",
@@ -77,9 +98,68 @@
   "state": "draft",
   "groundedness": 0.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-fanout.src.ring.Consumer<T>.try_recv",
+   "github.com-soarsa-celnet.crates.celnet-fanout.src.ring.Consumer<T>.try_recv_batch"
+  ],
+  "text": "Consumer::try_recv_batch drains up to `out.len()` items from the ring into a caller-supplied `&mut [T]` slice in a single call, returning the number of items written. It delegates entirely to repeated `try_recv()` calls and stops on the first `RecvError::Empty`. The caller owns the output buffer; no allocation occurs inside the method. This is the preferred batch-drain API for throughput-sensitive consumers (e.g. the FX price-fanout path)."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-rfq.src.panel.MultiDealerEngine.new",
+   "github.com-soarsa-celnet.crates.celnet-rfq.src.panel.MultiDealerEngine.request",
+   "github.com-soarsa-celnet.crates.celnet-rfq.src.panel.QuoteSource.request"
+  ],
+  "text": "CAPABILITY SUMMARY — celnet-rfq is the concurrent multi-dealer RFQ engine. Its public contract is: (1) MultiDealerEngine::new(sources: Vec<Box<dyn QuoteSource>>) assembles an arbitrary panel of LP adapters behind a single async trait; (2) MultiDealerEngine::request(&self, request, deadline, now_nanos) -> Result<RankedPanel, PanelError> fans out in parallel to every source with a hard per-source timeout, drops non-responders and timeouts, applies last-look staleness filtering, ranks best-bid and best-offer independently with deterministic tie-break, and returns a RankedPanel carrying all rows + per-side winner ids. New LP adapters plug in by implementing QuoteSource::lp_id + QuoteSource::request; the engine itself is not modified."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-engine.src.journal.DurableBook.mark",
+   "github.com-soarsa-celnet.crates.celnet-engine.src.journal.last_mark_wins",
+   "github.com-soarsa-celnet.crates.celnet-engine.src.journal.recover",
+   "github.com-soarsa-celnet.crates.celnet-engine.src.journal.replay_into_state"
+  ],
+  "text": "recover(path) -> Result<(MarketState, BookState), RecoveryError> is the crash-recovery entry point: it opens the on-disk journal at `path`, replays all events via replay_into_state() (which dispatches each decoded payload to BookState::push for BookLine events or records the last MarkState), and returns the final (MarketState, BookState) pair. Recovery fails with RecoveryError::NoMarkedState if the journal contains no MarkState record (nothing to price against). DurableBook::mark(&mut self, market: MarketState) appends an encoded MarkState record to the journal; on replay the last mark seen wins (last_mark_wins test: two marks at spot=1.10 and 1.25, recover returns spot=1.25 bit-identical)."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-fanout.src.ring.BroadcastRing",
+   "github.com-soarsa-celnet.crates.celnet-fanout.src.ring.BroadcastRing<T>.consumer",
+   "github.com-soarsa-celnet.crates.celnet-fanout.src.ring.BroadcastRing<T>.into_producer",
+   "github.com-soarsa-celnet.crates.celnet-fanout.src.ring.BroadcastRing<T>.new",
+   "github.com-soarsa-celnet.crates.celnet-fanout.src.ring.BroadcastRing<T>.producer",
+   "github.com-soarsa-celnet.crates.celnet-fanout.src.ring.Consumer<T>.try_recv",
+   "github.com-soarsa-celnet.crates.celnet-fanout.src.ring.Producer<T>.subscribe_from_head",
+   "github.com-soarsa-celnet.crates.celnet-fanout.src.ring.Producer<T>.subscribe_from_start"
+  ],
+  "text": "celnet-fanout provides a lock-free, allocation-free, single-producer / multi-consumer (SPMC) broadcast ring for `T: Copy` values. The public contract is: `BroadcastRing::new(capacity)` allocates once (rounding capacity up to the next power-of-two, minimum 2); `BroadcastRing::producer()` / `into_producer()` vends the unique `Producer`; `Producer::subscribe_from_start()` / `subscribe_from_head()` vend arbitrarily many independent `Consumer` handles (cheaply cloneable via `Arc` ref-count). After construction, the hot path (`publish` + `try_recv`) is zero-alloc and lock-free for all consumers. A new downstream arm plugs in by calling `producer.subscribe_from_start()` (to replay buffered history) or `subscribe_from_head()` (to start from 'now'), then polling `consumer.try_recv()` in its own thread."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-bench.src.core_load.CoreBudget.architecture_1_2"
   ],
   "text": "PILLAR (CLAUDE.md guardrails 6 + 11 — scale & performance are requirements: the pricing hot core must stream prices to high-performance counterparties at the latency budgets in docs/ARCHITECTURE.md §1.2). `CoreBudget::architecture_1_2` is the single, authoritative encoding of the per-price hot-core tail-latency budget: a parameterless `const fn` returning `Self { p50_ns: 2_000, p99_ns: 10_000, p999_ns: 25_000 }` — i.e. the 2µs/10µs/25µs p50/p99/p99.9 envelope from ARCHITECTURE §1.2. Being a `const fn` over literals it is pure and side-effect-free by construction (no allocation, I/O, or mutation); it has no WRITES edges. The bench load harness (CoreReport::budget_breaches) measures the live core against exactly this struct, so the latency pillar is reconciled against a single source of truth rather than asserted. SELF-INVALIDATING: editing any budget constant (or the signature) shifts this anchor and flips the claim stale, re-opening review against the doc."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-engine.src.core.PricingCore.drain",
+   "github.com-soarsa-celnet.crates.celnet-engine.src.core.PricingCore.run"
+  ],
+  "text": "PricingCore::run() is the engine's main loop: it spins on drain() (budgeted batch pop from the rtrb request ring) until the AtomicBool `stop` is observed Relaxed-true, then performs a final quiesce loop calling drain() until empty (bounded by ring capacity), ensuring every request enqueued before stop was set is priced and pushed to the response ring before returning. The loop calls std::hint::spin_loop() on idle (zero-priced drain) to hint the CPU without parking — preserving the sub-microsecond re-observation of `stop`."
  },
  {
   "kind": "invariant",
@@ -93,6 +173,118 @@
    "github.com-soarsa-celnet.gui.src.components.Sparkline"
   ],
   "text": "Baseline Storybook stories exist co-located with the 5 most important exported components under gui/src/components: Button, PriceTile, Panel, Sparkline, and GreeksStrip. Each story file (*.stories.tsx) uses the Meta/StoryObj pattern from @storybook/react, references only Aurora design tokens (CSS custom properties from --bg-*, --text-*, --bid, --offer, --space-*, etc.) — never raw hex or inline color literals — and is additive (the component files themselves are unmodified). The StatusBadge.stories.tsx scaffold story pre-existed; these 5 are the new lane-components deliverable."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.ShardRiskSource.shard_additive",
+   "github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.ShardRiskSource.shard_constituents",
+   "github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.ShardRiskSource.shard_ids",
+   "github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.fan_in_additive_over",
+   "github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.gather_firm_node_over"
+  ],
+  "text": "The `ShardRiskSource` trait is the abstraction seam for in-process vs distributed shard access. It exposes three methods: `shard_ids` (sorted replica list — doc: 'fan-in summation order is reproducible'), `shard_additive` (cheap net-Greeks + vega-ladder path; doc: 'callers must NOT rely on `.positions`/`.leaves` being populated'), and `shard_constituents` (full position-retaining roll-up for non-additive re-gather; doc: 'heavier O(positions); call only when a non-additive measure is needed'). `fan_in_additive_over` uses `shard_additive`; `gather_firm_node_over` uses `shard_constituents`; both fold via `merge_additive` over `shard_ids()` order. A shard not found in the source returns `FleetError::ShardUnavailable`."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.CommodityInputs.on_future",
+   "github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.CommodityInputs.on_spot",
+   "github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.greeks_with_margining"
+  ],
+  "text": "CAPABILITY SUMMARY — celnet-commodity-vanilla is the commodity/futures-options analytics leaf on the carry seam. Its public contract is (CommodityInputs, OptionType, Margining) → (price f64 | CarryGreeks) with two distinct margining modes dispatched through greeks_with_margining: EquityStyle (discounted Black-76, used for physically-settled exchange options) and FuturesStyle (undiscounted Black-76, used for CME-style daily-margined contracts). The crate exposes two smart constructors — CommodityInputs::on_future (sets b=0, spot:=future price) and CommodityInputs::on_spot (sets b=r−convenience_yield) — that encode the standard cost-of-carry reparameterization. New arms plug in by calling greeks_with_margining or price_with_margining with the appropriate Margining tag; no switch is needed anywhere else in the pricing stack."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-exotics.src.multiasset.cholesky",
+   "github.com-soarsa-celnet.crates.celnet-exotics.src.multiasset.price_basket"
+  ],
+  "text": "price_basket prices a multi-asset basket option via scrambled Sobol QMC with Brownian bridge construction and Cholesky correlation. It runs cfg.replications independent scrambles (each a fresh SobolSequence::stream seed via derive_seed) of cfg.budget paths. Across-leg correlation is applied per step by Cholesky::apply to independent per-step normals before passing to bridge.build — this propagates ρ through the full path covariance. The inter-replication variance of rep_means is the std_error denominator, requiring ≥2 scrambles. Rejects non-PSD correlation matrices (cholesky returns CorrelationError). Scratch buffers (u, z_step, x_step, z_corr, path, w_terminal) are reused across paths — zero per-path allocation in the hot loop beyond the Sobol point."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-exotics.src.american.american_fd"
+  ],
+  "text": "american_fd solves the American/Bermudan option pricing LCP via a Crank-Nicolson/Rannacher PSOR finite-difference scheme on an exponentially-spaced log-spot grid. It applies Rannacher smoothing (full implicit θ=1) for the first grid.rannacher_steps time steps then switches to Crank-Nicolson (θ=0.5) for the remainder. For Bermudan-exercisable layers it solves the PSOR LCP (V ≥ intrinsic g) via step_psor; for between-date layers it runs the plain European implicit step. Far-field boundary conditions are applied before each step via FarField::apply, with the early-exercise floor only on exercisable layers. Returns the price interpolated at the current spot from the FD grid."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-risk-cube.src.cube.accumulate_fact",
+   "github.com-soarsa-celnet.crates.celnet-risk-cube.src.cube.group_by_orders_first_seen_and_routes_exotic_legs",
+   "github.com-soarsa-celnet.crates.celnet-risk-cube.src.dimension.fx_pair_group_value_is_the_documented_48bit_packing"
+  ],
+  "text": "Cube::group_by partitions facts by any DimensionId (Trader, Book, Desk, Underlying, etc.) in first-seen order, routing each RiskFact to either the vanilla positions slice or the exotic_legs slice based on fact.measure.exotic. accumulate_fact ensures every leaf (vanilla and exotic) contributes to net_greeks and vega_ladder regardless of routing, so additive Greeks roll up correctly across mixed vanilla/exotic nodes. The fx_pair_group_value encodes the Underlying dimension key as a 48-bit big-endian ASCII packing of the 6-character currency code (e.g. EURUSD → 0x455552555344), with metal pairs (XAUUSD) packing through the same projection — group keys are stable u64 values, always < 2^48."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-fanout.src.ring.BroadcastRing<T>.new",
+   "github.com-soarsa-celnet.crates.celnet-fanout.src.ring.Inner",
+   "github.com-soarsa-celnet.crates.celnet-fanout.src.ring.Inner<T>.new",
+   "github.com-soarsa-celnet.crates.celnet-fanout.src.ring.UNWRITTEN"
+  ],
+  "text": "BroadcastRing::new rounds the requested capacity up to the nearest power of two (minimum 2) via `capacity.next_power_of_two().max(2)`. Inner::new asserts `capacity.is_power_of_two()` and stores `mask = capacity - 1` for branchless slot index computation `idx = seq & mask`. All slots are pre-allocated in a `Box<[Slot<T>]>` with stamps initialized to `UNWRITTEN` (a sentinel that no valid even stamp can equal). The cache-padded `head: CachePadded<AtomicU64>` is initialized to 0 and is the single shared coordination point between producer and all consumers."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-fanout.src.mem.PayloadCell<T>.write",
+   "github.com-soarsa-celnet.crates.celnet-fanout.src.ring.Inner",
+   "github.com-soarsa-celnet.crates.celnet-fanout.src.ring.Producer<T>.publish"
+  ],
+  "text": "Producer::publish uses a true two-stamp seqlock writer protocol: (1) store `writing = (seq << 1) | 1` with Release to raise the in-progress flag, (2) write the payload into the slot's UnsafeCell via PayloadCell::write, (3) store `stable = seq << 1` with Release to close the write window, (4) advance the global `head` (AtomicU64, cache-padded) with Release as the last step. The two Release stamp stores straddle the payload write so any concurrent consumer copy that overlaps the write observes either the odd in-progress stamp or a before/after stamp mismatch, and retries. Single-producer ownership makes the UnsafeCell write safe with no locks."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-parity.tests.conventions.vanilla_price_matches_closed_form",
+   "github.com-soarsa-celnet.crates.celnet-parity.tests.determinism.price_and_greeks_are_bit_identical",
+   "github.com-soarsa-celnet.crates.celnet-parity.tests.greeks.full_greek_set_matches_finite_difference"
+  ],
+  "text": "CAPABILITY SUMMARY — celnet-parity is the competitive-parity verification harness: a pure integration-test crate (zero public pricing surface, `#![forbid(unsafe_code)]`) whose 19 numbered rows prove the claims in docs/CAPABILITIES-VS-COMPETITION.md are continuously *true*, not merely asserted. Every row exercises the production crates (`celnet-vanilla`, `celnet-exotics`, `celnet-surface`, etc.) through their public APIs exactly as a downstream consumer would. A regression in any row makes `cargo nextest run -p celnet-parity` fail, so the competitive matrix cannot silently rot — new product arms plug in by adding a new row to the map in lib.rs and a corresponding test file under tests/. The crate carries no runtime code; its only output is a pass/fail gate over the production crates."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-heston.src.lib.HestonParams",
+   "github.com-soarsa-celnet.crates.celnet-heston.src.lib.MarketInputs",
+   "github.com-soarsa-celnet.crates.celnet-heston.src.lib.carr_madan",
+   "github.com-soarsa-celnet.crates.celnet-heston.src.lib.cos"
+  ],
+  "text": "CAPABILITY SUMMARY. celnet-heston is the self-contained Heston stochastic-volatility pricer: it exposes two independent, cross-validated closed-form pricing routes — `cos` (Fang–Oosterlee 2008 cosine-series) and `carr_madan` (Carr–Madan damped-integrand FFT-style) — both accepting `(OptionType, &MarketInputs, &HestonParams) -> f64`. The crate owns its own minimal `Complex` arithmetic (no external num-complex dep), a 16-point Gauss–Legendre panel integrator, and the overflow-stable `char_exponent` CF kernel. A new caller plugs in by constructing `MarketInputs::new(spot, strike, t, r_dom, r_for)` and `HestonParams::new(kappa, theta, vol_of_vol, rho, v0)` then calling either pricer; puts and calls are both returned via exact put–call parity so neither route has a separate put path. The two pricers cross-validate each other in the `carr_madan_and_cos_agree` and `put_call_parity_internal` tests shipped in the crate."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-rfq.src.lp_fix.FixLpAdapter.run_cycle",
+   "github.com-soarsa-celnet.crates.celnet-rfq.src.lp_fix.ccy_bytes",
+   "github.com-soarsa-celnet.crates.celnet-rfq.src.lp_fix.fix_symbol",
+   "github.com-soarsa-celnet.crates.celnet-rfq.src.lp_fix.push_strike"
+  ],
+  "text": "FixLpAdapter::run_cycle encodes a Celnet RfqRequest into a FIX QuoteRequest (MsgType D) over a real TCP loopback session and lifts the response back to TwoWay. The FIX instrument block encoding is: tag 55 (Symbol) = 6-byte CCYPAIR (e.g. b\"EURUSD\"), tag 460 = b\"4\" (Product=CURRENCY), tag 167 = b\"FXVO\" (deliverable FX vanilla option), tag 201 = b\"1\" Call / b\"0\" Put, tag 947 (StrikeCurrency) = 3-byte quote currency bytes, tag 1194 = b\"0\" (European exercise). The strike tag uses push_strike which encodes strike as scaled integer + fractional decimal string. Returns Ok(None) when the LP returns a partial (bid-only or offer-only) or declines."
  },
  {
   "kind": "invariant",
@@ -126,6 +318,54 @@
   "state": "draft",
   "groundedness": 0.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.FleetTopology.parse",
+   "github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.ShardRiskSource.shard_ids",
+   "github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.fan_out_aggregate",
+   "github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.fan_out_aggregate_over",
+   "github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.partition_facts"
+  ],
+  "text": "CAPABILITY SUMMARY — celnet-risk-fleet is the distributed risk-aggregation crate. Its public contract: (1) `partition_facts` / `partition_facts_with` route a flat `[RiskFact]` slice into a `FleetReducer` by HRW-based partition key `(pair, tenant)`, failing closed on an empty replica set; (2) `FleetReducer` exposes `fan_in_additive` (additive Greek/vega-ladder fan-in), `gather_firm_node` (constituent re-gather for non-additive measures), `firm_var_es`, `firm_var_es_sensitivity`, and `firm_curvature_spot`; (3) the `ShardRiskSource` object-safe trait + `fan_out_aggregate_over` / `fan_in_additive_over` / `gather_firm_node_over` extend the same fan-out/fan-in pattern to distributed backends (returning `FleetError::ShardUnavailable` on an unreachable shard); (4) `fan_out_aggregate` / `fan_out_aggregate_over` are the one-shot entry points that produce a `FleetAggregate` (firm node + VaR/ES + curvature-spot + shard_count). `FleetTopology::parse` selects `InProcess` vs `Distributed` at startup from a `(mode, backends)` string pair."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-risk-cube.src.cube.accumulate_fact",
+   "github.com-soarsa-celnet.crates.celnet-risk-cube.src.frtb.assemble_capital",
+   "github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.historical_var_es",
+   "github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.sensitivity_var_es"
+  ],
+  "text": "CAPABILITY SUMMARY — celnet-risk-cube is the risk-aggregation and regulatory-capital crate. Its public seam is the `Cube` (upsert/group_by), three non-additive VaR/ES lenses (historical full-reprice, sensitivity Taylor, curvature), and the FRTB Sensitivity-Based Method assembler (`assemble_capital`). A new asset arm plugs in by: (1) implementing `CarryPricer` for repricing, (2) calling `Cube::upsert` with `RiskFact` objects, and (3) supplying `SbmParams`/`CurvatureBucket` slices to `assemble_capital`. The additive greeks layer (delta, vega ladder) and the non-additive layer (VaR, ES, curvature CVR) are kept strictly separate — additive fields roll up linearly across all assets; VaR/ES are computed per-node by quantile reduction over a shared `quantile_var_es` kernel used identically by both the historical full-reprice path and the sensitivity Taylor path."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-linear.src.forward.pv",
+   "github.com-soarsa-celnet.crates.celnet-linear.src.inputs.LinearInputs.outright",
+   "github.com-soarsa-celnet.crates.celnet-linear.src.swap.pv"
+  ],
+  "text": "CAPABILITY SUMMARY — celnet-linear is the linear-products leaf of the celnet pricing platform: it prices FX outright forwards, FX swaps (two-legged near+far), and non-deliverable forwards (NDFs) against the shared carry seam. Its public contract is three modules — forward (outright PV + greeks), swap (two-leg PV + swap points), ndf (cash-settled NDF via Ndf struct + FixingSource) — all built over the single validated input type LinearInputs::outright / LinearInputs::with_far. A new instrument arm plugs in by constructing a LinearInputs (validated via LinearInputs::validate: positive notional, non-negative settle times) with the appropriate Underlying + Carry tags, then calling pv / greeks (forward), swap::pv / swap_points (swap), or Ndf::new + Ndf::pv (NDF). The crate has no I/O, no allocation in its hot path, and no state beyond the immutable inputs struct."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-engine.src.core.PricingCore.price",
+   "github.com-soarsa-celnet.crates.celnet-engine.src.core.PricingCore.run",
+   "github.com-soarsa-celnet.crates.celnet-engine.src.journal.recover",
+   "github.com-soarsa-celnet.crates.celnet-engine.src.rt.StateHandle.publish"
+  ],
+  "text": "CAPABILITY SUMMARY — celnet-engine is the hot-path FX-options pricing engine: it exposes PricingCore as the single entry point for pricing vanilla options against a live smile surface, publishes top-of-book results atomically via a seqlock (PriceSnapshot), persists position state through DurableBook/journal (crash-recoverable and bit-identical on replay), and supports lock-free hot market-state reloads via StateHandle (arc-swap). A new pricing arm plugs in by: (1) constructing a PricingCore with an initial MarketState; (2) calling run() with an rtrb SPSC request/response ring; (3) publishing updated MarketState ticks into StateHandle::publish() from a separate thread with no locking; (4) opening a DurableBook for journal-backed crash recovery via recover()."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-plugin-host.src.wasm.map_instantiation_error"
   ],
   "text": "ADR (plugin-host sandbox = wasmi, fuel-metered; chosen over wasmtime) — the error-taxonomy side. `map_instantiation_error(e: &wasmi::Error) -> HostError` is the pure, total classifier (reads only the borrowed wasmi error, mutates nothing; its only allocations are the returned short() strings) that lowers a wasmi LOAD/instantiate fault into the host's stable error enum: TrapCode::OutOfFuel -> FuelExhausted, TrapCode::GrowthOperationLimited -> ResourceLimit, \"resource limiter denied\" -> ResourceLimit, an unknown/missing import -> CapabilityDenied (deny-by-default capability surface), everything else -> InvalidModule. This mapping is the concrete embodiment of the wasmi decision: it depends on wasmi's specific as_trap_code()/TrapCode vocabulary, so the host error contract is defined in terms of the chosen interpreter's fault model — the trade-off being that swapping engines would re-write this seam, accepted because wasmi's pure-Rust trap codes give deterministic, panic-free, hang-free fault classification (no JIT codegen failure modes to model)."
@@ -153,6 +393,17 @@
   "state": "draft",
   "groundedness": 0.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-risk-normalize.src.leaf.canonicalize",
+   "github.com-soarsa-celnet.crates.celnet-risk-normalize.src.numeraire.Numeraire.from_leaves",
+   "github.com-soarsa-celnet.crates.celnet-risk-normalize.src.pricer.dispatch"
+  ],
+  "text": "CAPABILITY (crate summary): celnet-risk-normalize is the cross-asset risk normalisation layer between the raw carry-seam pricers and portfolio-level risk consumers. Its public seam is three-stage: (1) `canonicalize(pos)` / `canonicalize_with(pricer, engine, pos)` — projects any asset-class `PositionRisk` through the `CarryPricer` trait to a `CanonicalLeaf` (notional-scaled Greeks, spot-unadjusted premium-excluded delta, premium currency, price); (2) the `dispatch` / `AssetPricer` subsystem — fan-out over the `LEAVES` static array of `CarryPricer` impls (FxLeaf, EquityLeaf, CommodityLeaf, CryptoLeaf) with error-priority escalation; (3) `Numeraire::from_leaves` — converts a slice of `CanonicalLeaf`s into a single-numeraire risk summary (delta_vector, delta_numeraire, premium_numeraire, vega_numeraire) via a caller-supplied `SpotResolver`. New asset-class arms plug in by implementing `CarryPricer` and adding a leaf to `LEAVES`; the `PositionRisk.carry` / `PositionRisk.fx` constructors are the two entry points into the position type."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-bench.src.surface_rebuild.SurfaceReport.budget_breaches"
   ],
   "text": "PILLAR (CLAUDE.md guardrails 6 + 11 — many-instrument surface rebuild must stay inside the docs/ARCHITECTURE.md §1.2 p99 budget). `SurfaceReport::budget_breaches` is the pure, deterministic detector over a multi-model surface-rebuild report: it reads only `&self`, iterates the measured per-model `latency.p99_ns`, filters those exceeding `budget.p99_ns`, and returns a freshly-allocated `Vec<BudgetBreach>` (each carrying the static model name, the \"p99\" metric, the measured ns and the ceiling). No `&mut`, no I/O, no shared/global mutation — allocating the returned Vec is not an externally-observable side effect; it has no WRITES edges. Determinism guarantees a per-model p99 regression past the §1.2 surface budget is flagged reproducibly. SELF-INVALIDATING: a write or comparison change shifts this anchor and flips the claim stale."
@@ -171,6 +422,17 @@
   "state": "draft",
   "groundedness": 0.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-engine.src.core.hot_reload_observed_without_locking",
+   "github.com-soarsa-celnet.crates.celnet-engine.src.rt.StateHandle.load",
+   "github.com-soarsa-celnet.crates.celnet-engine.src.rt.StateHandle.publish"
+  ],
+  "text": "StateHandle::publish(&self, state: MarketState) replaces the engine's live market state lock-free via arc-swap (self.inner.store(Arc::new(state))). StateHandle::load(&self) -> Arc<MarketState> reads it (self.inner.load_full()). PricingCore::price() calls self.reader.load() on every request, so a market-state update published from any thread is immediately visible to the pricing hot path on the next request with no locking and no stale read. The test hot_reload_observed_without_locking confirms: after publish(st2) with a higher spot, the next core.price() returns a higher call price."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-types.src.lib.Carry.discount_rate"
   ],
   "text": "Carry::discount_rate() is a pure const accessor returning the numeraire/discount rate r used in e^{-r*t}: the stored r_dom verbatim for Carry::FxRates and the stored r verbatim for Carry::CostOfCarry. No side effects, no allocation, no Carry construction — a plain field read by match. This is the single asset-class-agnostic source of the discount rate on the carry seam; every leaf (vanilla/exotics/surface/risk and the crypto/equity/commodity leaves) reads r through here rather than matching on Carry or Underlying (ADR-0008 carry-seam architecture, docs/adr/ADR-0008-multi-asset-carry-architecture.md). For FX, discount_rate() == r_dom exactly, which underpins the FX df_dom byte-identity."
@@ -180,9 +442,66 @@
   "state": "draft",
   "groundedness": 0.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-engine.src.rt.Seqlock<T>.read",
+   "github.com-soarsa-celnet.crates.celnet-engine.src.rt.Seqlock<T>.store"
+  ],
+  "text": "Seqlock<T>::store(&self, value: T) is the single-writer, multi-reader publish primitive for PriceSnapshot top-of-book. Write protocol: (1) load current even seq; (2) store seq+1 with Release (marks write in-progress, odd); (3) write payload word-by-word (relaxed per-word atomics); (4) store seq+2 with Release (even, marks complete). Seqlock<T>::read(&self) -> T retries until it observes an even `before` sequence and confirms `before == after` (both Acquire loads), rejecting any torn read. In debug_assertions mode a writer_active flag traps concurrent store() calls. This is the zero-lock mechanism that lets the reader thread observe PriceSnapshot without any mutex."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-exotics.src.barrier.single_barrier_price",
+   "github.com-soarsa-celnet.crates.celnet-exotics.src.inputs.ExoticInputs.new",
+   "github.com-soarsa-celnet.crates.celnet-exotics.src.lsv.LsvModel.calibrate",
+   "github.com-soarsa-celnet.crates.celnet-exotics.src.tarf.tarf_price"
+  ],
+  "text": "CAPABILITY SUMMARY (celnet-exotics): The crate is the full exotic-products pricing engine for the Celnet platform, providing closed-form, PDE (ADI/PSOR FD), and Monte Carlo (QMC Sobol + antithetic) pricers for: single/double barriers (Reiner-Rubinstein closed form + rebate decomposition), digital/touch options, TARFs and accumulators (antithetic-pair Euler MC), lookback options (Conze-Viswanathan fixed + floating closed form), Asian options (Turnbull-Wakeman analytic + MC), forward-starts and cliquets, American/Bermudan options (PSOR FD + Longstaff-Schwartz MC), perpetual options, multi-asset baskets (scrambled Sobol QMC with Cholesky correlation), and the LSV (Local-Stochastic Volatility) model via particle calibration + ADI PDE. The public contract seam is ExoticInputs, which carries the generalized Carry struct (ADR-0008) so all pricers are asset-class-agnostic. The market-hedge overlay (Vanna-Volga) adds smile cost on top of any flat-vol pricer. A new product arm plugs in by accepting &ExoticInputs and calling i.carry_rate()/discount_df()/carry_df() for drift/discount — never matching on Carry directly."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-fanout.src.mem.PayloadCell<T>.read",
+   "github.com-soarsa-celnet.crates.celnet-fanout.src.ring.Consumer<T>.received",
+   "github.com-soarsa-celnet.crates.celnet-fanout.src.ring.Consumer<T>.skipped",
+   "github.com-soarsa-celnet.crates.celnet-fanout.src.ring.Consumer<T>.try_recv"
+  ],
+  "text": "Consumer::try_recv implements the seqlock reader protocol with exact conflation (skip) accounting. On each call it: (1) loads `head` with Acquire; if `cursor >= head` returns `Empty`. (2) Computes `oldest_live = head - capacity`; if `cursor < oldest_live` fast-forwards cursor and accumulates `self.skipped += gap`. (3) Enters a spin loop: loads `stamp_before` (Acquire), checks it equals `want = seq << 1`; if not, re-derives the frontier and either laps forward, returns Empty, or spin-retries a transient mid-write. On a matching stamp, copies the payload via `slot.value.read()`, issues an `Acquire` fence (to prevent the aarch64 payload-load/stamp-recheck reorder), then re-checks `stamp_after`; a mismatch discards the copy and retries. On a clean double-stamp match, increments `cursor` and `self.received` and returns `Ok(value)`. The `skipped` counter records exactly the number of items conflated since construction."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-types.src.lib.Carry.discount_df"
   ],
   "text": "Carry::discount_df(t) is a pure function computing the numeraire discount factor e^{-r*t} via libm::exp(-self.discount_rate() * t). It has no side effects and no state mutation — its output depends only on (self, t). Because discount_rate() reads r_dom verbatim for Carry::FxRates, the FX discount factor produced here is byte-identical to VanillaInputs::df_dom (the FX two-rate form), preserving FX bit-identity across the carry seam (ADR-0008). CarryInputs::discount_df and ExoticInputs::discount_df both delegate to this method."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.FleetReducer.firm_curvature_spot",
+   "github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.FleetReducer.firm_var_es",
+   "github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.FleetReducer.firm_var_es_sensitivity",
+   "github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.summing_shard_vars_overstates_firm_var"
+  ],
+  "text": "VaR/ES and curvature-spot are NON-ADDITIVE measures that require a re-gathered firm node, not a per-shard sum. `FleetReducer::firm_var_es` calls `gather_firm_node` (which fan-ins constituent positions from all shards) then passes the resulting firm node to `Cube::node_var_es`. The `summing_shard_vars_overstates_firm_var` test explicitly asserts `firm_var < naive_shard_sum` — the diversification / sub-additivity invariant — proving that callers must NEVER compute VaR by summing per-shard VaRs. The same pattern applies to `firm_curvature_spot` (via `Cube::node_curvature_spot`) and `firm_var_es_sensitivity` (via `Cube::node_var_es_sensitivity`)."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-fanout.src.ring.Consumer<T>.clone",
+   "github.com-soarsa-celnet.crates.celnet-fanout.src.ring.Producer<T>.subscribe_from_head",
+   "github.com-soarsa-celnet.crates.celnet-fanout.src.ring.Producer<T>.subscribe_from_start"
+  ],
+  "text": "Producer::subscribe_from_start creates a Consumer with `cursor = 0`, enabling replay of all still-buffered history up to the ring's capacity. Producer::subscribe_from_head creates a Consumer with `cursor = head` (loaded with Acquire), skipping all already-published items and starting from the next publish. Both constructors share the same `Arc<Inner<T>>` reference without any allocation of new ring storage. Consumer::clone is also provided (`in_degree=293`), cloning the Arc reference and copying the current cursor and counters — enabling fan-out to N independent downstream consumers from a single subscription point."
  },
  {
   "kind": "invariant",
@@ -207,6 +526,27 @@
   "state": "draft",
   "groundedness": 0.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-exotics.src.american.american_lsm"
+  ],
+  "text": "american_lsm implements the Longstaff-Schwartz regression-based Monte Carlo for American/Bermudan options using scrambled Sobol QMC (via SobolSequence + BrownianBridge) with degree-3 polynomial regression in normalised moneyness x=S/K (not raw S, to keep the design matrix well-conditioned — raw spot³ ≈ 10⁶ would bias the least-squares solve). Backward induction exercises path p at date k when intrinsic(s) >= estimated continuation value from ridge_regress. Carry accessors are read once before the path loops. Returns LsmEstimate{price, std_error} as the mean of per-path discounted cashflows."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-qmc.src.bridge.BrownianBridge.new",
+   "github.com-soarsa-celnet.crates.celnet-qmc.src.lib.rqmc_estimate",
+   "github.com-soarsa-celnet.crates.celnet-qmc.src.sobol.SobolSequence.new",
+   "github.com-soarsa-celnet.crates.celnet-qmc.src.sobol.SobolSequence.stream"
+  ],
+  "text": "CAPABILITY SUMMARY — celnet-qmc is the randomized quasi-Monte Carlo substrate for all path-dependent option pricing in celnet. Its public contract is: (1) `SobolSequence::new(dim)` builds a `dim`-dimensional scrambled Sobol sequence from the embedded Joe-Kuo direction-number table (up to MAX_DIM); (2) `BrownianBridge::new(m, t_total)` computes a bisection-order bridge plan for `m` uniform time steps; (3) `rqmc_estimate(bridge, budget, replications, base_seed, payoff)` drives the full RQMC loop — per-replication scramble seeds derived via splitmix, Sobol stream → inverse-normal → bridge build → payoff accumulation — and returns an `RqmcResult` with estimate + inter-replication standard error. A new pricing arm plugs in by passing a `FnMut(&[f64]) -> f64` payoff closure to `rqmc_estimate`; no other crate state is required."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-core.src.carry.fx_vanilla_inputs"
   ],
   "text": "fx_vanilla_inputs(inputs) is a pure (side-effect-free) lowering from the generalized CarryInputs to the FX leaf's VanillaInputs. It accepts only FX-family underlyings (Underlying::Fx | Underlying::Metal — a metal's lease rate is modelled as the FX foreign rate) carried by Carry::FxRates, and typed-rejects every other underlying (Equity/Commodity/DigitalAsset) or a Carry::CostOfCarry carry with CarryPriceError rather than silently mis-pricing under FX arithmetic. The rate mapping is a verbatim field copy of (r_dom, r_for) — no recomputation — so the resulting forward/df_dom/df_for are byte-identical to CarryInputs::forward/discount_df (proved by fx_carry_inputs_byte_identical; ADR-0008 metals byte-identity)."
@@ -221,6 +561,28 @@
   "text": "ExoticInputs::carry_df() is a pure accessor computing the yield/foreign discount factor e^{-q*t} as exp(-self.carry.yield_rate() * self.t) — no side effects. Crucially it reads the yield rate q through Carry::yield_rate(), which for Carry::FxRates returns the STORED r_for verbatim; it must NEVER reconstruct q as discount_rate() - carry_rate() (r_dom - (r_dom - r_for) does not round-trip bit-for-bit). This keeps the foreign-leg discount e^{-r_for*t} byte-identical to the FX two-rate form on the exotics carry seam (ADR-0008 FX bit-identity)."
  },
  {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-engine.src.core.PricingCore.price",
+   "github.com-soarsa-celnet.crates.celnet-engine.src.core.price_matches_direct_vanilla_at_smile_vol"
+  ],
+  "text": "PricingCore::price(&mut self, req: PriceRequest) -> PriceResponse computes a single vanilla option price in four deterministic steps: (1) load the current MarketState via arc-swap (lock-free reader); (2) call smile.implied_vol(req.strike, forward, st.t) to look up the smile-surface Black vol for the request strike; (3) form VanillaInputs{spot, strike, vol, t, r_dom, r_for} and call celnet_vanilla::greeks(option_type, &inputs); (4) write the resulting PriceSnapshot into the top-of-book seqlock and increment the priced counter. The test price_matches_direct_vanilla_at_smile_vol confirms that resp.greeks.price == celnet_vanilla::greeks(…, &VanillaInputs{…, smile_vol, …}).price to 1e-12 relative / 1e-14 absolute tolerance."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-xva.src.cva.compute_xva",
+   "github.com-soarsa-celnet.crates.celnet-xva.src.exposure.ExposureProfile.simulate",
+   "github.com-soarsa-celnet.crates.celnet-xva.src.netting.NettingSet.net_value",
+   "github.com-soarsa-celnet.crates.celnet-xva.src.survival.SurvivalCurve.survival"
+  ],
+  "text": "CAPABILITY SUMMARY (celnet-xva): the crate computes the three standard counterparty-risk valuation adjustments — CVA (credit), DVA (debit/own-credit), and FVA (funding) — for a synthetic netting set of vanilla FX options. The pipeline is: (1) ExposureProfile::simulate drives spot under risk-neutral GBM with Sobol low-discrepancy normals, reprices each NettedTrade via celnet_vanilla::price, nets within the set, and reduces across paths to EPE(t_k)/ENE(t_k) profiles; (2) SurvivalCurve (flat or piecewise-constant hazard) supplies survival probabilities S(t) = exp(−Λ(t)); (3) compute_xva aggregates over the time grid to produce XvaResult {cva, dva, fva}. The public seam is (XvaInputs → compute_xva → XvaResult), where XvaInputs borrows an ExposureProfile plus counterparty/own SurvivalCurves and LGDs. The crate is #![forbid(unsafe_code)] and explicitly out of scope are collateral/CSA, wrong-way risk, and live credit-curve wiring — those are deploy-gated extensions."
+ },
+ {
   "kind": "invariant:pure",
   "state": "active",
   "groundedness": 1.0,
@@ -228,6 +590,15 @@
    "github.com-soarsa-celnet.crates.celnet-proto.src.helpers.Underlying.as_digital_asset"
   ],
   "text": "`Underlying::as_digital_asset` is the exhaustive, total projection of the underlying oneof onto its digital-asset arm: it returns `Some(&CryptoPair)` only for the `DigitalAsset` variant and `None` for every other asset class (Fx, Metal, Equity, Commodity) and for an absent ref. The match arms enumerate all variants explicitly (no wildcard), so adding a new asset class to the one contract is a compile error here rather than a silent mis-projection. Pure: it borrows `&self` and returns a borrow, mutating nothing."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.inverse.aux"
+  ],
+  "text": "`inverse::aux(i)` precomputes the five shared scalars for the coin-margined closed form: `sqt=√t`, `vsqt=σ√t`, `f=S·e^{b·t}` (forward), `df=e^{-r·t}` (discount factor), `s2t=σ²·t`, and the three log-moneyness distances `d1=(ln(F/K)+½σ²t)/(σ√t)`, `d2=d1-σ√t`, `d3=d1-2σ√t`, plus `es2t=e^{σ²t}`. The inverse formula uses d2 and d3 (not d1) as the CDF arguments — d3 = d1 - 2σ√t is specific to the coin-margined payoff, absent from both the FX/linear and the standard Black-Scholes aux. Pure: reads `&InverseInputs`, returns `Aux`, no WRITES."
  },
  {
   "kind": "invariant:pure",
@@ -250,6 +621,15 @@
  {
   "kind": "invariant:pure",
   "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-linear.src.forward.fair_forward"
+  ],
+  "text": "fair_forward(inputs) returns the at-market forward rate F = spot * e^{b * near_settle_t} (carry.forward_factor delegates to libm::exp). It is the zero-PV strike: a forward struck at this rate has PV = 0, verified bit-for-bit by fair_forward_has_zero_pv_to_bits (assert_eq!(pv(...at_fair...).to_bits(), 0_f64.to_bits())). The function reads only &LinearInputs and writes nothing — pure and side-effect-free."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-golden.src.oracle.fx_swap_points"
@@ -279,13 +659,22 @@
   "state": "active",
   "groundedness": 1.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.FleetReducer.fan_in_additive"
+  ],
+  "text": "`FleetReducer::fan_in_additive` computes the additive firm-node roll-up — net Greeks + vega ladder — by initialising from the first shard's `local_aggregate` then calling `merge_additive` on each subsequent shard in ascending-replica order. An empty shard list returns `Cube::new().firm_aggregate(pillars)` rather than failing. The method is pure with respect to external state (no I/O, no shared mutation); its output depends only on `&self` and `pillars`. This is the cheap path: additive Greek/vega aggregation with O(shards) work and no constituent-position allocation."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-limits.src.limit.LimitSpec.classify"
   ],
   "text": "SAFETY — pre-trade limit breach is hard-classified at the cap, not approximated: LimitSpec::classify maps a projected exposure to a RagStatus by exact threshold order — ratio > 1.0 (exposure strictly over cap) is RagStatus::Breach; ratio >= red is Red; ratio >= amber is Amber; else Green. Breach is the ONLY band above the cap, so a hard limit can never be silently under-classified as a mere Red warning. classify is the single pure breach-decision atom (it reads &self spec + the f64 exposure and returns a Utilization, mutating nothing); pre_trade_check builds on it and turns any is_hard_breach into PreTradeDecision::Reject. The strict-greater-than at the cap means an exposure exactly AT the cap (ratio == 1.0) is Red, not Breach — utilisation up to and including the cap is permitted, beyond it is rejected."
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-conventions.src.registry.accrual_basis"
@@ -303,7 +692,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-vanilla.src.atm.atm_strike"
@@ -312,7 +701,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-golden.src.oracle.fx_forward_pv"
@@ -333,6 +722,15 @@
   "state": "active",
   "groundedness": 1.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-vanilla.src.adjoint.adjoint_greeks"
+  ],
+  "text": "`adjoint_greeks` computes the full 14-field Greeks via AAD (Algorithmic Adjoint Differentiation). The forward pass records a `Tape` struct (all intermediate scalars needed for reverse differentiation); the first reverse pass (`reverse(&tp, 1.0)`) produces the first-order adjoints — delta_spot=∂V/∂S, vega=∂V/∂σ, theta=−∂V/∂T, rho_dom=∂V/∂r_dom, rho_for=∂V/∂r_for — in a single backward sweep (O(1), same cost as a forward eval). Second-order gamma and vanna are obtained by hand-composing a second reverse pass over the delta_spot expression (genuine reverse-over-reverse, not finite-difference), using the chain-rule edges stored on the tape: gamma=df_for·φ(d1)·(1/(S·vsqt)), vanna=df_for·φ(d1)·((σT)/vsqt−d1/σ). volga=vega·(−d1)·∂d1/∂σ. The mixed/higher-order tail (charm, speed, zomma, color) is taken from the analytic `greeks` path. The AAD price is bit-identical to `price` (pinned by `aad_price_bit_identical`). Pure: reads (OptionType, &VanillaInputs), returns Greeks, no writes."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "stale",
+  "groundedness": 1.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-vanilla.src.premium.premium_from_domestic_pips"
   ],
   "text": "PremiumStyle is the FX quotation-units axis and premium_from_domestic_pips is its canonical converter (docs/CONVENTIONS.md PremiumStyle → premium units; docs/ANALYTICS-SPEC premium quotation). Given a price already in domestic pips (v_dpips), it exhaustively maps the four PremiumStyle variants to their quoted unit: DomesticPips passes the raw PV through unchanged; PercentForeign divides by spot (per unit of foreign/base notional); PercentDomestic divides by strike (per unit of domestic/quote notional at strike); ForeignPips divides by spot·strike. The match is exhaustive over PremiumStyle, so no style is defaulted, and the DomesticPips arm is the identity (domestic_pips_is_the_raw_pv). Pure: a total function of (style, v_dpips, spot, strike) returning f64 with no writes/allocation/IO; deterministic under the f64 CPU-canonical/libm rule. Self-invalidates if the PremiumStyle variant set or any per-style scale factor changes (WRITES gate)."
@@ -340,6 +738,33 @@
  {
   "kind": "invariant:pure",
   "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-equity-vanilla.src.lib.hull_index_option_reference"
+  ],
+  "text": "hull_index_option_reference() is the externally-pinned numerical oracle for the generalized-BSM equity pricer: for S=930, K=900, r=0.08, q=0.03, σ=0.20, T=1/6 yr, repo=0 it asserts call=51.832956796490860 and put=14.550996773772400 (both to 1e-9 relative and absolute). This is an independently-computed full-precision result — not round-tripped from the crate under test — providing a ground-truth anchor that is source-stable (the specific reference values appear in the test source verbatim). Validated by assert_close! to 9 decimal places."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-qmc.src.sobol.owen_scramble_u32"
+  ],
+  "text": "`owen_scramble_u32(x: u32, dim: u64, seed: u64) -> u32` applies a bit-by-bit Owen scramble to Sobol integer `x` for dimension `dim` under scramble key `seed`. It processes all 32 bits MSB-first: for each depth `d`, flip = LSB of mix64(base ^ (d<<40) ^ (prefix<<1)), out_bit = in_bit XOR flip, prefix accumulates emitted bits. The function is pure (reads only its three scalar arguments, no shared mutation) and deterministically preserves the dyadic-prefix structure required for the scrambled sequence to remain (t,s)-equidistributed: the scrambled prefix of k bits depends only on the original k-bit prefix, never on deeper bits."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-equity-vanilla.src.lib.EquityInputs.discount_df"
+  ],
+  "text": "EquityInputs::discount_df() is the pure numeraire discount factor e^{−r·t}: it delegates to celnet_core::math::exp (libm, correctly-rounded) with no mutation or I/O. Called by 39 downstream consumers and by price() as k_disc = strike·discount_df(). Because r is the independent discount axis (separate from carry b), this method's pure-function semantics are load-bearing for the clean partial derivatives in greeks(): the discount_rho formula holds analytically only when r enters the price solely through e^{-r·t} and e^{(b-r)·t}, which requires b to be independently varied — enforced by with_r_fixed_b."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-conventions.src.registry.region_of"
@@ -360,13 +785,23 @@
   "state": "active",
   "groundedness": 1.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-equity-vanilla.src.lib.with_b_via_q",
+   "github.com-soarsa-celnet.crates.celnet-equity-vanilla.src.lib.with_r_fixed_b"
+  ],
+  "text": "with_r_fixed_b(i, r) is the pure finite-difference perturbation helper for discount_rho (∂V/∂r at fixed b): to hold b = r−q−repo constant while shifting r, it adjusts q by the same delta (q' = q + (r_new − r_old)) so that carry() is unchanged. with_b_via_q(i, q) is the complementary helper for carry_rho (∂V/∂b at fixed r): it directly replaces q in the struct, since ∂b/∂q = −1 so ∂V/∂b = −∂V/∂q. Both are pure (no side effects, no I/O, return a new EquityInputs by struct-update). These helpers are used by the FD oracle in the test suite to verify the closed-form discount_rho and carry_rho against central differences."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-replog.src.persist.decode"
   ],
   "text": "Raft persistent-state corruption safety (deliverable: replog-quorum-durability). persist::decode is a pure, deterministic deserializer: given a byte slice it validates exact RECORD_LEN, recomputes crc32 over the body and rejects any mismatch by returning None, then reconstructs (current_term, voted_for, commit_index) with no I/O and no mutation of any shared state. Purity + CRC validation is the safety invariant — a torn or bit-flipped persisted vote/term/commit record can never be silently accepted, so quorum-commit durability and single-vote-per-term election safety survive a crash mid-fsync. Pure (no WRITES edges); self-invalidates on change."
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-vanilla.src.lib.price"
@@ -396,13 +831,23 @@
   "state": "active",
   "groundedness": 1.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-heston.src.lib.carr_madan_upper",
+   "github.com-soarsa-celnet.crates.celnet-heston.src.lib.effective_log_variance"
+  ],
+  "text": "carr_madan_upper(m, p) determines the Carr–Madan integration upper bound by taking the larger of two regime-specific decay envelopes — a Gaussian estimate sqrt(2·ln(10¹⁶)/E[variance]) covering small-σ regimes, and an exponential-tail estimate ln(10¹⁶)/rate (rate = v₀/(σ√(1−ρ²)) + κθT√(1−ρ²)/σ) covering slow-decaying high-σ regimes — applying a 1.5× safety margin and clamping to [50, 20 000]. The threshold ln(10¹⁶)≈36.84 ensures the integrand envelope is ≤1e−16 at the upper limit in either regime."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-server.src.pricer.product_name"
   ],
   "text": "CAPABILITY (carry-seam deliverable, one-contract product-family reach): product_name is the pure total over the full Product enumeration — it names all 24 product arms reachable through the one unversioned contract (vanilla, strategy, single/double barrier, digital, touch, variance_swap, volatility_swap, asian_option, forward_start, cliquet, quanto, tarf, pivot, accumulator, lookback, window_barrier, american, basket, fx_forward, fx_swap, ndf, perpetual_option, listed_future_option) with no fallback arm. Pure: maps &Product to a &'static str with no WRITES; the exhaustive match self-invalidates the moment a product arm is added or removed."
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-plugin-host.src.wasm.sandbox_config"
@@ -432,6 +877,26 @@
   "state": "active",
   "groundedness": 1.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-parity.tests.exotics.barriers_match_quantlib",
+   "github.com-soarsa-celnet.crates.celnet-parity.tests.exotics.digitals_match_quantlib",
+   "github.com-soarsa-celnet.crates.celnet-parity.tests.exotics.touches_and_dnt_match_quantlib"
+  ],
+  "text": "Rows 12–14 (parity) — `digitals_match_quantlib`, `touches_and_dnt_match_quantlib`, and `barriers_match_quantlib` prove the first-generation exotic pricers reproduce an independent QuantLib 1.42.1 reference to 1e-9 relative / 1e-10 absolute (and 1e-6 / 1e-8 for the double-barrier reflection series) across: European digitals (cash-or-nothing and asset-or-nothing, both directions), one-touch / no-touch / double-no-touch / double-touch, all eight single-barrier flavours (up/down × in/out × call/put), and the double knock-out/knock-in. The QuantLib-sourced CSV tables live in celnet-golden; this crate re-runs the checks through the public celnet-exotics API."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.linear.greeks"
+  ],
+  "text": "`linear::greeks(opt, i)` is the complete analytic Greek strip for the USDT-margined (GK-equivalent) crypto vanilla. It computes price in the same spot-space order as `linear::price` so `greeks().price` is `to_bits`-identical to the standalone price call. Spot delta = e^{bt}·df·Φ(±d1); forward delta = df·Φ(±d1); gamma = e^{2bt}·df·φ(d1)/(F·σ√t); vega = df·F·√t·φ(d1); discount_rho = -t·price; carry_rho (∂V/∂b) = ±t·F·df·Φ(±d1). The theta algebra uses the identity F·φ(d1)=K·φ(d2) to collapse to a single positive pdf term `df·F·φ(d1)·σ/(2√t)`. Returns `CarryGreeks` (the same struct as FX/commodity). Pure: reads `(OptionType, &LinearInputs)`, no WRITES, no allocation."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-gpu.src.cpu.CpuBackend.label"
   ],
   "text": "ADR (GPU abstraction = wgpu baseline + CPU-SIMD fallback, CUDA optional). `CpuBackend::label` returns the constant identity \"cpu-f64\": a pure accessor (reads nothing, mutates nothing) that names the f64 CPU oracle within the shared `PricingBackend` trait. That trait is the portability seam — `CpuBackend` and the wgpu `GpuBackend` both implement the same simulate_paths/reduce_payoff/price_vanilla contract, with Philox path index i fixed across backends so results reconcile (modulo the f32/f64 element type) — which is exactly what makes the GPU backend swappable behind one interface. DECISION/RATIONALE: the GPU strategy is wgpu (Metal/Vulkan/DX12) as the open, permissively-licensed baseline, with the CPU-SIMD path as the always-available f64 oracle and reconciliation reference, and an optional CUDA backend behind the same trait — chosen over a CubeCL/CUDA-first design because wgpu keeps the runtime dependency-set fully open-source and portable across the M4/Metal dev box and Linux/Vulkan CI. The label encodes the key portability caveat the design must respect: the CPU oracle is f64 while the wgpu/Metal path is f32 (Metal lacks f64), so cross-backend agreement is asserted to the f32 tolerance, never bit-identity. (Guardrail: no commercial products; open GPU stack with wgpu first-class.)"
@@ -439,6 +904,15 @@
  {
   "kind": "invariant:pure",
   "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-xva.src.exposure.ExposureProfile.simulate"
+  ],
+  "text": "ExposureProfile::simulate drives spot under risk-neutral GBM with Sobol low-discrepancy normals from celnet_qmc::SobolSequence (one point per path, dimension = steps, each coordinate driving one time-step): drift = (r_dom − r_for − ½σ²)·Δt, vol_step = σ·√Δt; spot_{k+1} = spot_k · exp(drift + vol_step · Φ⁻¹(u_k)). At each grid date t_k the full netting set is repriced via NettingSet::net_value(t_k, spot), and EPE(t_k) = E[max(V,0)], ENE(t_k) = E[max(−V,0)] are computed as path-average sums. The discount vector at grid node t_k is exp(−r_dom · t_k). Bit-reproducibility is guaranteed by the seeded Sobol stream (seed + steps fix the entire uniform sequence)."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-calendar.src.daycount.year_fraction"
@@ -477,6 +951,16 @@
   "state": "active",
   "groundedness": 1.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.natural_owner_of",
+   "github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.partition_key_of"
+  ],
+  "text": "`partition_key_of(fact)` is the canonical HRW partition key function: it builds a `PartitionKey` from the fact's underlying currency pair (`partition_pair_of(&fact.key.underlying)`) scoped by the entity tenant id (`TenantId(u64::from(fact.key.entity.0))`). The two-component key (pair + tenant) ensures co-residency of same-entity same-pair risk across shards — the load-bearing routing invariant pinned by the `entity_pair_cell_is_co_resident` test. Pure: reads `&RiskFact`, returns `PartitionKey`, no mutation."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-surface.src.calibrate.fit_sabr"
   ],
   "text": "CAPABILITY (smile family 1/5 — SABR): fit_sabr is the SABR smile-family calibrator entry — pure (&MarketContext, &MarketQuotes) -> Result<StochasticVolSmile>. Seeds (alpha, rho, nu) from the ATM level, 25-delta risk-reversal skew, and butterfly convexity, then a Gauss-Newton fit reproduces the total-variance anchors; beta is pinned (SABR_BETA). No I/O, no input mutation, no WRITES — the gate self-invalidates if the calibration grows a side effect. One of the five selectable smile families (SABR, raw-SVI, SSVI, Vanna-Volga, parametric)."
@@ -486,9 +970,27 @@
   "state": "active",
   "groundedness": 1.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.inverse.convexity_sandwich_vs_linear_is_signed"
+  ],
+  "text": "The convexity sandwich test pins a signed directional inequality between the coin-margined and linear prices: for all tested parameters, `inverse::price(Call)*S < linear::price(Call)` strictly, and `inverse::price(Put)*S > linear::price(Put)` strictly (tolerance 1e-6). This is the anti-circular guard — a naive V_lin/S₀ rescale of the linear price would produce equality at both legs, making both differences zero and failing both assertions. The test thus verifies that the inverse formula is not a trivial rescale of the linear one. Pure validator: reads from value arguments, no mutation."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "stale",
+  "groundedness": 1.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-core.src.math.norm_cdf_deep_tail_matches_reference"
   ],
   "text": "Determinism rule — `norm_cdf_deep_tail_matches_reference` pins `norm_cdf` against high-precision reference values deep in the left tail: Φ(−1)=0.15865525393145705, Φ(−5)=2.866515718791939e-7, Φ(−10)=7.619853024160525e-24, each via `assert_close!` with explicit rel/abs tolerances (never `==`). Because `norm_cdf` routes through `libm::erfc` (correctly-rounded), these exact-digit references encode the bit-stable, cross-platform tail behaviour; a regression that dropped the erfc routing (reintroducing catastrophic cancellation) would fail here. Pure test: evaluates norm_cdf and asserts, no mutation."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "draft",
+  "groundedness": -1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-risk-normalize.src.pricer.dispatch"
+  ],
+  "text": "`dispatch` is the asset-class router that implements the no-silent-fallback contract: it iterates over the static `LEAVES` array calling the supplied closure on each `&dyn CarryPricer`; on `Ok(v)` it returns immediately; on `Err(UnsupportedCarry)` it records that error as the most informative failure (it wins over the generic `UnsupportedUnderlying` default); on `Err(UnsupportedUnderlying)` it skips silently. If no leaf claims the underlying it returns `Err(UnsupportedUnderlying)` or `Err(UnsupportedCarry)` — never a silent proxy price. The docstring states this explicitly: \"Never returns a silent fallback price.\""
  },
  {
   "kind": "invariant:pure",
@@ -504,13 +1006,22 @@
   "state": "active",
   "groundedness": 1.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-equity-vanilla.src.lib.EquityInputs.forward"
+  ],
+  "text": "EquityInputs::forward() is the pure equity forward pricer: F = S·e^{b·t} where b = carry() = r−q−repo and the exponential routes through celnet_core::math::exp (libm-backed, correctly-rounded). No side effects or mutation — a read-only scalar computation. It is called by 45+ downstream consumers (surface rebuilds, risk ladder nodes, carry-seam nodes) making it the canonical equity forward reference."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-bench.benches.iai_instructions.soft_regression_limits"
   ],
   "text": "DELIVERABLE bench/iai-instruction-gate-no-limits = LANDED (backlog tracker still lists it OPEN as a Round-2 P1/S finding; reconciled against the live graph). `soft_regression_limits` is a pure (side-effect-free) builder returning the iai-callgrind regression config: it constructs Callgrind::default().soft_limits([(EventKind::Ir, SOFT_INSTRUCTION_REGRESSION_PCT), (EventKind::EstimatedCycles, SOFT_ESTIMATED_CYCLES_REGRESSION_PCT)]) with no external writes. The Round-2 gap (the iai instruction-count regression gate was structurally unable to fail because NO RegressionConfig/soft_limit/hard_limit existed — the lane always exited 0) is CLOSED: the gate now carries explicit per-EventKind percentage soft limits on instructions (Ir) and estimated cycles, applied via instruction_gate, so an instruction-count regression beyond the band now flags. SELF-INVALIDATING: removing or editing the limit construction shifts this anchor and flips the claim stale, re-opening the reconciliation; a write-introducing regression also flips it."
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-exotics.src.tarf.tarf_price"
@@ -519,7 +1030,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-observability.src.channel.telemetry_channel"
@@ -528,7 +1039,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-golden.src.oracle.equity_bsm_price"
@@ -555,7 +1066,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-limits.src.check.exposure_of"
@@ -585,6 +1096,15 @@
   "state": "active",
   "groundedness": 1.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.greeks"
+  ],
+  "text": "`greeks` computes the full 13-field CarryGreeks for equity-style (discounted) commodity options under the cost-of-carry parameterization. Key formulas: price = df·[F·Φ(±d1) − K·Φ(±d2)]; delta_spot = e^{(b−r)t}·Φ(±d1) (chain rule ∂V/∂S = e^{bt}·∂V/∂F with ∂V/∂F = df·Φ(±d1)); gamma = e^{2bt}·df·φ(d1)/(F·σ√t); discount_rho = −t·price (∂V/∂r at fixed b, since V = e^{−rt}·[…] independent of r in forward space); carry_rho = ±t·F·df·Φ(±d1) (only F = S·e^{bt} depends on b); theta includes the pdf term df·F·φ(d1)·σ/(2√t) plus carry/financing legs. All sensitivities are cross-validated against central finite differences in `greeks_vs_finite_difference`. Pure: no writes, no allocation, no IO."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-proto.src.convert.validate_deliverable_underlying"
   ],
   "text": "PILLAR (CLAUDE.md guardrail 9 — \"No versioned APIs: exactly ONE clean, current contract\"; guardrail 8 — purpose-named, vendor-neutral). `validate_deliverable_underlying(underlying)` is a pure, total projection of the single wire `Underlying` oneof onto the deliverable linear-forward book: it reads only the borrowed `WireUnderlying` and returns a `Result`, mutating nothing (no WRITES edges). On the one unversioned contract it accepts exactly the deliverable leg-pair arms — Fx and Metal (decoding to `Underlying::Fx`/`Underlying::Metal`) — and for every cross-asset arm (Equity, Commodity, DigitalAsset) returns a typed `WireError::WrongUnderlying { product_family: \"deliverable forward\", .. }` rather than silently coercing the asset-class identity under deliverable-FX arithmetic; an absent ref yields `WireError::MissingField`. It is the deliverable-book twin of the already-governed `validate_fx_underlying` (cl_1ff652eea3ffb73e) on the same single contract — there is no schema_version, no N/N-1 negotiation: a malformed or wrong-asset request is rejected, never version-coerced. Self-invalidating: if this acquires a side effect the purity gate flips it off."
@@ -594,13 +1114,22 @@
   "state": "active",
   "groundedness": 1.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.linear.fx_equiv_rates"
+  ],
+  "text": "`linear::fx_equiv_rates(i) -> (r_dom, r_for)` recovers the GK-equivalent domestic/foreign rate pair from the unified Carry: `r_dom = carry.discount_rate()` and `r_for = r_dom - carry.carry_rate()` (= r - b = funding rate). This is the seam that maps the crypto funding-rate carry convention onto the same two-rate spot-discounting formula as the FX GK leaf, making `linear::price` bit-identical to `celnet-vanilla::price` under matching rates (as the comment in `aux` documents). Pure: reads `&LinearInputs`, returns `(f64, f64)`, no WRITES."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "stale",
+  "groundedness": 1.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-conventions.src.registry.tenor_days"
   ],
   "text": "tenor_days is the exhaustive nominal-horizon primitive that drives the short/long delta-convention classification (docs/CONVENTIONS.md tenor axis). It is a pure total function over the whole Tenor enum returning u32 days: the pre-spot short end Overnight | TomNext | SpotNext → 1 (and BrokenDate → 1, the conservative short default since the exact pricing axis is set later by the pricer from the resolved expiry, not here); Weeks(w) → 7·w; Months(m) → (365·m + 6)/12 (the 365/12 ≈ 30.4167 days-per-month rounded to nearest day, so Months(12) = 365 and Months(6) = 183); Years(y) → 365·y; Imm(n) → (3·n·365 + 6)/12 (≈ 3 months per IMM step). The match is exhaustive over Tenor, so no variant is defaulted, and it is consumed by is_long_tenor (>365 ⇒ forward delta). const-foldable integer arithmetic, no writes/allocation/IO; deterministic. Self-invalidates if the Tenor variant set or any per-variant day formula changes (WRITES gate)."
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-exotics.src.touch.one_touch_price"
@@ -615,6 +1144,17 @@
    "github.com-soarsa-celnet.crates.celnet-exotics.src.perpetual.perpetual_price"
   ],
   "text": "DELIVERABLE proto/new-payoff-shapes (PerpetualOption arm) = DONE (RC cut a0817d6; arm 30). `perpetual_price(opt, i)` is a pure, total closed-form valuation of an American perpetual option: it dispatches on the `valuation(opt, i)` result and returns spot for a never-exercised call, strike for a never-exercised put, the intrinsic `opt.sign()*(spot-strike)` when immediately exercised, and the continuation `value` otherwise — every `Valuation` arm enumerated, no wildcard, so the match is exhaustive and a new regime is a compile error rather than a silent fall-through. Pure: it borrows `&PerpetualInputs`, performs no I/O/allocation/mutation, and returns `Result<f64, PerpetualError>`. Verified non-circularly against an independent root-bracketing re-derivation (closed_form_matches_independent_bisection_rederivation) in the same module. This is one of the two genuinely-new payoff shapes the backlog tracked as OPEN; it is now built + golden/parity-gated + surfaced across all 5 clients."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-qmc.src.bridge.BrownianBridge.build",
+   "github.com-soarsa-celnet.crates.celnet-qmc.src.bridge.BrownianBridge.new",
+   "github.com-soarsa-celnet.crates.celnet-qmc.src.bridge.bisect"
+  ],
+  "text": "`BrownianBridge::new(m, t_total)` constructs the bridge plan by bisection: it first places W(T) = W(t_{m-1}) conditioned on W(0)=0 with std = sqrt(t_{m-1}), then recursively bisects interior index intervals. Each `BridgeStep` records (out, left, right, left_w, right_w, std) where left_w = 1 − frac, right_w = frac = (t_mid−t_left)/(t_right−t_left), std = sqrt((t_mid−t_left)(t_right−t_mid)/(t_right−t_left)). The resulting plan has exactly m steps covering every time index, and `BrownianBridge::build(&z, &mut path)` executes it in plan order as `path[out] = left_w·path[left] + right_w·path[right] + std·z[k]`, consuming m independent N(0,1) draws."
  },
  {
   "kind": "invariant:pure",
@@ -636,12 +1176,21 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-surface.src.arbitrage.forward_call"
   ],
   "text": "Analytics-correctness (arbitrage-gate deliverable, vertical/calendar oracle): celnet-surface::arbitrage::forward_call is the pure undiscounted Black forward-call value F·N(d1) − K·N(d2) evaluated at the smile's own implied vol σ(K,F,t). It is the closed-form oracle the arbitrage gates are checked against: its K-derivative is −N(d2) ∈ [−1,0] (the vertical/call-spread bound, forward_call_strike_slope), and its second K-difference is the butterfly/density check; calendar-monotonicity is verified by comparing this value across maturities. Pure: deterministic in (&Smile, strike, forward, t), no WRITES edges."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.aux"
+  ],
+  "text": "`aux` is the shared Black-76 precomputation kernel: given CommodityInputs it computes σ√t, the carry-adjusted forward F = S·e^{b·t} (via CommodityInputs::forward), the discount factor df = e^{−r·t} (via CommodityInputs::discount_df), and the canonical log-moneyness d1 = [ln(F/K) + ½σ²t] / (σ√t) and d2 = d1 − σ√t using libm-routed ln/sqrt for cross-platform determinism. All five pricing/Greeks functions (price, greeks, futures_style_price, futures_style_greeks, forward_delta) read exclusively from this Aux struct so the critical-path arithmetic is computed once. Pure: reads &CommodityInputs, returns Aux, no writes/allocation/IO."
  },
  {
   "kind": "invariant:pure",
@@ -663,12 +1212,22 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-golden.src.oracle.ndf_pv"
   ],
   "text": "Golden-oracle gate (NDF PV reference): ndf_pv is a pure closed-form function of (side, spot, strike, notional, t, r_dom, r_for) — a non-deliverable forward prices as the deliverable forward, delegating to the pure fx_forward_pv. No writes, no I/O, deterministic; the NDF reference PV the parity suite pins is a pure function of its inputs."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-risk-cube.src.frtb.curvature_legs",
+   "github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.vanilla_curvature_legs"
+  ],
+  "text": "curvature_legs(pricer, positions, rw) -> (cvr_up, cvr_down) is the FRTB MAR21 curvature CVR computation for a vanilla node: base PV and two relative spot reprices (×(1±rw)), linear term = sum_i(delta_spot_i × notional_i × rw × spot_i). CVR_up = -((reprice_up - base) - linear); CVR_down = -((reprice_down - base) + linear). Only the spot is shocked; carry, vol, time, and strike are held fixed. The same formula is implemented in vanilla_curvature_legs via node_value/node_value_shocked helpers, which is the canonical path used for FRTB curvature bucket construction."
  },
  {
   "kind": "invariant:pure",
@@ -720,13 +1279,23 @@
   "state": "active",
   "groundedness": 1.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-parity.tests.determinism.price_and_greeks_are_bit_identical",
+   "github.com-soarsa-celnet.crates.celnet-parity.tests.determinism.smile_and_exotics_are_bit_identical"
+  ],
+  "text": "Row 15 (parity) — `price_and_greeks_are_bit_identical` proves bit-for-bit reproducibility (IEEE-754 `to_bits()` equality) of the price and full 13-Greek set via three non-vacuous checks: (a) reconstruct inputs from a shortest-round-trip decimal snapshot string (no shared provenance) and recompute — proves value-determinism not identity-dependence; (b) cross-thread: 8 spawned threads each rebuild inputs from the snapshot and compute independently, all must agree to the bit — catches hidden global/thread-local state; (c) committed golden-bit table for two textbook regimes (e.g. call price bits `0x4024_e6b2_e3d5_4dc0` for S=K=100, σ=20%, T=1, r_d=5%) — catches cross-run/cross-build ULP regressions. `smile_and_exotics_are_bit_identical` extends the same three-mode check to the broker smile and analytic exotic pricers."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-surface.src.arbitrage.ArbitrageReport.is_arbitrage_free"
   ],
   "text": "Analytics-correctness (arbitrage-gate deliverable): celnet-surface::arbitrage::ArbitrageReport::is_arbitrage_free is the pure hard-reject predicate combining all three no-arbitrage axes within tolerance tol — butterfly/density (min_butterfly ≥ −tol), vertical/call-spread monotonicity (max_vertical_increase ≤ tol), and risk-neutral density positivity (min_density ≥ −tol). A slice/surface is accepted only when every axis is within tol; any single breach makes the report not arbitrage-free. Pure: deterministic in (&self, tol), reads only the report's reduced extrema, no WRITES edges."
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-core.src.math.norm_cdf_tail_symmetry_and_no_underflow"
@@ -735,7 +1304,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-core.src.carry.fx_carry_inputs_byte_identical"
@@ -753,7 +1322,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-exotics.src.market_hedge_overlay.hedge_smile_cost"
@@ -765,9 +1334,29 @@
   "state": "active",
   "groundedness": 1.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-rfq.src.internal.InternalPricerSource.new",
+   "github.com-soarsa-celnet.crates.celnet-rfq.src.internal.InternalPricerSource.two_way"
+  ],
+  "text": "InternalPricerSource::two_way(&self) -> TwoWay is the symmetric mid-spread quote constructor: bid = mid - half_spread, offer = mid + half_spread. The constructor clamps half_spread to max(half_spread, 0.0), so a negative input is silently zeroed, guaranteeing bid <= offer for any finite mid. The function reads only &self and constructs a new TwoWay with no I/O or mutation."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "stale",
+  "groundedness": 1.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.inverse.price"
   ],
   "text": "CAPABILITY (crypto inverse/coin-margined leaf): celnet-crypto-vanilla::inverse::price is the inverse (coin-margined, 1/S_T payoff) crypto vanilla pricing entry — a pure, side-effect-free closed form taking (OptionType, &InverseInputs) whose value is expressed in the coin numeraire via the k/F and e^{sigma^2 t} convexity terms (norm_cdf of d2/d3), reconciled to an independent oracle with a signed convexity sandwich. It is the crypto inverse capability's projection target on the carry seam through the one contract; the sibling linear (USDT-margined) crypto path collapses to the Black-76 forward limit at zero carry. No I/O, allocation, logging, or mutation."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-heston.src.lib.carr_madan",
+   "github.com-soarsa-celnet.crates.celnet-heston.src.lib.carr_madan_upper"
+  ],
+  "text": "carr_madan(opt, m, p) prices a European FX option via the Carr–Madan damped-integrand method, working in log-moneyness κ = ln(K/S₀) to avoid forming the large ln(S₀) phase. It evaluates ψ(v) = φ_ret(v−(α+1)i) / (α²+α−v²+i(2α+1)v) with damping constant α = CM_ALPHA, then integrates Re[e^{−ivκ}·ψ(v)] from 0 to an adaptively chosen upper limit via Gauss–Legendre quadrature. The call price is df_d·S₀·e^{−ακ}/π·∫…dv; puts are obtained via exact put–call parity. The upper integration limit and panel count are both chosen adaptively (carr_madan_upper + oscillation count) to keep truncation and quadrature error below double precision."
  },
  {
   "kind": "invariant:pure",
@@ -783,9 +1372,38 @@
   "state": "active",
   "groundedness": 1.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-equity-vanilla.src.lib.greeks"
+  ],
+  "text": "greeks(opt, i) is the complete, pure generalized-BSM Greeks engine for equity vanilla options: it returns EquityGreeks containing price, delta_spot (∂V/∂S = e^{(b-r)t}·Φ(±d1)), delta_forward (∂V/∂F = Φ(±d1)), gamma (e^{(b-r)t}·φ(d1)/(S·σ√t)), vega (S·e^{(b-r)t}·√t·φ(d1)), theta (generalized-BSM carry-tagged decay), discount_rho (∂V/∂r holding b fixed), carry_rho (∂V/∂b holding r — the dividend-rho), vanna (−e^{(b-r)t}·φ(d1)·d2/σ), volga (vega·d1·d2/σ), charm (∂Δ/∂T), speed (∂γ/∂S), zomma (∂γ/∂σ), and color (∂γ/∂T). The two rate sensitivities are INDEPENDENT partials in the (r, b) basis: since d1/d2 depend on b but not r, the φ-terms cancel in carry_rho, yielding clean closed forms. No I/O, no mutation, no allocation beyond the returned struct."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-linear.src.swap.leg_rates",
+   "github.com-soarsa-celnet.crates.celnet-linear.src.swap.swap_points"
+  ],
+  "text": "swap_points(inputs) returns the FX swap-point differential: far_forward - near_forward, where both legs use the same carry curve (F(t) = spot * e^{b*t}). Swap points are positive when the far rate exceeds the near rate (base currency at a forward premium, r_dom > r_for), verified by swap_points_sign_matches_carry. Returns SwapError::MissingFarLeg when far_settle_t is absent. Pure: reads only &LinearInputs, no writes."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-proto.src.convert.Settlement.from"
   ],
   "text": "The wire→types Settlement mapping is a total 1:1 lift of the two settlement styles: `From<WireSettlement> for Settlement` matches Deliverable→Deliverable and NonDeliverable→NonDeliverable explicitly, no wildcard. NonDeliverable encodes an NDO that cash-settles at a published fixing (EMTA/WMR), versus a physically Deliverable option (docs/CONVENTIONS.md). This seam carries the settlement style from the wire onto `celnet_types::Settlement` with no silent enum drift. Pure: a match returning the mapped enum, no mutation."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-heston.src.lib.cos",
+   "github.com-soarsa-celnet.crates.celnet-heston.src.lib.heston_c4"
+  ],
+  "text": "cos(opt, m, p) prices a European FX option via the Fang–Oosterlee (2008) COS series. It computes Heston cumulants c₁ (mean log-return) and c₂ (variance) per Fang–Oosterlee Table 11, then the 4th cumulant c₄ via numerical 4th-difference of char_exponent (see heston_c4). The truncation range is [c₁ ± L·√(|c₂|+√|c₄|)] — including c₄ is essential for fat-tailed regimes (high σ, long T). The put leg is always priced directly (call coefficients evaluate e^{hi} at the wide right edge and lose precision); the call is recovered by exact put–call parity C = P + S·e^{−r_f T} − K·e^{−r_d T}. N=128 cosine terms are summed with the n=0 half-weight Fourier convention."
  },
  {
   "kind": "invariant:pure",
@@ -801,9 +1419,47 @@
   "state": "active",
   "groundedness": 1.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-vanilla.src.delta.delta"
+  ],
+  "text": "`delta` implements all four FX delta conventions over a shared `delta_aux` precomputation. For SpotUnadjusted/ForwardUnadjusted: Δ = factor·N(±d1) (where factor = df_for for spot, 1 for forward). For SpotPremiumAdjusted/ForwardPremiumAdjusted: Δ_call = factor·(K/F)·N(d2); Δ_put = Δ_call − factor·(K/F) — premium-adjusted delta keys on N(d2) and carries the K/F ratio, which makes it non-monotone in K (the call has a maximum) and underpins the `strike_from_delta` reachability check. The match over DeltaConvention is exhaustive with no wildcard. Pure: reads (DeltaConvention, OptionType, &VanillaInputs), returns f64, no writes."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-golden.src.oracle.det3"
   ],
   "text": "Golden-oracle numerical kernel: det3 computes the 3x3 determinant by cofactor expansion over a borrowed [[f64;3];3] with no writes, no I/O — a pure function of the matrix. Determinism of this kernel underpins the correctness of the oracle routines (e.g. correlation/quanto projections) that the parity gate trusts as ground truth."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-heston.src.lib.char_exponent",
+   "github.com-soarsa-celnet.crates.celnet-heston.src.lib.heston_c4"
+  ],
+  "text": "heston_c4(p, t) computes the 4th cumulant of the Heston log-return distribution via a 5-point central-difference approximation of the 4th derivative of the real log-CF ln φ_ret at u=0, using h=1e-2: d4 = (ψ(2h) − 4ψ(h) + 6ψ(0) − 4ψ(−h) + ψ(−2h)) / h⁴. By evaluating char_exponent at real frequencies it is independent of the COS series, so it cannot mask a COS bug. Market inputs are neutralised (spot=strike=1, rates=0) since spot/strike/rates only shift c₁ and do not affect centred cumulants."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-qmc.src.sobol.SobolSequence.new"
+  ],
+  "text": "`SobolSequence::new(dim)` initialises direction numbers for up to MAX_DIM dimensions from the embedded Joe-Kuo table. Dimension 1 uses the identity numbers v_k = 2^{31-k} (van der Corput sequence). Dimensions 2..=dim apply the Joe-Kuo recurrence on 32-bit left-justified integers V[k] = m_k · 2^{32-k}: for k > s, V[k] = V[k-s] XOR (V[k-s] >> s) XOR ⊕_{i=1}^{s−1} a_i·V[k-i], where a_i = (a >> (s-1-i)) & 1. The constructor panics for dim=0 or dim > MAX_DIM and is otherwise pure: no side effects, no I/O, no shared mutation."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.partition_facts",
+   "github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.partition_facts_with"
+  ],
+  "text": "`partition_facts_with` routes each `RiskFact` to its HRW-natural owner using a caller-supplied `PartitionStrategy`, then sorts shards by ascending `ReplicaId` for deterministic reduction order. It fails closed — returning `Err(RouteError::EmptySet)` — if the replica set is empty or if `natural_owner` returns `None`. The sort-by-key at the end (`shards.sort_by_key(|s| s.replica().0)`) is the single invariant that makes `fan_in_additive`'s summation order reproducible regardless of insertion order. Pure in the sense that for identical `(facts, replicas, strategy)` inputs the same `FleetReducer` shard partition is produced; no I/O, no global mutation."
  },
  {
   "kind": "invariant:pure",
@@ -816,7 +1472,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-conventions.src.registry.premium_adjusted_of"
@@ -840,6 +1496,26 @@
    "github.com-soarsa-celnet.crates.celnet-proto.src.convert.DeltaConvention.from"
   ],
   "text": "The wire→types DeltaConvention mapping is a total, order-preserving 1:1 lift of the four FX delta conventions: `From<WireDeltaConvention> for DeltaConvention` matches every wire variant explicitly (SpotUnadjusted→SpotUnadjusted, ForwardUnadjusted→ForwardUnadjusted, SpotPremiumAdjusted→SpotPremiumAdjusted, ForwardPremiumAdjusted→ForwardPremiumAdjusted) with no wildcard arm, so the proto enum and the celnet-types enum can never silently drift — adding a delta convention on either side is a compile error here. This is the single conversion seam carrying the per-(pair,tenor) delta convention from the wire onto `celnet_types::DeltaConvention` (the convention encoded in the type, never a global default; docs/CONVENTIONS.md). Pure: a match over the input value returning the mapped enum, mutating nothing."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.CommodityInputs.on_future",
+   "github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.future_equals_spot_reparameterization"
+  ],
+  "text": "`CommodityInputs::on_future` is the canonical smart constructor for an option priced directly on a futures price: it sets spot := future (the futures price), carry b := 0.0 (no drift on a futures price under risk-neutral measure), and r to the discount rate. The test `future_equals_spot_reparameterization` pins the equivalence: on_future(F, K, σ, t, r) produces the same price as on_spot(S, K, σ, t, r, convenience) when F = S·e^{b·t} — confirming the two constructors are equivalent reparameterizations of the same model, not two distinct models. const fn: evaluates to a struct literal at compile time, no writes/allocation/IO."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-risk-cube.src.frtb.quadratic_form",
+   "github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.correlation_weighted_vega"
+  ],
+  "text": "quadratic_form(ws: &[f64], rho: F) -> f64 computes the FRTB intra-bucket capital formula: sqrt(max(0, sum_i(ws_i^2) + sum_{i<j}(2*rho(i,j)*ws_i*ws_j))). It is the kernel used for both the delta/vega SBM bucket charge (via SbmParams::class_charge) and the vega-bucket correlation_weighted_vega function. The max(0,·) guard prevents imaginary results when the cross-term sum dominates the diagonal (can occur under the Low correlation scenario where scaled ρ can be negative)."
  },
  {
   "kind": "invariant:pure",
@@ -870,12 +1546,21 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-golden.src.oracle.black76_undiscounted_price"
   ],
   "text": "Golden-oracle gate (Black-76 commodity/forward reference): black76_undiscounted_price is a pure closed-form function of (cp, forward, strike, vol, t) using only libm math and the pure xerf_norm_cdf, with the t<=0 intrinsic-payoff branch. No writes, no I/O, deterministic — the QuantLib-pinned reference price the parity suite gates production engines against must be a pure function of its inputs."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.FleetTopology.parse"
+  ],
+  "text": "`FleetTopology::parse(mode, backends)` is the startup topology selector: it returns `FleetTopology::Distributed { endpoints }` only when `mode == \"distributed\"` AND the comma-separated `backends` string yields at least one non-empty trimmed endpoint; otherwise it always falls back to `FleetTopology::InProcess`. There is no third variant and no error path — an invalid or empty distributed config silently degrades to in-process rather than failing. Pure: reads only its two `&str` inputs, returns `FleetTopology`, no mutation or I/O."
  },
  {
   "kind": "invariant:pure",
@@ -891,6 +1576,15 @@
   "state": "active",
   "groundedness": 1.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-heston.src.lib.gauss_legendre"
+  ],
+  "text": "gauss_legendre(f, lo, hi, n_panels) integrates a real-valued function using a composite 16-point Gauss–Legendre rule. It divides [lo,hi] into n_panels equal sub-intervals and applies the 8-node symmetric GL rule (GL16_X/GL16_W, exploiting symmetry: one loop over k=0..8 evaluates f(mid+dx)+f(mid−dx)) to each panel, accumulating acc += GL16_W[k]*(f(mid+dx)+f(mid−dx)) then returning acc*half. No heap allocation; no branching; a purely functional numeric kernel."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-conventions.src.record.ConventionRecord.is_non_deliverable"
   ],
   "text": "Settlement→deliverability mapping (docs/CONVENTIONS.md Settlement enum → celnet-types): ConventionRecord::is_non_deliverable is a pure total function of self.settlement — returns true exactly for Settlement::NonDeliverable, false otherwise. const fn, no writes/allocation/IO; deterministic. Self-invalidates if the Settlement variant set or this match arm changes (WRITES gate)."
@@ -898,6 +1592,36 @@
  {
   "kind": "invariant:pure",
   "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-xva.src.exposure.ExposureProfile.deterministic"
+  ],
+  "text": "ExposureProfile::deterministic is a validated constructor for externally-supplied EPE/ENE profiles (closed-form or scenario-override use): it asserts grid/epe/ene are equal-length and non-empty, grid[0] == 0, grid is strictly increasing, and every EPE/ENE entry is non-negative (panics on any violation). It then computes the discount vector as exp(−r_dom·t_k) over the supplied grid. This is the entry point for the closed-form XVA oracle tests that bypass Monte Carlo."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-parity.tests.structured.accumulator_continuous_monitoring_knocks_out_more_than_discrete",
+   "github.com-soarsa-celnet.crates.celnet-parity.tests.structured.lookback_closed_form_matches_mc_and_dominates_vanilla",
+   "github.com-soarsa-celnet.crates.celnet-parity.tests.structured.quanto_closed_form_matches_mc_and_collapses_at_zero_correlation",
+   "github.com-soarsa-celnet.crates.celnet-parity.tests.structured.tarf_gap_risk_premium_is_priced_and_signed"
+  ],
+  "text": "Rows 16–19 (parity) — four structured-product gates prove the second-generation / TARF book in the open: (16) `quanto_closed_form_matches_mc_and_collapses_at_zero_correlation`: quanto vanilla and digital closed forms reproduce an independent MC within 4·σ_MC+1e-6; at zero correlation ρ=0 the quanto drift vanishes and the quanto price equals the plain vanilla to 1e-12, i.e. `quanto_vanilla_price(opt, &e, QuantoParams::new(σ_fx,0)) == vanilla_price(opt, &i)`. (17) lookback closed forms (floating- and fixed-strike) cross-validated by MC, plus the optionality invariant lookback ≥ vanilla. (18) TARF gap-risk: FullGain settlement is strictly costlier than CappedGain, with a positive expected overshoot on FullGain and zero on CappedGain. (19) Accumulator: continuous (Brownian-bridge) monitoring knocks out more than discrete fixing-only monitoring, so fewer fixings settle."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.quantile_var_es"
+  ],
+  "text": "quantile_var_es(pnl: &mut [f64], alpha: f64) -> VarEs is the single shared quantile kernel used by BOTH the historical full-reprice path (historical_var_es) and the sensitivity Taylor path (sensitivity_var_es). It sorts pnl ascending, computes tail = floor((1-alpha)*n).max(1).min(n), then ES = -(sum(pnl[..tail]) / tail) and VaR = -pnl[tail-1], both floored at 0. The tail index is floor not ceil, so the boundary is strict — a loss exactly at the alpha quantile is excluded from the ES average. The function takes a &mut slice (in-place sort) and has no I/O or shared-state side effects."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-vanilla.src.solver.bracket"
@@ -927,6 +1651,15 @@
   "state": "active",
   "groundedness": 1.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-heston.src.lib.char_exponent"
+  ],
+  "text": "char_exponent(u: Complex, m: &MarketInputs, p: &HestonParams) -> Complex computes ln φ_ret(u), the log of the Heston return-space characteristic function, using an overflow-stable factoring: it forms w = exp(−d·t) (bounded, |w|≤1 since Re(d)≥0) and then computes A = (u²+iu)(1−w) / [d(1+w) + ξ(1−w)] and B via e^{−dt/2} kept inside the log, so the large e^{Re(d)·t/2} factor that would overflow cosh/sinh at high |u| or long t cancels before any floating-point operation. Result: φ_ret = exp(iuμt − (κθρt/σ)·iu − v₀·A + (2κθ/σ²)·ln B). No I/O, no allocation, no mutation — the function reads only its three arguments."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-conventions.src.record.ConventionRecord.is_delta_premium_adjusted"
   ],
   "text": "Convention premium-adjusted mapping (docs/CONVENTIONS.md DeltaConvention→premium-style): ConventionRecord::is_delta_premium_adjusted is a pure total function of self.delta — returns true exactly for the two premium-adjusted variants DeltaConvention::SpotPremiumAdjusted and DeltaConvention::ForwardPremiumAdjusted, false for the unadjusted Spot/Forward variants. const fn, no writes/allocation/IO; deterministic. Self-invalidates if the enum→bool mapping or DeltaConvention variant set changes (WRITES gate)."
@@ -948,6 +1681,15 @@
    "github.com-soarsa-celnet.crates.celnet-surface.src.strangle.market_strangle"
   ],
   "text": "The broker (market) butterfly is NOT the smile butterfly — the #1 production FX-vol bug (ANALYTICS-SPEC §1.4). `market_strangle` defines what brokers actually trade: a SINGLE vol `strangle_vol = atm_vol + quote.butterfly` applied to BOTH the call AND put pillar strikes (call_strike and put_strike each resolved via strike_at_delta at that one vol), and its price is call+put at that single vol. This is the calibration TARGET that the recovered smile must reprice — it is deliberately distinct from the arithmetic smile-strangle (the per-wing-vol convexity), and the two differ materially for high-RR/EM pairs. Treating the quoted BF as the arithmetic 25Δ smile-strangle silently biases the wings and breaks 10Δ reproduction. Pure: reads ctx/atm_vol/quote, returns Result<MarketStrangle, CalibrationError>, mutating nothing."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-equity-vanilla.src.lib.aux"
+  ],
+  "text": "aux(i) is the pure precomputation kernel for the generalized-BSM equity pricer: given EquityInputs it computes d1 = [ln(S/K) + (b + ½σ²)·t] / (σ√t) where b = carry() = r − q − repo is the net cost of carry, d2 = d1 − σ√t, and returns the Aux struct {d1, d2, sqt=√t, vsqt=σ√t}. No side effects, no allocation, no I/O — a pure closed-form function of its argument. Both price() and greeks() call this exactly once and re-use the cached (d1, d2, sqt, vsqt), so transcendental cost is paid once per pricing call."
  },
  {
   "kind": "invariant:pure",
@@ -990,6 +1732,35 @@
   "state": "active",
   "groundedness": 1.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-xva.src.cva.compute_xva"
+  ],
+  "text": "compute_xva implements the standard discrete unilateral CVA/DVA/FVA formulas (Gregory, The xVA Challenge, 2015; Brigo-Morini-Pallavicini, 2013): CVA = LGD_c · Σ_k D(t_k) · EPE(t_k) · (S_c(t_{k-1}) − S_c(t_k)); DVA = LGD_o · Σ_k D(t_k) · ENE(t_k) · (S_o(t_{k-1}) − S_o(t_k)); FVA = funding_spread · Σ_k D(t_k) · (EPE(t_k) − ENE(t_k)) · Δt_k · S_c(t_k) · S_o(t_k). LGDs are hard-asserted to [0,1] (panic otherwise). The function reads only &XvaInputs and returns XvaResult — no mutation, no I/O, no allocation beyond the return value."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-parity.tests.greeks.full_greek_set_matches_finite_difference",
+   "github.com-soarsa-celnet.crates.celnet-parity.tests.greeks.put_call_parity_across_regimes",
+   "github.com-soarsa-celnet.crates.celnet-parity.tests.greeks.second_order_wing_greeks_match_fd"
+  ],
+  "text": "Rows 4–5 (parity) — `full_greek_set_matches_finite_difference` proves all nine 'core' Greeks (delta_spot, vega, rho_dom, rho_for, theta, gamma, vanna, volga, charm) agree with central finite differences of the price function to 1e-5 relative / 1e-7 absolute (first-order) or 1e-4 / 1e-6 (second-order), across ≥126 rows. `second_order_wing_greeks_match_fd` proves the remaining four (speed=∂gamma/∂S, zomma=∂gamma/∂σ, color=∂gamma/∂T, delta_forward=∂[V_fwd]/∂F) against their defining derivatives, completing the full 13-Greek set. `put_call_parity_across_regimes` proves C−P = S·e^{-r_f·T} − K·e^{-r_d·T} across ≥7 regimes."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-parity.tests.conventions.premium_adjusted_call_delta_is_guarded"
+  ],
+  "text": "Row 3 (parity) — `premium_adjusted_call_delta_is_guarded` proves the premium-adjusted call delta non-monotone guard: (a) a target above the attainable ceiling (delta at strike K_max where ∂Δ/∂K=0, computed by `premium_adjusted_call_delta_max`) returns `Err(Unreachable)` — not a silently wrong strike — and (b) a target at 50% of the ceiling is reachable and round-trips to 1e-9. This is the non-monotone primitive Bloomberg/Fenics bury; Celnet exposes and gates it."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-exotics.src.lsv.LsvModel.calibrate"
   ],
   "text": "DELIVERABLE lsv/market-calibration-frontend = PARTIAL / still OPEN (backlog tracker docs/WORLD-CLASS-BACKLOG.md Round-2 P2/L: \"LSV booking model has no market-calibration front end: no Heston-backbone NLS calibration and no mixing-weight (eta) tuning to touch/DNT quotes\"; reconciled against the live graph). What EXISTS today: `LsvModel::calibrate(inputs, var, iv, spot_grid, cfg)` is a pure, side-effect-free constructor that builds an LsvModel by delegating to particle::calibrate_leverage(iv, &var, spot_grid, spot, t, cfg) — a PARTICLE leverage-function calibration to an ImpliedVolSurface — and stores {inputs, var, leverage}, no I/O/writes/allocation-in-loop in the constructor itself. The OPEN gap the finding names is NOT closed here: this calibrates the local-vol LEVERAGE to a given IV surface; it does NOT do a Heston-backbone nonlinear-least-squares calibration of the variance params, and the mixing weight (eta) is taken from VarianceParams rather than tuned to touch/DNT market quotes. SELF-INVALIDATING: when a Heston-NLS + mixing-eta market-calibration front end lands, this method's signature/body changes (it would take market touch/DNT quotes and tune var/eta), flipping or unresolving this claim — the signal that the deliverable's remaining half closed."
@@ -1006,6 +1777,16 @@
  {
   "kind": "invariant:pure",
   "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-xva.src.survival.SurvivalCurve.cumulative_hazard",
+   "github.com-soarsa-celnet.crates.celnet-xva.src.survival.SurvivalCurve.survival"
+  ],
+  "text": "SurvivalCurve::survival(t) = exp(−Λ(t)) where Λ(t) is the piecewise-constant cumulative hazard. It is a pure total function: `libm::exp(-self.cumulative_hazard(t))` with no mutation, no I/O. cumulative_hazard(t) integrates the piecewise-constant λ segments up to t via an O(n) scan over (pillar, hazard) pairs, clipping each segment at min(pillar, t), and extrapolates the final hazard flat beyond the last finite pillar — so S(t) is continuous, monotone non-increasing, and equals 1 at t=0. Negative or non-finite t panics."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-proto.src.convert.settlement_round_trips"
@@ -1026,9 +1807,28 @@
   "state": "active",
   "groundedness": 1.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-linear.src.forward.fd_central",
+   "github.com-soarsa-celnet.crates.celnet-linear.src.forward.greeks"
+  ],
+  "text": "greeks(inputs) computes the complete analytic Greek vector {pv, delta, rho_dom, rho_for, theta} for an FX outright forward in closed form, routing all transcendentals through celnet_core::math::exp (libm-backed, bit-identical to the Carry accessors) for cross-platform reproducibility. The closed forms are: delta = sign*N*e^{-r_for*t}; rho_dom = sign*N*K*t*e^{-r_dom*t}; rho_for = -sign*N*S*t*e^{-r_for*t}; theta = sign*N*(-r_for*S*e^{-r_for*t} + r_dom*K*e^{-r_dom*t}). All five outputs are independently cross-checked against central finite differences (fd_central: (f(x+h)-f(x-h))/(2h)) in greeks_match_central_finite_difference. The function reads only its &LinearInputs argument and writes nothing — pure and side-effect-free."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "stale",
+  "groundedness": 1.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-conventions.src.registry.is_long_tenor"
   ],
   "text": "The spot-vs-forward delta switch is a one-year tenor threshold (docs/CONVENTIONS.md DeltaConvention: short tenors quote spot delta, long tenors switch to forward/driftless delta). `is_long_tenor(tenor)` is a pure total predicate returning tenor_days(tenor) > 365 — STRICTLY greater, so exactly-one-year tenors (Tenor::Years(1) and Tenor::Months(12), both 365 days) classify as SHORT (spot delta) and 18M / 2Y classify as LONG (forward delta), exactly as long_tenor_threshold_is_one_year pins. This boolean is the `forward` axis fed to premium_adjusted_of in region_default. const-foldable, no writes/allocation/IO; deterministic. Self-invalidates if the threshold or tenor_days mapping changes (WRITES gate)."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-exotics.src.barrier.single_barrier_price"
+  ],
+  "text": "single_barrier_price decomposes a single-barrier option with optional rebate into two independent legs: (1) bare = single_barrier_no_rebate(i, kind, strike, barrier) — the core Reiner-Rubinstein reflection formula; (2) rebate leg — for KnockOut, a one-touch paying rebate at hit (one_touch_price(i, barrier, rebate, RebateTiming::AtHit)); for KnockIn, a no-touch paying rebate at expiry if the barrier is never touched (no_touch_price). Returns bare + reb. When rebate == 0.0, returns bare immediately without pricing the touch. Pure: reads &ExoticInputs + SingleBarrier, returns f64, no WRITES."
  },
  {
   "kind": "invariant:pure",
@@ -1050,7 +1850,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.price"
@@ -1059,7 +1859,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-golden.src.oracle.black76_price"
@@ -1068,7 +1868,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-calendar.src.daycount.actual_days"
@@ -1080,18 +1880,37 @@
   "state": "active",
   "groundedness": 1.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-exotics.src.market_hedge_overlay.hedge_smile_cost",
+   "github.com-soarsa-celnet.crates.celnet-exotics.src.market_hedge_overlay.hedge_smile_overlay"
+  ],
+  "text": "hedge_smile_overlay is the Vanna-Volga smile-cost overlay: it computes raw = vanna * market.vanna_price + volga * market.volga_price (hedge_smile_cost), multiplies by survival.probability (the barrier-survival weight, clamped to [0,1] to prevent over-hedging near the barrier), and returns OverlayResult{flat_vol_price, hedge_smile_cost: survival.probability*raw, smile_price: flat_vol_price + cost}. The survival weighting accounts for the reduced probability that an exotic product survives to expiry — reducing the smile correction proportionally. Pure: reads inputs and returns OverlayResult, no WRITES."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "stale",
+  "groundedness": 1.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-equity-vanilla.src.lib.price"
   ],
   "text": "CAPABILITY (equity cross-asset leaf): celnet-equity-vanilla::price is the generalized-BSM equity vanilla pricing entry on the carry seam — a pure, side-effect-free closed form taking (OptionType, &EquityInputs) where the dividend yield enters as the carry b = r - q, so the no-dividend limit collapses to standard Black-Scholes (proven by no_dividend_limit_is_standard_bsm) and the leaf reconciles to an independent QuantLib-pinned BSM oracle. Heavily re-used (in_degree 147) as the equity capability's projection target through the one contract. No I/O, allocation, logging, or mutation."
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-journal.src.crc32.crc32"
   ],
   "text": "SAFETY — journal record integrity is a standard CRC-32 (IEEE 802.3 reflected polynomial): crc32 seeds 0xFFFF_FFFF, folds each byte through the 256-entry reflected lookup TABLE (crc = (crc >> 8) ^ TABLE[(crc ^ b) & 0xFF]), and finalizes with the XOR-out 0xFFFF_FFFF — the bit-exact reflected CRC-32 whose known-answer vectors (e.g. \"123456789\" => 0xCBF43926) are pinned by the crate's own vectors test. Every framed journal record carries this checksum over sync-word+header+payload (frame_record appends crc32(frame).to_le_bytes()), so any single-bit flip in a persisted record changes the CRC and the record is rejected on replay rather than silently mis-applied to recovered book/market state. Pure: it reads only the input byte slice and returns the u32 checksum, mutating nothing."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.inverse.greeks"
+  ],
+  "text": "`inverse::greeks(opt, i)` is the complete analytic Greek strip for the coin-margined vanilla. It introduces the convexity amplitude `amp = A = (K/F)·e^{σ²t}` and `ψ₃ = A·Φ(φ·d3)`, exploiting the exact lognormal pdf identity `A·φ(d3) = φ(d2)` (because d2-d3=σ√t) so all pdf cross-terms cancel into clean closed forms. Key sensitivities: `price = φ·df·(Φ(φd2) - ψ₃)`, `delta_spot = φ·df·ψ₃/S`, `delta_forward = φ·df·ψ₃/F`, `discount_rho = -t·price`, `carry_rho = φ·df·t·ψ₃`, `vega = df·φ(d2)·√t - φ·df·2σt·ψ₃`, `gamma = df·φ(d2)·u/S - φ·df·2·ψ₃/S²` (u=1/(S·σ√t)). Returns `InverseGreeks { coin: CarryGreeks, usd_equivalent: price*S }`. Pure: reads `(OptionType, &InverseInputs)`, no WRITES, no allocation."
  },
  {
   "kind": "invariant:pure",
@@ -1104,12 +1923,21 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-gpu.src.batch.as_erf_price_bound"
   ],
   "text": "PILLAR (CLAUDE.md guardrails 5 + 6 + 7 — numerical code is VALIDATED against a derived bound, never merely asserted plausible; the GPU scale path uses open methods and Metal lacks f64 so the f32 path is rigorously bounded). `as_erf_price_bound(b)` is the pure, closed-form per-instrument absolute-error envelope for the f32/`as`-erf batch GPU kernel: it returns `(s_disc + k_disc) * 0.5 * AS_ERF_MAX_ABS_ERR` with `AS_ERF_MAX_ABS_ERR = 1.5e-7`, where the discounted-spot and discounted-strike legs scale the worst-case erf approximation error into a price tolerance. The many-instrument GPU batch path (CLAUDE.md guardrail 6 — IB-sized portfolios / high-throughput scale-out) is reconciled three-way against the exact f64 oracle WITHIN this analytic bound, so the precision claim is proven rather than assumed. The function is side-effect-free: it reads only the borrowed BatchInstrument and computes a scalar via libm-backed exp, mutating nothing."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-risk-cube.src.frtb.residual_addon"
+  ],
+  "text": "residual_addon(instruments: &[ResidualInstrument]) -> f64 is the FRTB RRAO (Residual Risk Add-On) charge: a pure linear sum of |notional_i| * kind.weight() over all residual instruments. ResidualKind::OtherResidual carries weight 0.001 (10bp); ResidualKind::ExoticUnderlying carries 0.01 (100bp); ResidualKind::None carries 0.0 (vanilla, excluded). No correlation, no squaring — the RRAO is a gross-notional additive charge by BCBS design."
  },
  {
   "kind": "invariant:pure",
@@ -1125,9 +1953,47 @@
   "state": "active",
   "groundedness": 1.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-parity.tests.conventions.vanilla_price_matches_closed_form"
+  ],
+  "text": "Row 1 (parity) — `vanilla_price_matches_closed_form` proves the production pricer `celnet_vanilla::price` reproduces the independent closed-form Garman-Kohlhagen formula C = S·e^{-r_f·T}·N(d1) − K·e^{-r_d·T}·N(d2), P = K·e^{-r_d·T}·N(-d2) − S·e^{-r_f·T}·N(-d1), d1=(ln(S/K)+(r_d−r_f+½σ²)T)/(σ√T), d2=d1−σ√T, computed in the test via a separate expression grouping (not the same code path), to tolerance 1e-12 relative / 1e-14 absolute across ≥14 reference-market × option-side rows. This is the pricing floor every incumbent meets behind closed doors; Celnet meets it in the open."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-risk-normalize.src.pricer.EquityLeaf.lower"
+  ],
+  "text": "`EquityLeaf::lower` enforces a typed carry-seam discipline: it accepts only `Carry::CostOfCarry { r, b }` under an equity underlying and hard-rejects `Carry::FxRates` (which would silently mis-map FX two-rate carry onto an equity pricer) with `CarryPriceError::UnsupportedCarry`. The dividend yield is reconstructed as `q = r - b` (i.e. `b = r - q` in cost-of-carry form) and passed as the equity pricer's `q` argument with `repo = 0.0`. An equity underlying carrying `Carry::FxRates` is a malformed input, not a silent approximation."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-golden.src.oracle.cholesky"
   ],
   "text": "SAFETY/ORACLE — cholesky is the correlation-decomposition primitive underpinning the independent basket / multi-asset Monte-Carlo golden references: it computes the lower-triangular factor L of a symmetric positive-definite correlation matrix via the classic doubly-indexed recurrence (sum a[i][j] - Σ_k l[i][k]·l[j][k], diagonal = √sum, off-diagonal = sum/l[j][j]). It is pure and deterministic over its input matrix (no I/O, no mutation of the argument, no RNG), and it is fail-closed: a non-positive-definite matrix trips assert!(sum > 0.0) and panics rather than silently emitting a NaN/garbage factor that would corrupt every correlated-path draw. This makes the oracle's correlated scenarios reproducible and trustworthy as a can-disagree reference. Self-invalidates if the PD guard is removed."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-linear.src.forward.oracle_pv",
+   "github.com-soarsa-celnet.crates.celnet-linear.src.forward.pv",
+   "github.com-soarsa-celnet.crates.celnet-linear.src.forward.pv_at"
+  ],
+  "text": "pv_at(inputs, t) is the single closed-form present-value kernel for an FX outright forward at time t: PV = sign(side) * N * df_dom(t) * (F(t) - K), where F(t) = spot * e^{b*t} (forward via carry.forward_factor), df_dom(t) = e^{-r_dom*t} (via carry.discount_df), K = contract_rate, N = notional, sign = +1 Buy / -1 Sell. It reads only its two arguments, has no side effects, no allocation, no I/O — pure by inspection. Both forward::pv and swap::pv delegate entirely to this kernel. The formula is cross-validated against oracle_pv (an independent flat expansion: sign*N*(spot*e^{-r_for*t} - K*e^{-r_dom*t})) byte-for-byte in pv_matches_independent_discount_bond_route."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-risk-normalize.src.numeraire.convert"
+  ],
+  "text": "`convert(amount, ccy, resolver)` is the single atom for currency conversion into the reporting numeraire: it calls `resolver.rate_into_numeraire(ccy)` returning `Option<f64>`, fails with `NumeraireError::MissingRate(ccy)` if absent, then hard-validates the rate is finite and strictly positive (fails with `NumeraireError::InvalidRate(ccy)` otherwise), and returns `amount * rate`. No zero-rate silent pass-through, no NaN propagation. Pure: reads its three args, returns `Result<f64, NumeraireError>`, mutates nothing."
  },
  {
   "kind": "invariant:pure",
@@ -1140,12 +2006,32 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-surface.src.arbitrage.forward_call_strike_slope"
   ],
   "text": "`forward_call_strike_slope` returns the sticky (∂σ/∂K-ignoring) strike-derivative of the forward call price as `-Φ(d2)`, where `d2 = d1 - σ√t` from the smile's implied vol at the strike. Since `Φ ∈ [0,1]`, the returned slope lies in `[-1, 0]` — the no-arbitrage bound on a call's monotone-decreasing strike profile. Pure: it reads the smile and scalar inputs and returns an `f64`, mutating nothing."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-risk-normalize.src.numeraire.CurrencyExposure.add_leaf_delta",
+   "github.com-soarsa-celnet.crates.celnet-risk-normalize.src.numeraire.CurrencyExposure.in_numeraire",
+   "github.com-soarsa-celnet.crates.celnet-risk-normalize.src.numeraire.Numeraire.from_leaves"
+  ],
+  "text": "`Numeraire::from_leaves` converts a slice of `CanonicalLeaf`s into a single-numeraire `Numeraire` struct: for each leaf it nets the spot-unadjusted premium-excluded delta into a `CurrencyExposure` vector (both base and quote legs for FX/metal pairs; quote leg only for cross-asset underlyings), accumulates `premium_numeraire` and `vega_numeraire` by converting each leaf's `premium_quote` and `vega` through the `SpotResolver` via `convert()`. A missing FX rate returns `Err(NumeraireError::MissingRate)` and an invalid rate (non-finite or ≤ 0) returns `Err(NumeraireError::InvalidRate)` — neither silently drops to zero. The delta_numeraire is the scalar sum of the full `CurrencyExposure` vector converted to numeraire. The CAP overflow (> 32 distinct currencies) is caught by `debug_assert!`."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-xva.src.survival.SurvivalCurve.flat"
+  ],
+  "text": "SurvivalCurve::flat(lambda) constructs a constant-hazard survival curve representing S(t) = exp(−λ·t) for all t ≥ 0. It asserts lambda is finite and non-negative (panics otherwise) and stores a single pillar at f64::INFINITY, so cumulative_hazard evaluates to λ·t for any finite t via the flat-extrapolation branch. This is the closed-form reference curve used by the XVA oracle tests."
  },
  {
   "kind": "invariant:pure",
@@ -1170,6 +2056,15 @@
   "state": "active",
   "groundedness": 1.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.sensitivity_profile_is_adjoint_greeks_scaled_by_notional"
+  ],
+  "text": "PositionSensitivity::sensitivity_profile carries adjoint Greeks (delta_spot, gamma, vega, volga, vanna, discount_rho, carry_rho) scaled by notional_base. The scaling is bitwise-exact: each field equals the corresponding adjoint Greek multiplied by notional, confirmed by to_bits() equality in the test. carry_rho = -(rho_for * notional) — a sign flip from the raw Greek so that a positive carry_rho always means sensitivity to the foreign rate in the direction that increases PV."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.partition_facts"
   ],
   "text": "PILLAR (CLAUDE.md guardrail 6 + 11 — \"scale to investment-banking-sized portfolios\"; horizontal scale-out / many-instrument batch). `partition_facts(facts, replicas)` is the pure entry that spreads a risk-fact set across the live replica fleet: it is a thin, side-effect-free delegation to `partition_facts_with(.., partition_key_of)` (reads only its two borrowed slices/sets, mutates nothing, no I/O, no WRITES edges). Each fact is assigned to the HRW `natural_owner` of its partition key, producing a `FleetReducer` whose logical shards form a DISJOINT cover of the input (every fact lands in exactly one shard — verified by `partition_is_disjoint_cover`) with a deterministic reduction order (shards sorted by ascending replica id), so a fleet of N nodes reduces a firm-sized portfolio to the SAME aggregate as a single node bit-for-bit (`single_shard_fan_out_is_bit_identical`). This is the data-parallel scale-out seam that makes IB-sized cube/risk reduction horizontally partitionable without changing the answer. Self-invalidating: any side effect introduced into the partitioning entry flips the purity gate."
@@ -1179,9 +2074,28 @@
   "state": "active",
   "groundedness": 1.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-xva.src.netting.NettedTrade.mark",
+   "github.com-soarsa-celnet.crates.celnet-xva.src.netting.NettingSet.net_value"
+  ],
+  "text": "NettedTrade::mark(t_obs, spot, r_dom, r_for) is the per-trade mark-to-market at observation time t_obs: it computes remaining time τ = expiry − t_obs and returns 0.0 for any matured trade (τ ≤ 0), otherwise delegates to celnet_vanilla::price via VanillaInputs::new(spot, strike, vol, τ, r_dom, r_for) scaled by notional. NettingSet::net_value sums these marks across all trades, implementing plain algebraic netting (signed sum) within the set. Pure: reads only &self and scalar inputs, returns f64, no mutation."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-server.src.pricer.is_cross_asset"
   ],
   "text": "CAPABILITY (cross-asset carry-seam reach): is_cross_asset is the pure routing predicate that decides — by Underlying variant alone (Equity | Commodity | DigitalAsset) — which instruments leave the FX vanilla path for the cross-asset leaf engines (equity generalized-BSM, commodity Black-76, crypto inverse/linear) on the shared carry seam. FX/metal stays on the vanilla path (metal lease rate modelled as the FX foreign rate), byte-identically. Side-effect-free classifier: reads only the &Underlying, returns bool, no WRITES — the gate self-invalidates if the variant set or the routing shifts."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-risk-cube.src.frtb.curvature_class"
+  ],
+  "text": "curvature_class(buckets, gamma) -> SbmCharge applies the FRTB MAR21.5.2 cross-bucket curvature aggregation under all three correlation scenarios. For each scenario: K_total = sqrt(max(0, sum_b(K_b^2) + sum_{b≠c}(gamma_scaled^2 * psi(CVR_b,CVR_c) * CVR_b * CVR_c))) where psi(CVR_b,CVR_c) = 0 iff both CVR are negative (MAR21.5.2(4)), else 1; gamma is squared (not linear) for curvature; and gamma is scenario-scaled before squaring. Returns SbmCharge{high, medium, low}."
  },
  {
   "kind": "invariant:pure",
@@ -1206,13 +2120,23 @@
   "state": "active",
   "groundedness": 1.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-qmc.src.sobol.SobolStream<'_>.next_point",
+   "github.com-soarsa-celnet.crates.celnet-qmc.src.sobol.u32_to_open_unit"
+  ],
+  "text": "`SobolStream::next_point(&mut self, out: &mut [f64])` advances the stateful Gray-code Sobol iterator by one point. For i=0 all state integers are zeroed (the all-zero Gray-code point); for i>0, c = trailing_zeros(i) and each coordinate j XORs in direction number v[j][c]. Each state integer is then Owen-scrambled per dimension and mapped to (0,1) via `u32_to_open_unit(u) = (u as f64 + 0.5) * 2^{-32}`, guaranteeing the open unit interval (never 0 or 1, so inv_norm_cdf never produces ±∞). The mutation is entirely to self.state and out — no allocation, no shared mutation beyond the stream itself."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "stale",
+  "groundedness": 1.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-core.src.math.norm_cdf"
   ],
   "text": "Determinism rule — `norm_cdf` computes the standard-normal CDF as `0.5 * libm::erfc(-x * INV_SQRT_2)`, routing the transcendental through `rust-lang/libm` (correctly-rounded) rather than the platform libm, so the result is bit-identical across targets (the cross-platform determinism guarantee of docs/INTERFACES.md). Using the complementary error function `erfc` on `-x·1/√2` keeps the deep left tail stable (no catastrophic cancellation), which is why the tail tests pass. f64 is the CPU-canonical scalar. Pure: maps one f64 to one f64 via libm, no side effects, no state."
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-surface.src.arbitrage.check_slice"
@@ -1221,7 +2145,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-proto.src.convert.cut_round_trips"
@@ -1239,12 +2163,31 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-vanilla.src.delta.premium_adjusted_call_delta_max"
   ],
   "text": "Premium-adjusted call delta is NON-MONOTONE in strike — it has a maximum-delta strike with two strikes mapping to the same delta, so the strike↔delta root-find must be guarded and bracketed on the correct branch (ANALYTICS-SPEC §3.5). `premium_adjusted_call_delta_max` computes that delta-max strike as the stationary point: it solves g(d2)=N(d2)·σ√T−φ(d2)=0 (g increasing in d2, root at small positive d2) by bisection, then maps the root d2* back to the strike K = F·exp(−½σ²T − d2*·σ√T). This is the cap the solver must respect: a target delta above the achievable max is unreachable, and a naive monotone Brent/Newton would converge to the wrong branch or diverge. Pure: reads `&VanillaInputs`, returns the cap strike as f64 via a fixed-iteration bisection, mutating nothing."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-exotics.src.lookback.fixed_lookback_price",
+   "github.com-soarsa-celnet.crates.celnet-exotics.src.lookback.floating_lookback_price"
+  ],
+  "text": "floating_lookback_price and fixed_lookback_price are pure Conze-Viswanathan closed-form lookback pricers over the carry seam: both read b = carry_rate(), df_dom = discount_df(), df_for = carry_df() — byte-identical for FX. floating_lookback_price prices the option on the running extremum ξ=S at inception: Call = S·df_for·Φ(a1) − S·df_dom·Φ(a2) + S·df_dom·(σ²/2b)·[Φ(−a1+2b√T/σ) − e^{bT}·Φ(−a1)]. fixed_lookback_price branches on K≷S to select between the standard Conze-Viswanathan form (K≥S) and the intrinsic-lock form (K<S), each with the corresponding reflection term σ²/(2b)·[±(S/K)^{−2b/σ²}·Φ(d1−2b√T/σ·…) ∓ e^{bT}·Φ(d1)]. Both are pure (no WRITES, no allocation)."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-exotics.src.asian.turnbull_wakeman_price"
+  ],
+  "text": "turnbull_wakeman_price is the Turnbull-Wakeman moment-matching Asian pricer: it computes future_moments(i, spec) to get the first and second moments (ex, ex2) of the remaining average, applies seasoned_match to account for any already-settled fixings (adjusting the effective strike k_eff = spec.strike − fixed), then prices via black_on_average(spec.option, ex, ex2, k_eff, df) — a Black-76 formula on the lognormal approximation of the arithmetic average. Pure: reads &ExoticInputs + AnalyticAsian, returns f64, no WRITES."
  },
  {
   "kind": "invariant:pure",
@@ -1257,7 +2200,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-engine.src.handoff.serialize_state"
@@ -1269,9 +2212,37 @@
   "state": "active",
   "groundedness": 1.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-xva.src.survival.SurvivalCurve.marginal_default"
+  ],
+  "text": "SurvivalCurve::marginal_default(a, b) = S(a) − S(b): the marginal probability of default in the interval (a, b]. It asserts a ≤ b, then returns survival(a) − survival(b). This is the interval default-probability atom consumed by compute_xva's outer loop (dp_c = s_c_prev − s_c corresponds to marginal_default over each grid interval). Pure: reads only &self and two f64 scalars, returns f64, no mutation."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-linear.src.swap.pv",
+   "github.com-soarsa-celnet.crates.celnet-linear.src.swap.swap_inp"
+  ],
+  "text": "swap::pv(inputs) prices a two-legged FX swap as the algebraic sum of two outright forward PVs evaluated at different settle times: near_pv = pv_at(inputs, near_settle_t) on the stated side, far_pv = pv_at(far_leg, far_t) on the opposite side (far_leg clones the inputs with side.opposite()). It returns SwapError::MissingFarLeg if far_settle_t is absent. The two-leg decomposition is independently verified by pv_equals_independent_two_leg_sum and the opposite-leg netting property by equal_dates_opposite_legs_net_to_zero."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-proto.src.convert.validate_listed_future_terms"
   ],
   "text": "On the one wire contract, a listed-future option's terms are accepted only when both maturities are well-formed and consistently ordered: `validate_listed_future_terms` requires the option `expiry_years` to be finite and strictly positive, and the future's `future_expiry_years` to be finite and `>= expiry_years` (the underlying future must outlive the option), else it returns `WireError::InvalidTerms`; a missing `future_symbol` yields `WireError::MissingField` and an out-of-range margining tag yields `WireError::UnknownEnum`. Pure: it reads only the wire option and the expiry argument and returns a `Result`, mutating nothing."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-rfq.src.panel.check_winner"
+  ],
+  "text": "check_winner(rows, side, winner) is the post-ranking consistency guard: if a winner LP-id was declared it MUST appear in the responder rows, else PanelError::WinnerNotAResponder is returned. This prevents a phantom winner — an LP-id that timed out or declined — from appearing in the final RankedPanel. The function reads only its arguments, allocates only the error string on the failure path, and always returns Ok(()) when winner is None."
  },
  {
   "kind": "invariant:pure",
@@ -1293,12 +2264,32 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-vanilla.src.delta.delta_d_strike"
   ],
   "text": "Analytics-correctness (premium-adjusted-delta deliverable): celnet-vanilla::delta::delta_d_strike is a pure analytic ∂Δ/∂K. For the unadjusted conventions (Spot/Forward-Unadjusted) call and put deltas differ by a K-independent constant, so the strike-slope is the single term factor·φ(d1)·∂d1/∂K with ∂d1/∂K = ∂d2/∂K = −1/(K σ√T). For the premium-adjusted conventions (Spot/Forward-PremiumAdjusted) Δ_call = factor·(K/F)·N(d2), so the slope follows the product rule in K (F is K-independent): factor·(N(d2)/F + (K/F)·φ(d2)·∂d2/∂K); the put slope is the call slope minus factor/F since Δ_put = Δ_call − factor·(K/F). This convention-branching strike-derivative is what makes the premium-adjusted delta non-monotone in strike (it underpins the guarded delta→strike root-find). Pure: deterministic in (conv, opt, &VanillaInputs), no WRITES edges."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-rfq.src.panel.SideKey<'_>.partial_cmp_total",
+   "github.com-soarsa-celnet.crates.celnet-rfq.src.panel.rank_side",
+   "github.com-soarsa-celnet.crates.celnet-rfq.src.panel.side_key"
+  ],
+  "text": "rank_side(rows, now_nanos, side) is the pure best-LP selector: it filters rows to those whose valid_until_nanos >= now_nanos (last-look gate — stale quotes are categorically excluded from winning), then picks the min under SideKey::partial_cmp_total. The SideKey for Bid negates the price (-bid) so that min-selection gives the highest bid; for Offer the price is taken straight so min gives the lowest offer. Tie-break is lexicographic: (better_price, earlier epoch_nanos, smaller lp_id) — fully deterministic with no NaN ambiguity (non-finite prices lose to any finite price via partial_cmp_total). Returns None when all rows are stale or the slice is empty."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-xva.src.cva.XvaResult.total_adjustment"
+  ],
+  "text": "XvaResult::total_adjustment() = cva − dva + fva: the algebraically-signed aggregate valuation adjustment applied to the clean price (CVA reduces value, DVA increases it, FVA is additive as a funding cost on net exposure). Pure: reads only &self, returns f64, no mutation or allocation."
  },
  {
   "kind": "invariant:pure",
@@ -1311,7 +2302,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-calendar.src.daycount.signed_when_reversed"
@@ -1320,7 +2311,35 @@
  },
  {
   "kind": "invariant:pure",
+  "state": "draft",
+  "groundedness": -1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-qmc.src.normal.inv_norm_cdf"
+  ],
+  "text": "`inv_norm_cdf(p: f64) -> f64` computes Φ⁻¹(p), the standard normal quantile, via a three-region Acklam rational approximation seeded at the correct asymptotic regime, followed by a single Halley-polish step: e = Φ(x) − p, u = e / φ(x), x ← x − u / (1 + 0.5·x·u). The function is pure (no I/O, no mutation, no allocation) and handles all boundary cases: p ∉ [0,1] or NaN → NaN, p=0 → −∞, p=1 → +∞. It is the sole inverse-normal transform in the RQMC path; all uniform Sobol points pass through it before being fed to BrownianBridge::build."
+ },
+ {
+  "kind": "invariant:pure",
   "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-parity.tests.broker_smile.high_rr_em_case_reprices",
+   "github.com-soarsa-celnet.crates.celnet-parity.tests.broker_smile.smile_reprices_broker_strangle"
+  ],
+  "text": "Rows 10–11 (parity) — `smile_reprices_broker_strangle` and `high_rr_em_case_reprices` prove the broker→smile calibration reprices the market strangle (a call+put priced at a single vol σ_ATM+BF at the broker wing strikes) to 1e-8 relative / 1e-10 absolute, AND that the naive arithmetic-butterfly smile (the documented '#1 production bug' in docs/CAPABILITIES-VS-COMPETITION.md) *misprices* the same strangle by a demonstrably larger error. Asserting the naive misprice exceeds a threshold while the calibrated one is within tolerance proves the calibration is a real correction, not a tautology — on both a G10 benign slice and a high-risk-reversal EM case."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-exotics.src.digital.digital_price"
+  ],
+  "text": "digital_price is the closed-form dual-style digital kernel: given (kind, i) it reads (d1,d2) from d12(i), df_dom = i.discount_df(), df_for = i.carry_df(), and returns — CashOrNothing Call: df_dom·Φ(d2); CashOrNothing Put: df_dom·Φ(−d2); AssetOrNothing Call: S·df_for·Φ(d1); AssetOrNothing Put: S·df_for·Φ(−d1). The match is exhaustive over (DigitalStyle, OptionType) with no wildcard, enforcing that cash digitals discount with the numeraire factor and asset digitals with the yield factor. Pure: reads &ExoticInputs, returns f64, no WRITES."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-core.src.math.norm_pdf"
@@ -1341,13 +2360,23 @@
   "state": "active",
   "groundedness": 1.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-qmc.src.lib.rqmc_estimate",
+   "github.com-soarsa-celnet.crates.celnet-qmc.src.lib.splitmix"
+  ],
+  "text": "`rqmc_estimate` derives independent per-replication scramble seeds via `splitmix(base_seed.wrapping_add((r as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15)))`, where splitmix is the Murmur3/SplitMix64 finalizer. This makes each replication's scrambled Sobol sequence statistically independent of the others; the inter-replication mean and sample variance of the `replications` per-replication averages provide the estimate and its standard error (std_error = sqrt(sample_var / replications)). With replications=1 the standard error is NaN (not estimable from one replication)."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "stale",
+  "groundedness": 1.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-conventions.src.registry.region_default"
   ],
   "text": "The fall-through (uncovered-pair) convention record is assembled deterministically from per-currency and per-region rules (docs/CONVENTIONS.md house-default conventions; ResolutionSource::RegionDefault). `region_default(pair, tenor)` is a pure total function building a ConventionRecord with: cut = Tokyo1500 for a Tokyo-region pair else NewYork1000 (via region_of); premium_style = PercentForeign; delta = premium_adjusted_of(is_long_tenor(tenor), premium_style.is_premium_adjusted()) — so the spot/forward axis follows the tenor and the premium-adjusted axis follows the premium style; atm = DeltaNeutralStraddle; day_count_vol = Act365Fixed; the foreign and domestic accrual day-counts = accrual_basis(pair.base) and accrual_basis(pair.quote) respectively (per-currency, not per-pair); settlement = Deliverable. No combination is defaulted ad hoc — every field is a documented function of (pair, tenor). const-style assembly, no writes/allocation/IO; deterministic. Self-invalidates if any of the composed mapping helpers or the default field set changes (WRITES gate)."
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.settlement.route_price"
@@ -1356,12 +2385,31 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-golden.src.oracle.crypto_linear_price"
   ],
   "text": "Golden-oracle gate (linear/GK-funding crypto reference): crypto_linear_price is a pure closed-form function of (cp, spot, strike, vol, t, r, funding) — applies carry b=r-funding to the forward then delegates to the pure black76_price. No writes, no I/O, deterministic; the linear crypto reference price the parity suite uses is a pure function of its inputs."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.funding.funding_carry"
+  ],
+  "text": "`funding_carry(r, funding) -> Carry` is the canonical Carry constructor for crypto: it builds `Carry::CostOfCarry { r, b: r - funding }` so the net cost-of-carry b equals the difference between the risk-free rate and the perpetual funding rate. When funding == r the carry rate is zero and the forward equals spot (zero-drift, Black-76 limit). The function is called by 14 callers — it is the standard entry point for both inverse and linear crypto inputs. Pure: returns a new `Carry` from two `f64` scalars with no WRITES, no allocation, no I/O."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-parity.tests.conventions.atm_dns_strike_is_delta_neutral",
+   "github.com-soarsa-celnet.crates.celnet-parity.tests.conventions.strike_delta_roundtrip_all_conventions"
+  ],
+  "text": "Row 2 (parity) — `strike_delta_roundtrip_all_conventions` proves the convention-aware strike↔delta solver round-trips in all four FX delta conventions (SpotUnadjusted, ForwardUnadjusted, SpotPremiumAdjusted, ForwardPremiumAdjusted) for both calls and puts at the 25Δ and 10Δ wings: solve `strike_from_delta(conv, opt, target, &inputs)` then re-read `convention_delta(conv, opt, &solved_inputs)` and require agreement to 1e-9 relative / 1e-10 absolute, for ≥50 rows. `atm_dns_strike_is_delta_neutral` additionally proves the delta-neutral-straddle ATM strike satisfies call_delta + put_delta = 0 to 1e-9 in unadjusted conventions, and the ATMF strike equals the outright forward F=S·e^{(r_d−r_f)T} to 1e-12."
  },
  {
   "kind": "invariant:pure",
@@ -1377,6 +2425,15 @@
   "state": "active",
   "groundedness": 1.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-vanilla.src.lib.aux"
+  ],
+  "text": "`aux` is the internal precomputation kernel: it computes the four canonical option-pricing intermediates from `&VanillaInputs` — sqt=√T (via libm::sqrt), vsqt=σ·√T, d1=(ln(S/K)+(r_dom−r_for+½σ²)·T)/vsqt (via libm::ln), d2=d1−vsqt — and packages them in `Aux`. Both `price` and `greeks` call `aux` first and re-use these values throughout; computing them once avoids duplicate transcendental evaluations on the hot path. Pure: reads only &VanillaInputs, returns Aux, no allocation, no writes."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "stale",
+  "groundedness": 1.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-golden.src.oracle.crypto_inverse_price"
   ],
   "text": "Golden-oracle gate (inverse/coin-margined crypto reference): crypto_inverse_price is a pure closed-form function of (cp, spot, strike, vol, t, r, funding) — carry b=r-funding, forward, the (K/F)e^{sigma^2 t} amplitude correction for the 1/S_T inverse payoff, libm math and pure xerf_norm_cdf only. No writes, no I/O, deterministic; the reference price gating the inverse crypto engine must depend solely on its inputs."
@@ -1389,6 +2446,15 @@
    "github.com-soarsa-celnet.crates.celnet-surface.src.strangle.build_trial_smile"
   ],
   "text": "STRANGLE-CALIBRATION guarded trial-smile constructor (ANALYTICS-SPEC §1.4 — the mandatory smile-strangle calibration that reprices the broker/market strangle). `build_trial_smile(ctx, atm_vol, atm_strike, pillar, rr, smile_strangle)` builds one candidate vanna-volga smile for a trial σ_ss inside the calibration bracketing loop: it resolves the three wings via `smile_wings`, then HARD-REJECTS out-of-domain trials as `Err(CalibrationError::DegenerateQuote)` rather than panicking or returning an invalid Ok — (1) a |RR| too large relative to ATM+σ_ss drives a wing vol <= 0, caught by `!(put_vol>0 && call_vol>0)`; (2) the fallible `MarketHedgeSmile::try_new` enforces the strike ordering K1<K2<K3 (put wing < ATM < call wing) and returns the same error if a pathological trial inverts it. This keeps the guarded root-find total: a degenerate trial steps the bracket away, and a terminal degenerate state surfaces as a typed error, never a panic. Pure: reads ctx/scalars/pillar, returns Result<MarketHedgeSmile, CalibrationError>, mutating nothing."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-risk-normalize.src.leaf.canonicalize"
+  ],
+  "text": "`canonicalize(pos)` is the zero-configuration entry point for cross-asset Greek projection: `pub fn canonicalize(pos: &PositionRisk) -> Result<CanonicalLeaf, CarryPriceError> { canonicalize_with(&crate::AssetPricer, GreekEngine::default(), pos) }`. It is a pure forwarder (no writes, no I/O) that fixes the pricer to the static `AssetPricer` dispatch table and the engine to the analytic default. Every caller that does not need to inject a custom pricer or the adjoint engine variant goes through this single entry. Pure: it reads only its `&PositionRisk` argument and returns `Result<CanonicalLeaf, CarryPriceError>`, mutating nothing."
  },
  {
   "kind": "invariant:pure",
@@ -1440,6 +2506,16 @@
   "state": "active",
   "groundedness": 1.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.futures_style_is_undiscounted_and_rate_invariant",
+   "github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.futures_style_price"
+  ],
+  "text": "`futures_style_price` is the undiscounted Black-76 closed form for futures-style (CME daily-margined) commodity options: Call = F·Φ(d1) − K·Φ(d2), Put = K·Φ(−d2) − F·Φ(−d1), with no discount factor. The test `futures_style_is_undiscounted_and_rate_invariant` pins two invariants: (1) futures_style_price × e^{−r·t} == price bitwise (the discounted form is exactly df×undiscounted), and (2) futures_style_price is bitwise invariant to changes in r at fixed b — the discount rate is entirely absent from the formula, so the futures-style price has zero discount-rho. Pure: reads (OptionType, &CommodityInputs), returns f64, no writes/allocation/IO."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-conventions.src.registry.PairMeta.is_precious_metal"
   ],
   "text": "Pair-universe asset-class classification (docs/CONVENTIONS.md InstrumentClass → registry PairMeta): PairMeta::is_precious_metal is a pure total function of self.instrument — returns true exactly for InstrumentClass::PreciousMetal (the loco-London metal-leg pairs), false for fiat. const fn, no writes/allocation/IO; deterministic. Self-invalidates if the match arm or InstrumentClass variants change (WRITES gate)."
@@ -1455,12 +2531,41 @@
  },
  {
   "kind": "invariant:pure",
+  "state": "draft",
+  "groundedness": -1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-exotics.src.forward_start.cliquet_price_plain",
+   "github.com-soarsa-celnet.crates.celnet-exotics.src.forward_start.forward_start_price"
+  ],
+  "text": "forward_start_price prices a forward-starting option as S·e^{−q·t₁}·unit_spot_value(i, option, moneyness, residual), where t₁=spec.reset is the reset date, q is read via i.carry_df_at(spec.reset) (the yield/foreign discount factor to reset, stored r_for verbatim for FX — byte-identical to e^{−r_for·t₁}), and residual = spec.expiry − spec.reset is the remaining tenor. unit_spot_value gives the normalized option value per unit spot at a moneyness strike. cliquet_price_plain sums n forward-start legs over consecutive schedule intervals for an uncapped ratchet cliquet — valid only when Cliquet::is_plain() holds (debug_assert). Pure: reads ExoticInputs, no WRITES."
+ },
+ {
+  "kind": "invariant:pure",
   "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-equity-vanilla.src.lib.EquityInputs.carry"
+  ],
+  "text": "EquityInputs::carry() is the pure, side-effect-free accessor for the net cost of carry b = r − q − repo: it reads the three stored fields and returns their scalar difference. This scalar b is the single carry coordinate threading through d1, the forward (S·e^{b·t}), and all carry-tagged Greeks. By convention repo=0.0 for an unencumbered name, which collapses b to r−q (continuous dividend yield form)."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-golden.src.oracle.gk_price"
   ],
   "text": "SAFETY/ORACLE — gk_price is the independent golden reference (the Garman-Kohlhagen two-rate FX vanilla closed form) against which the production engine is validated, NOT the engine's own pricer: for t>0 it computes d1=(ln(S/K)+(r_dom-r_for+0.5*vol^2)*t)/(vol*sqrt(t)), d2=d1-vol*sqrt(t), df_dom=e^{-r_dom*t}, df_for=e^{-r_for*t}, and returns S*df_for*N(d1)-K*df_dom*N(d2) for a Call (put by symmetry); for t<=0 it returns the discounted intrinsic max(sign*(S-K),0). It deliberately re-derives the price from first principles with its own norm_cdf so a parity test (e.g. vanilla_price_and_greeks_match_quantlib, also pinned to published QuantLib numbers) can disagree with the engine — the anti-circular-oracle property: numerical correctness is checked against this reference, never merely asserted plausible. Pure: it reads only its scalar args and returns the f64 price, mutating nothing."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.forward_delta",
+   "github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.forward_delta_helper_matches_strip"
+  ],
+  "text": "`forward_delta` returns the driftless (forward) delta ∂V/∂F = df·Φ(d1) for a Call and df·(Φ(d1)−1) for a Put — the Black-76 forward-space sensitivity used as the standardised delta quote for commodity options (where hedging is via the futures contract, not the spot). It is distinct from the spot delta in `greeks` which carries the additional e^{bt} factor. The test `forward_delta_helper_matches_strip` asserts it is bitwise identical to the delta_forward field extracted from `greeks` for both EquityStyle variants. Pure: reads (OptionType, &CommodityInputs), returns f64, no writes/allocation/IO."
  },
  {
   "kind": "invariant:pure",
@@ -1485,6 +2590,16 @@
   "state": "active",
   "groundedness": 1.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-linear.src.inputs.LinearInputs.discount_df",
+   "github.com-soarsa-celnet.crates.celnet-linear.src.inputs.LinearInputs.forward"
+  ],
+  "text": "LinearInputs::forward(t) and LinearInputs::discount_df(t) are the two primitive carry-seam accessors on the inputs struct: forward(t) = self.spot * self.carry.forward_factor(t) (i.e. S*e^{b*t}); discount_df(t) = self.carry.discount_df(t) (i.e. e^{-r_dom*t}). Both delegate entirely to celnet_core::carry::Carry, so they are byte-identical to CarryInputs::forward / CarryInputs::discount_df — proved by forward_and_df_match_core_carry_inputs_byte_for_byte. This identity is the structural seam ensuring the linear and options leaves share one pricing substrate."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "stale",
+  "groundedness": 1.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-exotics.src.inputs.carry_vanilla_price_at"
   ],
   "text": "CAPABILITY (cross-asset carry-seam reach): carry_vanilla_price_at is the generalized closed-form pricing kernel of the cross-asset carry seam — a pure, side-effect-free generalized-Black-Scholes-Merton evaluation parameterized by a generalized Carry (cost-of-carry b = r - q via Carry::discount_rate/yield_rate). Because every asset family lowers onto this one Carry-parameterized kernel (FX as r_dom/r_for, equity as r/dividend-yield, commodity as Black-76 r/b, crypto-linear as r/funding), the SAME pure kernel reaches vanilla/exotics/surface/risk across the FX, equity, commodity, and crypto/digital-asset and linear leaves. It performs no I/O, allocation, logging, or mutation: d1/d2 and discounted spot/strike are computed and one branch on OptionType returns the price."
@@ -1494,18 +2609,47 @@
   "state": "active",
   "groundedness": 1.0,
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.linear.aux",
+   "github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.linear.price"
+  ],
+  "text": "`linear::price(opt, i)` is the USDT/coin-quoted (linear-margined) crypto vanilla closed form: it computes `s_disc = spot·e^{-r_for·t}` and `k_disc = strike·e^{-r_dom·t}` where `(r_dom, r_for) = (r, r-b)` extracted from the Carry via `fx_equiv_rates`, then prices as Call = s_disc·Φ(d1) - k_disc·Φ(d2) and Put = k_disc·Φ(-d2) - s_disc·Φ(-d1). The `d1/d2` use the spot-space log-moneyness formula `d1 = (ln(S/K) + (r_dom - r_for + ½σ²)·t) / (σ√t)` (comment: same operation order as the FX GK leaf, so price is bit-identical to the FX leaf under matching rates). Pure: reads `(OptionType, &LinearInputs)`, returns `f64`, no WRITES, allocation, or I/O."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "stale",
+  "groundedness": 1.0,
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-router.src.hash.rendezvous_weight"
   ],
   "text": "PILLAR (CLAUDE.md guardrail 6 + 11 — \"Design for horizontal scale-out from day one\"; \"scale-out aware\"). `rendezvous_weight(replica_seed, key_digest)` is the pure deterministic core of the platform's horizontal scale-out: a `const fn` computing the Highest-Random-Weight (HRW / rendezvous-hashing) score for one (replica, partition-key) pair as `mix64(fold64(replica_seed, key_digest))`. It reads only its two u64 inputs and returns a u64 — no allocation, no I/O, no mutation, no WRITES edges — so it is referentially transparent and the per-replica scores are reproducible on every node. This is the primitive that makes book/risk sharding deterministic and minimal-disruption under membership change: `PartitionMap::natural_owner` takes the argmax of this weight over the live replica set to assign each partition key its stable owner, so adding/removing a replica re-homes only the keys whose argmax moved (the HRW property), never a global reshuffle. Self-invalidating: if the entanglement/mixing changes (anything beyond a pure two-u64 fold) the WRITES gate flips this claim off."
  },
  {
   "kind": "invariant:pure",
-  "state": "active",
+  "state": "stale",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-fix.src.framing.checksum"
   ],
   "text": "SAFETY/WIRE — FIX session-layer frame integrity is the standard FIX BodyLength/CheckSum (tag 10) modulo-256 sum: checksum folds every byte of the message-up-to-and-including the SOH before tag 10 with wrapping u32 addition and returns (acc & 0xFF) as u8 — the canonical FIX checksum that is always rendered as a 3-digit field and validated on inbound frames (rejects_corrupted_checksum, checksum_is_mod_256). A counterparty frame whose recomputed mod-256 checksum does not match the transmitted tag-10 value is rejected at framing, so a corrupted/truncated FIX message never reaches order/quote handling. Pure: it reads only the input byte slice and returns the u8 checksum, mutating nothing."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.sensitivity_var_es"
+  ],
+  "text": "sensitivity_var_es(pricer, positions, scenarios, alpha) -> VarEs is the adjoint (sensitivity-based) VaR/ES path. It makes ONE Greeks sweep via node_sensitivities (one CarryPricer call per position), then for each Scenario approximates node P&L as sum_i(PositionSensitivity_i.taylor_pnl(s)) — a second-order Taylor expansion in spot and vol shocks. Delegates to the same quantile_var_es kernel as the historical path. The separation of the single-sweep sensitivity computation from the per-scenario summation is the efficiency invariant: O(P) pricer calls instead of O(P×S)."
+ },
+ {
+  "kind": "invariant:pure",
+  "state": "active",
+  "groundedness": 1.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.historical_var_es",
+   "github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.node_pnl"
+  ],
+  "text": "historical_var_es(pricer, positions, scenarios, alpha) -> VarEs computes full bump-and-revalue historical VaR/ES: for each Scenario it calls node_pnl (sum of position_pnl over all positions through the CarryPricer seam), collects a Vec<f64> of per-scenario P&Ls, then delegates to the shared quantile_var_es kernel. No Greeks or Taylor approximation — every scenario is a full reprice. Deterministic given identical scenario ordering; returns VarEs{var:0,es:0} for an empty scenario slice."
  },
  {
   "kind": "spec:satisfies",
