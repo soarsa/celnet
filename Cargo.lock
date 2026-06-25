@@ -735,6 +735,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "celnet-rates"
+version = "0.0.0"
+dependencies = [
+ "celnet-types",
+]
+
+[[package]]
 name = "celnet-replog"
 version = "0.0.0"
 dependencies = [

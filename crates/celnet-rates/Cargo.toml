@@ -1,0 +1,15 @@
+[package]
+name = "celnet-rates"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Celnet interest-rate term-structure engine — immutable, cheaply-cloned discount/forward curve snapshots with log-linear-on-log-DF interpolation, the foundation for USD-SOFR multi-curve construction and the linear-rates pricing/risk core (docs/fixed-income/FI-CURVES-SPEC.md). Vendor-neutral, OSS-only; no IO in the numeric core."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+celnet-types.workspace = true
