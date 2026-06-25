@@ -36,6 +36,39 @@
   "text": "DataGrid is a WAI-ARIA APG composite grid: its root carries role=\"grid\" with aria-label (the caller-supplied `label`), aria-rowcount and aria-colcount; the header band is role=\"row\"/aria-rowindex=1 with role=\"columnheader\" cells that expose aria-sort (ascending|descending|none) on sortable columns; body rows are role=\"row\" with role=\"gridcell\" cells, and group headers add aria-expanded. A single roving tabindex (one cell tabIndex=0, the rest -1) plus arrow/Home/End/PageUp/PageDown key handling makes it keyboard-operable as one composite widget. This is the shared virtualized grid powering the blotter/risk/book workspaces, so the grid-pattern a11y contract is centralized here."
  },
  {
+  "kind": "adr",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-proto.proto.celnet.PricingModel",
+   "github.com-soarsa-celnet.crates.celnet-proto.proto.celnet.PricingService",
+   "github.com-soarsa-celnet.crates.celnet-proto.proto.celnet.Underlying"
+  ],
+  "text": "ADR-0007 — ONE UNVERSIONED WIRE CONTRACT (evolve in place, zero legacy). Celnet has no external users and one uniformly-upgraded deployment, so the wire contract (celnet-proto) carries NO schema_version, no template/version field, no schemaId negotiation, and no N/N-1 back-compat shims. Growth is additive + default-compatible (new oneof arms/fields default to the prior behavior — e.g. ADR-0008 Underlying/CarryModel default to FX), so existing call sites are unchanged with no version handshake. Where a byte stream needs a discriminator it is a fixed CONTENT tag (ADR-0009 CELNHND1), never a schema version. API-first parity is binding: SDK, WS mirror, CLI, Excel all consume this one contract and change in lockstep. Doc: docs/adr/ADR-0007-one-unversioned-contract.md; CLAUDE.md guardrail #9."
+ },
+ {
+  "kind": "adr",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-core.src.carry.fx_vanilla_inputs",
+   "github.com-soarsa-celnet.crates.celnet-types.src.lib.Carry",
+   "github.com-soarsa-celnet.crates.celnet-types.src.lib.Underlying"
+  ],
+  "text": "ADR-0008 — MULTI-ASSET ARCHITECTURE: identity / carry-producing market / agnostic payoff. The one fused FX seam is separated into three orthogonal layers: (1) Identity = Underlying, a discriminated union (Fx(CcyPair) now; Metal/DigitalAsset/Equity/Listed additive) — the ONLY place asset class is named; (2) Market = Carry as a forward/discount PRODUCER (forward(t)/discount(t)) — FX two-rate, equity (r,q), commodity (r,convenience), crypto (r,funding) all collapse to generalized-BSM F=S·e^{b·t}, df=e^{−r·t}, differing only in how b is assembled; Carry::FxRates reproduces FX forward/discount BIT-FOR-BIT (byte-identity invariant); (3) Payoff = asset-class-AGNOSTIC engines consuming forward(t)/discount(t)+vol surface only. NO-WORKAROUND TEST (binding): a payoff engine that does `match carry { FxRates=>…, CostOfCarry=>… }` is a review blocker, not a shortcut. Greeks stays a fixed zero-alloc POD shape (guardrail #11); factor decomposition lives in the risk layer (celnet-risk-cube), not an allocating map on Greeks. Doc: docs/adr/ADR-0008-multi-asset-carry-architecture.md."
+ },
+ {
+  "kind": "adr",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-engine.src.handoff.MAGIC",
+   "github.com-soarsa-celnet.crates.celnet-engine.src.handoff.Reader",
+   "github.com-soarsa-celnet.crates.celnet-engine.src.handoff.Writer"
+  ],
+  "text": "ADR-0009 — EDGE WIRE CODEC (hot-upgrade hand-off). The handoff module serializes the engine's live BookState (every booked option line) + MarketState essentials (spot, both rates, vol-time, ConventionRecord, calibrated smile reconstructed from its three benchmark pillars) to a flat deterministic little-endian byte buffer (fixed-width ints, IEEE-754 f64 bit patterns) under a single fixed magic tag CELNHND1 — a CONTENT tag, not a schema_version (honours ADR-0007 / guardrail #9). A freshly started process restores byte-identical book+market state and reprices bit-identically. This is the built hand-rolled codec, explicitly NOT rkyv. Doc: docs/adr/ADR-0009-edge-wire-codec.md."
+ },
+ {
   "kind": "design:token",
   "state": "draft",
   "groundedness": 0.0,
