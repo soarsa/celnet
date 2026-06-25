@@ -28,7 +28,7 @@
 //! bootstrap failure on otherwise-valid input).
 
 use celnet_proto::{
-    BrokenDate, CurveSet, OisInstrument, RatesPriceRequest, RatesPricingResult, Side,
+    BrokenDate, CurveSet, OisInstrument, OisPillar, RatesPriceRequest, RatesPricingResult, Side,
     rates_instrument,
 };
 use celnet_rates::{
@@ -233,6 +233,72 @@ pub fn price_rates(req: &RatesPriceRequest) -> Result<RatesPricingResult, RatesP
     }
 }
 
+/// The P0 static USD-SOFR par-OIS pillar ladder `(tenor_years, par_rate)`.
+///
+/// This is the market the FIX rates edge quotes against until a live SOFR feed is
+/// wired (operator question Q6 — test-environment data-provider access — is
+/// deferred). It is a *real* calibrating market, not a stub: it bootstraps a real
+/// self-discounting curve and produces real par rates and risk. When the feed
+/// lands it simply replaces this table; nothing else changes.
+const P0_USD_SOFR_PILLARS: &[(u32, f64)] = &[
+    (1, 0.0432),
+    (2, 0.0418),
+    (3, 0.0409),
+    (5, 0.0405),
+    (7, 0.0408),
+    (10, 0.0415),
+    (15, 0.0421),
+    (20, 0.0424),
+    (30, 0.0423),
+];
+
+/// The reference (spot-anchor) date of the P0 static curve.
+const P0_REFERENCE: BrokenDate = BrokenDate {
+    year: 2026,
+    month: 6,
+    day: 25,
+};
+
+/// The P0 static USD-SOFR [`CurveSet`] the FIX rates edge prices against (see
+/// [`P0_USD_SOFR_PILLARS`]). A real calibrating market pending a live SOFR feed.
+#[must_use]
+pub fn default_usd_sofr_curve_set() -> CurveSet {
+    CurveSet {
+        currency: SUPPORTED_CURRENCY.to_string(),
+        reference_date: Some(P0_REFERENCE),
+        ois_pillars: P0_USD_SOFR_PILLARS
+            .iter()
+            .map(|&(tenor_years, par_rate)| OisPillar {
+                tenor_years,
+                par_rate,
+            })
+            .collect(),
+    }
+}
+
+/// The fair (par) fixed rate of a spot-starting USD-SOFR OIS of `tenor_years`,
+/// bootstrapped from `curve` — the number the FIX rates edge centres a two-way
+/// RFQ market on. Side- and notional-independent.
+///
+/// # Errors
+///
+/// Returns [`RatesPriceError`] for an invalid curve, an unsupported currency, or a
+/// numeric schedule/bootstrap failure.
+pub fn par_rate_for(curve: &CurveSet, tenor_years: u32) -> Result<f64, RatesPriceError> {
+    if tenor_years == 0 {
+        return Err(RatesPriceError::ZeroTenor);
+    }
+    let reference_date = curve
+        .reference_date
+        .as_ref()
+        .ok_or(RatesPriceError::MissingReferenceDate)?;
+    let reference = resolve_date(reference_date)?;
+    let quotes = build_quotes(curve, reference)?;
+    let schedule = usd_sofr_ois_schedule(reference, tenor_years)?;
+    let base = bootstrap_ois(&quotes)?;
+    Ok(ois_par_rate(&base, &schedule).0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -405,5 +471,34 @@ mod tests {
             price_rates(&req),
             Err(RatesPriceError::InvalidReferenceDate)
         );
+    }
+
+    #[test]
+    fn default_curve_reprices_its_own_pillar() {
+        // The bootstrap reprices each calibrating pillar at par, so the par rate
+        // of a fresh schedule at a pillar tenor returns the quoted pillar rate.
+        let curve = default_usd_sofr_curve_set();
+        let par5 = par_rate_for(&curve, 5).unwrap();
+        assert!((par5 - 0.0405).abs() < 1e-6, "5y par {par5}");
+    }
+
+    #[test]
+    fn par_rate_for_agrees_with_price_rates() {
+        let curve = default_usd_sofr_curve_set();
+        let par = par_rate_for(&curve, 7).unwrap();
+        let req = RatesPriceRequest {
+            request_id: 1,
+            curve_set: Some(curve),
+            instrument: Some(RatesInstrument {
+                instrument: Some(rates_instrument::Instrument::Ois(OisInstrument {
+                    tenor_years: 7,
+                    fixed_rate: 0.0,
+                    notional: 1.0,
+                    side: Side::Sell as i32,
+                })),
+            }),
+            correlation_id: None,
+        };
+        assert_eq!(price_rates(&req).unwrap().par_rate, par);
     }
 }

@@ -31,6 +31,7 @@ use std::time::Duration;
 
 use celnet_core::is_close;
 use celnet_fix::MsgType;
+use celnet_fix::dialect_rates::{self, RatesQuoteRequestParams, RatesSide, SubscriptionRequest};
 use celnet_fix::framing::{FrameCursor, FrameEncoder};
 use celnet_fix::messages::{
     self, EXEC_FILLED, EXEC_REJECTED, ExecReportView, Header, NewOrderParams, QuoteView,
@@ -186,6 +187,45 @@ fn build_lift<'a>(
     }
 }
 
+/// Build an OIS `QuoteRequest(R)` on the fixed-income dialect at a whole-year tenor.
+fn build_rates_rfq<'a>(
+    req_id: &'a [u8],
+    tenor_years: u32,
+    notional: f64,
+    side: RatesSide,
+) -> impl FnOnce(&Header<'_>, &mut FrameEncoder) -> Vec<u8> + 'a {
+    move |h: &Header<'_>, e: &mut FrameEncoder| {
+        let p = RatesQuoteRequestParams {
+            quote_req_id: req_id,
+            symbol: b"USD-OIS",
+            tenor_years,
+            notional,
+            side,
+            subscription: SubscriptionRequest::Snapshot,
+        };
+        dialect_rates::build_rates_quote_request(h, &p, e)
+    }
+}
+
+/// Lift an OIS quote (`NewOrderSingle(D)` against a `QuoteID` on a side).
+fn build_rates_lift<'a>(
+    cl_ord_id: &'a [u8],
+    quote_id: &'a [u8],
+    side: u8,
+) -> impl FnOnce(&Header<'_>, &mut FrameEncoder) -> Vec<u8> + 'a {
+    move |h: &Header<'_>, e: &mut FrameEncoder| {
+        let p = NewOrderParams {
+            cl_ord_id,
+            quote_id,
+            symbol: b"USD-OIS",
+            side,
+            qty: 100_000_000.0,
+            transact_time: T,
+        };
+        messages::build_new_order_single(h, &p, e)
+    }
+}
+
 /// Attach a FIX acceptor to a freshly-booted edge and return its bound address.
 async fn boot_edge_with_fix(clock: Clock) -> (celnet_server::Edge, SocketAddr) {
     let (mut edge, _grpc) = start_edge_with(true, clock.clone()).await;
@@ -255,6 +295,68 @@ async fn fix_rfq_quote_reprices_to_golden_and_lift_fills() {
         assert!(
             is_close(fill_exact, expected_offer, 1e-12, 1e-12),
             "FIX fill premium {fill_exact} != quoted offer {expected_offer}"
+        );
+
+        edge.shutdown(Duration::from_secs(5)).await;
+    })
+    .await
+    .expect("test timed out");
+}
+
+/// Fixed-income RFQ → Quote on the OIS dialect: the maker shows a two-way RATE
+/// market centred on the engine's USD-SOFR par rate (the exact-rate field
+/// reconciles to 1e-12), and a pay-fixed (BUY) lift books a fill at exactly the
+/// quoted offer rate — proving "the FIX API supports fixed income" runs through
+/// the SAME quote / keyed-MAC token / last-look machinery as the FX path.
+#[tokio::test]
+async fn fix_rates_rfq_quotes_par_and_lift_fills() {
+    tokio::time::timeout(DEADLINE, async {
+        let clock = Clock::system();
+        let (edge, fix_addr) = boot_edge_with_fix(clock).await;
+
+        // First-principles reference: the par rate of the 5y OIS on the P0 static
+        // USD-SOFR curve, plus the maker half-spread on the offer side.
+        let curve = celnet_server::rates_pricing::default_usd_sofr_curve_set();
+        let par = celnet_server::rates_pricing::par_rate_for(&curve, 5).expect("5y par rate");
+        let (_bid, expected_offer) = dialect_rates::two_way_rates(par, 0.000_05);
+
+        let mut drv = Driver::connect(fix_addr).await;
+
+        // OIS RFQ → Quote (two-way request).
+        drv.send_app(build_rates_rfq(
+            b"RREQ-1",
+            5,
+            100_000_000.0,
+            RatesSide::TwoWay,
+        ))
+        .await;
+        let quote_raw = drv.next_app(MsgType::Quote).await;
+        let view = QuoteView::new(FrameCursor::parse(&quote_raw).expect("a well-formed Quote"));
+
+        let quote_id = view
+            .quote_id()
+            .expect("the quote carries a QuoteID")
+            .to_vec();
+        let offer_exact = view
+            .offer_exact()
+            .expect("the Quote carries the exact offer rate");
+        assert!(
+            is_close(offer_exact, expected_offer, 1e-12, 1e-12),
+            "FIX rates offer {offer_exact} != engine par+spread {expected_offer}"
+        );
+
+        // Pay-fixed lift (BUY) takes the offer → a fill at exactly the quoted rate.
+        drv.send_app(build_rates_lift(b"RORD-1", &quote_id, b'1'))
+            .await;
+        let exec_raw = drv.next_app(MsgType::ExecutionReport).await;
+        let er = ExecReportView::new(
+            FrameCursor::parse(&exec_raw).expect("a well-formed ExecutionReport"),
+        );
+        assert_eq!(er.exec_type(), Some(EXEC_FILLED), "the rates lift fills");
+        let fill_exact = er.last_px_exact().expect("the fill carries the exact rate");
+        assert!(
+            is_close(fill_exact, expected_offer, 1e-12, 1e-12),
+            "FIX rates fill {fill_exact} != quoted offer {expected_offer}"
         );
 
         edge.shutdown(Duration::from_secs(5)).await;
