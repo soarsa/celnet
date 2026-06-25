@@ -43,7 +43,19 @@ prices the same arm. Single unversioned contract; no placeholder arms (only OIS 
 > live SOFR feed (Q6, test-environment data-provider access, deferred). When the feed lands it
 > replaces the table; nothing else changes.
 
-GUI (separate from the rates core):
+Slice F — five-client parity (in progress):
+
+| Sub-slice | Commit | What | Tests |
+|---|---|---|---|
+| F1 — WS mirror | `61a23b6` | `price_rates` → `rates_price_response` on the WebSocket edge (codec + dispatch) so browser/GUI clients reach the rates path; gRPC and WS share one impl. | +1 codec |
+| F2 — Rust SDK | `32d5504` | `celnet-client::rates` — `UsdSofrCurve` / `Ois` fluent builders + `Client::price_rates` returning side-signed `RatesPriced`. | +4 |
+
+**Five-client status:** FIX ✅ (E2), WS edge ✅ (F1), Rust SDK ✅ (F2). **Remaining: GUI** (F3 —
+`Options | Fixed-Income` asset tabs + a rates pricing workspace, on the F1 WS transport), **Excel**
+(F4 — rates worksheet functions), **federation** (F5 — rates fan-out). The GUI is the largest piece
+and, per the web rules, wants visual-regression + a11y verification — best done in a focused session.
+
+GUI (existing):
 
 | Commit | What |
 |---|---|
