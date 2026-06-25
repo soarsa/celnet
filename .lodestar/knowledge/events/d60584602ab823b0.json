@@ -1,1 +1,0 @@
-{"author":"stage1_gate","claim_key":"d0d55bc9d6b28f76","hlc":{"counter":0,"physical":1782181651385},"id":"d60584602ab823b0","parents":[],"payload":{"evidence_type":"supporting","weight":2.0,"fact":"ui:component:dialog","fact_kind":"stage1_gate"},"type":"verdict"}

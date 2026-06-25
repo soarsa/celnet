@@ -73,12 +73,17 @@ identity.json.tmp
 !.mcp.json
 # <<< lodestar init <<<
 
-# lodestar knowledge SNAPSHOT = machine-local. It is a single mutable freshness record
-# (a real merge hotspot across many developers) and is fully regenerable by folding the
-# content-addressed event log. Only events/ (immutable, hash-named => pure set-union, ZERO
-# textual conflict) + project-id are the shared source of truth. This overrides the
-# lodestar-init un-ignore above (a later .gitignore rule wins), and survives a re-init.
+# lodestar knowledge: the SHARED SOURCE OF TRUTH is the anchor-carrying MIRROR
+# (.lodestar/knowledge/claims-mirror.json + CLAIMS.md + DELIVERABLES.md), NOT the raw event
+# log. lodestar's event log carries no anchors, so it cannot rehydrate the live projection on
+# a fresh clone or after a projection loss (lodestar#18) — it + the snapshot are machine-local,
+# regenerable, per-machine-HLC caches (churn, not shared truth). tools/lodestar/sync-knowledge.sh
+# rebuilds the live projection from the mirror on SessionStart (background, staleness-guarded).
+# These overrides win over the lodestar-init un-ignore above (a later rule wins) + survive re-init.
 .lodestar/knowledge/snapshot.json
+.lodestar/knowledge/events/
+.lodestar/index.log
+.lodestar/knowledge-sync.log
 
 # Office (Excel/Word) temp lock files
 ~$*

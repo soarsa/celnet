@@ -34,7 +34,10 @@ import sys
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 MIRROR = os.path.join(REPO, ".lodestar", "knowledge", "claims-mirror.json")
 PROJECT = "github.com-soarsa-celnet"
-AUTHOR = os.environ.get("LODESTAR_AUTHOR", "claude-code")
+# FIXED, machine/developer-neutral author so the claim key is identical on every machine —
+# this is what makes replay idempotent (re-running converges instead of duplicating). Do NOT
+# read LODESTAR_AUTHOR here: a per-developer author would mint a distinct claim key per person.
+AUTHOR = "celnet-knowledge"
 
 
 def main() -> int:
