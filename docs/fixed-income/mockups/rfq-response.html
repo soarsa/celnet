@@ -30,6 +30,35 @@
   .toggle { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary); }
   .sw { width: 34px; height: 18px; border-radius: var(--r-full); background: var(--accent); position: relative; }
   .sw::after { content:""; position:absolute; right:2px; top:2px; width:14px; height:14px; border-radius:var(--r-full); background:#fff; }
+
+  /* desktop "growl" notification — inbound RFQ requires pricing */
+  .growl { position: fixed; top: 56px; right: 22px; width: 348px; z-index: 60;
+    background: var(--bg-overlay); backdrop-filter: blur(22px);
+    border: 0.5px solid oklch(1 0 0 / 0.16); border-radius: 16px; box-shadow: var(--shadow-float);
+    padding: 13px 15px; display: flex; gap: 12px; }
+  .growl::before { content:""; position:absolute; left:0; top:14px; bottom:14px; width:3px; border-radius:3px; background: var(--brand); }
+  .growl .gi { width: 36px; height: 36px; border-radius: 9px; flex:none; display:grid; place-items:center;
+    color:#1a1530; font-weight:700; font-size:15px;
+    background: radial-gradient(circle at 35% 30%, var(--brand), oklch(0.55 0.18 28)); box-shadow: 0 2px 10px oklch(0.72 0.17 35 / 0.45); }
+  .growl .gc { flex:1; min-width:0; }
+  .growl .gh { display:flex; align-items:baseline; justify-content:space-between; gap:8px; }
+  .growl .gt { font-size:10px; letter-spacing:0.06em; text-transform:uppercase; color:var(--text-tertiary); }
+  .growl .gtime { font-size:10px; color:var(--text-tertiary); font-family:var(--font-mono); }
+  .growl .gn { font-size:13.5px; font-weight:600; margin:3px 0 3px; }
+  .growl .gb { font-size:12px; color:var(--text-secondary); line-height:1.45; }
+  .growl .gb b { color:var(--text-primary); font-family:var(--font-mono); }
+  .growl .ga { display:flex; gap:8px; margin-top:10px; }
+  .growl .cap { position:absolute; top:-9px; left:14px; font-size:9px; letter-spacing:0.05em; text-transform:uppercase;
+    color:var(--text-tertiary); background:var(--bg-inset); border:0.5px solid oklch(1 0 0 / 0.12); padding:1px 7px; border-radius:var(--r-full); }
+  /* in-app fallback toast (notifications blocked) */
+  .ntoast { position: fixed; bottom: 42px; right: 22px; z-index: 60; width: 320px;
+    background: var(--bg-overlay); backdrop-filter: blur(20px); border:0.5px solid oklch(1 0 0 / 0.12);
+    border-left:2px solid var(--bid); border-radius:12px; box-shadow:var(--shadow-float);
+    padding:10px 13px; display:flex; gap:10px; align-items:flex-start; }
+  .ntoast .ti { color:var(--bid); font-size:15px; }
+  .ntoast .tn { font-size:12px; color:var(--text-secondary); line-height:1.4; }
+  .ntoast .tn b { color:var(--text-primary); }
+  .ntoast .cap { display:block; font-size:9px; letter-spacing:0.05em; text-transform:uppercase; color:var(--text-tertiary); margin-top:4px; }
 </style>
 </head>
 <body>
@@ -211,6 +240,31 @@
       <span class="seg">venues 4/4 · internal book linked</span>
       <span class="right">quote round-trip p99 <span style="color:var(--bid)">2.1ms</span></span>
     </footer>
+  </div>
+
+  <!-- desktop "growl" notification: an RFQ requiring pricing arrived (fires for Options + FI) -->
+  <aside class="growl" role="alert">
+    <span class="cap">macOS notification</span>
+    <div class="gi">c</div>
+    <div class="gc">
+      <div class="gh"><span class="gt">celnet · RFQ requires pricing</span><span class="gtime">now</span></div>
+      <div class="gn">Macro Fund A — two-way request</div>
+      <div class="gb">Fixed Income · <b>UST 4.25% 02/35</b> · <b>$25mm</b> · 18s to respond</div>
+      <div class="ga">
+        <button class="btn primary sm">Price now →</button>
+        <button class="btn sm">Snooze</button>
+        <button class="btn ghost sm">Dismiss</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- in-app fallback when OS notifications are denied -->
+  <div class="ntoast" role="status" aria-live="polite">
+    <span class="ti">◉</span>
+    <div>
+      <div class="tn"><b>RFQ requires pricing</b> — Macro Fund A · UST 4.25 02/35 · $25mm</div>
+      <span class="cap">in-app fallback · aria-live (notifications blocked)</span>
+    </div>
   </div>
 </div>
 </body>

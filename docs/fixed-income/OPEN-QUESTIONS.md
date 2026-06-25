@@ -59,6 +59,14 @@ narrower core first, then the deferred lanes:
   move to the deferred vol workstream.
 - **D11 — Oracles (Q8/Q9/Q13):** QuantLib + ORE only (rateslib + FinancePy excluded as deps); CME
   published CFs as a third futures anchor.
+- **D12 — Inbound-RFQ alerting (CROSS-ASSET — Options + FI).** Desktop ("growl") notifications +
+  optional audible cue **when an inbound RFQ/RFM that requires a price arrives** (and on any
+  auto-quote→manual escalation), fired for **both Options and Fixed Income** regardless of focused
+  tab; click-through deep-links to the RFQ ticket; per-desk/per-counterparty-tier mute + threshold;
+  honour OS Do-Not-Disturb; **degrade to the in-app toast + `aria-live`** when notification
+  permission is denied. Asset-class-agnostic; full requirement in
+  [`../GUI-EXPERIENCE-DESIGN.md`](../GUI-EXPERIENCE-DESIGN.md) §3 row 14. (Recorded here because the
+  FI RFQ surface is the active lane; not an FI-only decision.)
 
 **Vol-detail decisions (Q14–Q18) are unchanged as locked _design_ choices, but now belong to the
 deferred `celnet-rates-vol` workstream (per the Q7 revision), not P0.**
