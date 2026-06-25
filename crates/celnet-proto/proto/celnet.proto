@@ -3504,3 +3504,123 @@ service AuthService {
   // Delete a desk (admin only).
   rpc DeleteDesk(DeleteDeskRequest) returns (DeleteDeskResponse);
 }
+
+// ===========================================================================
+// rates — linear interest-rate term structure & instruments (fixed income)
+// ===========================================================================
+//
+// The fixed-income linear-rates arm (`docs/fixed-income/FI-ARCHITECTURE.md`),
+// backed by the `celnet-rates` engine. A `CurveSet` is the calibrated rates
+// market a `RatesInstrument` prices against: for the USD-SOFR P0 it is the single
+// self-discounting SOFR OIS curve, defined by its dated par-OIS pillars so the
+// server bootstraps it deterministically (sequential, acyclic) and any client
+// reproduces byte-identical discount factors. The contract is additive (rule 9):
+// new instrument arms and curve kinds extend the oneofs at the next free field
+// number, never renumbering, and no arm appears on the wire before it can be
+// priced end-to-end (no placeholder arms).
+
+// One calibrating pillar of a self-discounting OIS curve: the observed par (fair
+// fixed) rate of the spot-starting USD-SOFR OIS of the given whole-year tenor.
+// The pillar's schedule (modified-following US calendar, ACT/360 accrual,
+// ACT/365F discount time) is reconstructed server-side from the `CurveSet`
+// reference date and this tenor, so only the economic quote travels on the wire.
+message OisPillar {
+  // The OIS tenor in whole years from spot (e.g. 1, 2, 5, 10). Must be >= 1.
+  uint32 tenor_years = 1;
+  // The observed par (fair fixed) rate as a decimal (0.0405 = 4.05%).
+  double par_rate = 2;
+}
+
+// A calibrated set of interest-rate curves — the rates market an instrument is
+// priced against. For USD-SOFR (the P0 arm) this is exactly one self-discounting
+// SOFR curve, carried as its dated par-OIS pillars plus the reference
+// (spot-anchor) date; the server bootstraps the discount/forward term structure
+// from them. Additive: a multi-curve (basis) generalisation adds further pillar
+// sets at the next free field numbers without reshaping this message.
+message CurveSet {
+  // ISO 4217 currency of the curve (USD for the P0 arm). Carried for forward
+  // generalisation; a non-USD curve is rejected until the multi-currency arm
+  // ships (never silently mispriced).
+  string currency = 1;
+  // The curve reference (spot-anchor) civil date the pillar schedules roll from.
+  BrokenDate reference_date = 2;
+  // The self-discounting OIS pillars, in strictly increasing tenor order. At
+  // least one pillar is required; duplicate or out-of-order tenors are rejected.
+  repeated OisPillar ois_pillars = 3;
+}
+
+// An overnight-indexed swap (OIS) — fixed vs compounded overnight floating, on a
+// single self-discounting curve. The schedule is the spot-starting USD-SOFR
+// schedule of `tenor_years`, reconstructed server-side from the `CurveSet`
+// reference date. `side` is taken from the client's perspective: SIDE_BUY pays
+// fixed (payer swap, long the floating leg); SIDE_SELL receives fixed.
+message OisInstrument {
+  // The swap tenor in whole years from spot (e.g. 2, 5, 10). Must be >= 1.
+  uint32 tenor_years = 1;
+  // The fixed-leg rate as a decimal (0.041 = 4.10%).
+  double fixed_rate = 2;
+  // The notional in the curve currency (always positive; direction is `side`).
+  double notional = 3;
+  // SIDE_BUY = pay fixed (payer); SIDE_SELL = receive fixed. SIDE_TWO_WAY is
+  // rejected for an outright price request (use the quote/stream surface for a
+  // two-way market).
+  Side side = 4;
+}
+
+// A linear interest-rate instrument to price: exactly one arm is set. The oneof
+// grows additively (FRA, vanilla IRS, tenor/cross-ccy basis, STIR/bond futures)
+// as each is backed end-to-end by the rates engine; no arm ships on the wire
+// before it can be priced (rule 2 — narrow, never fake).
+message RatesInstrument {
+  // The instrument arm: exactly one variant is set.
+  oneof instrument {
+    // An overnight-indexed swap (the USD-SOFR P0 arm).
+    OisInstrument ois = 1;
+  }
+}
+
+// The priced result for a linear-rates instrument: present value plus first-order
+// risk. All measures are in the curve currency and already carry the instrument
+// `side` sign (a payer and a receiver of the same swap report equal-and-opposite
+// PV / PV01 / DV01 / ladder).
+message RatesPricingResult {
+  // Present value in the curve currency (sign per `side`).
+  double pv = 1;
+  // The par (fair fixed) rate of the instrument's schedule on the calibrated
+  // curve, as a decimal — the breakeven fixed rate, independent of `side`.
+  double par_rate = 2;
+  // Analytic PV01: the PV change per 1bp move in the instrument's own fixed rate
+  // (the fixed-leg annuity in bp), signed per `side`.
+  double pv01 = 3;
+  // DV01: the PV change for a +1bp parallel bump of every calibrating curve
+  // pillar (the curve delta), signed per `side`.
+  double dv01 = 4;
+  // The key-rate (bucketed) DV01 ladder: one entry per `CurveSet` pillar, in
+  // pillar order, each the PV change for a +1bp bump of that pillar alone. Sums
+  // to `dv01` to first order (the residual is curve cross-gamma).
+  repeated double key_rate_ladder = 5;
+}
+
+// Request: price one `RatesInstrument` against one `CurveSet`. The linear-rates
+// analogue of `PriceRequest`.
+message RatesPriceRequest {
+  // Opaque client correlation id, echoed in `RatesPriceResponse.request_id`.
+  uint64 request_id = 1;
+  // The calibrated curve set to price against.
+  CurveSet curve_set = 2;
+  // The instrument to price.
+  RatesInstrument instrument = 3;
+  // Optional caller correlation id, echoed verbatim on the response so a client
+  // joins an asynchronous reply to its originating request. Absent => none.
+  optional uint64 correlation_id = 4;
+}
+
+// Response: the priced rates result.
+message RatesPriceResponse {
+  // Correlates with `RatesPriceRequest.request_id`.
+  uint64 request_id = 1;
+  // The PV + PV01 / DV01 / key-rate-ladder result.
+  RatesPricingResult result = 2;
+  // Echo of the originating `RatesPriceRequest.correlation_id`, if supplied.
+  optional uint64 correlation_id = 3;
+}
