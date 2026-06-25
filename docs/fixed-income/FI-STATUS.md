@@ -25,6 +25,24 @@ The `celnet-rates` crate — the disjoint-leaf numeric core (depends only on the
 **Net: a working USD-SOFR rates engine** — bootstrap a curve from dated OIS quotes → price any OIS →
 PV / PV01 / DV01 / key-rate ladder. `celnet-rates`: **37/37 tests**, clippy `-D` clean.
 
+Integration phase — the engine wired through the wire contract, server, and FIX edge:
+
+| Slice | Commit | What | Tests |
+|---|---|---|---|
+| C | `f4b82d7` | **Proto rates arms** — additive `CurveSet` / `OisPillar` / `OisInstrument` / `RatesInstrument` oneof / `RatesPricingResult` / `RatesPrice{Request,Response}` on the single unversioned `celnet.proto` (reuses `Side`+`BrokenDate`, no renumber). | 62 |
+| D | `5757a16` | **Server `PriceRates` rpc** — `rates_pricing` maps the wire `CurveSet`/`OisInstrument` → engine, prices via `ois_risk`, applies the client `side` sign; thin `PricingService` handler. Server path byte-identical to a direct engine call; par-swap PV≈0; payer == −receiver. | +12 |
+| E1 | `ea9e29d` | **FIX FI dialect** (`celnet-fix/dialect_rates`) — OIS `QuoteRequest` encode/decode, `RatesSide` (pay/receive/two-way), `SubscriptionRequest` (RFQ / RFS subscribe / unsubscribe), `TAG_TENOR_YEARS`. | +9 |
+| E2 | `2c49ab5` | **Live FIX routing** — `price_request` branches on `SecurityType=OIS` to a par-rate two-way line reusing the SAME keyed-MAC token / Quote / last-look / fill path. Real loopback FIX 4.4: OIS RFQ → Quote @ engine par+spread (1e-12) → pay-fixed lift → fill. | +1 e2e |
+
+**Net: "the FIX API supports fixed income" is true end-to-end** — an external FIX counterparty RFQs an
+OIS, gets a two-way rate market, and lifts to a fill, all on the live acceptor. gRPC `PriceRates`
+prices the same arm. Single unversioned contract; no placeholder arms (only OIS ships, additive).
+
+> **P0 market note:** the FIX edge prices against a documented **static USD-SOFR par-OIS ladder**
+> (`rates_pricing::default_usd_sofr_curve_set`) — a *real* calibrating market, not a stub — pending a
+> live SOFR feed (Q6, test-environment data-provider access, deferred). When the feed lands it
+> replaces the table; nothing else changes.
+
 GUI (separate from the rates core):
 
 | Commit | What |
@@ -84,13 +102,17 @@ GUI (separate from the rates core):
 
 ## UI changes — explicit status
 - **Administration tab:** ✅ done (`6c978cf`).
-- **FI asset-class tabs + FI workspace set:** ⏳ outstanding (item F above) — designed in
-  [`mockups/`](./mockups/) and FI-ARCHITECTURE §4; the real GUI build is sequenced behind the
-  `celnet-proto` arms (C) it renders, so the workspaces show live contract data, not placeholders.
+- **FI asset-class tabs + FI workspace set:** ⏳ outstanding (slice F) — designed in
+  [`mockups/`](./mockups/) and FI-ARCHITECTURE §4. Now **unblocked**: the `celnet-proto` arms (C)
+  and the server `PriceRates` rpc (D) exist, so the workspaces render live contract data, not
+  placeholders. Remaining F work: WS mirror for `price_rates` (codec + dispatch), the GUI
+  `Options | Fixed-Income` asset-class tabs + a rates pricing workspace (curve → OIS → PV / par /
+  DV01 / key-rate ladder), then Excel rates functions + SDK builders + federation fan-out.
 
 ---
 
 ## Build order for the outstanding phase
-**C (proto arms) → D (server consumes `celnet-rates`) → E (FIX dialect) → F (SDK · Excel · GUI ·
-federation)**, with A/B product breadth landing into `celnet-rates` in parallel (disjoint leaf).
-The proto arms (C) are the keystone every client surface depends on, so they go first.
+**C (proto arms) ✅ → D (server consumes `celnet-rates`) ✅ → E (FIX dialect) ✅ → F (WS mirror ·
+GUI asset-tabs + rates workspace · Excel · SDK · federation) ⏳**, with A/B product breadth
+(FRA / IRS / futures / cash-bond RV) landing into `celnet-rates` in parallel (disjoint leaf).
+C/D/E are committed and gated; F (the five-client surface) is the remaining front-end-led phase.
