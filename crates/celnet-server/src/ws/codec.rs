@@ -49,6 +49,11 @@ use celnet_proto::{
     LoginResponse, LogoutRequest, LogoutResponse, ResetPasswordRequest, ResetPasswordResponse,
     UpdateUserRequest, UpdateUserResponse, UserDesc,
 };
+// Linear-rates (fixed-income) contract — the WS mirror of PricingService::PriceRates.
+use celnet_proto::{
+    CurveSet, OisInstrument, OisPillar, RatesInstrument, RatesPriceRequest, RatesPriceResponse,
+    RatesPricingResult, rates_instrument,
+};
 
 /// A codec error: a malformed or out-of-contract JSON message. Carries a
 /// human-readable reason echoed back to the client as a typed `error` frame.
@@ -1156,6 +1161,95 @@ pub(super) fn price_response_to_json(r: &PriceResponse) -> Value {
         // Presence-tracked MC standard error (set only for MC-priced products) so
         // the WS one-shot price path matches the gRPC PriceResponse disclosure.
         "price_std_error": r.price_std_error,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Linear rates (fixed income) — the WS mirror of PricingService::PriceRates
+// ---------------------------------------------------------------------------
+
+/// Decode a `u32` proto field carried as a JSON integer, range-checked.
+fn u32_field(o: &Map<String, Value>, key: &str) -> Result<u32> {
+    u32::try_from(u64_field(o, key)?).map_err(|_| err(format!("field `{key}` out of u32 range")))
+}
+
+/// Decode one OIS curve pillar `{ tenor_years, par_rate }`.
+fn ois_pillar_from_json(v: &Value) -> Result<OisPillar> {
+    let o = obj(v, "ois_pillar")?;
+    Ok(OisPillar {
+        tenor_years: u32_field(o, "tenor_years")?,
+        par_rate: f64_field(o, "par_rate")?,
+    })
+}
+
+/// Decode a `CurveSet` `{ currency, reference_date, ois_pillars[] }`.
+fn curve_set_from_json(v: &Value) -> Result<CurveSet> {
+    let o = obj(v, "curve_set")?;
+    let pillars = o
+        .get("ois_pillars")
+        .and_then(Value::as_array)
+        .ok_or_else(|| err("`curve_set.ois_pillars` must be an array"))?
+        .iter()
+        .map(ois_pillar_from_json)
+        .collect::<Result<Vec<_>>>()?;
+    Ok(CurveSet {
+        currency: string_field(o, "currency")?,
+        reference_date: Some(nested(o, "reference_date", broken_date_from_json)?),
+        ois_pillars: pillars,
+    })
+}
+
+/// Decode an `OisInstrument` `{ tenor_years, fixed_rate, notional, side }`.
+fn ois_instrument_from_json(v: &Value) -> Result<OisInstrument> {
+    let o = obj(v, "ois")?;
+    Ok(OisInstrument {
+        tenor_years: u32_field(o, "tenor_years")?,
+        fixed_rate: f64_field(o, "fixed_rate")?,
+        notional: f64_field(o, "notional")?,
+        side: enum_or_zero(o, "side"),
+    })
+}
+
+/// Decode a `RatesInstrument` oneof — exactly the `ois` arm in the P0 contract.
+fn rates_instrument_from_json(v: &Value) -> Result<RatesInstrument> {
+    let o = obj(v, "instrument")?;
+    let arm = if o.contains_key("ois") {
+        rates_instrument::Instrument::Ois(ois_instrument_from_json(o.get("ois").unwrap())?)
+    } else {
+        return Err(err("rates `instrument` oneof: expected an `ois` arm"));
+    };
+    Ok(RatesInstrument {
+        instrument: Some(arm),
+    })
+}
+
+/// Decode a `RatesPriceRequest`.
+pub(super) fn rates_price_request_from_json(o: &Map<String, Value>) -> Result<RatesPriceRequest> {
+    Ok(RatesPriceRequest {
+        request_id: u64_or_zero(o, "request_id"),
+        curve_set: Some(nested(o, "curve_set", curve_set_from_json)?),
+        instrument: Some(nested(o, "instrument", rates_instrument_from_json)?),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+/// Encode a `RatesPricingResult`.
+fn rates_pricing_result_to_json(r: &RatesPricingResult) -> Value {
+    json!({
+        "pv": r.pv,
+        "par_rate": r.par_rate,
+        "pv01": r.pv01,
+        "dv01": r.dv01,
+        "key_rate_ladder": r.key_rate_ladder,
+    })
+}
+
+/// Encode a `RatesPriceResponse`.
+pub(super) fn rates_price_response_to_json(r: &RatesPriceResponse) -> Value {
+    json!({
+        "request_id": r.request_id,
+        "result": r.result.as_ref().map(rates_pricing_result_to_json),
+        "correlation_id": r.correlation_id,
     })
 }
 
@@ -3075,5 +3169,59 @@ mod tests {
         // An unevaluated curvature is `null`, not a spurious zero.
         assert_eq!(node["nonadditive"]["curvature_spot"], Value::Null);
         assert_eq!(v["correlation_id"], json!(7));
+    }
+
+    /// A `price_rates` request decodes from the browser JSON shape into the proto
+    /// `RatesPriceRequest`, and the decoded curve + instrument price through the
+    /// engine — proving the WS mirror reaches the SAME rates path as gRPC.
+    #[test]
+    fn rates_price_request_decodes_and_prices() {
+        let body = json!({
+            "request_id": 9,
+            "curve_set": {
+                "currency": "USD",
+                "reference_date": { "year": 2026, "month": 6, "day": 25 },
+                "ois_pillars": [
+                    { "tenor_years": 1, "par_rate": 0.0432 },
+                    { "tenor_years": 2, "par_rate": 0.0418 },
+                    { "tenor_years": 5, "par_rate": 0.0405 }
+                ]
+            },
+            "instrument": {
+                "ois": { "tenor_years": 5, "fixed_rate": 0.0405, "notional": 100000000.0, "side": 1 }
+            },
+            "correlation_id": 7
+        });
+        let o = body.as_object().unwrap();
+        let req = rates_price_request_from_json(o).expect("decodes");
+        assert_eq!(req.request_id, 9);
+        assert_eq!(req.correlation_id, Some(7));
+        let curve = req.curve_set.as_ref().unwrap();
+        assert_eq!(curve.currency, "USD");
+        assert_eq!(curve.ois_pillars.len(), 3);
+        assert_eq!(curve.ois_pillars[2].tenor_years, 5);
+
+        // The decoded request prices through the engine: a 5y receive-fixed swap
+        // (side=1=SELL) at the 5y par rate is ~par, so PV ~ 0.
+        let result = crate::rates_pricing::price_rates(&req).expect("prices");
+        assert!(
+            (result.par_rate - 0.0405).abs() < 1e-6,
+            "par {}",
+            result.par_rate
+        );
+        assert!(result.pv.abs() < 1.0, "near-par PV {}", result.pv);
+        assert_eq!(result.key_rate_ladder.len(), 3);
+
+        // The response re-encodes to the browser shape.
+        let resp = celnet_proto::RatesPriceResponse {
+            request_id: req.request_id,
+            result: Some(result),
+            correlation_id: req.correlation_id,
+        };
+        let v = rates_price_response_to_json(&resp);
+        assert_eq!(v["request_id"], json!(9));
+        assert_eq!(v["correlation_id"], json!(7));
+        assert!(v["result"]["par_rate"].as_f64().unwrap() > 0.0);
+        assert_eq!(v["result"]["key_rate_ladder"].as_array().unwrap().len(), 3);
     }
 }

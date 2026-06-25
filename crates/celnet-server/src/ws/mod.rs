@@ -19,7 +19,8 @@
 //!   `multi_dealer_quote` (the ranked LP panel; the matching `accept_quote` may
 //!   carry a panel row's `lp_id`), `accept_quote` → `execution`,
 //!   `reject_quote` → `reject_ack`;
-//! * **pricing** — `price` → `price_response`;
+//! * **pricing** — `price` → `price_response`, `price_rates` → `rates_price_response`
+//!   (the fixed-income linear-rates mirror of `PricingService::PriceRates`);
 //! * **surface** — `get_smile` → `smile`, `mark_surface` → `mark_surface_response`,
 //!   `scenario` → `scenario_response`;
 //! * **RFS** — `subscribe` / `modify` / `unsubscribe` / `resync` / `execute` /
@@ -566,6 +567,14 @@ async fn handle_unary(
                 services.pricing.price(Request::new(req)),
                 "price_response",
                 codec::price_response_to_json
+            )
+        }
+        "price_rates" => {
+            let req = decode!(codec::rates_price_request_from_json(o));
+            call!(
+                services.pricing.price_rates(Request::new(req)),
+                "rates_price_response",
+                codec::rates_price_response_to_json
             )
         }
         "request_quote" => {
