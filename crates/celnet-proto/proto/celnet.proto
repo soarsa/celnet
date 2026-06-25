@@ -2952,6 +2952,12 @@ message PriceResponse {
 service PricingService {
   // Price an instrument and return its full 13-Greek risk.
   rpc Price(PriceRequest) returns (PriceResponse);
+  // Price a linear interest-rate instrument against a calibrated curve set and
+  // return its PV plus the PV01 / DV01 / key-rate risk ladder (the linear-rates
+  // analogue of `Price`; see `RatesPriceRequest`). Like `Price`, the caller
+  // supplies the market (the `CurveSet`) explicitly, so this is a calculation
+  // RPC needing no live-market read. USD-SOFR OIS is the first instrument arm.
+  rpc PriceRates(RatesPriceRequest) returns (RatesPriceResponse);
 }
 
 // The RFQ lifecycle: request a quote, then accept or reject it.

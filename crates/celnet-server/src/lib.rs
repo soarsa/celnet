@@ -74,6 +74,7 @@ pub mod config;
 pub mod core_link;
 pub mod lsv_pricer;
 pub mod pricer;
+pub mod rates_pricing;
 pub mod readiness;
 pub mod services;
 pub mod spread;

@@ -834,6 +834,7 @@ dependencies = [
  "celnet-linear",
  "celnet-observability",
  "celnet-proto",
+ "celnet-rates",
  "celnet-rfq",
  "celnet-risk-cube",
  "celnet-risk-fleet",

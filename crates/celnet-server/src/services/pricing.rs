@@ -14,10 +14,11 @@
 use std::sync::Arc;
 
 use celnet_proto::pricing_service_server::PricingService;
-use celnet_proto::{PriceRequest, PriceResponse};
+use celnet_proto::{PriceRequest, PriceResponse, RatesPriceRequest, RatesPriceResponse};
 use tonic::{Request, Response, Status};
 
 use crate::pricer::{ConventionSet, price_instrument};
+use crate::rates_pricing::{RatesPriceError, price_rates};
 use crate::readiness::ReadinessGate;
 use crate::services::forward::{Serve, route_underlying, serve_mode};
 use crate::services::pin::{PinnedVol, resolve_pinned_vol};
@@ -139,6 +140,31 @@ impl PricingService for PricingEdge {
             correlation_id: req.correlation_id,
             surface_version: echo_version,
             price_std_error: priced.std_error,
+        }))
+    }
+
+    async fn price_rates(
+        &self,
+        request: Request<RatesPriceRequest>,
+    ) -> Result<Response<RatesPriceResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+
+        // Linear-rates pricing is a pure calculation against the caller-supplied
+        // `CurveSet` — there is no per-pair market read to route — so every
+        // replica computes the identical result; no fleet forwarding is needed.
+        let result = price_rates(&req).map_err(|e| match e {
+            // A bootstrap failure on otherwise-valid input is an internal numeric
+            // fault; every other variant is a malformed request.
+            RatesPriceError::Bootstrap(_) => Status::internal(e.to_string()),
+            _ => Status::invalid_argument(e.to_string()),
+        })?;
+
+        Ok(Response::new(RatesPriceResponse {
+            request_id: req.request_id,
+            result: Some(result),
+            correlation_id: req.correlation_id,
         }))
     }
 }
