@@ -47,11 +47,12 @@ describe("data-driven rail + glyph fix (GW1-S1)", () => {
     await renderShell();
     const rail = screen.getByRole("complementary", { name: "workspaces" });
     // The default render is a non-admin (anonymous) session: every registry view
-    // appears EXCEPT the admin-only Connections workspace, and each visible button
-    // keeps its registry ⌘N hint (the original index, so numbering stays aligned).
+    // appears EXCEPT the admin-only Administration group (Connections + Admin), and
+    // each visible button keeps its registry ⌘N hint (the original index, so the
+    // numbering stays aligned).
     for (let i = 0; i < RAIL.length; i += 1) {
       const r = RAIL[i]!;
-      if (r.id === "connections") {
+      if (r.group === "administration") {
         expect(
           within(rail).queryByRole("button", { name: new RegExp(r.label, "i") }),
         ).toBeNull();

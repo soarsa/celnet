@@ -65,14 +65,20 @@ export interface CommandMeta {
  * (uncapping the old `⌘1-5`). Glyph fix: Book is `▤` (a ledger), freeing `Σ` for
  * sum/vega-ladder use exclusively (one glyph, one meaning).
  */
-export const RAIL: readonly { id: WorkspaceId; glyph: string; label: string }[] = [
+export const RAIL: readonly {
+  id: WorkspaceId;
+  glyph: string;
+  label: string;
+  /** Optional grouping tag; `administration` workspaces are set off in their own rail section. */
+  group?: "administration";
+}[] = [
   { id: "ticket", glyph: "⌁", label: "Ticket" },
   { id: "stream", glyph: "≋", label: "Stream" },
   { id: "surface", glyph: "◷", label: "Surface" },
   { id: "risk", glyph: "⊞", label: "Risk" },
   { id: "book", glyph: "▤", label: "Book" },
-  { id: "connections", glyph: "⇄", label: "Connections" },
-  { id: "admin", glyph: "⚇", label: "Admin" },
+  { id: "connections", glyph: "⇄", label: "Connections", group: "administration" },
+  { id: "admin", glyph: "⚇", label: "Admin", group: "administration" },
   { id: "excel", glyph: "▦", label: "Excel" },
 ] as const;
 

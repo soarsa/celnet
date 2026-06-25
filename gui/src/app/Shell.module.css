@@ -77,6 +77,20 @@
   color: var(--text-primary);
 }
 
+/* The Administration rail section: a small uppercase label above a hairline
+ * divider, setting Connections + Admin apart from the trading workspaces. */
+.railGroupLabel {
+  width: 56px;
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--bg-inset);
+  font-size: var(--type-micro);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: center;
+  color: var(--text-tertiary);
+}
+
 /* --- main column --- */
 .main {
   display: grid;

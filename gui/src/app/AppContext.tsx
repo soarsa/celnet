@@ -318,7 +318,10 @@ const NOOP = (): void => {};
  * one of these (a ⌘-jump, a recalled/URL saved view, or losing admin while parked
  * there) is bounced to the default workspace.
  */
-const ADMIN_ONLY_WORKSPACES: ReadonlySet<WorkspaceId> = new Set<WorkspaceId>(["connections"]);
+const ADMIN_ONLY_WORKSPACES: ReadonlySet<WorkspaceId> = new Set<WorkspaceId>([
+  "connections",
+  "admin",
+]);
 
 export function AppProvider({
   children,
