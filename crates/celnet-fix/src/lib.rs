@@ -22,6 +22,7 @@
 
 pub mod acceptor;
 pub mod dialect_fx;
+pub mod dialect_rates;
 pub mod dictionary;
 pub mod framing;
 pub mod initiator;
