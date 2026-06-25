@@ -1,12 +1,11 @@
 # Verified knowledge — anchored mirror (committed source of truth)
 
-Durable, anchor-carrying record of every Tier-1 lodestar claim. lodestar's
-event log does not persist anchors, so THIS file is what survives a fresh clone or
-projection loss. Rebuild the live projection: `python3 tools/lodestar/replay-knowledge.py`.
+Durable, anchor-carrying record of every Tier-1 lodestar claim. Rebuild the live
+projection: `python3 tools/lodestar/replay-knowledge.py`.
 
-**462 claims** — kinds: a11y:labeled=2, a11y:role=2, design:token=1, invariant=154, invariant:pure=298, spec:satisfies=1, ui:component:badge=1, ui:component:dialog=1, ui:component:grid=1, ui:component:strip=1
+**465 claims** — kinds: a11y:labeled=2, a11y:role=2, design:token=1, invariant=154, invariant:pure=298, spec:satisfies=4, ui:component:badge=1, ui:component:dialog=1, ui:component:grid=1, ui:component:strip=1
 
-states: active=247, draft=165, stale=50
+states: active=247, draft=168, stale=50
 
 ---
 
@@ -2300,22 +2299,37 @@ Anchors: `design-target:docs/acceptance/carry-seam.acceptance.json`, `github.com
 
 Carry-seam FX byte-identity (carry-seam deliverable, ADR-0008): celnet-core::carry::fx_vanilla_inputs lowers the Carry::FxRates arm to VanillaInputs byte-identically (forward/df_dom/df_for to_bits-equal to the direct VanillaInputs::new) and rejects the generalized Carry::CostOfCarry arm on the FX lowering path — no silent fallback. Acceptance assertions in docs/acceptance/carry-seam.acceptance.json.
 
-### 459. `ui:component:badge` (active)
+### 459. `spec:satisfies` (draft)
+Anchors: `design-target:docs/acceptance/rfq-multidealer.acceptance.json`, `github.com-soarsa-celnet.crates.celnet-rfq.src.panel.MultiDealerEngine.request`
+
+Deliverable rfq-multidealer is satisfied: concurrent fan-out + ranked panel.
+
+### 460. `spec:satisfies` (draft)
+Anchors: `design-target:docs/acceptance/rfq-multidealer.acceptance.json`, `github.com-soarsa-celnet.crates.celnet-rfq.src.panel.MultiDealerEngine.request`
+
+Deliverable rfq-multidealer is satisfied: MultiDealerEngine fans an RfqRequest out to every registered QuoteSource concurrently and ranks responses into a best-bid/offer panel with deterministic tie-break.
+
+### 461. `spec:satisfies` (draft)
+Anchors: `design-target:docs/acceptance/rfq-multidealer.acceptance.json`, `github.com-soarsa-celnet.crates.celnet-rfq.src.panel.MultiDealerEngine.request`, `github.com-soarsa-celnet.crates.celnet-rfq.src.panel.QuoteSource.request`
+
+Deliverable rfq-multidealer: MultiDealerEngine::request fans an RfqRequest out to every registered QuoteSource concurrently and ranks responses into a best-bid/offer panel with a deterministic tie-break; new LPs implement the QuoteSource seam without touching the engine. Acceptance target docs/acceptance/rfq-multidealer.acceptance.json. (Behavioral assertions DEFER to draft until execute-to-verify is enabled.)
+
+### 462. `ui:component:badge` (active)
 Anchors: `github.com-soarsa-celnet.gui.src.components.StatusBadge.StatusBadge`
 
 StatusBadge is the small stream-health status pill: a single <span> driven purely by the StreamHealth enum, selecting a glyph (GLYPH[health]) and a per-state CSS-Module modifier class (styles[health.toLowerCase()]) that colors it from the semantic tokens. It is stateless and presentational, and is the only component with committed Storybook stories (StatusBadge.stories.tsx → components-statusbadge--* in the static index), making it the visual-regression and token-rendering reference fixture.
 
-### 460. `ui:component:dialog` (active)
+### 463. `ui:component:dialog` (active)
 Anchors: `github.com-soarsa-celnet.gui.src.components.CommandPalette.CommandPalette`
 
 CommandPalette is the ⌘K command-launcher overlay: a scrim-backed modal dialog with a fuzzy-matched (fuzzyMatch) search input over the caller-supplied Command list, ranking and showing the top results as a keyboard-navigable listbox. It renders null when closed, clears query/active on open, and runs the selected command's run() on Enter/click. It is the central action surface (pairs, workspaces, actions) styled through CSS-Module tokens (scrim/palette/item) rather than inline literals.
 
-### 461. `ui:component:grid` (active)
+### 464. `ui:component:grid` (active)
 Anchors: `github.com-soarsa-celnet.gui.src.components.DataGrid.DataGrid`
 
 DataGrid is the single reusable virtualized data-grid primitive (generic over the row datum T): row-windowing (useVirtualWindow) and column-windowing (columnWindow) render only the visible slice, with optional grouping (flattenGroups + collapsible group rows), sortable columns, and roving-tabindex keyboard navigation. It reads row height and cell padding from the density tokens (--row-h, --cell-pad-x/y) via useRowHeight, so the comfortable/compact density axis applies without a JS branch. The blotter (StreamWorkspace), risk and book workspaces all compose this one component rather than re-implementing a grid.
 
-### 462. `ui:component:strip` (active)
+### 465. `ui:component:strip` (active)
 Anchors: `github.com-soarsa-celnet.gui.src.components.GreeksStrip.GreeksStrip`
 
 GreeksStrip is the inline option-risk readout: a primary row of GreekCell tiles (delta/gamma/vega/theta) plus a disclosure button (aria-expanded + aria-label="toggle full Greeks") that reveals the secondary Greeks. It is asset-class-aware — rhoGreeksFor(assetClass) relabels the rate-rho Greeks per the active underlier's class (FX default) — so the same strip serves FX/equity/commodity/crypto tickets. Numerics render through GreekCell on the mono token face; the strip itself carries no raw color literals.

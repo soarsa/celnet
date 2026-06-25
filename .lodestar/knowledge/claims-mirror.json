@@ -4407,6 +4407,37 @@
   "state": "draft",
   "groundedness": 0.0,
   "anchors": [
+   "design-target:docs/acceptance/rfq-multidealer.acceptance.json",
+   "github.com-soarsa-celnet.crates.celnet-rfq.src.panel.MultiDealerEngine.request"
+  ],
+  "text": "Deliverable rfq-multidealer is satisfied: concurrent fan-out + ranked panel."
+ },
+ {
+  "kind": "spec:satisfies",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
+   "design-target:docs/acceptance/rfq-multidealer.acceptance.json",
+   "github.com-soarsa-celnet.crates.celnet-rfq.src.panel.MultiDealerEngine.request"
+  ],
+  "text": "Deliverable rfq-multidealer is satisfied: MultiDealerEngine fans an RfqRequest out to every registered QuoteSource concurrently and ranks responses into a best-bid/offer panel with deterministic tie-break."
+ },
+ {
+  "kind": "spec:satisfies",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
+   "design-target:docs/acceptance/rfq-multidealer.acceptance.json",
+   "github.com-soarsa-celnet.crates.celnet-rfq.src.panel.MultiDealerEngine.request",
+   "github.com-soarsa-celnet.crates.celnet-rfq.src.panel.QuoteSource.request"
+  ],
+  "text": "Deliverable rfq-multidealer: MultiDealerEngine::request fans an RfqRequest out to every registered QuoteSource concurrently and ranks responses into a best-bid/offer panel with a deterministic tie-break; new LPs implement the QuoteSource seam without touching the engine. Acceptance target docs/acceptance/rfq-multidealer.acceptance.json. (Behavioral assertions DEFER to draft until execute-to-verify is enabled.)"
+ },
+ {
+  "kind": "spec:satisfies",
+  "state": "draft",
+  "groundedness": 0.0,
+  "anchors": [
    "design-target:docs/acceptance/carry-seam.acceptance.json",
    "github.com-soarsa-celnet.crates.celnet-core.src.carry.fx_vanilla_inputs"
   ],
