@@ -32,9 +32,11 @@
 pub mod bootstrap;
 pub mod curve;
 pub mod ois;
+pub mod schedule;
 pub mod solver;
 
 pub use bootstrap::{BootstrapError, OisQuote, bootstrap_ois};
 pub use curve::{Curve, CurveError};
 pub use ois::{FixedPeriod, OisSchedule, ScheduleError, ois_annuity, ois_par_rate, ois_pv};
+pub use schedule::{us_settlement_calendar, usd_sofr_ois_schedule};
 pub use solver::{SolverError, brent_root};

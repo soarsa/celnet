@@ -13,3 +13,5 @@ workspace = true
 
 [dependencies]
 celnet-types.workspace = true
+celnet-calendar.workspace = true
+time.workspace = true
