@@ -119,6 +119,7 @@
 
 mod error;
 mod idempotency;
+pub mod rates;
 pub mod rfs;
 pub mod risk;
 pub mod series;
@@ -165,7 +166,7 @@ use celnet_proto::risk_service_client::RiskServiceClient;
 use celnet_proto::surface_service_client::SurfaceServiceClient;
 use celnet_proto::{
     GetSmileRequest, MarkSurfaceRequest, PriceRequest, QuoteAccept, QuoteReject, QuoteRequest,
-    ScenarioRequest,
+    RatesPriceRequest, ScenarioRequest,
 };
 use celnet_types::CcyPair;
 use tonic::transport::{Channel, Endpoint};
@@ -300,6 +301,44 @@ impl Client {
             conventions,
             price_std_error: resp.price_std_error,
         })
+    }
+
+    /// Price a linear interest-rate instrument (a USD-SOFR OIS) against a
+    /// calibrated curve, returning its PV and PV01 / DV01 / key-rate risk —
+    /// the fixed-income analogue of [`Client::price`].
+    ///
+    /// ```no_run
+    /// # use celnet_client::{Client, rates::{UsdSofrCurve, CivilDate, Ois}};
+    /// # async fn ex(client: &Client) -> celnet_client::ClientResult<()> {
+    /// let curve = UsdSofrCurve::new(CivilDate::new(2026, 6, 25))
+    ///     .pillar(1, 0.0432).pillar(2, 0.0418).pillar(5, 0.0405);
+    /// let priced = client
+    ///     .price_rates(&curve, &Ois::receive_fixed(5, 0.0405).notional(100_000_000.0))
+    ///     .await?;
+    /// println!("par {} pv {} dv01 {}", priced.par_rate, priced.pv, priced.dv01);
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`] on a transport / server failure or a missing result.
+    pub async fn price_rates(
+        &self,
+        curve: &rates::UsdSofrCurve,
+        instrument: &rates::Ois,
+    ) -> ClientResult<rates::RatesPriced> {
+        let mut svc = PricingServiceClient::new(self.channel.clone());
+        let request = RatesPriceRequest {
+            request_id: 0,
+            curve_set: Some(curve.to_wire()),
+            instrument: Some(instrument.to_wire()),
+            correlation_id: None,
+        };
+        let resp = svc.price_rates(request).await?.into_inner();
+        let result = resp
+            .result
+            .ok_or(ClientError::MissingField("RatesPriceResponse.result"))?;
+        Ok(rates::RatesPriced::from_wire(result))
     }
 
     // ---- surface ----------------------------------------------------------
