@@ -31,6 +31,7 @@
 
 pub mod bootstrap;
 pub mod curve;
+pub mod fra;
 pub mod ois;
 pub mod risk;
 pub mod schedule;
@@ -38,6 +39,7 @@ pub mod solver;
 
 pub use bootstrap::{BootstrapError, OisQuote, bootstrap_ois};
 pub use curve::{Curve, CurveError};
+pub use fra::{Fra, FraError, FraRisk, fra_par_rate, fra_pv, fra_pv01, fra_risk};
 pub use ois::{FixedPeriod, OisSchedule, ScheduleError, ois_annuity, ois_par_rate, ois_pv};
 pub use risk::{OisRisk, ois_risk, pv01};
 pub use schedule::{us_settlement_calendar, usd_sofr_ois_schedule};
