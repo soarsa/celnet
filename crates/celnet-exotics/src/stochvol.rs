@@ -320,6 +320,100 @@ mod tests {
         }
     }
 
+    /// QUANTITATIVE pins of BOTH quadratic-exponential branches as
+    /// deterministic functions of `(params, v, dt, u)` — the W6 plan §3.5
+    /// pre-kill item 5. Expected values hand-derived OUT-OF-BAND from the
+    /// published scheme (Andersen 2008: exact conditional moments eqn 17,
+    /// squared-Gaussian branch `v' = a(b+Z)²` with `b² = 2/ψ − 1 +
+    /// √(2/ψ)√(2/ψ−1)`, `a = m/(1+b²)`; exponential branch `p* = (ψ−1)/(ψ+1)`,
+    /// `β = (1−p*)/m`, tail inverse `ln((1−p*)/(1−u))/β`) in an independent
+    /// double-precision implementation. The statistical mean test cannot see a
+    /// conditional-VARIANCE (s²) mutant that preserves the mean — these pins
+    /// kill the whole moment/branch chain on magnitude. `v ≠ θ` deliberately
+    /// (at `v = θ` the conditional mean degenerates to `θ` and loses its
+    /// `e^{−κΔ}` dependence).
+    #[test]
+    fn qe_branches_match_hand_derived_scheme() {
+        // Squared-Gaussian branch: ψ ≈ 0.045 ≤ ψ_c.
+        let calm = VarianceParams::new(0.04, 3.0, 0.05, 0.2, -0.3);
+        let (v, dt) = (0.062, 1.0 / 12.0);
+        assert_close!(
+            qe_variance_step(&calm, v, dt, 0.25),
+            0.050_505_841_521_469_99,
+            1e-9,
+            1e-12
+        );
+        assert_close!(
+            qe_variance_step(&calm, v, dt, 0.9),
+            0.075_877_000_473_907_3,
+            1e-9,
+            1e-12
+        );
+
+        // Exponential-with-atom branch: ψ ≈ 35.9 > ψ_c (strongly
+        // Feller-violating, near-zero current variance).
+        let wild = VarianceParams::new(0.04, 0.5, 0.04, 1.2, -0.7);
+        // u = 0.1 < p* ≈ 0.9458 ⇒ the atom at zero.
+        assert_close!(
+            qe_variance_step(&wild, 1e-4, 1.0 / 12.0, 0.1),
+            0.0,
+            1e-15,
+            1e-15
+        );
+        // u = 0.95 > p* ⇒ the exponential tail inverse.
+        assert_close!(
+            qe_variance_step(&wild, 1e-4, 1.0 / 12.0, 0.95),
+            2.580_971_040_503_96e-3,
+            1e-9,
+            1e-14
+        );
+    }
+
+    /// `log_spot_increment` is a deterministic function — pinned against the
+    /// hand-derived broadband integration (γ₁ = γ₂ = ½ trapezoidal ∫v dt; the
+    /// SDE substitution `∫√v dW = (v₁ − v₀ − κθΔ + κ∫v dt)/ξ`; Itô term
+    /// `−½L²∫v dt`; orthogonal `√(1−ρ²)·L·√(∫v dt)·Z⊥`), evaluated out-of-band:
+    /// the main path, the full-truncation clamp (`v₀ < 0` in), and the `ξ = 0`
+    /// pure-local-vol branch.
+    #[test]
+    fn log_spot_increment_matches_hand_derivation() {
+        let p = VarianceParams::new(0.04, 1.5, 0.04, 0.5, -0.3);
+        assert_close!(
+            log_spot_increment(&p, 0.05, 0.038, 1.0 / 12.0, 1.13, 0.62),
+            0.045_925_396_052_403_06,
+            1e-12,
+            1e-14
+        );
+        // Full truncation: a (defensively handled) negative start variance is
+        // clamped to zero before any √ or drift use.
+        assert_close!(
+            log_spot_increment(&p, -0.02, 0.038, 1.0 / 12.0, 1.13, 0.62),
+            1.598_463_144_890_895_8e-3,
+            1e-12,
+            1e-14
+        );
+        // ξ = 0: the stochastic-integral substitution is undefined ⇒ zero
+        // correlated leg by contract (pure local-vol limit).
+        let lv = VarianceParams::new(0.04, 2.0, 0.06, 0.0, 0.4);
+        assert_close!(
+            log_spot_increment(&lv, 0.04, 0.04, 0.25, 0.9, -1.1),
+            -0.094_784_998_760_125_65,
+            1e-12,
+            1e-14
+        );
+    }
+
+    /// `step_uniforms` consumes exactly the first two words of the
+    /// `(seed, stream, path, step)` counter stream — bit-equal to drawing them
+    /// directly (the bit-reproducibility contract of an LSV step).
+    #[test]
+    fn step_uniforms_are_first_two_stream_words() {
+        let (u0, u1) = step_uniforms(0xFEED_5EED, 4, 1234, 17);
+        let mut rng = CounterRng::new(0xFEED_5EED, 4, 1234, 17);
+        assert_eq!(u0.to_bits(), rng.next_u01().to_bits());
+        assert_eq!(u1.to_bits(), rng.next_u01().to_bits());
+    }
+
     /// With zero vol-of-variance the variance is deterministic and the QE step
     /// returns the exact mean-reversion ODE solution — the pure-local-vol limit at
     /// the backbone level.

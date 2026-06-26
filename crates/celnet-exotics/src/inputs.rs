@@ -288,6 +288,57 @@ mod tests {
         }
     }
 
+    /// Seam-accessor identities re-derived RAW (the horizon-τ accessors and the
+    /// carry-seam identities the per-`t` byte-identity test does not reach):
+    /// `discount_df_at(τ) = e^{−r_dom·τ}`, `carry_df_at(τ) = e^{−r_for·τ}` at a
+    /// horizon `τ ≠ t`, `yield_rate` verbatim, and the `as_fx_vanilla`
+    /// round-trip (every field bit-exact, strike substituted) — the ADR-0008
+    /// carry-seam identity — plus the typed rejection of a non-FX carry.
+    #[test]
+    fn seam_accessor_identities_raw() {
+        let v = VanillaInputs::new(1.30, 1.25, 0.10, 0.75, 0.03, 0.01);
+        let e = ExoticInputs::from(&v);
+        let tau = 0.4;
+        assert_eq!(e.discount_df_at(tau).to_bits(), exp(-0.03 * tau).to_bits());
+        assert_eq!(e.carry_df_at(tau).to_bits(), exp(-0.01 * tau).to_bits());
+        assert_eq!(e.yield_rate().to_bits(), 0.01f64.to_bits());
+        assert_eq!(e.carry_rate().to_bits(), (0.03f64 - 0.01).to_bits());
+
+        let k = 1.372_905_124_873_311_4;
+        let rt = e.as_fx_vanilla(k).expect("FX carry must lower");
+        assert_eq!(rt.spot.to_bits(), v.spot.to_bits());
+        assert_eq!(rt.strike.to_bits(), k.to_bits());
+        assert_eq!(rt.vol.to_bits(), v.vol.to_bits());
+        assert_eq!(rt.t.to_bits(), v.t.to_bits());
+        assert_eq!(rt.r_dom.to_bits(), v.r_dom.to_bits());
+        assert_eq!(rt.r_for.to_bits(), v.r_for.to_bits());
+
+        // A non-FX carry typed-rejects instead of silently mis-pricing.
+        let synthetic = ExoticInputs {
+            carry: Carry::CostOfCarry { r: 0.03, b: 0.0173 },
+            ..e
+        };
+        assert!(synthetic.as_fx_vanilla(k).is_err());
+    }
+
+    /// `carry_vanilla_price_at` (the strike-continuum form) is the SAME IEEE-754
+    /// op sequence as `carry_vanilla_price` on materialized inputs — bit-for-bit
+    /// across option types and carry kinds.
+    #[test]
+    fn carry_vanilla_at_matches_materialized_bitwise() {
+        let v = VanillaInputs::new(1.30, 1.25, 0.10, 0.75, 0.03, 0.01);
+        let e = ExoticInputs::from(&v);
+        for carry in [e.carry, Carry::CostOfCarry { r: 0.03, b: 0.0173 }] {
+            let i = ExoticInputs { carry, ..e.clone() };
+            for opt in [OptionType::Call, OptionType::Put] {
+                assert_eq!(
+                    carry_vanilla_price_at(opt, i.spot, i.strike, i.vol, i.t, &i.carry).to_bits(),
+                    carry_vanilla_price(opt, &i).to_bits()
+                );
+            }
+        }
+    }
+
     /// The carry-seam vanilla reproduces the FX two-rate vanilla BIT-FOR-BIT for a
     /// genuine FX carry, and a synthetic `CostOfCarry { r, b }` reproduces the
     /// legacy synthetic-FX recast (`r_for = r − b`) BIT-FOR-BIT — the two

@@ -14,9 +14,20 @@
 //!
 //! The quantile uses the rational minimax approximation of Acklam (2003) with a
 //! single Halley refinement step against [`celnet_core::math::norm_cdf`] /
-//! `norm_pdf`, giving full double precision (≤ 1e-15 relative across the
-//! representable tails). Method provenance lives only here; the public functions
-//! are purpose-named.
+//! `norm_pdf`. Accuracy (measured against the Wichura AS241 references in the
+//! tests): full double precision (≲ 1e-13 relative) in the central region and
+//! the **lower** tail, where `norm_cdf(x) − p` is a difference of small
+//! same-magnitude numbers carried at full relative precision by the erfc-based
+//! CDF. In the far **upper** tail the residual `norm_cdf(x) − p` cancels at
+//! `ulp(1) ≈ 2.2e-16` absolute, which the `1/φ(x)` Halley amplification turns
+//! into a relative error on `x` of up to ~5e-10 by `p = 1 − 1e-10` (measured
+//! 4.6e-10 there). This is far below the resolution of the only in-crate
+//! consumer — [`crate::rng::CounterRng`] uniforms are quantized at `2⁻³² ≈
+//! 2.3e-10` in `u`, i.e. ~1e6× coarser in `x` near that tail — but a future
+//! symmetric reduction (`p > ½ ⇒ −Φ⁻¹(1−p)`, exact by Sterbenz) would close it
+//! at the cost of changing every MC draw bit-pattern, so it must ride a
+//! coordinated re-freeze of the `fx_byte_identity` gates. Method provenance
+//! lives only here; the public functions are purpose-named.
 
 use celnet_core::math::{ln, norm_cdf, norm_pdf, sqrt};
 
@@ -139,6 +150,64 @@ mod tests {
         assert_close!(inverse_cdf(0.5), 0.0, 1e-12, 1e-12);
         assert_close!(inverse_cdf(0.975), 1.959_963_984_540_054, 1e-9, 1e-9);
         assert_close!(inverse_cdf(0.025), -1.959_963_984_540_054, 1e-9, 1e-9);
+    }
+
+    /// External quantile references: values from the Wichura AS241 (PPND16)
+    /// algorithm — an INDEPENDENT published quantile approximation (different
+    /// rational fits, different branch structure from the Acklam + Halley
+    /// product path), evaluated out-of-band and typed in as literals. Pins the
+    /// quantile's MAGNITUDE across both tails, both rational-approximation
+    /// branches, and the exact `P_LOW` branch boundary (`p = 0.02425`), so
+    /// approximation-coefficient/branch mutants die on value, not just on the
+    /// `Φ(Φ⁻¹(p)) = p` self-consistency round-trip (which the Halley step can
+    /// partially repair).
+    #[test]
+    fn quantile_matches_external_references() {
+        for &(p, x) in &[
+            (1e-10, -6.361_340_902_404_057),
+            (1e-4, -3.719_016_485_455_68),
+            (0.024_25, -1.972_961_051_311_884_5), // exactly P_LOW
+            (0.1, -1.281_551_565_544_600_6),
+            (0.3, -0.524_400_512_708_040_8),
+            (0.6, 0.253_347_103_135_799_8),
+            (0.975, 1.959_963_984_540_053_4),
+            (0.999_9, 3.719_016_485_455_708_4),
+        ] {
+            assert_close!(inverse_cdf(p), x, 1e-12, 1e-13);
+        }
+        // Far upper tail: the Halley residual `Φ(x) − p` cancels at ulp(1),
+        // so the achievable relative accuracy at p = 1 − 1e-10 is ~5e-10 (see
+        // the module docs; the true value 6.361340889697423 is pinned via an
+        // erfc-bisection oracle, the measured product error is 4.6e-10). The
+        // 5e-9 band is the honest accuracy class — still ~7 orders sharper
+        // than any approximation-branch magnitude mutant.
+        assert_close!(
+            inverse_cdf(0.999_999_999_9),
+            6.361_340_889_697_423,
+            5e-9,
+            0.0
+        );
+    }
+
+    /// The pair transform pinned against hand-derived values (`r = √(−2 ln u₁)`,
+    /// `θ = τ·u₂`, `(r·cos θ, r·sin θ)` evaluated out-of-band at double
+    /// precision and typed in as literals) — kills magnitude mutants in the
+    /// radial and angular parts that the moment test's 5e-3 tolerance absorbs.
+    #[test]
+    fn gaussian_pair_matches_hand_derived_values() {
+        for &(u1, u2, z0, z1) in &[
+            (0.25, 0.3, -0.514_547_047_185_909_5, 1.583_612_976_226_212_3),
+            (0.8, 0.85, 0.392_668_310_120_565_6, -0.540_461_562_791_914_7),
+        ] {
+            let (a, b) = gaussian_pair_from_uniforms(u1, u2);
+            assert_close!(a, z0, 1e-12, 1e-13);
+            assert_close!(b, z1, 1e-12, 1e-13);
+        }
+        // Deep-tail radial part: u₁ = 1e-9 ⇒ r = 6.437898…; the angle π sends
+        // the sine to (floating) zero.
+        let (a, b) = gaussian_pair_from_uniforms(1e-9, 0.5);
+        assert_close!(a, -6.437_898_078_868_041_6, 1e-12, 1e-13);
+        assert!(b.abs() < 1e-14, "sin(π) leg should vanish, got {b}");
     }
 
     /// Antisymmetry: `Φ⁻¹(1−p) = −Φ⁻¹(p)`.

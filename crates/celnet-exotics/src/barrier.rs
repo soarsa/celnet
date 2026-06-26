@@ -168,6 +168,44 @@ fn pow(base: f64, exp_: f64) -> f64 {
     exp(exp_ * dlog(base))
 }
 
+/// `e^{ln_scale}·(Φ(a) − Φ(b))`, evaluated tail-stably for the image series.
+///
+/// The Ikeda-Kunitomo reflection terms multiply an exponential weight that can
+/// reach `e^{±500}` when the carry-to-variance ratio `|b|/σ²` is large by a
+/// difference of normal CDFs whose true magnitude offsets it. Evaluated
+/// literally, both `Φ` saturate to `1.0` in the upper tail, so the difference
+/// collapses to `0` or to a ±1-ulp rounding residue that the huge weight
+/// amplifies into a completely wrong price (the `double_ko_bounds_property`
+/// regression at `b/σ² ≈ −45.9` summed weights of `e^{462}` against ulp noise
+/// and blew through the vanilla upper bound). Two repairs:
+///
+/// * **Tail-stable difference**: for `a, b ≥ 0`, `Φ(a) − Φ(b) = Φ(−b) − Φ(−a)`
+///   — both operands move to the erfc-based *lower* tail of
+///   [`celnet_core::math::norm_cdf`], which keeps full relative precision down
+///   to the underflow floor instead of saturating at 1.
+/// * **Log-space product**: the weight and the difference combine as
+///   `±exp(ln_scale + ln|Δ|)`, so a huge weight meets a tiny difference in the
+///   exponent — bounded for the convergent series — instead of overflowing or
+///   amplifying rounding noise.
+///
+/// A difference that is exactly `0.0` (both CDFs identical in f64: the true
+/// weighted term is far below any representable magnitude) returns `0`; a
+/// non-finite combination (unreachable inside the series' convergence domain)
+/// is clamped to `0`, matching [`crate::touch`]'s `pow_cdf` guard.
+#[inline]
+fn scaled_cdf_diff(ln_scale: f64, a: f64, b: f64) -> f64 {
+    let diff = if a >= 0.0 && b >= 0.0 {
+        norm_cdf(-b) - norm_cdf(-a)
+    } else {
+        norm_cdf(a) - norm_cdf(b)
+    };
+    if diff == 0.0 {
+        return 0.0;
+    }
+    let v = diff.signum() * exp(ln_scale + dlog(diff.abs()));
+    if v.is_finite() { v } else { 0.0 }
+}
+
 /// Price of a single-barrier option (per unit base notional, domestic premium),
 /// including rebate.
 ///
@@ -372,28 +410,37 @@ pub fn double_knock_out_price(i: &ExoticInputs, spec: DoubleBarrierKnockOut) -> 
         let direct_log = ln_s + 2.0 * nf * ln_ul;
         let dd_lo = (direct_log - dlog(f_lo)) / vsqt + drift;
         let dd_hi = (direct_log - dlog(f_hi)) / vsqt + drift;
-        let pow1 = pow(ul, nf * mu1);
+        // ln of the direct reflection weight (U/L)^{n·μ₁}.
+        let ln_pow1 = nf * mu1 * ln_ul;
 
         // Lower-wall mirror image spot S' = L^{2n+2}/(U^{2n}·S):
         //   ln(S'/level) = (2n+2)lnL − 2n·lnU − lnS − ln(level).
         let img_log = (2.0 * nf + 2.0) * ln_l - 2.0 * nf * ln_u - ln_s;
         let dm_lo = (img_log - dlog(f_lo)) / vsqt + drift;
         let dm_hi = (img_log - dlog(f_hi)) / vsqt + drift;
-        let mirror_base = pow(big_l, nf + 1.0) / (pow(big_u, nf) * s);
-        let pow2 = pow(mirror_base, mu1);
+        // ln of the mirror weight base L^{n+1}/(Uⁿ·S).
+        let ln_mirror = (nf + 1.0) * ln_l - nf * ln_u - ln_s;
 
+        // Each weight×CDF-difference product goes through the log-space
+        // tail-stable form — see `scaled_cdf_diff` for why the literal
+        // `pow(..)·(Φ−Φ)` evaluation breaks down at large |b|/σ².
         let asset = s
             * df_for
-            * (pow1 * (norm_cdf(phi * dd_lo) - norm_cdf(phi * dd_hi))
-                - pow2 * (norm_cdf(phi * dm_lo) - norm_cdf(phi * dm_hi)));
+            * (scaled_cdf_diff(ln_pow1, phi * dd_lo, phi * dd_hi)
+                - scaled_cdf_diff(mu1 * ln_mirror, phi * dm_lo, phi * dm_hi));
 
         // Cash leg: power exponent μ₁ − 2 = 2μ, arguments shifted by −σ√T.
-        let pow1c = pow(ul, nf * (mu1 - 2.0));
-        let pow2c = pow(mirror_base, mu1 - 2.0);
         let cash = k
             * df_dom
-            * (pow1c * (norm_cdf(phi * (dd_lo - vsqt)) - norm_cdf(phi * (dd_hi - vsqt)))
-                - pow2c * (norm_cdf(phi * (dm_lo - vsqt)) - norm_cdf(phi * (dm_hi - vsqt))));
+            * (scaled_cdf_diff(
+                nf * (mu1 - 2.0) * ln_ul,
+                phi * (dd_lo - vsqt),
+                phi * (dd_hi - vsqt),
+            ) - scaled_cdf_diff(
+                (mu1 - 2.0) * ln_mirror,
+                phi * (dm_lo - vsqt),
+                phi * (dm_hi - vsqt),
+            ));
 
         sum += asset - cash;
     }
@@ -723,6 +770,61 @@ mod tests {
                 "{option:?}: DKO {dko} must be ≤ single KOs ({down_out}, {up_out})"
             );
             assert!(dko >= -1e-10);
+        }
+    }
+
+    /// Regression (proptest `cc d16c25ad…`, persisted in
+    /// `proptest-regressions/barrier.txt`): an extreme carry-to-variance ratio
+    /// (`b/σ² ≈ −45.9`: 7% negative carry against 3.9% vol) drove the raw
+    /// Ikeda-Kunitomo reflection weights to `e^{±463}` while their CDF
+    /// differences saturated to 1.0-ulp, so the series summed rounding noise
+    /// amplified by ~1e200 and the "price" blew far through the vanilla bound.
+    /// The log-space tail-stable evaluation (`scaled_cdf_diff`) keeps every
+    /// term's magnitude in the exponent. The corridor here is wide (the lower
+    /// wall sits ≈6.2σ below spot, the upper ≈5.0σ above, drift ≈−2.1σ), so
+    /// the true knock-out probability strips only ~2e-6 of value: the DKO must
+    /// sit fractionally BELOW the vanilla, not above it — pinned both ways.
+    #[test]
+    fn double_ko_extreme_carry_regression() {
+        let i: ExoticInputs = VanillaInputs::new(
+            0.25,
+            0.25,
+            0.039_156_509_308_435_41,
+            1.351_005_303_060_065_5,
+            0.030_973_909_748_948_616,
+            0.101_257_786_905_037_64,
+        )
+        .into();
+        let lower = 0.25 * (1.0 - 0.246_647_360_229_049_7);
+        let upper = 0.25 * (1.0 + 0.254_740_468_358_782_83);
+        let spec = DoubleBarrierKnockOut::new(OptionType::Put, 0.25, lower, upper);
+        let v = double_knock_out_price(&i, spec);
+        let vanilla = vanilla_price(OptionType::Put, &vi(&i, 0.25));
+        // Two-sided magnitude pin: barriers ~4σ+ effective ⇒ KO strips < 1e-4
+        // of value, and a knock-out can never exceed its vanilla.
+        assert!(
+            v <= vanilla && v >= vanilla - 1e-4,
+            "DKO {v} must sit fractionally below vanilla {vanilla}"
+        );
+        // Sandwich vs each single-KO leg (both closed forms remain stable here).
+        for (up, barrier) in [(false, lower), (true, upper)] {
+            let single = single_barrier_price(
+                &i,
+                SingleBarrier {
+                    kind: BarrierKind {
+                        up,
+                        style: BarrierStyle::KnockOut,
+                        option: OptionType::Put,
+                    },
+                    strike: 0.25,
+                    barrier,
+                    rebate: 0.0,
+                },
+            );
+            assert!(
+                v <= single + 1e-12,
+                "DKO {v} must be ≤ the up={up} single KO {single}"
+            );
         }
     }
 
