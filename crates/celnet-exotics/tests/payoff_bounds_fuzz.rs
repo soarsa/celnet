@@ -39,7 +39,12 @@ fn clamp_into(raw: f64, lo: f64, hi: f64) -> f64 {
 }
 
 fn build_exotic_inputs(
-    spot: f64, strike: f64, vol: f64, t: f64, r_dom: f64, r_for: f64,
+    spot: f64,
+    strike: f64,
+    vol: f64,
+    t: f64,
+    r_dom: f64,
+    r_for: f64,
 ) -> ExoticInputs {
     ExoticInputs::new(
         spot,
@@ -51,7 +56,15 @@ fn build_exotic_inputs(
     )
 }
 
-fn vanilla_price_gk(opt: OptionType, spot: f64, strike: f64, vol: f64, t: f64, r_dom: f64, r_for: f64) -> f64 {
+fn vanilla_price_gk(
+    opt: OptionType,
+    spot: f64,
+    strike: f64,
+    vol: f64,
+    t: f64,
+    r_dom: f64,
+    r_for: f64,
+) -> f64 {
     let inputs = VanillaInputs::new(spot, strike, vol, t, r_dom, r_for);
     celnet_vanilla::price(opt, &inputs)
 }

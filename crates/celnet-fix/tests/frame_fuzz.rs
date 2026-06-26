@@ -58,7 +58,11 @@ fn assert_contracts(data: &[u8]) {
             // Contract 5: field iteration — non-zero tags, sub-slice bounds.
             let data_start = data.as_ptr() as usize;
             for field in cursor.fields() {
-                assert!(field.tag > 0, "field tag must be non-zero, got {}", field.tag);
+                assert!(
+                    field.tag > 0,
+                    "field tag must be non-zero, got {}",
+                    field.tag
+                );
                 let val_start = field.value.as_ptr() as usize;
                 assert!(
                     val_start >= data_start

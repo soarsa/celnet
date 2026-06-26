@@ -18,19 +18,38 @@ use proptest::prelude::*;
 
 fn clamp_into(raw: f64, lo: f64, hi: f64) -> f64 {
     let mid = 0.5 * (lo + hi);
-    if !raw.is_finite() { return mid; }
+    if !raw.is_finite() {
+        return mid;
+    }
     let t = 0.5 * (libm::tanh(raw) + 1.0);
     lo + t * (hi - lo)
 }
 
 fn build_position(
     is_call: bool,
-    spot: f64, strike: f64, vol: f64, t: f64, r_dom: f64, r_for: f64, notional: f64,
+    spot: f64,
+    strike: f64,
+    vol: f64,
+    t: f64,
+    r_dom: f64,
+    r_for: f64,
+    notional: f64,
 ) -> PositionRisk {
     let pair = CcyPair::new(Ccy::EUR, Ccy::USD);
-    let opt = if is_call { OptionType::Call } else { OptionType::Put };
+    let opt = if is_call {
+        OptionType::Call
+    } else {
+        OptionType::Put
+    };
     let inputs = VanillaInputs::new(spot, strike, vol, t, r_dom, r_for);
-    PositionRisk::fx(pair, opt, notional, inputs, DeltaConvention::SpotUnadjusted, PremiumStyle::DomesticPips)
+    PositionRisk::fx(
+        pair,
+        opt,
+        notional,
+        inputs,
+        DeltaConvention::SpotUnadjusted,
+        PremiumStyle::DomesticPips,
+    )
 }
 
 proptest! {

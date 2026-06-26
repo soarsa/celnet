@@ -12,12 +12,16 @@
 //! 128 cases; same draw ranges as the fuzz target.
 
 use celnet_types::OptionType;
-use celnet_xva::{ExposureConfig, ExposureProfile, NettedTrade, NettingSet, SurvivalCurve, XvaInputs, compute_xva};
+use celnet_xva::{
+    ExposureConfig, ExposureProfile, NettedTrade, NettingSet, SurvivalCurve, XvaInputs, compute_xva,
+};
 use proptest::prelude::*;
 
 fn clamp_into(raw: f64, lo: f64, hi: f64) -> f64 {
     let mid = 0.5 * (lo + hi);
-    if !raw.is_finite() { return mid; }
+    if !raw.is_finite() {
+        return mid;
+    }
     let t = 0.5 * (libm::tanh(raw) + 1.0);
     lo + t * (hi - lo)
 }

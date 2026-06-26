@@ -12,7 +12,9 @@
 use celnet_conventions::ConventionRecord;
 use celnet_core::Smile;
 use celnet_surface::{MarketContext, MarketQuotes, build_smile_and_outer, check_slice};
-use celnet_types::{AtmConvention, Carry, Cut, DayCount, DeltaConvention, PremiumStyle, Settlement};
+use celnet_types::{
+    AtmConvention, Carry, Cut, DayCount, DeltaConvention, PremiumStyle, Settlement,
+};
 use proptest::prelude::*;
 
 /// Squash through tanh so the full f64 range folds smoothly into [lo, hi].
