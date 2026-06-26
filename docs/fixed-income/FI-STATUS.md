@@ -128,10 +128,15 @@ GUI (existing):
 - Gated by a loopback FIX initiator (mirror `tests/fix_acceptor.rs`).
 
 ### F. Five-client parity (slice 9)
-- **GUI** — the D2 **Options | Fixed-Income asset-class tab layer** (above the rail) + the FI
-  workspace set (Curve · Ticket · RFQ · IOI · RFS · Blotter), per FI-ARCHITECTURE §4 and the
-  [`mockups/`](./mockups/). *Real-GUI implementation pending the proto arms it renders.*
-- **Excel** add-in — `CELNET.*` rates functions (curve DF, swap PV, par, PV01/DV01, key-rate).
+- **GUI** — ✅ the **Fixed-Income asset-class tab** + a live **rates pricing workspace**
+  (curve → OIS → PV / par / PV01 / DV01 / key-rate ladder) over `price_rates`
+  (`RatesWorkspace.tsx` + offline pricer `ratesPricing.ts` + live `wsTransport.priceRates`; tab
+  wired via Shell/commands). Broader FI workspace set (RFQ · IOI · RFS · Blotter), per
+  FI-ARCHITECTURE §4 / [`mockups/`](./mockups/), outstanding.
+- **Excel** add-in — ✅ (`7722c59`) `=CELNET.RATES(...)` prices an OIS via the live `price_rates`
+  engine RPC, spilling PV / par / PV01 / DV01 + the key-rate DV01 ladder (contract + codec adapted
+  byte-for-byte from the proven GUI; tsc clean, vitest 445/445 incl. 16 new). Further `CELNET.*`
+  rates fns (standalone curve DF, multi-arm) follow as the proto arms beyond OIS land.
 - **Rust SDK** (`celnet-client`) — typed builders for the rates instrument vocab.
 - **FIX** — the dialect in (E).
 - **Federation** — rates pricing/risk fans out across shards.
@@ -148,17 +153,18 @@ GUI (existing):
 
 ## UI changes — explicit status
 - **Administration tab:** ✅ done (`6c978cf`).
-- **FI asset-class tabs + FI workspace set:** ⏳ outstanding (slice F) — designed in
-  [`mockups/`](./mockups/) and FI-ARCHITECTURE §4. Now **unblocked**: the `celnet-proto` arms (C)
-  and the server `PriceRates` rpc (D) exist, so the workspaces render live contract data, not
-  placeholders. Remaining F work: WS mirror for `price_rates` (codec + dispatch), the GUI
-  `Options | Fixed-Income` asset-class tabs + a rates pricing workspace (curve → OIS → PV / par /
-  DV01 / key-rate ladder), then Excel rates functions + SDK builders + federation fan-out.
+- **FI asset-class tabs + FI workspace set:** 🟡 mostly delivered (slice F) — designed in
+  [`mockups/`](./mockups/) and FI-ARCHITECTURE §4. Delivered: WS mirror for `price_rates` (codec +
+  dispatch) ✅, Rust SDK `Client::price_rates` ✅, the GUI Fixed-Income tab + rates pricing
+  workspace (curve → OIS → PV / par / PV01 / DV01 / key-rate ladder) ✅, and the Excel
+  `=CELNET.RATES(...)` function ✅ (`7722c59`). Remaining F work: the broader FI workspace set
+  (RFQ · IOI · RFS · Blotter) and the federation rates fan-out.
 
 ---
 
 ## Build order for the outstanding phase
-**C (proto arms) ✅ → D (server consumes `celnet-rates`) ✅ → E (FIX dialect) ✅ → F (WS mirror ·
-GUI asset-tabs + rates workspace · Excel · SDK · federation) ⏳**, with A/B product breadth
-(FRA / IRS / futures / cash-bond RV) landing into `celnet-rates` in parallel (disjoint leaf).
-C/D/E are committed and gated; F (the five-client surface) is the remaining front-end-led phase.
+**C (proto arms) ✅ → D (server consumes `celnet-rates`) ✅ → E (FIX dialect) ✅ → F (WS mirror ✅ ·
+Rust SDK ✅ · GUI asset-tabs + rates workspace ✅ · Excel ✅ · federation) 🟡**, with A/B product
+breadth (FRA / IRS / futures / cash-bond RV) landing into `celnet-rates` in parallel (disjoint leaf).
+C/D/E committed and gated; F is nearly complete — only the **federation rates fan-out** remains
+(plus the broader GUI FI workspace set: RFQ · IOI · RFS · Blotter).
