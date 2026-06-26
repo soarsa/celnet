@@ -33,6 +33,7 @@ pub mod bond;
 pub mod bootstrap;
 pub mod curve;
 pub mod fra;
+pub mod futures;
 pub mod ois;
 pub mod risk;
 pub mod schedule;
@@ -46,6 +47,11 @@ pub use bond::{
 pub use bootstrap::{BootstrapError, OisQuote, bootstrap_ois};
 pub use curve::{Curve, CurveError};
 pub use fra::{Fra, FraError, FraRisk, fra_par_rate, fra_pv, fra_pv01, fra_risk};
+pub use futures::{
+    Deliverable, FutureError, StirFuture, cheapest_to_deliver, conversion_factor,
+    convexity_adjustment, gross_basis, implied_repo_rate, stir_forward_rate, stir_futures_price,
+    stir_futures_rate,
+};
 pub use ois::{FixedPeriod, OisSchedule, ScheduleError, ois_annuity, ois_par_rate, ois_pv};
 pub use risk::{OisRisk, ois_risk, pv01};
 pub use schedule::{us_settlement_calendar, usd_sofr_ois_schedule};
