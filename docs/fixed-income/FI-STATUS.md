@@ -75,7 +75,12 @@ GUI (existing):
   DF(0)−DF(T), annual case == `ois_par_rate`). **30/360 fixed-leg basis deferred** — needs a
   coordinated `celnet_types::DayCount` addition (proto / engine handoff / GUI+Excel enum mirrors);
   the builder takes a supported `DayCount` (ACT/365F, ACT/360) until then.
-- **STIR & bond futures** — convexity (deterministic placeholder per Q11), CF/CTD/implied-repo.
+- **STIR & bond futures** ✅ (`36b853d`) — STIR: curve forward + deterministic one-factor Gaussian
+  convexity (`½σ²T₁T₂`, σ a caller input per Q11), `100·(1−rate)` price. Bond: conversion factor
+  (price at notional yield), gross basis, implied repo, CTD by max implied repo. Verified by
+  identities (zero-vol == forward, convexity ↑ in σ, CF == 1 on idealised par schedule, gross basis
+  vanishes at converted price, CTD selects max implied repo). Delivery-window accrued + stochastic
+  convexity deferred.
 - **Cash-bond analytics** ✅ (`eb24f0b`) — fixed-coupon bond reusing the swap coupon schedule:
   PV on curve, periodic **yield-to-maturity**, **Z-spread** (cc spread over curve zeros),
   **G-spread** (yield over same-cashflow curve yield), par-par **ASW**; yield/Z via the shared
