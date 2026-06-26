@@ -76,7 +76,13 @@ GUI (existing):
   coordinated `celnet_types::DayCount` addition (proto / engine handoff / GUI+Excel enum mirrors);
   the builder takes a supported `DayCount` (ACT/365F, ACT/360) until then.
 - **STIR & bond futures** — convexity (deterministic placeholder per Q11), CF/CTD/implied-repo.
-- **Cash-bond analytics** — yield, **G-spread / Z-spread / ASW**, OAS on option-free (= Z).
+- **Cash-bond analytics** ✅ (`eb24f0b`) — fixed-coupon bond reusing the swap coupon schedule:
+  PV on curve, periodic **yield-to-maturity**, **Z-spread** (cc spread over curve zeros),
+  **G-spread** (yield over same-cashflow curve yield), par-par **ASW**; yield/Z via the shared
+  Brent solver. Verified by identities (yield recovers its pricing rate, price↔yield round-trip,
+  monotone price/yield, Z/G/ASW vanish at curve-fair price with correct cheap/rich signs).
+  **Mid-period accrued (clean vs dirty)** deferred to the settlement-date layer; **callable OAS**
+  deferred (slice is option-free, where OAS ≡ Z).
 
 ### B. Curve completeness (`celnet-rates`)
 - **Monotone-convex-on-forwards** interpolation (the smooth-view scheme; log-linear-DF is shipped).
