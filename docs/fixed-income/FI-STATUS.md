@@ -90,10 +90,17 @@ GUI (existing):
   deferred (slice is option-free, where OAS ≡ Z).
 
 ### B. Curve completeness (`celnet-rates`)
-- **Monotone-convex-on-forwards** interpolation (the smooth-view scheme; log-linear-DF is shipped).
-  **OPEN** — this is a *core hot-path* change (a second interpolation scheme on the pinned
-  zero-alloc query path), so it is deliberately not bundled with the additive overlay below; best
-  done as a focused slice.
+- **Monotone-convex-on-forwards** interpolation (the smooth-view scheme) ✅ (`aaa9bb6`) — a second
+  scheme on `Curve` selected at construction (`Interpolation` enum + `from_monotone_convex_dfs`/
+  `_zero_rates`), alongside the shipped log-linear default. A piecewise-quadratic instantaneous
+  forward (Hagan-West region construction; provenance in prose only per §8) that reproduces every
+  pillar DF exactly, is continuous across pillars, and is monotonicity/convexity-preserving (no
+  overshoot on monotone discrete forwards). Knot forwards precomputed once at build; the query path
+  stays allocation-free (one quadratic on the bracketing segment via a scheme dispatch). Verified by
+  identities only (no external oracle): exact pillar reproduction, forward continuity at pillars,
+  `forward == −d lnDF/dt` by central difference (the stored integral is the exact antiderivative of
+  the forward), monotone-forward preservation, single-segment coincidence with log-linear, negative
+  rates. **Lane B core complete.**
 - **Turn-of-year / central-bank-meeting** forward jumps ✅ (`ae79a5c`) — `turns::with_turns`
   overlays localized forward spikes by re-sampling the base curve at pillars + jump boundaries and
   applying `exp(−size·overlap)`, then rebuilding a `Curve`. **Construction-only — hot query path
