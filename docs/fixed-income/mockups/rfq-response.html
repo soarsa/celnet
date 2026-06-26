@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>celnet · Fixed Income — RFQ response (mockup)</title>
+<link rel="stylesheet" href="shared.css" />
+<style>
+  .rfq { display: grid; grid-template-columns: minmax(0,360px) minmax(0,1fr); gap: 16px; align-items: start; }
+  .blot td { padding: 7px 10px; }
+  .blot tr.sel { background: var(--accent-soft); }
+  .blot tr.sel td.inst { color: var(--text-primary); }
+  .side-b { color: var(--bid); font-weight: 600; } .side-s { color: var(--offer); font-weight: 600; }
+  .req-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+  .req-head .rt { font-size: 17px; font-weight: 600; }
+  .req-head .rs { font-size: 12px; color: var(--text-tertiary); margin-top: 3px; }
+  .twoway { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--grid-line); border-radius: var(--r-md); overflow: hidden; margin-bottom: 14px; }
+  .leg { background: var(--bg-inset); padding: 14px 16px; }
+  .leg.bidleg { box-shadow: inset 3px 0 0 var(--bid); }
+  .leg.offleg { box-shadow: inset 3px 0 0 var(--offer); }
+  .leg .lk { font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-tertiary); }
+  .leg .lv { font-family: var(--font-mono); font-size: 24px; font-variant-numeric: tabular-nums; margin: 4px 0; }
+  .leg .ly { font-size: 11px; color: var(--text-secondary); font-family: var(--font-mono); }
+  .best { box-shadow: inset 0 0 0 1px oklch(0.78 0.16 155 / 0.5); }
+  .vmark { font-size: 9px; letter-spacing: 0.05em; color: var(--bid); text-transform: uppercase; }
+  .src-int td { background: oklch(0.72 0.17 35 / 0.06); }
+  .barbg { position: relative; height: 6px; background: var(--bg-inset); border-radius: var(--r-full); overflow: hidden; margin-top: 6px; }
+  .barfill { position: absolute; left:0; top:0; bottom:0; background: var(--accent); border-radius: var(--r-full); }
+  .gridlbl { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-tertiary); margin: 4px 0 8px; }
+  .toggle { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary); }
+  .sw { width: 34px; height: 18px; border-radius: var(--r-full); background: var(--accent); position: relative; }
+  .sw::after { content:""; position:absolute; right:2px; top:2px; width:14px; height:14px; border-radius:var(--r-full); background:#fff; }
+
+  /* desktop "growl" notification — inbound RFQ requires pricing */
+  .growl { position: fixed; top: 56px; right: 22px; width: 348px; z-index: 60;
+    background: var(--bg-overlay); backdrop-filter: blur(22px);
+    border: 0.5px solid oklch(1 0 0 / 0.16); border-radius: 16px; box-shadow: var(--shadow-float);
+    padding: 13px 15px; display: flex; gap: 12px; }
+  .growl::before { content:""; position:absolute; left:0; top:14px; bottom:14px; width:3px; border-radius:3px; background: var(--brand); }
+  .growl .gi { width: 36px; height: 36px; border-radius: 9px; flex:none; display:grid; place-items:center;
+    color:#1a1530; font-weight:700; font-size:15px;
+    background: radial-gradient(circle at 35% 30%, var(--brand), oklch(0.55 0.18 28)); box-shadow: 0 2px 10px oklch(0.72 0.17 35 / 0.45); }
+  .growl .gc { flex:1; min-width:0; }
+  .growl .gh { display:flex; align-items:baseline; justify-content:space-between; gap:8px; }
+  .growl .gt { font-size:10px; letter-spacing:0.06em; text-transform:uppercase; color:var(--text-tertiary); }
+  .growl .gtime { font-size:10px; color:var(--text-tertiary); font-family:var(--font-mono); }
+  .growl .gn { font-size:13.5px; font-weight:600; margin:3px 0 3px; }
+  .growl .gb { font-size:12px; color:var(--text-secondary); line-height:1.45; }
+  .growl .gb b { color:var(--text-primary); font-family:var(--font-mono); }
+  .growl .ga { display:flex; gap:8px; margin-top:10px; }
+  .growl .cap { position:absolute; top:-9px; left:14px; font-size:9px; letter-spacing:0.05em; text-transform:uppercase;
+    color:var(--text-tertiary); background:var(--bg-inset); border:0.5px solid oklch(1 0 0 / 0.12); padding:1px 7px; border-radius:var(--r-full); }
+  /* in-app fallback toast (notifications blocked) */
+  .ntoast { position: fixed; bottom: 42px; right: 22px; z-index: 60; width: 320px;
+    background: var(--bg-overlay); backdrop-filter: blur(20px); border:0.5px solid oklch(1 0 0 / 0.12);
+    border-left:2px solid var(--bid); border-radius:12px; box-shadow:var(--shadow-float);
+    padding:10px 13px; display:flex; gap:10px; align-items:flex-start; }
+  .ntoast .ti { color:var(--bid); font-size:15px; }
+  .ntoast .tn { font-size:12px; color:var(--text-secondary); line-height:1.4; }
+  .ntoast .tn b { color:var(--text-primary); }
+  .ntoast .cap { display:block; font-size:9px; letter-spacing:0.05em; text-transform:uppercase; color:var(--text-tertiary); margin-top:4px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="rail">
+    <div class="mark">c</div>
+    <a class="rail-btn" href="index.html"><span class="ic">◈</span><span class="lb">Home</span></a>
+    <a class="rail-btn" href="pricing-desk.html"><span class="ic">◷</span><span class="lb">Pricing</span></a>
+    <a class="rail-btn active" href="rfq-response.html"><span class="ic">⇄</span><span class="lb">RFQ</span></a>
+    <a class="rail-btn" href="ioi-axes.html"><span class="ic">✦</span><span class="lb">IOI</span></a>
+    <div class="rail-btn muted"><span class="ic">▤</span><span class="lb">Book</span></div>
+    <div class="rail-btn muted"><span class="ic">≋</span><span class="lb">RFS</span></div>
+    <div class="rail-spacer"></div>
+    <div class="rail-btn muted"><span class="ic">⚙</span><span class="lb">Admin</span></div>
+  </nav>
+
+  <div class="main">
+    <div class="asset-tabs">
+      <div class="asset-tab"><span class="dot"></span>Options</div>
+      <div class="asset-tab active"><span class="dot"></span>Fixed Income</div>
+    </div>
+    <header class="topbar">
+      <div class="wordmark">cel<b>net</b></div>
+      <div class="crumb"><span class="sep">/</span><b>Fixed Income</b><span class="sep">›</span>RFQ response</div>
+      <div class="search">⌕ client / ISIN / ticket <span class="kbd">⌘K</span></div>
+      <div class="auth">BC</div>
+    </header>
+
+    <main class="canvas">
+      <div class="rfq">
+
+        <!-- LEFT: incoming RFQ blotter -->
+        <section class="panel">
+          <div class="panel-head"><span class="glyph">⇄</span><span class="panel-title">Inbound RFQ</span>
+            <div class="actions"><span class="badge live"><span class="gd"></span>6 live</span></div>
+          </div>
+          <div class="panel-body flush">
+            <table class="tbl blot">
+              <thead>
+                <tr><th class="l">Client / Instr.</th><th>Side</th><th>Size</th><th>⏱</th></tr>
+              </thead>
+              <tbody>
+                <tr class="sel">
+                  <td class="l inst">Macro Fund A<br><span class="muted" style="font-size:11px;">UST 4.25 02/35</span></td>
+                  <td><span class="side-s">2-way</span></td><td class="num">25mm</td><td class="num up">0:18</td>
+                </tr>
+                <tr>
+                  <td class="l inst">RM Bank<br><span class="muted" style="font-size:11px;">USD IRS 10Y rec</span></td>
+                  <td><span class="side-b">BUY</span></td><td class="num">100mm</td><td class="num up">0:41</td>
+                </tr>
+                <tr>
+                  <td class="l inst">Pension B<br><span class="muted" style="font-size:11px;">UST 4.75 11/43</span></td>
+                  <td><span class="side-s">SELL</span></td><td class="num">15mm</td><td class="num amber">1:07</td>
+                </tr>
+                <tr>
+                  <td class="l inst">HF Delta<br><span class="muted" style="font-size:11px;">ASW pkg 5s10s</span></td>
+                  <td><span class="side-b">BUY</span></td><td class="num">50k DV01</td><td class="num amber">1:55</td>
+                </tr>
+                <tr>
+                  <td class="l inst">Corp Treasury<br><span class="muted" style="font-size:11px;">SR3 Dec-26 strip</span></td>
+                  <td><span class="side-s">SELL</span></td><td class="num">2,000</td><td class="num dn">2:40</td>
+                </tr>
+                <tr>
+                  <td class="l inst">Macro Fund C<br><span class="muted" style="font-size:11px;">TY/CTD basis</span></td>
+                  <td><span class="side-b">BUY</span></td><td class="num">30k DV01</td><td class="num dn">3:12</td>
+                </tr>
+              </tbody>
+            </table>
+            <p class="muted" style="font-size:11px; padding:10px 12px;">Auto-quote handles tickets inside policy; flagged ones escalate to the trader.</p>
+          </div>
+        </section>
+
+        <!-- RIGHT: response builder -->
+        <section class="panel">
+          <div class="panel-head"><span class="glyph">◎</span><span class="panel-title">Response · best execution</span>
+            <div class="actions">
+              <span class="toggle">Auto-quote <span class="sw"></span></span>
+              <span class="badge ok"><span class="gd"></span>within policy</span>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="req-head">
+              <div>
+                <div class="rt">Macro Fund A — two-way · UST 4.25% 15-Feb-2035</div>
+                <div class="rs">$25mm · channel: API/FIX · tier: platinum · last traded 4d ago · curve snapshot #88,412</div>
+              </div>
+              <span class="badge live"><span class="gd"></span>18s to respond</span>
+            </div>
+
+            <!-- model fair value + suggested two-way -->
+            <div class="gridlbl">Suggested two-way — model fair value ± spread policy</div>
+            <div class="twoway">
+              <div class="leg bidleg">
+                <div class="lk">Our bid</div>
+                <div class="lv up">101-15+</div>
+                <div class="ly">yield 4.052% · −1.0/32 vs mid · skew for our axe</div>
+              </div>
+              <div class="leg offleg">
+                <div class="lk">Our offer</div>
+                <div class="lv dn">101-17</div>
+                <div class="ly">yield 4.044% · +0.5/32 vs mid · win-prob 71%</div>
+              </div>
+            </div>
+            <div class="metrics" style="grid-template-columns: repeat(4,1fr); margin-bottom:14px;">
+              <div class="metric"><div class="k">Model mid</div><div class="v acc">101-16</div></div>
+              <div class="metric"><div class="k">Quoted spread</div><div class="v">1.5<small>/32</small></div></div>
+              <div class="metric"><div class="k">Expected markup</div><div class="v up">+$11.7k</div></div>
+              <div class="metric"><div class="k">Hedge DV01</div><div class="v">20.3k</div></div>
+            </div>
+
+            <!-- the best-execution composite -->
+            <div class="between">
+              <div class="gridlbl" style="margin:0;">Liquidity scan — external venues + internal book (real-time)</div>
+              <span class="muted" style="font-size:11px;">refreshed 120ms ago</span>
+            </div>
+            <table class="tbl" style="margin-top:8px;">
+              <thead>
+                <tr><th class="l">Source</th><th>Bid</th><th>Offer</th><th>Size</th><th>Age</th><th>Cost/edge</th></tr>
+              </thead>
+              <tbody>
+                <tr class="src-int">
+                  <td class="l inst">⬢ celnet internal axe</td>
+                  <td><span class="q bid">101-15</span></td>
+                  <td><span class="q offer best">101-16+ <span class="vmark">best</span></span></td>
+                  <td class="num">40mm</td><td class="num">live</td><td class="num up">+0.5/32</td>
+                </tr>
+                <tr>
+                  <td class="l inst">Tradeweb (D2C)</td>
+                  <td><span class="q bid">101-14+</span></td><td><span class="q offer">101-17+</span></td>
+                  <td class="num">25mm</td><td class="num">0.3s</td><td class="num dn">−0.4/32</td>
+                </tr>
+                <tr>
+                  <td class="l inst">MarketAxess (D2C)</td>
+                  <td><span class="q bid best">101-15+ <span class="vmark">best</span></span></td>
+                  <td><span class="q offer">101-17</span></td>
+                  <td class="num">10mm</td><td class="num">0.5s</td><td class="num">flat</td>
+                </tr>
+                <tr>
+                  <td class="l inst">BrokerTec (D2D / lit)</td>
+                  <td><span class="q bid">101-14</span></td><td><span class="q offer">101-18</span></td>
+                  <td class="num">50mm</td><td class="num">0.1s</td><td class="num dn">−0.8/32</td>
+                </tr>
+                <tr>
+                  <td class="l inst">Composite mid (size-wtd)</td>
+                  <td colspan="2" style="text-align:center;"><span class="num acc">101-15+ / 101-17</span></td>
+                  <td class="num">—</td><td class="num">—</td><td class="num">benchmark</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="gridlbl" style="margin-top:14px;">Internalisation — match against our book before hitting the street</div>
+            <div class="between" style="background:var(--bg-inset); border-radius:var(--r-sm); padding:10px 12px;">
+              <div>
+                <div style="font-size:12px;">We are <b class="up">axed to sell</b> this line — internal fill covers <b>40mm</b> of the 25mm offer.</div>
+                <div class="barbg"><div class="barfill" style="width:100%"></div></div>
+              </div>
+              <div style="text-align:right; min-width:120px;">
+                <div class="num up" style="font-size:15px;">100% internal</div>
+                <div class="muted" style="font-size:11px;">no street hedge needed</div>
+              </div>
+            </div>
+
+            <!-- actions -->
+            <div class="row" style="margin-top:16px;">
+              <button class="btn primary lg grow">Send two-way →</button>
+              <button class="btn bid lg">Firm bid</button>
+              <button class="btn offer lg">Firm offer</button>
+              <button class="btn lg">Counter</button>
+              <button class="btn ghost lg">Pass</button>
+            </div>
+            <p class="muted" style="font-size:11px; margin-top:10px;">Best-execution audit: model mid, full venue snapshot, internalisation decision &amp; timestamps are journaled per ticket.</p>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <footer class="statusbar">
+      <span class="seg">● 6 RFQ live · auto-quote ON</span>
+      <span class="seg">venues 4/4 · internal book linked</span>
+      <span class="right">quote round-trip p99 <span style="color:var(--bid)">2.1ms</span></span>
+    </footer>
+  </div>
+
+  <!-- desktop "growl" notification: an RFQ requiring pricing arrived (fires for Options + FI) -->
+  <aside class="growl" role="alert">
+    <span class="cap">macOS notification</span>
+    <div class="gi">c</div>
+    <div class="gc">
+      <div class="gh"><span class="gt">celnet · RFQ requires pricing</span><span class="gtime">now</span></div>
+      <div class="gn">Macro Fund A — two-way request</div>
+      <div class="gb">Fixed Income · <b>UST 4.25% 02/35</b> · <b>$25mm</b> · 18s to respond</div>
+      <div class="ga">
+        <button class="btn primary sm">Price now →</button>
+        <button class="btn sm">Snooze</button>
+        <button class="btn ghost sm">Dismiss</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- in-app fallback when OS notifications are denied -->
+  <div class="ntoast" role="status" aria-live="polite">
+    <span class="ti">◉</span>
+    <div>
+      <div class="tn"><b>RFQ requires pricing</b> — Macro Fund A · UST 4.25 02/35 · $25mm</div>
+      <span class="cap">in-app fallback · aria-live (notifications blocked)</span>
+    </div>
+  </div>
+</div>
+</body>
+</html>

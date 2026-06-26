@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>celnet · Fixed Income — Strategy ticket (mockup)</title>
+<link rel="stylesheet" href="shared.css" />
+<style>
+  .tk { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,360px); gap: 16px; align-items: start; }
+  .presets { display: flex; gap: 8px; flex-wrap: wrap; }
+  .leg-b { color: var(--bid); font-weight: 600; } .leg-s { color: var(--offer); font-weight: 600; }
+  .legrow td { padding: 9px 12px; }
+  .netbar { display: grid; grid-template-columns: repeat(4,1fr); gap: 1px; background: var(--grid-line); border-radius: var(--r-md); overflow: hidden; }
+  .netbar .nb { background: var(--bg-inset); padding: 12px 14px; }
+  .netbar .nk { font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-tertiary); }
+  .netbar .nv { font-family: var(--font-mono); font-size: 18px; margin-top: 4px; }
+  .gridlbl { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-tertiary); margin: 4px 0 8px; }
+  .krr { display: flex; align-items: flex-end; gap: 5px; height: 70px; }
+  .krr .kb { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; justify-content: flex-end; height: 100%; }
+  .krr .bar { width: 64%; border-radius: 3px 3px 0 0; min-height: 2px; }
+  .krr .pos { background: var(--bid); } .krr .neg { background: var(--offer); }
+  .krr .kt { font-size: 9px; color: var(--text-tertiary); font-family: var(--font-mono); }
+  .summ { font-size: 12px; color: var(--text-secondary); line-height: 1.8; }
+  .summ b { color: var(--text-primary); }
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="rail">
+    <div class="mark">c</div>
+    <a class="rail-btn" href="index.html"><span class="ic">◈</span><span class="lb">Home</span></a>
+    <a class="rail-btn" href="pricing-desk.html"><span class="ic">◷</span><span class="lb">Pricing</span></a>
+    <a class="rail-btn active" href="ticket.html"><span class="ic">⊟</span><span class="lb">Ticket</span></a>
+    <a class="rail-btn" href="rfq-response.html"><span class="ic">⇄</span><span class="lb">RFQ</span></a>
+    <a class="rail-btn" href="ioi-axes.html"><span class="ic">✦</span><span class="lb">IOI</span></a>
+    <a class="rail-btn" href="rfs-stream.html"><span class="ic">≋</span><span class="lb">RFS</span></a>
+    <a class="rail-btn" href="blotter.html"><span class="ic">▤</span><span class="lb">Blotter</span></a>
+    <div class="rail-spacer"></div>
+    <div class="rail-btn muted"><span class="ic">⚙</span><span class="lb">Admin</span></div>
+  </nav>
+
+  <div class="main">
+    <div class="asset-tabs">
+      <div class="asset-tab"><span class="dot"></span>Options</div>
+      <div class="asset-tab active"><span class="dot"></span>Fixed Income</div>
+    </div>
+    <header class="topbar">
+      <div class="wordmark">cel<b>net</b></div>
+      <div class="crumb"><span class="sep">/</span><b>Fixed Income</b><span class="sep">›</span>Strategy ticket</div>
+      <div class="search">⌕ build · 10Y ASW package <span class="kbd">⌘K</span></div>
+      <div class="auth">BC</div>
+    </header>
+
+    <main class="canvas">
+      <div class="tk">
+
+        <!-- LEFT: multi-leg builder -->
+        <section class="panel">
+          <div class="panel-head"><span class="glyph">⊟</span><span class="panel-title">Strategy · 10Y asset-swap package</span>
+            <div class="actions"><span class="badge live"><span class="gd"></span>DV01-neutral</span></div>
+          </div>
+          <div class="panel-body">
+            <div class="gridlbl">Structure presets</div>
+            <div class="presets" style="margin-bottom:14px;">
+              <button class="btn sm">Outright</button>
+              <button class="btn sm primary">ASW package</button>
+              <button class="btn sm">CTD basis</button>
+              <button class="btn sm">Curve 5s10s</button>
+              <button class="btn sm">Butterfly 2s5s10s</button>
+              <button class="btn sm">Invoice spread</button>
+            </div>
+
+            <table class="tbl">
+              <thead>
+                <tr><th class="l">Leg</th><th>Side</th><th>Notional / DV01</th><th>Level</th><th>DV01</th><th></th></tr>
+              </thead>
+              <tbody>
+                <tr class="legrow">
+                  <td class="l inst">UST 4.25% 02/35<br><span class="muted" style="font-size:11px;">cash bond · clean 101-16+</span></td>
+                  <td><span class="leg-b">BUY</span></td><td class="num">25mm</td>
+                  <td class="num">4.047%</td><td class="num">+20.3k</td>
+                  <td class="num"><button class="btn ghost sm">×</button></td>
+                </tr>
+                <tr class="legrow">
+                  <td class="l inst">USD IRS 10Y<br><span class="muted" style="font-size:11px;">SOFR · pay fixed, matched maturity</span></td>
+                  <td><span class="leg-s">PAY</span></td><td class="num">20.3k DV01</td>
+                  <td class="num">4.048%</td><td class="num dn">−20.3k</td>
+                  <td class="num"><button class="btn ghost sm">×</button></td>
+                </tr>
+                <tr><td colspan="6" style="text-align:left;"><button class="btn sm">+ Add leg</button></td></tr>
+              </tbody>
+            </table>
+
+            <div class="gridlbl" style="margin-top:14px;">Net key-rate DV01 (residual after hedge)</div>
+            <div class="krr">
+              <div class="kb"><div class="bar pos" style="height:8%"></div><div class="kt">2Y</div></div>
+              <div class="kb"><div class="bar pos" style="height:5%"></div><div class="kt">3Y</div></div>
+              <div class="kb"><div class="bar neg" style="height:12%"></div><div class="kt">5Y</div></div>
+              <div class="kb"><div class="bar pos" style="height:16%"></div><div class="kt">7Y</div></div>
+              <div class="kb"><div class="bar pos" style="height:9%"></div><div class="kt">10Y</div></div>
+              <div class="kb"><div class="bar neg" style="height:4%"></div><div class="kt">20Y</div></div>
+              <div class="kb"><div class="bar pos" style="height:3%"></div><div class="kt">30Y</div></div>
+            </div>
+            <p class="muted" style="font-size:11px; margin-top:8px;">Outright DV01 cancels; only curve-shape residual remains — this is the spread trade's true exposure.</p>
+          </div>
+        </section>
+
+        <!-- RIGHT: net economics + actions -->
+        <section class="panel">
+          <div class="panel-head"><span class="glyph">∑</span><span class="panel-title">Net economics</span></div>
+          <div class="panel-body">
+            <div class="netbar" style="grid-template-columns: repeat(2,1fr);">
+              <div class="nb"><div class="nk">Asset-swap spread</div><div class="nv acc">+38.6 bp</div></div>
+              <div class="nb"><div class="nk">Net DV01</div><div class="nv">≈ 0</div></div>
+              <div class="nb"><div class="nk">Spread DV01</div><div class="nv">+1.9k</div></div>
+              <div class="nb"><div class="nk">Carry + roll (3m)</div><div class="nv up">+4.2 bp</div></div>
+              <div class="nb"><div class="nk">Net cash today</div><div class="nv">−$25.76mm</div></div>
+              <div class="nb"><div class="nk">Funding (repo)</div><div class="nv">SOFR+8</div></div>
+            </div>
+
+            <div class="gridlbl" style="margin-top:16px;">Scenario — spread move</div>
+            <div class="summ" style="background:var(--bg-inset); border-radius:var(--r-sm); padding:12px 14px;">
+              <div>Tighten <b>5 bp</b> → <b class="up">+$9.6k</b></div>
+              <div>Unchanged (carry, 3m) → <b class="up">+$8.0k</b></div>
+              <div>Widen <b>5 bp</b> → <b class="dn">−$9.6k</b></div>
+              <div class="muted" style="margin-top:6px;">break-even hold ≈ <b>34 days</b> on carry</div>
+            </div>
+
+            <div class="gridlbl" style="margin-top:16px;">Booking</div>
+            <div class="summ">
+              <div>Two legs · one strategy ticket · <b>STRAT-10Y-ASW-0612</b></div>
+              <div class="muted">links to the cash + swap fills; risk nets in the book.</div>
+            </div>
+
+            <div class="col" style="margin-top:16px; gap:10px;">
+              <button class="btn primary lg">Price &amp; send to RFQ ⇄</button>
+              <div class="row">
+                <button class="btn lg grow">Work as IOI ✦</button>
+                <button class="btn lg grow">Book direct</button>
+              </div>
+              <button class="btn ghost lg">Save draft</button>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <footer class="statusbar">
+      <span class="seg">● strategy priced · snapshot #88,412</span>
+      <span class="seg">net DV01 ≈ 0 · ASW +38.6bp</span>
+      <span class="right">USD · build latency <span style="color:var(--bid)">61µs</span></span>
+    </footer>
+  </div>
+</div>
+</body>
+</html>

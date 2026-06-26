@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>celnet · Fixed Income — RFS streaming (mockup)</title>
+<link rel="stylesheet" href="shared.css" />
+<style>
+  .strm { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,330px); gap: 16px; align-items: start; }
+  .flash-up { background: oklch(0.85 0.18 155 / 0.16); }
+  .flash-dn { background: oklch(0.78 0.19 25 / 0.16); }
+  .tier { font-size: 9px; letter-spacing: 0.04em; text-transform: uppercase; padding: 1px 6px; border-radius: var(--r-full);
+    color: var(--accent); background: var(--accent-soft); }
+  .gridlbl { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-tertiary); margin: 4px 0 8px; }
+  .sub { display: flex; align-items: center; justify-content: space-between; padding: 9px 0; border-bottom: 0.5px solid oklch(1 0 0 / 0.06); }
+  .sub .sn { font-size: 12px; } .sub .sm { font-size: 11px; color: var(--text-tertiary); }
+  .stat { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--grid-line); border-radius: var(--r-sm); overflow: hidden; }
+  .stat .st { background: var(--bg-inset); padding: 10px 12px; }
+  .stat .sk { font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-tertiary); }
+  .stat .sv { font-family: var(--font-mono); font-size: 16px; margin-top: 3px; }
+  .toggle { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary); }
+  .sw { width: 34px; height: 18px; border-radius: var(--r-full); background: var(--bid); position: relative; }
+  .sw::after { content:""; position:absolute; right:2px; top:2px; width:14px; height:14px; border-radius:var(--r-full); background:#fff; }
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="rail">
+    <div class="mark">c</div>
+    <a class="rail-btn" href="index.html"><span class="ic">◈</span><span class="lb">Home</span></a>
+    <a class="rail-btn" href="pricing-desk.html"><span class="ic">◷</span><span class="lb">Pricing</span></a>
+    <a class="rail-btn" href="ticket.html"><span class="ic">⊟</span><span class="lb">Ticket</span></a>
+    <a class="rail-btn" href="rfq-response.html"><span class="ic">⇄</span><span class="lb">RFQ</span></a>
+    <a class="rail-btn" href="ioi-axes.html"><span class="ic">✦</span><span class="lb">IOI</span></a>
+    <a class="rail-btn active" href="rfs-stream.html"><span class="ic">≋</span><span class="lb">RFS</span></a>
+    <a class="rail-btn" href="blotter.html"><span class="ic">▤</span><span class="lb">Blotter</span></a>
+    <div class="rail-spacer"></div>
+    <div class="rail-btn muted"><span class="ic">⚙</span><span class="lb">Admin</span></div>
+  </nav>
+
+  <div class="main">
+    <div class="asset-tabs">
+      <div class="asset-tab"><span class="dot"></span>Options</div>
+      <div class="asset-tab active"><span class="dot"></span>Fixed Income</div>
+    </div>
+    <header class="topbar">
+      <div class="wordmark">cel<b>net</b></div>
+      <div class="crumb"><span class="sep">/</span><b>Fixed Income</b><span class="sep">›</span>RFS streaming</div>
+      <div class="search">⌕ stream / subscriber <span class="kbd">⌘K</span></div>
+      <div class="auth">BC</div>
+    </header>
+
+    <main class="canvas">
+      <div class="strm">
+
+        <!-- LEFT: live streamed price grid -->
+        <section class="panel">
+          <div class="panel-head"><span class="glyph">≋</span><span class="panel-title">Streaming prices · executable</span>
+            <div class="actions">
+              <div class="seg"><button class="on">Tier 1</button><button>Tier 2</button><button>All</button></div>
+              <span class="badge live"><span class="gd"></span>streaming</span>
+            </div>
+          </div>
+          <div class="panel-body flush">
+            <table class="tbl">
+              <thead>
+                <tr><th class="l">Instrument</th><th>Bid</th><th>Offer</th><th>Mid</th><th>Spr</th><th>Size</th><th>Tier</th></tr>
+              </thead>
+              <tbody>
+                <tr class="grp"><td colspan="7">UST benchmarks</td></tr>
+                <tr><td class="l inst">UST 2Y 3.875 06/28</td><td><span class="q bid">99-28+</span></td><td><span class="q offer flash-up">99-29</span></td><td class="num">99-28¾</td><td class="num">0.5</td><td class="num">100mm</td><td><span class="tier">T1</span></td></tr>
+                <tr><td class="l inst">UST 5Y 4.00 06/31</td><td><span class="q bid">100-02</span></td><td><span class="q offer">100-02+</span></td><td class="num">100-02¼</td><td class="num">0.5</td><td class="num">75mm</td><td><span class="tier">T1</span></td></tr>
+                <tr><td class="l inst">UST 10Y 4.25 02/35</td><td><span class="q bid flash-dn">101-15+</span></td><td><span class="q offer">101-16+</span></td><td class="num">101-16</td><td class="num">1.0</td><td class="num">50mm</td><td><span class="tier">T1</span></td></tr>
+                <tr><td class="l inst">UST 30Y 4.75 11/55</td><td><span class="q bid">102-04</span></td><td><span class="q offer">102-06</span></td><td class="num">102-05</td><td class="num">2.0</td><td class="num">25mm</td><td><span class="tier">T1</span></td></tr>
+                <tr class="grp"><td colspan="7">SOFR swaps (rate, bp)</td></tr>
+                <tr><td class="l inst">USD IRS 2Y</td><td><span class="q bid">3.718</span></td><td><span class="q offer">3.722</span></td><td class="num">3.720</td><td class="num">0.4</td><td class="num">250mm</td><td><span class="tier">T1</span></td></tr>
+                <tr><td class="l inst">USD IRS 5Y</td><td><span class="q bid">3.800</span></td><td><span class="q offer flash-up">3.804</span></td><td class="num">3.802</td><td class="num">0.4</td><td class="num">200mm</td><td><span class="tier">T1</span></td></tr>
+                <tr><td class="l inst">USD IRS 10Y</td><td><span class="q bid">4.046</span></td><td><span class="q offer">4.050</span></td><td class="num">4.048</td><td class="num">0.4</td><td class="num">150mm</td><td><span class="tier">T1</span></td></tr>
+                <tr><td class="l inst">USD IRS 30Y</td><td><span class="q bid">4.349</span></td><td><span class="q offer">4.355</span></td><td class="num">4.352</td><td class="num">0.6</td><td class="num">75mm</td><td><span class="tier">T1</span></td></tr>
+              </tbody>
+            </table>
+            <p class="muted" style="font-size:11px; padding:10px 12px;">Prices recompute on every curve tick from snapshot #88,412 — last-look + max-staleness guard before any auto-fill.</p>
+          </div>
+        </section>
+
+        <!-- RIGHT: subscribers + health -->
+        <section class="col">
+          <section class="panel">
+            <div class="panel-head"><span class="glyph">⊹</span><span class="panel-title">Stream controls</span></div>
+            <div class="panel-body">
+              <div class="row" style="justify-content:space-between; align-items:center;">
+                <span class="toggle">Stream live <span class="sw"></span></span>
+                <button class="btn sm offer">Pull all</button>
+              </div>
+              <div class="gridlbl" style="margin-top:14px;">Tier pricing skew (bp)</div>
+              <div class="stat">
+                <div class="st"><div class="sk">Tier 1 spread</div><div class="sv">×1.0</div></div>
+                <div class="st"><div class="sk">Tier 2 spread</div><div class="sv">×1.6</div></div>
+                <div class="st"><div class="sk">Max size T1</div><div class="sv">100mm</div></div>
+                <div class="st"><div class="sk">Last-look</div><div class="sv up">25 ms</div></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head"><span class="glyph">◴</span><span class="panel-title">Subscribers</span>
+              <div class="actions"><span class="badge ok"><span class="gd"></span>5 live</span></div>
+            </div>
+            <div class="panel-body" style="padding-top:6px;">
+              <div class="sub"><div><div class="sn">Macro Fund A</div><div class="sm">FIX · T1 · 42 instr</div></div><span class="badge ok"><span class="gd"></span>live</span></div>
+              <div class="sub"><div><div class="sn">RM Bank</div><div class="sm">FIX · T1 · 18 instr</div></div><span class="badge ok"><span class="gd"></span>live</span></div>
+              <div class="sub"><div><div class="sn">HF Delta</div><div class="sm">API · T1 · 42 instr</div></div><span class="badge ok"><span class="gd"></span>live</span></div>
+              <div class="sub"><div><div class="sn">Pension B</div><div class="sm">FIX · T2 · 8 instr</div></div><span class="badge warn"><span class="gd"></span>slow</span></div>
+              <div class="sub" style="border-bottom:0;"><div><div class="sn">Corp Treasury</div><div class="sm">API · T2 · 6 instr</div></div><span class="badge ok"><span class="gd"></span>live</span></div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head"><span class="glyph">⚡</span><span class="panel-title">Throughput</span></div>
+            <div class="panel-body">
+              <div class="stat">
+                <div class="st"><div class="sk">Updates / s</div><div class="sv acc">18,400</div></div>
+                <div class="st"><div class="sk">Tick→wire p99</div><div class="sv up">42 µs</div></div>
+                <div class="st"><div class="sk">Fills (today)</div><div class="sv">312</div></div>
+                <div class="st"><div class="sk">Reject rate</div><div class="sv">0.4%</div></div>
+              </div>
+            </div>
+          </section>
+        </section>
+      </div>
+    </main>
+
+    <footer class="statusbar">
+      <span class="seg">● RFS streaming · 5 subscribers</span>
+      <span class="seg">18.4k upd/s · p99 42µs</span>
+      <span class="right">follow-on workstream — sequenced behind analytics (Q5)</span>
+    </footer>
+  </div>
+</div>
+</body>
+</html>

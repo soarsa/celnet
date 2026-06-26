@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>celnet · Fixed Income — surface overview (mockup)</title>
+<link rel="stylesheet" href="shared.css" />
+<style>
+  .hero { background: linear-gradient(160deg, var(--bg-raised), var(--bg-inset));
+    border: var(--hairline); border-radius: var(--r-lg); padding: 22px 24px; box-shadow: var(--shadow-panel); }
+  .nav-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 16px; }
+  .nav-card { background: var(--bg-raised); border: var(--hairline); border-radius: var(--r-md); padding: 16px;
+    box-shadow: var(--shadow-panel); cursor: pointer; transition: all 160ms ease; display: flex; flex-direction: column; gap: 8px; }
+  .nav-card:hover { border-color: oklch(0.66 0.17 280 / 0.5); transform: translateY(-2px); box-shadow: var(--shadow-float); }
+  .nav-card .nc-ic { width: 34px; height: 34px; border-radius: var(--r-sm); background: var(--accent-soft);
+    display: grid; place-items: center; font-size: 18px; color: var(--accent); }
+  .nav-card .nc-t { font-size: 14px; font-weight: 600; }
+  .nav-card .nc-d { font-size: 12px; color: var(--text-tertiary); line-height: 1.5; }
+  .nav-card .nc-go { margin-top: auto; font-size: 11px; color: var(--accent); letter-spacing: 0.04em; }
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 14px; font-size: 11px; color: var(--text-tertiary); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .dotc { width: 9px; height: 9px; border-radius: var(--r-full); }
+  .flow-stack { display: flex; flex-direction: column; gap: 10px; }
+  .flow-band { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-tertiary); margin-bottom: 2px; }
+  .fan { display: flex; gap: 12px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- left rail: Fixed-Income workspace set -->
+  <nav class="rail">
+    <div class="mark">c</div>
+    <a class="rail-btn active" href="index.html"><span class="ic">◈</span><span class="lb">Home</span></a>
+    <a class="rail-btn" href="pricing-desk.html"><span class="ic">◷</span><span class="lb">Pricing</span></a>
+    <a class="rail-btn" href="rfq-response.html"><span class="ic">⇄</span><span class="lb">RFQ</span></a>
+    <a class="rail-btn" href="ioi-axes.html"><span class="ic">✦</span><span class="lb">IOI</span></a>
+    <div class="rail-btn muted"><span class="ic">▤</span><span class="lb">Book</span></div>
+    <div class="rail-btn muted"><span class="ic">≋</span><span class="lb">RFS</span></div>
+    <div class="rail-spacer"></div>
+    <div class="rail-btn muted"><span class="ic">⚙</span><span class="lb">Admin</span></div>
+  </nav>
+
+  <div class="main">
+    <!-- asset-class tab layer (D2) -->
+    <div class="asset-tabs">
+      <div class="asset-tab"><span class="dot"></span>Options</div>
+      <div class="asset-tab active"><span class="dot"></span>Fixed Income</div>
+    </div>
+
+    <header class="topbar">
+      <div class="wordmark">cel<b>net</b></div>
+      <div class="crumb"><span class="sep">/</span><b>Fixed Income</b><span class="sep">›</span>Overview</div>
+      <div class="search">⌕ Search instruments, RFQs, axes… <span class="kbd">⌘K</span></div>
+      <div class="auth">BC</div>
+    </header>
+
+    <main class="canvas">
+
+      <section class="hero">
+        <div class="between">
+          <div>
+            <div class="wrap-title">USD Fixed Income — rates &amp; cash desk</div>
+            <div class="wrap-sub">P0 scope: USD-SOFR only · bonds · futures · swaps · cross-product strategy &amp; relative-value analytics.
+              Vol and credit are sequenced follow-ons.</div>
+          </div>
+          <div class="col" style="gap:8px; align-items:flex-end;">
+            <span class="badge live"><span class="gd"></span>SOFR curve · LIVE</span>
+            <span class="pill">built 14:32:07 · 41 instruments</span>
+          </div>
+        </div>
+        <div class="legend">
+          <span><span class="dotc" style="background:var(--bid)"></span>bid / buy / richening</span>
+          <span><span class="dotc" style="background:var(--offer)"></span>offer / sell / cheapening</span>
+          <span><span class="dotc" style="background:var(--accent)"></span>fair value (model)</span>
+          <span><span class="dotc" style="background:var(--brand)"></span>celnet internal liquidity</span>
+        </div>
+      </section>
+
+      <!-- the spine: how a price is built, then consumed by RFQ / IOI / RFS -->
+      <section class="panel" style="margin-top:16px;">
+        <div class="panel-head"><span class="glyph">⟐</span><span class="panel-title">Price construction → execution spine</span>
+          <span class="panel-sub">how a single immutable pricing snapshot flows to every response channel</span></div>
+        <div class="panel-body">
+          <div class="flow-stack">
+
+            <div class="flow-band">1 · Market data in (operator-supplied data-provider access)</div>
+            <div class="fan">
+              <div class="flow-node"><div class="ft">Static / referential</div><div class="fb">Bond static, schedules, corporate actions, calendars</div></div>
+              <div class="flow-node"><div class="ft">Real-time</div><div class="fb">Quotes · axes · prints from venues &amp; dealers</div></div>
+              <div class="flow-node"><div class="ft">Historical</div><div class="fb">Quotes · prints · missed — for RV &amp; backtest</div></div>
+            </div>
+
+            <div class="flow-band" style="margin-top:8px;">2 · Curve construction (celnet-rates)</div>
+            <div class="flow">
+              <div class="flow-node"><div class="ft">Instruments</div><div class="fb">O/N SOFR · futures strip · OIS swaps → bootstrap</div></div>
+              <span class="flow-arrow">→</span>
+              <div class="flow-node"><div class="ft">USD SOFR curve</div><div class="fb">single OIS-discount · log-linear on log-DF</div></div>
+              <span class="flow-arrow">→</span>
+              <div class="flow-node"><div class="ft">Analytics</div><div class="fb">PV · yield · DV01 · key-rate · G/Z-spread · ASW</div></div>
+            </div>
+
+            <div class="flow-band" style="margin-top:8px;">3 · Central event processor — one snapshot, embedded best-execution analytics</div>
+            <div class="flow">
+              <div class="flow-node brand"><div class="ft">Fair value + risk</div><div class="fb">immutable snapshot, same numbers for every channel</div></div>
+              <span class="flow-arrow">→</span>
+              <div class="flow-node"><div class="ft">External liquidity</div><div class="fb">scans venues in real time (Tradeweb · MarketAxess · BrokerTec…)</div></div>
+              <div class="flow-node" style="margin-left:12px;"><div class="ft">Internal liquidity</div><div class="fb">internalisation · axes · market-making book</div></div>
+            </div>
+
+            <div class="flow-band" style="margin-top:8px;">4 · Response channels (this mockup set)</div>
+            <div class="fan">
+              <div class="flow-node brand"><div class="ft">RFQ / RFM</div><div class="fb">respond to a client request with a best-ex two-way</div></div>
+              <div class="flow-node brand"><div class="ft">IOI / axes</div><div class="fb">publish &amp; respond to indications of interest</div></div>
+              <div class="flow-node"><div class="ft">RFS stream</div><div class="fb">continuous executable prices (follow-on)</div></div>
+            </div>
+
+          </div>
+        </div>
+      </section>
+
+      <!-- nav to the three workspaces -->
+      <div class="nav-cards">
+        <a class="nav-card" href="pricing-desk.html">
+          <div class="nc-ic">◷</div>
+          <div class="nc-t">Pricing desk</div>
+          <div class="nc-d">How a price is built: the USD SOFR curve from its bootstrap instruments, and a bond/swap/future
+            priced off it — PV, yield, DV01, key-rate ladder, swap-spread/ASW.</div>
+          <div class="nc-go">Open ›</div>
+        </a>
+        <a class="nav-card" href="rfq-response.html">
+          <div class="nc-ic">⇄</div>
+          <div class="nc-t">RFQ response</div>
+          <div class="nc-d">How an RFQ is answered: incoming request blotter, model fair value, the best-execution composite of
+            external venues + internal axes, and the suggested two-way to send.</div>
+          <div class="nc-go">Open ›</div>
+        </a>
+        <a class="nav-card" href="ioi-axes.html">
+          <div class="nc-ic">✦</div>
+          <div class="nc-t">IOI &amp; axes</div>
+          <div class="nc-d">How IOIs are answered: our published axe inventory (model-priced), incoming client IOIs, match scoring
+            against the book, and one-click respond / firm-up.</div>
+          <div class="nc-go">Open ›</div>
+        </a>
+      </div>
+
+      <p class="wrap-sub" style="margin-top:16px;">Mockup · visual exploration only. Numbers are illustrative. Aesthetic mirrors the live celnet GUI tokens.</p>
+    </main>
+
+    <footer class="statusbar">
+      <span class="seg">● SOFR curve healthy</span>
+      <span class="seg">venues 4/4 connected</span>
+      <span class="seg">internal book linked</span>
+      <span class="right">USD · 2026-06-25 14:32:07Z</span>
+    </footer>
+  </div>
+</div>
+</body>
+</html>

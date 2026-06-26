@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>celnet · Fixed Income — IOI &amp; axes (mockup)</title>
+<link rel="stylesheet" href="shared.css" />
+<style>
+  .board { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,420px); gap: 16px; align-items: start; }
+  .dir-b { color: var(--bid); font-weight: 600; } .dir-s { color: var(--offer); font-weight: 600; }
+  .axe-tag { font-size: 9px; letter-spacing: 0.04em; text-transform: uppercase; padding: 1px 6px; border-radius: var(--r-full); }
+  .axe-tag.pub { color: var(--bid); background: var(--bid-soft); }
+  .axe-tag.wrk { color: var(--warn); background: oklch(0.82 0.16 75 / 0.16); }
+  .axe-tag.drft { color: var(--text-tertiary); background: oklch(1 0 0 / 0.05); }
+  .ioi-card { background: var(--bg-inset); border: var(--hairline); border-radius: var(--r-md); padding: 14px; }
+  .ioi-card .ic-h { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+  .ioi-card .ic-t { font-size: 14px; font-weight: 600; }
+  .ioi-card .ic-s { font-size: 11px; color: var(--text-tertiary); margin-top: 2px; }
+  .match-ring { display: flex; align-items: center; gap: 12px; margin: 14px 0; }
+  .ring { width: 64px; height: 64px; border-radius: var(--r-full); display: grid; place-items: center;
+    background: conic-gradient(var(--bid) 0 86%, var(--bg-raised) 86% 100%); }
+  .ring .inner { width: 50px; height: 50px; border-radius: var(--r-full); background: var(--bg-inset); display: grid; place-items: center; }
+  .ring .pct { font-family: var(--font-mono); font-size: 16px; color: var(--bid); }
+  .match-lines { font-size: 12px; color: var(--text-secondary); line-height: 1.7; }
+  .match-lines b { color: var(--text-primary); }
+  .gridlbl { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-tertiary); margin: 4px 0 8px; }
+  .lvl { font-family: var(--font-mono); }
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="rail">
+    <div class="mark">c</div>
+    <a class="rail-btn" href="index.html"><span class="ic">◈</span><span class="lb">Home</span></a>
+    <a class="rail-btn" href="pricing-desk.html"><span class="ic">◷</span><span class="lb">Pricing</span></a>
+    <a class="rail-btn" href="rfq-response.html"><span class="ic">⇄</span><span class="lb">RFQ</span></a>
+    <a class="rail-btn active" href="ioi-axes.html"><span class="ic">✦</span><span class="lb">IOI</span></a>
+    <div class="rail-btn muted"><span class="ic">▤</span><span class="lb">Book</span></div>
+    <div class="rail-btn muted"><span class="ic">≋</span><span class="lb">RFS</span></div>
+    <div class="rail-spacer"></div>
+    <div class="rail-btn muted"><span class="ic">⚙</span><span class="lb">Admin</span></div>
+  </nav>
+
+  <div class="main">
+    <div class="asset-tabs">
+      <div class="asset-tab"><span class="dot"></span>Options</div>
+      <div class="asset-tab active"><span class="dot"></span>Fixed Income</div>
+    </div>
+    <header class="topbar">
+      <div class="wordmark">cel<b>net</b></div>
+      <div class="crumb"><span class="sep">/</span><b>Fixed Income</b><span class="sep">›</span>IOI &amp; axes</div>
+      <div class="search">⌕ axe / client / ISIN <span class="kbd">⌘K</span></div>
+      <div class="auth">BC</div>
+    </header>
+
+    <main class="canvas">
+      <div class="board">
+
+        <!-- LEFT: our published axe inventory -->
+        <section class="panel">
+          <div class="panel-head"><span class="glyph">✦</span><span class="panel-title">Our axes · model-priced inventory</span>
+            <div class="actions">
+              <div class="seg"><button class="on">All</button><button>Published</button><button>Working</button></div>
+              <button class="btn sm primary">+ New axe</button>
+            </div>
+          </div>
+          <div class="panel-body flush">
+            <table class="tbl">
+              <thead>
+                <tr><th class="l">Instrument</th><th>Dir</th><th>Size</th><th>Level (vs model)</th><th>P&amp;L if hit</th><th>Status</th></tr>
+              </thead>
+              <tbody>
+                <tr class="grp"><td colspan="6">Govies · cash</td></tr>
+                <tr>
+                  <td class="l inst">UST 4.25% 02/35</td><td><span class="dir-s">SELL</span></td><td class="num">40mm</td>
+                  <td><span class="lvl up">101-16+ · +0.5/32</span></td><td class="num up">+$11.7k</td>
+                  <td><span class="axe-tag pub">published</span></td>
+                </tr>
+                <tr>
+                  <td class="l inst">UST 4.75% 11/43</td><td><span class="dir-b">BUY</span></td><td class="num">25mm</td>
+                  <td><span class="lvl dn">+1.2 bp cheap</span></td><td class="num up">+$7.4k</td>
+                  <td><span class="axe-tag pub">published</span></td>
+                </tr>
+                <tr>
+                  <td class="l inst">UST 3.875% 09/29</td><td><span class="dir-s">SELL</span></td><td class="num">60mm</td>
+                  <td><span class="lvl up">99-30 · +0.4/32</span></td><td class="num up">+$9.0k</td>
+                  <td><span class="axe-tag wrk">working</span></td>
+                </tr>
+                <tr class="grp"><td colspan="6">Swaps &amp; basis</td></tr>
+                <tr>
+                  <td class="l inst">USD IRS 10Y · rec</td><td><span class="dir-b">RECV</span></td><td class="num">50k DV01</td>
+                  <td><span class="lvl up">+38.6 bp · +0.3</span></td><td class="num up">+$15k</td>
+                  <td><span class="axe-tag pub">published</span></td>
+                </tr>
+                <tr>
+                  <td class="l inst">10Y ASW pkg</td><td><span class="dir-s">PAY</span></td><td class="num">30k DV01</td>
+                  <td><span class="lvl dn">38.2 bp · −0.4</span></td><td class="num dn">−$3.1k</td>
+                  <td><span class="axe-tag drft">draft</span></td>
+                </tr>
+                <tr>
+                  <td class="l inst">TY/CTD net basis</td><td><span class="dir-b">BUY</span></td><td class="num">30k DV01</td>
+                  <td><span class="lvl up">−2.1/32 · IRR 4.18%</span></td><td class="num up">+$6.2k</td>
+                  <td><span class="axe-tag wrk">working</span></td>
+                </tr>
+              </tbody>
+            </table>
+            <p class="muted" style="font-size:11px; padding:10px 12px;">Axe levels re-mark off curve snapshot #88,412 — drift past tolerance auto-repulls the published IOI.</p>
+          </div>
+        </section>
+
+        <!-- RIGHT: inbound IOI + match -->
+        <section class="panel">
+          <div class="panel-head"><span class="glyph">↘</span><span class="panel-title">Inbound IOI</span>
+            <div class="actions"><span class="badge live"><span class="gd"></span>3 new</span></div>
+          </div>
+          <div class="panel-body">
+
+            <div class="ioi-card" style="box-shadow: inset 0 0 0 1px oklch(0.78 0.16 155 / 0.4);">
+              <div class="ic-h">
+                <div>
+                  <div class="ic-t">Macro Fund A wants to BUY</div>
+                  <div class="ic-s">UST 4.25% 02/35 · ~25mm · natural · via API</div>
+                </div>
+                <span class="badge ok"><span class="gd"></span>strong match</span>
+              </div>
+
+              <div class="match-ring">
+                <div class="ring"><div class="inner"><span class="pct">86</span></div></div>
+                <div class="match-lines">
+                  Matches our <b class="dir-s">SELL 40mm</b> axe ·
+                  side <b class="up">✓</b> · size <b class="up">✓ covers</b> · level <b class="up">+0.5/32 edge</b><br>
+                  Internalises <b>100%</b> — no street hedge · expected <b class="up">+$11.7k</b>
+                </div>
+              </div>
+
+              <div class="gridlbl">Suggested response</div>
+              <div class="metrics" style="grid-template-columns: repeat(3,1fr);">
+                <div class="metric"><div class="k">Offer level</div><div class="v dn">101-16+</div></div>
+                <div class="metric"><div class="k">Show size</div><div class="v">25<small>mm</small></div></div>
+                <div class="metric"><div class="k">Win prob</div><div class="v up">74<small>%</small></div></div>
+              </div>
+
+              <div class="row" style="margin-top:14px;">
+                <button class="btn primary grow">Respond · firm offer →</button>
+                <button class="btn">Send to RFQ</button>
+                <button class="btn ghost">Decline</button>
+              </div>
+            </div>
+
+            <div class="gridlbl" style="margin-top:16px;">Queue</div>
+            <table class="tbl">
+              <tbody>
+                <tr>
+                  <td class="l inst">Pension B · BUY<br><span class="muted" style="font-size:11px;">USD IRS 10Y rec ~50mm</span></td>
+                  <td><span class="badge warn"><span class="gd"></span>62% partial</span></td>
+                  <td class="num"><button class="btn sm">View</button></td>
+                </tr>
+                <tr>
+                  <td class="l inst">HF Delta · SELL<br><span class="muted" style="font-size:11px;">UST 3.875 09/29 ~20mm</span></td>
+                  <td><span class="badge idle"><span class="gd"></span>opposite side</span></td>
+                  <td class="num"><button class="btn sm">View</button></td>
+                </tr>
+              </tbody>
+            </table>
+            <p class="muted" style="font-size:11px; margin-top:10px;">Match score = side · size-coverage · level-edge · internalisation · client tier. Responses route through the same best-ex audit as RFQ.</p>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <footer class="statusbar">
+      <span class="seg">● 6 axes live · 4 published</span>
+      <span class="seg">3 inbound IOI · 1 strong match</span>
+      <span class="right">re-mark on snapshot #88,412 · USD</span>
+    </footer>
+  </div>
+</div>
+</body>
+</html>

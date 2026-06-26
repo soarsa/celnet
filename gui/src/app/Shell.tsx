@@ -12,7 +12,7 @@
  * analytics) are URL-encoded + localStorage-persisted (`SavedViewsMenu`).
  */
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useApp } from "./AppContext";
 import { CommandPalette } from "../components/CommandPalette";
 import { ShortcutsOverlay } from "../components/ShortcutsOverlay";
@@ -24,6 +24,7 @@ import { RiskWorkspace } from "../workspaces/RiskWorkspace";
 import { BookWorkspace } from "../workspaces/BookWorkspace";
 import { ConnectionsWorkspace } from "../workspaces/ConnectionsWorkspace";
 import { AdminWorkspace } from "../workspaces/AdminWorkspace";
+import { ExcelWorkspace } from "../workspaces/ExcelWorkspace";
 import { StatusRibbon } from "./StatusRibbon";
 import { CelerMark, CelnetWordmark } from "../components/CelerMark";
 import { ScopeControl } from "../components/ScopeControl";
@@ -44,6 +45,7 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   book: BookWorkspace,
   connections: ConnectionsWorkspace,
   admin: AdminWorkspace,
+  excel: ExcelWorkspace,
 };
 
 export function Shell(): React.ReactElement {
@@ -52,13 +54,13 @@ export function Shell(): React.ReactElement {
   // The keyboard-shortcut cheatsheet overlay (bound to `?`). Shell-local UI.
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
-  // FIX-connection management is admin-only: a non-admin sees no Connections rail
-  // button or pane, and the workspace-jump for it is dropped from the palette /
-  // keyboard. Each visible entry keeps its ORIGINAL rail index so the ⌘N numbers
-  // stay aligned with `resolveChord` (which maps digits against the full RAIL);
-  // ⌘6 (connections) simply resolves to a now-absent command and is inert.
+  // The Administration group (Connections + Admin) is admin-only: a non-admin sees
+  // neither rail button nor pane, and their workspace-jumps are dropped from the
+  // palette / keyboard. Each visible entry keeps its ORIGINAL rail index so the ⌘N
+  // numbers stay aligned with `resolveChord` (which maps digits against the full
+  // RAIL); the admin-group chords simply resolve to now-absent commands and are inert.
   const isAdmin = app.auth.isAdmin;
-  const rail = isAdmin ? RAIL : RAIL.filter((r) => r.id !== "connections");
+  const rail = isAdmin ? RAIL : RAIL.filter((r) => r.group !== "administration");
 
   // The runnable commands, bound to live app actions — the SINGLE source the
   // palette renders and the Shell dispatches from.
@@ -79,7 +81,7 @@ export function Shell(): React.ReactElement {
     toggleAppearance,
     toggleContrast,
     canDrillScope: !isTerminal(app.scope),
-  }).filter((c) => isAdmin || c.id !== "ws-connections");
+  }).filter((c) => isAdmin || (c.id !== "ws-connections" && c.id !== "ws-admin"));
 
   // Global keyboard grammar (single source: lib/commands.ts). The Shell resolves a
   // keydown against the registry and dispatches the matched command, so what the
@@ -118,20 +120,30 @@ export function Shell(): React.ReactElement {
           <CelerMark size={30} className={styles.mark} title="Celnet — a Celer Technologies product" />
         </div>
         <nav className={styles.nav}>
-          {rail.map((r) => {
+          {rail.map((r, i) => {
             // Original RAIL index keeps the ⌘N hint aligned with resolveChord.
             const kbd = railChord(RAIL.indexOf(r)).join("");
+            // The Administration group (Connections + Admin) is set off under a
+            // labelled hairline divider at the foot of the rail.
+            const startsAdmin =
+              r.group === "administration" && rail[i - 1]?.group !== "administration";
             return (
-              <button
-                key={r.id}
-                className={`${styles.railBtn} ${app.workspace === r.id ? styles.railActive : ""}`}
-                onClick={() => app.setWorkspace(r.id)}
-                title={`${r.label} (${kbd})`}
-                aria-current={app.workspace === r.id}
-              >
-                <span className={styles.railGlyph}>{r.glyph}</span>
-                <span className={styles.railLabel}>{r.label}</span>
-              </button>
+              <Fragment key={r.id}>
+                {startsAdmin && (
+                  <span className={styles.railGroupLabel} aria-hidden>
+                    Admin
+                  </span>
+                )}
+                <button
+                  className={`${styles.railBtn} ${app.workspace === r.id ? styles.railActive : ""}`}
+                  onClick={() => app.setWorkspace(r.id)}
+                  title={`${r.label} (${kbd})`}
+                  aria-current={app.workspace === r.id}
+                >
+                  <span className={styles.railGlyph}>{r.glyph}</span>
+                  <span className={styles.railLabel}>{r.label}</span>
+                </button>
+              </Fragment>
             );
           })}
         </nav>

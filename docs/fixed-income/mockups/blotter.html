@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>celnet · Fixed Income — Order blotter (mockup)</title>
+<link rel="stylesheet" href="shared.css" />
+<style>
+  .side-b { color: var(--bid); font-weight: 600; } .side-s { color: var(--offer); font-weight: 600; }
+  .stt { font-size: 9px; letter-spacing: 0.04em; text-transform: uppercase; padding: 1px 7px; border-radius: var(--r-full); }
+  .stt.fill { color: var(--bid); background: var(--bid-soft); }
+  .stt.work { color: var(--warn); background: oklch(0.82 0.16 75 / 0.16); }
+  .stt.part { color: var(--accent); background: var(--accent-soft); }
+  .stt.canc { color: var(--text-tertiary); background: oklch(1 0 0 / 0.05); }
+  .summ-row { display: grid; grid-template-columns: repeat(5,1fr); gap: 1px; background: var(--grid-line); border-radius: var(--r-md); overflow: hidden; margin-bottom: 16px; }
+  .sc { background: var(--bg-raised); padding: 12px 14px; }
+  .sc .sk { font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-tertiary); }
+  .sc .sv { font-family: var(--font-mono); font-size: 19px; margin-top: 4px; }
+  .ven { font-size: 11px; color: var(--text-tertiary); }
+  .twocol { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,360px); gap: 16px; align-items: start; }
+  .gridlbl { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-tertiary); margin: 4px 0 8px; }
+  .fillrow { display:flex; justify-content:space-between; padding:8px 0; border-bottom:0.5px solid oklch(1 0 0 / 0.06); font-size:12px; }
+  .fillrow .fm { color: var(--text-tertiary); font-size:11px; }
+  .summ { font-size:12px; color:var(--text-secondary); line-height:1.7; }
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="rail">
+    <div class="mark">c</div>
+    <a class="rail-btn" href="index.html"><span class="ic">◈</span><span class="lb">Home</span></a>
+    <a class="rail-btn" href="pricing-desk.html"><span class="ic">◷</span><span class="lb">Pricing</span></a>
+    <a class="rail-btn" href="ticket.html"><span class="ic">⊟</span><span class="lb">Ticket</span></a>
+    <a class="rail-btn" href="rfq-response.html"><span class="ic">⇄</span><span class="lb">RFQ</span></a>
+    <a class="rail-btn" href="ioi-axes.html"><span class="ic">✦</span><span class="lb">IOI</span></a>
+    <a class="rail-btn" href="rfs-stream.html"><span class="ic">≋</span><span class="lb">RFS</span></a>
+    <a class="rail-btn active" href="blotter.html"><span class="ic">▤</span><span class="lb">Blotter</span></a>
+    <div class="rail-spacer"></div>
+    <div class="rail-btn muted"><span class="ic">⚙</span><span class="lb">Admin</span></div>
+  </nav>
+
+  <div class="main">
+    <div class="asset-tabs">
+      <div class="asset-tab"><span class="dot"></span>Options</div>
+      <div class="asset-tab active"><span class="dot"></span>Fixed Income</div>
+    </div>
+    <header class="topbar">
+      <div class="wordmark">cel<b>net</b></div>
+      <div class="crumb"><span class="sep">/</span><b>Fixed Income</b><span class="sep">›</span>Order blotter</div>
+      <div class="search">⌕ ticket / client / ISIN <span class="kbd">⌘K</span></div>
+      <div class="auth">BC</div>
+    </header>
+
+    <main class="canvas">
+
+      <!-- top summary strip -->
+      <div class="summ-row">
+        <div class="sc"><div class="sk">Working orders</div><div class="sv amber">7</div></div>
+        <div class="sc"><div class="sk">Filled today</div><div class="sv up">$842mm</div></div>
+        <div class="sc"><div class="sk">Internalised</div><div class="sv acc">61%</div></div>
+        <div class="sc"><div class="sk">Avg slippage vs arrival</div><div class="sv up">−0.18 bp</div></div>
+        <div class="sc"><div class="sk">Net DV01 (book)</div><div class="sv">−$104k</div></div>
+      </div>
+
+      <div class="twocol">
+        <!-- LEFT: orders + executions -->
+        <section class="panel">
+          <div class="panel-head"><span class="glyph">▤</span><span class="panel-title">Orders &amp; executions</span>
+            <div class="actions">
+              <div class="seg"><button class="on">All</button><button>Working</button><button>Filled</button><button>Cancelled</button></div>
+            </div>
+          </div>
+          <div class="panel-body flush">
+            <table class="tbl">
+              <thead>
+                <tr><th class="l">Time</th><th class="l">Ticket / Client</th><th class="l">Instrument</th><th>Side</th><th>Qty</th><th>Level</th><th>Filled</th><th>Venue</th><th>Status</th></tr>
+              </thead>
+              <tbody>
+                <tr><td class="l num">14:31:58</td><td class="l inst">T-90412<br><span class="ven">Macro Fund A</span></td><td class="l">UST 4.25 02/35</td><td><span class="side-s">SELL</span></td><td class="num">25mm</td><td class="num">101-16+</td><td class="num up">25mm</td><td class="ven">internal</td><td><span class="stt fill">filled</span></td></tr>
+                <tr><td class="l num">14:30:22</td><td class="l inst">T-90410<br><span class="ven">RM Bank</span></td><td class="l">USD IRS 10Y rec</td><td><span class="side-b">BUY</span></td><td class="num">100mm</td><td class="num">4.048</td><td class="num acc">60mm</td><td class="ven">BrokerTec</td><td><span class="stt part">partial</span></td></tr>
+                <tr><td class="l num">14:28:05</td><td class="l inst">T-90408<br><span class="ven">HF Delta</span></td><td class="l">10Y ASW pkg</td><td><span class="side-b">BUY</span></td><td class="num">50k DV01</td><td class="num">38.4</td><td class="num">—</td><td class="ven">working</td><td><span class="stt work">working</span></td></tr>
+                <tr><td class="l num">14:25:41</td><td class="l inst">T-90405<br><span class="ven">Pension B</span></td><td class="l">UST 4.75 11/43</td><td><span class="side-s">SELL</span></td><td class="num">15mm</td><td class="num">102-05</td><td class="num up">15mm</td><td class="ven">MarketAxess</td><td><span class="stt fill">filled</span></td></tr>
+                <tr><td class="l num">14:22:13</td><td class="l inst">T-90401<br><span class="ven">Corp Treasury</span></td><td class="l">SR3 Dec-26 ×2,000</td><td><span class="side-s">SELL</span></td><td class="num">2,000</td><td class="num">96.040</td><td class="num up">2,000</td><td class="ven">CME</td><td><span class="stt fill">filled</span></td></tr>
+                <tr><td class="l num">14:19:50</td><td class="l inst">T-90398<br><span class="ven">Macro Fund C</span></td><td class="l">TY/CTD basis</td><td><span class="side-b">BUY</span></td><td class="num">30k DV01</td><td class="num">−2.1/32</td><td class="num">—</td><td class="ven">working</td><td><span class="stt work">working</span></td></tr>
+                <tr><td class="l num">14:15:32</td><td class="l inst">T-90390<br><span class="ven">RM Bank</span></td><td class="l">UST 3.875 09/29</td><td><span class="side-s">SELL</span></td><td class="num">60mm</td><td class="num">99-30</td><td class="num up">60mm</td><td class="ven">internal</td><td><span class="stt fill">filled</span></td></tr>
+                <tr><td class="l num">14:09:11</td><td class="l inst">T-90381<br><span class="ven">HF Delta</span></td><td class="l">USD IRS 5Y pay</td><td><span class="side-s">SELL</span></td><td class="num">200mm</td><td class="num">3.804</td><td class="num muted">cxl</td><td class="ven">—</td><td><span class="stt canc">cancelled</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- RIGHT: selected order detail / fills -->
+        <section class="panel">
+          <div class="panel-head"><span class="glyph">◫</span><span class="panel-title">Ticket T-90410 · fills</span>
+            <div class="actions"><span class="stt part">partial 60%</span></div>
+          </div>
+          <div class="panel-body">
+            <div class="gridlbl">RM Bank · USD IRS 10Y receive · 100mm</div>
+            <div class="metrics" style="grid-template-columns: repeat(2,1fr); margin-bottom:14px;">
+              <div class="metric"><div class="k">Arrival mid</div><div class="v acc">4.0485</div></div>
+              <div class="metric"><div class="k">Avg fill</div><div class="v up">4.0479</div></div>
+              <div class="metric"><div class="k">Slippage</div><div class="v up">−0.06 bp</div></div>
+              <div class="metric"><div class="k">Remaining</div><div class="v">40mm</div></div>
+            </div>
+
+            <div class="gridlbl">Execution trail</div>
+            <div class="fillrow"><div>30mm @ 4.0476 <span class="fm">BrokerTec</span></div><div class="num">14:30:24</div></div>
+            <div class="fillrow"><div>20mm @ 4.0481 <span class="fm">internal x-fill</span></div><div class="num">14:30:31</div></div>
+            <div class="fillrow"><div>10mm @ 4.0483 <span class="fm">Tradeweb</span></div><div class="num">14:30:58</div></div>
+            <div class="fillrow" style="border-bottom:0;"><div class="muted">40mm working <span class="fm">child order live</span></div><div class="num muted">—</div></div>
+
+            <div class="gridlbl" style="margin-top:16px;">Best-execution check</div>
+            <div class="summ">
+              Each child routed to the best venue at decision time vs the composite; internal x-fill where it improved the level. Full snapshot &amp; timestamps journaled.
+            </div>
+
+            <div class="row" style="margin-top:16px;">
+              <button class="btn primary lg grow">Work remaining</button>
+              <button class="btn offer lg">Cancel</button>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <p class="wrap-sub" style="margin-top:14px;">Mockup · order &amp; execution blotter — feeds positions/risk in the book and the best-execution audit store.</p>
+    </main>
+
+    <footer class="statusbar">
+      <span class="seg">● 7 working · 312 fills today</span>
+      <span class="seg">internalised 61% · slippage −0.18bp</span>
+      <span class="right">USD · 2026-06-25 14:32:07Z</span>
+    </footer>
+  </div>
+</div>
+</body>
+</html>

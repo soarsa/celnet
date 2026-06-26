@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>celnet · Fixed Income — Pricing desk (mockup)</title>
+<link rel="stylesheet" href="shared.css" />
+<style>
+  .desk { display: grid; grid-template-columns: minmax(0,1.05fr) minmax(0,1fr); gap: 16px; align-items: start; }
+  .krr { display: flex; align-items: flex-end; gap: 6px; height: 90px; padding-top: 8px; }
+  .krr .kb { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 5px; justify-content: flex-end; height: 100%; }
+  .krr .bar { width: 60%; background: var(--accent); border-radius: 3px 3px 0 0; min-height: 2px; }
+  .krr .kt { font-size: 10px; color: var(--text-tertiary); font-family: var(--font-mono); }
+  .krr .kv { font-size: 10px; color: var(--text-secondary); font-family: var(--font-mono); }
+  .rv-strip { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1px; background: var(--grid-line); border-radius: var(--r-sm); overflow: hidden; }
+  .rv { background: var(--bg-inset); padding: 10px 12px; }
+  .rv .k { font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-tertiary); }
+  .rv .v { font-family: var(--font-mono); font-size: 15px; margin-top: 4px; }
+  .rv .s { font-size: 10px; color: var(--text-tertiary); margin-top: 2px; }
+  .inst-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+  .inst-head .it { font-size: 16px; font-weight: 600; }
+  .inst-head .isub { font-size: 12px; color: var(--text-tertiary); margin-top: 2px; }
+  .px-big { font-family: var(--font-mono); font-size: 26px; font-variant-numeric: tabular-nums; }
+  .gridlbl { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-tertiary); margin: 14px 0 8px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="rail">
+    <div class="mark">c</div>
+    <a class="rail-btn" href="index.html"><span class="ic">◈</span><span class="lb">Home</span></a>
+    <a class="rail-btn active" href="pricing-desk.html"><span class="ic">◷</span><span class="lb">Pricing</span></a>
+    <a class="rail-btn" href="rfq-response.html"><span class="ic">⇄</span><span class="lb">RFQ</span></a>
+    <a class="rail-btn" href="ioi-axes.html"><span class="ic">✦</span><span class="lb">IOI</span></a>
+    <div class="rail-btn muted"><span class="ic">▤</span><span class="lb">Book</span></div>
+    <div class="rail-btn muted"><span class="ic">≋</span><span class="lb">RFS</span></div>
+    <div class="rail-spacer"></div>
+    <div class="rail-btn muted"><span class="ic">⚙</span><span class="lb">Admin</span></div>
+  </nav>
+
+  <div class="main">
+    <div class="asset-tabs">
+      <div class="asset-tab"><span class="dot"></span>Options</div>
+      <div class="asset-tab active"><span class="dot"></span>Fixed Income</div>
+    </div>
+    <header class="topbar">
+      <div class="wordmark">cel<b>net</b></div>
+      <div class="crumb"><span class="sep">/</span><b>Fixed Income</b><span class="sep">›</span>Pricing desk</div>
+      <div class="search">⌕ UST 4.25 02/35 <span class="kbd">⌘K</span></div>
+      <div class="auth">BC</div>
+    </header>
+
+    <main class="canvas">
+      <div class="desk">
+
+        <!-- LEFT: curve construction — how the discount factors come to be -->
+        <section class="panel">
+          <div class="panel-head"><span class="glyph">◷</span><span class="panel-title">USD SOFR curve · build</span>
+            <div class="actions">
+              <div class="seg"><button>Zero</button><button class="on">Fwd</button><button>Disc</button></div>
+              <span class="badge ok"><span class="gd"></span>arb-free</span>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="chartwrap">
+              <svg viewBox="0 0 560 200" width="100%" height="200" preserveAspectRatio="none" font-family="var(--font-mono)">
+                <!-- gridlines -->
+                <g stroke="oklch(1 0 0 / 0.06)" stroke-width="1">
+                  <line x1="40" y1="20" x2="540" y2="20"/><line x1="40" y1="70" x2="540" y2="70"/>
+                  <line x1="40" y1="120" x2="540" y2="120"/><line x1="40" y1="170" x2="540" y2="170"/>
+                </g>
+                <!-- y labels (rate %) -->
+                <g fill="oklch(0.7 0.025 276)" font-size="9" text-anchor="end">
+                  <text x="34" y="24">4.50</text><text x="34" y="74">4.20</text><text x="34" y="124">3.90</text><text x="34" y="174">3.60</text>
+                </g>
+                <!-- x labels (tenor) -->
+                <g fill="oklch(0.7 0.025 276)" font-size="9" text-anchor="middle">
+                  <text x="60" y="192">ON</text><text x="150" y="192">1Y</text><text x="240" y="192">2Y</text>
+                  <text x="330" y="192">5Y</text><text x="430" y="192">10Y</text><text x="525" y="192">30Y</text>
+                </g>
+                <!-- discount-implied area tint -->
+                <polyline fill="oklch(0.66 0.17 280 / 0.10)" stroke="none"
+                  points="60,38 105,55 150,98 195,118 240,128 330,120 380,95 430,78 490,58 525,48 525,178 60,178"/>
+                <!-- forward curve: front high, dips mid, rises long -->
+                <polyline fill="none" stroke="var(--accent)" stroke-width="2"
+                  points="60,38 105,55 150,98 195,118 240,128 330,120 380,95 430,78 490,58 525,48"/>
+                <!-- pillar nodes -->
+                <g fill="var(--brand)">
+                  <circle cx="60" cy="38" r="3.2"/><circle cx="150" cy="98" r="3.2"/><circle cx="240" cy="128" r="3.2"/>
+                  <circle cx="330" cy="120" r="3.2"/><circle cx="430" cy="78" r="3.2"/><circle cx="525" cy="48" r="3.2"/>
+                </g>
+              </svg>
+            </div>
+            <div class="between" style="margin-top:10px;">
+              <span class="lbl">Bootstrap inputs · 41 instruments</span>
+              <span class="muted" style="font-size:11px;">max repricing residual <span class="num up">0.04 bp</span></span>
+            </div>
+
+            <table class="tbl" style="margin-top:6px;">
+              <thead>
+                <tr><th class="l">Instrument</th><th>Tenor</th><th>Market</th><th>Model</th><th>Resid (bp)</th></tr>
+              </thead>
+              <tbody>
+                <tr class="grp"><td colspan="5">Cash / O-N</td></tr>
+                <tr><td class="l inst">SOFR fixing</td><td class="num">O/N</td><td class="num">4.330</td><td class="num">4.330</td><td class="num up">0.00</td></tr>
+                <tr class="grp"><td colspan="5">SOFR futures strip</td></tr>
+                <tr><td class="l inst">SR3 Sep-26</td><td class="num">3M</td><td class="num">95.785</td><td class="num">95.786</td><td class="num up">0.01</td></tr>
+                <tr><td class="l inst">SR3 Dec-26</td><td class="num">6M</td><td class="num">96.040</td><td class="num">96.041</td><td class="num up">0.02</td></tr>
+                <tr><td class="l inst">SR3 Mar-27</td><td class="num">9M</td><td class="num">96.225</td><td class="num">96.224</td><td class="num dn">-0.01</td></tr>
+                <tr class="grp"><td colspan="5">OIS swaps (annual, SOFR)</td></tr>
+                <tr><td class="l inst">USD OIS 2Y</td><td class="num">2Y</td><td class="num">3.720</td><td class="num">3.720</td><td class="num up">0.00</td></tr>
+                <tr><td class="l inst">USD OIS 5Y</td><td class="num">5Y</td><td class="num">3.802</td><td class="num">3.802</td><td class="num up">0.00</td></tr>
+                <tr><td class="l inst">USD OIS 10Y</td><td class="num">10Y</td><td class="num">4.048</td><td class="num">4.049</td><td class="num up">0.01</td></tr>
+                <tr><td class="l inst">USD OIS 30Y</td><td class="num">30Y</td><td class="num">4.352</td><td class="num">4.351</td><td class="num dn">-0.04</td></tr>
+              </tbody>
+            </table>
+            <p class="muted" style="font-size:11px; margin-top:8px;">STIR convexity: deterministic placeholder (closed-form) — term-structure-consistent adjustment lands with the rates-vol workstream.</p>
+          </div>
+        </section>
+
+        <!-- RIGHT: instrument priced off that curve -->
+        <section class="panel">
+          <div class="panel-head"><span class="glyph">⊞</span><span class="panel-title">Instrument analytics</span>
+            <div class="actions">
+              <div class="seg"><button class="on">Bond</button><button>Swap</button><button>Future</button></div>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="inst-head">
+              <div>
+                <div class="it">UST 4.25% 15-Feb-2035</div>
+                <div class="isub">912828 · ACT/ACT · semi · T+1 · benchmark 10Y</div>
+              </div>
+              <div style="text-align:right;">
+                <div class="px-big">101-16+</div>
+                <div class="isub">clean · <span class="num">101.515625</span></div>
+              </div>
+            </div>
+
+            <div class="metrics" style="grid-template-columns: repeat(3,1fr);">
+              <div class="metric"><div class="k">Yield (YTM)</div><div class="v acc">4.047<small>%</small></div></div>
+              <div class="metric"><div class="k">Accrued</div><div class="v">1.5151<small> /100</small></div></div>
+              <div class="metric"><div class="k">Dirty price</div><div class="v">103.031</div></div>
+              <div class="metric"><div class="k">DV01</div><div class="v">812.4<small> /mm</small></div></div>
+              <div class="metric"><div class="k">PV01 (analytic)</div><div class="v">810.9<small> /mm</small></div></div>
+              <div class="metric"><div class="k">Mod. duration</div><div class="v">8.02<small> yr</small></div></div>
+              <div class="metric"><div class="k">Convexity</div><div class="v">0.79</div></div>
+              <div class="metric"><div class="k">G-spread</div><div class="v up">+1.8<small> bp</small></div></div>
+              <div class="metric"><div class="k">Z-spread</div><div class="v up">+2.1<small> bp</small></div></div>
+            </div>
+
+            <div class="gridlbl">Key-rate DV01 ladder (per mm, bp shift)</div>
+            <div class="krr">
+              <div class="kb"><div class="bar" style="height:6%"></div><div class="kv">5</div><div class="kt">2Y</div></div>
+              <div class="kb"><div class="bar" style="height:14%"></div><div class="kv">12</div><div class="kt">3Y</div></div>
+              <div class="kb"><div class="bar" style="height:30%"></div><div class="kv">61</div><div class="kt">5Y</div></div>
+              <div class="kb"><div class="bar" style="height:46%"></div><div class="kv">96</div><div class="kt">7Y</div></div>
+              <div class="kb"><div class="bar" style="height:100%; background:var(--brand)"></div><div class="kv">612</div><div class="kt">10Y</div></div>
+              <div class="kb"><div class="bar" style="height:5%"></div><div class="kv">8</div><div class="kt">20Y</div></div>
+              <div class="kb"><div class="bar" style="height:3%"></div><div class="kv">2</div><div class="kt">30Y</div></div>
+            </div>
+
+            <div class="gridlbl">Relative value — cross-product strategy analytics</div>
+            <div class="rv-strip">
+              <div class="rv"><div class="k">Swap spread (vs 10Y OIS)</div><div class="v up">+38.6 bp</div><div class="s">ASW · matched-maturity</div></div>
+              <div class="rv"><div class="k">CTD basis (TYU6)</div><div class="v dn">−2.1 / 32</div><div class="s">net basis · IRR 4.18%</div></div>
+              <div class="rv"><div class="k">Z-spread pickup</div><div class="v acc">+2.1 bp</div><div class="s">vs SOFR discount curve</div></div>
+            </div>
+
+            <div class="row" style="margin-top:16px;">
+              <button class="btn primary lg grow">Send to RFQ ⇄</button>
+              <button class="btn lg">Add to strategy</button>
+              <button class="btn lg">Pin to book</button>
+            </div>
+            <p class="muted" style="font-size:11px; margin-top:10px;">OAS / callable analytics shown only for option-free here — callable OAS &amp; deflation-floor ILB arrive with the rates-vol layer (Q21/Q22 deferred).</p>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <footer class="statusbar">
+      <span class="seg">● curve 14:32:07 · residual 0.04bp</span>
+      <span class="seg">analytics snapshot #88,412</span>
+      <span class="right">USD · pricing latency p99 <span style="color:var(--bid)">38µs</span></span>
+    </footer>
+  </div>
+</div>
+</body>
+</html>
