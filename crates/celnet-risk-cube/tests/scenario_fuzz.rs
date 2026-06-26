@@ -25,6 +25,7 @@ fn clamp_into(raw: f64, lo: f64, hi: f64) -> f64 {
     lo + t * (hi - lo)
 }
 
+#[allow(clippy::too_many_arguments)] // test helper: explicit market scalars are clearer than a struct
 fn build_position(
     is_call: bool,
     spot: f64,
@@ -101,15 +102,15 @@ proptest! {
         // two-step subtraction `dr_d - (dr_d - dr_f)` a 1-ULP difference is possible,
         // so we test with a tight epsilon (1e-15) rather than bit-exact equality.
         let shocked2 = scen.apply(&pos.inputs);
-        if let celnet_types::Carry::FxRates { r_dom: rd, r_for: rf } = pos.inputs.carry {
-            if let celnet_types::Carry::FxRates { r_dom: rd_s, r_for: rf_s } = shocked2.carry {
-                prop_assert_eq!(rd_s.to_bits(), (rd + dr_d).to_bits());
-                let rf_exp = rf + dr_f;
-                prop_assert!(
-                    (rf_s - rf_exp).abs() <= 1e-15 * (1.0 + rf_exp.abs()),
-                    "r_for round-trip: got {rf_s}, expected {rf_exp} (tol 1e-15)"
-                );
-            }
+        if let celnet_types::Carry::FxRates { r_dom: rd, r_for: rf } = pos.inputs.carry
+            && let celnet_types::Carry::FxRates { r_dom: rd_s, r_for: rf_s } = shocked2.carry
+        {
+            prop_assert_eq!(rd_s.to_bits(), (rd + dr_d).to_bits());
+            let rf_exp = rf + dr_f;
+            prop_assert!(
+                (rf_s - rf_exp).abs() <= 1e-15 * (1.0 + rf_exp.abs()),
+                "r_for round-trip: got {rf_s}, expected {rf_exp} (tol 1e-15)"
+            );
         }
 
         // Contracts 3 + 4: position/node PnL finite and additive.

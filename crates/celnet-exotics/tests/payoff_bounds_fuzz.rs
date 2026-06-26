@@ -277,7 +277,7 @@ proptest! {
                 f64::INFINITY
             };
             let sigma_sqrt_t = vol * t.sqrt();
-            if log_moneyness <= 0.3 && sigma_sqrt_t >= 0.05 && sigma_sqrt_t <= 0.5 {
+            if log_moneyness <= 0.3 && (0.05..=0.5).contains(&sigma_sqrt_t) {
                 prop_assert!(
                     geo <= tw + 1e-9,
                     "geometric_avg ({geo}) must be ≤ Turnbull-Wakeman ({tw}) by AM-GM \
