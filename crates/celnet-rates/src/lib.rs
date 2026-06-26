@@ -29,6 +29,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod bond;
 pub mod bootstrap;
 pub mod curve;
 pub mod fra;
@@ -38,6 +39,10 @@ pub mod schedule;
 pub mod solver;
 pub mod vanilla_swap;
 
+pub use bond::{
+    BondError, CashBond, asset_swap_spread, bond_pv, fixed_coupon_bond, g_spread, price_at_yield,
+    yield_to_maturity, z_spread,
+};
 pub use bootstrap::{BootstrapError, OisQuote, bootstrap_ois};
 pub use curve::{Curve, CurveError};
 pub use fra::{Fra, FraError, FraRisk, fra_par_rate, fra_pv, fra_pv01, fra_risk};
