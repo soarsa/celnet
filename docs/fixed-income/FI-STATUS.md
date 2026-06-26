@@ -66,8 +66,15 @@ GUI (existing):
 ## ⏳ Outstanding (the integration phase — each a gated slice)
 
 ### A. More rates products (`celnet-rates`)
-- **FRA** — single forward-fixing off the curve's simple forward.
-- **Vanilla IRS conventions** — frequency/day-count variants beyond the annual OIS already built.
+- **FRA** ✅ (`89b0588`) — single forward-fixing off the curve; PV ≡ one-period OIS swaplet, par
+  zeroes PV, analytic PV01, central-difference DV01 + key-rate ladder.
+- **Vanilla IRS conventions** ✅ (`0d9f55b`) — two-leg fixed-vs-float swap with per-leg payment
+  frequency (annual/semi/quarterly), independent schedules, explicit per-period float projection
+  (projection-curve seam), PV/par/PV01/DV01/key-rate. Verified by structural identities (par PV=0,
+  leg decomposition, exact PV01 finite-diff, ladder sums to DV01, explicit float == telescoping
+  DF(0)−DF(T), annual case == `ois_par_rate`). **30/360 fixed-leg basis deferred** — needs a
+  coordinated `celnet_types::DayCount` addition (proto / engine handoff / GUI+Excel enum mirrors);
+  the builder takes a supported `DayCount` (ACT/365F, ACT/360) until then.
 - **STIR & bond futures** — convexity (deterministic placeholder per Q11), CF/CTD/implied-repo.
 - **Cash-bond analytics** — yield, **G-spread / Z-spread / ASW**, OAS on option-free (= Z).
 
