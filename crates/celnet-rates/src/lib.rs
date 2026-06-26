@@ -38,6 +38,7 @@ pub mod ois;
 pub mod risk;
 pub mod schedule;
 pub mod solver;
+pub mod turns;
 pub mod vanilla_swap;
 
 pub use bond::{
@@ -56,6 +57,7 @@ pub use ois::{FixedPeriod, OisSchedule, ScheduleError, ois_annuity, ois_par_rate
 pub use risk::{OisRisk, ois_risk, pv01};
 pub use schedule::{us_settlement_calendar, usd_sofr_ois_schedule};
 pub use solver::{SolverError, brent_root};
+pub use turns::{TurnError, TurnJump, turn_discount_factor, with_turns};
 pub use vanilla_swap::{
     LegPeriod, PaymentFrequency, SwapError, SwapLeg, SwapRisk, VanillaSwap, fixed_annuity,
     float_leg_value, swap_leg_schedule, swap_par_rate, swap_pv, swap_pv01, swap_risk,
