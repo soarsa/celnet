@@ -36,7 +36,10 @@ import type {
   MarketSeriesPoint,
   MarketSeriesSnapshot,
   MultiDealerQuote,
+  OisInstrument,
   Quote,
+  RatesCurveSet,
+  RatesPricingResult,
   Snapshot,
   StreamHealth,
   StreamReject,
@@ -57,6 +60,9 @@ import {
   multiDealerQuoteFromWire,
   parseFrame,
   quoteFromWire,
+  ratesCurveSetToWire,
+  ratesInstrumentToWire,
+  ratesPricingResultFromWire,
   serializeFrame,
   snapshotFromWire,
   streamRejectFromWire,
@@ -709,6 +715,29 @@ export class Connection {
     const stdErr = optNumField(reply, "price_std_error");
     if (stdErr !== undefined) out.priceStdError = stdErr;
     return out;
+  }
+
+  /**
+   * Price a linear-rates instrument over the `price_rates` RPC (the WS mirror):
+   * send the calibrated `curve_set` + the OIS `instrument` and decode the
+   * server-bootstrapped PV + first-order risk (par rate, PV01, DV01, key-rate
+   * ladder). The add-in carries no rates math of its own — the live
+   * `celnet-rates` engine bootstraps the discount/forward curve and prices the
+   * swap; the one unversioned contract makes the result authoritative.
+   */
+  async priceRates(
+    curve: RatesCurveSet,
+    instrument: OisInstrument,
+  ): Promise<RatesPricingResult> {
+    const reply = await this.request(
+      "price_rates",
+      {
+        curve_set: ratesCurveSetToWire(curve),
+        instrument: ratesInstrumentToWire(instrument),
+      },
+      "rates_price_response",
+    );
+    return ratesPricingResultFromWire(reply);
   }
 
   async requestQuote(

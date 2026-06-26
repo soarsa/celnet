@@ -26,6 +26,7 @@ import type {
   BasketKind,
   BasketLeg,
   BasketOption,
+  BrokenDate,
   CcyPair,
   Cliquet,
   CommodityRef,
@@ -50,11 +51,16 @@ import type {
   Metal,
   MetalPair,
   MonitoringStyle,
+  OisCurvePillar,
+  OisDirection,
+  OisInstrument,
   OptionType,
   Pivot,
   PricingModel,
   Product,
   QuantoPayoff,
+  RatesCurveSet,
+  RatesPricingResult,
   SettlementStyle,
   Side,
   SingleBarrier,
@@ -3709,4 +3715,210 @@ function canonicalStrike(s: StrikeOrDelta): unknown {
 
 function canonicalConventions(c: Conventions): unknown {
   return [c.deltaConvention, c.atmConvention, c.premiumStyle, c.cut, c.dayCount, c.settlement];
+}
+
+// ---------------------------------------------------------------------------
+// fixed-income (rates) — parse a curve range + scalar args into the typed
+// `RatesCurveSet` + `OisInstrument` the `price_rates` RPC carries, and format the
+// server's `RatesPricingResult` as a labelled spill. The add-in holds NO rates
+// math: these helpers only validate and shape the inputs the `celnet-rates`
+// engine prices, and lay out the engine's result for the grid.
+// ---------------------------------------------------------------------------
+
+/** The default curve currency — the USD-SOFR P0 arm (the only arm the engine prices). */
+const DEFAULT_CURVE_CURRENCY = "USD";
+
+/** Excel's serial-date epoch: serial 0 is 1899-12-30 (UTC), so day `n` is that plus `n` days. */
+const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30);
+const MS_PER_DAY = 86_400_000;
+
+/** Read a curve cell as a finite number, accepting a numeric or numeric-string cell. */
+function ratesCell(value: string | number | boolean, what: string): number {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new ShapingError(`${what} must be a finite number`);
+    return value;
+  }
+  if (typeof value === "boolean") throw new ShapingError(`${what} must be a number, not a boolean`);
+  const s = value.trim();
+  if (s === "") throw new ShapingError(`${what} is empty`);
+  const n = Number(s);
+  if (!Number.isFinite(n)) throw new ShapingError(`${what} \`${value}\` is not a number`);
+  return n;
+}
+
+/** True when a curve row is entirely empty (Excel pads ranges with blank trailing cells). */
+function isEmptyCurveRow(row: readonly (string | number | boolean)[]): boolean {
+  return row.every((c) => c === "" || c === null || c === undefined);
+}
+
+/**
+ * Parse the `reference_date` (spot-anchor civil date). Accepts an Excel date
+ * serial (the default for a date-typed cell) or an ISO `YYYY-MM-DD` string.
+ */
+export function parseBrokenDate(raw: number | string): BrokenDate {
+  if (typeof raw === "number") {
+    if (!Number.isFinite(raw) || raw <= 0) {
+      throw new ShapingError(`invalid reference date serial \`${raw}\``);
+    }
+    const d = new Date(EXCEL_EPOCH_MS + Math.trunc(raw) * MS_PER_DAY);
+    return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() };
+  }
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw.trim());
+  if (!m) {
+    throw new ShapingError(`invalid reference date \`${raw}\` (expected an Excel date or YYYY-MM-DD)`);
+  }
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  if (month < 1 || month > 12) throw new ShapingError(`reference date month out of range in \`${raw}\``);
+  if (day < 1 || day > 31) throw new ShapingError(`reference date day out of range in \`${raw}\``);
+  return { year, month, day };
+}
+
+/** Parse an OIS tenor as a whole number of years (`>= 1`); accepts `5` or `"5Y"`. */
+export function parseOisTenorYears(raw: number | string): number {
+  let n: number;
+  if (typeof raw === "number") {
+    n = raw;
+  } else {
+    const m = /^(\d+)\s*Y?$/.exec(raw.trim().toUpperCase());
+    if (!m) throw new ShapingError(`invalid OIS tenor \`${raw}\` (expected whole years, e.g. 5 or 5Y)`);
+    n = Number(m[1]);
+  }
+  if (!Number.isInteger(n) || n < 1) {
+    throw new ShapingError(`OIS tenor must be a whole number of years >= 1 (got \`${raw}\`)`);
+  }
+  return n;
+}
+
+/**
+ * Parse the fixed-leg direction. `PAY_FIXED` (payer) / `RECEIVE_FIXED` (receiver),
+ * with the common desk aliases (PAY/PAYER, RECEIVE/REC/RECEIVER).
+ */
+export function parseOisDirection(raw: string): OisDirection {
+  const s = raw.trim().toUpperCase();
+  if (s === "PAY_FIXED" || s === "PAYFIXED" || s === "PAY" || s === "PAYER") return "PAY_FIXED";
+  if (
+    s === "RECEIVE_FIXED" ||
+    s === "RECEIVEFIXED" ||
+    s === "RECEIVE" ||
+    s === "REC" ||
+    s === "RECEIVER"
+  ) {
+    return "RECEIVE_FIXED";
+  }
+  throw new ShapingError(`invalid OIS direction \`${raw}\` (expected PAY_FIXED or RECEIVE_FIXED)`);
+}
+
+/** Validate a positive OIS notional (direction carries the sign, never the notional). */
+function shapeOisNotional(raw: number): number {
+  if (!Number.isFinite(raw) || raw <= 0) {
+    throw new ShapingError(`OIS notional must be a positive number (got \`${raw}\`)`);
+  }
+  return raw;
+}
+
+/** Validate + normalise the curve currency (3-letter ISO-4217; default USD). */
+function parseCurveCurrency(raw: string | undefined): string {
+  if (raw === undefined || raw.trim() === "") return DEFAULT_CURVE_CURRENCY;
+  const s = raw.trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(s)) throw new ShapingError(`invalid currency \`${raw}\` (expected a 3-letter ISO code)`);
+  return s;
+}
+
+/**
+ * Parse the curve range — a 2-column `[tenorYears, parRate]` grid, one row per
+ * self-discounting OIS pillar — into strictly-increasing-tenor pillars. Blank
+ * trailing rows are ignored; out-of-order or duplicate tenors are rejected
+ * (the engine bootstraps deterministically only from ordered pillars).
+ */
+function parseOisPillars(curve: readonly (readonly (string | number | boolean)[])[]): OisCurvePillar[] {
+  const pillars: OisCurvePillar[] = [];
+  for (const row of curve) {
+    if (isEmptyCurveRow(row)) continue;
+    if (row.length < 2) {
+      throw new ShapingError("each curve row must have 2 columns: [tenorYears, parRate]");
+    }
+    const tenorYears = parseOisTenorYears(ratesCell(row[0]!, "pillar tenorYears"));
+    const parRate = ratesCell(row[1]!, "pillar parRate");
+    const prev = pillars[pillars.length - 1];
+    if (prev !== undefined && tenorYears <= prev.tenorYears) {
+      throw new ShapingError(
+        `curve pillars must be in strictly increasing tenor order (\`${prev.tenorYears}Y\` then \`${tenorYears}Y\`)`,
+      );
+    }
+    pillars.push({ tenorYears, parRate });
+  }
+  if (pillars.length === 0) throw new ShapingError("the curve needs at least one OIS pillar");
+  return pillars;
+}
+
+/** The curve-range + reference-date + currency a CELNET.RATES call shapes into a `RatesCurveSet`. */
+export interface RatesCurveArgs {
+  /** The 2-column `[tenorYears, parRate]` curve range (one row per pillar). */
+  readonly curve: readonly (readonly (string | number | boolean)[])[];
+  /** The spot-anchor civil date (Excel date serial or `YYYY-MM-DD`). */
+  readonly referenceDate: number | string;
+  /** ISO-4217 currency; defaults to USD (the only priced arm). */
+  readonly currency?: string | undefined;
+}
+
+/** Shape a curve range + reference date into the typed `RatesCurveSet`. */
+export function shapeRatesCurve(args: RatesCurveArgs): RatesCurveSet {
+  return {
+    currency: parseCurveCurrency(args.currency),
+    referenceDate: parseBrokenDate(args.referenceDate),
+    pillars: parseOisPillars(args.curve),
+  };
+}
+
+/** The scalar OIS terms a CELNET.RATES call shapes into an `OisInstrument`. */
+export interface OisInstrumentArgs {
+  /** The swap tenor in whole years (`5` or `"5Y"`). */
+  readonly tenor: number | string;
+  /** The fixed-leg rate as a decimal (0.041 = 4.10%). */
+  readonly fixedRate: number;
+  /** Pay-fixed (payer) or receive-fixed (receiver). */
+  readonly direction: string;
+  /** The (positive) notional in the curve currency. */
+  readonly notional: number;
+}
+
+/** Shape the scalar OIS terms into the typed `OisInstrument`. */
+export function shapeOisInstrument(args: OisInstrumentArgs): OisInstrument {
+  if (!Number.isFinite(args.fixedRate)) {
+    throw new ShapingError(`OIS fixed rate must be a finite decimal (got \`${args.fixedRate}\`)`);
+  }
+  return {
+    tenorYears: parseOisTenorYears(args.tenor),
+    fixedRate: args.fixedRate,
+    notional: shapeOisNotional(args.notional),
+    direction: parseOisDirection(args.direction),
+  };
+}
+
+/**
+ * Format a `RatesPricingResult` as a labelled vertical spill: `pv`, `par_rate`,
+ * `pv01`, `dv01`, then the key-rate DV01 ladder — one `kr_dv01[<tenor>Y]` row per
+ * curve pillar, in pillar order (the ladder sums to `dv01` to first order). When
+ * the engine's ladder length matches the curve pillars the rows are tenor-labelled;
+ * a length mismatch falls back to positional `kr_dv01[i]` labels (never silently
+ * dropped). Returns a rectangular `(4 + pillars)×2` matrix.
+ */
+export function formatRatesSpill(
+  result: RatesPricingResult,
+  pillars: readonly OisCurvePillar[],
+): SpillMatrix {
+  const rows: SpillMatrix = [
+    ["pv", result.pv],
+    ["par_rate", result.parRate],
+    ["pv01", result.pv01],
+    ["dv01", result.dv01],
+  ];
+  const tenorLabelled = result.keyRateLadder.length === pillars.length;
+  result.keyRateLadder.forEach((value, i) => {
+    const label = tenorLabelled ? `kr_dv01[${pillars[i]!.tenorYears}Y]` : `kr_dv01[${i}]`;
+    rows.push([label, value]);
+  });
+  return rectangular(rows);
 }
