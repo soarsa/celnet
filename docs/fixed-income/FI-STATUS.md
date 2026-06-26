@@ -91,8 +91,17 @@ GUI (existing):
 
 ### B. Curve completeness (`celnet-rates`)
 - **Monotone-convex-on-forwards** interpolation (the smooth-view scheme; log-linear-DF is shipped).
-- **Turn-of-year / central-bank-meeting** forward jumps.
-- **Deterministic STIR convexity** placeholder wired into the short-end build.
+  **OPEN** — this is a *core hot-path* change (a second interpolation scheme on the pinned
+  zero-alloc query path), so it is deliberately not bundled with the additive overlay below; best
+  done as a focused slice.
+- **Turn-of-year / central-bank-meeting** forward jumps ✅ (`ae79a5c`) — `turns::with_turns`
+  overlays localized forward spikes by re-sampling the base curve at pillars + jump boundaries and
+  applying `exp(−size·overlap)`, then rebuilding a `Curve`. **Construction-only — hot query path
+  untouched.** Verified by identities (no-turns == base, DFs before unchanged, DFs after scaled by
+  `exp(−size·width)`, in-window forward raised by exactly `size`, inverted turn lowers it, multiple
+  turns compose, degenerate/out-of-range reject).
+- **Deterministic STIR convexity** ✅ delivered in lane-A futures (`36b853d`, `convexity_adjustment`);
+  wiring it into the short-end bootstrap build is the remaining integration step.
 
 ### C. Wire contract (`celnet-proto`, additive — single contract, guardrail #9)
 - New arms on the one `celnet.proto`: **`CurveSet`**, **`RatesInstrument`** oneof
