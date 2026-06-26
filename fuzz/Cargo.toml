@@ -64,6 +64,18 @@ prost = "0.13"
 # cross-crate feature unification, matching the celnet-fix manifest's own
 # discipline (workspace pin: tokio 1).
 tokio = { version = "1", features = ["rt", "io-util"] }
+# Analytics crates — fuzzed for algebraic property + payoff-bound invariants
+# (W6-ANALYTICS-RIGOR §4): surface calibration no-panic/no-NaN, risk-cube scenario
+# algebra, XVA netting, exotic payoff bounds, FIX-4.4 decoder arbitrary bytes.
+celnet-surface = { path = "../crates/celnet-surface" }
+celnet-conventions = { path = "../crates/celnet-conventions" }
+celnet-core = { path = "../crates/celnet-core" }
+celnet-risk-cube = { path = "../crates/celnet-risk-cube" }
+celnet-risk-normalize = { path = "../crates/celnet-risk-normalize" }
+celnet-exotics = { path = "../crates/celnet-exotics" }
+celnet-xva = { path = "../crates/celnet-xva" }
+# FIX-4.4 decoder — the only external-bytes parser without a fuzz target.
+celnet-fix = { path = "../crates/celnet-fix" }
 
 [[bin]]
 name = "vanilla_inputs"
@@ -135,6 +147,53 @@ bench = false
 [[bin]]
 name = "router_route"
 path = "fuzz_targets/router_route.rs"
+test = false
+doc = false
+bench = false
+
+# --- Analytics property targets (PC-FUZZ-ANALYTICS / W6-ANALYTICS-RIGOR §4) -----
+# These targets fuzz the ANALYTICS crates as PROPERTY surfaces (no-panic,
+# NaN-free, algebraic identity, payoff-bound invariants) on structured
+# in-domain draws via `arbitrary` + the `clamp_into` tanh squash. Every target
+# is mirrored as a proptest suite in the owning crate's `tests/` directory so
+# the property gates `just check` on stable toolchain.
+
+[[bin]]
+name = "surface_quote_grid"
+path = "fuzz_targets/surface_quote_grid.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "risk_cube_scenarios"
+path = "fuzz_targets/risk_cube_scenarios.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "xva_netting"
+path = "fuzz_targets/xva_netting.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "exotic_payoff_bounds"
+path = "fuzz_targets/exotic_payoff_bounds.rs"
+test = false
+doc = false
+bench = false
+
+# --- Additional untrusted-bytes decode target (verification-contract clause f) ----
+# `fix_decoder` is the FIX-4.4 framing decoder: the only hand-rolled external-bytes
+# parser in the codebase that previously lacked a fuzz target. Contract: no panic,
+# no UB, Ok-or-typed-FrameError on ANY byte sequence.
+
+[[bin]]
+name = "fix_decoder"
+path = "fuzz_targets/fix_decoder.rs"
 test = false
 doc = false
 bench = false

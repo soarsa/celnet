@@ -28,3 +28,5 @@ libm.workspace = true
 # `assert_close!` for the independent closed-form oracle suite
 # (tests/closed_form_oracle.rs — the W6 mutation-gate killing tests).
 celnet-core.workspace = true
+# Property-based fuzzing of the XVA netting algebra (W6-ANALYTICS-RIGOR §4).
+proptest.workspace = true
