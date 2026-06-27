@@ -1,0 +1,120 @@
+---
+# Provision a Celnet host: service account, directory skeleton, build
+# prerequisites, the Rust toolchain (rustup), the runtime env file, and the
+# celnetctl start/stop control script. Privileged (become: true at play level).
+
+- name: Read existing passwd entries
+  ansible.builtin.getent:
+    database: passwd
+
+- name: Ensure celnet group exists
+  ansible.builtin.group:
+    name: "{{ celnet_group }}"
+    system: true
+
+# Only CREATE the account when it is missing. When we connect as `celnet`
+# itself, the account already exists and its live SSH session means `usermod`
+# would fail ("user is currently used by process ..."); skipping avoids that and
+# is correct — there is nothing to change. When provisioning as an admin account
+# (root/ubuntu/etc.), this creates the celnet service account.
+- name: Create celnet service account (only if missing)
+  ansible.builtin.user:
+    name: "{{ celnet_user }}"
+    group: "{{ celnet_group }}"
+    home: "{{ celnet_base }}"
+    shell: /bin/bash
+    system: true
+    create_home: false
+  when: celnet_user not in ansible_facts.getent_passwd
+
+- name: Install build & runtime prerequisites (apt)
+  ansible.builtin.apt:
+    name:
+      - build-essential      # cc/linker for cc-using crates
+      - pkg-config
+      - curl                 # rustup installer
+      - git
+      - rsync                # source push (synchronize)
+      - ca-certificates
+      - openssl              # self-signed TLS cert generation
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: ansible_pkg_mgr == 'apt'
+
+- name: Check for an existing Node.js
+  ansible.builtin.stat:
+    path: /usr/bin/node
+  register: celnet_node_stat
+  when: celnet_serve_gui | bool
+
+- name: Add the NodeSource {{ celnet_node_major }}.x apt repo (for the GUI build)
+  ansible.builtin.shell: "curl -fsSL https://deb.nodesource.com/setup_{{ celnet_node_major }}.x | bash -"
+  args:
+    executable: /bin/bash
+    creates: /etc/apt/sources.list.d/nodesource.list
+  when:
+    - celnet_serve_gui | bool
+    - not celnet_node_stat.stat.exists
+
+- name: Install Node.js (Vite/React build toolchain)
+  ansible.builtin.apt:
+    name: nodejs
+    state: present
+    update_cache: true
+  when:
+    - celnet_serve_gui | bool
+    - not celnet_node_stat.stat.exists
+
+- name: Create the /opt/celnet directory skeleton
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ celnet_user }}"
+    group: "{{ celnet_group }}"
+    mode: "0755"
+  loop:
+    - "{{ celnet_base }}"
+    - "{{ celnet_releases_dir }}"
+    - "{{ celnet_shared_dir }}"
+    - "{{ celnet_config_dir }}"
+    - "{{ celnet_log_dir }}"
+    - "{{ celnet_run_dir }}"
+    - "{{ celnet_bin_dir }}"
+    - "{{ celnet_tls_dir }}"
+    - "{{ celnet_build_dir }}"
+
+- name: Check for an existing rustup/cargo install
+  ansible.builtin.stat:
+    path: "{{ celnet_base }}/.cargo/bin/cargo"
+  register: celnet_cargo_stat
+
+- name: Install rustup (per service account; channel comes from rust-toolchain.toml)
+  ansible.builtin.shell: >-
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
+    sh -s -- -y --no-modify-path --profile {{ celnet_rust_profile }} --default-toolchain none
+  args:
+    creates: "{{ celnet_base }}/.cargo/bin/cargo"
+  become: true
+  become_user: "{{ celnet_user }}"
+  environment:
+    CARGO_HOME: "{{ celnet_base }}/.cargo"
+    RUSTUP_HOME: "{{ celnet_base }}/.rustup"
+  when: not celnet_cargo_stat.stat.exists
+
+- name: Template the runtime env file
+  ansible.builtin.template:
+    src: celnet.env.j2
+    dest: "{{ celnet_config_dir }}/celnet.env"
+    owner: "{{ celnet_user }}"
+    group: "{{ celnet_group }}"
+    mode: "0640"
+  notify: restart celnet-server
+
+- name: Install the celnetctl start/stop control script
+  ansible.builtin.template:
+    src: celnetctl.sh.j2
+    dest: "{{ celnet_bin_dir }}/celnetctl"
+    owner: "{{ celnet_user }}"
+    group: "{{ celnet_group }}"
+    mode: "0755"

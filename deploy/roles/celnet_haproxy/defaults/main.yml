@@ -1,0 +1,8 @@
+---
+# Edge listen address. 0.0.0.0 = all IPv4 interfaces.
+celnet_bind_address: "0.0.0.0"
+celnet_http_port: 80
+celnet_https_port: 443
+celnet_expose_grpc: false
+celnet_grpc_https_port: 8443
+celnet_tls_generate_self_signed: true

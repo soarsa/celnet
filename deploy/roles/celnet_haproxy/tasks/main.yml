@@ -1,0 +1,66 @@
+---
+# HAProxy edge: TLS termination for https://{{ celnet_domain }} with an HTTP->HTTPS
+# redirect, fronting the local celnet-server WebSocket mirror (and optionally gRPC).
+# Privileged (become: true at play level).
+
+- name: Install HAProxy
+  ansible.builtin.apt:
+    name: haproxy
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: ansible_pkg_mgr == 'apt'
+
+- name: Ensure TLS directory exists
+  ansible.builtin.file:
+    path: "{{ celnet_tls_dir }}"
+    state: directory
+    owner: "{{ celnet_user }}"
+    group: "{{ celnet_group }}"
+    mode: "0750"
+
+- name: Check for an existing TLS PEM
+  ansible.builtin.stat:
+    path: "{{ celnet_tls_pem }}"
+  register: celnet_tls_stat
+
+- name: Generate a self-signed TLS cert+key PEM for {{ celnet_domain }}
+  ansible.builtin.shell: >-
+    umask 027 &&
+    openssl req -x509 -newkey rsa:2048 -nodes
+    -keyout /tmp/celnet_tls.key -out /tmp/celnet_tls.crt -days 825
+    -subj "/CN={{ celnet_domain }}/O=Celnet/OU=UAT"
+    -addext "subjectAltName=DNS:{{ celnet_domain }}" &&
+    cat /tmp/celnet_tls.crt /tmp/celnet_tls.key > {{ celnet_tls_pem }} &&
+    rm -f /tmp/celnet_tls.key /tmp/celnet_tls.crt
+  args:
+    executable: /bin/bash
+    creates: "{{ celnet_tls_pem }}"
+  when:
+    - celnet_tls_generate_self_signed | bool
+    - not celnet_tls_stat.stat.exists
+  notify: reload haproxy
+
+- name: Secure the TLS PEM
+  ansible.builtin.file:
+    path: "{{ celnet_tls_pem }}"
+    owner: root
+    group: root
+    mode: "0640"
+  when: celnet_tls_stat.stat.exists or celnet_tls_generate_self_signed | bool
+
+- name: Deploy the HAProxy configuration
+  ansible.builtin.template:
+    src: haproxy.cfg.j2
+    dest: /etc/haproxy/haproxy.cfg
+    owner: root
+    group: root
+    mode: "0644"
+    validate: "haproxy -c -f %s"
+  notify: reload haproxy
+
+- name: Ensure HAProxy is enabled and running
+  ansible.builtin.service:
+    name: haproxy
+    state: started
+    enabled: true

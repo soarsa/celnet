@@ -1,0 +1,42 @@
+---
+# nginx serves the built GUI SPA (from the current release) on a loopback port.
+# HAProxy terminates TLS and routes non-WebSocket requests here. Privileged.
+- name: Install nginx
+  ansible.builtin.apt:
+    name: nginx
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: ansible_pkg_mgr == 'apt'
+
+- name: Remove the default nginx site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: reload nginx
+
+- name: Deploy the celnet nginx site (serves the SPA from current/web)
+  ansible.builtin.template:
+    src: nginx-celnet.conf.j2
+    dest: /etc/nginx/sites-available/celnet.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload nginx
+
+- name: Enable the celnet nginx site
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/celnet.conf
+    dest: /etc/nginx/sites-enabled/celnet.conf
+    state: link
+  notify: reload nginx
+
+- name: Validate nginx config
+  ansible.builtin.command: nginx -t
+  changed_when: false
+
+- name: Ensure nginx is enabled and running
+  ansible.builtin.service:
+    name: nginx
+    state: started
+    enabled: true

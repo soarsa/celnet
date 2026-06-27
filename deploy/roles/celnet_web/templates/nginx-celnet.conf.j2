@@ -1,0 +1,28 @@
+# MANAGED BY ANSIBLE — serves the celnet GUI SPA for {{ celnet_domain }}.
+# TLS is terminated by HAProxy, which proxies non-WebSocket requests here.
+server {
+    listen 127.0.0.1:{{ celnet_nginx_port }};
+    server_name {{ celnet_domain }};
+
+    # Serve the built SPA from the current release.
+    root {{ celnet_current_link }}/web;
+    index index.html;
+
+    # Lightweight liveness endpoint for HAProxy/health checks.
+    location = /healthz {
+        add_header Content-Type text/plain;
+        return 200 "celnet {{ celnet_deploy_name | default('uat') }} web ok\n";
+    }
+
+    # SPA history fallback: unknown routes return index.html.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Cache fingerprinted static assets aggressively.
+    location /assets/ {
+        try_files $uri =404;
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+}

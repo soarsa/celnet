@@ -1,0 +1,7 @@
+---
+- name: restart celnet-server
+  ansible.builtin.command: "{{ celnet_bin_dir }}/celnetctl restart"
+  become: false
+  changed_when: true
+  # Only meaningful once a release exists; ignore if current symlink is absent.
+  failed_when: false

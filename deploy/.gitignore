@@ -1,0 +1,6 @@
+# Vault passphrase file — never commit.
+.vault_pass
+# Decrypted vault artifacts, if any.
+*.vault.decrypted
+# Local ansible noise.
+*.retry

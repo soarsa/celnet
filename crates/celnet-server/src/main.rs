@@ -8,10 +8,15 @@
 //! address, marks the readiness gate ready, and runs until `SIGINT`/`Ctrl-C`, at
 //! which point it performs a graceful blue-green drain (`docs/ARCHITECTURE.md` §5).
 //!
-//! The bind address is read from the environment so the same binary serves any
+//! The bind addresses are read from the environment so the same binary serves any
 //! deployment without recompilation:
 //!
 //! * `CELNET_GRPC_ADDR` — gRPC bind address (default `127.0.0.1:50051`).
+//! * `CELNET_WS_ADDR` — WebSocket-mirror bind address. When **unset**, the mirror
+//!   binds an OS-assigned ephemeral port on the gRPC host (the historical
+//!   behaviour, fine for local demos). Set it to a fixed `HOST:PORT` so a reverse
+//!   proxy (e.g. the HAProxy edge that fronts `app.uat.celnet.co.uk`) can target a
+//!   stable backend — see `deploy/`.
 //!
 //! The bootstrap market state is the engine's calibrated EURUSD fixture; in a
 //! full deployment a market-data adapter republishes live state through the same
@@ -35,6 +40,10 @@ fn addr_from_env(key: &str, default: &str) -> SocketAddr {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let grpc_addr = addr_from_env("CELNET_GRPC_ADDR", "127.0.0.1:50051");
+    // WS mirror: a fixed port when `CELNET_WS_ADDR` is set (so a reverse proxy can
+    // target it), else `{grpc_ip}:0` — an OS-assigned ephemeral port, preserving the
+    // historical default exactly (`start_on` treats port 0 as "ephemeral").
+    let ws_addr = addr_from_env("CELNET_WS_ADDR", &format!("{}:0", grpc_addr.ip()));
 
     // Bootstrap market state: the engine's calibrated EURUSD 1Y fixture. A live
     // deployment republishes real state through the same `CoreLink`.
@@ -46,8 +55,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // sets affinity via the deployment's isolated-core list).
     let link = CoreLink::start(initial, None);
 
-    let edge = Edge::start(
+    let edge = Edge::start_on(
         grpc_addr,
+        ws_addr,
         std::sync::Arc::clone(&link),
         SpreadModel::default(),
         Clock::system(),

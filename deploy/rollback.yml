@@ -1,0 +1,51 @@
+---
+# Roll back to the previous release: repoint `current` at the prior release dir
+# and restart. No rebuild. Runs unprivileged.
+#
+#   ansible-playbook rollback.yml --limit uat
+- name: Celnet — rollback to previous release
+  hosts: "{{ target | default('uat') }}"
+  gather_facts: false
+  become: false
+  tasks:
+    - name: Resolve current release target
+      ansible.builtin.command: "readlink -f {{ celnet_current_link }}"
+      register: celnet_current_target
+      changed_when: false
+
+    - name: List releases (newest first)
+      ansible.builtin.find:
+        paths: "{{ celnet_releases_dir }}"
+        file_type: directory
+        recurse: false
+      register: celnet_release_find
+
+    - name: Compute rollback target (release before the current one)
+      vars:
+        sorted_releases: >-
+          {{ celnet_release_find.files
+             | sort(attribute='mtime', reverse=true)
+             | map(attribute='path') | list }}
+        current_path: "{{ celnet_current_target.stdout }}"
+      ansible.builtin.set_fact:
+        celnet_rollback_to: >-
+          {{ (sorted_releases | reject('equalto', current_path) | list | first)
+             | default('', true) }}
+
+    - name: Fail if there is no prior release
+      ansible.builtin.fail:
+        msg: "No previous release to roll back to (only {{ celnet_release_find.files | length }} release(s) on disk)."
+      when: celnet_rollback_to | length == 0
+
+    - name: Atomically repoint current -> previous release
+      ansible.builtin.command: "ln -sfn {{ celnet_rollback_to }} {{ celnet_current_link }}"
+      changed_when: true
+
+    - name: Restart celnet-server
+      ansible.builtin.command: "{{ celnet_bin_dir }}/celnetctl restart"
+      changed_when: true
+
+    - name: Rollback summary
+      ansible.builtin.debug:
+        msg: "Rolled back: current -> {{ celnet_rollback_to }} (restarted)"
+

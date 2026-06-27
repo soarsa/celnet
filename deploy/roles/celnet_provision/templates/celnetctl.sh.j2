@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# ---------------------------------------------------------------------------
+# celnetctl — start/stop/status control for celnet-server on this host.
+# MANAGED BY ANSIBLE. Installed at {{ celnet_bin_dir }}/celnetctl.
+#
+#   celnetctl start | stop | restart | status | tail
+#
+# Runs the binary from the `current` release symlink, sources the shared env
+# file, writes a pidfile, and logs to the shared log dir. Stop is graceful:
+# celnet-server drains on SIGINT (see ARCHITECTURE.md §5), so we send SIGINT
+# and wait before escalating to SIGKILL.
+# ---------------------------------------------------------------------------
+set -euo pipefail
+
+BASE="{{ celnet_base }}"
+CURRENT="{{ celnet_current_link }}"
+BIN="${CURRENT}/bin/celnet-server"
+ENV_FILE="{{ celnet_config_dir }}/celnet.env"
+PIDFILE="{{ celnet_run_dir }}/celnet-server.pid"
+LOG="{{ celnet_log_dir }}/celnet-server.out.log"
+DRAIN_WAIT={{ celnet_stop_drain_seconds | default(35) }}
+
+is_running() {
+  [[ -f "$PIDFILE" ]] || return 1
+  local pid; pid="$(cat "$PIDFILE" 2>/dev/null || true)"
+  [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
+}
+
+start() {
+  if is_running; then
+    echo "celnet-server already running (pid $(cat "$PIDFILE"))"; return 0
+  fi
+  [[ -x "$BIN" ]] || { echo "ERROR: $BIN not found/executable (deploy a release first)"; exit 1; }
+  [[ -f "$ENV_FILE" ]] || { echo "ERROR: env file $ENV_FILE missing"; exit 1; }
+  echo "Starting celnet-server from $(readlink -f "$CURRENT")"
+  # shellcheck disable=SC1090
+  set -a; source "$ENV_FILE"; set +a
+  nohup "$BIN" >>"$LOG" 2>&1 &
+  echo $! > "$PIDFILE"
+  sleep 1
+  if is_running; then
+    echo "Started (pid $(cat "$PIDFILE")). Logs: $LOG"
+  else
+    echo "ERROR: celnet-server failed to start; last log lines:"; tail -n 20 "$LOG" || true; exit 1
+  fi
+}
+
+stop() {
+  if ! is_running; then echo "celnet-server not running"; rm -f "$PIDFILE"; return 0; fi
+  local pid; pid="$(cat "$PIDFILE")"
+  echo "Stopping celnet-server (pid $pid), draining up to ${DRAIN_WAIT}s..."
+  kill -INT "$pid" 2>/dev/null || true
+  for _ in $(seq 1 "$DRAIN_WAIT"); do
+    is_running || { echo "Stopped."; rm -f "$PIDFILE"; return 0; }
+    sleep 1
+  done
+  echo "Drain timed out; sending SIGKILL."
+  kill -KILL "$pid" 2>/dev/null || true
+  rm -f "$PIDFILE"
+  echo "Killed."
+}
+
+status() {
+  if is_running; then
+    echo "celnet-server: RUNNING (pid $(cat "$PIDFILE"))"
+    echo "  release: $(readlink -f "$CURRENT" 2>/dev/null || echo '?')"
+    echo "  grpc:    ${CELNET_GRPC_ADDR:-{{ celnet_grpc_addr }}}   ws: ${CELNET_WS_ADDR:-{{ celnet_ws_addr }}}"
+  else
+    echo "celnet-server: STOPPED"; return 3
+  fi
+}
+
+case "${1:-}" in
+  start)   start ;;
+  stop)    stop ;;
+  restart) stop || true; start ;;
+  status)  status ;;
+  tail)    tail -n "${2:-50}" -f "$LOG" ;;
+  *) echo "usage: celnetctl {start|stop|restart|status|tail [n]}"; exit 64 ;;
+esac
