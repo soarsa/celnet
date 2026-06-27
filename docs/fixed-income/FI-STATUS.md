@@ -137,9 +137,13 @@ GUI (existing):
   engine RPC, spilling PV / par / PV01 / DV01 + the key-rate DV01 ladder (contract + codec adapted
   byte-for-byte from the proven GUI; tsc clean, vitest 445/445 incl. 16 new). Further `CELNET.*`
   rates fns (standalone curve DF, multi-arm) follow as the proto arms beyond OIS land.
-- **Rust SDK** (`celnet-client`) — typed builders for the rates instrument vocab.
+- **Rust SDK** (`celnet-client`) — ✅ rates instrument vocab + `Client::price_rates`.
 - **FIX** — the dialect in (E).
-- **Federation** — rates pricing/risk fans out across shards.
+- **Federation** — 🟡 cross-shard rates risk fan-out + bit-exact rollup delivered in
+  `celnet-risk-fleet` (`af8ad25`): `RatesFleetReducer::fan_in_additive` == the single-node rollup
+  (proptest-pinned, bit-for-bit), additive PV/PV01/DV01 + key-rate ladder bucketed by tenor, with
+  `PartitionKey::currency` for `(entity, ccy)` HRW sharding. Remaining: the server-owned RPC
+  endpoint that drives a position store through it.
 
 ---
 
@@ -164,7 +168,8 @@ GUI (existing):
 
 ## Build order for the outstanding phase
 **C (proto arms) ✅ → D (server consumes `celnet-rates`) ✅ → E (FIX dialect) ✅ → F (WS mirror ✅ ·
-Rust SDK ✅ · GUI asset-tabs + rates workspace ✅ · Excel ✅ · federation) 🟡**, with A/B product
-breadth (FRA / IRS / futures / cash-bond RV) landing into `celnet-rates` in parallel (disjoint leaf).
-C/D/E committed and gated; F is nearly complete — only the **federation rates fan-out** remains
-(plus the broader GUI FI workspace set: RFQ · IOI · RFS · Blotter).
+Rust SDK ✅ · GUI asset-tabs + rates workspace ✅ · Excel ✅ · federation rollup ✅) 🟡**, with A/B
+product breadth (FRA / IRS / futures / cash-bond RV) landing into `celnet-rates` in parallel
+(disjoint leaf). C/D/E committed and gated; F's five client surfaces are delivered — remaining:
+the **server-owned RPC endpoint** that drives the rates fan-out (position store → `partition_rates_facts`
+→ `fan_in_additive`), plus the broader GUI FI workspace set (RFQ · IOI · RFS · Blotter).
