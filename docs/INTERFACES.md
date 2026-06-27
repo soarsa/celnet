@@ -7,9 +7,9 @@ updating this file, and announcing it in the `CLAUDE.md` ledger. Within a parall
 window the interface crates are treated as **stable** so streams don't churn; a deliberate
 interface change coordinates all affected crates at once (see `docs/ROADMAP.md` §3).
 
-## The 39-crate workspace
+## The 40-crate workspace
 
-The implemented flat workspace is **39 crates** (`ls crates`):
+The implemented flat workspace is **40 crates** (`ls crates`):
 
 ```
 celnet-types  celnet-core  celnet-conventions  celnet-calendar  celnet-vanilla
@@ -20,6 +20,7 @@ celnet-plugin-host  celnet-observability  celnet-golden  celnet-testkit  celnet-
 celnet-router  celnet-fix  celnet-parity  celnet-risk-normalize  celnet-risk-cube
 celnet-risk-fleet  celnet-limits  celnet-entitlements  celnet-xva  celnet-linear
 celnet-equity-vanilla  celnet-commodity-vanilla  celnet-crypto-vanilla  celnet-rfq
+celnet-rates
 ```
 
 Several domains the early design split across many crates were **consolidated**:
@@ -60,8 +61,14 @@ celnet-journal    →  dependency-free fsync'd append-only log + crash recovery;
 celnet-replog     →  leader-replicated deterministic-replay log over loopback sockets (→ celnet-journal)
 celnet-fanout     →  lock-free SPMC broadcast ring (reuses crossbeam-utils CachePadded only)
 celnet-integration   →  Celer estate + vendor MD adapters, over celnet-surface/-types
-celnet-risk-normalize →  pure leaf transform over celnet-vanilla/-core/-types (no IO);
+celnet-risk-normalize →  pure leaf transform (no IO) over celnet-core/-types + the vanilla
+                         tier — celnet-{vanilla,equity-vanilla,commodity-vanilla,crypto-vanilla}
+                         (grew cross-asset reach to canonicalize mixed-asset risk);
                          the convention/numeraire boundary the risk cube sits on
+celnet-rates          →  DEFERRED, built-but-unwired (the ADR-0008 §forward-compat `celnet-curve`):
+                         OIS/SOFR log-linear-DF Curve + bootstrap + PV01/DV01 + Brent solver, over
+                         celnet-types/-calendar only. Zero runtime in-edges today — it must enter the
+                         pricing path BEHIND the carry seam (`Carry::forward/discount`) when wired.
 celnet-risk-cube      →  single-node OLAP cube over celnet-risk-normalize (+ -vanilla
                          for bump-and-revalue, -core, -types); no IO/market-data
 celnet-risk-fleet     →  cross-shard risk fan-out ALGEBRA over celnet-risk-cube + celnet-router
