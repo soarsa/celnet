@@ -3,16 +3,14 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-bench.benches.aad.bump\_first\_order
 
-- **claim** (`cl\_f06f690c0421b79d`): bump\_first\_order computes all five first-order Greeks (delta, vega, theta, rho\_dom, rho\_for) via symmetric finite difference using step sizes h\_s=1e-5×spot (relative), h\_v=1e-5, h\_t=1e-6, h\_r=1e-6. Theta is sign-flipped (desk convention: −∂V/∂T). This numerical oracle is used in the aad bench to cross-validate adjoint\_greeks against central differences — the benchmark both times and validates correctness.
+- **claim** (`cl\_63b671a48e3372a0`): bump\_first\_order computes all five first-order Greeks (delta, vega, theta, rho\_dom, rho\_for) via symmetric finite difference using step sizes h\_s=1e-5×spot (relative), h\_v=1e-5, h\_t=1e-6, h\_r=1e-6. Theta is sign-flipped (desk convention: −∂V/∂T). This numerical oracle is used in the aad bench to cross-validate adjoint\_greeks against central differences — the benchmark both times and validates correctness.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-bench.benches.aad.bump\_first\_order` (hash `a5b68c861b4e6a73`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-bench.benches.aad.bump\_first\_order` (hash `d4af2f7e21c6145b`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-bench.benches.iai\_instructions.soft\_regression\_limits
 
@@ -27,54 +25,48 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-bench.src.gpu\_load.compare\_to\_baseline
 
-- **claim** (`cl\_4305c868d2292551`): compare\_to\_baseline detects GPU performance regressions using a slowdown-only policy: for every batch size present in both reports it checks (1) throughput: a breach is recorded when measured \< baseline / (1 + tolerance), i.e. only falls count; and (2) dispatch p99 latency: a breach is recorded when measured \> baseline \* (1 + tolerance), i.e. only rises count. Improvements in either direction are never flagged. The function is pure over its inputs and allocates a new Vec\<GpuBreach\> — one entry per violated metric — leaving the inputs unchanged.
+- **claim** (`cl\_72668763ffb5e374`): compare\_to\_baseline detects GPU performance regressions using a slowdown-only policy: for every batch size present in both reports it checks (1) throughput: a breach is recorded when measured \< baseline / (1 + tolerance), i.e. only falls count; and (2) dispatch p99 latency: a breach is recorded when measured \> baseline \* (1 + tolerance), i.e. only rises count. Improvements in either direction are never flagged. The function is pure over its inputs and allocates a new Vec\<GpuBreach\> — one entry per violated metric — leaving the inputs unchanged.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:40:34Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-bench.src.gpu\_load.compare\_to\_baseline` (hash `a035b917137dba1a`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-bench.src.gpu\_load.compare\_to\_baseline` (hash `0f8b7c0504ce9e4e`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:40:34Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:40:34Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-bench.src.lib.batch\_builder\_is\_sane
 
-- **claim** (`cl\_9ee915fe526131ed`): representative\_batch() constructs a 64-strike surface-slice (BATCH\_STRIKES=64) as a linear moneyness ladder spanning ±35% around the forward (\[0.65, 1.35\] × forward), with a symmetric quadratic-in-log-moneyness vol smile: vol = base\_vol + 0.6 × (ln(K/F))². This ensures ATM, skew, and deep-wing strikes all exercise the full d1/d2 range. The batch builder is validated by batch\_builder\_is\_sane, which asserts strictly-increasing positive strikes bracketing the forward plus finite, non-negative prices and 13 finite Greeks for every fixture.
+- **claim** (`cl\_e4558c23634f2617`): representative\_batch() constructs a 64-strike surface-slice (BATCH\_STRIKES=64) as a linear moneyness ladder spanning ±35% around the forward (\[0.65, 1.35\] × forward), with a symmetric quadratic-in-log-moneyness vol smile: vol = base\_vol + 0.6 × (ln(K/F))². This ensures ATM, skew, and deep-wing strikes all exercise the full d1/d2 range. The batch builder is validated by batch\_builder\_is\_sane, which asserts strictly-increasing positive strikes bracketing the forward plus finite, non-negative prices and 13 finite Greeks for every fixture.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-bench.src.lib.batch\_builder\_is\_sane` (hash `35db9f790288a6ac`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-bench.src.lib.representative\_batch` (hash `d63740fa20ec817b`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-bench.src.lib.batch\_builder\_is\_sane` (hash `a0515b4169a1f65c`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-bench.src.lib.representative\_batch` (hash `9050efa2dcda1b3b`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-bench.src.lib.representative\_inputs
 
-- **claim** (`cl\_70f38a260ff352c0`): representative\_inputs() returns a single canonical at-the-money EUR/USD-style vanilla option fixture: VanillaInputs::new(spot=1.10, strike=1.10, vol=0.095, t=0.5, r\_dom=0.025, r\_for=0.015). This is the exact input the hot-path benchmarks price; it is consumed by 9 callers across benches and unit tests, ensuring published benchmark numbers and test-suite numbers are the same workload.
+- **claim** (`cl\_2a26627de0251b4a`): representative\_inputs() returns a single canonical at-the-money EUR/USD-style vanilla option fixture: VanillaInputs::new(spot=1.10, strike=1.10, vol=0.095, t=0.5, r\_dom=0.025, r\_for=0.015). This is the exact input the hot-path benchmarks price; it is consumed by 9 callers across benches and unit tests, ensuring published benchmark numbers and test-suite numbers are the same workload.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-bench.src.lib.representative\_inputs` (hash `1848927cd8cb8231`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-bench.src.lib.representative\_inputs` (hash `3bb091ad98ea5f71`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-bench.src.lib.sweep\_inputs
 
-- **claim** (`cl\_f3188364fd0083b4`): sweep\_inputs() returns a SWEEP\_LEN-element sequence of VanillaInputs where spot drifts ±5% (base×\[0.95, 1.05\]), moneyness spans \[0.75, 1.25\] (strike = forward × moneyness), and vol ranges \[0.07, 0.13\] — all linear in the index fraction. This smooth, varied sweep is the working set the coordinated-omission-aware core\_load histogram runs over; its coverage of the realistic liquid parameter window is validated by sweep\_inputs\_is\_varied\_and\_smooth.
+- **claim** (`cl\_5b29c3143adfc7dd`): sweep\_inputs() returns a SWEEP\_LEN-element sequence of VanillaInputs where spot drifts ±5% (base×\[0.95, 1.05\]), moneyness spans \[0.75, 1.25\] (strike = forward × moneyness), and vol ranges \[0.07, 0.13\] — all linear in the index fraction. This smooth, varied sweep is the working set the coordinated-omission-aware core\_load histogram runs over; its coverage of the realistic liquid parameter window is validated by sweep\_inputs\_is\_varied\_and\_smooth.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-bench.src.lib.sweep\_inputs` (hash `fb8e1c41e07d1fe8`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-bench.src.lib.sweep\_inputs` (hash `b9d63b53509401a8`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-bench.src.surface\_rebuild.model\_name
 
@@ -100,42 +92,36 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-calendar.src.daycount.actual\_days
 
-- **claim** (`cl\_745bdb8f8298928e`): \`actual\_days\` is the signed day-count primitive underlying every \`DayCount\` accrual: it returns \`(end - start).whole\_days()\` as an \`i64\`, so it is signed (negative when end precedes start) and counts whole days only. This signedness is what makes \`year\_fraction\` anti-symmetric under interval reversal; it is the sole bridge from the \`time::Date\` calendar type into the ACT/365 and ACT/360 numerators. Pure: reads two dates, returns i64, no side effects.
+- **claim** (`cl\_817e266f16d6c100`): \`actual\_days\` is the signed day-count primitive underlying every \`DayCount\` accrual: it returns \`(end - start).whole\_days()\` as an \`i64\`, so it is signed (negative when end precedes start) and counts whole days only. This signedness is what makes \`year\_fraction\` anti-symmetric under interval reversal; it is the sole bridge from the \`time::Date\` calendar type into the ACT/365 and ACT/360 numerators. Pure: reads two dates, returns i64, no side effects.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-calendar.src.daycount.actual\_days` (hash `f3be6aad453351d4`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-calendar.src.daycount.actual\_days` (hash `2a3d55d6c5e2c9c4`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-calendar.src.daycount.signed\_when\_reversed
 
-- **claim** (`cl\_caba9e1e55822523`): \`signed\_when\_reversed\` pins the anti-symmetry of the day-count year fraction: with \`DayCount::Act365Fixed\`, \`year\_fraction(basis, 2024-01-01, 2023-01-01)\` equals −1.0 (asserted via \`assert\_close!\`, the sanctioned float comparator, never \`==\`). It guards that a reversed accrual interval yields the exact negative year fraction — the property exotic/vol-time accrual relies on for signed time spans — and that the 2024→2023 span is exactly 365 days over the ACT/365 denominator. Pure test: builds dates and asserts via assert\_close!, mutating no external state.
+- **claim** (`cl\_6b6f3f302f2c54f4`): \`signed\_when\_reversed\` pins the anti-symmetry of the day-count year fraction: with \`DayCount::Act365Fixed\`, \`year\_fraction(basis, 2024-01-01, 2023-01-01)\` equals −1.0 (asserted via \`assert\_close!\`, the sanctioned float comparator, never \`==\`). It guards that a reversed accrual interval yields the exact negative year fraction — the property exotic/vol-time accrual relies on for signed time spans — and that the 2024→2023 span is exactly 365 days over the ACT/365 denominator. Pure test: builds dates and asserts via assert\_close!, mutating no external state.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-calendar.src.daycount.signed\_when\_reversed` (hash `922c8406720ac975`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-calendar.src.daycount.signed\_when\_reversed` (hash `1c2552dc17bc4b25`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-calendar.src.daycount.year\_fraction
 
-- **claim** (`cl\_f565ecf2365e0bc7`): \`year\_fraction\` is the canonical realization of the \`DayCount\` convention: it divides the actual day count by the basis-selected denominator — 365.0 for \`DayCount::Act365Fixed\`, 360.0 for \`DayCount::Act360\` — via an exhaustive match with no wildcard, returning a \`Time\`. Because the day count is signed (\`actual\_days\` = end − start in whole days), an end strictly before start yields a negative year fraction (the reversed-interval property), so the function is anti-symmetric in (start,end) by construction. This is the one place the celnet-types \`DayCount\` enum becomes a numeric accrual factor; ACT/365-fixed (vol-time) and ACT/360 (money-market) are kept deliberately distinct (docs/CONVENTIONS.md). Pure: reads basis and the two dates, returns Time, no mutation.
+- **claim** (`cl\_bc8b2cc4118c13aa`): \`year\_fraction\` is the canonical realization of the \`DayCount\` convention: it divides the actual day count by the basis-selected denominator — 365.0 for \`DayCount::Act365Fixed\`, 360.0 for \`DayCount::Act360\` — via an exhaustive match with no wildcard, returning a \`Time\`. Because the day count is signed (\`actual\_days\` = end − start in whole days), an end strictly before start yields a negative year fraction (the reversed-interval property), so the function is anti-symmetric in (start,end) by construction. This is the one place the celnet-types \`DayCount\` enum becomes a numeric accrual factor; ACT/365-fixed (vol-time) and ACT/360 (money-market) are kept deliberately distinct (docs/CONVENTIONS.md). Pure: reads basis and the two dates, returns Time, no mutation.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-calendar.src.daycount.year\_fraction` (hash `d944af91942cf529`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-calendar.src.daycount.year\_fraction` (hash `871ea4854fbd0b49`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-calendar.src.fx.TenorError.fmt
 
@@ -150,40 +136,38 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-calendar.src.fx.centre\_for
 
-- **claim** (`cl\_731d7f1c5e174df7`): Maps a G10 currency code to its FX settlement centre: USD→UnitedStates, EUR→Target2, GBP→UnitedKingdom, JPY→Japan, CHF→Switzerland, AUD→Australia, CAD→Canada, NZD→NewZealand. For any other currency it delegates to \`centre\_for\_em\`; unknown currencies return \`None\`. The function is exhaustive over the G10 set and has no side-effects.
+- **claim** (`cl\_7d374bdff5037619`): Maps a G10 currency code to its FX settlement centre: USD→UnitedStates, EUR→Target2, GBP→UnitedKingdom, JPY→Japan, CHF→Switzerland, AUD→Australia, CAD→Canada, NZD→NewZealand. For any other currency it delegates to \`centre\_for\_em\`; unknown currencies return \`None\`. The function is exhaustive over the G10 set and has no side-effects.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:29:52Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-calendar.src.fx.centre\_for` (hash `520ded7ba99f3ce2`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-calendar.src.fx.centre\_for` (hash `e5afdb989769fe02`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:29:52Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:52Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-calendar.src.fx.centre\_for\_em
 
-- **claim** (`cl\_20d6ee79a9ec50b1`): Maps emerging-market and precious-metal currencies to settlement centres: MXN→Mexico, ZAR→SouthAfrica, NOK→Norway, SEK→Sweden, and all four precious metals (XAU/XAG/XPT/XPD)→UnitedKingdom (reflecting loco-London LBMA/LPPM settlement convention). Any unrecognised currency returns \`None\`. Pure; no side-effects.
+- **claim** (`cl\_fb65f08894f9c3df`): Maps emerging-market and precious-metal currencies to settlement centres: MXN→Mexico, ZAR→SouthAfrica, NOK→Norway, SEK→Sweden, and all four precious metals (XAU/XAG/XPT/XPD)→UnitedKingdom (reflecting loco-London LBMA/LPPM settlement convention). Any unrecognised currency returns \`None\`. Pure; no side-effects.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:29:52Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-calendar.src.fx.centre\_for\_em` (hash `36f94b284d5f1a5b`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-calendar.src.fx.centre\_for\_em` (hash `830c97d66105369b`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:29:52Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:52Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-calendar.src.fx.expiry\_for\_tenor
 
-- **claim** (`cl\_f3299735c65c0c32`): \`expiry\_for\_tenor(pair, horizon, spot, tenor)\` maps the full \`Tenor\` enum to an expiry \`Date\` with per-variant anchor rules: (1) Overnight → next business day after horizon; (2) TomNext → business day after ON expiry; (3) SpotNext → business day after spot; (4) Weeks(n) → spot + n weeks, ModifiedFollowing-adjusted; (5) Months(n)/Years(n) → spot + period via \`roll\_period\` (end-of-month rule if spot is last business day of its month, otherwise ModifiedFollowing); (6) Imm(n) → nth third-Wednesday of the Mar/Jun/Sep/Dec cycle strictly after horizon, ModifiedFollowing-adjusted (ordinal zero returns \`Err(TenorError::ImmOrdinalZero)\`); (7) BrokenDate → civil date parsed from the broken-date tag, ModifiedFollowing-adjusted. All standard-ladder tenors (Weeks/Months/Years/Imm) are anchored on \`spot\`, not \`horizon\`.
+- **claim** (`cl\_caa4c2bbd7824514`): \`expiry\_for\_tenor(pair, horizon, spot, tenor)\` maps the full \`Tenor\` enum to an expiry \`Date\` with per-variant anchor rules: (1) Overnight → next business day after horizon; (2) TomNext → business day after ON expiry; (3) SpotNext → business day after spot; (4) Weeks(n) → spot + n weeks, ModifiedFollowing-adjusted; (5) Months(n)/Years(n) → spot + period via \`roll\_period\` (end-of-month rule if spot is last business day of its month, otherwise ModifiedFollowing); (6) Imm(n) → nth third-Wednesday of the Mar/Jun/Sep/Dec cycle strictly after horizon, ModifiedFollowing-adjusted (ordinal zero returns \`Err(TenorError::ImmOrdinalZero)\`); (7) BrokenDate → civil date parsed from the broken-date tag, ModifiedFollowing-adjusted. All standard-ladder tenors (Weeks/Months/Years/Imm) are anchored on \`spot\`, not \`horizon\`.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
   - `github.com-soarsa-celnet.crates.celnet-calendar.src.fx.expiry\_for\_tenor` (hash `44483082a37b5097`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-calendar.src.fx.imm\_date` (hash `697e0e0ce2e9f1cf`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-calendar.src.fx.imm\_date` (hash `50064e2cde4b8a93`, resolved)
   - `github.com-soarsa-celnet.crates.celnet-calendar.src.fx.roll\_period` (hash `39a80df0f377db3b`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-calendar.src.fx.first\_imm\_month\_on\_or\_after
 
@@ -198,32 +182,28 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-calendar.src.fx.imm\_date
 
-- **claim** (`cl\_deb1d5df3366ee8f`): \`imm\_date(horizon, n) -\> Date\` returns the nth IMM date (third Wednesday of a quarterly Mar/Jun/Sep/Dec cycle) strictly after \`horizon\` by scanning forward from \`first\_imm\_month\_on\_or\_after(horizon.month())\` in 3-month steps via \`next\_imm\_month\`, counting only candidates strictly greater than horizon. \`n\` is 1-based; \`n == 0\` is rejected upstream by \`expiry\_for\_tenor\` with \`TenorError::ImmOrdinalZero\`. No allocation; terminates in at most \`n\` quarter-cycle iterations.
+- **claim** (`cl\_d3b215f9c0ec3551`): \`imm\_date(horizon, n) -\> Date\` returns the nth IMM date (third Wednesday of a quarterly Mar/Jun/Sep/Dec cycle) strictly after \`horizon\` by scanning forward from \`first\_imm\_month\_on\_or\_after(horizon.month())\` in 3-month steps via \`next\_imm\_month\`, counting only candidates strictly greater than horizon. \`n\` is 1-based; \`n == 0\` is rejected upstream by \`expiry\_for\_tenor\` with \`TenorError::ImmOrdinalZero\`. No allocation; terminates in at most \`n\` quarter-cycle iterations.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-calendar.src.fx.imm\_date` (hash `697e0e0ce2e9f1cf`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-calendar.src.fx.imm\_date` (hash `50064e2cde4b8a93`, resolved)
   - `github.com-soarsa-celnet.crates.celnet-calendar.src.fx.third\_wednesday` (hash `51da29937b32c598`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-calendar.src.fx.is\_t\_plus\_one\_pair
 
-- **claim** (`cl\_e700174bfdb3cd38`): \`spot\_date(pair, horizon) -\> Date\` adds exactly \`spot\_lag\_days(pair)\` business days (T+1 for USD/CAD, USD/TRY, USD/RUB, USD/PHP; T+2 for all other pairs) to \`horizon\` using the pair's composite \`BusinessCalendar\`. \`spot\_lag\_days\` returns \`1\` when \`is\_t\_plus\_one\_pair\` matches, otherwise \`2\`. No side effects; deterministic over inputs.
+- **claim** (`cl\_4ecf6353a801e4e1`): \`spot\_date(pair, horizon) -\> Date\` adds exactly \`spot\_lag\_days(pair)\` business days (T+1 for USD/CAD, USD/TRY, USD/RUB, USD/PHP; T+2 for all other pairs) to \`horizon\` using the pair's composite \`BusinessCalendar\`. \`spot\_lag\_days\` returns \`1\` when \`is\_t\_plus\_one\_pair\` matches, otherwise \`2\`. No side effects; deterministic over inputs.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-calendar.src.fx.is\_t\_plus\_one\_pair` (hash `6760c5ffe2069ac1`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-calendar.src.fx.spot\_date` (hash `fbca596a3a7a7168`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-calendar.src.fx.spot\_lag\_days` (hash `ccb1c8435b9eec7a`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-calendar.src.fx.is\_t\_plus\_one\_pair` (hash `e60ecaaa4009c3c1`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-calendar.src.fx.spot\_date` (hash `770cb27c3ab1c0b4`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-calendar.src.fx.spot\_lag\_days` (hash `1a94d6c62506f05a`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-calendar.src.fx.next\_imm\_month
 
@@ -491,14 +471,14 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-cli.src.basket.format\_report
 
-- **claim** (`cl\_9dfeecec126fc737`): basket format\_report emits a header line with kind (basket/best-of/worst-of), option side, strike, expiry, and leg count; then one line per leg showing label/weight/spot/vol/r\_for; then a price + std\_error footer with the parenthetical note "Monte-Carlo; multi-asset Greeks deferred". Greeks are explicitly deferred because the MC estimator does not compute them.
+- **claim** (`cl\_631631edfd653ec4`): basket format\_report emits a header line with kind (basket/best-of/worst-of), option side, strike, expiry, and leg count; then one line per leg showing label/weight/spot/vol/r\_for; then a price + std\_error footer with the parenthetical note "Monte-Carlo; multi-asset Greeks deferred". Greeks are explicitly deferred because the MC estimator does not compute them.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:29:51Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-cli.src.basket.format\_report` (hash `002085e6ec90a19f`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-cli.src.basket.format\_report` (hash `fd390c0f79f747e3`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:29:51Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:51Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-cli.src.basket.parse\_leg
 
@@ -557,14 +537,14 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-cli.src.exotic.format\_report
 
-- **claim** (`cl\_aaad45bfb27e9ffa`): exotic format\_report routes the output format by ExoticSpec variant: VarianceSwap emits fair\_variance and its square root as fair\_vol; VolatilitySwap emits only fair\_vol; any MC-priced product (std\_error is Some) emits price + std\_error; all closed-form products emit only price. The label string uniquely identifies the sub-variant (e.g. "american-fd" vs "american-lsm", "lookback-continuous" vs "lookback-discrete").
+- **claim** (`cl\_69ec813b027bb2cd`): exotic format\_report routes the output format by ExoticSpec variant: VarianceSwap emits fair\_variance and its square root as fair\_vol; VolatilitySwap emits only fair\_vol; any MC-priced product (std\_error is Some) emits price + std\_error; all closed-form products emit only price. The label string uniquely identifies the sub-variant (e.g. "american-fd" vs "american-lsm", "lookback-continuous" vs "lookback-discrete").
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:29:51Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-cli.src.exotic.format\_report` (hash `c518990ca5629886`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-cli.src.exotic.format\_report` (hash `5669a8aa742ec886`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:29:51Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:51Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-cli.src.future\_option.CliMargining.label
 
@@ -590,14 +570,14 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-cli.src.future\_option.format\_report
 
-- **claim** (`cl\_cb1d8da9872e0462`): future\_option format\_report emits the contract identity as "TICKER@MIC" when venue is non-empty or bare ticker when empty; routes rate sensitivities from the CarryGreeks to discount\_rho/carry\_rho (always the Carry variant for on-future options, with the Fx fallback being structurally unreachable); and emits the full Greek surface including delta (as delta\_forward, not delta\_spot) at standard precision.
+- **claim** (`cl\_94c5321f3a97dc35`): future\_option format\_report emits the contract identity as "TICKER@MIC" when venue is non-empty or bare ticker when empty; routes rate sensitivities from the CarryGreeks to discount\_rho/carry\_rho (always the Carry variant for on-future options, with the Fx fallback being structurally unreachable); and emits the full Greek surface including delta (as delta\_forward, not delta\_spot) at standard precision.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:29:51Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-cli.src.future\_option.format\_report` (hash `21bb38d6a9d9ebee`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-cli.src.future\_option.format\_report` (hash `955bcad28b34b2ee`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:29:51Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:51Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-cli.src.linear.FixingSource.from
 
@@ -634,64 +614,58 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-cli.src.perpetual.format\_report
 
-- **claim** (`cl\_dbc3cffd91e5da76`): perpetual format\_report always appends theta=0 with the comment "exact: the perpetual value is time-homogeneous". It also branches on RateSensitivities: for Fx it emits rho\_dom/rho\_for; for Carry it emits discount\_rho/carry\_rho. The perpetual theta is mathematically exact at zero because the value function has no explicit time dependency.
+- **claim** (`cl\_ef105107e7b179a9`): perpetual format\_report always appends theta=0 with the comment "exact: the perpetual value is time-homogeneous". It also branches on RateSensitivities: for Fx it emits rho\_dom/rho\_for; for Carry it emits discount\_rho/carry\_rho. The perpetual theta is mathematically exact at zero because the value function has no explicit time dependency.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:29:51Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-cli.src.perpetual.format\_report` (hash `7f480d44b7d8a2e3`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-cli.src.perpetual.format\_report` (hash `604219b581f3de23`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:29:51Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:51Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-cli.src.price.atm\_forward\_strike\_equals\_forward
 
-- **claim** (`cl\_317dfe993cfe6e62`): The \`price\` module's ATM-Forward strike resolver sets the solved strike equal to the theoretical forward price \`spot \* exp((r\_dom - r\_for) \* t)\` to within 1e-12: \`StrikeSpec::Atm { atm: AtmConvention::AtmForward, .. }\` resolves to \`VanillaInputs::forward()\` on the same market parameters.
+- **claim** (`cl\_62da0d410fcce1c4`): The \`price\` module's ATM-Forward strike resolver sets the solved strike equal to the theoretical forward price \`spot \* exp((r\_dom - r\_for) \* t)\` to within 1e-12: \`StrikeSpec::Atm { atm: AtmConvention::AtmForward, .. }\` resolves to \`VanillaInputs::forward()\` on the same market parameters.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-cli.src.price.atm\_forward\_strike\_equals\_forward` (hash `b9024c80cf398c43`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-cli.src.price.atm\_forward\_strike\_equals\_forward` (hash `5441038d13ec11bb`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-cli.src.price.delta\_spec\_round\_trips\_to\_target\_delta
 
-- **claim** (`cl\_31d2bcdafffd203b`): The delta-spec solver in the \`price\` module is self-inverse with tolerance 1e-9: solving a strike from a 25Δ target via \`StrikeSpec::Delta { target: 0.25, convention }\` and then computing the convention delta of that result recovers exactly 0.25. The resolved strike additionally matches \`celnet\_vanilla::strike\_from\_delta\` called directly on the same inputs to 1e-14, confirming the CLI adds no solver indirection.
+- **claim** (`cl\_f6f6dbacfdc770ae`): The delta-spec solver in the \`price\` module is self-inverse with tolerance 1e-9: solving a strike from a 25Δ target via \`StrikeSpec::Delta { target: 0.25, convention }\` and then computing the convention delta of that result recovers exactly 0.25. The resolved strike additionally matches \`celnet\_vanilla::strike\_from\_delta\` called directly on the same inputs to 1e-14, confirming the CLI adds no solver indirection.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-cli.src.price.delta\_spec\_round\_trips\_to\_target\_delta` (hash `aed2b5ba9bacd7e9`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-cli.src.price.delta\_spec\_round\_trips\_to\_target\_delta` (hash `9c2f5e8a08350c79`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-cli.src.price.format\_report\_for
 
-- **claim** (`cl\_4a2656bc53fa763e`): price format\_report\_for renders the full first- and second-order Greek surface for a vanilla option: price, delta\_spot, delta\_forward, conv\_delta (with delta\_convention label), gamma, vega, theta, rho\_dom, rho\_for, vanna, volga, charm, speed, zomma, color — all at 10 decimal places. The settlement style (linear vs inverse-coin) is included in the header.
+- **claim** (`cl\_f6c2b23709221271`): price format\_report\_for renders the full first- and second-order Greek surface for a vanilla option: price, delta\_spot, delta\_forward, conv\_delta (with delta\_convention label), gamma, vega, theta, rho\_dom, rho\_for, vanna, volga, charm, speed, zomma, color — all at 10 decimal places. The settlement style (linear vs inverse-coin) is included in the header.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:29:51Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-cli.src.price.format\_report\_for` (hash `8ba6f3e35e18ba6d`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-cli.src.price.format\_report\_for` (hash `a8c573d36fdd840d`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:29:51Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:51Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-cli.src.price.outright\_matches\_direct\_vanilla
 
-- **claim** (`cl\_064aadd5dd752cbd`): The \`price\` module's \`run\` function, exercised by \`outright\_matches\_direct\_vanilla\`, produces price/vega/gamma and a convention delta that are bit-for-bit identical (tolerance 1e-14) to the \`celnet\_vanilla::greeks\` and \`celnet\_vanilla::convention\_delta\` functions called directly on the same \`VanillaInputs\`. This cross-check proves the CLI's market-to-inputs pipeline introduces zero numerical drift for the outright-strike case.
+- **claim** (`cl\_758cfb0cfd9161a7`): The \`price\` module's \`run\` function, exercised by \`outright\_matches\_direct\_vanilla\`, produces price/vega/gamma and a convention delta that are bit-for-bit identical (tolerance 1e-14) to the \`celnet\_vanilla::greeks\` and \`celnet\_vanilla::convention\_delta\` functions called directly on the same \`VanillaInputs\`. This cross-check proves the CLI's market-to-inputs pipeline introduces zero numerical drift for the outright-strike case.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-cli.src.price.outright\_matches\_direct\_vanilla` (hash `047d880ffa095fb6`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-cli.src.price.outright\_matches\_direct\_vanilla` (hash `c4c66251af91adfe`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-cli.src.rfq.Side.from
 
@@ -717,17 +691,15 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-cli.src.rfq.format\_panel
 
-- **claim** (`cl\_d33148f47b802c81`): The \`format\_panel\` function in the \`rfq\` module renders RFQ panel rows using Rust's \`{}\` (shortest-round-trip) float formatter, guaranteeing that parsing the printed bid/offer recovers the exact \`f64\` bit pattern. This is verified by \`ladder\_prices\_round\_trip\_bit\_for\_bit\`: \`col(row, "bid").to\_bits() == (0.1\_f64 + 0.2).to\_bits()\` and \`col(row, "offer").to\_bits() == 0.32\_f64.to\_bits()\`, including the canonical \`0.1 + 0.2\` rounding case.
+- **claim** (`cl\_7e28e664176cc377`): The \`format\_panel\` function in the \`rfq\` module renders RFQ panel rows using Rust's \`{}\` (shortest-round-trip) float formatter, guaranteeing that parsing the printed bid/offer recovers the exact \`f64\` bit pattern. This is verified by \`ladder\_prices\_round\_trip\_bit\_for\_bit\`: \`col(row, "bid").to\_bits() == (0.1\_f64 + 0.2).to\_bits()\` and \`col(row, "offer").to\_bits() == 0.32\_f64.to\_bits()\`, including the canonical \`0.1 + 0.2\` rounding case.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
   - `github.com-soarsa-celnet.crates.celnet-cli.src.rfq.format\_panel` (hash `4d6c9dc12e221ace`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-cli.src.rfq.ladder\_prices\_round\_trip\_bit\_for\_bit` (hash `1d3f375113f8b329`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-cli.src.rfq.ladder\_prices\_round\_trip\_bit\_for\_bit` (hash `3752117909cf2fe9`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-cli.src.risk.OrgDimension.from
 
@@ -753,28 +725,26 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-cli.src.surface.atm\_vol\_recovered\_at\_atm\_strike
 
-- **claim** (`cl\_0ba997959824122f`): The \`surface\` module's smile calibration pipeline guarantees arbitrage-freedom on a standard 25Δ broker slice: \`SurfaceResult::arbitrage.is\_arbitrage\_free(1e-6)\` must hold for any benign EUR/USD-style input (ATM=10.5%, RR25=-0.5%, BF25=0.2%). Additionally, the calibrated smile reprices the ATM vol at the ATM strike to within 1e-9 (\`r.smile.implied\_vol(r.atm\_strike, r.forward, 1.0).0 ≈ atm\_vol\`), verifying the pipeline's internal consistency.
+- **claim** (`cl\_07fc1253d8baa915`): The \`surface\` module's smile calibration pipeline guarantees arbitrage-freedom on a standard 25Δ broker slice: \`SurfaceResult::arbitrage.is\_arbitrage\_free(1e-6)\` must hold for any benign EUR/USD-style input (ATM=10.5%, RR25=-0.5%, BF25=0.2%). Additionally, the calibrated smile reprices the ATM vol at the ATM strike to within 1e-9 (\`r.smile.implied\_vol(r.atm\_strike, r.forward, 1.0).0 ≈ atm\_vol\`), verifying the pipeline's internal consistency.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-cli.src.surface.atm\_vol\_recovered\_at\_atm\_strike` (hash `bb74ec7fb74a4cb3`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-cli.src.surface.calibrated\_slice\_is\_arbitrage\_free` (hash `9c812a07b14bbc36`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-cli.src.surface.atm\_vol\_recovered\_at\_atm\_strike` (hash `6d6a6cc94083af5b`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-cli.src.surface.calibrated\_slice\_is\_arbitrage\_free` (hash `2e04c0965d0798fe`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-cli.src.tenor.format\_tenor
 
-- **claim** (`cl\_162305ea3192a560`): format\_tenor is the exact left-inverse of parse\_tenor for the non-broken-date arms: Overnight→"ON", TomNext→"TN", SpotNext→"SN", Weeks(n)→"\<n\>W", Months(n)→"\<n\>M", Years(n)→"\<n\>Y", Imm(n)→"\<n\>IMM", BrokenDate({y,m,d})→"YYYY-MM-DD" (zero-padded). The round-trip parse\_tenor(format\_tenor(t)) == Ok(t) holds for every non-BrokenDate Tenor variant.
+- **claim** (`cl\_5ad9144183294703`): format\_tenor is the exact left-inverse of parse\_tenor for the non-broken-date arms: Overnight→"ON", TomNext→"TN", SpotNext→"SN", Weeks(n)→"\<n\>W", Months(n)→"\<n\>M", Years(n)→"\<n\>Y", Imm(n)→"\<n\>IMM", BrokenDate({y,m,d})→"YYYY-MM-DD" (zero-padded). The round-trip parse\_tenor(format\_tenor(t)) == Ok(t) holds for every non-BrokenDate Tenor variant.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:29:51Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-cli.src.tenor.format\_tenor` (hash `5a85ec2e5b3f2748`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-cli.src.tenor.format\_tenor` (hash `25daa33ed62ced08`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:29:51Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:51Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-cli.src.tenor.parse\_tenor
 
@@ -1034,17 +1004,15 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-client.src.surface\_vocab.Smile.atm\_vol
 
-- **claim** (`cl\_60c2c2a33a1db4b7`): \`Smile::atm\_vol(&self) -\> Option\<f64\>\` is a pure accessor that returns the ATM volatility by querying \`vol\_at\_delta(0.50)\`. \`vol\_at\_delta\` performs exact pillar lookup with an absolute tolerance \`DELTA\_MATCH\_ABS\`: queries within that tolerance band of a pillar resolve to that pillar's vol; queries between pillars return \`None\` with no aliasing or fallthrough to adjacent pillars. \`atm\_vol\` is therefore \`None\` when the 0.50-delta pillar is absent from the smile.
+- **claim** (`cl\_e2d27ddc7d455e5d`): \`Smile::atm\_vol(&self) -\> Option\<f64\>\` is a pure accessor that returns the ATM volatility by querying \`vol\_at\_delta(0.50)\`. \`vol\_at\_delta\` performs exact pillar lookup with an absolute tolerance \`DELTA\_MATCH\_ABS\`: queries within that tolerance band of a pillar resolve to that pillar's vol; queries between pillars return \`None\` with no aliasing or fallthrough to adjacent pillars. \`atm\_vol\` is therefore \`None\` when the 0.50-delta pillar is absent from the smile.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
   - `github.com-soarsa-celnet.crates.celnet-client.src.surface\_vocab.Smile.atm\_vol` (hash `60040258267cabca`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-client.src.surface\_vocab.vol\_at\_delta\_matches\_within\_tolerance\_without\_pillar\_aliasing` (hash `e845b8683a4581c0`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-client.src.surface\_vocab.vol\_at\_delta\_matches\_within\_tolerance\_without\_pillar\_aliasing` (hash `ff00f7df79c29b20`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-client.src.vocab.BasketKind.to\_wire
 
@@ -1140,25 +1108,25 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-client.src.vocab.american\_terms\_encode\_to\_the\_wire\_arm
 
-- **claim** (`cl\_ece68cdedd1371b5`): American \`InstrumentSpec\` wire encoding: the American/FD path maps to \`instrument::Product::American\` with \`exercise\_style = ExerciseStyle::American\`, \`bermudan\_dates\` empty, and \`lsm\_paths = 0\`. The Bermudan/LSM path maps to \`exercise\_style = ExerciseStyle::Bermudan\`, \`bermudan\_dates.len() == number\_of\_exercise\_dates\`, \`lsm\_paths = mc\_paths\`, \`lsm\_exercise\_dates = mc\_exercise\_dates\`, \`lsm\_seed = seed\`. Source: \`american\_terms\_encode\_to\_the\_wire\_arm\`.
+- **claim** (`cl\_eb5bfc8de85148c5`): American \`InstrumentSpec\` wire encoding: the American/FD path maps to \`instrument::Product::American\` with \`exercise\_style = ExerciseStyle::American\`, \`bermudan\_dates\` empty, and \`lsm\_paths = 0\`. The Bermudan/LSM path maps to \`exercise\_style = ExerciseStyle::Bermudan\`, \`bermudan\_dates.len() == number\_of\_exercise\_dates\`, \`lsm\_paths = mc\_paths\`, \`lsm\_exercise\_dates = mc\_exercise\_dates\`, \`lsm\_seed = seed\`. Source: \`american\_terms\_encode\_to\_the\_wire\_arm\`.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:40:33Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-client.src.vocab.american\_terms\_encode\_to\_the\_wire\_arm` (hash `b613a62fe1a25eb4`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-client.src.vocab.american\_terms\_encode\_to\_the\_wire\_arm` (hash `298eb4ffd9f92c14`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:40:33Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:40:33Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-client.src.vocab.basket\_terms\_encode\_to\_the\_wire\_arm
 
-- **claim** (`cl\_96ef9455cb880819`): Basket \`InstrumentSpec\` wire encoding: \`InstrumentSpec::basket(…, BasketTerms)\` serializes to \`instrument::Product::Basket\` with all leg \`spot\` and \`vol\` fields bit-for-bit identical to the input (using \`.to\_bits()\` comparison), the full correlation flat-array preserved, \`kind\` mapping to \`BasketKind\`, and MC simulation parameters (\`mc\_paths\`, \`mc\_replications\`, \`mc\_seed\`) carried without loss. Source: \`basket\_terms\_encode\_to\_the\_wire\_arm\`.
+- **claim** (`cl\_5824f0b1a67993d9`): Basket \`InstrumentSpec\` wire encoding: \`InstrumentSpec::basket(…, BasketTerms)\` serializes to \`instrument::Product::Basket\` with all leg \`spot\` and \`vol\` fields bit-for-bit identical to the input (using \`.to\_bits()\` comparison), the full correlation flat-array preserved, \`kind\` mapping to \`BasketKind\`, and MC simulation parameters (\`mc\_paths\`, \`mc\_replications\`, \`mc\_seed\`) carried without loss. Source: \`basket\_terms\_encode\_to\_the\_wire\_arm\`.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:40:33Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-client.src.vocab.basket\_terms\_encode\_to\_the\_wire\_arm` (hash `3bb180a455ea6fc5`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-client.src.vocab.basket\_terms\_encode\_to\_the\_wire\_arm` (hash `bdd7e5ab849e9475`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:40:33Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:40:33Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-client.src.vocab.calibration\_from\_wire
 
@@ -1184,25 +1152,25 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-client.src.vocab.listed\_future\_terms\_encode\_to\_the\_wire\_arm
 
-- **claim** (`cl\_78c61617cd5b401d`): Listed-future-option wire encoding: \`InstrumentSpec::listed\_future\_option\` serializes \`expiry\_years\` at the outer instrument level (not inside the product arm), carries \`future\_symbol.ticker\` and \`future\_symbol.venue\` as non-null strings, preserves \`future\_expiry\_years\`, \`option\_type\`, \`strike\`, \`notional\`, and \`margining\` bit-for-bit. Source: \`listed\_future\_terms\_encode\_to\_the\_wire\_arm\`.
+- **claim** (`cl\_fdf29dc24cea58fd`): Listed-future-option wire encoding: \`InstrumentSpec::listed\_future\_option\` serializes \`expiry\_years\` at the outer instrument level (not inside the product arm), carries \`future\_symbol.ticker\` and \`future\_symbol.venue\` as non-null strings, preserves \`future\_expiry\_years\`, \`option\_type\`, \`strike\`, \`notional\`, and \`margining\` bit-for-bit. Source: \`listed\_future\_terms\_encode\_to\_the\_wire\_arm\`.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:40:33Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-client.src.vocab.listed\_future\_terms\_encode\_to\_the\_wire\_arm` (hash `1ba7f1c607ddb339`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-client.src.vocab.listed\_future\_terms\_encode\_to\_the\_wire\_arm` (hash `973009cfc84d8389`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:40:33Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:40:33Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-client.src.vocab.perpetual\_terms\_encode\_to\_the\_wire\_arm
 
-- **claim** (`cl\_4a8d943aa0757229`): Perpetual option wire encoding: \`InstrumentSpec::perpetual\` encodes to \`instrument::Product::PerpetualOption\` with \`expiry\_years == 0.0\` (bit-exact) and \`tenor == None\` on the wire — the contract has no tenor or expiry. Strike and notional are bit-identical to the builder inputs. Source: \`perpetual\_terms\_encode\_to\_the\_wire\_arm\`.
+- **claim** (`cl\_351adfdd4e3a05e9`): Perpetual option wire encoding: \`InstrumentSpec::perpetual\` encodes to \`instrument::Product::PerpetualOption\` with \`expiry\_years == 0.0\` (bit-exact) and \`tenor == None\` on the wire — the contract has no tenor or expiry. Strike and notional are bit-identical to the builder inputs. Source: \`perpetual\_terms\_encode\_to\_the\_wire\_arm\`.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:40:33Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-client.src.vocab.perpetual\_terms\_encode\_to\_the\_wire\_arm` (hash `c0bd7b135e22fc90`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-client.src.vocab.perpetual\_terms\_encode\_to\_the\_wire\_arm` (hash `27cc65d0ba2c4f30`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:40:33Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:40:33Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-client.tests.conformance.cp
 
@@ -1272,44 +1240,38 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.CommodityInputs.on\_future
 
-- **claim** (`cl\_fd188ad042cbbbac`): \`CommodityInputs::on\_future\` is the canonical smart constructor for an option priced directly on a futures price: it sets spot := future (the futures price), carry b := 0.0 (no drift on a futures price under risk-neutral measure), and r to the discount rate. The test \`future\_equals\_spot\_reparameterization\` pins the equivalence: on\_future(F, K, σ, t, r) produces the same price as on\_spot(S, K, σ, t, r, convenience) when F = S·e^{b·t} — confirming the two constructors are equivalent reparameterizations of the same model, not two distinct models. const fn: evaluates to a struct literal at compile time, no writes/allocation/IO.
+- **claim** (`cl\_240024774b8a2286`): \`CommodityInputs::on\_future\` is the canonical smart constructor for an option priced directly on a futures price: it sets spot := future (the futures price), carry b := 0.0 (no drift on a futures price under risk-neutral measure), and r to the discount rate. The test \`future\_equals\_spot\_reparameterization\` pins the equivalence: on\_future(F, K, σ, t, r) produces the same price as on\_spot(S, K, σ, t, r, convenience) when F = S·e^{b·t} — confirming the two constructors are equivalent reparameterizations of the same model, not two distinct models. const fn: evaluates to a struct literal at compile time, no writes/allocation/IO.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
   - `github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.CommodityInputs.on\_future` (hash `03fc950447dc229c`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.future\_equals\_spot\_reparameterization` (hash `867c54992eeddc1c`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.future\_equals\_spot\_reparameterization` (hash `b32f7c2192ce2a4c`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.aux
 
-- **claim** (`cl\_52411a45dcf9d9ab`): \`aux\` is the shared Black-76 precomputation kernel: given CommodityInputs it computes σ√t, the carry-adjusted forward F = S·e^{b·t} (via CommodityInputs::forward), the discount factor df = e^{−r·t} (via CommodityInputs::discount\_df), and the canonical log-moneyness d1 = \[ln(F/K) + ½σ²t\] / (σ√t) and d2 = d1 − σ√t using libm-routed ln/sqrt for cross-platform determinism. All five pricing/Greeks functions (price, greeks, futures\_style\_price, futures\_style\_greeks, forward\_delta) read exclusively from this Aux struct so the critical-path arithmetic is computed once. Pure: reads &CommodityInputs, returns Aux, no writes/allocation/IO.
+- **claim** (`cl\_969bb492603bf09e`): \`aux\` is the shared Black-76 precomputation kernel: given CommodityInputs it computes σ√t, the carry-adjusted forward F = S·e^{b·t} (via CommodityInputs::forward), the discount factor df = e^{−r·t} (via CommodityInputs::discount\_df), and the canonical log-moneyness d1 = \[ln(F/K) + ½σ²t\] / (σ√t) and d2 = d1 − σ√t using libm-routed ln/sqrt for cross-platform determinism. All five pricing/Greeks functions (price, greeks, futures\_style\_price, futures\_style\_greeks, forward\_delta) read exclusively from this Aux struct so the critical-path arithmetic is computed once. Pure: reads &CommodityInputs, returns Aux, no writes/allocation/IO.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.aux` (hash `de4151e55e523f5d`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.aux` (hash `e46c29c83d24d03d`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.forward\_delta
 
-- **claim** (`cl\_2800d5c2b84464d2`): \`forward\_delta\` returns the driftless (forward) delta ∂V/∂F = df·Φ(d1) for a Call and df·(Φ(d1)−1) for a Put — the Black-76 forward-space sensitivity used as the standardised delta quote for commodity options (where hedging is via the futures contract, not the spot). It is distinct from the spot delta in \`greeks\` which carries the additional e^{bt} factor. The test \`forward\_delta\_helper\_matches\_strip\` asserts it is bitwise identical to the delta\_forward field extracted from \`greeks\` for both EquityStyle variants. Pure: reads (OptionType, &CommodityInputs), returns f64, no writes/allocation/IO.
+- **claim** (`cl\_09ff5505595fc2a0`): \`forward\_delta\` returns the driftless (forward) delta ∂V/∂F = df·Φ(d1) for a Call and df·(Φ(d1)−1) for a Put — the Black-76 forward-space sensitivity used as the standardised delta quote for commodity options (where hedging is via the futures contract, not the spot). It is distinct from the spot delta in \`greeks\` which carries the additional e^{bt} factor. The test \`forward\_delta\_helper\_matches\_strip\` asserts it is bitwise identical to the delta\_forward field extracted from \`greeks\` for both EquityStyle variants. Pure: reads (OptionType, &CommodityInputs), returns f64, no writes/allocation/IO.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.forward\_delta` (hash `e397656d6e24d53f`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.forward\_delta\_helper\_matches\_strip` (hash `1416b1677d64b02f`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.forward\_delta` (hash `b3df56cd2a0c2c2f`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.forward\_delta\_helper\_matches\_strip` (hash `a299fd4295f6edb7`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.futures\_style\_greeks
 
@@ -1324,17 +1286,15 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.futures\_style\_is\_undiscounted\_and\_rate\_invariant
 
-- **claim** (`cl\_3faef81a2a8b1295`): \`futures\_style\_price\` is the undiscounted Black-76 closed form for futures-style (CME daily-margined) commodity options: Call = F·Φ(d1) − K·Φ(d2), Put = K·Φ(−d2) − F·Φ(−d1), with no discount factor. The test \`futures\_style\_is\_undiscounted\_and\_rate\_invariant\` pins two invariants: (1) futures\_style\_price × e^{−r·t} == price bitwise (the discounted form is exactly df×undiscounted), and (2) futures\_style\_price is bitwise invariant to changes in r at fixed b — the discount rate is entirely absent from the formula, so the futures-style price has zero discount-rho. Pure: reads (OptionType, &CommodityInputs), returns f64, no writes/allocation/IO.
+- **claim** (`cl\_20a4b9582d8cc66b`): \`futures\_style\_price\` is the undiscounted Black-76 closed form for futures-style (CME daily-margined) commodity options: Call = F·Φ(d1) − K·Φ(d2), Put = K·Φ(−d2) − F·Φ(−d1), with no discount factor. The test \`futures\_style\_is\_undiscounted\_and\_rate\_invariant\` pins two invariants: (1) futures\_style\_price × e^{−r·t} == price bitwise (the discounted form is exactly df×undiscounted), and (2) futures\_style\_price is bitwise invariant to changes in r at fixed b — the discount rate is entirely absent from the formula, so the futures-style price has zero discount-rho. Pure: reads (OptionType, &CommodityInputs), returns f64, no writes/allocation/IO.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.futures\_style\_is\_undiscounted\_and\_rate\_invariant` (hash `9cb6ac9634950077`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.futures\_style\_price` (hash `86c0e220e678749b`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.futures\_style\_is\_undiscounted\_and\_rate\_invariant` (hash `896e897edc1d361f`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.futures\_style\_price` (hash `7f37b1be00fcc4db`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.greeks
 
@@ -1349,27 +1309,25 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.price
 
-- **claim** (`cl\_f5642347d379e2ab`): CAPABILITY (commodity cross-asset leaf): celnet-commodity-vanilla::price is the Black-76 commodity/future-option pricing entry on the carry seam — a pure, side-effect-free closed form taking (OptionType, &CommodityInputs) that discounts the forward directly (no spot carry), reconciled to Haug's published Black-76 reference and an independent QuantLib-pinned oracle. It is the commodity capability's projection target through the one contract. No I/O, allocation, logging, or mutation.
+- **claim** (`cl\_0a85199a84e8186d`): CAPABILITY (commodity cross-asset leaf): celnet-commodity-vanilla::price is the Black-76 commodity/future-option pricing entry on the carry seam — a pure, side-effect-free closed form taking (OptionType, &CommodityInputs) that discounts the forward directly (no spot carry), reconciled to Haug's published Black-76 reference and an independent QuantLib-pinned oracle. It is the commodity capability's projection target through the one contract. No I/O, allocation, logging, or mutation.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.price` (hash `d340a454a5eea8dd`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.price` (hash `6d52632f9740df7d`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.price\_with\_margining
 
-- **claim** (`cl\_1742aa4a479bada6`): price\_with\_margining is a pure dispatch: for Margining::EquityStyle it delegates to price(opt, i) (discounted Black-Scholes-Merton with cost-of-carry b), and for Margining::FuturesStyle it delegates to futures\_style\_price(opt, i) (undiscounted Black-76). No arithmetic is performed; the function is a zero-cost match arm selector over the Margining enum.
+- **claim** (`cl\_87e0a69d4b35cd36`): price\_with\_margining is a pure dispatch: for Margining::EquityStyle it delegates to price(opt, i) (discounted Black-Scholes-Merton with cost-of-carry b), and for Margining::FuturesStyle it delegates to futures\_style\_price(opt, i) (undiscounted Black-76). No arithmetic is performed; the function is a zero-cost match arm selector over the Margining enum.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:48:15Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.price\_with\_margining` (hash `985a4a5d1343e00c`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.price\_with\_margining` (hash `60e13f31ccd7563c`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:48:15Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:48:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.strip\_fields
 
@@ -1495,149 +1453,127 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-conventions.src.registry.PairProfile.record\_at
 
-- **claim** (`cl\_462e56f78d5caeb7`): \`PairProfile.record\_at(tenor)\` produces a \`ConventionRecord\` with the vol day-count unconditionally set to \`DayCount::Act365Fixed\` (§1.5 of the convention spec), regardless of pair or tenor. The delta convention is derived as \`premium\_adjusted\_of(is\_long\_tenor(tenor), premium\_adjusted)\`, so short tenors and long tenors receive different delta conventions while all other fields come directly from the profile.
+- **claim** (`cl\_54f2a535ab05975a`): \`PairProfile.record\_at(tenor)\` produces a \`ConventionRecord\` with the vol day-count unconditionally set to \`DayCount::Act365Fixed\` (§1.5 of the convention spec), regardless of pair or tenor. The delta convention is derived as \`premium\_adjusted\_of(is\_long\_tenor(tenor), premium\_adjusted)\`, so short tenors and long tenors receive different delta conventions while all other fields come directly from the profile.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
   - `github.com-soarsa-celnet.crates.celnet-conventions.src.registry.PairProfile.record\_at` (hash `93ad8ee3cf0709a3`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-conventions.src.registry.is\_long\_tenor` (hash `50ef7c69d8156775`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-conventions.src.registry.is\_long\_tenor` (hash `2cad661506df38d5`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-conventions.src.registry.accrual\_basis
 
-- **claim** (`cl\_d575c65887a1c8db`): Accrual day-count is a CURRENCY property, not a pair property (docs/CONVENTIONS.md DayCount → celnet-types::DayCount). \`accrual\_basis(ccy)\` is a pure total function mapping each Ccy to its money-market money accrual basis: GBP, AUD and NZD accrue ACT/365-fixed (DayCount::Act365Fixed); every other currency accrues ACT/360 (DayCount::Act360). Because it keys on the single currency leg (not the pair), AUD as the foreign leg accrues ACT/365 whether the pair is a covered major (AUDUSD), a covered G10 cross (AUDJPY), or a region-default-derived uncovered cross (AUDPLN) — the single source of truth the registry's accrual\_basis\_is\_single\_source\_of\_truth test pins. const-foldable, no writes/allocation/IO; deterministic. Self-invalidates if the currency→basis mapping changes (WRITES gate).
+- **claim** (`cl\_d01ff03513a847ce`): Accrual day-count is a CURRENCY property, not a pair property (docs/CONVENTIONS.md DayCount → celnet-types::DayCount). \`accrual\_basis(ccy)\` is a pure total function mapping each Ccy to its money-market money accrual basis: GBP, AUD and NZD accrue ACT/365-fixed (DayCount::Act365Fixed); every other currency accrues ACT/360 (DayCount::Act360). Because it keys on the single currency leg (not the pair), AUD as the foreign leg accrues ACT/365 whether the pair is a covered major (AUDUSD), a covered G10 cross (AUDJPY), or a region-default-derived uncovered cross (AUDPLN) — the single source of truth the registry's accrual\_basis\_is\_single\_source\_of\_truth test pins. const-foldable, no writes/allocation/IO; deterministic. Self-invalidates if the currency→basis mapping changes (WRITES gate).
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-conventions.src.registry.accrual\_basis` (hash `fa6bc2297afa94ad`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-conventions.src.registry.accrual\_basis` (hash `c89d69e0175ec94d`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:01:27Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-conventions.src.registry.canonicalize
 
-- **claim** (`cl\_50bcc86a46739a93`): \`resolve(pair, tenor)\` is the primary two-path resolution function: it calls \`pair\_profile(pair)\` which attempts a direct-key then flipped-key lookup in the static \`COVERED\_PAIRS\` table via \`canonicalize\`; on a hit it calls \`profile.record\_at(tenor)\` with \`ResolutionSource::PairProfile\`; on a miss it falls back to \`region\_default(pair, tenor)\` with \`ResolutionSource::RegionDefault\`. The function is pure: no I/O, no global mutation, deterministic over its inputs.
+- **claim** (`cl\_2bbcdd17d1493064`): \`resolve(pair, tenor)\` is the primary two-path resolution function: it calls \`pair\_profile(pair)\` which attempts a direct-key then flipped-key lookup in the static \`COVERED\_PAIRS\` table via \`canonicalize\`; on a hit it calls \`profile.record\_at(tenor)\` with \`ResolutionSource::PairProfile\`; on a miss it falls back to \`region\_default(pair, tenor)\` with \`ResolutionSource::RegionDefault\`. The function is pure: no I/O, no global mutation, deterministic over its inputs.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-conventions.src.registry.canonicalize` (hash `a54951420c0a858d`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-conventions.src.registry.pair\_profile` (hash `e3557203c33039f4`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-conventions.src.registry.resolve` (hash `db03adfa6ab39dc3`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-conventions.src.registry.canonicalize` (hash `70cdd0989f3c922d`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-conventions.src.registry.pair\_profile` (hash `3971e3c09380cf64`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-conventions.src.registry.resolve` (hash `c2b4d1566ed99703`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-conventions.src.registry.canonicalize
 
-- **claim** (`cl\_7891de3a78464bff`): \`canonicalize(pair) -\> Option\<Canonical\>\` performs orientation-agnostic lookup: it first tries the direct key; if not in \`COVERED\_PAIRS\` it tries the flipped pair (base and quote swapped) and sets \`Canonical.flipped = true\`. Returns \`None\` if neither orientation is covered. This means \`pair\_profile\` and all downstream callers are indifferent to quote orientation.
+- **claim** (`cl\_4f73cbbcf873cda2`): \`canonicalize(pair) -\> Option\<Canonical\>\` performs orientation-agnostic lookup: it first tries the direct key; if not in \`COVERED\_PAIRS\` it tries the flipped pair (base and quote swapped) and sets \`Canonical.flipped = true\`. Returns \`None\` if neither orientation is covered. This means \`pair\_profile\` and all downstream callers are indifferent to quote orientation.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-conventions.src.registry.canonicalize` (hash `a54951420c0a858d`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-conventions.src.registry.canonicalize` (hash `70cdd0989f3c922d`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-conventions.src.registry.is\_long\_tenor
 
-- **claim** (`cl\_af42234e4ed9f546`): The spot-vs-forward delta switch is a one-year tenor threshold (docs/CONVENTIONS.md DeltaConvention: short tenors quote spot delta, long tenors switch to forward/driftless delta). \`is\_long\_tenor(tenor)\` is a pure total predicate returning tenor\_days(tenor) \> 365 — STRICTLY greater, so exactly-one-year tenors (Tenor::Years(1) and Tenor::Months(12), both 365 days) classify as SHORT (spot delta) and 18M / 2Y classify as LONG (forward delta), exactly as long\_tenor\_threshold\_is\_one\_year pins. This boolean is the \`forward\` axis fed to premium\_adjusted\_of in region\_default. const-foldable, no writes/allocation/IO; deterministic. Self-invalidates if the threshold or tenor\_days mapping changes (WRITES gate).
+- **claim** (`cl\_53b4ef9870490eb8`): The spot-vs-forward delta switch is a one-year tenor threshold (docs/CONVENTIONS.md DeltaConvention: short tenors quote spot delta, long tenors switch to forward/driftless delta). \`is\_long\_tenor(tenor)\` is a pure total predicate returning tenor\_days(tenor) \> 365 — STRICTLY greater, so exactly-one-year tenors (Tenor::Years(1) and Tenor::Months(12), both 365 days) classify as SHORT (spot delta) and 18M / 2Y classify as LONG (forward delta), exactly as long\_tenor\_threshold\_is\_one\_year pins. This boolean is the \`forward\` axis fed to premium\_adjusted\_of in region\_default. const-foldable, no writes/allocation/IO; deterministic. Self-invalidates if the threshold or tenor\_days mapping changes (WRITES gate).
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-conventions.src.registry.is\_long\_tenor` (hash `50ef7c69d8156775`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-conventions.src.registry.is\_long\_tenor` (hash `2cad661506df38d5`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-conventions.src.registry.pair\_meta
 
-- **claim** (`cl\_8c9e166124634787`): \`pair\_meta(pair) -\> Option\<PairMeta\>\` aggregates the full convention bundle for a covered pair: it calls \`pair\_profile\` then \`premium\_ccy\_of\` to derive the premium currency (base ccy when premium-adjusted, quote ccy otherwise), and collects \`spot\_lag\_days\`, \`atm\`, \`premium\_style\`, \`premium\_ccy\`, \`premium\_adjusted\`, \`cut\`, \`settlement\`, \`ndf\`, \`instrument\`, and \`metal\_leg\` into a single \`PairMeta\` struct. Returns \`None\` for uncovered pairs. With 11 callers it is the primary rich-metadata entry point.
+- **claim** (`cl\_c9b2029d3e308fe9`): \`pair\_meta(pair) -\> Option\<PairMeta\>\` aggregates the full convention bundle for a covered pair: it calls \`pair\_profile\` then \`premium\_ccy\_of\` to derive the premium currency (base ccy when premium-adjusted, quote ccy otherwise), and collects \`spot\_lag\_days\`, \`atm\`, \`premium\_style\`, \`premium\_ccy\`, \`premium\_adjusted\`, \`cut\`, \`settlement\`, \`ndf\`, \`instrument\`, and \`metal\_leg\` into a single \`PairMeta\` struct. Returns \`None\` for uncovered pairs. With 11 callers it is the primary rich-metadata entry point.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-conventions.src.registry.pair\_meta` (hash `6737f2f5d1bc28fb`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-conventions.src.registry.pair\_meta` (hash `2151a19e8da9c2bb`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-conventions.src.registry.premium\_adjusted\_of
 
-- **claim** (`cl\_60c429406bad7516`): DeltaConvention is the cartesian product of two independent booleans (docs/CONVENTIONS.md DeltaConvention; docs/CONVENTIONS.md PremiumStyle⇔DeltaConvention). \`premium\_adjusted\_of(forward, premium\_adjusted)\` is the const-fn total constructor that composes the (forward?, premium-adjusted?) flags back into the four-variant enum: (false,false)→SpotUnadjusted, (false,true)→SpotPremiumAdjusted, (true,false)→ForwardUnadjusted, (true,true)→ForwardPremiumAdjusted. The match is exhaustive over both booleans, so no combination is defaulted — it is the exact inverse of the record predicates is\_delta\_forward (the \`forward\` axis) and is\_delta\_premium\_adjusted (the \`premium\_adjusted\` axis). Pure: no writes/allocation/IO; deterministic. Self-invalidates if the DeltaConvention variant set or the flag→variant mapping changes (WRITES gate).
+- **claim** (`cl\_34be5beac00de4c8`): DeltaConvention is the cartesian product of two independent booleans (docs/CONVENTIONS.md DeltaConvention; docs/CONVENTIONS.md PremiumStyle⇔DeltaConvention). \`premium\_adjusted\_of(forward, premium\_adjusted)\` is the const-fn total constructor that composes the (forward?, premium-adjusted?) flags back into the four-variant enum: (false,false)→SpotUnadjusted, (false,true)→SpotPremiumAdjusted, (true,false)→ForwardUnadjusted, (true,true)→ForwardPremiumAdjusted. The match is exhaustive over both booleans, so no combination is defaulted — it is the exact inverse of the record predicates is\_delta\_forward (the \`forward\` axis) and is\_delta\_premium\_adjusted (the \`premium\_adjusted\` axis). Pure: no writes/allocation/IO; deterministic. Self-invalidates if the DeltaConvention variant set or the flag→variant mapping changes (WRITES gate).
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-conventions.src.registry.premium\_adjusted\_of` (hash `0911ac8e1dd4b146`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-conventions.src.registry.premium\_adjusted\_of` (hash `63e6fdee6fc5f846`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-conventions.src.registry.profile\_for\_canonical
 
-- **claim** (`cl\_23e046dbf2f68a40`): \`profile\_for\_canonical(k)\` builds a \`PairProfile\` from the 6-byte canonical key by (1) looking up the \`PairSpec\` in \`COVERED\_PAIRS\`; (2) mapping \`SpecKind::NonDeliverable(fixing)\` to \`NdfTerms { fixing, settlement\_ccy: Ccy::USD }\` (NDF pairs always settle in USD); (3) for precious metals, overriding \`day\_count\_accrual\_for\` to \`DayCount::Act360\` (loco-London bullion basis) and attaching a \`MetalLeg { metal, lease\_day\_count: Act360, loco\_london: true }\`; (4) hard-coding \`AtmConvention::DeltaNeutralStraddle\` for all covered pairs.
+- **claim** (`cl\_dd131f33c32852ca`): \`profile\_for\_canonical(k)\` builds a \`PairProfile\` from the 6-byte canonical key by (1) looking up the \`PairSpec\` in \`COVERED\_PAIRS\`; (2) mapping \`SpecKind::NonDeliverable(fixing)\` to \`NdfTerms { fixing, settlement\_ccy: Ccy::USD }\` (NDF pairs always settle in USD); (3) for precious metals, overriding \`day\_count\_accrual\_for\` to \`DayCount::Act360\` (loco-London bullion basis) and attaching a \`MetalLeg { metal, lease\_day\_count: Act360, loco\_london: true }\`; (4) hard-coding \`AtmConvention::DeltaNeutralStraddle\` for all covered pairs.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-conventions.src.registry.profile\_for\_canonical` (hash `74cc1dbd8281d2b8`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-conventions.src.registry.profile\_for\_canonical` (hash `4ae7db47a5f612f8`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-conventions.src.registry.region\_default
 
-- **claim** (`cl\_99e7bfee39053ff2`): The fall-through (uncovered-pair) convention record is assembled deterministically from per-currency and per-region rules (docs/CONVENTIONS.md house-default conventions; ResolutionSource::RegionDefault). \`region\_default(pair, tenor)\` is a pure total function building a ConventionRecord with: cut = Tokyo1500 for a Tokyo-region pair else NewYork1000 (via region\_of); premium\_style = PercentForeign; delta = premium\_adjusted\_of(is\_long\_tenor(tenor), premium\_style.is\_premium\_adjusted()) — so the spot/forward axis follows the tenor and the premium-adjusted axis follows the premium style; atm = DeltaNeutralStraddle; day\_count\_vol = Act365Fixed; the foreign and domestic accrual day-counts = accrual\_basis(pair.base) and accrual\_basis(pair.quote) respectively (per-currency, not per-pair); settlement = Deliverable. No combination is defaulted ad hoc — every field is a documented function of (pair, tenor). const-style assembly, no writes/allocation/IO; deterministic. Self-invalidates if any of the composed mapping helpers or the default field set changes (WRITES gate).
+- **claim** (`cl\_90809b44e0852ec0`): The fall-through (uncovered-pair) convention record is assembled deterministically from per-currency and per-region rules (docs/CONVENTIONS.md house-default conventions; ResolutionSource::RegionDefault). \`region\_default(pair, tenor)\` is a pure total function building a ConventionRecord with: cut = Tokyo1500 for a Tokyo-region pair else NewYork1000 (via region\_of); premium\_style = PercentForeign; delta = premium\_adjusted\_of(is\_long\_tenor(tenor), premium\_style.is\_premium\_adjusted()) — so the spot/forward axis follows the tenor and the premium-adjusted axis follows the premium style; atm = DeltaNeutralStraddle; day\_count\_vol = Act365Fixed; the foreign and domestic accrual day-counts = accrual\_basis(pair.base) and accrual\_basis(pair.quote) respectively (per-currency, not per-pair); settlement = Deliverable. No combination is defaulted ad hoc — every field is a documented function of (pair, tenor). const-style assembly, no writes/allocation/IO; deterministic. Self-invalidates if any of the composed mapping helpers or the default field set changes (WRITES gate).
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-conventions.src.registry.region\_default` (hash `5c03a887bb0cce33`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-conventions.src.registry.region\_default` (hash `075e3c245dd95cb3`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-conventions.src.registry.region\_of
 
-- **claim** (`cl\_43d97104974899f3`): The expiry-cut region is decided by the QUOTE currency (docs/CONVENTIONS.md Cut → New York 10:00 vs Tokyo 15:00). \`region\_of(pair)\` is a pure total function returning Region::Tokyo exactly when pair.quote == Ccy::JPY, else Region::NewYork — the JPY-region/Asian business books the Tokyo 15:00 cut, every other pair the New York 10:00 cut. It keys on the quote leg only (the JPY pairs are quoted XXXJPY), so the region/cut is a deterministic function of the pair, never of spot or tenor. const-foldable, no writes/allocation/IO. Self-invalidates if the region-selection rule or Region/Ccy variant set changes (WRITES gate).
+- **claim** (`cl\_1a495b744be00326`): The expiry-cut region is decided by the QUOTE currency (docs/CONVENTIONS.md Cut → New York 10:00 vs Tokyo 15:00). \`region\_of(pair)\` is a pure total function returning Region::Tokyo exactly when pair.quote == Ccy::JPY, else Region::NewYork — the JPY-region/Asian business books the Tokyo 15:00 cut, every other pair the New York 10:00 cut. It keys on the quote leg only (the JPY pairs are quoted XXXJPY), so the region/cut is a deterministic function of the pair, never of spot or tenor. const-foldable, no writes/allocation/IO. Self-invalidates if the region-selection rule or Region/Ccy variant set changes (WRITES gate).
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-conventions.src.registry.region\_of` (hash `8385d3d54a355b72`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-conventions.src.registry.region\_of` (hash `a91c9ba8b4a18c92`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-conventions.src.registry.tenor\_days
 
-- **claim** (`cl\_7e6bfa089afed3a1`): tenor\_days is the exhaustive nominal-horizon primitive that drives the short/long delta-convention classification (docs/CONVENTIONS.md tenor axis). It is a pure total function over the whole Tenor enum returning u32 days: the pre-spot short end Overnight \| TomNext \| SpotNext → 1 (and BrokenDate → 1, the conservative short default since the exact pricing axis is set later by the pricer from the resolved expiry, not here); Weeks(w) → 7·w; Months(m) → (365·m + 6)/12 (the 365/12 ≈ 30.4167 days-per-month rounded to nearest day, so Months(12) = 365 and Months(6) = 183); Years(y) → 365·y; Imm(n) → (3·n·365 + 6)/12 (≈ 3 months per IMM step). The match is exhaustive over Tenor, so no variant is defaulted, and it is consumed by is\_long\_tenor (\>365 ⇒ forward delta). const-foldable integer arithmetic, no writes/allocation/IO; deterministic. Self-invalidates if the Tenor variant set or any per-variant day formula changes (WRITES gate).
+- **claim** (`cl\_49d97cb61d8134e4`): tenor\_days is the exhaustive nominal-horizon primitive that drives the short/long delta-convention classification (docs/CONVENTIONS.md tenor axis). It is a pure total function over the whole Tenor enum returning u32 days: the pre-spot short end Overnight \| TomNext \| SpotNext → 1 (and BrokenDate → 1, the conservative short default since the exact pricing axis is set later by the pricer from the resolved expiry, not here); Weeks(w) → 7·w; Months(m) → (365·m + 6)/12 (the 365/12 ≈ 30.4167 days-per-month rounded to nearest day, so Months(12) = 365 and Months(6) = 183); Years(y) → 365·y; Imm(n) → (3·n·365 + 6)/12 (≈ 3 months per IMM step). The match is exhaustive over Tenor, so no variant is defaulted, and it is consumed by is\_long\_tenor (\>365 ⇒ forward delta). const-foldable integer arithmetic, no writes/allocation/IO; deterministic. Self-invalidates if the Tenor variant set or any per-variant day formula changes (WRITES gate).
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-conventions.src.registry.tenor\_days` (hash `784f938162e89bed`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-conventions.src.registry.tenor\_days` (hash `956e137174ad658d`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-core.src.carry.CarryInputs.forward
 
@@ -1663,40 +1599,36 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-core.src.carry.fx\_carry\_greeks
 
-- **claim** (`cl\_7220ac2937c0bb1a`): \`fx\_carry\_greeks(g: &Greeks) -\> CarryGreeks\` is the pure field-copy lifting function from the FX leaf's \`Greeks\` struct to the generalized \`CarryGreeks\` on the carry seam. It copies all 14 fields verbatim: price, delta\_spot, delta\_forward, gamma, vega, theta, vanna, volga, charm, speed, zomma, color, and packages the FX rate sensitivities as \`RateSensitivities::Fx { rho\_dom, rho\_for }\`. No arithmetic, no branch, no allocation — a structural repackaging. The byte-identity of this lift is verified by \`fx\_carry\_greeks\_lifts\_byte\_identically\` (assert\_eq! on to\_bits() for every field). Pure: reads only &Greeks, no WRITES.
+- **claim** (`cl\_65083e7bd5eafc28`): \`fx\_carry\_greeks(g: &Greeks) -\> CarryGreeks\` is the pure field-copy lifting function from the FX leaf's \`Greeks\` struct to the generalized \`CarryGreeks\` on the carry seam. It copies all 14 fields verbatim: price, delta\_spot, delta\_forward, gamma, vega, theta, vanna, volga, charm, speed, zomma, color, and packages the FX rate sensitivities as \`RateSensitivities::Fx { rho\_dom, rho\_for }\`. No arithmetic, no branch, no allocation — a structural repackaging. The byte-identity of this lift is verified by \`fx\_carry\_greeks\_lifts\_byte\_identically\` (assert\_eq! on to\_bits() for every field). Pure: reads only &Greeks, no WRITES.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-core.src.carry.fx\_carry\_greeks` (hash `86c1c04a9a6901ef`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-core.src.carry.fx\_carry\_greeks` (hash `f37d2dc482a6085f`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-core.src.carry.fx\_carry\_greeks\_lifts\_byte\_identically
 
-- **claim** (`cl\_3a414896b207a5e9`): fx\_carry\_greeks\_lifts\_byte\_identically asserts that fx\_carry\_greeks() is a zero-loss lift: every scalar field (price, delta\_spot, delta\_forward, gamma, vega, theta, vanna, volga, charm, speed, zomma, color) and both rate fields (rho\_dom, rho\_for) are preserved bit-for-bit (via to\_bits() equality). The rates field must tag as RateSensitivities::Fx{rho\_dom, rho\_for}; tagging as Carry panics. This proves no precision is lost in the carry → FX greek conversion.
+- **claim** (`cl\_c0396f2869d51236`): fx\_carry\_greeks\_lifts\_byte\_identically asserts that fx\_carry\_greeks() is a zero-loss lift: every scalar field (price, delta\_spot, delta\_forward, gamma, vega, theta, vanna, volga, charm, speed, zomma, color) and both rate fields (rho\_dom, rho\_for) are preserved bit-for-bit (via to\_bits() equality). The rates field must tag as RateSensitivities::Fx{rho\_dom, rho\_for}; tagging as Carry panics. This proves no precision is lost in the carry → FX greek conversion.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:20Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-core.src.carry.fx\_carry\_greeks\_lifts\_byte\_identically` (hash `3b62141dba2bbd04`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-core.src.carry.fx\_carry\_greeks\_lifts\_byte\_identically` (hash `8a098e925efc3464`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:58:20Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:20Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-core.src.carry.fx\_carry\_inputs\_byte\_identical
 
-- **claim** (`cl\_78c13017e2c9b144`): The carry-seam FX byte-identity is enforced by fx\_carry\_inputs\_byte\_identical: the FX arm of Carry (FxRates) lowers to VanillaInputs with forward/df\_dom/df\_for bit-identical (to\_bits) to the native FX leaf, and the CostOfCarry arm is rejected (UnsupportedCarry). This is a pure byte-identity gate over the carry seam (ADR-0008). Supersedes a withdrawn spec:satisfies probe whose design-target sentinel did not resolve in this build.
+- **claim** (`cl\_b69fa16462fd459e`): The carry-seam FX byte-identity is enforced by fx\_carry\_inputs\_byte\_identical: the FX arm of Carry (FxRates) lowers to VanillaInputs with forward/df\_dom/df\_for bit-identical (to\_bits) to the native FX leaf, and the CostOfCarry arm is rejected (UnsupportedCarry). This is a pure byte-identity gate over the carry seam (ADR-0008). Supersedes a withdrawn spec:satisfies probe whose design-target sentinel did not resolve in this build.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-core.src.carry.fx\_carry\_inputs\_byte\_identical` (hash `49b83fa5ffe7bf1a`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-core.src.carry.fx\_carry\_inputs\_byte\_identical` (hash `0776104362fd01e2`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-core.src.compare.is\_close
 
@@ -1711,81 +1643,69 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-core.src.math.norm\_cdf
 
-- **claim** (`cl\_42676204abb9a600`): Determinism rule — \`norm\_cdf\` computes the standard-normal CDF as \`0.5 \* libm::erfc(-x \* INV\_SQRT\_2)\`, routing the transcendental through \`rust-lang/libm\` (correctly-rounded) rather than the platform libm, so the result is bit-identical across targets (the cross-platform determinism guarantee of docs/INTERFACES.md). Using the complementary error function \`erfc\` on \`-x·1/√2\` keeps the deep left tail stable (no catastrophic cancellation), which is why the tail tests pass. f64 is the CPU-canonical scalar. Pure: maps one f64 to one f64 via libm, no side effects, no state.
+- **claim** (`cl\_e582a5afdb0e832f`): Determinism rule — \`norm\_cdf\` computes the standard-normal CDF as \`0.5 \* libm::erfc(-x \* INV\_SQRT\_2)\`, routing the transcendental through \`rust-lang/libm\` (correctly-rounded) rather than the platform libm, so the result is bit-identical across targets (the cross-platform determinism guarantee of docs/INTERFACES.md). Using the complementary error function \`erfc\` on \`-x·1/√2\` keeps the deep left tail stable (no catastrophic cancellation), which is why the tail tests pass. f64 is the CPU-canonical scalar. Pure: maps one f64 to one f64 via libm, no side effects, no state.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-core.src.math.norm\_cdf` (hash `12fa3639aa0fea26`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-core.src.math.norm\_cdf` (hash `a88bce70bc6e0800`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-core.src.math.norm\_cdf\_deep\_tail\_matches\_reference
 
-- **claim** (`cl\_712c2c0a85236679`): Determinism rule — \`norm\_cdf\_deep\_tail\_matches\_reference\` pins \`norm\_cdf\` against high-precision reference values deep in the left tail: Φ(−1)=0.15865525393145705, Φ(−5)=2.866515718791939e-7, Φ(−10)=7.619853024160525e-24, each via \`assert\_close!\` with explicit rel/abs tolerances (never \`==\`). Because \`norm\_cdf\` routes through \`libm::erfc\` (correctly-rounded), these exact-digit references encode the bit-stable, cross-platform tail behaviour; a regression that dropped the erfc routing (reintroducing catastrophic cancellation) would fail here. Pure test: evaluates norm\_cdf and asserts, no mutation.
+- **claim** (`cl\_03715c837785003c`): Determinism rule — \`norm\_cdf\_deep\_tail\_matches\_reference\` pins \`norm\_cdf\` against high-precision reference values deep in the left tail: Φ(−1)=0.15865525393145705, Φ(−5)=2.866515718791939e-7, Φ(−10)=7.619853024160525e-24, each via \`assert\_close!\` with explicit rel/abs tolerances (never \`==\`). Because \`norm\_cdf\` routes through \`libm::erfc\` (correctly-rounded), these exact-digit references encode the bit-stable, cross-platform tail behaviour; a regression that dropped the erfc routing (reintroducing catastrophic cancellation) would fail here. Pure test: evaluates norm\_cdf and asserts, no mutation.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-core.src.math.norm\_cdf\_deep\_tail\_matches\_reference` (hash `a4f3ac0626d2c7fd`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-core.src.math.norm\_cdf\_deep\_tail\_matches\_reference` (hash `27f3073a8221240d`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-core.src.math.norm\_cdf\_tail\_symmetry\_and\_no\_underflow
 
-- **claim** (`cl\_b5842938c3e2447f`): Determinism rule — \`norm\_cdf\_tail\_symmetry\_and\_no\_underflow\` guards the tail-stability that the \`libm::erfc\` routing in \`norm\_cdf\` buys: it checks the reflection identity Φ(−x)=1−Φ(x) at x∈{3,4,5} (the largest x where the RHS is still representable before it underflows to 0), pins Φ(−15)=3.670966199312858e-51 and Φ(−20)=2.753624118606331e-89 against high-precision references, and asserts Φ(−37)\>0 (≈5.7e-300, never flushed to zero). All comparisons go through \`assert\_close!\`, never \`==\`. A regression that reintroduced the cancellation-prone 1−Φ(x) form on the direct path would be caught. Pure test: evaluates norm\_cdf and asserts, no mutation.
+- **claim** (`cl\_efe6bb4f50397941`): Determinism rule — \`norm\_cdf\_tail\_symmetry\_and\_no\_underflow\` guards the tail-stability that the \`libm::erfc\` routing in \`norm\_cdf\` buys: it checks the reflection identity Φ(−x)=1−Φ(x) at x∈{3,4,5} (the largest x where the RHS is still representable before it underflows to 0), pins Φ(−15)=3.670966199312858e-51 and Φ(−20)=2.753624118606331e-89 against high-precision references, and asserts Φ(−37)\>0 (≈5.7e-300, never flushed to zero). All comparisons go through \`assert\_close!\`, never \`==\`. A regression that reintroduced the cancellation-prone 1−Φ(x) form on the direct path would be caught. Pure test: evaluates norm\_cdf and asserts, no mutation.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-core.src.math.norm\_cdf\_tail\_symmetry\_and\_no\_underflow` (hash `a22dcfa09d549a8f`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-core.src.math.norm\_cdf\_tail\_symmetry\_and\_no\_underflow` (hash `465a95da16e43597`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-core.src.math.norm\_pdf
 
-- **claim** (`cl\_ac26b52eab7dd765`): Determinism rule — \`norm\_pdf\` computes the standard-normal density as \`INV\_SQRT\_2PI \* exp(-0.5 \* x \* x)\` where \`exp\` is the crate's \`libm\`-backed wrapper, so the transcendental is correctly-rounded and bit-identical across platforms (docs/INTERFACES.md cross-platform determinism). The argument is symmetric in x (x·x), so norm\_pdf is exactly even. f64 is the CPU-canonical type. Pure: maps one f64 to one f64, no side effects.
+- **claim** (`cl\_ac412adf55b709ea`): Determinism rule — \`norm\_pdf\` computes the standard-normal density as \`INV\_SQRT\_2PI \* exp(-0.5 \* x \* x)\` where \`exp\` is the crate's \`libm\`-backed wrapper, so the transcendental is correctly-rounded and bit-identical across platforms (docs/INTERFACES.md cross-platform determinism). The argument is symmetric in x (x·x), so norm\_pdf is exactly even. f64 is the CPU-canonical type. Pure: maps one f64 to one f64, no side effects.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-core.src.math.norm\_pdf` (hash `af26c3a0c2a9fce4`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-core.src.math.norm\_pdf` (hash `2eb0294bb04e515e`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.funding.funding\_carry
 
-- **claim** (`cl\_da8ef0cc4f373d77`): \`funding\_carry(r, funding) -\> Carry\` is the canonical Carry constructor for crypto: it builds \`Carry::CostOfCarry { r, b: r - funding }\` so the net cost-of-carry b equals the difference between the risk-free rate and the perpetual funding rate. When funding == r the carry rate is zero and the forward equals spot (zero-drift, Black-76 limit). The function is called by 14 callers — it is the standard entry point for both inverse and linear crypto inputs. Pure: returns a new \`Carry\` from two \`f64\` scalars with no WRITES, no allocation, no I/O.
+- **claim** (`cl\_a6a2b3e46b00051d`): \`funding\_carry(r, funding) -\> Carry\` is the canonical Carry constructor for crypto: it builds \`Carry::CostOfCarry { r, b: r - funding }\` so the net cost-of-carry b equals the difference between the risk-free rate and the perpetual funding rate. When funding == r the carry rate is zero and the forward equals spot (zero-drift, Black-76 limit). The function is called by 14 callers — it is the standard entry point for both inverse and linear crypto inputs. Pure: returns a new \`Carry\` from two \`f64\` scalars with no WRITES, no allocation, no I/O.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.funding.funding\_carry` (hash `c25950f49ec27593`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.funding.funding\_carry` (hash `afd3b2bbaf429b93`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.inverse.aux
 
-- **claim** (`cl\_c622aa90b2aea8e9`): \`inverse::aux(i)\` precomputes the five shared scalars for the coin-margined closed form: \`sqt=√t\`, \`vsqt=σ√t\`, \`f=S·e^{b·t}\` (forward), \`df=e^{-r·t}\` (discount factor), \`s2t=σ²·t\`, and the three log-moneyness distances \`d1=(ln(F/K)+½σ²t)/(σ√t)\`, \`d2=d1-σ√t\`, \`d3=d1-2σ√t\`, plus \`es2t=e^{σ²t}\`. The inverse formula uses d2 and d3 (not d1) as the CDF arguments — d3 = d1 - 2σ√t is specific to the coin-margined payoff, absent from both the FX/linear and the standard Black-Scholes aux. Pure: reads \`&InverseInputs\`, returns \`Aux\`, no WRITES.
+- **claim** (`cl\_cedce1f10921926c`): \`inverse::aux(i)\` precomputes the five shared scalars for the coin-margined closed form: \`sqt=√t\`, \`vsqt=σ√t\`, \`f=S·e^{b·t}\` (forward), \`df=e^{-r·t}\` (discount factor), \`s2t=σ²·t\`, and the three log-moneyness distances \`d1=(ln(F/K)+½σ²t)/(σ√t)\`, \`d2=d1-σ√t\`, \`d3=d1-2σ√t\`, plus \`es2t=e^{σ²t}\`. The inverse formula uses d2 and d3 (not d1) as the CDF arguments — d3 = d1 - 2σ√t is specific to the coin-margined payoff, absent from both the FX/linear and the standard Black-Scholes aux. Pure: reads \`&InverseInputs\`, returns \`Aux\`, no WRITES.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.inverse.aux` (hash `0f8c66671de133ff`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.inverse.aux` (hash `3078450c94e8b6d7`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.inverse.check\_greeks
 
@@ -1800,38 +1720,36 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.inverse.closed\_form\_matches\_deterministic\_quadrature
 
-- **claim** (`cl\_74c93c681300a1c6`): The inverse-vanilla closed-form price is verified against a code-disjoint midpoint-quadrature integration of the literal payoff E^Q\[df·max(φ·(S\_T−K),0)/S\_T\] over the risk-neutral lognormal distribution. The quadrature uses 400 000 uniform panels spanning z ∈ \[−12, 12\] of the standard normal, evaluating the integrand (phi·(S\_T−K)).max(0)/S\_T at each midpoint z = lo+(j+0.5)·dz, where S\_T = F·exp(−½σ²t + σ√t·z). Three (S,K,σ,t,r,funding) vectors spanning OTM/ITM/ATM at different crypto vol regimes (0.55–0.80) are tested for both Call and Put. Agreement is required to 1e-6 relative with a 1e-7 absolute floor. The method shares no analytic structure with the production CDF-based \`price\` function, providing a structurally independent oracle.
+- **claim** (`cl\_fd7acf1d957d42e7`): The inverse-vanilla closed-form price is verified against a code-disjoint midpoint-quadrature integration of the literal payoff E^Q\[df·max(φ·(S\_T−K),0)/S\_T\] over the risk-neutral lognormal distribution. The quadrature uses 400 000 uniform panels spanning z ∈ \[−12, 12\] of the standard normal, evaluating the integrand (phi·(S\_T−K)).max(0)/S\_T at each midpoint z = lo+(j+0.5)·dz, where S\_T = F·exp(−½σ²t + σ√t·z). Three (S,K,σ,t,r,funding) vectors spanning OTM/ITM/ATM at different crypto vol regimes (0.55–0.80) are tested for both Call and Put. Agreement is required to 1e-6 relative with a 1e-7 absolute floor. The method shares no analytic structure with the production CDF-based \`price\` function, providing a structurally independent oracle.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:48:16Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.inverse.closed\_form\_matches\_deterministic\_quadrature` (hash `9c930a8b3aa632a3`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.inverse.closed\_form\_matches\_deterministic\_quadrature` (hash `02da446bf061659b`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:48:16Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:48:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.inverse.closed\_form\_within\_monte\_carlo\_standard\_error
 
-- **claim** (`cl\_90541a53c87682c0`): The inverse-vanilla closed-form price agrees with a fully deterministic Monte Carlo oracle (4 000 000 paths, Box-Muller normals from a seeded SplitMix64 PRNG defined inline — no dependency on any production sampler) to within 4 standard errors of the MC estimate plus 1e-12. Each path computes the coin-denominated payoff df·max(φ·(S\_T−K),0)/S\_T and the MC standard error is derived from the empirical variance. The same three (S,K,σ,t,r,funding) market scenarios tested in the quadrature verification are covered for both Call and Put, gating the closed form from below by an independent stochastic oracle at 4σ.
+- **claim** (`cl\_cb9917e78bda7ba1`): The inverse-vanilla closed-form price agrees with a fully deterministic Monte Carlo oracle (4 000 000 paths, Box-Muller normals from a seeded SplitMix64 PRNG defined inline — no dependency on any production sampler) to within 4 standard errors of the MC estimate plus 1e-12. Each path computes the coin-denominated payoff df·max(φ·(S\_T−K),0)/S\_T and the MC standard error is derived from the empirical variance. The same three (S,K,σ,t,r,funding) market scenarios tested in the quadrature verification are covered for both Call and Put, gating the closed form from below by an independent stochastic oracle at 4σ.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:48:16Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.inverse.closed\_form\_within\_monte\_carlo\_standard\_error` (hash `1541c834913f5ec8`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.inverse.closed\_form\_within\_monte\_carlo\_standard\_error` (hash `301f04823a80c518`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:48:16Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:48:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.inverse.convexity\_sandwich\_vs\_linear\_is\_signed
 
-- **claim** (`cl\_e217f1e25e49a933`): The convexity sandwich test pins a signed directional inequality between the coin-margined and linear prices: for all tested parameters, \`inverse::price(Call)\*S \< linear::price(Call)\` strictly, and \`inverse::price(Put)\*S \> linear::price(Put)\` strictly (tolerance 1e-6). This is the anti-circular guard — a naive V\_lin/S₀ rescale of the linear price would produce equality at both legs, making both differences zero and failing both assertions. The test thus verifies that the inverse formula is not a trivial rescale of the linear one. Pure validator: reads from value arguments, no mutation.
+- **claim** (`cl\_71e9d4733d231d66`): The convexity sandwich test pins a signed directional inequality between the coin-margined and linear prices: for all tested parameters, \`inverse::price(Call)\*S \< linear::price(Call)\` strictly, and \`inverse::price(Put)\*S \> linear::price(Put)\` strictly (tolerance 1e-6). This is the anti-circular guard — a naive V\_lin/S₀ rescale of the linear price would produce equality at both legs, making both differences zero and failing both assertions. The test thus verifies that the inverse formula is not a trivial rescale of the linear one. Pure validator: reads from value arguments, no mutation.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.inverse.convexity\_sandwich\_vs\_linear\_is\_signed` (hash `cf2f42c8c213dcb8`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.inverse.convexity\_sandwich\_vs\_linear\_is\_signed` (hash `b35d3cd040adc258`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.inverse.greeks
 
@@ -1846,30 +1764,26 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.inverse.price
 
-- **claim** (`cl\_2e87a2904e719ae1`): CAPABILITY (crypto inverse/coin-margined leaf): celnet-crypto-vanilla::inverse::price is the inverse (coin-margined, 1/S\_T payoff) crypto vanilla pricing entry — a pure, side-effect-free closed form taking (OptionType, &InverseInputs) whose value is expressed in the coin numeraire via the k/F and e^{sigma^2 t} convexity terms (norm\_cdf of d2/d3), reconciled to an independent oracle with a signed convexity sandwich. It is the crypto inverse capability's projection target on the carry seam through the one contract; the sibling linear (USDT-margined) crypto path collapses to the Black-76 forward limit at zero carry. No I/O, allocation, logging, or mutation.
+- **claim** (`cl\_7c152e59e1fec9eb`): CAPABILITY (crypto inverse/coin-margined leaf): celnet-crypto-vanilla::inverse::price is the inverse (coin-margined, 1/S\_T payoff) crypto vanilla pricing entry — a pure, side-effect-free closed form taking (OptionType, &InverseInputs) whose value is expressed in the coin numeraire via the k/F and e^{sigma^2 t} convexity terms (norm\_cdf of d2/d3), reconciled to an independent oracle with a signed convexity sandwich. It is the crypto inverse capability's projection target on the carry seam through the one contract; the sibling linear (USDT-margined) crypto path collapses to the Black-76 forward limit at zero carry. No I/O, allocation, logging, or mutation.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.inverse.price` (hash `700f8c42eae96eed`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.inverse.price` (hash `8d2e0c32fcae388d`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.linear.aux
 
-- **claim** (`cl\_9f596515439a1835`): \`linear::price(opt, i)\` is the USDT/coin-quoted (linear-margined) crypto vanilla closed form: it computes \`s\_disc = spot·e^{-r\_for·t}\` and \`k\_disc = strike·e^{-r\_dom·t}\` where \`(r\_dom, r\_for) = (r, r-b)\` extracted from the Carry via \`fx\_equiv\_rates\`, then prices as Call = s\_disc·Φ(d1) - k\_disc·Φ(d2) and Put = k\_disc·Φ(-d2) - s\_disc·Φ(-d1). The \`d1/d2\` use the spot-space log-moneyness formula \`d1 = (ln(S/K) + (r\_dom - r\_for + ½σ²)·t) / (σ√t)\` (comment: same operation order as the FX GK leaf, so price is bit-identical to the FX leaf under matching rates). Pure: reads \`(OptionType, &LinearInputs)\`, returns \`f64\`, no WRITES, allocation, or I/O.
+- **claim** (`cl\_0957f30ccfc0f48b`): \`linear::price(opt, i)\` is the USDT/coin-quoted (linear-margined) crypto vanilla closed form: it computes \`s\_disc = spot·e^{-r\_for·t}\` and \`k\_disc = strike·e^{-r\_dom·t}\` where \`(r\_dom, r\_for) = (r, r-b)\` extracted from the Carry via \`fx\_equiv\_rates\`, then prices as Call = s\_disc·Φ(d1) - k\_disc·Φ(d2) and Put = k\_disc·Φ(-d2) - s\_disc·Φ(-d1). The \`d1/d2\` use the spot-space log-moneyness formula \`d1 = (ln(S/K) + (r\_dom - r\_for + ½σ²)·t) / (σ√t)\` (comment: same operation order as the FX GK leaf, so price is bit-identical to the FX leaf under matching rates). Pure: reads \`(OptionType, &LinearInputs)\`, returns \`f64\`, no WRITES, allocation, or I/O.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.linear.aux` (hash `9db19de9c34fa87f`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.linear.price` (hash `583014788c3eb0b6`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.linear.aux` (hash `be9d7c8f3a572b57`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.linear.price` (hash `36fff6de5a952236`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.linear.check\_greeks
 
@@ -1884,16 +1798,14 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.linear.fx\_equiv\_rates
 
-- **claim** (`cl\_001bb501c41ef788`): \`linear::fx\_equiv\_rates(i) -\> (r\_dom, r\_for)\` recovers the GK-equivalent domestic/foreign rate pair from the unified Carry: \`r\_dom = carry.discount\_rate()\` and \`r\_for = r\_dom - carry.carry\_rate()\` (= r - b = funding rate). This is the seam that maps the crypto funding-rate carry convention onto the same two-rate spot-discounting formula as the FX GK leaf, making \`linear::price\` bit-identical to \`celnet-vanilla::price\` under matching rates (as the comment in \`aux\` documents). Pure: reads \`&LinearInputs\`, returns \`(f64, f64)\`, no WRITES.
+- **claim** (`cl\_4149775b0cde2471`): \`linear::fx\_equiv\_rates(i) -\> (r\_dom, r\_for)\` recovers the GK-equivalent domestic/foreign rate pair from the unified Carry: \`r\_dom = carry.discount\_rate()\` and \`r\_for = r\_dom - carry.carry\_rate()\` (= r - b = funding rate). This is the seam that maps the crypto funding-rate carry convention onto the same two-rate spot-discounting formula as the FX GK leaf, making \`linear::price\` bit-identical to \`celnet-vanilla::price\` under matching rates (as the comment in \`aux\` documents). Pure: reads \`&LinearInputs\`, returns \`(f64, f64)\`, no WRITES.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.linear.fx\_equiv\_rates` (hash `b03b2c97b7c5c506`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.linear.fx\_equiv\_rates` (hash `e6da5db2267b2f76`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.linear.greeks
 
@@ -1908,16 +1820,14 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.settlement.route\_price
 
-- **claim** (`cl\_c31be1dc3be878f4`): CAPABILITY (carry-seam deliverable, crypto leaf reach): route\_price is the pure crypto settlement-style dispatcher that reaches both crypto vanilla leaves on the shared Carry seam — SettlementStyle::Linear → linear::price (GK-funding, USDT/coin-quoted) and SettlementStyle::InverseCoin → inverse::price (inverse/coin-margined 1/S\_T payoff) — selecting the leaf by settlement style and forwarding the same (spot, strike, vol, t, Carry). Pure: returns the leaf price from value/ref args with no WRITES; self-invalidates if either leaf arm gains a side effect.
+- **claim** (`cl\_cca58ba414461a22`): CAPABILITY (carry-seam deliverable, crypto leaf reach): route\_price is the pure crypto settlement-style dispatcher that reaches both crypto vanilla leaves on the shared Carry seam — SettlementStyle::Linear → linear::price (GK-funding, USDT/coin-quoted) and SettlementStyle::InverseCoin → inverse::price (inverse/coin-margined 1/S\_T payoff) — selecting the leaf by settlement style and forwarding the same (spot, strike, vol, t, Carry). Pure: returns the leaf price from value/ref args with no WRITES; self-invalidates if either leaf arm gains a side effect.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.settlement.route\_price` (hash `a453bf1b580b40a2`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.settlement.route\_price` (hash `5fb097e58e2b8bc2`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-engine.src.handoff.HandoffError.fmt
 
@@ -2015,16 +1925,14 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-engine.src.handoff.serialize\_state
 
-- **claim** (`cl\_d8d1931526918fab`): ADR-0007 (one unversioned contract — engine hot-upgrade handoff). \`serialize\_state\` is the single, deterministic encoder of the engine's live state (MarketState + BookState) into the handoff byte image: it is a pure function of its two borrowed inputs (it reads no global/external state and mutates none — the only allocation is the returned Vec\<u8\>), so the same (market, book) always yields byte-identical output. The image is a fixed self-describing layout — MAGIC header, market scalars, conventions, the three smile benchmark pillars + reference forward/time (exactly the state from which MarketHedgeSmile::new reconstructs an identical smile), then the length-prefixed book — and \`restore\_state\` is its exact inverse (round-trip proven by roundtrip\_restores\_identical\_state / restored\_state\_reprices\_identically). DECISION/RATIONALE: hot-upgrade carries state across a code swap through this ONE current handoff format with a MAGIC sentinel and NO schema\_version field and NO N/N-1 negotiation — consistent with the platform-wide single-unversioned-contract decision (ADR-0007). An upgrade deploys a single uniform engine version: the old build serializes, the new build restores; there is no mixed-version window to negotiate, so the format evolves in place rather than versioning. (Guardrail: no versioned APIs; hot-upgradable single-version estate.)
+- **claim** (`cl\_7c5c158e22b785bc`): ADR-0007 (one unversioned contract — engine hot-upgrade handoff). \`serialize\_state\` is the single, deterministic encoder of the engine's live state (MarketState + BookState) into the handoff byte image: it is a pure function of its two borrowed inputs (it reads no global/external state and mutates none — the only allocation is the returned Vec\<u8\>), so the same (market, book) always yields byte-identical output. The image is a fixed self-describing layout — MAGIC header, market scalars, conventions, the three smile benchmark pillars + reference forward/time (exactly the state from which MarketHedgeSmile::new reconstructs an identical smile), then the length-prefixed book — and \`restore\_state\` is its exact inverse (round-trip proven by roundtrip\_restores\_identical\_state / restored\_state\_reprices\_identically). DECISION/RATIONALE: hot-upgrade carries state across a code swap through this ONE current handoff format with a MAGIC sentinel and NO schema\_version field and NO N/N-1 negotiation — consistent with the platform-wide single-unversioned-contract decision (ADR-0007). An upgrade deploys a single uniform engine version: the old build serializes, the new build restores; there is no mixed-version window to negotiate, so the format evolves in place rather than versioning. (Guardrail: no versioned APIs; hot-upgradable single-version estate.)
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-engine.src.handoff.serialize\_state` (hash `77806348d4c88bca`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-engine.src.handoff.serialize\_state` (hash `b895f29603af787e`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-engine.src.journal.EventTag.from\_byte
 
@@ -2083,17 +1991,15 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-entitlements.src.decision.AccessMode.is\_permissive
 
-- **claim** (`cl\_4d5a3795f4e94b7e`): \`AccessMode\` defaults to \`Enforce\` (\`AccessMode::default() == AccessMode::Enforce\`), verified by the \`default\_mode\_is\_enforce\` test. In \`Enforce\` mode \`is\_permissive()\` returns \`false\`. This is the production posture — the system never silently opens access due to an absent or misconfigured principal.
+- **claim** (`cl\_1f1193b06e4443dc`): \`AccessMode\` defaults to \`Enforce\` (\`AccessMode::default() == AccessMode::Enforce\`), verified by the \`default\_mode\_is\_enforce\` test. In \`Enforce\` mode \`is\_permissive()\` returns \`false\`. This is the production posture — the system never silently opens access due to an absent or misconfigured principal.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
   - `github.com-soarsa-celnet.crates.celnet-entitlements.src.decision.AccessMode.is\_permissive` (hash `1746563e5be23f67`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-entitlements.src.decision.default\_mode\_is\_enforce` (hash `f6b51cc0f5bd94a3`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-entitlements.src.decision.default\_mode\_is\_enforce` (hash `ae5250fedec5191b`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-entitlements.src.decision.AccessMode.label
 
@@ -2240,16 +2146,14 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-equity-vanilla.src.lib.aux
 
-- **claim** (`cl\_c61bb3ad3a313c4d`): aux(i) is the pure precomputation kernel for the generalized-BSM equity pricer: given EquityInputs it computes d1 = \[ln(S/K) + (b + ½σ²)·t\] / (σ√t) where b = carry() = r − q − repo is the net cost of carry, d2 = d1 − σ√t, and returns the Aux struct {d1, d2, sqt=√t, vsqt=σ√t}. No side effects, no allocation, no I/O — a pure closed-form function of its argument. Both price() and greeks() call this exactly once and re-use the cached (d1, d2, sqt, vsqt), so transcendental cost is paid once per pricing call.
+- **claim** (`cl\_8a1b40e6ce4c59f7`): aux(i) is the pure precomputation kernel for the generalized-BSM equity pricer: given EquityInputs it computes d1 = \[ln(S/K) + (b + ½σ²)·t\] / (σ√t) where b = carry() = r − q − repo is the net cost of carry, d2 = d1 − σ√t, and returns the Aux struct {d1, d2, sqt=√t, vsqt=σ√t}. No side effects, no allocation, no I/O — a pure closed-form function of its argument. Both price() and greeks() call this exactly once and re-use the cached (d1, d2, sqt, vsqt), so transcendental cost is paid once per pricing call.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-equity-vanilla.src.lib.aux` (hash `b562a3ebf4a64b71`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-equity-vanilla.src.lib.aux` (hash `8ab6c8a47633bc41`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-equity-vanilla.src.lib.check\_greeks
 
@@ -2275,29 +2179,25 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-equity-vanilla.src.lib.hull\_index\_option\_reference
 
-- **claim** (`cl\_7f005d4f8424a000`): hull\_index\_option\_reference() is the externally-pinned numerical oracle for the generalized-BSM equity pricer: for S=930, K=900, r=0.08, q=0.03, σ=0.20, T=1/6 yr, repo=0 it asserts call=51.832956796490860 and put=14.550996773772400 (both to 1e-9 relative and absolute). This is an independently-computed full-precision result — not round-tripped from the crate under test — providing a ground-truth anchor that is source-stable (the specific reference values appear in the test source verbatim). Validated by assert\_close! to 9 decimal places.
+- **claim** (`cl\_2eb04ee748f0b709`): hull\_index\_option\_reference() is the externally-pinned numerical oracle for the generalized-BSM equity pricer: for S=930, K=900, r=0.08, q=0.03, σ=0.20, T=1/6 yr, repo=0 it asserts call=51.832956796490860 and put=14.550996773772400 (both to 1e-9 relative and absolute). This is an independently-computed full-precision result — not round-tripped from the crate under test — providing a ground-truth anchor that is source-stable (the specific reference values appear in the test source verbatim). Validated by assert\_close! to 9 decimal places.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-equity-vanilla.src.lib.hull\_index\_option\_reference` (hash `d881e04f56c9159d`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-equity-vanilla.src.lib.hull\_index\_option\_reference` (hash `be855c4e137b83ad`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-equity-vanilla.src.lib.price
 
-- **claim** (`cl\_e1c58d7e029c7be5`): CAPABILITY (equity cross-asset leaf): celnet-equity-vanilla::price is the generalized-BSM equity vanilla pricing entry on the carry seam — a pure, side-effect-free closed form taking (OptionType, &EquityInputs) where the dividend yield enters as the carry b = r - q, so the no-dividend limit collapses to standard Black-Scholes (proven by no\_dividend\_limit\_is\_standard\_bsm) and the leaf reconciles to an independent QuantLib-pinned BSM oracle. Heavily re-used (in\_degree 147) as the equity capability's projection target through the one contract. No I/O, allocation, logging, or mutation.
+- **claim** (`cl\_3549d66ae65b558f`): CAPABILITY (equity cross-asset leaf): celnet-equity-vanilla::price is the generalized-BSM equity vanilla pricing entry on the carry seam — a pure, side-effect-free closed form taking (OptionType, &EquityInputs) where the dividend yield enters as the carry b = r - q, so the no-dividend limit collapses to standard Black-Scholes (proven by no\_dividend\_limit\_is\_standard\_bsm) and the leaf reconciles to an independent QuantLib-pinned BSM oracle. Heavily re-used (in\_degree 147) as the equity capability's projection target through the one contract. No I/O, allocation, logging, or mutation.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-equity-vanilla.src.lib.price` (hash `28f48c2ea95ab210`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-equity-vanilla.src.lib.price` (hash `a6f92a2e94bed6b0`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-equity-vanilla.src.lib.with\_b\_via\_q
 
@@ -2313,14 +2213,14 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.accumulator.accumulator\_price
 
-- **claim** (`cl\_520f68f52df27901`): accumulator\_price prices a target-accrual accumulator via antithetic-pair quasi-Monte Carlo: it draws counter-based normal variates with CounterRng, walks two antithetic paths (sign +1 and −1) via walk\_path, averages each pair's (bank\_pv, settled\_fixings) with coefficient 0.5, and accumulates both statistics in Welford online estimators. The carry drift per step is \`(carry\_rate() − ½σ²)·dt\` and the discount factors are precomputed once as \`discount\_df\_at(t\_k)\` for k=1..n, matching the FX two-rate GK form byte-for-bit (ADR-0008).
+- **claim** (`cl\_7d1a254d0931b76e`): accumulator\_price prices a target-accrual accumulator via antithetic-pair quasi-Monte Carlo: it draws counter-based normal variates with CounterRng, walks two antithetic paths (sign +1 and −1) via walk\_path, averages each pair's (bank\_pv, settled\_fixings) with coefficient 0.5, and accumulates both statistics in Welford online estimators. The carry drift per step is \`(carry\_rate() − ½σ²)·dt\` and the discount factors are precomputed once as \`discount\_df\_at(t\_k)\` for k=1..n, matching the FX two-rate GK form byte-for-bit (ADR-0008).
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:29:51Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-exotics.src.accumulator.accumulator\_price` (hash `357052484788224a`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-exotics.src.accumulator.accumulator\_price` (hash `b93836d37a8bac76`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:29:51Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:51Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.adi.Lsv2d\<'\_\>.is\_dead
 
@@ -2445,14 +2345,14 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.asian.curran\_price
 
-- **claim** (`cl\_731cd8bf48f7079d`): curran\_price prices an arithmetic Asian option by Curran's conditioning approximation: it conditions on \`ln G\` (the log of the geometric average, which is Gaussian), finds the single exercise boundary \`z\*\` where the conditional average equals the strike by 80-iteration bisection on a ±8σ window, splits the Gauss-Legendre-64 outer integral at \`z\*\` for smoothness, and applies a conditional Black formula for the residual within-G dispersion at each quadrature node. The \`k\_eff = strike − fixed\` effective strike handles already-accrued fixings (the seasoned weight \`w\` and \`elapsed\_avg\`). The continuous averaging case is handled as a dense 256-point discrete approximation.
+- **claim** (`cl\_1b9cda19e0e9edda`): curran\_price prices an arithmetic Asian option by Curran's conditioning approximation: it conditions on \`ln G\` (the log of the geometric average, which is Gaussian), finds the single exercise boundary \`z\*\` where the conditional average equals the strike by 80-iteration bisection on a ±8σ window, splits the Gauss-Legendre-64 outer integral at \`z\*\` for smoothness, and applies a conditional Black formula for the residual within-G dispersion at each quadrature node. The \`k\_eff = strike − fixed\` effective strike handles already-accrued fixings (the seasoned weight \`w\` and \`elapsed\_avg\`). The continuous averaging case is handled as a dense 256-point discrete approximation.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:29:51Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-exotics.src.asian.curran\_price` (hash `7ed39313a150dbf2`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-exotics.src.asian.curran\_price` (hash `94ac42b0fac1f38e`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:29:51Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:51Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.asian.discrete\_moments
 
@@ -2478,49 +2378,47 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.asian.geometric\_average\_price
 
-- **claim** (`cl\_5c9d2d4e3a53821c`): geometric\_average\_price prices a geometric-average Asian option analytically. For discrete schedules with n future observations it computes the effective volatility σ\_G²= σ²(n+1)(2n+1)/(6n²) and effective cost-of-carry b\_G = ½(b − ½σ²)(n+1)/n + ½σ\_G², constructs a synthetic ExoticInputs with these parameters, and delegates to carry\_vanilla\_price. For continuous averaging it delegates to continuous\_geometric\_price which uses σ\_G²=σ²/3 and the corresponding carry adjustment. Both paths are asset-class-agnostic via the carry-seam ExoticInputs representation.
+- **claim** (`cl\_bebdc10ce5f114e0`): geometric\_average\_price prices a geometric-average Asian option analytically. For discrete schedules with n future observations it computes the effective volatility σ\_G²= σ²(n+1)(2n+1)/(6n²) and effective cost-of-carry b\_G = ½(b − ½σ²)(n+1)/n + ½σ\_G², constructs a synthetic ExoticInputs with these parameters, and delegates to carry\_vanilla\_price. For continuous averaging it delegates to continuous\_geometric\_price which uses σ\_G²=σ²/3 and the corresponding carry adjustment. Both paths are asset-class-agnostic via the carry-seam ExoticInputs representation.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:40:33Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-exotics.src.asian.geometric\_average\_price` (hash `7c6522264510f473`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-exotics.src.asian.geometric\_average\_price` (hash `8633f7d1b7e061f3`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:40:33Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:40:33Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.asian.turnbull\_wakeman\_price
 
-- **claim** (`cl\_0da79db95933e4b4`): turnbull\_wakeman\_price is the Turnbull-Wakeman moment-matching Asian pricer: it computes future\_moments(i, spec) to get the first and second moments (ex, ex2) of the remaining average, applies seasoned\_match to account for any already-settled fixings (adjusting the effective strike k\_eff = spec.strike − fixed), then prices via black\_on\_average(spec.option, ex, ex2, k\_eff, df) — a Black-76 formula on the lognormal approximation of the arithmetic average. Pure: reads &ExoticInputs + AnalyticAsian, returns f64, no WRITES.
+- **claim** (`cl\_feb14c81241ca473`): turnbull\_wakeman\_price is the Turnbull-Wakeman moment-matching Asian pricer: it computes future\_moments(i, spec) to get the first and second moments (ex, ex2) of the remaining average, applies seasoned\_match to account for any already-settled fixings (adjusting the effective strike k\_eff = spec.strike − fixed), then prices via black\_on\_average(spec.option, ex, ex2, k\_eff, df) — a Black-76 formula on the lognormal approximation of the arithmetic average. Pure: reads &ExoticInputs + AnalyticAsian, returns f64, no WRITES.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-exotics.src.asian.turnbull\_wakeman\_price` (hash `75c31a2b4dec2afb`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-exotics.src.asian.turnbull\_wakeman\_price` (hash `03370830947a2313`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.barrier.double\_knock\_out\_price
 
-- **claim** (`cl\_ab88bd04b6909dde`): double\_knock\_out\_price prices a double-knock-out option using the Andersen-Brotherton-Ratcliffe reflection-image series (summed over n = −DKO\_TERMS..=DKO\_TERMS). For each image term it evaluates two scaled CDF differences — one for the direct image (weight \`(U/L)^{n·μ₁}\`) and one for the lower-wall mirror (weight base \`L^{n+1}/(Uⁿ·S)\`) — via \`scaled\_cdf\_diff\` which evaluates the product \`exp(ln\_scale + ln\|ΔΦ\|)\` in log-space to prevent Inf×0 NaN. The payoff is oriented by \`phi = option.sign()\` applied inside each CDF argument, so the raw \`sum\` is the put/call value directly and only the payoff floor \`.max(0.0)\` is applied on return.
+- **claim** (`cl\_d5889d04e35d4a91`): double\_knock\_out\_price prices a double-knock-out option using the Andersen-Brotherton-Ratcliffe reflection-image series (summed over n = −DKO\_TERMS..=DKO\_TERMS). For each image term it evaluates two scaled CDF differences — one for the direct image (weight \`(U/L)^{n·μ₁}\`) and one for the lower-wall mirror (weight base \`L^{n+1}/(Uⁿ·S)\`) — via \`scaled\_cdf\_diff\` which evaluates the product \`exp(ln\_scale + ln\|ΔΦ\|)\` in log-space to prevent Inf×0 NaN. The payoff is oriented by \`phi = option.sign()\` applied inside each CDF argument, so the raw \`sum\` is the put/call value directly and only the payoff floor \`.max(0.0)\` is applied on return.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:29:51Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-exotics.src.barrier.double\_knock\_out\_price` (hash `27404283a3252c65`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-exotics.src.barrier.double\_knock\_out\_price` (hash `d15aa37a05dc9761`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:29:51Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:51Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.barrier.scaled\_cdf\_diff
 
-- **claim** (`cl\_9646131264068325`): scaled\_cdf\_diff evaluates \`exp(ln\_scale) · (Φ(a) − Φ(b))\` in a numerically stable form that prevents Inf×0 NaN when the Girsanov weight overflows while the CDF difference underflows. When both arguments are non-negative it uses the equivalent tail form \`Φ(−b) − Φ(−a)\` (exploiting symmetry for precision). The product is evaluated as \`signum(diff) · exp(ln\_scale + ln\|diff\|)\` and returned as 0.0 if non-finite.
+- **claim** (`cl\_40cacf419e10a662`): scaled\_cdf\_diff evaluates \`exp(ln\_scale) · (Φ(a) − Φ(b))\` in a numerically stable form that prevents Inf×0 NaN when the Girsanov weight overflows while the CDF difference underflows. When both arguments are non-negative it uses the equivalent tail form \`Φ(−b) − Φ(−a)\` (exploiting symmetry for precision). The product is evaluated as \`signum(diff) · exp(ln\_scale + ln\|diff\|)\` and returned as 0.0 if non-finite.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:29:51Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-exotics.src.barrier.scaled\_cdf\_diff` (hash `268a8fd624d2ba06`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-exotics.src.barrier.scaled\_cdf\_diff` (hash `5d29c0f093882476`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:29:51Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:51Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.barrier.single\_barrier\_no\_rebate
 
@@ -2535,16 +2433,14 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.barrier.single\_barrier\_price
 
-- **claim** (`cl\_2d0785a3afb37af5`): single\_barrier\_price decomposes a single-barrier option with optional rebate into two independent legs: (1) bare = single\_barrier\_no\_rebate(i, kind, strike, barrier) — the core Reiner-Rubinstein reflection formula; (2) rebate leg — for KnockOut, a one-touch paying rebate at hit (one\_touch\_price(i, barrier, rebate, RebateTiming::AtHit)); for KnockIn, a no-touch paying rebate at expiry if the barrier is never touched (no\_touch\_price). Returns bare + reb. When rebate == 0.0, returns bare immediately without pricing the touch. Pure: reads &ExoticInputs + SingleBarrier, returns f64, no WRITES.
+- **claim** (`cl\_ee35ca7f0456745f`): single\_barrier\_price decomposes a single-barrier option with optional rebate into two independent legs: (1) bare = single\_barrier\_no\_rebate(i, kind, strike, barrier) — the core Reiner-Rubinstein reflection formula; (2) rebate leg — for KnockOut, a one-touch paying rebate at hit (one\_touch\_price(i, barrier, rebate, RebateTiming::AtHit)); for KnockIn, a no-touch paying rebate at expiry if the barrier is never touched (no\_touch\_price). Returns bare + reb. When rebate == 0.0, returns bare immediately without pricing the touch. Pure: reads &ExoticInputs + SingleBarrier, returns f64, no WRITES.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-exotics.src.barrier.single\_barrier\_price` (hash `ad6563a52b9695a6`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-exotics.src.barrier.single\_barrier\_price` (hash `6e2df6f61e5e1226`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.digital.digital\_greeks
 
@@ -2559,29 +2455,25 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.digital.digital\_price
 
-- **claim** (`cl\_ee5ca4efd2ef45e4`): digital\_price is the closed-form dual-style digital kernel: given (kind, i) it reads (d1,d2) from d12(i), df\_dom = i.discount\_df(), df\_for = i.carry\_df(), and returns — CashOrNothing Call: df\_dom·Φ(d2); CashOrNothing Put: df\_dom·Φ(−d2); AssetOrNothing Call: S·df\_for·Φ(d1); AssetOrNothing Put: S·df\_for·Φ(−d1). The match is exhaustive over (DigitalStyle, OptionType) with no wildcard, enforcing that cash digitals discount with the numeraire factor and asset digitals with the yield factor. Pure: reads &ExoticInputs, returns f64, no WRITES.
+- **claim** (`cl\_813046bca9704263`): digital\_price is the closed-form dual-style digital kernel: given (kind, i) it reads (d1,d2) from d12(i), df\_dom = i.discount\_df(), df\_for = i.carry\_df(), and returns — CashOrNothing Call: df\_dom·Φ(d2); CashOrNothing Put: df\_dom·Φ(−d2); AssetOrNothing Call: S·df\_for·Φ(d1); AssetOrNothing Put: S·df\_for·Φ(−d1). The match is exhaustive over (DigitalStyle, OptionType) with no wildcard, enforcing that cash digitals discount with the numeraire factor and asset digitals with the yield factor. Pure: reads &ExoticInputs, returns f64, no WRITES.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-exotics.src.digital.digital\_price` (hash `85d400840a23419d`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-exotics.src.digital.digital\_price` (hash `4edebc5f14b4d33d`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.inputs.carry\_vanilla\_price\_at
 
-- **claim** (`cl\_86b8390bdc448fca`): CAPABILITY (cross-asset carry-seam reach): carry\_vanilla\_price\_at is the generalized closed-form pricing kernel of the cross-asset carry seam — a pure, side-effect-free generalized-Black-Scholes-Merton evaluation parameterized by a generalized Carry (cost-of-carry b = r - q via Carry::discount\_rate/yield\_rate). Because every asset family lowers onto this one Carry-parameterized kernel (FX as r\_dom/r\_for, equity as r/dividend-yield, commodity as Black-76 r/b, crypto-linear as r/funding), the SAME pure kernel reaches vanilla/exotics/surface/risk across the FX, equity, commodity, and crypto/digital-asset and linear leaves. It performs no I/O, allocation, logging, or mutation: d1/d2 and discounted spot/strike are computed and one branch on OptionType returns the price.
+- **claim** (`cl\_d4bf7dbb0b606318`): CAPABILITY (cross-asset carry-seam reach): carry\_vanilla\_price\_at is the generalized closed-form pricing kernel of the cross-asset carry seam — a pure, side-effect-free generalized-Black-Scholes-Merton evaluation parameterized by a generalized Carry (cost-of-carry b = r - q via Carry::discount\_rate/yield\_rate). Because every asset family lowers onto this one Carry-parameterized kernel (FX as r\_dom/r\_for, equity as r/dividend-yield, commodity as Black-76 r/b, crypto-linear as r/funding), the SAME pure kernel reaches vanilla/exotics/surface/risk across the FX, equity, commodity, and crypto/digital-asset and linear leaves. It performs no I/O, allocation, logging, or mutation: d1/d2 and discounted spot/strike are computed and one branch on OptionType returns the price.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-exotics.src.inputs.carry\_vanilla\_price\_at` (hash `24ffee3fd11b9f92`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-exotics.src.inputs.carry\_vanilla\_price\_at` (hash `0c52adc0ff99c0b2`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.leverage.LocalVolSurface\<'a, S\>.local\_var
 
@@ -2596,39 +2488,37 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.leverage.bracket
 
-- **claim** (`cl\_6aecfce41d9845d3`): bracket performs a binary search on a sorted f64 grid to find the bracketing interval \[lo, hi\] and the linear interpolation fraction for a query value x. It clamps to the first element when x ≤ grid\[0\] (returning fraction 0.0) and to the last element when x ≥ grid\[n-1\]. For interior values, the loop invariant grid\[lo\] ≤ x \< grid\[hi\] is maintained until hi−lo=1, after which fraction = (x−grid\[lo\])/(grid\[hi\]−grid\[lo\]) ∈ \[0,1).
+- **claim** (`cl\_765bfe01cac8d5b7`): bracket performs a binary search on a sorted f64 grid to find the bracketing interval \[lo, hi\] and the linear interpolation fraction for a query value x. It clamps to the first element when x ≤ grid\[0\] (returning fraction 0.0) and to the last element when x ≥ grid\[n-1\]. For interior values, the loop invariant grid\[lo\] ≤ x \< grid\[hi\] is maintained until hi−lo=1, after which fraction = (x−grid\[lo\])/(grid\[hi\]−grid\[lo\]) ∈ \[0,1).
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:40:33Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-exotics.src.leverage.bracket` (hash `c9f248be349b583a`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-exotics.src.leverage.bracket` (hash `d8ea0814178ce8ea`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:40:33Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:40:33Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.lookback.fixed\_lookback\_price
 
-- **claim** (`cl\_c798b2636a528315`): floating\_lookback\_price and fixed\_lookback\_price are pure Conze-Viswanathan closed-form lookback pricers over the carry seam: both read b = carry\_rate(), df\_dom = discount\_df(), df\_for = carry\_df() — byte-identical for FX. floating\_lookback\_price prices the option on the running extremum ξ=S at inception: Call = S·df\_for·Φ(a1) − S·df\_dom·Φ(a2) + S·df\_dom·(σ²/2b)·\[Φ(−a1+2b√T/σ) − e^{bT}·Φ(−a1)\]. fixed\_lookback\_price branches on K≷S to select between the standard Conze-Viswanathan form (K≥S) and the intrinsic-lock form (K\<S), each with the corresponding reflection term σ²/(2b)·\[±(S/K)^{−2b/σ²}·Φ(d1−2b√T/σ·…) ∓ e^{bT}·Φ(d1)\]. Both are pure (no WRITES, no allocation).
+- **claim** (`cl\_c4746ea17dac415a`): floating\_lookback\_price and fixed\_lookback\_price are pure Conze-Viswanathan closed-form lookback pricers over the carry seam: both read b = carry\_rate(), df\_dom = discount\_df(), df\_for = carry\_df() — byte-identical for FX. floating\_lookback\_price prices the option on the running extremum ξ=S at inception: Call = S·df\_for·Φ(a1) − S·df\_dom·Φ(a2) + S·df\_dom·(σ²/2b)·\[Φ(−a1+2b√T/σ) − e^{bT}·Φ(−a1)\]. fixed\_lookback\_price branches on K≷S to select between the standard Conze-Viswanathan form (K≥S) and the intrinsic-lock form (K\<S), each with the corresponding reflection term σ²/(2b)·\[±(S/K)^{−2b/σ²}·Φ(d1−2b√T/σ·…) ∓ e^{bT}·Φ(d1)\]. Both are pure (no WRITES, no allocation).
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-exotics.src.lookback.fixed\_lookback\_price` (hash `1d5089c53c0d5c3c`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-exotics.src.lookback.floating\_lookback\_price` (hash `5e92e03576ad18f2`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-exotics.src.lookback.fixed\_lookback\_price` (hash `35d6965174cd38ac`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-exotics.src.lookback.floating\_lookback\_price` (hash `8429a808e1194a12`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.lookback.lookback\_payoff
 
-- **claim** (`cl\_03d048beed9fe953`): lookback\_payoff simulates one antithetic-signed lookback path and computes the path payoff. At each step it updates the running minimum and maximum using the reflected-Brownian-bridge interval extrema: \`bridge\_min = ½\[(x\_prev+x\_next) − √((x\_next−x\_prev)² − 2·var\_step·ln(u\[k\]))\]\` and \`bridge\_max\` symmetrically (u\[k\] uniform variate for the bridge correction). The four payoff cases are: floating-strike call \`S\_T − min\`, floating-strike put \`max − S\_T\`, fixed-strike call \`(max − K)⁺\`, fixed-strike put \`(K − min)⁺\`.
+- **claim** (`cl\_a23a6c3f7d1ba1b0`): lookback\_payoff simulates one antithetic-signed lookback path and computes the path payoff. At each step it updates the running minimum and maximum using the reflected-Brownian-bridge interval extrema: \`bridge\_min = ½\[(x\_prev+x\_next) − √((x\_next−x\_prev)² − 2·var\_step·ln(u\[k\]))\]\` and \`bridge\_max\` symmetrically (u\[k\] uniform variate for the bridge correction). The four payoff cases are: floating-strike call \`S\_T − min\`, floating-strike put \`max − S\_T\`, fixed-strike call \`(max − K)⁺\`, fixed-strike put \`(K − min)⁺\`.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:29:51Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-exotics.src.lookback.lookback\_payoff` (hash `38f68941ca614a07`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-exotics.src.lookback.lookback\_payoff` (hash `e7a5bb0e7908d3ab`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:29:51Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:51Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.lsv.LsvModel.calibrate
 
@@ -2643,41 +2533,37 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.market\_hedge\_overlay.hedge\_smile\_cost
 
-- **claim** (`cl\_1282db9f50606bea`): DELIVERABLE exotics/vanna-volga-overlay-magnitude-unvalidated = LANDED (backlog tracker still lists it OPEN as a Round-2 P2/M finding; reconciled against the live graph). \`hedge\_smile\_cost\` is the pure (side-effect-free) vanna-volga market-hedge smile-overlay cost: it reads ExoticSensitivities + the broker RR/BF marks and returns the overlay cost with no external writes. The Round-2 gap (only flat-smile/sign/scaling tests; the spec-mandated VV-vs-replication magnitude cross-validation unimplemented) is CLOSED: celnet-parity::vv\_magnitude::engine\_overlay\_matches\_replicating\_portfolio\_oracle\_in\_magnitude now pins the engine overlay against a CODE-DISJOINT replicating-portfolio oracle (oracle\_cost) within a derived 20% magnitude band, with \<=1% relative agreement on the cross-Greeks (vanna/volga) and a materiality floor + sign-agreement guard across the product set, backed by the golden oracle hedge\_smile\_overlay\_cost. SELF-INVALIDATING: any edit to the overlay arithmetic shifts this anchor and flips the claim stale, re-opening the reconciliation; a write-introducing regression also flips it.
+- **claim** (`cl\_7bd1306d9040788c`): DELIVERABLE exotics/vanna-volga-overlay-magnitude-unvalidated = LANDED (backlog tracker still lists it OPEN as a Round-2 P2/M finding; reconciled against the live graph). \`hedge\_smile\_cost\` is the pure (side-effect-free) vanna-volga market-hedge smile-overlay cost: it reads ExoticSensitivities + the broker RR/BF marks and returns the overlay cost with no external writes. The Round-2 gap (only flat-smile/sign/scaling tests; the spec-mandated VV-vs-replication magnitude cross-validation unimplemented) is CLOSED: celnet-parity::vv\_magnitude::engine\_overlay\_matches\_replicating\_portfolio\_oracle\_in\_magnitude now pins the engine overlay against a CODE-DISJOINT replicating-portfolio oracle (oracle\_cost) within a derived 20% magnitude band, with \<=1% relative agreement on the cross-Greeks (vanna/volga) and a materiality floor + sign-agreement guard across the product set, backed by the golden oracle hedge\_smile\_overlay\_cost. SELF-INVALIDATING: any edit to the overlay arithmetic shifts this anchor and flips the claim stale, re-opening the reconciliation; a write-introducing regression also flips it.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-exotics.src.market\_hedge\_overlay.hedge\_smile\_cost` (hash `c9515d6cabe6fa7d`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-exotics.src.market\_hedge\_overlay.hedge\_smile\_cost` (hash `29524a2874bb4b1d`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.market\_hedge\_overlay.hedge\_smile\_cost
 
-- **claim** (`cl\_bebda77df786a0c3`): hedge\_smile\_overlay is the Vanna-Volga smile-cost overlay: it computes raw = vanna \* market.vanna\_price + volga \* market.volga\_price (hedge\_smile\_cost), multiplies by survival.probability (the barrier-survival weight, clamped to \[0,1\] to prevent over-hedging near the barrier), and returns OverlayResult{flat\_vol\_price, hedge\_smile\_cost: survival.probability\*raw, smile\_price: flat\_vol\_price + cost}. The survival weighting accounts for the reduced probability that an exotic product survives to expiry — reducing the smile correction proportionally. Pure: reads inputs and returns OverlayResult, no WRITES.
+- **claim** (`cl\_92a49ef5ddfdb705`): hedge\_smile\_overlay is the Vanna-Volga smile-cost overlay: it computes raw = vanna \* market.vanna\_price + volga \* market.volga\_price (hedge\_smile\_cost), multiplies by survival.probability (the barrier-survival weight, clamped to \[0,1\] to prevent over-hedging near the barrier), and returns OverlayResult{flat\_vol\_price, hedge\_smile\_cost: survival.probability\*raw, smile\_price: flat\_vol\_price + cost}. The survival weighting accounts for the reduced probability that an exotic product survives to expiry — reducing the smile correction proportionally. Pure: reads inputs and returns OverlayResult, no WRITES.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-exotics.src.market\_hedge\_overlay.hedge\_smile\_cost` (hash `c9515d6cabe6fa7d`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-exotics.src.market\_hedge\_overlay.hedge\_smile\_overlay` (hash `f0e76adbfe52bff3`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-exotics.src.market\_hedge\_overlay.hedge\_smile\_cost` (hash `29524a2874bb4b1d`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-exotics.src.market\_hedge\_overlay.hedge\_smile\_overlay` (hash `fab6408771222d73`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.mc.price\_asian
 
-- **claim** (`cl\_0c9170cf3532edfd`): price\_asian prices an arithmetic Asian option by Monte Carlo with a geometric-average control variate. It runs two passes: the first collects antithetic-pair (arithmetic, geometric) samples and accumulates online covariance via Welford to estimate the regression coefficient β = Cov(arith, geo)/Var(geo). The second pass applies the control correction Y = arith\_sample − β·(geo\_sample − E\[geo\]) where E\[geo\] is \`geometric\_asian\_price / df\` (the undiscounted analytic geometric mean). The final price is \`df·E\[Y\]\`.
+- **claim** (`cl\_b7162cfe6f3d113a`): price\_asian prices an arithmetic Asian option by Monte Carlo with a geometric-average control variate. It runs two passes: the first collects antithetic-pair (arithmetic, geometric) samples and accumulates online covariance via Welford to estimate the regression coefficient β = Cov(arith, geo)/Var(geo). The second pass applies the control correction Y = arith\_sample − β·(geo\_sample − E\[geo\]) where E\[geo\] is \`geometric\_asian\_price / df\` (the undiscounted analytic geometric mean). The final price is \`df·E\[Y\]\`.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:29:51Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-exotics.src.mc.price\_asian` (hash `677ff2b715a639a9`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-exotics.src.mc.price\_asian` (hash `f9332c4946b55771`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:29:51Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:51Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.multiasset.CorrelationError.fmt
 
@@ -2692,14 +2578,14 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.multiasset.discounted\_payoff
 
-- **claim** (`cl\_087568f6c01a0ff4`): discounted\_payoff aggregates basket legs according to the basket kind and applies the option payoff. For BasketKind::Basket the aggregate is \`Σ weight\_i · S\_i(T)\` (weighted sum). For BestOf it is \`max\_i(weight\_i · S\_i(T))\`. For WorstOf it is \`min\_i(weight\_i · S\_i(T))\`. The intrinsic \`(agg − K)⁺\` or \`(K − agg)⁺\` is then discounted by \`df\`.
+- **claim** (`cl\_ff67f2fb8489acd7`): discounted\_payoff aggregates basket legs according to the basket kind and applies the option payoff. For BasketKind::Basket the aggregate is \`Σ weight\_i · S\_i(T)\` (weighted sum). For BestOf it is \`max\_i(weight\_i · S\_i(T))\`. For WorstOf it is \`min\_i(weight\_i · S\_i(T))\`. The intrinsic \`(agg − K)⁺\` or \`(K − agg)⁺\` is then discounted by \`df\`.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:29:51Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-exotics.src.multiasset.discounted\_payoff` (hash `d8bea0aefd84f250`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-exotics.src.multiasset.discounted\_payoff` (hash `b901b0075bddecc8`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:29:51Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:51Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.pde.GridLayout.apply\_dirichlet
 
@@ -2725,14 +2611,14 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.perpetual.analytic\_greeks\_match\_central\_finite\_difference
 
-- **claim** (`cl\_bf08bd6b3803f04d`): analytic\_greeks\_match\_central\_finite\_difference verifies that perpetual\_greeks returns Greeks consistent with perpetual\_price via symmetric finite-difference checks at h=1e-4·S for delta/gamma, h=1e-6 for vega, and h=1e-7 for rate sensitivities. Specifically: delta = ∂V/∂S, gamma = ∂²V/∂S² (via delta FD), vega = ∂V/∂σ, and rhos are computed through the cost-of-carry chain (discount\_rho = ∂V/∂r, carry\_rho = ∂V/∂b) or the FX chain (rho\_dom = ∂V/∂r\_dom, rho\_for = ∂V/∂r\_for). All agree to 1e-6 relative / 1e-9 absolute (spot Greeks) or 1e-5/1e-7 (rate Greeks). The price field of PerpetualGreeks must be bit-identical to perpetual\_price output.
+- **claim** (`cl\_9e8dbd54dcd623f4`): analytic\_greeks\_match\_central\_finite\_difference verifies that perpetual\_greeks returns Greeks consistent with perpetual\_price via symmetric finite-difference checks at h=1e-4·S for delta/gamma, h=1e-6 for vega, and h=1e-7 for rate sensitivities. Specifically: delta = ∂V/∂S, gamma = ∂²V/∂S² (via delta FD), vega = ∂V/∂σ, and rhos are computed through the cost-of-carry chain (discount\_rho = ∂V/∂r, carry\_rho = ∂V/∂b) or the FX chain (rho\_dom = ∂V/∂r\_dom, rho\_for = ∂V/∂r\_for). All agree to 1e-6 relative / 1e-9 absolute (spot Greeks) or 1e-5/1e-7 (rate Greeks). The price field of PerpetualGreeks must be bit-identical to perpetual\_price output.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:48:16Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-exotics.src.perpetual.analytic\_greeks\_match\_central\_finite\_difference` (hash `2512e0af64089c3b`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-exotics.src.perpetual.analytic\_greeks\_match\_central\_finite\_difference` (hash `21968505c96079a3`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:48:16Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:48:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.perpetual.characteristic\_roots
 
@@ -2747,14 +2633,14 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.perpetual.closed\_form\_matches\_independent\_bisection\_rederivation
 
-- **claim** (`cl\_75dc853bf1cf09b0`): closed\_form\_matches\_independent\_bisection\_rederivation verifies that perpetual\_price and perpetual\_exercise\_boundary implement the exact closed-form solution to the characteristic equation ψ(y) = ½σ²y(y−1) + by − r = 0. For calls, the root y₁ \> 1 is isolated by bisection (200 halvings, reaching machine precision) with initial bracket expanded from hi=2 doubling until ψ(hi)\>0; the exercise boundary is S\* = K·y₁/(y₁−1) and the price is (S\*−K)·(S/S\*)^y₁ for S\<S\*, else S−K. For puts, the root y₂\<0 is found symmetrically by bracketing on the negative axis. Both price and boundary must agree with the bisection rederivation to 1e-10 relative / 1e-12 absolute tolerance across six market points including the σ→0 regime (vol=1e-3).
+- **claim** (`cl\_b9c01417a09af251`): closed\_form\_matches\_independent\_bisection\_rederivation verifies that perpetual\_price and perpetual\_exercise\_boundary implement the exact closed-form solution to the characteristic equation ψ(y) = ½σ²y(y−1) + by − r = 0. For calls, the root y₁ \> 1 is isolated by bisection (200 halvings, reaching machine precision) with initial bracket expanded from hi=2 doubling until ψ(hi)\>0; the exercise boundary is S\* = K·y₁/(y₁−1) and the price is (S\*−K)·(S/S\*)^y₁ for S\<S\*, else S−K. For puts, the root y₂\<0 is found symmetrically by bracketing on the negative axis. Both price and boundary must agree with the bisection rederivation to 1e-10 relative / 1e-12 absolute tolerance across six market points including the σ→0 regime (vol=1e-3).
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:48:16Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-exotics.src.perpetual.closed\_form\_matches\_independent\_bisection\_rederivation` (hash `57cab5ded8979dfb`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-exotics.src.perpetual.closed\_form\_matches\_independent\_bisection\_rederivation` (hash `2bfdefde1af04c63`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:48:16Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:48:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.perpetual.perpetual\_exercise\_boundary
 
@@ -2802,14 +2688,14 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.pivot.pivot\_tra\_price\_cv
 
-- **claim** (`cl\_168bdb0815c5c98c`): pivot\_tra\_price\_cv prices a Pivot TRA via antithetic-pair MC with a linear control variate. The control is the sum of discounted forward legs \`Σ\_k g·(S₀·carry\_df\_at(t\_k) − K·df\_k)\` — computed from the STORED yield via \`carry\_df\_at\` (never \`discount\_rate() − carry\_rate()\` reconstruction, preserving FX byte-identity per spec §8). The regression coefficient β = online Cov(pivot\_pv, X) / Var(X) is estimated in the first pass; the second pass applies \`Y = pivot\_pv − β·(X − E\[X\])\` and reports \`E\[Y\]\` with its standard error.
+- **claim** (`cl\_f7a4c61703ed8fef`): pivot\_tra\_price\_cv prices a Pivot TRA via antithetic-pair MC with a linear control variate. The control is the sum of discounted forward legs \`Σ\_k g·(S₀·carry\_df\_at(t\_k) − K·df\_k)\` — computed from the STORED yield via \`carry\_df\_at\` (never \`discount\_rate() − carry\_rate()\` reconstruction, preserving FX byte-identity per spec §8). The regression coefficient β = online Cov(pivot\_pv, X) / Var(X) is estimated in the first pass; the second pass applies \`Y = pivot\_pv − β·(X − E\[X\])\` and reports \`E\[Y\]\` with its standard error.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:29:51Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-exotics.src.pivot.pivot\_tra\_price\_cv` (hash `2c8ee053f4823fb4`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-exotics.src.pivot.pivot\_tra\_price\_cv` (hash `234bea16e1b009c4`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:29:51Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:51Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.pivot.walk\_path
 
@@ -2824,25 +2710,25 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.quanto.quanto\_digital\_mc
 
-- **claim** (`cl\_3ad3380a4ea95e1a`): quanto\_digital\_mc prices a quanto digital option via antithetic Monte Carlo, applying the quanto drift adjustment through quanto\_adjusted\_inputs before simulation. Each path draws a single standard-normal variate z; antithetic pairing evaluates pays(+1) and pays(−1) and averages them, which zeroes the first-order MC bias. The discounted mean over cfg.pairs paths is the price estimate; the standard error is computed from the Welford online variance.
+- **claim** (`cl\_e6334debcf79f37a`): quanto\_digital\_mc prices a quanto digital option via antithetic Monte Carlo, applying the quanto drift adjustment through quanto\_adjusted\_inputs before simulation. Each path draws a single standard-normal variate z; antithetic pairing evaluates pays(+1) and pays(−1) and averages them, which zeroes the first-order MC bias. The discounted mean over cfg.pairs paths is the price estimate; the standard error is computed from the Welford online variance.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:40:33Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-exotics.src.quanto.quanto\_digital\_mc` (hash `86c22d1442923c28`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-exotics.src.quanto.quanto\_digital\_mc` (hash `243f3ac275c43974`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:40:33Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:40:33Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.quanto.quanto\_digital\_price
 
-- **claim** (`cl\_16921621c2eb5b23`): quanto\_digital\_price prices a cash-or-nothing digital under quanto adjustment. It calls \`quanto\_adjusted\_inputs\` to shift the drift by the quanto correlation adjustment (−ρ·σ\_S·σ\_X·T absorbed into an effective carry), then applies the standard GK cash-digital formula: \`d2 = (ln(S/K) + (b\_adj + ½σ²)T) / (σ√T) − σ√T\`; price = \`df·Φ(ω·d2)\` where ω = +1 for call, −1 for put.
+- **claim** (`cl\_e653e4b0d06fd080`): quanto\_digital\_price prices a cash-or-nothing digital under quanto adjustment. It calls \`quanto\_adjusted\_inputs\` to shift the drift by the quanto correlation adjustment (−ρ·σ\_S·σ\_X·T absorbed into an effective carry), then applies the standard GK cash-digital formula: \`d2 = (ln(S/K) + (b\_adj + ½σ²)T) / (σ√T) − σ√T\`; price = \`df·Φ(ω·d2)\` where ω = +1 for call, −1 for put.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:29:51Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-exotics.src.quanto.quanto\_digital\_price` (hash `266c8cc47aa60369`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-exotics.src.quanto.quanto\_digital\_price` (hash `152a15a152484889`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:29:51Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:51Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.stochvol.VarianceParams.feller\_ratio
 
@@ -2858,49 +2744,47 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.stochvol.log\_spot\_increment
 
-- **claim** (`cl\_897bf355abab9ff3`): log\_spot\_increment(p, v0, v1, dt, lev, z\_perp) returns the log-spot increment dlnS over \[t, t+dt\] under the stochastic-volatility model using Andersen's (2008) broadband discretisation (§3.2, γ1=γ2=½). Full-truncation clips v0,v1 to max(·,0). The exact stochastic-integral substitution ∫√v dW^v = (v1−v0−κθΔ+κ·int\_v)/ξ (int\_v=(½v0+½v1)Δ) is used when ξ\>0, else 0. Result = −½L²·int\_v  +  ρ·L·stoch\_int  +  √(1−ρ²)·L·√int\_v·Z⊥. The function is pure: reads only its six arguments, no I/O, no allocation, no mutation.
+- **claim** (`cl\_08e0e44863cfdaa7`): log\_spot\_increment(p, v0, v1, dt, lev, z\_perp) returns the log-spot increment dlnS over \[t, t+dt\] under the stochastic-volatility model using Andersen's (2008) broadband discretisation (§3.2, γ1=γ2=½). Full-truncation clips v0,v1 to max(·,0). The exact stochastic-integral substitution ∫√v dW^v = (v1−v0−κθΔ+κ·int\_v)/ξ (int\_v=(½v0+½v1)Δ) is used when ξ\>0, else 0. Result = −½L²·int\_v  +  ρ·L·stoch\_int  +  √(1−ρ²)·L·√int\_v·Z⊥. The function is pure: reads only its six arguments, no I/O, no allocation, no mutation.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T00:02:45Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-exotics.src.stochvol.log\_spot\_increment` (hash `753ee4f5733b42e8`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-exotics.src.stochvol.log\_spot\_increment` (hash `9b53904842cd0208`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T00:02:45Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T00:02:45Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.stochvol.qe\_variance\_step
 
-- **claim** (`cl\_7783342ffd17f230`): qe\_variance\_step(p, v, dt, u) advances the Heston CIR variance v by one time step dt using Andersen's (2008) Quadratic-Exponential (QE) scheme. It computes the exact conditional mean m = θ + (v−θ)e^{−κΔ} and conditional variance s² = v·ξ²·e^{−κΔ}·(1−e^{−κΔ})/κ + θ·ξ²·(1−e^{−κΔ})²/(2κ) (Andersen 2008 eqn 17). The dispersion ratio ψ = s²/m² selects the branch: (a) ψ ≤ QE\_SWITCH: squared-Gaussian branch v' = a(b+Z)², b=√(2/ψ−1+√(2/ψ)·√(2/ψ−1)), a=m/(1+b²), Z=Φ⁻¹(u); (b) ψ \> QE\_SWITCH: exponential-with-atom branch, p\*=(ψ−1)/(ψ+1), β=(1−p\*)/m, v'=0 if u≤p\* else ln((1−p\*)/(1−u))/β. A degenerate guard returns m when ψ≤1e-12 (deterministic limit). The function is pure: reads p/v/dt/u, performs no I/O, no allocation, no mutation.
+- **claim** (`cl\_408bb5d21b1d4560`): qe\_variance\_step(p, v, dt, u) advances the Heston CIR variance v by one time step dt using Andersen's (2008) Quadratic-Exponential (QE) scheme. It computes the exact conditional mean m = θ + (v−θ)e^{−κΔ} and conditional variance s² = v·ξ²·e^{−κΔ}·(1−e^{−κΔ})/κ + θ·ξ²·(1−e^{−κΔ})²/(2κ) (Andersen 2008 eqn 17). The dispersion ratio ψ = s²/m² selects the branch: (a) ψ ≤ QE\_SWITCH: squared-Gaussian branch v' = a(b+Z)², b=√(2/ψ−1+√(2/ψ)·√(2/ψ−1)), a=m/(1+b²), Z=Φ⁻¹(u); (b) ψ \> QE\_SWITCH: exponential-with-atom branch, p\*=(ψ−1)/(ψ+1), β=(1−p\*)/m, v'=0 if u≤p\* else ln((1−p\*)/(1−u))/β. A degenerate guard returns m when ψ≤1e-12 (deterministic limit). The function is pure: reads p/v/dt/u, performs no I/O, no allocation, no mutation.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T00:02:45Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-exotics.src.stochvol.qe\_variance\_step` (hash `5f31ff9acfeca156`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-exotics.src.stochvol.qe\_variance\_step` (hash `e23b555cdc5780d6`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T00:02:45Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T00:02:45Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.stochvol.step\_uniforms
 
-- **claim** (`cl\_c8d164bf1cff1a84`): step\_uniforms(seed, stream, path, step) is a pure convenience that constructs a CounterRng with the given coordinates and draws exactly two next\_u01() values, returning them as (u0, u1). These two f64 uniforms in (0,1) are the canonical per-step random inputs for the QE + log-spot increment pair: u0 drives qe\_variance\_step (variance draw) and u1 drives the orthogonal normal via inverse\_cdf. The function owns no persistent state and has no side effects.
+- **claim** (`cl\_1e79763ae6357794`): step\_uniforms(seed, stream, path, step) is a pure convenience that constructs a CounterRng with the given coordinates and draws exactly two next\_u01() values, returning them as (u0, u1). These two f64 uniforms in (0,1) are the canonical per-step random inputs for the QE + log-spot increment pair: u0 drives qe\_variance\_step (variance draw) and u1 drives the orthogonal normal via inverse\_cdf. The function owns no persistent state and has no side effects.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T00:02:45Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-exotics.src.stochvol.step\_uniforms` (hash `620471a090b6e1ac`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-exotics.src.stochvol.step\_uniforms` (hash `172f1da5cfdebfdc`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T00:02:45Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T00:02:45Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.tarf.tarf\_price
 
-- **claim** (`cl\_7a4dd7606b9ad286`): DELIVERABLE exotics/qmc-pathwise-wiring = OPEN (Round-2 P2/M finding; reconciled against the live graph — still genuinely open at this round). \`tarf\_price\` is a pure (side-effect-free) Monte-Carlo TARF valuation: it reads ExoticInputs/Tarf/TarfMcConfig, builds local per-fixing buffers, and returns a TarfResult with no external writes. The OPEN gap: the path generator is STILL the plain \`CounterRng\` antithetic Philox stream (\`CounterRng::new(cfg.seed, 0, pair, 0)\` + inverse\_cdf), NOT the scrambled-Sobol / Brownian-bridge QMC stack in celnet-qmc that already feeds american.rs/multiasset.rs. The path-dependent pricers (tarf/accumulator/lookback/quanto/pivot) therefore forgo the low-discrepancy variance reduction the QMC crate provides. SELF-INVALIDATING: when this pricer is rewired onto celnet-qmc (Sobol/bridge) the function body changes and this claim flips stale, signalling the deliverable has closed; a write-introducing regression also flips it.
+- **claim** (`cl\_317ef33bba35589f`): DELIVERABLE exotics/qmc-pathwise-wiring = OPEN (Round-2 P2/M finding; reconciled against the live graph — still genuinely open at this round). \`tarf\_price\` is a pure (side-effect-free) Monte-Carlo TARF valuation: it reads ExoticInputs/Tarf/TarfMcConfig, builds local per-fixing buffers, and returns a TarfResult with no external writes. The OPEN gap: the path generator is STILL the plain \`CounterRng\` antithetic Philox stream (\`CounterRng::new(cfg.seed, 0, pair, 0)\` + inverse\_cdf), NOT the scrambled-Sobol / Brownian-bridge QMC stack in celnet-qmc that already feeds american.rs/multiasset.rs. The path-dependent pricers (tarf/accumulator/lookback/quanto/pivot) therefore forgo the low-discrepancy variance reduction the QMC crate provides. SELF-INVALIDATING: when this pricer is rewired onto celnet-qmc (Sobol/bridge) the function body changes and this claim flips stale, signalling the deliverable has closed; a write-introducing regression also flips it.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-exotics.src.tarf.tarf\_price` (hash `13d0ba5483a5ea29`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-exotics.src.tarf.tarf\_price` (hash `b20a416008596f75`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.tarf.walk\_path
 
@@ -2926,16 +2810,14 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.touch.one\_touch\_price
 
-- **claim** (`cl\_54ec934259d77d5b`): DELIVERABLE exotics/one-touch-at-hit-pairing-flip = LANDED (backlog tracker still lists it OPEN as the Round-2 P0; reconciled against the live graph). \`one\_touch\_price\` (-\> one\_touch\_with\_side) is a pure (side-effect-free) closed-form one-touch valuation: it reads ExoticInputs/barrier/rebate/timing and returns a price with no external writes. The Round-2 P0 (~28% high / 2x-on-far-barriers at-hit pairing flip + circular golden oracle) is FIXED-AT-ROOT: the at-hit branch is now pinned to an INDEPENDENT first-passage quadrature reference (at\_hit\_matches\_independent\_first\_passage\_quadrature, 1e-12) and guarded by a non-circular family — discounted-hit-probability sandwich (at\_hit\_sandwiched\_by\_discounted\_hit\_probability), t-\>inf perpetual-discounted-hit limit (at\_hit\_t\_infinity\_is\_perpetual\_discounted\_hit\_factor), barrier continuity (at\_hit\_continuous\_at\_the\_barrier), zero-rate collapse to deferred (zero\_discount\_rate\_collapses\_at\_hit\_to\_deferred), and barrier monotonicity. SELF-INVALIDATING: a regression that re-introduces a WRITES side effect, or any re-pairing edit that shifts these anchors, flips this claim stale, re-opening the reconciliation.
+- **claim** (`cl\_4f96bd1ee5ddfc4e`): DELIVERABLE exotics/one-touch-at-hit-pairing-flip = LANDED (backlog tracker still lists it OPEN as the Round-2 P0; reconciled against the live graph). \`one\_touch\_price\` (-\> one\_touch\_with\_side) is a pure (side-effect-free) closed-form one-touch valuation: it reads ExoticInputs/barrier/rebate/timing and returns a price with no external writes. The Round-2 P0 (~28% high / 2x-on-far-barriers at-hit pairing flip + circular golden oracle) is FIXED-AT-ROOT: the at-hit branch is now pinned to an INDEPENDENT first-passage quadrature reference (at\_hit\_matches\_independent\_first\_passage\_quadrature, 1e-12) and guarded by a non-circular family — discounted-hit-probability sandwich (at\_hit\_sandwiched\_by\_discounted\_hit\_probability), t-\>inf perpetual-discounted-hit limit (at\_hit\_t\_infinity\_is\_perpetual\_discounted\_hit\_factor), barrier continuity (at\_hit\_continuous\_at\_the\_barrier), zero-rate collapse to deferred (zero\_discount\_rate\_collapses\_at\_hit\_to\_deferred), and barrier monotonicity. SELF-INVALIDATING: a regression that re-introduces a WRITES side effect, or any re-pairing edit that shifts these anchors, flips this claim stale, re-opening the reconciliation.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-exotics.src.touch.one\_touch\_price` (hash `c46134e5cb06bbdc`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-exotics.src.touch.one\_touch\_price` (hash `ef6ab9375633b54c`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-exotics.src.touch.one\_touch\_with\_side
 
@@ -2995,39 +2877,37 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-fix.src.dialect\_fx.inputs\_for
 
-- **claim** (`cl\_9a9c5e2d13d42212`): inputs\_for(desc, snap) is the pure bridge from FIX-decoded option descriptor + live market snapshot to VanillaInputs: \`VanillaInputs::new(snap.spot, desc.strike, snap.vol, snap.t, snap.r\_dom, snap.r\_for)\`. It reads only its two arguments and allocates nothing. price\_leg(desc, snap, pricer) composes it with a VanillaPricer fn-pointer: \`pricer(desc.option\_type, &inputs\_for(desc, snap))\`, returning the single-leg option price as f64. These two functions are the seam between the FIX wire representation and the celnet-pricer analytics kernel.
+- **claim** (`cl\_7c9add6fb4ef7fe0`): inputs\_for(desc, snap) is the pure bridge from FIX-decoded option descriptor + live market snapshot to VanillaInputs: \`VanillaInputs::new(snap.spot, desc.strike, snap.vol, snap.t, snap.r\_dom, snap.r\_for)\`. It reads only its two arguments and allocates nothing. price\_leg(desc, snap, pricer) composes it with a VanillaPricer fn-pointer: \`pricer(desc.option\_type, &inputs\_for(desc, snap))\`, returning the single-leg option price as f64. These two functions are the seam between the FIX wire representation and the celnet-pricer analytics kernel.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-fix.src.dialect\_fx.inputs\_for` (hash `29ed6c0112ec7c94`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-fix.src.dialect\_fx.price\_leg` (hash `c146a5529c247762`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-fix.src.dialect\_fx.inputs\_for` (hash `e08ad3afe976d084`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-fix.src.dialect\_fx.price\_leg` (hash `54e8936f89ef3882`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-fix.src.dialect\_fx.parse\_put\_or\_call
 
-- **claim** (`cl\_c3281efaa0833590`): parse\_put\_or\_call maps FIX tag-201 byte values to OptionType: b"0"→Put, b"1"→Call, anything else→None. This is the single decode point for put/call on both single-leg (tag 201) and multileg (tag 1358) paths.
+- **claim** (`cl\_75b30429deea6ad2`): parse\_put\_or\_call maps FIX tag-201 byte values to OptionType: b"0"→Put, b"1"→Call, anything else→None. This is the single decode point for put/call on both single-leg (tag 201) and multileg (tag 1358) paths.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:29:52Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-fix.src.dialect\_fx.parse\_put\_or\_call` (hash `a7ab52c077b79a9c`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-fix.src.dialect\_fx.parse\_put\_or\_call` (hash `a5dc4d1336d1870c`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:29:52Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:52Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-fix.src.dialect\_fx.put\_or\_call\_value
 
-- **claim** (`cl\_ae01d306bb74797a`): put\_or\_call\_value is the inverse encoding of parse\_put\_or\_call: OptionType::Call→CALL constant, OptionType::Put→PUT constant, returning a u32 suitable for embedding in a FIX tag-201 push.
+- **claim** (`cl\_ad97c53811978f68`): put\_or\_call\_value is the inverse encoding of parse\_put\_or\_call: OptionType::Call→CALL constant, OptionType::Put→PUT constant, returning a u32 suitable for embedding in a FIX tag-201 push.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:29:52Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-fix.src.dialect\_fx.put\_or\_call\_value` (hash `1f243388170fef8f`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-fix.src.dialect\_fx.put\_or\_call\_value` (hash `107f19901decc4ff`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:29:52Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:52Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-fix.src.dictionary.MsgType.as\_bytes
 
@@ -3064,14 +2944,14 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-fix.src.dictionary.required\_tags
 
-- **claim** (`cl\_5c9d5853d11d63cd`): required\_tags returns the minimal set of FIX tag numbers that must be present for a well-formed message of each MsgType. Tag 35 (MsgType) is always included. The sets are: Logon=\[35,98,108\], ResendRequest=\[35,7,16\], SequenceReset=\[35,36\], QuoteRequest=\[35,131\], NewOrderSingle=\[35,11,54,38\], NewOrderMultileg=\[35,11,555\], ExecutionReport=\[35,37,17,150,39\]. This function is the authoritative tag-presence gate for inbound FIX validation.
+- **claim** (`cl\_9e4a6bd0dcc878eb`): required\_tags returns the minimal set of FIX tag numbers that must be present for a well-formed message of each MsgType. Tag 35 (MsgType) is always included. The sets are: Logon=\[35,98,108\], ResendRequest=\[35,7,16\], SequenceReset=\[35,36\], QuoteRequest=\[35,131\], NewOrderSingle=\[35,11,54,38\], NewOrderMultileg=\[35,11,555\], ExecutionReport=\[35,37,17,150,39\]. This function is the authoritative tag-presence gate for inbound FIX validation.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:29:52Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-fix.src.dictionary.required\_tags` (hash `78ce845887fa1478`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-fix.src.dictionary.required\_tags` (hash `8cb46595b63499b8`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:29:52Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:52Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-fix.src.dictionary.type\_ok
 
@@ -3108,27 +2988,25 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-fix.src.framing.checksum
 
-- **claim** (`cl\_db748fcb0ab3bdb7`): SAFETY/WIRE — FIX session-layer frame integrity is the standard FIX BodyLength/CheckSum (tag 10) modulo-256 sum: checksum folds every byte of the message-up-to-and-including the SOH before tag 10 with wrapping u32 addition and returns (acc & 0xFF) as u8 — the canonical FIX checksum that is always rendered as a 3-digit field and validated on inbound frames (rejects\_corrupted\_checksum, checksum\_is\_mod\_256). A counterparty frame whose recomputed mod-256 checksum does not match the transmitted tag-10 value is rejected at framing, so a corrupted/truncated FIX message never reaches order/quote handling. Pure: it reads only the input byte slice and returns the u8 checksum, mutating nothing.
+- **claim** (`cl\_5d844b044ddb675d`): SAFETY/WIRE — FIX session-layer frame integrity is the standard FIX BodyLength/CheckSum (tag 10) modulo-256 sum: checksum folds every byte of the message-up-to-and-including the SOH before tag 10 with wrapping u32 addition and returns (acc & 0xFF) as u8 — the canonical FIX checksum that is always rendered as a 3-digit field and validated on inbound frames (rejects\_corrupted\_checksum, checksum\_is\_mod\_256). A counterparty frame whose recomputed mod-256 checksum does not match the transmitted tag-10 value is rejected at framing, so a corrupted/truncated FIX message never reaches order/quote handling. Pure: it reads only the input byte slice and returns the u8 checksum, mutating nothing.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-fix.src.framing.checksum` (hash `b9374aac566abc3c`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-fix.src.framing.checksum` (hash `8eb7bdacfe56c638`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-fix.src.framing.parse\_uint
 
-- **claim** (`cl\_3b2d385c68fcec08`): parse\_uint converts a non-empty ASCII decimal byte slice to u64, returning None on an empty slice, any non-digit byte, or integer overflow. Overflow is detected via checked\_mul(10)?.checked\_add(digit)? — no panic, no silent truncation.
+- **claim** (`cl\_96f5e2b4914d8eca`): parse\_uint converts a non-empty ASCII decimal byte slice to u64, returning None on an empty slice, any non-digit byte, or integer overflow. Overflow is detected via checked\_mul(10)?.checked\_add(digit)? — no panic, no silent truncation.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:29:52Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-fix.src.framing.parse\_uint` (hash `85ab03625ee831d8`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-fix.src.framing.parse\_uint` (hash `a4b18c217efe3a24`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:29:52Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:52Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-golden.src.bin.gen\_vectors.basket\_vector
 
@@ -3210,29 +3088,25 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-golden.src.oracle.black76\_price
 
-- **claim** (`cl\_1a2733746bb02c03`): SAFETY/ORACLE — black76\_price is the independent golden reference for futures-style (forward-measure) options (the Black-76 closed form), NOT the production engine's own pricer: for t\<=0 it returns the discounted intrinsic exp(-r·t)·max(sign·(F-K),0); otherwise the standard Black-76 with vsqt=vol·√t, d1=(ln(F/K)+½σ²t)/vsqt, d2=d1-vsqt, discount df=exp(-r·t), Call=df·(F·N(d1)-K·N(d2)) and the Put put-call complement. It is pure and deterministic over its 6 scalar inputs (libm transcendentals only, no I/O/mutation/allocation), so it is a trustworthy can-disagree oracle gating commodity / listed-future-option parity against the engine. Self-invalidates if the closed form drifts.
+- **claim** (`cl\_34ac32cb27e53745`): SAFETY/ORACLE — black76\_price is the independent golden reference for futures-style (forward-measure) options (the Black-76 closed form), NOT the production engine's own pricer: for t\<=0 it returns the discounted intrinsic exp(-r·t)·max(sign·(F-K),0); otherwise the standard Black-76 with vsqt=vol·√t, d1=(ln(F/K)+½σ²t)/vsqt, d2=d1-vsqt, discount df=exp(-r·t), Call=df·(F·N(d1)-K·N(d2)) and the Put put-call complement. It is pure and deterministic over its 6 scalar inputs (libm transcendentals only, no I/O/mutation/allocation), so it is a trustworthy can-disagree oracle gating commodity / listed-future-option parity against the engine. Self-invalidates if the closed form drifts.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-golden.src.oracle.black76\_price` (hash `32eaab454a9d489d`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-golden.src.oracle.black76\_price` (hash `fbf56720552eda3d`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-golden.src.oracle.black76\_undiscounted\_price
 
-- **claim** (`cl\_f57679b44d74ca92`): Golden-oracle gate (Black-76 commodity/forward reference): black76\_undiscounted\_price is a pure closed-form function of (cp, forward, strike, vol, t) using only libm math and the pure xerf\_norm\_cdf, with the t\<=0 intrinsic-payoff branch. No writes, no I/O, deterministic — the QuantLib-pinned reference price the parity suite gates production engines against must be a pure function of its inputs.
+- **claim** (`cl\_7cd1dfc618f1bb74`): Golden-oracle gate (Black-76 commodity/forward reference): black76\_undiscounted\_price is a pure closed-form function of (cp, forward, strike, vol, t) using only libm math and the pure xerf\_norm\_cdf, with the t\<=0 intrinsic-payoff branch. No writes, no I/O, deterministic — the QuantLib-pinned reference price the parity suite gates production engines against must be a pure function of its inputs.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-golden.src.oracle.black76\_undiscounted\_price` (hash `f102d58e0201f65a`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-golden.src.oracle.black76\_undiscounted\_price` (hash `c6f4e1af999c70ba`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-golden.src.oracle.cholesky
 
@@ -3247,29 +3121,25 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-golden.src.oracle.crypto\_inverse\_price
 
-- **claim** (`cl\_4d15ec4ee2c9cacc`): Golden-oracle gate (inverse/coin-margined crypto reference): crypto\_inverse\_price is a pure closed-form function of (cp, spot, strike, vol, t, r, funding) — carry b=r-funding, forward, the (K/F)e^{sigma^2 t} amplitude correction for the 1/S\_T inverse payoff, libm math and pure xerf\_norm\_cdf only. No writes, no I/O, deterministic; the reference price gating the inverse crypto engine must depend solely on its inputs.
+- **claim** (`cl\_a97c32c5c59eee7a`): Golden-oracle gate (inverse/coin-margined crypto reference): crypto\_inverse\_price is a pure closed-form function of (cp, spot, strike, vol, t, r, funding) — carry b=r-funding, forward, the (K/F)e^{sigma^2 t} amplitude correction for the 1/S\_T inverse payoff, libm math and pure xerf\_norm\_cdf only. No writes, no I/O, deterministic; the reference price gating the inverse crypto engine must depend solely on its inputs.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-golden.src.oracle.crypto\_inverse\_price` (hash `25115ba764759b0f`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-golden.src.oracle.crypto\_inverse\_price` (hash `166c41af6b52707f`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-golden.src.oracle.crypto\_linear\_price
 
-- **claim** (`cl\_cd78c020021a6446`): Golden-oracle gate (linear/GK-funding crypto reference): crypto\_linear\_price is a pure closed-form function of (cp, spot, strike, vol, t, r, funding) — applies carry b=r-funding to the forward then delegates to the pure black76\_price. No writes, no I/O, deterministic; the linear crypto reference price the parity suite uses is a pure function of its inputs.
+- **claim** (`cl\_e1febb3d310b4684`): Golden-oracle gate (linear/GK-funding crypto reference): crypto\_linear\_price is a pure closed-form function of (cp, spot, strike, vol, t, r, funding) — applies carry b=r-funding to the forward then delegates to the pure black76\_price. No writes, no I/O, deterministic; the linear crypto reference price the parity suite uses is a pure function of its inputs.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-golden.src.oracle.crypto\_linear\_price` (hash `5f00855fe96a951e`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-golden.src.oracle.crypto\_linear\_price` (hash `79275a81bcbb455e`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-golden.src.oracle.det3
 
@@ -3284,94 +3154,80 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-golden.src.oracle.equity\_bsm\_price
 
-- **claim** (`cl\_a7dadf35d3656059`): SAFETY/ORACLE — equity\_bsm\_price is the independent golden reference for generalized Black-Scholes-Merton equity vanillas (carry b = r - q - repo), NOT the engine's own pricer: for t\<=0 it returns intrinsic max(sign·(S-K),0); otherwise d1=(ln(S/K)+(b+½σ²)t)/(σ√t), d2=d1-σ√t, with cost-of-carry-discounted spot s\_disc=S·exp((b-r)t) and rate-discounted strike k\_disc=K·exp(-r·t), Call=s\_disc·N(d1)-k\_disc·N(d2) and the Put complement. It is pure and deterministic over its 8 scalar inputs (libm only, no I/O/mutation/allocation), serving as a can-disagree oracle gating equity-vanilla parity (dividend yield + repo carry) against the engine. Self-invalidates if the carry decomposition drifts.
+- **claim** (`cl\_79585546bc3d141c`): SAFETY/ORACLE — equity\_bsm\_price is the independent golden reference for generalized Black-Scholes-Merton equity vanillas (carry b = r - q - repo), NOT the engine's own pricer: for t\<=0 it returns intrinsic max(sign·(S-K),0); otherwise d1=(ln(S/K)+(b+½σ²)t)/(σ√t), d2=d1-σ√t, with cost-of-carry-discounted spot s\_disc=S·exp((b-r)t) and rate-discounted strike k\_disc=K·exp(-r·t), Call=s\_disc·N(d1)-k\_disc·N(d2) and the Put complement. It is pure and deterministic over its 8 scalar inputs (libm only, no I/O/mutation/allocation), serving as a can-disagree oracle gating equity-vanilla parity (dividend yield + repo carry) against the engine. Self-invalidates if the carry decomposition drifts.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-golden.src.oracle.equity\_bsm\_price` (hash `258cff621b9d193b`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-golden.src.oracle.equity\_bsm\_price` (hash `624d37274e134fe3`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-golden.src.oracle.floating\_lookback\_price
 
-- **claim** (`cl\_e98b777605b46b35`): \`floating\_lookback\_price\` computes the closed-form price of a floating-strike lookback option (call: S\_T − S\_min; put: S\_max − S\_T) using the Goldman–Sosin–Gatto formula. With b = r\_dom − r\_for and two\_b\_over\_sig2 = 2b/σ², the call is \`S·df\_for·N(a1) − S·df\_dom·N(a2) + S·df\_dom·(σ²/2b)·\[N(−a1+two\_b\_over\_sig2·σ√T) − e^{bT}·N(−a1)\]\` and the put is the symmetric complement.
+- **claim** (`cl\_a753bc5157743b9f`): \`floating\_lookback\_price\` computes the closed-form price of a floating-strike lookback option (call: S\_T − S\_min; put: S\_max − S\_T) using the Goldman–Sosin–Gatto formula. With b = r\_dom − r\_for and two\_b\_over\_sig2 = 2b/σ², the call is \`S·df\_for·N(a1) − S·df\_dom·N(a2) + S·df\_dom·(σ²/2b)·\[N(−a1+two\_b\_over\_sig2·σ√T) − e^{bT}·N(−a1)\]\` and the put is the symmetric complement.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-golden.src.oracle.floating\_lookback\_price` (hash `68bc777b14da6142`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-golden.src.oracle.floating\_lookback\_price` (hash `a2702326ffc025e2`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-golden.src.oracle.forward\_start\_price
 
-- **claim** (`cl\_02299f266a222719`): \`forward\_start\_price\` prices a forward-start option as \`e^{−r\_for·reset} · spot · V\_unit\`, where V\_unit is a unit-spot vanilla (gk\_price with spot=1, strike=moneyness, maturity=expiry−reset). If expiry ≤ reset the option has already started and the payoff collapses to the intrinsic max(cp·(1−moneyness), 0). The formula is exact for a GBM model with flat vol.
+- **claim** (`cl\_d04115375016b1dc`): \`forward\_start\_price\` prices a forward-start option as \`e^{−r\_for·reset} · spot · V\_unit\`, where V\_unit is a unit-spot vanilla (gk\_price with spot=1, strike=moneyness, maturity=expiry−reset). If expiry ≤ reset the option has already started and the payoff collapses to the intrinsic max(cp·(1−moneyness), 0). The formula is exact for a GBM model with flat vol.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-golden.src.oracle.forward\_start\_price` (hash `4965dfc7eca23b47`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-golden.src.oracle.forward\_start\_price` (hash `486bddeb39ab97df`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-golden.src.oracle.fx\_forward\_pv
 
-- **claim** (`cl\_f43dd891ade242a0`): Golden-oracle gate (FX forward PV reference): fx\_forward\_pv is a pure closed-form function of (side, spot, strike, notional, t, r\_dom, r\_for) — side\*notional\*(spot\*e^{-r\_for t} - strike\*e^{-r\_dom t}), dual-discounted, no writes, no I/O, deterministic. The FX-forward reference PV the parity suite pins must depend solely on its inputs.
+- **claim** (`cl\_e0d1d3eeec005729`): Golden-oracle gate (FX forward PV reference): fx\_forward\_pv is a pure closed-form function of (side, spot, strike, notional, t, r\_dom, r\_for) — side\*notional\*(spot\*e^{-r\_for t} - strike\*e^{-r\_dom t}), dual-discounted, no writes, no I/O, deterministic. The FX-forward reference PV the parity suite pins must depend solely on its inputs.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-golden.src.oracle.fx\_forward\_pv` (hash `983a321abbd8d1d8`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-golden.src.oracle.fx\_forward\_pv` (hash `187a2834cf590418`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-golden.src.oracle.fx\_swap\_points
 
-- **claim** (`cl\_c16d7acbbf53523a`): Golden-oracle gate (FX swap points reference): fx\_swap\_points is a pure closed-form function of (spot, near\_t, far\_t, r\_dom, r\_for) — spot\*(e^{b\*far\_t}-e^{b\*near\_t}) with carry b=r\_dom-r\_for, no writes, no I/O, deterministic. The FX-swap points reference the parity suite pins must depend solely on its inputs.
+- **claim** (`cl\_423d4a988b6defe3`): Golden-oracle gate (FX swap points reference): fx\_swap\_points is a pure closed-form function of (spot, near\_t, far\_t, r\_dom, r\_for) — spot\*(e^{b\*far\_t}-e^{b\*near\_t}) with carry b=r\_dom-r\_for, no writes, no I/O, deterministic. The FX-swap points reference the parity suite pins must depend solely on its inputs.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-golden.src.oracle.fx\_swap\_points` (hash `5ed4466aa26a7889`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-golden.src.oracle.fx\_swap\_points` (hash `23f9c25cf4df3229`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-golden.src.oracle.fx\_swap\_pv
 
-- **claim** (`cl\_0040ffc7934b89a8`): \`fx\_swap\_pv\` prices an FX swap as the algebraic sum of two offsetting forward legs: a near leg with side \`near\_side\` at \`near\_t\` and a far leg with side \`−near\_side\` at \`far\_t\`, both evaluated by \`fx\_forward\_pv\`. This makes the swap PV the difference of two discounted FX-forward residuals, consistent with the convention that the near and far legs carry opposite sign on the domestic-currency notional.
+- **claim** (`cl\_6b4c99ecba602ec6`): \`fx\_swap\_pv\` prices an FX swap as the algebraic sum of two offsetting forward legs: a near leg with side \`near\_side\` at \`near\_t\` and a far leg with side \`−near\_side\` at \`far\_t\`, both evaluated by \`fx\_forward\_pv\`. This makes the swap PV the difference of two discounted FX-forward residuals, consistent with the convention that the near and far legs carry opposite sign on the domestic-currency notional.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-golden.src.oracle.fx\_swap\_pv` (hash `d667dd8c40bc2c84`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-golden.src.oracle.fx\_swap\_pv` (hash `c7e2f68692e8ee94`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-golden.src.oracle.gk\_price
 
-- **claim** (`cl\_e00f3e5a329e313a`): SAFETY/ORACLE — gk\_price is the independent golden reference (the Garman-Kohlhagen two-rate FX vanilla closed form) against which the production engine is validated, NOT the engine's own pricer: for t\>0 it computes d1=(ln(S/K)+(r\_dom-r\_for+0.5\*vol^2)\*t)/(vol\*sqrt(t)), d2=d1-vol\*sqrt(t), df\_dom=e^{-r\_dom\*t}, df\_for=e^{-r\_for\*t}, and returns S\*df\_for\*N(d1)-K\*df\_dom\*N(d2) for a Call (put by symmetry); for t\<=0 it returns the discounted intrinsic max(sign\*(S-K),0). It deliberately re-derives the price from first principles with its own norm\_cdf so a parity test (e.g. vanilla\_price\_and\_greeks\_match\_quantlib, also pinned to published QuantLib numbers) can disagree with the engine — the anti-circular-oracle property: numerical correctness is checked against this reference, never merely asserted plausible. Pure: it reads only its scalar args and returns the f64 price, mutating nothing.
+- **claim** (`cl\_5e7ec952f41a41c8`): SAFETY/ORACLE — gk\_price is the independent golden reference (the Garman-Kohlhagen two-rate FX vanilla closed form) against which the production engine is validated, NOT the engine's own pricer: for t\>0 it computes d1=(ln(S/K)+(r\_dom-r\_for+0.5\*vol^2)\*t)/(vol\*sqrt(t)), d2=d1-vol\*sqrt(t), df\_dom=e^{-r\_dom\*t}, df\_for=e^{-r\_for\*t}, and returns S\*df\_for\*N(d1)-K\*df\_dom\*N(d2) for a Call (put by symmetry); for t\<=0 it returns the discounted intrinsic max(sign\*(S-K),0). It deliberately re-derives the price from first principles with its own norm\_cdf so a parity test (e.g. vanilla\_price\_and\_greeks\_match\_quantlib, also pinned to published QuantLib numbers) can disagree with the engine — the anti-circular-oracle property: numerical correctness is checked against this reference, never merely asserted plausible. Pure: it reads only its scalar args and returns the f64 price, mutating nothing.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-golden.src.oracle.gk\_price` (hash `f4dd73d95d32f7f9`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-golden.src.oracle.gk\_price` (hash `05d9a81c58c49f99`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-golden.src.oracle.hedge\_smile\_overlay\_cost
 
@@ -3386,53 +3242,47 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-golden.src.oracle.ndf\_pv
 
-- **claim** (`cl\_3458197c9562d32d`): Golden-oracle gate (NDF PV reference): ndf\_pv is a pure closed-form function of (side, spot, strike, notional, t, r\_dom, r\_for) — a non-deliverable forward prices as the deliverable forward, delegating to the pure fx\_forward\_pv. No writes, no I/O, deterministic; the NDF reference PV the parity suite pins is a pure function of its inputs.
+- **claim** (`cl\_7d2a8fa1a933f057`): Golden-oracle gate (NDF PV reference): ndf\_pv is a pure closed-form function of (side, spot, strike, notional, t, r\_dom, r\_for) — a non-deliverable forward prices as the deliverable forward, delegating to the pure fx\_forward\_pv. No writes, no I/O, deterministic; the NDF reference PV the parity suite pins is a pure function of its inputs.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-golden.src.oracle.ndf\_pv` (hash `292fc7e9cf19eba4`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-golden.src.oracle.ndf\_pv` (hash `9e2764e739302994`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-golden.src.oracle.quanto\_digital\_price
 
-- **claim** (`cl\_8a3c972a476eb8e9`): \`quanto\_digital\_price\` prices a FX-quanto cash-or-nothing digital using the same quanto drift correction as \`quanto\_vanilla\_price\`: it applies r\_for\_adj = r\_for + ρ·σ·σ\_conv, computes d2 directly, and returns df·N(±d2). The formula is the exact BSM limit for a cash digital with quanto-adjusted drift.
+- **claim** (`cl\_73099cf20dcbfdb3`): \`quanto\_digital\_price\` prices a FX-quanto cash-or-nothing digital using the same quanto drift correction as \`quanto\_vanilla\_price\`: it applies r\_for\_adj = r\_for + ρ·σ·σ\_conv, computes d2 directly, and returns df·N(±d2). The formula is the exact BSM limit for a cash digital with quanto-adjusted drift.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-golden.src.oracle.quanto\_digital\_price` (hash `bb583eaab8caf396`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-golden.src.oracle.quanto\_digital\_price` (hash `2b069ffcefb73e36`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-golden.src.oracle.quanto\_vanilla\_price
 
-- **claim** (`cl\_d45ccf03528f1068`): \`quanto\_vanilla\_price\` prices a FX-quanto vanilla by replacing r\_for with r\_for − (−ρ·σ\_asset·σ\_fx), i.e. the quanto carry adjustment is −ρ·σ·σ\_conv, then delegating to \`gk\_price\`. This is the standard quanto drift correction: the asset grows at r\_dom − (r\_for − ρσσ\_conv) under the domestic risk-neutral measure.
+- **claim** (`cl\_55da61667884ebf2`): \`quanto\_vanilla\_price\` prices a FX-quanto vanilla by replacing r\_for with r\_for − (−ρ·σ\_asset·σ\_fx), i.e. the quanto carry adjustment is −ρ·σ·σ\_conv, then delegating to \`gk\_price\`. This is the standard quanto drift correction: the asset grows at r\_dom − (r\_for − ρσσ\_conv) under the domestic risk-neutral measure.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-golden.src.oracle.quanto\_vanilla\_price` (hash `6358037840e2f5c4`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-golden.src.oracle.quanto\_vanilla\_price` (hash `e2f3e1259f692ad4`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-golden.src.oracle.tarf\_bank\_pv\_mc
 
-- **claim** (`cl\_8b5d0c46f279c996`): tarf\_bank\_pv\_mc prices a Target-Accrual Redemption Forward (TARF) from the bank's perspective using antithetic-variate SplitMix64 Monte-Carlo under GBM: drift = (r\_dom − r\_for − ½σ²)dt, diffusion = σ√dt per fixing step. On each favourable fixing the function accumulates the intrinsic gain against a running total; when the total reaches \`target\` the redemption leg settles either the full raw intrinsic (FullGain) or only the remaining cap (CappedGain) and the path terminates immediately. Each unfavourable fixing contributes \`leverage × \|intrinsic\|\` to the bank PV with sign reversed. The antithetic pair (walk(z,+1), walk(z,−1)) is averaged before pushing to the Welford accumulator, so variance is halved relative to a plain estimator. Returns McEstimate{price: mean, std\_error}.
+- **claim** (`cl\_7a6084a32b32f9c9`): tarf\_bank\_pv\_mc prices a Target-Accrual Redemption Forward (TARF) from the bank's perspective using antithetic-variate SplitMix64 Monte-Carlo under GBM: drift = (r\_dom − r\_for − ½σ²)dt, diffusion = σ√dt per fixing step. On each favourable fixing the function accumulates the intrinsic gain against a running total; when the total reaches \`target\` the redemption leg settles either the full raw intrinsic (FullGain) or only the remaining cap (CappedGain) and the path terminates immediately. Each unfavourable fixing contributes \`leverage × \|intrinsic\|\` to the bank PV with sign reversed. The antithetic pair (walk(z,+1), walk(z,−1)) is averaged before pushing to the Welford accumulator, so variance is halved relative to a plain estimator. Returns McEstimate{price: mean, std\_error}.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:29:51Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-golden.src.oracle.tarf\_bank\_pv\_mc` (hash `41fade378f62426b`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-golden.src.oracle.tarf\_bank\_pv\_mc` (hash `99c33d1efb9ce07b`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:29:51Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:51Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-golden.src.table.parse\_barrier\_type
 
@@ -3623,60 +3473,52 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-gpu.src.as\_normal.as\_inverse\_brackets\_libm\_inverse
 
-- **claim** (`cl\_185a53f84b3d270d`): inv\_norm\_cdf(p: f32) -\> f32 (WGSL, path.wgsl) is the inverse normal CDF used in the Sobol QMC path generator. It implements the Acklam rational-approximation with three regions (tail p \< 0.02425, central, upper tail), followed by one Halley-step refinement: \`x = x - (norm\_cdf(x)-p)/norm\_pdf(x) / (1 + 0.5\*x\*(norm\_cdf(x)-p)/norm\_pdf(x))\`. The function is pure (no writes, no allocation). It is the GPU-side counterpart of the CPU Acklam implementation in celnet-qmc, and the two are kept bit-comparable within f32 precision by the test \`as\_inverse\_brackets\_libm\_inverse\`.
+- **claim** (`cl\_95bbd953099a4fb7`): inv\_norm\_cdf(p: f32) -\> f32 (WGSL, path.wgsl) is the inverse normal CDF used in the Sobol QMC path generator. It implements the Acklam rational-approximation with three regions (tail p \< 0.02425, central, upper tail), followed by one Halley-step refinement: \`x = x - (norm\_cdf(x)-p)/norm\_pdf(x) / (1 + 0.5\*x\*(norm\_cdf(x)-p)/norm\_pdf(x))\`. The function is pure (no writes, no allocation). It is the GPU-side counterpart of the CPU Acklam implementation in celnet-qmc, and the two are kept bit-comparable within f32 precision by the test \`as\_inverse\_brackets\_libm\_inverse\`.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-gpu.src.as\_normal.as\_inverse\_brackets\_libm\_inverse` (hash `63ff57ca77a31c47`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-gpu.src.as\_normal.as\_inverse\_brackets\_libm\_inverse` (hash `693a644adb6e992f`, resolved)
   - `github.com-soarsa-celnet.crates.celnet-gpu.src.path.inv\_norm\_cdf` (hash `da3f8c37ce18a8fa`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-gpu.src.batch.as\_erf\_oracle\_brackets\_golden
 
-- **claim** (`cl\_2ce9d316cec41e0c`): erf\_as(x: f32) -\> f32 (WGSL, batch.wgsl) is the GPU f32 error-function, implementing Abramowitz & Stegun formula 7.1.26: \`t = 1/(1+p\*\|x\|)\`, Horner-evaluated 5-term polynomial, \`y = 1 - poly\*exp(-x^2)\`, reflected for x\<0 via \`s = sign(x)\`. The coefficients are bit-identical to the CPU oracle \`erf\_as\_oracle\` in batch.rs (verified by \`as\_erf\_oracle\_brackets\_golden\`). norm\_cdf\_f32 wraps it as \`0.5\*(1 + erf\_as(x \* INV\_SQRT\_2))\`. Both functions are pure (no writes).
+- **claim** (`cl\_cfee216c875736ba`): erf\_as(x: f32) -\> f32 (WGSL, batch.wgsl) is the GPU f32 error-function, implementing Abramowitz & Stegun formula 7.1.26: \`t = 1/(1+p\*\|x\|)\`, Horner-evaluated 5-term polynomial, \`y = 1 - poly\*exp(-x^2)\`, reflected for x\<0 via \`s = sign(x)\`. The coefficients are bit-identical to the CPU oracle \`erf\_as\_oracle\` in batch.rs (verified by \`as\_erf\_oracle\_brackets\_golden\`). norm\_cdf\_f32 wraps it as \`0.5\*(1 + erf\_as(x \* INV\_SQRT\_2))\`. Both functions are pure (no writes).
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-gpu.src.batch.as\_erf\_oracle\_brackets\_golden` (hash `456af2890daa43cd`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-gpu.src.batch.as\_erf\_oracle\_brackets\_golden` (hash `a47f2dd3feef0bed`, resolved)
   - `github.com-soarsa-celnet.crates.celnet-gpu.src.batch.erf\_as` (hash `1fdd259c335fff02`, resolved)
   - `github.com-soarsa-celnet.crates.celnet-gpu.src.batch.norm\_cdf\_f32` (hash `07843579b5c8c768`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-gpu.src.batch.as\_erf\_price\_bound
 
-- **claim** (`cl\_e309772420e8bccc`): PILLAR (CLAUDE.md guardrails 5 + 6 + 7 — numerical code is VALIDATED against a derived bound, never merely asserted plausible; the GPU scale path uses open methods and Metal lacks f64 so the f32 path is rigorously bounded). \`as\_erf\_price\_bound(b)\` is the pure, closed-form per-instrument absolute-error envelope for the f32/\`as\`-erf batch GPU kernel: it returns \`(s\_disc + k\_disc) \* 0.5 \* AS\_ERF\_MAX\_ABS\_ERR\` with \`AS\_ERF\_MAX\_ABS\_ERR = 1.5e-7\`, where the discounted-spot and discounted-strike legs scale the worst-case erf approximation error into a price tolerance. The many-instrument GPU batch path (CLAUDE.md guardrail 6 — IB-sized portfolios / high-throughput scale-out) is reconciled three-way against the exact f64 oracle WITHIN this analytic bound, so the precision claim is proven rather than assumed. The function is side-effect-free: it reads only the borrowed BatchInstrument and computes a scalar via libm-backed exp, mutating nothing.
+- **claim** (`cl\_aebdb893ced5b026`): PILLAR (CLAUDE.md guardrails 5 + 6 + 7 — numerical code is VALIDATED against a derived bound, never merely asserted plausible; the GPU scale path uses open methods and Metal lacks f64 so the f32 path is rigorously bounded). \`as\_erf\_price\_bound(b)\` is the pure, closed-form per-instrument absolute-error envelope for the f32/\`as\`-erf batch GPU kernel: it returns \`(s\_disc + k\_disc) \* 0.5 \* AS\_ERF\_MAX\_ABS\_ERR\` with \`AS\_ERF\_MAX\_ABS\_ERR = 1.5e-7\`, where the discounted-spot and discounted-strike legs scale the worst-case erf approximation error into a price tolerance. The many-instrument GPU batch path (CLAUDE.md guardrail 6 — IB-sized portfolios / high-throughput scale-out) is reconciled three-way against the exact f64 oracle WITHIN this analytic bound, so the precision claim is proven rather than assumed. The function is side-effect-free: it reads only the borrowed BatchInstrument and computes a scalar via libm-backed exp, mutating nothing.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-gpu.src.batch.as\_erf\_price\_bound` (hash `46dd6ddc02ea030c`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-gpu.src.batch.as\_erf\_price\_bound` (hash `0f6462b0bc7d793c`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-gpu.src.batch.batch\_reconciles\_three\_way
 
-- **claim** (`cl\_00280a72d0402ef8`): gk\_price\_as\_oracle(b: &BatchInstrument) -\> f64 is the CPU closed-form GBM (Garman-Kohlhagen) pricer used as the validation oracle for the GPU batch path: d1 = (ln(spot/strike) + (r\_dom − r\_for + 0.5σ²)T) / (σ√T), d2 = d1 − σ√T, price = spot\*exp(−r\_for\*T)\*N(sign\*d1) − strike\*exp(−r\_dom\*T)\*N(sign\*d2) for call (sign=+1) or put (sign=−1), clamped to zero. All transcendentals route through celnet\_core::math (libm-backed, deterministic). cpu\_batch\_with\_as\_erf maps this oracle over a &\[BatchInstrument\] slice. The test \`batch\_reconciles\_three\_way\` asserts GPU batch, CPU path Monte Carlo, and this oracle agree within \`as\_erf\_price\_bound\`.
+- **claim** (`cl\_1df34e9ba1ed28a1`): gk\_price\_as\_oracle(b: &BatchInstrument) -\> f64 is the CPU closed-form GBM (Garman-Kohlhagen) pricer used as the validation oracle for the GPU batch path: d1 = (ln(spot/strike) + (r\_dom − r\_for + 0.5σ²)T) / (σ√T), d2 = d1 − σ√T, price = spot\*exp(−r\_for\*T)\*N(sign\*d1) − strike\*exp(−r\_dom\*T)\*N(sign\*d2) for call (sign=+1) or put (sign=−1), clamped to zero. All transcendentals route through celnet\_core::math (libm-backed, deterministic). cpu\_batch\_with\_as\_erf maps this oracle over a &\[BatchInstrument\] slice. The test \`batch\_reconciles\_three\_way\` asserts GPU batch, CPU path Monte Carlo, and this oracle agree within \`as\_erf\_price\_bound\`.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-gpu.src.batch.batch\_reconciles\_three\_way` (hash `dd16bdd665a38d27`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-gpu.src.batch.cpu\_batch\_with\_as\_erf` (hash `2996231731e07d40`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-gpu.src.batch.gk\_price\_as\_oracle` (hash `6ef0deaabfad30a9`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-gpu.src.batch.batch\_reconciles\_three\_way` (hash `62a9827b9fb3314f`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-gpu.src.batch.cpu\_batch\_with\_as\_erf` (hash `4be3259a0fe967a0`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-gpu.src.batch.gk\_price\_as\_oracle` (hash `1ccad39e7b3d46c9`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-gpu.src.batch.realistic\_batch
 
@@ -3702,17 +3544,15 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-gpu.src.cpu.pairwise\_sum
 
-- **claim** (`cl\_a31efe7951365312`): pairwise\_sum(xs: &\[f64\]) -\> f64 is the numerically-stable recursive summation used for all Monte Carlo reduction readbacks. For slices of length ≤ 64 it uses a sequential accumulator (cache-friendly base case); for longer slices it recursively splits at the midpoint. This avoids catastrophic cancellation in large path counts compared to a naive left-fold. It is pure (reads only xs, no allocation of its own, self-recursive). The test \`pairwise\_sum\_is\_order\_stable\` confirms the result is independent of call-site ordering.
+- **claim** (`cl\_2a7a648b1cb343f4`): pairwise\_sum(xs: &\[f64\]) -\> f64 is the numerically-stable recursive summation used for all Monte Carlo reduction readbacks. For slices of length ≤ 64 it uses a sequential accumulator (cache-friendly base case); for longer slices it recursively splits at the midpoint. This avoids catastrophic cancellation in large path counts compared to a naive left-fold. It is pure (reads only xs, no allocation of its own, self-recursive). The test \`pairwise\_sum\_is\_order\_stable\` confirms the result is independent of call-site ordering.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-gpu.src.cpu.pairwise\_sum` (hash `8d2d1f5efa33146f`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-gpu.src.cpu.pairwise\_sum\_is\_order\_stable` (hash `e2dda35712a2d485`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-gpu.src.cpu.pairwise\_sum` (hash `6b4e609b46d2654d`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-gpu.src.cpu.pairwise\_sum\_is\_order\_stable` (hash `17bcf91c91020bf5`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-gpu.src.greeks.sobol\_coord
 
@@ -3772,17 +3612,15 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-heston.src.lib.carr\_madan
 
-- **claim** (`cl\_ee1814e371f2b757`): carr\_madan(opt, m, p) prices a European FX option via the Carr–Madan damped-integrand method, working in log-moneyness κ = ln(K/S₀) to avoid forming the large ln(S₀) phase. It evaluates ψ(v) = φ\_ret(v−(α+1)i) / (α²+α−v²+i(2α+1)v) with damping constant α = CM\_ALPHA, then integrates Re\[e^{−ivκ}·ψ(v)\] from 0 to an adaptively chosen upper limit via Gauss–Legendre quadrature. The call price is df\_d·S₀·e^{−ακ}/π·∫…dv; puts are obtained via exact put–call parity. The upper integration limit and panel count are both chosen adaptively (carr\_madan\_upper + oscillation count) to keep truncation and quadrature error below double precision.
+- **claim** (`cl\_25e6f400b50de7f9`): carr\_madan(opt, m, p) prices a European FX option via the Carr–Madan damped-integrand method, working in log-moneyness κ = ln(K/S₀) to avoid forming the large ln(S₀) phase. It evaluates ψ(v) = φ\_ret(v−(α+1)i) / (α²+α−v²+i(2α+1)v) with damping constant α = CM\_ALPHA, then integrates Re\[e^{−ivκ}·ψ(v)\] from 0 to an adaptively chosen upper limit via Gauss–Legendre quadrature. The call price is df\_d·S₀·e^{−ακ}/π·∫…dv; puts are obtained via exact put–call parity. The upper integration limit and panel count are both chosen adaptively (carr\_madan\_upper + oscillation count) to keep truncation and quadrature error below double precision.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-heston.src.lib.carr\_madan` (hash `92dbd00be145a5cb`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-heston.src.lib.carr\_madan` (hash `56fd7bb70b6fbfe3`, resolved)
   - `github.com-soarsa-celnet.crates.celnet-heston.src.lib.carr\_madan\_upper` (hash `582b96c856df7992`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-heston.src.lib.carr\_madan\_upper
 
@@ -3821,17 +3659,15 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-heston.src.lib.cos
 
-- **claim** (`cl\_7e7abda981d9447e`): cos(opt, m, p) prices a European FX option via the Fang–Oosterlee (2008) COS series. It computes Heston cumulants c₁ (mean log-return) and c₂ (variance) per Fang–Oosterlee Table 11, then the 4th cumulant c₄ via numerical 4th-difference of char\_exponent (see heston\_c4). The truncation range is \[c₁ ± L·√(\|c₂\|+√\|c₄\|)\] — including c₄ is essential for fat-tailed regimes (high σ, long T). The put leg is always priced directly (call coefficients evaluate e^{hi} at the wide right edge and lose precision); the call is recovered by exact put–call parity C = P + S·e^{−r\_f T} − K·e^{−r\_d T}. N=128 cosine terms are summed with the n=0 half-weight Fourier convention.
+- **claim** (`cl\_3c661d03e4c711b0`): cos(opt, m, p) prices a European FX option via the Fang–Oosterlee (2008) COS series. It computes Heston cumulants c₁ (mean log-return) and c₂ (variance) per Fang–Oosterlee Table 11, then the 4th cumulant c₄ via numerical 4th-difference of char\_exponent (see heston\_c4). The truncation range is \[c₁ ± L·√(\|c₂\|+√\|c₄\|)\] — including c₄ is essential for fat-tailed regimes (high σ, long T). The put leg is always priced directly (call coefficients evaluate e^{hi} at the wide right edge and lose precision); the call is recovered by exact put–call parity C = P + S·e^{−r\_f T} − K·e^{−r\_d T}. N=128 cosine terms are summed with the n=0 half-weight Fourier convention.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-heston.src.lib.cos` (hash `c3fe9c5adbd4872a`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-heston.src.lib.cos` (hash `2f8e2710d9e960de`, resolved)
   - `github.com-soarsa-celnet.crates.celnet-heston.src.lib.heston\_c4` (hash `8bb293ada7026de8`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-heston.src.lib.gauss\_legendre
 
@@ -4022,16 +3858,14 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-journal.src.crc32.crc32
 
-- **claim** (`cl\_659f58539d67b81c`): SAFETY — journal record integrity is a standard CRC-32 (IEEE 802.3 reflected polynomial): crc32 seeds 0xFFFF\_FFFF, folds each byte through the 256-entry reflected lookup TABLE (crc = (crc \>\> 8) ^ TABLE\[(crc ^ b) & 0xFF\]), and finalizes with the XOR-out 0xFFFF\_FFFF — the bit-exact reflected CRC-32 whose known-answer vectors (e.g. "123456789" =\> 0xCBF43926) are pinned by the crate's own vectors test. Every framed journal record carries this checksum over sync-word+header+payload (frame\_record appends crc32(frame).to\_le\_bytes()), so any single-bit flip in a persisted record changes the CRC and the record is rejected on replay rather than silently mis-applied to recovered book/market state. Pure: it reads only the input byte slice and returns the u32 checksum, mutating nothing.
+- **claim** (`cl\_8568f9ba79330ff6`): SAFETY — journal record integrity is a standard CRC-32 (IEEE 802.3 reflected polynomial): crc32 seeds 0xFFFF\_FFFF, folds each byte through the 256-entry reflected lookup TABLE (crc = (crc \>\> 8) ^ TABLE\[(crc ^ b) & 0xFF\]), and finalizes with the XOR-out 0xFFFF\_FFFF — the bit-exact reflected CRC-32 whose known-answer vectors (e.g. "123456789" =\> 0xCBF43926) are pinned by the crate's own vectors test. Every framed journal record carries this checksum over sync-word+header+payload (frame\_record appends crc32(frame).to\_le\_bytes()), so any single-bit flip in a persisted record changes the CRC and the record is rejected on replay rather than silently mis-applied to recovered book/market state. Pure: it reads only the input byte slice and returns the u32 checksum, mutating nothing.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-journal.src.crc32.crc32` (hash `3f476398af9b5360`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-journal.src.crc32.crc32` (hash `7a5214530d659c2c`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-journal.src.lib.frame\_record
 
@@ -4068,16 +3902,14 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-limits.src.check.exposure\_of
 
-- **claim** (`cl\_028dc7864b9d8cf0`): Pre-trade limit-breach exposure safety (deliverable: limits-breach-detection). exposure\_of is a pure, deterministic, total function over LimitMetric: it reads the aggregated net Greeks, vega ladder, gross concentration, and non-additive VaR/ES/StopLoss out of borrowed &NodeAggregate / &NonAdditiveExposure and returns the scalar exposure with no I/O and no mutation of any input. Determinism is the load-bearing safety property — pre-trade and post-trade checks (its four callers) measure the same metric against the same limit cap identically, so a breach can never be hidden by a non-reproducible reading. Pure (no WRITES edges); self-invalidates on change.
+- **claim** (`cl\_2fa0fda3880e47b9`): Pre-trade limit-breach exposure safety (deliverable: limits-breach-detection). exposure\_of is a pure, deterministic, total function over LimitMetric: it reads the aggregated net Greeks, vega ladder, gross concentration, and non-additive VaR/ES/StopLoss out of borrowed &NodeAggregate / &NonAdditiveExposure and returns the scalar exposure with no I/O and no mutation of any input. Determinism is the load-bearing safety property — pre-trade and post-trade checks (its four callers) measure the same metric against the same limit cap identically, so a breach can never be hidden by a non-reproducible reading. Pure (no WRITES edges); self-invalidates on change.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-limits.src.check.exposure\_of` (hash `33b6a8d364f48a24`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-limits.src.check.exposure\_of` (hash `a8ae45d0cf0ac814`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-limits.src.check.gross\_concentration
 
@@ -4147,56 +3979,50 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-limits.src.tree.scope\_pair\_of
 
-- **claim** (`cl\_21d4779b561666ec`): scope\_pair\_of derives a CcyPair from any Underlying using a defined priority fallback: (1) direct as\_ccy\_pair() if present; (2) equity currency → self-pair (n, n); (3) commodity currency → self-pair; (4) digital asset quote currency parsed via Ccy::parse, defaulting to USD on failure; (5) USD/USD for any other variant. This ensures every Underlying maps to a valid non-panicking CcyPair for limit-tree bucketing.
+- **claim** (`cl\_5a602611fcf34795`): scope\_pair\_of derives a CcyPair from any Underlying using a defined priority fallback: (1) direct as\_ccy\_pair() if present; (2) equity currency → self-pair (n, n); (3) commodity currency → self-pair; (4) digital asset quote currency parsed via Ccy::parse, defaulting to USD on failure; (5) USD/USD for any other variant. This ensures every Underlying maps to a valid non-panicking CcyPair for limit-tree bucketing.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:04Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-limits.src.tree.scope\_pair\_of` (hash `b826d00aaad5fcf2`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-limits.src.tree.scope\_pair\_of` (hash `ddbd97de15422e12`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:58:04Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:04Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-linear.src.forward.fair\_forward
 
-- **claim** (`cl\_f24106da2a03068d`): fair\_forward(inputs) returns the at-market forward rate F = spot \* e^{b \* near\_settle\_t} (carry.forward\_factor delegates to libm::exp). It is the zero-PV strike: a forward struck at this rate has PV = 0, verified bit-for-bit by fair\_forward\_has\_zero\_pv\_to\_bits (assert\_eq!(pv(...at\_fair...).to\_bits(), 0\_f64.to\_bits())). The function reads only &LinearInputs and writes nothing — pure and side-effect-free.
+- **claim** (`cl\_8e067eb9862eff50`): fair\_forward(inputs) returns the at-market forward rate F = spot \* e^{b \* near\_settle\_t} (carry.forward\_factor delegates to libm::exp). It is the zero-PV strike: a forward struck at this rate has PV = 0, verified bit-for-bit by fair\_forward\_has\_zero\_pv\_to\_bits (assert\_eq!(pv(...at\_fair...).to\_bits(), 0\_f64.to\_bits())). The function reads only &LinearInputs and writes nothing — pure and side-effect-free.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-linear.src.forward.fair\_forward` (hash `8fe7baddcb7e1922`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-linear.src.forward.fair\_forward` (hash `4b4493a8019e6442`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-linear.src.forward.fd\_central
 
-- **claim** (`cl\_23bc3eb00cae6e48`): greeks(inputs) computes the complete analytic Greek vector {pv, delta, rho\_dom, rho\_for, theta} for an FX outright forward in closed form, routing all transcendentals through celnet\_core::math::exp (libm-backed, bit-identical to the Carry accessors) for cross-platform reproducibility. The closed forms are: delta = sign\*N\*e^{-r\_for\*t}; rho\_dom = sign\*N\*K\*t\*e^{-r\_dom\*t}; rho\_for = -sign\*N\*S\*t\*e^{-r\_for\*t}; theta = sign\*N\*(-r\_for\*S\*e^{-r\_for\*t} + r\_dom\*K\*e^{-r\_dom\*t}). All five outputs are independently cross-checked against central finite differences (fd\_central: (f(x+h)-f(x-h))/(2h)) in greeks\_match\_central\_finite\_difference. The function reads only its &LinearInputs argument and writes nothing — pure and side-effect-free.
+- **claim** (`cl\_7a35775663464dd2`): greeks(inputs) computes the complete analytic Greek vector {pv, delta, rho\_dom, rho\_for, theta} for an FX outright forward in closed form, routing all transcendentals through celnet\_core::math::exp (libm-backed, bit-identical to the Carry accessors) for cross-platform reproducibility. The closed forms are: delta = sign\*N\*e^{-r\_for\*t}; rho\_dom = sign\*N\*K\*t\*e^{-r\_dom\*t}; rho\_for = -sign\*N\*S\*t\*e^{-r\_for\*t}; theta = sign\*N\*(-r\_for\*S\*e^{-r\_for\*t} + r\_dom\*K\*e^{-r\_dom\*t}). All five outputs are independently cross-checked against central finite differences (fd\_central: (f(x+h)-f(x-h))/(2h)) in greeks\_match\_central\_finite\_difference. The function reads only its &LinearInputs argument and writes nothing — pure and side-effect-free.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
   - `github.com-soarsa-celnet.crates.celnet-linear.src.forward.fd\_central` (hash `dd5e7bfbcae0835c`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-linear.src.forward.greeks` (hash `158e21164bf1c1d5`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-linear.src.forward.greeks` (hash `a15380cab2973d35`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-linear.src.forward.oracle\_pv
 
-- **claim** (`cl\_a732f1d60547dc6b`): pv\_at(inputs, t) is the single closed-form present-value kernel for an FX outright forward at time t: PV = sign(side) \* N \* df\_dom(t) \* (F(t) - K), where F(t) = spot \* e^{b\*t} (forward via carry.forward\_factor), df\_dom(t) = e^{-r\_dom\*t} (via carry.discount\_df), K = contract\_rate, N = notional, sign = +1 Buy / -1 Sell. It reads only its two arguments, has no side effects, no allocation, no I/O — pure by inspection. Both forward::pv and swap::pv delegate entirely to this kernel. The formula is cross-validated against oracle\_pv (an independent flat expansion: sign\*N\*(spot\*e^{-r\_for\*t} - K\*e^{-r\_dom\*t})) byte-for-byte in pv\_matches\_independent\_discount\_bond\_route.
+- **claim** (`cl\_bc53e828b6b6122d`): pv\_at(inputs, t) is the single closed-form present-value kernel for an FX outright forward at time t: PV = sign(side) \* N \* df\_dom(t) \* (F(t) - K), where F(t) = spot \* e^{b\*t} (forward via carry.forward\_factor), df\_dom(t) = e^{-r\_dom\*t} (via carry.discount\_df), K = contract\_rate, N = notional, sign = +1 Buy / -1 Sell. It reads only its two arguments, has no side effects, no allocation, no I/O — pure by inspection. Both forward::pv and swap::pv delegate entirely to this kernel. The formula is cross-validated against oracle\_pv (an independent flat expansion: sign\*N\*(spot\*e^{-r\_for\*t} - K\*e^{-r\_dom\*t})) byte-for-byte in pv\_matches\_independent\_discount\_bond\_route.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
   - `github.com-soarsa-celnet.crates.celnet-linear.src.forward.oracle\_pv` (hash `98c8cc36056c9c1e`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-linear.src.forward.pv` (hash `ec86527227f86818`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-linear.src.forward.pv\_at` (hash `ebd3c2b9f1393a3c`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-linear.src.forward.pv` (hash `89e9a976bdfbfd58`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-linear.src.forward.pv\_at` (hash `0459cf4629f916ac`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-linear.src.inputs.LinearInputError.fmt
 
@@ -4280,16 +4106,14 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-observability.src.channel.telemetry\_channel
 
-- **claim** (`cl\_0ebb0c3300808c4d`): PILLAR (CLAUDE.md guardrail 11 — zero-cost observability, telemetry offloads over a BOUNDED queue so the pinned hot core stays alloc/lock/log-free). \`telemetry\_channel(capacity)\` is the single constructor of the hot-path-to-drain seam: it builds an rtrb single-producer/single-consumer RingBuffer of FIXED \`capacity.max(1)\` (the bounded queue) and returns the (HotProbe, TelemetryDrain) pair sharing one Arc\<Shared\>. The hot side (HotProbe) only pushes HotSamples into the pre-sized ring and never blocks or allocates per sample; backpressure is absorbed by dropping/counting gaps, never by stalling the pricing core. The function itself is a pure constructor — its output depends only on \`capacity\`, it mutates no shared/global state and has no observable side effect beyond returning the owned channel ends.
+- **claim** (`cl\_f11e8bf1326a7a10`): PILLAR (CLAUDE.md guardrail 11 — zero-cost observability, telemetry offloads over a BOUNDED queue so the pinned hot core stays alloc/lock/log-free). \`telemetry\_channel(capacity)\` is the single constructor of the hot-path-to-drain seam: it builds an rtrb single-producer/single-consumer RingBuffer of FIXED \`capacity.max(1)\` (the bounded queue) and returns the (HotProbe, TelemetryDrain) pair sharing one Arc\<Shared\>. The hot side (HotProbe) only pushes HotSamples into the pre-sized ring and never blocks or allocates per sample; backpressure is absorbed by dropping/counting gaps, never by stalling the pricing core. The function itself is a pure constructor — its output depends only on \`capacity\`, it mutates no shared/global state and has no observable side effect beyond returning the owned channel ends.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-observability.src.channel.telemetry\_channel` (hash `c569240a52f60405`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-observability.src.channel.telemetry\_channel` (hash `91c12ae6fd592725`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-observability.src.latency.LatencyRecorder.p99\_ns
 
@@ -4458,31 +4282,27 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-parity.tests.broker\_smile.high\_rr\_em\_case\_reprices
 
-- **claim** (`cl\_787d27b325a4938a`): Rows 10–11 (parity) — \`smile\_reprices\_broker\_strangle\` and \`high\_rr\_em\_case\_reprices\` prove the broker→smile calibration reprices the market strangle (a call+put priced at a single vol σ\_ATM+BF at the broker wing strikes) to 1e-8 relative / 1e-10 absolute, AND that the naive arithmetic-butterfly smile (the documented '\#1 production bug' in docs/CAPABILITIES-VS-COMPETITION.md) \*misprices\* the same strangle by a demonstrably larger error. Asserting the naive misprice exceeds a threshold while the calibrated one is within tolerance proves the calibration is a real correction, not a tautology — on both a G10 benign slice and a high-risk-reversal EM case.
+- **claim** (`cl\_cdb1556258651b5d`): Rows 10–11 (parity) — \`smile\_reprices\_broker\_strangle\` and \`high\_rr\_em\_case\_reprices\` prove the broker→smile calibration reprices the market strangle (a call+put priced at a single vol σ\_ATM+BF at the broker wing strikes) to 1e-8 relative / 1e-10 absolute, AND that the naive arithmetic-butterfly smile (the documented '\#1 production bug' in docs/CAPABILITIES-VS-COMPETITION.md) \*misprices\* the same strangle by a demonstrably larger error. Asserting the naive misprice exceeds a threshold while the calibrated one is within tolerance proves the calibration is a real correction, not a tautology — on both a G10 benign slice and a high-risk-reversal EM case.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-parity.tests.broker\_smile.high\_rr\_em\_case\_reprices` (hash `6c2230f4640848ae`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-parity.tests.broker\_smile.smile\_reprices\_broker\_strangle` (hash `7ab9ab7e93c829d1`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-parity.tests.broker\_smile.high\_rr\_em\_case\_reprices` (hash `03f57290a8b1a816`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-parity.tests.broker\_smile.smile\_reprices\_broker\_strangle` (hash `70729153226c2e71`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-parity.tests.conventions.atm\_dns\_strike\_is\_delta\_neutral
 
-- **claim** (`cl\_51cf2a465a7c14d4`): Row 2 (parity) — \`strike\_delta\_roundtrip\_all\_conventions\` proves the convention-aware strike↔delta solver round-trips in all four FX delta conventions (SpotUnadjusted, ForwardUnadjusted, SpotPremiumAdjusted, ForwardPremiumAdjusted) for both calls and puts at the 25Δ and 10Δ wings: solve \`strike\_from\_delta(conv, opt, target, &inputs)\` then re-read \`convention\_delta(conv, opt, &solved\_inputs)\` and require agreement to 1e-9 relative / 1e-10 absolute, for ≥50 rows. \`atm\_dns\_strike\_is\_delta\_neutral\` additionally proves the delta-neutral-straddle ATM strike satisfies call\_delta + put\_delta = 0 to 1e-9 in unadjusted conventions, and the ATMF strike equals the outright forward F=S·e^{(r\_d−r\_f)T} to 1e-12.
+- **claim** (`cl\_7a3785f29996a982`): Row 2 (parity) — \`strike\_delta\_roundtrip\_all\_conventions\` proves the convention-aware strike↔delta solver round-trips in all four FX delta conventions (SpotUnadjusted, ForwardUnadjusted, SpotPremiumAdjusted, ForwardPremiumAdjusted) for both calls and puts at the 25Δ and 10Δ wings: solve \`strike\_from\_delta(conv, opt, target, &inputs)\` then re-read \`convention\_delta(conv, opt, &solved\_inputs)\` and require agreement to 1e-9 relative / 1e-10 absolute, for ≥50 rows. \`atm\_dns\_strike\_is\_delta\_neutral\` additionally proves the delta-neutral-straddle ATM strike satisfies call\_delta + put\_delta = 0 to 1e-9 in unadjusted conventions, and the ATMF strike equals the outright forward F=S·e^{(r\_d−r\_f)T} to 1e-12.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-parity.tests.conventions.atm\_dns\_strike\_is\_delta\_neutral` (hash `a9447b269a4ec044`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-parity.tests.conventions.strike\_delta\_roundtrip\_all\_conventions` (hash `7b4ce5a5dad0c9d6`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-parity.tests.conventions.atm\_dns\_strike\_is\_delta\_neutral` (hash `73de77f36df21a34`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-parity.tests.conventions.strike\_delta\_roundtrip\_all\_conventions` (hash `e09a675fd159bfee`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-parity.tests.conventions.closed\_form\_gk
 
@@ -4497,29 +4317,25 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-parity.tests.conventions.premium\_adjusted\_call\_delta\_is\_guarded
 
-- **claim** (`cl\_abdb2127758a53b7`): Row 3 (parity) — \`premium\_adjusted\_call\_delta\_is\_guarded\` proves the premium-adjusted call delta non-monotone guard: (a) a target above the attainable ceiling (delta at strike K\_max where ∂Δ/∂K=0, computed by \`premium\_adjusted\_call\_delta\_max\`) returns \`Err(Unreachable)\` — not a silently wrong strike — and (b) a target at 50% of the ceiling is reachable and round-trips to 1e-9. This is the non-monotone primitive Bloomberg/Fenics bury; Celnet exposes and gates it.
+- **claim** (`cl\_3137de993fb233d9`): Row 3 (parity) — \`premium\_adjusted\_call\_delta\_is\_guarded\` proves the premium-adjusted call delta non-monotone guard: (a) a target above the attainable ceiling (delta at strike K\_max where ∂Δ/∂K=0, computed by \`premium\_adjusted\_call\_delta\_max\`) returns \`Err(Unreachable)\` — not a silently wrong strike — and (b) a target at 50% of the ceiling is reachable and round-trips to 1e-9. This is the non-monotone primitive Bloomberg/Fenics bury; Celnet exposes and gates it.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-parity.tests.conventions.premium\_adjusted\_call\_delta\_is\_guarded` (hash `2bc2aa8b775a17c2`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-parity.tests.conventions.premium\_adjusted\_call\_delta\_is\_guarded` (hash `b9386e1dfd675dca`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-parity.tests.conventions.vanilla\_price\_matches\_closed\_form
 
-- **claim** (`cl\_98d72126483975c6`): Row 1 (parity) — \`vanilla\_price\_matches\_closed\_form\` proves the production pricer \`celnet\_vanilla::price\` reproduces the independent closed-form Garman-Kohlhagen formula C = S·e^{-r\_f·T}·N(d1) − K·e^{-r\_d·T}·N(d2), P = K·e^{-r\_d·T}·N(-d2) − S·e^{-r\_f·T}·N(-d1), d1=(ln(S/K)+(r\_d−r\_f+½σ²)T)/(σ√T), d2=d1−σ√T, computed in the test via a separate expression grouping (not the same code path), to tolerance 1e-12 relative / 1e-14 absolute across ≥14 reference-market × option-side rows. This is the pricing floor every incumbent meets behind closed doors; Celnet meets it in the open.
+- **claim** (`cl\_3d49ed7069a88f38`): Row 1 (parity) — \`vanilla\_price\_matches\_closed\_form\` proves the production pricer \`celnet\_vanilla::price\` reproduces the independent closed-form Garman-Kohlhagen formula C = S·e^{-r\_f·T}·N(d1) − K·e^{-r\_d·T}·N(d2), P = K·e^{-r\_d·T}·N(-d2) − S·e^{-r\_f·T}·N(-d1), d1=(ln(S/K)+(r\_d−r\_f+½σ²)T)/(σ√T), d2=d1−σ√T, computed in the test via a separate expression grouping (not the same code path), to tolerance 1e-12 relative / 1e-14 absolute across ≥14 reference-market × option-side rows. This is the pricing floor every incumbent meets behind closed doors; Celnet meets it in the open.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-parity.tests.conventions.vanilla\_price\_matches\_closed\_form` (hash `d2afe482a6f0930e`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-parity.tests.conventions.vanilla\_price\_matches\_closed\_form` (hash `f05b1b8013557276`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-parity.tests.crossasset.cp
 
@@ -4537,28 +4353,26 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-parity.tests.determinism.price\_and\_greeks\_are\_bit\_identical
 
-- **claim** (`cl\_f989399a0ceac657`): Row 15 (parity) — \`price\_and\_greeks\_are\_bit\_identical\` proves bit-for-bit reproducibility (IEEE-754 \`to\_bits()\` equality) of the price and full 13-Greek set via three non-vacuous checks: (a) reconstruct inputs from a shortest-round-trip decimal snapshot string (no shared provenance) and recompute — proves value-determinism not identity-dependence; (b) cross-thread: 8 spawned threads each rebuild inputs from the snapshot and compute independently, all must agree to the bit — catches hidden global/thread-local state; (c) committed golden-bit table for two textbook regimes (e.g. call price bits \`0x4024\_e6b2\_e3d5\_4dc0\` for S=K=100, σ=20%, T=1, r\_d=5%) — catches cross-run/cross-build ULP regressions. \`smile\_and\_exotics\_are\_bit\_identical\` extends the same three-mode check to the broker smile and analytic exotic pricers.
+- **claim** (`cl\_315818b75005f6f9`): Row 15 (parity) — \`price\_and\_greeks\_are\_bit\_identical\` proves bit-for-bit reproducibility (IEEE-754 \`to\_bits()\` equality) of the price and full 13-Greek set via three non-vacuous checks: (a) reconstruct inputs from a shortest-round-trip decimal snapshot string (no shared provenance) and recompute — proves value-determinism not identity-dependence; (b) cross-thread: 8 spawned threads each rebuild inputs from the snapshot and compute independently, all must agree to the bit — catches hidden global/thread-local state; (c) committed golden-bit table for two textbook regimes (e.g. call price bits \`0x4024\_e6b2\_e3d5\_4dc0\` for S=K=100, σ=20%, T=1, r\_d=5%) — catches cross-run/cross-build ULP regressions. \`smile\_and\_exotics\_are\_bit\_identical\` extends the same three-mode check to the broker smile and analytic exotic pricers.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-parity.tests.determinism.price\_and\_greeks\_are\_bit\_identical` (hash `17c8d5f1966e6bff`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-parity.tests.determinism.smile\_and\_exotics\_are\_bit\_identical` (hash `b9457781075d2751`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-parity.tests.determinism.price\_and\_greeks\_are\_bit\_identical` (hash `0fe16ae3b42af347`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-parity.tests.determinism.smile\_and\_exotics\_are\_bit\_identical` (hash `aefe5d5596012bf1`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-parity.tests.essvi.ssvi\_byte\_recovered\_at\_constant\_rho
 
-- **claim** (`cl\_ecb63bf9e0bf7f8f`): \`ssvi\_byte\_recovered\_at\_constant\_rho\` establishes that \`ExtendedSlice::from\_curvature(θ, ρ, φ(θ))\` is bit-for-bit identical to \`ParametricSurface::total\_variance(k, θ)\` across a full 5×4×3×4×7 parameter sweep (420 checked points). This proves the eSSVI single-tenor slice is a lossless, zero-approximation projection of the full SSVI surface when ρ is held constant.
+- **claim** (`cl\_820c75e347163b83`): \`ssvi\_byte\_recovered\_at\_constant\_rho\` establishes that \`ExtendedSlice::from\_curvature(θ, ρ, φ(θ))\` is bit-for-bit identical to \`ParametricSurface::total\_variance(k, θ)\` across a full 5×4×3×4×7 parameter sweep (420 checked points). This proves the eSSVI single-tenor slice is a lossless, zero-approximation projection of the full SSVI surface when ρ is held constant.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:40:33Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-parity.tests.essvi.ssvi\_byte\_recovered\_at\_constant\_rho` (hash `7d599245cdd37cc2`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-parity.tests.essvi.ssvi\_byte\_recovered\_at\_constant\_rho` (hash `cc7a668f244fbb8a`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:40:33Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:40:33Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-parity.tests.exotics.barrier\_kind
 
@@ -4573,18 +4387,16 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-parity.tests.exotics.barriers\_match\_quantlib
 
-- **claim** (`cl\_e21d308cd1492cbf`): Rows 12–14 (parity) — \`digitals\_match\_quantlib\`, \`touches\_and\_dnt\_match\_quantlib\`, and \`barriers\_match\_quantlib\` prove the first-generation exotic pricers reproduce an independent QuantLib 1.42.1 reference to 1e-9 relative / 1e-10 absolute (and 1e-6 / 1e-8 for the double-barrier reflection series) across: European digitals (cash-or-nothing and asset-or-nothing, both directions), one-touch / no-touch / double-no-touch / double-touch, all eight single-barrier flavours (up/down × in/out × call/put), and the double knock-out/knock-in. The QuantLib-sourced CSV tables live in celnet-golden; this crate re-runs the checks through the public celnet-exotics API.
+- **claim** (`cl\_bc651e0f5459d762`): Rows 12–14 (parity) — \`digitals\_match\_quantlib\`, \`touches\_and\_dnt\_match\_quantlib\`, and \`barriers\_match\_quantlib\` prove the first-generation exotic pricers reproduce an independent QuantLib 1.42.1 reference to 1e-9 relative / 1e-10 absolute (and 1e-6 / 1e-8 for the double-barrier reflection series) across: European digitals (cash-or-nothing and asset-or-nothing, both directions), one-touch / no-touch / double-no-touch / double-touch, all eight single-barrier flavours (up/down × in/out × call/put), and the double knock-out/knock-in. The QuantLib-sourced CSV tables live in celnet-golden; this crate re-runs the checks through the public celnet-exotics API.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-parity.tests.exotics.barriers\_match\_quantlib` (hash `f325a8fa20f8fb2d`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-parity.tests.exotics.digitals\_match\_quantlib` (hash `209d2f94a52b1720`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-parity.tests.exotics.touches\_and\_dnt\_match\_quantlib` (hash `30ee07ccd75bc46f`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-parity.tests.exotics.barriers\_match\_quantlib` (hash `0052a4181fd7be9d`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-parity.tests.exotics.digitals\_match\_quantlib` (hash `c9894d6be061dd40`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-parity.tests.exotics.touches\_and\_dnt\_match\_quantlib` (hash `4a3ffc3274ace677`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-parity.tests.exotics.celnet\_double\_barrier
 
@@ -4643,29 +4455,27 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-parity.tests.greeks.full\_greek\_set\_matches\_finite\_difference
 
-- **claim** (`cl\_630ea2744cb27951`): Rows 4–5 (parity) — \`full\_greek\_set\_matches\_finite\_difference\` proves all nine 'core' Greeks (delta\_spot, vega, rho\_dom, rho\_for, theta, gamma, vanna, volga, charm) agree with central finite differences of the price function to 1e-5 relative / 1e-7 absolute (first-order) or 1e-4 / 1e-6 (second-order), across ≥126 rows. \`second\_order\_wing\_greeks\_match\_fd\` proves the remaining four (speed=∂gamma/∂S, zomma=∂gamma/∂σ, color=∂gamma/∂T, delta\_forward=∂\[V\_fwd\]/∂F) against their defining derivatives, completing the full 13-Greek set. \`put\_call\_parity\_across\_regimes\` proves C−P = S·e^{-r\_f·T} − K·e^{-r\_d·T} across ≥7 regimes.
+- **claim** (`cl\_359da77a6a79fadb`): Rows 4–5 (parity) — \`full\_greek\_set\_matches\_finite\_difference\` proves all nine 'core' Greeks (delta\_spot, vega, rho\_dom, rho\_for, theta, gamma, vanna, volga, charm) agree with central finite differences of the price function to 1e-5 relative / 1e-7 absolute (first-order) or 1e-4 / 1e-6 (second-order), across ≥126 rows. \`second\_order\_wing\_greeks\_match\_fd\` proves the remaining four (speed=∂gamma/∂S, zomma=∂gamma/∂σ, color=∂gamma/∂T, delta\_forward=∂\[V\_fwd\]/∂F) against their defining derivatives, completing the full 13-Greek set. \`put\_call\_parity\_across\_regimes\` proves C−P = S·e^{-r\_f·T} − K·e^{-r\_d·T} across ≥7 regimes.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-parity.tests.greeks.full\_greek\_set\_matches\_finite\_difference` (hash `044b885693c3ee44`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-parity.tests.greeks.put\_call\_parity\_across\_regimes` (hash `e1f523ba902d1c65`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-parity.tests.greeks.second\_order\_wing\_greeks\_match\_fd` (hash `72d7eb317feaadcf`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-parity.tests.greeks.full\_greek\_set\_matches\_finite\_difference` (hash `fdff0fffb0d6e344`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-parity.tests.greeks.put\_call\_parity\_across\_regimes` (hash `8429141a6d1d4755`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-parity.tests.greeks.second\_order\_wing\_greeks\_match\_fd` (hash `f3657a8b745175d7`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-parity.tests.heston.call\_monotone\_non\_increasing\_in\_strike\_and\_positive
 
-- **claim** (`cl\_32fc70edc02681a1`): call\_monotone\_non\_increasing\_in\_strike\_and\_positive verifies the static no-arbitrage condition ∂C/∂K ≤ 0 for the Heston pricer across both Carr-Madan and COS implementations. Over all parameter sets in param\_sweep, maturities {0.5, 1.0, 2.0, 3.0}y, and strikes K ∈ \[60, 160\] step 5, every call price must be non-negative (\> -1e-12) and non-increasing in K (C(K+5) ≤ C(K) + 1e-9).
+- **claim** (`cl\_844afd0e342bf30e`): call\_monotone\_non\_increasing\_in\_strike\_and\_positive verifies the static no-arbitrage condition ∂C/∂K ≤ 0 for the Heston pricer across both Carr-Madan and COS implementations. Over all parameter sets in param\_sweep, maturities {0.5, 1.0, 2.0, 3.0}y, and strikes K ∈ \[60, 160\] step 5, every call price must be non-negative (\> -1e-12) and non-increasing in K (C(K+5) ≤ C(K) + 1e-9).
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:29:51Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-parity.tests.heston.call\_monotone\_non\_increasing\_in\_strike\_and\_positive` (hash `b12623fa0228b1e0`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-parity.tests.heston.call\_monotone\_non\_increasing\_in\_strike\_and\_positive` (hash `26f0fd929c87fc20`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:29:51Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:51Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-parity.tests.linear.sign
 
@@ -4779,14 +4589,14 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-parity.tests.qmc.brownian\_bridge\_reproduces\_discrete\_covariance
 
-- **claim** (`cl\_a2a97376af28be1d`): brownian\_bridge\_reproduces\_discrete\_covariance verifies that the BrownianBridge weight matrix A satisfies Cov(W(tᵢ), W(tⱼ)) = min(tᵢ, tⱼ) to within 1e-12 for all step counts m ∈ {1,2,4,8,16,17,32} and all index pairs (i,j). Specifically it asserts ‖Aᵢ · Aⱼ − min(tᵢ,tⱼ)‖ \< 1e-12, confirming that the bridge's linear map correctly encodes Brownian covariance structure regardless of irregular step sizes.
+- **claim** (`cl\_4b2974d1471ba45a`): brownian\_bridge\_reproduces\_discrete\_covariance verifies that the BrownianBridge weight matrix A satisfies Cov(W(tᵢ), W(tⱼ)) = min(tᵢ, tⱼ) to within 1e-12 for all step counts m ∈ {1,2,4,8,16,17,32} and all index pairs (i,j). Specifically it asserts ‖Aᵢ · Aⱼ − min(tᵢ,tⱼ)‖ \< 1e-12, confirming that the bridge's linear map correctly encodes Brownian covariance structure regardless of irregular step sizes.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:29:51Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-parity.tests.qmc.brownian\_bridge\_reproduces\_discrete\_covariance` (hash `fd4e018722ab927c`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-parity.tests.qmc.brownian\_bridge\_reproduces\_discrete\_covariance` (hash `04aa32f67f95ef7c`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:29:51Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:51Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-parity.tests.qmc.compositions
 
@@ -4812,14 +4622,14 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-parity.tests.qmc.sobol\_dim1\_is\_van\_der\_corput\_base2
 
-- **claim** (`cl\_fc7255c05e803529`): \`sobol\_dim1\_is\_van\_der\_corput\_base2\` proves two structural properties of \`SobolSequence\`: (1) for every i in 0..512, \`point\_u32(i)\[0\]\` equals the bit-reversal of the Gray code \`i ^ (i \>\> 1)\` — the base-2 van der Corput radical inverse; (2) for each k in 1..=8, the first 2^k points partition the dyadic grid {0, 1/2^k, …, (2^k−1)/2^k} with no cell hit twice — a verified (0,k,1)-net property.
+- **claim** (`cl\_e6ffa1630c44c8e9`): \`sobol\_dim1\_is\_van\_der\_corput\_base2\` proves two structural properties of \`SobolSequence\`: (1) for every i in 0..512, \`point\_u32(i)\[0\]\` equals the bit-reversal of the Gray code \`i ^ (i \>\> 1)\` — the base-2 van der Corput radical inverse; (2) for each k in 1..=8, the first 2^k points partition the dyadic grid {0, 1/2^k, …, (2^k−1)/2^k} with no cell hit twice — a verified (0,k,1)-net property.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:40:33Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-parity.tests.qmc.sobol\_dim1\_is\_van\_der\_corput\_base2` (hash `2eb1005e5fcee21d`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-parity.tests.qmc.sobol\_dim1\_is\_van\_der\_corput\_base2` (hash `80ff257a0e5db50d`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:40:33Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:40:33Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-parity.tests.qmc\_highdim.asian\_plain\_mc\_rmse
 
@@ -4878,19 +4688,17 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-parity.tests.structured.accumulator\_continuous\_monitoring\_knocks\_out\_more\_than\_discrete
 
-- **claim** (`cl\_2cb313346c486312`): Rows 16–19 (parity) — four structured-product gates prove the second-generation / TARF book in the open: (16) \`quanto\_closed\_form\_matches\_mc\_and\_collapses\_at\_zero\_correlation\`: quanto vanilla and digital closed forms reproduce an independent MC within 4·σ\_MC+1e-6; at zero correlation ρ=0 the quanto drift vanishes and the quanto price equals the plain vanilla to 1e-12, i.e. \`quanto\_vanilla\_price(opt, &e, QuantoParams::new(σ\_fx,0)) == vanilla\_price(opt, &i)\`. (17) lookback closed forms (floating- and fixed-strike) cross-validated by MC, plus the optionality invariant lookback ≥ vanilla. (18) TARF gap-risk: FullGain settlement is strictly costlier than CappedGain, with a positive expected overshoot on FullGain and zero on CappedGain. (19) Accumulator: continuous (Brownian-bridge) monitoring knocks out more than discrete fixing-only monitoring, so fewer fixings settle.
+- **claim** (`cl\_b40e794637c553f4`): Rows 16–19 (parity) — four structured-product gates prove the second-generation / TARF book in the open: (16) \`quanto\_closed\_form\_matches\_mc\_and\_collapses\_at\_zero\_correlation\`: quanto vanilla and digital closed forms reproduce an independent MC within 4·σ\_MC+1e-6; at zero correlation ρ=0 the quanto drift vanishes and the quanto price equals the plain vanilla to 1e-12, i.e. \`quanto\_vanilla\_price(opt, &e, QuantoParams::new(σ\_fx,0)) == vanilla\_price(opt, &i)\`. (17) lookback closed forms (floating- and fixed-strike) cross-validated by MC, plus the optionality invariant lookback ≥ vanilla. (18) TARF gap-risk: FullGain settlement is strictly costlier than CappedGain, with a positive expected overshoot on FullGain and zero on CappedGain. (19) Accumulator: continuous (Brownian-bridge) monitoring knocks out more than discrete fixing-only monitoring, so fewer fixings settle.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-parity.tests.structured.accumulator\_continuous\_monitoring\_knocks\_out\_more\_than\_discrete` (hash `35e6a17442794bd7`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-parity.tests.structured.lookback\_closed\_form\_matches\_mc\_and\_dominates\_vanilla` (hash `d35a8b1fdd9e4b71`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-parity.tests.structured.quanto\_closed\_form\_matches\_mc\_and\_collapses\_at\_zero\_correlation` (hash `cc57330a9213c1bf`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-parity.tests.structured.tarf\_gap\_risk\_premium\_is\_priced\_and\_signed` (hash `681337c1cb80ea48`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-parity.tests.structured.accumulator\_continuous\_monitoring\_knocks\_out\_more\_than\_discrete` (hash `0e283ea3a4702e2f`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-parity.tests.structured.lookback\_closed\_form\_matches\_mc\_and\_dominates\_vanilla` (hash `809b775e4d689841`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-parity.tests.structured.quanto\_closed\_form\_matches\_mc\_and\_collapses\_at\_zero\_correlation` (hash `eb67496e5b1f6dc7`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-parity.tests.structured.tarf\_gap\_risk\_premium\_is\_priced\_and\_signed` (hash `977f5d7f360ce088`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-plugin-api.src.error.PluginError.fmt
 
@@ -4927,16 +4735,14 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-plugin-api.src.example.reference\_call
 
-- **claim** (`cl\_ac83b1371028b0b7`): reference\_call(inputs: &CarryInputs) -\> f64 is the canonical closed-form carry-generalized call pricer used as the ground-truth oracle in plugin-api tests. It computes: r = inputs.carry.discount\_rate(), b = inputs.carry.carry\_rate(), d₁ = \[ln(S/K) + (b + 0.5σ²)t\]/(σ√t), d₂ = d₁ − σ√t, call = S·e^{(b−r)t}·Φ(d₁) − K·e^{−rt}·Φ(d₂). This is the generalized Garman-Kohlhagen/Black formula parameterized through the carry seam: for FX Carry::FxRates, r = r\_dom and b = r\_dom − r\_for, reproducing the exact FX two-rate arithmetic; for Carry::CostOfCarry, r and b are the stored fields directly. The function is pure (reads only &CarryInputs, routes all transcendentals through celnet\_core::math: sqrt, ln, exp, norm\_cdf; no I/O, no mutation, no allocation).
+- **claim** (`cl\_2e936c7053505a5d`): reference\_call(inputs: &CarryInputs) -\> f64 is the canonical closed-form carry-generalized call pricer used as the ground-truth oracle in plugin-api tests. It computes: r = inputs.carry.discount\_rate(), b = inputs.carry.carry\_rate(), d₁ = \[ln(S/K) + (b + 0.5σ²)t\]/(σ√t), d₂ = d₁ − σ√t, call = S·e^{(b−r)t}·Φ(d₁) − K·e^{−rt}·Φ(d₂). This is the generalized Garman-Kohlhagen/Black formula parameterized through the carry seam: for FX Carry::FxRates, r = r\_dom and b = r\_dom − r\_for, reproducing the exact FX two-rate arithmetic; for Carry::CostOfCarry, r and b are the stored fields directly. The function is pure (reads only &CarryInputs, routes all transcendentals through celnet\_core::math: sqrt, ln, exp, norm\_cdf; no I/O, no mutation, no allocation).
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-plugin-api.src.example.reference\_call` (hash `3f18d2f283e4ce1f`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-plugin-api.src.example.reference\_call` (hash `54487c8c55b70c0f`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-plugin-api.src.lib.fx\_rates
 
@@ -4973,63 +4779,59 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-plugin-host.src.abi.canonicalize
 
-- **claim** (`cl\_708281a8dc6eca54`): abi::canonicalize(x: f64) -\> f64 is a pure NaN-normalization function: if x.is\_nan() it returns f64::from\_bits(CANONICAL\_NAN\_BITS), otherwise it returns x unchanged. This is the single boundary canonicalization applied to every f64 crossing the host/guest interface — both on import arguments entering the guest and on the price return value exiting the guest.
+- **claim** (`cl\_e44cef9bfdd0afee`): abi::canonicalize(x: f64) -\> f64 is a pure NaN-normalization function: if x.is\_nan() it returns f64::from\_bits(CANONICAL\_NAN\_BITS), otherwise it returns x unchanged. This is the single boundary canonicalization applied to every f64 crossing the host/guest interface — both on import arguments entering the guest and on the price return value exiting the guest.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-plugin-host.src.abi.canonicalize` (hash `f3108b33812316f9`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-plugin-host.src.abi.canonicalize` (hash `040cbf767cb4be99`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-plugin-host.src.abi.carry\_to\_abi
 
-- **claim** (`cl\_ded161c160b26ba1`): carry\_to\_abi encodes a Carry enum into the three-word ABI tuple (kind:i32, a:f64, b:f64) used at the host/guest boundary: Carry::FxRates{r\_dom,r\_for} → (CARRY\_KIND\_FX\_RATES, r\_dom, r\_for) and Carry::CostOfCarry{r,b} → (CARRY\_KIND\_COST\_OF\_CARRY, r, b). The integer tag is the sole discriminant the guest reads to branch between FX-rate and cost-of-carry semantics; the two f64 words are always the ordered pair of the enum's fields, preserving all information losslessly.
+- **claim** (`cl\_e790970e2cb03f04`): carry\_to\_abi encodes a Carry enum into the three-word ABI tuple (kind:i32, a:f64, b:f64) used at the host/guest boundary: Carry::FxRates{r\_dom,r\_for} → (CARRY\_KIND\_FX\_RATES, r\_dom, r\_for) and Carry::CostOfCarry{r,b} → (CARRY\_KIND\_COST\_OF\_CARRY, r, b). The integer tag is the sole discriminant the guest reads to branch between FX-rate and cost-of-carry semantics; the two f64 words are always the ordered pair of the enum's fields, preserving all information losslessly.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:40:34Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-plugin-host.src.abi.carry\_to\_abi` (hash `bd922a65e49ad125`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-plugin-host.src.abi.carry\_to\_abi` (hash `ecbaf6269956f445`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:40:34Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:40:34Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-plugin-host.src.abi.input\_to\_bytes
 
-- **claim** (`cl\_4b4a5103817d07b0`): abi::input\_to\_bytes(inputs: &CarryInputs) -\> \[u8; INPUT\_BYTES\] serializes a CarryInputs struct to a fixed-size little-endian byte array. The layout is: 6 × 8-byte f64 fields (spot, strike, vol, t, carry\_0, carry\_1) each canonicalized before encoding via to\_bits().to\_le\_bytes(), followed by two i32 discriminants packed after the numeric block (underlying\_to\_abi(&inputs.underlying) at base, carry\_kind at base+4). This is the sole serialization format shared between host and Wasm guest.
+- **claim** (`cl\_da0ec2fb2312377a`): abi::input\_to\_bytes(inputs: &CarryInputs) -\> \[u8; INPUT\_BYTES\] serializes a CarryInputs struct to a fixed-size little-endian byte array. The layout is: 6 × 8-byte f64 fields (spot, strike, vol, t, carry\_0, carry\_1) each canonicalized before encoding via to\_bits().to\_le\_bytes(), followed by two i32 discriminants packed after the numeric block (underlying\_to\_abi(&inputs.underlying) at base, carry\_kind at base+4). This is the sole serialization format shared between host and Wasm guest.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-plugin-host.src.abi.input\_to\_bytes` (hash `1be5c25d5feeaf70`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-plugin-host.src.abi.input\_to\_bytes` (hash `f4328395d3ec47fc`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-plugin-host.src.abi.opt\_from\_abi
 
-- **claim** (`cl\_d12059cab1192a71`): opt\_to\_abi and opt\_from\_abi form a bijection for OptionType: Call↔0 and Put↔1. opt\_to\_abi maps every OptionType to its ABI i32 tag exhaustively (no default arm). opt\_from\_abi is the partial inverse: 0→Some(Call), 1→Some(Put), any other i32→None. Together they define the stable, lossless encoding of option direction across the host/guest ABI boundary.
+- **claim** (`cl\_91e0adde1c3b2404`): opt\_to\_abi and opt\_from\_abi form a bijection for OptionType: Call↔0 and Put↔1. opt\_to\_abi maps every OptionType to its ABI i32 tag exhaustively (no default arm). opt\_from\_abi is the partial inverse: 0→Some(Call), 1→Some(Put), any other i32→None. Together they define the stable, lossless encoding of option direction across the host/guest ABI boundary.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:40:34Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-plugin-host.src.abi.opt\_from\_abi` (hash `777fef291e92d8ab`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-plugin-host.src.abi.opt\_to\_abi` (hash `d398dc07b8f32413`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-plugin-host.src.abi.opt\_from\_abi` (hash `081b877567192f6b`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-plugin-host.src.abi.opt\_to\_abi` (hash `c1133dcec9734a13`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:40:34Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:40:34Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-plugin-host.src.abi.underlying\_to\_abi
 
-- **claim** (`cl\_fa5704cf696f46bf`): underlying\_to\_abi maps every Underlying variant to a distinct integer asset-class discriminant: Fx→UNDERLYING\_CLASS\_FX, Metal→UNDERLYING\_CLASS\_METAL, Equity→UNDERLYING\_CLASS\_EQUITY, Commodity→UNDERLYING\_CLASS\_COMMODITY, DigitalAsset→UNDERLYING\_CLASS\_DIGITAL\_ASSET. This is the sole point where the host signals the asset class to the guest; it is exhaustive and const, so no new variant can be silently ignored at compile time.
+- **claim** (`cl\_f4086d883e1ca3ea`): underlying\_to\_abi maps every Underlying variant to a distinct integer asset-class discriminant: Fx→UNDERLYING\_CLASS\_FX, Metal→UNDERLYING\_CLASS\_METAL, Equity→UNDERLYING\_CLASS\_EQUITY, Commodity→UNDERLYING\_CLASS\_COMMODITY, DigitalAsset→UNDERLYING\_CLASS\_DIGITAL\_ASSET. This is the sole point where the host signals the asset class to the guest; it is exhaustive and const, so no new variant can be silently ignored at compile time.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:40:34Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-plugin-host.src.abi.underlying\_to\_abi` (hash `64b801cbe8edf41c`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-plugin-host.src.abi.underlying\_to\_abi` (hash `62e8fc1ea807e08c`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:40:34Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:40:34Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-plugin-host.src.native.NativeModel\<M\>.price
 
@@ -5100,16 +4902,14 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-plugin-host.src.wasm.sandbox\_config
 
-- **claim** (`cl\_e1f8a69d5bc33b08`): ADR (plugin-host sandbox = wasmi, fuel-metered, narrowed feature set). \`sandbox\_config()\` is the single source of the guest-execution sandbox policy and is a pure builder: it constructs a fresh wasmi \`Config\`, enables \`consume\_fuel(true)\` (deterministic instruction metering, the basis of the per-call FuelBudget that bounds even a \`(start)\` function — see WasmModel::load), and explicitly disables the unused proposals (memory64, bulk-memory, reference-types, tail-call) to narrow the accepted module surface. It reads and writes no external state — its result depends only on the wasmi defaults — so the sandbox policy is reproducible call-to-call. DECISION/RATIONALE: the Tier-2 user-plugin host is built on wasmi (a pure-Rust, no-unsafe, no-JIT interpreter) rather than wasmtime: wasmi gives deterministic fuel metering and a small, auditable, JIT-free attack surface that suits a mission-critical pricing host where a plugin must be sandboxed and time-bounded, accepting interpreter throughput for that safety. Tier-0 native models run un-sandboxed for the hot path; untrusted user code is confined here. (Memory: plugin-host=wasmi; wasmtime rejected.)
+- **claim** (`cl\_232668f6a48267f1`): ADR (plugin-host sandbox = wasmi, fuel-metered, narrowed feature set). \`sandbox\_config()\` is the single source of the guest-execution sandbox policy and is a pure builder: it constructs a fresh wasmi \`Config\`, enables \`consume\_fuel(true)\` (deterministic instruction metering, the basis of the per-call FuelBudget that bounds even a \`(start)\` function — see WasmModel::load), and explicitly disables the unused proposals (memory64, bulk-memory, reference-types, tail-call) to narrow the accepted module surface. It reads and writes no external state — its result depends only on the wasmi defaults — so the sandbox policy is reproducible call-to-call. DECISION/RATIONALE: the Tier-2 user-plugin host is built on wasmi (a pure-Rust, no-unsafe, no-JIT interpreter) rather than wasmtime: wasmi gives deterministic fuel metering and a small, auditable, JIT-free attack surface that suits a mission-critical pricing host where a plugin must be sandboxed and time-bounded, accepting interpreter throughput for that safety. Tier-0 native models run un-sandboxed for the hot path; untrusted user code is confined here. (Memory: plugin-host=wasmi; wasmtime rejected.)
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-plugin-host.src.wasm.sandbox\_config` (hash `de0c57f7be2c016a`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-plugin-host.src.wasm.sandbox\_config` (hash `e0302691ebc4548a`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-plugin-host.tests.sandbox.TrivialForward.price
 
@@ -5405,29 +5205,25 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-proto.src.convert.cut\_round\_trips
 
-- **claim** (`cl\_2f1f6f72abf4afd4`): \`cut\_round\_trips\` pins the wire↔types Cut conversion as a total round-trip: for every \`celnet\_types::Cut\` variant (NewYork1000, Tokyo1500) \`Cut::from(WireCut::from(c)) == c\`. This guards that the two \`From\` directions stay mutually inverse, so the cut convention survives a wire encode/decode unchanged — the one-contract guarantee for the expiry-cut convention (no versioning, single current mapping). Pure test: constructs values and asserts equality, mutating no external state.
+- **claim** (`cl\_3d54d01edc28ce93`): \`cut\_round\_trips\` pins the wire↔types Cut conversion as a total round-trip: for every \`celnet\_types::Cut\` variant (NewYork1000, Tokyo1500) \`Cut::from(WireCut::from(c)) == c\`. This guards that the two \`From\` directions stay mutually inverse, so the cut convention survives a wire encode/decode unchanged — the one-contract guarantee for the expiry-cut convention (no versioning, single current mapping). Pure test: constructs values and asserts equality, mutating no external state.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-proto.src.convert.cut\_round\_trips` (hash `b087f4c335f175f7`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-proto.src.convert.cut\_round\_trips` (hash `41e8f99c4b06995f`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-proto.src.convert.settlement\_round\_trips
 
-- **claim** (`cl\_c54a4cc1f35d561a`): \`settlement\_round\_trips\` pins the wire↔types Settlement conversion as a total round-trip: for every \`celnet\_types::Settlement\` variant (Deliverable, NonDeliverable) \`Settlement::from(WireSettlement::from(s)) == s\`. It guards that the two \`From\` directions remain mutually inverse so the deliverable/non-deliverable (NDO cash-settled) distinction survives a wire encode/decode unchanged — the single-contract guarantee for the settlement convention. Pure test: constructs values and asserts equality, no external mutation.
+- **claim** (`cl\_5054d43ae20e6abc`): \`settlement\_round\_trips\` pins the wire↔types Settlement conversion as a total round-trip: for every \`celnet\_types::Settlement\` variant (Deliverable, NonDeliverable) \`Settlement::from(WireSettlement::from(s)) == s\`. It guards that the two \`From\` directions remain mutually inverse so the deliverable/non-deliverable (NDO cash-settled) distinction survives a wire encode/decode unchanged — the single-contract guarantee for the settlement convention. Pure test: constructs values and asserts equality, no external mutation.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-proto.src.convert.settlement\_round\_trips` (hash `97e0acb1f72ca7d4`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-proto.src.convert.settlement\_round\_trips` (hash `1127f1902a74d004`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-proto.src.convert.validate\_deliverable\_underlying
 
@@ -5546,28 +5342,26 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-qmc.src.bridge.covariance\_identity
 
-- **claim** (`cl\_c2592e9b4928089a`): covariance\_identity() is a self-contained unit oracle that asserts weight\_matrix() produces an exact Brownian covariance factor: for every pair (i, j) in 0..m, the dot product of rows i and j of L equals min(t\_i, t\_j) to within 1e-12 absolute tolerance. This is verified for m ∈ {1, 2, 4, 7, 16} with T=2.0, covering non-power-of-two step counts.
+- **claim** (`cl\_4ca4f92faef013ec`): covariance\_identity() is a self-contained unit oracle that asserts weight\_matrix() produces an exact Brownian covariance factor: for every pair (i, j) in 0..m, the dot product of rows i and j of L equals min(t\_i, t\_j) to within 1e-12 absolute tolerance. This is verified for m ∈ {1, 2, 4, 7, 16} with T=2.0, covering non-power-of-two step counts.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:40:35Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-qmc.src.bridge.covariance\_identity` (hash `2affb2240ccb39d0`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-qmc.src.bridge.covariance\_identity` (hash `ae76dbd5bad15160`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:40:35Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:40:35Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-qmc.src.lib.rqmc\_estimate
 
-- **claim** (`cl\_79bd1bf9ecc68087`): \`rqmc\_estimate\` derives independent per-replication scramble seeds via \`splitmix(base\_seed.wrapping\_add((r as u64).wrapping\_mul(0x9e37\_79b9\_7f4a\_7c15)))\`, where splitmix is the Murmur3/SplitMix64 finalizer. This makes each replication's scrambled Sobol sequence statistically independent of the others; the inter-replication mean and sample variance of the \`replications\` per-replication averages provide the estimate and its standard error (std\_error = sqrt(sample\_var / replications)). With replications=1 the standard error is NaN (not estimable from one replication).
+- **claim** (`cl\_4f46237d1c49f6e8`): \`rqmc\_estimate\` derives independent per-replication scramble seeds via \`splitmix(base\_seed.wrapping\_add((r as u64).wrapping\_mul(0x9e37\_79b9\_7f4a\_7c15)))\`, where splitmix is the Murmur3/SplitMix64 finalizer. This makes each replication's scrambled Sobol sequence statistically independent of the others; the inter-replication mean and sample variance of the \`replications\` per-replication averages provide the estimate and its standard error (std\_error = sqrt(sample\_var / replications)). With replications=1 the standard error is NaN (not estimable from one replication).
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
   - `github.com-soarsa-celnet.crates.celnet-qmc.src.lib.rqmc\_estimate` (hash `f10360d438ad30b6`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-qmc.src.lib.splitmix` (hash `29168c432ee59643`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-qmc.src.lib.splitmix` (hash `6bd479bf6c3a9dab`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-qmc.src.sobol.SobolSequence.new
 
@@ -5582,96 +5376,92 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-qmc.src.sobol.SobolStream\<'\_\>.next\_point
 
-- **claim** (`cl\_c2afd87c121939fd`): \`SobolStream::next\_point(&mut self, out: &mut \[f64\])\` advances the stateful Gray-code Sobol iterator by one point. For i=0 all state integers are zeroed (the all-zero Gray-code point); for i\>0, c = trailing\_zeros(i) and each coordinate j XORs in direction number v\[j\]\[c\]. Each state integer is then Owen-scrambled per dimension and mapped to (0,1) via \`u32\_to\_open\_unit(u) = (u as f64 + 0.5) \* 2^{-32}\`, guaranteeing the open unit interval (never 0 or 1, so inv\_norm\_cdf never produces ±∞). The mutation is entirely to self.state and out — no allocation, no shared mutation beyond the stream itself.
+- **claim** (`cl\_eb541dd45c7779e7`): \`SobolStream::next\_point(&mut self, out: &mut \[f64\])\` advances the stateful Gray-code Sobol iterator by one point. For i=0 all state integers are zeroed (the all-zero Gray-code point); for i\>0, c = trailing\_zeros(i) and each coordinate j XORs in direction number v\[j\]\[c\]. Each state integer is then Owen-scrambled per dimension and mapped to (0,1) via \`u32\_to\_open\_unit(u) = (u as f64 + 0.5) \* 2^{-32}\`, guaranteeing the open unit interval (never 0 or 1, so inv\_norm\_cdf never produces ±∞). The mutation is entirely to self.state and out — no allocation, no shared mutation beyond the stream itself.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
   - `github.com-soarsa-celnet.crates.celnet-qmc.src.sobol.SobolStream\<'\_\>.next\_point` (hash `9371340fd9d6a013`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-qmc.src.sobol.u32\_to\_open\_unit` (hash `fe111ef85ac42555`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-qmc.src.sobol.u32\_to\_open\_unit` (hash `5b2aa1418288d335`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-qmc.src.sobol.owen\_scramble\_u32
 
-- **claim** (`cl\_85c82edffc138457`): \`owen\_scramble\_u32(x: u32, dim: u64, seed: u64) -\> u32\` applies a bit-by-bit Owen scramble to Sobol integer \`x\` for dimension \`dim\` under scramble key \`seed\`. It processes all 32 bits MSB-first: for each depth \`d\`, flip = LSB of mix64(base ^ (d\<\<40) ^ (prefix\<\<1)), out\_bit = in\_bit XOR flip, prefix accumulates emitted bits. The function is pure (reads only its three scalar arguments, no shared mutation) and deterministically preserves the dyadic-prefix structure required for the scrambled sequence to remain (t,s)-equidistributed: the scrambled prefix of k bits depends only on the original k-bit prefix, never on deeper bits.
+- **claim** (`cl\_1be249d7a17000fa`): \`owen\_scramble\_u32(x: u32, dim: u64, seed: u64) -\> u32\` applies a bit-by-bit Owen scramble to Sobol integer \`x\` for dimension \`dim\` under scramble key \`seed\`. It processes all 32 bits MSB-first: for each depth \`d\`, flip = LSB of mix64(base ^ (d\<\<40) ^ (prefix\<\<1)), out\_bit = in\_bit XOR flip, prefix accumulates emitted bits. The function is pure (reads only its three scalar arguments, no shared mutation) and deterministically preserves the dyadic-prefix structure required for the scrambled sequence to remain (t,s)-equidistributed: the scrambled prefix of k bits depends only on the original k-bit prefix, never on deeper bits.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-qmc.src.sobol.owen\_scramble\_u32` (hash `519ba3f3ad839350`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-qmc.src.sobol.owen\_scramble\_u32` (hash `5ded3e8060fb7860`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-qmc.src.sobol.stream\_matches\_direct\_unscrambled
 
-- **claim** (`cl\_a1df7522357b6330`): stream\_matches\_direct\_unscrambled() proves that the Sobol streaming interface (point\_u32) is algebraically equivalent to the direct gray-code recurrence. It independently reconstructs the unscrambled integer state by replaying the XOR recurrence state\[j\] ^= v\[j\]\[trailing\_zeros(i)\] for i=1..255, then asserts bit-identical equality with seq.point\_u32(i) at every step. This pins the streaming implementation to the standard binary reflected gray code construction.
+- **claim** (`cl\_1e4b4cfe1615a632`): stream\_matches\_direct\_unscrambled() proves that the Sobol streaming interface (point\_u32) is algebraically equivalent to the direct gray-code recurrence. It independently reconstructs the unscrambled integer state by replaying the XOR recurrence state\[j\] ^= v\[j\]\[trailing\_zeros(i)\] for i=1..255, then asserts bit-identical equality with seq.point\_u32(i) at every step. This pins the streaming implementation to the standard binary reflected gray code construction.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:40:35Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-qmc.src.sobol.stream\_matches\_direct\_unscrambled` (hash `8e91e097492f2bf0`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-qmc.src.sobol.stream\_matches\_direct\_unscrambled` (hash `fc4aa97eaa716b50`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:40:35Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:40:35Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-qmc.tests.sequence\_oracle.bridge\_factorization\_reproduces\_brownian\_covariance
 
-- **claim** (`cl\_ac19b4e08d71790f`): bridge\_factorization\_reproduces\_brownian\_covariance() is the comprehensive Brownian Bridge oracle test. It asserts: (1) the grid times are exactly t\_i = (i+1)\*T/m (bit-identical comparison via to\_bits()); (2) L L^T = C to 1e-12 absolute error; (3) the terminal-normal column satisfies L\[i\]\[0\] = t\_i/sqrt(T); (4) for m=8 the bisection pivot is the midpoint (index 3, t=T/2) with conditional standard deviation sqrt(t\*(T-t)/T) = sqrt(T)/2; (5) calling build() on canonical basis vectors reproduces columns of weight\_matrix() bit-for-bit, proving the hot-path and matrix methods are algebraically identical.
+- **claim** (`cl\_11f64b5dd5a54939`): bridge\_factorization\_reproduces\_brownian\_covariance() is the comprehensive Brownian Bridge oracle test. It asserts: (1) the grid times are exactly t\_i = (i+1)\*T/m (bit-identical comparison via to\_bits()); (2) L L^T = C to 1e-12 absolute error; (3) the terminal-normal column satisfies L\[i\]\[0\] = t\_i/sqrt(T); (4) for m=8 the bisection pivot is the midpoint (index 3, t=T/2) with conditional standard deviation sqrt(t\*(T-t)/T) = sqrt(T)/2; (5) calling build() on canonical basis vectors reproduces columns of weight\_matrix() bit-for-bit, proving the hot-path and matrix methods are algebraically identical.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:40:35Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-qmc.tests.sequence\_oracle.bridge\_factorization\_reproduces\_brownian\_covariance` (hash `493fe5625ba9ef3b`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-qmc.tests.sequence\_oracle.bridge\_factorization\_reproduces\_brownian\_covariance` (hash `b5c7398085f87ee3`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:40:35Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:40:35Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-qmc.tests.sequence\_oracle.inverse\_normal\_matches\_reference
 
-- **claim** (`cl\_da62ada6a48b0de4`): inv\_norm\_cdf is verified by inverse\_normal\_matches\_reference() to satisfy three independent correctness criteria: (1) Φ⁻¹(0.5) == 0.0 exactly (bit-identical); (2) five published tail quantiles (p ∈ {0.975, 0.95, 0.99, 0.995, 0.999}) match to 1e-13 relative error, and the symmetric negatives also match; (3) a round-trip against the independent reference Φ(x) = ½·erfc(−x/√2) holds to 1e-13 relative across 14 points from the deep tail (p=1e-12) to 0.999; (4) frozen bit patterns at both branch break-points (p=0.02425 and 1−0.02425) are pinned as \`0xbfff913f9b7aa943\` / \`0x3fff913f9b7aa943\`, proving each branch is taken as documented.
+- **claim** (`cl\_9ea2c80c7071078e`): inv\_norm\_cdf is verified by inverse\_normal\_matches\_reference() to satisfy three independent correctness criteria: (1) Φ⁻¹(0.5) == 0.0 exactly (bit-identical); (2) five published tail quantiles (p ∈ {0.975, 0.95, 0.99, 0.995, 0.999}) match to 1e-13 relative error, and the symmetric negatives also match; (3) a round-trip against the independent reference Φ(x) = ½·erfc(−x/√2) holds to 1e-13 relative across 14 points from the deep tail (p=1e-12) to 0.999; (4) frozen bit patterns at both branch break-points (p=0.02425 and 1−0.02425) are pinned as \`0xbfff913f9b7aa943\` / \`0x3fff913f9b7aa943\`, proving each branch is taken as documented.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:40:35Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-qmc.tests.sequence\_oracle.inverse\_normal\_matches\_reference` (hash `3207cd7a469f73c4`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-qmc.tests.sequence\_oracle.inverse\_normal\_matches\_reference` (hash `15a4aaebb57d9cb4`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:40:35Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:40:35Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-qmc.tests.sequence\_oracle.low\_discrepancy\_reference\_points
 
-- **claim** (`cl\_f7941bac4d8ed60d`): low\_discrepancy\_reference\_points() pins the first eight dim-0 Sobol points against hand-derived gray-code radical-inverse values \[0.5, 0.75, 0.25, 0.375, 0.875, 0.625, 0.125, 0.1875\] (bit-exact). It additionally asserts: (1) point 0 is the origin in every coordinate (gray code g(0)=0); (2) the first 16 dim-0 points form the complete equidistributed set {k/16 : k=0..15} with no duplicates; (3) every Joe-Kuo dimension has a leading direction integer m\_1=1, so point 1 is 0.5 in all dimensions.
+- **claim** (`cl\_8af4e84e6d30f73f`): low\_discrepancy\_reference\_points() pins the first eight dim-0 Sobol points against hand-derived gray-code radical-inverse values \[0.5, 0.75, 0.25, 0.375, 0.875, 0.625, 0.125, 0.1875\] (bit-exact). It additionally asserts: (1) point 0 is the origin in every coordinate (gray code g(0)=0); (2) the first 16 dim-0 points form the complete equidistributed set {k/16 : k=0..15} with no duplicates; (3) every Joe-Kuo dimension has a leading direction integer m\_1=1, so point 1 is 0.5 in all dimensions.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:40:35Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-qmc.tests.sequence\_oracle.low\_discrepancy\_reference\_points` (hash `ef1a6190bda5eaa8`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-qmc.tests.sequence\_oracle.low\_discrepancy\_reference\_points` (hash `d8663be59812c7c8`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:40:35Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:40:35Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-qmc.tests.sequence\_oracle.rqmc\_estimate\_integrates\_monomials
 
-- **claim** (`cl\_aae9f76724bf7ec4`): rqmc\_estimate\_integrates\_monomials() validates the randomised QMC estimator (rqmc\_estimate) by checking that E\[u^k\] for u = Φ(W(t\_idx)/sqrt(t\_idx)) (a uniform(0,1) variate) converges to the correct moment: E\[u\] = 1/2 and E\[u^2\] = 1/3. The test uses 4096 QMC points and 8 scramble replicates; the estimator must hit within 1e-4 absolute for every m ∈ 1..=4 and for both the terminal and first grid coordinates. The standard error must be finite and positive, confirming variance reduction relative to plain Monte Carlo.
+- **claim** (`cl\_e7e9463a350ddaee`): rqmc\_estimate\_integrates\_monomials() validates the randomised QMC estimator (rqmc\_estimate) by checking that E\[u^k\] for u = Φ(W(t\_idx)/sqrt(t\_idx)) (a uniform(0,1) variate) converges to the correct moment: E\[u\] = 1/2 and E\[u^2\] = 1/3. The test uses 4096 QMC points and 8 scramble replicates; the estimator must hit within 1e-4 absolute for every m ∈ 1..=4 and for both the terminal and first grid coordinates. The standard error must be finite and positive, confirming variance reduction relative to plain Monte Carlo.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:40:35Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-qmc.tests.sequence\_oracle.rqmc\_estimate\_integrates\_monomials` (hash `11aa0e1711c4dbdd`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-qmc.tests.sequence\_oracle.rqmc\_estimate\_integrates\_monomials` (hash `2214ba5b9770226d`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:40:35Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:40:35Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-qmc.tests.sequence\_oracle.scrambled\_point\_is\_deterministic\_and\_in\_unit\_cube
 
-- **claim** (`cl\_b602ea988be87df1`): scrambled\_point\_is\_deterministic\_and\_in\_unit\_cube() asserts three invariants of SobolSequence::scrambled\_point(): (1) repeated calls with the same (i, seed) pair return bit-identical results across all 64 tested points; (2) every scrambled coordinate is strictly inside the open unit interval (0, 1) — the half-LSB bias prohibits the boundary value 0.0 exactly; (3) different scramble seeds (7 vs 8) produce at least one differing coordinate somewhere in the 64×8 grid, proving seed diversity is effective.
+- **claim** (`cl\_bcd371515d31c02b`): scrambled\_point\_is\_deterministic\_and\_in\_unit\_cube() asserts three invariants of SobolSequence::scrambled\_point(): (1) repeated calls with the same (i, seed) pair return bit-identical results across all 64 tested points; (2) every scrambled coordinate is strictly inside the open unit interval (0, 1) — the half-LSB bias prohibits the boundary value 0.0 exactly; (3) different scramble seeds (7 vs 8) produce at least one differing coordinate somewhere in the 64×8 grid, proving seed diversity is effective.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:40:35Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-qmc.tests.sequence\_oracle.scrambled\_point\_is\_deterministic\_and\_in\_unit\_cube` (hash `3be5310c563853d1`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-qmc.tests.sequence\_oracle.scrambled\_point\_is\_deterministic\_and\_in\_unit\_cube` (hash `319e16e0e4dc5871`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:40:35Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:40:35Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-rates.src.bootstrap.BootstrapError.fmt
 
@@ -5816,49 +5606,49 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-rates.src.ois.ois\_annuity
 
-- **claim** (`cl\_cfeab2a01837320c`): ois\_annuity computes the fixed-leg annuity as the sum over all schedule periods of (accrual\_fraction \* discount\_factor(pay\_time)): A = Σ\_i α\_i \* DF(T\_i), where α\_i is the ACT/360 accrual year-fraction and T\_i is the pay time.
+- **claim** (`cl\_ec4af64aa41a362c`): ois\_annuity computes the fixed-leg annuity as the sum over all schedule periods of (accrual\_fraction \* discount\_factor(pay\_time)): A = Σ\_i α\_i \* DF(T\_i), where α\_i is the ACT/360 accrual year-fraction and T\_i is the pay time.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T00:02:45Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-rates.src.ois.ois\_annuity` (hash `dd356a95605e65a2`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-rates.src.ois.ois\_annuity` (hash `9892435f967eb0c2`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T00:02:45Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T00:02:45Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-rates.src.ois.ois\_par\_rate
 
-- **claim** (`cl\_381f2865755b2c38`): ois\_par\_rate implements the standard OIS par-rate identity: par = (DF(start) - DF(maturity)) / A, where A = ois\_annuity. At par the floating-leg PV (DF(start) - DF(maturity)) equals the fixed-leg PV (par \* A), so ois\_pv = 0 at fixed\_rate = par.
+- **claim** (`cl\_b67dfe73d5c80d18`): ois\_par\_rate implements the standard OIS par-rate identity: par = (DF(start) - DF(maturity)) / A, where A = ois\_annuity. At par the floating-leg PV (DF(start) - DF(maturity)) equals the fixed-leg PV (par \* A), so ois\_pv = 0 at fixed\_rate = par.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T00:02:45Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-rates.src.ois.ois\_par\_rate` (hash `a9431c93bf5b64d3`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-rates.src.ois.ois\_pv` (hash `13a8bc65789fca2e`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-rates.src.ois.ois\_par\_rate` (hash `f78d6aa0f66242d3`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-rates.src.ois.ois\_pv` (hash `0d9fe3d5b2d6002e`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T00:02:45Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T00:02:45Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-rates.src.ois.ois\_pv
 
-- **claim** (`cl\_1f5b3feaecc51109`): ois\_pv computes the PV of a receive-fixed OIS swap as: PV = N \* (K \* A - (DF(start) - DF(maturity))), where K is the fixed rate, A is the annuity, and (DF(start) - DF(maturity)) is the floating-leg PV under OIS discounting. Positive PV means the fixed leg exceeds the floating leg value.
+- **claim** (`cl\_98a3c1dc6994c4cd`): ois\_pv computes the PV of a receive-fixed OIS swap as: PV = N \* (K \* A - (DF(start) - DF(maturity))), where K is the fixed rate, A is the annuity, and (DF(start) - DF(maturity)) is the floating-leg PV under OIS discounting. Positive PV means the fixed leg exceeds the floating leg value.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T00:02:45Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-rates.src.ois.ois\_pv` (hash `13a8bc65789fca2e`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-rates.src.ois.ois\_pv` (hash `0d9fe3d5b2d6002e`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T00:02:45Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T00:02:45Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-rates.src.risk.ONE\_BP
 
-- **claim** (`cl\_31afbafbf4cbcdec`): pv01 is a pure analytic sensitivity: PV01 = N \* A \* 1bp, where A = ois\_annuity and 1bp = ONE\_BP = 0.0001. It equals the first-order fixed-rate sensitivity dPV/dK \* 1bp = N\*A\*1bp, without re-bootstrapping the curve.
+- **claim** (`cl\_f7ed5e246016e390`): pv01 is a pure analytic sensitivity: PV01 = N \* A \* 1bp, where A = ois\_annuity and 1bp = ONE\_BP = 0.0001. It equals the first-order fixed-rate sensitivity dPV/dK \* 1bp = N\*A\*1bp, without re-bootstrapping the curve.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T00:02:45Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
   - `github.com-soarsa-celnet.crates.celnet-rates.src.risk.ONE\_BP` (hash `9d5eca9c819d2a7a`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-rates.src.risk.pv01` (hash `2ef377df3a1f51c2`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-rates.src.risk.pv01` (hash `68a7238b25051662`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T00:02:45Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T00:02:45Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-rates.src.solver.SolverError.fmt
 
@@ -6028,14 +5818,14 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-rfq.src.internal.always\_quotes\_deterministically
 
-- **claim** (`cl\_f0a62c8514199f4f`): always\_quotes\_deterministically verifies that InternalPricerSource (the native dealer) is referentially transparent: two sequential calls with the same RfqRequest and timeout produce bit-identical QuoteSourceReply::Quote values. The mid-price is derived as \`spread\_mid = mid\_rate - half\_spread\` (asserted: \`(price.bid - 0.0080).abs() \< 1e-12\` for mid=0.0085, half\_spread=0.0005). The epoch\_nanos field is taken verbatim from the seeded clock (42) and valid\_until\_nanos = epoch\_nanos.saturating\_add(valid\_for\_nanos) = 1\_042.
+- **claim** (`cl\_2548c2a965d39bb2`): always\_quotes\_deterministically verifies that InternalPricerSource (the native dealer) is referentially transparent: two sequential calls with the same RfqRequest and timeout produce bit-identical QuoteSourceReply::Quote values. The mid-price is derived as \`spread\_mid = mid\_rate - half\_spread\` (asserted: \`(price.bid - 0.0080).abs() \< 1e-12\` for mid=0.0085, half\_spread=0.0005). The epoch\_nanos field is taken verbatim from the seeded clock (42) and valid\_until\_nanos = epoch\_nanos.saturating\_add(valid\_for\_nanos) = 1\_042.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:57:34Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-rfq.src.internal.always\_quotes\_deterministically` (hash `172d710a2fa1b2f8`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-rfq.src.internal.always\_quotes\_deterministically` (hash `0f1b876997aa3ae0`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:57:34Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:57:34Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-rfq.src.panel.SideKey\<'\_\>.partial\_cmp\_total
 
@@ -6151,57 +5941,49 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-risk-cube.src.frtb.curvature\_class
 
-- **claim** (`cl\_9315c2878de00b7b`): curvature\_class(buckets, gamma) -\> SbmCharge applies the FRTB MAR21.5.2 cross-bucket curvature aggregation under all three correlation scenarios. For each scenario: K\_total = sqrt(max(0, sum\_b(K\_b^2) + sum\_{b≠c}(gamma\_scaled^2 \* psi(CVR\_b,CVR\_c) \* CVR\_b \* CVR\_c))) where psi(CVR\_b,CVR\_c) = 0 iff both CVR are negative (MAR21.5.2(4)), else 1; gamma is squared (not linear) for curvature; and gamma is scenario-scaled before squaring. Returns SbmCharge{high, medium, low}.
+- **claim** (`cl\_d65f4108ac02987d`): curvature\_class(buckets, gamma) -\> SbmCharge applies the FRTB MAR21.5.2 cross-bucket curvature aggregation under all three correlation scenarios. For each scenario: K\_total = sqrt(max(0, sum\_b(K\_b^2) + sum\_{b≠c}(gamma\_scaled^2 \* psi(CVR\_b,CVR\_c) \* CVR\_b \* CVR\_c))) where psi(CVR\_b,CVR\_c) = 0 iff both CVR are negative (MAR21.5.2(4)), else 1; gamma is squared (not linear) for curvature; and gamma is scenario-scaled before squaring. Returns SbmCharge{high, medium, low}.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-risk-cube.src.frtb.curvature\_class` (hash `6e3d74da00001bfc`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-risk-cube.src.frtb.curvature\_class` (hash `ec0358d33ae86a6c`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-risk-cube.src.frtb.curvature\_legs
 
-- **claim** (`cl\_550d27fc9a7eb5e1`): curvature\_legs(pricer, positions, rw) -\> (cvr\_up, cvr\_down) is the FRTB MAR21 curvature CVR computation for a vanilla node: base PV and two relative spot reprices (×(1±rw)), linear term = sum\_i(delta\_spot\_i × notional\_i × rw × spot\_i). CVR\_up = -((reprice\_up - base) - linear); CVR\_down = -((reprice\_down - base) + linear). Only the spot is shocked; carry, vol, time, and strike are held fixed. The same formula is implemented in vanilla\_curvature\_legs via node\_value/node\_value\_shocked helpers, which is the canonical path used for FRTB curvature bucket construction.
+- **claim** (`cl\_a29ab3c62e0be4eb`): curvature\_legs(pricer, positions, rw) -\> (cvr\_up, cvr\_down) is the FRTB MAR21 curvature CVR computation for a vanilla node: base PV and two relative spot reprices (×(1±rw)), linear term = sum\_i(delta\_spot\_i × notional\_i × rw × spot\_i). CVR\_up = -((reprice\_up - base) - linear); CVR\_down = -((reprice\_down - base) + linear). Only the spot is shocked; carry, vol, time, and strike are held fixed. The same formula is implemented in vanilla\_curvature\_legs via node\_value/node\_value\_shocked helpers, which is the canonical path used for FRTB curvature bucket construction.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-risk-cube.src.frtb.curvature\_legs` (hash `5e7cf51e178f3a5b`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.vanilla\_curvature\_legs` (hash `53bd4d30ff7e7444`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-risk-cube.src.frtb.curvature\_legs` (hash `aa9041cc2b35569b`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.vanilla\_curvature\_legs` (hash `735351ffd47c70b4`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-risk-cube.src.frtb.quadratic\_form
 
-- **claim** (`cl\_755fc31ce2cea300`): quadratic\_form(ws: &\[f64\], rho: F) -\> f64 computes the FRTB intra-bucket capital formula: sqrt(max(0, sum\_i(ws\_i^2) + sum\_{i\<j}(2\*rho(i,j)\*ws\_i\*ws\_j))). It is the kernel used for both the delta/vega SBM bucket charge (via SbmParams::class\_charge) and the vega-bucket correlation\_weighted\_vega function. The max(0,·) guard prevents imaginary results when the cross-term sum dominates the diagonal (can occur under the Low correlation scenario where scaled ρ can be negative).
+- **claim** (`cl\_2e929b74b3006b8a`): quadratic\_form(ws: &\[f64\], rho: F) -\> f64 computes the FRTB intra-bucket capital formula: sqrt(max(0, sum\_i(ws\_i^2) + sum\_{i\<j}(2\*rho(i,j)\*ws\_i\*ws\_j))). It is the kernel used for both the delta/vega SBM bucket charge (via SbmParams::class\_charge) and the vega-bucket correlation\_weighted\_vega function. The max(0,·) guard prevents imaginary results when the cross-term sum dominates the diagonal (can occur under the Low correlation scenario where scaled ρ can be negative).
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-risk-cube.src.frtb.quadratic\_form` (hash `7650e862edd8f5a4`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.correlation\_weighted\_vega` (hash `76ed751e400d4d19`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-risk-cube.src.frtb.quadratic\_form` (hash `f489b31ca2d31914`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.correlation\_weighted\_vega` (hash `f112a5ae5aea9fe1`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-risk-cube.src.frtb.residual\_addon
 
-- **claim** (`cl\_d663c267bbca1556`): residual\_addon(instruments: &\[ResidualInstrument\]) -\> f64 is the FRTB RRAO (Residual Risk Add-On) charge: a pure linear sum of \|notional\_i\| \* kind.weight() over all residual instruments. ResidualKind::OtherResidual carries weight 0.001 (10bp); ResidualKind::ExoticUnderlying carries 0.01 (100bp); ResidualKind::None carries 0.0 (vanilla, excluded). No correlation, no squaring — the RRAO is a gross-notional additive charge by BCBS design.
+- **claim** (`cl\_a6f7f5120d475c08`): residual\_addon(instruments: &\[ResidualInstrument\]) -\> f64 is the FRTB RRAO (Residual Risk Add-On) charge: a pure linear sum of \|notional\_i\| \* kind.weight() over all residual instruments. ResidualKind::OtherResidual carries weight 0.001 (10bp); ResidualKind::ExoticUnderlying carries 0.01 (100bp); ResidualKind::None carries 0.0 (vanilla, excluded). No correlation, no squaring — the RRAO is a gross-notional additive charge by BCBS design.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-risk-cube.src.frtb.residual\_addon` (hash `0960ad2aa1207381`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-risk-cube.src.frtb.residual\_addon` (hash `aa935ea2b3140b81`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.PositionSensitivity.from\_position
 
@@ -6227,28 +6009,26 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.base\_scenario\_is\_bitwise\_identity
 
-- **claim** (`cl\_6453965fa3c9895c`): \`Scenario::base().apply(inputs)\` is the bitwise identity: every field of the returned \`CarryInputs\` compares equal bit-for-bit to the original, including the carry arm variant (FxRates vs CostOfCarry). The named constructors \`Scenario::spot(δ)\` and \`Scenario::vol(δ)\` exclusively set \`spot\_rel\` and \`vol\_abs\` respectively, leaving the other three adjustment fields exactly zero.
+- **claim** (`cl\_87ad6a7774a1ee05`): \`Scenario::base().apply(inputs)\` is the bitwise identity: every field of the returned \`CarryInputs\` compares equal bit-for-bit to the original, including the carry arm variant (FxRates vs CostOfCarry). The named constructors \`Scenario::spot(δ)\` and \`Scenario::vol(δ)\` exclusively set \`spot\_rel\` and \`vol\_abs\` respectively, leaving the other three adjustment fields exactly zero.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:29:53Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.base\_scenario\_is\_bitwise\_identity` (hash `4064197da33f5c83`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.base\_scenario\_is\_bitwise\_identity` (hash `2f1d20b40a3f8ecb`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:29:53Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:53Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.historical\_var\_es
 
-- **claim** (`cl\_935c8c03bc647190`): historical\_var\_es(pricer, positions, scenarios, alpha) -\> VarEs computes full bump-and-revalue historical VaR/ES: for each Scenario it calls node\_pnl (sum of position\_pnl over all positions through the CarryPricer seam), collects a Vec\<f64\> of per-scenario P&Ls, then delegates to the shared quantile\_var\_es kernel. No Greeks or Taylor approximation — every scenario is a full reprice. Deterministic given identical scenario ordering; returns VarEs{var:0,es:0} for an empty scenario slice.
+- **claim** (`cl\_a0158e9bf237c72e`): historical\_var\_es(pricer, positions, scenarios, alpha) -\> VarEs computes full bump-and-revalue historical VaR/ES: for each Scenario it calls node\_pnl (sum of position\_pnl over all positions through the CarryPricer seam), collects a Vec\<f64\> of per-scenario P&Ls, then delegates to the shared quantile\_var\_es kernel. No Greeks or Taylor approximation — every scenario is a full reprice. Deterministic given identical scenario ordering; returns VarEs{var:0,es:0} for an empty scenario slice.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.historical\_var\_es` (hash `f839ef01d93ef053`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.node\_pnl` (hash `390276009af64baf`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.historical\_var\_es` (hash `46843d0f1045ce53`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.node\_pnl` (hash `017a953143d8341f`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.quantile\_var\_es
 
@@ -6263,51 +6043,47 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.sensitivity\_profile\_is\_adjoint\_greeks\_scaled\_by\_notional
 
-- **claim** (`cl\_a2e65834521c7fb2`): PositionSensitivity::sensitivity\_profile carries adjoint Greeks (delta\_spot, gamma, vega, volga, vanna, discount\_rho, carry\_rho) scaled by notional\_base. The scaling is bitwise-exact: each field equals the corresponding adjoint Greek multiplied by notional, confirmed by to\_bits() equality in the test. carry\_rho = -(rho\_for \* notional) — a sign flip from the raw Greek so that a positive carry\_rho always means sensitivity to the foreign rate in the direction that increases PV.
+- **claim** (`cl\_7a6183ba6342b894`): PositionSensitivity::sensitivity\_profile carries adjoint Greeks (delta\_spot, gamma, vega, volga, vanna, discount\_rho, carry\_rho) scaled by notional\_base. The scaling is bitwise-exact: each field equals the corresponding adjoint Greek multiplied by notional, confirmed by to\_bits() equality in the test. carry\_rho = -(rho\_for \* notional) — a sign flip from the raw Greek so that a positive carry\_rho always means sensitivity to the foreign rate in the direction that increases PV.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.sensitivity\_profile\_is\_adjoint\_greeks\_scaled\_by\_notional` (hash `8a8d43e325743a50`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.sensitivity\_profile\_is\_adjoint\_greeks\_scaled\_by\_notional` (hash `9c921359b7faa7f0`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.sensitivity\_var\_es
 
-- **claim** (`cl\_3920fa8c5cb0fb8f`): sensitivity\_var\_es(pricer, positions, scenarios, alpha) -\> VarEs is the adjoint (sensitivity-based) VaR/ES path. It makes ONE Greeks sweep via node\_sensitivities (one CarryPricer call per position), then for each Scenario approximates node P&L as sum\_i(PositionSensitivity\_i.taylor\_pnl(s)) — a second-order Taylor expansion in spot and vol shocks. Delegates to the same quantile\_var\_es kernel as the historical path. The separation of the single-sweep sensitivity computation from the per-scenario summation is the efficiency invariant: O(P) pricer calls instead of O(P×S).
+- **claim** (`cl\_1a1efde6d39b1af5`): sensitivity\_var\_es(pricer, positions, scenarios, alpha) -\> VarEs is the adjoint (sensitivity-based) VaR/ES path. It makes ONE Greeks sweep via node\_sensitivities (one CarryPricer call per position), then for each Scenario approximates node P&L as sum\_i(PositionSensitivity\_i.taylor\_pnl(s)) — a second-order Taylor expansion in spot and vol shocks. Delegates to the same quantile\_var\_es kernel as the historical path. The separation of the single-sweep sensitivity computation from the per-scenario summation is the efficiency invariant: O(P) pricer calls instead of O(P×S).
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.sensitivity\_var\_es` (hash `e20282d85faff3c0`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.sensitivity\_var\_es` (hash `044f855b3db8de20`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.shift\_carry
 
-- **claim** (`cl\_07314e01f851a2d5`): \`shift\_carry\` translates absolute rate scenario bumps into the correct carry-arm fields: for \`FxRates { r\_dom, r\_for }\` it sets \`r\_dom += discount\_abs\` and \`r\_for += discount\_abs − carry\_abs\`, preserving the cost-of-carry identity \`b = r\_dom − r\_for\` under independent additive shocks to the discount rate and the carry basis; for \`CostOfCarry { r, b }\` it shifts \`r += discount\_abs\` and \`b += carry\_abs\` directly.
+- **claim** (`cl\_bdc60103dbdb1904`): \`shift\_carry\` translates absolute rate scenario bumps into the correct carry-arm fields: for \`FxRates { r\_dom, r\_for }\` it sets \`r\_dom += discount\_abs\` and \`r\_for += discount\_abs − carry\_abs\`, preserving the cost-of-carry identity \`b = r\_dom − r\_for\` under independent additive shocks to the discount rate and the carry basis; for \`CostOfCarry { r, b }\` it shifts \`r += discount\_abs\` and \`b += carry\_abs\` directly.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:29:53Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.shift\_carry` (hash `cba95f6b270411cf`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.shift\_carry` (hash `8762b6c73f3a513f`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:29:53Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:53Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-risk-cube.src.scenario\_grid.asymmetric\_grid\_indexing\_is\_row\_major
 
-- **claim** (`cl\_ca6b5b7e7fdbdc4d`): ScenarioAxes row-major layout: \`NodeScenarioGrid\` stores PV values in a flat \`pv\` array with index \`i \* n\_vol + j\` where \`i\` indexes spot multiplier and \`j\` indexes vol bump. The \`pv(i, j)\` accessor enforces this and the test verifies that for a 2×3 grid all six nodes are distinct and each matches the direct analytic re-price \`Σ notional × black(spot \* sm, strike, vol + vb, t, r\_dom, r\_for)\` to absolute tolerance 1e-6. The analytic path always has \`on\_gpu = false\` and \`std\_err == 0.0\` bitwise at every node.
+- **claim** (`cl\_0f2bbd58811434dc`): ScenarioAxes row-major layout: \`NodeScenarioGrid\` stores PV values in a flat \`pv\` array with index \`i \* n\_vol + j\` where \`i\` indexes spot multiplier and \`j\` indexes vol bump. The \`pv(i, j)\` accessor enforces this and the test verifies that for a 2×3 grid all six nodes are distinct and each matches the direct analytic re-price \`Σ notional × black(spot \* sm, strike, vol + vb, t, r\_dom, r\_for)\` to absolute tolerance 1e-6. The analytic path always has \`on\_gpu = false\` and \`std\_err == 0.0\` bitwise at every node.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:29:53Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-risk-cube.src.scenario\_grid.asymmetric\_grid\_indexing\_is\_row\_major` (hash `c58ee489f30453c8`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-risk-cube.src.scenario\_grid.asymmetric\_grid\_indexing\_is\_row\_major` (hash `4cf9ef16068c5d28`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:29:53Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:53Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.FleetError.fmt
 
@@ -6355,28 +6131,26 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.cross\_asset\_numeraire
 
-- **claim** (`cl\_2ef012629e5db89c`): cross\_asset\_numeraire extracts a settlement currency from a non-FX Underlying via a fixed priority chain: equity → equity.currency; commodity → commodity.currency; digital-asset → Ccy::parse(quote) falling back to Ccy::USD; all other arms → Ccy::USD. The function is pure and has no side-effects; it is the single authoritative mapping used when building cross-asset risk positions to assign a numeraire to non-FX legs.
+- **claim** (`cl\_096f74d6e7f47eb5`): cross\_asset\_numeraire extracts a settlement currency from a non-FX Underlying via a fixed priority chain: equity → equity.currency; commodity → commodity.currency; digital-asset → Ccy::parse(quote) falling back to Ccy::USD; all other arms → Ccy::USD. The function is pure and has no side-effects; it is the single authoritative mapping used when building cross-asset risk positions to assign a numeraire to non-FX legs.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:48:16Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.cross\_asset\_numeraire` (hash `bb6578fa143ec40c`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.cross\_asset\_numeraire` (hash `83ec6dcecdd23a3c`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:48:16Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:48:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.natural\_owner\_of
 
-- **claim** (`cl\_818c93eae217bfea`): \`partition\_key\_of(fact)\` is the canonical HRW partition key function: it builds a \`PartitionKey\` from the fact's underlying currency pair (\`partition\_pair\_of(&fact.key.underlying)\`) scoped by the entity tenant id (\`TenantId(u64::from(fact.key.entity.0))\`). The two-component key (pair + tenant) ensures co-residency of same-entity same-pair risk across shards — the load-bearing routing invariant pinned by the \`entity\_pair\_cell\_is\_co\_resident\` test. Pure: reads \`&RiskFact\`, returns \`PartitionKey\`, no mutation.
+- **claim** (`cl\_7b31e29705bb8dd3`): \`partition\_key\_of(fact)\` is the canonical HRW partition key function: it builds a \`PartitionKey\` from the fact's underlying currency pair (\`partition\_pair\_of(&fact.key.underlying)\`) scoped by the entity tenant id (\`TenantId(u64::from(fact.key.entity.0))\`). The two-component key (pair + tenant) ensures co-residency of same-entity same-pair risk across shards — the load-bearing routing invariant pinned by the \`entity\_pair\_cell\_is\_co\_resident\` test. Pure: reads \`&RiskFact\`, returns \`PartitionKey\`, no mutation.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.natural\_owner\_of` (hash `0c4368fdabf1b60e`, resolved)
-  - `github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.partition\_key\_of` (hash `6a3f4cd35f1470e0`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.natural\_owner\_of` (hash `a0ad99607e5e760e`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.partition\_key\_of` (hash `ab4362b39e747bc0`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.partition\_facts
 
@@ -6526,42 +6300,36 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-router.src.hash.fold64
 
-- **claim** (`cl\_b965039743396158`): fold64(acc, lane) chains one 64-bit lane into a running accumulator via: rotated = acc.rotate\_left(23); mix64(rotated.wrapping\_add(mix64(lane))). The 23-bit rotation before addition ensures successive lanes occupy different bit positions before mixing, defeating trivial cancellation of equal lanes. fold64 is order-sensitive: fold64(fold64(0,1),2) != fold64(fold64(0,2),1) (tested by fold\_is\_order\_sensitive).
+- **claim** (`cl\_be1253f28ef722c7`): fold64(acc, lane) chains one 64-bit lane into a running accumulator via: rotated = acc.rotate\_left(23); mix64(rotated.wrapping\_add(mix64(lane))). The 23-bit rotation before addition ensures successive lanes occupy different bit positions before mixing, defeating trivial cancellation of equal lanes. fold64 is order-sensitive: fold64(fold64(0,1),2) != fold64(fold64(0,2),1) (tested by fold\_is\_order\_sensitive).
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-router.src.hash.fold64` (hash `c41ae4517332cfa6`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-router.src.hash.fold64` (hash `59ac7c888590ed80`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-router.src.hash.mix64
 
-- **claim** (`cl\_de05e5886f41ebe7`): mix64 is the splitmix64 avalanching finalizer: z = (z ^ (z\>\>30)) \* 0xbf58476d1ce4e5b9; z = (z ^ (z\>\>27)) \* 0x94d049bb133111eb; z ^ (z\>\>31). It is bijective (never collapses distinct inputs), branch-free, const-evaluable, and produces ~32-bit average Hamming distance on single-bit input perturbations. This property makes per-replica rendezvous weights behave as independent uniform draws.
+- **claim** (`cl\_d4393c32d6e5e38d`): mix64 is the splitmix64 avalanching finalizer: z = (z ^ (z\>\>30)) \* 0xbf58476d1ce4e5b9; z = (z ^ (z\>\>27)) \* 0x94d049bb133111eb; z ^ (z\>\>31). It is bijective (never collapses distinct inputs), branch-free, const-evaluable, and produces ~32-bit average Hamming distance on single-bit input perturbations. This property makes per-replica rendezvous weights behave as independent uniform draws.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-router.src.hash.mix64` (hash `c8f68398f22f27ce`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-router.src.hash.mix64` (hash `569f8b447fd04688`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-router.src.hash.rendezvous\_weight
 
-- **claim** (`cl\_34dce0d1fd4ce707`): PILLAR (CLAUDE.md guardrail 6 + 11 — "Design for horizontal scale-out from day one"; "scale-out aware"). \`rendezvous\_weight(replica\_seed, key\_digest)\` is the pure deterministic core of the platform's horizontal scale-out: a \`const fn\` computing the Highest-Random-Weight (HRW / rendezvous-hashing) score for one (replica, partition-key) pair as \`mix64(fold64(replica\_seed, key\_digest))\`. It reads only its two u64 inputs and returns a u64 — no allocation, no I/O, no mutation, no WRITES edges — so it is referentially transparent and the per-replica scores are reproducible on every node. This is the primitive that makes book/risk sharding deterministic and minimal-disruption under membership change: \`PartitionMap::natural\_owner\` takes the argmax of this weight over the live replica set to assign each partition key its stable owner, so adding/removing a replica re-homes only the keys whose argmax moved (the HRW property), never a global reshuffle. Self-invalidating: if the entanglement/mixing changes (anything beyond a pure two-u64 fold) the WRITES gate flips this claim off.
+- **claim** (`cl\_10b951552fbc47ad`): PILLAR (CLAUDE.md guardrail 6 + 11 — "Design for horizontal scale-out from day one"; "scale-out aware"). \`rendezvous\_weight(replica\_seed, key\_digest)\` is the pure deterministic core of the platform's horizontal scale-out: a \`const fn\` computing the Highest-Random-Weight (HRW / rendezvous-hashing) score for one (replica, partition-key) pair as \`mix64(fold64(replica\_seed, key\_digest))\`. It reads only its two u64 inputs and returns a u64 — no allocation, no I/O, no mutation, no WRITES edges — so it is referentially transparent and the per-replica scores are reproducible on every node. This is the primitive that makes book/risk sharding deterministic and minimal-disruption under membership change: \`PartitionMap::natural\_owner\` takes the argmax of this weight over the live replica set to assign each partition key its stable owner, so adding/removing a replica re-homes only the keys whose argmax moved (the HRW property), never a global reshuffle. Self-invalidating: if the entanglement/mixing changes (anything beyond a pure two-u64 fold) the WRITES gate flips this claim off.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-router.src.hash.rendezvous\_weight` (hash `428b0afb5cc685d9`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-router.src.hash.rendezvous\_weight` (hash `a0e606429308cbe3`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-router.src.key.PartitionKey.digest
 
@@ -6576,14 +6344,14 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-router.src.key.tagged
 
-- **claim** (`cl\_1a25172260272bf4`): The \`tagged\` const fn encodes an optional 64-bit sub-key so that absence and any concrete value are provably distinguishable: \`None\` returns the sentinel \`0xA5A5\_A5A5\_A5A5\_A5A5\` (alternating bit pattern, unreachable by the \`Some\` path's output distribution); \`Some(v)\` returns \`mix64(v ^ 0x5555\_5555\_5555\_5555)\` which XOR-masks the value before mixing to break low-entropy clustering around zero. The function is \`const\` and has no side effects.
+- **claim** (`cl\_caa0ebccf83e11fd`): The \`tagged\` const fn encodes an optional 64-bit sub-key so that absence and any concrete value are provably distinguishable: \`None\` returns the sentinel \`0xA5A5\_A5A5\_A5A5\_A5A5\` (alternating bit pattern, unreachable by the \`Some\` path's output distribution); \`Some(v)\` returns \`mix64(v ^ 0x5555\_5555\_5555\_5555)\` which XOR-masks the value before mixing to break low-entropy clustering around zero. The function is \`const\` and has no side effects.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:40:34Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-router.src.key.tagged` (hash `21a406430369af8a`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-router.src.key.tagged` (hash `0cb918205fe3e4ea`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:40:34Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:40:34Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-router.src.map.PartitionMap\<'a\>.natural\_owner
 
@@ -6620,14 +6388,14 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-router.src.map.healthy\_standby
 
-- **claim** (`cl\_6059c21552c9159c`): \`healthy\_standby\` returns \`Some(sb)\` if and only if the owner replica has a non-None \`standby\` field AND the standby's \`Health\` in the replica set is \`Health::Up\`. In all other cases (no standby configured, or standby exists but is not \`Up\`) it returns \`None\`. The function is a pure read over shared references with no side effects.
+- **claim** (`cl\_074e044a3085e755`): \`healthy\_standby\` returns \`Some(sb)\` if and only if the owner replica has a non-None \`standby\` field AND the standby's \`Health\` in the replica set is \`Health::Up\`. In all other cases (no standby configured, or standby exists but is not \`Up\`) it returns \`None\`. The function is a pure read over shared references with no side effects.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:40:34Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-router.src.map.healthy\_standby` (hash `7dc747c0f5f19289`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-router.src.map.healthy\_standby` (hash `ac7caee457577379`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:40:34Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:40:34Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-router.src.replica.MembershipError.fmt
 
@@ -6950,25 +6718,25 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-server.src.services.access.mode\_from\_env\_or
 
-- **claim** (`cl\_50332db5f7952b12`): mode\_from\_env\_or reads the CELNET\_ACCESS\_MODE environment variable and maps "permissive" -\> AccessMode::Permissive, "enforce" -\> AccessMode::Enforce, and any other value (including unset) -\> the provided default. This is the single authoritative resolution point for the access mode override; the demo edge passes Permissive as default, all production paths pass Enforce.
+- **claim** (`cl\_15ab6b083de4309a`): mode\_from\_env\_or reads the CELNET\_ACCESS\_MODE environment variable and maps "permissive" -\> AccessMode::Permissive, "enforce" -\> AccessMode::Enforce, and any other value (including unset) -\> the provided default. This is the single authoritative resolution point for the access mode override; the demo edge passes Permissive as default, all production paths pass Enforce.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:59:17Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-server.src.services.access.mode\_from\_env\_or` (hash `849162c0d3844898`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-server.src.services.access.mode\_from\_env\_or` (hash `21f4b9c56987ddd8`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:59:17Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:59:17Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-server.src.services.access.principal\_label
 
-- **claim** (`cl\_f2dffa3fbc789f90`): principal\_label produces a human-readable diagnostic string for an EntitlementPrincipal: None → "absent"; grant\_all with denies → "grant-all(+N denies)"; scoped → "scoped(M grants, N denies)". The function is pure and allocation-only (no I/O, no mutation).
+- **claim** (`cl\_2ff82bf468b97afe`): principal\_label produces a human-readable diagnostic string for an EntitlementPrincipal: None → "absent"; grant\_all with denies → "grant-all(+N denies)"; scoped → "scoped(M grants, N denies)". The function is pure and allocation-only (no I/O, no mutation).
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:45Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-server.src.services.access.principal\_label` (hash `71325dcd469e1709`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-server.src.services.access.principal\_label` (hash `3657d9bf9912d0a9`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:58:45Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:45Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-server.src.services.attribution.resolve
 
@@ -7093,27 +6861,25 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-server.src.services.pricefanout.spot\_at
 
-- **claim** (`cl\_5a24af5f3ac7ab01`): \`spot\_at(seed, tick\_seq, base\_spot)\` is a pure deterministic spot-price generator for the price fan-out stream. It computes: \`mixed = splitmix64(seed XOR (tick\_seq \* 0x2545\_F491\_4F6C\_DD1D))\`, then \`u = unit\_signed(mixed)\` (a signed uniform in (-1,1)), and returns \`base\_spot \* (u \* STREAM\_BUMP + 1.0)\`. The same \`(seed, tick\_seq)\` pair always produces the same price; distinct pairs produce independent draws.
+- **claim** (`cl\_9621270714295fc4`): \`spot\_at(seed, tick\_seq, base\_spot)\` is a pure deterministic spot-price generator for the price fan-out stream. It computes: \`mixed = splitmix64(seed XOR (tick\_seq \* 0x2545\_F491\_4F6C\_DD1D))\`, then \`u = unit\_signed(mixed)\` (a signed uniform in (-1,1)), and returns \`base\_spot \* (u \* STREAM\_BUMP + 1.0)\`. The same \`(seed, tick\_seq)\` pair always produces the same price; distinct pairs produce independent draws.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-server.src.services.pricefanout.spot\_at` (hash `aa84b819d660e704`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-server.src.services.pricefanout.spot\_at` (hash `87fb5a8c0997f474`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-server.src.services.risk.aggregate.resolved\_group\_value
 
-- **claim** (`cl\_db8fa0f6c7fdc8ef`): resolved\_group\_value resolves the u64 group key for a risk fact under a given dimension, with two hierarchy-aware overrides: for DimensionId::Desk it looks up the book's owning desk via Hierarchy::desk\_of and uses the desk's raw id if found (falling back to the fact's own group\_value when no desk mapping exists); for Entity it similarly lifts via entity\_of(location). All other dimensions delegate directly to fact.key.group\_value(dim).
+- **claim** (`cl\_ae37eb8d421c23df`): resolved\_group\_value resolves the u64 group key for a risk fact under a given dimension, with two hierarchy-aware overrides: for DimensionId::Desk it looks up the book's owning desk via Hierarchy::desk\_of and uses the desk's raw id if found (falling back to the fact's own group\_value when no desk mapping exists); for Entity it similarly lifts via entity\_of(location). All other dimensions delegate directly to fact.key.group\_value(dim).
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:48:15Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-server.src.services.risk.aggregate.resolved\_group\_value` (hash `2f7fe0ec3e6922b2`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-server.src.services.risk.aggregate.resolved\_group\_value` (hash `fbd08074ce8ce9d2`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:48:15Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:48:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-server.src.services.risk.convert.dimension\_of
 
@@ -7128,47 +6894,47 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-server.src.services.risk.convert.dimension\_to\_wire
 
-- **claim** (`cl\_99e0ab53df8dc9c7`): dimension\_to\_wire is an exhaustive pure bijection from the six DimensionId variants (Trader, Book, Desk, Underlying, Location, Entity) to their corresponding RiskDimension proto enum i32 values via a cast. No default arm exists; adding a new DimensionId variant causes a compile error.
+- **claim** (`cl\_34bf231fee84ebba`): dimension\_to\_wire is an exhaustive pure bijection from the six DimensionId variants (Trader, Book, Desk, Underlying, Location, Entity) to their corresponding RiskDimension proto enum i32 values via a cast. No default arm exists; adding a new DimensionId variant causes a compile error.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:53Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-server.src.services.risk.convert.dimension\_to\_wire` (hash `150af6b49cbc80ac`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-server.src.services.risk.convert.dimension\_to\_wire` (hash `ca35a2b9dbe45edc`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:58:53Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:53Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-server.src.services.risk.convert.enforcement\_to\_wire
 
-- **claim** (`cl\_cd2f80b064c775d3`): enforcement\_to\_wire is a pure, exhaustive bijection from the two-variant Enforcement enum to WireEnforcement proto i32 values: Enforcement::Soft→WireEnforcement::Soft as i32, Enforcement::Hard→WireEnforcement::Hard as i32.
+- **claim** (`cl\_08336c1667340b69`): enforcement\_to\_wire is a pure, exhaustive bijection from the two-variant Enforcement enum to WireEnforcement proto i32 values: Enforcement::Soft→WireEnforcement::Soft as i32, Enforcement::Hard→WireEnforcement::Hard as i32.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:59:02Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-server.src.services.risk.convert.enforcement\_to\_wire` (hash `aa407f53f236ced8`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-server.src.services.risk.convert.enforcement\_to\_wire` (hash `2a80756e05b70118`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:59:02Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:59:02Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-server.src.services.risk.convert.limit\_metric\_to\_wire
 
-- **claim** (`cl\_ee3125fe7918ee43`): limit\_metric\_to\_wire is a pure, total mapping from LimitMetric enum variants to a wire triple (LimitMetricKind, Option\<WireVegaPillar\>, u32). VegaBucket carries a non-None pillar; TenorVega carries its tenor\_days in the u32 slot; all scalar Greeks and risk measures carry (kind, None, 0). The mapping covers all 11 variants exhaustively.
+- **claim** (`cl\_30d94af076dba8c5`): limit\_metric\_to\_wire is a pure, total mapping from LimitMetric enum variants to a wire triple (LimitMetricKind, Option\<WireVegaPillar\>, u32). VegaBucket carries a non-None pillar; TenorVega carries its tenor\_days in the u32 slot; all scalar Greeks and risk measures carry (kind, None, 0). The mapping covers all 11 variants exhaustively.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:56Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-server.src.services.risk.convert.limit\_metric\_to\_wire` (hash `87deea8e3a534ece`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-server.src.services.risk.convert.limit\_metric\_to\_wire` (hash `2280a2a7bc263cce`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:58:56Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:56Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-server.src.services.risk.convert.rag\_to\_wire
 
-- **claim** (`cl\_4af807f88259f7a5`): rag\_to\_wire is a total, exhaustive bijection from the four RagStatus variants (Green, Amber, Red, Breach) to the corresponding WireRag proto discriminants, returned as i32. Every variant is covered; no default branch exists.
+- **claim** (`cl\_7d5d0098c1c022e5`): rag\_to\_wire is a total, exhaustive bijection from the four RagStatus variants (Green, Amber, Red, Breach) to the corresponding WireRag proto discriminants, returned as i32. Every variant is covered; no default branch exists.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:50Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-server.src.services.risk.convert.rag\_to\_wire` (hash `f1bcfb12d2f03be2`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-server.src.services.risk.convert.rag\_to\_wire` (hash `855ee92fc0bafd02`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:58:50Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:50Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-server.src.services.risk.convert.rule\_of
 
@@ -7326,14 +7092,14 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.american\_decodes\_from\_json
 
-- **claim** (`cl\_874de187fdc764a7`): american\_decodes\_from\_json verifies two codec contracts: (a) an American/continuous option with absent lsm\_paths decodes with lsm\_paths==0 and bermudan\_dates empty; (b) a Bermudan variant with explicit bermudan\_dates array of 4 year-fractions, lsm\_paths=100\_000, lsm\_exercise\_dates=50, and lsm\_seed=7 round-trips all four fields with bit-exact year-fraction values.
+- **claim** (`cl\_334a255e808f79e2`): american\_decodes\_from\_json verifies two codec contracts: (a) an American/continuous option with absent lsm\_paths decodes with lsm\_paths==0 and bermudan\_dates empty; (b) a Bermudan variant with explicit bermudan\_dates array of 4 year-fractions, lsm\_paths=100\_000, lsm\_exercise\_dates=50, and lsm\_seed=7 round-trips all four fields with bit-exact year-fraction values.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:04Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.american\_decodes\_from\_json` (hash `d146a33823f409af`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.american\_decodes\_from\_json` (hash `571b61f070284f97`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:58:04Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:04Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.american\_from\_json
 
@@ -7359,36 +7125,36 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.basket\_instrument\_round\_trips\_from\_json
 
-- **claim** (`cl\_b9e268346e19662d`): basket\_instrument\_round\_trips\_from\_json verifies that a two-leg basket instrument (EUR/USD 0.5 weight + GBP/USD 0.5 weight, 4-element correlation matrix \[1.0, 0.4, 0.4, 1.0\], BasketKind::WorstOf, mc\_paths=8192, mc\_replications=16) round-trips through instrument\_from\_json with bit-exact f64 preservation for spot, vol, and strike values.
+- **claim** (`cl\_9618385852cc067c`): basket\_instrument\_round\_trips\_from\_json verifies that a two-leg basket instrument (EUR/USD 0.5 weight + GBP/USD 0.5 weight, 4-element correlation matrix \[1.0, 0.4, 0.4, 1.0\], BasketKind::WorstOf, mc\_paths=8192, mc\_replications=16) round-trips through instrument\_from\_json with bit-exact f64 preservation for spot, vol, and strike values.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:22Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.basket\_instrument\_round\_trips\_from\_json` (hash `9585760ed8d9c813`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.basket\_instrument\_round\_trips\_from\_json` (hash `73dfe1ecb06a1d4b`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:58:22Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:22Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.fx\_forward\_instrument\_round\_trips\_from\_json
 
-- **claim** (`cl\_62181bfc1fb31be2`): fx\_forward\_instrument\_round\_trips\_from\_json verifies bit-exact round-trip of an FX forward instrument through instrument\_from\_json: contract\_rate=1.25, notional=1\_000\_000.0, and side=Buy (enum discriminant 0) are all preserved exactly, with f64 fields compared via to\_bits() to guard against any lossy parse path.
+- **claim** (`cl\_098e797f03f2047c`): fx\_forward\_instrument\_round\_trips\_from\_json verifies bit-exact round-trip of an FX forward instrument through instrument\_from\_json: contract\_rate=1.25, notional=1\_000\_000.0, and side=Buy (enum discriminant 0) are all preserved exactly, with f64 fields compared via to\_bits() to guard against any lossy parse path.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:59:15Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.fx\_forward\_instrument\_round\_trips\_from\_json` (hash `83d8423dc2bdf0fa`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.fx\_forward\_instrument\_round\_trips\_from\_json` (hash `595b3bc7fa421bd2`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:59:15Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:59:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.fx\_swap\_instrument\_round\_trips\_from\_json
 
-- **claim** (`cl\_cdd76c4695f05ec4`): fx\_swap\_instrument\_round\_trips\_from\_json verifies that a JSON FX-swap instrument decodes via instrument\_from\_json with exact IEEE-754 bit-identical field preservation: near.side == Buy (0), far.side == Sell (1), and near.notional.to\_bits() == 2\_000\_000.0\_f64.to\_bits(). The two-leg side inversion (near Buy / far Sell) is the invariant being sealed.
+- **claim** (`cl\_370fccd1aae8d719`): fx\_swap\_instrument\_round\_trips\_from\_json verifies that a JSON FX-swap instrument decodes via instrument\_from\_json with exact IEEE-754 bit-identical field preservation: near.side == Buy (0), far.side == Sell (1), and near.notional.to\_bits() == 2\_000\_000.0\_f64.to\_bits(). The two-leg side inversion (near Buy / far Sell) is the invariant being sealed.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:39Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.fx\_swap\_instrument\_round\_trips\_from\_json` (hash `43582198021b250f`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.fx\_swap\_instrument\_round\_trips\_from\_json` (hash `7512afca6b70dff7`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:58:39Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:39Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.instrument\_underlying\_from\_json
 
@@ -7425,14 +7191,14 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.ndf\_instrument\_round\_trips\_from\_json
 
-- **claim** (`cl\_4553b277077109e7`): ndf\_instrument\_round\_trips\_from\_json verifies exact JSON decode of an NDF instrument: contract\_rate bit-identical to 5.1, fixing==FixingSource::BrlPtax (discriminant 3), settlement\_ccy=="USD". The fixing source integer-to-enum mapping is the load-bearing invariant being sealed.
+- **claim** (`cl\_6d8317dec4df28f3`): ndf\_instrument\_round\_trips\_from\_json verifies exact JSON decode of an NDF instrument: contract\_rate bit-identical to 5.1, fixing==FixingSource::BrlPtax (discriminant 3), settlement\_ccy=="USD". The fixing source integer-to-enum mapping is the load-bearing invariant being sealed.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:59:26Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.ndf\_instrument\_round\_trips\_from\_json` (hash `a3bbc22a97a43923`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.ndf\_instrument\_round\_trips\_from\_json` (hash `5b58f66880abbd9b`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:59:26Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:59:26Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.opt\_f64
 
@@ -7557,58 +7323,58 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.vanilla\_instrument\_round\_trips\_from\_json
 
-- **claim** (`cl\_fba27c57a66531e4`): vanilla\_instrument\_round\_trips\_from\_json confirms that the WS codec decodes a vanilla JSON instrument with bit-exact f64 preservation: expiry\_years 1.0 and strike 1.12 both satisfy to\_bits equality after the JSON→proto round-trip, proving no lossy float conversion.
+- **claim** (`cl\_ec9e29d0667ea4cc`): vanilla\_instrument\_round\_trips\_from\_json confirms that the WS codec decodes a vanilla JSON instrument with bit-exact f64 preservation: expiry\_years 1.0 and strike 1.12 both satisfy to\_bits equality after the JSON→proto round-trip, proving no lossy float conversion.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:50Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.vanilla\_instrument\_round\_trips\_from\_json` (hash `a68f81d93b6bfbf7`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.vanilla\_instrument\_round\_trips\_from\_json` (hash `fdcdc3fb9337789f`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:58:50Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:50Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.wave1\_products\_decode\_from\_json
 
-- **claim** (`cl\_ee376673b5992e09`): wave1\_products\_decode\_from\_json verifies that the WS JSON codec correctly decodes VarianceSwap (strike\_vol bit-exact), VolatilitySwap, and AsianOption (observations, strike, elapsed\_weight all bit-exact f64) from their respective JSON discriminators.
+- **claim** (`cl\_452cee90319c5482`): wave1\_products\_decode\_from\_json verifies that the WS JSON codec correctly decodes VarianceSwap (strike\_vol bit-exact), VolatilitySwap, and AsianOption (observations, strike, elapsed\_weight all bit-exact f64) from their respective JSON discriminators.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:59:05Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.wave1\_products\_decode\_from\_json` (hash `67b027b86ddc68c8`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.wave1\_products\_decode\_from\_json` (hash `b2b2a23d686b81e8`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:59:05Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:59:05Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.wave2\_products\_decode\_from\_json
 
-- **claim** (`cl\_6b148c3e5a82c9ed`): wave2\_products\_decode\_from\_json verifies the WS codec for ForwardStart (moneyness/reset bit-exact), plain Cliquet (optional floor/cap all None when absent), clamped Cliquet (local\_floor=Some(0.0), local\_cap=Some(0.03), mc\_pairs/mc\_seed exact), and Quanto (payoff discriminant, strike/correlation bit-exact f64).
+- **claim** (`cl\_18fbebb825102d2c`): wave2\_products\_decode\_from\_json verifies the WS codec for ForwardStart (moneyness/reset bit-exact), plain Cliquet (optional floor/cap all None when absent), clamped Cliquet (local\_floor=Some(0.0), local\_cap=Some(0.03), mc\_pairs/mc\_seed exact), and Quanto (payoff discriminant, strike/correlation bit-exact f64).
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:59:07Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.wave2\_products\_decode\_from\_json` (hash `0e7358d79c40a348`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.wave2\_products\_decode\_from\_json` (hash `5975d35c96cfbc68`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:59:07Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:59:07Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.wave3\_products\_decode\_from\_json
 
-- **claim** (`cl\_4dd026f5371a4c14`): wave3\_products\_decode\_from\_json verifies WS codec round-trips for TARF (redemption enum, target bit-exact, schedule fixing\_years length, mc\_pairs/mc\_seed), Pivot (all TARF fields plus pivot level bit-exact), Accumulator (monitoring enum, barrier bit-exact, schedule length), continuous Lookback (Floating style, Continuous monitoring), and discrete Lookback (Fixed style, Discrete monitoring, strike/observations/mc knobs exact).
+- **claim** (`cl\_35423834b808511e`): wave3\_products\_decode\_from\_json verifies WS codec round-trips for TARF (redemption enum, target bit-exact, schedule fixing\_years length, mc\_pairs/mc\_seed), Pivot (all TARF fields plus pivot level bit-exact), Accumulator (monitoring enum, barrier bit-exact, schedule length), continuous Lookback (Floating style, Continuous monitoring), and discrete Lookback (Fixed style, Discrete monitoring, strike/observations/mc knobs exact).
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:59:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.wave3\_products\_decode\_from\_json` (hash `fbc416253b3acc95`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.wave3\_products\_decode\_from\_json` (hash `fd106a77ab7487c5`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:59:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:59:11Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.window\_barrier\_and\_pricing\_model\_decode\_from\_json
 
-- **claim** (`cl\_0561596171b38215`): window\_barrier\_and\_pricing\_model\_decode\_from\_json verifies two contracts: (1) an explicit pricing\_model:1 in the JSON decodes to PricingModel::LocalStochVol, and WindowBarrier fields (barrier, side, window\_start, window\_end, mc\_pairs, mc\_steps, mc\_seed) are all preserved exactly; (2) an absent pricing\_model field decodes to PricingModel::Default (proto3 zero), preserving backward compatibility.
+- **claim** (`cl\_50d0309b88e82739`): window\_barrier\_and\_pricing\_model\_decode\_from\_json verifies two contracts: (1) an explicit pricing\_model:1 in the JSON decodes to PricingModel::LocalStochVol, and WindowBarrier fields (barrier, side, window\_start, window\_end, mc\_pairs, mc\_steps, mc\_seed) are all preserved exactly; (2) an absent pricing\_model field decodes to PricingModel::Default (proto3 zero), preserving backward compatibility.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:59:13Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.window\_barrier\_and\_pricing\_model\_decode\_from\_json` (hash `39afc1c115348df9`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.window\_barrier\_and\_pricing\_model\_decode\_from\_json` (hash `91fa3305130c3d49`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:59:13Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:59:13Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-server.src.ws.limits.transport\_config
 
@@ -7689,42 +7455,36 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-surface.src.arbitrage.check\_slice
 
-- **claim** (`cl\_29dd9bca9819d10e`): \`check\_slice\` is the per-slice butterfly + vertical no-arbitrage primitive (ANALYTICS-SPEC §3.4) that VolSurface::arbitrage\_report calls at each sampled maturity. Over a strictly-ascending strike grid it returns an ArbitrageReport with \`min\_density\` (the minimum second-difference risk-neutral density (down−2·mid+up)/h² via implied\_density; a negative density is a butterfly violation), \`min\_butterfly\` = the h²-scaled butterfly spread, and \`max\_vertical\_increase\` = the largest call-price rise from a lower strike to the next (a positive increase is a vertical-spread violation, since calls must be monotone non-increasing in K). It asserts grid.len()≥3, h\>0, strictly-ascending strikes, and grid\[0\]\>h as preconditions. This is the slice-local half of the surface arbitrage gate; the calendar (cross-tenor) dimension is checked separately. Pure: it reads the smile + grid + scalars and returns the report value, mutating nothing.
+- **claim** (`cl\_367e8df360193621`): \`check\_slice\` is the per-slice butterfly + vertical no-arbitrage primitive (ANALYTICS-SPEC §3.4) that VolSurface::arbitrage\_report calls at each sampled maturity. Over a strictly-ascending strike grid it returns an ArbitrageReport with \`min\_density\` (the minimum second-difference risk-neutral density (down−2·mid+up)/h² via implied\_density; a negative density is a butterfly violation), \`min\_butterfly\` = the h²-scaled butterfly spread, and \`max\_vertical\_increase\` = the largest call-price rise from a lower strike to the next (a positive increase is a vertical-spread violation, since calls must be monotone non-increasing in K). It asserts grid.len()≥3, h\>0, strictly-ascending strikes, and grid\[0\]\>h as preconditions. This is the slice-local half of the surface arbitrage gate; the calendar (cross-tenor) dimension is checked separately. Pure: it reads the smile + grid + scalars and returns the report value, mutating nothing.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-surface.src.arbitrage.check\_slice` (hash `39351d38abda3948`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-surface.src.arbitrage.check\_slice` (hash `e5fe133b2d20c894`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-surface.src.arbitrage.forward\_call
 
-- **claim** (`cl\_766a107dccd59c7f`): Analytics-correctness (arbitrage-gate deliverable, vertical/calendar oracle): celnet-surface::arbitrage::forward\_call is the pure undiscounted Black forward-call value F·N(d1) − K·N(d2) evaluated at the smile's own implied vol σ(K,F,t). It is the closed-form oracle the arbitrage gates are checked against: its K-derivative is −N(d2) ∈ \[−1,0\] (the vertical/call-spread bound, forward\_call\_strike\_slope), and its second K-difference is the butterfly/density check; calendar-monotonicity is verified by comparing this value across maturities. Pure: deterministic in (&Smile, strike, forward, t), no WRITES edges.
+- **claim** (`cl\_4d4bfe004d031e22`): Analytics-correctness (arbitrage-gate deliverable, vertical/calendar oracle): celnet-surface::arbitrage::forward\_call is the pure undiscounted Black forward-call value F·N(d1) − K·N(d2) evaluated at the smile's own implied vol σ(K,F,t). It is the closed-form oracle the arbitrage gates are checked against: its K-derivative is −N(d2) ∈ \[−1,0\] (the vertical/call-spread bound, forward\_call\_strike\_slope), and its second K-difference is the butterfly/density check; calendar-monotonicity is verified by comparing this value across maturities. Pure: deterministic in (&Smile, strike, forward, t), no WRITES edges.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-surface.src.arbitrage.forward\_call` (hash `3e7ce4a5f5522727`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-surface.src.arbitrage.forward\_call` (hash `8ce4e1efc7a0d9df`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-surface.src.arbitrage.forward\_call\_strike\_slope
 
-- **claim** (`cl\_27255af93a920219`): \`forward\_call\_strike\_slope\` returns the sticky (∂σ/∂K-ignoring) strike-derivative of the forward call price as \`-Φ(d2)\`, where \`d2 = d1 - σ√t\` from the smile's implied vol at the strike. Since \`Φ ∈ \[0,1\]\`, the returned slope lies in \`\[-1, 0\]\` — the no-arbitrage bound on a call's monotone-decreasing strike profile. Pure: it reads the smile and scalar inputs and returns an \`f64\`, mutating nothing.
+- **claim** (`cl\_af2fd3c60a5d24e3`): \`forward\_call\_strike\_slope\` returns the sticky (∂σ/∂K-ignoring) strike-derivative of the forward call price as \`-Φ(d2)\`, where \`d2 = d1 - σ√t\` from the smile's implied vol at the strike. Since \`Φ ∈ \[0,1\]\`, the returned slope lies in \`\[-1, 0\]\` — the no-arbitrage bound on a call's monotone-decreasing strike profile. Pure: it reads the smile and scalar inputs and returns an \`f64\`, mutating nothing.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-surface.src.arbitrage.forward\_call\_strike\_slope` (hash `ef44f315812ab58f`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-surface.src.arbitrage.forward\_call\_strike\_slope` (hash `e09fd91d88078aff`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-surface.src.calibrate.CalibratedSmile.forward
 
@@ -8393,103 +8153,91 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-types.src.lib.rate\_sensitivities\_arms
 
-- **claim** (`cl\_4ac46056f04075e7`): rate\_sensitivities\_arms is a test that documents and enforces the FX–carry decomposition identity for RateSensitivities: given a discount rate sensitivity rho\_dom\_discount and a carry rate sensitivity carry\_rho, the FX arm satisfies rho\_dom = rho\_dom\_discount + carry\_rho and rho\_for = -carry\_rho. The test uses binary-exact constants (0.25 + 0.125 = 0.375) so the assertions are mathematically exact (no floating-point approximation error). This encodes the structural invariant that the FX rate sensitivities are a linear decomposition of discount and carry contributions.
+- **claim** (`cl\_c28b8279f4047661`): rate\_sensitivities\_arms is a test that documents and enforces the FX–carry decomposition identity for RateSensitivities: given a discount rate sensitivity rho\_dom\_discount and a carry rate sensitivity carry\_rho, the FX arm satisfies rho\_dom = rho\_dom\_discount + carry\_rho and rho\_for = -carry\_rho. The test uses binary-exact constants (0.25 + 0.125 = 0.375) so the assertions are mathematically exact (no floating-point approximation error). This encodes the structural invariant that the FX rate sensitivities are a linear decomposition of discount and carry contributions.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:40:35Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-types.src.lib.rate\_sensitivities\_arms` (hash `42ceff7a19e39f80`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-types.src.lib.rate\_sensitivities\_arms` (hash `6f66882bf4eb5ae0`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:40:35Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:40:35Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-vanilla.src.adjoint.adjoint\_greeks
 
-- **claim** (`cl\_514b66171a3bf1e8`): \`adjoint\_greeks\` computes the full 14-field Greeks via AAD (Algorithmic Adjoint Differentiation). The forward pass records a \`Tape\` struct (all intermediate scalars needed for reverse differentiation); the first reverse pass (\`reverse(&tp, 1.0)\`) produces the first-order adjoints — delta\_spot=∂V/∂S, vega=∂V/∂σ, theta=−∂V/∂T, rho\_dom=∂V/∂r\_dom, rho\_for=∂V/∂r\_for — in a single backward sweep (O(1), same cost as a forward eval). Second-order gamma and vanna are obtained by hand-composing a second reverse pass over the delta\_spot expression (genuine reverse-over-reverse, not finite-difference), using the chain-rule edges stored on the tape: gamma=df\_for·φ(d1)·(1/(S·vsqt)), vanna=df\_for·φ(d1)·((σT)/vsqt−d1/σ). volga=vega·(−d1)·∂d1/∂σ. The mixed/higher-order tail (charm, speed, zomma, color) is taken from the analytic \`greeks\` path. The AAD price is bit-identical to \`price\` (pinned by \`aad\_price\_bit\_identical\`). Pure: reads (OptionType, &VanillaInputs), returns Greeks, no writes.
+- **claim** (`cl\_3b8ffd31a116c2d1`): \`adjoint\_greeks\` computes the full 14-field Greeks via AAD (Algorithmic Adjoint Differentiation). The forward pass records a \`Tape\` struct (all intermediate scalars needed for reverse differentiation); the first reverse pass (\`reverse(&tp, 1.0)\`) produces the first-order adjoints — delta\_spot=∂V/∂S, vega=∂V/∂σ, theta=−∂V/∂T, rho\_dom=∂V/∂r\_dom, rho\_for=∂V/∂r\_for — in a single backward sweep (O(1), same cost as a forward eval). Second-order gamma and vanna are obtained by hand-composing a second reverse pass over the delta\_spot expression (genuine reverse-over-reverse, not finite-difference), using the chain-rule edges stored on the tape: gamma=df\_for·φ(d1)·(1/(S·vsqt)), vanna=df\_for·φ(d1)·((σT)/vsqt−d1/σ). volga=vega·(−d1)·∂d1/∂σ. The mixed/higher-order tail (charm, speed, zomma, color) is taken from the analytic \`greeks\` path. The AAD price is bit-identical to \`price\` (pinned by \`aad\_price\_bit\_identical\`). Pure: reads (OptionType, &VanillaInputs), returns Greeks, no writes.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-vanilla.src.adjoint.adjoint\_greeks` (hash `d1a26121eb32c4e8`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-vanilla.src.adjoint.adjoint\_greeks` (hash `8fea80335b49a6a8`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-vanilla.src.atm.atm\_strike
 
-- **claim** (`cl\_ea0c24a9da1d0d2f`): Delta-Neutral-Straddle (DNS) ATM strike SIGN-FLIPS with the premium-adjusted delta convention — the single most surface-corrupting convention bug if mislocated. \`atm\_strike\` returns F·exp(+½σ²t) for unadjusted delta (SpotUnadjusted \| ForwardUnadjusted) but F·exp(-½σ²t) for premium-adjusted delta (SpotPremiumAdjusted \| ForwardPremiumAdjusted) — the DNS strike sits ABOVE the forward when unadjusted and BELOW it when premium-adjusted (opposite sign of the ½σ²t drift), exactly per ANALYTICS-SPEC §1.3. AtmForward simply returns the forward. The match on (AtmConvention, DeltaConvention) is exhaustive over both enums, so the half-variance sign is never defaulted. Pure: a total function of (atm, delta\_conv, forward, vol, t) returning f64, no side effects.
+- **claim** (`cl\_91df0e2f0d1d5792`): Delta-Neutral-Straddle (DNS) ATM strike SIGN-FLIPS with the premium-adjusted delta convention — the single most surface-corrupting convention bug if mislocated. \`atm\_strike\` returns F·exp(+½σ²t) for unadjusted delta (SpotUnadjusted \| ForwardUnadjusted) but F·exp(-½σ²t) for premium-adjusted delta (SpotPremiumAdjusted \| ForwardPremiumAdjusted) — the DNS strike sits ABOVE the forward when unadjusted and BELOW it when premium-adjusted (opposite sign of the ½σ²t drift), exactly per ANALYTICS-SPEC §1.3. AtmForward simply returns the forward. The match on (AtmConvention, DeltaConvention) is exhaustive over both enums, so the half-variance sign is never defaulted. Pure: a total function of (atm, delta\_conv, forward, vol, t) returning f64, no side effects.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-vanilla.src.atm.atm\_strike` (hash `7f4f7efd5f4c8257`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-vanilla.src.atm.atm\_strike` (hash `34870ca9e2d9af07`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-vanilla.src.delta.delta
 
-- **claim** (`cl\_202feecf6dec6101`): \`delta\` implements all four FX delta conventions over a shared \`delta\_aux\` precomputation. For SpotUnadjusted/ForwardUnadjusted: Δ = factor·N(±d1) (where factor = df\_for for spot, 1 for forward). For SpotPremiumAdjusted/ForwardPremiumAdjusted: Δ\_call = factor·(K/F)·N(d2); Δ\_put = Δ\_call − factor·(K/F) — premium-adjusted delta keys on N(d2) and carries the K/F ratio, which makes it non-monotone in K (the call has a maximum) and underpins the \`strike\_from\_delta\` reachability check. The match over DeltaConvention is exhaustive with no wildcard. Pure: reads (DeltaConvention, OptionType, &VanillaInputs), returns f64, no writes.
+- **claim** (`cl\_5bd951463ec0bb8b`): \`delta\` implements all four FX delta conventions over a shared \`delta\_aux\` precomputation. For SpotUnadjusted/ForwardUnadjusted: Δ = factor·N(±d1) (where factor = df\_for for spot, 1 for forward). For SpotPremiumAdjusted/ForwardPremiumAdjusted: Δ\_call = factor·(K/F)·N(d2); Δ\_put = Δ\_call − factor·(K/F) — premium-adjusted delta keys on N(d2) and carries the K/F ratio, which makes it non-monotone in K (the call has a maximum) and underpins the \`strike\_from\_delta\` reachability check. The match over DeltaConvention is exhaustive with no wildcard. Pure: reads (DeltaConvention, OptionType, &VanillaInputs), returns f64, no writes.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-vanilla.src.delta.delta` (hash `4e2c310e4ab926e6`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-vanilla.src.delta.delta` (hash `362147f3ff17a466`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-vanilla.src.delta.delta\_aux
 
-- **claim** (`cl\_1cd32292d706df99`): delta\_aux computes the shared intermediate quantities needed by all four delta conventions in a single pass: d1 = (ln(S/K) + (r\_dom − r\_for + ½σ²)T) / (σ√T), d2 = d1 − σ√T, factor = exp(−r\_for·T) for spot conventions (SpotUnadjusted, SpotPremiumAdjusted) and 1.0 for forward conventions (ForwardUnadjusted, ForwardPremiumAdjusted), and k\_over\_f = K/F. The function never branches on OptionType; the spot/forward distinction is the sole determinant of \`factor\`.
+- **claim** (`cl\_a21a1a5f91ad5b0c`): delta\_aux computes the shared intermediate quantities needed by all four delta conventions in a single pass: d1 = (ln(S/K) + (r\_dom − r\_for + ½σ²)T) / (σ√T), d2 = d1 − σ√T, factor = exp(−r\_for·T) for spot conventions (SpotUnadjusted, SpotPremiumAdjusted) and 1.0 for forward conventions (ForwardUnadjusted, ForwardPremiumAdjusted), and k\_over\_f = K/F. The function never branches on OptionType; the spot/forward distinction is the sole determinant of \`factor\`.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-27T05:40:34Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-vanilla.src.delta.delta\_aux` (hash `4bb6e2f9b606a377`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-vanilla.src.delta.delta\_aux` (hash `2e8bf2b438b19e2f`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-27T05:40:34Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:40:34Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-vanilla.src.delta.delta\_d\_strike
 
-- **claim** (`cl\_2ea705c4c8317ec6`): Analytics-correctness (premium-adjusted-delta deliverable): celnet-vanilla::delta::delta\_d\_strike is a pure analytic ∂Δ/∂K. For the unadjusted conventions (Spot/Forward-Unadjusted) call and put deltas differ by a K-independent constant, so the strike-slope is the single term factor·φ(d1)·∂d1/∂K with ∂d1/∂K = ∂d2/∂K = −1/(K σ√T). For the premium-adjusted conventions (Spot/Forward-PremiumAdjusted) Δ\_call = factor·(K/F)·N(d2), so the slope follows the product rule in K (F is K-independent): factor·(N(d2)/F + (K/F)·φ(d2)·∂d2/∂K); the put slope is the call slope minus factor/F since Δ\_put = Δ\_call − factor·(K/F). This convention-branching strike-derivative is what makes the premium-adjusted delta non-monotone in strike (it underpins the guarded delta→strike root-find). Pure: deterministic in (conv, opt, &VanillaInputs), no WRITES edges.
+- **claim** (`cl\_4a9029e1faf511b9`): Analytics-correctness (premium-adjusted-delta deliverable): celnet-vanilla::delta::delta\_d\_strike is a pure analytic ∂Δ/∂K. For the unadjusted conventions (Spot/Forward-Unadjusted) call and put deltas differ by a K-independent constant, so the strike-slope is the single term factor·φ(d1)·∂d1/∂K with ∂d1/∂K = ∂d2/∂K = −1/(K σ√T). For the premium-adjusted conventions (Spot/Forward-PremiumAdjusted) Δ\_call = factor·(K/F)·N(d2), so the slope follows the product rule in K (F is K-independent): factor·(N(d2)/F + (K/F)·φ(d2)·∂d2/∂K); the put slope is the call slope minus factor/F since Δ\_put = Δ\_call − factor·(K/F). This convention-branching strike-derivative is what makes the premium-adjusted delta non-monotone in strike (it underpins the guarded delta→strike root-find). Pure: deterministic in (conv, opt, &VanillaInputs), no WRITES edges.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-vanilla.src.delta.delta\_d\_strike` (hash `b3ff2848f6c7ef2c`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-vanilla.src.delta.delta\_d\_strike` (hash `6929d44e35efcd5c`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-vanilla.src.delta.premium\_adjusted\_call\_delta\_max
 
-- **claim** (`cl\_bc3450e3c7118cf8`): Premium-adjusted call delta is NON-MONOTONE in strike — it has a maximum-delta strike with two strikes mapping to the same delta, so the strike↔delta root-find must be guarded and bracketed on the correct branch (ANALYTICS-SPEC §3.5). \`premium\_adjusted\_call\_delta\_max\` computes that delta-max strike as the stationary point: it solves g(d2)=N(d2)·σ√T−φ(d2)=0 (g increasing in d2, root at small positive d2) by bisection, then maps the root d2\* back to the strike K = F·exp(−½σ²T − d2\*·σ√T). This is the cap the solver must respect: a target delta above the achievable max is unreachable, and a naive monotone Brent/Newton would converge to the wrong branch or diverge. Pure: reads \`&VanillaInputs\`, returns the cap strike as f64 via a fixed-iteration bisection, mutating nothing.
+- **claim** (`cl\_ec057f3c15148167`): Premium-adjusted call delta is NON-MONOTONE in strike — it has a maximum-delta strike with two strikes mapping to the same delta, so the strike↔delta root-find must be guarded and bracketed on the correct branch (ANALYTICS-SPEC §3.5). \`premium\_adjusted\_call\_delta\_max\` computes that delta-max strike as the stationary point: it solves g(d2)=N(d2)·σ√T−φ(d2)=0 (g increasing in d2, root at small positive d2) by bisection, then maps the root d2\* back to the strike K = F·exp(−½σ²T − d2\*·σ√T). This is the cap the solver must respect: a target delta above the achievable max is unreachable, and a naive monotone Brent/Newton would converge to the wrong branch or diverge. Pure: reads \`&VanillaInputs\`, returns the cap strike as f64 via a fixed-iteration bisection, mutating nothing.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-vanilla.src.delta.premium\_adjusted\_call\_delta\_max` (hash `9c437604b1002271`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-vanilla.src.delta.premium\_adjusted\_call\_delta\_max` (hash `405fe7656ad1869d`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-vanilla.src.lib.aux
 
-- **claim** (`cl\_8a335ff9a772f2c1`): \`aux\` is the internal precomputation kernel: it computes the four canonical option-pricing intermediates from \`&VanillaInputs\` — sqt=√T (via libm::sqrt), vsqt=σ·√T, d1=(ln(S/K)+(r\_dom−r\_for+½σ²)·T)/vsqt (via libm::ln), d2=d1−vsqt — and packages them in \`Aux\`. Both \`price\` and \`greeks\` call \`aux\` first and re-use these values throughout; computing them once avoids duplicate transcendental evaluations on the hot path. Pure: reads only &VanillaInputs, returns Aux, no allocation, no writes.
+- **claim** (`cl\_ee8cf58a6da194b7`): \`aux\` is the internal precomputation kernel: it computes the four canonical option-pricing intermediates from \`&VanillaInputs\` — sqt=√T (via libm::sqrt), vsqt=σ·√T, d1=(ln(S/K)+(r\_dom−r\_for+½σ²)·T)/vsqt (via libm::ln), d2=d1−vsqt — and packages them in \`Aux\`. Both \`price\` and \`greeks\` call \`aux\` first and re-use these values throughout; computing them once avoids duplicate transcendental evaluations on the hot path. Pure: reads only &VanillaInputs, returns Aux, no allocation, no writes.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:12Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:52Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-vanilla.src.lib.aux` (hash `2cd4e18aae239699`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-vanilla.src.lib.aux` (hash `09f9c22e7398f849`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:52Z
 
 ## github.com-soarsa-celnet.crates.celnet-vanilla.src.lib.greeks
 
@@ -8504,42 +8252,36 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-vanilla.src.lib.price
 
-- **claim** (`cl\_7ebf294058054e61`): GUARDRAIL/HOT-CORE — the FX vanilla pricing kernel \`price\` is allocation-free and lock-free by construction: it reads spot/strike discounted by df\_for()/df\_dom(), evaluates the closed form via norm\_cdf on the precomputed aux (d1,d2), and returns the f64 price for Call/Put — no allocation (alloc\_in\_loop=0, no Vec/Box), no loop (loop\_depth=0), no I/O, no logging, no locks. This is the pinned zero-alloc hot core: it is the leaf kernel the engine's hot pricing loop calls (in\_degree 13), and the engine's \`hot\_pricing\_loop\_allocates\_zero\` / \`hot\_pricing\_under\_concurrent\_publish\_allocates\_zero\` tests (a custom counting global allocator asserting zero allocations on the hot path) hold precisely because kernels like this allocate nothing. Pure: it reads &VanillaInputs and the OptionType and returns the f64 price, mutating nothing — telemetry/logging is offloaded off this path, never inlined into it.
+- **claim** (`cl\_90cab3ccb045a4a4`): GUARDRAIL/HOT-CORE — the FX vanilla pricing kernel \`price\` is allocation-free and lock-free by construction: it reads spot/strike discounted by df\_for()/df\_dom(), evaluates the closed form via norm\_cdf on the precomputed aux (d1,d2), and returns the f64 price for Call/Put — no allocation (alloc\_in\_loop=0, no Vec/Box), no loop (loop\_depth=0), no I/O, no logging, no locks. This is the pinned zero-alloc hot core: it is the leaf kernel the engine's hot pricing loop calls (in\_degree 13), and the engine's \`hot\_pricing\_loop\_allocates\_zero\` / \`hot\_pricing\_under\_concurrent\_publish\_allocates\_zero\` tests (a custom counting global allocator asserting zero allocations on the hot path) hold precisely because kernels like this allocate nothing. Pure: it reads &VanillaInputs and the OptionType and returns the f64 price, mutating nothing — telemetry/logging is offloaded off this path, never inlined into it.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-vanilla.src.lib.price` (hash `794bbca3dea802fc`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-vanilla.src.lib.price` (hash `534b5ba2ca8e086c`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-vanilla.src.premium.premium\_from\_domestic\_pips
 
-- **claim** (`cl\_06a3215c7cb8c119`): PremiumStyle is the FX quotation-units axis and premium\_from\_domestic\_pips is its canonical converter (docs/CONVENTIONS.md PremiumStyle → premium units; docs/ANALYTICS-SPEC premium quotation). Given a price already in domestic pips (v\_dpips), it exhaustively maps the four PremiumStyle variants to their quoted unit: DomesticPips passes the raw PV through unchanged; PercentForeign divides by spot (per unit of foreign/base notional); PercentDomestic divides by strike (per unit of domestic/quote notional at strike); ForeignPips divides by spot·strike. The match is exhaustive over PremiumStyle, so no style is defaulted, and the DomesticPips arm is the identity (domestic\_pips\_is\_the\_raw\_pv). Pure: a total function of (style, v\_dpips, spot, strike) returning f64 with no writes/allocation/IO; deterministic under the f64 CPU-canonical/libm rule. Self-invalidates if the PremiumStyle variant set or any per-style scale factor changes (WRITES gate).
+- **claim** (`cl\_d4ba976d62ad4bdc`): PremiumStyle is the FX quotation-units axis and premium\_from\_domestic\_pips is its canonical converter (docs/CONVENTIONS.md PremiumStyle → premium units; docs/ANALYTICS-SPEC premium quotation). Given a price already in domestic pips (v\_dpips), it exhaustively maps the four PremiumStyle variants to their quoted unit: DomesticPips passes the raw PV through unchanged; PercentForeign divides by spot (per unit of foreign/base notional); PercentDomestic divides by strike (per unit of domestic/quote notional at strike); ForeignPips divides by spot·strike. The match is exhaustive over PremiumStyle, so no style is defaulted, and the DomesticPips arm is the identity (domestic\_pips\_is\_the\_raw\_pv). Pure: a total function of (style, v\_dpips, spot, strike) returning f64 with no writes/allocation/IO; deterministic under the f64 CPU-canonical/libm rule. Self-invalidates if the PremiumStyle variant set or any per-style scale factor changes (WRITES gate).
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:10Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-vanilla.src.premium.premium\_from\_domestic\_pips` (hash `b9ab18aaf4adda8e`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-vanilla.src.premium.premium\_from\_domestic\_pips` (hash `4e15490dc71a9a8e`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-vanilla.src.solver.bracket
 
-- **claim** (`cl\_743e94277fa69d97`): \`bracket\` is the branch-aware bracketing primitive that makes the strike↔delta solve safe under the NON-MONOTONE premium-adjusted call delta (ANALYTICS-SPEC §3.5). It detects the premium-adjusted convention (SpotPremiumAdjusted \| ForwardPremiumAdjusted) and, for a Call, computes the delta-max strike via \`premium\_adjusted\_call\_delta\_max\`: a target\_delta above delta\_max+1e-12 is rejected as DeltaSolveError::Unreachable (the cap is the reachability boundary), and the returned bracket is deliberately pinned to the DECREASING (OTM) branch — lo=K\_max where Δ=delta\_max≥target ⇒ g(lo)≥0, hi expanded by doubling until g(hi)≤0 as K→∞ where Δ→0 — so the downstream root-find can never land on the ascending (ITM) branch that maps a different strike to the same delta. For unadjusted/put cases delta is monotone, so it geometrically expands \[tiny\_strike, f\] outward toward the shrinking-residual side until a sign change is found, returning Unreachable after 64 unsuccessful doublings. Pure: reads (conv,opt,target\_delta,&VanillaInputs,f,&at-closure) and returns Result\<(f64,f64),DeltaSolveError\>; it allocates nothing and mutates no external state (only loop-local lo/hi/iters).
+- **claim** (`cl\_ac0d7344c2c1ce39`): \`bracket\` is the branch-aware bracketing primitive that makes the strike↔delta solve safe under the NON-MONOTONE premium-adjusted call delta (ANALYTICS-SPEC §3.5). It detects the premium-adjusted convention (SpotPremiumAdjusted \| ForwardPremiumAdjusted) and, for a Call, computes the delta-max strike via \`premium\_adjusted\_call\_delta\_max\`: a target\_delta above delta\_max+1e-12 is rejected as DeltaSolveError::Unreachable (the cap is the reachability boundary), and the returned bracket is deliberately pinned to the DECREASING (OTM) branch — lo=K\_max where Δ=delta\_max≥target ⇒ g(lo)≥0, hi expanded by doubling until g(hi)≤0 as K→∞ where Δ→0 — so the downstream root-find can never land on the ascending (ITM) branch that maps a different strike to the same delta. For unadjusted/put cases delta is monotone, so it geometrically expands \[tiny\_strike, f\] outward toward the shrinking-residual side until a sign change is found, returning Unreachable after 64 unsuccessful doublings. Pure: reads (conv,opt,target\_delta,&VanillaInputs,f,&at-closure) and returns Result\<(f64,f64),DeltaSolveError\>; it allocates nothing and mutates no external state (only loop-local lo/hi/iters).
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-vanilla.src.solver.bracket` (hash `03dd7ea473622e35`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-vanilla.src.solver.bracket` (hash `3cd23ae565b69be3`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-vanilla.src.solver.reachable\_targets
 
@@ -8576,16 +8318,14 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 
 ## github.com-soarsa-celnet.crates.celnet-xva.src.cva.compute\_xva
 
-- **claim** (`cl\_d9ddef7e2953b68f`): compute\_xva implements the standard discrete unilateral CVA/DVA/FVA formulas (Gregory, The xVA Challenge, 2015; Brigo-Morini-Pallavicini, 2013): CVA = LGD\_c · Σ\_k D(t\_k) · EPE(t\_k) · (S\_c(t\_{k-1}) − S\_c(t\_k)); DVA = LGD\_o · Σ\_k D(t\_k) · ENE(t\_k) · (S\_o(t\_{k-1}) − S\_o(t\_k)); FVA = funding\_spread · Σ\_k D(t\_k) · (EPE(t\_k) − ENE(t\_k)) · Δt\_k · S\_c(t\_k) · S\_o(t\_k). LGDs are hard-asserted to \[0,1\] (panic otherwise). The function reads only &XvaInputs and returns XvaResult — no mutation, no I/O, no allocation beyond the return value.
+- **claim** (`cl\_cede2f98b6d8fd51`): compute\_xva implements the standard discrete unilateral CVA/DVA/FVA formulas (Gregory, The xVA Challenge, 2015; Brigo-Morini-Pallavicini, 2013): CVA = LGD\_c · Σ\_k D(t\_k) · EPE(t\_k) · (S\_c(t\_{k-1}) − S\_c(t\_k)); DVA = LGD\_o · Σ\_k D(t\_k) · ENE(t\_k) · (S\_o(t\_{k-1}) − S\_o(t\_k)); FVA = funding\_spread · Σ\_k D(t\_k) · (EPE(t\_k) − ENE(t\_k)) · Δt\_k · S\_c(t\_k) · S\_o(t\_k). LGDs are hard-asserted to \[0,1\] (panic otherwise). The function reads only &XvaInputs and returns XvaResult — no mutation, no I/O, no allocation beyond the return value.
 - **kind**: invariant:pure · **state**: active · **confidence**: 
-- **author**: celnet-knowledge · **created**: 2026-06-25T08:20:11Z
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:39:51Z
 - **anchors**:
-  - `github.com-soarsa-celnet.crates.celnet-xva.src.cva.compute\_xva` (hash `feff0eb4b79e8da9`, resolved)
+  - `github.com-soarsa-celnet.crates.celnet-xva.src.cva.compute\_xva` (hash `0152ff7f8a6fdb15`, resolved)
 - **provenance**:
-  - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
-  - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
-  - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
-  - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+  - (none) → draft by agent (authored) @ 2026-06-27T06:39:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:39:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-xva.src.exposure.ExposureProfile.deterministic
 
