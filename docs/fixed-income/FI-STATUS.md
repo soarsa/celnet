@@ -1,6 +1,6 @@
 # Fixed Income — implementation status & outstanding features
 
-**Branch:** `feature/fixedincome` · **Updated:** 2026-06-25
+**Branch:** `fixedincom_risk_ui` · **Updated:** 2026-06-27
 **Scope tracked:** the locked P0 (USD-only, linear rates + cash, no vol/credit — see
 [`OPEN-QUESTIONS.md`](./OPEN-QUESTIONS.md) D3–D12) plus the cross-asset/UI items.
 
@@ -128,16 +128,19 @@ GUI (existing):
 - Gated by a loopback FIX initiator (mirror `tests/fix_acceptor.rs`).
 
 ### F. Five-client parity (slice 9)
-- **GUI** — ✅ the **Fixed-Income asset-class tab** + two of the four §4.2 FI workspaces:
+- **GUI** — ✅ the **top-level domain tab bar** (FX Options · Fixed Income · Administration —
+  `034065a`; the active tab derives from the active workspace so the global `⌘N` chord grammar is
+  unchanged) + **three** of the four §4.2 FI workspaces:
   **Ticket** (`RatesWorkspace.tsx` + offline pricer `ratesPricing.ts` + live `wsTransport.priceRates`:
-  curve → OIS → PV / par / PV01 / DV01 / key-rate ladder over `price_rates`; pricer unit-tested) and
+  curve → OIS → PV / par / PV01 / DV01 / key-rate ladder over `price_rates`; pricer unit-tested),
   **Curve** (`ee3f29f`: `CurveWorkspace.tsx` + `CurveChart` — DF / zero / forward inspection over the
-  bootstrapped curve, log-linear-on-log-DF, curve-identity tested). The remaining §4.2 workspaces:
-  **Risk** (portfolio PV01/DV01/key-rate) is now **unblocked** — the `RiskService.AggregateRatesRisk`
-  RPC (`5bb8099`) exists; it needs a GUI transport method + workspace UI (a WS-mirror exposure of the
-  RPC may be needed if the GUI doesn't reach gRPC directly). **Book** (rates blotter) still awaits the
-  persisted rates position store. The §C/mockup RFQ · IOI · RFS surfaces await their own server
-  contracts.
+  bootstrapped curve, log-linear-on-log-DF, curve-identity tested), and **Risk** ✅ (`034065a`:
+  `RatesRiskWorkspace.tsx` — editable OIS portfolio → `transport.aggregateRatesRisk` → per-ccy nodes
+  with net PV/PV01/DV01 + key-rate DV01 ladder; ladder-sum == net-DV01 identity tested). The Risk
+  workspace reaches the federated RPC over a **WS-mirror of `AggregateRatesRisk`** (`bad2625`: server
+  codec + dispatch arm + GUI transport/codec/in-app rollup, entitlement path preserved). The remaining
+  §4.2 workspace **Book** (rates blotter) still awaits the persisted rates position store. The
+  §C/mockup RFQ · IOI · RFS surfaces await their own server contracts.
 - **Excel** add-in — ✅ (`7722c59`) `=CELNET.RATES(...)` prices an OIS via the live `price_rates`
   engine RPC, spilling PV / par / PV01 / DV01 + the key-rate DV01 ladder (contract + codec adapted
   byte-for-byte from the proven GUI; tsc clean, vitest 445/445 incl. 16 new). Further `CELNET.*`
@@ -150,8 +153,10 @@ GUI (existing):
   sharding) **and** the server-owned RPC that drives it: `RiskService.AggregateRatesRisk`
   (`5bb8099`) — positions → `price_rates` → `partition_rates_facts` → `fan_in_additive` → per-ccy
   rollup, deny-by-default entitlement, endpoint == `firm_aggregate_rates` bit-for-bit (additive proto
-  change). Positions inline; a persisted execution-fed rates position store is the remaining
-  follow-up (it also unblocks the GUI **Book** workspace).
+  change). Now reachable from the GUI over a **WS-mirror** (`bad2625`: codec + dispatch arm + GUI
+  transport/in-app rollup) and surfaced in the **Rates Risk** workspace (`034065a`). Positions inline;
+  a persisted execution-fed rates position store is the remaining follow-up (it also unblocks the GUI
+  **Book** workspace).
 
 ---
 
@@ -165,12 +170,15 @@ GUI (existing):
 
 ## UI changes — explicit status
 - **Administration tab:** ✅ done (`6c978cf`).
+- **Top-level domain tab bar (FX Options · Fixed Income · Administration):** ✅ done (`034065a`) —
+  active tab derives from the active workspace; admin tab gated; chord grammar unchanged.
 - **FI asset-class tabs + FI workspace set:** 🟡 mostly delivered (slice F) — designed in
   [`mockups/`](./mockups/) and FI-ARCHITECTURE §4. Delivered: WS mirror for `price_rates` (codec +
   dispatch) ✅, Rust SDK `Client::price_rates` ✅, the GUI Fixed-Income tab + rates pricing
-  workspace (curve → OIS → PV / par / PV01 / DV01 / key-rate ladder) ✅, and the Excel
-  `=CELNET.RATES(...)` function ✅ (`7722c59`). Remaining F work: the broader FI workspace set
-  (RFQ · IOI · RFS · Blotter) and the federation rates fan-out.
+  workspace (curve → OIS → PV / par / PV01 / DV01 / key-rate ladder) ✅, the **Curve** workspace ✅,
+  the **Rates Risk** workspace ✅ (`034065a`, over the `AggregateRatesRisk` WS-mirror `bad2625`), and
+  the Excel `=CELNET.RATES(...)` function ✅ (`7722c59`). Remaining F work: the **Book** blotter
+  (awaits the persisted rates position store) and the §C RFQ · IOI · RFS surfaces (own contracts).
 
 ---
 
@@ -178,8 +186,10 @@ GUI (existing):
 **C (proto arms) ✅ → D (server consumes `celnet-rates`) ✅ → E (FIX dialect) ✅ → F (WS mirror ✅ ·
 Rust SDK ✅ · GUI asset-tabs + rates workspace ✅ · Excel ✅ · federation rollup ✅) 🟡**, with A/B
 product breadth (FRA / IRS / futures / cash-bond RV) landing into `celnet-rates` in parallel
-(disjoint leaf). C/D/E committed and gated; F's five client surfaces are delivered, 2 of the 4 §4.2
-GUI FI workspaces (Ticket, Curve), **and** the federated `RiskService.AggregateRatesRisk` endpoint
-(`5bb8099`). Remaining: the GUI **Risk** workspace (now unblocked — needs transport + UI, possibly a
-WS-mirror exposure of the RPC); the GUI **Book** workspace + its persisted rates position store; and
-the §C RFQ · IOI · RFS surfaces (own server contracts first).
+(disjoint leaf). C/D/E committed and gated; F's five client surfaces are delivered, **3 of the 4** §4.2
+GUI FI workspaces (Ticket, Curve, **Rates Risk** — `034065a`), the federated
+`RiskService.AggregateRatesRisk` endpoint (`5bb8099`) + its **WS-mirror** (`bad2625`), and the
+**top-level domain tab bar** (`034065a`). Shipped to UAT via `deploy/celnet-deploy.sh` option 2
+(binary release; service verified RUNNING on release `1c90371-…`). Remaining: the GUI **Book**
+workspace + its persisted execution-fed rates position store; and the §C RFQ · IOI · RFS surfaces
+(own server contracts first).
