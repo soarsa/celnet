@@ -65,6 +65,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use celnet_entitlements::AccessMode;
 use celnet_fanout::Consumer;
 use celnet_observability::LatencyRecorder;
 use celnet_proto::stream_service_server::StreamService;
@@ -92,6 +93,8 @@ use crate::services::risk::federate::Fleet;
 use crate::spread::SpreadModel;
 use crate::surface_book::SurfaceBook;
 
+use super::access::{RequiredAuthority, ResolvedCaller, authorize_caller, resolve_caller};
+use super::sessions::SessionRegistry;
 use super::stream_rx::ReceiverStream;
 
 /// The bounded depth of each per-session server→client channel. A subscriber
@@ -173,6 +176,22 @@ pub struct StreamEdge {
     /// counter-based spot ticker). Shared across all sessions on this edge (and
     /// the WS mirror, which builds its session driver from the same `StreamEdge`).
     fanout: Arc<PriceFanout>,
+    /// The edge-wide [`SessionRegistry`] a `StreamAuth` frame's `session_token` is
+    /// validated against — the SAME authentication state every other front (gRPC +
+    /// WS) and gated edge (risk, fix-admin, auth) shares. The constructors default
+    /// to a fresh empty registry (consulted only when a session actually presents a
+    /// token, so the isolated stream tests never touch it); the boot path overrides
+    /// it with the edge-wide registry via [`StreamEdge::with_sessions`].
+    sessions: Arc<SessionRegistry>,
+}
+
+/// A fresh, empty [`SessionRegistry`] the [`StreamEdge`] constructors default to —
+/// the SAME default the risk edge uses. It is only ever consulted when a session
+/// presents a `session_token`, so an isolated stream test (built without a token)
+/// never touches it; the boot path replaces it with the edge-wide registry via
+/// [`StreamEdge::with_sessions`].
+fn default_sessions() -> Arc<SessionRegistry> {
+    Arc::new(SessionRegistry::new(Clock::system()))
 }
 
 impl StreamEdge {
@@ -196,6 +215,7 @@ impl StreamEdge {
             store: None,
             fleet: None,
             fanout: PriceFanout::start(),
+            sessions: default_sessions(),
         }
     }
 
@@ -221,6 +241,7 @@ impl StreamEdge {
             store: Some(store),
             fleet: None,
             fanout: PriceFanout::start(),
+            sessions: default_sessions(),
         }
     }
 
@@ -248,7 +269,32 @@ impl StreamEdge {
             store: Some(store),
             fleet,
             fanout: PriceFanout::start(),
+            sessions: default_sessions(),
         }
+    }
+
+    /// Install the edge-wide [`SessionRegistry`] so this edge validates a
+    /// `StreamAuth` frame's `session_token` against the SAME authentication state
+    /// every other front shares (the boot path calls this; the constructors
+    /// otherwise default to an empty registry). Builder-style, mirroring
+    /// [`RiskEdge::with_sessions`](super::risk::RiskEdge::with_sessions).
+    #[must_use]
+    pub fn with_sessions(mut self, sessions: Arc<SessionRegistry>) -> Self {
+        self.sessions = sessions;
+        self
+    }
+
+    /// The entitlements trust-boundary [`AccessMode`] this edge enforces, derived
+    /// from its risk position book: production has a store (so its
+    /// [`PositionStore::access_mode`](super::risk::store::PositionStore::access_mode)
+    /// governs — [`AccessMode::Enforce`] by default), while an isolated stream test
+    /// has `store: None` and so runs [`AccessMode::Permissive`] (the
+    /// authorization gate is a no-op, keeping the existing tests token-free).
+    fn access_mode(&self) -> AccessMode {
+        self.store
+            .as_ref()
+            .map(|s| s.access_mode())
+            .unwrap_or(AccessMode::Permissive)
     }
 }
 
@@ -569,6 +615,12 @@ impl StreamEdge {
             next_execution_id: Arc::clone(&self.next_execution_id),
             store: self.store.clone(),
             fanout: Arc::clone(&self.fanout),
+            // A fresh session is anonymous until a `StreamAuth` frame resolves the
+            // caller; it validates tokens against the SAME edge-wide registry every
+            // other front shares, and enforces the edge's resolved access mode.
+            caller: ResolvedCaller::anonymous(),
+            sessions: Arc::clone(&self.sessions),
+            access_mode: self.access_mode(),
         }
     }
 }
@@ -851,6 +903,20 @@ pub(crate) struct Session {
     /// subscribe the session draws a [`PriceTick`] consumer for the subscription's
     /// pair; `drive_tick` drains it to emit per-subscription updates.
     fanout: Arc<PriceFanout>,
+    /// The caller this session is authenticated as. A freshly-opened session starts
+    /// **anonymous** ([`ResolvedCaller::anonymous`]); a `StreamAuth` frame resolves
+    /// it (a valid `session_token` authenticates a user; an asserted principal rides
+    /// along). The single enforcement seam in [`Session::handle_client_message`]
+    /// authorizes this caller before any subscribe / modify / execute / resync.
+    caller: ResolvedCaller,
+    /// The edge-wide [`SessionRegistry`] a `StreamAuth.session_token` is validated
+    /// against (shared from the [`StreamEdge`]) — the SAME registry every front uses.
+    sessions: Arc<SessionRegistry>,
+    /// The entitlements trust-boundary [`AccessMode`] this session enforces (derived
+    /// once from the edge's store at construction): [`AccessMode::Enforce`] in
+    /// production, [`AccessMode::Permissive`] for an isolated (store-less) stream
+    /// test (where the gate is a no-op).
+    access_mode: AccessMode,
 }
 
 impl Session {
@@ -880,7 +946,56 @@ impl Session {
         let Some(message) = msg.message else {
             return true; // empty control frame: ignore.
         };
+
+        // ---- the single authorization seam ---------------------------------
+        // Before dispatching any subscribe / modify / execute / resync /
+        // market-series-subscribe, authorize the pinned caller ONCE. Under
+        // `AccessMode::Enforce` (production) an anonymous session — one that never
+        // sent a valid `StreamAuth` — is rejected `unauthenticated`; under
+        // `AccessMode::Permissive` (an isolated store-less test / demo edge) the
+        // gate is a no-op. A rejected op keeps the connection open (return `true`)
+        // so the client can re-authenticate and retry — only the op is refused.
+        // `Heartbeat` / `Unsubscribe` / `MarketSeriesUnsubscribe` / `Authenticate`
+        // carry no dealable intent (and `Authenticate` is HOW a caller authorizes)
+        // and stay exempt.
+        let gated = matches!(
+            &message,
+            client_stream_message::Message::Subscribe(_)
+                | client_stream_message::Message::Modify(_)
+                | client_stream_message::Message::Execute(_)
+                | client_stream_message::Message::Resync(_)
+                | client_stream_message::Message::MarketSeriesSubscribe(_)
+        );
+        if gated
+            && let Err(status) = authorize_caller(
+                self.access_mode,
+                &self.caller,
+                "StreamService",
+                RequiredAuthority::ReadAny,
+                None,
+            )
+        {
+            // Reject this op, but keep the session open for a re-auth + retry.
+            let _ = out_tx.send(Err(status)).await;
+            return true;
+        }
+
         match message {
+            // A `StreamAuth` pins the caller for the rest of the session. Resolving a
+            // presented-but-invalid token is a hard error: the session is closed
+            // rather than left running as a stale/forged credential.
+            client_stream_message::Message::Authenticate(auth) => {
+                match resolve_caller(&self.sessions, auth.session_token.as_deref(), auth.principal) {
+                    Ok(caller) => {
+                        self.caller = caller;
+                        true
+                    }
+                    Err(status) => {
+                        let _ = out_tx.send(Err(status)).await;
+                        false // a bad credential closes the session.
+                    }
+                }
+            }
             client_stream_message::Message::Subscribe(s) => self.handle_subscribe(s, out_tx).await,
             client_stream_message::Message::Modify(m) => self.handle_modify(m, out_tx).await,
             client_stream_message::Message::Unsubscribe(u) => {
@@ -1688,6 +1803,9 @@ mod tests {
             next_execution_id: Arc::new(AtomicU64::new(1)),
             store: None,
             fanout,
+            caller: ResolvedCaller::anonymous(),
+            sessions: default_sessions(),
+            access_mode: AccessMode::Permissive,
         };
         let mut sub = Subscription {
             id: SubscriptionId { value: 1 },
@@ -1720,6 +1838,208 @@ mod tests {
         sub.retain(1, snap);
         session.subs.insert(1, sub);
         session
+    }
+
+    /// Build a session under [`AccessMode::Enforce`] (the production posture) wired
+    /// to the supplied edge-wide [`SessionRegistry`], starting **anonymous** (no
+    /// `StreamAuth` resolved yet). Unlike [`make_session`] there is NO pre-opened
+    /// subscription: a subscribe under enforce must first authenticate, so the test
+    /// drives the full client-message path through the authorization seam.
+    fn make_enforcing_session(clock: Clock, sessions: Arc<SessionRegistry>) -> Session {
+        let link = CoreLink::start(
+            celnet_engine::testing::make_state(
+                1.10,
+                celnet_conventions::resolve(
+                    celnet_types::CcyPair::parse("EURUSD").unwrap(),
+                    celnet_types::Tenor::Years(1),
+                )
+                .record,
+            ),
+            None,
+        );
+        Session {
+            subs: HashMap::new(),
+            series: HashMap::new(),
+            link,
+            spread: SpreadModel::default(),
+            clock,
+            surface_book: Arc::new(SurfaceBook::new()),
+            minter: TokenMinter::new(),
+            next_execution_id: Arc::new(AtomicU64::new(1)),
+            store: None,
+            fanout: PriceFanout::start(),
+            caller: ResolvedCaller::anonymous(),
+            sessions,
+            access_mode: AccessMode::Enforce,
+        }
+    }
+
+    /// Mint a valid bearer token in `reg` for a trader on the `g10` desk — the SAME
+    /// `SessionRegistry::issue` path `AuthService.Login` uses (see the
+    /// `services::access` / `services::sessions` tests).
+    fn mint_trader_token(reg: &SessionRegistry) -> String {
+        use crate::config::identity::Role;
+        use crate::services::sessions::AuthenticatedUser;
+        reg.issue(AuthenticatedUser {
+            user_id: "u-stream".into(),
+            email: "trader@celnet.com".into(),
+            display_name: "Stream Trader".into(),
+            role: Role::Trader,
+            desk_id: Some("g10".into()),
+        })
+        .expect("the OS CSPRNG mints a session token")
+        .token
+    }
+
+    /// A `Subscribe` for the calibrated EURUSD fixture (the same instrument the
+    /// other stream tests subscribe).
+    fn eurusd_subscribe() -> ClientStreamMessage {
+        ClientStreamMessage {
+            message: Some(client_stream_message::Message::Subscribe(
+                celnet_proto::Subscribe {
+                    subscription: Some(SubscriptionId { value: 1 }),
+                    instrument: Some(vanilla_call(1.10)),
+                    conventions: Some(wire_conv()),
+                    throttle_nanos: 0,
+                    surface_version: None,
+                    correlation_id: Some(1),
+                    attribution: None,
+                },
+            )),
+        }
+    }
+
+    /// Drain one error `Status` from the outbound channel, if the head is one.
+    fn try_recv_status(
+        rx: &mut mpsc::Receiver<Result<ServerStreamMessage, Status>>,
+    ) -> Option<Status> {
+        match rx.try_recv() {
+            Ok(Err(status)) => Some(status),
+            _ => None,
+        }
+    }
+
+    /// **The streaming-path authorization cross-cut.** Under the production
+    /// `AccessMode::Enforce` posture an anonymous session (one that never sent a
+    /// valid `StreamAuth`) is **denied** click-to-trade and subscribe with a typed
+    /// `unauthenticated`; after authenticating with a valid session token the SAME
+    /// subscribe is admitted. This closes the verified finding
+    /// (`docs/SECURITY-AUTHZ-FINDING.md`): the WS/stream path enforced nothing.
+    #[tokio::test]
+    async fn enforce_denies_unauthenticated_then_admits_after_authenticate() {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let clock = Clock::manual(1_000_000_000);
+            let reg = Arc::new(SessionRegistry::new(clock.clone()));
+            let mut session = make_enforcing_session(clock.clone(), Arc::clone(&reg));
+            let (tx, mut rx) = mpsc::channel::<Result<ServerStreamMessage, Status>>(64);
+
+            // (a) A Subscribe with NO prior Authenticate is rejected `unauthenticated`,
+            // and the connection stays open (return `true`) for a re-auth + retry.
+            assert!(
+                session
+                    .handle_client_message(eurusd_subscribe(), &tx)
+                    .await,
+                "an unauthorized op keeps the session open for a re-auth"
+            );
+            let err = try_recv_status(&mut rx).expect("an anonymous subscribe is rejected");
+            assert_eq!(
+                err.code(),
+                tonic::Code::Unauthenticated,
+                "enforce denies the anonymous caller: {}",
+                err.message()
+            );
+            assert!(
+                session.subs.is_empty(),
+                "the rejected subscribe opened no subscription"
+            );
+
+            // An Execute (click-to-trade) is likewise refused before authentication.
+            let exec = ClientStreamMessage {
+                message: Some(client_stream_message::Message::Execute(Execute {
+                    subscription: Some(SubscriptionId { value: 1 }),
+                    token: 0xDEAD_BEEF,
+                    idempotency_key: "x".to_owned(),
+                    correlation_id: Some(2),
+                })),
+            };
+            assert!(session.handle_client_message(exec, &tx).await);
+            assert_eq!(
+                try_recv_status(&mut rx)
+                    .expect("an anonymous execute is rejected")
+                    .code(),
+                tonic::Code::Unauthenticated,
+                "click-to-trade is gated by the same seam"
+            );
+
+            // (b) Authenticate with a VALID session token minted via the registry the
+            // codebase's auth path uses, then the SAME subscribe is admitted.
+            let token = mint_trader_token(&reg);
+            let auth = ClientStreamMessage {
+                message: Some(client_stream_message::Message::Authenticate(
+                    celnet_proto::StreamAuth {
+                        session_token: Some(token),
+                        principal: None,
+                    },
+                )),
+            };
+            assert!(
+                session.handle_client_message(auth, &tx).await,
+                "a valid Authenticate pins the caller and keeps the session"
+            );
+            assert!(
+                session.caller.user().is_some(),
+                "the session is now authenticated"
+            );
+            assert!(
+                try_recv_status(&mut rx).is_none(),
+                "Authenticate itself emits no error frame"
+            );
+
+            // The previously-denied subscribe now succeeds: a baseline Snapshot lands
+            // and the subscription is open.
+            assert!(
+                session
+                    .handle_client_message(eurusd_subscribe(), &tx)
+                    .await,
+                "the authenticated subscribe is admitted"
+            );
+            let admitted = rx.try_recv().expect("a baseline message").unwrap();
+            assert!(
+                matches!(
+                    admitted.message,
+                    Some(server_stream_message::Message::Snapshot(_))
+                ),
+                "the admitted subscribe answers with a baseline Snapshot"
+            );
+            assert_eq!(
+                session.subs.len(),
+                1,
+                "the authenticated subscribe opened the subscription"
+            );
+
+            // An invalid token closes the session (a bad credential is never
+            // downgraded to anonymous): handle returns `false`.
+            let bad_auth = ClientStreamMessage {
+                message: Some(client_stream_message::Message::Authenticate(
+                    celnet_proto::StreamAuth {
+                        session_token: Some("not-a-real-token".to_owned()),
+                        principal: None,
+                    },
+                )),
+            };
+            assert!(
+                !session.handle_client_message(bad_auth, &tx).await,
+                "a presented-but-invalid token closes the session"
+            );
+            assert_eq!(
+                try_recv_status(&mut rx)
+                    .expect("the bad credential surfaces an error")
+                    .code(),
+                tonic::Code::Unauthenticated
+            );
+        })
+        .await
+        .expect("no hang");
     }
 
     fn seq_of(msg: &ServerStreamMessage) -> Option<u64> {
