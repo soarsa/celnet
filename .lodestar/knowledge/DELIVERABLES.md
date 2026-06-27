@@ -1,11 +1,8 @@
 # Deliverable / capability map — what already exists (extend, don't duplicate)
 
-Derived from the verified `CAPABILITY SUMMARY` claims in the knowledge base. Before building
-a new capability, check here + `knowledge_get <governed symbol>` for the contract. Formal
-`spec:satisfies` acceptance targets live in `docs/acceptance/` (verified-active gating pends
-execute-to-verify; see lodestar ticket).
+Derived from the verified CAPABILITY SUMMARY claims. Check here + `knowledge_get <symbol>` before building.
 
-**23 capabilities mapped.**
+**25 capabilities mapped.**
 
 ## `celnet-bench`
 **Governed symbols:** `main`
@@ -36,6 +33,16 @@ celnet-core is the zero-IO, zero-alloc pure-domain foundation layer of the celne
 **Governed symbols:** `price`, `run`, `recover`, `publish`
 
 celnet-engine is the hot-path FX-options pricing engine: it exposes PricingCore as the single entry point for pricing vanilla options against a live smile surface, publishes top-of-book results atomically via a seqlock (PriceSnapshot), persists position state through DurableBook/journal (crash-recoverable and bit-identical on replay), and supports lock-free hot market-state reloads via StateHandle (arc-swap). A new pricing arm plugs in by: (1) constructing a PricingCore with an initial MarketState; (2) calling run() with an rtrb SPSC request/response ring; (3) publishing updated MarketState ticks into StateHandle::publish() from a separate thread with no locking; (4) opening a DurableBook for journal-backed crash recovery via recover().
+
+## `celnet-exotics`
+**Governed symbols:** `CounterRng`, `next_u01`, `block`
+
+celnet-exotics/src/rng.rs: CounterRng is the exotics Monte-Carlo path RNG, a CPU-side 4×32/10-round counter-based CBRNG (Salmon et al. 2011). Its contract: given (seed, stream, path, step) it delivers an infinite, reproducible, bit-identical sequence of f64 uniforms in (0,1) via next_u01(), with one block() call per 4 draws. The counter partition (path/step/draw) and key partition (seed/stream) guarantee that each logical Monte-Carlo coordinate maps to a unique, non-overlapping sub-stream — enabling embarrassingly-parallel pricing where any path or step can be drawn independently and out of order on CPU or GPU with identical output. Verified by KAT (block_matches_published_known_answer_vectors), moment convergence (uniform_moments), open-interval guarantee (uniform_in_open_unit_interval), and stream-collision absence (distinct_paths_do_not_collide_in_first_block, distinct_coordinates_differ).
+
+## `celnet-exotics`
+**Governed symbols:** `VarianceParams`, `log_spot_increment`, `qe_variance_step`, `step_uniforms`
+
+celnet-exotics/src/stochvol.rs: provides a complete, allocation-free Heston/stochastic-volatility Monte-Carlo step for FX exotic pricing. The seam is: (1) VarianceParams holds the five CIR/Heston parameters (v0, κ, θ, ξ, ρ) plus Feller-condition introspection (satisfies_feller / feller_ratio = 2κθ/ξ²); (2) qe_variance_step advances the variance by one step using Andersen's (2008) QE scheme — exact conditional moments, two-branch (squared-Gaussian / exponential-atom), degenerate-limit guard — consuming one CounterRng uniform; (3) log_spot_increment constructs the corresponding log-spot increment using the broadband (γ1=γ2=½) stochastic-integral substitution and full-truncation, consuming one independent normal z_perp; (4) step_uniforms extracts the canonical (u_var, u_spot) pair from the counter-RNG address (seed,stream,path,step). Tests verify non-negativity of QE output (qe_is_non_negative), conditional mean convergence (qe_matches_conditional_mean), exact branch formulas (qe_branches_match_hand_derived_scheme), log-spot formula (log_spot_increment_matches_hand_derivation), zero-xi determinism (zero_vol_of_var_is_deterministic), and Feller detection (feller_condition_detection).
 
 ## `celnet-exotics`
 **Governed symbols:** `single_barrier_price`, `new`, `calibrate`, `tarf_price`
