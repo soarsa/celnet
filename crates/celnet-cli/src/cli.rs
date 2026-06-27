@@ -208,6 +208,11 @@ pub(crate) struct StreamArgs {
     /// The number of post-snapshot ticks to print before unsubscribing.
     #[arg(long, default_value_t = 3)]
     pub(crate) ticks: u32,
+    /// An `AuthService.Login`-issued session token authenticating the stream as that
+    /// user. Omitted ⇒ the SDK sends the audited grant-all `Authenticate` frame the
+    /// production deny-by-default edge admits (parity with the risk commands).
+    #[arg(long = "session-token")]
+    pub(crate) session_token: Option<String>,
 }
 
 /// Arguments to `rfq`.
@@ -1791,6 +1796,7 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
                 strike,
                 notional_base: a.notional,
                 ticks: a.ticks,
+                session_token: a.session_token,
             };
             risk::run_stream(&req, out).map_err(DispatchError::Risk)?;
             Ok(())

@@ -322,6 +322,11 @@ pub(crate) struct StreamReq {
     pub(crate) notional_base: f64,
     /// The number of post-snapshot ticks to print before unsubscribing.
     pub(crate) ticks: u32,
+    /// The `AuthService.Login`-issued session token to authenticate the stream
+    /// session under the production deny-by-default edge. Absent ⇒ the SDK sends the
+    /// audited explicit grant-all `Authenticate` frame (parity with the risk
+    /// commands' grant-all default), which `Enforce` admits.
+    pub(crate) session_token: Option<String>,
 }
 
 // ===========================================================================
@@ -405,6 +410,13 @@ pub(crate) fn run_stream<W: std::io::Write>(
 ) -> Result<String, RiskError> {
     block_on(async {
         let client = connect(&req.endpoint).await?;
+        // Authenticate the stream as the Login-issued user when a token is supplied;
+        // otherwise the SDK sends the audited grant-all `Authenticate` frame the
+        // production `Enforce` edge admits (parity with the risk commands' default).
+        let client = match &req.session_token {
+            Some(token) => client.with_session_token(token.clone()),
+            None => client,
+        };
         let session = bounded("open_session", client.open_session()).await?;
         let instrument = InstrumentSpec::vanilla(
             req.pair,

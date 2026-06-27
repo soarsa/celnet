@@ -36,6 +36,22 @@ server-minted last-look token, which the same unauthenticated session is handed 
 A single tonic interceptor + a WS pre-handshake auth check producing a `ResolvedCaller` threaded
 into the session is the uniform cross-cut the codebase currently lacks.
 
+## Client-side counterpart (SDK + CLI)
+The server seam above only enforces if clients actually authenticate. The Rust SDK
+(`celnet-client`) now sends a `StreamAuth` **`Authenticate` frame as the FIRST control frame** on
+every `StreamSession` open (and re-sends it first on a drain-cutover reconnect, since the re-dialed
+stream is anonymous), so the server pins the caller before any subscribe/execute. It carries the
+client's `session_token` when one is attached (`Client::with_session_token`, the real
+`AuthService.Login` bearer) and an entitlement `principal` (`Client::with_principal`), defaulting —
+exactly like the gated risk requests (`risk::principal_or_grant_all`) — to the audited **explicit
+grant-all** so the headline streaming workflow is admitted under `Enforce` without relying on the
+server granting an absent caller. The CLI `stream` command threads an optional `--session-token`
+onto the SDK; otherwise it inherits the grant-all default. Sites: `Client::open_session` →
+`rfs::SessionAuth` (`crates/celnet-client/src/{lib.rs,rfs.rs}`); CLI `run_stream`
+(`crates/celnet-cli/src/risk.rs`). Covered end-to-end by
+`rfs_workflow::stream_authenticates_under_enforce_with_login_token_and_grant_all_default` (real
+Login token + grant-all default, both admitted under `Enforce`).
+
 ## Caveat (threat model)
 This is a static-architecture verdict on the server code. If the WS/stream endpoints sit behind
 an authenticating gateway in deployment (the Celer estate edge), the *exploitability* is reduced —
