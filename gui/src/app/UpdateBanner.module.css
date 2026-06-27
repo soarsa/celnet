@@ -1,0 +1,96 @@
+/*
+ * UpdateBanner — a floating "new release" pill, fixed to the top-centre of the
+ * viewport above the workspace. Uses the accent surface + float shadow so it
+ * reads as a deliberate, dismissible call to action, not a system chrome bar. It
+ * sits below the reconnect scrim (which is fully blocking when shown).
+ */
+
+.banner {
+  position: fixed;
+  top: var(--space-4);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: min(92vw, 560px);
+  padding: var(--space-2) var(--space-3);
+
+  background: var(--bg-raised);
+  border: 1px solid oklch(from var(--accent) l c h / 0.45);
+  border-left: 2px solid var(--accent);
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow-float);
+  font-size: var(--type-caption);
+}
+
+.glyph {
+  font-size: 13px;
+  color: var(--accent);
+  line-height: 1;
+}
+
+.text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-weight: var(--weight-emphasis);
+  color: var(--text-primary);
+}
+
+.detail {
+  font-size: var(--type-micro);
+  color: var(--text-secondary);
+  font-weight: var(--weight-regular);
+  font-variant-numeric: tabular-nums;
+}
+
+.reload {
+  margin-left: var(--space-3);
+  padding: var(--space-1) var(--space-3);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: var(--accent);
+  color: var(--bg-base);
+  font-size: var(--type-caption);
+  font-weight: var(--weight-emphasis);
+  cursor: pointer;
+  transition: filter var(--motion-fast, 120ms) ease;
+}
+
+.reload:hover {
+  filter: brightness(1.08);
+}
+
+.reload:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.dismiss {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color var(--motion-fast, 120ms) ease;
+}
+
+.dismiss:hover {
+  color: var(--text-primary);
+}
+
+.dismiss:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}

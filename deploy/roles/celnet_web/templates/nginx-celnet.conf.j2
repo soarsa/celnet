@@ -14,9 +14,20 @@ server {
         return 200 "celnet {{ celnet_deploy_name | default('uat') }} web ok\n";
     }
 
-    # SPA history fallback: unknown routes return index.html.
+    # Release manifest the SPA polls to detect a fresh deploy. MUST never be
+    # cached, so a running page sees the new release id the instant it lands.
+    location = /version.json {
+        try_files $uri =404;
+        add_header Cache-Control "no-store";
+        default_type application/json;
+    }
+
+    # SPA history fallback: unknown routes return index.html. The entry HTML is
+    # never cached so a reload always lands on the current index, which in turn
+    # references the new fingerprinted /assets/* bundle.
     location / {
         try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-store";
     }
 
     # Cache fingerprinted static assets aggressively.
