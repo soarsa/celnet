@@ -4,7 +4,16 @@ Build-on-target Ansible deployment for Celnet. Ships the two production binaries
 (`celnet-server`, `celnet`) to a host, builds them natively, and publishes them
 with a Capistrano-style versioned-release + atomic-symlink layout so binary
 releases are incremental and instantly rollback-able. An HAProxy edge terminates
-TLS for `https://app.uat.celnet.co.uk` and proxies to the local server.
+TLS for `https://app.uat.celnet.uk` and proxies to the local server (nginx serves
+the GUI SPA; WebSocket-upgrade requests go to the celnet-server mirror).
+
+> **Networking (required):** the host firewall is open, but the **cloud
+> perimeter firewall must allow inbound `tcp:80,443`**. On GCP:
+> `gcloud compute firewall-rules create celnet-allow-web --direction=INGRESS
+> --action=ALLOW --rules=tcp:80,tcp:443 --source-ranges=0.0.0.0/0 --network=default`
+> (AWS/Azure: open 80/443 in the security group / NSG). Also point DNS for the
+> domain at the host IP. Symptom if missing: every on-box check is green
+> (`https://127.0.0.1/` → 200) but browsers time out — `:443` ingress is dropped.
 
 ## Layout on the host (`/opt/celnet`)
 
