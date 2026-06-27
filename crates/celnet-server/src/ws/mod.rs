@@ -502,6 +502,9 @@ fn decode_stream_control(
     o: &Map<String, Value>,
 ) -> Result<ClientStreamMessage, codec::CodecError> {
     let message = match kind {
+        "authenticate" => {
+            client_stream_message::Message::Authenticate(codec::stream_auth_from_json(o)?)
+        }
         "subscribe" => client_stream_message::Message::Subscribe(codec::subscribe_from_json(o)?),
         "modify" => client_stream_message::Message::Modify(codec::modify_from_json(o)?),
         "unsubscribe" => {
