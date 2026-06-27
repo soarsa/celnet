@@ -86,9 +86,10 @@ export const Hud: Story = {
 
 /** No title — the panel renders without a header bar (edge-to-edge body). */
 export const NoTitle: Story = {
+  // `title`/`glyph` are simply omitted (an absent optional prop IS "no header"):
+  // under `exactOptionalPropertyTypes` a `glyph?: string` cannot take an explicit
+  // `undefined`, and omission is exactly what this story demonstrates.
   args: {
-    title: undefined,
-    glyph: undefined,
     children: (
       <p style={{ color: "var(--text-secondary)", fontSize: "var(--type-body)", margin: 0 }}>
         Titleless panel — body is the full surface.
@@ -142,17 +143,21 @@ export const MaterialPalette: Story = {
       }}
     >
       {MATERIALS.map((m) => (
-        <Panel key={m} material={m} title={m} glyph="○" style={{ width: 200 } as React.CSSProperties}>
-          <p
-            style={{
-              color: "var(--text-secondary)",
-              fontSize: "var(--type-caption)",
-              margin: 0,
-            }}
-          >
-            {m} surface
-          </p>
-        </Panel>
+        // `Panel` owns no `style` prop (its surface is token-driven); size it via
+        // a wrapping track, as the rest of this file styles its examples.
+        <div key={m} style={{ width: 200 }}>
+          <Panel material={m} title={m} glyph="○">
+            <p
+              style={{
+                color: "var(--text-secondary)",
+                fontSize: "var(--type-caption)",
+                margin: 0,
+              }}
+            >
+              {m} surface
+            </p>
+          </Panel>
+        </div>
       ))}
     </div>
   ),

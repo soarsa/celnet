@@ -256,7 +256,11 @@ describe("Excel real-edge conformance (frozen golden corpus over a REAL WebSocke
       });
       expect(spill.length).toBe(1 + 4 + 2); // header + 4 LP rows + quote_id + footer
       expect(spill.slice(1, 5).map((r) => r[0])).toEqual(ids);
-      expect(spill[5]).toEqual(["quote_id", md.quoteId.toString()]);
+      // The quote_id row carries its label + id; `rectangular()` then pads every
+      // row to the table width (an Excel dynamic-array spill must be rectangular),
+      // so the row trails empties out to the header width.
+      const width = spill[0].length;
+      expect(spill[5]).toEqual(["quote_id", md.quoteId.toString(), ...Array(width - 2).fill("")]);
     });
 
     it("books a chosen panel line by (quote_id, lp_id) at exactly the shown price", async () => {

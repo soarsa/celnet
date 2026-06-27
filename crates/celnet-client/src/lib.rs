@@ -178,10 +178,34 @@ use idempotency::KeyMinter;
 /// Cheap to clone — a clone shares the underlying HTTP/2 [`Channel`] (and so the
 /// connection pool) and the idempotency-key minter, so concurrent calls from
 /// cloned handles are safe and never collide. Construct with [`Client::connect`].
+///
+/// # Authenticating the stream session
+///
+/// The bidirectional [`StreamSession`] runs against the production deny-by-default
+/// edge ([`celnet_server::AccessMode::Enforce`]), which rejects an *anonymous*
+/// session before any subscribe / execute. The SDK closes that seam exactly as the
+/// gated risk requests do: [`Client::open_session`] sends an `Authenticate` frame as
+/// the **first** control frame, carrying the client's [`session_token`](Client::with_session_token)
+/// (the `AuthService.Login`-issued bearer, when set) and an entitlement
+/// [`principal`](Client::with_principal). When neither is set the principal defaults
+/// to the audited **explicit grant-all** every client asserts — the same default the
+/// risk path sends via `principal_or_grant_all` — so the headline streaming workflow
+/// is admitted under `Enforce` without the SDK ever relying on the server granting an
+/// absent caller. Attach a real Login token with [`Client::with_session_token`] to
+/// authenticate the stream as that user.
 #[derive(Debug, Clone)]
 pub struct Client {
     channel: Channel,
     keys: KeyMinter,
+    /// The `AuthService.Login`-issued bearer token to authenticate the stream
+    /// session, if the caller attached one. Absent ⇒ the stream authenticates via
+    /// the asserted/grant-all `principal` only (the legacy mode-gated path the risk
+    /// requests use).
+    session_token: Option<String>,
+    /// The entitlement principal pinned on the stream session's opening
+    /// `Authenticate` frame. Absent ⇒ the explicit grant-all default
+    /// (`risk::principal_or_grant_all`), identical to the risk path.
+    principal: Option<risk::Entitlements>,
 }
 
 impl Client {
@@ -209,7 +233,36 @@ impl Client {
         Self {
             channel,
             keys: KeyMinter::new(),
+            session_token: None,
+            principal: None,
         }
+    }
+
+    /// Attach the `AuthService.Login`-issued bearer `token` so the stream session
+    /// authenticates as that user. The token is sent verbatim on the
+    /// `Authenticate` frame [`Client::open_session`] writes first, where the server
+    /// validates it against its session registry (an unknown/expired token closes
+    /// the stream). The same Login-issued token a deployment threads onto the gated
+    /// requests is reused here — never a fabricated one.
+    ///
+    /// Additive and chainable: returns the client with the token set.
+    #[must_use]
+    pub fn with_session_token(mut self, token: impl Into<String>) -> Self {
+        self.session_token = Some(token.into());
+        self
+    }
+
+    /// Pin the entitlement `principal` the stream session's opening `Authenticate`
+    /// frame asserts (the same principal shape the risk queries carry via
+    /// [`AggregateQuery::entitled`](crate::AggregateQuery::entitled)). Omit ⇒ the
+    /// explicit grant-all default every client asserts, so the stream is admitted
+    /// under the production `Enforce` edge exactly as the risk path is.
+    ///
+    /// Additive and chainable: returns the client with the principal set.
+    #[must_use]
+    pub fn with_principal(mut self, principal: risk::Entitlements) -> Self {
+        self.principal = Some(principal);
+        self
     }
 
     /// The underlying HTTP/2 [`Channel`] (a cheap clone — shares the connection
@@ -455,11 +508,25 @@ impl Client {
     /// stream per line), with gap-detection, resync, and reconnect handled by the
     /// SDK.
     ///
+    /// The session is authenticated before the first subscribe: the SDK writes an
+    /// `Authenticate` frame as the **first** control frame, carrying this client's
+    /// [`session_token`](Client::with_session_token) (when set) and entitlement
+    /// [`principal`](Client::with_principal) (defaulting to the audited explicit
+    /// grant-all every client asserts). This pins the caller on the production
+    /// deny-by-default edge ([`celnet_server::AccessMode::Enforce`]) before any
+    /// dealable intent, and is re-sent first on a transparent drain-cutover
+    /// reconnect.
+    ///
     /// # Errors
     ///
     /// [`ClientError`] if the bidirectional session stream cannot be opened.
     pub async fn open_session(&self) -> ClientResult<StreamSession> {
-        StreamSession::open(self.channel.clone(), self.keys.clone()).await
+        StreamSession::open(
+            self.channel.clone(),
+            self.keys.clone(),
+            rfs::SessionAuth::new(self.session_token.clone(), self.principal.clone()),
+        )
+        .await
     }
 
     /// Run a scenario / what-if grid (see [`Client::scenario`]) **and** the

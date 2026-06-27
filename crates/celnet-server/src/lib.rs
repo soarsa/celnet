@@ -377,15 +377,24 @@ impl Edge {
             fleet.clone(),
             panel,
         ));
-        let stream = StreamServiceServer::new(StreamEdge::with_store_and_fleet(
-            Arc::clone(&link),
-            Arc::clone(&gate),
-            spread,
-            clock.clone(),
-            Arc::clone(&surface_book),
-            Arc::clone(&store),
-            fleet.clone(),
-        ));
+        // The edge-wide session registry: the ONE authentication state every front
+        // (gRPC + WS) and every gated edge (stream, risk, fix-admin, auth) shares.
+        // Created before the edges so each is built `.with_sessions(...)` over it;
+        // the registry stamps issue/expiry off the SAME edge clock. Process-local —
+        // empty on boot, so a restart invalidates every token.
+        let sessions = Arc::new(SessionRegistry::new(clock.clone()));
+        let stream = StreamServiceServer::new(
+            StreamEdge::with_store_and_fleet(
+                Arc::clone(&link),
+                Arc::clone(&gate),
+                spread,
+                clock.clone(),
+                Arc::clone(&surface_book),
+                Arc::clone(&store),
+                fleet.clone(),
+            )
+            .with_sessions(Arc::clone(&sessions)),
+        );
         let surface = SurfaceServiceServer::new(SurfaceEdge::with_fleet(
             Arc::clone(&link),
             Arc::clone(&gate),
@@ -398,13 +407,7 @@ impl Edge {
         // it reconciles to the single-node answer over the union book (Phase 3,
         // `docs/RISK-HIERARCHY.md` §3.4). In-process ⇒ the direct single-node path. The
         // SAME connected edge backs both the gRPC server and the WS mirror, shared
-        // behind an `Arc`.
-        // The edge-wide session registry: the ONE authentication state every front
-        // (gRPC + WS) and every gated edge (risk, fix-admin, auth) shares. Created
-        // before the edges so each is built `.with_sessions(...)` over it; the
-        // registry stamps issue/expiry off the SAME edge clock. Process-local —
-        // empty on boot, so a restart invalidates every token.
-        let sessions = Arc::new(SessionRegistry::new(clock.clone()));
+        // behind an `Arc`. It shares the edge-wide `sessions` registry built above.
         let risk_edge = Arc::new(
             match &fleet {
                 Some(fleet) => {

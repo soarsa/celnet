@@ -68,9 +68,9 @@ use std::task::{Context, Poll};
 
 use celnet_proto::stream_service_client::StreamServiceClient;
 use celnet_proto::{
-    ClientStreamMessage, Conventions as WireConventions, Execute, Instrument,
-    MarketSeriesSubscribe, Resync, ServerStreamMessage, Subscribe, SubscriptionId, TradableToken,
-    client_stream_message, server_stream_message, stream_end, stream_reject,
+    ClientStreamMessage, Conventions as WireConventions, EntitlementPrincipal, Execute, Instrument,
+    MarketSeriesSubscribe, Resync, ServerStreamMessage, StreamAuth, Subscribe, SubscriptionId,
+    TradableToken, client_stream_message, server_stream_message, stream_end, stream_reject,
 };
 use celnet_types::{CcyPair, Greeks, Tenor};
 use futures_util::{Stream, StreamExt};
@@ -92,6 +92,60 @@ const EVENT_CHANNEL_DEPTH: usize = 1024;
 /// of the driver→stream outbound relay. One pair for the whole multiplexed session,
 /// sized for many concurrent subscriptions' control + click-to-trade traffic.
 const CONTROL_CHANNEL_DEPTH: usize = 256;
+
+/// The credential the SDK presents to **authenticate the stream session** before
+/// the first subscribe. Built by [`crate::Client::open_session`] from the client's
+/// [`session_token`](crate::Client::with_session_token) and entitlement
+/// [`principal`](crate::Client::with_principal), and rendered to the wire
+/// [`StreamAuth`] the SDK sends as the very first control frame (and re-sends first
+/// on a drain-cutover reconnect).
+///
+/// The principal defaults to the audited **explicit grant-all** every client asserts
+/// (`risk::principal_or_grant_all`) — identical to the gated risk requests — so an
+/// authenticated frame is always emitted and the stream is admitted on the
+/// production deny-by-default edge ([`celnet_server::AccessMode::Enforce`]) without
+/// the SDK ever relying on the server granting an absent caller. A real
+/// `AuthService.Login`-issued `session_token` authenticates the stream as that user.
+#[derive(Debug, Clone)]
+pub(crate) struct SessionAuth {
+    /// The `AuthService.Login`-issued bearer token, when the client attached one.
+    /// Sent verbatim; the server validates it against its session registry.
+    token: Option<String>,
+    /// The asserted entitlement principal. `None` ⇒ the explicit grant-all default.
+    principal: Option<crate::risk::Entitlements>,
+}
+
+impl SessionAuth {
+    /// The credential carrying `token` (a real Login bearer, when set) and
+    /// `principal` (the asserted entitlements, else the grant-all default).
+    pub(crate) fn new(
+        token: Option<String>,
+        principal: Option<crate::risk::Entitlements>,
+    ) -> Self {
+        Self { token, principal }
+    }
+
+    /// Render the wire [`StreamAuth`]: the bearer token (if any) plus the asserted
+    /// principal, defaulting to the explicit grant-all every client asserts so the
+    /// frame always authenticates the session under `Enforce` — exactly as
+    /// `crate::risk::principal_or_grant_all` does on the gated risk requests.
+    fn to_wire(&self) -> StreamAuth {
+        let principal: EntitlementPrincipal =
+            crate::risk::principal_or_grant_all(self.principal.as_ref());
+        StreamAuth {
+            session_token: self.token.clone(),
+            principal: Some(principal),
+        }
+    }
+
+    /// The opening `Authenticate` control frame — sent FIRST on every session stream
+    /// (eager open and reconnect) so the server pins the caller before any subscribe.
+    fn frame(&self) -> ClientStreamMessage {
+        ClientStreamMessage {
+            message: Some(client_stream_message::Message::Authenticate(self.to_wire())),
+        }
+    }
+}
 
 /// One short-lived click-to-trade token stamped on a streamed line: the side it
 /// books, the premium it books at, and the validity deadline after which it is
@@ -310,7 +364,11 @@ impl StreamSession {
     /// # Errors
     ///
     /// [`ClientError`] if the session stream cannot be opened.
-    pub(crate) async fn open(channel: Channel, keys: KeyMinter) -> ClientResult<Self> {
+    pub(crate) async fn open(
+        channel: Channel,
+        keys: KeyMinter,
+        auth: SessionAuth,
+    ) -> ClientResult<Self> {
         // The caller→driver control channel: handles + execute send here; the driver
         // drains it and relays each frame to the live outbound stream.
         let (control_tx, control_rx) = mpsc::channel::<ClientStreamMessage>(CONTROL_CHANNEL_DEPTH);
@@ -320,6 +378,15 @@ impl StreamSession {
         let registry: Registry = Arc::new(Mutex::new(HashMap::new()));
         let series: SeriesRegistry = Arc::new(Mutex::new(HashMap::new()));
         let waiters: ExecuteWaiters = Arc::new(Mutex::new(HashMap::new()));
+
+        // Authenticate FIRST: push the `Authenticate` frame onto the outbound relay
+        // before the stream is dialed, so it is the very head of the outbound
+        // sequence tonic reads — the server pins the caller from this frame before
+        // any subscribe / execute, which the production `Enforce` edge requires.
+        // (The buffered relay is empty here, so this never blocks.)
+        if relay_tx.send(auth.frame()).await.is_err() {
+            return Err(ClientError::StreamClosed);
+        }
 
         // Dial the first stream eagerly so a connection failure surfaces here, not on
         // the first subscribe.
@@ -333,6 +400,7 @@ impl StreamSession {
             registry: Arc::clone(&registry),
             series: Arc::clone(&series),
             waiters: Arc::clone(&waiters),
+            auth,
         }));
 
         let inner = Arc::new(SessionInner {
@@ -712,6 +780,9 @@ struct DriverCtx {
     registry: Registry,
     series: SeriesRegistry,
     waiters: ExecuteWaiters,
+    /// The session credential, re-sent FIRST on a drain-cutover reconnect so the
+    /// freshly-dialed (anonymous) stream is re-authenticated before re-subscribe.
+    auth: SessionAuth,
 }
 
 /// Dial a fresh bidirectional session stream over `channel`, consuming `outbound_rx`
@@ -1205,6 +1276,14 @@ async fn reconnect_session(ctx: &mut DriverCtx) -> bool {
     ctx.inbound = inbound;
     ctx.relay_tx = relay_tx;
 
+    // Re-authenticate FIRST on the fresh stream: the re-dialed session is anonymous
+    // server-side, so the `Authenticate` frame must lead — before any re-subscribe —
+    // exactly as on the eager open, or the production `Enforce` edge would reject the
+    // re-subscribes `unauthenticated`.
+    if ctx.relay_tx.send(ctx.auth.frame()).await.is_err() {
+        return false;
+    }
+
     // Re-subscribe every live subscription on the fresh stream (resetting its
     // baseline) and surface a Reconnected event on each.
     let resubs: Vec<(u64, ClientStreamMessage)> = {
@@ -1304,8 +1383,55 @@ fn decode_line(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::risk::{Entitlements, EntitlementScope, Scope as ClientScope};
 
     const SUB_ID: u64 = 7;
+
+    /// The opening `Authenticate` frame carries the client's session token verbatim
+    /// AND an explicit grant-all principal when none was asserted — so the server
+    /// pins an authenticated caller and the production `Enforce` edge admits the
+    /// session (parity with the gated risk requests' grant-all default).
+    #[test]
+    fn session_auth_frame_carries_token_and_defaults_to_grant_all() {
+        let auth = SessionAuth::new(Some("login-bearer-xyz".to_owned()), None);
+        match auth.frame().message.expect("a payload") {
+            client_stream_message::Message::Authenticate(a) => {
+                assert_eq!(
+                    a.session_token.as_deref(),
+                    Some("login-bearer-xyz"),
+                    "the Login-issued token is sent verbatim"
+                );
+                let principal = a.principal.expect("an explicit principal is always asserted");
+                assert!(
+                    principal.grant_all,
+                    "no asserted principal ⇒ the explicit grant-all default (Enforce-admitted)"
+                );
+                assert!(principal.grants.is_empty() && principal.denies.is_empty());
+            }
+            other => panic!("expected Authenticate, got {other:?}"),
+        }
+    }
+
+    /// With NO session token, the frame is still emitted — an anonymous-token frame
+    /// asserting the grant-all principal, which is exactly how the risk path is
+    /// admitted under `Enforce`. A scoped principal rides through unchanged.
+    #[test]
+    fn session_auth_frame_without_token_asserts_the_scoped_principal() {
+        let scoped = Entitlements::scoped().grant(EntitlementScope::covering(ClientScope::firm()));
+        let auth = SessionAuth::new(None, Some(scoped));
+        match auth.frame().message.expect("a payload") {
+            client_stream_message::Message::Authenticate(a) => {
+                assert!(a.session_token.is_none(), "no token ⇒ anonymous bearer");
+                let principal = a.principal.expect("the asserted principal rides the frame");
+                assert!(
+                    !principal.grant_all,
+                    "a scoped principal is sent as-is, not coerced to grant-all"
+                );
+                assert_eq!(principal.grants.len(), 1, "the scoped grant is carried");
+            }
+            other => panic!("expected Authenticate, got {other:?}"),
+        }
+    }
 
     fn registry_with_sub(last_seq: u64) -> (Registry, mpsc::Receiver<ClientResult<StreamEvent>>) {
         let (tx, rx) = mpsc::channel(16);

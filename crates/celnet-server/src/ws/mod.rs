@@ -463,36 +463,53 @@ async fn dispatch(
     };
     let correlation_id = o.get("correlation_id").and_then(Value::as_u64);
 
-    match kind {
-        // ---- RFS stream control: forward to the shared session driver --------
-        "subscribe"
-        | "modify"
-        | "unsubscribe"
-        | "resync"
-        | "execute"
-        | "heartbeat"
-        | "market_series_subscribe"
-        | "market_series_unsubscribe" => {
-            match decode_stream_control(kind, o) {
-                Ok(msg) => {
-                    // If the RFS driver has gone, the connection is being torn down.
-                    rfs_in_tx.send(msg).await.is_ok()
-                }
-                Err(e) => out_tx
-                    .send(Outbound::Frame(codec::error_frame(
-                        &e.to_string(),
-                        correlation_id,
-                    )))
-                    .await
-                    .is_ok(),
+    // Stream-control frames are forwarded to the shared `run_session` driver via
+    // `rfs_in_tx`; everything else is a request/response RPC handled inline. The
+    // classification has ONE source of truth — [`is_stream_control`] — so a new
+    // stream-control verb added to `decode_stream_control` can never again be
+    // forgotten here (the `authenticate` frame was: it fell through to
+    // `handle_unary`, the session stayed anonymous, and under `AccessMode::Enforce`
+    // the following `subscribe` was rejected `unauthenticated` so no two-way
+    // streamed — the WS-mirror counterpart of the gRPC stream's `Authenticate` arm).
+    if is_stream_control(kind) {
+        match decode_stream_control(kind, o) {
+            Ok(msg) => {
+                // If the RFS driver has gone, the connection is being torn down.
+                rfs_in_tx.send(msg).await.is_ok()
             }
+            Err(e) => out_tx
+                .send(Outbound::Frame(codec::error_frame(
+                    &e.to_string(),
+                    correlation_id,
+                )))
+                .await
+                .is_ok(),
         }
+    } else {
         // ---- request/response RPCs: run the same edge, reply inline ----------
-        _ => {
-            let reply = handle_unary(services, kind, o, correlation_id).await;
-            out_tx.send(Outbound::Frame(reply)).await.is_ok()
-        }
+        let reply = handle_unary(services, kind, o, correlation_id).await;
+        out_tx.send(Outbound::Frame(reply)).await.is_ok()
     }
+}
+
+/// Whether a frame `type` is an RFS stream-control verb (forwarded to the shared
+/// session driver) rather than a request/response RPC. The SINGLE source of truth
+/// for the routing decision in [`dispatch`], kept in lockstep with the verbs
+/// [`decode_stream_control`] decodes — including `authenticate`, the session-pinning
+/// first frame whose omission left WS sessions anonymous under `Enforce`.
+fn is_stream_control(kind: &str) -> bool {
+    matches!(
+        kind,
+        "authenticate"
+            | "subscribe"
+            | "modify"
+            | "unsubscribe"
+            | "resync"
+            | "execute"
+            | "heartbeat"
+            | "market_series_subscribe"
+            | "market_series_unsubscribe"
+    )
 }
 
 /// Decode a stream-control frame into the [`ClientStreamMessage`] the shared RFS
@@ -502,6 +519,9 @@ fn decode_stream_control(
     o: &Map<String, Value>,
 ) -> Result<ClientStreamMessage, codec::CodecError> {
     let message = match kind {
+        "authenticate" => {
+            client_stream_message::Message::Authenticate(codec::stream_auth_from_json(o)?)
+        }
         "subscribe" => client_stream_message::Message::Subscribe(codec::subscribe_from_json(o)?),
         "modify" => client_stream_message::Message::Modify(codec::modify_from_json(o)?),
         "unsubscribe" => {
@@ -818,5 +838,103 @@ impl futures_util::Stream for ClientStreamRx {
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
         self.rx.poll_recv(cx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The `authenticate` frame — the session-pinning FIRST frame every WS client
+    /// sends — MUST route to the RFS session driver, not `handle_unary`. Omitting
+    /// it from the routing classification left WS sessions anonymous, so under
+    /// `AccessMode::Enforce` the following `subscribe` was rejected `unauthenticated`
+    /// and no live two-way ever streamed (the GUI/Excel headline-stream defect this
+    /// guards against forever).
+    #[test]
+    fn authenticate_routes_to_the_stream_driver() {
+        assert!(
+            is_stream_control("authenticate"),
+            "`authenticate` must be a stream-control frame so it reaches run_session"
+        );
+    }
+
+    /// Every other stream-control verb routes to the driver too — the live RFS
+    /// control surface, none of it treated as a request/response RPC.
+    #[test]
+    fn every_stream_control_verb_is_classified() {
+        for kind in [
+            "authenticate",
+            "subscribe",
+            "modify",
+            "unsubscribe",
+            "resync",
+            "execute",
+            "heartbeat",
+            "market_series_subscribe",
+            "market_series_unsubscribe",
+        ] {
+            assert!(is_stream_control(kind), "`{kind}` must route to the driver");
+        }
+    }
+
+    /// `is_stream_control` and `decode_stream_control` stay in LOCKSTEP: a verb the
+    /// decoder accepts must be classified as stream-control (else `dispatch` would
+    /// mis-route it to `handle_unary`), and a verb it rejects must not be (else
+    /// `dispatch` would try to decode a non-control frame). This catches the exact
+    /// class of bug the `authenticate` omission was — a new control verb added to
+    /// the decoder but forgotten in the router.
+    #[test]
+    fn classification_matches_the_decoder() {
+        let empty = serde_json::Map::new();
+        for kind in [
+            "authenticate",
+            "subscribe",
+            "modify",
+            "unsubscribe",
+            "resync",
+            "execute",
+            "heartbeat",
+            "market_series_subscribe",
+            "market_series_unsubscribe",
+            // request/response RPCs + a nonsense verb: NOT stream-control.
+            "price",
+            "request_quote",
+            "accept_quote",
+            "login",
+            "not_a_real_frame",
+        ] {
+            // `decode_stream_control` rejects ONLY with the "unknown stream-control
+            // type" error for a non-control verb; a control verb either decodes or
+            // fails on a missing field (still "recognized"). Distinguish on the error.
+            let decoded = decode_stream_control(kind, &empty);
+            let recognized = match &decoded {
+                Ok(_) => true,
+                Err(e) => !e.0.contains("unknown stream-control type"),
+            };
+            assert_eq!(
+                is_stream_control(kind),
+                recognized,
+                "`{kind}`: router classification must match the decoder's recognition",
+            );
+        }
+    }
+
+    /// A request/response RPC name is NOT a stream-control frame — it must reach
+    /// `handle_unary`, never the driver.
+    #[test]
+    fn unary_rpcs_are_not_stream_control() {
+        for kind in [
+            "price",
+            "request_quote",
+            "accept_quote",
+            "login",
+            "aggregate_risk",
+        ] {
+            assert!(
+                !is_stream_control(kind),
+                "`{kind}` is a request/response RPC, not stream control"
+            );
+        }
     }
 }

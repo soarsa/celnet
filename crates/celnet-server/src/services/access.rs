@@ -267,6 +267,21 @@ pub struct ResolvedCaller {
 }
 
 impl ResolvedCaller {
+    /// The **anonymous** caller: no authenticated user, no asserted principal — the
+    /// starting state of a freshly-opened stream session before any `StreamAuth`
+    /// frame. Under [`AccessMode::Enforce`] this caller is denied
+    /// [`Status::unauthenticated`] by [`authorize_caller`]; under
+    /// [`AccessMode::Permissive`] it is admitted (the legacy/demo path). Built here
+    /// rather than by reaching into the private fields, so the streaming edge can
+    /// seed a session without widening the struct's surface.
+    #[must_use]
+    pub fn anonymous() -> Self {
+        Self {
+            user: None,
+            principal: None,
+        }
+    }
+
     /// The authenticated user, if a valid session token accompanied the request.
     #[must_use]
     pub fn user(&self) -> Option<&AuthenticatedUser> {

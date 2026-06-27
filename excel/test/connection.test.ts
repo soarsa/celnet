@@ -189,6 +189,74 @@ describe("Connection RFS lifecycle", () => {
   });
 });
 
+describe("Connection stream authentication (Enforce-admitted)", () => {
+  it("sends the Authenticate frame FIRST on open, before any subscribe", () => {
+    const { conn, sock } = makeConn();
+    sock.open();
+    conn.subscribe(INSTR, DEFAULT_CONVENTIONS, "row");
+
+    // The very first frame on the wire is the Authenticate control frame.
+    const first = sock.sent[0]!;
+    expect(first["type"]).toBe("authenticate");
+    // Exactly one authenticate per open; the subscribe follows it (auth leads).
+    expect(sock.sentOfType("authenticate").length).toBe(1);
+    const authIdx = sock.sent.findIndex((f) => f["type"] === "authenticate");
+    const subIdx = sock.sent.findIndex((f) => f["type"] === "subscribe");
+    expect(authIdx).toBeGreaterThanOrEqual(0);
+    expect(subIdx).toBeGreaterThan(authIdx);
+  });
+
+  it("defaults to the explicit grant-all principal and omits the token when anonymous", () => {
+    const { sock } = makeConn();
+    sock.open();
+    const auth = sock.sentOfType("authenticate")[0]!;
+    // No token attached ⇒ omit `session_token` entirely (anonymous bearer).
+    expect("session_token" in auth).toBe(false);
+    const principal = auth["principal"] as Record<string, unknown>;
+    expect(principal["grant_all"]).toBe(true);
+    expect(principal["grants"]).toEqual([]);
+    expect(principal["denies"]).toEqual([]);
+  });
+
+  it("carries the session token verbatim on the Authenticate frame when held", () => {
+    const sock = new FakeSocket();
+    const conn = new Connection({
+      url: "ws://test",
+      factory: () => sock,
+      stalenessWindowMs: 0,
+      sessionToken: "login-bearer-xyz",
+    });
+    sock.open();
+    const auth = sock.sentOfType("authenticate")[0]!;
+    expect(auth["session_token"]).toBe("login-bearer-xyz");
+    // The grant-all principal still rides alongside the token (Enforce parity).
+    expect((auth["principal"] as Record<string, unknown>)["grant_all"]).toBe(true);
+    conn.close();
+  });
+
+  it("re-sends the Authenticate frame FIRST on reconnect (re-dialed stream is anonymous)", () => {
+    const { conn, sock, time } = makeConn();
+    sock.open();
+    const subId = conn.subscribe(INSTR, DEFAULT_CONVENTIONS, "row");
+    sock.deliver(snapshotFrame(Number(subId), 1));
+    sock.deliver(updateFrame(Number(subId), 2));
+    expect(sock.sentOfType("authenticate").length).toBe(1);
+
+    // Drop and reconnect on the same fake socket.
+    sock.close();
+    time.advance(1000);
+    sock.open();
+
+    // A second Authenticate frame is emitted, and it LEADS the re-subscribe/resync.
+    expect(sock.sentOfType("authenticate").length).toBe(2);
+    const lastAuthIdx = sock.sent.map((f) => f["type"]).lastIndexOf("authenticate");
+    const reSubIdx = sock.sent.map((f) => f["type"]).lastIndexOf("subscribe");
+    const reResyncIdx = sock.sent.map((f) => f["type"]).lastIndexOf("resync");
+    expect(reSubIdx).toBeGreaterThan(lastAuthIdx);
+    expect(reResyncIdx).toBeGreaterThan(lastAuthIdx);
+  });
+});
+
 describe("Connection request/response", () => {
   it("routes a reply to its correlation-id waiter and resolves the promise", async () => {
     const { conn, sock } = makeConn();

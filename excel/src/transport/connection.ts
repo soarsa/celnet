@@ -64,6 +64,10 @@ import {
   type WireObject,
 } from "../contract/wsCodec";
 import * as enums from "../contract/enums";
+import {
+  entitlementPrincipalToWire,
+  type EntitlementPrincipal,
+} from "../contract/riskCodec";
 import type { MarketContext } from "../contract/contract";
 import { WS_OPEN, type WebSocketFactory, type WebSocketLike } from "./socket";
 
@@ -94,6 +98,22 @@ export interface ConnectionOptions {
   readonly setTimer?: (fn: () => void, ms: number) => unknown;
   /** Cancels a timer from `setTimer`; defaults to `clearTimeout`. */
   readonly clearTimer?: (handle: unknown) => void;
+  /**
+   * The bearer `session_token` from `AuthService.Login` to authenticate the
+   * stream session under the server's `Enforce` posture. When set it rides the
+   * opening `Authenticate` frame verbatim; absent ⇒ the frame still authenticates
+   * with the explicit grant-all principal (see `principal`). A secret — held only
+   * in memory, never persisted or logged. A deployment gateway sets the real one.
+   */
+  readonly sessionToken?: string;
+  /**
+   * The entitlement principal asserted on the opening `Authenticate` frame. Absent
+   * ⇒ the audited **explicit grant-all** every client asserts (parity with the
+   * gated risk requests' `principal_or_grant_all`), so the headline streaming
+   * workflow is admitted under `Enforce` without relying on the server granting an
+   * absent caller. A deployment gateway injects a scoped principal in production.
+   */
+  readonly principal?: EntitlementPrincipal;
 }
 
 const DEFAULT_BASE_BACKOFF_MS = 250;
@@ -180,6 +200,15 @@ export class Connection {
   private readonly setTimer: (fn: () => void, ms: number) => unknown;
   private readonly clearTimer: (handle: unknown) => void;
 
+  /**
+   * The bearer session token authenticating the stream session, or `null` for the
+   * anonymous (grant-all-principal) path. Carried verbatim on the opening
+   * `Authenticate` frame. A secret — in memory only, never persisted or logged.
+   */
+  private sessionToken: string | null;
+  /** The entitlement principal asserted on the `Authenticate` frame, if any. */
+  private readonly principal: EntitlementPrincipal | undefined;
+
   private nextCorrelation = 1n;
   private backoff: number;
   private reconnectTimer: unknown = undefined;
@@ -215,8 +244,42 @@ export class Connection {
     this.clock = opts.clock ?? (() => Date.now());
     this.setTimer = opts.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
     this.clearTimer = opts.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
+    this.sessionToken = opts.sessionToken ?? null;
+    this.principal = opts.principal;
     this.backoff = this.baseBackoffMs;
     this.open();
+  }
+
+  /**
+   * Set (or clear, with `null`) the bearer session token sent on the opening
+   * `Authenticate` frame. Called by the auth flow after a `AuthService.Login`
+   * (or a deployment gateway). The new token takes effect on the NEXT stream open
+   * / reconnect — the contract pins the caller at session open, so a mid-session
+   * token swap re-authenticates on the next (re)dial, exactly like the SDK/GUI.
+   */
+  setSessionToken(token: string | null): void {
+    this.sessionToken = token;
+  }
+
+  /**
+   * Build the opening `Authenticate` control frame: the bearer token (when held)
+   * plus the asserted entitlement principal, defaulting — exactly like the gated
+   * risk requests (`applyCommon` ⇒ `principal_or_grant_all`) — to the audited
+   * **explicit grant-all** so the frame ALWAYS authenticates the session and the
+   * production `Enforce` edge admits the streaming workflow without relying on the
+   * server granting an absent caller. Sent FIRST on every (re)open (see `open`).
+   */
+  private authenticateFrame(): WireObject {
+    const frame: WireObject = {
+      type: "authenticate",
+      principal: entitlementPrincipalToWire(
+        this.principal ?? { grantAll: true, grants: [], denies: [] },
+      ),
+    };
+    // The token, when held, rides verbatim (omitted entirely when anonymous so the
+    // frame stays byte-minimal — the server reads an absent token as anonymous).
+    if (this.sessionToken !== null) frame["session_token"] = this.sessionToken;
+    return frame;
   }
 
   /** True iff the underlying socket is currently OPEN. */
@@ -259,6 +322,14 @@ export class Connection {
     this.ws = ws;
     ws.onopen = () => {
       this.backoff = this.baseBackoffMs;
+      // Authenticate FIRST: the freshly-opened (or re-dialed) stream is anonymous
+      // server-side, so the `Authenticate` control frame MUST lead — before the
+      // queued outbox AND before `onReconnect` re-issues any subscribe/resync — or
+      // the server's `Enforce` posture rejects the subscribe as `Unauthenticated`
+      // (docs/SECURITY-AUTHZ-FINDING.md "Client-side counterpart"; SDK/GUI parity).
+      // Written straight to the socket (not via `send`/the outbox) so it cannot be
+      // re-ordered behind frames that were queued while the socket was down.
+      ws.send(serializeFrame(this.authenticateFrame()));
       for (const frame of this.outbox.splice(0)) ws.send(frame);
       this.onReconnect();
       for (const l of this.stateListeners) l(true);
