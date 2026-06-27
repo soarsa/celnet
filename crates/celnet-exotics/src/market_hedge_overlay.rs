@@ -419,6 +419,104 @@ mod tests {
         );
     }
 
+    /// QUANTITATIVE magnitude oracle for the full Vanna-Volga construction —
+    /// closes the Round-2 audit finding that this module was gated on *signs*
+    /// and *linear scaling* only (a mutant that altered every magnitude while
+    /// preserving signs would have survived).
+    ///
+    /// The expected values are hand-derived **out-of-band** from the published
+    /// Vanna-Volga construction (Castagna & Mercurio, "The vanna-volga method
+    /// for implied volatilities", Risk 2007; Bossens, Rayée, Skantzos &
+    /// Deelstra 2010, the market-price-of-vanna/volga projection), evaluated
+    /// independently at double precision (Python, no shared code) and typed in
+    /// as literals. Derivation, step by step, for the pinned fixture
+    /// `S=1.30, σ₀=0.10, T=0.75, r_d=3%, r_f=1%` (T ≠ 1 deliberately, so every
+    /// `·t`/`·√t` factor is load-bearing), wings `K_p = 0.92·F`, `K_c = 1.09·F`,
+    /// wing vols `σ_p = 10.5%`, `σ_c = 11.8%`:
+    ///
+    /// ```text
+    ///   F  = S·e^{(r_d−r_f)T} = 1.3196469840004346,  DF = e^{−r_d T}
+    ///   per wing K: d₁ = (ln(F/K) + ½σ₀²T)/(σ₀√T),  d₂ = d₁ − σ₀√T
+    ///     vega  = F·DF·φ(d₁)·√T
+    ///     vanna = −DF·φ(d₁)·d₂/σ₀
+    ///     volga = vega·d₁·d₂/σ₀
+    ///   surplus_w   = vega_w·(σ_w − σ₀)              (w ∈ {p, c})
+    ///   vanna_price = (surplus_c − surplus_p)/(vanna_c − vanna_p)
+    ///               = 7.93227932638695e-4
+    ///   volga_price = (surplus_c + surplus_p)/(volga_c + volga_p)
+    ///               = 1.2189979783440049e-3
+    /// ```
+    ///
+    /// Pinned at 1e-10 relative so the construction's mutants die on
+    /// **magnitude**, not just sign.
+    #[test]
+    fn pinned_smile_matches_hand_derived_construction() {
+        // T = 0.75: no `t == 1` degeneracy (kills `·t ↔ /t`, `·√t ↔ /√t`).
+        let i = VanillaInputs::new(1.30, 1.30, 0.10, 0.75, 0.03, 0.01);
+        let f = i.forward();
+        let (kp, kc) = (f * 0.92, f * 1.09);
+        let smile = ThreePointSmile {
+            put_strike: kp,
+            call_strike: kc,
+            put_vol: 0.105,
+            call_vol: 0.118,
+            atm_vol: 0.10,
+        };
+        let market = market_price_of_hedge_smile(&smile, &(&i).into(), kp, kc);
+        assert_close!(market.vanna_price, 7.932_279_326_386_95e-4, 1e-10, 1e-13);
+        assert_close!(market.volga_price, 1.218_997_978_344_004_9e-3, 1e-10, 1e-13);
+
+        // Exotic with vanna 0.8, volga 1.7 (distinct magnitudes so the two
+        // legs cannot compensate): raw cost, then survival-weighted overlay.
+        let x = ExoticSensitivities {
+            vanna: 0.8,
+            volga: 1.7,
+        };
+        assert_close!(
+            hedge_smile_cost(x, market),
+            2.706_878_909_295_764_4e-3,
+            1e-10,
+            1e-13
+        );
+        let r = hedge_smile_overlay(2.0, x, market, SurvivalWeight::new(0.65));
+        assert_close!(r.flat_vol_price, 2.0, 1e-15, 1e-15);
+        assert_close!(r.hedge_smile_cost, 1.759_471_291_042_246_8e-3, 1e-10, 1e-13);
+        assert_close!(r.smile_price, 2.001_759_471_291_042, 1e-10, 1e-13);
+    }
+
+    /// `exotic_sensitivities_fd` against closed-form cross-Greeks.
+    ///
+    /// `f(S,σ) = 2Sσ + 0.75·S²σ² − 1.5σ²` has degree ≤ 2 in each variable, so
+    /// both central stencils are EXACT in real arithmetic for any bump:
+    /// `vanna = 2 + 3Sσ`, `volga = 1.5S² − 3` — the only deviation is rounding
+    /// amplification (~1e-8 here). The pin is magnitude-sharp: a stencil
+    /// sign/divisor mutant shifts the result O(1).
+    #[test]
+    fn fd_sensitivities_match_polynomial_closed_form() {
+        let x = exotic_sensitivities_fd(
+            |s, v| 2.0 * s * v + 0.75 * s * s * v * v - 1.5 * v * v,
+            1.3,
+            0.1,
+        );
+        assert_close!(x.vanna, 2.0 + 3.0 * 1.3 * 0.1, 1e-6, 1e-7);
+        assert_close!(x.volga, 1.5 * 1.3 * 1.3 - 3.0, 1e-6, 1e-7);
+    }
+
+    /// `exotic_sensitivities_fd` on `f(S,σ) = σ²·ln S` (`vanna = 2σ/S`,
+    /// `volga = 2·ln S` — curvature on the *relative* scale, like a price) at a
+    /// LARGE spot (25 000, an FX-points-quoted level). Unlike the polynomial
+    /// pin (exact for any bump), this kills the bump-*construction* mutants:
+    /// `hs = 1e-4·spot` mutated to `1e-4/spot` collapses the spot bump to 4e-9
+    /// absolute, drowning the mixed stencil in rounding noise (~1% error vs the
+    /// 1e-6 pin), while `1e-4+spot` pushes `S−hs` negative ⇒ `ln` NaN ⇒ caught.
+    #[test]
+    fn fd_sensitivities_bump_scales_with_spot_level() {
+        let (s, v) = (25_000.0_f64, 0.1_f64);
+        let x = exotic_sensitivities_fd(|s, v| v * v * s.ln(), s, v);
+        assert_close!(x.vanna, 2.0 * v / s, 1e-6, 1e-12);
+        assert_close!(x.volga, 2.0 * s.ln(), 1e-6, 1e-9);
+    }
+
     /// Survival weight is clamped into `[0, 1]`.
     #[test]
     fn survival_weight_clamped() {

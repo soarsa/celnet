@@ -38,7 +38,7 @@ use celnet_server::Clock;
 use celnet_types::{OptionType, Tenor, VanillaInputs};
 
 use common::{
-    FIXTURE_SPOT, STEP_DEADLINE, TEST_DEADLINE, conventions, eurusd, live_market,
+    FIXTURE_SPOT, STEP_DEADLINE, TEST_DEADLINE, conventions, eurusd, live_market, login_seed_admin,
     start_edge_and_client_with, start_ready_edge, vanilla_call,
 };
 
@@ -479,6 +479,88 @@ async fn risk_manager_pulls_book_shaped_risk_equals_direct_fd() {
         );
 
         let _ = FIXTURE_SPOT;
+        edge.shutdown(Duration::from_secs(5)).await;
+    })
+    .await
+    .expect("test must not hang");
+}
+
+/// **Streaming-path authentication, end-to-end.** The server now rejects an
+/// unauthenticated `StreamSession` under the production deny-by-default posture
+/// (`AccessMode::Enforce`, set by the test harness). This proves the SDK closes that
+/// seam: it sends an `Authenticate` frame as the FIRST control frame whenever it
+/// opens a session, so the subscribe that follows is admitted.
+///
+/// * **Real Login token.** The taker logs in via the edge's real `AuthService.Login`
+///   RPC (the seed admin), attaches the issued bearer with
+///   [`Client::with_session_token`], and the SDK authenticates the stream as that
+///   user — the token validated against the edge's OWN session registry, the same
+///   one `StreamAuth` is checked against.
+/// * **Grant-all default.** A client that attaches no token still authenticates: the
+///   SDK sends the audited explicit grant-all `Authenticate` frame (parity with the
+///   gated risk requests), which `Enforce` admits. Both subscribe and stream.
+#[tokio::test]
+async fn stream_authenticates_under_enforce_with_login_token_and_grant_all_default() {
+    tokio::time::timeout(TEST_DEADLINE, async {
+        // Force a fresh seed of the default admin (`admin@celnet.com` / `password`)
+        // into the gitignored CWD `identity.json`, so the login below works with the
+        // default credential regardless of any prior run's rotated password. Safe
+        // under the gate's serial (`--test-threads 1`) execution.
+        let _ = std::fs::remove_file("identity.json");
+        let (edge, addr) = start_ready_edge(Clock::system()).await;
+
+        // ---- (a) a real Login-issued session token authenticates the stream -------
+        let token = login_seed_admin(addr).await;
+        let authed = tokio::time::timeout(STEP_DEADLINE, Client::connect(format!("http://{addr}")))
+            .await
+            .expect("client connects in time")
+            .expect("client connects")
+            .with_session_token(token);
+
+        let session = tokio::time::timeout(STEP_DEADLINE, authed.open_session())
+            .await
+            .expect("session opens in time")
+            .expect("session opens");
+        let mut sub = tokio::time::timeout(
+            STEP_DEADLINE,
+            session.subscribe(vanilla_call(1.12), conventions(), None, None),
+        )
+        .await
+        .expect("subscribe resolves in time")
+        .expect("an authenticated subscribe is admitted under Enforce");
+        // A baseline snapshot proves the Authenticate frame led and the subscribe
+        // was admitted — an anonymous subscribe under Enforce would have errored here.
+        match next_event(&mut sub).await {
+            StreamEvent::Snapshot { line, .. } => assert_eq!(line.sequence, 1),
+            other => panic!("expected an admitted Snapshot, got {other:?}"),
+        }
+        drop(sub);
+        drop(session);
+
+        // ---- (b) the grant-all default (no token) is also admitted under Enforce --
+        let default_client =
+            tokio::time::timeout(STEP_DEADLINE, Client::connect(format!("http://{addr}")))
+                .await
+                .expect("client connects in time")
+                .expect("client connects");
+        let session2 = tokio::time::timeout(STEP_DEADLINE, default_client.open_session())
+            .await
+            .expect("session opens in time")
+            .expect("session opens");
+        let mut sub2 = tokio::time::timeout(
+            STEP_DEADLINE,
+            session2.subscribe(vanilla_call(1.10), conventions(), None, None),
+        )
+        .await
+        .expect("subscribe resolves in time")
+        .expect("the grant-all default Authenticate admits the subscribe under Enforce");
+        match next_event(&mut sub2).await {
+            StreamEvent::Snapshot { line, .. } => assert_eq!(line.sequence, 1),
+            other => panic!("expected an admitted Snapshot, got {other:?}"),
+        }
+
+        drop(sub2);
+        drop(session2);
         edge.shutdown(Duration::from_secs(5)).await;
     })
     .await

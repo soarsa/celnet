@@ -199,8 +199,8 @@ the structured `waves` array for crates/oracle/parity/deps/priority per wave. Su
   (Underlying/Carry/Sensitivities), the new pricing-core trait, `celnet-proto` (Underlying/
   CarryModel/RateSensitivities + product validity matrix), `celnet-plugin-api` (generalized
   PricingModel + WIT/wasmi ABI). FX proven byte-identical end-to-end (golden + parity +
-  4 plugin gates + 5-client conformance all unchanged) — the no-regression gate. Re-index
-  the codebase-memory graph; reconcile INTERFACES/ARCHITECTURE docs.
+  4 plugin gates + 5-client conformance all unchanged) — the no-regression gate. Lodestar
+  auto-indexes; run `mcp__lodestar__detect_changes` to confirm scope; reconcile INTERFACES/ARCHITECTURE docs.
 - **W2 — FX linear products + pair/metals breadth (P0/P2):** Track A `celnet-linear`
   (forward/swap/NDF, QuantLib + closed-form oracle). Track B pair universe → >75 + XPT/XPD +
   metal crosses (EMTA/ISDA/LBMA tables + independent rata-die oracle).
@@ -261,7 +261,7 @@ Branch-first off `main`; push ONLY to the single sanctioned `origin`
 3. all client suites pass (Rust nextest + GUI vitest + GUI Playwright real-edge e2e + Excel
    real-edge e2e);
 4. the per-class verification contract is complete for any new product;
-5. docs reconciled (no stale "deferred" for shipped code) + codebase-memory re-indexed.
+5. docs reconciled (no stale "deferred" for shipped code) + lodestar auto-indexed (run `mcp__lodestar__detect_changes` to confirm scope).
 
 A milestone = one asset class or one cross-cutting capability fully landed across all 5
 clients with all gates green. See the structured `milestones` array.

@@ -74,6 +74,7 @@ to the tree mid-wave (that would burden the running critique's `just check`).
 
 ## 6. Knowledge stays live
 
-After any structural change, re-`index_repository` so the codebase-memory graph covers the
-full scope; update the `CLAUDE.md` ledger + work-stream table; record durable decisions as
-ADRs (`manage_adr`) and auto-memory; keep `docs/` free of stale references (zero-legacy).
+After any structural change, lodestar re-indexes automatically via its filesystem watcher; run
+`mcp__lodestar__detect_changes` to verify scope after structural changes; update the `CLAUDE.md`
+ledger + work-stream table; record durable decisions as ADRs (`mcp__lodestar__manage_adr`) and
+auto-memory; keep `docs/` free of stale references (zero-legacy).

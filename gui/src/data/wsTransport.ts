@@ -136,6 +136,7 @@ import {
   marketSeriesUnsubscribeToWire,
   marketToWire,
   multiDealerQuoteFromWire,
+  principalOrGrantAllToWire,
   parseFrame,
   quoteAcceptToWire,
   quoteFromWire,
@@ -290,7 +291,20 @@ class WsConnection {
     this.ws = ws;
     ws.onopen = () => {
       this.backoff = this.baseBackoffMs;
-      // Flush anything queued while down, then let the bound session re-establish
+      // Authenticate the session FIRST — the server pins the caller from this frame
+      // before any subscribe/execute (the Enforce posture rejects an un-authenticated
+      // session). Carry our session token when we hold one, plus an explicit grant-all
+      // principal default (mirroring the SDK's `principal_or_grant_all`) so the headline
+      // GUI workflow is admitted under Enforce without relying on the server granting an
+      // absent caller. Sent directly (not via the outbox) so it is the literal first
+      // frame on every (re)connect — a re-dialed socket is anonymous server-side.
+      const authFrame: WireObject = {
+        type: "authenticate",
+        principal: principalOrGrantAllToWire(undefined),
+        ...(this.sessionToken ? { session_token: this.sessionToken } : {}),
+      };
+      ws.send(JSON.stringify(authFrame));
+      // Then flush anything queued while down, then let the bound session re-establish
       // its subscriptions (fresh subscribe + resync from last good sequence).
       for (const frame of this.outbox.splice(0)) ws.send(frame);
       this.session?.onReconnect();

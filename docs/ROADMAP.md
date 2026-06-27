@@ -16,7 +16,7 @@
 3. **Flat virtual workspace, layered by domain function** (per matklad / rust-analyzer style), *not* by technical tier. Root is a `[workspace]` virtual manifest; crate folders named identically to crate names; members under `crates/`.
 4. **Determinism is a feature.** Float comparisons use ULP/relative tolerances (never `==`); prefer `rust-lang/libm` (correctly-rounded) for transcendentals; forbid FMA contraction / fast-math on reproducibility-critical paths; never assert on NaN bit patterns. GPU standardizes on **f32**, with **f64 CPU** reconciliation.
 5. **Tail latency (p99/p99.9), not mean,** is the latency KPI. Hot path is non-async, core-pinned, zero-alloc.
-6. **Greenfield.** `/Users/adrian/code/celeroption` contains only `.git`. Everything below is created from scratch; P0 establishes the skeleton.
+6. **Greenfield.** The repo root contains only `.git`. Everything below is created from scratch; P0 establishes the skeleton.
 
 ---
 
@@ -175,7 +175,7 @@ celnet/
 - **Owns:** `celnet-integration`.
 - **Deliverables:** adapter to the in-process JVM **distributor** (bounded disruptor mailbox, skip-while-full) via JVM adapter or `DistributorProducerChannelHandler` socket protocol — **decision recorded as ADR** before build; sized mailboxes + rate-limiting so a high-frequency option pricer cannot cause silent price drops; resilient `MarketMerchantPriceService` WS consumer (handle disconnects, respect ~6 concurrent HTTP conns/domain semaphore); vol-data feed handler (verify marketdata-api can supply vol surface/Greeks input or provision additional feed); **FMD FXO 2.0-style surface adapter** normalizing vendor ATM/25d&10d RR/BF + spot/fwd/NDF into the canonical surface object; new-`OptionProduct`-type touch-list tracked as a cross-cutting ADR (celertech-type, staticdata, api proto enums, positionmanager netting keys, risk exposure models, destination FIX dialect).
 - **Depends on:** G0 (`celnet-proto`), WS-C (surface object) for the FMD adapter.
-- **Gates:** back-pressure test (mailbox full → bounded, no corruption); WS-reconnect resilience test; FMD-feed normalization round-trip snapshot; cross-service dependency map maintained **manually** (codebase-memory finds zero cross-service edges for in-proc distributor/Protobuf/FIX) and verified against Spring config + distributor `notifyUsers` names.
+- **Gates:** back-pressure test (mailbox full → bounded, no corruption); WS-reconnect resilience test; FMD-feed normalization round-trip snapshot; cross-service dependency map maintained **manually** (lodestar finds zero cross-service edges for in-proc distributor/Protobuf/FIX) and verified against Spring config + distributor `notifyUsers` names.
 
 ### WS-I · Edge Binaries
 - **Owns:** `celnet-server`, `celnet-cli`.
@@ -212,7 +212,7 @@ celnet/
 
 ---
 
-## 6. Cross-Cutting ADRs (record before building, in `mcp__codebase-memory-mcp__manage_adr` and `docs/INTERFACES.md`)
+## 6. Cross-Cutting ADRs (record before building, in `mcp__lodestar__manage_adr` and `docs/INTERFACES.md`)
 
 1. **Async runtime split** — tokio edge (default, for tonic/hyper ecosystem) vs non-async core-pinned hot path; monoio/glommio explicitly rejected for the engine core (Send/Sync ecosystem loss, maintenance/io_uring security risk) unless a measured IO-bound workload justifies a prototype.
 2. **Allocator choice** — mimalloc (small-alloc tail latency) vs tikv-jemallocator (multi-thread throughput); benchmark on real workload, gap small in steady state.
@@ -248,7 +248,7 @@ The ledger is the single source of truth for parallel coordination. Maintain a t
 | WS-A   | celnet-conventions, celnet-calendar | IN-PROGRESS | sess-3 / ws-a-cal | G0 | 2026-05-30 green | EOM logic done |
 | ...    | ... | UNCLAIMED / IN-PROGRESS / BLOCKED / DONE | ... | ... | ... | ... |
 ```
-Also append to a **decision log** section any ADRs, interface bumps (with semver + tag), and gate transitions (G0→G1 etc.). Update `index_repository` / codebase-memory after structural changes so the manual cross-service map stays accurate.
+Also append to a **decision log** section any ADRs, interface bumps (with semver + tag), and gate transitions (G0→G1 etc.). lodestar auto-indexes; run `detect_changes` to confirm scope after structural changes so the manual cross-service map stays accurate.
 
 ### 7.4 Test gates before "done" (must all pass locally, then in CI)
 A stream is **DONE** only when, on its owned crates:

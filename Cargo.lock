@@ -776,6 +776,8 @@ dependencies = [
  "celnet-risk-normalize",
  "celnet-types",
  "celnet-vanilla",
+ "libm",
+ "proptest",
 ]
 
 [[package]]
@@ -908,6 +910,7 @@ dependencies = [
  "celnet-types",
  "celnet-vanilla",
  "libm",
+ "proptest",
 ]
 
 [[package]]

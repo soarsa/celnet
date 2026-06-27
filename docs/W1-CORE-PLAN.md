@@ -94,7 +94,7 @@ Stage so the workspace compiles + `just check` is green at every commit:
 - **S5 (plugin-api + WIT + wasmi ABI):** generalize; 4 existing gates green + NEW equity-dividend
   model gate vs QuantLib. Commit.
 - **S6 (delete legacy + reconcile):** remove the superseded flat `r_dom/r_for`/`rho_*` paths
-  (#10), re-index codebase-memory, reconcile INTERFACES/ARCHITECTURE/CONVENTIONS docs, add the
+  (#10), lodestar auto-indexes; verify scope with `mcp__lodestar__detect_changes`; reconcile INTERFACES/ARCHITECTURE/CONVENTIONS docs, add the
   `Underlying`/`Carry` rows to the W0 verification corpus. Full `just check` + all 5 client
   suites + the conformance harness green. Milestone commit + push.
 
@@ -106,7 +106,7 @@ Stage so the workspace compiles + `just check` is green at every commit:
 - Full `just check` prints the literal **"All gates passed."** (verified by me, not a wrapper
   exit code); GUI vitest + Playwright e2e + Excel real-edge e2e green.
 - One NEW non-FX proof: an equity-dividend plugin model vs an independent oracle.
-- Re-index codebase-memory; reconcile docs (no stale "FX-only" claims for generalized code).
+- Lodestar auto-indexes; verify scope with `mcp__lodestar__detect_changes`; reconcile docs (no stale "FX-only" claims for generalized code).
 
 ## 6. Out of W1 scope (later waves, designed-seam only here)
 New asset-class leaves (crypto/equity/commodity — W3/W5), new payoff shapes

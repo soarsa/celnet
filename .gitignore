@@ -31,8 +31,8 @@ lcov.info
 .env
 .env.local
 
-# codebase-memory-mcp local index artifact (machine-local, regenerable, not synced)
-.codebase-memory/
+# lodestar graph cache is machine-local and regenerable; it lives in ~/.cache/lodestar/,
+# not in the repo tree. The .lodestar/ knowledge dir IS committed (see rules below).
 
 # GUI incremental TS build info (regenerable)
 gui/**/*.tsbuildinfo
@@ -62,3 +62,32 @@ identity.json.tmp
 # Serena tool cache/config (local code-intel scratch; lodestar is this project's
 # primary code graph). Not a product artifact.
 .serena/
+
+# >>> lodestar init >>>
+.lodestar/*
+!.lodestar/knowledge/
+!.lodestar/knowledge/events/
+!.lodestar/knowledge/events/**
+!.lodestar/knowledge/snapshot.json
+.lodestar/**/*.db
+.lodestar/**/graph.db.zst
+.lodestar/sync/key
+.lodestar/sync/sign_key
+!.lodestar/project-id
+!.mcp.json
+# <<< lodestar init <<<
+
+# lodestar knowledge: the SHARED SOURCE OF TRUTH is the anchor-carrying MIRROR
+# (.lodestar/knowledge/claims-mirror.json + CLAIMS.md + DELIVERABLES.md), NOT the raw event
+# log. lodestar's event log carries no anchors, so it cannot rehydrate the live projection on
+# a fresh clone or after a projection loss (lodestar#18) — it + the snapshot are machine-local,
+# regenerable, per-machine-HLC caches (churn, not shared truth). tools/lodestar/sync-knowledge.sh
+# rebuilds the live projection from the mirror on SessionStart (background, staleness-guarded).
+# These overrides win over the lodestar-init un-ignore above (a later rule wins) + survive re-init.
+.lodestar/knowledge/snapshot.json
+.lodestar/knowledge/events/
+.lodestar/index.log
+.lodestar/knowledge-sync.log
+
+# Office (Excel/Word) temp lock files
+~$*

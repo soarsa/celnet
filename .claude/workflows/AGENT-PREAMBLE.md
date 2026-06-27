@@ -3,22 +3,28 @@
 Every Celnet workflow brief includes these three blocks. They encode the operator
 directives: graph-first token economy, right-sized contexts, optimal model per task.
 
-## 1. Graph-first discovery (MCP via CLI — connection-independent)
+## 1. Graph-first discovery (lodestar MCP via CLI — connection-independent)
 
-Discovery goes through the codebase-memory graph BEFORE any file reading, via Bash
-(works whether or not the MCP server is attached to the session):
+Discovery goes through the **lodestar** code-graph BEFORE any file reading, via Bash
+(works whether or not the MCP server is attached to the session). The stable project key
+is the git-remote key `github.com-soarsa-celnet` (pinned in `.lodestar/project-id`,
+identical on every clone):
 
 ```bash
-BIN="$HOME/.local/bin/codebase-memory-mcp"
-"$BIN" cli search_graph '{"project":"Users-adrian-code-celeroption","name_pattern":"^price_instrument$","limit":5}'
-"$BIN" cli search_graph '{"project":"Users-adrian-code-celeroption","query":"one touch first passage","limit":8}'   # BM25
-"$BIN" cli get_code_snippet '{"project":"Users-adrian-code-celeroption","qualified_name":"<qn from search>"}'
-"$BIN" cli trace_path '{"project":"Users-adrian-code-celeroption","function_name":"price_instrument","mode":"calls"}'
+L="$HOME/.local/bin/lodestar"   # on PATH after `lodestar install`
+P=github.com-soarsa-celnet
+"$L" cli search_graph     '{"project":"'$P'","name_pattern":"price_instrument","limit":5}'
+"$L" cli search_graph     '{"project":"'$P'","query":"one touch first passage","limit":8}'   # BM25
+"$L" cli get_code_snippet '{"project":"'$P'","qualified_name":"<qn from search>"}'
+"$L" cli trace_path       '{"project":"'$P'","function_name":"price_instrument","mode":"calls"}'
+"$L" cli knowledge_get    '{"project":"'$P'","qualified_name":"<qn>"}'   # the verified "why"
 ```
 
-Health probe before trusting it (the corruption lesson): a hub symbol returning 0 or a
-node count ≪17k ⇒ report it; the coordinator rebuilds (3s). Grep/Read are the fallback
-for non-code text only.
+Health probe before trusting it: `lodestar doctor --json` must report `ok:true` /
+`problems:0`, and `price_instrument` must resolve (graph ≈18k nodes). A sharp drop or a
+missing hot symbol ⇒ `lodestar index --full .` (~2s, deterministic, byte-identical).
+Grep/Read are the fallback for non-code text only. lodestar self-invalidates — claims go
+stale when code changes, so re-query rather than trusting cached understanding.
 
 ## 2. Token discipline ("clear tokens")
 

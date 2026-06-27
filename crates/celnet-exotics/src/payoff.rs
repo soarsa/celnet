@@ -129,6 +129,47 @@ mod tests {
         assert_close!(b.terminal(115.0, false), 0.0);
     }
 
+    /// Touching EXACTLY the barrier level counts as a breach in both
+    /// directions — the knock convention the path engines rely on (a touch AT
+    /// the level knocks; `>=`/`<=`, not strict). Kills the strict-inequality
+    /// boundary mutants the off-level checks cannot see.
+    #[test]
+    fn breach_at_exact_barrier_level() {
+        let up = DiscreteBarrier {
+            option: OptionType::Call,
+            strike: 100.0,
+            barrier: 120.0,
+            up: true,
+            knock_in: false,
+        };
+        assert!(up.is_breach(120.0), "at-level touch must knock (up)");
+        let down = DiscreteBarrier {
+            up: false,
+            barrier: 80.0,
+            ..up
+        };
+        assert!(down.is_breach(80.0), "at-level touch must knock (down)");
+    }
+
+    /// The Asian terminal payoff is the vanilla intrinsic of the average, for
+    /// both option types (direct value pins, independent of the MC engine).
+    #[test]
+    fn asian_terminal_is_intrinsic_of_average() {
+        let call = ArithmeticAsian {
+            option: OptionType::Call,
+            strike: 100.0,
+            observations: 12,
+        };
+        assert_close!(call.terminal(107.25), 7.25);
+        assert_close!(call.terminal(92.5), 0.0);
+        let put = ArithmeticAsian {
+            option: OptionType::Put,
+            ..call
+        };
+        assert_close!(put.terminal(92.5), 7.5);
+        assert_close!(put.terminal(107.25), 0.0);
+    }
+
     #[test]
     fn breach_direction() {
         let up = DiscreteBarrier {

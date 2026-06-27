@@ -37,7 +37,7 @@ const VERDICT = {
   },
 }
 
-const COMMON = `Celnet mesh worker. Repo /Users/adrian/code/celeroption (main worktree). HARD RULES (CLAUDE.md): no mocks/placeholders/todo!()/#[allow]-dodges/skipped tests/lowered tolerances; purpose-named vendor-neutral identifiers (math provenance in doc comments ONLY); FX + every existing family byte-identical (untouched paths); one unversioned contract; numerical work validated against INDEPENDENT oracles (the FRTB circular-oracle lesson: re-derive constants, never re-run the engine as its own check). Gate with plain 'cargo test' (NEVER nextest). Do NOT git commit. Match surrounding idiom exactly.`
+const COMMON = `Celnet mesh worker. Repo the working tree (cwd) (main worktree). HARD RULES (CLAUDE.md): no mocks/placeholders/todo!()/#[allow]-dodges/skipped tests/lowered tolerances; purpose-named vendor-neutral identifiers (math provenance in doc comments ONLY); FX + every existing family byte-identical (untouched paths); one unversioned contract; numerical work validated against INDEPENDENT oracles (the FRTB circular-oracle lesson: re-derive constants, never re-run the engine as its own check). Gate with plain 'cargo test' (NEVER nextest). Do NOT git commit. Match surrounding idiom exactly.`
 
 phase('Seam')
 const seam = await agent(

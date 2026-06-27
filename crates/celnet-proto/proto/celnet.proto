@@ -2013,7 +2013,25 @@ message ClientStreamMessage {
     MarketSeriesSubscribe market_series_subscribe = 7;
     // Close a market-series subscription.
     MarketSeriesUnsubscribe market_series_unsubscribe = 8;
+    // Authenticate the session — SHOULD be the first frame on a new session.
+    // Pins the caller for all subsequent control + click-to-trade.
+    StreamAuth authenticate = 9;
   }
+}
+
+// Authenticate a multiplexed stream session. SHOULD be the first frame: the
+// server resolves the caller from `session_token` (validated against the live
+// SessionRegistry minted by AuthService.Login) and pins the principal for the
+// whole session. Under the Enforce posture an unauthenticated session
+// (absent/invalid token) is refused control + click-to-trade; under Permissive
+// an absent token is the anonymous grant-all caller (legacy back-compat). A
+// field selecting WHO, never an API version (ADR-0007).
+message StreamAuth {
+  // The session token from AuthService.Login. Absent ⇒ anonymous.
+  optional string session_token = 1;
+  // The entitlement principal to pin for this session (absent ⇒ grant-all under
+  // Permissive). Composes with the authenticated session's desk scope.
+  optional EntitlementPrincipal principal = 2;
 }
 
 // The server→client message on the multiplexed bidirectional `StreamSession`.

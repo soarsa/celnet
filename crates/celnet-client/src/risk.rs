@@ -250,7 +250,7 @@ impl Entitlements {
         self
     }
 
-    fn to_wire(&self) -> EntitlementPrincipal {
+    pub(crate) fn to_wire(&self) -> EntitlementPrincipal {
         EntitlementPrincipal {
             grant_all: self.grant_all,
             grants: self.grants.iter().map(EntitlementScope::to_wire).collect(),
@@ -267,7 +267,7 @@ impl Entitlements {
 /// default is a real, logged `PrincipalAsserted` grant, not a reliance on the
 /// server granting an absent request (it no longer does). A deployment's
 /// authenticating gateway injects/validates the real principal in production.
-fn principal_or_grant_all(principal: Option<&Entitlements>) -> EntitlementPrincipal {
+pub(crate) fn principal_or_grant_all(principal: Option<&Entitlements>) -> EntitlementPrincipal {
     principal.map_or_else(
         || Entitlements::grant_all().to_wire(),
         Entitlements::to_wire,

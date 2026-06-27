@@ -292,7 +292,7 @@ Workspace compiles + `just check` is green at every commit.
   surfacing (§3); the 5-client conformance harness rows for equity + commodity vanilla green
   against a real edge; generate `CLIENT-PARITY-MATRIX.md`. Reconcile `RISK-HIERARCHY.md`,
   `INTERFACES.md`, `ARCHITECTURE.md` (risk layer now cross-asset; FRTB classes now
-  GIRR/equity/commodity/CSR; two new leaves), `ANALYTICS-SPEC.md`. Re-index codebase-memory.
+  GIRR/equity/commodity/CSR; two new leaves), `ANALYTICS-SPEC.md`. lodestar auto-indexes; run `detect_changes`.
   Full `just check` prints the literal **"All gates passed."** + GUI vitest/Playwright + Excel
   real-edge e2e green. Milestone commit + push.
 
@@ -311,7 +311,7 @@ Workspace compiles + `just check` is green at every commit.
 - **api-first parity:** `just verification-coverage` green (arm ⇄ vector ⇄ parity-row) for both
   new arms; reachable + identical from all 5 clients against a real edge.
 - Full `just check` = literal **"All gates passed."** (verified, not the wrapper exit code).
-- Docs reconciled (no stale "FX-only risk layer" claims); codebase-memory re-indexed.
+- Docs reconciled (no stale "FX-only risk layer" claims); lodestar auto-indexes; run `detect_changes`.
 
 ---
 

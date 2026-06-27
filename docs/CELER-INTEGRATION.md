@@ -1,6 +1,6 @@
 # Celnet — Celer Integration Map
 
-> Status: design document for a greenfield Rust service (`/Users/adrian/code/celeroption`). All Celer-side service names, hops, transports and constraints below are drawn from the `celnet-integration` research findings. Items the research flagged as **inferred** (not runtime-traced) or otherwise unconfirmed are called out explicitly and collected in the Open Questions section. Do not treat them as verified until checked against the real services.
+> Status: design document for a greenfield Rust service (this repo). All Celer-side service names, hops, transports and constraints below are drawn from the `celnet-integration` research findings. Items the research flagged as **inferred** (not runtime-traced) or otherwise unconfirmed are called out explicitly and collected in the Open Questions section. Do not treat them as verified until checked against the real services.
 
 ---
 
@@ -10,7 +10,7 @@ These are hard facts from the integration research that shape every decision bel
 
 - **The distributor is an in-process JVM disruptor mailbox.** It runs inside the JVM `baseserver`. A Rust process **cannot natively join it**. Celnet must either (a) run a JVM adapter/sidecar, or (b) speak the distributor socket protocol via `DistributorProducerChannelHandler`. **This choice must be made before any code is committed** — it determines the entire ingress/egress transport.
 - **The distributor mailbox is bounded with skip-while-full back-pressure.** A high-frequency option pricer can cause **silent price drops**. Mailboxes must be sized and the pricer rate-limited.
-- **Cross-service edges are invisible to automated tooling.** `codebase-memory-mcp` finds zero cross-service edges because the estate uses the in-proc distributor + Protobuf + FIX, not HTTP/gRPC. The dependency map must be maintained **manually** and verified against Spring config and distributor `notifyUsers` names.
+- **Cross-service edges are invisible to automated tooling.** `lodestar` finds zero cross-service edges because the estate uses the in-proc distributor + Protobuf + FIX, not HTTP/gRPC. The dependency map must be maintained **manually** and verified against Spring config and distributor `notifyUsers` names.
 - **Several hops are inferred, not traced.** `orderrouting → risk`, `risk → destination`, `destination → clearing`, `clearing → positionmanager` are inferred from API deps and handler signatures — validate before relying on them.
 - **`MarketMerchantPriceService` is WS-only with no fallback** and has a ~6 concurrent HTTP connection semaphore per domain. Any new option price stream must be resilient to WS disconnects.
 - **No option product type exists in the estate today.** Adding one touches `celertech-type`, `staticdata`, every API proto enum, `positionmanager` netting keys, `risk` exposure models, and `destination` FIX dialect mappings. This is a broad, cross-cutting change.

@@ -1,7 +1,7 @@
 # CRYPTO-SURFACE-LEAF — strike-axis smile leaf + asset-class-neutral surface core
 
 **Status:** implementation-ready spec (read-only design pass; no `cargo`/`npm` run — compute-courtesy §4.1, session-B holds the build window).
-**Source tree:** `/Users/adrian/code/celnet-csurf` (clean worktree @ `origin/main`).
+**Source tree:** a clean worktree of `origin/main`.
 **Lane:** SURFACE-CRYPTO-LEAF (W3 §5 / §7-S6 deferred item; ADR-0008 §7 cross-asset enablement).
 **Inputs read:** `crates/celnet-surface/src/{lib,quotes,calibrate,parametric,parametric_surface,extended_surface,arbitrage,termstructure,surface,strangle,market_hedge,mathx}.rs`; `crates/celnet-surface/tests/surface_properties.rs`; `crates/celnet-parity/tests/surface.rs`; `crates/celnet-crypto-vanilla/src/{lib,funding,inverse}.rs`; `crates/celnet-types/src/lib.rs` (`Carry`); `docs/W3-CRYPTO-PLAN.md` §5/§6/§7; `docs/SURFACE-WORKFLOW.md`; `docs/plan/ADR0008-EXOTICS-SURFACE-REMEDIATION.md` §4/§7.
 

@@ -1,0 +1,100 @@
+# lodestar.visual.toml.example — config for the host-side VISUAL drivers.
+#
+# Copy to tools/lodestar.judge.toml (the single config surface common.sh reads;
+# the [visual] / [storybook] sections below are additive to the judge config),
+# OR point at it explicitly:
+#     export LODESTAR_VISUAL_CONFIG=/path/to/lodestar.judge.toml
+#
+# EVERY key has an env twin (env > file > default), exactly like the judge
+# config. The default for every provider is OFF/absent: with no config the
+# visual seam reports the provider absent, the engine is byte-identical, and the
+# deterministic Stage-1 design gate (design:token / ui:component / a11y:*) stands
+# alone. NO commercial dependency anywhere — Storybook (MIT), Playwright
+# (Apache-2.0), axe-core (MPL-2.0, run as a separate host process) only.
+
+[engine]
+# The pure-C engine binary that owns the knowledge_review seam.
+bin = "lodestar"                      # env: LODESTAR_BIN
+project = "D-code-lodestar"           # env: LODESTAR_PROJECT
+
+[storybook]
+# Storybook is OPTIONAL symbolic input — never a runtime dep of the gate.
+# index.json is the built manifest (schema "v":3, a `stories` map). Absent ⇒
+# the ingest step is a no-op and design claims simply anchor without a story.
+index_json = "storybook-static/index.json"  # env: LODESTAR_STORYBOOK_INDEX
+# Command that builds the static Storybook (only used by visual-verify render,
+# never by ingest). Left as the conventional default; not invoked unless render
+# is enabled and a story must be (re)built.
+build_cmd = "npx storybook build"            # env: LODESTAR_STORYBOOK_BUILD
+# Where the BUILT STATIC Storybook lives. The rendered-a11y step (visual-verify
+# a11y) runs axe-core against this build via file:// — no live service.
+static_dir = "storybook-static"              # env: LODESTAR_STORYBOOK_STATIC
+
+[visual]
+# The ui:matches-mockup visual-verifier seam. DEFAULT OFF.
+#   off       : ship no driver (default). Seam reports absent; engine byte-identical.
+#   reference : the open render→screenshot→a11y→vision pipeline below.
+provider = "off"                      # env: LODESTAR_VISUAL_PROVIDER
+
+# Open render/screenshot stack (host-side ONLY; never linked into the engine).
+test_runner = "test-storybook"        # env: LODESTAR_STORYBOOK_TEST_RUNNER  (@storybook/test-runner, MIT)
+playwright_bin = "playwright"         # env: LODESTAR_PLAYWRIGHT_BIN          (Apache-2.0)
+axe_mode = "addon"                    # env: LODESTAR_AXE_MODE  (addon|playwright|off; axe-core MPL-2.0)
+
+# The screenshot output dir the test-runner postVisit hook writes to.
+screenshot_dir = ".lodestar/visual/shots"    # env: LODESTAR_VISUAL_SHOTS
+
+# ── STAGE 1 (P2): deterministic pixel/structural diff — runs BEFORE any model.
+# Byte-identity (cmp) always decides a match; otherwise the pixel tool counts
+# mismatched pixels (0 = match, >0 = flagged delta -> stage 2). Feature-detected
+# vendor-neutrally: "" autodetects pixelmatch, then ImageMagick; "none" disables
+# pixel tooling explicitly; or set an explicit command that receives
+# <screenshot> <target> and prints one line "PIXELDIFF: <n>".
+# A stage-1 match is committed-baseline + fixed-renderer + ZERO-model — the one
+# verdict that may carry the DETERMINISTIC reproducibility band.
+pixel_diff_cmd = ""                   # env: LODESTAR_VISUAL_PIXELDIFF_CMD
+# Optional OCR visual-block alignment on a flagged delta (layout/text fidelity,
+# the Design2Code-lineage deterministic layer). It refines the report; it NEVER
+# decides alone. "" autodetects tesseract; "none" disables; or a command that
+# receives <image> and prints the extracted text.
+ocr_cmd = ""                          # env: LODESTAR_VISUAL_OCR_CMD
+
+# ── STAGE 2 (P2): comparative VLM judgment, ONLY on a stage-1 flagged delta.
+# The vision verdict step. The DESIGN TARGET is a content-addressed IN-REPO asset
+# (a team-owned PNG/spec OR a designated baseline story snapshot) hashed via the
+# engine's kn_hash and recorded in the Tier-2 event log — NEVER a Figma artifact.
+# vision_cmd receives:  <screenshot_png> <target_asset> <request_json>  and must
+# print one line:
+#   VERDICT: <affirm|refute|uncertain> | CONCERN: <one sentence> [| INTERVAL: <lo> <hi>]
+# The judgment must be COMPARATIVE (screenshot vs target, pairwise) — never an
+# absolute score. INTERVAL is the conformal interval the command derives from
+# its score-token log-probabilities; when it is wider than conformal_max_width
+# the driver ABSTAINS honestly (uncertain; the symbolic verdict stands). A line
+# without INTERVAL is accepted (back-compat) and recorded as uncalibrated.
+# Left empty ⇒ the seam degrades to a recorded/stub verdict (the same honest
+# pattern the judge/execute-verify seams use where no live model runs in CI).
+# Recommended host-installed OPEN-WEIGHT judges (never bundled, vendor-neutral):
+# Qwen3-VL, GLM-4.6V, Molmo (Apache-2.0), UI-TARS / UGround (pixel grounding).
+vision_cmd = ""                       # env: LODESTAR_VISUAL_VISION_CMD
+# Conformal abstention policy: maximum informative interval width. 0.40 = the
+# span at which VLM score intervals are uninformative on natural images.
+conformal_max_width = "0.40"          # env: LODESTAR_VISUAL_CONFORMAL_MAX_WIDTH
+
+# ── Rendered a11y (P3): axe-core 4.12.x vs the BUILT STATIC Storybook.
+# axe_runner receives <static_dir> <story_id> <out_json> and writes
+# {"storyId","axeVersion","ruleIds":[...],"violationIds":[...]} (see
+# fixtures/axe-static.example.js, the reference runner). "" autodetects node +
+# the bundled reference runner; "none" disables. Every recorded rendered fact
+# carries the axe-core VERSION + a deterministic RULESET HASH (rules churn
+# every axe minor); with the stack absent the STATIC a11y:labeled/role facts
+# stand alone, unchanged. Gate baseline: WCAG 2.2 AA.
+axe_runner = ""                       # env: LODESTAR_AXE_RUNNER
+# Reviewer family for the vision verdict. MUST differ from the claim author's
+# family — the engine enforces never-self at the seam (LODE_REVIEW_SAME_FAMILY).
+reviewer_model = "claude-code:visual-verifier"  # env: LODESTAR_VISUAL_REVIEWER
+
+[mockup]
+# Where the in-repo, team-owned design targets live (committed assets). A target
+# is hashed with the engine's content hasher and pinned to the ui:matches-mockup
+# claim; a new target hash flips the claim stale even when code is unchanged.
+target_dir = "design/mockups"         # env: LODESTAR_MOCKUP_DIR

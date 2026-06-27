@@ -18,7 +18,7 @@ const RESULT = {
   },
 }
 
-const WT = '/Users/adrian/code/celnet-gw2'
+const WT = '../celnet-gw2'
 
 const COMMON = `
 You are a GW2 phase-2 worker on the Celnet trader GUI. WORK ONLY in ${WT} (branch lane/gw2-structuring). Always: cd ${WT}/gui

@@ -1,0 +1,35 @@
+{
+  "deliverable": "carry-seam",
+  "title": "Multi-asset carry seam — FX byte-identity",
+  "decision": "ADR-0008-multi-asset-carry-architecture",
+  "description": "The asset-class-agnostic carry seam (celnet-core::carry on celnet-types::Carry) must lower the FX two-rate arm to VanillaInputs byte-identically, and must reject the generalized CostOfCarry arm on the FX lowering path. This is the frozen-contract acceptance for the deliverable 'carry-seam'.",
+  "assertions": [
+    {
+      "id": "fx-lowering-byte-identical",
+      "kind": "invariant",
+      "anchor": "github.com-soarsa-celnet.crates.celnet-core.src.carry.fx_vanilla_inputs",
+      "statement": "fx_vanilla_inputs lowers Carry::FxRates{r_dom,r_for} to VanillaInputs with forward, df_dom and df_for byte-identical (to_bits equality) to the direct VanillaInputs::new(spot,strike,vol,t,r_dom,r_for) construction.",
+      "decidable": true
+    },
+    {
+      "id": "fx-lowering-rejects-cost-of-carry",
+      "kind": "edge",
+      "anchor": "github.com-soarsa-celnet.crates.celnet-core.src.carry.fx_lowering_rejects_cost_of_carry",
+      "statement": "The FX lowering path rejects (returns Err) when handed the generalized Carry::CostOfCarry arm — no silent fallback to a defaulted two-rate form.",
+      "decidable": true
+    },
+    {
+      "id": "discount-rate-agnostic-accessor",
+      "kind": "invariant",
+      "anchor": "github.com-soarsa-celnet.crates.celnet-types.src.lib.Carry.discount_rate",
+      "statement": "Carry::discount_rate() is the single asset-class-agnostic source of the numeraire/discount rate r used in e^{-r·t}: r_dom for FxRates, r for CostOfCarry; a pure field read with no side effects.",
+      "decidable": true
+    }
+  ],
+  "anchors": [
+    "github.com-soarsa-celnet.crates.celnet-core.src.carry.fx_vanilla_inputs",
+    "github.com-soarsa-celnet.crates.celnet-core.src.carry.fx_carry_inputs_byte_identical",
+    "github.com-soarsa-celnet.crates.celnet-core.src.carry.fx_lowering_rejects_cost_of_carry",
+    "github.com-soarsa-celnet.crates.celnet-types.src.lib.Carry"
+  ]
+}

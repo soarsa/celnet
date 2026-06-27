@@ -1,0 +1,23 @@
+# lodestar.judge.toml — CelNet-scoped config surface for the host-side VISUAL drivers
+# (the single file common.sh reads; env twins override: env > file). Project-scoped on
+# purpose: it lives in the CelNet repo and must NOT leak to any other lodestar project.
+# The proactive drift stream (LODESTAR_PROPOSALS) is set on the PROJECT .mcp.json
+# registration only — never globally. NO Stage-2 judge is configured (removed for now);
+# the deterministic Stage-1 constraint gate is the primary and needs none.
+
+[engine]
+bin = "lodestar"                         # env: LODESTAR_BIN
+project = "github.com-soarsa-celnet"     # env: LODESTAR_PROJECT (git-remote key; identical on every clone)
+
+[storybook]
+index_json = "gui/storybook-static/index.json"   # env: LODESTAR_STORYBOOK_INDEX (gitignored build artifact)
+static_dir = "gui/storybook-static"              # env: LODESTAR_STORYBOOK_STATIC
+build_cmd  = "npm --prefix gui run storybook:build"
+
+[visual]
+# ui:matches-mockup verifier — DEFAULT OFF (the deterministic design gate stands alone; no judge).
+provider = "off"                         # env: LODESTAR_VISUAL_PROVIDER
+
+[mockup]
+# In-repo, content-addressed design targets (a new hash flips ui:matches-mockup stale).
+target_dir = "docs/assets/baselines"     # env: LODESTAR_MOCKUP_DIR

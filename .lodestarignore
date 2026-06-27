@@ -1,0 +1,6 @@
+# lodestar must NOT index its own knowledge store as source code. The committed
+# .lodestar/knowledge/events/*.json are the verified-knowledge log (read directly by
+# the knowledge engine), NOT product code — indexing them pollutes the graph
+# (~20 nodes/event), skews coverage denominators + clustering, and perturbs anchor
+# hashes (false staleness). Keep them git-committed + shared; keep them out of the graph.
+.lodestar/

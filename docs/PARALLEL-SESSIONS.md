@@ -49,8 +49,8 @@ From `docs/DOWNSTREAM-EXECUTION-MAP.md`:
    `status: READY-FOR-MERGE`, record the branch + one-line gate evidence (test counts + the
    literal gate line). **Stop.** Do NOT merge to `main` or touch `main` yourself.
 6. **Coordinator** merges your branch, runs the full `just check` (+ 5-client conformance + GUI/
-   Excel suites), and sets the row → `DONE` (or returns it with notes). Re-index codebase-memory
-   after structural change.
+   Excel suites), and sets the row → `DONE` (or returns it with notes). Run `lodestar detect_changes`
+   to confirm blast radius after structural change.
 
 If your lane needs a seam/proto change mid-stream: set `status: NEEDS-COORDINATOR` with the
 exact ask, push the board, and stop at that boundary — do not edit the contract yourself.

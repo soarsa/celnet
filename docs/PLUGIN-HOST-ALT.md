@@ -236,8 +236,8 @@ the engine routes by `ModelDescriptor` and never knows or cares which tier serve
 5. **Docs sync (guardrail 10).** Update ARCHITECTURE §6.1/§6.3 to name **wasmi** (not wasmtime)
    as the untrusted runtime and to note "core modules, not Component Model, today"; update
    ROADMAP §7 WS-G deliverables; flip CAPABILITIES-VS-COMPETITION's "top GA gap"; update the
-   header comment in `wit/celnet.wit` (host is wasmi; bindings target core-module ABI). Re-index
-   codebase-memory after the crates land.
+   header comment in `wit/celnet.wit` (host is wasmi; bindings target core-module ABI). lodestar
+   auto-indexes; run detect_changes after the crates land to confirm coverage.
 
 ---
 

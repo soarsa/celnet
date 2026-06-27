@@ -219,7 +219,7 @@ spec text.
   e2e + Excel real-edge e2e + SDK/CLI e2e all green; `CLIENT-PARITY-MATRIX.md` regenerated from the
   passing harness with the new crypto rows.
 - **S10 (milestone):** full-workspace `just check` prints the literal **"All gates passed."**
-  (verified, not the wrapper exit code); re-index codebase-memory; reconcile INTERFACES/ARCHITECTURE/
+  (verified, not the wrapper exit code); lodestar auto-indexes; run detect_changes to confirm scope; reconcile INTERFACES/ARCHITECTURE/
   CONVENTIONS/ANALYTICS-SPEC docs (crypto asset class Built, no stale "FX-only"). Branch-first
   milestone commit + push to `origin`.
 

@@ -302,6 +302,124 @@ mod tests {
         assert_close!(res.mean_conditional_var, sigma * sigma, 0.2, 1e-3);
     }
 
+    /// The Nadaraya-Watson conditional-expectation estimator against a
+    /// brute-force hand computation on a tiny fixed particle set (independent
+    /// plain-loop oracle, out-of-band at double precision), plus its floor and
+    /// sparse-cloud guards — the W6 plan §3.5 pre-kill item 4(iii).
+    #[test]
+    fn conditional_expectation_matches_brute_force() {
+        let ln_s = [-0.2, -0.05, 0.1, 0.3];
+        let v = [0.05, 0.03, 0.08, 0.02];
+        // Hand: Σ wᵢvᵢ / Σ wᵢ with wᵢ = e^{−½((xᵢ−x)/h)²}, x = 0, h = 0.15.
+        assert_close!(
+            conditional_expectation(&ln_s, &v, 0.0, 0.15, 1e-6),
+            0.050_454_779_119_687_13,
+            1e-12,
+            1e-15
+        );
+        // Result floor: a cloud of near-zero variances floors at `floor`.
+        assert_close!(
+            conditional_expectation(&ln_s, &[0.0; 4], 0.0, 0.15, 1e-6),
+            1e-6,
+            1e-15,
+            1e-18
+        );
+        // Sparse-cloud denominator guard: every particle hundreds of
+        // bandwidths away ⇒ weights underflow ⇒ the floor, not 0/0.
+        assert_close!(
+            conditional_expectation(&ln_s, &v, 50.0, 0.01, 1e-6),
+            1e-6,
+            1e-15,
+            1e-18
+        );
+    }
+
+    /// Silverman bandwidth pinned by hand: `h = 1.06·σ̂·N^{−1/5}` with the
+    /// population standard deviation of the log-spot cloud, plus the
+    /// `(variance, h)` pair and the bandwidth floor on a collapsed cloud.
+    #[test]
+    fn bandwidth_matches_hand_silverman() {
+        let ln_s = [0.1, 0.25, -0.05, 0.4, 0.0];
+        let (var, h) = bandwidth(&ln_s);
+        assert_close!(var, 0.0274, 1e-12, 1e-15);
+        assert_close!(h, 0.127_170_724_590_346_8, 1e-12, 1e-15);
+        // A point-mass cloud floors the bandwidth (never a zero-width kernel).
+        let (var0, h0) = bandwidth(&[0.3; 64]);
+        assert_close!(var0, 0.0, 1e-15, 1e-15);
+        assert_close!(h0, 1e-4, 1e-12, 1e-15);
+    }
+
+    /// `carry_rate` recovers the exponential forward curve's carry exactly:
+    /// `F(t) = F₀·e^{b·t}` ⇒ `(ln F(t₁) − ln F(t₀))/Δ = b` to rounding.
+    #[test]
+    fn carry_rate_recovers_exponential_forward() {
+        struct Fwd;
+        impl ImpliedVolSurface for Fwd {
+            fn implied_vol(&self, _k: f64, _t: f64) -> f64 {
+                0.2
+            }
+            fn forward(&self, t: f64) -> f64 {
+                1.3 * exp(0.023 * t)
+            }
+        }
+        assert_close!(carry_rate(&Fwd, 0.5, 0.75, 0.25), 0.023, 1e-10, 1e-12);
+        // Degenerate interval ⇒ the 0.0 fallback.
+        assert_close!(carry_rate(&Fwd, 0.5, 0.75, 0.0), 0.0, 1e-15, 1e-15);
+    }
+
+    /// FROZEN leverage-node bits for a pinned skewed-smile calibration — the
+    /// W6 plan §3.5 pre-kill item 4(i)/(ii). The `calibration_is_reproducible`
+    /// replica test cannot see a mutant that perturbs both replicas
+    /// identically; these constants (captured once from the unmutated build,
+    /// quantitatively sanity-checked: `L ≈ σ_loc/√E[v|S] ≈ 1.14` at the ATM
+    /// node) pin the ENTIRE deterministic chain — counter RNG stream, normal
+    /// inverse, QE variance step, log-spot increment, Silverman bandwidth,
+    /// Nadaraya-Watson estimator, Dupire extraction, node indexing — to the
+    /// bit. ξ > 0 and a skewed smile keep every branch live.
+    #[test]
+    fn calibration_bits_frozen_for_pinned_smile() {
+        struct Skew;
+        impl ImpliedVolSurface for Skew {
+            fn implied_vol(&self, k: f64, _t: f64) -> f64 {
+                let y = ln(k / 1.3);
+                sqrt(0.0324 - 0.01 * y + 0.02 * y * y)
+            }
+            fn forward(&self, t: f64) -> f64 {
+                1.3 * exp(0.02 * t)
+            }
+        }
+        let var = VarianceParams::new(0.0324, 1.5, 0.0324, 0.4, -0.25);
+        let grid = [1.0, 1.15, 1.3, 1.45, 1.6];
+        let cfg = ParticleConfig {
+            particles: 600,
+            steps: 3,
+            seed: 0xCA11_B12A_7E5E_ED01,
+            bandwidth_scale: 1.0,
+            var_floor: 1e-6,
+        };
+        let res = calibrate_leverage(&Skew, &var, &grid, 1.3, 0.75, cfg);
+        for (i, j, bits) in [
+            (0usize, 0usize, 0x3ff2_4494_9c32_efb8_u64),
+            (2, 1, 0x3ff2_18d0_c88e_ed7a),
+            (4, 2, 0x3ff0_2468_7f33_5563),
+            (2, 3, 0x3ff1_edf6_deaf_7892),
+            (1, 3, 0x3ff0_20af_891d_d59e),
+        ] {
+            assert_eq!(
+                res.leverage.at(i, j).to_bits(),
+                bits,
+                "frozen leverage node ({i},{j}) changed: {:?}",
+                res.leverage.at(i, j)
+            );
+        }
+        assert_eq!(
+            res.mean_conditional_var.to_bits(),
+            0x3f99_d234_1348_1335,
+            "frozen mean conditional variance changed: {:?}",
+            res.mean_conditional_var
+        );
+    }
+
     /// Calibration is deterministic: identical seed ⇒ bit-identical leverage nodes.
     #[test]
     fn calibration_is_reproducible() {

@@ -27,7 +27,8 @@ use celnet_proto::{
     Quote, QuoteAccept, QuoteReject, QuoteRequest, RejectAck, ReportingNumeraire, Resync,
     RiskBucketRequest, RiskNode, RiskPosition, RiskScope, ScenarioPoint, ScenarioRequest,
     ScenarioResponse, ShockAxis, SingleBarrier, Smile, SmilePoint, Snapshot, Solve, Strategy,
-    StrategyKind, StreamEnd, StreamReject, StrikeOrDelta, Subscribe, SubscriptionId, Tarf, Tenor,
+    StrategyKind, StreamAuth, StreamEnd, StreamReject, StrikeOrDelta, Subscribe, SubscriptionId,
+    Tarf, Tenor,
     Touch, TradableToken, TwoWayPrice, Unsubscribe, Update, Vanilla, VanillaInputs, VarianceSwap,
     VegaLadderBucket, VegaPillar, VolatilitySwap, WindowBarrier, instrument, shock_axis,
     strike_or_delta, tenor,
@@ -1320,6 +1321,19 @@ pub(super) fn resync_from_json(o: &Map<String, Value>) -> Result<Resync> {
     Ok(Resync {
         subscription: Some(nested(o, "subscription", subscription_id_from_json)?),
         last_sequence: u64_or_zero(o, "last_sequence"),
+    })
+}
+
+/// Decode a `StreamAuth` authenticate frame from the WS JSON mirror, mirroring how
+/// the gated risk requests carry auth in the body: an optional `session_token`
+/// (validated against the live session registry) and an optional entitlement
+/// `principal` (absent ⇒ the server's grant-all default under Permissive). This is
+/// the WS-side counterpart of the `Authenticate` arm the gRPC stream already carries,
+/// so a WS client (GUI/Excel) can pin its caller before any subscribe/execute.
+pub(super) fn stream_auth_from_json(o: &Map<String, Value>) -> Result<StreamAuth> {
+    Ok(StreamAuth {
+        session_token: opt_string(o, "session_token"),
+        principal: opt_nested(o, "principal", principal_from_json)?,
     })
 }
 

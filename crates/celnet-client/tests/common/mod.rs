@@ -124,6 +124,44 @@ pub async fn start_panel_edge_and_client(clock: Clock, synthetic_lps: u32) -> (E
     (edge, client)
 }
 
+/// Log in as the default administrator over the edge's real `AuthService.Login` RPC
+/// and return the issued session token — the exact bearer a deployment threads onto a
+/// gated request. The seed admin (`admin@celnet.com` / `password`) is always present:
+/// every [`Edge::start`] ensures it (seeded on first run into the gitignored
+/// `identity.json`, persisted thereafter; nothing in the suite rotates its password).
+/// The returned token validates against the edge's OWN session registry — the one
+/// `StreamAuth` is checked against — so a stream authenticated with it is admitted as
+/// that user under [`AccessMode::Enforce`].
+pub async fn login_seed_admin(addr: SocketAddr) -> String {
+    use celnet_proto::auth_service_client::AuthServiceClient;
+    use celnet_proto::LoginRequest;
+
+    let mut auth = tokio::time::timeout(
+        STEP_DEADLINE,
+        AuthServiceClient::connect(format!("http://{addr}")),
+    )
+    .await
+    .expect("auth client connects in time")
+    .expect("auth client connects");
+    let resp = tokio::time::timeout(
+        STEP_DEADLINE,
+        auth.login(LoginRequest {
+            email: "admin@celnet.com".to_owned(),
+            password: "password".to_owned(),
+            correlation_id: None,
+        }),
+    )
+    .await
+    .expect("login resolves in time")
+    .expect("seed admin logs in")
+    .into_inner();
+    assert!(
+        !resp.session_token.is_empty(),
+        "Login mints a non-empty session token"
+    );
+    resp.session_token
+}
+
 /// The wire/typed conventions used across the tests — EURUSD spot-unadjusted /
 /// ATM-forward / domestic-pips, matching the server harness's `wire_conventions`.
 #[must_use]

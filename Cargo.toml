@@ -109,3 +109,18 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 debug = "line-tables-only"
+
+# Mutation-gate profile (cargo-mutants `--profile mutants`; wired in
+# `.config/mutants-exotics.toml`). Optimized code so the per-mutant test phase
+# runs in seconds, with dev-parity SEMANTICS: debug-assertions and
+# overflow-checks stay ON (they are kill vectors for defensive/index mutants),
+# and Rust float semantics are optimization-level-independent (no fast-math,
+# no implicit FMA contraction), so every frozen `to_bits` byte-identity gate
+# holds identically — proven by the full suite running green under this
+# profile before any wave. Debug info off purely for build/link speed.
+[profile.mutants]
+inherits = "dev"
+opt-level = 2
+debug = false
+debug-assertions = true
+overflow-checks = true

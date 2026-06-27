@@ -36,7 +36,7 @@ const VERDICT = {
   },
 }
 
-const COMMON = `Celnet mesh worker. Repo /Users/adrian/code/celeroption (main worktree). HARD RULES (CLAUDE.md): no mocks-as-real, no todo!()/placeholders/#[allow]-dodges/as-any/skipped tests; purpose-named vendor-neutral identifiers; FX/single-dealer paths stay byte-identical; NO celnet.proto edits (RequestMultiDealerQuote + MultiDealerQuote/DealerQuote + QuoteAccept.lp_id already on the wire); honest boundary: live LP connectivity/fills = ENV — in-repo LPs are deterministic synthetic/loopback, labeled as such. Gate with plain 'cargo test' (NEVER nextest). Do NOT git commit. Match surrounding idiom exactly.`
+const COMMON = `Celnet mesh worker. Repo the working tree (cwd) (main worktree). HARD RULES (CLAUDE.md): no mocks-as-real, no todo!()/placeholders/#[allow]-dodges/as-any/skipped tests; purpose-named vendor-neutral identifiers; FX/single-dealer paths stay byte-identical; NO celnet.proto edits (RequestMultiDealerQuote + MultiDealerQuote/DealerQuote + QuoteAccept.lp_id already on the wire); honest boundary: live LP connectivity/fills = ENV — in-repo LPs are deterministic synthetic/loopback, labeled as such. Gate with plain 'cargo test' (NEVER nextest). Do NOT git commit. Match surrounding idiom exactly.`
 
 phase('Server')
 const server = await agent(

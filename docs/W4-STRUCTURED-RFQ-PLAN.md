@@ -241,7 +241,7 @@ git-worktree lanes EXCEPT the proto file, which both edit — so the two proto e
    not the wrapper exit code); 5-client conformance green; GUI vitest + Playwright + Excel real-edge
    e2e green; per-class verification contract complete for pivot/perpetual/listed-future-option;
    docs reconciled (CLIENT-PARITY-MATRIX regenerated from the harness; INTERFACES/ARCHITECTURE
-   note the new arms + the RFQ service + the ENV carve-out); codebase-memory re-indexed. Branch-off
+   note the new arms + the RFQ service + the ENV carve-out); lodestar auto-indexes. Branch-off
    `main`, push to `origin`.
 
 ---

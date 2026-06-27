@@ -36,7 +36,8 @@
       "Bash(git push:*)",
       "Bash(git fetch:*)",
       "Bash(git ls-remote:*)",
-      "Bash(gh:*)"
+      "Bash(gh:*)",
+      "mcp__lodestar"
     ],
     "deny": [],
     "ask": []
@@ -51,7 +52,22 @@
         "hooks": [
           {
             "type": "command",
-            "command": "nohup bash -c '{ echo \"[$(date +%F\\ %T)] stop-hook index\"; \"$HOME/.local/bin/codebase-memory-mcp\" cli index_repository '\"'\"'{\"repo_path\":\"/Users/adrian/code/celeroption\",\"mode\":\"fast\"}'\"'\"' 2>&1 | tail -1; } >> /Users/adrian/code/celeroption/.codebase-memory/index.log 2>&1' >/dev/null 2>&1 & exit 0"
+            "command": "nohup sh -c 'lodestar index \"$PWD\" >> .lodestar/index.log 2>&1' >/dev/null 2>&1 & exit 0"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "nohup sh -c 'lodestar index \"$PWD\" >> .lodestar/index.log 2>&1' >/dev/null 2>&1 & exit 0"
+          },
+          {
+            "type": "command",
+            "command": "nohup sh -c 'sh tools/lodestar/sync-knowledge.sh >> .lodestar/knowledge-sync.log 2>&1' >/dev/null 2>&1 & exit 0"
           }
         ]
       }

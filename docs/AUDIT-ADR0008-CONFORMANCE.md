@@ -1,6 +1,6 @@
 # ADR-0008 Conformance Audit — Asset-Class-Agnostic Carry Seam
 
-**Audited tree:** `/Users/adrian/code/celnet-coord` @ `0f8933b` (clean worktree off `origin/main`).
+**Audited tree:** a clean worktree of `origin/main` @ `0f8933b`.
 **Method:** read-only (Read/Grep + the seam source in `celnet-core`/`celnet-types`); no `cargo` build/test/clippy run (compute-courtesy lane). Adversarial: a silent `if underlying == FX` inside a pricer counts as a finding.
 **Scope:** every leaf/engine crate named in the task — `celnet-vanilla`, `celnet-equity-vanilla`, `celnet-commodity-vanilla`, `celnet-crypto-vanilla`, `celnet-linear`, `celnet-exotics`, `celnet-rfq`, `celnet-surface`, `celnet-core`.
 

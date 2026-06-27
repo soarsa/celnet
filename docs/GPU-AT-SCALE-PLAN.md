@@ -492,7 +492,7 @@ Ordered by leverage. Every item is "done" only when its gate is green under
 table crate, must pass the OSS license set); no new commercial/proprietary runtime
 dep; vendor/method-neutral names (no `philox`/`sobol`/`owen` in *public API*
 identifiers — provenance in doc comments only, as `counter_rng.rs` already does);
-`#![forbid(unsafe_code)]` preserved; the codebase-memory graph re-indexed and
+`#![forbid(unsafe_code)]` preserved; lodestar re-indexes automatically — run `detect_changes` to confirm scope — and
 ARCHITECTURE §4 / ROADMAP WS-E updated after each landed item.
 
 ---
