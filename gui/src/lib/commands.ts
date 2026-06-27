@@ -27,6 +27,7 @@ import type { Command } from "../components/CommandPalette";
 /** Workspace ids the rail exposes (kept in sync with `AppContext.WorkspaceId`). */
 export type WorkspaceId =
   | "ticket"
+  | "rates"
   | "stream"
   | "surface"
   | "risk"
@@ -73,6 +74,7 @@ export const RAIL: readonly {
   group?: "administration";
 }[] = [
   { id: "ticket", glyph: "⌁", label: "Ticket" },
+  { id: "rates", glyph: "≣", label: "Rates" },
   { id: "stream", glyph: "≋", label: "Stream" },
   { id: "surface", glyph: "◷", label: "Surface" },
   { id: "risk", glyph: "⊞", label: "Risk" },

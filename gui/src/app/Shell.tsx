@@ -18,6 +18,7 @@ import { CommandPalette } from "../components/CommandPalette";
 import { ShortcutsOverlay } from "../components/ShortcutsOverlay";
 import { useAppearance } from "../design/appearance";
 import { TicketWorkspace } from "../workspaces/TicketWorkspace";
+import { RatesWorkspace } from "../workspaces/RatesWorkspace";
 import { StreamWorkspace } from "../workspaces/StreamWorkspace";
 import { SurfaceWorkspace } from "../workspaces/SurfaceWorkspace";
 import { RiskWorkspace } from "../workspaces/RiskWorkspace";
@@ -39,6 +40,7 @@ import styles from "./Shell.module.css";
 /** The workspace components, keyed by id, for the persistent-mount canvas. */
 const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   ticket: TicketWorkspace,
+  rates: RatesWorkspace,
   stream: StreamWorkspace,
   surface: SurfaceWorkspace,
   risk: RiskWorkspace,

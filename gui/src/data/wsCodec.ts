@@ -66,9 +66,12 @@ import type {
   MultiDealerQuote,
   NonAdditiveRisk,
   NumeraireRate,
+  OisInstrument,
   OrgKey,
   Owner,
   Quote,
+  RatesCurveSet,
+  RatesPricingResult,
   ReportingNumeraire,
   RiskBucketRequest,
   RiskNode,
@@ -784,6 +787,70 @@ function fixingScheduleToWire(s: FixingSchedule): WireObject {
 
 export function ccyPairFromWire(o: WireObject): CcyPair {
   return { base: str(o, "base"), quote: str(o, "quote") };
+}
+
+// --- fixed-income (rates): PriceRates request/response ----------------------
+//
+// The browser JSON projection of the `celnet.wire` rates messages. The request
+// body matches `RatesPriceRequest` minus the framing the `WsConnection` injects
+// (request_id / correlation_id); the reply is the `rates_price_response` frame's
+// `result` child. The OIS `direction` projects onto the wire `Side` integer
+// (PAY_FIXED = SIDE_BUY = 0, RECEIVE_FIXED = SIDE_SELL = 1), exactly as the
+// server's `ois_instrument_from_json` decodes it.
+
+/** Encode a `RatesCurveSet` to the wire `curve_set` object. */
+export function ratesCurveSetToWire(curve: RatesCurveSet): WireObject {
+  return {
+    currency: curve.currency,
+    reference_date: {
+      year: curve.referenceDate.year,
+      month: curve.referenceDate.month,
+      day: curve.referenceDate.day,
+    },
+    ois_pillars: curve.pillars.map((p) => ({
+      tenor_years: p.tenorYears,
+      par_rate: p.parRate,
+    })),
+  };
+}
+
+/** The wire `Side` code for an OIS direction (PAY_FIXED → BUY = 0; RECEIVE_FIXED → SELL = 1). */
+function oisDirectionToSide(direction: OisInstrument["direction"]): number {
+  return direction === "RECEIVE_FIXED" ? 1 : 0;
+}
+
+/** Encode an `OisInstrument` to the wire `instrument` object (the OIS oneof arm). */
+export function ratesInstrumentToWire(instrument: OisInstrument): WireObject {
+  return {
+    ois: {
+      tenor_years: instrument.tenorYears,
+      fixed_rate: instrument.fixedRate,
+      notional: instrument.notional,
+      side: oisDirectionToSide(instrument.direction),
+    },
+  };
+}
+
+/** Decode the `rates_price_response` frame's `result` into a `RatesPricingResult`. */
+export function ratesPricingResultFromWire(o: WireObject): RatesPricingResult {
+  const result = child(o, "result");
+  const raw = result["key_rate_ladder"];
+  if (!Array.isArray(raw)) {
+    throw new Error("`rates_price_response.result.key_rate_ladder` must be an array");
+  }
+  const keyRateLadder = raw.map((v, i) => {
+    if (typeof v !== "number" || !Number.isFinite(v)) {
+      throw new Error(`\`result.key_rate_ladder[${i}]\` must be a finite number`);
+    }
+    return v;
+  });
+  return {
+    pv: num(result, "pv"),
+    parRate: num(result, "par_rate"),
+    pv01: num(result, "pv01"),
+    dv01: num(result, "dv01"),
+    keyRateLadder,
+  };
 }
 
 export function conventionsFromWire(o: WireObject): Conventions {

@@ -28,6 +28,7 @@ import {
 /** The rail workspace the view is parked on. Mirrors `commands.WorkspaceId`. */
 export type WorkspaceId =
   | "ticket"
+  | "rates"
   | "stream"
   | "surface"
   | "risk"
@@ -38,6 +39,7 @@ export type WorkspaceId =
 
 const WORKSPACES: readonly WorkspaceId[] = [
   "ticket",
+  "rates",
   "stream",
   "surface",
   "risk",

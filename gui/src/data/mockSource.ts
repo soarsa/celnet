@@ -42,7 +42,10 @@ import type {
   MarketSeriesPoint,
   MultiDealerQuote,
   NonAdditiveRisk,
+  OisInstrument,
   Quote,
+  RatesCurveSet,
+  RatesPricingResult,
   ReportingNumeraire,
   RiskBucketRequest,
   RiskNode,
@@ -61,6 +64,7 @@ import type {
   VegaBucket,
 } from "./contract";
 import { forward, priceInstrument, strikeFromDelta } from "./pricing";
+import { priceRatesOffline } from "./ratesPricing";
 import { Rng } from "./rng";
 import {
   brokerLadder,
@@ -682,6 +686,19 @@ export class MockTransport implements CelnetTransport {
     // closed-form product carries no stderr.
     if (priceStdError !== undefined) result.priceStdError = priceStdError;
     return result;
+  }
+
+  async priceRates(
+    curve: RatesCurveSet,
+    instrument: OisInstrument,
+  ): Promise<RatesPricingResult> {
+    // A GENUINE in-browser OIS computation: bootstrap the self-discounting curve
+    // from the par-OIS pillars and price the swap (PV / par / PV01 / DV01 /
+    // key-rate ladder), reproducing the server's `celnet-rates` math exactly so
+    // the offline number agrees with the live `price_rates` RPC. A malformed
+    // curve/instrument throws (mirroring the server refusal), surfaced by the
+    // workspace exactly as a live transport error would be.
+    return priceRatesOffline(curve, instrument);
   }
 
   async requestQuote(
