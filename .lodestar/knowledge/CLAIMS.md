@@ -1650,6 +1650,17 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
   - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
 
+## github.com-soarsa-celnet.crates.celnet-core.src.carry.CarryPriceError.fmt
+
+- **claim** (`cl\_4a973b53173726b5`): CarryPriceError::fmt distinguishes exactly two rejection reasons at the carry-pricing boundary: 'pricer does not support this underlying asset class' (UnsupportedUnderlying) and 'pricer does not support this cost-of-carry model' (UnsupportedCarry). Both messages are static strings — zero allocation on format.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:41Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-core.src.carry.CarryPriceError.fmt` (hash `fbf2b8a6180f2c27`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:41Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:41Z
+
 ## github.com-soarsa-celnet.crates.celnet-core.src.carry.fx\_carry\_greeks
 
 - **claim** (`cl\_7220ac2937c0bb1a`): \`fx\_carry\_greeks(g: &Greeks) -\> CarryGreeks\` is the pure field-copy lifting function from the FX leaf's \`Greeks\` struct to the generalized \`CarryGreeks\` on the carry seam. It copies all 14 fields verbatim: price, delta\_spot, delta\_forward, gamma, vega, theta, vanna, volga, charm, speed, zomma, color, and packages the FX rate sensitivities as \`RateSensitivities::Fx { rho\_dom, rho\_for }\`. No arithmetic, no branch, no allocation — a structural repackaging. The byte-identity of this lift is verified by \`fx\_carry\_greeks\_lifts\_byte\_identically\` (assert\_eq! on to\_bits() for every field). Pure: reads only &Greeks, no WRITES.
@@ -3164,6 +3175,17 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
   - (none) → draft by agent (authored) @ 2026-06-27T05:29:52Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:52Z
 
+## github.com-soarsa-celnet.crates.celnet-golden.src.csv.CsvError.fmt
+
+- **claim** (`cl\_6cb737015169da27`): CsvError::fmt provides structured, position-aware messages for all five CSV parsing failure modes: Io wraps the inner error ('I/O error reading CSV: {e}'); MissingHeader is the static string 'CSV has no header row'; RaggedRow embeds row index, expected, and found column counts ('CSV row {row} has {found} columns, expected {expected}'); UnknownColumn names the offending column ('unknown CSV column: {c}'); Parse embeds row, column, and the raw value debug-formatted ('CSV row {row} column {column}: cannot parse {value:?}'). Exhaustive over the five variants; allocation/IO-free formatting.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:36Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-golden.src.csv.CsvError.fmt` (hash `c194d04f1ca1dbd4`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:36Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:36Z
+
 ## github.com-soarsa-celnet.crates.celnet-golden.src.oracle.Cp.parse
 
 - **claim** (`cl\_a1a799496bdcc461`): Cp::parse deserialises the canonical all-caps string tokens 'CALL'/'PUT' into the oracle's Cp enum. Any other input panics, enforcing a strict closed vocabulary at the oracle boundary.
@@ -3489,6 +3511,17 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
   - (none) → draft by agent (authored) @ 2026-06-27T05:29:52Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:52Z
 
+## github.com-soarsa-celnet.crates.celnet-golden.src.vectors.VectorError.fmt
+
+- **claim** (`cl\_c4c3e54fa1230c43`): VectorError::fmt always includes the file path (via path.display()) in its message for both variants — Io prefixes 'reading {path}: {source}' and Parse prefixes 'parsing {path}: {source}'. This guarantees that every golden-vector load failure can be located by path without inspecting the inner source error alone.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:38Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-golden.src.vectors.VectorError.fmt` (hash `f962de7d1cd324bf`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:38Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:38Z
+
 ## github.com-soarsa-celnet.crates.celnet-golden.tests.barrier\_grid.kind\_of
 
 - **claim** (`cl\_3e499e849e64ec3f`): kind\_of (barrier\_grid) is a pure, exhaustive bijection from the four BarrierType enum variants (DownOut, DownIn, UpOut, UpIn) to the corresponding BarrierKind struct, setting the \`up\` flag (false for Down, true for Up) and \`style\` (KnockOut/KnockIn), plus forwarding the option type. Every variant is covered; the function cannot return without a match.
@@ -3726,6 +3759,17 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
   - (none) → draft by agent (authored) @ 2026-06-27T05:40:34Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:40:34Z
 
+## github.com-soarsa-celnet.crates.celnet-gpu.src.shader.mc\_vanilla
+
+- **claim** (`cl\_b79b8f5916b378a0`): mc\_vanilla is a WGSL compute shader (@workgroup\_size(256)) implementing Black-Scholes Monte Carlo for a vanilla option. Each thread independently evaluates one path: it draws a standard normal via counter\_normal(path, 0, 0) (a counter-based quasi-random draw), computes log-spot as ln\_spot + mu\_term + vol\_sqrt\_t \* z, exponentiates to get S\_T, then evaluates the payoff as max(sign \* (S\_T - strike), 0). A tree reduction over shared memory (scratch\_sum / scratch\_sum\_sq) accumulates per-workgroup sums and sums-of-squares into group\_sums\[2\*wid\] and group\_sums\[2\*wid+1\] respectively, which the host reads to compute mean and variance. The guard \`if (path \< params.paths)\` zeroes out-of-bounds lanes before reduction.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:01Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-gpu.src.shader.mc\_vanilla` (hash `03d78bf924dd0900`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:01Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:01Z
+
 ## github.com-soarsa-celnet.crates.celnet-heston.src.lib.carr\_madan
 
 - **claim** (`cl\_ee1814e371f2b757`): carr\_madan(opt, m, p) prices a European FX option via the Carr–Madan damped-integrand method, working in log-moneyness κ = ln(K/S₀) to avoid forming the large ln(S₀) phase. It evaluates ψ(v) = φ\_ret(v−(α+1)i) / (α²+α−v²+i(2α+1)v) with damping constant α = CM\_ALPHA, then integrates Re\[e^{−ivκ}·ψ(v)\] from 0 to an adaptively chosen upper limit via Gauss–Legendre quadrature. The call price is df\_d·S₀·e^{−ακ}/π·∫…dv; puts are obtained via exact put–call parity. The upper integration limit and panel count are both chosen adaptively (carr\_madan\_upper + oscillation count) to keep truncation and quadrature error below double precision.
@@ -3832,6 +3876,17 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 - **provenance**:
   - (none) → draft by agent (authored) @ 2026-06-27T05:48:16Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:48:16Z
+
+## github.com-soarsa-celnet.crates.celnet-integration.src.lib.PipelineError.fmt
+
+- **claim** (`cl\_9e1fa7407db44f2a`): PipelineError::fmt decomposes the three-stage integration pipeline error hierarchy into prefixed messages — 'feed decode error: {e}', 'normalize error: {e}', 'blend error: {e}' — each delegating to the inner error's Display. This guarantees that the stage of failure is always identifiable from the top-level error string without unwrapping.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:32Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-integration.src.lib.PipelineError.fmt` (hash `3326811f5fca35b5`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:32Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:32Z
 
 ## github.com-soarsa-celnet.crates.celnet-integration.src.lib.PipelineError.source
 
@@ -4142,6 +4197,17 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
   - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
   - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
   - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+
+## github.com-soarsa-celnet.crates.celnet-linear.src.inputs.LinearInputError.fmt
+
+- **claim** (`cl\_082e5023b97cf17a`): LinearInputError::fmt enforces two domain-level pre-condition messages: NonPositiveNotional → 'linear notional must be strictly positive' (notional ≤ 0 rejected) and NegativeSettleTime → 'linear settlement time must be non-negative' (t \< 0 rejected). Both are static strings — the message set is the machine-readable contract for valid linear instrument inputs.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:46Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-linear.src.inputs.LinearInputError.fmt` (hash `347fd218a5f33b15`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:46Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:46Z
 
 ## github.com-soarsa-celnet.crates.celnet-linear.src.inputs.LinearInputs.discount\_df
 
@@ -5827,6 +5893,17 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
   - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
 
+## github.com-soarsa-celnet.crates.celnet-replog.src.entry.EntryError.fmt
+
+- **claim** (`cl\_f4a9368fecddec72`): EntryError::fmt renders exactly two fixed static strings: 'log entry truncated' for the Truncated variant and 'log entry crc mismatch' for the Crc variant. The output is fully determined by the variant — no heap allocation, no I/O, no mutable state.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:24Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-replog.src.entry.EntryError.fmt` (hash `082dc8d25592742a`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:24Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:24Z
+
 ## github.com-soarsa-celnet.crates.celnet-replog.src.log.Log.last\_index
 
 - **claim** (`cl\_11cebe61e9e8dfc7`): Log.last\_index returns the logical index of the last retained entry as base\_index + (terms.len() - 1), or snapshot\_index when the log is empty (all entries compacted away), or None when neither entries nor a snapshot exist. The formula is: \`if terms.len() \> 0 { Some(base\_index + terms.len() - 1) } else { snapshot\_index }\`.
@@ -5903,6 +5980,28 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 - **provenance**:
   - (none) → draft by agent (authored) @ 2026-06-27T05:29:51Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:51Z
+
+## github.com-soarsa-celnet.crates.celnet-replog.src.state.UpdateError.fmt
+
+- **claim** (`cl\_2d75ee3f3fb1ff5e`): UpdateError::fmt covers exactly two variants: Truncated yields 'book update truncated' and UnknownTag(t) yields 'book update unknown tag {t}' where t is the raw tag value embedded inline. Output is deterministic and allocation-free for Truncated; UnknownTag performs a single integer format.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:29Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-replog.src.state.UpdateError.fmt` (hash `fa00c0fa04e96871`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:29Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:29Z
+
+## github.com-soarsa-celnet.crates.celnet-replog.src.wire.WireError.fmt
+
+- **claim** (`cl\_bc0167ab4abd853d`): WireError::fmt covers exactly three variants with deterministic, human-readable messages: Io wraps the inner error with prefix 'wire io: {e}'; FrameTooLarge embeds the byte count as 'wire frame too large: {n}'; Malformed emits the static string 'wire frame malformed'. Every reachable variant is matched — the compiler enforces exhaustiveness.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:27Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-replog.src.wire.WireError.fmt` (hash `f37baaefccdf41de`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:27Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:27Z
 
 ## github.com-soarsa-celnet.crates.celnet-replog.tests.decode\_fuzz.book\_update\_bit\_eq
 
@@ -6369,6 +6468,17 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 - **provenance**:
   - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
+
+## github.com-soarsa-celnet.crates.celnet-risk-normalize.src.numeraire.NumeraireError.fmt
+
+- **claim** (`cl\_044098bfaa170b19`): NumeraireError::fmt encodes exactly two currency-conversion failure modes: MissingRate(c) → 'no conversion rate from {c} into the reporting numeraire' (rate absent); InvalidRate(c) → 'non-finite or non-positive conversion rate for {c}' (rate present but mathematically invalid). The currency code c is always embedded so the offending currency is traceable from the formatted error.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:43Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-risk-normalize.src.numeraire.NumeraireError.fmt` (hash `41eb82517c109d14`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:43Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:43Z
 
 ## github.com-soarsa-celnet.crates.celnet-risk-normalize.src.numeraire.convert
 
@@ -6947,6 +7057,17 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 - **provenance**:
   - (none) → draft by agent (authored) @ 2026-06-27T05:58:09Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:09Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.services.fix\_monitor.label\_for
+
+- **claim** (`cl\_0ca14b9f6a3aaee7`): label\_for maps FIX MsgType tag values to human-readable names as a pure total function with a two-level fallback: the empty string '' maps to 'Unknown' and any unrecognised code maps to 'Other'. The covered set is the session-admin + RFQ/quote lifecycle subset: Heartbeat(0), TestRequest(1), ResendRequest(2), Reject(3), SequenceReset(4), Logout(5), Logon(A), QuoteRequest(R), Quote(S), QuoteResponse(AG), QuoteAcknowledgement(AJ), MassQuoteAcknowledgement(b), NewOrderSingle(D), NewOrderMultileg(AB), ExecutionReport(8), OrderCancelReject(9), BusinessMessageReject(j). The function is allocation-free — all return values are &'static str.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:51Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.services.fix\_monitor.label\_for` (hash `df422a74e1cc95f6`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:51Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:51Z
 
 ## github.com-soarsa-celnet.crates.celnet-server.src.services.forward.serve\_mode
 
@@ -8545,6 +8666,766 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
   - (none) → draft by agent (authored) @ 2026-06-27T05:48:16Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:48:16Z
 
+## github.com-soarsa-celnet.excel.e2e.corpus.cryptoUnderlier
+
+- **claim** (`cl\_55896e5f8d6e69f8`): cryptoUnderlier (e2e corpus) converts a 6-character token to the canonical underlier string: the first 3 chars are the base coin, the last 3 are the quote. For \`INVERSE\_COIN\` it appends \`:inverse\`; for \`LINEAR\` no suffix. Any other settlement style or a non-6-char token throws an Error, making the corpus strictly typed.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:16Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.e2e.corpus.cryptoUnderlier` (hash `4a0353a375b99d3d`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:16Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:16Z
+
+## github.com-soarsa-celnet.excel.e2e.corpus.equityUnderlier
+
+- **claim** (`cl\_60f26113e51c7fb4`): equityUnderlier maps exactly three equity tickers to their canonical venue-qualified string: SPX → "SPX@XCBO:USD", AAPL → "AAPL@XNAS:USD", STOXX → "STOXX@XEUR:EUR". Any other ticker throws immediately with no fallback.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:05:59Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.e2e.corpus.equityUnderlier` (hash `3fb4875397915c3f`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:05:59Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:05:59Z
+
+## github.com-soarsa-celnet.excel.e2e.corpus.fixingToken
+
+- **claim** (`cl\_a82d5513e84cd968`): fixingToken maps exactly six NDF fixing-source variant names to their canonical fixing tokens: KrwKftc18 → "KRW.KFTC18", TwdTaipei → "TWD.TAIPEI", InrRbiRef → "INR.RBIB", BrlPtax → "BRL.PTAX", ClpDolarObs → "CLP.DOLAROBS", CopTrm → "COP.TRM". Any unknown variant throws with no fallback.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:03Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.e2e.corpus.fixingToken` (hash `4c4b1f4f8706e6a1`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:03Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:03Z
+
+## github.com-soarsa-celnet.excel.e2e.corpus.listedFutureUnderlier
+
+- **claim** (`cl\_71b8f700d018a04a`): listedFutureUnderlier maps exactly two listed-future underlying tokens to venue-qualified strings: WTI → "WTI@:USD" (venue-less commodity form) and ES → "ES@XCME:USD". Any other token throws immediately.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:05Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.e2e.corpus.listedFutureUnderlier` (hash `dde3e3d882dca74c`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:05Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:05Z
+
+## github.com-soarsa-celnet.excel.e2e.corpus.loadVectors
+
+- **claim** (`cl\_5389f1529f612692`): loadVectors reads all \*.json files from VECTORS\_DIR synchronously, parses each as a GoldenVector array, and concatenates them into one flat array. Non-JSON files are skipped (endsWith check). The function is deterministic given the directory contents.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:10Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.e2e.corpus.loadVectors` (hash `bcc386a8e641c4d7`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:10Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:10Z
+
+## github.com-soarsa-celnet.excel.e2e.corpus.specOf
+
+- **claim** (`cl\_a4caf9a79741ccb1`): specOf is a pure exhaustive switch over all Excel-exposed product families that converts a GoldenVector (corpus test vector) into InstrumentSpecArgs. The three cross-asset families (equity\_option, commodity\_option, crypto\_option) are mapped to product='vanilla' with their asset class encoded in the underlier string. perpetual\_option clears tenor to undefined because it is the one tenorless family. listed\_future\_option decodes a future\_symbol structure into 'TICKER@venue' form.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:09:21Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.e2e.corpus.specOf` (hash `1f4cb4af613868ba`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:09:21Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:09:21Z
+
+## github.com-soarsa-celnet.excel.src.contract.instrumentCodec.cliquetFromWire
+
+- **claim** (`cl\_ba3a20895eddd5a0`): cliquetFromWire deserializes a WireObject to a Cliquet using presence-tracking for the four optional clamp fields (\`localFloor\`, \`localCap\`, \`globalFloor\`, \`globalCap\`): a key absent from the wire object is never written to the struct (no spurious \`0\`-clamp). Required fields (\`optionType\`, \`moneyness\`, \`periods\`, \`mcPairs\`, \`mcSeed\`) are always decoded.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:01Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.contract.instrumentCodec.cliquetFromWire` (hash `db882e13281be070`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:01Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:01Z
+
+## github.com-soarsa-celnet.excel.src.contract.instrumentCodec.instrumentFromWire
+
+- **claim** (`cl\_389a29c263c62631`): instrumentFromWire enforces a strict one-arm constraint on the product oneof: it filters PRODUCT\_DECODERS by presence in the wire object and throws WireDecodeError if exactly one arm is not present. Optional fields (tenor, underlying, solve, settlement\_style, pricing\_model) are decoded only when their wire key is present, preserving proto3 zero-value semantics.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:25Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.contract.instrumentCodec.instrumentFromWire` (hash `bd591d3e67510c8c`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:25Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:25Z
+
+## github.com-soarsa-celnet.excel.src.contract.instrumentCodec.underlyingFromWire
+
+- **claim** (`cl\_1281cad8ec36b697`): underlyingFromWire decodes the Underlying protobuf oneof from wire JSON by checking the presence of exactly one of the five discriminant keys: fx, metal, equity, commodity, digital\_asset. It throws WireDecodeError if none is set. All five arms extract a shared settlementCcy from the top-level wire object, making that field mandatory for every underlying kind.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:09:42Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.contract.instrumentCodec.underlyingFromWire` (hash `ac36610817f5b0f7`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:09:42Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:09:42Z
+
+## github.com-soarsa-celnet.excel.src.contract.riskCodec.attributionDisplayFromWire
+
+- **claim** (`cl\_a12990d59ab58cb8`): attributionDisplayFromWire decodes a wire \`attribution\` object into a human-readable \`"held \<book\>/\<who\> \| quoted \<book\>/\<who\>"\` string (or \`undefined\` when absent). The \`who\` field is resolved with priority: \`trader\` string first, then \`autoPricer\` prefixed with \`"auto:"\`, otherwise empty. Returns \`undefined\` (not an empty string) when no attribution fields are present.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:05:47Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.contract.riskCodec.attributionDisplayFromWire` (hash `f46a46504a1dd130`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:05:47Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:05:47Z
+
+## github.com-soarsa-celnet.excel.src.contract.riskCodec.nonAdditiveRiskFromWire
+
+- **claim** (`cl\_d2761a2913183404`): nonAdditiveRiskFromWire decodes a NonAdditiveRisk from wire by copying only the present optional fields (var, es, var\_alpha, curvature\_spot), using optNum for each. Absent fields are not set on the result, preserving the partial-presence contract of non-additive risk metrics.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:44Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.contract.riskCodec.nonAdditiveRiskFromWire` (hash `1020fca7bb3e5c33`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:44Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:44Z
+
+## github.com-soarsa-celnet.excel.src.contract.riskCodec.numToBigInt
+
+- **claim** (`cl\_359215019e6064be`): numToBigInt (both wsCodec and riskCodec copies are byte-identical) converts a wire field to bigint via three cases: finite number → BigInt(Math.trunc(v)); already bigint → pass-through; non-empty string → BigInt(v) with fallback to 0n on parse error. Any other type returns 0n. Math.trunc prevents rounding of large JSON numbers before BigInt conversion.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:47Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.contract.riskCodec.numToBigInt` (hash `03d6e1196352e71e`, resolved)
+  - `github.com-soarsa-celnet.excel.src.contract.wsCodec.numToBigInt` (hash `19fc03916d001e4e`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:47Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:47Z
+
+## github.com-soarsa-celnet.excel.src.contract.wsCodec.cliquetToWire
+
+- **claim** (`cl\_7fe77656f82ca3fd`): cliquetToWire mirrors cliquetFromWire's presence-tracking in the encoding direction: \`mc\_seed\` is encoded as a plain JSON number (\`Number(c.mcSeed)\`) because seeds fit the JS safe-integer range and bigint would not JSON-serialise. The four optional clamp fields are emitted only when their TypeScript value is not \`undefined\` — an absent clamp sends no wire key, not a \`0\`.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:04Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.contract.wsCodec.cliquetToWire` (hash `cd5d48c0108d4735`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:04Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:04Z
+
+## github.com-soarsa-celnet.excel.src.contract.wsCodec.instrumentToWire
+
+- **claim** (`cl\_22127045a12b5fb9`): instrumentToWire serialises an Instrument to WireObject following proto3 zero-value suppression: settlement\_style is omitted when LINEAR (proto zero), pricing\_model is omitted when DEFAULT (proto zero), tenor is omitted for the perpetual arm (tenorless, expiry\_years=0), and underlying is omitted when absent. The product oneof is encoded under exactly one key matching the proto field name for 24 arms (vanilla through listed\_future\_option).
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:27Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.contract.wsCodec.instrumentToWire` (hash `28d2bf0ce607a2f4`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:27Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:27Z
+
+## github.com-soarsa-celnet.excel.src.contract.wsCodec.quoteFromWire
+
+- **claim** (`cl\_f5bccd22109312f3`): quoteFromWire decodes a WireObject into a Quote struct. Three fields are conditionally present and set only when the server sends them: correlationId (optBigInt), surfaceVersion (optBigInt), and priceStdError (optNum). The priceStdError field is decoded as undefined when absent, ensuring the spill never fabricates a precision claim for non-Monte-Carlo products.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:09:30Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.contract.wsCodec.quoteFromWire` (hash `4bbfeaf6ddce481e`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:09:30Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:09:30Z
+
+## github.com-soarsa-celnet.excel.src.contract.wsCodec.requoteLargeIntegers
+
+- **claim** (`cl\_2c8c29301c8fd4c4`): requoteLargeIntegers rewrites a raw JSON string in a single character-by-character pass, quoting only pure integer literals that exceed the JS safe integer range; floating-point literals (containing \`.\`, \`e\`, or \`E\`) and integers within safe range are left unchanged. A string-tracking state machine ensures digits inside JSON string values are never touched. The result is valid JSON where large integers are encoded as quoted strings, allowing numToBigInt to recover the exact bigint value.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:09:33Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.contract.wsCodec.requoteLargeIntegers` (hash `b63f3fcf0548cd96`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:09:33Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:09:33Z
+
+## github.com-soarsa-celnet.excel.src.contract.wsCodec.underlyingToWire
+
+- **claim** (`cl\_2c9322febbcfacc5`): underlyingToWire is a pure serialisation function that converts a typed Underlying value to a WireObject for transmission. It preserves the settlementCcy field on every output arm unchanged (const settlement\_ccy = u.settlementCcy is unconditionally injected into every returned object). The five arms cover: fx (copies base/quote directly), metal (encodes the metal enum via e.metal.toWire), equity (exposes symbol.ticker+symbol.venue+currency), commodity (exposes symbol.ticker+symbol.venue+currency), and digitalAsset (emits a snake\_case digital\_asset key matching the wire schema). The camelCase→snake\_case rename (digitalAsset → digital\_asset) is the only structural transformation; all numeric/string leaf values are forwarded verbatim.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:01Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.contract.wsCodec.underlyingToWire` (hash `06201e00209b193c`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:01Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:01Z
+
+## github.com-soarsa-celnet.excel.src.functions.functions.premiumSpillFor
+
+- **claim** (`cl\_00b4c5614b972e3f`): premiumSpillFor routes a priced Quote to the correct SpillMatrix formatter based on product kind: "varianceSwap" → formatVarSwapSpill with quote.resolvedStrike as fairVariance; "volatilitySwap" → formatVolSwapSpill with quote.resolvedStrike as fairVol; all other products → formatPremiumSpill with quote.greeks.price as premium. The priceStdError (via stdErrorFor) is included only when present on the quote (MC-priced products), never fabricated.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:09:30Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.functions.premiumSpillFor` (hash `bd5909973d07fb6b`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:09:30Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:09:30Z
+
+## github.com-soarsa-celnet.excel.src.functions.functions.shapeSeriesRequest
+
+- **claim** (`cl\_e35ac1e34a1ab7b8`): shapeSeriesRequest normalizes delta inputs: a value ≥ 1 is divided by 100 (treating it as a percent-delta like 25 → 0.25), while a value \< 1 is passed as-is. SPOT observables require no tenor or delta; non-SPOT observables require a tenor; RISK\_REVERSAL and BUTTERFLY additionally require a delta.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:56Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.functions.shapeSeriesRequest` (hash `4eed6d2cdf6b6c47`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:56Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:56Z
+
+## github.com-soarsa-celnet.excel.src.functions.functions.stdErrorFor
+
+- **claim** (`cl\_ddb456a686c226d9`): stdErrorFor is a pure switch over product kind that gates MC standard error surfacing precisely: cliquet/lookback/american expose priceStdError only when their respective isMonteCarlo predicates return true; exact closed-form families (vanilla, strategy, digital, touch, asian, forwardStart, quanto, varianceSwap, volatilitySwap, perpetualOption, listedFutureOption) always return undefined; MC-path-dependent families (singleBarrier, doubleBarrier, windowBarrier, tarf, pivot, accumulator, basket, fxForward, fxSwap, ndf) always return priceStdError.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:09:31Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.functions.stdErrorFor` (hash `bfc8421e463d2a98`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:09:31Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:09:31Z
+
+## github.com-soarsa-celnet.excel.src.functions.instrumentSpec.strategyFamily
+
+- **claim** (`cl\_5d01c922f68a6517`): strategyFamily returns a FamilySpec whose build function enforces that a product-name-bound StrategyKind (boundKind) is never silently overridden by a contradicting ("kind", …) term — the contradiction throws ShapingError. The term kind is accepted only when it matches boundKind or when boundKind is undefined (generic STRATEGY family).
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:09:33Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.instrumentSpec.strategyFamily` (hash `2dcf925cf28a1582`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:09:33Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:09:34Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.canonicalProduct
+
+- **claim** (`cl\_8883e6c6c9ac1e41`): canonicalProduct produces a deterministic, order-stable JSON-serialisable representation of every Product variant for use as a subscription coalescing key. All bigint fields (\`mcSeed\`) are stringified via \`.toString()\` so the result is always JSON-safe. Strategy legs and basket legs are mapped to minimal tuples to ensure two structurally identical instruments always produce the same key.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:05:55Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.canonicalProduct` (hash `9f34adbda6843e46`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:05:55Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:05:55Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.formatRfqPanelSpill
+
+- **claim** (`cl\_be2b31ed249d3258`): formatRfqPanelSpill produces a rectangular SpillMatrix with a fixed header \["lp\_id","bid","offer","valid\_until","best"\], one row per LP line (BEST\_BID and/or BEST\_OFFER markers joined with "+" in the best column), a quote\_id row, and a convention-footer row. Output shape is always rectangular (padded by the rectangular() helper).
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:19Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.formatRfqPanelSpill` (hash `aa1e74979102a47e`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:19Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:19Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.formatSurfaceCubeSpill
+
+- **claim** (`cl\_2ee7dbf6558b4c28`): formatSurfaceCubeSpill builds a pivot-table SpillMatrix over (tenor × delta) surface points: the union of all delta pillars forms the column headers (sorted ascending), each tenor row carries its tenorYears as the row label and vols indexed by delta (empty string for missing pillars), and a convention footer is appended as the last row.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:22Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.formatSurfaceCubeSpill` (hash `c59419807abda695`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:22Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:22Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.parseAccumulatorMonitoring
+
+- **claim** (`cl\_df8aa663b3b341c9`): parseAccumulatorMonitoring normalises raw input (trim + toUpperCase) and accepts the aliases DISCRETE/DISC/D (defaulting empty string to DISCRETE) and CONTINUOUS/CONT/C, returning the canonical AccumulatorMonitoring enum value. Any other value throws ShapingError.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:19Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.parseAccumulatorMonitoring` (hash `b8ecdaaaf712fd91`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:19Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:19Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.parseAsianMethod
+
+- **claim** (`cl\_28b42542983a6588`): parseAsianMethod normalises and accepts CURRAN (default for empty input) and TW/TURNBULL\_WAKEMAN/TURNBULL-WAKEMAN/TURNBULLWAKEMAN aliases, returning the canonical AsianMethod. Any other value throws ShapingError.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:21Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.parseAsianMethod` (hash `14df5e95456551fd`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:21Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:21Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.parseAveragingStyle
+
+- **claim** (`cl\_176a20bfd7cd9875`): parseAveragingStyle normalises and accepts DISCRETE/D (default for empty) and CONTINUOUS/CONT/C aliases, returning the canonical AveragingStyle. Any other value throws ShapingError. The implementation is structurally identical to parseAccumulatorMonitoring.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:30Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.parseAveragingStyle` (hash `4c161061c93ffff5`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:30Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:30Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.parseBarrierKind
+
+- **claim** (`cl\_a8ab3485d7bfa3c8`): parseBarrierKind normalises and accepts KNOCK\_IN/KNOCK-IN/KNOCKIN/KI/IN aliases (returning "KNOCK\_IN") and KNOCK\_OUT/KNOCK-OUT/KNOCKOUT/KO/OUT aliases (returning "KNOCK\_OUT"). Empty string defaults to KNOCK\_IN. Any other value throws ShapingError.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:33Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.parseBarrierKind` (hash `1e0991dbc8a60316`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:33Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:33Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.parseBarrierSide
+
+- **claim** (`cl\_dc66c19b5953dd93`): parseBarrierSide normalises a raw string to exactly one of two BarrierSide literals: absent/empty/"UP"/"U" all map to "UP"; "DOWN"/"DN"/"D" map to "DOWN". Any other input throws ShapingError. The function is case-insensitive via \`.trim().toUpperCase()\` applied before the switch.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:18Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.parseBarrierSide` (hash `069b2cb54607e267`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:18Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:18Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.parseBasketKind
+
+- **claim** (`cl\_8d1dce8aabab24b2`): parseBasketKind maps a raw string to one of three BasketKind literals with a default of "BASKET" when input is absent or empty. "BASKET"/"WEIGHTED"/"SUM" → "BASKET"; "BEST\_OF"/"BEST-OF"/"BESTOF"/"BEST"/"MAX" → "BEST\_OF"; "WORST\_OF"/"WORST-OF"/"WORSTOF"/"WORST"/"MIN" → "WORST\_OF". Any unrecognised value throws ShapingError.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:21Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.parseBasketKind` (hash `ed2170bad823edca`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:21Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:21Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.parseCryptoPair
+
+- **claim** (`cl\_cbb10d95873640bd`): parseCryptoPair splits a raw string into a {base, quote} CryptoPair using two strategies in order: (1) split on first separator matching /\[-/\_\]/ → extract two parts; (2) if no separator, peel a trailing known numeraire from the ordered list \[USDT, USDC, USD, EUR, BTC, ETH\] (requiring the base to be non-empty). If neither strategy yields both parts, throws ShapingError. Input is uppercased and trimmed before parsing.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:24Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.parseCryptoPair` (hash `835b17341520ed55`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:24Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:24Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.parseDigitalStyle
+
+- **claim** (`cl\_dd77557d0eb7fb4b`): parseDigitalStyle maps a raw string to one of two DigitalStyle literals, defaulting to "CASH\_OR\_NOTHING" when absent or empty. "CASH\_OR\_NOTHING"/"CASH-OR-NOTHING"/"CASH"/"C" → "CASH\_OR\_NOTHING"; "ASSET\_OR\_NOTHING"/"ASSET-OR-NOTHING"/"ASSET"/"A" → "ASSET\_OR\_NOTHING". Any other value throws ShapingError.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:27Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.parseDigitalStyle` (hash `61000f26b2e29276`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:27Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:27Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.parseLookbackMonitoring
+
+- **claim** (`cl\_93bc466b083ba630`): parseLookbackMonitoring maps a raw string to one of two LookbackMonitoring literals, defaulting to "CONTINUOUS" when absent or empty. "CONTINUOUS"/"CONT"/"C" → "CONTINUOUS"; "DISCRETE"/"DISC"/"D" → "DISCRETE". Any other value throws ShapingError.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:32Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.parseLookbackMonitoring` (hash `06e458cb91a274af`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:32Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:32Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.parseLookbackStyle
+
+- **claim** (`cl\_1e705bd85ad452cd`): parseLookbackStyle maps a raw string to one of two LookbackStyle literals, defaulting to "FLOATING" when absent or empty. "FLOATING"/"FLOAT"/"FL" → "FLOATING"; "FIXED"/"FIX"/"FX" → "FIXED". Any other value throws ShapingError.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:32Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.parseLookbackStyle` (hash `9119bbcac38a4cdd`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:32Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:32Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.parseMargining
+
+- **claim** (`cl\_7969ec6ff570a087`): parseMargining maps a raw string to one of two Margining literals, defaulting to "EQUITY\_STYLE" when absent or empty. Before matching, punctuation (\`.\`, \`\_\`, whitespace, \`-\`) is stripped via \`.replace(/\[.\_\\s-\]/g, "")\`. "EQUITYSTYLE"/"EQUITY"/"UPFRONT" → "EQUITY\_STYLE"; "FUTURESSTYLE"/"FUTURES"/"DAILY" → "FUTURES\_STYLE". Any other value throws ShapingError.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:35Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.parseMargining` (hash `0085b9b45f8e8c92`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:35Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:35Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.parseMonitoringStyle
+
+- **claim** (`cl\_d20df965a32edcca`): parseMonitoringStyle maps a raw string to one of two MonitoringStyle literals, defaulting to "CONTINUOUS" when absent or empty. "CONTINUOUS"/"CONT"/"C" → "CONTINUOUS"; "DISCRETE"/"DISC"/"D" → "DISCRETE". Any other value throws ShapingError. Identical alias set to parseLookbackMonitoring but returns MonitoringStyle (a distinct type).
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:37Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.parseMonitoringStyle` (hash `a33093b0c3dbec93`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:37Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:37Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.parseObservable
+
+- **claim** (`cl\_125531c7eaeaa166`): parseObservable maps a raw string to one of five MarketObservable literals. "ATM"/"ATMVOL"/"ATM\_VOL"/"VOL" → "ATM\_VOL"; "SPOT" → "SPOT"; "RR"/"RISK\_REVERSAL"/"RISKREVERSAL" → "RISK\_REVERSAL"; "BF"/"FLY"/"BUTTERFLY" → "BUTTERFLY"; "FWD"/"FORWARD" → "FORWARD". Input is required (no undefined default); any unrecognised value throws ShapingError.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:41Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.parseObservable` (hash `c63b476c8da768cc`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:41Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:41Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.parsePricingModel
+
+- **claim** (`cl\_21631728f09d4e1e`): parsePricingModel maps a raw string to one of two PricingModel literals, defaulting to "DEFAULT" when absent or empty. "DEFAULT"/"ANALYTIC"/"CLOSED\_FORM"/"CLOSED-FORM" → "DEFAULT"; "LSV"/"LOCAL\_STOCH\_VOL"/"LOCAL-STOCH-VOL"/"LOCAL\_STOCHASTIC\_VOLATILITY" → "LOCAL\_STOCH\_VOL". Any other value throws ShapingError enumerating PRICING\_MODEL\_MEMBERS.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:43Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.parsePricingModel` (hash `e8939bc74226930e`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:43Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:43Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.parseQuantoPayoff
+
+- **claim** (`cl\_4143b3dcfd0ccebb`): parseQuantoPayoff maps a raw string to one of two QuantoPayoff literals, defaulting to "VANILLA" when absent or empty. "VANILLA"/"V"/"OPT" → "VANILLA"; "DIGITAL"/"DIG"/"D" → "DIGITAL". Any other value throws ShapingError.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:53Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.parseQuantoPayoff` (hash `607cfdb4544ef719`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:53Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:53Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.parseRfqPanelFlag
+
+- **claim** (`cl\_9c2c3f92a520e1cb`): parseRfqPanelFlag coerces a boolean \| string \| undefined to a plain boolean. undefined and false → false; true → true; the string is trimmed and uppercased: empty string → false; "PANEL" or "TRUE" → true; "FALSE" → false; any other string throws ShapingError. This is the only shaping parser whose input may be a native boolean.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:56Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.parseRfqPanelFlag` (hash `cd77a85e58c63ab7`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:56Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:56Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.parseRiskDimension
+
+- **claim** (`cl\_8d3e4d5eda97b5f3`): parseRiskDimension maps a raw string to one of seven RiskDimension literals, defaulting to "FIRM" when absent or empty. "FIRM" → "FIRM"; "TRADER" → "TRADER"; "BOOK" → "BOOK"; "DESK" → "DESK"; "PAIR"/"CCYPAIR"/"CCY\_PAIR" → "CCY\_PAIR"; "LOCATION"/"LOC" → "LOCATION"; "ENTITY"/"LE" → "ENTITY". Any unrecognised value throws ShapingError.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:59Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.parseRiskDimension` (hash `bd0a33f70adb8803`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:59Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:59Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.parseSmileModel
+
+- **claim** (`cl\_7673b570ac8972db`): parseSmileModel maps a raw string to one of five SmileModel literals, defaulting to "MARKET\_HEDGE" when absent or empty. "VV"/"VANNA\_VOLGA"/"MARKET\_HEDGE" variants → "MARKET\_HEDGE"; "SABR"/"STOCHASTIC\_VOL" variants → "STOCHASTIC\_VOL"; "SVI"/"PARAMETRIC" → "PARAMETRIC"; "SSVI"/"PARAMETRIC\_SURFACE" variants → "PARAMETRIC\_SURFACE"; "ESSVI"/"EXTENDED"/"EXTENDED\_SURFACE" variants → "EXTENDED\_SURFACE". Unknown input throws ShapingError enumerating SMILE\_MODEL\_MEMBERS.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:09:03Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.parseSmileModel` (hash `353927cd2fb81436`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:09:03Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:09:03Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.parseStrategyKind
+
+- **claim** (`cl\_ef96b95a33bfb3bf`): parseStrategyKind maps a raw string to one of four StrategyKind literals. Before matching, all non-alphanumeric characters are stripped via \`.replace(/\[^A-Z0-9\]/g, "")\`. "RISKREVERSAL"/"RR" → "RISK\_REVERSAL"; "STRADDLE" → "STRADDLE"; "STRANGLE" → "STRANGLE"; "SEAGULL" → "SEAGULL". Input is required (not optional). Any unrecognised value throws ShapingError.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:09:06Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.parseStrategyKind` (hash `14a02952c0e2cbe9`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:09:06Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:09:06Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.parseStrikeOrDelta
+
+- **claim** (`cl\_d13ffe722ee0f633`): parseStrikeOrDelta accepts a number or string and returns a discriminated union {kind:"strike", strike} \| {kind:"delta", delta}. For numbers: must be finite and positive or throws ShapingError; yields kind:"strike". For strings: "ATM"/"DNS" → delta=0; a positive finite numeric string → kind:"strike"; regex /^(\\d+(?:\\.\\d+)?)\\s\*D\\s\*(\[CP\])$/ captures percent delta — percent must be in (0,100) and is signed: call side → +pct/100, put side → -pct/100.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:09:10Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.parseStrikeOrDelta` (hash `7704aedb2155a087`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:09:10Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:09:10Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.parseTarfRedemption
+
+- **claim** (`cl\_b6dfa3b82ad31240`): parseTarfRedemption maps a raw string to one of two TarfRedemption literals, defaulting to "FULL\_GAIN" when absent or empty. "FULL\_GAIN"/"FULL"/"F" → "FULL\_GAIN"; "CAPPED\_GAIN"/"CAPPED"/"C" → "CAPPED\_GAIN". Any other value throws ShapingError.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:09:12Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.parseTarfRedemption` (hash `fd54b50a2c0b9c5f`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:09:12Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:09:12Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.parseTenor
+
+- **claim** (`cl\_4a4ca24a1a16c010`): parseTenor parses a tenor string into a {tenor:{unit, count}, expiryYears} ParsedTenor. "ON" and "O/N" map to {unit:"OVERNIGHT", count:1, expiryYears:YEARS\_PER\_UNIT.OVERNIGHT}. Otherwise matches regex /^(\\d+)\\s\*(\[WMY\])$/ → unit W→"WEEKS", M→"MONTHS", Y→"YEARS"; expiryYears = count × YEARS\_PER\_UNIT\[unit\]. Count must be positive or throws ShapingError. Unmatched input throws ShapingError.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:09:15Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.parseTenor` (hash `833b92937aa062c7`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:09:15Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:09:15Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.parseTouchKind
+
+- **claim** (`cl\_815adf47fac5dfd0`): parseTouchKind maps a raw string to one of four TouchKind literals, defaulting to "ONE\_TOUCH" when absent or empty. ONE\_TOUCH aliases: "ONE\_TOUCH"/"ONE-TOUCH"/"ONETOUCH"/"OT"/"ONE"; NO\_TOUCH aliases: "NO\_TOUCH"/"NO-TOUCH"/"NOTOUCH"/"NT"/"NO"; DOUBLE\_NO\_TOUCH aliases: "DOUBLE\_NO\_TOUCH"/"DOUBLE-NO-TOUCH"/"DNT"; DOUBLE\_ONE\_TOUCH aliases: "DOUBLE\_ONE\_TOUCH"/"DOUBLE-ONE-TOUCH"/"DOT". Any other value throws ShapingError.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:09:19Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.parseTouchKind` (hash `df8be4f0925482b2`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:09:19Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:09:19Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.shapeAccumulator
+
+- **claim** (`cl\_3b6c8de58871fed6`): shapeAccumulator enforces a strict ordering invariant: the accumulator barrier must be strictly above the pivot (\`args.barrier \> pivot\`), and leverage must be ≥ 0. The pivot must be supplied as an absolute level (not a delta); a delta-form input throws ShapingError. The function always produces a TWO\_WAY side and delegates fixing schedule construction to equalFixingYears + shapeFixingNotional.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:18Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.shapeAccumulator` (hash `db91226a9078ac20`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:18Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:18Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.shapeAmerican
+
+- **claim** (`cl\_5971d3ce049bb00a`): shapeAmerican implements a contradiction-rejection rule for exercise style: an explicit AMERICAN style with a positive bermudanSteps count is a typed error (throws ShapingError). A positive steps count without an explicit style or with an explicit BERMUDAN style selects BERMUDAN and generates equally-spaced Bermudan dates via equalBermudanDates. BERMUDAN requires steps ≥ 1. The strike must be an absolute level, not a delta.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:22Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.shapeAmerican` (hash `5bce9a7ba98351de`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:22Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:22Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.shapeAsianOption
+
+- **claim** (`cl\_7107a92ac966b7b1`): shapeAsianOption requires an absolute strike level (not a delta) and validates elapsedWeight in the range \[0, 1) (\`elapsedWeight \>= 0 && elapsedWeight \< 1\`). For DISCRETE averaging, observations must be a positive integer (≥ 1). elapsedAvg must be finite and ≥ 0. The function is pure — no IO, no state mutation.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:24Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.shapeAsianOption` (hash `9211cca65a454481`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:24Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:24Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.shapeBarrier
+
+- **claim** (`cl\_15ca1357c7aa0250`): shapeBarrier dispatches between single-barrier and double-barrier products based on the presence of \`args.upperBarrier\`. For a double barrier, a \`side\` argument is rejected (throws ShapingError) and upper must be strictly above lower (\`upper \> lower\`). The \`pricingModel\` field is attached uniformly to the instrument regardless of barrier count. DEFAULT pricing model preserves wire byte-identity.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:26Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.shapeBarrier` (hash `e4cb58a5aa376b4b`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:26Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:26Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.shapeBasket
+
+- **claim** (`cl\_4810b1404fbc82ee`): shapeBasket validates that the correlation matrix is exactly n×n (where n = number of legs), each leg row has at least 5 elements \[pair, weight, spot, vol, rFor\], spot must be \> 0, vol must be ≥ 0, and strike must be a positive absolute level. All numeric fields are validated as finite. The function pure-maps the flat correlation array by row-major linearization.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:29Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.shapeBasket` (hash `2d1edce1e28b4516`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:29Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:29Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.shapeCalibration
+
+- **claim** (`cl\_94d3264c721f3a13`): shapeCalibration validates ATM vol strictly in the range (0, 5) in absolute terms (\`atmVol \> 0 && atmVol \< 5\`), rr25/bf25 must both be finite, and rr10/bf10 are only required when both are supplied together (hasTenDelta). When 10-delta inputs are absent, rr10 and bf10 default to 0 and hasTenDelta is false.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:32Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.shapeCalibration` (hash `adcc4fbc02546717`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:32Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:32Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.shapeCliquet
+
+- **claim** (`cl\_098170e33b51fa67`): shapeCliquet enforces floor/cap ordering: localFloor must not exceed localCap, and globalFloor must not exceed globalCap. The mcSeed is converted to BigInt (\`BigInt(mcSeedRaw)\`) before placement on the wire object. Clamp fields (localFloor/localCap/globalFloor/globalCap) are only attached when explicitly supplied (presence-optional proto semantics), so absent clamps are genuinely unconstrained.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:35Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.shapeCliquet` (hash `8e99b02f64ee0f3c`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:35Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:35Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.shapeFixingSource
+
+- **claim** (`cl\_e6d64a31077d356e`): shapeFixingSource is a pure exhaustive switch that normalizes fixing-source strings to canonical enum values by uppercasing and stripping dots/underscores/spaces. It maps 6 EM-currency fixing sources: KRW\_KFTC18, TWD\_TAIPEI, INR\_RBI\_REF, BRL\_PTAX, CLP\_DOLAR\_OBS, COP\_TRM. Any unrecognized input throws ShapingError.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:37Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.shapeFixingSource` (hash `c4dc2c3fb60bad65`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:37Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:37Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.shapeMetal
+
+- **claim** (`cl\_0cac888134476dcb`): shapeMetal is a pure exhaustive switch normalizing precious-metal identifiers (GOLD/XAU, SILVER/XAG, PLATINUM/XPT, PALLADIUM/XPD) to canonical Metal enum values via uppercase normalization. Any unrecognized input throws ShapingError. The function has no side effects.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:45Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.shapeMetal` (hash `d9951a3e142297e7`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:45Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:45Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.shapePivot
+
+- **claim** (`cl\_c598de40c803dd0e`): shapePivot enforces three positive-value constraints: pivot must be a positive level, target must be a positive cumulative gain, and leverage must be ≥ 0. The strike must be an absolute level (not a delta). Like TARF, the Pivot product uses a fixing schedule (equalFixingYears + shapeFixingNotional) and supports MC path budget/seed fields.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:48Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.shapePivot` (hash `0762dc8b82b23b9d`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:48Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:48Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.shapeQuanto
+
+- **claim** (`cl\_758fabd542c5699a`): shapeQuanto validates conversionVol in the range \[0, 5) in absolute terms and correlation in the range \[-1, 1\]. The strike must be an absolute level. These three guards — finite strike, vol range, and correlation range — are the complete validation contract for a quanto instrument frame.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:50Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.shapeQuanto` (hash `0d7246f86c1f7a70`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:50Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:50Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.shapeReportingNumeraire
+
+- **claim** (`cl\_a5e3e0bb6548bbfd`): shapeReportingNumeraire silently skips rows where the currency cell is empty/null/undefined and silently skips the numeraire currency itself (treated as implicitly 1.0). Invalid 3-letter currency codes or non-positive rates throw ShapingError. Currency codes are normalized to uppercase 3-letter form and validated by the regex \`/^\[A-Z\]{3}$/\`.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:53Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.shapeReportingNumeraire` (hash `b95bf1541745912e`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:53Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:53Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.shapeSettlementStyle
+
+- **claim** (`cl\_66efffba290deb8f`): shapeSettlementStyle defaults to LINEAR when the input is undefined (\`raw ?? "LINEAR"\`). It normalizes the input by trimming, uppercasing, and stripping separators, then maps to exactly two values: LINEAR or INVERSE\_COIN (accepting INVERSE and COIN as aliases). All other inputs throw ShapingError.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:58Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.shapeSettlementStyle` (hash `869055346168d2ad`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:58Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:58Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.shapeStrategy
+
+- **claim** (`cl\_4b2b0e0f0562fa92`): shapeStrategy enforces exact leg count from the STRATEGY\_TEMPLATE\_LEGS lookup table — the number of supplied legs must equal the template's expected count exactly. Each leg's ratio defaults to 1.0 when absent, and must be a positive number (ratio \<= 0 throws ShapingError because direction is encoded on the side field, not via a negative ratio).
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:09:13Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.shapeStrategy` (hash `8612648d9b8dc945`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:09:13Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:09:13Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.shapeTarf
+
+- **claim** (`cl\_1c15c1ba58411c59`): shapeTarf requires an absolute strike (not a delta), target \> 0, and leverage ≥ 0. It builds a fixing schedule via equalFixingYears + shapeFixingNotional, then assembles a Tarf with redemption style, MC budget (mcPairs/mcSeed), and sets side to TWO\_WAY.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:09:16Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.shapeTarf` (hash `caf93d68d7585490`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:09:16Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:09:16Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.shapeTouch
+
+- **claim** (`cl\_e280b0008df27bbb`): shapeTouch dispatches on isDoubleTouch(kind): double-touch kinds (DNT/DOT) require upperBarrier and enforce upper \> lower; single-touch kinds reject any supplied upperBarrier (throws ShapingError). The upperBarrier field on the Touch wire object is set to 0 for single-touch products.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:09:18Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.shapeTouch` (hash `cd8e0d14bb1c752a`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:09:18Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:09:18Z
+
+## github.com-soarsa-celnet.excel.src.functions.shaping.underlyingPairProjection
+
+- **claim** (`cl\_c4c1307129f00ac3`): underlyingPairProjection is a pure, total function that maps every variant of the Underlying discriminated union to a CcyPair without side effects. The five exhaustive arms are: fx → u.fx (already a CcyPair {base, quote}); metal → {base: METAL\_ISO\_CODE\[u.metal.metal\], quote: u.metal.quote} (ISO code looked up from a static map); equity → {base: u.equity.symbol.ticker, quote: u.equity.currency}; commodity → {base: u.commodity.symbol.ticker, quote: u.commodity.currency}; digitalAsset → {base: u.digitalAsset.base, quote: u.digitalAsset.quote}. No network, state, or external side-effects; the switch is exhaustive so the function never throws for a valid Underlying.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:57Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.functions.shaping.underlyingPairProjection` (hash `78e36282d2603fa5`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:57Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:57Z
+
+## github.com-soarsa-celnet.excel.src.taskpane.capability.classForUnderlying
+
+- **claim** (`cl\_266d4ade4bbc72f8`): classForUnderlying is a total, exhaustive pure switch from the five \`Underlying\['kind'\]\` discriminants to \`AssetClass\`: \`fx\` → \`"FX"\`, \`metal\` → \`"METAL"\`, \`equity\` → \`"EQUITY"\`, \`commodity\` → \`"COMMODITY"\`, \`digitalAsset\` → \`"CRYPTO"\`. TypeScript exhaustiveness ensures no runtime default is needed.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:05:58Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.taskpane.capability.classForUnderlying` (hash `461c2572c629338b`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:05:58Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:05:58Z
+
+## github.com-soarsa-celnet.excel.src.taskpane.dealerPanel.lastLookRemaining
+
+- **claim** (`cl\_d1e517b2d9047cf0`): lastLookRemaining computes a \[0,1\] ratio of last-look window remaining. It returns 0 when windowSeconds ≤ 0 or the deadline has passed, 1 when time remaining ≥ the full window, and remainingNanos / windowNanos otherwise. BigInt arithmetic is used for the nanos comparison to avoid JS safe-integer overflow; only the final ratio conversion calls Number().
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:38Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.taskpane.dealerPanel.lastLookRemaining` (hash `f00183770c341e79`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:38Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:38Z
+
+## github.com-soarsa-celnet.excel.src.taskpane.taskpane.parseTerms
+
+- **claim** (`cl\_4f692c10b4413cef`): parseTerms splits a textarea string into TermsRow\[\] following the same key/value grammar that CELNET.INSTRUMENT reads: lines are split on '\\n', each non-blank line tokenised on whitespace, the first token is kept as a string (the key), subsequent tokens are coerced to numbers when finite, otherwise kept as strings. Blank lines are skipped. The shaper owns all validation; this function is input-only.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:09:35Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.taskpane.taskpane.parseTerms` (hash `ae64a14e85ecbc83`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:09:35Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:09:35Z
+
+## github.com-soarsa-celnet.excel.src.transport.connection.subscriptionIdOf
+
+- **claim** (`cl\_7859a30f7552ec4c`): subscriptionIdOf extracts the subscription id from an RFS server frame's \`subscription.value\` field, normalizing both number and bigint wire types to bigint. Returns undefined for frames with no subscription field or a non-object subscription. This normalization is required because JSON transport delivers integers as JS numbers while the binary/proto path can deliver bigint.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:09:36Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.src.transport.connection.subscriptionIdOf` (hash `abc987f8352e79cf`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:09:36Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:09:36Z
+
+## github.com-soarsa-celnet.excel.test.instrumentPolymorphic.test.legacyInstrumentOf
+
+- **claim** (`cl\_effa601ca46b4754`): legacyInstrumentOf is the preserved verbatim dispatch of the retired per-product CELNET.\* worksheet functions (BARRIER, TARF, etc.). It calls the same production shapers those functions called with identical arguments, serving as the parity reference for the polymorphic instrument test. Four families (strategy, pivot, perpetual\_option, listed\_future\_option) are hand-built because they never had a per-product worksheet function.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:41Z
+- **anchors**:
+  - `github.com-soarsa-celnet.excel.test.instrumentPolymorphic.test.legacyInstrumentOf` (hash `9925223d2b68705c`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:41Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:41Z
+
 ## github.com-soarsa-celnet.fuzz.fuzz\_targets.fix\_frame\_decode.structured\_roundtrip
 
 - **claim** (`cl\_9fc2f84d5f2da133`): DELIVERABLE fix-decoder-fuzz-target = LANDED (backlog tracker docs/WORLD-CLASS-BACKLOG.md still lists it OPEN as the Round-2 P2/S finding "celnet-fix violates verification-contract clause (f): no fuzz target for the only byte parser fed external-counterparty bytes"; reconciled against the live graph). \`structured\_roundtrip\` is the pure (side-effect-free) differential oracle inside the now-present fuzz/fuzz\_targets/fix\_frame\_decode.rs harness: it drives the production celnet-fix FrameCursor::parse over adversarial/arbitrary byte frames and asserts the structured-decode↔re-encode round-trip and in-domain invariants, giving the external-counterparty FIX byte parser the fuzz coverage that VERIFICATION-CONTRACT.md clause (f) mandates. SELF-INVALIDATES on any change to this fuzz oracle.
@@ -8555,6 +9436,17 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 - **provenance**:
   - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
+
+## github.com-soarsa-celnet.gui.e2e.goldenCorpus.fixingSource
+
+- **claim** (`cl\_d60f4e969d95a9f8`): fixingSource (goldenCorpus) maps the corpus NDF fixing variant name (e.g. "BrlPtax") to the GUI contract FixingSource token (e.g. "BRL\_PTAX"). The six supported variants are KrwKftc18, TwdTaipei, InrRbiRef, BrlPtax, ClpDolarObs, CopTrm; any other variant throws an Error.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:13Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.e2e.goldenCorpus.fixingSource` (hash `00a0a74d21ac41ad`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:13Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:13Z
 
 ## github.com-soarsa-celnet.gui.src.components.CommandPalette.CommandPalette
 
@@ -8600,6 +9492,17 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
   - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
 
+## github.com-soarsa-celnet.gui.src.components.FixSpecModal.safeHref
+
+- **claim** (`cl\_6c77fc6d17b9e488`): safeHref is a URL allowlist guard: doc-relative paths beginning './' are rewritten to '/fix/\<rest\>'; fragment and root-relative hrefs ('\#', '/') pass through; absolute URLs with protocol in {http:, https:, mailto:} pass through; everything else (including unparseable URLs) returns undefined. No href is fabricated — undefined signals rejection to the caller.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:05:49Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.components.FixSpecModal.safeHref` (hash `6143e560bd7076b8`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:05:49Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:05:49Z
+
 ## github.com-soarsa-celnet.gui.src.components.GreeksStrip.GreeksStrip
 
 - **claim** (`cl\_76c793c40b51550d`): GreeksStrip is the inline option-risk readout: a primary row of GreekCell tiles (delta/gamma/vega/theta) plus a disclosure button (aria-expanded + aria-label="toggle full Greeks") that reveals the secondary Greeks. It is asset-class-aware — rhoGreeksFor(assetClass) relabels the rate-rho Greeks per the active underlier's class (FX default) — so the same strip serves FX/equity/commodity/crypto tickets. Numerics render through GreekCell on the mono token face; the strip itself carries no raw color literals.
@@ -8610,6 +9513,28 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 - **provenance**:
   - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
+
+## github.com-soarsa-celnet.gui.src.components.GreeksStrip.rhoGreeksFor
+
+- **claim** (`cl\_0829a69175fead9b`): rhoGreeksFor(cls) maps an AssetClass to the asset-class-specific pair of rate-rho GreekDef entries, relabelling rhoDom/rhoFor to their correct carry identity: FX/METAL→domestic+foreign rho pair; EQUITY→rate+dividend-yield rho; COMMODITY→rate+net-carry rho; CRYPTO→rate+funding rho. No new math — the wire fields rhoDom/rhoFor are unchanged; only labels differ.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:17Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.components.GreeksStrip.rhoGreeksFor` (hash `517cb3260aa51e8d`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:17Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:17Z
+
+## github.com-soarsa-celnet.gui.src.components.ScopeSwitcher.orgChildLabels
+
+- **claim** (`cl\_6b1bdc7d134d7155`): orgChildLabels(level, path) is a pure read of ORG\_SCAFFOLD: when level==='desk' it returns every desk label; when level==='book' it returns the books of the desk named by the first 'desk' crumb in path, or the union of all books if no desk crumb is present.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:19Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.components.ScopeSwitcher.orgChildLabels` (hash `d89178847bf1ab98`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:19Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:19Z
 
 ## github.com-soarsa-celnet.gui.src.components.SignInDialog.SignInDialog
 
@@ -8643,5 +9568,853 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 - **provenance**:
   - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
+
+## github.com-soarsa-celnet.gui.src.data.mockSource.applyShock
+
+- **claim** (`cl\_9c55d4f5eda1389a`): applyShock returns a new MarketContext with exactly one field bumped according to the ShockFactor. For relative bumps, \`new = base \* (1 + step)\`; for absolute, \`new = base + step\`. VOL is floor-clamped to 0.001 to prevent non-positive variance. TIME is a no-op (handled by expiry roll in the caller). All other fields are passed through unchanged via object spread.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:50Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.data.mockSource.applyShock` (hash `29528c1861b86815`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:50Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:50Z
+
+## github.com-soarsa-celnet.gui.src.data.mockSource.freezeStrikes
+
+- **claim** (`cl\_be07e1d95ea14d80`): freezeStrikes resolves delta-specified strikes to absolute levels for vanilla, strategy (all legs), single-/double-/window-barrier (the embedded vanilla strike only). All other product kinds (digital, touch, variance/volatility swap, Asian, forward-start, cliquet, quanto, TARF, pivot, accumulator, lookback, American, basket, fxForward, fxSwap, NDF, perpetualOption, listedFutureOption) carry no delta-able strike and are returned unchanged.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:04Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.data.mockSource.freezeStrikes` (hash `d6dd53ffe08cd43b`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:04Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:04Z
+
+## github.com-soarsa-celnet.gui.src.data.mockSource.rankSide
+
+- **claim** (`cl\_5d43db09c92879ff`): rankSide(rows, side) returns the lpId of the best dealer on one panel side using the engine's deterministic ranking law: highest bid (or lowest offer) wins; ties are broken lexicographically by lpId ascending. Returns empty string if rows is empty.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:03Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.data.mockSource.rankSide` (hash `a370f4671225cb3a`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:03Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:03Z
+
+## github.com-soarsa-celnet.gui.src.data.pricing.americanBinomialValue
+
+- **claim** (`cl\_622411a4c2ab8393`): americanBinomialValue prices American and Bermudan options on a CRR binomial tree with AMERICAN\_BINOMIAL\_STEPS steps. The FX risk-neutral up-probability is \`p = (exp((r\_d - r\_f)dt) - d) / (u - d)\` where \`u = exp(σ√dt)\`, \`d = 1/u\`. Backward induction applies early exercise at every layer (American, \`exerciseLayers === null\`) or only at the supplied Set of layer indices (Bermudan). At exercisable nodes, \`value\[j\] = max(continuation, intrinsic(S))\` where continuation is \`disc \* (p\*value\[j+1\] + q\*value\[j\])\`.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:47Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.data.pricing.americanBinomialValue` (hash `081c0c36696d4168`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:47Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:47Z
+
+## github.com-soarsa-celnet.gui.src.data.pricing.bermudanExerciseLayers
+
+- **claim** (`cl\_22441d3325ffeaa5`): bermudanExerciseLayers maps Bermudan exercise dates (year-fractions in (0, t\]) to step indices on a binomial tree of given size. Each date is snapped to \`round((date/t) \* steps)\`, kept only when in \[1, steps\]. The terminal layer (expiry = steps) is always included unconditionally. Dates outside (0, t\] are silently ignored, matching the server's domain rule.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:08Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.data.pricing.bermudanExerciseLayers` (hash `78f28229a0ce8494`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:08Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:08Z
+
+## github.com-soarsa-celnet.gui.src.data.pricing.dntSurvival
+
+- **claim** (`cl\_384351e38db0f8c4`): dntSurvival computes the double-no-touch survival probability using the method-of-images series (image count ±DNT\_IMAGE\_TERMS). The result is clamped to \[0,1\] by three guards: each inner weighted() clamps to 0 on non-positive CDF differences; the series sum is clamped to \[0,1\]; and the result is additionally capped by the minimum of two single-wall hit-probability caps (1 − singleWallHitProb). Spot on or outside the corridor immediately returns 0.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:35Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.data.pricing.dntSurvival` (hash `79910c458d674acb`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:35Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:35Z
+
+## github.com-soarsa-celnet.gui.src.data.pricing.doubleKnockOutValue
+
+- **claim** (`cl\_d2f6f45d0d121d6f`): doubleKnockOutValue implements the Ikeda-Kunitomo method-of-images series for a double-knock-out option: drift=(1+μ)·σ√T, μ=b/σ²−½, μ₁=2(μ+1). Each iteration n ∈ \[−DKO\_TERMS, +DKO\_TERMS\] contributes a direct image (S·(U/L)^{2n}) and a lower-wall mirror image (L^{2n+2}/(U^{2n}·S)); both asset and cash legs are summed separately with φ=±1 for call/put orientation. The result is floored at 0 via Math.max(sum,0). Spot on or outside the corridor returns 0 immediately.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:39Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.data.pricing.doubleKnockOutValue` (hash `0c6cf39dc51ecc5b`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:39Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:39Z
+
+## github.com-soarsa-celnet.gui.src.data.pricing.lookbackContinuousValue
+
+- **claim** (`cl\_cdf6ea43467ed0c0`): lookbackContinuousValue implements the exact closed-form lookback option price. For FLOATING style (running extremum = S at inception) it applies the standard floating-strike lookback formula with reflection term: call = S\*e^{-r\_for\*t}\*N(a1) - S\*e^{-r\_dom\*t}\*N(a2) + reflection, where a1 = (b + sigma^2/2)t / (sigma\*sqrt(t)), a2 = a1 - sigma\*sqrt(t), b = r\_dom - r\_for. For FIXED style (Conze-Viswanathan) it uses the fixed-strike formula conditioned on whether k \>= s or k \< s for calls, and k \<= s or k \> s for puts, each with a reflection term involving (s/k)^{-2b/sigma^2}.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:23Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.data.pricing.lookbackContinuousValue` (hash `89ba6c09eb361be2`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:23Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:23Z
+
+## github.com-soarsa-celnet.gui.src.data.pricing.pivotPathBankPv
+
+- **claim** (`cl\_7c30d24d6b993fad`): pivotPathBankPv computes one antithetic-signed path's discounted bank PV for a Pivot/TRA structure. Per fixing k: log-spot is advanced by (r\_dom - r\_for - ½σ²)·dt + σ·√dt·s·z\[k\]; the intrinsic gain c includes leverage gearing when spot is on the adverse side of the pivot; accumulation stops and the function returns early when a fixing's gain reaches or breaches the target (redemption applied). Adverse fixings (c\<0) add to bankPv as receipts.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:32Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.data.pricing.pivotPathBankPv` (hash `a098a01830154c6c`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:32Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:32Z
+
+## github.com-soarsa-celnet.gui.src.data.pricing.pricePerpetual
+
+- **claim** (`cl\_b2f4411492f40c74`): pricePerpetual computes the exact closed-form price and full analytic Greek strip (delta, gamma, vega, rhoDom, rhoFor) for a perpetual American vanilla. It throws on r\_dom\<0 (no finite value) and on a perpetual call with b\>r (diverges). The free boundary S\_b = K·y/(y−1) determines: beyond S\_b the value equals intrinsic exactly (delta=±1); in the continuation region V = \|S\_b−K\|·(S/S\_b)^y, with Greeks via exact chain rule through the characteristic root. Theta and time-tenor Greeks are identically zero by the time-homogeneous construction.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:58Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.data.pricing.pricePerpetual` (hash `54bb92f799133cf5`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:58Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:58Z
+
+## github.com-soarsa-celnet.gui.src.data.pricing.tarfPathBankPv
+
+- **claim** (`cl\_09470c98f2bc9dcf`): tarfPathBankPv computes the discounted bank PV along a single Monte-Carlo TARF path with antithetic sign s. At each fixing: if the signed gain breaches the remaining target, the structure redeems immediately — settling either the full gain or only the gap-to-target per spec.redemption ('FULL\_GAIN' vs. partial), discounting at exp(-rDom \* (k+1) \* dtYears), and returning early. Adverse fixings (signed \< 0) add spec.leverage \* \|signed\| \* df to bankPv. The function returns early on redemption, guaranteeing no subsequent fixings are priced.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:47Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.data.pricing.tarfPathBankPv` (hash `2f2c04e8b0432fa4`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:47Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:47Z
+
+## github.com-soarsa-celnet.gui.src.data.pricing.touchValue
+
+- **claim** (`cl\_8fe58c85e33c9cd1`): touchValue dispatches exhaustively over four Touch.kind variants (ONE\_TOUCH, NO\_TOUCH, DOUBLE\_NO\_TOUCH, DOUBLE\_ONE\_TOUCH), delegating each to its own closed-form pricing helper — oneTouchValue, noTouchValue, doubleNoTouchValue, doubleTouchValue — and returns the resulting premium. The switch is exhaustive; no default branch is needed.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:05:17Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.data.pricing.touchValue` (hash `2b593145c232578c`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:05:17Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:05:17Z
+
+## github.com-soarsa-celnet.gui.src.data.seed.strategyLegs
+
+- **claim** (`cl\_a56ac9f13394e62e`): strategyLegs (seed.ts) returns the canonical convention-delta default legs for each StrategyKind: RISK\_REVERSAL = \[25dC BUY, 25dP SELL\]; STRANGLE = \[10dC BUY, 10dP BUY\]; STRADDLE = \[50dC BUY, 50dP BUY\]; SEAGULL = \[25dC BUY, 10dC SELL, 25dP SELL\]. All strikes use delta convention. The companion templateDefaultLegs in strategy.tsx carries an identical ladder — the docstring explicitly states the round-trip test pins them byte-for-byte.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:30Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.data.seed.strategyLegs` (hash `008c04026eaeaa29`, resolved)
+  - `github.com-soarsa-celnet.gui.src.products.strategy.templateDefaultLegs` (hash `0d64d547ba4e101b`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:30Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:30Z
+
+## github.com-soarsa-celnet.gui.src.data.seed.tenorYearsToTenor
+
+- **claim** (`cl\_cd2a3f9522cd3d5e`): tenorYearsToTenor maps a fractional-year duration to the coarsest tenor unit that covers it, using fixed thresholds: ≤2/365 → OVERNIGHT(1), \<25/365 → WEEKS(round(y×52)), \<360/365 → MONTHS(round(y×12)), else YEARS(max(1,round(y))). The result is always a non-zero-count Tenor.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:05:14Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.data.seed.tenorYearsToTenor` (hash `f59cc3302082a382`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:05:14Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:05:14Z
+
+## github.com-soarsa-celnet.gui.src.data.seed.underlyingPairProjection
+
+- **claim** (`cl\_7a946e0c81c4834a`): underlyingPairProjection extracts a CcyPair from any Underlying kind: fx uses the fx field directly; metal builds {base: METAL\_ISO\_CODE\[metal\], quote}; equity uses {ticker, currency}; commodity uses {ticker, currency}; digitalAsset uses {base, quote}. The mapping is exhaustive and allocation-minimal (no intermediate objects beyond the returned pair).
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:05:28Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.data.seed.underlyingPairProjection` (hash `3f54a247e377b28f`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:05:28Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:05:28Z
+
+## github.com-soarsa-celnet.gui.src.data.surface.legsOf
+
+- **claim** (`cl\_a0563f9e5460537d`): legsOf extracts the smile-representative strike legs from an Instrument for use in vega-weighted smile reads. It returns one leg for vanilla, singleBarrier, doubleBarrier, windowBarrier, digital, and american products (using their embedded vanilla/strike field). Strategy products return all their legs. The following product families return an empty array (ATM fallback): touch, varianceSwap, volatilitySwap, asianOption, forwardStart, cliquet, quanto, tarf, pivot, accumulator, lookback, basket, fxForward, fxSwap, ndf, perpetualOption, listedFutureOption.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:20Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.data.surface.legsOf` (hash `e70c913b655da297`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:20Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:20Z
+
+## github.com-soarsa-celnet.gui.src.data.surface.modelWingShape
+
+- **claim** (`cl\_b8aed37d4efb63b0`): modelWingShape returns per-model wing-shape coefficients (convexity, asymmetry, wingPower) used to reshape the 10d/25d smile for display. The coefficients keep ATM exact (weight 0 at ATM) and preserve the RR sign. Values: MARKET\_HEDGE=(1.0, 1.0, 2.0); STOCHASTIC\_VOL=(1.12, 0.96, 2.2); PARAMETRIC=(0.9, 1.04, 1.8); PARAMETRIC\_SURFACE=(1.04, 0.92, 2.1); EXTENDED\_SURFACE=(1.08, 1.0, 2.15).
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:36Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.data.surface.modelWingShape` (hash `4ce9ad067169453e`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:36Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:36Z
+
+## github.com-soarsa-celnet.gui.src.data.surface.sampleSmilePoints
+
+- **claim** (`cl\_239af9bd6784086d`): sampleSmilePoints performs linear interpolation of calibrated smile volatility on the signed-delta axis: it sorts smile.points by delta, clamps to the wing vols at both extremes, and for the bracketing segment \[a, b\] returns a.vol + (b.vol - a.vol) \* t where t = (delta - a.delta) / (b.delta - a.delta), guarding against zero-width spans (t = 0). Falls back to brokerQuotes.atmVol when no calibrated points exist or no bracket is found.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:05:52Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.data.surface.sampleSmilePoints` (hash `eac8d9ccdf2b484d`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:05:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:05:52Z
+
+## github.com-soarsa-celnet.gui.src.data.surface.sampleSurface
+
+- **claim** (`cl\_d45c4cfec456c8f0`): sampleSurface performs bilinear surface interpolation: it finds the bracketing tenor pair (lo, hi) in the sorted smiles array, computes weight w = (tenorYears - lo.tenorYears) / (hi.tenorYears - lo.tenorYears) (clamped to 0 for zero span), calls sampleSmilePoints for both tenors, and returns vLo + (vHi - vLo) \* w. Returns 0 for an empty surface.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:05:54Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.data.surface.sampleSurface` (hash `70c728cac9aff781`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:05:54Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:05:54Z
+
+## github.com-soarsa-celnet.gui.src.data.wsCodec.attributionFromWire
+
+- **claim** (`cl\_75addf9123f75958`): attributionFromWire decodes an optional wire 'attribution' object into an AttributionRecord. It decodes 'quotedBy', 'heldBy' (via bookIdFromWire), 'won' (boolean), and 'lpCount' (number), setting only the fields present on the wire. If none of the fields decoded, it returns undefined rather than an empty object — explicitly honoring an 'honest empty-state, not {}' contract.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:57Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.data.wsCodec.attributionFromWire` (hash `06a701c7a6cec131`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:57Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:57Z
+
+## github.com-soarsa-celnet.gui.src.data.wsCodec.attributionToWire
+
+- **claim** (`cl\_f8c2c5375c90d8e9`): attributionToWire serializes an AttributionRecord to a WireObject, omitting fields that are undefined or falsy (quotedBy/heldBy use truthiness; won/lpCount use explicit \`!== undefined\`). It is the strict inverse of attributionFromWire for any non-empty record.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:59Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.data.wsCodec.attributionToWire` (hash `270528a8e7686825`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:59Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:59Z
+
+## github.com-soarsa-celnet.gui.src.data.wsCodec.instrumentToWire
+
+- **claim** (`cl\_0ec372cf5c4982d3`): instrumentToWire serialises every Instrument variant to a WireObject using an exhaustive switch on product.kind. Proto3 zero-value fields are omitted: settlement\_style LINEAR is never emitted; pricing\_model DEFAULT is never emitted; an absent tenor emits no \`tenor\` key (perpetual option canonical shape). Every wire field name is the proto snake\_case field name, and enum values are their numeric proto tags. The function covers all 24 product arms (vanilla, strategy, singleBarrier, doubleBarrier, digital, touch, varianceSwap, volatilitySwap, asianOption, forwardStart, cliquet, quanto, tarf, pivot, accumulator, lookback, windowBarrier, american, basket, fxForward, fxSwap, ndf, perpetualOption, listedFutureOption).
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:10Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.data.wsCodec.instrumentToWire` (hash `88c5cc5ebcc81e27`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:10Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:10Z
+
+## github.com-soarsa-celnet.gui.src.data.wsCodec.nonAdditiveRiskFromWire
+
+- **claim** (`cl\_49d7842a4d15f655`): nonAdditiveRiskFromWire deserialises a NonAdditiveRisk from a WireObject using presence-tracking: each field (var, es, var\_alpha, curvature\_spot) is read via optNum and written to the output only if not undefined, so an absent wire field never produces a spurious zero on the domain object.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:46Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.data.wsCodec.nonAdditiveRiskFromWire` (hash `c7a55d723c4791c4`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:46Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:46Z
+
+## github.com-soarsa-celnet.gui.src.data.wsCodec.numToBigInt
+
+- **claim** (`cl\_e6fed65f215713b1`): numToBigInt coerces a WireObject field to bigint with three-way type dispatch: finite JS number -\> BigInt(Math.trunc(v)); already a bigint -\> returned as-is; non-empty string -\> BigInt(v) with parse errors caught and mapped to 0n. All other types (undefined, null, object) return 0n. Math.trunc ensures no rounding surprises on integer-valued floats.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:43Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.data.wsCodec.numToBigInt` (hash `2f58aedda4fe76ea`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:43Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:43Z
+
+## github.com-soarsa-celnet.gui.src.data.wsCodec.ownerFromWire
+
+- **claim** (`cl\_2d0be1b8816928a5`): ownerFromWire(o) decodes an Owner union from a wire object: if o\['owner'\] is absent or non-object it returns undefined; if o\['owner'\]\['trader'\] is a string it returns {kind:'trader', trader}; if o\['owner'\]\['autoPricer'\] is a string it returns {kind:'autoPricer', autoPricer}; otherwise undefined. Never fabricates a value.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:22Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.data.wsCodec.ownerFromWire` (hash `d2197b48bab947c1`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:22Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:22Z
+
+## github.com-soarsa-celnet.gui.src.data.wsCodec.quoteFromWire
+
+- **claim** (`cl\_57b196f4abd39cdc`): quoteFromWire(o) deserializes a wire Quote object. The required fields (quoteId, idempotencyKey, price, greeks, conventions, resolvedStrike, epochNanos, validUntilNanos) are always decoded. Optional fields correlationId, surfaceVersion, attribution, and priceStdError are decoded only when present on the wire object, preserving the invariant that closed-form products never carry priceStdError.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:01Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.data.wsCodec.quoteFromWire` (hash `81ff60946f26a26d`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:01Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:01Z
+
+## github.com-soarsa-celnet.gui.src.data.wsCodec.requoteLargeIntegers
+
+- **claim** (`cl\_e2390f80b5541277`): requoteLargeIntegers(raw) is a single-pass state machine that rewrites JSON integer literals exceeding the JS safe integer range into quoted strings (so JSON.parse yields strings that numToBigInt can recover as bigint), while leaving string contents, fractional numbers, exponent numbers, and structure tokens untouched. It tracks in-string state to skip digits inside JSON string values.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:11Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.data.wsCodec.requoteLargeIntegers` (hash `9d8b29aef87be6ca`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:11Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:11Z
+
+## github.com-soarsa-celnet.gui.src.data.wsCodec.snapshotFromWire
+
+- **claim** (`cl\_dcbf7d4a7942d736`): snapshotFromWire decodes a WireObject into a Snapshot by composing typed sub-decoders: subscriptionIdFromWire, numToBigInt (sequence, epochNanos), twoWayFromWire (price), greeksFromWire, num (vol, resolvedStrike), conventionsFromWire, tradableVec. Optional fields (surfaceVersion, correlationId, attribution) are attached only when present in the wire object via optBigInt / attributionFromWire.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:23Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.data.wsCodec.snapshotFromWire` (hash `cf95b5e1ce0c6b2a`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:23Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:23Z
+
+## github.com-soarsa-celnet.gui.src.data.wsCodec.underlyingToWire
+
+- **claim** (`cl\_80ed28c66feaf5d9`): underlyingToWire serialises an Underlying to a WireObject: it exhaustively matches all five Underlying kinds, propagating the settlementCcy field on every arm. The metal arm additionally converts the metal enum via e.metal.toWire(); all other fields are copied verbatim. The function is pure and has exactly one caller.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:05:30Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.data.wsCodec.underlyingToWire` (hash `9f5689a7cae13b90`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:05:30Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:05:30Z
+
+## github.com-soarsa-celnet.gui.src.data.wsTransport.subscriptionIdOf
+
+- **claim** (`cl\_652c6b9a5d25d9c2`): subscriptionIdOf extracts the subscription id from a WireObject as a bigint: it reads o\['subscription'\]\['value'\], accepting both number (coerced via BigInt()) and bigint; returns undefined for absent, non-object, or non-numeric values. This is the sole path by which server RFS frames are correlated to local subscriptions.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:43Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.data.wsTransport.subscriptionIdOf` (hash `1fb6ec6d55cd7285`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:43Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:43Z
+
+## github.com-soarsa-celnet.gui.src.hooks.useStreamSession.distillObservability
+
+- **claim** (`cl\_a2eff9c1b33372d0`): distillObservability reduces a Map\<bigint,Heartbeat\> into a ServerObservability by accumulating the sum of all conflationDrops, the worst (max) serverPriceP99Nanos across all beats, and the most-recent beat (highest epochNanos) for surfaceVersion/correlationId. An empty map returns the constant EMPTY\_OBSERVABILITY without allocating.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:32Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.hooks.useStreamSession.distillObservability` (hash `f544ec90137dc66b`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:32Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:32Z
+
+## github.com-soarsa-celnet.gui.src.hooks.useStreamSession.rejectText
+
+- **claim** (`cl\_9a6002bbc2b02a5e`): rejectText(reason) is an exhaustive pure map from the three last-look rejection reasons to human-readable strings: EXPIRED→'last-look window expired', UNKNOWN\_TOKEN→'token no longer live', ALREADY\_CONSUMED→'already traded'.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:09Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.hooks.useStreamSession.rejectText` (hash `12436de68914dd8b`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:09Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:09Z
+
+## github.com-soarsa-celnet.gui.src.lib.assetUniverse.searchUnderliers
+
+- **claim** (`cl\_20591ba1d49a6c1d`): searchUnderliers filters and ranks UnderlierRow entries with a two-stage fuzzy match: the query must subsequence-match row.haystack (miss → excluded), and highlight indices are taken from the match against row.label (if the label doesn't match, indices are \[\]). Empty query returns all rows with score 0. Results are sorted descending by score then ascending by label.localeCompare.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:10Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.lib.assetUniverse.searchUnderliers` (hash `258d889f548b4ca8`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:10Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:10Z
+
+## github.com-soarsa-celnet.gui.src.lib.assetUniverse.underlierAssetClass
+
+- **claim** (`cl\_00c8292a93fd25b2`): underlierAssetClass is a pure total function that maps every Underlying.kind discriminant to its AssetClass string: fx→'FX', metal→'METAL', equity→'EQUITY', commodity→'COMMODITY', digitalAsset→'CRYPTO'. The switch is exhaustive.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:05:25Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.lib.assetUniverse.underlierAssetClass` (hash `a914727454d3f842`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:05:25Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:05:25Z
+
+## github.com-soarsa-celnet.gui.src.lib.commands.buildCommands
+
+- **claim** (`cl\_9ed3ebe3b6a64e9c`): buildCommands constructs the live Command array from COMMAND\_META, filtering out any command whose action is unavailable in the current CommandContext (e.g. 'scope-drill-down' when canDrillScope is false). Workspace-jump commands are generated from the RAIL constant (one per rail entry, id 'ws-{r.id}'). The output order mirrors COMMAND\_META order, not the insertion order of the action map.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:11Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.lib.commands.buildCommands` (hash `d4744e25d21f76ac`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:11Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:11Z
+
+## github.com-soarsa-celnet.gui.src.lib.commands.resolveChord
+
+- **claim** (`cl\_be9fcb03621660bc`): resolveChord(e, digitCount) resolves a keyboard event to a command id (and optional rail index) by matching against COMMAND\_META chord definitions. Three chord kinds are supported: 'meta' (meta+fixed key), 'metaDigit' (meta+1–9, producing ws-\<railId\> + railIndex when idx \< digitCount), and 'plain' (bare key). Returns null if no chord matches.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:14Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.lib.commands.resolveChord` (hash `45c82f064e7b8ffb`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:14Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:14Z
+
+## github.com-soarsa-celnet.gui.src.lib.format.deltaConvChip
+
+- **claim** (`cl\_1d044891b5494109`): deltaConvChip is a pure, exhaustive mapping from the four DeltaConvention enum values to their display strings: SPOT\_UNADJUSTED→"spot Δ", FORWARD\_UNADJUSTED→"fwd Δ", SPOT\_PREMIUM\_ADJUSTED→"spot Δ pa", FORWARD\_PREMIUM\_ADJUSTED→"fwd Δ pa".
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:16Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.lib.format.deltaConvChip` (hash `16eb210685f62ca6`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:16Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:16Z
+
+## github.com-soarsa-celnet.gui.src.lib.format.fmtPnlAdaptive
+
+- **claim** (`cl\_2c78ee0a45116553`): fmtPnlAdaptive formats a number into a compact signed string with adaptive scale: \|value\| ≥ 1,000,000 → 'm' suffix (1 decimal unless ≥ 10M where 0); ≥ 1,000 → 'k' suffix (1 decimal unless ≥ 10k where 0); ≥ 1 → integer; \< 1 → 2 decimal places. The sign prefix is '−' (Unicode minus) for negatives, '+' for positives, and empty for zero. Returns "0" for exact zero.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:58Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.lib.format.fmtPnlAdaptive` (hash `67463ec084b11a17`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:58Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:58Z
+
+## github.com-soarsa-celnet.gui.src.lib.format.premiumChip
+
+- **claim** (`cl\_2bc06622c5978f8b`): premiumChip(c) is an exhaustive pure map from PremiumStyle to its short display label: DOMESTIC\_PIPS→'dom pips', PERCENT\_FOREIGN→'% for', PERCENT\_DOMESTIC→'% dom', FOREIGN\_PIPS→'for pips'.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:37Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.lib.format.premiumChip` (hash `057d8c4abab1cebb`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:37Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:37Z
+
+## github.com-soarsa-celnet.gui.src.lib.format.premiumUnit
+
+- **claim** (`cl\_232d0e49f4c76e10`): premiumUnit(c) maps Conventions.premiumStyle to its unit suffix string: PERCENT\_FOREIGN→'%', PERCENT\_DOMESTIC→'% dom', DOMESTIC\_PIPS→'pips', FOREIGN\_PIPS→'for pips'.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:39Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.lib.format.premiumUnit` (hash `bc0d3d16e24a9134`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:39Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:39Z
+
+## github.com-soarsa-celnet.gui.src.lib.format.sideVerb
+
+- **claim** (`cl\_8e5dc9678017dad7`): sideVerb is an exhaustive pure mapping from the three-variant Side union to display strings: BUY → 'Buy', SELL → 'Sell', TWO\_WAY → 'Two-way'. No default branch — TypeScript exhaustiveness is enforced.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:19Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.lib.format.sideVerb` (hash `4246e12d558b4873`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:19Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:19Z
+
+## github.com-soarsa-celnet.gui.src.lib.grid.columnWindow
+
+- **claim** (`cl\_74150cbbd208e4a4`): columnWindow computes a virtualised column render window from prefix-sum column edges. It returns the first/last rendered column indices (with one overscan column on each side by default), the total grid width, and padLeft/padRight pixel amounts for CSS padding. When viewport is 0 (pre-measure), the right boundary is set to the edge of the overscan-head columns so the grid paints enough columns to measure. The result satisfies \`padLeft + sum(widths\[start..end\]) + padRight == totalWidth\`.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:34Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.lib.grid.columnWindow` (hash `8e40ad5dc1fd5eff`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:34Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:34Z
+
+## github.com-soarsa-celnet.gui.src.lib.grid.flattenGroups
+
+- **claim** (`cl\_8403f79454492c81`): flattenGroups is a generic variant of flatten for the DataGrid layer: it emits a group header (with key, label, and row count) for every RowGroup, then emits data rows for each group only if isCollapsed(model, g.key) is false. The group header always carries the count of total rows regardless of collapse state.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:54Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.lib.grid.flattenGroups` (hash `609891e9b3b764b3`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:54Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:54Z
+
+## github.com-soarsa-celnet.gui.src.lib.grid.moveRoving
+
+- **claim** (`cl\_90c070dab15bdefe`): moveRoving is a pure state reducer that moves the roving-focus cell within a grid. It maps RovingKey to a (nextRow, nextCol) displacement, then clamps: row is clamped to \[HEADER\_ROW, max(HEADER\_ROW, rowCount-1)\]; col is clamped to \[0, colCount-1\]. Ctrl+Home targets (0, 0) (row then clamped to HEADER\_ROW); Ctrl+End moves to (lastRow, lastCol). PageUp/PageDown step by pageSize (minimum 1). Returns identity if colCount \<= 0.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:40Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.lib.grid.moveRoving` (hash `672e4c978f691d85`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:40Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:40Z
+
+## github.com-soarsa-celnet.gui.src.lib.savedViews.decodeView
+
+- **claim** (`cl\_2e31038da9612ea9`): decodeView is the inverse of encodeView: it parses a URLSearchParams (or query string) into a ViewState by delegating scope to decodeScopePath and guarding workspace/groupBy with type-narrowing predicates. Absent optional analytics keys (model/measures/axes/trend) produce an empty AnalyticsSelection, never undefined fields with placeholder values. An unrecognised workspace token defaults to "stream".
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:13Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.lib.savedViews.decodeView` (hash `90263bbff29af003`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:13Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:13Z
+
+## github.com-soarsa-celnet.gui.src.lib.savedViews.encodeView
+
+- **claim** (`cl\_3c66d84b438c39d8`): encodeView is the inverse of decodeView: it serialises a ViewState into a URLSearchParams by always writing the workspace key, conditionally writing scope (only if non-empty) and groupBy (only if not "none"), and conditionally writing each of the four analytics keys (model/measures/axes/trend) only when present. The zero-default-omission policy ensures round-trippable minimal query strings.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:42Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.lib.savedViews.encodeView` (hash `ed498f7f857ebc28`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:42Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:42Z
+
+## github.com-soarsa-celnet.gui.src.lib.scope.decodeScopePath
+
+- **claim** (`cl\_8d73b20cf2fb689d`): decodeScopePath parses a '\>'-separated token into a ScopeNode\[\] path always rooted at FIRM\_SCOPE\_ROOT. Each crumb must be exactly one level below the current tail (strict descending walk); any crumb that fails the isScopeLevel or childLevel check is silently dropped, making the parser tolerant of corrupt tokens while always returning a valid, rooted path.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:10Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.lib.scope.decodeScopePath` (hash `f1021d6bd5bd389a`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:10Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:10Z
+
+## github.com-soarsa-celnet.gui.src.lib.scope.scopeReducer
+
+- **claim** (`cl\_a1bd4117c3768cd7`): scopeReducer is a pure Redux-style reducer over ScopeState. drillDown appends a child level only when childLevel returns non-null (terminal pair level is a no-op). drillUp slices the path to the clamped depth and calls reconcileGroupBy to relax the groupBy axis. setGroupBy is idempotent (returns same state reference when groupBy is unchanged). reset always returns INITIAL\_SCOPE.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:07Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.lib.scope.scopeReducer` (hash `df3683289d1b38aa`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:07Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:07Z
+
+## github.com-soarsa-celnet.gui.src.lib.trend.tenorForYears
+
+- **claim** (`cl\_1f3a3a27ef1da8c3`): tenorForYears converts a year fraction to the canonical Tenor struct using threshold-based bucketing: non-finite or \<= ONE\_BIZ\_DAY\_YEARS+EPS → OVERNIGHT/1; days \< 28-EPS → WEEKS/round(days/7); years \< 1-EPS → MONTHS/round(years\*12); otherwise YEARS/round(years). All counts are clamped to a minimum of 1 via Math.max.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:52Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.lib.trend.tenorForYears` (hash `a48f09f0e548069b`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:52Z
+
+## github.com-soarsa-celnet.gui.src.lib.trend.tenorLabel
+
+- **claim** (`cl\_878710234c7afdaa`): tenorLabel formats a year fraction as a trader display string using FX market conventions: ON / TN / SN for the three overnight/tom-next/spot-next thresholds; nW for weeks (\< 28 days); nM for months clamped to 11 (\< 1 year); nY for whole years (within 0.02y); n.1Y for fractional years. Non-finite or non-positive input returns '—'.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:03Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.lib.trend.tenorLabel` (hash `c1862e8fbd061a19`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:03Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:03Z
+
+## github.com-soarsa-celnet.gui.src.lib.trend.tenorYearsOf
+
+- **claim** (`cl\_8f04f851b779150b`): tenorYearsOf converts every Tenor unit to a year fraction using exact or approximated calendar conventions: OVERNIGHT = ONE\_BIZ\_DAY\_YEARS; TOM\_NEXT = TN\_YEARS; SPOT\_NEXT = SN\_YEARS; WEEKS = count\*7/365; MONTHS = count/12; YEARS = count; IMM = Math.max(1,count)\*0.25 (display approximation — server resolves the true 3rd-Wednesday date); BROKEN\_DATE = 1/12 (approximation — server resolves the real date).
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:07Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.lib.trend.tenorYearsOf` (hash `a27b96c8c0ab4c38`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:07Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:07Z
+
+## github.com-soarsa-celnet.gui.src.lib.universe.searchUniverse
+
+- **claim** (`cl\_4eadc77f0c9ecccb`): searchUniverse applies the same two-stage fuzzy match as searchUnderliers but over Universe.all (CcyPair entries): haystack match gates inclusion, label match provides highlight indices (empty when the label doesn't match), sorted by score desc then label.localeCompare asc. When the query is empty all pairs are returned with score 0 and no highlight.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:13Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.lib.universe.searchUniverse` (hash `e5360c9392457732`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:13Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:13Z
+
+## github.com-soarsa-celnet.gui.src.products.PayoffChart.describeShape
+
+- **claim** (`cl\_8bb83630f60140ff`): describeShape classifies a payoff vector into exactly three shapes based on the min/max over the payoff array: all-non-positive (max≤0 and min\<0) → "capped-downside"; all-non-negative (min≥0 and max\>0) → "limited-downside"; otherwise → "two-sided". The direction prefix is "short" for SELL and "long" otherwise. The result is used as an aria-label.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:18Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.products.PayoffChart.describeShape` (hash `e8104b7cdaebd370`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:18Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:18Z
+
+## github.com-soarsa-celnet.gui.src.products.PayoffChart.payoffAtExpiry
+
+- **claim** (`cl\_871ec4386d5b47ef`): payoffAtExpiry(structureId, params, spotGrid) maps payoffAt over the entire spotGrid, returning null early if any spot returns null (non-terminal structure) or the structureId is absent from TERMINAL\_STRUCTURES.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:28Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.products.PayoffChart.payoffAtExpiry` (hash `74817afdce6e8db0`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:28Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:28Z
+
+## github.com-soarsa-celnet.gui.src.products.basket.basketInceptionAggregate
+
+- **claim** (`cl\_f72e579163748c6d`): basketInceptionAggregate computes the inception aggregate level for a basket: \`Σ(weight\_a \* spot\_a)\` for BASKET, \`max(weight\_a \* spot\_a)\` for BEST\_OF, \`min(weight\_a \* spot\_a)\` for WORST\_OF (0 for an empty leg list). This is the natural at-the-money strike default so the basket prices roughly at-the-money on first build.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:05Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.products.basket.basketInceptionAggregate` (hash `d15cfc815c2eb08e`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:05Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:05Z
+
+## github.com-soarsa-celnet.gui.src.products.capability.classForUnderlying
+
+- **claim** (`cl\_2b12122c4aea4255`): classForUnderlying is an exhaustive, pure switch from the five Underlying kind discriminants to their AssetClass string: 'fx' → 'FX', 'metal' → 'METAL', 'equity' → 'EQUITY', 'commodity' → 'COMMODITY', 'digitalAsset' → 'CRYPTO'. TypeScript exhaustiveness ensures any new Underlying kind produces a compile error.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:22Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.products.capability.classForUnderlying` (hash `7ae219c85b429a3b`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:22Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:22Z
+
+## github.com-soarsa-celnet.gui.src.products.capability.galleryCardStates
+
+- **claim** (`cl\_d812a29251209a51`): galleryCardStates returns a Map\<id,CardState\> for the product gallery filtered to an AssetClass. FX and METAL pass all specs through as "available" (full FX engine, no dimming). For equity/commodity/crypto: a spec is "available" if its builder classes include the target class; "hidden" if a sibling spec of the same kind IS available for that class (prevents duplicate cards); otherwise the capability reason from priceability() is used, with "priceable" mapped to "hidden".
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:07Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.products.capability.galleryCardStates` (hash `3f82721fb81529fe`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:07Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:07Z
+
+## github.com-soarsa-celnet.gui.src.products.crossAsset.crossAssetInputsFor
+
+- **claim** (`cl\_7c38976fe20bf962`): crossAssetInputsFor maps a non-FX Underlying to a CrossAssetInputs overlay — FX always returns null; metal/equity/commodity always force settlementStyle to "LINEAR" regardless of the caller-supplied argument; digitalAsset (crypto) preserves the caller's settlementStyle. Returns null for FX underlyings.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:02Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.products.crossAsset.crossAssetInputsFor` (hash `c5ad74cd610cabff`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:02Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:02Z
+
+## github.com-soarsa-celnet.gui.src.products.crossAsset.crossAssetOverlayFor
+
+- **claim** (`cl\_e40acdf9820cb8b1`): crossAssetOverlayFor returns a CrossAssetOverlay (carrying the underlying + settlementStyle) only for equity, commodity, and digitalAsset underlyings; it returns undefined for fx and metal, because those route to the native FX engine and require no cross-asset overlay.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:04Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.products.crossAsset.crossAssetOverlayFor` (hash `0ac49b5b700cef5f`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:04Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:04Z
+
+## github.com-soarsa-celnet.gui.src.products.crossAsset.crossAssetUnderlying
+
+- **claim** (`cl\_3cd0e301fe465f81`): crossAssetUnderlying is a total, pure bijection from CrossAssetInputs to an Underlying discriminated union: EQUITY → {kind:"equity", equity:{symbol:{ticker,venue},currency}}, COMMODITY → {kind:"commodity", commodity:{symbol:{ticker,venue},currency}}, CRYPTO → {kind:"digitalAsset", digitalAsset:{base,quote}}, METAL → {kind:"metal", metal:{metal,quote}}. All string fields are normalised via .trim().toUpperCase() before packing. It is the exact inverse of crossAssetInputsFor for the non-FX cases.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:00Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.products.crossAsset.crossAssetUnderlying` (hash `14f9b08f822a08c6`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:00Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:00Z
+
+## github.com-soarsa-celnet.gui.src.products.strategyLegEditor.legLawMessage
+
+- **claim** (`cl\_d97aa8b91d22f776`): legLawMessage maps each LegLawViolation variant to a trader-facing English string. For LEG\_COUNT it computes the signed difference (actual - required) and directs the user to add or remove the exact number of legs. All other cases return fixed strings that name the violated constraint and how to fix it. The function is total over the LegLawViolation discriminant union.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:16Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.products.strategyLegEditor.legLawMessage` (hash `8f6d10458f72a2c0`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:16Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:16Z
+
+## github.com-soarsa-celnet.gui.src.products.strategyLegEditor.legLawViolations
+
+- **claim** (`cl\_2484207dbd65f11a`): legLawViolations checks strategy structural rules in order: (1) every leg must have ratio \> 0 (POSITIVE\_RATIO, per-leg); (2) leg count must match templateLegCount(template) — if not, returns early with only count + ratio violations; (3) pairwise laws are only applied once the count is correct. RISK\_REVERSAL requires opposite option types and opposite sides; STRANGLE/STRADDLE require opposite types and same side, with STRADDLE requiring a shared strike and STRANGLE requiring distinct strikes; SEAGULL requires at least one CALL and one PUT leg, and at least one BUY and one SELL leg.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:13Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.products.strategyLegEditor.legLawViolations` (hash `afbcb957a9651ddc`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:13Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:13Z
+
+## github.com-soarsa-celnet.gui.src.products.strategyLegEditor.parseStrikeEntry
+
+- **claim** (`cl\_9e3936997181a6be`): parseStrikeEntry(raw, optionType) parses a trader strike input string into a typed StrikeEntry result. 'ATM' maps to a delta strike of ±0.5 (sign = optionType). A positive finite number becomes an absolute strike level. A delta notation 'NNc'/'NNp' (e.g. '25C') is accepted only when pct ∈ (0,100) and the letter matches optionType; the signed delta is +(pct/100) for calls and -(pct/100) for puts. Every invalid case returns ok:false with a discriminated error kind (EMPTY, NON\_POSITIVE\_LEVEL, UNRECOGNIZED, DELTA\_OUT\_OF\_RANGE, DELTA\_LETTER\_MISMATCH).
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:26Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.products.strategyLegEditor.parseStrikeEntry` (hash `076500bccf693157`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:26Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:26Z
+
+## github.com-soarsa-celnet.gui.src.products.strategyLegEditor.strikeEntryMessage
+
+- **claim** (`cl\_fcfdf1bd662d44ef`): strikeEntryMessage maps every StrikeEntryError variant to a precise, actionable trader-facing string. DELTA\_LETTER\_MISMATCH includes both the mismatched raw input and the correct suffix ('dC' or 'dP') for the actual leg option type, derived from e.optionType.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:32Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.products.strategyLegEditor.strikeEntryMessage` (hash `03a9f19e8fa81b32`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:32Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:32Z
+
+## github.com-soarsa-celnet.gui.src.products.strategyLegEditor.templateName
+
+- **claim** (`cl\_86da670deaa4f317`): templateName maps every StrategyTemplate variant to its trader-facing display string: VANILLA → 'vanilla', RISK\_REVERSAL → 'risk reversal', STRANGLE → 'strangle', STRADDLE → 'straddle', SEAGULL → 'seagull'. Exhaustive switch — no default.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:49Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.products.strategyLegEditor.templateName` (hash `79557541a223f6bd`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:49Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:49Z
+
+## github.com-soarsa-celnet.gui.src.workspaces.BookWorkspace.mergeVegaLadder
+
+- **claim** (`cl\_ba283c6fa19812f8`): mergeVegaLadder aggregates vega ladder entries across all RiskNodes into a single book-level ladder keyed by \`${tenorDays}\|${deltaBp}\`. Entries with the same pillar key are summed. The output is sorted ascending by tenorDays, with ties broken by descending \|vega\| (largest absolute exposure first).
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:29Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.workspaces.BookWorkspace.mergeVegaLadder` (hash `4f63184dc4ebb221`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:29Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:29Z
+
+## github.com-soarsa-celnet.gui.src.workspaces.CubeWorkspace.metricByTenor
+
+- **claim** (`cl\_e857452bb6cd1a16`): metricByTenor derives ATM vol, 25-delta risk-reversal, and 25-delta butterfly per tenor from a calibrated CubeGrid using purely arithmetic recombination of the server's already-calibrated smile pillars: RR25 = call(+0.25d) - put(-0.25d); BF25 = 0.5\*(call+put) - ATM(-0.5d). Tenors are matched within +/-2/365 years; delta pillars within +/-1e-6. A null is returned for any tenor missing the required pillars. This is a read-only display derivation, not a re-calibration.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:33Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.workspaces.CubeWorkspace.metricByTenor` (hash `90c6ac29236abea0`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:33Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:33Z
+
+## github.com-soarsa-celnet.gui.src.workspaces.CubeWorkspace.valueBand
+
+- **claim** (`cl\_1be3a879e8041e6d`): valueBand scans a nullable number array and returns the {min,max} range, or null when the array contains no finite values. For a degenerate single-value array it manufactures a non-zero band: signed values get {-\|v\|‖-1e-6, \|v\|‖1e-6}, unsigned get {v, v+1e-6}, so consumers always have a valid gradient range.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:09Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.workspaces.CubeWorkspace.valueBand` (hash `4f8eda8620a0293e`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:09Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:09Z
+
+## github.com-soarsa-celnet.gui.src.workspaces.CubeWorkspace.volBand
+
+- **claim** (`cl\_1a3d32d86e318cee`): volBand scans all cells of a CubeGrid and returns the strict {min,max} vol range, returning null when the grid is null, has no finite values, or all cells share the same vol (max \> min required). It does not manufacture a synthetic band for the degenerate case.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:06:12Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.workspaces.CubeWorkspace.volBand` (hash `068e86cc58aeab6b`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:06:12Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:06:12Z
+
+## github.com-soarsa-celnet.gui.src.workspaces.StreamWorkspace.buildGroups
+
+- **claim** (`cl\_6fe74a3cb420b25a`): buildGroups partitions StreamRows by the GroupBy key (via groupKeyOf), preserving first-seen stream order across groups so the desk taxonomy is stable under live ticks. Within each group, rows are sorted by the active SortState (ascending or descending by rowSortValue) only when a sort is active; otherwise group-row order is preserved. Each group carries an aggregate computed over its original (pre-sort) rows.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:14Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.workspaces.StreamWorkspace.buildGroups` (hash `d4e89bc02863f002`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:14Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:14Z
+
+## github.com-soarsa-celnet.gui.src.workspaces.StreamWorkspace.flatten
+
+- **claim** (`cl\_6db0634dce549de1`): flatten (StreamWorkspace) produces a single FlatItem\[\] list from groups and a collapsed set: every group always contributes a header item; a group's row items are included only if its id is not in the collapsed set. This is the input to the single virtualiser that windows the whole stream workspace.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:50Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.workspaces.StreamWorkspace.flatten` (hash `93392904b80ade4c`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:50Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:50Z
+
+## github.com-soarsa-celnet.gui.src.workspaces.StreamWorkspace.fmtTrendValue
+
+- **claim** (`cl\_60eb4b2a8581f010`): fmtTrendValue dispatches formatting by TrendUnit: "premium" → fmtPremiumPct, "vol" → fmtVolPoint, "rate" → fmtRate, "vega"/"pnl" → value.toFixed(2). Each TrendUnit maps to exactly one formatter with no shared default.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:00Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.workspaces.StreamWorkspace.fmtTrendValue` (hash `27f734301924f54d`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:00Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:00Z
+
+## github.com-soarsa-celnet.gui.src.workspaces.StreamWorkspace.rowSortValue
+
+- **claim** (`cl\_8e65416ed3c630b9`): rowSortValue extracts a single numeric scalar from a StreamRow for three mutually-exclusive sort keys: 'mid' returns (bid + offer) / 2, 'delta' returns greeks.deltaSpot, and 'sigma' returns row.vol. The switch is exhaustive over the SortKey union — no default branch exists.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:05:46Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.workspaces.StreamWorkspace.rowSortValue` (hash `b31b996f0a61a0a0`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:05:46Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:05:46Z
+
+## github.com-soarsa-celnet.gui.src.workspaces.StreamWorkspace.tenorLabel
+
+- **claim** (`cl\_226f67ef60482915`): StreamWorkspace.tenorLabel formats a StreamRow's Tenor struct to a display string, returning 'PERP' for perpetual options (no tenor). For other units it formats OVERNIGHT→ON, TOM\_NEXT→TN, SPOT\_NEXT→SN, WEEKS→nW, MONTHS→nM, YEARS→nY, IMM→nIMM, BROKEN\_DATE→ISO-date string (YYYY-MM-DD with zero-padded month/day) or 'broken' when brokenDate is absent.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:03Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.workspaces.StreamWorkspace.tenorLabel` (hash `1c50ed71d3746506`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:03Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:03Z
+
+## github.com-soarsa-celnet.gui.src.workspaces.StreamWorkspace.trendUnitCaption
+
+- **claim** (`cl\_c0a3f2afa2dacd5e`): trendUnitCaption is a pure total function from TrendMode to a human-readable unit string, covering all 8 modes: PREMIUM→'premium', ATM\_VOL→'ATM vol', RR→'25Δ RR', BF→'25Δ BF', SPOT→'spot', FORWARD→'fwd', VEGA→'vega', PNL→'P&L'. The switch is exhaustive with no default fallback.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:05:20Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.workspaces.StreamWorkspace.trendUnitCaption` (hash `a6c3f67e50a627af`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:05:20Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:05:20Z
+
+## github.com-soarsa-celnet.gui.src.workspaces.TicketWorkspace.previewStrike
+
+- **claim** (`cl\_960eac0c134b26d4`): previewStrike(inputs, atmForward) extracts the primary chart kink strike from type-erased instrument inputs: it first looks for a top-level numeric 'strike' field \> 0, then walks the 'legs' array for the first leg with a 'strike.kind===\\"strike\\"' entry with a positive numeric value, and falls back to atmForward if neither is found.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:07:42Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.src.workspaces.TicketWorkspace.previewStrike` (hash `5ee8560ff8b5a24f`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:07:42Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:07:42Z
+
+## github.com-soarsa-celnet.gui.test.scope.test.refReducer
+
+- **claim** (`cl\_f9dfe55dc4573c65`): refReducer(state, action) is a reference implementation of the scope reducer used in tests. It is structurally independent of the production reducer: 'reset' returns a fixed firm-root path; 'setGroupBy' returns unchanged path with new groupBy; 'drillDown' appends the next LADDER level if not already at the terminal; 'drillUp' clamps depth to \[1, path.length\] and applies refRelax to the resulting shorter path.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T06:08:06Z
+- **anchors**:
+  - `github.com-soarsa-celnet.gui.test.scope.test.refReducer` (hash `5b857790e6ee414d`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T06:08:06Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T06:08:06Z
 
 
