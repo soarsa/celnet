@@ -3,7 +3,8 @@
     "lodestar": {
       "command": "lodestar",
       "env": {
-        "LODESTAR_PROPOSALS": "1"
+        "LODESTAR_PROPOSALS": "1",
+        "LODESTAR_AUTHOR": "celnet-knowledge"
       }
     }
   }
