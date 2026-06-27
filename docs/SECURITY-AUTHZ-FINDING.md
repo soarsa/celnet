@@ -1,8 +1,21 @@
-# Security finding — caller authorization is not a cross-cut (VERIFIED, open)
+# Security finding — caller authorization is not a cross-cut (VERIFIED)
 
 Surfaced by the architecture determination, then **adversarially verified** (refute-default,
-source-cited) 2026-06-27. Status: **CONFIRMED**. Also recorded as an `adr` claim in lodestar
-(anchored to `Session::handle_execute` / `handle_subscribe`).
+source-cited) 2026-06-27. Status: **CONFIRMED → stream/WS REMEDIATED 2026-06-27** (quote-accept
+binding + risk `principal∩desk_scope` hardening remain as a tracked lower-severity follow-up).
+Also recorded as an `adr` claim in lodestar (anchored to `Session::handle_execute` / `handle_subscribe`).
+
+## Remediation status (stream/WS — the headline hole)
+The unauthenticated-subscribe/execute exposure is **closed end-to-end** on `security/authz-cross-cut`:
+the server pins a `ResolvedCaller` from a `StreamAuth` `Authenticate` frame and enforces one gate
+(`authorize_caller(ReadAny)`) before subscribe/modify/execute/resync on **both** the gRPC stream
+(`Session::handle_client_message`) and the **WS mirror** (`ws::decode_stream_control` +
+`is_stream_control` routing); all five clients (SDK, CLI, GUI, Excel) send the frame **first** on
+every (re)connect with the audited grant-all default. Validated live under `AccessMode::Enforce`:
+GUI Playwright/axe **165/165** (incl. click-to-trade streaming), Excel e2e **122/122**, plus new
+Enforce unit/integration tests. A live-e2e-caught bug (the WS `authenticate` frame fell through to
+`handle_unary`, leaving WS sessions anonymous) was fixed with a single routing source-of-truth +
+lockstep regression tests.
 
 ## The exposure
 Any client that completes the **WS handshake** — or opens a gRPC **StreamSession** — gets a
@@ -17,26 +30,36 @@ server-minted last-look token, which the same unauthenticated session is handed 
 |---|---|---|
 | gRPC FixAdminService | **ENFORCED** (genuine baseline) | every RPC: `resolve_caller` + `authorize_caller(Admin)` + server-side `desk_scope` (`services/fix_admin.rs`) |
 | gRPC RiskService | **ENFORCED (role) — entitlement caller-asserted** | `risk/mod.rs:718` gates role; but `aggregate_risk_impl:344`/`drill_risk_impl:401` prune by **body `req.principal`**, and `convert::principal_of:93` maps an omitted principal → `grant_all` (whole-firm) |
-| gRPC StreamService | **UNGATED (fully open)** | `stream_session:496` gates only `is_ready()`; `Session:834` has no principal/token field; `handle_subscribe:929` / `handle_execute:1135` perform no caller check (last-look token only) |
-| WS RFS stream (`dispatch`→`rfs_in_tx`) | **UNGATED (fully open)** | `ws/serve_connection:269` accepts the socket with no auth handshake; same principal-free `Session` |
+| gRPC StreamService | **ENFORCED (REMEDIATED)** | `Session` now holds `caller: ResolvedCaller` pinned from the `Authenticate` frame; one gate `authorize_caller(self.access_mode, &self.caller, ReadAny)` runs before subscribe/modify/execute/resync; anonymous rejected under `Enforce` |
+| WS RFS stream (`dispatch`→`rfs_in_tx`) | **ENFORCED (REMEDIATED)** | `decode_stream_control` decodes `authenticate`; `is_stream_control` routes it to the SAME `Session` gate; the WS mirror enforces identically to gRPC |
 | WS unary RPCs (`handle_unary`) | **mirrors the service** | `ws/mod.rs:538` — token/principal ride in the body, so risk/fix-admin stay gated, pricing/quote stay ungated (no token-stripping bug) |
 | PricingService (`price`) | **UNGATED — plausibly by-design (public)** | `services/pricing.rs:84` — readiness only; pricing a hypothetical with client-supplied market is reasonably public |
 | QuoteService (`accept_quote`) | **UNGATED** | `quote.rs:684` — idempotency-key + last-look + panel-line integrity, but no caller/desk entitlement |
 
 ## Minimal fix (one seam, not per-handler)
-1. **Stream/WS:** authenticate the session open — give `Session` a `caller: ResolvedCaller` set
-   once (validate a `session_token` at `stream_session`/`serve_connection` before `session_driver`
-   runs); have `handle_subscribe`/`handle_execute`/`handle_modify` check the caller's `desk_scope`
-   against the instrument's desk; reject anonymous sessions under `Enforce`.
-2. **Pricing/Quote:** if not intentionally public, add the same `resolve_caller`+`authorize_caller(ReadAny)`
+1. ✅ **DONE — Stream/WS:** authenticate the session open — `Session` carries a `caller: ResolvedCaller`
+   pinned once from the `Authenticate` frame; one `authorize_caller(ReadAny)` gate runs before
+   subscribe/modify/execute/resync on the gRPC stream AND the WS mirror; anonymous rejected under
+   `Enforce`. All five clients authenticate-first (grant-all default). Live-validated under Enforce.
+2. ⤷ **FOLLOW-UP — Pricing/Quote:** if not intentionally public, add the same `resolve_caller`+`authorize_caller(ReadAny)`
    two-liner; bind `accept_quote` to the requester's resolved principal, not just the idempotency key.
-3. **Risk hardening:** intersect body `req.principal` with the session-derived `desk_scope` in
-   `aggregate_risk_impl`/`drill_risk_impl` so an omitted principal cannot widen to `grant_all`.
+3. ⤷ **FOLLOW-UP — Risk hardening:** intersect body `req.principal` with the session-derived `desk_scope`
+   in `aggregate_risk_impl`/`drill_risk_impl` so an omitted principal cannot widen to `grant_all`.
 
 A single tonic interceptor + a WS pre-handshake auth check producing a `ResolvedCaller` threaded
 into the session is the uniform cross-cut the codebase currently lacks.
 
-## Client-side counterpart (SDK + CLI)
+## Client-side counterpart (SDK + CLI + GUI + Excel + WS mirror)
+**GUI** (`gui/src/data/wsTransport.ts`): `WsConnection.open`'s `onopen` sends `{type:"authenticate",
+principal: principalOrGrantAllToWire(undefined), session_token?}` as the literal first frame on every
+(re)connect. **Excel** (`excel/src/transport/connection.ts`): the same Authenticate-first + grant-all
+default. **WS server** (`ws/codec::stream_auth_from_json` + `decode_stream_control` + `is_stream_control`):
+decodes the frame and routes it to the shared session driver so the WS mirror enforces through the same
+`Session` gate as gRPC — a defect where the frame fell through to `handle_unary` (WS sessions stayed
+anonymous under `Enforce`) was caught by the live e2e and fixed with regression tests
+(`authenticate_routes_to_the_stream_driver`, `classification_matches_the_decoder`).
+
+### SDK + CLI
 The server seam above only enforces if clients actually authenticate. The Rust SDK
 (`celnet-client`) now sends a `StreamAuth` **`Authenticate` frame as the FIRST control frame** on
 every `StreamSession` open (and re-sends it first on a drain-cutover reconnect, since the re-dialed
