@@ -18,8 +18,14 @@
 
 import type {
   AdditiveRisk,
+  AggregateRatesRiskRequest,
+  AggregateRatesRiskResponse,
   AggregateRiskRequest,
   AggregateRiskResponse,
+  KeyRateDv01,
+  RatesPosition,
+  RatesRiskNode,
+  RatesRiskScope,
   ArbReport,
   AttributionRecord,
   BookId,
@@ -851,6 +857,71 @@ export function ratesPricingResultFromWire(o: WireObject): RatesPricingResult {
     dv01: num(result, "dv01"),
     keyRateLadder,
   };
+}
+
+// --- rates portfolio risk (RiskService.AggregateRatesRisk) -------------------
+// Byte-compatible with the server `ws::codec` rates-risk codec: the request
+// reuses the shared `price_rates` curve/instrument encoders, and the response
+// mirrors the per-currency `RatesRiskNode` + tenor ladder the server emits.
+
+/** Encode one `RatesPosition` to its wire object (the OIS oneof + booking cell). */
+function ratesPositionToWire(p: RatesPosition): WireObject {
+  return {
+    // `position_id` is a wire `uint64`; the connection's other ids ride as JSON
+    // numbers, so narrow the bigint exactly as the correlation id is narrowed.
+    position_id: Number(p.positionId),
+    entity: p.entity,
+    book: p.book,
+    instrument: ratesInstrumentToWire(p.instrument),
+  };
+}
+
+/** Encode the optional `(entity, book, ccy)` scope; absent fields are omitted. */
+function ratesRiskScopeToWire(s: RatesRiskScope): WireObject {
+  const w: WireObject = {};
+  if (s.entity !== undefined) w["entity"] = s.entity;
+  if (s.book !== undefined) w["book"] = s.book;
+  if (s.ccy !== undefined) w["ccy"] = s.ccy;
+  return w;
+}
+
+export function aggregateRatesRiskRequestToWire(r: AggregateRatesRiskRequest): WireObject {
+  const w: WireObject = {
+    curve_set: ratesCurveSetToWire(r.curveSet),
+    positions: r.positions.map(ratesPositionToWire),
+  };
+  // The audited explicit grant-all default clears the server's deny-by-default
+  // boundary, exactly as the options `aggregate_risk` request does.
+  w["principal"] = principalOrGrantAllToWire(r.principal);
+  if (r.scope) w["scope"] = ratesRiskScopeToWire(r.scope);
+  return w;
+}
+
+/** Decode one key-rate DV01 ladder bucket. */
+function keyRateDv01FromWire(o: WireObject): KeyRateDv01 {
+  return { tenorYears: num(o, "tenor_years"), dv01: num(o, "dv01") };
+}
+
+/** Decode one per-currency `RatesRiskNode` (netted scalars + tenor ladder). */
+function ratesRiskNodeFromWire(o: WireObject): RatesRiskNode {
+  return {
+    ccy: str(o, "ccy"),
+    netPv: num(o, "net_pv"),
+    netPv01: num(o, "net_pv01"),
+    netDv01: num(o, "net_dv01"),
+    keyRateLadder: array(o, "key_rate_ladder").map(keyRateDv01FromWire),
+  };
+}
+
+export function aggregateRatesRiskResponseFromWire(
+  o: WireObject,
+): AggregateRatesRiskResponse {
+  const res: AggregateRatesRiskResponse = {
+    nodes: array(o, "nodes").map(ratesRiskNodeFromWire),
+  };
+  const corr = optBigInt(o, "correlation_id");
+  if (corr !== undefined) res.correlationId = corr;
+  return res;
 }
 
 export function conventionsFromWire(o: WireObject): Conventions {

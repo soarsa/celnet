@@ -12,6 +12,8 @@
 
 import type {
   AdditiveRisk,
+  AggregateRatesRiskRequest,
+  AggregateRatesRiskResponse,
   AggregateRiskRequest,
   AggregateRiskResponse,
   BrokerQuoteSet,
@@ -46,6 +48,7 @@ import type {
   Quote,
   RatesCurveSet,
   RatesPricingResult,
+  RatesRiskNode,
   ReportingNumeraire,
   RiskBucketRequest,
   RiskNode,
@@ -955,6 +958,80 @@ export class MockTransport implements CelnetTransport {
       numeraire: request.numeraire.numeraire,
       nodes: node.positionCount > 0 ? [node] : [],
     };
+    if (request.correlationId !== undefined) res.correlationId = request.correlationId;
+    return res;
+  }
+
+  async aggregateRatesRisk(
+    request: AggregateRatesRiskRequest,
+    _conventions: Conventions,
+  ): Promise<AggregateRatesRiskResponse> {
+    // A genuine in-browser portfolio-risk rollup — NOT a fabricated stub. Each
+    // position is priced through the SAME offline OIS core the live edge mirrors
+    // (`priceRatesOffline`), and the signed PV / PV01 / DV01 + per-pillar key-rate
+    // DV01 ladder are folded ADDITIVELY into one node per settlement currency.
+    //
+    // This reproduces the server's `services::rates_risk` semantics exactly: the
+    // settlement currency is the curve currency (never carried per position); each
+    // position is priced BEFORE the optional `(entity, book, ccy)` scope filter is
+    // applied; the fold is purely additive and per-ccy partitioned; and the ladder
+    // sums DV01 per curve-pillar tenor in ascending order (deterministic output).
+    const curve = request.curveSet;
+    const ccy = curve.currency;
+    const scope = request.scope;
+
+    // Accumulator: settlement ccy → netted scalars + a tenor→DV01 ladder map.
+    interface RatesNodeAccum {
+      netPv: number;
+      netPv01: number;
+      netDv01: number;
+      ladder: Map<number, number>;
+    }
+    const byCcy = new Map<string, RatesNodeAccum>();
+
+    for (const position of request.positions) {
+      // Price every position (the server prices then filters); an unpriceable
+      // position — e.g. a non-USD curve the offline core cannot bootstrap, or a
+      // malformed OIS — rejects the whole request, exactly as the live edge does.
+      const priced = priceRatesOffline(curve, position.instrument);
+
+      const inScope =
+        (scope?.entity === undefined || scope.entity === position.entity) &&
+        (scope?.book === undefined || scope.book === position.book) &&
+        (scope?.ccy === undefined ||
+          scope.ccy.toUpperCase() === ccy.toUpperCase());
+      if (!inScope) continue;
+
+      let existing = byCcy.get(ccy);
+      if (existing === undefined) {
+        existing = { netPv: 0, netPv01: 0, netDv01: 0, ladder: new Map() };
+        byCcy.set(ccy, existing);
+      }
+      const node = existing;
+      node.netPv += priced.pv;
+      node.netPv01 += priced.pv01;
+      node.netDv01 += priced.dv01;
+      // Zip each per-pillar DV01 onto its curve-pillar tenor and sum per bucket —
+      // the same pillar alignment the server's `fact_from_position` performs.
+      curve.pillars.forEach((pillar, i) => {
+        const prev = node.ladder.get(pillar.tenorYears) ?? 0;
+        node.ladder.set(pillar.tenorYears, prev + priced.keyRateLadder[i]);
+      });
+    }
+
+    const nodes: RatesRiskNode[] = [...byCcy.entries()]
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([nodeCcy, n]) => ({
+        ccy: nodeCcy,
+        netPv: n.netPv,
+        netPv01: n.netPv01,
+        netDv01: n.netDv01,
+        keyRateLadder: [...n.ladder.entries()]
+          .sort(([a], [b]) => a - b)
+          .map(([tenorYears, dv01]) => ({ tenorYears, dv01 })),
+      }));
+
+    const res: AggregateRatesRiskResponse = { nodes };
     if (request.correlationId !== undefined) res.correlationId = request.correlationId;
     return res;
   }

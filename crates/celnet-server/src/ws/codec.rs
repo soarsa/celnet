@@ -54,6 +54,11 @@ use celnet_proto::{
     CurveSet, OisInstrument, OisPillar, RatesInstrument, RatesPriceRequest, RatesPriceResponse,
     RatesPricingResult, rates_instrument,
 };
+// Linear-rates portfolio risk — the WS mirror of RiskService::AggregateRatesRisk.
+use celnet_proto::{
+    AggregateRatesRiskRequest, AggregateRatesRiskResponse, KeyRateDv01, RatesPosition,
+    RatesRiskNode, RatesRiskScope,
+};
 
 /// A codec error: a malformed or out-of-contract JSON message. Carries a
 /// human-readable reason echoed back to the client as a typed `error` frame.
@@ -114,6 +119,14 @@ fn opt_u64(o: &Map<String, Value>, key: &str) -> Option<u64> {
     match o.get(key) {
         None | Some(Value::Null) => None,
         Some(v) => v.as_u64(),
+    }
+}
+
+/// An optional presence-tracked `u32` field (`null`/absent/out-of-range ⇒ `None`).
+fn opt_u32(o: &Map<String, Value>, key: &str) -> Option<u32> {
+    match o.get(key) {
+        None | Some(Value::Null) => None,
+        Some(v) => v.as_u64().and_then(|n| u32::try_from(n).ok()),
     }
 }
 
@@ -1951,6 +1964,86 @@ pub(super) fn aggregate_risk_response_to_json(r: &AggregateRiskResponse) -> Valu
     })
 }
 
+// ---------------------------------------------------------------------------
+// Linear-rates portfolio risk — WS mirror of RiskService::AggregateRatesRisk.
+// Reuses the `price_rates` curve/instrument codecs (`curve_set_from_json`,
+// `rates_instrument_from_json`) so the risk path decodes the *identical* market
+// and economics the pricing edge does — no duplicate rates JSON shapes.
+// ---------------------------------------------------------------------------
+
+/// Decode one `RatesPosition` `{ position_id, entity, book, instrument }`. The
+/// `instrument` arm reuses the shared `price_rates` oneof decoder; `entity`/`book`
+/// are proto3 scalars (absent ⇒ the `0` default cell).
+fn rates_position_from_json(v: &Value) -> Result<RatesPosition> {
+    let o = obj(v, "position")?;
+    Ok(RatesPosition {
+        position_id: u64_or_zero(o, "position_id"),
+        entity: opt_u32(o, "entity").unwrap_or(0),
+        book: opt_u32(o, "book").unwrap_or(0),
+        instrument: Some(nested(o, "instrument", rates_instrument_from_json)?),
+    })
+}
+
+/// Decode the optional `RatesRiskScope` `{ entity?, book?, ccy? }` — each present
+/// field narrows the rollup; an absent field does not constrain.
+fn rates_risk_scope_from_json(v: &Value) -> Result<RatesRiskScope> {
+    let o = obj(v, "scope")?;
+    Ok(RatesRiskScope {
+        entity: opt_u32(o, "entity"),
+        book: opt_u32(o, "book"),
+        ccy: opt_string(o, "ccy"),
+    })
+}
+
+/// Decode an `AggregateRatesRiskRequest`. `session_token`/`principal` thread through
+/// exactly as `aggregate_risk_request_from_json` does, so the gRPC handler's
+/// deny-by-default entitlement check sees the same caller identity over WS as gRPC.
+pub(super) fn aggregate_rates_risk_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<AggregateRatesRiskRequest> {
+    let positions = o
+        .get("positions")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().map(rates_position_from_json).collect::<Result<Vec<_>>>())
+        .transpose()?
+        .unwrap_or_default();
+    Ok(AggregateRatesRiskRequest {
+        curve_set: Some(nested(o, "curve_set", curve_set_from_json)?),
+        positions,
+        scope: opt_nested(o, "scope", rates_risk_scope_from_json)?,
+        principal: opt_nested(o, "principal", principal_from_json)?,
+        correlation_id: opt_u64(o, "correlation_id"),
+        session_token: opt_string(o, "session_token"),
+    })
+}
+
+/// Encode a `KeyRateDv01` `{ tenor_years, dv01 }` ladder bucket.
+fn key_rate_dv01_to_json(k: &KeyRateDv01) -> Value {
+    json!({
+        "tenor_years": k.tenor_years,
+        "dv01": k.dv01,
+    })
+}
+
+/// Encode a per-currency `RatesRiskNode` with its netted scalars + tenor ladder.
+fn rates_risk_node_to_json(n: &RatesRiskNode) -> Value {
+    json!({
+        "ccy": n.ccy,
+        "net_pv": n.net_pv,
+        "net_pv01": n.net_pv01,
+        "net_dv01": n.net_dv01,
+        "key_rate_ladder": Value::Array(n.key_rate_ladder.iter().map(key_rate_dv01_to_json).collect()),
+    })
+}
+
+/// Encode an `AggregateRatesRiskResponse` `{ nodes[], correlation_id }`.
+pub(super) fn aggregate_rates_risk_response_to_json(r: &AggregateRatesRiskResponse) -> Value {
+    json!({
+        "nodes": Value::Array(r.nodes.iter().map(rates_risk_node_to_json).collect()),
+        "correlation_id": r.correlation_id,
+    })
+}
+
 pub(super) fn drill_risk_request_from_json(o: &Map<String, Value>) -> Result<DrillRiskRequest> {
     Ok(DrillRiskRequest {
         node: opt_nested(o, "node", risk_scope_from_json)?,
@@ -3223,5 +3316,73 @@ mod tests {
         assert_eq!(v["correlation_id"], json!(7));
         assert!(v["result"]["par_rate"].as_f64().unwrap() > 0.0);
         assert_eq!(v["result"]["key_rate_ladder"].as_array().unwrap().len(), 3);
+    }
+
+    /// An `aggregate_rates_risk` request decodes from the browser JSON shape into
+    /// the proto `AggregateRatesRiskRequest`: the shared curve/instrument codecs
+    /// rebuild the market + economics, positions carry their `(entity, book)` cell,
+    /// the optional scope threads through, and `session_token`/`principal` survive
+    /// for the gRPC handler's entitlement check.
+    #[test]
+    fn aggregate_rates_risk_request_decodes() {
+        let body = json!({
+            "curve_set": {
+                "currency": "USD",
+                "reference_date": { "year": 2026, "month": 6, "day": 25 },
+                "ois_pillars": [
+                    { "tenor_years": 1, "par_rate": 0.0432 },
+                    { "tenor_years": 5, "par_rate": 0.0405 }
+                ]
+            },
+            "positions": [
+                {
+                    "position_id": 11,
+                    "entity": 1,
+                    "book": 100,
+                    "instrument": {
+                        "ois": { "tenor_years": 5, "fixed_rate": 0.0405, "notional": 1.0e8, "side": 1 }
+                    }
+                }
+            ],
+            "scope": { "entity": 1, "book": 100 },
+            "session_token": "sess-xyz",
+            "correlation_id": 42
+        });
+        let o = body.as_object().unwrap();
+        let req = aggregate_rates_risk_request_from_json(o).expect("decodes");
+
+        assert_eq!(req.correlation_id, Some(42));
+        assert_eq!(req.session_token.as_deref(), Some("sess-xyz"));
+        let curve = req.curve_set.as_ref().unwrap();
+        assert_eq!(curve.currency, "USD");
+        assert_eq!(curve.ois_pillars.len(), 2);
+        assert_eq!(req.positions.len(), 1);
+        let p = &req.positions[0];
+        assert_eq!(p.position_id, 11);
+        assert_eq!(p.entity, 1);
+        assert_eq!(p.book, 100);
+        assert!(p.instrument.is_some());
+        let scope = req.scope.as_ref().unwrap();
+        assert_eq!(scope.entity, Some(1));
+        assert_eq!(scope.book, Some(100));
+        assert_eq!(scope.ccy, None);
+
+        // The decoded request rolls up through the SAME edge the gRPC handler calls,
+        // proving the WS mirror reaches the identical rates-risk path.
+        let resp =
+            crate::services::rates_risk::aggregate::single_node_aggregate(&req).expect("aggregates");
+        assert_eq!(resp.nodes.len(), 1);
+        assert_eq!(resp.nodes[0].ccy, "USD");
+
+        // The response re-encodes to the browser shape: per-ccy node + tenor ladder.
+        let v = aggregate_rates_risk_response_to_json(&resp);
+        assert_eq!(v["correlation_id"], json!(42));
+        let node = &v["nodes"][0];
+        assert_eq!(node["ccy"], json!("USD"));
+        assert!(node["net_dv01"].is_number());
+        let ladder = node["key_rate_ladder"].as_array().unwrap();
+        assert_eq!(ladder.len(), 2);
+        assert_eq!(ladder[0]["tenor_years"], json!(1));
+        assert!(ladder[0]["dv01"].is_number());
     }
 }

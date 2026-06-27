@@ -650,6 +650,14 @@ async fn handle_unary(
                 codec::aggregate_risk_response_to_json
             )
         }
+        "aggregate_rates_risk" => {
+            let req = decode!(codec::aggregate_rates_risk_request_from_json(o));
+            call!(
+                services.risk.aggregate_rates_risk(Request::new(req)),
+                "aggregate_rates_risk_response",
+                codec::aggregate_rates_risk_response_to_json
+            )
+        }
         "drill_risk" => {
             let req = decode!(codec::drill_risk_request_from_json(o));
             call!(

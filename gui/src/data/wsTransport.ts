@@ -20,6 +20,8 @@
  */
 
 import type {
+  AggregateRatesRiskRequest,
+  AggregateRatesRiskResponse,
   AggregateRiskRequest,
   AggregateRiskResponse,
   BrokerQuoteSet,
@@ -55,6 +57,8 @@ import type {
   UserDesc,
 } from "./contract";
 import {
+  aggregateRatesRiskRequestToWire,
+  aggregateRatesRiskResponseFromWire,
   aggregateRiskRequestToWire,
   aggregateRiskResponseFromWire,
   ccyPairToWire,
@@ -932,6 +936,18 @@ export class WsTransport implements CelnetTransport {
       "aggregate_risk_response",
     );
     return aggregateRiskResponseFromWire(reply);
+  }
+
+  async aggregateRatesRisk(
+    request: AggregateRatesRiskRequest,
+    _conventions: Conventions,
+  ): Promise<AggregateRatesRiskResponse> {
+    const reply = await this.conn.request(
+      "aggregate_rates_risk",
+      aggregateRatesRiskRequestToWire(request),
+      "aggregate_rates_risk_response",
+    );
+    return aggregateRatesRiskResponseFromWire(reply);
   }
 
   async drillRisk(request: DrillRiskRequest): Promise<DrillRiskResponse> {

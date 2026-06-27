@@ -1965,3 +1965,100 @@ export interface RatesPricingResult {
    */
   keyRateLadder: readonly number[];
 }
+
+// ---------------------------------------------------------------------------
+// fixed-income (rates) portfolio risk — the additive book-level risk rollup
+// (`RiskService.AggregateRatesRisk`). Mirrors the `celnet.wire` rates-risk
+// messages one-to-one: a `CurveSet` + signed `RatesPosition`s roll up additively
+// into one `RatesRiskNode` per settlement currency (netted PV / PV01 / DV01 + a
+// tenor-bucketed key-rate DV01 ladder). Purely additive, per-ccy partitioned,
+// deterministic — the exact wire analogue of the options `AggregateRisk` path.
+// ---------------------------------------------------------------------------
+
+/**
+ * One open linear-rates position the rollup nets (`celnet.wire.RatesPosition`):
+ * the `(entity, book)` cell it books into plus the `OisInstrument` to price. The
+ * instrument carries its own signed direction (PAY_FIXED / RECEIVE_FIXED), so the
+ * priced PV / PV01 / DV01 already net by sign across long and short books.
+ */
+export interface RatesPosition {
+  /** Stable position identity (the pricer's `request_id` echo); informational. */
+  positionId: bigint;
+  /** The legal-entity id the position books into (a scope filter dimension). */
+  entity: number;
+  /** The trading-book id the position books into (a scope filter dimension). */
+  book: number;
+  /** The OIS to price against the request `curveSet` (the only P0 arm). */
+  instrument: OisInstrument;
+}
+
+/**
+ * The optional `(entity, book, ccy)` filter applied BEFORE the rollup
+ * (`celnet.wire.RatesRiskScope`): each present field narrows the contributing
+ * positions; an absent field does not constrain. `ccy` matches case-insensitively.
+ */
+export interface RatesRiskScope {
+  /** Keep only positions in this legal entity, when set. */
+  entity?: number;
+  /** Keep only positions in this trading book, when set. */
+  book?: number;
+  /** Keep only positions whose settlement currency matches, when set. */
+  ccy?: string;
+}
+
+/**
+ * `RiskService.AggregateRatesRisk` request — price every `RatesPosition` against
+ * the shared `curveSet`, narrow by the optional `scope`, then sum additively into
+ * one `RatesRiskNode` per settlement currency. The market is the request-supplied
+ * `curveSet`, so the rollup is a pure, deterministic calculation.
+ */
+export interface AggregateRatesRiskRequest {
+  /** The calibrated curve set every position prices against (the shared market). */
+  curveSet: RatesCurveSet;
+  /** The positions to net; empty ⇒ an empty rollup. */
+  positions: readonly RatesPosition[];
+  /** The optional pre-rollup `(entity, book, ccy)` filter. */
+  scope?: RatesRiskScope;
+  /** Entitlement principal; omitted ⇒ the audited explicit grant-all default. */
+  principal?: EntitlementPrincipal;
+  /** Optional client correlation echo. */
+  correlationId?: bigint;
+}
+
+/**
+ * One tenor bucket of a node's key-rate DV01 ladder (`celnet.wire.KeyRateDv01`):
+ * the netted PV change for a +1bp bump of the curve pillar at `tenorYears` alone.
+ */
+export interface KeyRateDv01 {
+  /** The curve pillar tenor (whole years) this bucket bumps. */
+  tenorYears: number;
+  /** The netted DV01 contribution at this pillar (curve currency). */
+  dv01: number;
+}
+
+/**
+ * The netted risk of one settlement currency (`celnet.wire.RatesRiskNode`): the
+ * additively summed PV / PV01 / DV01 across every contributing position, plus the
+ * per-pillar key-rate DV01 ladder (which sums to `netDv01` to first order).
+ */
+export interface RatesRiskNode {
+  /** ISO-4217 settlement currency of this node (the rollup partition key). */
+  ccy: string;
+  /** Summed present value across the node's positions (curve currency). */
+  netPv: number;
+  /** Summed analytic PV01 across the node's positions. */
+  netPv01: number;
+  /** Summed parallel DV01 across the node's positions. */
+  netDv01: number;
+  /** The tenor-bucketed key-rate DV01 ladder, in ascending pillar order. */
+  keyRateLadder: readonly KeyRateDv01[];
+}
+
+/**
+ * `RiskService.AggregateRatesRisk` response — one `RatesRiskNode` per settlement
+ * currency, in ascending-currency order.
+ */
+export interface AggregateRatesRiskResponse {
+  nodes: readonly RatesRiskNode[];
+  correlationId?: bigint;
+}

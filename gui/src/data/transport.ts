@@ -16,6 +16,8 @@
  */
 
 import type {
+  AggregateRatesRiskRequest,
+  AggregateRatesRiskResponse,
   AggregateRiskRequest,
   AggregateRiskResponse,
   BrokerQuoteSet,
@@ -259,6 +261,20 @@ export interface CelnetTransport {
    * per node, and collapse everything into the reporting `numeraire`.
    */
   aggregateRisk(request: AggregateRiskRequest): Promise<AggregateRiskResponse>;
+
+  /**
+   * RiskService.AggregateRatesRisk — the linear-rates analogue of
+   * {@link aggregateRisk}: price every `RatesPosition` against the request
+   * `curveSet`, narrow by the optional `(entity, book, ccy)` scope, then sum
+   * additively into one `RatesRiskNode` per settlement currency. Purely additive,
+   * per-ccy partitioned, deterministic. Satisfied identically by both transports —
+   * the offline source prices + folds in-browser; the live transport issues the
+   * `aggregate_rates_risk` RPC to celnet-server.
+   */
+  aggregateRatesRisk(
+    request: AggregateRatesRiskRequest,
+    conventions: Conventions,
+  ): Promise<AggregateRatesRiskResponse>;
 
   /**
    * RiskService.DrillRisk — drill one node into child sub-nodes at a finer
