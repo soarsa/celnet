@@ -12,7 +12,7 @@
  * analytics) are URL-encoded + localStorage-persisted (`SavedViewsMenu`).
  */
 
-import { Fragment, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useApp } from "./AppContext";
 import { CommandPalette } from "../components/CommandPalette";
 import { ShortcutsOverlay } from "../components/ShortcutsOverlay";
@@ -20,6 +20,7 @@ import { useAppearance } from "../design/appearance";
 import { TicketWorkspace } from "../workspaces/TicketWorkspace";
 import { RatesWorkspace } from "../workspaces/RatesWorkspace";
 import { CurveWorkspace } from "../workspaces/CurveWorkspace";
+import { RatesRiskWorkspace } from "../workspaces/RatesRiskWorkspace";
 import { StreamWorkspace } from "../workspaces/StreamWorkspace";
 import { SurfaceWorkspace } from "../workspaces/SurfaceWorkspace";
 import { RiskWorkspace } from "../workspaces/RiskWorkspace";
@@ -34,7 +35,16 @@ import { ScopeSwitcher } from "../components/ScopeSwitcher";
 import { SavedViewsMenu } from "../components/SavedViewsMenu";
 import { AuthMenu } from "../components/AuthMenu";
 import { SignInDialog } from "../components/SignInDialog";
-import { buildCommands, RAIL, railChord, resolveChord, type WorkspaceId } from "../lib/commands";
+import {
+  buildCommands,
+  DOMAINS,
+  domainOf,
+  RAIL,
+  railChord,
+  resolveChord,
+  type Domain,
+  type WorkspaceId,
+} from "../lib/commands";
 import { isTerminal } from "../lib/scope";
 import styles from "./Shell.module.css";
 
@@ -43,6 +53,7 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   ticket: TicketWorkspace,
   rates: RatesWorkspace,
   curve: CurveWorkspace,
+  ratesrisk: RatesRiskWorkspace,
   stream: StreamWorkspace,
   surface: SurfaceWorkspace,
   risk: RiskWorkspace,
@@ -58,13 +69,46 @@ export function Shell(): React.ReactElement {
   // The keyboard-shortcut cheatsheet overlay (bound to `?`). Shell-local UI.
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
-  // The Administration group (Connections + Admin) is admin-only: a non-admin sees
-  // neither rail button nor pane, and their workspace-jumps are dropped from the
-  // palette / keyboard. Each visible entry keeps its ORIGINAL rail index so the ⌘N
-  // numbers stay aligned with `resolveChord` (which maps digits against the full
-  // RAIL); the admin-group chords simply resolve to now-absent commands and are inert.
+  // Connections + Admin are admin-only: a non-admin sees neither rail button nor
+  // pane, and their workspace-jumps are dropped from the palette / keyboard. The
+  // admin gate drops ONLY those two ids (Excel stays); every other entry keeps its
+  // ORIGINAL rail index so the ⌘N numbers stay aligned with `resolveChord` (which
+  // maps digits against the full RAIL). The admin chords simply resolve to
+  // now-absent commands and are inert.
   const isAdmin = app.auth.isAdmin;
-  const rail = isAdmin ? RAIL : RAIL.filter((r) => r.group !== "administration");
+  const adminGated = (r: (typeof RAIL)[number]): boolean =>
+    isAdmin || (r.id !== "connections" && r.id !== "admin");
+
+  // GW-tabs: the rail is now split into top-level DOMAIN tabs (FX Options / Fixed
+  // Income / Administration). The active domain follows the active workspace; the
+  // rail BUTTONS show only the active domain's workspaces (`navRail`), while the
+  // persistent-mount canvas keeps iterating EVERY domain's workspaces (`mountRail`)
+  // so switching tabs never unmounts a pane (preserves P0-11 persistent mount).
+  const activeDomain = domainOf(app.workspace);
+  const mountRail = RAIL.filter(adminGated);
+  const navRail = mountRail.filter((r) => r.domain === activeDomain);
+
+  // The Administration tab is shown only to admins.
+  const visibleDomains = DOMAINS.filter((d) => d.id !== "administration" || isAdmin);
+
+  // Per-domain memory of the last-active workspace, so re-selecting a tab returns
+  // to where the trader left it (defaulting to that domain's first rail entry).
+  // Shell-local UI state — kept in sync with the active workspace below.
+  const [lastByDomain, setLastByDomain] = useState<Partial<Record<Domain, WorkspaceId>>>(
+    () => ({ [activeDomain]: app.workspace }),
+  );
+  useEffect(() => {
+    const d = domainOf(app.workspace);
+    setLastByDomain((m) => (m[d] === app.workspace ? m : { ...m, [d]: app.workspace }));
+  }, [app.workspace]);
+
+  const firstOfDomain = (d: Domain): WorkspaceId => {
+    const entry = RAIL.find((r) => r.domain === d && adminGated(r));
+    return entry ? entry.id : app.workspace;
+  };
+  const selectDomain = (d: Domain): void => {
+    app.setWorkspace(lastByDomain[d] ?? firstOfDomain(d));
+  };
 
   // The runnable commands, bound to live app actions — the SINGLE source the
   // palette renders and the Shell dispatches from.
@@ -124,30 +168,21 @@ export function Shell(): React.ReactElement {
           <CelerMark size={30} className={styles.mark} title="Celnet — a Celer Technologies product" />
         </div>
         <nav className={styles.nav}>
-          {rail.map((r, i) => {
-            // Original RAIL index keeps the ⌘N hint aligned with resolveChord.
+          {navRail.map((r) => {
+            // Original RAIL index keeps the ⌘N hint aligned with resolveChord
+            // (which maps digits against the full, admin-filtered RAIL globally).
             const kbd = railChord(RAIL.indexOf(r)).join("");
-            // The Administration group (Connections + Admin) is set off under a
-            // labelled hairline divider at the foot of the rail.
-            const startsAdmin =
-              r.group === "administration" && rail[i - 1]?.group !== "administration";
             return (
-              <Fragment key={r.id}>
-                {startsAdmin && (
-                  <span className={styles.railGroupLabel} aria-hidden>
-                    Admin
-                  </span>
-                )}
-                <button
-                  className={`${styles.railBtn} ${app.workspace === r.id ? styles.railActive : ""}`}
-                  onClick={() => app.setWorkspace(r.id)}
-                  title={`${r.label} (${kbd})`}
-                  aria-current={app.workspace === r.id}
-                >
-                  <span className={styles.railGlyph}>{r.glyph}</span>
-                  <span className={styles.railLabel}>{r.label}</span>
-                </button>
-              </Fragment>
+              <button
+                key={r.id}
+                className={`${styles.railBtn} ${app.workspace === r.id ? styles.railActive : ""}`}
+                onClick={() => app.setWorkspace(r.id)}
+                title={`${r.label} (${kbd})`}
+                aria-current={app.workspace === r.id}
+              >
+                <span className={styles.railGlyph}>{r.glyph}</span>
+                <span className={styles.railLabel}>{r.label}</span>
+              </button>
             );
           })}
         </nav>
@@ -176,14 +211,32 @@ export function Shell(): React.ReactElement {
       </aside>
 
       <div className={styles.main}>
+        <div className={styles.tabBar} role="tablist" aria-label="product domains">
+          {visibleDomains.map((d) => {
+            const active = d.id === activeDomain;
+            return (
+              <button
+                key={d.id}
+                role="tab"
+                aria-selected={active}
+                tabIndex={active ? 0 : -1}
+                className={`${styles.tab} ${active ? styles.tabActive : ""}`}
+                onClick={() => selectDomain(d.id)}
+              >
+                {d.label}
+              </button>
+            );
+          })}
+        </div>
         <TitleBar />
         {/*
          * P0-11: every workspace stays MOUNTED; we toggle visibility rather than
-         * conditionally rendering. Switching no longer remounts (no lost Risk/Book
-         * in-progress state, no re-fired heavy effects).
+         * conditionally rendering. The canvas iterates the FULL admin-gated rail
+         * (all domains), so switching tabs/workspaces never remounts a pane (no
+         * lost Risk/Book in-progress state, no re-fired heavy effects).
          */}
         <div className={styles.canvas}>
-          {rail.map((r) => {
+          {mountRail.map((r) => {
             const View = WORKSPACE_VIEW[r.id];
             const active = app.workspace === r.id;
             return (

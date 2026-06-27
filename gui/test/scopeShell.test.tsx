@@ -52,24 +52,37 @@ describe("data-driven rail + glyph fix (GW1-S1)", () => {
     // numbering stays aligned).
     for (let i = 0; i < RAIL.length; i += 1) {
       const r = RAIL[i]!;
-      if (r.group === "administration") {
+      // Admin-only views (Connections + Admin) are hidden for a non-admin session.
+      if (r.id === "connections" || r.id === "admin") {
         expect(
           within(rail).queryByRole("button", { name: new RegExp(r.label, "i") }),
         ).toBeNull();
         continue;
       }
-      const btn = within(rail).getByRole("button", { name: new RegExp(r.label, "i") });
-      expect(btn.getAttribute("title")).toContain(railChord(i).join(""));
+      // GW-tabs: the rail now shows only the ACTIVE domain's workspaces. The default
+      // landing is `stream` (FX Options), so only that domain's buttons are mounted;
+      // a button in another domain is honestly absent until its tab is selected.
+      const btn = within(rail).queryByRole("button", { name: new RegExp(r.label, "i") });
+      if (r.domain !== "fx-options") {
+        expect(btn).toBeNull();
+        continue;
+      }
+      expect(btn).not.toBeNull();
+      expect(btn!.getAttribute("title")).toContain(railChord(i).join(""));
     }
   });
 
   it("Book uses the ledger glyph ▤ and Σ is not a rail glyph (one glyph, one meaning)", async () => {
     await renderShell();
-    const rail = screen.getByRole("complementary", { name: "workspaces" });
     const book = RAIL.find((r) => r.id === "book")!;
     expect(book.glyph).toBe("▤");
     // No rail glyph is Σ — it is freed for sum / vega-ladder use exclusively.
     expect(RAIL.some((r) => r.glyph === "Σ")).toBe(false);
+    // Book lives under the Fixed Income domain; select that tab to mount its rail.
+    act(() => {
+      fireEvent.click(screen.getByRole("tab", { name: "Fixed Income" }));
+    });
+    const rail = screen.getByRole("complementary", { name: "workspaces" });
     expect(within(rail).getByRole("button", { name: /Book/i }).textContent).toContain("▤");
   });
 });

@@ -68,6 +68,7 @@ export type WorkspaceId =
   | "ticket"
   | "rates"
   | "curve"
+  | "ratesrisk"
   | "stream"
   | "surface"
   | "risk"
