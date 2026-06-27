@@ -250,7 +250,7 @@ export function RatesRiskWorkspace(): React.ReactElement {
         .aggregateRatesRisk(request, app.conventions)
         .then((res) => {
           if (!live) return;
-          setNodes(res.nodes);
+          setNodes([...res.nodes]);
           setError(null);
           setBusy(false);
         })

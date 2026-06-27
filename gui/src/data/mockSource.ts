@@ -1015,7 +1015,7 @@ export class MockTransport implements CelnetTransport {
       // the same pillar alignment the server's `fact_from_position` performs.
       curve.pillars.forEach((pillar, i) => {
         const prev = node.ladder.get(pillar.tenorYears) ?? 0;
-        node.ladder.set(pillar.tenorYears, prev + priced.keyRateLadder[i]);
+        node.ladder.set(pillar.tenorYears, prev + (priced.keyRateLadder[i] ?? 0));
       });
     }
 
