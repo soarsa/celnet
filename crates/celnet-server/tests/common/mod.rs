@@ -17,6 +17,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use celnet_engine::testing::make_state;
+use celnet_entitlements::AccessMode;
 use celnet_risk_fleet::FleetTopology;
 use celnet_server::{Clock, CoreLink, Edge, LpPanelConfig, SpreadModel};
 use celnet_types::{CcyPair, Tenor};
@@ -52,6 +53,11 @@ pub async fn start_edge_with(ready: bool, clock: Clock) -> (Edge, SocketAddr) {
     if ready {
         edge.gate().mark_ready();
     }
+    // The generic mechanics harness runs under the Permissive posture: these tests
+    // exercise stream/surface/RFQ behaviour, not the caller-auth gate (Enforce is
+    // covered by the dedicated stream-auth unit test + the live e2e). Auth/entitlement
+    // tests build their own edge and assert the Enforce default explicitly.
+    edge.store().set_access_mode(AccessMode::Permissive);
     let addr = edge.grpc_addr();
     (edge, addr)
 }
@@ -89,6 +95,11 @@ pub async fn start_panel_edge_with(
     if ready {
         edge.gate().mark_ready();
     }
+    // The generic mechanics harness runs under the Permissive posture: these tests
+    // exercise stream/surface/RFQ behaviour, not the caller-auth gate (Enforce is
+    // covered by the dedicated stream-auth unit test + the live e2e). Auth/entitlement
+    // tests build their own edge and assert the Enforce default explicitly.
+    edge.store().set_access_mode(AccessMode::Permissive);
     let addr = edge.grpc_addr();
     (edge, addr)
 }
