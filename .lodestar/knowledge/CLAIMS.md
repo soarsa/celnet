@@ -1382,6 +1382,17 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
   - (none) → draft by agent (authored) @ 2026-06-27T05:48:15Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:48:15Z
 
+## github.com-soarsa-celnet.crates.celnet-conventions.src.lib.expect\_forward
+
+- **claim** (`cl\_4be5b41653f09a8d`): expect\_forward classifies a Tenor as requiring a forward rate (rather than spot) when its equivalent month count exceeds 12: Overnight/TomNext/SpotNext → 0; Weeks(w) → w/5; Months(m) → m; Years(y) → y\*12; Imm(n) → n\*3; BrokenDate → 0. Returns true iff months \> 12. This is the single authoritative FX tenor classification gate that determines spot vs forward axis routing.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:10Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-conventions.src.lib.expect\_forward` (hash `62530629964b139a`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:10Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:10Z
+
 ## github.com-soarsa-celnet.crates.celnet-conventions.src.lib.schedule
 
 - **claim** (`cl\_ea8029b4a521cf31`): \`vol\_year\_fraction(pair, horizon, tenor) -\> Result\<f64, TenorError\>\` computes the ACT/365-fixed year fraction for volatility time: it calls \`resolve(pair, tenor)\` to get the convention record (which always carries \`day\_count\_vol = DayCount::Act365Fixed\` per \`record\_at\`), builds an \`FxSchedule\` via \`schedule\`, and returns \`year\_fraction(Act365Fixed, sch.vol\_anchor, sch.expiry)\`. The result is the standard FX vol-time measure used as input to all volatility surface and pricing functions.
@@ -1652,6 +1663,17 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
   - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
   - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
 
+## github.com-soarsa-celnet.crates.celnet-core.src.carry.fx\_carry\_greeks\_lifts\_byte\_identically
+
+- **claim** (`cl\_3a414896b207a5e9`): fx\_carry\_greeks\_lifts\_byte\_identically asserts that fx\_carry\_greeks() is a zero-loss lift: every scalar field (price, delta\_spot, delta\_forward, gamma, vega, theta, vanna, volga, charm, speed, zomma, color) and both rate fields (rho\_dom, rho\_for) are preserved bit-for-bit (via to\_bits() equality). The rates field must tag as RateSensitivities::Fx{rho\_dom, rho\_for}; tagging as Carry panics. This proves no precision is lost in the carry → FX greek conversion.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:20Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-core.src.carry.fx\_carry\_greeks\_lifts\_byte\_identically` (hash `3b62141dba2bbd04`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:20Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:20Z
+
 ## github.com-soarsa-celnet.crates.celnet-core.src.carry.fx\_carry\_inputs\_byte\_identical
 
 - **claim** (`cl\_78c13017e2c9b144`): The carry-seam FX byte-identity is enforced by fx\_carry\_inputs\_byte\_identical: the FX arm of Carry (FxRates) lowers to VanillaInputs with forward/df\_dom/df\_for bit-identical (to\_bits) to the native FX leaf, and the CostOfCarry arm is rejected (UnsupportedCarry). This is a pure byte-identity gate over the carry seam (ADR-0008). Supersedes a withdrawn spec:satisfies probe whose design-target sentinel did not resolve in this build.
@@ -1754,6 +1776,17 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
   - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
   - stale → active by agent (re-authored) @ 2026-06-27T03:02:15Z
 
+## github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.inverse.check\_greeks
+
+- **claim** (`cl\_c6f33e8162bc7689`): celnet-crypto-vanilla inverse check\_greeks validates Greeks for inverse (coin-settled) options via the \`.coin\` field of the returned struct; all FD checks use 1e-9 absolute tolerance (tighter than linear/equity). Rate sensitivities must tag as RateSensitivities::Carry or panics with 'crypto inverse greeks must tag as Carry'. The forward delta is validated as spot-FD / carry.forward\_factor(t) on the coin Greek, not the USD Greek.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:57:47Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.inverse.check\_greeks` (hash `7bcf2feaf4fc6756`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:57:47Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:57:47Z
+
 ## github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.inverse.closed\_form\_matches\_deterministic\_quadrature
 
 - **claim** (`cl\_74c93c681300a1c6`): The inverse-vanilla closed-form price is verified against a code-disjoint midpoint-quadrature integration of the literal payoff E^Q\[df·max(φ·(S\_T−K),0)/S\_T\] over the risk-neutral lognormal distribution. The quadrature uses 400 000 uniform panels spanning z ∈ \[−12, 12\] of the standard normal, evaluating the integrand (phi·(S\_T−K)).max(0)/S\_T at each midpoint z = lo+(j+0.5)·dz, where S\_T = F·exp(−½σ²t + σ√t·z). Three (S,K,σ,t,r,funding) vectors spanning OTM/ITM/ATM at different crypto vol regimes (0.55–0.80) are tested for both Call and Put. Agreement is required to 1e-6 relative with a 1e-7 absolute floor. The method shares no analytic structure with the production CDF-based \`price\` function, providing a structurally independent oracle.
@@ -1826,6 +1859,17 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
   - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
   - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
   - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+
+## github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.linear.check\_greeks
+
+- **claim** (`cl\_bda874e55a0937d1`): celnet-crypto-vanilla linear check\_greeks validates all greeks for crypto linear options (coin-margined notional in fiat) against FD with Carry tagging required: delta\_forward = spot-FD / carry.forward\_factor(t); carry\_rho = ∂V/∂b (positive carry direction, not negated); rate sensitivities must tag as RateSensitivities::Carry or the test panics with 'crypto linear greeks must tag as Carry'.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:57:45Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.linear.check\_greeks` (hash `ba81d47456452870`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:57:45Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:57:45Z
 
 ## github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.linear.fx\_equiv\_rates
 
@@ -2015,6 +2059,17 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
   - (none) → draft by agent (authored) @ 2026-06-27T05:29:52Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:52Z
 
+## github.com-soarsa-celnet.crates.celnet-entitlements.src.decision.AccessDecision.label
+
+- **claim** (`cl\_11be107ad4726437`): AccessDecision::label is a pure const &'static str bijection: Allow =\> "allow", Deny =\> "deny". Exhaustive with no default arm; the two values form the complete access decision vocabulary.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:29Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-entitlements.src.decision.AccessDecision.label` (hash `142ca5a74edf6814`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:29Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:29Z
+
 ## github.com-soarsa-celnet.crates.celnet-entitlements.src.decision.AccessMode.is\_permissive
 
 - **claim** (`cl\_4d5a3795f4e94b7e`): \`AccessMode\` defaults to \`Enforce\` (\`AccessMode::default() == AccessMode::Enforce\`), verified by the \`default\_mode\_is\_enforce\` test. In \`Enforce\` mode \`is\_permissive()\` returns \`false\`. This is the production posture — the system never silently opens access due to an absent or misconfigured principal.
@@ -2029,6 +2084,17 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
   - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
   - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
 
+## github.com-soarsa-celnet.crates.celnet-entitlements.src.decision.AccessMode.label
+
+- **claim** (`cl\_461c2153a5942d44`): AccessMode::label is a pure const &'static str bijection: Enforce =\> "enforce", Permissive =\> "permissive". This is the canonical wire/log label for the access mode; all telemetry and entitlement log lines use this label.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:27Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-entitlements.src.decision.AccessMode.label` (hash `9b6223247438fefe`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:27Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:27Z
+
 ## github.com-soarsa-celnet.crates.celnet-entitlements.src.decision.AccessReason.decision
 
 - **claim** (`cl\_2049b848c7bc1560`): DELIVERABLE entitlements-trust-boundary-audit = LANDED (backlog tracker docs/WORLD-CLASS-BACKLOG.md still lists it OPEN as the Round-2 P2/M finding "entitlements trust boundary inverted — omitted principal ⇒ grant-all — and the documented per-decision audit is unimplemented"; Round-4 fixed the client-default half at 87c6f77; reconciled against the live graph). \`AccessReason::decision(self)\` is the pure, total, const reason→decision mapping that makes every access outcome first-class and auditable: PrincipalAsserted / PermissiveAbsent / SessionAuthenticated → Allow, and PrincipalAbsent / MalformedPrincipal / SessionInsufficientRole → Deny. A genuinely-absent or malformed principal now resolves to Deny (deny-by-default at the boundary), and each AccessReason is the per-decision audit datum emitted via the celnet-observability AuditSink — closing both halves of the finding (the inverted boundary and the missing per-decision audit; pinned by reason\_determines\_decision + the server entitlements\_boundary::decision\_records test). SELF-INVALIDATES on any change to this decision mapping.
@@ -2039,6 +2105,17 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 - **provenance**:
   - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
+
+## github.com-soarsa-celnet.crates.celnet-entitlements.src.decision.AccessReason.label
+
+- **claim** (`cl\_ab079d97fd981ac5`): AccessReason::label maps each of six access-decision reasons to a distinct stable ASCII string token used in structured logs and wire output: PrincipalAsserted =\> "principal\_asserted"; PermissiveAbsent =\> "permissive\_dev\_mode\_absent\_principal"; PrincipalAbsent =\> "principal\_absent"; MalformedPrincipal =\> "malformed\_principal"; SessionAuthenticated =\> "session\_authenticated"; SessionInsufficientRole =\> "session\_insufficient\_role". The PermissiveAbsent label embeds 'dev\_mode' to make permissive-mode grants visible in audit logs.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:32Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-entitlements.src.decision.AccessReason.label` (hash `cb32ff887a231ed5`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:32Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:32Z
 
 ## github.com-soarsa-celnet.crates.celnet-entitlements.src.filter.EntitlementFilter\<'a\>.admits
 
@@ -2162,6 +2239,17 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
   - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
   - active → stale by detect\_changes (anchor content-hash changed) @ 2026-06-26T23:46:44Z
   - stale → active by agent (re-authored) @ 2026-06-27T03:02:16Z
+
+## github.com-soarsa-celnet.crates.celnet-equity-vanilla.src.lib.check\_greeks
+
+- **claim** (`cl\_efe1c5122338b772`): celnet-equity-vanilla check\_greeks validates all first- and second-order Greeks against finite-difference oracles with tight tolerances: delta\_spot and vega are correct to 1e-4 relative / 1e-7 absolute; delta\_forward = (∂V\_fwd/∂S) / e^{bT} where V\_fwd = V·e^{rT}; theta = −∂V/∂T; discount\_rho = ∂V/∂r at fixed b; carry\_rho = −∂V/∂q; gamma/vanna/volga/charm/speed/zomma/color are validated via first-order FD of lower-order Greeks. Rate sensitivities must tag as RateSensitivities::Carry (not Fx) or the test panics.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:57:42Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-equity-vanilla.src.lib.check\_greeks` (hash `1cc85f60ba24a6ae`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:57:42Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:57:42Z
 
 ## github.com-soarsa-celnet.crates.celnet-equity-vanilla.src.lib.greeks
 
@@ -3042,6 +3130,17 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
   - (none) → draft by agent (authored) @ 2026-06-27T05:29:52Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:52Z
 
+## github.com-soarsa-celnet.crates.celnet-golden.src.bin.gen\_vectors.cp\_token
+
+- **claim** (`cl\_987cb93d245038a2`): cp\_token is a pure exhaustive bijection from Cp to a static ASCII string token: Cp::Call =\> "CALL", Cp::Put =\> "PUT". It is const-evaluable and allocation-free (returns &'static str). No default branch exists; adding a new Cp variant without updating this function is a compile error.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:57:53Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-golden.src.bin.gen\_vectors.cp\_token` (hash `2bf3e1194b02c9b8`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:57:53Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:57:53Z
+
 ## github.com-soarsa-celnet.crates.celnet-golden.src.bin.gen\_vectors.gen\_vanilla
 
 - **claim** (`cl\_df7abd19b71dcb8a`): gen\_vanilla selects 8 representative rows from the QuantLib vanilla\_gk.csv golden table at fixed indices \[120, 480, 905, 1330, 1755, 2180, 2605, 3050\] (using idx % len to guard against length changes), maps each to a GoldenVector in the \`vanilla\` family with all six Greeks (delta\_spot, gamma, vega, theta, rho\_dom, rho\_for), oracle tag 'quantlib-1.42.1 vanilla\_gk.csv row {idx}', and tightens the tolerance to rel=1e-7/abs=1e-9 (reflecting sub-ULP agreement with the production GK path).
@@ -3734,6 +3833,17 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
   - (none) → draft by agent (authored) @ 2026-06-27T05:48:16Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:48:16Z
 
+## github.com-soarsa-celnet.crates.celnet-integration.src.lib.PipelineError.source
+
+- **claim** (`cl\_37d9ef7240448f31`): PipelineError::source exhaustively exposes inner error sources for all three pipeline stage variants (Decode, Normalize, Blend) as Some(&dyn Error), enabling full error-chain traversal via std::error::Error::source(). No variant swallows its cause.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:12Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-integration.src.lib.PipelineError.source` (hash `6e61e921fc4f63b3`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:12Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:12Z
+
 ## github.com-soarsa-celnet.crates.celnet-integration.src.normalize.NormalizeError.fmt
 
 - **claim** (`cl\_96790b63318a6a88`): NormalizeError::fmt encodes the complete set of convention-agreement invariants the normalization layer enforces on incoming vendor surface messages. A message is rejected with a structured error if: the pair token is not a valid 6-letter ISO pair (\`BadPair\`); the tenor token is unrecognised (\`BadTenor\`); a required numeric field is non-finite or non-positive (\`BadValue\`); the vol-time year fraction is non-positive (\`BadMaturity\`); the feed's declared delta convention disagrees with Celnet's canonically resolved convention for that (pair, tenor) (\`DeltaConventionMismatch\`) — such a mismatch mis-signs every hedge delta and so is rejected rather than silently accepted; the feed's ATM convention disagrees with the canonical ATM convention (\`AtmConventionMismatch\`) — this mis-places the ATM pillar strike for the entire surface; the feed's premium-currency flag is internally inconsistent with its delta convention (\`PremiumFlagInconsistent\`); or the feed's premium-currency flag disagrees with the canonical premium style resolved for that (pair, tenor) (\`PremiumStyleMismatch\`) — a wrong-currency premium mis-signs every hedge delta. All eight rejection reasons are surfaced with enough context (declared vs resolved values) for diagnosis.
@@ -3947,6 +4057,28 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
   - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
 
+## github.com-soarsa-celnet.crates.celnet-limits.src.tree.LimitScope.dimension
+
+- **claim** (`cl\_90262b5e4fdab5f9`): LimitScope::dimension is a pure surjective map from scope variant to Option\<DimensionId\>: Firm =\> None; Trader =\> Some(Trader); Book =\> Some(Book); Desk =\> Some(Desk); CcyPair =\> Some(Underlying); Location =\> Some(Location); Entity =\> Some(Entity). None iff the scope is firm-wide (no group key).
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:57:58Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-limits.src.tree.LimitScope.dimension` (hash `3b16dee5be81a6a8`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:57:58Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:57:58Z
+
+## github.com-soarsa-celnet.crates.celnet-limits.src.tree.LimitScope.group\_value
+
+- **claim** (`cl\_57cf15c1333d5ed5`): LimitScope::group\_value returns None only for Firm; for all other variants it returns Some(u64) derived from the variant's inner raw ID. For CcyPair, the value is computed by constructing a zeroed FactKey with the underlying set to Underlying::Fx(p) and then delegating to FactKey::group\_value(DimensionId::Underlying), preserving byte-identical backward compatibility with the pre-generalization CcyPair encoding.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:01Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-limits.src.tree.LimitScope.group\_value` (hash `394f3ccdc37c2f2a`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:01Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:01Z
+
 ## github.com-soarsa-celnet.crates.celnet-limits.src.tree.ScopePath.resolve
 
 - **claim** (`cl\_95a7c36e4115ec24`): ScopePath::resolve deterministically maps a \`FactKey\` + \`Hierarchy\` to a fixed 7-element ordered scope list: \[Trader(key.trader), Book(key.book), Desk(hierarchy.desk\_of(key.book).unwrap\_or(key.desk)), CcyPair(scope\_pair\_of(&key.underlying)), Location(key.location), Entity(hierarchy.entity\_of(key.location).unwrap\_or(key.entity)), Firm\]. The Hierarchy overrides desk and entity via parent-pointer lookup (\`desk\_of\`/\`entity\_of\`), falling back to the fact's own ids when no parent is registered. This is a pure function with no I/O or mutation.
@@ -3957,6 +4089,17 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 - **provenance**:
   - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
+
+## github.com-soarsa-celnet.crates.celnet-limits.src.tree.scope\_pair\_of
+
+- **claim** (`cl\_21d4779b561666ec`): scope\_pair\_of derives a CcyPair from any Underlying using a defined priority fallback: (1) direct as\_ccy\_pair() if present; (2) equity currency → self-pair (n, n); (3) commodity currency → self-pair; (4) digital asset quote currency parsed via Ccy::parse, defaulting to USD on failure; (5) USD/USD for any other variant. This ensures every Underlying maps to a valid non-panicking CcyPair for limit-tree bucketing.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:04Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-limits.src.tree.scope\_pair\_of` (hash `b826d00aaad5fcf2`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:04Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:04Z
 
 ## github.com-soarsa-celnet.crates.celnet-linear.src.forward.fair\_forward
 
@@ -4011,6 +4154,28 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 - **provenance**:
   - (none) → draft by agent (authored) @ 2026-06-25T08:20:12Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:12Z
+
+## github.com-soarsa-celnet.crates.celnet-linear.src.inputs.Side.opposite
+
+- **claim** (`cl\_a6e3d3aed208fb4a`): Side::opposite is a pure const involution: opposite(Buy) = Sell, opposite(Sell) = Buy. Applying it twice returns the original value (self-inverse). It is const-evaluable and has no heap allocation.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:25Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-linear.src.inputs.Side.opposite` (hash `bdaa7848b8479241`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:25Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:25Z
+
+## github.com-soarsa-celnet.crates.celnet-linear.src.inputs.Side.sign
+
+- **claim** (`cl\_e72afab141ae18c9`): Side::sign is a pure const bijection: Side::Buy =\> 1.0, Side::Sell =\> -1.0. Used throughout linear pricing to convert directional side to a multiplicative sign factor with no branching overhead at call sites.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:22Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-linear.src.inputs.Side.sign` (hash `f86171fbbc29dadd`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:22Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:22Z
 
 ## github.com-soarsa-celnet.crates.celnet-linear.src.ndf.Ndf.pv
 
@@ -4136,6 +4301,17 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 - **provenance**:
   - (none) → draft by agent (authored) @ 2026-06-27T05:40:35Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:40:35Z
+
+## github.com-soarsa-celnet.crates.celnet-observability.src.logging.LogConfig.env\_filter
+
+- **claim** (`cl\_75d0674066cddcee`): LogConfig::env\_filter resolves the tracing EnvFilter with a two-level fallback: if a filter directive is explicitly configured, it is parsed via EnvFilter::try\_new; if that parse fails, it falls back to EnvFilter::new(max\_level). If no directive is configured, it tries EnvFilter::try\_from\_default\_env() (reads RUST\_LOG); on failure falls back to max\_level. The function never panics and always returns a valid EnvFilter.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:07Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-observability.src.logging.LogConfig.env\_filter` (hash `6ac1c5e8bcc5e2df`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:07Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:07Z
 
 ## github.com-soarsa-celnet.crates.celnet-observability.src.record.ErrorClass.from\_u16
 
@@ -4512,6 +4688,17 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 - **provenance**:
   - (none) → draft by agent (authored) @ 2026-06-27T05:48:15Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:48:15Z
+
+## github.com-soarsa-celnet.crates.celnet-parity.tests.pair\_universe.us\_holiday
+
+- **claim** (`cl\_847f081c0a0d9ed7`): us\_holiday is a pure predicate returning true iff (y, m, d) is a US federal public holiday observed on a weekday, implementing nearest-weekday observance (Saturday→Friday, Sunday→Monday) for fixed-date holidays and nth-weekday rules for floating ones. The complete set covered: New Year's Day (Jan 1), MLK Day (3rd Mon Jan), Presidents'/Washington Day (3rd Mon Feb), Memorial Day (last Mon May — 5th Monday if its day ≤ 31 else 4th), Juneteenth (Jun 19, only y≥2021), Independence Day (Jul 4), Labor Day (1st Mon Sep), Thanksgiving (4th Thu Nov), Christmas (Dec 25). Columbus/Veterans Day are explicitly excluded, matching the Fedwire calendar. The function calls only pure helpers (weekday, nth\_weekday), performs no I/O and reads no global state.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:56:44Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-parity.tests.pair\_universe.us\_holiday` (hash `afbcba6675263f70`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:56:44Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:56:44Z
 
 ## github.com-soarsa-celnet.crates.celnet-parity.tests.pivot\_wire.style
 
@@ -5740,6 +5927,17 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
   - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
 
+## github.com-soarsa-celnet.crates.celnet-rfq.src.internal.always\_quotes\_deterministically
+
+- **claim** (`cl\_f0a62c8514199f4f`): always\_quotes\_deterministically verifies that InternalPricerSource (the native dealer) is referentially transparent: two sequential calls with the same RfqRequest and timeout produce bit-identical QuoteSourceReply::Quote values. The mid-price is derived as \`spread\_mid = mid\_rate - half\_spread\` (asserted: \`(price.bid - 0.0080).abs() \< 1e-12\` for mid=0.0085, half\_spread=0.0005). The epoch\_nanos field is taken verbatim from the seeded clock (42) and valid\_until\_nanos = epoch\_nanos.saturating\_add(valid\_for\_nanos) = 1\_042.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:57:34Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-rfq.src.internal.always\_quotes\_deterministically` (hash `172d710a2fa1b2f8`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:57:34Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:57:34Z
+
 ## github.com-soarsa-celnet.crates.celnet-rfq.src.panel.SideKey\<'\_\>.partial\_cmp\_total
 
 - **claim** (`cl\_034ca85c17f38d18`): rank\_side(rows, now\_nanos, side) is the pure best-LP selector: it filters rows to those whose valid\_until\_nanos \>= now\_nanos (last-look gate — stale quotes are categorically excluded from winning), then picks the min under SideKey::partial\_cmp\_total. The SideKey for Bid negates the price (-bid) so that min-selection gives the highest bid; for Offer the price is taken straight so min gives the lowest offer. Tie-break is lexicographic: (better\_price, earlier epoch\_nanos, smaller lp\_id) — fully deterministic with no NaN ambiguity (non-finite prices lose to any finite price via partial\_cmp\_total). Returns None when all rows are stale or the slice is empty.
@@ -6354,6 +6552,94 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
   - (none) → draft by agent (authored) @ 2026-06-27T05:40:34Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:40:34Z
 
+## github.com-soarsa-celnet.crates.celnet-server.examples.scale\_harness.InstrumentSpec.to\_wire\_pub
+
+- **claim** (`cl\_dbd459889d246195`): InstrumentSpec::to\_wire\_pub always constructs an FX-path proto Instrument for the scale harness: underlying is celnet\_proto::Underlying::fx, tenor is 1Y, side is TwoWay, product is a Vanilla Call with an absolute strike (from strike\_for or the spec's own Absolute strike). The function panics if the spec's underlying is not an FX pair.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:21Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.examples.scale\_harness.InstrumentSpec.to\_wire\_pub` (hash `66c66b6bf9ea8891`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:21Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:21Z
+
+## github.com-soarsa-celnet.crates.celnet-server.examples.scale\_harness.strike\_for
+
+- **claim** (`cl\_b50563bce7561f53`): strike\_for returns a fixture ATM-approximate strike for each canonical scale-harness currency pair: EUR/USD-\>1.10, GBP/USD-\>1.27, AUD/USD-\>0.66, USD/JPY-\>150.0, any other pair-\>1.0.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:52Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.examples.scale\_harness.strike\_for` (hash `604c5945db87b928`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:52Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:52Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.config.fix\_connections.AcceptorKind.parse
+
+- **claim** (`cl\_41f7cc66618851c0`): AcceptorKind::parse accepts only the single string 'options' (case-insensitive, trimmed) and maps it to AcceptorKind::Options; all other inputs return None. This reflects that Options is the only currently supported FIX acceptor product kind.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:28Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.config.fix\_connections.AcceptorKind.parse` (hash `57bbf5cab1d2050e`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:28Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:28Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.config.fix\_connections.FixConnectionDef.validate
+
+- **claim** (`cl\_a7946a2e29bd6706`): FixConnectionDef::validate enforces that id, name, sender\_comp\_id, and target\_comp\_id are all non-empty after trimming, and that bind\_addr parses as a valid host:port via socket\_addr(). All four string checks return Err with a descriptive message on failure; the bind\_addr check returns a formatted Err on failure.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:48Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.config.fix\_connections.FixConnectionDef.validate` (hash `382f4467d21b5803`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:48Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:48Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.config.identity.Role.as\_str
+
+- **claim** (`cl\_f66097a5021bca46`): Role::as\_str is a total, allocation-free bijection from the two-variant Role enum to static string slices: Role::Admin maps to "admin" and Role::Trader maps to "trader". The match is exhaustive with no fallback arm, so any new variant causes a compile error.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:07Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.config.identity.Role.as\_str` (hash `ec2170edc096aab2`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:07Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:07Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.config.identity.Role.parse
+
+- **claim** (`cl\_c9028d70424e0df5`): Role::parse is a case-insensitive, trim-normalising parser: it maps 'admin' to Role::Admin and 'trader' to Role::Trader; all other inputs return None. The comparison is performed after trim() and to\_ascii\_lowercase(), so whitespace and case variations are accepted.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:26Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.config.identity.Role.parse` (hash `8981f7c88350e21c`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:26Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:26Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.config.identity.slugify
+
+- **claim** (`cl\_304ad4523b3cdfb3`): identity::slugify is the infallible variant: it pre-trims whitespace with \`s.trim()\`, then applies the same alphanumeric-lowercase / run-collapse algorithm, and trims both leading and trailing dashes via \`trim\_matches('-')\`. Always returns a String (may be empty for an all-punctuation input).
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:39Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.config.identity.slugify` (hash `6db9deaf3f86cd2e`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:39Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:39Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.core\_link.BarrierTopology.style
+
+- **claim** (`cl\_0aa099963ec74c61`): BarrierTopology::style is a pure const mapping: DownAndOut and UpAndOut both return BarrierStyle::KnockOut; DownAndIn and UpAndIn both return BarrierStyle::KnockIn. The function is a compile-time-eligible \`const fn\` covering all four variants.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:54Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.core\_link.BarrierTopology.style` (hash `200921e1acadef28`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:54Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:54Z
+
 ## github.com-soarsa-celnet.crates.celnet-server.src.core\_link.observe\_live
 
 - **claim** (`cl\_894c0505a1d7bc8c`): observe\_live computes the live scalar value for a market observable from a MarketState: AtmVol returns Smile::implied\_vol at ATM (forward==strike); Spot returns st.spot; Forward returns st.forward(); RiskReversal returns call\_vol − put\_vol at the requested delta magnitude; Butterfly returns 0.5\*(call\_vol + put\_vol) − atm\_vol. The delta-to-strike inversion for wing observables uses celnet\_vanilla::strike\_from\_delta under the market's delta convention, and returns None if inversion fails.
@@ -6365,6 +6651,39 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
   - (none) → draft by agent (authored) @ 2026-06-27T05:48:15Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:48:15Z
 
+## github.com-soarsa-celnet.crates.celnet-server.src.lsv\_pricer.decode\_option\_type
+
+- **claim** (`cl\_e1e8b289651d1690`): decode\_option\_type (lsv\_pricer) maps wire enum tags Call→OptionType::Call and Put→OptionType::Put, returning PriceError::UnknownEnum{kind:"OptionType", tag} for any unrecognized tag. The two-variant exhaustive match means no silent default is applied.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:47Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.lsv\_pricer.decode\_option\_type` (hash `47992611a73e3614`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:47Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:47Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.lsv\_pricer.vanilla\_strike
+
+- **claim** (`cl\_e29b76036ae4c5ed`): vanilla\_strike rejects delta-keyed strikes at the LSV layer with a domain error, and rejects non-positive or non-finite absolute strikes. It returns (OptionType, f64) only when the strike spec is Spec::Strike(k) with k \> 0.0 and k.is\_finite().
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:53Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.lsv\_pricer.vanilla\_strike` (hash `df730c046186ccfa`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:53Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:53Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.pricer.PriceError.fmt
+
+- **claim** (`cl\_9e74ef0901ddf585`): PriceError::fmt produces human-readable, structured error messages for all seven variants, each naming the relevant field/context: MissingField names the field, UnknownEnum names the kind and tag, Domain includes the reason, UnsupportedModel names both model and product with guidance, and LinearProductNotAnOption names the product and the responsible subsystem (linear book).
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:59:07Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.pricer.PriceError.fmt` (hash `3e509690eb5ecb8c`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:59:07Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:59:07Z
+
 ## github.com-soarsa-celnet.crates.celnet-server.src.pricer.carry\_greeks\_to\_greeks
 
 - **claim** (`cl\_8b1c3c0a3b2c3c49`): carry\_greeks\_to\_greeks projects CarryGreeks into the wire Greeks struct. The rho bijection is: if rates == Carry { discount\_rho, carry\_rho } then rho\_dom = discount\_rho + carry\_rho, rho\_for = −carry\_rho; if rates == Fx { rho\_dom, rho\_for } the values are forwarded unchanged. All other fields are copied 1-to-1.
@@ -6375,6 +6694,28 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 - **provenance**:
   - (none) → draft by agent (authored) @ 2026-06-27T05:29:50Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:29:50Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.pricer.decode\_fixing\_source
+
+- **claim** (`cl\_b93fc2a6b6c4f025`): decode\_fixing\_source is an exhaustive, pure bijection from the six proto FixingSource wire enum tags to the matching celnet\_types::FixingSource domain values: KrwKftc18, TwdTaipei, InrRbiRef, BrlPtax, ClpDolarObs, CopTrm. An unrecognized tag returns PriceError::UnknownEnum{kind:"FixingSource", tag}.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:36Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.pricer.decode\_fixing\_source` (hash `28b36d9dcbfb8541`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:36Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:36Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.pricer.decode\_linear\_side
+
+- **claim** (`cl\_247a259e9ab5ab4d`): decode\_linear\_side rejects Side::TwoWay with a domain error ("a linear product needs a definite BUY/SELL side, not TWO\_WAY"), maps Buy→LinearSide::Buy and Sell→LinearSide::Sell, and returns PriceError::UnknownEnum for any unrecognized tag. This enforces that linear products always carry a definite directional side.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:38Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.pricer.decode\_linear\_side` (hash `68014812e4e2c12f`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:38Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:38Z
 
 ## github.com-soarsa-celnet.crates.celnet-server.src.pricer.decode\_settlement\_style
 
@@ -6442,6 +6783,39 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
   - (none) → draft by agent (authored) @ 2026-06-27T05:48:15Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:48:15Z
 
+## github.com-soarsa-celnet.crates.celnet-server.src.pricer.wire\_error\_to\_price\_error
+
+- **claim** (`cl\_3a3246f6b6c25cda`): wire\_error\_to\_price\_error is a total, non-panicking lowering from all WireError variants to PriceError: UnknownEnum→UnknownEnum, MissingField→MissingField, InvalidTerms→Domain(constraint), InvalidCcy→Domain(static msg), OutOfRange→Domain(static msg), WrongUnderlying→Domain(static msg). No variant is unhandled.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:59:18Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.pricer.wire\_error\_to\_price\_error` (hash `9a083a00f5eab376`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:59:18Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:59:18Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.readiness.ServiceState.from\_tag
+
+- **claim** (`cl\_dab0ab2e14e74b18`): ServiceState::from\_tag is a const, pure, total function mapping u8 tag values to ServiceState variants: 1→Ready, 2→Draining, and any other value (including 0)→Starting. The wildcard default of Starting means unrecognized tags never error.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:59:13Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.readiness.ServiceState.from\_tag` (hash `b9dc9daa63543eae`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:59:13Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:59:13Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.readiness.ServiceState.tag
+
+- **claim** (`cl\_bc99276c63c581b5`): ServiceState::tag encodes the three lifecycle states as a stable, injective u8 discriminant: Starting→0, Ready→1, Draining→2. The mapping is a const fn with no branches outside the exhaustive match, so the tag is guaranteed unique and total over the enum.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:15Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.readiness.ServiceState.tag` (hash `6637a46bceec9722`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:15Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:15Z
+
 ## github.com-soarsa-celnet.crates.celnet-server.src.services.access.DeskScope.allows
 
 - **claim** (`cl\_6263871b942dc25d`): DeskScope::allows() is a pure three-way predicate: \`All\` permits any desk name, \`Desk(d)\` permits only exact string equality with \`owner\_desk\`, and \`Deskless\` permits only the empty-string desk. It has no side effects and allocates nothing.
@@ -6464,6 +6838,28 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
   - (none) → draft by agent (authored) @ 2026-06-27T05:48:15Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:48:15Z
 
+## github.com-soarsa-celnet.crates.celnet-server.src.services.access.mode\_from\_env\_or
+
+- **claim** (`cl\_50332db5f7952b12`): mode\_from\_env\_or reads the CELNET\_ACCESS\_MODE environment variable and maps "permissive" -\> AccessMode::Permissive, "enforce" -\> AccessMode::Enforce, and any other value (including unset) -\> the provided default. This is the single authoritative resolution point for the access mode override; the demo edge passes Permissive as default, all production paths pass Enforce.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:59:17Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.services.access.mode\_from\_env\_or` (hash `849162c0d3844898`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:59:17Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:59:17Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.services.access.principal\_label
+
+- **claim** (`cl\_f2dffa3fbc789f90`): principal\_label produces a human-readable diagnostic string for an EntitlementPrincipal: None → "absent"; grant\_all with denies → "grant-all(+N denies)"; scoped → "scoped(M grants, N denies)". The function is pure and allocation-only (no I/O, no mutation).
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:45Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.services.access.principal\_label` (hash `71325dcd469e1709`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:45Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:45Z
+
 ## github.com-soarsa-celnet.crates.celnet-server.src.services.attribution.resolve
 
 - **claim** (`cl\_3b062d8d581c7312`): attribution::resolve() produces an AttributionRecord for a new quote: the server's maker auto-pricer identity is always installed as \`quoted\_by\`. When a client-side attribution is supplied, its \`quoted\_by\` seat becomes the \`held\_by\` (the requesting client holds the position). Without a client attribution, \`held\_by\` is None. This is a pure transformation with no I/O.
@@ -6475,6 +6871,28 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
   - (none) → draft by agent (authored) @ 2026-06-27T05:40:33Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:40:33Z
 
+## github.com-soarsa-celnet.crates.celnet-server.src.services.auth.role\_from\_wire
+
+- **claim** (`cl\_17f134a7c98ada2c`): role\_from\_wire maps the proto i32 discriminant bijectively to domain Role: UserRole::Admin -\> Ok(Role::Admin), UserRole::Trader -\> Ok(Role::Trader), any unrecognised value -\> Err(Status::invalid\_argument). The function is a total, exhaustive match with no side-effects.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:14Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.services.auth.role\_from\_wire` (hash `726b8b2cb9e6a483`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:14Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:14Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.services.auth.role\_to\_wire
+
+- **claim** (`cl\_96b578b8e09f68e3`): role\_to\_wire is the left inverse of role\_from\_wire on the valid domain: Role::Admin -\> UserRole::Admin as i32, Role::Trader -\> UserRole::Trader as i32. The mapping is total and free of allocation or side-effects.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:16Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.services.auth.role\_to\_wire` (hash `174745086ee2ed81`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:16Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:16Z
+
 ## github.com-soarsa-celnet.crates.celnet-server.src.services.fix.instrument\_from\_descriptor
 
 - **claim** (`cl\_f4d7db3b0929436d`): instrument\_from\_descriptor constructs a canonical Instrument protobuf for a FIX new-order: it always sets Side::TwoWay, a 1,000,000 base-ccy notional, no tenor (None), PricingModel::Default, and wraps the OptionDescriptor's call/put type and absolute strike into a Vanilla product. The function is a pure mapping with no I/O or state access.
@@ -6485,6 +6903,61 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 - **provenance**:
   - (none) → draft by agent (authored) @ 2026-06-27T05:48:15Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:48:15Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.services.fix\_admin.direction\_to\_wire
+
+- **claim** (`cl\_3d9d427004aa248c`): direction\_to\_wire is a pure, exhaustive bijection from the two-variant FixDirection enum to the corresponding FixMsgDirection proto enum: Inbound→FixMsgDirection::Inbound, Outbound→FixMsgDirection::Outbound.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:55Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.services.fix\_admin.direction\_to\_wire` (hash `9b6de777a6040043`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:55Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:55Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.services.fix\_admin.kind\_from\_wire
+
+- **claim** (`cl\_c4a7e8e51160e8ea`): kind\_from\_wire is a total, pure mapping: i32 wire value -\> Result\<AcceptorKind, Status\>. It accepts exactly one valid discriminant (FixAcceptorKind::Options -\> AcceptorKind::Options) and returns Status::invalid\_argument for every other value. No silent fallback or default exists.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:47Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.services.fix\_admin.kind\_from\_wire` (hash `1e719c282d6e9e6c`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:47Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:47Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.services.fix\_admin.slugify
+
+- **claim** (`cl\_3bd47e0d36b63867`): fix\_admin::slugify converts a display name to a lowercase URL-safe slug: alphanumeric characters are lowercased and emitted verbatim; runs of non-alphanumeric characters collapse to a single '-'; trailing dashes are trimmed (trim\_end\_matches). Returns None if the result is empty.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:36Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.services.fix\_admin.slugify` (hash `b932c2e5a5ce71b1`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:36Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:36Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.services.fix\_monitor.FixDirection.as\_str
+
+- **claim** (`cl\_b87751f2a0feb15f`): FixDirection::as\_str is a total, allocation-free bijection: FixDirection::Inbound maps to "inbound" and FixDirection::Outbound maps to "outbound". The exhaustive match ensures no unhandled variant can exist at compile time.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:09Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.services.fix\_monitor.FixDirection.as\_str` (hash `8e5c800c6640b542`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:09Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:09Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.services.forward.serve\_mode
+
+- **claim** (`cl\_a83673fd4c7a02a3`): forward::serve\_mode is a total, pure two-way dispatch: Some(fleet) -\> Serve::Forward(fleet), None -\> Serve::Local. An absent fleet always yields local serving; a present fleet always yields forwarding.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:29Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.services.forward.serve\_mode` (hash `b686c87bc5ea99b5`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:29Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:29Z
 
 ## github.com-soarsa-celnet.crates.celnet-server.src.services.pin.resolve\_pinned\_vol
 
@@ -6532,6 +7005,61 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
   - (none) → draft by agent (authored) @ 2026-06-27T05:40:33Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:40:33Z
 
+## github.com-soarsa-celnet.crates.celnet-server.src.services.risk.convert.dimension\_to\_wire
+
+- **claim** (`cl\_99e0ab53df8dc9c7`): dimension\_to\_wire is an exhaustive pure bijection from the six DimensionId variants (Trader, Book, Desk, Underlying, Location, Entity) to their corresponding RiskDimension proto enum i32 values via a cast. No default arm exists; adding a new DimensionId variant causes a compile error.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:53Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.services.risk.convert.dimension\_to\_wire` (hash `150af6b49cbc80ac`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:53Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:53Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.services.risk.convert.enforcement\_to\_wire
+
+- **claim** (`cl\_cd2f80b064c775d3`): enforcement\_to\_wire is a pure, exhaustive bijection from the two-variant Enforcement enum to WireEnforcement proto i32 values: Enforcement::Soft→WireEnforcement::Soft as i32, Enforcement::Hard→WireEnforcement::Hard as i32.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:59:02Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.services.risk.convert.enforcement\_to\_wire` (hash `aa407f53f236ced8`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:59:02Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:59:02Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.services.risk.convert.limit\_metric\_to\_wire
+
+- **claim** (`cl\_ee3125fe7918ee43`): limit\_metric\_to\_wire is a pure, total mapping from LimitMetric enum variants to a wire triple (LimitMetricKind, Option\<WireVegaPillar\>, u32). VegaBucket carries a non-None pillar; TenorVega carries its tenor\_days in the u32 slot; all scalar Greeks and risk measures carry (kind, None, 0). The mapping covers all 11 variants exhaustively.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:56Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.services.risk.convert.limit\_metric\_to\_wire` (hash `87deea8e3a534ece`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:56Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:56Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.services.risk.convert.rag\_to\_wire
+
+- **claim** (`cl\_4af807f88259f7a5`): rag\_to\_wire is a total, exhaustive bijection from the four RagStatus variants (Green, Amber, Red, Breach) to the corresponding WireRag proto discriminants, returned as i32. Every variant is covered; no default branch exists.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:50Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.services.risk.convert.rag\_to\_wire` (hash `f1bcfb12d2f03be2`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:50Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:50Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.services.risk.convert.rule\_of
+
+- **claim** (`cl\_142a299cec5b6f59`): rule\_of folds a proto EntitlementRule's scopes into a domain Rule via conjunction: it starts from Rule::firm() (the permissive root) and calls \`.and(dim, scope.value)\` for each scope whose dimension resolves to Some; FIRM-pinned scopes (None dimension) are no-ops. An empty rule returns the firm root unchanged.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:18Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.services.risk.convert.rule\_of` (hash `cd55e2224ee126f2`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:18Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:18Z
+
 ## github.com-soarsa-celnet.crates.celnet-server.src.services.risk.convert.scope\_to\_rule
 
 - **claim** (`cl\_9c1d28470d535492`): scope\_to\_rule converts a RiskScope to a celnet\_limits Rule: an absent/None dimension yields Rule::firm() (firm-wide limit); any recognised dimension yields Rule::on(dim, scope.value); an unknown enum tag propagates invalid\_argument from dimension\_of. The function is a thin, stateless adapter between the wire and the limit-tree rule vocabulary.
@@ -6543,6 +7071,17 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
   - (none) → draft by agent (authored) @ 2026-06-27T05:48:15Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:48:15Z
 
+## github.com-soarsa-celnet.crates.celnet-server.src.services.risk.mod.RiskEdge.serve\_mode
+
+- **claim** (`cl\_e623b8227c08e8cf`): RiskEdge::serve\_mode returns Serve::Direct for InProcess topology, Serve::Federate(fleet) for a connected Distributed topology, and Err(Status::unavailable) if the Distributed topology has not been connected (fleet is None) — making the connection pre-condition explicit at the call site.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:26Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.services.risk.mod.RiskEdge.serve\_mode` (hash `98285dc323312425`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:26Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:26Z
+
 ## github.com-soarsa-celnet.crates.celnet-server.src.services.risk.mod.limit\_scope\_of
 
 - **claim** (`cl\_a3b57d342670ea0f`): limit\_scope\_of maps a wire RiskScope to a typed LimitScope: None dimension yields LimitScope::Firm; known dimensions (Trader, Book, Desk, Location, Entity) wrap the value field in the corresponding strongly-typed Id newtype (u32::try\_from with 0 fallback). An Underlying dimension is explicitly rejected with Status::invalid\_argument because a CCY\_PAIR scope cannot be addressed by a bare u64 value alone.
@@ -6553,6 +7092,28 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 - **provenance**:
   - (none) → draft by agent (authored) @ 2026-06-27T05:48:15Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:48:15Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.services.risk.store.seat\_name
+
+- **claim** (`cl\_02883d2cd81d25e9`): seat\_name extracts a stable string key from a BookId's Owner seat: Trader(t) -\> t.clone(), AutoPricer(p) -\> p.clone(), absent seat -\> "unknown-seat". The function is total (covers all cases via None fallback).
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:23Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.services.risk.store.seat\_name` (hash `f7af8c72379e106e`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:23Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:24Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.services.stream.pair\_of\_client\_message
+
+- **claim** (`cl\_0856afe15a1b0211`): pair\_of\_client\_message extracts the CcyPair from a ClientStreamMessage for exactly two message variants: Subscribe (via instrument.underlying.as\_fx()) and MarketSeriesSubscribe (via underlying.as\_fx()). All other message variants return None, making it a safe, pure filter that never mutates state.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:24Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.services.stream.pair\_of\_client\_message` (hash `3c5586921a6f9095`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:24Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:24Z
 
 ## github.com-soarsa-celnet.crates.celnet-server.src.services.stream.seq\_of
 
@@ -6609,6 +7170,105 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
   - (none) → draft by agent (authored) @ 2026-06-27T05:48:15Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:48:15Z
 
+## github.com-soarsa-celnet.crates.celnet-server.src.services.surface.expected\_wire\_tag
+
+- **claim** (`cl\_e52e74cac346ee68`): expected\_wire\_tag is a pure, exhaustive bijection from the five SmileModel variants to their proto wire integer tags: MarketHedge→0, StochasticVol→1, Parametric→2, ParametricSurface→3, ExtendedSurface→4. It is intentionally independent from the production wire\_smile\_model function so a shared bug cannot cause both to pass tests simultaneously.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:59:04Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.services.surface.expected\_wire\_tag` (hash `a34a07e1cd3737f9`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:59:04Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:59:04Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.services.surface.model\_label
+
+- **claim** (`cl\_17471e966b5ffa71`): model\_label is a pure, exhaustive mapping from SmileModel enum to a &'static str label covering all five variants: MarketHedge-\>'market-hedge', StochasticVol-\>'stochastic-vol', Parametric-\>'parametric', ParametricSurface-\>'parametric-surface', ExtendedSurface-\>'extended-surface'. Used to provide model-origin transparency in surface responses.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:59:20Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.services.surface.model\_label` (hash `54f5ef7a4b5134de`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:59:20Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:59:20Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.services.surface.wire\_smile\_model
+
+- **claim** (`cl\_b104c890cf844467`): wire\_smile\_model is a total, bijective mapping from the internal SmileModel enum to the corresponding celnet\_proto::SmileModel variant, covering all five variants (MarketHedge, StochasticVol, Parametric, ParametricSurface, ExtendedSurface) with no default arm.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:59:21Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.services.surface.wire\_smile\_model` (hash `14472ca823b4b9d5`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:59:21Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:59:21Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.american\_decodes\_from\_json
+
+- **claim** (`cl\_874de187fdc764a7`): american\_decodes\_from\_json verifies two codec contracts: (a) an American/continuous option with absent lsm\_paths decodes with lsm\_paths==0 and bermudan\_dates empty; (b) a Bermudan variant with explicit bermudan\_dates array of 4 year-fractions, lsm\_paths=100\_000, lsm\_exercise\_dates=50, and lsm\_seed=7 round-trips all four fields with bit-exact year-fraction values.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:04Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.american\_decodes\_from\_json` (hash `d146a33823f409af`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:04Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:04Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.american\_from\_json
+
+- **claim** (`cl\_df968fb75298b104`): american\_from\_json deserializes a JSON object under key "american" into an AmericanOption proto, applying three invariants: (1) missing or null "bermudan\_dates" always yields an empty Vec (never an error); (2) lsm\_paths and lsm\_exercise\_dates are bounds-checked via u32::try\_from and return a descriptive error string if out of range; (3) absent optional LSM fields default to zero via u64\_or\_zero. The function is a pure JSON→proto transcription with no side effects.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:02Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.american\_from\_json` (hash `cc333aa600c882d0`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:02Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:02Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.attribution\_to\_json
+
+- **claim** (`cl\_229e18704a48eedb`): attribution\_to\_json serializes an AttributionRecord to a JSON object containing only the present optional fields: "quotedBy" (via book\_id\_to\_json), "heldBy" (via book\_id\_to\_json), "won" (bool), and "lpCount" (u32). Absent/None fields are omitted entirely from the output object.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:19Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.attribution\_to\_json` (hash `c53993eb65a67e50`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:19Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:19Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.basket\_instrument\_round\_trips\_from\_json
+
+- **claim** (`cl\_b9e268346e19662d`): basket\_instrument\_round\_trips\_from\_json verifies that a two-leg basket instrument (EUR/USD 0.5 weight + GBP/USD 0.5 weight, 4-element correlation matrix \[1.0, 0.4, 0.4, 1.0\], BasketKind::WorstOf, mc\_paths=8192, mc\_replications=16) round-trips through instrument\_from\_json with bit-exact f64 preservation for spot, vol, and strike values.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:22Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.basket\_instrument\_round\_trips\_from\_json` (hash `9585760ed8d9c813`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:22Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:22Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.fx\_forward\_instrument\_round\_trips\_from\_json
+
+- **claim** (`cl\_62181bfc1fb31be2`): fx\_forward\_instrument\_round\_trips\_from\_json verifies bit-exact round-trip of an FX forward instrument through instrument\_from\_json: contract\_rate=1.25, notional=1\_000\_000.0, and side=Buy (enum discriminant 0) are all preserved exactly, with f64 fields compared via to\_bits() to guard against any lossy parse path.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:59:15Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.fx\_forward\_instrument\_round\_trips\_from\_json` (hash `83d8423dc2bdf0fa`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:59:15Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:59:15Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.fx\_swap\_instrument\_round\_trips\_from\_json
+
+- **claim** (`cl\_cdd76c4695f05ec4`): fx\_swap\_instrument\_round\_trips\_from\_json verifies that a JSON FX-swap instrument decodes via instrument\_from\_json with exact IEEE-754 bit-identical field preservation: near.side == Buy (0), far.side == Sell (1), and near.notional.to\_bits() == 2\_000\_000.0\_f64.to\_bits(). The two-leg side inversion (near Buy / far Sell) is the invariant being sealed.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:39Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.fx\_swap\_instrument\_round\_trips\_from\_json` (hash `43582198021b250f`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:39Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:39Z
+
 ## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.instrument\_underlying\_from\_json
 
 - **claim** (`cl\_a30bdeac593b09f4`): One clean unversioned contract with a single underlying discriminator: when decoding an instrument, \`instrument\_underlying\_from\_json\` treats the rich cross-asset \`underlying\` oneof as authoritative whenever it is present and non-null (it carries the asset-class discriminator), and consults the legacy FX \`pair\` key only when no \`underlying\` is present — projecting it to \`Underlying::fx\`. There is exactly one precedence order (underlying ≻ pair), not a versioned negotiation. Pure: it reads the JSON map and returns a \`Result\`, mutating no state.
@@ -6642,6 +7302,72 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
   - (none) → draft by agent (authored) @ 2026-06-25T08:20:11Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:11Z
 
+## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.ndf\_instrument\_round\_trips\_from\_json
+
+- **claim** (`cl\_4553b277077109e7`): ndf\_instrument\_round\_trips\_from\_json verifies exact JSON decode of an NDF instrument: contract\_rate bit-identical to 5.1, fixing==FixingSource::BrlPtax (discriminant 3), settlement\_ccy=="USD". The fixing source integer-to-enum mapping is the load-bearing invariant being sealed.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:59:26Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.ndf\_instrument\_round\_trips\_from\_json` (hash `a3bbc22a97a43923`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:59:26Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:59:26Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.opt\_f64
+
+- **claim** (`cl\_0a200631277ff683`): opt\_f64 maps a JSON map field to Option\<f64\>: absent key or JSON null both yield None; any other value delegates to serde\_json's as\_f64(). Mirrors opt\_u64 with identical structure for f64.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:08Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.opt\_f64` (hash `d24735f968814904`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:08Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:08Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.opt\_nested
+
+- **claim** (`cl\_b89de8e9acc5970e`): opt\_nested decodes an optional nested JSON object field via a caller-supplied decoder f: absent key or JSON null yield Ok(None); a present value passes through f and wraps the result in Some. This is the sole gateway for optional object fields in the codec — it never inspects field internals directly.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:10Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.opt\_nested` (hash `9f6c5a7d43d1c06f`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:10Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:10Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.opt\_smile\_model
+
+- **claim** (`cl\_66cd7967f6aaf88b`): opt\_smile\_model decodes an optional SmileModel field that accepts two wire forms: a JSON integer (numeric discriminant) or one of the four canonical string tags (SMILE\_MODEL\_MARKET\_HEDGE, SMILE\_MODEL\_STOCHASTIC\_VOL, SMILE\_MODEL\_PARAMETRIC, SMILE\_MODEL\_PARAMETRIC\_SURFACE). Absent, null, unknown strings, or non-numeric/non-string types all yield None.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:13Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.opt\_smile\_model` (hash `a1a0ccc9b519d95f`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:13Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:13Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.opt\_u64
+
+- **claim** (`cl\_f5d0dd1736c51a32`): opt\_u64 maps a JSON map field to Option\<u64\>: absent key or JSON null both yield None; any other value delegates to serde\_json's as\_u64(). The function is a pure, two-branch read with no allocation or side effects.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:05Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.opt\_u64` (hash `d2d79a986fc8f65f`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:05Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:05Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.owner\_to\_json
+
+- **claim** (`cl\_c2b1160a296f2a49`): owner\_to\_json serialises a proto Owner to a JSON object containing exactly one key: 'trader' (string) when the seat is Trader, or 'autoPricer' (string) when the seat is AutoPricer. An absent seat yields an empty object. No other keys are emitted.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:16Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.owner\_to\_json` (hash `c51bd13ab3599738`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:16Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:16Z
+
 ## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.pivot\_from\_json
 
 - **claim** (`cl\_2d03bf43f3367454`): DELIVERABLE pivot-wire-surfacing = LANDED (backlog tracker docs/WORLD-CLASS-BACKLOG.md still lists it OPEN as the Round-2 P1/M finding "Pivot TRA is engine-only — no proto arm, no golden vector, no parity row, unreachable from any client"; reconciled against the live graph). \`pivot\_from\_json\` is the pure (side-effect-free) server decoder that lowers a wire pivot instrument off the JSON edge into the celnet-exotics \`Pivot { option\_type, strike, pivot, target, leverage, redemption, schedule, mc\_pairs, mc\_seed }\` MC spec — proving the pivot TARGET-redemption-accumulator product is now reachable on the one unversioned contract (engine celnet-exotics::pivot::pivot\_tra\_price, GUI pricePivot, golden/parity celnet-parity::pivot\_wire with the pivot==strike→TARF degenerate collapse and code-disjoint MC oracle). SELF-INVALIDATES on any change to this decoder.
@@ -6653,6 +7379,17 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
   - (none) → draft by agent (authored) @ 2026-06-25T08:20:10Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-25T08:20:10Z
 
+## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.product\_from\_json
+
+- **claim** (`cl\_1e289be217b57339`): product\_from\_json dispatches on the presence of a product key in the JSON map (vanilla, strategy, single\_barrier, … listed\_future\_option — 24 variants) via a first-match-wins if/else-if chain mirroring the proto oneof. If no key matches, it returns a descriptive error naming all 24 accepted keys. Pure read.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:18Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.product\_from\_json` (hash `377220505890b7de`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:18Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:18Z
+
 ## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.server\_stream\_message\_to\_json
 
 - **claim** (`cl\_59c452124f1795fb`): server\_stream\_message\_to\_json serialises a ServerStreamMessage to a tagged JSON value, returning None if the message field is absent. Every variant of the server\_stream\_message::Message oneof is covered: Snapshot, Update, Heartbeat (includes all zero-alloc observability fields: conflation\_drops, server\_price\_p50/p99/p999\_nanos, surface\_version, correlation\_id), StreamEnd, Executed, StreamReject, MarketSeriesSnapshot, and MarketSeriesPoint. The result is always wrapped in codec::tagged so the type field matches what a WS client pattern-matches on.
@@ -6663,6 +7400,94 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 - **provenance**:
   - (none) → draft by agent (authored) @ 2026-06-27T05:48:15Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:48:15Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.smile\_model\_label
+
+- **claim** (`cl\_7bd96fa9b0d7ad4d`): smile\_model\_label maps each SmileModel proto discriminant to a vendor-neutral kebab-case label: MarketHedge-\>'market-hedge', StochasticVol-\>'stochastic-vol', Parametric-\>'parametric', ParametricSurface-\>'parametric-surface', ExtendedSurface-\>'extended-surface'; any unrecognised tag returns 'unknown'. The function is total, pure, and returns a static string.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:41Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.smile\_model\_label` (hash `0de039cf9e94b407`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:41Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:41Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.tagged
+
+- **claim** (`cl\_6127e40e13549255`): tagged(tag, body) produces a JSON object whose 'type' key is set to the given tag discriminator. When body is already a JSON Object the tag is inserted directly into that object's map; otherwise the body is wrapped under the key 'value' first. The result always carries exactly one 'type' field equal to tag.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:18Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.tagged` (hash `8dad18f43eb2da01`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:18Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:18Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.underlying\_object\_from\_json
+
+- **claim** (`cl\_8cd8f427866d18a1`): underlying\_object\_from\_json dispatches on exactly one present key among {fx, metal, equity, commodity, digital\_asset} in the 'underlying' JSON object and delegates to the matching typed constructor. If none of the five keys is present the function returns an error; if two are present, the first matching arm wins (priority order: fx \> metal \> equity \> commodity \> digital\_asset).
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:33Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.underlying\_object\_from\_json` (hash `fc0fddf40a0103df`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:33Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:33Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.vanilla\_instrument\_round\_trips\_from\_json
+
+- **claim** (`cl\_fba27c57a66531e4`): vanilla\_instrument\_round\_trips\_from\_json confirms that the WS codec decodes a vanilla JSON instrument with bit-exact f64 preservation: expiry\_years 1.0 and strike 1.12 both satisfy to\_bits equality after the JSON→proto round-trip, proving no lossy float conversion.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:50Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.vanilla\_instrument\_round\_trips\_from\_json` (hash `a68f81d93b6bfbf7`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:50Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:50Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.wave1\_products\_decode\_from\_json
+
+- **claim** (`cl\_ee376673b5992e09`): wave1\_products\_decode\_from\_json verifies that the WS JSON codec correctly decodes VarianceSwap (strike\_vol bit-exact), VolatilitySwap, and AsianOption (observations, strike, elapsed\_weight all bit-exact f64) from their respective JSON discriminators.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:59:05Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.wave1\_products\_decode\_from\_json` (hash `67b027b86ddc68c8`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:59:05Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:59:05Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.wave2\_products\_decode\_from\_json
+
+- **claim** (`cl\_6b148c3e5a82c9ed`): wave2\_products\_decode\_from\_json verifies the WS codec for ForwardStart (moneyness/reset bit-exact), plain Cliquet (optional floor/cap all None when absent), clamped Cliquet (local\_floor=Some(0.0), local\_cap=Some(0.03), mc\_pairs/mc\_seed exact), and Quanto (payoff discriminant, strike/correlation bit-exact f64).
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:59:07Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.wave2\_products\_decode\_from\_json` (hash `0e7358d79c40a348`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:59:07Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:59:07Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.wave3\_products\_decode\_from\_json
+
+- **claim** (`cl\_4dd026f5371a4c14`): wave3\_products\_decode\_from\_json verifies WS codec round-trips for TARF (redemption enum, target bit-exact, schedule fixing\_years length, mc\_pairs/mc\_seed), Pivot (all TARF fields plus pivot level bit-exact), Accumulator (monitoring enum, barrier bit-exact, schedule length), continuous Lookback (Floating style, Continuous monitoring), and discrete Lookback (Fixed style, Discrete monitoring, strike/observations/mc knobs exact).
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:59:11Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.wave3\_products\_decode\_from\_json` (hash `fbc416253b3acc95`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:59:11Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:59:11Z
+
+## github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.window\_barrier\_and\_pricing\_model\_decode\_from\_json
+
+- **claim** (`cl\_0561596171b38215`): window\_barrier\_and\_pricing\_model\_decode\_from\_json verifies two contracts: (1) an explicit pricing\_model:1 in the JSON decodes to PricingModel::LocalStochVol, and WindowBarrier fields (barrier, side, window\_start, window\_end, mc\_pairs, mc\_steps, mc\_seed) are all preserved exactly; (2) an absent pricing\_model field decodes to PricingModel::Default (proto3 zero), preserving backward compatibility.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:59:13Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.window\_barrier\_and\_pricing\_model\_decode\_from\_json` (hash `39afc1c115348df9`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:59:13Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:59:13Z
 
 ## github.com-soarsa-celnet.crates.celnet-server.src.ws.limits.transport\_config
 
@@ -6685,6 +7510,50 @@ Deterministic projection of graph-anchored knowledge claims. Active claims only.
 - **provenance**:
   - (none) → draft by agent (authored) @ 2026-06-27T05:48:15Z
   - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:48:15Z
+
+## github.com-soarsa-celnet.crates.celnet-server.tests.cross\_asset\_ws.instrument\_json
+
+- **claim** (`cl\_9ad4fba8a0f8c1c8`): instrument\_json constructs a WS vanilla-option instrument JSON value from a GoldenVector, mapping 'CALL'/'PUT' string terms to celnet\_proto::OptionType integer discriminants, and conditionally injecting settlement\_style=InverseCoin when the vector's settlement\_style term equals 'INVERSE\_COIN'. Any unrecognised option\_type panics — there is no silent default.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:45Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.tests.cross\_asset\_ws.instrument\_json` (hash `40c6e16e34358439`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:45Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:45Z
+
+## github.com-soarsa-celnet.crates.celnet-server.tests.cross\_asset\_ws.underlying\_json
+
+- **claim** (`cl\_f14204b6a212b58c`): underlying\_json maps a GoldenVector's family to the correct JSON discriminator shape used in cross-asset WS tests: 'equity\_option' → {equity:{symbol:{ticker,venue},currency}}, 'commodity\_option' → {commodity:{symbol:{ticker},currency:'USD'}}, 'crypto\_option' → {digital\_asset:{base,quote}} (splitting a 6-char pair token at position 3). Any other family panics.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:30Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.tests.cross\_asset\_ws.underlying\_json` (hash `46e17bd578d99645`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:30Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:30Z
+
+## github.com-soarsa-celnet.crates.celnet-server.tests.multi\_dealer.law\_winner
+
+- **claim** (`cl\_e523ccc37fa3cc87`): law\_winner computes the best-bid or best-offer dealer from a panel by linear scan with deterministic tie-break: for bid\_side=true the winner maximises row\_price; for bid\_side=false it minimises row\_price; ties are broken by lexicographically smallest lp\_id. Panics if the panel is empty.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:53Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.tests.multi\_dealer.law\_winner` (hash `2eecd77eeb3c0b25`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:53Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:53Z
+
+## github.com-soarsa-celnet.crates.celnet-server.tests.risk\_federation.assert\_nonadditive\_eq
+
+- **claim** (`cl\_21d397a84e2a9896`): assert\_nonadditive\_eq compares two NonAdditiveRisk protos with an absolute+relative tolerance of 1e-9 (tolerance = 1e-9 + 1e-9 \* b.abs()) for three fields: var, es, and curvature\_spot. Option presence must match exactly — a Some/None mismatch panics. The function is a pure assertion with no return value.
+- **kind**: invariant:pure · **state**: active · **confidence**: 
+- **author**: celnet-knowledge · **created**: 2026-06-27T05:58:14Z
+- **anchors**:
+  - `github.com-soarsa-celnet.crates.celnet-server.tests.risk\_federation.assert\_nonadditive\_eq` (hash `bf30d4ff87f4534f`, resolved)
+- **provenance**:
+  - (none) → draft by agent (authored) @ 2026-06-27T05:58:14Z
+  - draft → active by agent (stage-1 gate passed) @ 2026-06-27T05:58:14Z
 
 ## github.com-soarsa-celnet.crates.celnet-surface.src.arbitrage.ArbitrageReport.is\_arbitrage\_free
 
