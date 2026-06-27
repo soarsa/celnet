@@ -19,6 +19,7 @@ import { ShortcutsOverlay } from "../components/ShortcutsOverlay";
 import { useAppearance } from "../design/appearance";
 import { TicketWorkspace } from "../workspaces/TicketWorkspace";
 import { RatesWorkspace } from "../workspaces/RatesWorkspace";
+import { CurveWorkspace } from "../workspaces/CurveWorkspace";
 import { StreamWorkspace } from "../workspaces/StreamWorkspace";
 import { SurfaceWorkspace } from "../workspaces/SurfaceWorkspace";
 import { RiskWorkspace } from "../workspaces/RiskWorkspace";
@@ -41,6 +42,7 @@ import styles from "./Shell.module.css";
 const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   ticket: TicketWorkspace,
   rates: RatesWorkspace,
+  curve: CurveWorkspace,
   stream: StreamWorkspace,
   surface: SurfaceWorkspace,
   risk: RiskWorkspace,

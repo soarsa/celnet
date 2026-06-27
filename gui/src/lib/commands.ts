@@ -28,6 +28,7 @@ import type { Command } from "../components/CommandPalette";
 export type WorkspaceId =
   | "ticket"
   | "rates"
+  | "curve"
   | "stream"
   | "surface"
   | "risk"
@@ -62,8 +63,8 @@ export interface CommandMeta {
 /**
  * The rail workspaces, in order. The data-driven rail (replacing the hard-coded
  * `RAIL`/`⌘1-5`): the `⌘N` hint and the `metaDigit` chord are DERIVED from this
- * order, so adding a 6th view needs only a row here — `⌘6` lights up for free
- * (uncapping the old `⌘1-5`). Glyph fix: Book is `▤` (a ledger), freeing `Σ` for
+ * order, so adding a view needs only a row here — its `⌘N` lights up for free
+ * (`⌘1..⌘9`, then `⌘0` for a tenth; uncapping the old `⌘1-5`). Glyph fix: Book is `▤` (a ledger), freeing `Σ` for
  * sum/vega-ladder use exclusively (one glyph, one meaning).
  */
 export const RAIL: readonly {
@@ -75,6 +76,7 @@ export const RAIL: readonly {
 }[] = [
   { id: "ticket", glyph: "⌁", label: "Ticket" },
   { id: "rates", glyph: "≣", label: "Rates" },
+  { id: "curve", glyph: "∿", label: "Curve" },
   { id: "stream", glyph: "≋", label: "Stream" },
   { id: "surface", glyph: "◷", label: "Surface" },
   { id: "risk", glyph: "⊞", label: "Risk" },
@@ -84,9 +86,13 @@ export const RAIL: readonly {
   { id: "excel", glyph: "▦", label: "Excel" },
 ] as const;
 
-/** The `⌘N` chord hint for the rail position `index` (0-based). */
+/**
+ * The `⌘N` chord hint for the rail position `index` (0-based). The single-digit
+ * grammar addresses the first nine views as `⌘1..⌘9`; a tenth view wraps onto
+ * `⌘0` (the browser-tab convention), the last slot the digit grammar can bind.
+ */
 export function railChord(index: number): string[] {
-  return ["⌘", String(index + 1)];
+  return ["⌘", index === 9 ? "0" : String(index + 1)];
 }
 
 /**
@@ -239,8 +245,9 @@ export function resolveChord(
     if (c.kind === "meta" && e.meta && e.key.toLowerCase() === c.key) {
       return { id: cmd.id };
     }
-    if (c.kind === "metaDigit" && e.meta && /^[1-9]$/.test(e.key)) {
-      const idx = Number(e.key) - 1;
+    if (c.kind === "metaDigit" && e.meta && /^[0-9]$/.test(e.key)) {
+      // ⌘1..⌘9 ⇒ views 0..8; ⌘0 wraps to the tenth view (index 9).
+      const idx = e.key === "0" ? 9 : Number(e.key) - 1;
       if (idx < digitCount) return { id: `ws-${RAIL[idx]!.id}`, railIndex: idx };
     }
     if (c.kind === "plain" && !e.meta && e.key === c.key) {

@@ -67,6 +67,7 @@ import type { Density } from "../design/density";
 export type WorkspaceId =
   | "ticket"
   | "rates"
+  | "curve"
   | "stream"
   | "surface"
   | "risk"

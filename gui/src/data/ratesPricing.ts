@@ -275,8 +275,13 @@ interface CurveNode {
   readonly lnDf: number;
 }
 
-/** A curve: ascending `(t, ln DF)` pillars with the origin `(0, ln 1 = 0)` first. */
-interface DiscountCurve {
+/**
+ * A bootstrapped discount curve: ascending `(t, ln DF)` pillars with the origin
+ * `(0, ln 1 = 0)` first. Opaque to callers — build one with
+ * {@link bootstrapCurveFromSet} and sample it with {@link discountFactorAt},
+ * {@link zeroRateAt} and {@link instantaneousForwardAt}.
+ */
+export interface DiscountCurve {
   readonly nodes: readonly CurveNode[];
 }
 
@@ -619,4 +624,112 @@ export function priceRatesOffline(
     dv01: sign * risk.dv01,
     keyRateLadder: risk.keyRate.map((k) => sign * k),
   };
+}
+
+// ---------------------------------------------------------------------------
+// curve inspection — public sampling over the SAME bootstrapped discount curve
+// ---------------------------------------------------------------------------
+//
+// The Curve workspace (FI-ARCHITECTURE §4.2) inspects the bootstrapped curve
+// directly: the discount factor `DF(t)`, the continuously-compounded zero rate
+// `z(t) = −ln DF(t)/t`, and the instantaneous forward `f(t) = −d ln DF/dt`. These
+// are thin PUBLIC views over the EXISTING private curve math (`bootstrapOis`,
+// `lnDiscount`, `discountFactor`) — no re-implementation, so an inspected curve
+// is the very curve the offline pricer and the live edge price against.
+
+/** Central-difference step (years) for the instantaneous-forward derivative. */
+const FORWARD_DT = 1e-4;
+
+/** Default number of sample points {@link sampleCurve} lays across the span. */
+const DEFAULT_CURVE_SAMPLES = 96;
+
+/**
+ * Bootstrap the self-discounting discount curve implied by a curve set, validating
+ * it through the SAME `buildQuotes` path the offline pricer uses (currency,
+ * non-empty, strictly-increasing tenors). Reuses `bootstrapOis` verbatim.
+ *
+ * @throws {RatesPricingError} on a malformed curve set or a numeric bootstrap
+ * failure.
+ */
+export function bootstrapCurveFromSet(curve: RatesCurveSet): DiscountCurve {
+  return bootstrapOis(buildQuotes(curve));
+}
+
+/** The discount factor `DF(t)`; exactly `1` at and before the reference date. */
+export function discountFactorAt(curve: DiscountCurve, t: number): number {
+  return discountFactor(curve, t);
+}
+
+/**
+ * The continuously-compounded zero rate `z(t) = −ln DF(t)/t`. The `t → 0` limit is
+ * the instantaneous short rate `f(0⁺)` (l'Hôpital on the `0/0` form), so the origin
+ * is continuous rather than a singularity. Uses `ln DF` directly (no `exp`/`log`
+ * round-trip), so it is exactly consistent with {@link discountFactorAt}.
+ */
+export function zeroRateAt(curve: DiscountCurve, t: number): number {
+  if (t <= 0) return instantaneousForwardAt(curve, 0);
+  return -lnDiscount(curve, t) / t;
+}
+
+/**
+ * The instantaneous forward `f(t) = −d ln DF/dt`, by a symmetric central difference
+ * on `ln DF`. Because the curve interpolates linearly in `ln DF` (the shipping
+ * log-linear-on-log-DF scheme), `ln DF` is piecewise-linear, so the central
+ * difference recovers the engine's piecewise-FLAT instantaneous forward exactly in
+ * the interior of a segment, and averages the two adjacent segment slopes at a
+ * pillar (where the flat forward steps). `lnDiscount` flat-forward-extrapolates
+ * below `t = 0`, so `f(0)` is the first segment's forward.
+ */
+export function instantaneousForwardAt(curve: DiscountCurve, t: number): number {
+  const lo = lnDiscount(curve, t - FORWARD_DT);
+  const hi = lnDiscount(curve, t + FORWARD_DT);
+  return -(hi - lo) / (2 * FORWARD_DT);
+}
+
+/** Options for {@link sampleCurve}: the sample count and the upper time bound. */
+export interface CurveSampleOptions {
+  /** Number of points laid across the span (clamped to `>= 2`); default 96. */
+  readonly samples?: number;
+  /** Upper time bound in years; default the last pillar tenor (the curve span). */
+  readonly maxTenor?: number;
+}
+
+/** One sampled point of the bootstrapped curve in the three standard views. */
+export interface CurveSamplePoint {
+  /** Year-fraction time from the reference date. */
+  readonly t: number;
+  /** Discount factor `DF(t)`. */
+  readonly df: number;
+  /** Continuously-compounded zero rate `z(t)`. */
+  readonly zero: number;
+  /** Instantaneous forward `f(t)`. */
+  readonly forward: number;
+}
+
+/**
+ * Sample the bootstrapped curve at `N` evenly-spaced times across `0 .. maxTenor`
+ * (the curve span by default), returning `DF`, the zero rate and the instantaneous
+ * forward at each. Bootstraps once, then reads the three public views — allocation
+ * is a single `N`-length array.
+ *
+ * @throws {RatesPricingError} on a malformed curve set (via {@link bootstrapCurveFromSet}).
+ */
+export function sampleCurve(
+  curve: RatesCurveSet,
+  opts: CurveSampleOptions = {},
+): CurveSamplePoint[] {
+  const discount = bootstrapCurveFromSet(curve);
+  const span = opts.maxTenor ?? curve.pillars[curve.pillars.length - 1]!.tenorYears;
+  const n = Math.max(2, Math.trunc(opts.samples ?? DEFAULT_CURVE_SAMPLES));
+  const out: CurveSamplePoint[] = new Array(n);
+  for (let i = 0; i < n; i += 1) {
+    const t = (span * i) / (n - 1);
+    out[i] = {
+      t,
+      df: discountFactorAt(discount, t),
+      zero: zeroRateAt(discount, t),
+      forward: instantaneousForwardAt(discount, t),
+    };
+  }
+  return out;
 }

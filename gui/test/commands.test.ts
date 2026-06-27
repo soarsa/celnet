@@ -108,11 +108,16 @@ describe("resolveChord — honoured grammar == advertised grammar", () => {
 
   it("⌘1..n resolves to the rail view at that index, capped to the rail length", () => {
     for (let i = 0; i < RAIL.length; i += 1) {
-      const hit = resolveChord({ key: String(i + 1), meta: true }, RAIL.length);
+      // Drive the keydown from the digit the registry advertises for this view
+      // (railChord), so the honoured grammar is checked against its single source —
+      // ⌘1..⌘9 for the first nine, ⌘0 wrapping to a tenth.
+      const key = railChord(i)[1]!;
+      const hit = resolveChord({ key, meta: true }, RAIL.length);
       expect(hit?.id).toBe(`ws-${RAIL[i]!.id}`);
       expect(hit?.railIndex).toBe(i);
     }
-    // A digit beyond the rail length is NOT a command (no dead ⌘6 if 5 views).
+    // A digit beyond the rail length is NOT a command (no dead ⌘6 if 5 views); with
+    // a full ten-view rail ⌘0 is the last bound slot, so a digit past it is inert.
     expect(resolveChord({ key: String(RAIL.length + 1), meta: true }, RAIL.length)).toBeNull();
   });
 
