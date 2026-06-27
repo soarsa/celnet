@@ -56,11 +56,40 @@
   "kind": "adr",
   "state": "draft",
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-plugin-host.src.registry.ModelRegistry.model",
+   "github.com-soarsa-celnet.crates.celnet-plugin-host.src.registry.ModelRegistry.register_native"
+  ],
+  "text": "FINDING: four built crates are unwired into the runtime — celnet-plugin-host (wasmi Tier-2 sandbox, ModelRegistry) and celnet-rates have zero in-edges from any runtime crate; celnet-xva and celnet-replog are referenced only by the celnet-parity validation crate. The plugin host the docs call 'built' is never loaded by celnet-server. TARGET: either wire each into a runtime consumer (plugin-host into the server registry; xva/replog onto a server path; rates behind the forward()/discount() carry seam) or tag it explicitly deferred in INTERFACES.md with the integration edge named as the open deliverable."
+ },
+ {
+  "kind": "adr",
+  "state": "draft",
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-proto.proto.celnet.PricingModel",
    "github.com-soarsa-celnet.crates.celnet-proto.proto.celnet.PricingService",
    "github.com-soarsa-celnet.crates.celnet-proto.proto.celnet.Underlying"
   ],
   "text": "ADR-0007 — ONE UNVERSIONED WIRE CONTRACT (evolve in place, zero legacy). Celnet has no external users and one uniformly-upgraded deployment, so the wire contract (celnet-proto) carries NO schema_version, no template/version field, no schemaId negotiation, and no N/N-1 back-compat shims. Growth is additive + default-compatible (new oneof arms/fields default to the prior behavior — e.g. ADR-0008 Underlying/CarryModel default to FX), so existing call sites are unchanged with no version handshake. Where a byte stream needs a discriminator it is a fixed CONTENT tag (ADR-0009 CELNHND1), never a schema version. API-first parity is binding: SDK, WS mirror, CLI, Excel all consume this one contract and change in lockstep. Doc: docs/adr/ADR-0007-one-unversioned-contract.md; CLAUDE.md guardrail #9."
+ },
+ {
+  "kind": "adr",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.access.authorize_caller",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.access.resolve_caller",
+   "github.com-soarsa-celnet.crates.celnet-server.src.ws.mod.handle_unary"
+  ],
+  "text": "DECISION: the deny-by-default access gate must be enforced ONCE as a real cross-cut (single tonic Interceptor / tower::Layer reading a per-RPC RequiredAuthority registry, plus an equivalent WS-frame guard), failing closed for any unlisted RPC. Today resolve_caller+authorize_caller are hand-copied into ~10 gRPC handlers while the price/subscribe/execute hot path and the entire WS-JSON mirror call them zero times — a security-by-omission asymmetry between the two encodings of the supposedly-single contract. The execute path needs its own capability gate (an action, not a read)."
+ },
+ {
+  "kind": "adr",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.fan_out_aggregate",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.federate.Fleet.connect_with_membership",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.federate.fan_out"
+  ],
+  "text": "FINDING: real cross-process risk federation IS built and tested (Fleet.connect_with_membership + federate.fan_out over loopback gRPC with failover/hot-standby), exceeding the docs which call the fleet transport 'designed-only'. The shard boundary (HRW by pair/tenant) and the additive/non-additive merge algebra (NodeAggregate::merge_additive for sums; bump-and-revalue for VaR/ES) are the correct, bit-identically-proven scale-out boundary. RISK: risk facts are vanilla-only (services::risk::store), so the federated cube does not yet cover the exotic/cross-asset book the platform prices. Reconcile INTERFACES.md/ARCHITECTURE.md to built reality and extend risk-fact coverage to exotics/cross-asset."
  },
  {
   "kind": "adr",
@@ -99,11 +128,39 @@
   "kind": "adr",
   "state": "draft",
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-server.src.ws.codec.product_from_json",
+   "github.com-soarsa-celnet.crates.celnet-server.src.ws.mod.handle_unary"
+  ],
+  "text": "DECISION: apply ADR-0009's 'one generator, two projections / drift fails CI' discipline to the EXISTING hand-maintained WS-JSON codec, not only the future EdgeFrame. ws/codec.rs (product_from_json + 253 *_from_json round-trip functions) is kept in lockstep with celnet-proto only by 253 hand-written tests; every new proto arm requires a manual codec edit caught only if someone remembers the test. Generate the WS projection from celnet-proto so a new arm cannot compile without it."
+ },
+ {
+  "kind": "adr",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-core.src.carry.CarryInputs.discount_df",
+   "github.com-soarsa-celnet.crates.celnet-core.src.carry.fx_carry_inputs_byte_identical",
+   "github.com-soarsa-celnet.crates.celnet-types.src.lib.Carry.discount_df"
+  ],
+  "text": "The carry seam (ADR-0008) is the platform's load-bearing asset-class abstraction: all pricing math consumes CarryInputs.forward(t)/discount_df(t) and never matches on the Carry/Underlying discriminant on the hot path; the FX path is gated byte-identical to the pre-seam VanillaInputs. The only legitimate `match carry` sites are the off-hot-path sensitivity-routing layer. New asset classes must remain additive Carry builders with zero payoff-engine edits, and this invariant should be mechanically gated (cargo-deny ban-dep against `match carry` in payoff crates)."
+ },
+ {
+  "kind": "adr",
+  "state": "draft",
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-proto.proto.celnet.PricingModel",
    "github.com-soarsa-celnet.crates.celnet-proto.proto.celnet.PricingService",
    "github.com-soarsa-celnet.crates.celnet-proto.proto.celnet.Underlying"
   ],
   "text": "ADR-0007 — ONE UNVERSIONED WIRE CONTRACT (evolve in place, zero legacy). Celnet has no external users and one uniformly-upgraded deployment, so the wire contract (celnet-proto) carries NO schema_version, no template/version field, no schemaId negotiation, and no N/N-1 back-compat shims. Growth is additive + default-compatible (new oneof arms/fields default to the prior behavior — e.g. ADR-0008 Underlying/CarryModel default to FX), so existing call sites are unchanged with no version handshake. Where a byte stream needs a discriminator it is a fixed CONTENT tag (ADR-0009 CELNHND1), never a schema version. API-first parity is binding: SDK, WS mirror, CLI, Excel all consume this one contract and change in lockstep. Doc: docs/adr/ADR-0007-one-unversioned-contract.md; CLAUDE.md guardrail #9."
+ },
+ {
+  "kind": "adr",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.price_instrument",
+   "github.com-soarsa-celnet.crates.celnet-server.src.pricer.price_instrument_lsv"
+  ],
+  "text": "DECISION: dissolve the de-facto product-dispatch module into a structural ProductEngine registry/trait (price+greeks over the carry seam, one impl per product family). celnet-server::pricer::price_instrument is a 1207-line god-function (complexity 154, in_degree 62 / out_degree 111) fanning to ~50 routines across 6+ crates — the highest-churn, highest-merge-conflict seam, not per-arm unit-testable. After refactor it shrinks to decode→lookup→dispatch and 'add a product' becomes 'register an impl', mirroring the carry seam's already-achieved additive pattern."
  },
  {
   "kind": "adr",
