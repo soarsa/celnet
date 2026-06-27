@@ -25,8 +25,11 @@ import type {
   Cut,
   DayCount,
   DeltaConvention,
+  DeskRequestKind,
+  DeskRequestState,
   DigitalStyle,
   Enforcement,
+  NotificationKind,
   ExerciseStyle,
   FixingSource,
   LimitMetricKind,
@@ -75,6 +78,27 @@ function enumCodec<T extends string>(membersInWireOrder: readonly T[]): EnumCode
   return {
     toWire: (value: T) => toNumber.get(value) ?? 0,
     fromWire: (n: number) => membersInWireOrder[n] ?? zero,
+  };
+}
+
+/**
+ * Build a reversible enum codec whose first GUI member maps to the proto tag
+ * `firstTag` (and each subsequent member to `firstTag + i`). Used by the proto3
+ * enums that reserve `0` for an `*_UNSPECIFIED` member the GUI string union does
+ * NOT name (the desk-quoting enums: `DeskRequestKind`, `DeskRequestState`,
+ * `NotificationKind` all start their named members at proto tag 1). The first
+ * named member is the unknown-number fallback on decode.
+ */
+function offsetEnumCodec<T extends string>(
+  membersInWireOrder: readonly T[],
+  firstTag: number,
+): EnumCodec<T> {
+  const toNumber = new Map<T, number>();
+  membersInWireOrder.forEach((m, i) => toNumber.set(m, i + firstTag));
+  const zero = membersInWireOrder[0]!;
+  return {
+    toWire: (value: T) => toNumber.get(value) ?? firstTag,
+    fromWire: (n: number) => membersInWireOrder[n - firstTag] ?? zero,
   };
 }
 
@@ -346,3 +370,36 @@ export const ragStatus = enumCodec<RagStatus>(["GREEN", "AMBER", "RED", "BREACH"
 
 /** `Enforcement` ↔ proto `Enforcement` (SOFT=0, HARD=1). */
 export const enforcement = enumCodec<Enforcement>(["SOFT", "HARD"]);
+
+/**
+ * `DeskRequestKind` ↔ proto `DeskRequestKind`
+ * (DESK_REQUEST_KIND_UNSPECIFIED=0, RFQ=1, IOI=2). The GUI union names only the
+ * meaningful members, so the codec offsets the first named member to tag 1.
+ */
+export const deskRequestKind = offsetEnumCodec<DeskRequestKind>(["RFQ", "IOI"], 1);
+
+/**
+ * `DeskRequestState` ↔ proto `DeskRequestState` (UNSPECIFIED=0, PENDING=1,
+ * QUOTED=2, ACCEPTED=3, REJECTED=4, EXPIRED=5, WITHDRAWN=6).
+ */
+export const deskRequestState = offsetEnumCodec<DeskRequestState>(
+  ["PENDING", "QUOTED", "ACCEPTED", "REJECTED", "EXPIRED", "WITHDRAWN"],
+  1,
+);
+
+/**
+ * `NotificationKind` ↔ proto `NotificationKind` (UNSPECIFIED=0, RFQ_RECEIVED=1,
+ * IOI_RECEIVED=2, REQUEST_WITHDRAWN=3, REQUEST_EXPIRED=4, QUOTE_ACCEPTED=5,
+ * QUOTE_REJECTED=6).
+ */
+export const notificationKind = offsetEnumCodec<NotificationKind>(
+  [
+    "RFQ_RECEIVED",
+    "IOI_RECEIVED",
+    "REQUEST_WITHDRAWN",
+    "REQUEST_EXPIRED",
+    "QUOTE_ACCEPTED",
+    "QUOTE_REJECTED",
+  ],
+  1,
+);

@@ -37,8 +37,10 @@ use celnet_limits::{
 use celnet_proto::risk_service_server::RiskService;
 use celnet_proto::{
     AggregateRatesRiskRequest, AggregateRatesRiskResponse, AggregateRiskRequest,
-    AggregateRiskResponse, DrillRiskRequest, DrillRiskResponse, LimitStatusRequest,
-    LimitStatusResponse, LimitUtilization, ListPositionsRequest, ListPositionsResponse, RiskScope,
+    AggregateRiskResponse, BookRatesPositionRequest, BookRatesPositionResponse, DrillRiskRequest,
+    DrillRiskResponse, LimitStatusRequest, LimitStatusResponse, LimitUtilization,
+    ListPositionsRequest, ListPositionsResponse, ListRatesPositionsRequest,
+    ListRatesPositionsResponse, RiskScope,
 };
 use celnet_risk_cube::{
     BookId, DeskId, DimensionId, EntityId, LocationId, NetGreeks, NodeAggregate, TraderId,
@@ -106,6 +108,13 @@ pub struct RiskEdge {
     /// touch it); the boot path overrides it with the edge-wide registry via
     /// [`RiskEdge::with_sessions`] so every front shares one authentication state.
     sessions: Arc<SessionRegistry>,
+    /// The shared **linear-rates position book** the `BookRatesPosition` /
+    /// `ListRatesPositions` RPCs write/read (and the dealer-quoting
+    /// [`RfqDeskService`](crate::services::desk) books accepted deals into). The
+    /// constructors default to a fresh empty store; the boot path overrides it via
+    /// [`RiskEdge::with_rates_store`] so the desk edge and the Book workspace read one
+    /// coherent rates book.
+    rates: Arc<crate::services::rates_book::RatesPositionStore>,
 }
 
 /// A fresh, empty [`SessionRegistry`] the constructors default to. It is only ever
@@ -114,6 +123,12 @@ pub struct RiskEdge {
 /// the edge-wide registry via [`RiskEdge::with_sessions`].
 fn default_sessions() -> Arc<SessionRegistry> {
     Arc::new(SessionRegistry::new(Clock::system()))
+}
+
+/// A fresh, empty rates position book the constructors default to (overridden at boot
+/// via [`RiskEdge::with_rates_store`] so the desk edge shares the same instance).
+fn default_rates_store() -> Arc<crate::services::rates_book::RatesPositionStore> {
+    Arc::new(crate::services::rates_book::RatesPositionStore::new())
 }
 
 impl RiskEdge {
@@ -142,6 +157,7 @@ impl RiskEdge {
             topology,
             fleet: None,
             sessions: default_sessions(),
+            rates: default_rates_store(),
         }
     }
 
@@ -170,6 +186,7 @@ impl RiskEdge {
             topology,
             fleet,
             sessions: default_sessions(),
+            rates: default_rates_store(),
         })
     }
 
@@ -193,6 +210,7 @@ impl RiskEdge {
             topology: FleetTopology::Distributed { endpoints },
             fleet: Some(fleet),
             sessions: default_sessions(),
+            rates: default_rates_store(),
         }
     }
 
@@ -205,6 +223,25 @@ impl RiskEdge {
     pub fn with_sessions(mut self, sessions: Arc<SessionRegistry>) -> Self {
         self.sessions = sessions;
         self
+    }
+
+    /// Install the shared [`RatesPositionStore`](crate::services::rates_book::RatesPositionStore)
+    /// so this edge's `BookRatesPosition` / `ListRatesPositions` RPCs read and write the
+    /// SAME rates book the dealer-quoting [`RfqDeskService`](crate::services::desk) books
+    /// accepted deals into (the boot path shares one instance across both edges).
+    #[must_use]
+    pub fn with_rates_store(
+        mut self,
+        rates: Arc<crate::services::rates_book::RatesPositionStore>,
+    ) -> Self {
+        self.rates = rates;
+        self
+    }
+
+    /// The shared rates position book (so the boot path / a test can inspect it).
+    #[must_use]
+    pub fn rates_store(&self) -> &Arc<crate::services::rates_book::RatesPositionStore> {
+        &self.rates
     }
 
     /// The fleet topology this edge was booted under (the resolved deploy-time seam).
@@ -540,6 +577,65 @@ impl RiskEdge {
             correlation_id: req.correlation_id,
         })
     }
+
+    /// The shared `BookRatesPosition` implementation (gRPC + WS both call this).
+    /// Upserts the supplied [`RatesPosition`] into the live rates book (a `0`
+    /// `position_id` ⇒ the server assigns a fresh one) and echoes the stored fact.
+    ///
+    /// # Errors
+    /// `invalid_argument` for a missing position or instrument.
+    pub fn book_rates_position_impl(
+        &self,
+        req: &BookRatesPositionRequest,
+    ) -> Result<BookRatesPositionResponse, Status> {
+        let position = req
+            .position
+            .ok_or_else(|| Status::invalid_argument("BookRatesPosition missing `position`"))?;
+        if position.instrument.is_none() {
+            return Err(Status::invalid_argument(
+                "BookRatesPosition: position carries no instrument",
+            ));
+        }
+        let booked = self.rates.book(position);
+        Ok(BookRatesPositionResponse {
+            position: Some(booked),
+        })
+    }
+
+    /// The shared `ListRatesPositions` implementation (gRPC + WS both call this).
+    /// Returns the live rates book, narrowed by the optional `(entity, book)` scope
+    /// and **entitlement-pruned** to the cells the asserted principal admits (the
+    /// deny-by-default semantics, mirrored over the flat rates `(entity, book)` space
+    /// — see [`crate::services::rates_book::admits_rates_cell`]).
+    ///
+    /// # Errors
+    /// Infallible today; returns `Result` for parity with the other `_impl` reads.
+    pub fn list_rates_positions_impl(
+        &self,
+        req: &ListRatesPositionsRequest,
+    ) -> Result<ListRatesPositionsResponse, Status> {
+        let positions = self
+            .rates
+            .snapshot()
+            .into_iter()
+            .filter(|p| {
+                // Optional scope narrowing: a present `entity`/`book` must match. The
+                // `ccy` axis is a curve-currency narrowing that a stored position (no
+                // currency of its own) cannot answer, so it does not constrain here.
+                req.scope.as_ref().is_none_or(|s| {
+                    s.entity.is_none_or(|e| e == p.entity) && s.book.is_none_or(|b| b == p.book)
+                })
+            })
+            .filter(|p| {
+                crate::services::rates_book::admits_rates_cell(
+                    req.principal.as_ref(),
+                    p.entity,
+                    p.book,
+                )
+            })
+            .collect();
+        Ok(ListRatesPositionsResponse { positions })
+    }
 }
 
 /// An empty node aggregate at a group (a scope with no current risk).
@@ -817,6 +913,56 @@ impl RiskService for RiskEdge {
         // forward), so the additive fan-in runs in-process under the edge topology
         // on every replica — no federation forwarding, unlike the store-backed RPCs.
         let resp = crate::services::rates_risk::aggregate_rates_risk(&req, self.topology())?;
+        Ok(Response::new(resp))
+    }
+
+    async fn book_rates_position(
+        &self,
+        request: Request<BookRatesPositionRequest>,
+    ) -> Result<Response<BookRatesPositionResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        let caller = resolve_caller(
+            &self.sessions,
+            req.session_token.as_deref(),
+            req.principal.clone(),
+        )?;
+        // Booking is a write; it still passes the SAME deny-by-default boundary the
+        // rates reads do (an absent principal under enforce is denied). The model has
+        // no trader/admin split for booking — a desk books its own line — so the
+        // authority is `ReadAny`, gated by the principal/session exactly as the rest.
+        authorize_caller(
+            self.store.access_mode(),
+            &caller,
+            "RiskService/BookRatesPosition",
+            RequiredAuthority::ReadAny,
+            None,
+        )?;
+        let resp = self.book_rates_position_impl(&req)?;
+        Ok(Response::new(resp))
+    }
+
+    async fn list_rates_positions(
+        &self,
+        request: Request<ListRatesPositionsRequest>,
+    ) -> Result<Response<ListRatesPositionsResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        let caller = resolve_caller(
+            &self.sessions,
+            req.session_token.as_deref(),
+            req.principal.clone(),
+        )?;
+        authorize_caller(
+            self.store.access_mode(),
+            &caller,
+            "RiskService/ListRatesPositions",
+            RequiredAuthority::ReadAny,
+            None,
+        )?;
+        let resp = self.list_rates_positions_impl(&req)?;
         Ok(Response::new(resp))
     }
 }

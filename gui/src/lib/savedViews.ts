@@ -31,6 +31,9 @@ export type WorkspaceId =
   | "rates"
   | "curve"
   | "ratesrisk"
+  | "quoting"
+  | "deals"
+  | "ratesbook"
   | "stream"
   | "surface"
   | "risk"
@@ -44,6 +47,9 @@ const WORKSPACES: readonly WorkspaceId[] = [
   "rates",
   "curve",
   "ratesrisk",
+  "quoting",
+  "deals",
+  "ratesbook",
   "stream",
   "surface",
   "risk",

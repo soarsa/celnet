@@ -23,8 +23,10 @@
 //! refuses new work with `UNAVAILABLE` while the edge is starting or draining.
 
 pub mod access;
+pub mod desk;
 pub mod pricing;
 pub mod quote;
+pub mod rates_book;
 pub mod rates_risk;
 pub mod risk;
 pub mod stream;
@@ -44,4 +46,4 @@ pub(crate) mod clicktrade;
 pub(crate) mod forward;
 mod pin;
 pub mod pricefanout;
-mod stream_rx;
+pub(crate) mod stream_rx;

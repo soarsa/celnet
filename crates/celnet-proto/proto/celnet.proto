@@ -3014,6 +3014,14 @@ service RiskService {
   // bit-for-bit (`celnet-risk-fleet`); positions travel inline on the request
   // (there is no firm rates position store yet).
   rpc AggregateRatesRisk(AggregateRatesRiskRequest) returns (AggregateRatesRiskResponse);
+  // Book one rates position into the firm rates position store (the linear-rates
+  // analogue of the options booked book). Assigns a fresh id when `position_id`
+  // is 0; upserts otherwise. The store is authoritative for the session and is
+  // what `ListRatesPositions` reads and the Book workspace renders.
+  rpc BookRatesPosition(BookRatesPositionRequest) returns (BookRatesPositionResponse);
+  // List the firm rates positions (scoped + entitlement-pruned), the rates analogue
+  // of `ListPositions`. Reads the rates position store the booked flow populates.
+  rpc ListRatesPositions(ListRatesPositionsRequest) returns (ListRatesPositionsResponse);
 }
 
 // The surface workflow: read a smile, mark/recalibrate from broker quotes, and
@@ -3745,4 +3753,368 @@ message AggregateRatesRiskResponse {
   repeated RatesRiskNode nodes = 1;
   // Echo of the request's `correlation_id`, if supplied.
   optional uint64 correlation_id = 2;
+}
+
+// ===========================================================================
+// rates position store — the booked rates Book (fixed income)
+// ===========================================================================
+//
+// The firm rates position store now exists server-side (the inline-only caveat on
+// `AggregateRatesRiskRequest` is lifted for booked flow): an accepted desk quote
+// (or a direct booking) writes a `RatesPosition`; the Book workspace lists it.
+// Mirrors the options `PositionStore` — in-memory, authoritative for the session.
+
+// Request: book one rates position into the firm rates store.
+message BookRatesPositionRequest {
+  // The bearer session token from `AuthService.Login` (mode-gated like the rest).
+  optional string session_token = 1;
+  // The cell + instrument to book. `position_id == 0` ⇒ the server assigns a fresh
+  // id (a new booking); a non-zero id upserts (replaces) that position.
+  RatesPosition position = 2;
+  // The entitlement principal authorising the caller (absent ⇒ grant-all default).
+  optional EntitlementPrincipal principal = 3;
+  // Optional caller correlation id, echoed on the response. Presence-tracked.
+  optional string correlation_id = 4;
+}
+// Response: the booked position with its server-assigned (or echoed) id.
+message BookRatesPositionResponse {
+  // The booked position; `position_id` is the server-assigned (or echoed) id.
+  RatesPosition position = 1;
+}
+
+// Request: list the firm rates positions, scoped + entitlement-pruned.
+message ListRatesPositionsRequest {
+  // The bearer session token from `AuthService.Login` (mode-gated like the rest).
+  optional string session_token = 1;
+  // Narrow to one `(entity, book, ccy)` subtree (absent ⇒ all booked positions).
+  optional RatesRiskScope scope = 2;
+  // The entitlement principal authorising the caller (absent ⇒ grant-all default).
+  optional EntitlementPrincipal principal = 3;
+  // Optional caller correlation id, echoed on the response. Presence-tracked.
+  optional string correlation_id = 4;
+}
+// Response: the booked rates positions matching the scope + entitlements,
+// ascending by `position_id` (deterministic).
+message ListRatesPositionsResponse {
+  // The booked rates positions matching the scope, ascending by `position_id`.
+  repeated RatesPosition positions = 1;
+}
+
+// ===========================================================================
+// dealer-side quoting — RFQ/IOI desk inbox, deal blotter, notifications (FI)
+// ===========================================================================
+//
+// The MAKER side of the franchise: inbound RFQs and IOIs from counterparties land
+// in a desk inbox, the responsible trader is notified, prices, and responds; an
+// accepted quote books a deal into the received-deals blotter AND a rates position.
+// The taker side (`QuoteService.RequestQuote` → synthetic-LP auto-price) stays as
+// is; this is the human-quoted complement. Live counterparty venue connectivity is
+// a deploy concern (out of in-repo scope); inbound requests arrive over the one
+// current contract via `SubmitDeskRequest` (the client SDK / counterparty
+// simulator) — 100% real and test-driven (rule 2). FI-scoped: the instrument is a
+// `RatesInstrument` priced against a `CurveSet`; the oneof grows additively.
+
+// What kind of inbound request this is.
+enum DeskRequestKind {
+  // Default/unset — never a valid request kind on the wire.
+  DESK_REQUEST_KIND_UNSPECIFIED = 0;
+  // Request-for-quote: a counterparty wants a firm price.
+  DESK_REQUEST_KIND_RFQ = 1;
+  // Indication-of-interest: a non-firm axe for the desk to work.
+  DESK_REQUEST_KIND_IOI = 2;
+}
+
+// The lifecycle state of an inbound desk request (one current fact per id).
+enum DeskRequestState {
+  // Default/unset — never a valid state on the wire.
+  DESK_REQUEST_STATE_UNSPECIFIED = 0;
+  // Awaiting a desk response.
+  DESK_REQUEST_STATE_PENDING = 1;
+  // The desk has responded with a price.
+  DESK_REQUEST_STATE_QUOTED = 2;
+  // The counterparty lifted the quote → a deal booked.
+  DESK_REQUEST_STATE_ACCEPTED = 3;
+  // The desk declined to quote.
+  DESK_REQUEST_STATE_REJECTED = 4;
+  // The response deadline elapsed unquoted.
+  DESK_REQUEST_STATE_EXPIRED = 5;
+  // The counterparty pulled the request.
+  DESK_REQUEST_STATE_WITHDRAWN = 6;
+}
+
+// The desk's firm response to an RFQ (or a firm level on an IOI): the quoted price
+// and how long it stands.
+message DeskQuote {
+  // The quoted price. For the OIS arm this is the all-in fixed rate as a decimal
+  // (0.041 = 4.10%) the desk shows the counterparty.
+  double price = 1;
+  // The notional the quote is good for (curve currency, positive).
+  double notional = 2;
+  // How long the quote stands from issue, milliseconds (0 ⇒ indicative only).
+  uint32 valid_for_ms = 3;
+  // The quoting trader (attribution).
+  string trader = 4;
+}
+
+// One inbound dealer-side request (RFQ or IOI) as the desk sees it.
+message DeskRequest {
+  // Server-assigned, stable across the lifecycle.
+  string request_id = 1;
+  // Whether this is an RFQ (firm price wanted) or an IOI (axe to work).
+  DeskRequestKind kind = 2;
+  // The counterparty label (the taker). A display/attribution field, not auth.
+  string counterparty = 3;
+  // The target desk this request routes to (the entitlement + notification scope).
+  string desk = 4;
+  // The instrument the counterparty wants priced.
+  RatesInstrument instrument = 5;
+  // The curve set the instrument prices against.
+  CurveSet curve_set = 6;
+  // The counterparty's side from THEIR perspective: SIDE_BUY ⇒ they pay fixed.
+  Side side = 7;
+  // The notional requested (curve currency, always positive).
+  double notional = 8;
+  // Server receipt time (epoch nanos, UTC).
+  int64 received_at_nanos = 9;
+  // Response deadline (epoch nanos, UTC); past this the request EXPIRES unquoted.
+  int64 expires_at_nanos = 10;
+  // The current lifecycle state (one current fact per `request_id`).
+  DeskRequestState state = 11;
+  // The desk's response once quoted (absent while PENDING). Presence-tracked.
+  optional DeskQuote quote = 12;
+  // Opaque caller correlation id, echoed through the lifecycle. Presence-tracked.
+  optional string correlation_id = 13;
+}
+
+// A counterparty (taker SDK / simulator) submits an RFQ or IOI to a desk.
+message SubmitDeskRequestRequest {
+  // The bearer session token from `AuthService.Login` (mode-gated like the rest).
+  optional string session_token = 1;
+  // Whether this is an RFQ (firm price wanted) or an IOI (axe to work).
+  DeskRequestKind kind = 2;
+  // The submitting counterparty label (display/attribution, not auth).
+  string counterparty = 3;
+  // The desk this request routes to (the entitlement + notification scope).
+  string desk = 4;
+  // The instrument the counterparty wants priced.
+  RatesInstrument instrument = 5;
+  // The curve set to price the instrument against.
+  CurveSet curve_set = 6;
+  // The counterparty's side from THEIR perspective: SIDE_BUY ⇒ they pay fixed.
+  Side side = 7;
+  // The notional requested (curve currency, always positive).
+  double notional = 8;
+  // Time-to-live for the desk to respond, milliseconds (0 ⇒ a server default).
+  uint32 ttl_ms = 9;
+  // The entitlement principal authorising the caller (absent ⇒ grant-all default).
+  optional EntitlementPrincipal principal = 10;
+  // Optional caller correlation id, echoed through the lifecycle. Presence-tracked.
+  optional string correlation_id = 11;
+}
+// Response: the captured request in its PENDING state, with its server id.
+message SubmitDeskRequestResponse {
+  // The newly captured request (PENDING, with a server-assigned `request_id`).
+  DeskRequest request = 1;
+}
+
+// The desk declines to quote a request.
+message DeskReject {
+  // A short human reason shown to the counterparty (e.g. "no axe", "off-the-run").
+  string reason = 1;
+}
+
+// The desk quotes or rejects a pending request.
+message RespondDeskRequestRequest {
+  // The bearer session token from `AuthService.Login` (mode-gated like the rest).
+  optional string session_token = 1;
+  // The request being responded to.
+  string request_id = 2;
+  // The response: exactly one of a firm quote or a decline.
+  oneof response {
+    // Quote the request at a firm level.
+    DeskQuote quote = 3;
+    // Decline to quote the request.
+    DeskReject reject = 4;
+  }
+  // The entitlement principal authorising the caller (absent ⇒ grant-all default).
+  optional EntitlementPrincipal principal = 5;
+  // Optional caller correlation id, echoed on the response. Presence-tracked.
+  optional string correlation_id = 6;
+}
+// Response: the request advanced to QUOTED (or REJECTED).
+message RespondDeskRequestResponse {
+  // The request in its new state, carrying the desk's quote when QUOTED.
+  DeskRequest request = 1;
+}
+
+// The counterparty lifts a quoted price → books a `Deal` and a `RatesPosition`.
+message AcceptDeskQuoteRequest {
+  // The bearer session token from `AuthService.Login` (mode-gated like the rest).
+  optional string session_token = 1;
+  // The quoted request being lifted.
+  string request_id = 2;
+  // The entitlement principal authorising the caller (absent ⇒ grant-all default).
+  optional EntitlementPrincipal principal = 3;
+  // Optional caller correlation id, echoed on the response. Presence-tracked.
+  optional string correlation_id = 4;
+}
+// Response: the booked deal plus the request in its terminal ACCEPTED state.
+message AcceptDeskQuoteResponse {
+  // The deal booked from the lifted quote.
+  Deal deal = 1;
+  // The request in its terminal ACCEPTED state.
+  DeskRequest request = 2;
+}
+
+// A scope filter for the desk inbox.
+message DeskRequestScope {
+  // Restrict to these states (empty ⇒ all states).
+  repeated DeskRequestState states = 1;
+  // Restrict to one desk (absent ⇒ all desks the caller is entitled to).
+  optional string desk = 2;
+}
+// Request: read the desk inbox (the pending/terminal RFQ & IOI requests).
+message ListDeskRequestsRequest {
+  // The bearer session token from `AuthService.Login` (mode-gated like the rest).
+  optional string session_token = 1;
+  // Optional state/desk filter (absent ⇒ all states across entitled desks).
+  optional DeskRequestScope scope = 2;
+  // The entitlement principal authorising the caller (absent ⇒ grant-all default).
+  optional EntitlementPrincipal principal = 3;
+  // Optional caller correlation id, echoed on the response. Presence-tracked.
+  optional string correlation_id = 4;
+}
+// The desk inbox, newest first (descending `received_at_nanos`), entitlement-pruned.
+message ListDeskRequestsResponse {
+  // The matching desk requests, newest first.
+  repeated DeskRequest requests = 1;
+}
+
+// One booked received deal (an accepted desk quote), as the blotter shows it.
+message Deal {
+  // The server-assigned deal identity.
+  string deal_id = 1;
+  // The originating `DeskRequest.request_id`.
+  string request_id = 2;
+  // Whether the originating request was an RFQ or an IOI.
+  DeskRequestKind kind = 3;
+  // The counterparty label (display/attribution).
+  string counterparty = 4;
+  // The desk the deal booked under.
+  string desk = 5;
+  // The dealt instrument.
+  RatesInstrument instrument = 6;
+  // The curve set the deal priced against.
+  CurveSet curve_set = 7;
+  // The DESK's side (opposite the counterparty's submitted side).
+  Side side = 8;
+  // The dealt notional (curve currency, positive).
+  double notional = 9;
+  // The dealt level — the accepted `DeskQuote.price`.
+  double price = 10;
+  // Execution time (epoch nanos, UTC).
+  int64 executed_at_nanos = 11;
+  // The booking trader (attribution).
+  string trader = 12;
+  // The rates position id this deal booked into the rates store. Presence-tracked.
+  optional uint64 position_id = 13;
+  // Opaque caller correlation id carried from the request. Presence-tracked.
+  optional string correlation_id = 14;
+}
+// A scope filter for the received-deals blotter.
+message DealScope {
+  // Restrict to one desk (absent ⇒ all desks the caller is entitled to).
+  optional string desk = 1;
+}
+// Request: read the received-deals blotter.
+message ListDealsRequest {
+  // The bearer session token from `AuthService.Login` (mode-gated like the rest).
+  optional string session_token = 1;
+  // Optional desk filter (absent ⇒ all entitled desks).
+  optional DealScope scope = 2;
+  // The entitlement principal authorising the caller (absent ⇒ grant-all default).
+  optional EntitlementPrincipal principal = 3;
+  // Optional caller correlation id, echoed on the response. Presence-tracked.
+  optional string correlation_id = 4;
+}
+// The received-deals blotter, newest first (descending `executed_at_nanos`).
+message ListDealsResponse {
+  // The matching booked deals, newest first.
+  repeated Deal deals = 1;
+}
+
+// ---- Notifications: a dedicated server→client push stream ----
+// The desk learns "an RFQ/IOI requires pricing" the instant it lands, without
+// polling. A connected client opens ONE notification subscription scoped to the
+// desks it watches; the server fans out entitlement-filtered events to every
+// matching subscriber. Independent of the price (RFS) stream by operator choice:
+// a quiet, low-rate control channel that never shares back-pressure with pricing.
+enum NotificationKind {
+  // Default/unset — never a valid notification kind on the wire.
+  NOTIFICATION_KIND_UNSPECIFIED = 0;
+  // A new RFQ landed and needs pricing.
+  NOTIFICATION_KIND_RFQ_RECEIVED = 1;
+  // A new IOI landed for the desk to work.
+  NOTIFICATION_KIND_IOI_RECEIVED = 2;
+  // A pending request was withdrawn by the counterparty.
+  NOTIFICATION_KIND_REQUEST_WITHDRAWN = 3;
+  // A pending request expired before the desk responded.
+  NOTIFICATION_KIND_REQUEST_EXPIRED = 4;
+  // A desk quote was lifted by the counterparty → a deal booked.
+  NOTIFICATION_KIND_QUOTE_ACCEPTED = 5;
+  // A desk quote was rejected by the counterparty.
+  NOTIFICATION_KIND_QUOTE_REJECTED = 6;
+}
+// One pushed notification event the desk surfaces as a toast/inbox item.
+message Notification {
+  // The server-assigned notification identity (de-dup key on the client).
+  string notification_id = 1;
+  // What happened (RFQ/IOI received, withdrawn, expired, accepted, rejected).
+  NotificationKind kind = 2;
+  // When the event occurred (epoch nanos, UTC).
+  int64 at_nanos = 3;
+  // The request/deal this concerns, for click-through. Presence-tracked.
+  optional string request_id = 4;
+  // The desk the event is scoped to.
+  string desk = 5;
+  // The counterparty involved (display/attribution).
+  string counterparty = 6;
+  // Whether the underlying request was an RFQ or an IOI.
+  DeskRequestKind request_kind = 7;
+  // A one-line human headline (rendered in the toast/inbox).
+  string headline = 8;
+  // Optional longer detail line. Presence-tracked.
+  optional string detail = 9;
+}
+// The desks a notification subscription covers.
+message NotificationScope {
+  // The desks to receive notifications for (empty ⇒ all the caller is entitled to).
+  repeated string desks = 1;
+}
+// Open one long-lived notification subscription scoped to `scope`'s desks.
+message StreamNotificationsRequest {
+  // The bearer session token from `AuthService.Login` (mode-gated like the rest).
+  optional string session_token = 1;
+  // The desks to subscribe to (absent ⇒ all the caller is entitled to).
+  optional NotificationScope scope = 2;
+  // The entitlement principal authorising the caller (absent ⇒ grant-all default).
+  optional EntitlementPrincipal principal = 3;
+  // Optional caller correlation id, echoed by the server. Presence-tracked.
+  optional string correlation_id = 4;
+}
+
+// The dealer-side quoting desk: inbound RFQ/IOI capture, response, acceptance, and
+// the inbox + received-deals reads. Entitlement-pruned exactly like the risk reads.
+service RfqDeskService {
+  rpc SubmitDeskRequest(SubmitDeskRequestRequest) returns (SubmitDeskRequestResponse);
+  rpc RespondDeskRequest(RespondDeskRequestRequest) returns (RespondDeskRequestResponse);
+  rpc AcceptDeskQuote(AcceptDeskQuoteRequest) returns (AcceptDeskQuoteResponse);
+  rpc ListDeskRequests(ListDeskRequestsRequest) returns (ListDeskRequestsResponse);
+  rpc ListDeals(ListDealsRequest) returns (ListDealsResponse);
+}
+
+// The dedicated server→client notification push channel (one long-lived stream per
+// connected client; entitlement-filtered desk fan-out).
+service NotificationService {
+  rpc StreamNotifications(StreamNotificationsRequest) returns (stream Notification);
 }

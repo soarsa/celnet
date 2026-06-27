@@ -2062,3 +2062,289 @@ export interface AggregateRatesRiskResponse {
   nodes: readonly RatesRiskNode[];
   correlationId?: bigint;
 }
+
+// ---------------------------------------------------------------------------
+// dealer-quoting desk + linear-rates Book/List + notification push. The WS
+// mirror of RfqDeskService / RiskService(BookRatesPosition, ListRatesPositions)
+// / NotificationService (crates/celnet-proto/proto/celnet.proto). One current
+// contract (CLAUDE.md rule 9): a desk request carries the SAME `OisInstrument`
+// + `RatesCurveSet` the `price_rates` path prices, so a desk RFQ is priced by
+// the identical engine the `priceRates` seam exposes.
+// ---------------------------------------------------------------------------
+
+/**
+ * The flavour of an inbound dealer request (`celnet.wire.DeskRequestKind`,
+ * proto RFQ=1 / IOI=2): an `RFQ` is a firm request-for-quote the desk responds
+ * to with a price; an `IOI` is an indication-of-interest (an advertised axe the
+ * desk may also price). Purpose-named, vendor-neutral.
+ */
+export type DeskRequestKind = "RFQ" | "IOI";
+
+/**
+ * The lifecycle state of a `DeskRequest` (`celnet.wire.DeskRequestState`, proto
+ * PENDING=1 … WITHDRAWN=6). A request is `PENDING` on receipt, becomes `QUOTED`
+ * when the desk prices it or `REJECTED` when the desk declines, `ACCEPTED` when
+ * the counterparty lifts the quote (booking a deal), and `EXPIRED`/`WITHDRAWN`
+ * on timeout / counterparty pull.
+ */
+export type DeskRequestState =
+  | "PENDING"
+  | "QUOTED"
+  | "ACCEPTED"
+  | "REJECTED"
+  | "EXPIRED"
+  | "WITHDRAWN";
+
+/**
+ * The kind of a push `Notification` (`celnet.wire.NotificationKind`, proto
+ * RFQ_RECEIVED=1 … QUOTE_REJECTED=6). The `*_RECEIVED` kinds signal a new inbound
+ * request requiring desk attention; the lifecycle kinds report a request's
+ * resolution.
+ */
+export type NotificationKind =
+  | "RFQ_RECEIVED"
+  | "IOI_RECEIVED"
+  | "REQUEST_WITHDRAWN"
+  | "REQUEST_EXPIRED"
+  | "QUOTE_ACCEPTED"
+  | "QUOTE_REJECTED";
+
+/**
+ * The desk's response to an RFQ/IOI (`celnet.wire.DeskQuote`): the quoted
+ * `price` (a fixed rate for an OIS), the quoted `notional`, the quote's validity
+ * window `validForMs`, and the `trader` seat that priced it.
+ */
+export interface DeskQuote {
+  /** The quoted level — a fixed rate for an OIS (decimal, 0.041 = 4.10%). */
+  price: number;
+  /** The notional the quote is good for (curve currency). */
+  notional: number;
+  /** The quote's last-look validity window in milliseconds. */
+  validForMs: number;
+  /** The trader seat that priced the quote. */
+  trader: string;
+}
+
+/** A desk's decline of an RFQ/IOI (`celnet.wire.DeskReject`): a free-text reason. */
+export interface DeskReject {
+  reason: string;
+}
+
+/**
+ * The desk's view of one inbound dealer request (`celnet.wire.DeskRequest`): the
+ * `OisInstrument` + `RatesCurveSet` to price, the `side`/`notional` requested, its
+ * lifecycle `state`, and (once priced) the `quote`. Timestamps are nanoseconds
+ * since the Unix epoch (UTC).
+ */
+export interface DeskRequest {
+  /** Stable request identity (server-minted). */
+  requestId: string;
+  kind: DeskRequestKind;
+  /** The counterparty that originated the request. */
+  counterparty: string;
+  /** The desk the request is routed to. */
+  desk: string;
+  /** The OIS to price (the P0 rates arm). */
+  instrument: OisInstrument;
+  /** The curve set the request prices against. */
+  curveSet: RatesCurveSet;
+  /** The direction requested (BUY = pay fixed / receive; per the wire `Side`). */
+  side: Side;
+  /** The requested notional (curve currency). */
+  notional: number;
+  /** Receipt timestamp, nanoseconds since the Unix epoch (UTC). */
+  receivedAtNanos: bigint;
+  /** Expiry deadline, nanoseconds since the Unix epoch (UTC). */
+  expiresAtNanos: bigint;
+  state: DeskRequestState;
+  /** The desk's quote once priced (absent while `PENDING`/`REJECTED`). */
+  quote?: DeskQuote;
+  /** Optional client correlation echo. */
+  correlationId?: string;
+}
+
+/**
+ * A booked received deal (`celnet.wire.Deal`): the executed terms of an
+ * `ACCEPTED` desk request — the dealt `price`, `notional`, `side`, the booking
+ * `trader`, and (when the deal booked a rates position) its `positionId`.
+ */
+export interface Deal {
+  dealId: string;
+  /** The originating `DeskRequest.requestId`. */
+  requestId: string;
+  kind: DeskRequestKind;
+  counterparty: string;
+  desk: string;
+  instrument: OisInstrument;
+  curveSet: RatesCurveSet;
+  side: Side;
+  notional: number;
+  /** The dealt level — the accepted `DeskQuote.price`. */
+  price: number;
+  /** Execution timestamp, nanoseconds since the Unix epoch (UTC). */
+  executedAtNanos: bigint;
+  trader: string;
+  /** The booked `RatesPosition.positionId`, when the deal booked one. */
+  positionId?: bigint;
+  correlationId?: string;
+}
+
+/**
+ * A server→client push event (`celnet.wire.Notification`): a desk-attention
+ * signal (a new RFQ/IOI) or a lifecycle resolution (accepted/rejected/expired),
+ * carrying a human `headline` (+ optional `detail`) and the `requestId` it
+ * concerns.
+ */
+export interface Notification {
+  notificationId: string;
+  kind: NotificationKind;
+  /** Event timestamp, nanoseconds since the Unix epoch (UTC). */
+  atNanos: bigint;
+  /** The `DeskRequest.requestId` this notification concerns (when applicable). */
+  requestId?: string;
+  desk: string;
+  counterparty: string;
+  requestKind: DeskRequestKind;
+  headline: string;
+  detail?: string;
+}
+
+// --- desk request/response messages -----------------------------------------
+
+/**
+ * `RfqDeskService.SubmitDeskRequest` request — inject an inbound RFQ/IOI (used by
+ * the counterparty simulator). The desk enqueues it `PENDING` and pushes a
+ * `*_RECEIVED` notification.
+ */
+export interface SubmitDeskRequestRequest {
+  kind: DeskRequestKind;
+  counterparty: string;
+  desk: string;
+  instrument: OisInstrument;
+  curveSet: RatesCurveSet;
+  side: Side;
+  notional: number;
+  /** The request's time-to-live in milliseconds (0 ⇒ a server default). */
+  ttlMs: number;
+  /** Entitlement principal; omitted ⇒ the audited explicit grant-all default. */
+  principal?: EntitlementPrincipal;
+  correlationId?: string;
+}
+
+export interface SubmitDeskRequestResponse {
+  request: DeskRequest;
+}
+
+/** The oneof arm a `RespondDeskRequest` carries: a quote OR a reject. */
+export type DeskResponseArm =
+  | { kind: "quote"; quote: DeskQuote }
+  | { kind: "reject"; reject: DeskReject };
+
+/**
+ * `RfqDeskService.RespondDeskRequest` request — the desk's response to a
+ * `PENDING` request: quote it (→ `QUOTED`) or reject it (→ `REJECTED`).
+ */
+export interface RespondDeskRequestRequest {
+  requestId: string;
+  response: DeskResponseArm;
+  principal?: EntitlementPrincipal;
+  correlationId?: string;
+}
+
+export interface RespondDeskRequestResponse {
+  request: DeskRequest;
+}
+
+/**
+ * `RfqDeskService.AcceptDeskQuote` request — the counterparty lifts a `QUOTED`
+ * request, booking a `Deal` (+ a `RatesPosition`) and moving it to `ACCEPTED`.
+ */
+export interface AcceptDeskQuoteRequest {
+  requestId: string;
+  principal?: EntitlementPrincipal;
+  correlationId?: string;
+}
+
+export interface AcceptDeskQuoteResponse {
+  deal: Deal;
+  request: DeskRequest;
+}
+
+/** The optional `(states, desk)` filter on a `ListDeskRequests` query. */
+export interface DeskRequestScope {
+  /** Keep only requests in these states, when non-empty. */
+  states?: DeskRequestState[];
+  /** Keep only requests routed to this desk, when set. */
+  desk?: string;
+}
+
+export interface ListDeskRequestsRequest {
+  scope?: DeskRequestScope;
+  principal?: EntitlementPrincipal;
+  correlationId?: string;
+}
+
+export interface ListDeskRequestsResponse {
+  requests: DeskRequest[];
+}
+
+/** The optional `(desk)` filter on a `ListDeals` query. */
+export interface DealScope {
+  desk?: string;
+}
+
+export interface ListDealsRequest {
+  scope?: DealScope;
+  principal?: EntitlementPrincipal;
+  correlationId?: string;
+}
+
+export interface ListDealsResponse {
+  deals: Deal[];
+}
+
+// --- linear-rates Book/List (RiskService rates Book) ------------------------
+
+/**
+ * `RiskService.BookRatesPosition` request — book one open `RatesPosition` into the
+ * desk's in-memory rates book (what `ListRatesPositions` reads and the rates Book
+ * workspace renders).
+ */
+export interface BookRatesPositionRequest {
+  position: RatesPosition;
+  principal?: EntitlementPrincipal;
+  correlationId?: string;
+}
+
+export interface BookRatesPositionResponse {
+  position: RatesPosition;
+}
+
+/**
+ * `RiskService.ListRatesPositions` request — the booked rates positions, narrowed
+ * by the optional `(entity, book, ccy)` scope.
+ */
+export interface ListRatesPositionsRequest {
+  scope?: RatesRiskScope;
+  principal?: EntitlementPrincipal;
+  correlationId?: string;
+}
+
+export interface ListRatesPositionsResponse {
+  positions: RatesPosition[];
+}
+
+// --- notification push stream -----------------------------------------------
+
+/** The desks a notification subscription scopes to (`celnet.wire.NotificationScope`). */
+export interface NotificationScope {
+  desks: string[];
+}
+
+/**
+ * `NotificationService.StreamNotifications` request — open the dedicated push
+ * stream, optionally scoped to a set of desks.
+ */
+export interface StreamNotificationsRequest {
+  scope?: NotificationScope;
+}

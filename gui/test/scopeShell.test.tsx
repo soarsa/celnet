@@ -83,7 +83,12 @@ describe("data-driven rail + glyph fix (GW1-S1)", () => {
       fireEvent.click(screen.getByRole("tab", { name: "Fixed Income" }));
     });
     const rail = screen.getByRole("complementary", { name: "workspaces" });
-    expect(within(rail).getByRole("button", { name: /Book/i }).textContent).toContain("▤");
+    // The Fixed Income rail also carries "Rates Book"; select the FX "Book" button
+    // unambiguously by its title prefix so the glyph assertion targets one button.
+    const bookBtn = within(rail)
+      .getAllByRole("button")
+      .find((b) => b.getAttribute("title")?.startsWith("Book "));
+    expect(bookBtn?.textContent).toContain("▤");
   });
 });
 

@@ -30,6 +30,9 @@ export type WorkspaceId =
   | "rates"
   | "curve"
   | "ratesrisk"
+  | "quoting"
+  | "deals"
+  | "ratesbook"
   | "stream"
   | "surface"
   | "risk"
@@ -99,6 +102,9 @@ export const RAIL: readonly {
   { id: "rates", glyph: "≣", label: "Rates", domain: "fixed-income" },
   { id: "curve", glyph: "∿", label: "Curve", domain: "fixed-income" },
   { id: "ratesrisk", glyph: "⊟", label: "Rates Risk", domain: "fixed-income" },
+  { id: "quoting", glyph: "⇌", label: "Quoting", domain: "fixed-income" },
+  { id: "deals", glyph: "✓", label: "Deals", domain: "fixed-income" },
+  { id: "ratesbook", glyph: "▥", label: "Rates Book", domain: "fixed-income" },
   { id: "book", glyph: "▤", label: "Book", domain: "fixed-income" },
   // Administration.
   { id: "connections", glyph: "⇄", label: "Connections", domain: "administration" },

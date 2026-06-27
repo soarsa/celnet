@@ -16,10 +16,14 @@
  */
 
 import type {
+  AcceptDeskQuoteRequest,
+  AcceptDeskQuoteResponse,
   AggregateRatesRiskRequest,
   AggregateRatesRiskResponse,
   AggregateRiskRequest,
   AggregateRiskResponse,
+  BookRatesPositionRequest,
+  BookRatesPositionResponse,
   BrokerQuoteSet,
   CcyPair,
   Conventions,
@@ -29,6 +33,18 @@ import type {
   DrillRiskResponse,
   Executed,
   Execution,
+  ListDealsRequest,
+  ListDealsResponse,
+  ListDeskRequestsRequest,
+  ListDeskRequestsResponse,
+  ListRatesPositionsRequest,
+  ListRatesPositionsResponse,
+  Notification,
+  NotificationScope,
+  RespondDeskRequestRequest,
+  RespondDeskRequestResponse,
+  SubmitDeskRequestRequest,
+  SubmitDeskRequestResponse,
   FixConnection,
   FixConnectionSpec,
   FixMessagePage,
@@ -281,6 +297,48 @@ export interface CelnetTransport {
    * dimension and/or its contributing positions (the Book→Risk drill).
    */
   drillRisk(request: DrillRiskRequest): Promise<DrillRiskResponse>;
+
+  // --- RfqDeskService — dealer-quoting RFQ/IOI desk --------------------------
+  //
+  // The desk lifecycle over the single contract: a counterparty SubmitDeskRequest
+  // enqueues an inbound RFQ/IOI (PENDING); the desk RespondDeskRequest quotes or
+  // rejects it; the counterparty AcceptDeskQuote lifts a quote, booking a Deal (+
+  // a RatesPosition). ListDeskRequests/ListDeals read the inbox/blotter. Desk
+  // requests price the SAME OisInstrument the `priceRates` seam prices.
+
+  /** RfqDeskService.SubmitDeskRequest — inject an inbound RFQ/IOI (PENDING). */
+  submitDeskRequest(request: SubmitDeskRequestRequest): Promise<SubmitDeskRequestResponse>;
+
+  /** RfqDeskService.RespondDeskRequest — quote (→ QUOTED) or reject (→ REJECTED). */
+  respondDeskRequest(request: RespondDeskRequestRequest): Promise<RespondDeskRequestResponse>;
+
+  /** RfqDeskService.AcceptDeskQuote — lift a QUOTED request, booking a deal + position. */
+  acceptDeskQuote(request: AcceptDeskQuoteRequest): Promise<AcceptDeskQuoteResponse>;
+
+  /** RfqDeskService.ListDeskRequests — the desk inbox, optionally scoped. */
+  listDeskRequests(request: ListDeskRequestsRequest): Promise<ListDeskRequestsResponse>;
+
+  /** RfqDeskService.ListDeals — the received-deals blotter, optionally scoped. */
+  listDeals(request: ListDealsRequest): Promise<ListDealsResponse>;
+
+  // --- RiskService rates Book — book + list linear-rates positions -----------
+
+  /** RiskService.BookRatesPosition — book one open rates position into the book. */
+  bookRatesPosition(request: BookRatesPositionRequest): Promise<BookRatesPositionResponse>;
+
+  /** RiskService.ListRatesPositions — the booked rates positions, optionally scoped. */
+  listRatesPositions(request: ListRatesPositionsRequest): Promise<ListRatesPositionsResponse>;
+
+  /**
+   * NotificationService.StreamNotifications — open the dedicated server→client
+   * push stream (RFQ/IOI received, accepted/rejected/expired). `onNotification`
+   * fires for each pushed `Notification`; the returned disposer unsubscribes.
+   * Re-opens transparently across a reconnect (live transport).
+   */
+  streamNotifications(
+    scope: NotificationScope | undefined,
+    onNotification: (notification: Notification) => void,
+  ): () => void;
 
   /**
    * RiskService.LimitStatus — the limit tree + per-limit utilization/RAG for a

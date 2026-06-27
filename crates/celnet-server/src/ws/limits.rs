@@ -209,6 +209,20 @@ mod tests {
             Arc::clone(&gate),
             Clock::system(),
         ));
+        // A throwaway desk edge over fresh stores: the cap test never exercises the
+        // dealer-quoting desk, it just needs the edge the WS set now requires.
+        let rfq_desk = Arc::new(crate::services::desk::RfqDeskEdge::new(
+            Arc::clone(&store),
+            Arc::new(crate::services::sessions::SessionRegistry::new(
+                Clock::system(),
+            )),
+            Arc::clone(&gate),
+            Arc::new(crate::services::desk::store::DeskRequestStore::new()),
+            Arc::new(crate::services::desk::store::DealStore::new()),
+            Arc::new(crate::services::rates_book::RatesPositionStore::new()),
+            Arc::new(crate::services::desk::notify::NotificationBroker::new()),
+            Clock::system(),
+        ));
         let services = WsServices::new(
             link,
             gate,
@@ -219,6 +233,7 @@ mod tests {
             risk,
             fix_admin,
             auth,
+            rfq_desk,
             None,
             LpPanelConfig { synthetic_lps: 0 },
         );

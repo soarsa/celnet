@@ -21,6 +21,9 @@ import { TicketWorkspace } from "../workspaces/TicketWorkspace";
 import { RatesWorkspace } from "../workspaces/RatesWorkspace";
 import { CurveWorkspace } from "../workspaces/CurveWorkspace";
 import { RatesRiskWorkspace } from "../workspaces/RatesRiskWorkspace";
+import { QuotingWorkspace } from "../workspaces/QuotingWorkspace";
+import { DealsBlotterWorkspace } from "../workspaces/DealsBlotterWorkspace";
+import { RatesBookWorkspace } from "../workspaces/RatesBookWorkspace";
 import { StreamWorkspace } from "../workspaces/StreamWorkspace";
 import { SurfaceWorkspace } from "../workspaces/SurfaceWorkspace";
 import { RiskWorkspace } from "../workspaces/RiskWorkspace";
@@ -34,6 +37,7 @@ import { ScopeControl } from "../components/ScopeControl";
 import { ScopeSwitcher } from "../components/ScopeSwitcher";
 import { SavedViewsMenu } from "../components/SavedViewsMenu";
 import { AuthMenu } from "../components/AuthMenu";
+import { NotificationCenter } from "../components/NotificationCenter";
 import { SignInDialog } from "../components/SignInDialog";
 import {
   buildCommands,
@@ -54,6 +58,9 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   rates: RatesWorkspace,
   curve: CurveWorkspace,
   ratesrisk: RatesRiskWorkspace,
+  quoting: QuotingWorkspace,
+  deals: DealsBlotterWorkspace,
+  ratesbook: RatesBookWorkspace,
   stream: StreamWorkspace,
   surface: SurfaceWorkspace,
   risk: RiskWorkspace,
@@ -285,6 +292,7 @@ function TitleBar(): React.ReactElement {
         <kbd className={styles.kbd}>⌘K</kbd>
         <span>Search / command…</span>
       </button>
+      <NotificationCenter />
       <AuthMenu />
     </header>
   );
