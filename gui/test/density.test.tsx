@@ -222,12 +222,16 @@ describe("density is JS-free everywhere except its owner + boot wiring", () => {
   // (the axis owner) and App.tsx (the one-line boot wiring) may reference the
   // density attribute or the useDensity hook. A grid hardcoding a row height
   // instead of reading `--row-h` would be a regression this catches as it lands.
+  // Storybook stories (`*.stories.tsx`) are exempt: they exist to *demonstrate*
+  // the density design axis (density.stories.tsx drives the toggle; tokens.stories
+  // .tsx renders the live density tokens), so referencing the hook/attribute is
+  // their whole point — they ship no production grid that could hardcode a height.
   function* walk(dir: string): Generator<string> {
     for (const entry of readdirSync(dir)) {
       const full = join(dir, entry);
       if (statSync(full).isDirectory()) {
         yield* walk(full);
-      } else if (/\.(ts|tsx)$/.test(entry)) {
+      } else if (/\.(ts|tsx)$/.test(entry) && !/\.stories\.tsx$/.test(entry)) {
         yield full;
       }
     }
