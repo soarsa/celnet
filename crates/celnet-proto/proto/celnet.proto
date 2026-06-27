@@ -3005,6 +3005,15 @@ service RiskService {
   // Read the limit tree + utilization/RAG status for a scope node, including the
   // hard-breach escalation flag.
   rpc LimitStatus(LimitStatusRequest) returns (LimitStatusResponse);
+  // Price a set of linear-rates (fixed-income) positions against one calibrated
+  // `CurveSet`, shard the resulting risk facts across the firm fan-out partition,
+  // and roll them up into the per-currency net PV / PV01 / DV01 + key-rate-DV01
+  // ladder. The linear-rates analogue of `AggregateRisk`: the client submits a
+  // book of positions and reads the netted firm rollup — it never prices or sums
+  // itself. The fan-in is purely additive and equals the single-node rollup
+  // bit-for-bit (`celnet-risk-fleet`); positions travel inline on the request
+  // (there is no firm rates position store yet).
+  rpc AggregateRatesRisk(AggregateRatesRiskRequest) returns (AggregateRatesRiskResponse);
 }
 
 // The surface workflow: read a smile, mark/recalibrate from broker quotes, and
@@ -3629,4 +3638,111 @@ message RatesPriceResponse {
   RatesPricingResult result = 2;
   // Echo of the originating `RatesPriceRequest.correlation_id`, if supplied.
   optional uint64 correlation_id = 3;
+}
+
+// ===========================================================================
+// rates portfolio risk — server-side federated rollup (fixed income)
+// ===========================================================================
+//
+// The linear-rates analogue of the options `RiskService.AggregateRisk` roll-up
+// (`docs/fixed-income/FI-ARCHITECTURE.md`; `docs/SCALE-OUT.md` §2/§11). A client
+// submits a book of rates positions and reads the netted firm rollup; the server
+// prices each position against the supplied `CurveSet`, builds one additive risk
+// fact per position keyed on its `(entity, ccy, book)` cell, shards the facts
+// across the firm HRW partition map and fans them in. Rates risk is *purely
+// additive* (PV/PV01/DV01/key-rate ladder sum over a netting set; the OIS par rate
+// is curve-derived and never aggregated), so the fan-in equals the single-node
+// rollup bit-for-bit (`celnet-risk-fleet`). Currency is the curve currency, never
+// carried per position. Additive (rule 9): new instrument arms ride `RatesInstrument`.
+
+// One rates position to price and net into the firm rates rollup: the linear-rates
+// analogue of `RiskPosition`. Carries the position identity, the `(legal-entity,
+// book)` cell it nets into, and the instrument economics; the settlement currency
+// is taken from the `CurveSet`, not the wire.
+message RatesPosition {
+  // The position identity (one current fact per id in the rollup).
+  uint64 position_id = 1;
+  // The legal entity (regulatory-capital unit) the position books into — the
+  // primary netting/partition sub-key (`celnet_risk_fleet::RatesFactKey::entity`).
+  uint32 entity = 2;
+  // The netting book the position sits in (carried for netting/attribution; not a
+  // partition key, so a currency's whole cross-book risk stays co-resident).
+  uint32 book = 3;
+  // The linear-rates instrument to price (the USD-SOFR OIS P0 arm; the oneof grows
+  // additively exactly as in `RatesPriceRequest`).
+  RatesInstrument instrument = 4;
+}
+
+// A scope filter narrowing a rates risk aggregate to one `(entity, book, ccy)`
+// subtree before the rollup — the rates-native analogue of `RiskScope`, in the
+// `RatesFactKey` `(entity, ccy, book)` key space rather than the options org
+// dimensions. Each filter is presence-tracked: an absent field does not constrain.
+// A position is included iff every present filter matches it.
+message RatesRiskScope {
+  // Pin to one legal entity (absent ⇒ all entities).
+  optional uint32 entity = 1;
+  // Pin to one netting book (absent ⇒ all books).
+  optional uint32 book = 2;
+  // Pin to one settlement currency, ISO 4217 (absent ⇒ all currencies). Matched
+  // against the `CurveSet` currency the positions price under.
+  optional string ccy = 3;
+}
+
+// Request: price `positions` against `curve_set`, shard, and roll up the firm
+// rates risk. The linear-rates analogue of `AggregateRiskRequest`. Positions
+// travel inline (the caller submits its own book; there is no firm rates position
+// store yet — `docs/fixed-income/FI-ARCHITECTURE.md`).
+message AggregateRatesRiskRequest {
+  // The calibrated curve set every position is priced against (the rates market).
+  CurveSet curve_set = 1;
+  // The rates positions to price and net into the firm rollup.
+  repeated RatesPosition positions = 2;
+  // Optional scope narrowing the rollup to one `(entity, book, ccy)` subtree
+  // (absent ⇒ the whole submitted book).
+  optional RatesRiskScope scope = 3;
+  // The entitlement principal authorising the caller (absent ⇒ grant-all default,
+  // mode-gated exactly as `AggregateRisk`).
+  optional EntitlementPrincipal principal = 4;
+  // Optional caller correlation id, echoed on the response. Presence-tracked.
+  optional uint64 correlation_id = 5;
+  // The bearer session token from `AuthService.Login`. When present and valid the
+  // server authenticates the caller; absent ⇒ the legacy client-asserted-principal
+  // path (mode-gated). A secret — never logged.
+  optional string session_token = 6;
+}
+
+// One bucket of a netted key-rate (instrument-Jacobian) DV01 ladder: the DV01
+// attributable to a single calibrating-instrument tenor, in settlement-currency PV
+// (`celnet_risk_fleet::KeyRateBucket`).
+message KeyRateDv01 {
+  // The calibrating-instrument tenor in whole years (the ladder's bucket key).
+  uint32 tenor_years = 1;
+  // The netted DV01 of a +1bp bump of that tenor's quote, in settlement-currency PV.
+  double dv01 = 2;
+}
+
+// One per-currency node of the firm rates rollup: the netted PV / PV01 / DV01 and
+// the tenor-bucketed key-rate ladder for one settlement currency
+// (`celnet_risk_fleet::RatesNodeAggregate`). All measures are in `ccy`; currencies
+// never cross-net (summing PV across currencies is meaningless).
+message RatesRiskNode {
+  // The settlement currency this node nets, ISO 4217.
+  string ccy = 1;
+  // Net present value over the netting set, in `ccy`.
+  double net_pv = 2;
+  // Net analytic PV01, in `ccy` PV.
+  double net_pv01 = 3;
+  // Net parallel DV01, in `ccy` PV.
+  double net_dv01 = 4;
+  // The merged key-rate DV01 ladder, bucketed by tenor and ascending by tenor.
+  repeated KeyRateDv01 key_rate_ladder = 5;
+}
+
+// Response: the firm rates rollup as one node per settlement currency, ascending by
+// currency code (deterministic).
+message AggregateRatesRiskResponse {
+  // The per-currency rollup nodes, ascending by currency code.
+  repeated RatesRiskNode nodes = 1;
+  // Echo of the request's `correlation_id`, if supplied.
+  optional uint64 correlation_id = 2;
 }

@@ -36,9 +36,9 @@ use celnet_limits::{
 };
 use celnet_proto::risk_service_server::RiskService;
 use celnet_proto::{
-    AggregateRiskRequest, AggregateRiskResponse, DrillRiskRequest, DrillRiskResponse,
-    LimitStatusRequest, LimitStatusResponse, LimitUtilization, ListPositionsRequest,
-    ListPositionsResponse, RiskScope,
+    AggregateRatesRiskRequest, AggregateRatesRiskResponse, AggregateRiskRequest,
+    AggregateRiskResponse, DrillRiskRequest, DrillRiskResponse, LimitStatusRequest,
+    LimitStatusResponse, LimitUtilization, ListPositionsRequest, ListPositionsResponse, RiskScope,
 };
 use celnet_risk_cube::{
     BookId, DeskId, DimensionId, EntityId, LocationId, NetGreeks, NodeAggregate, TraderId,
@@ -790,6 +790,33 @@ impl RiskService for RiskEdge {
             Serve::Direct => self.limit_status_impl(&req)?,
             Serve::Federate(fleet) => self.federated_limit_status(fleet, &req).await?,
         };
+        Ok(Response::new(resp))
+    }
+
+    async fn aggregate_rates_risk(
+        &self,
+        request: Request<AggregateRatesRiskRequest>,
+    ) -> Result<Response<AggregateRatesRiskResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        let caller = resolve_caller(
+            &self.sessions,
+            req.session_token.as_deref(),
+            req.principal.clone(),
+        )?;
+        authorize_caller(
+            self.store.access_mode(),
+            &caller,
+            "RiskService/AggregateRatesRisk",
+            RequiredAuthority::ReadAny,
+            req.correlation_id,
+        )?;
+        // Rates portfolio risk is a pure calculation over the request-supplied
+        // `CurveSet` + positions (no live-market read, no per-pair fleet route to
+        // forward), so the additive fan-in runs in-process under the edge topology
+        // on every replica — no federation forwarding, unlike the store-backed RPCs.
+        let resp = crate::services::rates_risk::aggregate_rates_risk(&req, self.topology())?;
         Ok(Response::new(resp))
     }
 }

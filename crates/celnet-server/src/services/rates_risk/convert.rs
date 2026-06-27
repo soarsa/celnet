@@ -1,0 +1,139 @@
+//! Wire ↔ domain mapping for the rates portfolio-risk rollup — the linear-rates
+//! analogue of [`super::super::risk::convert`].
+//!
+//! Two directions live here:
+//!
+//! * **inbound** — a proto [`RatesPosition`] priced against the request's
+//!   [`CurveSet`] becomes one additive [`RatesRiskFact`]
+//!   ([`fact_from_position`]). The position is priced through the **same**
+//!   [`crate::rates_pricing::price_rates`] entry the `PricingService.PriceRates`
+//!   edge uses (the OIS math is never re-implemented here); the per-pillar
+//!   `key_rate_ladder` doubles are zipped back onto the `CurveSet` pillar tenors so
+//!   each ladder bucket maps to its tradeable hedge tenor.
+//! * **outbound** — a [`RatesFirmRollup`] becomes an [`AggregateRatesRiskResponse`]
+//!   ([`rollup_to_response`]), one [`RatesRiskNode`] per settlement currency in the
+//!   rollup's ascending-currency order.
+
+// `tonic::Status` is a large error type; the whole `RiskService` surface carries it
+// by value, mirroring `services::risk` (`#![allow(clippy::result_large_err)]`).
+#![allow(clippy::result_large_err)]
+
+use celnet_proto::{
+    AggregateRatesRiskResponse, CurveSet, KeyRateDv01, RatesInstrument, RatesPosition,
+    RatesPriceRequest, RatesRiskNode,
+};
+use celnet_risk_cube::{BookId, EntityId};
+use celnet_risk_fleet::{KeyRateBucket, RatesFactKey, RatesFirmRollup, RatesRiskFact};
+use celnet_types::Ccy;
+use tonic::Status;
+
+use crate::rates_pricing::{RatesPriceError, price_rates};
+
+/// Map a [`RatesPriceError`] to a gRPC [`Status`], mirroring the
+/// `PricingService.PriceRates` edge: a bootstrap failure on otherwise-valid input
+/// is an internal numeric fault; every other variant is a malformed request.
+fn price_error_status(e: &RatesPriceError) -> Status {
+    match e {
+        RatesPriceError::Bootstrap(_) => Status::internal(e.to_string()),
+        _ => Status::invalid_argument(e.to_string()),
+    }
+}
+
+/// Price one [`RatesPosition`] against `curve_set` and build its additive
+/// [`RatesRiskFact`]: the `(entity, ccy, book)` cell plus the side-signed
+/// PV / PV01 / DV01 and the per-tenor key-rate DV01 ladder.
+///
+/// The settlement currency is the curve currency (never carried per position); the
+/// ladder's tenor labels come from the `CurveSet` pillars the priced
+/// `key_rate_ladder` doubles align with (one entry per pillar, in pillar order).
+///
+/// # Errors
+/// * `invalid_argument` if the curve currency is not a valid ISO 4217 code, or the
+///   position carries no instrument.
+/// * Whatever [`price_rates`] returns (malformed pillars/instrument ⇒
+///   `invalid_argument`; a numeric bootstrap failure ⇒ `internal`).
+pub fn fact_from_position(
+    position: &RatesPosition,
+    curve_set: &CurveSet,
+) -> Result<RatesRiskFact, Status> {
+    let ccy = Ccy::parse(&curve_set.currency).ok_or_else(|| {
+        Status::invalid_argument(format!(
+            "AggregateRatesRisk: curve currency `{}` is not a valid ISO 4217 code",
+            curve_set.currency
+        ))
+    })?;
+    let instrument: RatesInstrument = position.instrument.ok_or_else(|| {
+        Status::invalid_argument(format!(
+            "AggregateRatesRisk: position {} carries no instrument",
+            position.position_id
+        ))
+    })?;
+
+    // Price through the shared edge entry — never a re-implementation of OIS math.
+    // The market is the request-supplied `CurveSet`, so this is a pure calculation.
+    let price_req = RatesPriceRequest {
+        request_id: position.position_id,
+        curve_set: Some(curve_set.clone()),
+        instrument: Some(instrument),
+        correlation_id: None,
+    };
+    let priced = price_rates(&price_req).map_err(|e| price_error_status(&e))?;
+
+    // Zip the per-pillar DV01 doubles back onto their `CurveSet` pillar tenors so
+    // each ladder bucket carries the tradeable hedge tenor it bumps. `price_rates`
+    // emits exactly one ladder entry per pillar in pillar order, so the lengths
+    // agree by construction; a mismatch would be a pricer contract break.
+    let key_rate_ladder: Vec<KeyRateBucket> = curve_set
+        .ois_pillars
+        .iter()
+        .zip(priced.key_rate_ladder.iter())
+        .map(|(pillar, &dv01)| KeyRateBucket {
+            tenor_years: pillar.tenor_years,
+            dv01,
+        })
+        .collect();
+
+    Ok(RatesRiskFact {
+        key: RatesFactKey {
+            entity: EntityId(position.entity),
+            ccy,
+            book: BookId(position.book),
+        },
+        pv: priced.pv,
+        pv01: priced.pv01,
+        dv01: priced.dv01,
+        key_rate_ladder,
+    })
+}
+
+/// Map a [`RatesFirmRollup`] to the wire [`AggregateRatesRiskResponse`]: one
+/// [`RatesRiskNode`] per settlement currency, in the rollup's ascending-currency
+/// order, each carrying the netted scalars and the tenor-bucketed ladder.
+#[must_use]
+pub fn rollup_to_response(
+    rollup: &RatesFirmRollup,
+    correlation_id: Option<u64>,
+) -> AggregateRatesRiskResponse {
+    let nodes = rollup
+        .books()
+        .iter()
+        .map(|book| RatesRiskNode {
+            ccy: book.ccy.as_str().to_owned(),
+            net_pv: book.net_pv,
+            net_pv01: book.net_pv01,
+            net_dv01: book.net_dv01,
+            key_rate_ladder: book
+                .key_rate_ladder
+                .iter()
+                .map(|bucket| KeyRateDv01 {
+                    tenor_years: bucket.tenor_years,
+                    dv01: bucket.dv01,
+                })
+                .collect(),
+        })
+        .collect();
+    AggregateRatesRiskResponse {
+        nodes,
+        correlation_id,
+    }
+}

@@ -861,6 +861,14 @@ impl RiskService for DelayingBackend {
         tokio::time::sleep(self.delay).await;
         RiskService::limit_status(&self.inner, request).await
     }
+
+    async fn aggregate_rates_risk(
+        &self,
+        request: Request<celnet_proto::AggregateRatesRiskRequest>,
+    ) -> Result<Response<celnet_proto::AggregateRatesRiskResponse>, Status> {
+        tokio::time::sleep(self.delay).await;
+        RiskService::aggregate_rates_risk(&self.inner, request).await
+    }
 }
 
 /// Boot a delaying `RiskService` backend (seeded with `legs`, sleeping `delay` before

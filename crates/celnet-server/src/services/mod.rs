@@ -25,6 +25,7 @@
 pub mod access;
 pub mod pricing;
 pub mod quote;
+pub mod rates_risk;
 pub mod risk;
 pub mod stream;
 pub mod surface;
