@@ -128,11 +128,15 @@ GUI (existing):
 - Gated by a loopback FIX initiator (mirror `tests/fix_acceptor.rs`).
 
 ### F. Five-client parity (slice 9)
-- **GUI** — ✅ the **Fixed-Income asset-class tab** + a live **rates pricing workspace**
-  (curve → OIS → PV / par / PV01 / DV01 / key-rate ladder) over `price_rates`
-  (`RatesWorkspace.tsx` + offline pricer `ratesPricing.ts` + live `wsTransport.priceRates`; tab
-  wired via Shell/commands). Broader FI workspace set (RFQ · IOI · RFS · Blotter), per
-  FI-ARCHITECTURE §4 / [`mockups/`](./mockups/), outstanding.
+- **GUI** — ✅ the **Fixed-Income asset-class tab** + two of the four §4.2 FI workspaces:
+  **Ticket** (`RatesWorkspace.tsx` + offline pricer `ratesPricing.ts` + live `wsTransport.priceRates`:
+  curve → OIS → PV / par / PV01 / DV01 / key-rate ladder over `price_rates`; pricer unit-tested) and
+  **Curve** (`ee3f29f`: `CurveWorkspace.tsx` + `CurveChart` — DF / zero / forward inspection over the
+  bootstrapped curve, log-linear-on-log-DF, curve-identity tested). The remaining §4.2 workspaces —
+  **Risk** (portfolio PV01/DV01/key-rate via the server RiskService rollup) and **Book** (rates
+  blotter) — are **blocked on server contracts** (the federation RPC endpoint + a positions store):
+  building them client-side now would be mocks. The §C/mockup RFQ · IOI · RFS surfaces likewise await
+  their server contracts.
 - **Excel** add-in — ✅ (`7722c59`) `=CELNET.RATES(...)` prices an OIS via the live `price_rates`
   engine RPC, spilling PV / par / PV01 / DV01 + the key-rate DV01 ladder (contract + codec adapted
   byte-for-byte from the proven GUI; tsc clean, vitest 445/445 incl. 16 new). Further `CELNET.*`
@@ -170,6 +174,8 @@ GUI (existing):
 **C (proto arms) ✅ → D (server consumes `celnet-rates`) ✅ → E (FIX dialect) ✅ → F (WS mirror ✅ ·
 Rust SDK ✅ · GUI asset-tabs + rates workspace ✅ · Excel ✅ · federation rollup ✅) 🟡**, with A/B
 product breadth (FRA / IRS / futures / cash-bond RV) landing into `celnet-rates` in parallel
-(disjoint leaf). C/D/E committed and gated; F's five client surfaces are delivered — remaining:
-the **server-owned RPC endpoint** that drives the rates fan-out (position store → `partition_rates_facts`
-→ `fan_in_additive`), plus the broader GUI FI workspace set (RFQ · IOI · RFS · Blotter).
+(disjoint leaf). C/D/E committed and gated; F's five client surfaces are delivered, and 2 of the 4
+§4.2 GUI FI workspaces (Ticket, Curve). Remaining is gated on one backend unblocker: the
+**server-owned rates-risk RPC endpoint** (position store → `partition_rates_facts` → `fan_in_additive`),
+which then unblocks the **Risk** and **Book** GUI workspaces; the §C RFQ · IOI · RFS surfaces need
+their own server contracts first.
