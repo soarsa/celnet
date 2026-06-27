@@ -1883,7 +1883,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.linear.fx_equiv_rates"
@@ -1892,7 +1892,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-gpu.src.batch.batch_reconciles_three_way",
@@ -1903,7 +1903,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-golden.src.oracle.fx_swap_pv"
@@ -1930,7 +1930,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-golden.src.oracle.forward_start_price"
@@ -1948,7 +1948,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-limits.src.check.exposure_of"
@@ -1995,7 +1995,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-cli.src.price.outright_matches_direct_vanilla"
@@ -2004,7 +2004,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-vanilla.src.premium.premium_from_domestic_pips"
@@ -2040,7 +2040,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-cli.src.surface.atm_vol_recovered_at_atm_strike",
@@ -2077,7 +2077,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-exotics.src.asian.turnbull_wakeman_price"
@@ -2095,7 +2095,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-observability.src.channel.telemetry_channel"
@@ -2132,7 +2132,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-exotics.src.market_hedge_overlay.hedge_smile_cost"
@@ -2159,7 +2159,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-gpu.src.as_normal.as_inverse_brackets_libm_inverse",
@@ -2169,7 +2169,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-golden.src.oracle.black76_price"
@@ -2226,7 +2226,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-vanilla.src.delta.delta"
@@ -2253,7 +2253,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-linear.src.forward.fd_central",
@@ -2263,7 +2263,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-conventions.src.registry.profile_for_canonical"
@@ -2282,7 +2282,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-surface.src.arbitrage.forward_call_strike_slope"
@@ -2291,7 +2291,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.forward_delta",
@@ -2301,7 +2301,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-surface.src.arbitrage.check_slice"
@@ -2319,7 +2319,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-parity.tests.structured.accumulator_continuous_monitoring_knocks_out_more_than_discrete",
@@ -2331,7 +2331,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-gpu.src.batch.as_erf_oracle_brackets_golden",
@@ -2351,7 +2351,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-exotics.src.barrier.single_barrier_price"
@@ -2369,7 +2369,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.inverse.price"
@@ -2378,7 +2378,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-vanilla.src.delta.delta_d_strike"
@@ -2387,7 +2387,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-proto.src.convert.cut_round_trips"
@@ -2415,7 +2415,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-cli.src.price.atm_forward_strike_equals_forward"
@@ -2443,7 +2443,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-cli.src.price.delta_spec_round_trips_to_target_delta"
@@ -2470,7 +2470,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-golden.src.oracle.ndf_pv"
@@ -2479,7 +2479,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-router.src.hash.rendezvous_weight"
@@ -2525,7 +2525,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.sensitivity_var_es"
@@ -2581,7 +2581,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.futures_style_is_undiscounted_and_rate_invariant",
@@ -2609,7 +2609,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-core.src.math.norm_cdf"
@@ -2627,7 +2627,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-conventions.src.registry.region_of"
@@ -2654,7 +2654,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-conventions.src.registry.PairProfile.record_at",
@@ -2710,7 +2710,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-plugin-host.src.abi.input_to_bytes"
@@ -2728,7 +2728,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-golden.src.oracle.crypto_inverse_price"
@@ -2737,7 +2737,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-entitlements.src.decision.AccessMode.is_permissive",
@@ -2774,7 +2774,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-conventions.src.registry.canonicalize",
@@ -2785,7 +2785,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-vanilla.src.adjoint.adjoint_greeks"
@@ -2794,7 +2794,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-parity.tests.conventions.atm_dns_strike_is_delta_neutral",
@@ -2813,7 +2813,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.aux"
@@ -2831,7 +2831,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-exotics.src.touch.one_touch_price"
@@ -2840,7 +2840,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-risk-cube.src.frtb.curvature_legs",
@@ -2878,7 +2878,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-server.src.services.pricefanout.spot_at"
@@ -2932,7 +2932,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-client.src.surface_vocab.Smile.atm_vol",
@@ -2942,7 +2942,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-conventions.src.registry.premium_adjusted_of"
@@ -2969,7 +2969,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-parity.tests.greeks.full_greek_set_matches_finite_difference",
@@ -3007,7 +3007,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-journal.src.crc32.crc32"
@@ -3090,7 +3090,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-plugin-host.src.abi.canonicalize"
@@ -3099,7 +3099,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-bench.src.lib.representative_inputs"
@@ -3108,7 +3108,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-core.src.math.norm_cdf_deep_tail_matches_reference"
@@ -3117,7 +3117,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-core.src.carry.fx_carry_greeks"
@@ -3135,7 +3135,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-vanilla.src.solver.bracket"
@@ -3144,7 +3144,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-calendar.src.daycount.actual_days"
@@ -3153,7 +3153,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-risk-cube.src.frtb.quadratic_form",
@@ -3181,7 +3181,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-surface.src.arbitrage.forward_call"
@@ -3226,7 +3226,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-parity.tests.broker_smile.high_rr_em_case_reprices",
@@ -3236,7 +3236,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-conventions.src.registry.canonicalize"
@@ -3245,7 +3245,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-core.src.carry.fx_carry_inputs_byte_identical"
@@ -3254,7 +3254,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-qmc.src.lib.rqmc_estimate",
@@ -3273,7 +3273,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-exotics.src.tarf.tarf_price"
@@ -3319,7 +3319,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-conventions.src.registry.tenor_days"
@@ -3328,7 +3328,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-heston.src.lib.cos",
@@ -3347,7 +3347,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-vanilla.src.lib.price"
@@ -3356,7 +3356,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-equity-vanilla.src.lib.hull_index_option_reference"
@@ -3383,7 +3383,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.natural_owner_of",
@@ -3402,7 +3402,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-qmc.src.sobol.owen_scramble_u32"
@@ -3420,7 +3420,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-exotics.src.inputs.carry_vanilla_price_at"
@@ -3456,7 +3456,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-vanilla.src.lib.aux"
@@ -3474,7 +3474,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-golden.src.oracle.quanto_digital_price"
@@ -3529,7 +3529,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-conventions.src.registry.pair_meta"
@@ -3538,7 +3538,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-risk-cube.src.frtb.curvature_class"
@@ -3556,7 +3556,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.historical_var_es",
@@ -3611,7 +3611,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-parity.tests.conventions.vanilla_price_matches_closed_form"
@@ -3639,7 +3639,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-conventions.src.registry.region_default"
@@ -3667,7 +3667,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-fix.src.dialect_fx.inputs_for",
@@ -3724,7 +3724,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-bench.src.lib.batch_builder_is_sane",
@@ -3734,7 +3734,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.linear.aux",
@@ -3771,7 +3771,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-risk-cube.src.nonadditive.sensitivity_profile_is_adjoint_greeks_scaled_by_notional"
@@ -3789,7 +3789,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-gpu.src.cpu.pairwise_sum",
@@ -3844,7 +3844,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-linear.src.forward.oracle_pv",
@@ -3855,7 +3855,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-golden.src.oracle.equity_bsm_price"
@@ -3910,7 +3910,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-parity.tests.conventions.premium_adjusted_call_delta_is_guarded"
@@ -3919,7 +3919,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-core.src.math.norm_pdf"
@@ -3928,7 +3928,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-plugin-api.src.example.reference_call"
@@ -3947,7 +3947,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-conventions.src.registry.is_long_tenor"
@@ -3992,7 +3992,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-core.src.math.norm_cdf_tail_symmetry_and_no_underflow"
@@ -4001,7 +4001,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-router.src.hash.fold64"
@@ -4019,7 +4019,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-vanilla.src.delta.premium_adjusted_call_delta_max"
@@ -4028,7 +4028,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-exotics.src.market_hedge_overlay.hedge_smile_cost",
@@ -4047,7 +4047,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-golden.src.oracle.fx_swap_points"
@@ -4076,7 +4076,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-qmc.src.sobol.SobolStream<'_>.next_point",
@@ -4086,7 +4086,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.settlement.route_price"
@@ -4104,7 +4104,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-proto.src.convert.settlement_round_trips"
@@ -4122,7 +4122,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-equity-vanilla.src.lib.aux"
@@ -4131,7 +4131,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.inverse.aux"
@@ -4158,7 +4158,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-exotics.src.lookback.fixed_lookback_price",
@@ -4195,7 +4195,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-calendar.src.daycount.signed_when_reversed"
@@ -4214,7 +4214,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-golden.src.oracle.crypto_linear_price"
@@ -4278,7 +4278,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-cli.src.rfq.format_panel",
@@ -4288,7 +4288,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-golden.src.oracle.quanto_vanilla_price"
@@ -4297,7 +4297,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-conventions.src.registry.accrual_basis"
@@ -4306,7 +4306,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-risk-cube.src.frtb.residual_addon"
@@ -4315,7 +4315,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-engine.src.handoff.serialize_state"
@@ -4333,7 +4333,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-xva.src.cva.compute_xva"
@@ -4342,7 +4342,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.funding.funding_carry"
@@ -4351,7 +4351,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-fix.src.framing.checksum"
@@ -4379,7 +4379,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-router.src.hash.mix64"
@@ -4388,7 +4388,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-calendar.src.fx.imm_date",
@@ -4398,7 +4398,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-golden.src.oracle.gk_price"
@@ -4407,7 +4407,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-equity-vanilla.src.lib.price"
@@ -4416,7 +4416,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-plugin-host.src.wasm.sandbox_config"
@@ -4425,7 +4425,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-crypto-vanilla.src.inverse.convexity_sandwich_vs_linear_is_signed"
@@ -4434,7 +4434,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-parity.tests.exotics.barriers_match_quantlib",
@@ -4464,7 +4464,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-gpu.src.batch.as_erf_price_bound"
@@ -4491,7 +4491,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-calendar.src.fx.is_t_plus_one_pair",
@@ -4520,7 +4520,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-golden.src.oracle.floating_lookback_price"
@@ -4538,7 +4538,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-vanilla.src.atm.atm_strike"
@@ -4603,7 +4603,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-heston.src.lib.carr_madan",
@@ -4613,7 +4613,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-exotics.src.digital.digital_price"
@@ -4651,7 +4651,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-bench.benches.aad.bump_first_order"
@@ -4678,7 +4678,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-linear.src.forward.fair_forward"
@@ -4696,7 +4696,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-bench.src.lib.sweep_inputs"
@@ -4705,7 +4705,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-calendar.src.fx.expiry_for_tenor",
@@ -4716,7 +4716,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-golden.src.oracle.fx_forward_pv"
@@ -4734,7 +4734,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.price"
@@ -4743,7 +4743,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-calendar.src.daycount.year_fraction"
@@ -4752,7 +4752,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-golden.src.oracle.black76_undiscounted_price"
@@ -4779,7 +4779,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-parity.tests.determinism.price_and_greeks_are_bit_identical",
@@ -4807,7 +4807,7 @@
  },
  {
   "kind": "invariant:pure",
-  "state": "stale",
+  "state": "active",
   "groundedness": 1.0,
   "anchors": [
    "github.com-soarsa-celnet.crates.celnet-commodity-vanilla.src.lib.CommodityInputs.on_future",
