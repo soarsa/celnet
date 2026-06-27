@@ -85,6 +85,15 @@
   "kind": "adr",
   "state": "draft",
   "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.stream.Session.handle_execute",
+   "github.com-soarsa-celnet.crates.celnet-server.src.services.stream.Session.handle_subscribe"
+  ],
+  "text": "SECURITY/EXPOSURE (verified 2026-06-27, refute-default) — the stream/WS RFS session path enforces NO caller authentication or entitlement. stream_session/ws::serve_connection gate only on readiness; the Session struct carries no principal/token; handle_subscribe subscribes to any instrument; handle_execute books a click-to-trade gated ONLY by the server-minted last-look quote token + idempotency, never a caller/desk check. Any client that completes the WS handshake or opens a gRPC StreamSession can subscribe to any stream and execute a trade with no entitlement. QuoteEdge::accept_quote is a second ungated booking path (idempotency+last-look integrity, but no entitlement). Authorization is NOT a cross-cut: resolve_caller/authorize_caller are applied only in risk + fix-admin; and even risk entitlement is caller-asserted (omit req.principal -> Principal::grant_all -> whole-firm view). FIX: one auth seam at the session/WS boundary — ResolvedCaller set once from the session-open frame, desk_scope/entitlement checked per stream handler; add resolve_caller+authorize_caller to price/quote if not public; intersect body principal with session desk_scope in aggregate_risk_impl/drill_risk_impl. See docs/SECURITY-AUTHZ-FINDING.md."
+ },
+ {
+  "kind": "adr",
+  "state": "draft",
+  "anchors": [
    "github.com-soarsa-celnet.crates.celnet-risk-fleet.src.lib.fan_out_aggregate",
    "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.federate.Fleet.connect_with_membership",
    "github.com-soarsa-celnet.crates.celnet-server.src.services.risk.federate.fan_out"
