@@ -132,22 +132,26 @@ GUI (existing):
   **Ticket** (`RatesWorkspace.tsx` + offline pricer `ratesPricing.ts` + live `wsTransport.priceRates`:
   curve → OIS → PV / par / PV01 / DV01 / key-rate ladder over `price_rates`; pricer unit-tested) and
   **Curve** (`ee3f29f`: `CurveWorkspace.tsx` + `CurveChart` — DF / zero / forward inspection over the
-  bootstrapped curve, log-linear-on-log-DF, curve-identity tested). The remaining §4.2 workspaces —
-  **Risk** (portfolio PV01/DV01/key-rate via the server RiskService rollup) and **Book** (rates
-  blotter) — are **blocked on server contracts** (the federation RPC endpoint + a positions store):
-  building them client-side now would be mocks. The §C/mockup RFQ · IOI · RFS surfaces likewise await
-  their server contracts.
+  bootstrapped curve, log-linear-on-log-DF, curve-identity tested). The remaining §4.2 workspaces:
+  **Risk** (portfolio PV01/DV01/key-rate) is now **unblocked** — the `RiskService.AggregateRatesRisk`
+  RPC (`5bb8099`) exists; it needs a GUI transport method + workspace UI (a WS-mirror exposure of the
+  RPC may be needed if the GUI doesn't reach gRPC directly). **Book** (rates blotter) still awaits the
+  persisted rates position store. The §C/mockup RFQ · IOI · RFS surfaces await their own server
+  contracts.
 - **Excel** add-in — ✅ (`7722c59`) `=CELNET.RATES(...)` prices an OIS via the live `price_rates`
   engine RPC, spilling PV / par / PV01 / DV01 + the key-rate DV01 ladder (contract + codec adapted
   byte-for-byte from the proven GUI; tsc clean, vitest 445/445 incl. 16 new). Further `CELNET.*`
   rates fns (standalone curve DF, multi-arm) follow as the proto arms beyond OIS land.
 - **Rust SDK** (`celnet-client`) — ✅ rates instrument vocab + `Client::price_rates`.
 - **FIX** — the dialect in (E).
-- **Federation** — 🟡 cross-shard rates risk fan-out + bit-exact rollup delivered in
-  `celnet-risk-fleet` (`af8ad25`): `RatesFleetReducer::fan_in_additive` == the single-node rollup
-  (proptest-pinned, bit-for-bit), additive PV/PV01/DV01 + key-rate ladder bucketed by tenor, with
-  `PartitionKey::currency` for `(entity, ccy)` HRW sharding. Remaining: the server-owned RPC
-  endpoint that drives a position store through it.
+- **Federation** — ✅ cross-shard rates risk fan-out + bit-exact rollup in `celnet-risk-fleet`
+  (`af8ad25`: `RatesFleetReducer::fan_in_additive` == single-node, proptest-pinned bit-for-bit;
+  additive PV/PV01/DV01 + key-rate ladder by tenor; `PartitionKey::currency` for `(entity, ccy)` HRW
+  sharding) **and** the server-owned RPC that drives it: `RiskService.AggregateRatesRisk`
+  (`5bb8099`) — positions → `price_rates` → `partition_rates_facts` → `fan_in_additive` → per-ccy
+  rollup, deny-by-default entitlement, endpoint == `firm_aggregate_rates` bit-for-bit (additive proto
+  change). Positions inline; a persisted execution-fed rates position store is the remaining
+  follow-up (it also unblocks the GUI **Book** workspace).
 
 ---
 
@@ -174,8 +178,8 @@ GUI (existing):
 **C (proto arms) ✅ → D (server consumes `celnet-rates`) ✅ → E (FIX dialect) ✅ → F (WS mirror ✅ ·
 Rust SDK ✅ · GUI asset-tabs + rates workspace ✅ · Excel ✅ · federation rollup ✅) 🟡**, with A/B
 product breadth (FRA / IRS / futures / cash-bond RV) landing into `celnet-rates` in parallel
-(disjoint leaf). C/D/E committed and gated; F's five client surfaces are delivered, and 2 of the 4
-§4.2 GUI FI workspaces (Ticket, Curve). Remaining is gated on one backend unblocker: the
-**server-owned rates-risk RPC endpoint** (position store → `partition_rates_facts` → `fan_in_additive`),
-which then unblocks the **Risk** and **Book** GUI workspaces; the §C RFQ · IOI · RFS surfaces need
-their own server contracts first.
+(disjoint leaf). C/D/E committed and gated; F's five client surfaces are delivered, 2 of the 4 §4.2
+GUI FI workspaces (Ticket, Curve), **and** the federated `RiskService.AggregateRatesRisk` endpoint
+(`5bb8099`). Remaining: the GUI **Risk** workspace (now unblocked — needs transport + UI, possibly a
+WS-mirror exposure of the RPC); the GUI **Book** workspace + its persisted rates position store; and
+the §C RFQ · IOI · RFS surfaces (own server contracts first).
