@@ -262,13 +262,10 @@ fn exotic_inputs_at(
 /// ([`RateSensitivities`] docs) — unreachable from the FX-only wire
 /// `MarketContext` until ADR-0008 Wave S, but total by construction.
 fn fx_wire_greeks(g: &CarryGreeks) -> Greeks {
-    let (rho_dom, rho_for) = match g.rates {
-        RateSensitivities::Fx { rho_dom, rho_for } => (rho_dom, rho_for),
-        RateSensitivities::Carry {
-            discount_rho,
-            carry_rho,
-        } => (discount_rho + carry_rho, -carry_rho),
-    };
+    // The single source of the carry↔flat rho bijection (FX verbatim; cost-of-carry
+    // → `(discount_rho + carry_rho, −carry_rho)`) — byte-identical to the former
+    // inline match.
+    let (rho_dom, rho_for) = g.rates.flat_rhos();
     Greeks {
         price: g.price,
         delta_spot: g.delta_spot,
@@ -1765,15 +1762,10 @@ fn cost_of_carry(market: &WireMarketContext) -> Result<Carry, PriceError> {
 /// boundary then emits them through the same `Greeks → WireGreeks` path the FX
 /// vanilla uses.
 fn carry_greeks_to_greeks(g: &celnet_core::carry::CarryGreeks) -> Greeks {
-    let (rho_dom, rho_for) = match g.rates {
-        RateSensitivities::Carry {
-            discount_rho,
-            carry_rho,
-        } => (discount_rho + carry_rho, -carry_rho),
-        // The cross-asset leaves always tag Carry; an Fx arm here would be a leaf
-        // contract break. Carry the rhos through unchanged rather than fabricate.
-        RateSensitivities::Fx { rho_dom, rho_for } => (rho_dom, rho_for),
-    };
+    // The single source of the carry↔flat rho bijection. The cross-asset leaves
+    // always tag Carry → `(discount_rho + carry_rho, −carry_rho)`; an Fx arm passes
+    // through verbatim. Byte-identical to the former inline match.
+    let (rho_dom, rho_for) = g.rates.flat_rhos();
     Greeks {
         price: g.price,
         delta_spot: g.delta_spot,
@@ -1805,18 +1797,23 @@ fn carry_greeks_to_greeks(g: &celnet_core::carry::CarryGreeks) -> Greeks {
 /// `rho_dom + rho_for` — the native discount-rho to within one ULP of that addition
 /// (fp addition is not associative, so the double round-trip is not bit-exact —
 /// economically nil on a Greek, and the **FX arm, the only byte-identity gate, is
-/// untouched**). The native arm flows through bit-exactly once the shared
-/// carry→sensitivity mapper lands (plan item F); until then the stream names the
-/// arm and carries the FX-shaped magnitudes (pinned by
+/// untouched**). Threading the *native* (un-round-tripped) carry arm to this edge
+/// bit-exactly is deferred to plan item C (it needs the native arm on `Priced`); until
+/// then the stream names the arm and carries the FX-shaped magnitudes (pinned by
 /// `streamed_rate_sensitivities_round_trips_carry`).
 ///
-/// The discriminator is the underlying's asset class ([`is_cross_asset`]), **not a
-/// `match carry`** over the carry model — the ADR-0008 streamed-path review-blocker.
+/// The arm *type* selection is the underlying's asset class ([`is_cross_asset`]),
+/// **not a `match carry`** over the carry model — the ADR-0008 streamed-path
+/// review-blocker. The per-arm value transform here differs by branch (the FX arm
+/// passes the flat rhos verbatim; the Carry arm re-expresses them in `(r, b)` natural
+/// coordinates), so a single `Carry::rate_sensitivities(a, b)` natural-coords wrapper
+/// cannot serve both branches without fabricating a `Carry` and duplicating the
+/// branch — left as the explicit two-arm form rather than route it through the mapper.
 ///
 /// Scope: this carry-tags the STREAMED edge only (Snapshot/Update). The unary
-/// price/quote paths keep emitting the lossless FX-shaped projection until the
-/// shared carry→sensitivity mapper lands (plan item F); a client recovers the same
-/// numbers from either, and the stream additionally names the asset-class arm.
+/// price/quote paths keep emitting the lossless FX-shaped projection (via the shared
+/// [`RateSensitivities::flat_rhos`] bijection); a client recovers the same numbers
+/// from either, and the stream additionally names the asset-class arm.
 pub(crate) fn streamed_rate_sensitivities(
     instrument: &Instrument,
     greeks: &Greeks,
@@ -2387,16 +2384,10 @@ fn price_perpetual(
             "a perpetual call with carry exceeding the discount rate has no finite value",
         )
     })?;
-    // The same rho bijection as `carry_greeks_to_greeks`: the FX arm is
-    // verbatim; the generalized arm projects losslessly via
-    // `rho_dom = discount_rho + carry_rho`, `rho_for = −carry_rho`.
-    let (rho_dom, rho_for) = match g.rates {
-        RateSensitivities::Fx { rho_dom, rho_for } => (rho_dom, rho_for),
-        RateSensitivities::Carry {
-            discount_rho,
-            carry_rho,
-        } => (discount_rho + carry_rho, -carry_rho),
-    };
+    // The single source of the carry↔flat rho bijection (the FX arm verbatim; the
+    // generalized arm via `rho_dom = discount_rho + carry_rho`, `rho_for = −carry_rho`)
+    // — byte-identical to the former inline match.
+    let (rho_dom, rho_for) = g.rates.flat_rhos();
     let (vanna, volga, speed, zomma) = perpetual_cross_greeks(option, &inputs);
     Ok(Priced {
         greeks: Greeks {
