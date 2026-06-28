@@ -16,6 +16,7 @@ import { Panel } from "../components/Panel";
 import { principalForScope } from "../data/riskView";
 import { fmtRate, fmtClock } from "../lib/format";
 import type { Deal, Side } from "../data/contract";
+import { DealTicket } from "./DealTicket";
 import styles from "./DealsBlotterWorkspace.module.css";
 
 const MM = 1_000_000;
@@ -36,6 +37,7 @@ export function DealsBlotterWorkspace(): React.ReactElement {
 
   const [deals, setDeals] = useState<Deal[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Deal | null>(null);
 
   const refresh = useCallback(() => {
     void app.transport
@@ -85,7 +87,9 @@ export function DealsBlotterWorkspace(): React.ReactElement {
                 <tr>
                   <th>Time</th>
                   <th>Counterparty</th>
+                  <th>Desk</th>
                   <th>Instrument</th>
+                  <th>Ccy</th>
                   <th className={styles.num}>Notional</th>
                   <th className={styles.num}>Price</th>
                   <th>Side</th>
@@ -95,15 +99,30 @@ export function DealsBlotterWorkspace(): React.ReactElement {
               </thead>
               <tbody>
                 {deals.map((d) => (
-                  <tr key={d.dealId}>
+                  <tr
+                    key={d.dealId}
+                    className={`${styles.row} ${selected?.dealId === d.dealId ? styles.rowSelected : ""}`}
+                    onClick={() => setSelected(d)}
+                    tabIndex={0}
+                    role="button"
+                    aria-label={`Open deal ${d.dealId}`}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setSelected(d);
+                      }
+                    }}
+                  >
                     <td className={styles.mono}>{fmtClock(d.executedAtNanos)}</td>
                     <td className={styles.strong}>{d.counterparty}</td>
+                    <td>{d.desk}</td>
                     <td>
                       <span className={`${styles.kind} ${d.kind === "IOI" ? styles.kindIoi : styles.kindRfq}`}>
                         {d.kind}
                       </span>
                       {d.instrument.tenorYears}y OIS
                     </td>
+                    <td className={styles.mono}>{d.curveSet.currency}</td>
                     <td className={`${styles.num} ${styles.mono}`}>{fmtMm(d.notional)}</td>
                     <td className={`${styles.num} ${styles.mono} ${styles.price}`}>{fmtRate(d.price)}</td>
                     <td>{sideLabel(d.side)}</td>
@@ -116,6 +135,7 @@ export function DealsBlotterWorkspace(): React.ReactElement {
           </div>
         )}
       </Panel>
+      {selected && <DealTicket deal={selected} onClose={() => setSelected(null)} />}
     </div>
   );
 }

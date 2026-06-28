@@ -23,6 +23,7 @@ import { Panel } from "../components/Panel";
 import { principalForScope } from "../data/riskView";
 import { DEFAULT_USD_SOFR_CURVE } from "../data/ratesPricing";
 import { fmtPnlAdaptive, fmtRate, fmtClock } from "../lib/format";
+import { capabilityDenialTitle } from "../lib/capabilityMatrix";
 import type {
   DeskRequest,
   DeskRequestKind,
@@ -282,7 +283,20 @@ function PricePanel({
   const rateValue = Number.parseFloat(ratePct);
   const rateValid = Number.isFinite(rateValue);
 
+  // Capability gating (slice 5): this is a fixed-income dealer-quoting surface.
+  // Responding (quote / reject) is gated on the request-kind's respond capability
+  // — an RFQ needs `rfq_respond`, an IOI needs `ioi_respond`; lifting the standing
+  // quote (`acceptDeskQuote`) is gated on `execute`. Disabled + tooltip, never
+  // hidden; handlers no-op defensively (the server still enforces).
+  const app = useApp();
+  const respondAction = request.kind === "IOI" ? "ioi_respond" : "rfq_respond";
+  const canRespond = app.auth.can(respondAction, "fixed_income");
+  const canExecute = app.auth.can("execute", "fixed_income");
+  const respondDeniedTitle = capabilityDenialTitle(respondAction, "fixed_income");
+  const executeDeniedTitle = capabilityDenialTitle("execute", "fixed_income");
+
   const runQuote = async () => {
+    if (!canRespond) return;
     if (!rateValid) return;
     setBusy(true);
     setActionError(null);
@@ -296,6 +310,7 @@ function PricePanel({
   };
 
   const runReject = async () => {
+    if (!canRespond) return;
     setBusy(true);
     setActionError(null);
     try {
@@ -308,6 +323,7 @@ function PricePanel({
   };
 
   const runAccept = async () => {
+    if (!canExecute) return;
     setBusy(true);
     setActionError(null);
     try {
@@ -394,7 +410,12 @@ function PricePanel({
                 onChange={(e) => setValidSecs(Math.max(1, Math.trunc(Number(e.target.value))))}
               />
             </label>
-            <Button variant="primary" disabled={busy || !rateValid} onClick={runQuote}>
+            <Button
+              variant="primary"
+              disabled={busy || !rateValid || !canRespond}
+              onClick={runQuote}
+              title={canRespond ? undefined : respondDeniedTitle}
+            >
               Send quote
             </Button>
           </div>
@@ -407,7 +428,12 @@ function PricePanel({
               placeholder="reject reason"
               onChange={(e) => setRejectReason(e.target.value)}
             />
-            <Button variant="ghost" disabled={busy} onClick={runReject}>
+            <Button
+              variant="ghost"
+              disabled={busy || !canRespond}
+              onClick={runReject}
+              title={canRespond ? undefined : respondDeniedTitle}
+            >
               Reject
             </Button>
           </div>
@@ -420,7 +446,12 @@ function PricePanel({
             Simulate the counterparty lifting the quote — books a deal and a rates
             position.
           </p>
-          <Button variant="primary" disabled={busy} onClick={runAccept}>
+          <Button
+            variant="primary"
+            disabled={busy || !canExecute}
+            onClick={runAccept}
+            title={canExecute ? undefined : executeDeniedTitle}
+          >
             Accept (counterparty lifts) — {trader}
           </Button>
         </section>

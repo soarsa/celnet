@@ -21,6 +21,9 @@ import type {
   BookRatesPositionRequest,
   BookRatesPositionResponse,
   BrokerQuoteSet,
+  Capability,
+  CapabilityAction,
+  CapabilityAsset,
   CcyExposureLeg,
   CcyPair,
   Conventions,
@@ -85,9 +88,12 @@ import type {
   TwoWayPrice,
   Update,
   UpdateUserInput,
+  UserCapabilities,
   UserDesc,
+  UserRole,
   VegaBucket,
 } from "./contract";
+import { CAPABILITY_ACTIONS, CAPABILITY_ASSETS } from "./contract";
 import { forward, priceInstrument, strikeFromDelta } from "./pricing";
 import { DEFAULT_USD_SOFR_CURVE, priceRatesOffline } from "./ratesPricing";
 import { Rng } from "./rng";
@@ -664,7 +670,13 @@ export class MockTransport implements CelnetTransport {
    * hashes and never round-trips a password. No desks are seeded (parity with
    * the server seed); an admin creates them in the workspace.
    */
-  private readonly mockUsers: { user: UserDesc; password: string }[] = [
+  private readonly mockUsers: {
+    user: UserDesc;
+    password: string;
+    /** Per-user capability overlay (empty until an admin edits it). */
+    grants: Capability[];
+    denies: Capability[];
+  }[] = [
     {
       user: {
         id: "admin",
@@ -674,6 +686,8 @@ export class MockTransport implements CelnetTransport {
         disabled: false,
       },
       password: "password",
+      grants: [],
+      denies: [],
     },
   ];
   private readonly mockDesks: DeskDesc[] = [];
@@ -1281,7 +1295,15 @@ export class MockTransport implements CelnetTransport {
     this.mockTokens.add(token);
     // A 12-hour session, mirroring the server's TTL.
     const expiresNanos = nowNanos() + 12n * 60n * 60n * 1_000_000_000n;
-    return { token, user: { ...found.user }, expiresNanos };
+    // The caller's OWN effective set — the SAME `role bundle ∪ grants ∖ denies`
+    // resolution the live server runs (and that GetUserCapabilities returns), so
+    // offline affordance gating is coherent real behaviour, not a stub.
+    const capabilities = mockResolveEffective(
+      found.user.role,
+      found.grants,
+      found.denies,
+    );
+    return { token, user: { ...found.user }, expiresNanos, capabilities };
   }
 
   async logout(): Promise<boolean> {
@@ -1312,7 +1334,7 @@ export class MockTransport implements CelnetTransport {
       disabled: false,
     };
     if (input.deskId && input.deskId.length > 0) user.deskId = input.deskId;
-    this.mockUsers.push({ user, password: input.password });
+    this.mockUsers.push({ user, password: input.password, grants: [], denies: [] });
     return { ...user };
   }
 
@@ -1355,6 +1377,43 @@ export class MockTransport implements CelnetTransport {
       throw new Error(`password must be at least ${MOCK_MIN_PASSWORD_LEN} characters`);
     }
     entry.password = newPassword;
+  }
+
+  async getUserCapabilities(id: string): Promise<UserCapabilities> {
+    const entry = this.mockUsers.find((u) => u.user.id === id);
+    if (!entry) throw new Error(`no user with id \`${id}\``);
+    return {
+      grants: entry.grants.map((c) => ({ ...c })),
+      denies: entry.denies.map((c) => ({ ...c })),
+      effective: mockResolveEffective(entry.user.role, entry.grants, entry.denies),
+    };
+  }
+
+  async setUserCapabilities(
+    id: string,
+    grants: readonly Capability[],
+    denies: readonly Capability[],
+  ): Promise<UserCapabilities> {
+    const entry = this.mockUsers.find((u) => u.user.id === id);
+    if (!entry) throw new Error(`no user with id \`${id}\``);
+    // Server parity: an unknown action/asset label is rejected (invalid_argument),
+    // never silently dropped — the overlay that lands is exactly what was sent.
+    for (const cap of [...grants, ...denies]) {
+      if (!CAPABILITY_ACTIONS.includes(cap.action) || !CAPABILITY_ASSETS.includes(cap.asset)) {
+        throw new Error(`unknown capability \`${cap.action}/${cap.asset}\``);
+      }
+    }
+    // The overlay is replaced wholesale (not a delta). A successful set revokes the
+    // target's live sessions server-side; offline the single in-browser session is
+    // the admin's own, so there is nothing to revoke here — the contract semantics
+    // are surfaced to the admin by the workspace's success note.
+    entry.grants = grants.map((c) => ({ ...c }));
+    entry.denies = denies.map((c) => ({ ...c }));
+    return {
+      grants: entry.grants.map((c) => ({ ...c })),
+      denies: entry.denies.map((c) => ({ ...c })),
+      effective: mockResolveEffective(entry.user.role, entry.grants, entry.denies),
+    };
   }
 
   async listDesks(): Promise<DeskDesc[]> {
@@ -1660,6 +1719,41 @@ export class MockTransport implements CelnetTransport {
 
 /** The minimum password length on create/reset (mirrors the server's `MIN_PASSWORD_LEN`). */
 const MOCK_MIN_PASSWORD_LEN = 12;
+
+/** The action set a `TRADER` holds by default on each asset class — every action
+ * except `administer` (mirrors the server's `TRADER_ACTIONS`). `ADMIN` is grant-all. */
+const MOCK_TRADER_DENIED_ACTION: CapabilityAction = "administer";
+
+/** A stable key for set membership over a capability. */
+function mockCapKey(action: CapabilityAction, asset: CapabilityAsset): string {
+  return `${action} ${asset}`;
+}
+
+/**
+ * Resolve the effective capability set the offline edge admits, enumerated over
+ * every action × asset — a GENUINE mirror of the server's
+ * `AuthenticatedUser::capabilities`: `role bundle ∪ grants ∖ denies`, deny-wins.
+ * `ADMIN` ⇒ grant-all; `TRADER` ⇒ every action except `administer` on both asset
+ * classes; then per-user grants widen and denies narrow, with deny checked first.
+ */
+function mockResolveEffective(
+  role: UserRole,
+  grants: readonly Capability[],
+  denies: readonly Capability[],
+): Capability[] {
+  const grantSet = new Set(grants.map((c) => mockCapKey(c.action, c.asset)));
+  const denySet = new Set(denies.map((c) => mockCapKey(c.action, c.asset)));
+  const effective: Capability[] = [];
+  for (const action of CAPABILITY_ACTIONS) {
+    for (const asset of CAPABILITY_ASSETS) {
+      const key = mockCapKey(action, asset);
+      if (denySet.has(key)) continue; // deny-wins
+      const roleAllows = role === "ADMIN" || action !== MOCK_TRADER_DENIED_ACTION;
+      if (roleAllows || grantSet.has(key)) effective.push({ action, asset });
+    }
+  }
+  return effective;
+}
 
 /** A lowercase, hyphen-separated slug of `name` (mirrors the server's `slugify`). */
 function mockSlugify(name: string): string {

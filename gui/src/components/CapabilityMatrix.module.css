@@ -1,0 +1,186 @@
+/* CapabilityMatrix — per-user capability overlay editor (Admin workspace). */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.title {
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-brand);
+  font-size: var(--type-title);
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+}
+.subtitle {
+  margin: 0;
+  max-width: 46rem;
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+.headActions {
+  display: flex;
+  gap: var(--space-3);
+  flex-shrink: 0;
+}
+
+.error {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  background: color-mix(in oklch, var(--danger) 12%, transparent);
+  color: var(--text-primary);
+  font-size: var(--type-caption);
+}
+.savedNote {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--r-sm);
+  border: 1px solid color-mix(in oklch, var(--bid) 50%, transparent);
+  background: color-mix(in oklch, var(--bid) 12%, transparent);
+  color: var(--text-primary);
+  font-size: var(--type-caption);
+}
+.loading {
+  padding: var(--space-4);
+  color: var(--text-tertiary);
+  font-size: var(--type-caption);
+}
+
+.table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: var(--space-2);
+  font-size: var(--type-body);
+}
+.caption {
+  caption-side: top;
+  text-align: left;
+  margin-bottom: var(--space-2);
+  color: var(--text-tertiary);
+  font-size: var(--type-micro, 0.7rem);
+}
+.actionHead,
+.assetHead {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--type-caption);
+  font-weight: var(--weight-header);
+  color: var(--text-secondary);
+}
+.assetHead {
+  text-align: center;
+}
+.actionCell {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+.cellWrap {
+  width: 42%;
+}
+
+/* The tri-state cell button. */
+.cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  min-height: 4.25rem;
+  padding: var(--space-3);
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  background: var(--bg-inset);
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast, 120ms) ease,
+    background var(--dur-fast, 120ms) ease;
+}
+.cell:hover:not(:disabled) {
+  border-color: color-mix(in oklch, var(--accent) 55%, transparent);
+}
+.cell:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.cell:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* Allowed cells are highlighted prominently; blocked cells recede. */
+.cell[data-allowed="true"] {
+  border-color: color-mix(in oklch, var(--bid) 55%, transparent);
+  background: color-mix(in oklch, var(--bid) 12%, var(--bg-inset));
+}
+.cell[data-allowed="false"] {
+  background: var(--bg-inset);
+}
+
+.effect {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+}
+.effectIcon {
+  font-size: 0.95em;
+}
+.cell[data-allowed="true"] .effectIcon {
+  color: var(--bid);
+}
+.cell[data-allowed="false"] .effectIcon {
+  color: var(--danger);
+}
+
+.overlayTag {
+  font-size: var(--type-micro, 0.7rem);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.overlayTag[data-overlay="grant"] {
+  color: var(--accent);
+}
+.overlayTag[data-overlay="deny"] {
+  color: var(--danger);
+  font-weight: var(--weight-header);
+}
+
+/* Deny-wins marker — carried by icon + text, never colour alone. */
+.denyOverride {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 0.05rem 0.4rem;
+  border-radius: var(--r-sm);
+  border: 1px solid color-mix(in oklch, var(--danger) 60%, transparent);
+  background: color-mix(in oklch, var(--danger) 14%, transparent);
+  color: var(--text-primary);
+  font-size: var(--type-micro, 0.7rem);
+}
+.cell[data-deny-override="true"] {
+  border-color: color-mix(in oklch, var(--danger) 65%, transparent);
+}
+
+@media (max-width: 800px) {
+  .cell {
+    min-height: 5rem;
+  }
+}

@@ -1207,6 +1207,8 @@ mod tests {
                 display_name: user_id.to_owned(),
                 role: Role::Trader,
                 desk_id: Some("g10".to_owned()),
+                cap_grants: Vec::new(),
+                cap_denies: Vec::new(),
             })
             .expect("session issues")
             .token

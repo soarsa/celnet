@@ -1,0 +1,129 @@
+/*
+ * DealTicket — a settlement-detail side panel for one booked deal. Raised surface
+ * with a float shadow so it reads as an overlay on the blotter, with a definition-
+ * list body grouped into economics / schedule / counterparty / references.
+ */
+
+.ticket {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: clamp(260px, 28vw, 340px);
+  padding: var(--space-4);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle, oklch(from var(--text-primary) l c h / 0.12));
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow-float);
+  overflow-y: auto;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.kindTag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: var(--r-sm);
+  font-size: var(--type-micro);
+  font-weight: var(--weight-emphasis);
+  letter-spacing: 0.04em;
+}
+
+.rfq {
+  background: oklch(from var(--accent) l c h / 0.16);
+  color: var(--accent);
+}
+
+.ioi {
+  background: oklch(from var(--bid) l c h / 0.16);
+  color: var(--bid);
+}
+
+.title {
+  margin: 4px 0 0;
+  font-size: var(--type-body);
+  font-weight: var(--weight-emphasis);
+  color: var(--text-primary);
+}
+
+.subtitle {
+  margin: 1px 0 0;
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+}
+
+.close {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.close:hover {
+  color: var(--text-primary);
+}
+
+.close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.sectionTitle {
+  margin: 0;
+  padding-bottom: 2px;
+  border-bottom: 1px solid oklch(from var(--text-primary) l c h / 0.08);
+  font-size: var(--type-micro);
+  font-weight: var(--weight-emphasis);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+
+.dl {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.dt {
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+}
+
+.dd {
+  margin: 0;
+  font-size: var(--type-caption);
+  font-weight: var(--weight-emphasis);
+  color: var(--text-primary);
+  text-align: right;
+}
+
+.mono {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}

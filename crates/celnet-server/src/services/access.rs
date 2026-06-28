@@ -49,7 +49,9 @@
 // choice (the same allowance every service module carries).
 #![allow(clippy::result_large_err)]
 
-use celnet_entitlements::{AccessDecision, AccessMode, AccessReason};
+use celnet_entitlements::{
+    AccessDecision, AccessMode, AccessReason, Action, AssetClass, Capability,
+};
 use celnet_observability::LogClass;
 use celnet_proto::EntitlementPrincipal;
 use tonic::Status;
@@ -209,6 +211,15 @@ pub enum RequiredAuthority {
     /// `SetEnabled`). Under [`AccessMode::Enforce`] this requires a real admin
     /// session; permissive dev-mode still admits an absent caller (audited).
     Admin,
+    /// The caller must hold a specific **action capability** on an asset class —
+    /// the gate for the quote / respond / stream / **execute** / book paths
+    /// (`docs/plan/PERMISSIONS-ADMINISTRATION-REQUIREMENT.md` §4). Like
+    /// [`RequiredAuthority::Admin`] it requires an authenticated session under
+    /// [`AccessMode::Enforce`] (an asserted body principal cannot self-grant a
+    /// capability); permissive dev-mode still admits an absent caller (audited).
+    /// Desk-scope narrowing of the *target resource* is applied separately by the
+    /// resource handler via [`ResolvedCaller::desk_scope`].
+    Capability(Action, AssetClass),
 }
 
 /// What set of **desk-owned** resources a resolved caller may see. Desk ownership
@@ -396,11 +407,24 @@ pub fn authorize_caller(
             }
             .emit();
         };
-        if matches!(required, RequiredAuthority::Admin) && !user.is_admin() {
-            emit(AccessReason::SessionInsufficientRole);
-            return Err(Status::permission_denied(format!(
-                "{resource}: requires an administrator session (caller is not an admin)"
-            )));
+        match required {
+            RequiredAuthority::Admin if !user.is_admin() => {
+                emit(AccessReason::SessionInsufficientRole);
+                return Err(Status::permission_denied(format!(
+                    "{resource}: requires an administrator session (caller is not an admin)"
+                )));
+            }
+            RequiredAuthority::Capability(action, asset)
+                if !user.capabilities().allows(Capability::new(action, asset)) =>
+            {
+                emit(AccessReason::SessionMissingCapability);
+                return Err(Status::permission_denied(format!(
+                    "{resource}: caller lacks the {}·{} capability",
+                    action.label(),
+                    asset.label()
+                )));
+            }
+            _ => {}
         }
         emit(AccessReason::SessionAuthenticated);
         return Ok(());
@@ -411,7 +435,11 @@ pub fn authorize_caller(
         RequiredAuthority::ReadAny => {
             authorize(mode, caller.principal.as_ref(), resource, correlation_id)
         }
-        RequiredAuthority::Admin => {
+        // Both the admin gate and the action-capability gate require a
+        // server-authenticated session: an asserted body principal cannot
+        // self-grant either. Permissive dev-mode admits the absent caller
+        // (audited); enforce denies it unauthenticated.
+        RequiredAuthority::Admin | RequiredAuthority::Capability(..) => {
             let emit = |reason: AccessReason| {
                 AccessAudit {
                     resource,
@@ -422,6 +450,12 @@ pub fn authorize_caller(
                 }
                 .emit();
             };
+            let need = match required {
+                RequiredAuthority::Capability(action, asset) => {
+                    format!("the {}·{} capability", action.label(), asset.label())
+                }
+                _ => "an administrator session".to_owned(),
+            };
             match mode {
                 AccessMode::Permissive => {
                     emit(AccessReason::PermissiveAbsent);
@@ -430,7 +464,7 @@ pub fn authorize_caller(
                 AccessMode::Enforce => {
                     emit(AccessReason::PrincipalAbsent);
                     Err(Status::unauthenticated(format!(
-                        "{resource}: requires an administrator session — none presented \
+                        "{resource}: requires {need} — no authenticated session presented \
                          (log in via AuthService.Login, or run a dev edge in permissive mode)"
                     )))
                 }
@@ -537,6 +571,8 @@ mod tests {
             display_name: "Trader".into(),
             role,
             desk_id: Some("g10".into()),
+            cap_grants: Vec::new(),
+            cap_denies: Vec::new(),
         }
     }
 
@@ -690,6 +726,85 @@ mod tests {
         )
         .expect_err("no session + no principal + enforce ⇒ deny by default");
         assert_eq!(err.code(), tonic::Code::Unauthenticated);
+    }
+
+    // --- action-capability gate -----------------------------------------------
+
+    /// A trader session holds the deal capability → an `Execute` gate passes.
+    #[test]
+    fn authorize_caller_trader_session_allows_held_capability() {
+        let reg = SessionRegistry::new(Clock::manual(0));
+        let token = reg.issue(user(Role::Trader)).unwrap().token;
+        let caller = resolve_caller(&reg, Some(&token), None).unwrap();
+        authorize_caller(
+            AccessMode::Enforce,
+            &caller,
+            "QuoteService/AcceptQuote",
+            RequiredAuthority::Capability(Action::Execute, AssetClass::FxOptions),
+            None,
+        )
+        .expect("a trader holds Execute on FX options");
+    }
+
+    /// A trader session does NOT hold `Administer` → a capability gate for it is a
+    /// capability-typed `permission_denied`, distinct from the role-gated admin path.
+    #[test]
+    fn authorize_caller_trader_session_denied_missing_capability() {
+        let reg = SessionRegistry::new(Clock::manual(0));
+        let token = reg.issue(user(Role::Trader)).unwrap().token;
+        let caller = resolve_caller(&reg, Some(&token), None).unwrap();
+        let err = authorize_caller(
+            AccessMode::Enforce,
+            &caller,
+            "IdentityAdminService/CreateUser",
+            RequiredAuthority::Capability(Action::Administer, AssetClass::FxOptions),
+            None,
+        )
+        .expect_err("a trader lacks the Administer capability");
+        assert_eq!(err.code(), tonic::Code::PermissionDenied);
+        assert!(err.message().contains("administer"), "{}", err.message());
+    }
+
+    /// No session + enforce + a capability gate ⇒ unauthenticated (a body principal
+    /// cannot self-grant a capability — the finding #3 widening guard).
+    #[test]
+    fn authorize_caller_no_session_enforce_capability_denied() {
+        let asserted = EntitlementPrincipal {
+            grant_all: true,
+            grants: vec![],
+            denies: vec![],
+        };
+        let caller = ResolvedCaller {
+            user: None,
+            principal: Some(asserted),
+        };
+        let err = authorize_caller(
+            AccessMode::Enforce,
+            &caller,
+            "RfqDeskService/AcceptDeskQuote",
+            RequiredAuthority::Capability(Action::Execute, AssetClass::FixedIncome),
+            None,
+        )
+        .expect_err("an asserted grant-all body principal cannot self-grant Execute");
+        assert_eq!(err.code(), tonic::Code::Unauthenticated);
+    }
+
+    /// No session + permissive + a capability gate ⇒ admitted (the demo edge is
+    /// unchanged; the admission is audited).
+    #[test]
+    fn authorize_caller_no_session_permissive_capability_allowed() {
+        let caller = ResolvedCaller {
+            user: None,
+            principal: None,
+        };
+        authorize_caller(
+            AccessMode::Permissive,
+            &caller,
+            "RfqDeskService/AcceptDeskQuote",
+            RequiredAuthority::Capability(Action::Execute, AssetClass::FixedIncome),
+            None,
+        )
+        .expect("permissive dev-mode admits the absent capability caller");
     }
 
     // --- desk-visibility scope ------------------------------------------------

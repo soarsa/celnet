@@ -31,20 +31,22 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
+use celnet_entitlements::{Action, AssetClass, Capability};
 use celnet_proto::auth_service_server::AuthService;
 use celnet_proto::{
-    CreateDeskRequest, CreateDeskResponse, CreateUserRequest, CreateUserResponse,
+    CapabilityDesc, CreateDeskRequest, CreateDeskResponse, CreateUserRequest, CreateUserResponse,
     DeleteDeskRequest, DeleteDeskResponse, DeleteUserRequest, DeleteUserResponse, DeskDesc,
-    ListDesksRequest, ListDesksResponse, ListUsersRequest, ListUsersResponse, LoginRequest,
-    LoginResponse, LogoutRequest, LogoutResponse, ResetPasswordRequest, ResetPasswordResponse,
-    UpdateUserRequest, UpdateUserResponse, UserDesc, UserRole,
+    GetUserCapabilitiesRequest, GetUserCapabilitiesResponse, ListDesksRequest, ListDesksResponse,
+    ListUsersRequest, ListUsersResponse, LoginRequest, LoginResponse, LogoutRequest,
+    LogoutResponse, ResetPasswordRequest, ResetPasswordResponse, SetUserCapabilitiesRequest,
+    SetUserCapabilitiesResponse, UpdateUserRequest, UpdateUserResponse, UserDesc, UserRole,
 };
 use tonic::{Request, Response, Status};
 
 use crate::clock::Clock;
 use crate::config::identity::{
-    DeskDef, IdentityStore, Role, UserDef, hash_password, mint_desk_id, mint_user_id,
-    verify_password,
+    DeskDef, IdentityStore, PermissionGrant, Role, UserDef, hash_password, mint_desk_id,
+    mint_user_id, verify_password,
 };
 use crate::readiness::ReadinessGate;
 use crate::services::sessions::{AuthenticatedUser, SessionRegistry};
@@ -255,6 +257,9 @@ impl AuthService for AuthEdge {
             session_token: issued.token,
             user: Some(user_to_wire(&user)),
             expires_nanos: issued.expires_nanos,
+            // The caller's own resolved set, so a client can gate its own
+            // affordances without an admin-only capabilities round-trip.
+            capabilities: effective_caps(&user),
             correlation_id: req.correlation_id,
         }))
     }
@@ -335,6 +340,10 @@ impl AuthService for AuthEdge {
             desk_id,
             password_hash,
             disabled: false,
+            // A new account starts with no per-user overlay — pure role-derived
+            // capabilities until an admin grants/denies specific ones.
+            capability_grants: Vec::new(),
+            capability_denies: Vec::new(),
         };
         let mut next = guard.clone();
         next.users.push(new_user.clone());
@@ -387,6 +396,11 @@ impl AuthService for AuthEdge {
             desk_id,
             password_hash: old.password_hash.clone(),
             disabled: req.disabled,
+            // Preserve the per-user capability overlay — this RPC edits identity
+            // (role/desk/disabled), never the overlay, so it must not silently wipe
+            // it. Overlay editing is its own admin RPC (slice 3b).
+            capability_grants: old.capability_grants.clone(),
+            capability_denies: old.capability_denies.clone(),
         };
         let authority_changed = updated.role != old.role
             || updated.desk_id != old.desk_id
@@ -474,6 +488,80 @@ impl AuthService for AuthEdge {
         // Force re-login with the new credential everywhere.
         self.sessions.revoke_user(&req.id);
         Ok(Response::new(ResetPasswordResponse {
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn get_user_capabilities(
+        &self,
+        request: Request<GetUserCapabilitiesRequest>,
+    ) -> Result<Response<GetUserCapabilitiesResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_admin(&req.session_token)?;
+
+        let user = self
+            .lock()
+            .user(&req.id)
+            .cloned()
+            .ok_or_else(|| Status::not_found(format!("no user with id `{}`", req.id)))?;
+        Ok(Response::new(GetUserCapabilitiesResponse {
+            grants: overlay_to_wire(&user.capability_grants),
+            denies: overlay_to_wire(&user.capability_denies),
+            effective: effective_caps(&user),
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn set_user_capabilities(
+        &self,
+        request: Request<SetUserCapabilitiesRequest>,
+    ) -> Result<Response<SetUserCapabilitiesResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_admin(&req.session_token)?;
+
+        // Parse + validate the whole overlay up front: an unknown action/asset
+        // label is rejected (`invalid_argument`), never silently dropped — the
+        // overlay that lands is exactly the one the admin sent or no change at all.
+        let grants = caps_from_wire(&req.grants)?;
+        let denies = caps_from_wire(&req.denies)?;
+
+        let mut guard = self.lock();
+        let Some(old) = guard.user(&req.id).cloned() else {
+            return Err(Status::not_found(format!("no user with id `{}`", req.id)));
+        };
+        let updated = UserDef {
+            id: old.id.clone(),
+            email: old.email.clone(),
+            display_name: old.display_name.clone(),
+            role: old.role,
+            desk_id: old.desk_id.clone(),
+            password_hash: old.password_hash.clone(),
+            disabled: old.disabled,
+            // The overlay is replaced wholesale (it is the full new set, not a
+            // delta); identity fields are carried through untouched.
+            capability_grants: grants.iter().copied().map(PermissionGrant::of).collect(),
+            capability_denies: denies.iter().copied().map(PermissionGrant::of).collect(),
+        };
+
+        let mut next = guard.clone();
+        if let Some(slot) = next.users.iter_mut().find(|u| u.id == updated.id) {
+            *slot = updated.clone();
+        }
+        self.persist_and_commit(&mut guard, next)?;
+        drop(guard);
+
+        // The overlay changed the user's authority — revoke their live sessions so
+        // a token minted under the old capabilities cannot outlive them (the same
+        // rule role/desk/disabled/password changes follow).
+        self.sessions.revoke_user(&updated.id);
+        Ok(Response::new(SetUserCapabilitiesResponse {
+            grants: overlay_to_wire(&updated.capability_grants),
+            denies: overlay_to_wire(&updated.capability_denies),
+            effective: effective_caps(&updated),
             correlation_id: req.correlation_id,
         }))
     }
@@ -588,6 +676,59 @@ fn user_to_wire(u: &UserDef) -> UserDesc {
         desk_id: u.desk_id.clone(),
         disabled: u.disabled,
     }
+}
+
+/// Map a domain [`Capability`] onto its wire [`CapabilityDesc`] (canonical labels).
+fn cap_to_wire(cap: Capability) -> CapabilityDesc {
+    CapabilityDesc {
+        action: cap.action.label().to_string(),
+        asset: cap.asset.label().to_string(),
+    }
+}
+
+/// Map a stored overlay (`Vec<PermissionGrant>`) onto its wire form. The stored
+/// labels are validated at load, so this is total and lossless.
+fn overlay_to_wire(overlay: &[PermissionGrant]) -> Vec<CapabilityDesc> {
+    overlay
+        .iter()
+        .map(|g| CapabilityDesc {
+            action: g.action.clone(),
+            asset: g.asset.clone(),
+        })
+        .collect()
+}
+
+/// Resolve a wire [`CapabilityDesc`] to a domain [`Capability`], rejecting an
+/// unrecognised action/asset label with `invalid_argument`.
+fn cap_from_wire(d: &CapabilityDesc) -> Result<Capability, Status> {
+    let action = Action::from_label(&d.action)
+        .ok_or_else(|| Status::invalid_argument(format!("unknown action label `{}`", d.action)))?;
+    let asset = AssetClass::from_label(&d.asset)
+        .ok_or_else(|| Status::invalid_argument(format!("unknown asset label `{}`", d.asset)))?;
+    Ok(Capability::new(action, asset))
+}
+
+/// Resolve a wire overlay, failing on the first unknown label.
+fn caps_from_wire(descs: &[CapabilityDesc]) -> Result<Vec<Capability>, Status> {
+    descs.iter().map(cap_from_wire).collect()
+}
+
+/// The fully-resolved effective set for a user: role bundle ∪ grants ∖ denies,
+/// enumerated over every action × asset. Built through the *same* resolution the
+/// access boundary uses ([`AuthenticatedUser::capabilities`]), so the read-back can
+/// never diverge from the live decision.
+fn effective_caps(user: &UserDef) -> Vec<CapabilityDesc> {
+    let set = AuthenticatedUser::from_user(user).capabilities();
+    let mut out = Vec::new();
+    for action in Action::ALL {
+        for asset in AssetClass::ALL {
+            let cap = Capability::new(action, asset);
+            if set.allows(cap) {
+                out.push(cap_to_wire(cap));
+            }
+        }
+    }
+    out
 }
 
 /// Map a stored [`DeskDef`] onto its wire [`DeskDesc`].
@@ -759,6 +900,8 @@ mod tests {
             desk_id: None,
             password_hash: "x".into(),
             disabled: false,
+            capability_grants: Vec::new(),
+            capability_denies: Vec::new(),
         });
         assert!(!was_sole_enabled_admin(&store, &admin));
         // A trader is never "the sole admin".
@@ -770,6 +913,8 @@ mod tests {
             desk_id: None,
             password_hash: "x".into(),
             disabled: false,
+            capability_grants: Vec::new(),
+            capability_denies: Vec::new(),
         };
         assert!(!was_sole_enabled_admin(&store, &trader));
     }
@@ -878,6 +1023,206 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(denied.code(), tonic::Code::PermissionDenied);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Create a trader and return (its id, a live trader token).
+    async fn make_trader(edge: &AuthEdge, admin_token: &str, email: &str) -> (String, String) {
+        let created = edge
+            .create_user(Request::new(CreateUserRequest {
+                session_token: admin_token.to_string(),
+                email: email.into(),
+                display_name: "Trader".into(),
+                role: UserRole::Trader as i32,
+                desk_id: None,
+                password: "trader-pw-123".into(),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        let id = created.user.unwrap().id;
+        let token = login(edge, email, "trader-pw-123")
+            .await
+            .unwrap()
+            .session_token;
+        (id, token)
+    }
+
+    fn cap(action: &str, asset: &str) -> CapabilityDesc {
+        CapabilityDesc {
+            action: action.into(),
+            asset: asset.into(),
+        }
+    }
+
+    fn has_cap(caps: &[CapabilityDesc], action: &str, asset: &str) -> bool {
+        caps.iter().any(|c| c.action == action && c.asset == asset)
+    }
+
+    #[tokio::test]
+    async fn set_user_capabilities_widens_narrows_persists_and_revokes() {
+        let (edge, path, sessions) = edge("set-caps");
+        let admin = login(&edge, "admin@celnet.com", "password").await.unwrap();
+        let (trader_id, trader_token) =
+            make_trader(&edge, &admin.session_token, "ovl@celnet.com").await;
+
+        // Baseline: a trader holds Execute·FixedIncome (role bundle) and NOT
+        // Administer·FxOptions.
+        let base = edge
+            .get_user_capabilities(Request::new(GetUserCapabilitiesRequest {
+                session_token: admin.session_token.clone(),
+                id: trader_id.clone(),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(base.grants.is_empty() && base.denies.is_empty());
+        assert!(has_cap(&base.effective, "execute", "fixed_income"));
+        assert!(!has_cap(&base.effective, "administer", "fx_options"));
+
+        // Admin overlays: grant Administer·FxOptions (widen), deny Execute·FixedIncome
+        // (narrow). The trader has a live session — it must be revoked by the change.
+        assert!(sessions.validate(&trader_token).is_some());
+        let set = edge
+            .set_user_capabilities(Request::new(SetUserCapabilitiesRequest {
+                session_token: admin.session_token.clone(),
+                id: trader_id.clone(),
+                grants: vec![cap("administer", "fx_options")],
+                denies: vec![cap("execute", "fixed_income")],
+                correlation_id: Some(7),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(set.correlation_id, Some(7));
+        // Read-back: effective now includes the grant and excludes the deny.
+        assert!(has_cap(&set.effective, "administer", "fx_options"));
+        assert!(!has_cap(&set.effective, "execute", "fixed_income"));
+        assert!(has_cap(&set.grants, "administer", "fx_options"));
+        assert!(has_cap(&set.denies, "execute", "fixed_income"));
+        // The trader's stale session is gone (authority changed).
+        assert!(sessions.validate(&trader_token).is_none());
+
+        // Persisted: a fresh get returns the same overlay, and it survives reload
+        // from disk (the overlay round-tripped through identity.json).
+        let again = edge
+            .get_user_capabilities(Request::new(GetUserCapabilitiesRequest {
+                session_token: admin.session_token.clone(),
+                id: trader_id.clone(),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(has_cap(&again.grants, "administer", "fx_options"));
+        assert!(has_cap(&again.denies, "execute", "fixed_income"));
+        let reloaded = IdentityStore::load(&path).unwrap();
+        let stored = reloaded.user(&trader_id).unwrap();
+        assert_eq!(stored.capability_grants.len(), 1);
+        assert_eq!(stored.capability_denies.len(), 1);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn login_returns_caller_effective_capabilities() {
+        let (edge, path, _s) = edge("login-caps");
+        // The seed admin resolves to grant-all: every action × asset (9 × 2 = 18).
+        let admin = login(&edge, "admin@celnet.com", "password").await.unwrap();
+        assert_eq!(
+            admin.capabilities.len(),
+            Action::ALL.len() * AssetClass::ALL.len()
+        );
+
+        // A fresh trader holds the role bundle: all actions but `administer` (8 × 2).
+        let (trader_id, _t) = make_trader(&edge, &admin.session_token, "lc@celnet.com").await;
+        let trader = login(&edge, "lc@celnet.com", "trader-pw-123")
+            .await
+            .unwrap();
+        assert_eq!(
+            trader.capabilities.len(),
+            (Action::ALL.len() - 1) * AssetClass::ALL.len()
+        );
+        assert!(has_cap(&trader.capabilities, "execute", "fixed_income"));
+        assert!(!has_cap(&trader.capabilities, "administer", "fx_options"));
+
+        // After an admin denies one capability, the trader's NEXT login (their prior
+        // session was revoked by the change) re-derives the narrowed set.
+        edge.set_user_capabilities(Request::new(SetUserCapabilitiesRequest {
+            session_token: admin.session_token,
+            id: trader_id,
+            grants: vec![],
+            denies: vec![cap("execute", "fixed_income")],
+            correlation_id: None,
+        }))
+        .await
+        .unwrap();
+        let relogged = login(&edge, "lc@celnet.com", "trader-pw-123")
+            .await
+            .unwrap();
+        assert!(!has_cap(&relogged.capabilities, "execute", "fixed_income"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn set_user_capabilities_rejects_unknown_label() {
+        let (edge, path, _s) = edge("set-caps-bad");
+        let admin = login(&edge, "admin@celnet.com", "password").await.unwrap();
+        let (trader_id, _t) = make_trader(&edge, &admin.session_token, "bad@celnet.com").await;
+        let err = edge
+            .set_user_capabilities(Request::new(SetUserCapabilitiesRequest {
+                session_token: admin.session_token.clone(),
+                id: trader_id,
+                grants: vec![cap("teleport", "fx_options")],
+                denies: vec![],
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn capability_rpcs_require_admin_and_known_user() {
+        let (edge, path, _s) = edge("caps-authz");
+        let admin = login(&edge, "admin@celnet.com", "password").await.unwrap();
+        let (_id, trader_token) =
+            make_trader(&edge, &admin.session_token, "authz@celnet.com").await;
+
+        // A trader's token cannot read or write any user's overlay.
+        let get_denied = edge
+            .get_user_capabilities(Request::new(GetUserCapabilitiesRequest {
+                session_token: trader_token.clone(),
+                id: "anyone".into(),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(get_denied.code(), tonic::Code::PermissionDenied);
+        let set_denied = edge
+            .set_user_capabilities(Request::new(SetUserCapabilitiesRequest {
+                session_token: trader_token,
+                id: "anyone".into(),
+                grants: vec![],
+                denies: vec![],
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(set_denied.code(), tonic::Code::PermissionDenied);
+
+        // An admin targeting a missing user gets not_found, not a silent no-op.
+        let missing = edge
+            .get_user_capabilities(Request::new(GetUserCapabilitiesRequest {
+                session_token: admin.session_token,
+                id: "ghost".into(),
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(missing.code(), tonic::Code::NotFound);
         let _ = std::fs::remove_file(&path);
     }
 

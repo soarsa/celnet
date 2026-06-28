@@ -55,6 +55,8 @@ use tonic::{Request, Response, Status};
 use crate::clock::Clock;
 use crate::rates_pricing::{RatesPriceError, price_rates};
 use crate::readiness::ReadinessGate;
+use celnet_entitlements::{Action, AssetClass};
+
 use crate::services::access::{DeskScope, RequiredAuthority, authorize_caller, resolve_caller};
 use crate::services::rates_book::RatesPositionStore;
 use crate::services::risk::store::PositionStore;
@@ -416,6 +418,22 @@ impl RfqDeskService for RfqDeskEdge {
             )));
         }
 
+        // Action-capability gate: responding to an RFQ vs an IOI is a distinct
+        // capability and the kind is known only after the request resolves, so the
+        // pre-lookup `ReadAny` gate above authenticates the caller (no anonymous
+        // enumeration of request ids) and this gate enforces the action right.
+        let respond_action = match DeskRequestKind::try_from(current.kind) {
+            Ok(DeskRequestKind::Ioi) => Action::IoiRespond,
+            _ => Action::RfqRespond,
+        };
+        authorize_caller(
+            self.access_store.access_mode(),
+            &caller,
+            "RfqDeskService/RespondDeskRequest",
+            RequiredAuthority::Capability(respond_action, AssetClass::FixedIncome),
+            None,
+        )?;
+
         let arm = req.response.ok_or_else(|| {
             Status::invalid_argument("respond: a `quote` or `reject` is required")
         })?;
@@ -465,7 +483,8 @@ impl RfqDeskService for RfqDeskEdge {
             self.access_store.access_mode(),
             &caller,
             "RfqDeskService/AcceptDeskQuote",
-            RequiredAuthority::ReadAny,
+            // Accepting a desk quote books a deal — the Execute (deal) capability.
+            RequiredAuthority::Capability(Action::Execute, AssetClass::FixedIncome),
             None,
         )?;
 
@@ -724,11 +743,31 @@ mod tests {
         assert_eq!(via_desk.dv01.to_bits(), direct.dv01.to_bits());
     }
 
+    /// Issue a live `Trader` session on the edge's registry and return its bearer
+    /// token. Responding to / accepting a desk quote now requires the action
+    /// capability the session carries (an asserted body principal cannot
+    /// self-grant it), so the dealing tests authenticate a real desk trader.
+    fn trader_token(edge: &RfqDeskEdge) -> String {
+        edge.sessions()
+            .issue(crate::services::sessions::AuthenticatedUser {
+                user_id: "t-1".to_owned(),
+                email: "trader@celnet.com".to_owned(),
+                display_name: "Desk Trader".to_owned(),
+                role: crate::config::identity::Role::Trader,
+                desk_id: Some("g10".to_owned()),
+                cap_grants: Vec::new(),
+                cap_denies: Vec::new(),
+            })
+            .expect("issue trader session")
+            .token
+    }
+
     /// submit → respond(quote) → accept books a deal AND a rates position, and the
     /// request ends ACCEPTED with the desk side opposite the counterparty's.
     #[tokio::test]
     async fn lifecycle_quote_then_accept_books_deal_and_position() {
         let edge = edge();
+        let token = trader_token(&edge);
         let submitted = edge
             .submit_desk_request(Request::new(submit_req(DeskRequestKind::Rfq, Side::Buy)))
             .await
@@ -741,7 +780,7 @@ mod tests {
 
         let quoted = edge
             .respond_desk_request(Request::new(RespondDeskRequestRequest {
-                session_token: None,
+                session_token: Some(token.clone()),
                 request_id: id.clone(),
                 principal: Some(celnet_proto::EntitlementPrincipal {
                     grant_all: true,
@@ -765,7 +804,7 @@ mod tests {
 
         let accept = edge
             .accept_desk_quote(Request::new(AcceptDeskQuoteRequest {
-                session_token: None,
+                session_token: Some(token.clone()),
                 request_id: id.clone(),
                 principal: Some(celnet_proto::EntitlementPrincipal {
                     grant_all: true,
@@ -797,6 +836,7 @@ mod tests {
     #[tokio::test]
     async fn lifecycle_reject() {
         let edge = edge();
+        let token = trader_token(&edge);
         let id = edge
             .submit_desk_request(Request::new(submit_req(DeskRequestKind::Rfq, Side::Sell)))
             .await
@@ -807,7 +847,7 @@ mod tests {
             .request_id;
         let rejected = edge
             .respond_desk_request(Request::new(RespondDeskRequestRequest {
-                session_token: None,
+                session_token: Some(token.clone()),
                 request_id: id.clone(),
                 principal: Some(celnet_proto::EntitlementPrincipal {
                     grant_all: true,
@@ -833,6 +873,39 @@ mod tests {
     #[tokio::test]
     async fn accept_unquoted_is_failed_precondition() {
         let edge = edge();
+        let token = trader_token(&edge);
+        let id = edge
+            .submit_desk_request(Request::new(submit_req(DeskRequestKind::Rfq, Side::Buy)))
+            .await
+            .expect("submit")
+            .into_inner()
+            .request
+            .unwrap()
+            .request_id;
+        let err = edge
+            .accept_desk_quote(Request::new(AcceptDeskQuoteRequest {
+                session_token: Some(token.clone()),
+                request_id: id,
+                principal: Some(celnet_proto::EntitlementPrincipal {
+                    grant_all: true,
+                    grants: vec![],
+                    denies: vec![],
+                }),
+                correlation_id: None,
+            }))
+            .await
+            .expect_err("cannot accept a PENDING request");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+    }
+
+    /// The action-capability gate: an asserted grant-all body principal with NO
+    /// authenticated session cannot accept (deal) under enforce — a body principal
+    /// can never self-grant the Execute capability (security finding #3 guard, on
+    /// the real RPC). Contrast `accept_unquoted_is_failed_precondition`, which now
+    /// authenticates and so reaches the precondition check.
+    #[tokio::test]
+    async fn accept_without_session_is_denied_under_enforce() {
+        let edge = edge();
         let id = edge
             .submit_desk_request(Request::new(submit_req(DeskRequestKind::Rfq, Side::Buy)))
             .await
@@ -853,8 +926,8 @@ mod tests {
                 correlation_id: None,
             }))
             .await
-            .expect_err("cannot accept a PENDING request");
-        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+            .expect_err("a body principal cannot self-grant Execute");
+        assert_eq!(err.code(), tonic::Code::Unauthenticated);
     }
 
     /// Deny-by-default: an absent principal under enforce is denied at submit.

@@ -35,8 +35,25 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Mutex;
 
+use celnet_entitlements::{Action, AssetClass, Capability, CapabilitySet};
+
 use crate::clock::Clock;
 use crate::config::identity::{Role, UserDef};
+
+/// The action bundle a desk `Trader` holds by default on **each** asset class:
+/// every action except [`Action::Administer`]. This is the slice-1 *role-derived*
+/// default; admin-editable per-user grants/denials layer on top in a later slice
+/// (`docs/plan/PERMISSIONS-ADMINISTRATION-REQUIREMENT.md` §3.3/§10).
+const TRADER_ACTIONS: [Action; 8] = [
+    Action::View,
+    Action::Price,
+    Action::QuoteRespond,
+    Action::RfqRespond,
+    Action::IoiRespond,
+    Action::Stream,
+    Action::Execute,
+    Action::Book,
+];
 
 /// Number of random bytes in a session token (256 bits).
 const TOKEN_BYTES: usize = 32;
@@ -60,18 +77,44 @@ pub struct AuthenticatedUser {
     pub role: Role,
     /// The desk the user belonged to at login, if any.
     pub desk_id: Option<String>,
+    /// The user's per-user capability **grants** at login (snapshot of
+    /// [`UserDef::capability_grants`]), layered on top of the role bundle in
+    /// [`capabilities`](Self::capabilities).
+    pub cap_grants: Vec<Capability>,
+    /// The user's per-user capability **denials** at login (snapshot of
+    /// [`UserDef::capability_denies`]); deny-wins over the role bundle and grants.
+    pub cap_denies: Vec<Capability>,
 }
 
 impl AuthenticatedUser {
     /// Snapshot a stored user into a session identity.
+    ///
+    /// The capability overlay is parsed from the user's persisted labels. The
+    /// identity store validates every overlay at load
+    /// ([`IdentityStore::load`](crate::config::identity::IdentityStore::load)) and at
+    /// every admin write, so the labels are well-formed here; a (load-impossible)
+    /// malformed entry is dropped per-list rather than panicking — dropping a
+    /// **grant** fails closed (less authority), the safe direction.
     #[must_use]
     pub fn from_user(user: &UserDef) -> Self {
+        let cap_grants = user
+            .capability_grants
+            .iter()
+            .filter_map(|g| g.parse().ok())
+            .collect();
+        let cap_denies = user
+            .capability_denies
+            .iter()
+            .filter_map(|g| g.parse().ok())
+            .collect();
         Self {
             user_id: user.id.clone(),
             email: user.email.clone(),
             display_name: user.display_name.clone(),
             role: user.role,
             desk_id: user.desk_id.clone(),
+            cap_grants,
+            cap_denies,
         }
     }
 
@@ -79,6 +122,37 @@ impl AuthenticatedUser {
     #[must_use]
     pub fn is_admin(&self) -> bool {
         self.role.is_admin()
+    }
+
+    /// The effective **action capabilities** this caller holds, derived from their
+    /// role (`docs/plan/PERMISSIONS-ADMINISTRATION-REQUIREMENT.md` §3):
+    ///
+    /// * [`Role::Admin`] ⇒ [`CapabilitySet::grant_all`] (every action, both asset
+    ///   classes — including [`Action::Administer`]);
+    /// * [`Role::Trader`] ⇒ every non-admin action ([`TRADER_ACTIONS`]) on **both**
+    ///   FX options and fixed income, scoped at the resource edge by
+    ///   [`super::access::ResolvedCaller::desk_scope`].
+    ///
+    /// The role bundle is the **base**; the per-user overlay then applies
+    /// ([`cap_grants`](Self::cap_grants) widen, [`cap_denies`](Self::cap_denies)
+    /// narrow, deny-wins). The returned set is the single source the access boundary
+    /// consults — separation of duties (e.g. a trader granted FX but **denied**
+    /// `Execute·FixedIncome`) is expressed entirely here.
+    #[must_use]
+    pub fn capabilities(&self) -> CapabilitySet {
+        let mut set = match self.role {
+            Role::Admin => CapabilitySet::grant_all(),
+            Role::Trader => CapabilitySet::empty()
+                .grant_actions(&TRADER_ACTIONS, AssetClass::FxOptions)
+                .grant_actions(&TRADER_ACTIONS, AssetClass::FixedIncome),
+        };
+        for &cap in &self.cap_grants {
+            set = set.grant(cap);
+        }
+        for &cap in &self.cap_denies {
+            set = set.deny(cap);
+        }
+        set
     }
 }
 
@@ -260,6 +334,8 @@ mod tests {
             display_name: "Alice".into(),
             role: Role::Trader,
             desk_id: Some("g10".into()),
+            cap_grants: Vec::new(),
+            cap_denies: Vec::new(),
         }
     }
 
@@ -331,6 +407,75 @@ mod tests {
             reg.validate(&b1).is_some(),
             "bob's session survives alice's revocation"
         );
+    }
+
+    #[test]
+    fn admin_holds_grant_all_caps_trader_holds_no_admin_cap() {
+        use celnet_entitlements::{Action, AssetClass, Capability};
+        let admin = AuthenticatedUser {
+            role: Role::Admin,
+            ..alice()
+        };
+        let admin_caps = admin.capabilities();
+        assert!(admin_caps.is_grant_all());
+        assert!(admin_caps.allows(Capability::new(Action::Administer, AssetClass::FxOptions)));
+
+        // A trader can deal on both asset classes but cannot administer.
+        let trader_caps = alice().capabilities(); // alice is a Trader
+        assert!(trader_caps.allows(Capability::new(Action::Execute, AssetClass::FxOptions)));
+        assert!(trader_caps.allows(Capability::new(Action::RfqRespond, AssetClass::FixedIncome)));
+        assert!(!trader_caps.allows(Capability::new(Action::Administer, AssetClass::FxOptions)));
+        assert!(!trader_caps.allows(Capability::new(Action::Administer, AssetClass::FixedIncome)));
+    }
+
+    /// The per-user overlay layers on the role bundle: a grant widens authority
+    /// beyond the role, and a deny narrows it (deny-wins) — separation of duties.
+    #[test]
+    fn per_user_overlay_widens_and_narrows_role_bundle() {
+        use celnet_entitlements::{Action, AssetClass, Capability};
+        let fi_admin = Capability::new(Action::Administer, AssetClass::FixedIncome);
+        let fi_exec = Capability::new(Action::Execute, AssetClass::FixedIncome);
+
+        // A trader granted Administer·FixedIncome (not in the role bundle) and denied
+        // Execute·FixedIncome (which the role bundle grants).
+        let user = AuthenticatedUser {
+            cap_grants: vec![fi_admin],
+            cap_denies: vec![fi_exec],
+            ..alice()
+        };
+        let caps = user.capabilities();
+        assert!(
+            caps.allows(fi_admin),
+            "explicit grant widens beyond the role"
+        );
+        assert!(
+            !caps.allows(fi_exec),
+            "explicit deny wins over the role grant"
+        );
+        // Untouched capabilities still follow the role bundle.
+        assert!(caps.allows(Capability::new(Action::Execute, AssetClass::FxOptions)));
+    }
+
+    /// `from_user` snapshots the persisted overlay into the session identity.
+    #[test]
+    fn from_user_snapshots_capability_overlay() {
+        use crate::config::identity::PermissionGrant;
+        use celnet_entitlements::{Action, AssetClass, Capability};
+        let fi_admin = Capability::new(Action::Administer, AssetClass::FixedIncome);
+        let user = UserDef {
+            id: "u".into(),
+            email: "u@celnet.com".into(),
+            display_name: "U".into(),
+            role: Role::Trader,
+            desk_id: None,
+            password_hash: "x".into(),
+            disabled: false,
+            capability_grants: vec![PermissionGrant::of(fi_admin)],
+            capability_denies: Vec::new(),
+        };
+        let who = AuthenticatedUser::from_user(&user);
+        assert_eq!(who.cap_grants, vec![fi_admin]);
+        assert!(who.capabilities().allows(fi_admin));
     }
 
     #[test]

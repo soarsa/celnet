@@ -31,6 +31,9 @@ import type {
   BookId,
   BrokerQuoteSet,
   BucketedRisk,
+  Capability,
+  CapabilityAction,
+  CapabilityAsset,
   CcyExposureLeg,
   CcyPair,
   Conventions,
@@ -121,6 +124,7 @@ import type {
   TwoWayPrice,
   Underlying,
   Update,
+  UserCapabilities,
   VanillaInputs,
   VegaBucket,
   VegaLadderBucket,
@@ -2200,6 +2204,10 @@ export function loginResultFromWire(o: WireObject): LoginResult {
     token: str(o, "session_token"),
     user: userDescFromWire(user as WireObject),
     expiresNanos: numToBigInt(o, "expires_nanos"),
+    // The caller's OWN fully-resolved effective set (`role bundle ∪ grants ∖
+    // denies`), enumerated server-side over every action × asset — the source
+    // for the client's affordance gating. Absent ⇒ empty (deny-everything).
+    capabilities: capabilityListFromWire(o, "capabilities"),
   };
 }
 
@@ -2253,6 +2261,54 @@ export function deleteUserRequestToWire(id: string): WireObject {
 
 export function resetPasswordRequestToWire(id: string, newPassword: string): WireObject {
   return { id, new_password: newPassword };
+}
+
+// per-user capability overlay ------------------------------------------------
+//
+// `get_user_capabilities` reads the overlay + resolved effective set; the codec
+// auto-injects the bearer `session_token`. `set_user_capabilities` replaces the
+// overlay wholesale. The action/asset labels are the canonical snake_case the
+// server round-trips through `Action`/`AssetClass::from_label`.
+
+function capabilityFromWire(o: WireObject): Capability {
+  return {
+    action: str(o, "action") as CapabilityAction,
+    asset: str(o, "asset") as CapabilityAsset,
+  };
+}
+
+function capabilityToWire(cap: Capability): WireObject {
+  return { action: cap.action, asset: cap.asset };
+}
+
+function capabilityListFromWire(o: WireObject, key: string): Capability[] {
+  const arr = o[key];
+  return Array.isArray(arr) ? (arr as WireObject[]).map(capabilityFromWire) : [];
+}
+
+export function getUserCapabilitiesRequestToWire(id: string): WireObject {
+  return { id };
+}
+
+export function setUserCapabilitiesRequestToWire(
+  id: string,
+  grants: readonly Capability[],
+  denies: readonly Capability[],
+): WireObject {
+  return {
+    id,
+    grants: grants.map(capabilityToWire),
+    denies: denies.map(capabilityToWire),
+  };
+}
+
+/** Decode a `user_capabilities` / `user_capabilities_set` frame. */
+export function userCapabilitiesFromWire(o: WireObject): UserCapabilities {
+  return {
+    grants: capabilityListFromWire(o, "grants"),
+    denies: capabilityListFromWire(o, "denies"),
+    effective: capabilityListFromWire(o, "effective"),
+  };
 }
 
 // desk CRUD ------------------------------------------------------------------

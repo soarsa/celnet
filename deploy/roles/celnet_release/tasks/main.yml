@@ -21,6 +21,15 @@
       - "--exclude=gui/node_modules/"
       - "--exclude=gui/dist/"
       - "--exclude=excel/node_modules/"
+      # Local-only Playwright/e2e output. Its dirs embed the test title — which
+      # contains an em-dash ("Celnet GUI — …") — so the names carry multi-byte
+      # UTF-8; under a non-UTF-8 deploy locale the synchronize module fails to
+      # decode rsync's itemized output ("returned non UTF-8 data"). None of it is
+      # a build input, so excluding it both fixes the deploy and trims the sync.
+      - "--exclude=gui/test-results/"
+      - "--exclude=gui/playwright-report/"
+      - "--exclude=gui/e2e-artifacts/"
+      - "--exclude=excel/dist/"
       - "--exclude=.serena/"
       - "--exclude=.codebase-memory/"
       - "--exclude=*.log"

@@ -26,12 +26,22 @@ export interface DealerPanelProps {
   windowSeconds?: number;
   /** Book one dealer line: SELL hits its bid, BUY lifts its offer. */
   onBook: (quoteId: bigint, lpId: string, side: "BUY" | "SELL") => void;
+  /**
+   * When set, the book buttons are disabled regardless of expiry — the signed-in
+   * user lacks the execute capability for this surface. The row stays VISIBLE
+   * (never hidden) with {@link bookDisabledTitle} explaining why.
+   */
+  bookDisabled?: boolean;
+  /** The explanatory tooltip for a capability-disabled book button. */
+  bookDisabledTitle?: string;
 }
 
 export function DealerPanel({
   panel,
   windowSeconds = 8,
   onBook,
+  bookDisabled = false,
+  bookDisabledTitle,
 }: DealerPanelProps): React.ReactElement {
   // One shared countdown clock drives every row's ring + expiry gate.
   const now = useCountdownClock(true);
@@ -66,6 +76,8 @@ export function DealerPanel({
               remainingSeconds={secondsUntil(d.validUntilNanos, now)}
               windowSeconds={windowSeconds}
               onBook={onBook}
+              bookDisabled={bookDisabled}
+              bookDisabledTitle={bookDisabledTitle}
             />
           ))}
         </tbody>
@@ -87,8 +99,16 @@ function DealerRow(props: {
   remainingSeconds: number;
   windowSeconds: number;
   onBook: (quoteId: bigint, lpId: string, side: "BUY" | "SELL") => void;
+  bookDisabled: boolean;
+  bookDisabledTitle: string | undefined;
 }): React.ReactElement {
   const { dealer, quoteId, bestBid, bestOffer, expired, windowSeconds, onBook } = props;
+  const { bookDisabled, bookDisabledTitle } = props;
+  // A book button is dead either because the line expired OR the signed-in user
+  // lacks the execute capability; the tooltip explains whichever applies.
+  const bidDisabled = expired || bookDisabled;
+  const offerDisabled = expired || bookDisabled;
+  const denyTitle = bookDisabled ? bookDisabledTitle : undefined;
   return (
     <tr className={expired ? styles.expiredRow : undefined}>
       <th scope="row" className={`num ${styles.lp}`}>
@@ -97,12 +117,15 @@ function DealerRow(props: {
       <td className={`${styles.priceCell} ${bestBid ? styles.bestBid : ""}`}>
         <button
           className={`${styles.book} ${styles.bid}`}
-          disabled={expired}
+          disabled={bidDisabled}
           onClick={() => onBook(quoteId, dealer.lpId, "SELL")}
           aria-label={`sell to ${dealer.lpId} at ${fmtPremiumPct(dealer.price.bid)}${
             bestBid ? " — best bid" : ""
           }`}
-          title={expired ? "line expired — re-request the panel" : "Hit this bid (SELL)"}
+          title={
+            denyTitle ??
+            (expired ? "line expired — re-request the panel" : "Hit this bid (SELL)")
+          }
         >
           <span className="num">{fmtPremiumPct(dealer.price.bid)}</span>
           {bestBid && <span className={styles.best}>best</span>}
@@ -111,12 +134,15 @@ function DealerRow(props: {
       <td className={`${styles.priceCell} ${bestOffer ? styles.bestOffer : ""}`}>
         <button
           className={`${styles.book} ${styles.offer}`}
-          disabled={expired}
+          disabled={offerDisabled}
           onClick={() => onBook(quoteId, dealer.lpId, "BUY")}
           aria-label={`buy from ${dealer.lpId} at ${fmtPremiumPct(dealer.price.offer)}${
             bestOffer ? " — best offer" : ""
           }`}
-          title={expired ? "line expired — re-request the panel" : "Lift this offer (BUY)"}
+          title={
+            denyTitle ??
+            (expired ? "line expired — re-request the panel" : "Lift this offer (BUY)")
+          }
         >
           <span className="num">{fmtPremiumPct(dealer.price.offer)}</span>
           {bestOffer && <span className={styles.best}>best</span>}

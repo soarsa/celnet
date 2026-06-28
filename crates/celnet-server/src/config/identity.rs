@@ -28,6 +28,7 @@ use std::path::{Path, PathBuf};
 
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use celnet_entitlements::{Action, AssetClass, Capability};
 use serde::{Deserialize, Serialize};
 
 /// Env var naming the identity JSON file. Absent ⇒ [`DEFAULT_CONFIG_PATH`].
@@ -97,6 +98,16 @@ pub struct UserDef {
     /// Whether the account is disabled (cannot log in) without being deleted.
     #[serde(default)]
     pub disabled: bool,
+    /// Per-user capability **grants** layered on top of the user's role bundle
+    /// (admin-editable overlay; `docs/plan/PERMISSIONS-ADMINISTRATION-REQUIREMENT.md`
+    /// §3.3). Empty ⇒ a pure role-derived user. Stored as the kernel's stable
+    /// snake_case labels so the file stays human-editable and round-trips exactly.
+    #[serde(default)]
+    pub capability_grants: Vec<PermissionGrant>,
+    /// Per-user capability **denials**; deny-wins over both the role bundle and any
+    /// grant (the information-barrier rule, mirrored from the read-side predicate).
+    #[serde(default)]
+    pub capability_denies: Vec<PermissionGrant>,
 }
 
 impl UserDef {
@@ -105,6 +116,62 @@ impl UserDef {
     #[must_use]
     pub fn verify(&self, candidate: &str) -> bool {
         !self.disabled && verify_password(&self.password_hash, candidate)
+    }
+
+    /// The typed capability overlay `(grants, denies)`, parsed from the persisted
+    /// labels. Returns an error on **any** unknown label so a corrupt overlay is
+    /// rejected loudly (at load and at admin write) rather than silently dropping a
+    /// capability when a session is built.
+    ///
+    /// # Errors
+    /// A label that is not a known [`Action`]/[`AssetClass`].
+    pub fn capability_overlay(&self) -> Result<(Vec<Capability>, Vec<Capability>), String> {
+        let grants = self
+            .capability_grants
+            .iter()
+            .map(PermissionGrant::parse)
+            .collect::<Result<Vec<_>, _>>()?;
+        let denies = self
+            .capability_denies
+            .iter()
+            .map(PermissionGrant::parse)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok((grants, denies))
+    }
+}
+
+/// One persisted capability on a user's overlay — an [`Action`] on an
+/// [`AssetClass`], stored as the kernel's stable snake_case labels
+/// ([`Action::label`] / [`AssetClass::label`]) so `identity.json` is human-editable
+/// and round-trips exactly through [`Action::from_label`] / [`AssetClass::from_label`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PermissionGrant {
+    /// The action label, e.g. `"execute"`.
+    pub action: String,
+    /// The asset-class label, e.g. `"fixed_income"`.
+    pub asset: String,
+}
+
+impl PermissionGrant {
+    /// Render a typed [`Capability`] into its persisted label form.
+    #[must_use]
+    pub fn of(cap: Capability) -> Self {
+        Self {
+            action: cap.action.label().to_string(),
+            asset: cap.asset.label().to_string(),
+        }
+    }
+
+    /// Parse this persisted entry into the typed kernel [`Capability`].
+    ///
+    /// # Errors
+    /// An `action` or `asset` that is not a known label.
+    pub fn parse(&self) -> Result<Capability, String> {
+        let action = Action::from_label(&self.action)
+            .ok_or_else(|| format!("unknown capability action {:?}", self.action))?;
+        let asset = AssetClass::from_label(&self.asset)
+            .ok_or_else(|| format!("unknown capability asset {:?}", self.asset))?;
+        Ok(Capability::new(action, asset))
     }
 }
 
@@ -154,11 +221,33 @@ impl IdentityStore {
     /// Propagates IO errors other than not-found, and JSON parse failures.
     pub fn load(path: &Path) -> std::io::Result<Self> {
         match std::fs::read(path) {
-            Ok(bytes) => serde_json::from_slice(&bytes)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e)),
+            Ok(bytes) => {
+                let store: Self = serde_json::from_slice(&bytes)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+                // A corrupt capability overlay is rejected at load (fail-fast), so a
+                // bad label can never silently drop a capability at session build.
+                store
+                    .validate_capabilities()
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+                Ok(store)
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(e) => Err(e),
         }
+    }
+
+    /// Validate every user's capability overlay parses (unknown labels ⇒ error).
+    /// Called at [`load`](IdentityStore::load) so a broken `identity.json` fails
+    /// loudly rather than degrading authority resolution at runtime.
+    ///
+    /// # Errors
+    /// The first user whose overlay carries an unknown action/asset label.
+    fn validate_capabilities(&self) -> Result<(), String> {
+        for user in &self.users {
+            user.capability_overlay()
+                .map_err(|e| format!("user {:?}: {e}", user.id))?;
+        }
+        Ok(())
     }
 
     /// Persist **atomically**: pretty-print to a sibling `*.tmp` file then rename
@@ -206,6 +295,8 @@ impl IdentityStore {
             desk_id: None,
             password_hash: hash,
             disabled: false,
+            capability_grants: Vec::new(),
+            capability_denies: Vec::new(),
         });
         Ok(true)
     }
@@ -380,6 +471,8 @@ mod tests {
             desk_id: None,
             password_hash: hash_password("pw").unwrap(),
             disabled: false,
+            capability_grants: Vec::new(),
+            capability_denies: Vec::new(),
         };
         assert!(admin.verify("pw"));
         admin.disabled = true;
@@ -407,6 +500,8 @@ mod tests {
             desk_id: None,
             password_hash: "x".into(),
             disabled: false,
+            capability_grants: Vec::new(),
+            capability_denies: Vec::new(),
         }];
         // Same local-part ⇒ disambiguated.
         assert_eq!(mint_user_id("jane@other.com", &users), "jane-2");
@@ -467,5 +562,48 @@ mod tests {
                 .iter()
                 .any(|u| u.password_hash == SEED_ADMIN_PASSWORD)
         }
+    }
+
+    /// A persisted overlay round-trips: typed `Capability` → label form → typed,
+    /// and `capability_overlay` returns the grants and denies it was given.
+    #[test]
+    fn capability_overlay_round_trips() {
+        let fi_book = Capability::new(Action::Book, AssetClass::FixedIncome);
+        let fx_exec = Capability::new(Action::Execute, AssetClass::FxOptions);
+        assert_eq!(PermissionGrant::of(fi_book).parse().unwrap(), fi_book);
+
+        let user = UserDef {
+            id: "u".into(),
+            email: "u@celnet.com".into(),
+            display_name: "U".into(),
+            role: Role::Trader,
+            desk_id: None,
+            password_hash: "x".into(),
+            disabled: false,
+            capability_grants: vec![PermissionGrant::of(fi_book)],
+            capability_denies: vec![PermissionGrant::of(fx_exec)],
+        };
+        let (grants, denies) = user.capability_overlay().expect("known labels parse");
+        assert_eq!(grants, vec![fi_book]);
+        assert_eq!(denies, vec![fx_exec]);
+    }
+
+    /// An identity file carrying an unknown capability label is rejected at load
+    /// (`InvalidData`) — a corrupt overlay never silently degrades authority.
+    #[test]
+    fn load_rejects_unknown_capability_label() {
+        let json = r#"{
+            "users": [{
+                "id": "u", "email": "u@celnet.com", "display_name": "U",
+                "role": "trader", "password_hash": "x", "disabled": false,
+                "capability_grants": [{"action": "teleport", "asset": "fixed_income"}]
+            }],
+            "desks": []
+        }"#;
+        let path = std::env::temp_dir().join("celnet-identity-badcap.json");
+        std::fs::write(&path, json).unwrap();
+        let err = IdentityStore::load(&path).expect_err("unknown label must be rejected");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        let _ = std::fs::remove_file(&path);
     }
 }

@@ -157,6 +157,7 @@ at their tier.
 | **W5-A-XRISK** | `celnet-risk-normalize`, `celnet-risk-cube` | W1 + W5-B leaves | longhand recomputation + FRTB re-derived; FX 1e-12 invariant | **DONE** | coordinator / merged `7aad04b` |
 | **W5-B-LEAVES** | NEW `celnet-equity-vanilla`, `celnet-commodity-vanilla` | W1 contract | QuantLib AnalyticEuropean (div) + Black-76 golden | **DONE** | coordinator / `lane/w5-b-leaves` |
 | **GW2-STRUCTURING** | `gui/src/products/*` (Ticket→ProductSpec registry) + tests | GW0/GW1 merge | vitest per-ProductSpec round-trip + Playwright e2e + axe | **DONE** | coordinator / `lane/gw2-structuring` |
+| **PERMS-SLICE4-GUI** | `gui/` only: AdminWorkspace capability-overlay editor (CapabilityMatrix + hook + transport/codec/mock + contract types) | server slice 3b `d1c440c` | `npm run build` clean · vitest matrix resolution/deny-wins · live Playwright + axe under Enforce | **CLAIMED** | this-session / `lane/fi-rates-breadth` |
 
 ## 6. Coordinator state (updated by the coordinator each milestone)
 

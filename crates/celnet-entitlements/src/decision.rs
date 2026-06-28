@@ -120,6 +120,11 @@ pub enum AccessReason {
     /// administrator authority the caller's role does not hold (a role-gated
     /// `permission_denied`, distinct from an unauthenticated absence).
     SessionInsufficientRole,
+    /// Deny: a valid session authenticated the caller, but they do not hold the
+    /// **action capability** the resource requires (e.g. an `Execute`-on-FX deal
+    /// attempted by a price-only user). A capability-gated `permission_denied`,
+    /// distinct from the role-gated [`AccessReason::SessionInsufficientRole`].
+    SessionMissingCapability,
 }
 
 impl AccessReason {
@@ -133,6 +138,7 @@ impl AccessReason {
             AccessReason::MalformedPrincipal => "malformed_principal",
             AccessReason::SessionAuthenticated => "session_authenticated",
             AccessReason::SessionInsufficientRole => "session_insufficient_role",
+            AccessReason::SessionMissingCapability => "session_missing_capability",
         }
     }
 
@@ -146,7 +152,8 @@ impl AccessReason {
             | AccessReason::SessionAuthenticated => AccessDecision::Allow,
             AccessReason::PrincipalAbsent
             | AccessReason::MalformedPrincipal
-            | AccessReason::SessionInsufficientRole => AccessDecision::Deny,
+            | AccessReason::SessionInsufficientRole
+            | AccessReason::SessionMissingCapability => AccessDecision::Deny,
         }
     }
 }
@@ -191,6 +198,10 @@ mod tests {
             AccessReason::SessionInsufficientRole.decision(),
             AccessDecision::Deny
         );
+        assert_eq!(
+            AccessReason::SessionMissingCapability.decision(),
+            AccessDecision::Deny
+        );
     }
 
     /// Labels are stable, distinct snake_case identifiers (audit fields key on
@@ -204,6 +215,7 @@ mod tests {
             AccessReason::MalformedPrincipal.label(),
             AccessReason::SessionAuthenticated.label(),
             AccessReason::SessionInsufficientRole.label(),
+            AccessReason::SessionMissingCapability.label(),
         ];
         let mut sorted = reasons.to_vec();
         sorted.sort_unstable();

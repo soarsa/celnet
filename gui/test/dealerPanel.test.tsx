@@ -227,3 +227,52 @@ describe("TicketWorkspace — multi-dealer RFQ (LP panel) flow", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("DealerPanel — capability gating (slice 5: disable + tooltip, never hide)", () => {
+  it("disables every book button and explains why when bookDisabled is set", () => {
+    const live = nowNanos() + 8n * NS_PER_S;
+    const denyTitle = "Your permissions don't allow executing FX-options trades.";
+    const panel = panelWith(
+      [
+        dealer("celnet-auto-pricer", 0.12, 0.13, live),
+        dealer("SYNTH-LP-1", 0.1206, 0.1296, live),
+      ],
+      { bestBidLpId: "SYNTH-LP-1", bestOfferLpId: "SYNTH-LP-1" },
+    );
+    const onBook = vi.fn();
+    render(
+      <DealerPanel
+        panel={panel}
+        onBook={onBook}
+        bookDisabled
+        bookDisabledTitle={denyTitle}
+      />,
+    );
+    // The rows are NEVER hidden — the panel table is still present.
+    expect(screen.getByRole("table", { name: "multi-dealer quote panel" })).toBeInTheDocument();
+    // Every book button is disabled and carries the explanatory denial tooltip.
+    const bookButtons = screen
+      .getAllByRole("button")
+      .filter((b) => /sell to|buy from/i.test(b.getAttribute("aria-label") ?? ""));
+    expect(bookButtons.length).toBe(4); // 2 LPs × (bid + offer)
+    for (const b of bookButtons) {
+      expect(b).toBeDisabled();
+      expect(b.getAttribute("title")).toBe(denyTitle);
+    }
+    // A click on a disabled control never fires the booking callback.
+    fireEvent.click(bookButtons[0]!);
+    expect(onBook).not.toHaveBeenCalled();
+  });
+
+  it("leaves the book buttons live (no denial tooltip) when not capability-gated", () => {
+    const live = nowNanos() + 8n * NS_PER_S;
+    const panel = panelWith([dealer("SYNTH-LP-1", 0.1206, 0.1296, live)], {
+      bestBidLpId: "SYNTH-LP-1",
+      bestOfferLpId: "SYNTH-LP-1",
+    });
+    render(<DealerPanel panel={panel} onBook={vi.fn()} />);
+    const sell = screen.getByRole("button", { name: /^sell to SYNTH-LP-1/ });
+    expect(sell).not.toBeDisabled();
+    expect(sell.getAttribute("title")).toBe("Hit this bid (SELL)");
+  });
+});
