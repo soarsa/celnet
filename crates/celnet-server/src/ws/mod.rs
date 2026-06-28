@@ -974,6 +974,22 @@ async fn handle_unary(
                 codec::reset_password_response_to_json
             )
         }
+        "get_user_capabilities" => {
+            let req = decode!(codec::get_user_capabilities_request_from_json(o));
+            call!(
+                services.auth.get_user_capabilities(Request::new(req)),
+                "user_capabilities",
+                codec::get_user_capabilities_response_to_json
+            )
+        }
+        "set_user_capabilities" => {
+            let req = decode!(codec::set_user_capabilities_request_from_json(o));
+            call!(
+                services.auth.set_user_capabilities(Request::new(req)),
+                "user_capabilities_set",
+                codec::set_user_capabilities_response_to_json
+            )
+        }
         "list_desks" => {
             let req = decode!(codec::list_desks_request_from_json(o));
             call!(

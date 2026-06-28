@@ -3519,6 +3519,69 @@ message DeleteDeskResponse {
   optional uint64 correlation_id = 2;
 }
 
+// One capability on the wire: an action label crossed with an asset-class label.
+// The labels are the entitlement kernel's canonical snake_case tokens (e.g.
+// `execute` × `fixed_income`); they round-trip exactly and an unknown token is
+// rejected, never silently dropped. This is the admin-overlay encoding — not the
+// authorization decision, which the server still makes from the resolved set.
+message CapabilityDesc {
+  // The action label: one of `view`, `price`, `quote_respond`, `rfq_respond`,
+  // `ioi_respond`, `stream`, `execute`, `book`, `administer`.
+  string action = 1;
+  // The asset-class label: `fx_options` or `fixed_income`.
+  string asset = 2;
+}
+
+// Read a user's capability overlay and resolved effective set (admin only).
+message GetUserCapabilitiesRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The id of the user whose capabilities are read.
+  string id = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+}
+// A user's per-user overlay plus the fully-resolved decision surface.
+message GetUserCapabilitiesResponse {
+  // The per-user grants that widen authority beyond the role bundle.
+  repeated CapabilityDesc grants = 1;
+  // The per-user denies that narrow it (deny wins over any grant).
+  repeated CapabilityDesc denies = 2;
+  // The set the access boundary actually admits — role bundle ∪ grants ∖ denies,
+  // enumerated over every action × asset. This is what a GUI gates affordances on.
+  repeated CapabilityDesc effective = 3;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 4;
+}
+
+// Replace a user's capability overlay (admin only). `grants`/`denies` are the full
+// new overlay (not a delta); the change persists and revokes the target's live
+// sessions so it takes effect on their next request.
+message SetUserCapabilitiesRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The id of the user whose overlay is replaced.
+  string id = 2;
+  // The new grants (widen beyond the role bundle).
+  repeated CapabilityDesc grants = 3;
+  // The new denies (narrow it; deny wins).
+  repeated CapabilityDesc denies = 4;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 5;
+}
+// The overlay after the update, plus the resolved effective set (an admin
+// read-back: it shows exactly what the change now admits).
+message SetUserCapabilitiesResponse {
+  // The grants now in effect.
+  repeated CapabilityDesc grants = 1;
+  // The denies now in effect.
+  repeated CapabilityDesc denies = 2;
+  // The fully-resolved effective set after the change.
+  repeated CapabilityDesc effective = 3;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 4;
+}
+
 // Server-enforced authentication + user/desk administration. Login mints a bearer
 // token the server validates on every subsequent RPC; administrative RPCs require
 // the resolved identity to be an admin. Accounts persist to disk and a default
@@ -3538,6 +3601,10 @@ service AuthService {
   rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse);
   // Set a user's password (admin only).
   rpc ResetPassword(ResetPasswordRequest) returns (ResetPasswordResponse);
+  // Read a user's capability overlay + resolved effective set (admin only).
+  rpc GetUserCapabilities(GetUserCapabilitiesRequest) returns (GetUserCapabilitiesResponse);
+  // Replace a user's capability overlay (admin only).
+  rpc SetUserCapabilities(SetUserCapabilitiesRequest) returns (SetUserCapabilitiesResponse);
   // List all desks (admin only).
   rpc ListDesks(ListDesksRequest) returns (ListDesksResponse);
   // Create a desk (admin only).

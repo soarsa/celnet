@@ -43,11 +43,12 @@ use celnet_proto::{
 };
 // AuthService — server-enforced sessions + user/desk administration (WS mirror).
 use celnet_proto::{
-    CreateDeskRequest, CreateDeskResponse, CreateUserRequest, CreateUserResponse,
+    CapabilityDesc, CreateDeskRequest, CreateDeskResponse, CreateUserRequest, CreateUserResponse,
     DeleteDeskRequest, DeleteDeskResponse, DeleteUserRequest, DeleteUserResponse, DeskDesc,
-    ListDesksRequest, ListDesksResponse, ListUsersRequest, ListUsersResponse, LoginRequest,
-    LoginResponse, LogoutRequest, LogoutResponse, ResetPasswordRequest, ResetPasswordResponse,
-    UpdateUserRequest, UpdateUserResponse, UserDesc,
+    GetUserCapabilitiesRequest, GetUserCapabilitiesResponse, ListDesksRequest, ListDesksResponse,
+    ListUsersRequest, ListUsersResponse, LoginRequest, LoginResponse, LogoutRequest,
+    LogoutResponse, ResetPasswordRequest, ResetPasswordResponse, SetUserCapabilitiesRequest,
+    SetUserCapabilitiesResponse, UpdateUserRequest, UpdateUserResponse, UserDesc,
 };
 // Linear-rates (fixed-income) contract — the WS mirror of PricingService::PriceRates.
 use celnet_proto::{
@@ -2736,6 +2737,82 @@ pub(super) fn reset_password_response_to_json(r: &ResetPasswordResponse) -> Valu
     json!({ "correlation_id": r.correlation_id })
 }
 
+/// Encode one capability (`{action, asset}` labels) for the wire.
+fn capability_desc_to_json(c: &CapabilityDesc) -> Value {
+    json!({ "action": c.action, "asset": c.asset })
+}
+
+/// Encode a list of capabilities as a JSON array.
+fn capability_list_to_json(caps: &[CapabilityDesc]) -> Value {
+    Value::Array(caps.iter().map(capability_desc_to_json).collect())
+}
+
+/// Decode one capability object: both `action` and `asset` labels are required.
+/// Label validity is the server's call (it rejects unknown labels); here we only
+/// require the fields to be present strings.
+fn capability_desc_from_json(v: &Value) -> Result<CapabilityDesc> {
+    let o = v
+        .as_object()
+        .ok_or_else(|| err("each capability must be an object with action + asset"))?;
+    Ok(CapabilityDesc {
+        action: string_field(o, "action")?,
+        asset: string_field(o, "asset")?,
+    })
+}
+
+/// Decode an optional JSON array of capabilities under `key` (absent ⇒ empty).
+fn capability_list_from_json(o: &Map<String, Value>, key: &str) -> Result<Vec<CapabilityDesc>> {
+    match o.get(key) {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(arr) => arr
+            .as_array()
+            .ok_or_else(|| err(format!("`{key}` must be an array of capabilities")))?
+            .iter()
+            .map(capability_desc_from_json)
+            .collect(),
+    }
+}
+
+pub(super) fn get_user_capabilities_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<GetUserCapabilitiesRequest> {
+    Ok(GetUserCapabilitiesRequest {
+        session_token: string_field(o, "session_token")?,
+        id: string_field(o, "id")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn get_user_capabilities_response_to_json(r: &GetUserCapabilitiesResponse) -> Value {
+    json!({
+        "grants": capability_list_to_json(&r.grants),
+        "denies": capability_list_to_json(&r.denies),
+        "effective": capability_list_to_json(&r.effective),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn set_user_capabilities_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<SetUserCapabilitiesRequest> {
+    Ok(SetUserCapabilitiesRequest {
+        session_token: string_field(o, "session_token")?,
+        id: string_field(o, "id")?,
+        grants: capability_list_from_json(o, "grants")?,
+        denies: capability_list_from_json(o, "denies")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn set_user_capabilities_response_to_json(r: &SetUserCapabilitiesResponse) -> Value {
+    json!({
+        "grants": capability_list_to_json(&r.grants),
+        "denies": capability_list_to_json(&r.denies),
+        "effective": capability_list_to_json(&r.effective),
+        "correlation_id": r.correlation_id,
+    })
+}
+
 pub(super) fn list_desks_request_from_json(o: &Map<String, Value>) -> Result<ListDesksRequest> {
     Ok(ListDesksRequest {
         session_token: string_field(o, "session_token")?,
@@ -3907,5 +3984,83 @@ mod tests {
         assert_eq!(req.session_token.as_deref(), Some("tok"));
         assert_eq!(req.scope.unwrap().desks, vec!["g10", "em"]);
         assert_eq!(req.correlation_id.as_deref(), Some("c"));
+    }
+
+    /// `get_user_capabilities` decodes its target id; the response encodes the
+    /// overlay + effective set as three capability arrays.
+    #[test]
+    fn get_user_capabilities_round_trip() {
+        let o = json!({
+            "type": "get_user_capabilities",
+            "session_token": "tok",
+            "id": "u-1",
+            "correlation_id": 9
+        });
+        let req = get_user_capabilities_request_from_json(o.as_object().unwrap()).expect("decodes");
+        assert_eq!(req.session_token, "tok");
+        assert_eq!(req.id, "u-1");
+        assert_eq!(req.correlation_id, Some(9));
+        let v = get_user_capabilities_response_to_json(&GetUserCapabilitiesResponse {
+            grants: vec![CapabilityDesc {
+                action: "administer".into(),
+                asset: "fx_options".into(),
+            }],
+            denies: vec![CapabilityDesc {
+                action: "execute".into(),
+                asset: "fixed_income".into(),
+            }],
+            effective: vec![CapabilityDesc {
+                action: "view".into(),
+                asset: "fx_options".into(),
+            }],
+            correlation_id: Some(9),
+        });
+        assert_eq!(v["grants"][0]["action"], json!("administer"));
+        assert_eq!(v["denies"][0]["asset"], json!("fixed_income"));
+        assert_eq!(v["effective"][0]["action"], json!("view"));
+        assert_eq!(v["correlation_id"], json!(9));
+    }
+
+    /// `set_user_capabilities` decodes both overlay arrays (absent ⇒ empty); the
+    /// response mirrors the get shape. This keeps the decoder + router in lockstep
+    /// for the new admin verb.
+    #[test]
+    fn set_user_capabilities_round_trip() {
+        let o = json!({
+            "type": "set_user_capabilities",
+            "session_token": "tok",
+            "id": "u-2",
+            "grants": [{ "action": "book", "asset": "fixed_income" }],
+            "denies": [],
+            "correlation_id": 4
+        });
+        let req = set_user_capabilities_request_from_json(o.as_object().unwrap()).expect("decodes");
+        assert_eq!(req.id, "u-2");
+        assert_eq!(req.grants.len(), 1);
+        assert_eq!(req.grants[0].action, "book");
+        assert!(req.denies.is_empty());
+        assert_eq!(req.correlation_id, Some(4));
+
+        // A missing overlay array decodes to empty, never an error.
+        let bare = json!({ "type": "set_user_capabilities", "session_token": "t", "id": "u" });
+        let req2 =
+            set_user_capabilities_request_from_json(bare.as_object().unwrap()).expect("decodes");
+        assert!(req2.grants.is_empty() && req2.denies.is_empty());
+
+        // A malformed capability entry (missing `asset`) is rejected at decode.
+        let bad = json!({
+            "type": "set_user_capabilities", "session_token": "t", "id": "u",
+            "grants": [{ "action": "book" }]
+        });
+        assert!(set_user_capabilities_request_from_json(bad.as_object().unwrap()).is_err());
+
+        let v = set_user_capabilities_response_to_json(&SetUserCapabilitiesResponse {
+            grants: req.grants.clone(),
+            denies: vec![],
+            effective: req.grants,
+            correlation_id: Some(4),
+        });
+        assert_eq!(v["grants"][0]["asset"], json!("fixed_income"));
+        assert_eq!(v["effective"][0]["action"], json!("book"));
     }
 }
