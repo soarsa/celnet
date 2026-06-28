@@ -309,6 +309,27 @@ pub async fn run_load(addr: SocketAddr, config: LoadConfig) -> Result<WireReport
     for i in 0..config.stream_subscriptions {
         let mut sclient = StreamServiceClient::new(channel.clone());
         let (tx, rx) = tokio::sync::mpsc::channel(8);
+        // Authenticate the session FIRST (the stream/WS caller-authz cross-cut):
+        // the bench edge boots under the Enforce default, so a session must pin its
+        // caller before any subscribe or the subscribe is rejected `unauthenticated`.
+        // Assert the audited explicit grant-all — the same default the SDK's opening
+        // `Authenticate` frame and the gated risk/quote paths use — so the load
+        // generator is admitted under Enforce.
+        tx.send(celnet_proto::ClientStreamMessage {
+            message: Some(client_stream_message::Message::Authenticate(
+                celnet_proto::StreamAuth {
+                    session_token: None,
+                    principal: Some(celnet_proto::EntitlementPrincipal {
+                        grant_all: true,
+                        grants: vec![],
+                        denies: vec![],
+                    }),
+                },
+            )),
+        })
+        .await
+        .map_err(|e| format!("authenticate send failed: {e}"))?;
+
         // Subscribe to a distinct strike per subscription so each is a real,
         // independently-sequenced line.
         let strike = 1.00 + 0.005 * (i as f64);
@@ -387,6 +408,16 @@ pub async fn run_load(addr: SocketAddr, config: LoadConfig) -> Result<WireReport
                     correlation_id: None,
                     surface_version: None,
                     attribution: None,
+                    session_token: None,
+                    // The RFQ path is now caller-gated (item B §2); the bench edge
+                    // boots under the Enforce default, so assert the audited explicit
+                    // grant-all principal (the same default the SDK/risk path uses) so
+                    // the load generator is admitted.
+                    principal: Some(celnet_proto::EntitlementPrincipal {
+                        grant_all: true,
+                        grants: vec![],
+                        denies: vec![],
+                    }),
                 };
                 let t0 = Instant::now();
                 let res =

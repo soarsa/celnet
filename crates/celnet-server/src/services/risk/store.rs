@@ -264,6 +264,27 @@ impl PositionStore {
         g.interner.intern(name)
     }
 
+    /// **The desk-identity bridge** (item B §3): give an identity desk slug a
+    /// canonical numeric [`DeskId`] and declare which books it owns, populating the
+    /// `Book → Desk` hierarchy at boot.
+    ///
+    /// Interns `desk_slug` to its stable handle (the canonical numeric desk id), and
+    /// for each book name interns it to a [`CubeBookId`] and sets its parent desk —
+    /// so a fact booked into one of those books resolves up to this desk exactly as
+    /// the cube's roll-up and the entitlement filter do (`docs/RISK-HIERARCHY.md`
+    /// §2.6). Interning is idempotent: the same slug/book names always resolve to the
+    /// same handles within a run, so the live attribution path's lazy book interning
+    /// (`book_from_attribution`) and this boot-time configuration agree on the same
+    /// numeric ids. Called once per [`config::identity::DeskDef`](crate::config::identity::DeskDef)
+    /// at edge boot; the empty-`books` desk is a no-op (it owns no books yet).
+    pub fn configure_desk(&self, desk_slug: &str, books: &[String]) {
+        let desk_handle = self.intern(desk_slug);
+        for book in books {
+            let book_handle = self.intern(book);
+            self.set_book_desk(book_handle, desk_handle);
+        }
+    }
+
     /// Configure a limit at a hierarchy scope (admin / setup path).
     pub fn set_limit(&self, scope: celnet_limits::LimitScope, spec: celnet_limits::LimitSpec) {
         let mut g = self.inner.write().expect("position store lock poisoned");

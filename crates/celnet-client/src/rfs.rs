@@ -118,10 +118,7 @@ pub(crate) struct SessionAuth {
 impl SessionAuth {
     /// The credential carrying `token` (a real Login bearer, when set) and
     /// `principal` (the asserted entitlements, else the grant-all default).
-    pub(crate) fn new(
-        token: Option<String>,
-        principal: Option<crate::risk::Entitlements>,
-    ) -> Self {
+    pub(crate) fn new(token: Option<String>, principal: Option<crate::risk::Entitlements>) -> Self {
         Self { token, principal }
     }
 
@@ -1383,7 +1380,7 @@ fn decode_line(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::risk::{Entitlements, EntitlementScope, Scope as ClientScope};
+    use crate::risk::{EntitlementScope, Entitlements, Scope as ClientScope};
 
     const SUB_ID: u64 = 7;
 
@@ -1401,7 +1398,9 @@ mod tests {
                     Some("login-bearer-xyz"),
                     "the Login-issued token is sent verbatim"
                 );
-                let principal = a.principal.expect("an explicit principal is always asserted");
+                let principal = a
+                    .principal
+                    .expect("an explicit principal is always asserted");
                 assert!(
                     principal.grant_all,
                     "no asserted principal ⇒ the explicit grant-all default (Enforce-admitted)"

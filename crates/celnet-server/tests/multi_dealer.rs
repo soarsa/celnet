@@ -55,6 +55,8 @@ fn quote_request(key: &str) -> QuoteRequest {
         correlation_id: None,
         surface_version: None,
         attribution: None,
+        session_token: None,
+        principal: None,
     }
 }
 
@@ -244,6 +246,8 @@ async fn accept_with_lp_id_books_pinned_panel_row() {
             idempotency_key: key.to_owned(),
             side: Side::Buy as i32,
             lp_id: "SYNTH-LP-2".to_owned(),
+            session_token: None,
+            principal: None,
         };
         let exec = client
             .accept_quote(accept.clone())
@@ -282,6 +286,8 @@ async fn accept_with_lp_id_books_pinned_panel_row() {
                 idempotency_key: key.to_owned(),
                 side: Side::Buy as i32,
                 lp_id: "SYNTH-LP-1".to_owned(),
+                session_token: None,
+                principal: None,
             })
             .await
             .expect_err("a line-flipped retry is refused");
@@ -306,6 +312,8 @@ async fn accept_with_lp_id_books_pinned_panel_row() {
                 idempotency_key: key2.to_owned(),
                 side: Side::Sell as i32,
                 lp_id: "SYNTH-LP-1".to_owned(),
+                session_token: None,
+                principal: None,
             })
             .await
             .expect("SELL books the dealer line")
@@ -329,6 +337,8 @@ async fn accept_with_lp_id_books_pinned_panel_row() {
                 idempotency_key: key3.to_owned(),
                 side: Side::Buy as i32,
                 lp_id: "LP-NEVER-ON-PANEL".to_owned(),
+                session_token: None,
+                principal: None,
             })
             .await
             .expect_err("an unknown dealer line is refused");
@@ -371,6 +381,8 @@ async fn empty_lp_id_keeps_single_dealer_path_byte_identical() {
                 idempotency_key: key.to_owned(),
                 side: Side::Buy as i32,
                 lp_id: String::new(),
+                session_token: None,
+                principal: None,
             })
             .await
             .expect("single-dealer accept books")
@@ -398,6 +410,8 @@ async fn empty_lp_id_keeps_single_dealer_path_byte_identical() {
                 idempotency_key: key.to_owned(),
                 side: Side::Buy as i32,
                 lp_id: MAKER_LP_ID.to_owned(),
+                session_token: None,
+                principal: None,
             })
             .await
             .expect("native-line retry returns the booking")
@@ -437,6 +451,8 @@ async fn expired_panel_row_accept_refused() {
                 idempotency_key: key.to_owned(),
                 side: Side::Buy as i32,
                 lp_id: "SYNTH-LP-2".to_owned(),
+                session_token: None,
+                principal: None,
             })
             .await
             .expect_err("a lapsed dealer line is refused");
@@ -448,6 +464,8 @@ async fn expired_panel_row_accept_refused() {
                 idempotency_key: key.to_owned(),
                 side: Side::Buy as i32,
                 lp_id: String::new(),
+                session_token: None,
+                principal: None,
             })
             .await
             .expect_err("the lapsed single-dealer line is refused identically");

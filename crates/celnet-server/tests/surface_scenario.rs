@@ -284,6 +284,8 @@ async fn quote_pinned_to_marked_surface_version_is_honoured_and_echoed() {
                 correlation_id: Some(0xABCD),
                 surface_version: Some(version),
                 attribution: None,
+                session_token: None,
+                principal: None,
             }),
         )
         .await
@@ -311,6 +313,8 @@ async fn quote_pinned_to_marked_surface_version_is_honoured_and_echoed() {
                 correlation_id: None,
                 surface_version: Some(version + 9_999),
                 attribution: None,
+                session_token: None,
+                principal: None,
             }),
         )
         .await

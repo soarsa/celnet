@@ -67,6 +67,10 @@ pub(crate) struct RfqReq {
     pub(crate) accept: Option<String>,
     /// The accept direction (ignored without `accept`).
     pub(crate) side: Side,
+    /// The `AuthService.Login`-issued session token to authenticate the RFQ as that
+    /// user (item B §2); `None` ⇒ the SDK's audited grant-all principal default, the
+    /// same posture `stream` uses.
+    pub(crate) session_token: Option<String>,
 }
 
 /// Run `rfq`: request the ranked multi-dealer panel through the SDK, print the
@@ -75,6 +79,14 @@ pub(crate) struct RfqReq {
 pub(crate) fn run<W: std::io::Write>(req: &RfqReq, out: &mut W) -> Result<(), RiskError> {
     let report = block_on(async {
         let client = connect(&req.endpoint).await?;
+        // Authenticate the RFQ as the Login-issued user when a token is supplied;
+        // otherwise the SDK asserts the audited grant-all principal the production
+        // `Enforce` edge admits (parity with `stream` / the risk commands). The token
+        // rides in every QuoteRequest/QuoteAccept body so request + accept agree.
+        let client = match &req.session_token {
+            Some(token) => client.with_session_token(token.clone()),
+            None => client,
+        };
         let instrument = InstrumentSpec::vanilla(
             req.pair,
             req.tenor,

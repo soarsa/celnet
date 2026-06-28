@@ -985,7 +985,11 @@ impl Session {
             // presented-but-invalid token is a hard error: the session is closed
             // rather than left running as a stale/forged credential.
             client_stream_message::Message::Authenticate(auth) => {
-                match resolve_caller(&self.sessions, auth.session_token.as_deref(), auth.principal) {
+                match resolve_caller(
+                    &self.sessions,
+                    auth.session_token.as_deref(),
+                    auth.principal,
+                ) {
                     Ok(caller) => {
                         self.caller = caller;
                         true
@@ -1936,9 +1940,7 @@ mod tests {
             // (a) A Subscribe with NO prior Authenticate is rejected `unauthenticated`,
             // and the connection stays open (return `true`) for a re-auth + retry.
             assert!(
-                session
-                    .handle_client_message(eurusd_subscribe(), &tx)
-                    .await,
+                session.handle_client_message(eurusd_subscribe(), &tx).await,
                 "an unauthorized op keeps the session open for a re-auth"
             );
             let err = try_recv_status(&mut rx).expect("an anonymous subscribe is rejected");
@@ -1998,9 +2000,7 @@ mod tests {
             // The previously-denied subscribe now succeeds: a baseline Snapshot lands
             // and the subscription is open.
             assert!(
-                session
-                    .handle_client_message(eurusd_subscribe(), &tx)
-                    .await,
+                session.handle_client_message(eurusd_subscribe(), &tx).await,
                 "the authenticated subscribe is admitted"
             );
             let admitted = rx.try_recv().expect("a baseline message").unwrap();
