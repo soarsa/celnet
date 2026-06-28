@@ -257,6 +257,9 @@ impl AuthService for AuthEdge {
             session_token: issued.token,
             user: Some(user_to_wire(&user)),
             expires_nanos: issued.expires_nanos,
+            // The caller's own resolved set, so a client can gate its own
+            // affordances without an admin-only capabilities round-trip.
+            capabilities: effective_caps(&user),
             correlation_id: req.correlation_id,
         }))
     }
@@ -1116,6 +1119,46 @@ mod tests {
         let stored = reloaded.user(&trader_id).unwrap();
         assert_eq!(stored.capability_grants.len(), 1);
         assert_eq!(stored.capability_denies.len(), 1);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn login_returns_caller_effective_capabilities() {
+        let (edge, path, _s) = edge("login-caps");
+        // The seed admin resolves to grant-all: every action × asset (9 × 2 = 18).
+        let admin = login(&edge, "admin@celnet.com", "password").await.unwrap();
+        assert_eq!(
+            admin.capabilities.len(),
+            Action::ALL.len() * AssetClass::ALL.len()
+        );
+
+        // A fresh trader holds the role bundle: all actions but `administer` (8 × 2).
+        let (trader_id, _t) = make_trader(&edge, &admin.session_token, "lc@celnet.com").await;
+        let trader = login(&edge, "lc@celnet.com", "trader-pw-123")
+            .await
+            .unwrap();
+        assert_eq!(
+            trader.capabilities.len(),
+            (Action::ALL.len() - 1) * AssetClass::ALL.len()
+        );
+        assert!(has_cap(&trader.capabilities, "execute", "fixed_income"));
+        assert!(!has_cap(&trader.capabilities, "administer", "fx_options"));
+
+        // After an admin denies one capability, the trader's NEXT login (their prior
+        // session was revoked by the change) re-derives the narrowed set.
+        edge.set_user_capabilities(Request::new(SetUserCapabilitiesRequest {
+            session_token: admin.session_token,
+            id: trader_id,
+            grants: vec![],
+            denies: vec![cap("execute", "fixed_income")],
+            correlation_id: None,
+        }))
+        .await
+        .unwrap();
+        let relogged = login(&edge, "lc@celnet.com", "trader-pw-123")
+            .await
+            .unwrap();
+        assert!(!has_cap(&relogged.capabilities, "execute", "fixed_income"));
         let _ = std::fs::remove_file(&path);
     }
 

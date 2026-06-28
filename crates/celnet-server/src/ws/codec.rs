@@ -2643,6 +2643,8 @@ pub(super) fn login_response_to_json(r: &LoginResponse) -> Value {
         "session_token": r.session_token,
         "user": r.user.as_ref().map(user_desc_to_json),
         "expires_nanos": r.expires_nanos,
+        // The caller's own effective set — a client gates its own affordances on it.
+        "capabilities": capability_list_to_json(&r.capabilities),
         "correlation_id": r.correlation_id,
     })
 }

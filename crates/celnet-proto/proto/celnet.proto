@@ -3350,6 +3350,11 @@ message LoginResponse {
   UserDesc user = 2;
   // Absolute session expiry (epoch nanos); re-login is required past it.
   int64 expires_nanos = 3;
+  // The caller's own fully-resolved effective capability set (role bundle ∪
+  // grants ∖ denies), enumerated over every action × asset. A client gates its
+  // own affordances on this without an admin-only round-trip. Because a
+  // capability change revokes the user's sessions, the next login re-derives it.
+  repeated CapabilityDesc capabilities = 5;
   // Echoed request correlation id.
   optional uint64 correlation_id = 4;
 }
