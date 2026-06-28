@@ -128,7 +128,7 @@ describe("dynamic-array formatting", () => {
   it("relabels the rate-rho rows by asset class (the carry seam), FX byte-identical", () => {
     // FX (and an absent underlying) keep the two-rate domestic/foreign pair.
     expect(greekRowsFor(undefined).map((r) => r.label)).toEqual(GREEK_ROWS.map((r) => r.label));
-    const fxRows = greekRowsFor({ kind: "fx", fx: { base: "EUR", quote: "USD" } });
+    const fxRows = greekRowsFor({ kind: "fx", fx: { base: "EUR", quote: "USD" }, settlementCcy: "USD" });
     expect(fxRows[5]?.label).toBe("rho_dom");
     expect(fxRows[6]?.label).toBe("rho_for");
 
