@@ -102,6 +102,8 @@ use celnet_proto::{
 use tokio::sync::Mutex;
 use tonic::{Request, Response, Status};
 
+use celnet_entitlements::{Action, AssetClass};
+
 use crate::clock::Clock;
 use crate::core_link::CoreLink;
 use crate::pricer::{ConventionSet, price_instrument};
@@ -827,11 +829,18 @@ impl QuoteService for QuoteEdge {
             acc.session_token.as_deref(),
             acc.principal.clone(),
         )?;
+        // Accepting a quote books an execution — the strongest write on the FX
+        // path — so it requires the Execute·FxOptions capability, not mere read
+        // access. The capability gate resolves an authenticated session (a body
+        // principal cannot self-grant; finding #3): under Enforce a caller without
+        // Execute is denied, while logged-in GUI/Excel users (who inject their
+        // session token on every unary) keep trading. Mirrors the FI accept/book
+        // gates (RfqDeskService/AcceptDeskQuote, RiskService/BookRatesPosition).
         authorize_caller(
             self.access_store.access_mode(),
             &caller,
             "QuoteService/AcceptQuote",
-            RequiredAuthority::ReadAny,
+            RequiredAuthority::Capability(Action::Execute, AssetClass::FxOptions),
             None,
         )?;
 
@@ -1371,6 +1380,31 @@ mod tests {
             .expect("Alice — the requesting caller — books her own quote")
             .into_inner();
         assert_eq!(exec.quote_id, quote.quote_id);
+    }
+
+    /// Accepting a quote books an execution, so under Enforce it requires the
+    /// `Execute·FxOptions` capability — not mere read access. A grant-all *body
+    /// principal* with no session is admitted for the read-side RequestQuote
+    /// (ReadAny — see `enforce_denies_unauthenticated_then_admits_authenticated`),
+    /// but must be DENIED here: a body principal cannot self-grant a capability
+    /// (finding #3), so only an authenticated session that holds Execute may accept.
+    /// The capability gate fires before the quote lookup, so the denial is
+    /// `unauthenticated`, not `not_found`.
+    #[tokio::test]
+    async fn accept_under_enforce_requires_execute_capability_not_just_a_principal() {
+        let (edge, _sessions, _store) = edge_under(AccessMode::Enforce);
+        let denied = edge
+            .accept_quote(Request::new(QuoteAccept {
+                quote_id: 1, // never looked up — the capability gate refuses first
+                idempotency_key: "k-grant-all-accept".to_owned(),
+                side: Side::Buy as i32,
+                lp_id: String::new(),
+                session_token: None,
+                principal: Some(grant_all()),
+            }))
+            .await
+            .expect_err("a grant-all principal cannot satisfy the Execute capability");
+        assert_eq!(denied.code(), tonic::Code::Unauthenticated);
     }
 
     /// An ANONYMOUS-requested quote (permissive, no authenticated requester) keeps
