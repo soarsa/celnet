@@ -365,6 +365,78 @@ Status legend: OPEN / IN-PROGRESS / DONE / ENV (deploy-bound, not a gap). Each i
 - **[P3/M] `proto/strategy-per-leg-expiry celnet-proto+celnet-server`** — Multi-leg strategies are single-expiry: proto Leg carries no per-leg tenor, so calendar/diagonal spreads cannot be booked as one structure.
   Evidence: crates/celnet-proto/proto/celnet.proto:806-827 (read this round); docs/COMPETITIVE-ANALYSIS.md OVML row. Oracle: VERIFIED: celnet.proto Leg = {option_type, strike, side, ratio} with no expiry field; Strategy legs share the enclosing Instrument expiry. A 1M-vs-3M calendar/diagonal — routinely-traded FX vol structures that OVML/venues book as one net-premium ticket — is unexpressible on the wire. Survived the ad… **OPEN.**
 
+## (2026-06-28) Permissions-program tail + integration backlog
+
+Surfaced while delivering the action-capability permissions program (slices 1–5,
+merged to `main` in `cc2e3b9`; see the per-project memory `permissions-capability-track`
+and `docs/plan/PERMISSIONS-ADMINISTRATION-REQUIREMENT.md`). Each is a self-contained,
+independently-landable feature. Format matches this file: dedup-key, evidence, acceptance.
+
+- **[P1/M] `authz-quote-accept-gating celnet-proto+celnet-server+gui+excel`** — FX
+  click-to-trade (`QuoteService.AcceptQuote`) is **not** capability-gated: the `QuoteAccept`
+  wire message carries no `session_token`/`principal`, so `Execute·FxOptions` cannot be
+  enforced server-side — unlike the FI accept path (`AcceptDeskQuote`), which is gated. This
+  is the FX half of permissions slice 2.
+  Evidence: `crates/celnet-proto/proto/celnet.proto` (QuoteAccept message lacks the auth
+  fields the FI accept path carries); `crates/celnet-server/src/services/quote.rs` (no
+  `authorize_caller(Capability(Execute, FxOptions))` on accept); adjacent reachability item
+  `AcceptQuote.lp_id` elsewhere in this file. Acceptance: add `session_token` (+ optional
+  `principal`) to QuoteAccept → regen → GUI/Excel/client inject the token (as every other
+  unary RPC already does) → server gates `Capability(Execute, FxOptions)` requiring an
+  authenticated session (finding-#3 guard: a body principal must not self-grant) → e2e under
+  Enforce: an un-`Execute` trader's accept is denied; gui affordance already disabled (slice
+  5b gates the button on `execute·fx_options`). **OPEN.**
+- **[P1/M] `authz-stream-session-gating celnet-server/src/services/stream.rs`** — the
+  streaming session (`StreamSession` subscribe / execute frames) is not capability-gated
+  (`Stream` / `Execute`). Hot path; gate at the WS stream driver without alloc/lock/log in the
+  pinned core. **Coordinate** — `stream.rs` is touched by multiple sessions.
+  Evidence: `crates/celnet-server/src/services/stream.rs` (subscribe/execute frame handlers);
+  `crates/celnet-server/src/ws/mod.rs` stream-control dispatch. Acceptance: subscribe gates
+  `Capability(Stream, <asset>)`, click-to-trade-over-stream gates `Capability(Execute,
+  <asset>)`, both requiring an authenticated session; e2e under Enforce; the decoder/router
+  lockstep test still green. **OPEN.**
+- **[P2/M] `excel-signin-affordance-gating excel/`** — the Excel add-in cannot client-side-gate
+  affordances on the caller's capabilities the way the GUI does (slice 5b), because it has **no
+  interactive login**: it presents a pre-minted `sessionToken` via `ConnectionOptions` and never
+  receives `LoginResponse.capabilities`. Server still enforces every gated RPC, so this is a UX
+  parity gap, not a security hole.
+  Evidence: `excel/src/transport/connection.ts` (token via `ConnectionOptions`, no login round-
+  trip); `excel/src/taskpane/capability.ts` is the product price-matrix, a different concept.
+  Acceptance: an Excel sign-in flow that performs `Login`, captures `capabilities`, and
+  disables/explains ribbon + task-pane affordances by action×asset (Excel's idiom for
+  "not permitted"); parity with the GUI's disable-+-tooltip discipline. **OPEN.**
+- **[P3/S] `gui-a11y-book-view-domain-nav gui/e2e`** — `e2e/a11y.e2e.ts` "Book view" times out:
+  `gotoWorkspace(page,"book")` clicks the Book rail button **without switching to the
+  `fixed-income` domain**, where Book lives (`gui/src/lib/commands.ts`); the test starts in FX
+  Options so the click never resolves. Pre-existing harness/domain-nav bug (not a product
+  defect; the other 8 a11y views + the slice-4/5 e2e specs pass).
+  Evidence: `gui/e2e/a11y.e2e.ts` "Book view"; `gui/e2e/helpers.ts` `gotoWorkspace`;
+  `gui/src/lib/commands.ts` (Book ∈ fixed-income domain). Acceptance: `gotoWorkspace` switches
+  domain before clicking the rail; the "Book view" a11y case passes. **OPEN.**
+- **[P2/L] `fi-fix-quoting-wiring`** — wire the FIX transport for FI / dealer-quoting (the live
+  counterparty venue is a deploy-tier dependency). Original integration item.
+  Evidence: FI dealer-quoting desk shipped (`25293f8`, see memory `fi-dealer-quoting-shipped`)
+  but over the native WS contract, not FIX. Acceptance: FIX acceptor/initiator carrying the
+  RFQ/IOI/quote/accept lifecycle, validated against a session that replays a recorded FIX
+  conversation; no commercial FIX engine (OSS only). **OPEN.**
+- **[P2/M] `cli-fix-test-client`** — a CLI FIX test client to exercise the above, runnable
+  against local and the UAT edge (`celnet@136.115.32.199`). Original item.
+  Evidence: none yet. Acceptance: `celnet-cli` subcommand (or sibling bin) that initiates a FIX
+  session and drives quote/accept; conformance test replaying a fixture. **OPEN.**
+- **[P3/S] `bench-wire-load-bounded celnet-bench`** — get
+  `celnet-bench::wire_load_runs_bounded_and_reports` green (architecture-tail item). **Re-verify
+  post-merge** — the concurrent xasset session whose WIP this was landed in `cc2e3b9`; confirm
+  whether it is still red before scheduling.
+  Evidence: `crates/celnet-bench` (the named test). Acceptance: the bench runs bounded and
+  reports p50/p99/p99.9 within the budget; `just`/cargo gate green. **OPEN (verify).**
+- **[P2/M] `rates-daycount-stir-convexity celnet-rates`** — the rates engine needs 30/360
+  day-count handling and STIR (futures) convexity adjustment in the short-end bootstrap.
+  Independent and self-contained. Original item.
+  Evidence: the rates curve bootstrap (FRA slice 1 `89b0588`); `docs/CONVENTIONS.md` day-count
+  spec. Acceptance: 30/360 selectable per leg and matched to a QuantLib reference; STIR
+  convexity adjustment in the short end validated against published/QuantLib prices (tolerances
+  never silently loosened). **OPEN.**
+
 ## Deliverables (operator-facing artifacts)
 
 - **[DOCS] deliverable/capabilities-pdf** — Produce the **perfectly-styled professional PDF**
