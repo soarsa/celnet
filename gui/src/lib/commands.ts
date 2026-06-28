@@ -39,6 +39,7 @@ export type WorkspaceId =
   | "book"
   | "connections"
   | "admin"
+  | "permissions"
   | "excel";
 
 /**
@@ -109,6 +110,7 @@ export const RAIL: readonly {
   // Administration.
   { id: "connections", glyph: "⇄", label: "Connections", domain: "administration" },
   { id: "admin", glyph: "⚇", label: "Admin", domain: "administration" },
+  { id: "permissions", glyph: "⚷", label: "Permissions", domain: "administration" },
   { id: "excel", glyph: "▦", label: "Excel", domain: "administration" },
 ] as const;
 

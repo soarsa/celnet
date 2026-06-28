@@ -1,0 +1,319 @@
+/* ComponentAccessGrid — per-user component access editor (Permissions page). */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.title {
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-brand);
+  font-size: var(--type-title);
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+}
+.subtitle {
+  margin: 0;
+  max-width: 46rem;
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+.headActions {
+  display: flex;
+  gap: var(--space-3);
+  flex-shrink: 0;
+}
+
+.error {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  background: color-mix(in oklch, var(--danger) 12%, transparent);
+  color: var(--text-primary);
+  font-size: var(--type-caption);
+}
+.savedNote {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--r-sm);
+  border: 1px solid color-mix(in oklch, var(--bid) 50%, transparent);
+  background: color-mix(in oklch, var(--bid) 12%, transparent);
+  color: var(--text-primary);
+  font-size: var(--type-caption);
+}
+.loading {
+  padding: var(--space-4);
+  color: var(--text-tertiary);
+  font-size: var(--type-caption);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--type-body);
+}
+.compHead,
+.toggleHead {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--type-caption);
+  font-weight: var(--weight-header);
+  color: var(--text-secondary);
+  border-bottom: var(--hairline);
+}
+.toggleHead {
+  width: 9rem;
+  text-align: center;
+}
+
+.section + .section {
+  border-top: var(--hairline);
+}
+.sectionHead {
+  text-align: left;
+  padding: var(--space-4) var(--space-3) var(--space-2);
+}
+.sectionTitle {
+  display: block;
+  font-family: var(--font-brand);
+  font-size: var(--type-body);
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+}
+.sectionNote {
+  display: block;
+  margin-top: 2px;
+  max-width: 40rem;
+  font-size: var(--type-micro, 0.7rem);
+  color: var(--text-tertiary);
+  line-height: 1.4;
+}
+
+.row {
+  border-top: var(--hairline);
+}
+.rowHead {
+  text-align: left;
+  padding: 0;
+  font-weight: var(--weight-body);
+}
+.disclosure {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-3);
+  border: none;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--r-sm);
+}
+.disclosure:hover {
+  background: var(--bg-inset);
+}
+.disclosure:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.caret {
+  display: inline-block;
+  font-size: 0.8em;
+  color: var(--text-tertiary);
+  transition: transform var(--dur-fast, 120ms) ease;
+}
+.caret[data-open="true"] {
+  transform: rotate(90deg);
+}
+.compLabel {
+  font-weight: var(--weight-header);
+}
+
+.toggleCell {
+  padding: var(--space-2) var(--space-3);
+  text-align: center;
+}
+
+/* The Read/Write projection switch. */
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1, 0.25rem) var(--space-2);
+  border: var(--hairline);
+  border-radius: var(--r-pill, 999px);
+  background: var(--bg-inset);
+  color: var(--text-secondary);
+  font-size: var(--type-micro, 0.7rem);
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast, 120ms) ease,
+    background var(--dur-fast, 120ms) ease;
+}
+.switch:hover:not(:disabled) {
+  border-color: color-mix(in oklch, var(--accent) 55%, transparent);
+}
+.switch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.track {
+  position: relative;
+  display: inline-block;
+  width: 1.85rem;
+  height: 1rem;
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--text-tertiary) 45%, transparent);
+  transition: background var(--dur-fast, 120ms) ease;
+}
+.thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 50%;
+  background: var(--bg-surface, #fff);
+  transition: transform var(--dur-fast, 120ms) ease;
+}
+
+/* ON — the affordance is granted (bid-tinted, like an allowed cell). */
+.switch[data-state="on"] {
+  border-color: color-mix(in oklch, var(--bid) 55%, transparent);
+  background: color-mix(in oklch, var(--bid) 14%, var(--bg-inset));
+  color: var(--text-primary);
+}
+.switch[data-state="on"] .track {
+  background: var(--bid);
+}
+.switch[data-state="on"] .thumb {
+  transform: translateX(0.85rem);
+}
+
+/* MIXED — partial; carried by the "Mixed" word + a half-shifted thumb, never colour alone. */
+.switch[data-state="mixed"] {
+  border-color: color-mix(in oklch, var(--accent) 55%, transparent);
+  color: var(--text-primary);
+}
+.switch[data-state="mixed"] .track {
+  background: color-mix(in oklch, var(--accent) 60%, transparent);
+}
+.switch[data-state="mixed"] .thumb {
+  transform: translateX(0.42rem);
+}
+
+/* OFF via an active DENY — deny-wins, made obvious (danger-tinted + bordered). */
+.switch[data-deny="true"][data-state="off"] {
+  border-color: color-mix(in oklch, var(--danger) 60%, transparent);
+  background: color-mix(in oklch, var(--danger) 12%, var(--bg-inset));
+  color: var(--text-primary);
+}
+.switch[data-deny="true"][data-state="off"] .track {
+  background: var(--danger);
+}
+
+.stateText {
+  font-weight: var(--weight-header);
+  text-transform: uppercase;
+}
+
+.readOnlyTag {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  color: var(--text-tertiary);
+  font-size: var(--type-micro, 0.7rem);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: help;
+}
+
+/* The advanced per-action drawer. */
+.advRow {
+  background: var(--bg-inset);
+}
+.advWrap {
+  padding: var(--space-3) var(--space-4) var(--space-4);
+}
+.advHint {
+  margin: 0 0 var(--space-3);
+  font-size: var(--type-micro, 0.7rem);
+  color: var(--text-tertiary);
+}
+.advGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  gap: var(--space-2);
+}
+.advCell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-3);
+  border-radius: var(--r-sm);
+  border: var(--hairline);
+  background: var(--bg-surface, var(--bg-inset));
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast, 120ms) ease,
+    background var(--dur-fast, 120ms) ease;
+}
+.advCell:hover:not(:disabled) {
+  border-color: color-mix(in oklch, var(--accent) 55%, transparent);
+}
+.advCell:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.advCell:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.advCell[data-allowed="true"] {
+  border-color: color-mix(in oklch, var(--bid) 50%, transparent);
+  background: color-mix(in oklch, var(--bid) 10%, var(--bg-surface, var(--bg-inset)));
+}
+.advCell[data-deny-override="true"] {
+  border-color: color-mix(in oklch, var(--danger) 65%, transparent);
+}
+.advAction {
+  font-weight: var(--weight-header);
+  color: var(--text-primary);
+}
+.advEffect {
+  font-size: var(--type-micro, 0.7rem);
+  color: var(--text-secondary);
+}
+.advOverlay {
+  font-size: var(--type-micro, 0.7rem);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.advOverlay[data-overlay="grant"] {
+  color: var(--accent);
+}
+.advOverlay[data-overlay="deny"] {
+  color: var(--danger);
+  font-weight: var(--weight-header);
+}

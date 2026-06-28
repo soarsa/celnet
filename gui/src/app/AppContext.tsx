@@ -78,6 +78,7 @@ export type WorkspaceId =
   | "book"
   | "connections"
   | "admin"
+  | "permissions"
   | "excel";
 
 // Re-export the scope vocabulary from its owning module so existing consumers
@@ -327,6 +328,7 @@ const NOOP = (): void => {};
 const ADMIN_ONLY_WORKSPACES: ReadonlySet<WorkspaceId> = new Set<WorkspaceId>([
   "connections",
   "admin",
+  "permissions",
 ]);
 
 export function AppProvider({

@@ -30,6 +30,7 @@ import { RiskWorkspace } from "../workspaces/RiskWorkspace";
 import { BookWorkspace } from "../workspaces/BookWorkspace";
 import { ConnectionsWorkspace } from "../workspaces/ConnectionsWorkspace";
 import { AdminWorkspace } from "../workspaces/AdminWorkspace";
+import { PermissionsWorkspace } from "../workspaces/PermissionsWorkspace";
 import { ExcelWorkspace } from "../workspaces/ExcelWorkspace";
 import { StatusRibbon } from "./StatusRibbon";
 import { CelerMark, CelnetWordmark } from "../components/CelerMark";
@@ -67,6 +68,7 @@ const WORKSPACE_VIEW: Record<WorkspaceId, () => React.ReactElement> = {
   book: BookWorkspace,
   connections: ConnectionsWorkspace,
   admin: AdminWorkspace,
+  permissions: PermissionsWorkspace,
   excel: ExcelWorkspace,
 };
 
@@ -76,15 +78,15 @@ export function Shell(): React.ReactElement {
   // The keyboard-shortcut cheatsheet overlay (bound to `?`). Shell-local UI.
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
-  // Connections + Admin are admin-only: a non-admin sees neither rail button nor
-  // pane, and their workspace-jumps are dropped from the palette / keyboard. The
-  // admin gate drops ONLY those two ids (Excel stays); every other entry keeps its
-  // ORIGINAL rail index so the ⌘N numbers stay aligned with `resolveChord` (which
-  // maps digits against the full RAIL). The admin chords simply resolve to
-  // now-absent commands and are inert.
+  // Connections + Admin + Permissions are admin-only: a non-admin sees neither
+  // rail button nor pane, and their workspace-jumps are dropped from the palette /
+  // keyboard. The admin gate drops ONLY those three ids (Excel stays); every other
+  // entry keeps its ORIGINAL rail index so the ⌘N numbers stay aligned with
+  // `resolveChord` (which maps digits against the full RAIL). The admin chords
+  // simply resolve to now-absent commands and are inert.
   const isAdmin = app.auth.isAdmin;
   const adminGated = (r: (typeof RAIL)[number]): boolean =>
-    isAdmin || (r.id !== "connections" && r.id !== "admin");
+    isAdmin || (r.id !== "connections" && r.id !== "admin" && r.id !== "permissions");
 
   // GW-tabs: the rail is now split into top-level DOMAIN tabs (FX Options / Fixed
   // Income / Administration). The active domain follows the active workspace; the
@@ -136,7 +138,10 @@ export function Shell(): React.ReactElement {
     toggleAppearance,
     toggleContrast,
     canDrillScope: !isTerminal(app.scope),
-  }).filter((c) => isAdmin || (c.id !== "ws-connections" && c.id !== "ws-admin"));
+  }).filter(
+    (c) =>
+      isAdmin || (c.id !== "ws-connections" && c.id !== "ws-admin" && c.id !== "ws-permissions"),
+  );
 
   // Global keyboard grammar (single source: lib/commands.ts). The Shell resolves a
   // keydown against the registry and dispatches the matched command, so what the

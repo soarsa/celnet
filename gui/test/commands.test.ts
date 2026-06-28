@@ -160,7 +160,8 @@ describe("resolveChord — honoured grammar == advertised grammar", () => {
       expect(hit?.id).toBe(`ws-${RAIL[i]!.id}`);
       expect(hit?.railIndex).toBe(i);
     }
-    // The eleventh-and-beyond views (admin Excel today) have no ⌘N chord at all.
+    // The eleventh-and-beyond views (Connections / Admin / Permissions / Excel
+    // today) have no ⌘N chord at all.
     expect(railChord(10)).toEqual([]);
     // A two-digit "chord" is never honoured (the grammar is a single keypress).
     expect(resolveChord({ key: String(RAIL.length + 1), meta: true }, RAIL.length)).toBeNull();
