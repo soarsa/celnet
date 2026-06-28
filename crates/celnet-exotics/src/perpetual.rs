@@ -452,18 +452,18 @@ pub fn perpetual_greeks(
         }
     };
     // Carry-tagged rhos (ADR-0008 idiom): the FX arm reports the exact chain
-    // rule through r = r_dom, b = r_dom − r_for. This match is per-request
-    // reporting setup, never pricing math.
-    let rates = match i.carry {
-        Carry::FxRates { .. } => RateSensitivities::Fx {
-            rho_dom: discount_rho + carry_rho,
-            rho_for: -carry_rho,
-        },
-        Carry::CostOfCarry { .. } => RateSensitivities::Carry {
-            discount_rho,
-            carry_rho,
-        },
+    // rule through r = r_dom, b = r_dom − r_for. This match selects each arm's
+    // natural-coordinate rate-Greeks (per-request reporting setup, never pricing
+    // math); the matching arm *type* is wrapped by the single-source mapper
+    // `Carry::rate_sensitivities` (pure type selection, no arithmetic) —
+    // byte-identical to the former inline arm constructors.
+    let (rate_greek_a, rate_greek_b) = match i.carry {
+        // FX natural coords are the two flat rhos: rho_dom = discount_rho +
+        // carry_rho (in that order), rho_for = −carry_rho.
+        Carry::FxRates { .. } => (discount_rho + carry_rho, -carry_rho),
+        Carry::CostOfCarry { .. } => (discount_rho, carry_rho),
     };
+    let rates = i.carry.rate_sensitivities(rate_greek_a, rate_greek_b);
     Ok(PerpetualGreeks {
         price,
         delta,

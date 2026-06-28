@@ -1595,7 +1595,7 @@ mod tests {
         let booked = edge
             .book_rates_position(Request::new(BookRatesPositionRequest {
                 session_token: Some(token),
-                position: Some(line.clone()),
+                position: Some(line),
                 principal: None,
                 correlation_id: None,
             }))

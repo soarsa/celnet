@@ -72,7 +72,7 @@
 use celnet_core::CarryGreeks;
 use celnet_core::math::{exp, ln, sqrt};
 use celnet_qmc::{BrownianBridge, SobolSequence, inv_norm_cdf};
-use celnet_types::{Carry, OptionType, RateSensitivities};
+use celnet_types::{Carry, OptionType};
 
 use crate::inputs::ExoticInputs;
 
@@ -213,12 +213,13 @@ pub fn american_fd(i: &ExoticInputs, spec: &AmericanOption, grid: AmericanGrid) 
 /// the PSOR grid, so the early-exercise boundary moves consistently with the
 /// shocked market.
 ///
-/// Rate sensitivities are carry-tagged ([`RateSensitivities`]): an FX
+/// Rate sensitivities are carry-tagged ([`celnet_types::RateSensitivities`]): an FX
 /// [`Carry::FxRates`] input is bumped along `r_dom`/`r_for` **natively** (the
 /// identical finite-difference perturbations the historical FX engine used, so
-/// the FX rhos are byte-identical) and reported as [`RateSensitivities::Fx`]; a
-/// [`Carry::CostOfCarry`] input is bumped along `(r, b)` and reported as
-/// [`RateSensitivities::Carry`]. The bump *basis* is carry-native by design —
+/// the FX rhos are byte-identical) and reported as
+/// [`Fx`](celnet_types::RateSensitivities::Fx); a [`Carry::CostOfCarry`] input is
+/// bumped along `(r, b)` and reported as
+/// [`Carry`](celnet_types::RateSensitivities::Carry). The bump *basis* is carry-native by design —
 /// re-expressing the FX bumps in `(r, b)` would change the rounding of the
 /// central differences (ADR-0008 §3.4 decision).
 #[must_use]
@@ -284,9 +285,15 @@ fn fd_greeks(i: &ExoticInputs, price: &dyn Fn(&ExoticInputs) -> f64) -> CarryGre
     let with_carry = |carry: Carry| ExoticInputs { carry, ..i.clone() };
     let central =
         |up: Carry, dn: Carry| (price(&with_carry(up)) - price(&with_carry(dn))) / (2.0 * H_R);
-    let rates = match i.carry {
-        Carry::FxRates { r_dom, r_for } => RateSensitivities::Fx {
-            rho_dom: central(
+    // The `match i.carry` selects WHICH params get FD-bumped (carry-native basis, so
+    // the FX central differences are the historical ones bit-for-bit — re-expressing
+    // them in `(r, b)` would change the rounding); the two bumped rate-Greeks are then
+    // wrapped in the matching arm by the single-source mapper [`Carry::rate_sensitivities`]
+    // (pure type selection, no arithmetic) — byte-identical to the former inline arm
+    // constructors. A third Carry arm needs its bumps here + one edit in the mapper.
+    let (rate_greek_a, rate_greek_b) = match i.carry {
+        Carry::FxRates { r_dom, r_for } => (
+            central(
                 Carry::FxRates {
                     r_dom: r_dom + H_R,
                     r_for,
@@ -296,7 +303,7 @@ fn fd_greeks(i: &ExoticInputs, price: &dyn Fn(&ExoticInputs) -> f64) -> CarryGre
                     r_for,
                 },
             ),
-            rho_for: central(
+            central(
                 Carry::FxRates {
                     r_dom,
                     r_for: r_for + H_R,
@@ -306,18 +313,19 @@ fn fd_greeks(i: &ExoticInputs, price: &dyn Fn(&ExoticInputs) -> f64) -> CarryGre
                     r_for: r_for - H_R,
                 },
             ),
-        },
-        Carry::CostOfCarry { r, b } => RateSensitivities::Carry {
-            discount_rho: central(
+        ),
+        Carry::CostOfCarry { r, b } => (
+            central(
                 Carry::CostOfCarry { r: r + H_R, b },
                 Carry::CostOfCarry { r: r - H_R, b },
             ),
-            carry_rho: central(
+            central(
                 Carry::CostOfCarry { r, b: b + H_R },
                 Carry::CostOfCarry { r, b: b - H_R },
             ),
-        },
+        ),
     };
+    let rates = i.carry.rate_sensitivities(rate_greek_a, rate_greek_b);
 
     let h_t = i.t * H_T_REL;
     let at_t = |t: f64, ds: f64| ExoticInputs {
