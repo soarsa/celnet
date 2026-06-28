@@ -6,6 +6,7 @@ import {
   conventionFooter,
   formatCalibratedSmileSpill,
   formatGreeksSpill,
+  greekRowsFor,
   formatPremiumSpill,
   formatRfqSpill,
   formatServerStatusSpill,
@@ -122,6 +123,35 @@ describe("dynamic-array formatting", () => {
     expect(String(m[13]?.[0])).toContain("SPOT_UNADJUSTED");
     // Greek price is NOT in the GREEKS spill (it is CELNET.PRICE's job).
     expect(m.flat()).not.toContain(SAMPLE_GREEKS.price);
+  });
+
+  it("relabels the rate-rho rows by asset class (the carry seam), FX byte-identical", () => {
+    // FX (and an absent underlying) keep the two-rate domestic/foreign pair.
+    expect(greekRowsFor(undefined).map((r) => r.label)).toEqual(GREEK_ROWS.map((r) => r.label));
+    const fxRows = greekRowsFor({ kind: "fx", fx: { base: "EUR", quote: "USD" } });
+    expect(fxRows[5]?.label).toBe("rho_dom");
+    expect(fxRows[6]?.label).toBe("rho_for");
+
+    // A cross-asset line carries the class-correct carry rho — same wire keys
+    // (rhoDom/rhoFor), class-correct labels (mirrors the GUI GreeksStrip).
+    const eq = greekRowsFor({
+      kind: "equity",
+      equity: { symbol: { ticker: "AAPL", venue: "XNAS" }, currency: "USD" },
+      settlementCcy: "USD",
+    });
+    expect(eq[5]).toEqual({ label: "rho_rate", key: "rhoDom" });
+    expect(eq[6]).toEqual({ label: "rho_dividend_yield", key: "rhoFor" });
+    expect(greekRowsFor({ kind: "commodity", commodity: { symbol: { ticker: "CL", venue: "" }, currency: "USD" }, settlementCcy: "USD" })[6]?.label).toBe("rho_net_carry");
+    expect(greekRowsFor({ kind: "digitalAsset", digitalAsset: { base: "BTC", quote: "USDT" }, settlementCcy: "USDT" })[6]?.label).toBe("rho_funding");
+
+    // The spill carries the class-correct label + the (unchanged) wire value.
+    const spill = formatGreeksSpill(SAMPLE_GREEKS, DEFAULT_CONVENTIONS, 1n, 0n, {
+      kind: "equity",
+      equity: { symbol: { ticker: "AAPL", venue: "XNAS" }, currency: "USD" },
+      settlementCcy: "USD",
+    });
+    expect(spill[6]).toEqual(["rho_dividend_yield", SAMPLE_GREEKS.rhoFor]);
+    expect(spill.length).toBe(GREEK_ROWS.length + 1); // still 13 Greeks + footer
   });
 
   it("conventionFooter renders live vs versioned surface", () => {
