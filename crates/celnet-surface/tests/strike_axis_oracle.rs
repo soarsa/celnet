@@ -129,6 +129,68 @@ fn eth_exact_svi_grid_round_trips() {
     assert!((fit.slice.a - a).abs() <= 1e-6);
 }
 
+/// O1 regression — the steep-skew, short-tenor truth that exposed the
+/// single-start outer-search stall (the strike-axis multi-start fix). At
+/// `t = 0.02` (one week) with `b ≈ 0.46`, `ρ ≈ −0.8`, `σ ≈ 0.35` the truth is
+/// monotone in total variance across `k ∈ ±0.6`, so the on-grid `argmin w` sits
+/// at the right *edge* — diametrically away from the interior SVI vertex
+/// `m ≈ 0.09`. The legacy single Gauss-Newton start seeded there walked the
+/// width up and settled at a shallow local minimum (max vol error `> 1`); the
+/// deterministic multi-start brackets the vertex and recovers the global basin.
+///
+/// The truth is genuinely arbitrage-free (the cost at the true `(m, σ)` is
+/// `≈1e-29`), so the fitter MUST reproduce it: this asserts the same exact-
+/// recovery standard as the gentle fixtures, never a loosened tolerance. The
+/// parameters are the proptest's persisted shrink — re-typed here as a unit-
+/// level guard independent of the regression-seed file.
+#[test]
+fn steep_skew_short_tenor_truth_round_trips() {
+    let (a, b, rho, m, sigma, t) = (
+        1e-4,
+        0.459_573_554_125_727_87,
+        -0.799_637_053_145_059_7,
+        0.090_862_266_730_059_9,
+        0.352_049_973_445_048_1,
+        0.02,
+    );
+    // Zero net carry ⇒ forward = spot = 100 (the proptest's anchor).
+    let ctx = StrikeSliceContext::new(100.0, Carry::CostOfCarry { r: 0.0, b: 0.0 }, t);
+    let f = ctx.forward();
+    // The 11-point ±0.6 grid — vols from the in-test re-typed reference only.
+    let quotes = StrikeQuoteSlice::new(
+        (0..11)
+            .map(|i| {
+                let k = -0.6 + 1.2 * f64::from(i) / 10.0;
+                let w = svi_w_reference(k, a, b, rho, m, sigma);
+                StrikeQuote {
+                    strike: f * k.exp(),
+                    vol: (w / t).sqrt(),
+                }
+            })
+            .collect(),
+    );
+
+    let fit = fit_strike_slice(&ctx, &quotes).unwrap();
+    assert!(
+        fit.max_vol_error <= 1e-4,
+        "steep-skew on-grid max vol error {} must be ≤ 1e-4 (the sanctioned floor)",
+        fit.max_vol_error
+    );
+    // Off-grid total variance agrees with the reference across the span.
+    for j in 0..=40 {
+        let k = -0.6 + 1.2 * f64::from(j) / 40.0;
+        let w_fit = fit.slice.total_variance(k);
+        let w_truth = svi_w_reference(k, a, b, rho, m, sigma);
+        assert!(
+            (w_fit - w_truth).abs() <= 1e-6,
+            "off-grid w at k={k}: fit {w_fit} vs truth {w_truth}"
+        );
+    }
+    // The fitted slice is arbitrage-free in both independent notions.
+    assert!(fit.slice.is_butterfly_free(0.6, 1e-6));
+    assert!(fit.slice.satisfies_wing_bound());
+}
+
 // =========================================================================
 // O2 — independent linear algebra (Cramer's rule).
 // =========================================================================

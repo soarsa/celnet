@@ -197,6 +197,34 @@ pub struct StrikeSliceFit {
 /// skew `ρ` is indeterminate — mapped to `0`.
 const FLAT_D_FLOOR: f64 = 1e-12;
 
+/// Deterministic outer multi-start grid for the `(m, σ)` search.
+///
+/// The dimension-reduced calibration is **exactly convex in the inner `(a, c, d)`**
+/// (a 3×3 linear least squares) but the outer objective over `(m, σ)` is
+/// non-convex: a damped Gauss-Newton from a single seed can settle in a shallow
+/// local minimum far from the global optimum. The single legacy seed (the on-grid
+/// `argmin w` vertex, [`seed_from_grid`]) is the global basin for the common,
+/// gently-skewed smile, but it is *diametrically wrong* for a steeply-skewed
+/// slice whose total variance is monotone across the grid: then the on-grid
+/// minimum sits at an **edge**, not at the interior SVI vertex, and Gauss-Newton
+/// walks the width `σ` up and away from the true narrow basin (verified: an
+/// arbitrage-free `t=0.02`, `b≈0.46`, `ρ≈−0.8`, `σ≈0.35` truth — global cost
+/// `≈1e-29` at the true `(m,σ)`, single-start cost `≈2e-4`). The fix is a fixed
+/// multi-start that brackets the SVI vertex across the grid's log-moneyness span
+/// and the width across a few decades, takes the lowest-cost converged result,
+/// and keeps the legacy seed first so any quote set the single start already
+/// reproduced exactly stays **bit-identical** (a strictly-lower-cost rule never
+/// displaces an already-optimal start). The starts are fixed constants evaluated
+/// in a fixed order ⇒ the fit remains bit-reproducible.
+///
+/// `M_STARTS` vertices spaced across `[k₁, kₙ]` (the SVI vertex must lie at or
+/// near a grid strike for a recoverable smile) × `SIGMA_STARTS` widths spanning
+/// the narrow-to-wide range an exchange smile occupies.
+const M_STARTS: usize = 7;
+/// Width seeds (log-moneyness units): a few decades from a sharp vertex to a
+/// flat-wide smile, chosen to bracket the recoverable `σ` band.
+const SIGMA_STARTS: [f64; 4] = [0.05, 0.15, 0.35, 0.8];
+
 /// The hostile constant residual returned when the inner linear solve fails:
 /// the Gauss-Newton residual-decrease guard then rejects the step
 /// deterministically (it cannot improve on any finite accepted state).
@@ -318,6 +346,21 @@ fn admit_or_shrink(
     candidate(lo).filter(passes_admission_scan)
 }
 
+/// The legacy single-start seed: the vertex near the lowest observed total
+/// variance (first occurrence) and the width from the observed k-span — kept as
+/// the **first** multi-start so any quote set this seed already reproduced
+/// exactly stays bit-identical.
+fn seed_from_grid(ks: &[f64], ws: &[f64]) -> (f64, f64) {
+    let mut min_i = 0;
+    for (i, &w) in ws.iter().enumerate() {
+        if w < ws[min_i] {
+            min_i = i;
+        }
+    }
+    let n = ks.len();
+    (ks[min_i], clamp(0.25 * (ks[n - 1] - ks[0]), 1e-2, 1.0))
+}
+
 /// Lower the strike-gridded quotes onto the neutral anchor plane:
 /// `k_i = ln(K_i/F)`, `w_i = σ_i²·t` — the identical lowering the FX delta
 /// front-end performs after its pillar calibration (`calibrate.rs::anchors`).
@@ -422,17 +465,6 @@ pub fn fit_strike_slice(
     let (ks, ws) = anchors(forward, t, quotes);
     let n = ks.len();
 
-    // Deterministic seeds: the vertex near the lowest observed total variance
-    // (first occurrence), the width from the observed k-span.
-    let mut min_i = 0;
-    for (i, &w) in ws.iter().enumerate() {
-        if w < ws[min_i] {
-            min_i = i;
-        }
-    }
-    let mut m = ks[min_i];
-    let mut sigma = clamp(0.25 * (ks[n - 1] - ks[0]), 1e-2, 1.0);
-
     let (m_lo, m_hi) = (ks[0] - 0.5, ks[n - 1] + 0.5);
     let project = |m: f64, sigma: f64| (clamp(m, m_lo, m_hi), clamp(sigma, 1e-4, 5.0));
 
@@ -460,7 +492,34 @@ pub fn fit_strike_slice(
         }
     };
 
-    gauss_newton_2(&mut m, &mut sigma, residuals, (m_lo, m_hi), project);
+    // Deterministic outer multi-start (`M_STARTS`):
+    //   * the legacy on-grid `argmin w` seed FIRST (bit-identical preservation),
+    //   * then vertices bracketing `[k₁, kₙ]` × widths spanning `SIGMA_STARTS`.
+    // Run the shared damped Gauss-Newton from each start and keep the lowest
+    // converged sum-of-squared-residuals; a STRICTLY-lower cost is required to
+    // displace the incumbent, so an already-optimal first start is never replaced
+    // (the existing exact-recovery fixtures stay bit-for-bit). The fixed seed set,
+    // fixed evaluation order, and strict tie-break keep the fit deterministic.
+    let mut starts = Vec::with_capacity(1 + M_STARTS * SIGMA_STARTS.len());
+    starts.push(seed_from_grid(&ks, &ws));
+    for i in 0..M_STARTS {
+        let m_seed = ks[0] + (ks[n - 1] - ks[0]) * (i as f64) / ((M_STARTS - 1) as f64);
+        for &sigma_seed in &SIGMA_STARTS {
+            starts.push((m_seed, sigma_seed));
+        }
+    }
+
+    let mut best: Option<(f64, f64, f64)> = None; // (cost, m, σ)
+    for &(m0, sigma0) in &starts {
+        let (mut m, mut sigma) = project(m0, sigma0);
+        gauss_newton_2(&mut m, &mut sigma, residuals, (m_lo, m_hi), project);
+        let cost = crate::fitmath::sumsq(&residuals(m, sigma));
+        if best.is_none_or(|(best_cost, _, _)| cost < best_cost) {
+            best = Some((cost, m, sigma));
+        }
+    }
+    // `starts` is non-empty (the legacy seed is always present) ⇒ `best` is set.
+    let (_, m, sigma) = best.expect("at least the legacy start always converges");
 
     // Extraction: recompute the projected inner solution at the final (m, σ) —
     // bitwise the state the accepted residuals evaluated — then admit it (or
