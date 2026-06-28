@@ -335,6 +335,10 @@ impl AuthService for AuthEdge {
             desk_id,
             password_hash,
             disabled: false,
+            // A new account starts with no per-user overlay — pure role-derived
+            // capabilities until an admin grants/denies specific ones.
+            capability_grants: Vec::new(),
+            capability_denies: Vec::new(),
         };
         let mut next = guard.clone();
         next.users.push(new_user.clone());
@@ -387,6 +391,11 @@ impl AuthService for AuthEdge {
             desk_id,
             password_hash: old.password_hash.clone(),
             disabled: req.disabled,
+            // Preserve the per-user capability overlay — this RPC edits identity
+            // (role/desk/disabled), never the overlay, so it must not silently wipe
+            // it. Overlay editing is its own admin RPC (slice 3b).
+            capability_grants: old.capability_grants.clone(),
+            capability_denies: old.capability_denies.clone(),
         };
         let authority_changed = updated.role != old.role
             || updated.desk_id != old.desk_id
@@ -756,6 +765,8 @@ mod tests {
             desk_id: None,
             password_hash: "x".into(),
             disabled: false,
+            capability_grants: Vec::new(),
+            capability_denies: Vec::new(),
         });
         assert!(!was_sole_enabled_admin(&store, &admin));
         // A trader is never "the sole admin".
@@ -767,6 +778,8 @@ mod tests {
             desk_id: None,
             password_hash: "x".into(),
             disabled: false,
+            capability_grants: Vec::new(),
+            capability_denies: Vec::new(),
         };
         assert!(!was_sole_enabled_admin(&store, &trader));
     }

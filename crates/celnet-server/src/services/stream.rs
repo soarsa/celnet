@@ -1890,6 +1890,8 @@ mod tests {
             display_name: "Stream Trader".into(),
             role: Role::Trader,
             desk_id: Some("g10".into()),
+            cap_grants: Vec::new(),
+            cap_denies: Vec::new(),
         })
         .expect("the OS CSPRNG mints a session token")
         .token

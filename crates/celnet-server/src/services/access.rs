@@ -571,6 +571,8 @@ mod tests {
             display_name: "Trader".into(),
             role,
             desk_id: Some("g10".into()),
+            cap_grants: Vec::new(),
+            cap_denies: Vec::new(),
         }
     }
 

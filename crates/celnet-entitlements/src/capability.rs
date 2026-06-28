@@ -95,6 +95,14 @@ impl Action {
             Action::Administer => "administer",
         }
     }
+
+    /// Parse an action from its [`label`](Action::label) — the exact inverse, so a
+    /// persisted / wire / audit string round-trips. Returns `None` for any unknown
+    /// token (the boundary fails loud rather than silently dropping authority).
+    #[must_use]
+    pub fn from_label(label: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|a| a.label() == label)
+    }
 }
 
 /// The **asset class** a capability applies to. Rates live under
@@ -118,6 +126,14 @@ impl AssetClass {
             AssetClass::FxOptions => "fx_options",
             AssetClass::FixedIncome => "fixed_income",
         }
+    }
+
+    /// Parse an asset class from its [`label`](AssetClass::label) — the exact
+    /// inverse, so a persisted / wire / audit string round-trips. Returns `None`
+    /// for any unknown token.
+    #[must_use]
+    pub fn from_label(label: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|a| a.label() == label)
     }
 }
 
@@ -305,6 +321,22 @@ mod tests {
         assert!(set.allows(FI_EXEC));
         assert!(!set.allows(FX_EXEC), "bundle was FI-only");
         assert!(!set.allows(Capability::new(Action::Book, AssetClass::FixedIncome)));
+    }
+
+    /// Every action/asset label round-trips through `from_label`, and an unknown
+    /// token is rejected (so a persisted/wire string can never silently widen or
+    /// drop authority).
+    #[test]
+    fn labels_round_trip_through_from_label() {
+        for action in Action::ALL {
+            assert_eq!(Action::from_label(action.label()), Some(action));
+        }
+        for asset in AssetClass::ALL {
+            assert_eq!(AssetClass::from_label(asset.label()), Some(asset));
+        }
+        assert_eq!(Action::from_label("teleport"), None);
+        assert_eq!(Action::from_label("Book"), None, "labels are case-exact");
+        assert_eq!(AssetClass::from_label("equities"), None);
     }
 
     /// Action/asset labels are stable and distinct (audit fields key on them).
