@@ -12,7 +12,9 @@
 //!   3. Determinism: same draw ⇒ `simulate` bit-identical on two calls;
 //!   4. `XvaResult`: `cva >= 0`, `dva >= 0`, all three fields finite;
 //!      `total_adjustment() == cva − dva + fva` exactly (to_bits match);
-//!   5. Comparative monotonicity: doubling `lambda_cpty` does not decrease CVA
+//!   5. Comparative monotonicity: doubling `lambda_cpty` does not decrease the
+//!      counterparty's total default probability (CVA itself is NOT monotonic in
+//!      hazard for a general exposure profile — see Contract 5 below)
 //!      (survival mass shifts earlier; the EPE-weighted integral grows or stays).
 //!
 //! The panic contract on out-of-range LGD is unit-tested in the crate, not here:
@@ -204,8 +206,26 @@ fuzz_target!(|draw: Draw| {
         "total_adjustment must be cva - dva + fva exactly"
     );
 
-    // Contract 5: doubling lambda_cpty must not decrease CVA.
+    // Contract 5: doubling lambda_cpty must not decrease the counterparty's TOTAL
+    // default probability over the horizon — the mathematically-exact hazard
+    // monotonicity (S(t)=exp(-λt) ⇒ doubling λ never raises survival). NOTE: CVA
+    // itself is NOT monotonic in the hazard rate for a general exposure profile —
+    // CVA = Σ DF·EPE·ΔPD reweights toward the EARLIER intervals as λ rises, so a
+    // rising / hump-shaped discounted-EPE leg can legitimately LOWER CVA when λ
+    // doubles. Asserting CVA-monotonicity was a wrong invariant — the `compute_xva`
+    // CVA formula is the standard discrete one and is correct; we assert the true
+    // default-probability monotonicity and that the doubled-hazard XVA still
+    // computes cleanly.
     let cpty2 = SurvivalCurve::flat(draw.lambda_cpty * 2.0);
+    let horizon = set.horizon();
+    let pd_before = 1.0 - cpty.survival(horizon);
+    let pd_after = 1.0 - cpty2.survival(horizon);
+    assert!(
+        pd_after >= pd_before - 1e-12,
+        "doubling hazard must not decrease total default probability: before={}, after={}",
+        pd_before,
+        pd_after
+    );
     let xva2 = compute_xva(&XvaInputs {
         profile: &profile,
         counterparty: &cpty2,
@@ -214,13 +234,9 @@ fuzz_target!(|draw: Draw| {
         lgd_own: draw.lgd_o,
         funding_spread: draw.funding_spread,
     });
-    // Allow a tiny floating-point slack: sum of marginal-default products
-    // is non-negative when EPE ≥ 0, but float rounding in summation may yield
-    // a negligible negative when both values are very small.
     assert!(
-        xva2.cva >= xva.cva - 1e-12,
-        "doubling hazard must not decrease CVA: before={}, after={}",
-        xva.cva,
+        xva2.cva >= 0.0 && xva2.cva.is_finite(),
+        "doubled-hazard CVA must be ≥ 0 and finite: {}",
         xva2.cva
     );
 });

@@ -7,7 +7,9 @@
 //!   2. Profile invariants: grid[0]==0, EPE≥0, ENE≥0, discount correct, all finite;
 //!   3. Determinism: simulate bit-identical on two calls with same draw;
 //!   4. CVA≥0, DVA≥0, FVA finite; total_adjustment()==cva-dva+fva exactly;
-//!   5. Doubling lambda_cpty does not decrease CVA.
+//!   5. Doubling lambda_cpty does not decrease the counterparty's total default
+//!      probability (CVA itself is NOT monotonic in hazard for a general exposure
+//!      profile — see Contract 5 below).
 //!
 //! 128 cases; same draw ranges as the fuzz target.
 
@@ -114,8 +116,24 @@ proptest! {
             "total_adjustment must equal cva-dva+fva exactly"
         );
 
-        // Contract 5: doubling lambda_cpty must not decrease CVA.
+        // Contract 5: doubling lambda_cpty must not decrease the counterparty's
+        // TOTAL default probability over the horizon — the mathematically-exact
+        // hazard monotonicity (S(t)=exp(-λt) ⇒ doubling λ never raises survival, so
+        // 1-S(T) never falls). NOTE: CVA itself is NOT monotonic in the hazard rate
+        // for a general exposure profile — CVA = Σ DF·EPE·ΔPD reweights toward the
+        // EARLIER intervals as λ rises, so a rising / hump-shaped discounted-EPE leg
+        // (which the noisy 64-path MC EPE routinely is) can legitimately LOWER CVA
+        // when λ doubles. Asserting CVA-monotonicity was a wrong invariant — the
+        // `compute_xva` CVA formula is the standard discrete one and is correct; we
+        // assert the true default-probability monotonicity and that the doubled-hazard
+        // XVA still computes cleanly (no panic, CVA ≥ 0, finite).
         let cpty2 = SurvivalCurve::flat(lambda_cpty * 2.0);
+        let horizon = set.horizon();
+        let pd_before = 1.0 - cpty.survival(horizon);
+        let pd_after = 1.0 - cpty2.survival(horizon);
+        prop_assert!(pd_after >= pd_before - 1e-12,
+            "doubling hazard must not decrease total default probability: \
+             before={pd_before}, after={pd_after}");
         let xva2 = compute_xva(&XvaInputs {
             profile: &profile,
             counterparty: &cpty2,
@@ -124,7 +142,7 @@ proptest! {
             lgd_own: lgd_o,
             funding_spread,
         });
-        prop_assert!(xva2.cva >= xva.cva - 1e-12,
-            "doubling hazard must not decrease CVA: before={}, after={}", xva.cva, xva2.cva);
+        prop_assert!(xva2.cva >= 0.0 && xva2.cva.is_finite(),
+            "doubled-hazard CVA must be ≥ 0 and finite");
     }
 }
