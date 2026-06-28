@@ -62,6 +62,7 @@ import {
   type SavedView,
   type ViewState,
 } from "../lib/savedViews";
+import { firstAccessibleWorkspace, workspaceAccessible } from "../lib/commands";
 import type { Density } from "../design/density";
 
 export type WorkspaceId =
@@ -318,19 +319,6 @@ export function useApp(): AppState {
 
 const NOOP = (): void => {};
 
-/**
- * Workspaces only an administrator may open. FIX-connection management is
- * admin-only: a non-admin never sees the Connections rail/pane (Shell hides it),
- * and this set is the enforcement backstop — any path that lands a non-admin on
- * one of these (a ⌘-jump, a recalled/URL saved view, or losing admin while parked
- * there) is bounced to the default workspace.
- */
-const ADMIN_ONLY_WORKSPACES: ReadonlySet<WorkspaceId> = new Set<WorkspaceId>([
-  "connections",
-  "admin",
-  "permissions",
-]);
-
 export function AppProvider({
   children,
   // The density value + setter are OWNED by `App.tsx`'s boot hook (the one JS
@@ -437,14 +425,21 @@ export function AppProvider({
   // token on the transport flows it onto every gated RPC.
   const auth = useAuth(transport);
 
-  // Enforce admin-only workspaces: if a non-admin is parked on one (a recalled or
-  // URL saved view, a ⌘-jump, or having just lost admin), bounce to the default.
-  // Pairs with the Shell hiding the rail/pane so non-admins never reach it.
+  // Enforce navigation gating: if the active workspace is not accessible to this
+  // identity — an admin-only pane for a non-admin, OR a workspace in a domain the
+  // user lacks `view` on (e.g. an FX trader who just had `view·fx_options` denied
+  // and re-logs in while parked on an FX view) — bounce to the first ACCESSIBLE
+  // workspace. Covers every entry path: a recalled/URL saved view, a ⌘-jump, the
+  // command palette, or losing access while parked. Pairs with the Shell hiding
+  // the tab/rail/pane so the user is never stranded on a blank/hidden view.
+  // Signed out, `can` is permissive ⇒ no narrowing, so the anonymous workspace is
+  // untouched (the default `stream` stays accessible). The degenerate case where
+  // nothing is accessible leaves the workspace as-is rather than thrash.
   useEffect(() => {
-    if (!auth.isAdmin && ADMIN_ONLY_WORKSPACES.has(workspace)) {
-      setWorkspace("stream");
-    }
-  }, [auth.isAdmin, workspace]);
+    if (workspaceAccessible(workspace, auth)) return;
+    const target = firstAccessibleWorkspace(auth);
+    if (target && target !== workspace) setWorkspace(target);
+  }, [auth.isAdmin, auth.can, workspace]);
 
   const remarkSurface = useMemo(
     () => async (ladder?: BrokerQuoteSet[], model?: SmileModel) => {

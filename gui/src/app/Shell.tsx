@@ -42,11 +42,13 @@ import { NotificationCenter } from "../components/NotificationCenter";
 import { SignInDialog } from "../components/SignInDialog";
 import {
   buildCommands,
+  domainAccessible,
   DOMAINS,
   domainOf,
   RAIL,
   railChord,
   resolveChord,
+  workspaceAccessible,
   type Domain,
   type WorkspaceId,
 } from "../lib/commands";
@@ -78,27 +80,32 @@ export function Shell(): React.ReactElement {
   // The keyboard-shortcut cheatsheet overlay (bound to `?`). Shell-local UI.
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
-  // Connections + Admin + Permissions are admin-only: a non-admin sees neither
-  // rail button nor pane, and their workspace-jumps are dropped from the palette /
-  // keyboard. The admin gate drops ONLY those three ids (Excel stays); every other
-  // entry keeps its ORIGINAL rail index so the ⌘N numbers stay aligned with
-  // `resolveChord` (which maps digits against the full RAIL). The admin chords
-  // simply resolve to now-absent commands and are inert.
-  const isAdmin = app.auth.isAdmin;
-  const adminGated = (r: (typeof RAIL)[number]): boolean =>
-    isAdmin || (r.id !== "connections" && r.id !== "admin" && r.id !== "permissions");
+  // Navigation gating (single source: lib/commands.ts). A workspace is reachable
+  // only if `workspaceAccessible` admits it for this identity — this HIDES (never
+  // disables) whole domains a signed-in user lacks `view` on, exactly as the
+  // Administration tab is hidden for non-admins. Admin-only workspaces
+  // (Connections/Admin/Permissions) require `isAdmin`; FX/FI workspaces require
+  // `view` on their asset class; Excel stays visible to all. Signed out, `can` is
+  // permissive ⇒ every domain shows as before (gating only narrows a real
+  // identity). Every entry keeps its ORIGINAL rail index so the ⌘N numbers stay
+  // aligned with `resolveChord` (which maps digits against the full RAIL); chords
+  // for a now-hidden workspace resolve to an absent command and are inert.
+  const railVisible = (r: (typeof RAIL)[number]): boolean =>
+    workspaceAccessible(r.id, app.auth);
 
-  // GW-tabs: the rail is now split into top-level DOMAIN tabs (FX Options / Fixed
+  // GW-tabs: the rail is split into top-level DOMAIN tabs (FX Options / Fixed
   // Income / Administration). The active domain follows the active workspace; the
   // rail BUTTONS show only the active domain's workspaces (`navRail`), while the
-  // persistent-mount canvas keeps iterating EVERY domain's workspaces (`mountRail`)
-  // so switching tabs never unmounts a pane (preserves P0-11 persistent mount).
+  // persistent-mount canvas iterates every ACCESSIBLE domain's workspaces
+  // (`mountRail`) so switching tabs never unmounts a pane (preserves P0-11
+  // persistent mount) — and an inaccessible domain's panes are never mounted.
   const activeDomain = domainOf(app.workspace);
-  const mountRail = RAIL.filter(adminGated);
+  const mountRail = RAIL.filter(railVisible);
   const navRail = mountRail.filter((r) => r.domain === activeDomain);
 
-  // The Administration tab is shown only to admins.
-  const visibleDomains = DOMAINS.filter((d) => d.id !== "administration" || isAdmin);
+  // Domain tabs are shown only when accessible: Administration ⇒ admins;
+  // FX Options / Fixed Income ⇒ `view` on the asset class (permissive signed out).
+  const visibleDomains = DOMAINS.filter((d) => domainAccessible(d.id, app.auth));
 
   // Per-domain memory of the last-active workspace, so re-selecting a tab returns
   // to where the trader left it (defaulting to that domain's first rail entry).
@@ -112,7 +119,7 @@ export function Shell(): React.ReactElement {
   }, [app.workspace]);
 
   const firstOfDomain = (d: Domain): WorkspaceId => {
-    const entry = RAIL.find((r) => r.domain === d && adminGated(r));
+    const entry = RAIL.find((r) => r.domain === d && railVisible(r));
     return entry ? entry.id : app.workspace;
   };
   const selectDomain = (d: Domain): void => {
@@ -138,10 +145,13 @@ export function Shell(): React.ReactElement {
     toggleAppearance,
     toggleContrast,
     canDrillScope: !isTerminal(app.scope),
-  }).filter(
-    (c) =>
-      isAdmin || (c.id !== "ws-connections" && c.id !== "ws-admin" && c.id !== "ws-permissions"),
-  );
+  }).filter((c) => {
+    // Drop workspace-jump commands (palette + ⌘N) for inaccessible workspaces so
+    // no command can navigate to a hidden domain; non-workspace commands pass.
+    if (!c.id.startsWith("ws-")) return true;
+    const id = c.id.slice("ws-".length) as WorkspaceId;
+    return workspaceAccessible(id, app.auth);
+  });
 
   // Global keyboard grammar (single source: lib/commands.ts). The Shell resolves a
   // keydown against the registry and dispatches the matched command, so what the

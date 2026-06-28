@@ -15,15 +15,20 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ADMIN_ONLY_WORKSPACES,
   buildCommands,
   cheatsheet,
   COMMAND_META,
+  domainAccessible,
   DOMAINS,
   domainOf,
+  firstAccessibleWorkspace,
   RAIL,
   railChord,
   resolveChord,
+  workspaceAccessible,
   type CommandContext,
+  type NavAuth,
 } from "../src/lib/commands";
 import { SHORTCUTS } from "../src/lib/shortcuts";
 
@@ -200,5 +205,104 @@ describe("buildCommands — dispatch wiring & context gating", () => {
     const { ctx } = spyContext();
     const known = new Set(COMMAND_META.map((c) => c.id));
     for (const cmd of buildCommands(ctx)) expect(known.has(cmd.id)).toBe(true);
+  });
+});
+
+describe("navigation gating — domainAccessible / workspaceAccessible (slice 5c)", () => {
+  /** A NavAuth whose `can` admits exactly the given set of `action·asset` keys. */
+  function navAuth(opts: { isAdmin: boolean; allow?: ReadonlySet<string> }): NavAuth {
+    return {
+      isAdmin: opts.isAdmin,
+      can: (action, asset) => opts.allow?.has(`${action}·${asset}`) ?? false,
+    };
+  }
+
+  // The signed-out identity: `can` is permissive (returns true) and not admin.
+  const signedOut: NavAuth = { isAdmin: false, can: () => true };
+
+  describe("domainAccessible", () => {
+    it("fx-options requires view·fx_options for a signed-in identity", () => {
+      const has = navAuth({ isAdmin: false, allow: new Set(["view·fx_options"]) });
+      const lacks = navAuth({ isAdmin: false, allow: new Set(["view·fixed_income"]) });
+      expect(domainAccessible("fx-options", has)).toBe(true);
+      expect(domainAccessible("fx-options", lacks)).toBe(false);
+    });
+
+    it("fixed-income requires view·fixed_income for a signed-in identity", () => {
+      const has = navAuth({ isAdmin: false, allow: new Set(["view·fixed_income"]) });
+      const lacks = navAuth({ isAdmin: false, allow: new Set(["view·fx_options"]) });
+      expect(domainAccessible("fixed-income", has)).toBe(true);
+      expect(domainAccessible("fixed-income", lacks)).toBe(false);
+    });
+
+    it("administration requires isAdmin regardless of capabilities", () => {
+      const admin = navAuth({ isAdmin: true });
+      const trader = navAuth({ isAdmin: false, allow: new Set(["view·fx_options"]) });
+      expect(domainAccessible("administration", admin)).toBe(true);
+      expect(domainAccessible("administration", trader)).toBe(false);
+    });
+
+    it("signed-out is permissive — every asset domain visible, admin hidden", () => {
+      expect(domainAccessible("fx-options", signedOut)).toBe(true);
+      expect(domainAccessible("fixed-income", signedOut)).toBe(true);
+      expect(domainAccessible("administration", signedOut)).toBe(false);
+    });
+  });
+
+  describe("workspaceAccessible", () => {
+    it("admin-only workspaces require isAdmin", () => {
+      const admin = navAuth({ isAdmin: true });
+      const trader = navAuth({
+        isAdmin: false,
+        allow: new Set(["view·fx_options", "view·fixed_income"]),
+      });
+      for (const id of ADMIN_ONLY_WORKSPACES) {
+        expect(workspaceAccessible(id, admin)).toBe(true);
+        expect(workspaceAccessible(id, trader)).toBe(false);
+      }
+    });
+
+    it("Excel (Administration domain, not admin-only) is reachable by everyone", () => {
+      expect(workspaceAccessible("excel", navAuth({ isAdmin: false }))).toBe(true);
+      expect(workspaceAccessible("excel", navAuth({ isAdmin: true }))).toBe(true);
+    });
+
+    it("FX/FI workspaces follow their domain's view capability", () => {
+      const fiOnly = navAuth({ isAdmin: false, allow: new Set(["view·fixed_income"]) });
+      // FX workspaces hidden; FI workspaces shown.
+      expect(workspaceAccessible("ticket", fiOnly)).toBe(false); // fx-options
+      expect(workspaceAccessible("surface", fiOnly)).toBe(false); // fx-options
+      expect(workspaceAccessible("rates", fiOnly)).toBe(true); // fixed-income
+      expect(workspaceAccessible("book", fiOnly)).toBe(true); // fixed-income
+    });
+
+    it("signed-out reaches every non-admin workspace", () => {
+      for (const r of RAIL) {
+        const expected = !ADMIN_ONLY_WORKSPACES.has(r.id);
+        expect(workspaceAccessible(r.id, signedOut)).toBe(expected);
+      }
+    });
+  });
+
+  describe("firstAccessibleWorkspace", () => {
+    it("returns the first RAIL workspace the identity can reach", () => {
+      const fiOnly = navAuth({ isAdmin: false, allow: new Set(["view·fixed_income"]) });
+      // FX entries lead RAIL but are inaccessible ⇒ first hit is the first FI entry.
+      expect(firstAccessibleWorkspace(fiOnly)).toBe("rates");
+    });
+
+    it("an admin reaches the first RAIL entry (FX ticket)", () => {
+      const admin = navAuth({
+        isAdmin: true,
+        allow: new Set(["view·fx_options", "view·fixed_income"]),
+      });
+      expect(firstAccessibleWorkspace(admin)).toBe(RAIL[0]!.id);
+    });
+
+    it("an identity with no asset view still falls back to Excel (never null in practice)", () => {
+      // No view on either asset, not admin: only Excel remains reachable.
+      const none = navAuth({ isAdmin: false });
+      expect(firstAccessibleWorkspace(none)).toBe("excel");
+    });
   });
 });
