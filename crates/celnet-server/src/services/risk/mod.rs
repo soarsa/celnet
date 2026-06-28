@@ -57,6 +57,7 @@ use crate::services::sessions::SessionRegistry;
 use aggregate::{
     NonAdditiveConfig, aggregate_nodes, cube_from_facts, entitled_cube, entitled_facts_for_scope,
 };
+use celnet_entitlements::{Action, AssetClass};
 use convert::WireResolver;
 use store::PositionStore;
 
@@ -928,15 +929,17 @@ impl RiskService for RiskEdge {
             req.session_token.as_deref(),
             req.principal.clone(),
         )?;
-        // Booking is a write; it still passes the SAME deny-by-default boundary the
-        // rates reads do (an absent principal under enforce is denied). The model has
-        // no trader/admin split for booking — a desk books its own line — so the
-        // authority is `ReadAny`, gated by the principal/session exactly as the rest.
+        // Booking is a write into the rates book — the strongest action on a rates
+        // position. It carries the dedicated `Book·FixedIncome` capability: a caller
+        // may see (`ReadAny`) and even respond/deal on rates yet still not be entitled
+        // to commit a booked line. The capability gate requires an authenticated
+        // session (a body principal cannot self-grant `Book`); an absent principal
+        // under enforce is denied at the same boundary as the rates reads.
         authorize_caller(
             self.store.access_mode(),
             &caller,
             "RiskService/BookRatesPosition",
-            RequiredAuthority::ReadAny,
+            RequiredAuthority::Capability(Action::Book, AssetClass::FixedIncome),
             None,
         )?;
         let resp = self.book_rates_position_impl(&req)?;
@@ -1449,6 +1452,80 @@ mod tests {
             FleetTopology::Distributed {
                 endpoints: vec!["shard-a:7000".to_owned(), "shard-b:7000".to_owned()],
             }
+        );
+    }
+
+    /// Booking a rates line carries the dedicated `Book·FixedIncome` capability:
+    /// an authenticated trader (who holds it) books and the line lands in the book,
+    /// while an unauthenticated caller — even one asserting a grant-all body
+    /// principal — is denied under the default `Enforce` boundary, because a body
+    /// principal cannot self-grant the `Book` capability (the finding-#3 guard).
+    #[tokio::test]
+    async fn book_rates_position_requires_book_capability() {
+        use celnet_proto::{OisInstrument, RatesInstrument, RatesPosition, Side, rates_instrument};
+
+        let registry = Arc::new(SessionRegistry::new(Clock::system()));
+        let token = registry
+            .issue(crate::services::sessions::AuthenticatedUser {
+                user_id: "t-1".to_owned(),
+                email: "trader@celnet.com".to_owned(),
+                display_name: "Rates Trader".to_owned(),
+                role: crate::config::identity::Role::Trader,
+                desk_id: Some("g10".to_owned()),
+            })
+            .expect("issue trader session")
+            .token;
+        let edge = edge().with_sessions(registry);
+
+        let line = RatesPosition {
+            position_id: 0,
+            entity: 1,
+            book: 10,
+            instrument: Some(RatesInstrument {
+                instrument: Some(rates_instrument::Instrument::Ois(OisInstrument {
+                    tenor_years: 5,
+                    fixed_rate: 0.04,
+                    notional: 10_000_000.0,
+                    side: Side::Buy as i32,
+                })),
+            }),
+        };
+
+        // Authenticated trader holds Book·FixedIncome ⇒ the line is booked and the
+        // server echoes a freshly-assigned id.
+        let booked = edge
+            .book_rates_position(Request::new(BookRatesPositionRequest {
+                session_token: Some(token),
+                position: Some(line.clone()),
+                principal: None,
+                correlation_id: None,
+            }))
+            .await
+            .expect("authenticated trader books the line")
+            .into_inner()
+            .position
+            .expect("booked position echoed");
+        assert_eq!(booked.entity, 1);
+        assert_eq!(booked.book, 10);
+        assert!(booked.position_id > 0, "server assigns a fresh id");
+
+        // No session, asserting a grant-all body principal, under Enforce ⇒ denied:
+        // a body principal cannot self-grant the Book capability.
+        let denied = edge
+            .book_rates_position(Request::new(BookRatesPositionRequest {
+                session_token: None,
+                position: Some(line),
+                principal: Some(EntitlementPrincipal {
+                    grant_all: true,
+                    grants: vec![],
+                    denies: vec![],
+                }),
+                correlation_id: None,
+            }))
+            .await;
+        assert!(
+            denied.is_err(),
+            "an unauthenticated grant-all principal must not book under enforce"
         );
     }
 }
