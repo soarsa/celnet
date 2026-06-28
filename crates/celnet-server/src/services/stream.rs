@@ -478,7 +478,7 @@ fn make_snapshot(
             subscription: Some(sub.id),
             sequence: seq,
             price: Some(two_way),
-            greeks: Some(priced.greeks.into()),
+            greeks: Some(streamed_wire_greeks(&sub.instrument, &priced)),
             vol: priced.vol,
             conventions: Some(conv_to_wire(&sub.conv)),
             resolved_strike: priced.resolved_strike,
@@ -517,13 +517,27 @@ fn make_update(
             subscription: Some(sub.id),
             sequence: seq,
             price: Some(two_way),
-            greeks: Some(priced.greeks.into()),
+            greeks: Some(streamed_wire_greeks(&sub.instrument, &priced)),
             vol: priced.vol,
             tradable,
             surface_version: sub.surface_version,
             epoch_nanos: now,
         })),
     })
+}
+
+/// Build the wire [`celnet_proto::Greeks`] for a streamed Snapshot/Update,
+/// carry-tagging the rate-sensitivity arm by the instrument's asset class: an FX /
+/// metal line keeps the two-rho `Fx` arm **byte-identical** to today, a cross-asset
+/// line carries the generalized `Carry` arm. This is the streamed edge of the
+/// carry seam — the priced flat Greek strip is unchanged; only the wire's
+/// `rate_sensitivities` oneof is now asset-class-correct (see
+/// [`crate::pricer::streamed_rate_sensitivities`]).
+fn streamed_wire_greeks(instrument: &Instrument, priced: &Priced) -> celnet_proto::Greeks {
+    let mut greeks: celnet_proto::Greeks = priced.greeks.into();
+    greeks.rate_sensitivities =
+        Some(crate::pricer::streamed_rate_sensitivities(instrument, &priced.greeks).into());
+    greeks
 }
 
 /// Try to send a server message to the subscriber, returning `false` if the
@@ -1075,13 +1089,17 @@ impl Session {
             }
         };
         let market = pinned.market;
-        // Subscribe to the instrument's pair on the shared per-pair price-tick ring
-        // (the 1-producer → N-consumers fan-out). The pair's producer is created
-        // lazily on first subscribe, seeded from this baseline market. An instrument
-        // without a pair cannot be fanned out — a hard subscribe error (better than
-        // opening a line that can never tick), never a fabricated stream.
-        let tick = match instrument.underlying.as_ref().and_then(|u| u.as_fx()) {
-            Some(wire_pair) => match self.fanout.subscribe(wire_pair, market) {
+        // Subscribe to the instrument's underlying on the shared per-underlying
+        // price-tick ring (the 1-producer → N-consumers fan-out). The ring is
+        // created lazily on first subscribe, seeded from this baseline market. FX
+        // seeds byte-identically to the historical pair-keyed ring; a cross-asset
+        // underlying gets its own class-tagged ring and prices through the carry
+        // seam (the streamed edge of the carry seam, `docs/plan/CARRY-SEAM-TO-EDGE.md`).
+        // An instrument without an underlying cannot be fanned out — a hard subscribe
+        // error (better than opening a line that can never tick), never a fabricated
+        // stream.
+        let tick = match instrument.underlying.as_ref() {
+            Some(wire_underlying) => match self.fanout.subscribe(wire_underlying, market) {
                 Some(consumer) => consumer,
                 None => {
                     let _ = out_tx
@@ -1095,7 +1113,7 @@ impl Session {
             None => {
                 let _ = out_tx
                     .send(Err(Status::invalid_argument(
-                        "subscribe instrument requires a `pair`",
+                        "subscribe instrument requires an `underlying`",
                     )))
                     .await;
                 return true;
@@ -1192,12 +1210,12 @@ impl Session {
             }
         };
         let market = pinned.market;
-        // Re-subscribe to the (possibly new) pair's ring before taking the mutable
-        // subscription borrow (avoids a double borrow of `self`). The modified
-        // structure may name a different pair, so the line follows that pair's tick
-        // stream from now on.
-        let tick = match instrument.underlying.as_ref().and_then(|u| u.as_fx()) {
-            Some(wire_pair) => match self.fanout.subscribe(wire_pair, market) {
+        // Re-subscribe to the (possibly new) underlying's ring before taking the
+        // mutable subscription borrow (avoids a double borrow of `self`). The
+        // modified structure may name a different underlying, so the line follows
+        // that underlying's tick stream from now on.
+        let tick = match instrument.underlying.as_ref() {
+            Some(wire_underlying) => match self.fanout.subscribe(wire_underlying, market) {
                 Some(consumer) => consumer,
                 None => {
                     let _ = out_tx
@@ -1211,7 +1229,7 @@ impl Session {
             None => {
                 let _ = out_tx
                     .send(Err(Status::invalid_argument(
-                        "modify instrument requires a `pair`",
+                        "modify instrument requires an `underlying`",
                     )))
                     .await;
                 return true;
@@ -1436,6 +1454,20 @@ impl Session {
                 .await;
             return true;
         };
+        // Market-series observation samples the single live (FX) core market state;
+        // a non-FX underlying has no live observable core market yet, so it is
+        // refused rather than silently mislabeled with the FX core's observables (no
+        // fake). The price stream itself IS carry-seam-general (Subscribe → Update
+        // carries the asset-class arm); the *observable* series stays FX-only until a
+        // non-FX live core market exists (a market-data concern, not faked here).
+        if underlying.as_fx().is_none() {
+            let _ = out_tx
+                .send(Err(Status::unimplemented(
+                    "market-series observation is FX-only; a non-FX underlying has no live observable core market state",
+                )))
+                .await;
+            return true;
+        }
         let observable = match decode_observable(s.observable, s.delta) {
             Ok(o) => o,
             Err(status) => {
@@ -1769,6 +1801,65 @@ mod tests {
         }
     }
 
+    /// The streamed wire Greeks carry-tag the rate-sensitivity arm by asset class:
+    /// an FX line is **byte-identical** to the plain `Greeks → WireGreeks`
+    /// conversion (the no streamed-FX regression gate, extended to the streaming
+    /// path), while a cross-asset line carries the generalized `Carry` arm whose
+    /// lossless flat projection still equals the FX-shaped rhos a client reads.
+    #[test]
+    fn streamed_wire_greeks_tags_arm_by_asset_class() {
+        use celnet_proto::rate_sensitivities::Sensitivities;
+        let mut g = celnet_types::Greeks::price_only(2.0);
+        g.rho_dom = 0.11;
+        g.rho_for = -0.04;
+        let priced = Priced {
+            greeks: g,
+            resolved_strike: 1.10,
+            vol: 0.10,
+            std_error: None,
+        };
+
+        // FX: byte-identical to the historical plain `Greeks → WireGreeks`.
+        let fx_instr = vanilla_call(1.10);
+        let fx_wire = streamed_wire_greeks(&fx_instr, &priced);
+        let plain: celnet_proto::Greeks = g.into();
+        assert_eq!(
+            fx_wire, plain,
+            "FX streamed greeks must be byte-identical to the plain conversion"
+        );
+        assert!(matches!(
+            fx_wire
+                .rate_sensitivities
+                .as_ref()
+                .and_then(|r| r.sensitivities.as_ref()),
+            Some(Sensitivities::Fx(_))
+        ));
+
+        // Cross-asset: the generalized Carry arm; its flat projection recovers the
+        // FX-shaped rhos exactly.
+        let mut eq_instr = vanilla_call(1.10);
+        eq_instr.underlying = Some(celnet_proto::Underlying::equity(
+            celnet_proto::EquityRef::new(celnet_proto::Symbol::new("AAPL", "XNAS"), "USD"),
+        ));
+        let eq_wire = streamed_wire_greeks(&eq_instr, &priced);
+        match eq_wire
+            .rate_sensitivities
+            .as_ref()
+            .and_then(|r| r.sensitivities.as_ref())
+        {
+            Some(Sensitivities::Carry(c)) => {
+                // carry = −rho_for (exact); discount = rho_dom + rho_for (the sum).
+                assert_eq!(c.carry_rho.to_bits(), (-g.rho_for).to_bits());
+                assert_eq!(c.discount_rho.to_bits(), (g.rho_dom + g.rho_for).to_bits());
+            }
+            other => panic!("cross-asset streamed greeks must carry the Carry arm, got {other:?}"),
+        }
+        // The flat projection a legacy client reads matches across both arms:
+        // rho_for bit-exactly (negation round-trip), rho_dom to within one ULP.
+        assert_eq!(eq_wire.rho_for().to_bits(), fx_wire.rho_for().to_bits());
+        assert!((eq_wire.rho_dom() - fx_wire.rho_dom()).abs() <= 1e-15);
+    }
+
     /// Build a session over a calibrated EURUSD fixture, with one open subscription
     /// (baseline snapshot at sequence 1 already retained + delivered), ready to be
     /// driven by `drive_tick` and to receive `Execute`s.
@@ -1789,10 +1880,10 @@ mod tests {
         let fanout = PriceFanout::start();
         let tick = fanout
             .subscribe(
-                &celnet_proto::CcyPair {
+                &celnet_proto::Underlying::fx(celnet_proto::CcyPair {
                     base: "EUR".to_owned(),
                     quote: "USD".to_owned(),
-                },
+                }),
                 market,
             )
             .expect("the EURUSD price-tick ring");

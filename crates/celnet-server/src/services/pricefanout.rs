@@ -64,7 +64,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use celnet_fanout::{BroadcastRing, Consumer, Producer};
-use celnet_proto::{CcyPair, MarketContext};
+use celnet_proto::{CcyPair, MarketContext, Underlying};
 
 use crate::tick::TickSource;
 
@@ -134,6 +134,65 @@ pub fn pair_seed(pair: &CcyPair) -> u64 {
     TickSource::splitmix64(h)
 }
 
+/// The FNV-1a-then-`splitmix64` fold of a canonical identity string — the exact
+/// mixer [`pair_seed`] applies to `"BASE/QUOTE"`, factored out for reuse by the
+/// asset-class-general [`underlying_seed`]. Folding the bytes of `"EUR/USD"` here
+/// is byte-for-byte the FNV accumulation `pair_seed` does over `base ‖ "/" ‖
+/// quote`, so the FX arm of [`underlying_seed`] is byte-identical to [`pair_seed`]
+/// (pinned by `underlying_seed_fx_is_byte_identical_to_pair_seed`).
+fn seed_identity(s: &str) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in s.as_bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0000_0100_0000_01B3);
+    }
+    TickSource::splitmix64(h)
+}
+
+/// The canonical, class-tagged ring/identity key for ANY underlying. The **FX arm
+/// is the bare `"BASE/QUOTE"`** — UNTAGGED, so its [`seed_identity`] preimage is
+/// exactly the historical FX seed; every other asset class carries a class tag so
+/// two underlyings in different classes can never collide onto one ring. This key
+/// is purely internal (it never appears on the wire), so its spelling is free to
+/// evolve. A malformed (empty) underlying degrades to a stable sentinel rather
+/// than panicking, so it still keys deterministically.
+fn underlying_key(u: &Underlying) -> String {
+    use celnet_proto::underlying::Ref;
+    match u.r#ref.as_ref() {
+        Some(Ref::Fx(p)) => format!("{}/{}", p.base, p.quote),
+        Some(Ref::Metal(m)) => format!("XME:{}/{}", m.metal, m.quote),
+        Some(Ref::Equity(e)) => format!("EQ:{}/{}", symbol_key(e.symbol.as_ref()), e.currency),
+        Some(Ref::Commodity(c)) => format!("CO:{}/{}", symbol_key(c.symbol.as_ref()), c.currency),
+        Some(Ref::DigitalAsset(p)) => format!("DA:{}/{}", p.base, p.quote),
+        None => "??:".to_owned(),
+    }
+}
+
+/// The canonical `"ticker@venue"` key fragment for a [`celnet_proto::Symbol`]
+/// (bare ticker when the venue is unambiguous/empty). A missing symbol degrades
+/// to a stable sentinel so a malformed underlying still keys deterministically.
+fn symbol_key(s: Option<&celnet_proto::Symbol>) -> String {
+    match s {
+        Some(sym) if sym.venue.is_empty() => sym.ticker.clone(),
+        Some(sym) => format!("{}@{}", sym.ticker, sym.venue),
+        None => "?".to_owned(),
+    }
+}
+
+/// A stable 64-bit seed for ANY underlying's deterministic spot path — the
+/// asset-class-agnostic generalization of [`pair_seed`] that lets the streamed
+/// edge fan out a non-FX underlying (the carry seam reaching the streamed edge,
+/// `docs/plan/CARRY-SEAM-TO-EDGE.md` P1). The **FX arm is byte-identical to
+/// [`pair_seed`]** (the streamed-FX no-regression guarantee): both fold the bare
+/// `"BASE/QUOTE"` identity. Every other class folds its class-tagged
+/// [`underlying_key`] through the same FNV-1a + `splitmix64` discipline, so
+/// distinct underlyings (across classes too) almost surely seed distinctly and a
+/// streamed cross-asset line gets its own reproducible spot path.
+#[must_use]
+pub fn underlying_seed(u: &Underlying) -> u64 {
+    seed_identity(&underlying_key(u))
+}
+
 /// The deterministically-bumped spot for a pair at a given tick sequence, *without*
 /// any mutable state — pure in `(seed, tick_seq, base_spot)`. Reuses the exact
 /// `splitmix64` + `unit_signed` discipline of [`crate::tick::TickSource`] (and the
@@ -174,10 +233,10 @@ impl PairProducer {
     }
 }
 
-/// A control-plane request to the producer thread to ensure a pair has a live ring
-/// and return a fresh consumer for it.
+/// A control-plane request to the producer thread to ensure an underlying has a
+/// live ring and return a fresh consumer for it.
 struct SubscribeRequest {
-    pair: CcyPair,
+    underlying: Underlying,
     base: MarketContext,
     reply: std::sync::mpsc::Sender<Consumer<PriceTick>>,
 }
@@ -215,23 +274,25 @@ impl PriceFanout {
         })
     }
 
-    /// Subscribe to a pair's price-tick ring, returning an independent consumer
-    /// positioned at the producer's current head (it observes only ticks from now
-    /// on — the same "from now on" semantics a freshly-seeded per-subscription
-    /// tick had). The pair's ring is created lazily on first subscribe, seeded
-    /// from `base` (the subscription's baseline market). A returned `None` means
-    /// the producer thread has stopped (edge shutting down) — the caller falls
-    /// back to no streamed updates, never a fake.
+    /// Subscribe to an underlying's price-tick ring, returning an independent
+    /// consumer positioned at the producer's current head (it observes only ticks
+    /// from now on — the same "from now on" semantics a freshly-seeded
+    /// per-subscription tick had). The underlying's ring is created lazily on first
+    /// subscribe, seeded from `base` (the subscription's baseline market). FX seeds
+    /// byte-identically to the historical pair-keyed ring; a non-FX underlying gets
+    /// its own class-tagged ring ([`underlying_key`]/[`underlying_seed`]). A
+    /// returned `None` means the producer thread has stopped (edge shutting down) —
+    /// the caller falls back to no streamed updates, never a fake.
     #[must_use]
     pub(crate) fn subscribe(
         &self,
-        pair: &CcyPair,
+        underlying: &Underlying,
         base: MarketContext,
     ) -> Option<Consumer<PriceTick>> {
         let (reply, reply_rx) = std::sync::mpsc::channel::<Consumer<PriceTick>>();
         self.subscribe_tx
             .send(SubscribeRequest {
-                pair: pair.clone(),
+                underlying: underlying.clone(),
                 base,
                 reply,
             })
@@ -256,21 +317,21 @@ impl Drop for PriceFanout {
 /// Runs entirely off the tokio runtime so a slow async consumer can never stall
 /// publication (the ring conflates instead).
 fn producer_loop(subscribe_rx: std::sync::mpsc::Receiver<SubscribeRequest>, running: &AtomicBool) {
-    let mut producers: HashMap<(String, String), PairProducer> = HashMap::new();
+    let mut producers: HashMap<String, PairProducer> = HashMap::new();
     let mut last = std::time::Instant::now();
 
     while running.load(Ordering::Acquire) {
         // Service all pending subscribe requests (non-blocking), creating a ring
-        // for any new pair and replying with a fresh head-positioned consumer.
+        // for any new underlying and replying with a fresh head-positioned consumer.
         loop {
             match subscribe_rx.try_recv() {
                 Ok(req) => {
-                    let key = (req.pair.base.clone(), req.pair.quote.clone());
+                    let key = underlying_key(&req.underlying);
                     let entry = producers.entry(key).or_insert_with(|| {
                         let ring = BroadcastRing::<PriceTick>::new(RING_CAPACITY);
                         let producer = ring.into_producer();
                         PairProducer {
-                            seed: pair_seed(&req.pair),
+                            seed: underlying_seed(&req.underlying),
                             base: req.base,
                             tick_seq: 0,
                             producer,
@@ -319,6 +380,33 @@ mod tests {
         MarketContext::fx(spot, 0.10, 0.02, 0.01)
     }
 
+    /// The FX arm of [`underlying_seed`] is **byte-identical** to [`pair_seed`] —
+    /// the streamed-FX no-regression guarantee: generalizing the fan-out from a
+    /// currency pair to any underlying must not move a single streamed FX spot.
+    /// Cross-class underlyings seed distinctly (their class tags never collide with
+    /// the bare FX preimage).
+    #[test]
+    fn underlying_seed_fx_is_byte_identical_to_pair_seed() {
+        for (b, q) in [("EUR", "USD"), ("GBP", "JPY"), ("AUD", "NZD")] {
+            let p = pair(b, q);
+            assert_eq!(
+                underlying_seed(&Underlying::fx(p.clone())),
+                pair_seed(&p),
+                "FX underlying_seed must equal the historical pair_seed bit-for-bit"
+            );
+        }
+        // A cross-asset underlying gets its own (class-tagged) seed, distinct from
+        // a same-spelled FX pair — no cross-class ring collision.
+        let eq = Underlying::equity(celnet_proto::EquityRef {
+            symbol: Some(celnet_proto::Symbol {
+                ticker: "EUR".to_owned(),
+                venue: String::new(),
+            }),
+            currency: "USD".to_owned(),
+        });
+        assert_ne!(underlying_seed(&eq), pair_seed(&pair("EUR", "USD")));
+    }
+
     /// The per-pair seed is stable and pair-specific: the same pair always seeds
     /// identically, and different pairs (almost surely) seed differently.
     #[test]
@@ -362,8 +450,9 @@ mod tests {
         let p = pair("EUR", "USD");
         let seed = pair_seed(&p);
         let base = base_market(1.10);
-        let mut c1 = hub.subscribe(&p, base).expect("ring");
-        let mut c2 = hub.subscribe(&p, base).expect("ring");
+        let u = Underlying::fx(p.clone());
+        let mut c1 = hub.subscribe(&u, base).expect("ring");
+        let mut c2 = hub.subscribe(&u, base).expect("ring");
 
         // Collect a handful of ticks from each consumer, deadline-bounded.
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
@@ -432,7 +521,7 @@ mod tests {
         let p = pair("EUR", "USD");
         let seed = pair_seed(&p);
         let base = base_market(1.10);
-        let mut c = hub.subscribe(&p, base).expect("ring");
+        let mut c = hub.subscribe(&Underlying::fx(p.clone()), base).expect("ring");
         // The cursor at subscribe time is the head this consumer started from
         // (received == skipped == 0 here); exact accounting is relative to it.
         let start_head = c.cursor();

@@ -1792,6 +1792,53 @@ fn carry_greeks_to_greeks(g: &celnet_core::carry::CarryGreeks) -> Greeks {
     }
 }
 
+/// The carry-tagged rate-sensitivity arm to present on a **streamed** wire
+/// [`Greeks`], selected by the instrument's asset class — the streamed edge of the
+/// carry seam (`docs/plan/CARRY-SEAM-TO-EDGE.md` P2). An FX / metal underlying
+/// carries the two-rho [`RateSensitivities::Fx`] arm, **byte-identical** to the
+/// flat rhos the FX stream has always emitted; a cross-asset (equity / commodity /
+/// digital-asset) underlying carries the generalized [`RateSensitivities::Carry`]
+/// arm `{discount_rho, carry_rho}`, recovered from the FX-shaped flat rhos by
+/// inverting the lossless projection [`carry_greeks_to_greeks`] applies on the way
+/// out (`discount_rho = rho_dom + rho_for`, `carry_rho = −rho_for`). The carry-rho
+/// is recovered **exactly** (a negation); the discount-rho is the FX-shaped sum
+/// `rho_dom + rho_for` — the native discount-rho to within one ULP of that addition
+/// (fp addition is not associative, so the double round-trip is not bit-exact —
+/// economically nil on a Greek, and the **FX arm, the only byte-identity gate, is
+/// untouched**). The native arm flows through bit-exactly once the shared
+/// carry→sensitivity mapper lands (plan item F); until then the stream names the
+/// arm and carries the FX-shaped magnitudes (pinned by
+/// `streamed_rate_sensitivities_round_trips_carry`).
+///
+/// The discriminator is the underlying's asset class ([`is_cross_asset`]), **not a
+/// `match carry`** over the carry model — the ADR-0008 streamed-path review-blocker.
+///
+/// Scope: this carry-tags the STREAMED edge only (Snapshot/Update). The unary
+/// price/quote paths keep emitting the lossless FX-shaped projection until the
+/// shared carry→sensitivity mapper lands (plan item F); a client recovers the same
+/// numbers from either, and the stream additionally names the asset-class arm.
+pub(crate) fn streamed_rate_sensitivities(
+    instrument: &Instrument,
+    greeks: &Greeks,
+) -> RateSensitivities {
+    let cross_asset = instrument
+        .underlying
+        .as_ref()
+        .and_then(|u| celnet_types::Underlying::try_from(u.clone()).ok())
+        .is_some_and(|u| is_cross_asset(&u));
+    if cross_asset {
+        RateSensitivities::Carry {
+            discount_rho: greeks.rho_dom + greeks.rho_for,
+            carry_rho: -greeks.rho_for,
+        }
+    } else {
+        RateSensitivities::Fx {
+            rho_dom: greeks.rho_dom,
+            rho_for: greeks.rho_for,
+        }
+    }
+}
+
 /// Route a cross-asset (equity / commodity / digital-asset) instrument to its
 /// generalized cost-of-carry leaf. The cross-asset option products are the
 /// vanilla (equity/commodity/crypto options are `Product::Vanilla` over a
@@ -4187,6 +4234,60 @@ mod tests {
             base: "USD".into(),
             quote: "BRL".into(),
         })
+    }
+
+    /// The streamed carry-tagged arm is FX **byte-identical** and the cross-asset
+    /// `Carry` arm projects back to the original flat rhos exactly (the inverse
+    /// bijection) — the no-regression + correctness contract for the streamed edge
+    /// of the carry seam (`streamed_rate_sensitivities`).
+    #[test]
+    fn streamed_rate_sensitivities_round_trips_carry() {
+        use celnet_types::RateSensitivities as RS;
+        // A flat Greek strip with distinctive rhos (the values an FX stream emits).
+        let mut g = Greeks::price_only(1.23);
+        g.rho_dom = 0.456;
+        g.rho_for = -0.789;
+
+        // FX underlying → the two-rho Fx arm, byte-identical to the flat rhos.
+        let fx = Instrument {
+            underlying: Some(eurusd_underlying()),
+            ..Default::default()
+        };
+        match streamed_rate_sensitivities(&fx, &g) {
+            RS::Fx { rho_dom, rho_for } => {
+                assert_eq!(rho_dom.to_bits(), g.rho_dom.to_bits());
+                assert_eq!(rho_for.to_bits(), g.rho_for.to_bits());
+            }
+            other => panic!("FX underlying must carry the Fx arm, got {other:?}"),
+        }
+
+        // Cross-asset underlying → the generalized Carry arm; projecting it back to
+        // the FX-shaped flat rhos recovers the originals bit-for-bit.
+        let eq = Instrument {
+            underlying: Some(celnet_proto::Underlying::equity(celnet_proto::EquityRef::new(
+                celnet_proto::Symbol::new("AAPL", "XNAS"),
+                "USD",
+            ))),
+            ..Default::default()
+        };
+        match streamed_rate_sensitivities(&eq, &g) {
+            RS::Carry {
+                discount_rho,
+                carry_rho,
+            } => {
+                // The arm is the documented projection of the FX-shaped flat rhos:
+                // discount = rho_dom + rho_for (exact as that sum), carry = −rho_for
+                // (exact negation).
+                assert_eq!(discount_rho.to_bits(), (g.rho_dom + g.rho_for).to_bits());
+                assert_eq!(carry_rho.to_bits(), (-g.rho_for).to_bits());
+                // Projecting the carry arm back to the FX-shaped flat rhos recovers
+                // rho_for bit-exactly and rho_dom to within one ULP (fp addition is
+                // not associative — economically nil on a Greek).
+                assert_eq!((-carry_rho).to_bits(), g.rho_for.to_bits());
+                assert!(is_close(discount_rho + carry_rho, g.rho_dom, 1e-15, 1e-15));
+            }
+            other => panic!("cross-asset underlying must carry the Carry arm, got {other:?}"),
+        }
     }
 
     /// A market context whose spot/rates suit a linear-book worked example

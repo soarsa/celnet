@@ -428,8 +428,14 @@ fn greeks_to_json(g: &Greeks) -> Value {
         "gamma": g.gamma,
         "vega": g.vega,
         "theta": g.theta,
+        // The flat two-rho projection (FX verbatim; cost-of-carry losslessly
+        // projected) — kept for clients that read the flat shape directly.
         "rho_dom": g.rho_dom(),
         "rho_for": g.rho_for(),
+        // The carry-tagged arm itself, so a client renders the asset-class-correct
+        // rate Greeks (FX: rho_dom/rho_for; cross-asset: discount_rho/carry_rho).
+        // `null` only for an absent strip; FX/metal lines carry the `fx` arm.
+        "rate_sensitivities": g.rate_sensitivities.as_ref().map(rate_sensitivities_to_json),
         "vanna": g.vanna,
         "volga": g.volga,
         "charm": g.charm,
@@ -437,6 +443,23 @@ fn greeks_to_json(g: &Greeks) -> Value {
         "zomma": g.zomma,
         "color": g.color,
     })
+}
+
+/// Serialize the carry-tagged rate-sensitivity arm onto the wire JSON, mirroring
+/// the proto `RateSensitivities` oneof: `{"fx":{rho_dom,rho_for}}` for FX/metal,
+/// `{"carry":{discount_rho,carry_rho}}` for a cross-asset cost-of-carry line. The
+/// streamed edge of the carry seam reaching the JSON clients.
+fn rate_sensitivities_to_json(rs: &celnet_proto::RateSensitivities) -> Value {
+    use celnet_proto::rate_sensitivities::Sensitivities;
+    match &rs.sensitivities {
+        Some(Sensitivities::Fx(fx)) => json!({
+            "fx": { "rho_dom": fx.rho_dom, "rho_for": fx.rho_for },
+        }),
+        Some(Sensitivities::Carry(c)) => json!({
+            "carry": { "discount_rho": c.discount_rho, "carry_rho": c.carry_rho },
+        }),
+        None => Value::Null,
+    }
 }
 
 fn two_way_to_json(p: &TwoWayPrice) -> Value {
@@ -2826,6 +2849,44 @@ const _: fn() = || {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The WS Greeks JSON carries the carry-tagged rate-sensitivity arm: an FX line
+    /// emits the `fx` arm (and the flat `rho_dom`/`rho_for` stay byte-identical), a
+    /// cross-asset line emits the `carry` arm `{discount_rho, carry_rho}` while the
+    /// flat projection a legacy client reads still equals the FX-shaped rhos.
+    #[test]
+    fn greeks_json_carries_the_rate_sensitivity_arm() {
+        // FX arm.
+        let fx = celnet_proto::Greeks {
+            rate_sensitivities: Some(celnet_proto::RateSensitivities::fx(0.5, -0.2)),
+            ..Default::default()
+        };
+        let jf = greeks_to_json(&fx);
+        assert_eq!(jf["rho_dom"].as_f64().unwrap().to_bits(), 0.5_f64.to_bits());
+        assert_eq!(jf["rho_for"].as_f64().unwrap().to_bits(), (-0.2_f64).to_bits());
+        assert_eq!(jf["rate_sensitivities"]["fx"]["rho_dom"].as_f64().unwrap(), 0.5);
+        assert_eq!(jf["rate_sensitivities"]["fx"]["rho_for"].as_f64().unwrap(), -0.2);
+        assert!(jf["rate_sensitivities"].get("carry").is_none());
+
+        // Carry arm: discount_rho/carry_rho named, flat projection consistent.
+        let carry = celnet_proto::Greeks {
+            rate_sensitivities: Some(celnet_proto::RateSensitivities {
+                sensitivities: Some(celnet_proto::rate_sensitivities::Sensitivities::Carry(
+                    celnet_proto::rate_sensitivities::CarryRho {
+                        discount_rho: 0.3,
+                        carry_rho: 0.2,
+                    },
+                )),
+            }),
+            ..Default::default()
+        };
+        let jc = greeks_to_json(&carry);
+        assert_eq!(jc["rate_sensitivities"]["carry"]["discount_rho"].as_f64().unwrap(), 0.3);
+        assert_eq!(jc["rate_sensitivities"]["carry"]["carry_rho"].as_f64().unwrap(), 0.2);
+        // Flat projection: rho_dom = discount + carry = 0.5; rho_for = −carry = −0.2.
+        assert_eq!(jc["rho_dom"].as_f64().unwrap(), 0.5);
+        assert_eq!(jc["rho_for"].as_f64().unwrap(), -0.2);
+    }
 
     /// A round-trip of the instrument oneof: a vanilla call decodes from the JSON a
     /// browser client would send, with the strike/delta oneof and convention enums

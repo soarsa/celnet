@@ -95,7 +95,7 @@ pub use core_link::{
 };
 pub use pricer::{ConventionSet, PriceError, Priced, price_instrument};
 pub use readiness::{ReadinessGate, ServiceState};
-pub use services::pricefanout::{PriceTick, pair_seed, spot_at};
+pub use services::pricefanout::{PriceTick, pair_seed, spot_at, underlying_seed};
 pub use services::quote::LpPanelConfig;
 pub use spread::SpreadModel;
 pub use surface_book::{PinError, SurfaceBook};

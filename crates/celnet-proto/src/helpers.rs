@@ -346,26 +346,57 @@ impl RateSensitivities {
             _ => None,
         }
     }
+
+    /// The generalized `(discount_rho, carry_rho)` if this is the cost-of-carry
+    /// arm, else `None`.
+    #[must_use]
+    pub fn carry_rhos(&self) -> Option<(f64, f64)> {
+        match &self.sensitivities {
+            Some(rate_sensitivities::Sensitivities::Carry(c)) => {
+                Some((c.discount_rho, c.carry_rho))
+            }
+            _ => None,
+        }
+    }
+
+    /// The lossless FX-shaped flat projection `(rho_dom, rho_for)` of **either**
+    /// arm: the FX arm passes through verbatim (byte-identical); the cost-of-carry
+    /// arm projects by the documented bijection `rho_dom = discount_rho +
+    /// carry_rho`, `rho_for = −carry_rho` (the exact inverse of how the cross-asset
+    /// leaves populate the flat strip — see `celnet_types::RateSensitivities`). An
+    /// absent oneof is the zero strip `(0.0, 0.0)`. So a client that only knows the
+    /// flat two-rho shape still gets the correct numbers for any asset class.
+    #[must_use]
+    pub fn flat_rhos(&self) -> (f64, f64) {
+        match &self.sensitivities {
+            Some(rate_sensitivities::Sensitivities::Fx(fx)) => (fx.rho_dom, fx.rho_for),
+            Some(rate_sensitivities::Sensitivities::Carry(c)) => {
+                (c.discount_rho + c.carry_rho, -c.carry_rho)
+            }
+            None => (0.0, 0.0),
+        }
+    }
 }
 
 impl Greeks {
-    /// The domestic rho if these Greeks carry the FX rate-sensitivity arm, else
-    /// `0.0` (the price-only / non-FX strip).
+    /// The domestic rho as the lossless FX-shaped flat projection of whichever
+    /// rate-sensitivity arm these Greeks carry (FX verbatim; cost-of-carry via the
+    /// `RateSensitivities::flat_rhos` bijection), or `0.0` for an absent strip. So
+    /// a flat-shape client reads the correct `rho_dom` for any asset class.
     #[must_use]
     pub fn rho_dom(&self) -> f64 {
         self.rate_sensitivities
             .as_ref()
-            .and_then(RateSensitivities::fx_rhos)
-            .map_or(0.0, |(d, _)| d)
+            .map_or(0.0, |rs| rs.flat_rhos().0)
     }
 
-    /// The foreign rho if these Greeks carry the FX rate-sensitivity arm, else
-    /// `0.0`.
+    /// The foreign rho as the lossless FX-shaped flat projection of whichever
+    /// rate-sensitivity arm these Greeks carry (FX verbatim; cost-of-carry via the
+    /// `RateSensitivities::flat_rhos` bijection), or `0.0` for an absent strip.
     #[must_use]
     pub fn rho_for(&self) -> f64 {
         self.rate_sensitivities
             .as_ref()
-            .and_then(RateSensitivities::fx_rhos)
-            .map_or(0.0, |(_, f)| f)
+            .map_or(0.0, |rs| rs.flat_rhos().1)
     }
 }
