@@ -1801,6 +1801,108 @@ mod tests {
         }
     }
 
+    /// A cross-asset (equity) vanilla call — the same shape as [`vanilla_call`] but
+    /// over an AAPL/USD equity underlying, so a Subscribe drives the carry seam's
+    /// cross-asset leaf through the streamed path. The strike is kept at the FX
+    /// fixture's spot scale so the line is non-degenerate (in-the-money/ATM) and the
+    /// greeks are real and finite (the demo edge marks every stream off the EURUSD
+    /// fixture market — an honest deterministic mark, not a fabricated price).
+    fn equity_call(strike: f64) -> Instrument {
+        Instrument {
+            underlying: Some(celnet_proto::Underlying::equity(celnet_proto::EquityRef::new(
+                celnet_proto::Symbol::new("AAPL", "XNAS"),
+                "USD",
+            ))),
+            tenor: Some(celnet_proto::Tenor {
+                unit: celnet_proto::tenor::Unit::Years as i32,
+                count: 1,
+                broken_date: None,
+            }),
+            expiry_years: 1.0,
+            quantity: Some(celnet_proto::Quantity {
+                notional: 1_000_000.0,
+                base_ccy: true,
+            }),
+            side: celnet_proto::Side::TwoWay as i32,
+            solve: None,
+            pricing_model: celnet_proto::PricingModel::Default as i32,
+            product: Some(celnet_proto::instrument::Product::Vanilla(
+                celnet_proto::Vanilla {
+                    option_type: celnet_proto::OptionType::Call as i32,
+                    strike: Some(celnet_proto::StrikeOrDelta {
+                        spec: Some(celnet_proto::strike_or_delta::Spec::Strike(strike)),
+                    }),
+                },
+            )),
+            ..Default::default()
+        }
+    }
+
+    /// **End-to-end carry seam at the streamed edge.** A cross-asset (equity)
+    /// Subscribe driven through the FULL session driver (`handle_client_message` →
+    /// `handle_subscribe` → fan-out ring → `make_snapshot` → `price_instrument`)
+    /// answers with a baseline Snapshot whose wire `Greeks` carry the generalized
+    /// `Carry` arm (`{discount_rho, carry_rho}`), NOT the FX two-rho arm — proving
+    /// the seam reaches the edge through the real server path (not just the JS e2e).
+    /// The carry-rho (= the dividend-yield rho) is real and non-zero.
+    #[tokio::test]
+    async fn cross_asset_subscribe_streams_the_carry_arm_through_the_session() {
+        use celnet_proto::rate_sensitivities::Sensitivities;
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let clock = Clock::manual(1_000_000_000);
+            let mut session = make_session(clock);
+            let (tx, mut rx) = mpsc::channel::<Result<ServerStreamMessage, Status>>(64);
+
+            // A Subscribe on an EQUITY underlying (id 2; the fixture already holds an
+            // FX line at id 1). The Permissive demo session admits it without auth.
+            let subscribe = ClientStreamMessage {
+                message: Some(client_stream_message::Message::Subscribe(
+                    celnet_proto::Subscribe {
+                        subscription: Some(SubscriptionId { value: 2 }),
+                        instrument: Some(equity_call(1.10)),
+                        conventions: Some(wire_conv()),
+                        throttle_nanos: 0,
+                        surface_version: None,
+                        correlation_id: Some(7),
+                        attribution: None,
+                    },
+                )),
+            };
+            assert!(
+                session.handle_client_message(subscribe, &tx).await,
+                "the cross-asset subscribe is admitted"
+            );
+
+            let snap = rx.try_recv().expect("a baseline Snapshot").unwrap();
+            let Some(server_stream_message::Message::Snapshot(s)) = snap.message else {
+                panic!("the cross-asset subscribe answers with a Snapshot");
+            };
+            let greeks = s.greeks.expect("the snapshot carries greeks");
+            match greeks
+                .rate_sensitivities
+                .as_ref()
+                .and_then(|r| r.sensitivities.as_ref())
+            {
+                Some(Sensitivities::Carry(c)) => {
+                    assert!(
+                        c.discount_rho.is_finite() && c.carry_rho.is_finite(),
+                        "the carry arm is finite"
+                    );
+                    assert!(
+                        c.carry_rho.abs() > 0.0,
+                        "the dividend-yield (carry) rho is a real non-zero sensitivity, got {}",
+                        c.carry_rho
+                    );
+                }
+                other => panic!("a streamed equity must carry the Carry arm, got {other:?}"),
+            }
+            // The flat projection a legacy client reads is the (exact) dividend rho.
+            assert!(greeks.rho_for().abs() > 0.0, "flat dividend rho is non-zero");
+        })
+        .await
+        .expect("the cross-asset stream test completes within the deadline");
+    }
+
     /// The streamed wire Greeks carry-tag the rate-sensitivity arm by asset class:
     /// an FX line is **byte-identical** to the plain `Greeks → WireGreeks`
     /// conversion (the no streamed-FX regression gate, extended to the streaming
