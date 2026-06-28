@@ -979,6 +979,33 @@ impl Carry {
             Carry::CostOfCarry { r, b } => r - b,
         }
     }
+
+    /// Wrap two rate-Greeks `(a, b)`, already in this carry's *natural* coordinates,
+    /// in the matching [`RateSensitivities`] arm: [`Carry::FxRates`] →
+    /// [`RateSensitivities::Fx`] `{ rho_dom: a, rho_for: b }`; [`Carry::CostOfCarry`]
+    /// → [`RateSensitivities::Carry`] `{ discount_rho: a, carry_rho: b }`.
+    ///
+    /// This is the **single source** of the `Carry`-variant → rate-sensitivity-arm
+    /// *type* mapping — every producer of carry-tagged rate Greeks routes its arm
+    /// construction through here, so **a third `Carry` arm is one edit in this
+    /// function** (plus the new arm itself). It only selects the arm *type*; `a` and
+    /// `b` are passed through verbatim (no arithmetic), so the FX arm is byte-identical
+    /// to constructing [`RateSensitivities::Fx`] directly. The FX→flat projection (and
+    /// its inverse) lives in [`RateSensitivities::flat_rhos`]; this is the orthogonal
+    /// natural-coordinate constructor.
+    #[must_use]
+    pub fn rate_sensitivities(&self, a: f64, b: f64) -> RateSensitivities {
+        match self {
+            Carry::FxRates { .. } => RateSensitivities::Fx {
+                rho_dom: a,
+                rho_for: b,
+            },
+            Carry::CostOfCarry { .. } => RateSensitivities::Carry {
+                discount_rho: a,
+                carry_rho: b,
+            },
+        }
+    }
 }
 
 /// The full FX-options Greek set produced by the vanilla engine.
@@ -1075,6 +1102,34 @@ pub enum RateSensitivities {
         /// Carry rho: `∂V/∂b` (equity dividend-rho, commodity carry-rho).
         carry_rho: f64,
     },
+}
+
+impl RateSensitivities {
+    /// The lossless FX-shaped flat projection `(rho_dom, rho_for)` of **either** arm:
+    /// the [`RateSensitivities::Fx`] arm passes through verbatim (byte-identical);
+    /// the [`RateSensitivities::Carry`] arm projects by the documented bijection
+    /// `rho_dom = discount_rho + carry_rho`, `rho_for = −carry_rho` (the exact inverse
+    /// of how the cross-asset leaves populate the carry arm — for FX, `r = r_dom`,
+    /// `b = r_dom − r_for`).
+    ///
+    /// This is the **single source** of the carry↔flat rate-Greek bijection on the
+    /// domain enum — every server site that flattens carry-tagged rates to the two
+    /// FX rhos routes through here (mirroring the wire-type `flat_rhos` in
+    /// `celnet-proto`, which applies the identical bijection on the protobuf message).
+    /// A client that only knows the flat two-rho shape still gets the correct numbers
+    /// for any asset class. The
+    /// addition is computed `discount_rho + carry_rho` in that order — preserving the
+    /// historical associativity, so the FX path is byte-identical.
+    #[must_use]
+    pub fn flat_rhos(&self) -> (f64, f64) {
+        match *self {
+            RateSensitivities::Fx { rho_dom, rho_for } => (rho_dom, rho_for),
+            RateSensitivities::Carry {
+                discount_rho,
+                carry_rho,
+            } => (discount_rho + carry_rho, -carry_rho),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1283,6 +1338,64 @@ mod tests {
                 rho_dom: 0.375,
                 rho_for: -0.125
             }
+        );
+    }
+
+    /// The single-source `flat_rhos` bijection: the FX arm passes through
+    /// **bit-for-bit** (the byte-identity gate); the Carry arm projects by
+    /// `(discount_rho + carry_rho, −carry_rho)` in that exact addition order.
+    #[test]
+    fn flat_rhos_projects_both_arms() {
+        let fx = RateSensitivities::Fx {
+            rho_dom: 0.42,
+            rho_for: -0.17,
+        };
+        let (d, f) = fx.flat_rhos();
+        // FX arm is verbatim — pin the exact bits.
+        assert_eq!(d.to_bits(), 0.42_f64.to_bits());
+        assert_eq!(f.to_bits(), (-0.17_f64).to_bits());
+
+        // Binary-exact constants so the projected equality is exact, not approximate.
+        let (discount_rho, carry_rho) = (0.25_f64, 0.125_f64);
+        let carry = RateSensitivities::Carry {
+            discount_rho,
+            carry_rho,
+        };
+        let (cd, cf) = carry.flat_rhos();
+        assert_eq!(cd.to_bits(), (discount_rho + carry_rho).to_bits());
+        assert_eq!(cf.to_bits(), (-carry_rho).to_bits());
+        assert_eq!((cd, cf), (0.375, -0.125));
+    }
+
+    /// `Carry::rate_sensitivities` is the single source of the carry-variant → arm
+    /// *type* mapping: it selects the arm by the carry variant and passes the two
+    /// natural-coordinate rate-Greeks through verbatim (no arithmetic).
+    #[test]
+    fn carry_selects_rate_sensitivity_arm() {
+        let fx = Carry::FxRates {
+            r_dom: 0.05,
+            r_for: 0.01,
+        };
+        assert_eq!(
+            fx.rate_sensitivities(0.42, -0.17),
+            RateSensitivities::Fx {
+                rho_dom: 0.42,
+                rho_for: -0.17,
+            }
+        );
+        let coc = Carry::CostOfCarry { r: 0.04, b: 0.03 };
+        assert_eq!(
+            coc.rate_sensitivities(0.25, 0.125),
+            RateSensitivities::Carry {
+                discount_rho: 0.25,
+                carry_rho: 0.125,
+            }
+        );
+        // Round-trip: wrapping the Carry arm in natural coords then flattening
+        // recovers the FX-shaped strip the bijection promises.
+        assert_eq!(
+            coc.rate_sensitivities(0.25, 0.125).flat_rhos(),
+            (0.375, -0.125)
         );
     }
 
