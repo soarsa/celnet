@@ -75,6 +75,7 @@ use tonic::Status;
 
 use super::store::{BookedPosition, PositionStore};
 use super::{RiskEdge, convert};
+use crate::services::access::ResolvedCaller;
 
 /// The connected backend fleet behind a [`FleetTopology::Distributed`] edge: one
 /// `celnet_client::Client` per endpoint (sharing its HTTP/2 channel), plus the
@@ -325,8 +326,20 @@ impl RiskEdge {
         &self,
         fleet: &Fleet,
         req: &ListPositionsRequest,
+        caller: &ResolvedCaller,
     ) -> Result<ListPositionsResponse, Status> {
         let backends = fleet.reachable_serving()?;
+        // Desk-narrow the forwarded principal once at the aggregating edge (item B
+        // §3): the backends re-prune by the body principal, so the narrowed rule-set
+        // must ride the fan-out (sessions are process-local and never cross the
+        // federation boundary — narrowing here is the only place a backend can learn
+        // the caller's desk). An admin / no-session caller narrows to itself, so the
+        // forwarded request is byte-identical to before.
+        let narrowed_principal = self.narrowed_wire_principal(req.principal.as_ref(), caller)?;
+        let req = &ListPositionsRequest {
+            principal: narrowed_principal,
+            ..req.clone()
+        };
         // CONCURRENT fan-out: dial every backend at once; `join_all` yields the
         // per-backend results in input (endpoint) order, so the union below is
         // assembled in the SAME deterministic order as a sequential loop while the
@@ -358,8 +371,18 @@ impl RiskEdge {
         &self,
         fleet: &Fleet,
         req: &AggregateRiskRequest,
+        caller: &ResolvedCaller,
     ) -> Result<AggregateRiskResponse, Status> {
         let backends = fleet.reachable_serving()?;
+
+        // Desk-narrow the forwarded principal once (item B §3 — see
+        // `federated_list_positions`): the fan-out + every re-gather below prune by
+        // this principal at the backends. Admin / no-session ⇒ byte-identical.
+        let narrowed_principal = self.narrowed_wire_principal(req.principal.as_ref(), caller)?;
+        let req = &AggregateRiskRequest {
+            principal: narrowed_principal,
+            ..req.clone()
+        };
 
         // 1. Additive fan-in: dial every backend CONCURRENTLY (latency ~ slowest
         //    backend, not the sum), then sum the wire AdditiveRisk per (dimension,
@@ -426,8 +449,16 @@ impl RiskEdge {
         &self,
         fleet: &Fleet,
         req: &DrillRiskRequest,
+        caller: &ResolvedCaller,
     ) -> Result<DrillRiskResponse, Status> {
         let backends = fleet.reachable_serving()?;
+        // Desk-narrow the forwarded principal once (item B §3); admin/no-session ⇒
+        // byte-identical.
+        let narrowed_principal = self.narrowed_wire_principal(req.principal.as_ref(), caller)?;
+        let req = &DrillRiskRequest {
+            principal: narrowed_principal,
+            ..req.clone()
+        };
         // CONCURRENT fan-out (latency ~ slowest backend); `join_all` preserves endpoint
         // order so the per-child additive summation and position-union order are
         // deterministic / bit-reproducible.
@@ -478,13 +509,18 @@ impl RiskEdge {
         &self,
         fleet: &Fleet,
         req: &LimitStatusRequest,
+        caller: &ResolvedCaller,
     ) -> Result<LimitStatusResponse, Status> {
         let backends = fleet.reachable_serving()?;
+        // Desk-narrow the forwarded principal once (item B §3) so the gather below
+        // prunes at the backends by the caller's desk; admin/no-session ⇒
+        // byte-identical.
+        let narrowed_principal = self.narrowed_wire_principal(req.principal.as_ref(), caller)?;
         // Gather the scope's entitled positions across the fleet (the limit scope is
         // the listing scope: ListPositions prunes by principal AND scope at the backend).
         let list_req = ListPositionsRequest {
             scope: req.scope,
-            principal: req.principal.clone(),
+            principal: narrowed_principal.clone(),
             correlation_id: req.correlation_id,
             // Backends re-authorize the forwarded principal; sessions don't cross
             // the fan-out, so the gather request carries no token.
@@ -493,9 +529,16 @@ impl RiskEdge {
         let union = self.gather_union(&backends, &list_req).await?;
         // Rebuild the union into a transient store that carries THIS edge's firm
         // hierarchy + limit tree, then run the unchanged single-node limit algebra.
+        // The staged union is ALREADY narrow-pruned at the backends, so the local
+        // limit pass runs over it with the anonymous (no-narrow) caller; the request
+        // carries the narrowed principal for completeness.
         let staged = self.stage_union(&union)?;
         let staged_edge = RiskEdge::new(staged, Arc::clone(&self.gate));
-        staged_edge.limit_status_impl(req)
+        let local_req = &LimitStatusRequest {
+            principal: narrowed_principal,
+            ..req.clone()
+        };
+        staged_edge.limit_status_impl(local_req, &ResolvedCaller::anonymous())
     }
 
     /// Re-derive one node's non-additive measures over the **gathered union** of its
@@ -545,7 +588,10 @@ impl RiskEdge {
             // Local re-aggregation over the already-gathered staged set — no token.
             session_token: None,
         };
-        let resp = staged_edge.aggregate_risk_impl(&scoped_req)?;
+        // The staged union was already entitlement-pruned (by the narrowed principal)
+        // at the backends, so this local re-aggregation must NOT narrow again — pass
+        // the anonymous (DeskScope::All ⇒ no-narrow) caller over the final staged set.
+        let resp = staged_edge.aggregate_risk_impl(&scoped_req, &ResolvedCaller::anonymous())?;
         let node = resp
             .nodes
             .into_iter()

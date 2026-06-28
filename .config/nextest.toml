@@ -10,11 +10,13 @@
 # suite fast and stable in BOTH `-p celnet-engine` (isolation) and `--workspace`.
 
 [profile.default]
-# A generous slow-timeout for the spin-heavy / allocator-sensitive tests: they are
-# internally wall-clock-capped (concurrency.rs `SPIN_CAP`) and finish in well under a
-# second normally, but on a heavily loaded CI box give them room before nextest flags
-# them slow — and a hard terminate so a wedged test can never hang the suite.
-slow-timeout = { period = "30s", terminate-after = 4 }
+# A generous slow-timeout for the spin-heavy / allocator-sensitive tests (internally
+# wall-clock-capped via concurrency.rs `SPIN_CAP`, finishing well under a second
+# normally) AND headroom for the heavy GPU / Monte-Carlo reconciliation tests, which
+# legitimately take 60-90s when the single dev M4 is under concurrent load. Flagged
+# slow at 30s; hard-terminated at 30s × 6 = 180s so a genuinely wedged test still
+# cannot hang the suite, while a merely-starved heavy test gets room to finish.
+slow-timeout = { period = "30s", terminate-after = 6 }
 
 # Serialize the global-resource-sensitive engine tests: at most one of the group runs
 # at any instant, across the whole run. This is what keeps the process-global alloc
@@ -30,6 +32,20 @@ engine-serial = { max-threads = 1 }
 # Pinning them to a single serialized group removes the artifact without weakening any
 # assertion, exactly as the engine-serial group does for the spin/alloc probes.
 replog-consensus = { max-threads = 1 }
+# The GPU compute suite drives the one shared GPU device (wgpu/Metal on the dev M4,
+# CUDA in CI) — which cannot be exercised by several tests at once (the celnet-gpu
+# suite documents its `--test-threads 1` requirement) — and each test runs a full
+# pricing sweep that takes ~35s. The heavy Monte-Carlo / PDE reconciliation tests
+# (exotics American FD-vs-LSM, touch DNT-vs-MC, pivot-vs-oracle; the SDK MC
+# conformance rows; the bench gpu_load sweep) likewise each saturate every core for
+# tens of seconds. On the single dev M4 these co-schedule under `--workspace`, starve
+# each other, and exceed the slow-timeout terminate-after — a measurement artifact,
+# NOT a numerical regression (each passes comfortably with the machine to itself:
+# celnet-gpu 35/35, celnet-exotics 207/207, the MC conformance 9/9, bench 19/19 when
+# serialized). Pin them to a single serialized group so exactly one runs at a time,
+# mirroring engine-serial / replog-consensus above; no assertion is weakened, the FX
+# byte-identity and oracle reconciliations are unchanged.
+numerics-serial = { max-threads = 1 }
 
 [[profile.default.overrides]]
 # The zero-allocation proofs (share the process-global counting allocator) and the
@@ -43,3 +59,14 @@ test-group = 'engine-serial'
 # Serialized — see the replog-consensus group note above.
 filter = 'binary(replication) | binary(raft_election) | binary(raft_snapshot)'
 test-group = 'replog-consensus'
+
+[[profile.default.overrides]]
+# The GPU compute suite (whole package — shared device) and the heavy Monte-Carlo /
+# PDE reconciliation tests (exotics LSM/MC/oracle rows, the SDK MC conformance, the
+# bench gpu_load sweep). Serialized — see the numerics-serial group note above.
+filter = '''package(celnet-gpu)
+  | test(/gpu/)
+  | (package(celnet-exotics) & (test(/matches_lsm/) | test(/monte_carlo/) | test(/dnt_survival/) | test(/matches_independent_oracle/)))
+  | (package(celnet-client) & test(/conforms_mc/))
+  | (package(celnet-risk-cube) & test(/scenario_grid/))'''
+test-group = 'numerics-serial'

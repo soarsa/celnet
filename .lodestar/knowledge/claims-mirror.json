@@ -13417,5 +13417,40 @@
    "github.com-soarsa-celnet.gui.src.components.GreeksStrip.GreeksStrip"
   ],
   "text": "GreeksStrip is the inline option-risk readout: a primary row of GreekCell tiles (delta/gamma/vega/theta) plus a disclosure button (aria-expanded + aria-label=\"toggle full Greeks\") that reveals the secondary Greeks. It is asset-class-aware — rhoGreeksFor(assetClass) relabels the rate-rho Greeks per the active underlier's class (FX default) — so the same strip serves FX/equity/commodity/crypto tickets. Numerics render through GreekCell on the mono token face; the strip itself carries no raw color literals."
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-types.src.lib.Carry",
+   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve",
+   "github.com-soarsa-celnet.crates.celnet-types.src.lib.Carry.discount_df",
+   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve.discount_factor",
+   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve.zero_rate",
+   "github.com-soarsa-celnet.crates.celnet-rates.src.curve.Curve.forward_rate_continuous"
+  ],
+  "text": "DESIGN DIRECTION (ADR-0010, proposed/accepted, NOT yet implemented): converge celnet-rates onto the carry seam by recognizing celnet-types::Carry as the DEGENERATE flat (single-rate, single-expiry) term structure and celnet-rates::curve::Curve as the GENERAL bootstrapped term structure. The plan hoists a DiscountCurve/TermStructure trait into celnet-core that BOTH Carry (flat) and Curve (nodes + interpolation; discount_factor/zero_rate/forward_rate_continuous) implement, and generalizes the flat-rate carry context to a curve-backed one; the multi-curve CurveSet (OIS discount + per-index projection) is the container, with FX two-rate Carry::FxRates{r_dom,r_for} as the 2-curve special case (two flat discount curves producing a forward). Convergence is principled, not forced: FX carry is already a 2-curve special case of multi-curve. Payoff engines stay asset-class-agnostic over forward(t)/discount(t) and are NOT modified. Aligns with master-plan items A (carry-seam-to-edge) and F (shared carry→sensitivity mapper). This is a not-yet-built direction; the flat-carry path remains authoritative until the trait lands."
+ },
+ {
+  "kind": "decision",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-types.src.lib.RateSensitivities",
+   "github.com-soarsa-celnet.crates.celnet-proto.proto.celnet.AggregateRatesRisk",
+   "github.com-soarsa-celnet.crates.celnet-rates.src.risk.ladder",
+   "github.com-soarsa-celnet.crates.celnet-proto.proto.celnet.CurveSet",
+   "github.com-soarsa-celnet.crates.celnet-proto.proto.celnet.RatesInstrument"
+  ],
+  "text": "DESIGN DIRECTION (ADR-0010, proposed/accepted, NOT yet implemented): rates risk unifies into the ONE firm-wide risk cube rather than a silo. The plan extends celnet-types::RateSensitivities to carry a curve-bucketed key-rate-DV01 ladder and admits a rates underlying/dimension so rates positions roll up alongside FX/equity/crypto in the same cube; the RiskService.AggregateRatesRisk endpoint becomes a TYPED PROJECTION of that one cube, not a separate engine. The curve-risk primitive is the existing key-rate-DV01 ladder (celnet-rates::risk::ladder; KeyRateDv01/KeyRateBucket buckets) — preserved as the per-tenor sensitivity, now bucketed into the shared cube. Aligns with master-plan item E (risk-cube RepriceFn) and API-first parity. NOT yet built: AggregateRatesRisk today is computed by a dedicated rates-risk aggregate path; this direction makes it a projection of the unified cube."
+ },
+ {
+  "kind": "invariant",
+  "state": "draft",
+  "anchors": [
+   "github.com-soarsa-celnet.crates.celnet-core.src.carry.CarryInputs.discount_df",
+   "github.com-soarsa-celnet.crates.celnet-core.src.carry.CarryInputs.forward",
+   "github.com-soarsa-celnet.crates.celnet-types.src.lib.Carry"
+  ],
+  "text": "INVARIANT TO PRESERVE under ADR-0010 (FI-rates→carry-seam convergence): FX byte-identity must survive the carry→DiscountCurve-trait generalization. After Carry/CarryInputs are generalized from a flat rate to a curve-backed term-structure context, the flat-carry FX path (Carry::FxRates → CarryInputs::discount_df / forward → VanillaInputs) must remain BIT-IDENTICAL (to_bits equality) to the pre-generalization flat-rate result. The flat curve is the single-point degenerate of a term structure, so the generalization must not perturb the FX two-rate discount/forward by even one ULP. CarryInputs::discount_df() is a pure read (self.carry.discount_df(self.t), no writes) and must stay so. This continues the existing carry-seam byte-identity contract (ADR-0008, deliverable carry-seam) across the curve-trait hoist; it is the no-regression gate on the convergence."
  }
 ]

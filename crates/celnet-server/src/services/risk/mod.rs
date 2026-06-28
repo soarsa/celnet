@@ -52,7 +52,9 @@ use tonic::{Request, Response, Status};
 
 use crate::clock::Clock;
 use crate::readiness::ReadinessGate;
-use crate::services::access::{RequiredAuthority, authorize_caller, resolve_caller};
+use crate::services::access::{
+    DeskScope, RequiredAuthority, ResolvedCaller, authorize_caller, resolve_caller,
+};
 use crate::services::sessions::SessionRegistry;
 use aggregate::{
     NonAdditiveConfig, aggregate_nodes, cube_from_facts, entitled_cube, entitled_facts_for_scope,
@@ -345,6 +347,72 @@ fn limit_scope_of(scope: &RiskScope) -> Result<LimitScope, Status> {
 }
 
 impl RiskEdge {
+    /// **The effective pruning principal** for a read (item B §3): the caller's
+    /// asserted (or grant-all-defaulted) body principal, then **narrowed to the
+    /// caller's session-derived desk** so a non-admin desk-bound session cannot
+    /// widen to a firm-wide view via an omitted/grant-all body principal.
+    ///
+    /// * an **admin** session, or **no** session (the legacy/demo/federation path) ⇒
+    ///   [`DeskScope::All`] ⇒ no narrowing — byte-identical to the prior
+    ///   `convert::principal_of(req.principal)` behaviour;
+    /// * a **trader** session bound to desk `slug` ⇒ narrow to `Desk = intern(slug)`
+    ///   (the canonical numeric desk id the boot-time `configure_desk` populated);
+    /// * a **trader** session with no desk ⇒ narrow to `Desk = 0` (the house/unowned
+    ///   `DeskId(0)` facts only).
+    ///
+    /// The numeric desk id is resolved through THIS store's interner
+    /// ([`PositionStore::intern`]), which is idempotent and agrees with the live
+    /// attribution path's lazy book interning within a run (item B §3 design).
+    ///
+    /// # Errors
+    /// `invalid_argument` if the asserted principal carries an unknown dimension.
+    fn effective_principal(
+        &self,
+        asserted: Option<&celnet_proto::EntitlementPrincipal>,
+        caller: &ResolvedCaller,
+    ) -> Result<celnet_entitlements::Principal, Status> {
+        let base = convert::principal_of(asserted)?;
+        Ok(match caller.desk_scope() {
+            DeskScope::All => base,
+            DeskScope::Desk(slug) => {
+                convert::narrow_to_desk(base, u64::from(self.store.intern(&slug)))
+            }
+            // House/unowned facts (DeskId 0) — a deskless trader sees only those.
+            DeskScope::Deskless => convert::narrow_to_desk(base, 0),
+        })
+    }
+
+    /// The **wire** desk-narrowed principal to forward to federation backends (item
+    /// B §3). For an admin / no-session caller ([`DeskScope::All`]) this is the
+    /// asserted principal verbatim — `None` stays `None` — so the forwarded request
+    /// is byte-identical to before. For a desk-bound caller it is the narrowed
+    /// rule-set ([`Self::effective_principal`]) re-serialized to wire form, so each
+    /// backend re-prunes by the same narrowing the aggregating edge applies locally.
+    ///
+    /// NOTE (flagged design): the narrowed rule pins `Desk = intern(slug)` where the
+    /// handle is THIS edge's interner value. In a distributed deployment the backends'
+    /// facts carry their `OrgKey.desk` handle; the narrowing is correct iff that
+    /// handle equals this edge's slug interning (the firm-uniform identity config +
+    /// deterministic boot interning make this hold). A handle disagreement can only
+    /// *under*-count (show fewer facts than entitled) — never widen — which is the
+    /// security-conservative failure direction. The default/only-Phase-2 topology
+    /// (`InProcess`) narrows locally and is unaffected.
+    ///
+    /// # Errors
+    /// `invalid_argument` if the asserted principal carries an unknown dimension.
+    fn narrowed_wire_principal(
+        &self,
+        asserted: Option<&celnet_proto::EntitlementPrincipal>,
+        caller: &ResolvedCaller,
+    ) -> Result<Option<celnet_proto::EntitlementPrincipal>, Status> {
+        if caller.desk_scope().is_all() {
+            return Ok(asserted.cloned());
+        }
+        Ok(Some(convert::principal_to_wire(
+            &self.effective_principal(asserted, caller)?,
+        )))
+    }
+
     /// The shared list-positions implementation (gRPC + WS both call this).
     ///
     /// # Errors
@@ -352,9 +420,10 @@ impl RiskEdge {
     pub fn list_positions_impl(
         &self,
         req: &ListPositionsRequest,
+        caller: &ResolvedCaller,
     ) -> Result<ListPositionsResponse, Status> {
         let snapshot = self.store.snapshot();
-        let principal = convert::principal_of(req.principal.as_ref())?;
+        let principal = self.effective_principal(req.principal.as_ref(), caller)?;
         let scope = scope_filter(req.scope.as_ref())?;
         let facts =
             entitled_facts_for_scope(&snapshot.facts, &principal, &snapshot.hierarchy, scope);
@@ -382,13 +451,14 @@ impl RiskEdge {
     pub fn aggregate_risk_impl(
         &self,
         req: &AggregateRiskRequest,
+        caller: &ResolvedCaller,
     ) -> Result<AggregateRiskResponse, Status> {
         let numeraire = req
             .numeraire
             .as_ref()
             .ok_or_else(|| Status::invalid_argument("AggregateRisk missing `numeraire`"))?;
         let resolver = WireResolver::new(numeraire)?;
-        let principal = convert::principal_of(req.principal.as_ref())?;
+        let principal = self.effective_principal(req.principal.as_ref(), caller)?;
         let dim = convert::dimension_of(req.dimension)?;
         let scope = scope_filter(req.scope.as_ref())?;
 
@@ -436,7 +506,11 @@ impl RiskEdge {
     /// # Errors
     /// `invalid_argument` for a malformed request; `failed_precondition` for a
     /// numeraire rate failure.
-    pub fn drill_risk_impl(&self, req: &DrillRiskRequest) -> Result<DrillRiskResponse, Status> {
+    pub fn drill_risk_impl(
+        &self,
+        req: &DrillRiskRequest,
+        caller: &ResolvedCaller,
+    ) -> Result<DrillRiskResponse, Status> {
         let node_scope = req
             .node
             .as_ref()
@@ -446,7 +520,7 @@ impl RiskEdge {
             .as_ref()
             .ok_or_else(|| Status::invalid_argument("DrillRisk missing `numeraire`"))?;
         let resolver = WireResolver::new(numeraire)?;
-        let principal = convert::principal_of(req.principal.as_ref())?;
+        let principal = self.effective_principal(req.principal.as_ref(), caller)?;
         let scope = scope_filter(Some(node_scope))?;
 
         let snapshot = self.store.snapshot();
@@ -496,6 +570,7 @@ impl RiskEdge {
     pub fn limit_status_impl(
         &self,
         req: &LimitStatusRequest,
+        caller: &ResolvedCaller,
     ) -> Result<LimitStatusResponse, Status> {
         let wire_scope = req
             .scope
@@ -506,7 +581,7 @@ impl RiskEdge {
             .as_ref()
             .ok_or_else(|| Status::invalid_argument("LimitStatus missing `numeraire`"))?;
         let resolver = WireResolver::new(numeraire)?;
-        let principal = convert::principal_of(req.principal.as_ref())?;
+        let principal = self.effective_principal(req.principal.as_ref(), caller)?;
         let limit_scope = limit_scope_of(wire_scope)?;
         let scope = scope_filter(Some(wire_scope))?;
 
@@ -806,8 +881,8 @@ impl RiskService for RiskEdge {
             req.correlation_id,
         )?;
         let resp = match self.serve_mode()? {
-            Serve::Direct => self.list_positions_impl(&req)?,
-            Serve::Federate(fleet) => self.federated_list_positions(fleet, &req).await?,
+            Serve::Direct => self.list_positions_impl(&req, &caller)?,
+            Serve::Federate(fleet) => self.federated_list_positions(fleet, &req, &caller).await?,
         };
         Ok(Response::new(resp))
     }
@@ -832,8 +907,8 @@ impl RiskService for RiskEdge {
             req.correlation_id,
         )?;
         let resp = match self.serve_mode()? {
-            Serve::Direct => self.aggregate_risk_impl(&req)?,
-            Serve::Federate(fleet) => self.federated_aggregate_risk(fleet, &req).await?,
+            Serve::Direct => self.aggregate_risk_impl(&req, &caller)?,
+            Serve::Federate(fleet) => self.federated_aggregate_risk(fleet, &req, &caller).await?,
         };
         Ok(Response::new(resp))
     }
@@ -858,8 +933,8 @@ impl RiskService for RiskEdge {
             req.correlation_id,
         )?;
         let resp = match self.serve_mode()? {
-            Serve::Direct => self.drill_risk_impl(&req)?,
-            Serve::Federate(fleet) => self.federated_drill_risk(fleet, &req).await?,
+            Serve::Direct => self.drill_risk_impl(&req, &caller)?,
+            Serve::Federate(fleet) => self.federated_drill_risk(fleet, &req, &caller).await?,
         };
         Ok(Response::new(resp))
     }
@@ -884,8 +959,8 @@ impl RiskService for RiskEdge {
             req.correlation_id,
         )?;
         let resp = match self.serve_mode()? {
-            Serve::Direct => self.limit_status_impl(&req)?,
-            Serve::Federate(fleet) => self.federated_limit_status(fleet, &req).await?,
+            Serve::Direct => self.limit_status_impl(&req, &caller)?,
+            Serve::Federate(fleet) => self.federated_limit_status(fleet, &req, &caller).await?,
         };
         Ok(Response::new(resp))
     }
@@ -1055,12 +1130,15 @@ mod tests {
             .unwrap();
 
         let resp = edge
-            .list_positions_impl(&ListPositionsRequest {
-                scope: None,
-                principal: None, // grant-all default
-                correlation_id: Some(42),
-                session_token: None,
-            })
+            .list_positions_impl(
+                &ListPositionsRequest {
+                    scope: None,
+                    principal: None, // grant-all default
+                    correlation_id: Some(42),
+                    session_token: None,
+                },
+                &ResolvedCaller::anonymous(),
+            )
             .unwrap();
         assert_eq!(resp.positions.len(), 2);
         assert_eq!(resp.correlation_id, Some(42));
@@ -1116,7 +1194,9 @@ mod tests {
         // premium (a long call's PV is positive and additive) — the single-pair
         // `delta_numeraire` self-funds to ~0 in the quote numeraire (the EUR hedge
         // and its USD funding leg net), which is correct but not a useful magnitude.
-        let firm = edge.aggregate_risk_impl(&req(None)).unwrap();
+        let firm = edge
+            .aggregate_risk_impl(&req(None), &ResolvedCaller::anonymous())
+            .unwrap();
         let firm_prem = firm.nodes[0].additive.as_ref().unwrap().premium_numeraire;
         assert_eq!(firm.nodes[0].position_count, 2);
         assert!(firm_prem > 0.0, "long calls → positive firm premium");
@@ -1132,7 +1212,9 @@ mod tests {
             }],
             denies: vec![],
         };
-        let scoped_resp = edge.aggregate_risk_impl(&req(Some(scoped))).unwrap();
+        let scoped_resp = edge
+            .aggregate_risk_impl(&req(Some(scoped)), &ResolvedCaller::anonymous())
+            .unwrap();
         assert_eq!(
             scoped_resp.nodes[0].position_count, 1,
             "only the EM-VOL leg"
@@ -1163,7 +1245,9 @@ mod tests {
                 }],
             }],
         };
-        let walled_resp = edge.aggregate_risk_impl(&req(Some(walled))).unwrap();
+        let walled_resp = edge
+            .aggregate_risk_impl(&req(Some(walled)), &ResolvedCaller::anonymous())
+            .unwrap();
         assert_eq!(walled_resp.nodes[0].position_count, 1, "EM-VOL walled off");
     }
 
@@ -1192,16 +1276,19 @@ mod tests {
         );
 
         let resp = edge
-            .limit_status_impl(&LimitStatusRequest {
-                scope: Some(scope),
-                numeraire: Some(usd_numeraire()),
-                principal: None,
-                vega_pillars: vec![],
-                var_spot_shocks: vec![],
-                var_alpha: 0.0,
-                correlation_id: Some(7),
-                session_token: None,
-            })
+            .limit_status_impl(
+                &LimitStatusRequest {
+                    scope: Some(scope),
+                    numeraire: Some(usd_numeraire()),
+                    principal: None,
+                    vega_pillars: vec![],
+                    var_spot_shocks: vec![],
+                    var_alpha: 0.0,
+                    correlation_id: Some(7),
+                    session_token: None,
+                },
+                &ResolvedCaller::anonymous(),
+            )
             .unwrap();
         assert_eq!(resp.correlation_id, Some(7));
         assert_eq!(resp.limits.len(), 1);
@@ -1218,16 +1305,19 @@ mod tests {
             LimitSpec::hard(LimitMetric::Vega, 1.0e12),
         );
         let clear = edge
-            .limit_status_impl(&LimitStatusRequest {
-                scope: Some(scope),
-                numeraire: Some(usd_numeraire()),
-                principal: None,
-                vega_pillars: vec![],
-                var_spot_shocks: vec![],
-                var_alpha: 0.0,
-                correlation_id: None,
-                session_token: None,
-            })
+            .limit_status_impl(
+                &LimitStatusRequest {
+                    scope: Some(scope),
+                    numeraire: Some(usd_numeraire()),
+                    principal: None,
+                    vega_pillars: vec![],
+                    var_spot_shocks: vec![],
+                    var_alpha: 0.0,
+                    correlation_id: None,
+                    session_token: None,
+                },
+                &ResolvedCaller::anonymous(),
+            )
             .unwrap();
         assert_eq!(clear.worst, celnet_proto::RagStatus::Green as i32);
         assert!(!clear.hard_breach);
@@ -1251,20 +1341,23 @@ mod tests {
         edge.store.set_book_desk(b2, desk);
 
         let resp = edge
-            .drill_risk_impl(&celnet_proto::DrillRiskRequest {
-                node: Some(RiskScope {
-                    dimension: RiskDimension::Desk as i32,
-                    value: u64::from(desk),
-                }),
-                child_dimension: RiskDimension::Book as i32,
-                numeraire: Some(usd_numeraire()),
-                principal: None,
-                vega_pillars: vec![],
-                include_children: true,
-                include_positions: true,
-                correlation_id: Some(9),
-                session_token: None,
-            })
+            .drill_risk_impl(
+                &celnet_proto::DrillRiskRequest {
+                    node: Some(RiskScope {
+                        dimension: RiskDimension::Desk as i32,
+                        value: u64::from(desk),
+                    }),
+                    child_dimension: RiskDimension::Book as i32,
+                    numeraire: Some(usd_numeraire()),
+                    principal: None,
+                    vega_pillars: vec![],
+                    include_children: true,
+                    include_positions: true,
+                    correlation_id: Some(9),
+                    session_token: None,
+                },
+                &ResolvedCaller::anonymous(),
+            )
             .unwrap();
         assert_eq!(resp.correlation_id, Some(9));
         // Two child book sub-nodes, two contributing positions.
@@ -1319,11 +1412,15 @@ mod tests {
 
         let default_edge = edge();
         book(&default_edge);
-        let from_default = default_edge.aggregate_risk_impl(&req).unwrap();
+        let from_default = default_edge
+            .aggregate_risk_impl(&req, &ResolvedCaller::anonymous())
+            .unwrap();
 
         let inproc_edge = edge_with(FleetTopology::InProcess);
         book(&inproc_edge);
-        let from_inproc = inproc_edge.aggregate_risk_impl(&req).unwrap();
+        let from_inproc = inproc_edge
+            .aggregate_risk_impl(&req, &ResolvedCaller::anonymous())
+            .unwrap();
 
         // Same dimension / numeraire / correlation, same node count.
         assert_eq!(from_default.dimension, from_inproc.dimension);
@@ -1528,6 +1625,139 @@ mod tests {
         assert!(
             denied.is_err(),
             "an unauthenticated grant-all principal must not book under enforce"
+        );
+    }
+
+    // --- §3 desk-identity bridge + risk narrowing -----------------------------
+
+    use crate::config::identity::Role;
+    use crate::services::sessions::{AuthenticatedUser, SessionRegistry};
+
+    /// The firm-aggregate node's `position_count` an `aggregate_risk_impl` returns
+    /// for a given caller + asserted principal — the oracle observable.
+    fn firm_count(
+        edge: &RiskEdge,
+        caller: &ResolvedCaller,
+        principal: Option<EntitlementPrincipal>,
+    ) -> u32 {
+        let req = AggregateRiskRequest {
+            dimension: RiskDimension::Firm as i32,
+            numeraire: Some(usd_numeraire()),
+            principal,
+            scope: None,
+            vega_pillars: vec![],
+            var_spot_shocks: vec![],
+            var_alpha: 0.0,
+            curvature_risk_weight: 0.0,
+            correlation_id: None,
+            session_token: None,
+        };
+        let resp = edge.aggregate_risk_impl(&req, caller).unwrap();
+        resp.nodes.first().map_or(0, |n| n.position_count)
+    }
+
+    /// **§3 oracle (independent): session-derived desk narrowing == an explicit desk
+    /// scope, and is STRICTLY narrower than admin.** Two desks are wired via the
+    /// boot-time `configure_desk` bridge (not the test-only `set_book_desk`). A
+    /// desk-EM trader session asserting **grant-all** sees EXACTLY the same firm
+    /// total as the same trader asserting `scoped().grant(Desk = EM)` — proving the
+    /// narrowing equals an explicit desk scope — and sees STRICTLY FEWER positions
+    /// than an admin (whose grant-all is unrestricted). A deskless trader sees only
+    /// house/DeskId(0) facts (here: none). The property — not a hardcoded count — is
+    /// the oracle.
+    #[test]
+    fn desk_narrowing_equals_explicit_desk_scope_and_is_narrower_than_admin() {
+        let edge = edge();
+        // Two desks, two books each-ish: EM-VOL (book EM-VOL-1) and G10 (book G10-1).
+        edge.store
+            .book_from_attribution(booked(1, 10_000_000.0), &attribution("EM-VOL-1", "a"))
+            .unwrap();
+        edge.store
+            .book_from_attribution(booked(2, 7_000_000.0), &attribution("G10-1", "b"))
+            .unwrap();
+        // Wire the bridge from config-shaped DeskDefs (the production boot path).
+        edge.store
+            .configure_desk("em-vol-desk", &["EM-VOL-1".to_owned()]);
+        edge.store.configure_desk("g10-desk", &["G10-1".to_owned()]);
+
+        // Mint sessions over a shared registry the edge validates against.
+        let sessions = Arc::new(SessionRegistry::new(Clock::manual(0)));
+        let edge = edge.with_sessions(Arc::clone(&sessions));
+        let mk = |id: &str, role: Role, desk: Option<&str>| AuthenticatedUser {
+            user_id: id.to_owned(),
+            email: format!("{id}@celnet.com"),
+            display_name: id.to_owned(),
+            role,
+            desk_id: desk.map(str::to_owned),
+            cap_grants: Vec::new(),
+            cap_denies: Vec::new(),
+        };
+        let trader_tok = sessions
+            .issue(mk("emtrader", Role::Trader, Some("em-vol-desk")))
+            .unwrap()
+            .token;
+        let admin_tok = sessions.issue(mk("boss", Role::Admin, None)).unwrap().token;
+        let deskless_tok = sessions
+            .issue(mk("nomad", Role::Trader, None))
+            .unwrap()
+            .token;
+
+        let trader = resolve_caller(&sessions, Some(&trader_tok), None).unwrap();
+        let admin = resolve_caller(&sessions, Some(&admin_tok), None).unwrap();
+        let deskless = resolve_caller(&sessions, Some(&deskless_tok), None).unwrap();
+
+        // The canonical numeric desk id of the EM desk (idempotent interning).
+        let em_desk = edge.store.intern("em-vol-desk");
+        let explicit_em = EntitlementPrincipal {
+            grant_all: false,
+            grants: vec![EntitlementRule {
+                scopes: vec![RiskScope {
+                    dimension: RiskDimension::Desk as i32,
+                    value: u64::from(em_desk),
+                }],
+            }],
+            denies: vec![],
+        };
+
+        // ORACLE 1: the desk-EM trader asserting grant-all (an OMITTED body
+        // principal) sees EXACTLY the same firm total as the SAME trader asserting an
+        // explicit `Desk = EM` scope — the narrowing IS the explicit desk scope.
+        let trader_grant_all = firm_count(&edge, &trader, None);
+        let trader_explicit_scope = firm_count(&edge, &trader, Some(explicit_em.clone()));
+        assert_eq!(
+            trader_grant_all, trader_explicit_scope,
+            "session desk-narrowing of a grant-all body == an explicit Desk scope"
+        );
+        assert_eq!(
+            trader_grant_all, 1,
+            "the EM trader sees only the EM-VOL leg"
+        );
+
+        // ORACLE 2: an ADMIN session asserting grant-all sees the WHOLE firm (both
+        // legs) — STRICTLY MORE than the desk-bound trader (no narrowing for admin).
+        let admin_grant_all = firm_count(&edge, &admin, None);
+        assert_eq!(admin_grant_all, 2, "admin's grant-all is unrestricted");
+        assert!(
+            trader_grant_all < admin_grant_all,
+            "the desk-bound trader ({trader_grant_all}) sees strictly fewer than admin ({admin_grant_all})"
+        );
+
+        // ORACLE 3: a DESKLESS trader narrows to DeskId(0) (house/unowned) — neither
+        // booked leg is house-owned, so it sees NOTHING.
+        let deskless_grant_all = firm_count(&edge, &deskless, None);
+        assert_eq!(
+            deskless_grant_all, 0,
+            "a deskless trader sees only house/DeskId(0) facts (here: none)"
+        );
+
+        // Cross-check: the same explicit-EM-scope assertion under the ADMIN session
+        // (no narrowing) ALSO yields exactly the EM leg — proving the trader's
+        // grant-all narrowing reproduced the explicit scope's effect, not a wider or
+        // emptier set.
+        assert_eq!(
+            firm_count(&edge, &admin, Some(explicit_em)),
+            1,
+            "an explicit Desk=EM scope (admin, no narrowing) sees exactly the EM leg"
         );
     }
 }

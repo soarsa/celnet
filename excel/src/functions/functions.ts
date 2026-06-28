@@ -335,7 +335,16 @@ export async function GREEKS(
       ));
     }
     const quote = await getConnection().requestQuote(instrument, DEFAULT_CONVENTIONS, key);
-    return formatGreeksSpill(quote.greeks, quote.conventions, quote.surfaceVersion, quote.epochNanos);
+    // Pass the underlying so the rate-rho rows carry the asset-class-correct carry
+    // label (e.g. an equity's `rho_dividend_yield`) — the carry seam reaching the
+    // Excel Greeks spill. FX is byte-identical (the `rho_dom`/`rho_for` pair).
+    return formatGreeksSpill(
+      quote.greeks,
+      quote.conventions,
+      quote.surfaceVersion,
+      quote.epochNanos,
+      instrument.underlying,
+    );
   } catch (err) {
     throw toCfError(err);
   }

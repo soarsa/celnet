@@ -182,6 +182,14 @@ pub struct DeskDef {
     pub id: String,
     /// Human-friendly desk label, e.g. `G10 Options`.
     pub name: String,
+    /// The book **names** this desk owns — the attribution book strings the
+    /// interner sees on the live booking path. The desk-identity bridge (item B §3)
+    /// interns each at boot and sets its `Book → Desk` parent, so a logged-in
+    /// trader's session narrows to exactly the facts booked into their desk's books
+    /// (`PositionStore::configure_desk`). Empty ⇒ the desk owns no books yet (a
+    /// no-op at boot), an additive serde-default field (no `schema_version`).
+    #[serde(default)]
+    pub books: Vec<String>,
 }
 
 /// The persisted document: the users and desks of the edge.
@@ -502,6 +510,7 @@ mod tests {
         let desks = vec![DeskDef {
             id: "g10-options".into(),
             name: "G10 Options".into(),
+            books: Vec::new(),
         }];
         assert_eq!(mint_desk_id("G10 Options", &desks), "g10-options-2");
         assert_eq!(mint_desk_id("EM Vol", &desks), "em-vol");
@@ -514,6 +523,7 @@ mod tests {
         store.desks.push(DeskDef {
             id: "g10".into(),
             name: "G10".into(),
+            books: Vec::new(),
         });
         let bytes = serde_json::to_vec(&store).unwrap();
         let back: IdentityStore = serde_json::from_slice(&bytes).unwrap();

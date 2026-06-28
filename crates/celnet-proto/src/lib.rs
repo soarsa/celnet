@@ -765,6 +765,19 @@ mod tests {
             correlation_id: Some(0xCAFE_F00D),
             surface_version: Some(42),
             attribution: Some(sample_attribution()),
+            // The RFQ caller (item B §2): the validated session token + asserted
+            // principal both round-trip on the wire.
+            session_token: Some("sess-abc123".to_owned()),
+            principal: Some(EntitlementPrincipal {
+                grant_all: false,
+                grants: vec![EntitlementRule {
+                    scopes: vec![RiskScope {
+                        dimension: RiskDimension::Desk as i32,
+                        value: 7,
+                    }],
+                }],
+                denies: vec![],
+            }),
         };
         round_trip(&request);
 
@@ -777,6 +790,8 @@ mod tests {
             correlation_id: None,
             surface_version: None,
             attribution: None,
+            session_token: None,
+            principal: None,
         };
         round_trip(&request_no_optionals);
 
@@ -804,12 +819,17 @@ mod tests {
             idempotency_key: request.idempotency_key.clone(),
             side: Side::Buy as i32,
             lp_id: String::new(),
+            // The accepting caller (item B §2) round-trips on the wire.
+            session_token: Some("sess-abc123".to_owned()),
+            principal: None,
         };
         round_trip(&accept);
 
         let reject = QuoteReject {
             quote_id: 1_001,
             reason: "off-market".to_owned(),
+            session_token: None,
+            principal: None,
         };
         round_trip(&reject);
 
@@ -873,6 +893,8 @@ mod tests {
             idempotency_key: "rfq-to-many-1".to_owned(),
             side: Side::Buy as i32,
             lp_id: "LP-A".to_owned(),
+            session_token: None,
+            principal: None,
         });
     }
 

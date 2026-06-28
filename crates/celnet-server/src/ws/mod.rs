@@ -101,6 +101,7 @@ use crate::services::pricing::PricingEdge;
 use crate::services::quote::{LpPanelConfig, QuoteEdge};
 use crate::services::risk::RiskEdge;
 use crate::services::risk::store::PositionStore;
+use crate::services::sessions::SessionRegistry;
 use crate::services::stream::{StreamEdge, run_session};
 use crate::services::surface::SurfaceEdge;
 use crate::spread::SpreadModel;
@@ -154,6 +155,7 @@ impl WsServices {
         clock: Clock,
         surface_book: Arc<SurfaceBook>,
         store: Arc<PositionStore>,
+        sessions: Arc<SessionRegistry>,
         risk: Arc<RiskEdge>,
         fix_admin: Arc<FixAdminEdge>,
         auth: Arc<AuthEdge>,
@@ -172,15 +174,21 @@ impl WsServices {
             Arc::clone(&surface_book),
             fleet.clone(),
         ));
-        let quote = Arc::new(QuoteEdge::with_fleet(
-            Arc::clone(&link),
-            Arc::clone(&gate),
-            spread,
-            clock.clone(),
-            Arc::clone(&surface_book),
-            fleet.clone(),
-            panel,
-        ));
+        let quote = Arc::new(
+            QuoteEdge::with_fleet(
+                Arc::clone(&link),
+                Arc::clone(&gate),
+                spread,
+                clock.clone(),
+                Arc::clone(&surface_book),
+                fleet.clone(),
+                panel,
+            )
+            // The WS RFQ caller gate (item B §2) shares the SAME session registry +
+            // access store the gRPC quote edge uses, so the WS mirror enforces one
+            // coherent policy (the caller rides in the unary body — no router change).
+            .with_session_access(Arc::clone(&sessions), Arc::clone(&store)),
+        );
         let stream = Arc::new(StreamEdge::with_store(
             Arc::clone(&link),
             Arc::clone(&gate),

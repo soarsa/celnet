@@ -288,6 +288,27 @@ export class Connection {
     return frame;
   }
 
+  /**
+   * Caller-authz envelope for the unary QuoteService frames (item B §2): the same
+   * `session_token` + grant-all-default `principal` the opening `Authenticate`
+   * frame carries, so a quote request/accept presents the SAME caller and the
+   * production `Enforce` posture gates QuoteService identically to the stream. The
+   * server binds an `accept_quote` to the recording requester, so the request and
+   * the accept MUST present the same caller (a mismatch is refused
+   * `permission_denied`) — both default to grant-all + whatever token is held.
+   * Unlike the GUI's `WsConnection.request`, the Excel `request` helper does not
+   * auto-inject the token, so the quote frames carry it explicitly here.
+   */
+  private quoteAuthFields(): WireObject {
+    const fields: WireObject = {
+      principal: entitlementPrincipalToWire(
+        this.principal ?? { grantAll: true, grants: [], denies: [] },
+      ),
+    };
+    if (this.sessionToken !== null) fields["session_token"] = this.sessionToken;
+    return fields;
+  }
+
   /** True iff the underlying socket is currently OPEN. */
   isOpen(): boolean {
     return this.ws?.readyState === WS_OPEN;
@@ -822,6 +843,7 @@ export class Connection {
         idempotency_key: idempotencyKey,
         instrument: instrumentToWire(instrument),
         conventions: conventionsToWire(conventions),
+        ...this.quoteAuthFields(),
       },
       "quote",
     );
@@ -846,6 +868,7 @@ export class Connection {
         idempotency_key: idempotencyKey,
         instrument: instrumentToWire(instrument),
         conventions: conventionsToWire(conventions),
+        ...this.quoteAuthFields(),
       },
       "multi_dealer_quote",
     );
@@ -876,6 +899,11 @@ export class Connection {
       quote_id: args.quoteId,
       idempotency_key: args.idempotencyKey,
       side: enums.side.toWire(args.side),
+      // Same caller-authz envelope as the originating requestQuote (item B §2): the
+      // server binds this accept to the recording requester, so it MUST present the
+      // SAME caller (grant-all default principal + held token) — a mismatch is
+      // refused `permission_denied`.
+      ...this.quoteAuthFields(),
     };
     if (args.lpId !== undefined && args.lpId !== "") body["lp_id"] = args.lpId;
     const reply = await this.request("accept_quote", body, "execution");

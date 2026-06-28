@@ -607,6 +607,9 @@ impl AuthService for AuthEdge {
         let desk = DeskDef {
             id: mint_desk_id(&name, &guard.desks),
             name,
+            // A freshly-created desk owns no books yet; book→desk membership is
+            // declared separately (config/`configure_desk` at boot).
+            books: Vec::new(),
         };
         let mut next = guard.clone();
         next.desks.push(desk.clone());

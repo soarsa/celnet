@@ -1428,6 +1428,12 @@ export function quoteAcceptToWire(
     quote_id: quoteId,
     idempotency_key: idempotencyKey,
     side: e.side.toWire(side),
+    // Caller-authz (item B §2): the server binds an accept to the recording
+    // requester, so the accept must carry the SAME caller the request did — the
+    // grant-all default principal (and the bearer `session_token` the connection
+    // auto-injects into every envelope, the same one the stream `authenticate`
+    // frame uses). A mismatch is refused `permission_denied`.
+    principal: principalOrGrantAllToWire(undefined),
   };
   if (lpId !== undefined && lpId.length > 0) w["lp_id"] = lpId;
   return w;

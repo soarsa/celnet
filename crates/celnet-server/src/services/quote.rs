@@ -26,7 +26,28 @@
 //! retried `AcceptQuote` on an already-booked quote returns the **same**
 //! [`celnet_proto::Execution`], so a network retry can never double-book.
 //!
-//! # Trust model (request-matched accept / unguessable id)
+//! # Trust model (caller-gated, requester-bound accept, unguessable id)
+//!
+//! **Caller gate (item B §2).** Every RFQ RPC (`RequestQuote`,
+//! `RequestMultiDealerQuote`, `AcceptQuote`, `RejectQuote`) passes the same
+//! session-aware authorization boundary the risk reads do
+//! ([`crate::services::access::authorize_caller`] with [`RequiredAuthority::ReadAny`]):
+//! the caller is resolved from the request's `session_token` (validated against the
+//! shared [`SessionRegistry`]) + asserted `principal`, and an unauthenticated caller
+//! is denied by default under [`AccessMode::Enforce`](celnet_entitlements::AccessMode)
+//! (admitted, audited, under the explicit permissive demo mode). The access mode is
+//! read live from the shared [`PositionStore`], so gRPC and the WS mirror — which
+//! dispatch onto the SAME trait methods, the caller riding in the unary body —
+//! enforce one coherent policy with no router change.
+//!
+//! **Requester-bound accept (item B §2).** Beyond the request-matched idempotency
+//! key, the stored quote records the requesting caller's identity
+//! ([`RequesterBinding`]). When the requester was an **authenticated** user, an
+//! `AcceptQuote` is admitted only from that SAME authenticated user — a different
+//! authenticated principal is refused `permission_denied`, closing "any party that
+//! learns a `quote_id` books another requester's quote". An **anonymous**-requested
+//! quote (the permissive demo path) keeps the legacy idempotency-only behaviour
+//! unchanged.
 //!
 //! `quote_id` is **not** an authority token. `AcceptQuote` is request-matched to
 //! the originating idempotency key: an accept whose `idempotency_key` does not
@@ -85,9 +106,14 @@ use crate::clock::Clock;
 use crate::core_link::CoreLink;
 use crate::pricer::{ConventionSet, price_instrument};
 use crate::readiness::ReadinessGate;
+use crate::services::access::{
+    RequiredAuthority, ResolvedCaller, authorize_caller, resolve_caller,
+};
 use crate::services::forward::{Serve, route_underlying, serve_mode};
 use crate::services::pin::{PinnedVol, resolve_pinned_vol};
 use crate::services::risk::federate::Fleet;
+use crate::services::risk::store::PositionStore;
+use crate::services::sessions::SessionRegistry;
 use crate::spread::SpreadModel;
 use crate::surface_book::SurfaceBook;
 
@@ -194,6 +220,34 @@ fn synthetic_lp_attribution(lp_id: &str, held_by: Option<BookId>) -> Attribution
     }
 }
 
+/// **The identity bound to a quote at request time** (item B §2): the resolved
+/// caller that requested the quote, so an [`QuoteService::accept_quote`] can be
+/// required to come from the SAME caller.
+///
+/// * [`RequesterBinding::Authenticated`] — the requester held a valid session token;
+///   the wrapped string is their stable [`AuthenticatedUser::user_id`]. An accept is
+///   admitted only from an authenticated caller with the SAME id.
+/// * [`RequesterBinding::Anonymous`] — the requester carried no authenticated session
+///   (the permissive demo path); the accept keeps the legacy idempotency-only
+///   behaviour, no binding check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RequesterBinding {
+    /// The requester authenticated as this stable user id.
+    Authenticated(String),
+    /// The requester carried no authenticated session (permissive/demo path).
+    Anonymous,
+}
+
+/// The [`RequesterBinding`] for a resolved caller: an authenticated user binds to
+/// its stable id; an unauthenticated caller is [`RequesterBinding::Anonymous`]
+/// (binding is keyed on the SERVER-validated session, never a client-asserted
+/// principal — an asserted principal is not an authenticated identity).
+fn caller_binding(caller: &ResolvedCaller) -> RequesterBinding {
+    caller.user().map_or(RequesterBinding::Anonymous, |u| {
+        RequesterBinding::Authenticated(u.user_id.clone())
+    })
+}
+
 /// A booked, immutable quote record kept for idempotent re-request and accept.
 #[derive(Debug, Clone)]
 struct QuoteRecord {
@@ -216,6 +270,10 @@ struct QuoteRecord {
     /// is set; polices accept-retries (a retry naming a different line is a
     /// different trade intent, not a retry).
     booked_lp_id: String,
+    /// **The caller that requested this quote** (item B §2): an `AcceptQuote` is
+    /// bound to this requester when it was authenticated — a different authenticated
+    /// principal is refused. An anonymous requester keeps idempotency-only accepts.
+    requester: RequesterBinding,
 }
 
 /// The in-memory RFQ store: idempotency-key → quote_id, and quote_id → record.
@@ -265,6 +323,16 @@ pub struct QuoteEdge {
     /// `RequestMultiDealerQuote` (see [`LpPanelConfig`]; `0` ⇒ native-only,
     /// byte-identical single-dealer behaviour).
     panel: LpPanelConfig,
+    /// The edge-wide session registry the RFQ caller gate validates `session_token`
+    /// against — the SAME authentication state every other gated edge shares (item
+    /// B §2). Defaulted to an empty registry by the constructors; the boot path
+    /// installs the shared one via [`QuoteEdge::with_session_access`].
+    sessions: Arc<SessionRegistry>,
+    /// The shared live position book, read only for its runtime-settable
+    /// [`PositionStore::access_mode`] — the ONE access posture the whole edge gates
+    /// under (gRPC + WS, every service). Named `access_store` to keep the RFQ
+    /// [`QuoteStore`] field (`store`) distinct.
+    access_store: Arc<PositionStore>,
 }
 
 impl QuoteEdge {
@@ -310,6 +378,7 @@ impl QuoteEdge {
         // is appropriate (the determinism / counter-RNG guardrail governs pricing,
         // which never consumes this value).
         let quote_id_secret = RandomState::new().build_hasher().finish();
+        let sessions = Arc::new(SessionRegistry::new(clock.clone()));
         Self {
             link,
             gate,
@@ -323,7 +392,28 @@ impl QuoteEdge {
             fleet,
             quote_owners: Mutex::new(HashMap::new()),
             panel,
+            sessions,
+            access_store: Arc::new(PositionStore::new()),
         }
+    }
+
+    /// Install the edge-wide [`SessionRegistry`] (validates the RFQ caller's
+    /// `session_token`) and the shared [`PositionStore`] (the runtime-settable
+    /// access-mode authority), so the RFQ caller gate (item B §2) enforces under the
+    /// SAME posture every other gated edge does. Builder-style, mirroring
+    /// [`RiskEdge::with_sessions`](crate::services::risk::RiskEdge::with_sessions);
+    /// the constructors otherwise default to an empty registry + a private store, so
+    /// existing test constructors keep compiling (an empty registry rejects every
+    /// token, which is correct for a no-auth test edge).
+    #[must_use]
+    pub fn with_session_access(
+        mut self,
+        sessions: Arc<SessionRegistry>,
+        access_store: Arc<PositionStore>,
+    ) -> Self {
+        self.sessions = sessions;
+        self.access_store = access_store;
+        self
     }
 
     /// Mint the next **unguessable** `quote_id`: a strictly-fresh monotonic counter
@@ -412,6 +502,25 @@ impl QuoteService for QuoteEdge {
         let _guard = self.gate.enter();
         self.require_ready()?;
         let req = request.into_inner();
+
+        // Caller gate (item B §2): resolve the caller from the unary body's
+        // `session_token` + asserted `principal` and authorize under the live access
+        // mode BEFORE the distributed-forward branch, so a forwarding edge is gated
+        // too. The resolved caller is also the requester bound onto the stored quote
+        // (so a later accept must come from the same authenticated principal).
+        let caller = resolve_caller(
+            &self.sessions,
+            req.session_token.as_deref(),
+            req.principal.clone(),
+        )?;
+        authorize_caller(
+            self.access_store.access_mode(),
+            &caller,
+            "QuoteService/RequestQuote",
+            RequiredAuthority::ReadAny,
+            req.correlation_id,
+        )?;
+        let requester = caller_binding(&caller);
 
         // Distributed: forward RequestQuote to the backend that owns the instrument's
         // pair, record `quote_id → issuing backend` so the matching accept/reject
@@ -531,6 +640,9 @@ impl QuoteService for QuoteEdge {
                     rejected: false,
                     dealers: Vec::new(),
                     booked_lp_id: String::new(),
+                    // Bind the requesting caller (item B §2): a later accept by a
+                    // different authenticated principal is refused.
+                    requester,
                 },
             );
             if !req.idempotency_key.is_empty() {
@@ -559,6 +671,23 @@ impl QuoteService for QuoteEdge {
         // ranked quotes, never faked fills or placeholder rows.
         let req = request.into_inner();
         let correlation_id = req.correlation_id;
+        // Caller gate (item B §2): authorize the multi-dealer RFQ under the live
+        // access mode. The inner `request_quote` re-resolves + re-gates the same
+        // caller (idempotent) and records the requester binding; gating here too
+        // keeps every one of the four RFQ RPCs gated at its own entry, audited under
+        // this RPC's name.
+        let caller = resolve_caller(
+            &self.sessions,
+            req.session_token.as_deref(),
+            req.principal.clone(),
+        )?;
+        authorize_caller(
+            self.access_store.access_mode(),
+            &caller,
+            "QuoteService/RequestMultiDealerQuote",
+            RequiredAuthority::ReadAny,
+            correlation_id,
+        )?;
         // Reuse the full single-dealer pricing/idempotency/pinning path verbatim, so
         // the native dealer line is byte-identical to the `RequestQuote` it mirrors
         // and the quote is stored (keyed by `quote_id`) for accept/reject.
@@ -689,6 +818,23 @@ impl QuoteService for QuoteEdge {
         self.require_ready()?;
         let acc = request.into_inner();
 
+        // Caller gate (item B §2): resolve + authorize the accepting caller under the
+        // live access mode BEFORE the distributed-forward branch (`QuoteAccept` has
+        // no `correlation_id` field ⇒ `None`). The resolved caller is then bound
+        // against the quote's recorded requester below.
+        let caller = resolve_caller(
+            &self.sessions,
+            acc.session_token.as_deref(),
+            acc.principal.clone(),
+        )?;
+        authorize_caller(
+            self.access_store.access_mode(),
+            &caller,
+            "QuoteService/AcceptQuote",
+            RequiredAuthority::ReadAny,
+            None,
+        )?;
+
         // Distributed: route the accept to the SAME backend that issued the quote
         // (recorded on the forwarded RequestQuote). The accept/reject wire carries
         // only `quote_id` (no pair), and a `quote_id` is minted under the issuing
@@ -719,6 +865,23 @@ impl QuoteService for QuoteEdge {
             .get(&acc.quote_id)
             .ok_or_else(|| Status::not_found(format!("unknown quote_id {}", acc.quote_id)))?
             .clone();
+
+        // Requester binding (item B §2): when the quote was requested by an
+        // AUTHENTICATED caller, an accept is admitted only from that SAME
+        // authenticated principal — a different authenticated user is refused
+        // `permission_denied`, beyond the idempotency-key match below. This closes
+        // "any party that learns a quote_id books another requester's quote". An
+        // ANONYMOUS-requested quote (the permissive demo path) carries no binding,
+        // so the legacy idempotency-only behaviour is unchanged.
+        if let RequesterBinding::Authenticated(requester_id) = &rec.requester
+            && caller_binding(&caller) != RequesterBinding::Authenticated(requester_id.clone())
+        {
+            return Err(Status::permission_denied(format!(
+                "accept by a different principal than the one that requested quote {}; \
+                 an accept must come from the requesting caller",
+                acc.quote_id
+            )));
+        }
 
         // Request-matched idempotency: an accept must carry the *same* idempotency
         // key the quote was minted under. The `quote_id` alone is not an authority
@@ -871,6 +1034,24 @@ impl QuoteService for QuoteEdge {
         self.require_ready()?;
         let rej = request.into_inner();
 
+        // Caller gate (item B §2): authorize the rejecting caller under the live
+        // access mode BEFORE the distributed-forward branch (`QuoteReject` has no
+        // `correlation_id` field ⇒ `None`). Possession of the unguessable `quote_id`
+        // still authorizes WHICH quote may be declined (module trust model); this
+        // gate enforces that the caller is admitted at all under Enforce.
+        let caller = resolve_caller(
+            &self.sessions,
+            rej.session_token.as_deref(),
+            rej.principal.clone(),
+        )?;
+        authorize_caller(
+            self.access_store.access_mode(),
+            &caller,
+            "QuoteService/RejectQuote",
+            RequiredAuthority::ReadAny,
+            None,
+        )?;
+
         // Distributed: route the reject to the SAME backend that issued the quote
         // (recorded on the forwarded RequestQuote), for the same reason as accept.
         if let Serve::Forward(fleet) = serve_mode(self.fleet.as_ref()) {
@@ -916,5 +1097,325 @@ impl QuoteService for QuoteEdge {
             quote_id: rej.quote_id,
             epoch_nanos: self.clock.now_nanos(),
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Item B §2: the RFQ caller gate + the requester-bound accept.
+    //!
+    //! These build an in-process [`QuoteEdge`] over a real [`CoreLink`] (so an
+    //! admitted RFQ actually prices), an injected [`SessionRegistry`] (so we mint
+    //! authenticated users without an AuthService round-trip), and a shared
+    //! [`PositionStore`] whose runtime access mode the gate reads.
+    use super::*;
+    use crate::config::identity::Role;
+    use crate::services::sessions::AuthenticatedUser;
+    use celnet_entitlements::AccessMode;
+
+    /// A real EURUSD-fixture core so an admitted RFQ prices a genuine quote.
+    fn test_link() -> Arc<CoreLink> {
+        let initial = celnet_engine::testing::make_state(
+            1.10,
+            celnet_conventions::resolve(
+                celnet_types::CcyPair::parse("EURUSD").unwrap(),
+                celnet_types::Tenor::Years(1),
+            )
+            .record,
+        );
+        CoreLink::start(initial, None)
+    }
+
+    /// A EURUSD vanilla-call wire instrument at an absolute strike, 1Y.
+    fn vanilla_call(strike: f64) -> celnet_proto::Instrument {
+        celnet_proto::Instrument {
+            underlying: Some(celnet_proto::Underlying::fx(celnet_proto::CcyPair {
+                base: "EUR".to_owned(),
+                quote: "USD".to_owned(),
+            })),
+            tenor: Some(celnet_proto::Tenor {
+                unit: celnet_proto::tenor::Unit::Years as i32,
+                count: 1,
+                broken_date: None,
+            }),
+            expiry_years: 1.0,
+            quantity: Some(celnet_proto::Quantity {
+                notional: 1_000_000.0,
+                base_ccy: true,
+            }),
+            side: celnet_proto::Side::TwoWay as i32,
+            solve: None,
+            pricing_model: celnet_proto::PricingModel::Default as i32,
+            product: Some(celnet_proto::instrument::Product::Vanilla(
+                celnet_proto::Vanilla {
+                    option_type: celnet_proto::OptionType::Call as i32,
+                    strike: Some(celnet_proto::StrikeOrDelta {
+                        spec: Some(celnet_proto::strike_or_delta::Spec::Strike(strike)),
+                    }),
+                },
+            )),
+            ..Default::default()
+        }
+    }
+
+    fn wire_conventions() -> celnet_proto::Conventions {
+        celnet_proto::Conventions {
+            delta_convention: celnet_proto::DeltaConvention::SpotUnadjusted as i32,
+            atm_convention: celnet_proto::AtmConvention::AtmForward as i32,
+            premium_style: celnet_proto::PremiumStyle::DomesticPips as i32,
+            cut: celnet_proto::Cut::NewYork1000 as i32,
+            day_count: celnet_proto::DayCount::Act365Fixed as i32,
+            settlement: celnet_proto::Settlement::Deliverable as i32,
+        }
+    }
+
+    /// The grant-all wire principal every client asserts by default.
+    fn grant_all() -> celnet_proto::EntitlementPrincipal {
+        celnet_proto::EntitlementPrincipal {
+            grant_all: true,
+            grants: vec![],
+            denies: vec![],
+        }
+    }
+
+    /// A ready in-process quote edge under `mode`, returning the edge + the shared
+    /// session registry (to mint users) + the shared access store.
+    fn edge_under(mode: AccessMode) -> (QuoteEdge, Arc<SessionRegistry>, Arc<PositionStore>) {
+        let gate = Arc::new(ReadinessGate::new());
+        gate.mark_ready();
+        let clock = Clock::system();
+        let sessions = Arc::new(SessionRegistry::new(clock.clone()));
+        let access_store = Arc::new(PositionStore::new());
+        access_store.set_access_mode(mode);
+        let edge = QuoteEdge::new(
+            test_link(),
+            gate,
+            SpreadModel::default(),
+            clock,
+            Arc::new(SurfaceBook::new()),
+        )
+        .with_session_access(Arc::clone(&sessions), Arc::clone(&access_store));
+        (edge, sessions, access_store)
+    }
+
+    /// Mint a session token for a trader user with a stable id.
+    fn token_for(sessions: &SessionRegistry, user_id: &str) -> String {
+        sessions
+            .issue(AuthenticatedUser {
+                user_id: user_id.to_owned(),
+                email: format!("{user_id}@celnet.com"),
+                display_name: user_id.to_owned(),
+                role: Role::Trader,
+                desk_id: Some("g10".to_owned()),
+                cap_grants: Vec::new(),
+                cap_denies: Vec::new(),
+            })
+            .expect("session issues")
+            .token
+    }
+
+    fn quote_request(
+        key: &str,
+        session_token: Option<String>,
+        principal: Option<celnet_proto::EntitlementPrincipal>,
+    ) -> QuoteRequest {
+        QuoteRequest {
+            idempotency_key: key.to_owned(),
+            instrument: Some(vanilla_call(1.12)),
+            conventions: Some(wire_conventions()),
+            correlation_id: None,
+            surface_version: None,
+            attribution: None,
+            session_token,
+            principal,
+        }
+    }
+
+    // --- §2 caller gate -------------------------------------------------------
+
+    /// Under `Enforce`, every one of the four RFQ RPCs denies an unauthenticated
+    /// caller (no token, no principal) and admits once a valid `session_token` (or
+    /// the grant-all principal) is presented. This is the headline §2 gate.
+    #[tokio::test]
+    async fn enforce_denies_unauthenticated_then_admits_authenticated() {
+        let (edge, sessions, _store) = edge_under(AccessMode::Enforce);
+
+        // RequestQuote: deny (deny-by-default ⇒ Unauthenticated).
+        let err = edge
+            .request_quote(Request::new(quote_request("k-deny", None, None)))
+            .await
+            .expect_err("unauthenticated RequestQuote denied under Enforce");
+        assert_eq!(err.code(), tonic::Code::Unauthenticated);
+
+        // RequestMultiDealerQuote: deny.
+        let err = edge
+            .request_multi_dealer_quote(Request::new(quote_request("k-md-deny", None, None)))
+            .await
+            .expect_err("unauthenticated RequestMultiDealerQuote denied under Enforce");
+        assert_eq!(err.code(), tonic::Code::Unauthenticated);
+
+        // AcceptQuote: deny (gated before the not_found lookup).
+        let err = edge
+            .accept_quote(Request::new(QuoteAccept {
+                quote_id: 12345,
+                idempotency_key: "k".to_owned(),
+                side: Side::Buy as i32,
+                lp_id: String::new(),
+                session_token: None,
+                principal: None,
+            }))
+            .await
+            .expect_err("unauthenticated AcceptQuote denied under Enforce");
+        assert_eq!(err.code(), tonic::Code::Unauthenticated);
+
+        // RejectQuote: deny.
+        let err = edge
+            .reject_quote(Request::new(QuoteReject {
+                quote_id: 12345,
+                reason: "no".to_owned(),
+                session_token: None,
+                principal: None,
+            }))
+            .await
+            .expect_err("unauthenticated RejectQuote denied under Enforce");
+        assert_eq!(err.code(), tonic::Code::Unauthenticated);
+
+        // Admit with a valid session token: the RFQ prices and returns a quote.
+        let token = token_for(&sessions, "alice");
+        let quote = edge
+            .request_quote(Request::new(quote_request("k-ok-token", Some(token), None)))
+            .await
+            .expect("an authenticated RequestQuote is admitted and prices")
+            .into_inner();
+        assert!(quote.quote_id >= 1, "a real quote id was minted");
+
+        // Admit with the asserted grant-all principal (no token) — the audited
+        // explicit-grant default every client sends, accepted under Enforce.
+        let quote2 = edge
+            .request_quote(Request::new(quote_request(
+                "k-ok-grant-all",
+                None,
+                Some(grant_all()),
+            )))
+            .await
+            .expect("a grant-all RequestQuote is admitted under Enforce")
+            .into_inner();
+        assert!(quote2.quote_id >= 1);
+    }
+
+    /// Under `Permissive`, an absent caller is admitted (the audited demo path), so
+    /// the RFQ prices — the legacy edge is unchanged.
+    #[tokio::test]
+    async fn permissive_admits_absent_caller() {
+        let (edge, _sessions, _store) = edge_under(AccessMode::Permissive);
+        let quote = edge
+            .request_quote(Request::new(quote_request("perm", None, None)))
+            .await
+            .expect("permissive admits an absent caller")
+            .into_inner();
+        assert!(quote.quote_id >= 1);
+    }
+
+    // --- §2 requester-bound accept -------------------------------------------
+
+    /// An AUTHENTICATED requester binds the quote: an accept by a DIFFERENT
+    /// authenticated user is refused `permission_denied`; the SAME user succeeds.
+    #[tokio::test]
+    async fn accept_is_bound_to_the_authenticated_requester() {
+        let (edge, sessions, _store) = edge_under(AccessMode::Enforce);
+        let alice = token_for(&sessions, "alice");
+        let bob = token_for(&sessions, "bob");
+
+        // Alice requests a quote.
+        let quote = edge
+            .request_quote(Request::new(quote_request(
+                "bind-key",
+                Some(alice.clone()),
+                None,
+            )))
+            .await
+            .expect("Alice's RequestQuote prices")
+            .into_inner();
+
+        // Bob (a different authenticated principal) tries to accept it with the
+        // SAME idempotency key — refused on the requester binding, before booking.
+        let err = edge
+            .accept_quote(Request::new(QuoteAccept {
+                quote_id: quote.quote_id,
+                idempotency_key: "bind-key".to_owned(),
+                side: Side::Buy as i32,
+                lp_id: String::new(),
+                session_token: Some(bob),
+                principal: None,
+            }))
+            .await
+            .expect_err("Bob must not book Alice's requested quote");
+        assert_eq!(
+            err.code(),
+            tonic::Code::PermissionDenied,
+            "a different authenticated principal is refused: {}",
+            err.message()
+        );
+
+        // Alice (the requester) accepts the same quote — admitted and booked.
+        let exec = edge
+            .accept_quote(Request::new(QuoteAccept {
+                quote_id: quote.quote_id,
+                idempotency_key: "bind-key".to_owned(),
+                side: Side::Buy as i32,
+                lp_id: String::new(),
+                session_token: Some(alice),
+                principal: None,
+            }))
+            .await
+            .expect("Alice — the requesting caller — books her own quote")
+            .into_inner();
+        assert_eq!(exec.quote_id, quote.quote_id);
+    }
+
+    /// An ANONYMOUS-requested quote (permissive, no authenticated requester) keeps
+    /// the legacy idempotency-only accept behaviour: any caller carrying the right
+    /// key books it (no requester-binding check), and a wrong key is refused on the
+    /// key mismatch — not on a binding.
+    #[tokio::test]
+    async fn anonymous_requester_keeps_idempotency_only_accept() {
+        let (edge, _sessions, _store) = edge_under(AccessMode::Permissive);
+
+        // Anonymous request (no token, no principal — admitted under Permissive).
+        let quote = edge
+            .request_quote(Request::new(quote_request("anon-key", None, None)))
+            .await
+            .expect("permissive anonymous request prices")
+            .into_inner();
+
+        // A wrong key is refused on the idempotency-key mismatch (InvalidArgument),
+        // NOT a binding (there is no authenticated requester to bind to).
+        let err = edge
+            .accept_quote(Request::new(QuoteAccept {
+                quote_id: quote.quote_id,
+                idempotency_key: "wrong-key".to_owned(),
+                side: Side::Buy as i32,
+                lp_id: String::new(),
+                session_token: None,
+                principal: None,
+            }))
+            .await
+            .expect_err("a mismatched key is refused");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+
+        // The right key books it — anonymous, idempotency-only, unchanged.
+        let exec = edge
+            .accept_quote(Request::new(QuoteAccept {
+                quote_id: quote.quote_id,
+                idempotency_key: "anon-key".to_owned(),
+                side: Side::Buy as i32,
+                lp_id: String::new(),
+                session_token: None,
+                principal: None,
+            }))
+            .await
+            .expect("the right idempotency key books an anonymous-requested quote")
+            .into_inner();
+        assert_eq!(exec.quote_id, quote.quote_id);
     }
 }
