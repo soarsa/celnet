@@ -368,21 +368,27 @@ impl Edge {
             Arc::clone(&surface_book),
             fleet.clone(),
         ));
-        let quote = QuoteServiceServer::new(QuoteEdge::with_fleet(
-            Arc::clone(&link),
-            Arc::clone(&gate),
-            spread,
-            clock.clone(),
-            Arc::clone(&surface_book),
-            fleet.clone(),
-            panel,
-        ));
         // The edge-wide session registry: the ONE authentication state every front
-        // (gRPC + WS) and every gated edge (stream, risk, fix-admin, auth) shares.
-        // Created before the edges so each is built `.with_sessions(...)` over it;
-        // the registry stamps issue/expiry off the SAME edge clock. Process-local —
-        // empty on boot, so a restart invalidates every token.
+        // (gRPC + WS) and every gated edge (quote, stream, risk, fix-admin, auth)
+        // shares. Created before the edges so each is built `.with_sessions(...)` /
+        // `.with_session_access(...)` over it; the registry stamps issue/expiry off
+        // the SAME edge clock. Process-local — empty on boot, so a restart
+        // invalidates every token.
         let sessions = Arc::new(SessionRegistry::new(clock.clone()));
+        let quote = QuoteServiceServer::new(
+            QuoteEdge::with_fleet(
+                Arc::clone(&link),
+                Arc::clone(&gate),
+                spread,
+                clock.clone(),
+                Arc::clone(&surface_book),
+                fleet.clone(),
+                panel,
+            )
+            // The RFQ caller gate (item B §2) validates `session_token` against the
+            // shared registry and reads the live access mode off the shared store.
+            .with_session_access(Arc::clone(&sessions), Arc::clone(&store)),
+        );
         let stream = StreamServiceServer::new(
             StreamEdge::with_store_and_fleet(
                 Arc::clone(&link),
@@ -484,6 +490,14 @@ impl Edge {
                 .save(&identity_path)
                 .map_err(|e| std::io::Error::new(e.kind(), format!("seed identity: {e}")))?;
         }
+        // The desk-identity bridge (item B §3): populate the shared position book's
+        // `Book → Desk` hierarchy from the configured desk→book membership, so a
+        // logged-in trader's session narrows its risk reads to exactly the facts
+        // booked into their desk's books. Empty-`books` desks are no-ops. Runs before
+        // `identity_store` is moved into the `AuthEdge`.
+        for d in &identity_store.desks {
+            store.configure_desk(&d.id, &d.books);
+        }
         let auth_edge = Arc::new(AuthEdge::new(
             Arc::new(std::sync::Mutex::new(identity_store)),
             identity_path,
@@ -525,6 +539,7 @@ impl Edge {
             clock,
             Arc::clone(&surface_book),
             Arc::clone(&store),
+            Arc::clone(&sessions),
             Arc::clone(&risk_edge),
             Arc::clone(&fix_admin_edge),
             Arc::clone(&auth_edge),

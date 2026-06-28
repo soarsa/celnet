@@ -732,6 +732,12 @@ impl Rfq {
             // The requesting book/seat declared via `Rfq::with_attribution`; absent
             // ⇒ unattributed. The server resolves the full chain it echoes back.
             attribution: self.attribution.as_ref().map(Attribution::to_wire),
+            // The RFQ caller (item B §2): the client's session token + asserted
+            // principal, defaulting EXACTLY like the risk/stream path to the audited
+            // explicit grant-all so the headline RFQ is admitted under `Enforce`.
+            // Request AND accept carry the SAME caller (the accept binding needs it).
+            session_token: self.client.session_token.clone(),
+            principal: Some(risk::principal_or_grant_all(self.client.principal.as_ref())),
         };
         let resp = svc.request_quote(request).await?.into_inner();
         Quote::from_wire(resp)
@@ -752,6 +758,10 @@ impl Rfq {
             idempotency_key: self.idempotency_key.clone(),
             side: side.to_wire() as i32,
             lp_id: String::new(),
+            // SAME caller as the originating request (item B §2): the server binds
+            // the accept to the requesting principal, so request + accept must agree.
+            session_token: self.client.session_token.clone(),
+            principal: Some(risk::principal_or_grant_all(self.client.principal.as_ref())),
         };
         let resp = svc.accept_quote(request).await?.into_inner();
         Execution::from_wire(resp)
@@ -774,6 +784,10 @@ impl Rfq {
         let request = QuoteReject {
             quote_id: quote.quote_id,
             reason: reason.into(),
+            // The rejecting caller (item B §2): same default as request/accept so a
+            // reject is admitted under `Enforce`.
+            session_token: self.client.session_token.clone(),
+            principal: Some(risk::principal_or_grant_all(self.client.principal.as_ref())),
         };
         let resp = svc.reject_quote(request).await?.into_inner();
         Ok(RejectAck::from_wire(resp))
@@ -837,6 +851,9 @@ impl MultiDealerRfq {
             correlation_id: None,
             surface_version: None,
             attribution: self.attribution.as_ref().map(Attribution::to_wire),
+            // Same caller threading as the single-dealer `Rfq` (item B §2).
+            session_token: self.client.session_token.clone(),
+            principal: Some(risk::principal_or_grant_all(self.client.principal.as_ref())),
         };
         let resp = svc.request_multi_dealer_quote(request).await?.into_inner();
         RankedPanel::from_wire(resp)
@@ -891,6 +908,9 @@ impl MultiDealerRfq {
             idempotency_key: self.idempotency_key.clone(),
             side: side.to_wire() as i32,
             lp_id,
+            // SAME caller as the originating multi-dealer request (item B §2).
+            session_token: self.client.session_token.clone(),
+            principal: Some(risk::principal_or_grant_all(self.client.principal.as_ref())),
         };
         let resp = svc.accept_quote(request).await?.into_inner();
         Execution::from_wire(resp)

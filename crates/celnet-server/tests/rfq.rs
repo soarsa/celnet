@@ -45,6 +45,8 @@ async fn rfq_quote_accept_matches_direct_price() {
             correlation_id: None,
             surface_version: None,
             attribution: None,
+            session_token: None,
+            principal: None,
         };
         let quote = tokio::time::timeout(STEP_DEADLINE, client.request_quote(req))
             .await
@@ -89,6 +91,8 @@ async fn rfq_quote_accept_matches_direct_price() {
                 idempotency_key: "rfq-key-001".to_owned(),
                 side: Side::Buy as i32,
                 lp_id: String::new(),
+                session_token: None,
+                principal: None,
             }),
         )
         .await
@@ -134,6 +138,8 @@ async fn rfq_idempotent_retry_returns_same_quote_and_execution() {
             correlation_id: None,
             surface_version: None,
             attribution: None,
+            session_token: None,
+            principal: None,
         };
 
         let first = tokio::time::timeout(STEP_DEADLINE, client.request_quote(req()))
@@ -163,6 +169,8 @@ async fn rfq_idempotent_retry_returns_same_quote_and_execution() {
             idempotency_key: "dedup-42".to_owned(),
             side: Side::Buy as i32,
             lp_id: String::new(),
+            session_token: None,
+            principal: None,
         };
         let e1 = tokio::time::timeout(STEP_DEADLINE, client.accept_quote(acc()))
             .await
@@ -210,6 +218,8 @@ async fn rfq_accept_after_validity_is_rejected() {
                 correlation_id: None,
                 surface_version: None,
                 attribution: None,
+                session_token: None,
+                principal: None,
             }),
         )
         .await
@@ -227,6 +237,8 @@ async fn rfq_accept_after_validity_is_rejected() {
                 idempotency_key: "expiring".to_owned(),
                 side: Side::Buy as i32,
                 lp_id: String::new(),
+                session_token: None,
+                principal: None,
             }),
         )
         .await
@@ -266,6 +278,8 @@ async fn rfq_idempotency_key_collision_is_rejected() {
                 correlation_id: None,
                 surface_version: None,
                 attribution: None,
+                session_token: None,
+                principal: None,
             }),
         )
         .await
@@ -283,6 +297,8 @@ async fn rfq_idempotency_key_collision_is_rejected() {
                 correlation_id: None,
                 surface_version: None,
                 attribution: None,
+                session_token: None,
+                principal: None,
             }),
         )
         .await
@@ -306,6 +322,8 @@ async fn rfq_idempotency_key_collision_is_rejected() {
                 correlation_id: None,
                 surface_version: None,
                 attribution: None,
+                session_token: None,
+                principal: None,
             }),
         )
         .await
@@ -348,6 +366,8 @@ async fn rfq_accept_requires_originating_idempotency_key() {
                 correlation_id: None,
                 surface_version: None,
                 attribution: None,
+                session_token: None,
+                principal: None,
             }),
         )
         .await
@@ -363,6 +383,8 @@ async fn rfq_accept_requires_originating_idempotency_key() {
                 idempotency_key: "not-the-owner".to_owned(),
                 side: Side::Buy as i32,
                 lp_id: String::new(),
+                session_token: None,
+                principal: None,
             }),
         )
         .await
@@ -378,6 +400,8 @@ async fn rfq_accept_requires_originating_idempotency_key() {
                 idempotency_key: String::new(),
                 side: Side::Buy as i32,
                 lp_id: String::new(),
+                session_token: None,
+                principal: None,
             }),
         )
         .await
@@ -393,6 +417,8 @@ async fn rfq_accept_requires_originating_idempotency_key() {
                 idempotency_key: "owner-key-xyz".to_owned(),
                 side: Side::Buy as i32,
                 lp_id: String::new(),
+                session_token: None,
+                principal: None,
             }),
         )
         .await
@@ -432,6 +458,8 @@ async fn rfq_accept_retry_side_flip_is_refused() {
                 correlation_id: None,
                 surface_version: None,
                 attribution: None,
+                session_token: None,
+                principal: None,
             }),
         )
         .await
@@ -447,6 +475,8 @@ async fn rfq_accept_retry_side_flip_is_refused() {
                 idempotency_key: "flip-key".to_owned(),
                 side: Side::Buy as i32,
                 lp_id: String::new(),
+                session_token: None,
+                principal: None,
             }),
         )
         .await
@@ -463,6 +493,8 @@ async fn rfq_accept_retry_side_flip_is_refused() {
                 idempotency_key: "flip-key".to_owned(),
                 side: Side::Sell as i32,
                 lp_id: String::new(),
+                session_token: None,
+                principal: None,
             }),
         )
         .await
@@ -478,6 +510,8 @@ async fn rfq_accept_retry_side_flip_is_refused() {
                 idempotency_key: "flip-key".to_owned(),
                 side: Side::Buy as i32,
                 lp_id: String::new(),
+                session_token: None,
+                principal: None,
             }),
         )
         .await
@@ -514,6 +548,8 @@ async fn rfq_quote_ids_are_unguessable() {
             correlation_id: None,
             surface_version: None,
             attribution: None,
+            session_token: None,
+            principal: None,
         };
         let a = tokio::time::timeout(STEP_DEADLINE, client.request_quote(mk("a", 1.10)))
             .await
@@ -566,6 +602,8 @@ async fn rfq_reject_returns_typed_ack_and_blocks_accept() {
                 correlation_id: None,
                 surface_version: None,
                 attribution: None,
+                session_token: None,
+                principal: None,
             }),
         )
         .await
@@ -579,6 +617,8 @@ async fn rfq_reject_returns_typed_ack_and_blocks_accept() {
             client.reject_quote(QuoteReject {
                 quote_id: quote.quote_id,
                 reason: "passing".to_owned(),
+                session_token: None,
+                principal: None,
             }),
         )
         .await
@@ -597,6 +637,8 @@ async fn rfq_reject_returns_typed_ack_and_blocks_accept() {
             client.reject_quote(QuoteReject {
                 quote_id: quote.quote_id,
                 reason: "still passing".to_owned(),
+                session_token: None,
+                principal: None,
             }),
         )
         .await
@@ -613,6 +655,8 @@ async fn rfq_reject_returns_typed_ack_and_blocks_accept() {
                 idempotency_key: "reject-me".to_owned(),
                 side: Side::Buy as i32,
                 lp_id: String::new(),
+                session_token: None,
+                principal: None,
             }),
         )
         .await
@@ -662,6 +706,8 @@ async fn rfq_lifecycle_carries_maker_and_holder_attribution() {
                 won: Some(true),
                 lp_count: Some(3),
             }),
+            session_token: None,
+            principal: None,
         };
         let quote = tokio::time::timeout(STEP_DEADLINE, client.request_quote(req))
             .await
@@ -696,6 +742,8 @@ async fn rfq_lifecycle_carries_maker_and_holder_attribution() {
                 idempotency_key: "attr-key-1".to_owned(),
                 side: Side::Buy as i32,
                 lp_id: String::new(),
+                session_token: None,
+                principal: None,
             }),
         )
         .await

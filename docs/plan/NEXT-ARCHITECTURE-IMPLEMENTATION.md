@@ -47,13 +47,16 @@
 - Finding **#7 (docs drift), the INTERFACES.md part** — 40-crate count, `celnet-rates` listed DEFERRED,
   `risk-normalize` cross-asset deps corrected. (Federation-built/line-63 prose may still need a pass.)
 - Knowledge base current (0 stale, 1627 claims, committed mirror).
+- **Item K (gui-unit guard fix)** — DONE, landed `7f381b0` (pushed). The density JS-free guard
+  now exempts `*.stories.tsx` (density/tokens stories legitimately demo the axis); gui-unit **721/721**.
+  Test-only delta, zero runtime surface → live-e2e mandate N/A (gate = the plan's `gui-unit 721/721`).
 
 **REMAINING — the work this plan implements (ordered by leverage, determination §3):**
 
 | # | Item | Spec / anchors | Gate |
 |---|------|----------------|------|
 | A | **Carry seam → streamed edge** (highest leverage) | `docs/plan/CARRY-SEAM-TO-EDGE.md`; anchors `pricefanout::pair_seed`, `proto helpers MarketContext.fx`, `core::carry::CarryInputs::discount_df` | FX `Update` byte-identical + cross-asset conformance ×5 clients; no `match carry` in stream pricing; **T2** at P3 |
-| B | **Auth §2/§3 follow-up** (security) | `docs/SECURITY-AUTHZ-FINDING.md` §2/§3; anchors `services/quote.rs accept_quote`, `convert::principal_of`, `risk aggregate_risk_impl`/`drill_risk_impl`, `access.rs resolve_caller`/`authorize_caller` | proto `AcceptQuoteRequest`/`RequestQuoteRequest` token+principal; gate accept/price; intersect body principal with session `desk_scope`; 5 clients; **T2 under Enforce** |
+| ~~B~~ | ~~**Auth §2/§3 follow-up**~~ **DONE** (spec `docs/plan/B-AUTH-QUOTE-RISK.md`) | §2 quote gating + accept-binding; §3 desk-identity bridge + risk narrowing | ✅ all 4 QuoteService RPCs gated + accept bound to authenticated requester; desk slug→`DeskId` bridge (`DeskDef.books`→interned, boot-populated) narrows non-admin trader to `Rule::on(Desk,d)∩body` (admin/no-session byte-identical); 5 clients; adversarially-verified **SHIP**; **T2 green** (full `just check` + live GUI **165/165** + Excel **122/122** under Enforce). Also fixed 2 pre-existing latent gate gaps the full T2 surfaced: bench stream-auth + a false xva CVA-monotonicity proptest invariant; added a `numerics-serial` nextest group. |
 | C | **`price_instrument` god-fn → `ProductEngine` registry** | anchor `celnet-server::pricer::price_instrument` (1207 LOC, cx 154) | per-family impl over the carry seam; `price_instrument` < 100 lines (decode→lookup→dispatch); pricing **byte-identical** before/after (parity corpus) |
 | D | **Four dormant crates** — wire or tag deferred | anchors `plugin-host::ModelRegistry::register_native`, `celnet-xva`, `celnet-replog`, `celnet-rates`; `server::pricer` | wire `plugin-host` into the server registry (make "built" true) + xva/replog to a server path + `rates` behind `forward()/discount()`; OR tag each deferred in INTERFACES.md with the named integration edge |
 | E | **Decouple `risk-cube` from `exotics`/`gpu` via injected `RepriceFn`** | anchor `risk-cube` deps; aggregation boundary `entitlements::EntitlementFilter::entitled_cube` | risk-cube depends on a `RepriceFn` trait, not the PDE/MC/wgpu subtree; rebuild blast-radius shrinks; roll-ups byte-identical |
@@ -62,7 +65,7 @@
 | H | **Unify error taxonomy** | `From<ErrorClass> for tonic::Status` + WS derive; anchor `access.rs` Status sites | one mapping; no behavioural change to status codes (tests pin) |
 | I | **Docs-to-reality reconciliation tail** (#7 remainder) + **Celer ingress ADR** (#10) + **risk facts → exotics/cross-asset** | `manage_adr`; anchors `risk-fleet::fan_out_aggregate`, `risk::federate::fan_out` | INTERFACES/ARCH docs match built reality; ADR recorded; exotic/cross-asset positions in roll-ups |
 | J | **Restrictive-principal client e2e under Enforce** (#11) | anchor `entitlements::Principal::grant_all` | ≥1 client drives a desk-scoped (non-grant-all) principal end-to-end; denied-outside-scope asserted |
-| K | **Pre-existing gui-unit fix** | `gui/test/density.test.tsx:246` flags `density.stories.tsx`+`tokens.stories.tsx` | extend the JS-free guard allowlist to permit `*.stories.tsx` (stories legitimately demo design axes), OR refactor the 2 stories; gui-unit 721/721 |
+| ~~K~~ | ~~**Pre-existing gui-unit fix**~~ **DONE `7f381b0`** | `gui/test/density.test.tsx` JS-free guard now exempts `*.stories.tsx` | ✅ gui-unit **721/721** |
 | L | **(structural hygiene)** drop `client→server` / `surface→crypto-vanilla` dev-dep back-edges via `celnet-testkit`; cargo-deny ban-dep to mechanically gate the `proto`-only-`types` waist + the `match carry` ban | anchors per §3 #L / §2 | deny passes; no back-edges |
 
 ## 3. Execution strategy (how the post-clear session drives this)

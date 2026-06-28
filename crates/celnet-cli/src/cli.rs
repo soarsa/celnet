@@ -255,6 +255,12 @@ pub(crate) struct RfqArgs {
     /// (used only with `--accept`).
     #[arg(long, value_enum, default_value = "buy")]
     pub(crate) side: rfq::CliAcceptSide,
+    /// An `AuthService.Login`-issued session token authenticating the RFQ as that
+    /// user. Omitted ⇒ the SDK asserts the audited grant-all principal the
+    /// production deny-by-default edge admits (parity with `stream` / the risk
+    /// commands).
+    #[arg(long = "session-token")]
+    pub(crate) session_token: Option<String>,
 }
 
 /// Shared Garman-Kohlhagen market inputs accepted by `price` and `exotic`.
@@ -1824,6 +1830,7 @@ pub(crate) fn dispatch<W: Write>(cli: Cli, out: &mut W) -> Result<(), DispatchEr
                 notional_base: a.notional,
                 accept: a.accept,
                 side: a.side.into(),
+                session_token: a.session_token,
             };
             rfq::run(&req, out).map_err(DispatchError::Risk)?;
             Ok(())

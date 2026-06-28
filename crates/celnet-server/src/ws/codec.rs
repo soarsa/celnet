@@ -28,10 +28,9 @@ use celnet_proto::{
     RiskBucketRequest, RiskNode, RiskPosition, RiskScope, ScenarioPoint, ScenarioRequest,
     ScenarioResponse, ShockAxis, SingleBarrier, Smile, SmilePoint, Snapshot, Solve, Strategy,
     StrategyKind, StreamAuth, StreamEnd, StreamReject, StrikeOrDelta, Subscribe, SubscriptionId,
-    Tarf, Tenor,
-    Touch, TradableToken, TwoWayPrice, Unsubscribe, Update, Vanilla, VanillaInputs, VarianceSwap,
-    VegaLadderBucket, VegaPillar, VolatilitySwap, WindowBarrier, instrument, shock_axis,
-    strike_or_delta, tenor,
+    Tarf, Tenor, Touch, TradableToken, TwoWayPrice, Unsubscribe, Update, Vanilla, VanillaInputs,
+    VarianceSwap, VegaLadderBucket, VegaPillar, VolatilitySwap, WindowBarrier, instrument,
+    shock_axis, strike_or_delta, tenor,
 };
 // The FIX-admin contract (manage the inbound FIX acceptor connections). Kept in a
 // dedicated `use` so the long alphabetized list above stays undisturbed.
@@ -957,6 +956,11 @@ pub(super) fn quote_request_from_json(o: &Map<String, Value>) -> Result<QuoteReq
         correlation_id: opt_u64(o, "correlation_id"),
         surface_version: opt_u64(o, "surface_version"),
         attribution: opt_nested(o, "attribution", attribution_from_json)?,
+        // Caller identity rides in the unary body (mirrors the risk decoders): the
+        // service resolves + gates the RFQ under the access posture and binds any
+        // later accept to this principal.
+        session_token: opt_string(o, "session_token"),
+        principal: opt_nested(o, "principal", principal_from_json)?,
     })
 }
 
@@ -1054,6 +1058,10 @@ pub(super) fn quote_accept_from_json(o: &Map<String, Value>) -> Result<QuoteAcce
         // absent/empty selects the single-dealer quote (byte-identical to the
         // pre-panel contract); a `DealerQuote.lp_id` books that pinned panel row.
         lp_id: string_or_empty(o, "lp_id"),
+        // Accepting caller identity (mirrors the risk decoders): resolved + gated +
+        // bound to the requesting quote's recorded principal.
+        session_token: opt_string(o, "session_token"),
+        principal: opt_nested(o, "principal", principal_from_json)?,
     })
 }
 
@@ -1061,6 +1069,8 @@ pub(super) fn quote_reject_from_json(o: &Map<String, Value>) -> Result<QuoteReje
     Ok(QuoteReject {
         quote_id: u64_field(o, "quote_id")?,
         reason: string_or_empty(o, "reason"),
+        session_token: opt_string(o, "session_token"),
+        principal: opt_nested(o, "principal", principal_from_json)?,
     })
 }
 

@@ -1565,6 +1565,14 @@ message QuoteRequest {
   // seat the quote is requested on behalf of, so the resulting `Quote` and any
   // booking carry a complete attribution chain. Absent ⇒ unattributed.
   optional AttributionRecord attribution = 6;
+  // The session token from AuthService.Login. The server resolves the caller and
+  // gates the RFQ under the access posture (Enforce ⇒ an unauthenticated request
+  // is refused; Permissive ⇒ the anonymous grant-all caller). Absent ⇒ anonymous.
+  // A field selecting WHO, never an API version (rule 9).
+  optional string session_token = 7;
+  // The entitlement principal the caller asserts (absent ⇒ grant-all under
+  // Permissive). Bound to any later accept of the resulting quote.
+  optional EntitlementPrincipal principal = 8;
 }
 
 // A tradable two-way quote returned for a `QuoteRequest`.
@@ -1679,6 +1687,14 @@ message QuoteAccept {
   // `quote_id` is the aggregate request id, so `lp_id` disambiguates which
   // dealer's price is being lifted/hit.
   string lp_id = 4;
+  // The session token from AuthService.Login. The server resolves the accepting
+  // caller, gates the booking under the access posture, and binds the accept to
+  // the principal that requested the quote (a different caller is refused, beyond
+  // the idempotency-key match). Absent ⇒ anonymous. Selects WHO, not a version.
+  optional string session_token = 5;
+  // The entitlement principal the accepting caller asserts (absent ⇒ grant-all
+  // under Permissive). Must match the requesting quote's recorded principal.
+  optional EntitlementPrincipal principal = 6;
 }
 
 // A client rejection of a previously issued `Quote` (declines to trade).
@@ -1687,6 +1703,12 @@ message QuoteReject {
   uint64 quote_id = 1;
   // A free-text reason for the audit trail.
   string reason = 2;
+  // The session token from AuthService.Login; the server resolves the caller and
+  // gates the reject under the access posture. Absent ⇒ anonymous. Selects WHO.
+  optional string session_token = 3;
+  // The entitlement principal the caller asserts (absent ⇒ grant-all under
+  // Permissive).
+  optional EntitlementPrincipal principal = 4;
 }
 
 // The acknowledgement produced by rejecting a quote. A reject never books a

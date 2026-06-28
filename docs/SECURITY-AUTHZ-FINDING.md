@@ -1,9 +1,10 @@
 # Security finding — caller authorization is not a cross-cut (VERIFIED)
 
 Surfaced by the architecture determination, then **adversarially verified** (refute-default,
-source-cited) 2026-06-27. Status: **CONFIRMED → stream/WS REMEDIATED 2026-06-27** (quote-accept
-binding + risk `principal∩desk_scope` hardening remain as a tracked lower-severity follow-up).
-Also recorded as an `adr` claim in lodestar (anchored to `Session::handle_execute` / `handle_subscribe`).
+source-cited) 2026-06-27. Status: **CONFIRMED → FULLY REMEDIATED 2026-06-27**. The headline
+stream/WS hole was closed first (`8e0ee48`); the §2 quote-accept gating/binding and the §3 risk
+`principal∩desk_scope` hardening (via a full desk-identity bridge) landed second (item B). Also
+recorded as an `adr` claim in lodestar (anchored to `Session::handle_execute` / `handle_subscribe`).
 
 ## Remediation status (stream/WS — the headline hole)
 The unauthenticated-subscribe/execute exposure is **closed end-to-end** on `security/authz-cross-cut`:
@@ -29,22 +30,37 @@ server-minted last-look token, which the same unauthenticated session is handed 
 | Surface | Verdict | Evidence |
 |---|---|---|
 | gRPC FixAdminService | **ENFORCED** (genuine baseline) | every RPC: `resolve_caller` + `authorize_caller(Admin)` + server-side `desk_scope` (`services/fix_admin.rs`) |
-| gRPC RiskService | **ENFORCED (role) — entitlement caller-asserted** | `risk/mod.rs:718` gates role; but `aggregate_risk_impl:344`/`drill_risk_impl:401` prune by **body `req.principal`**, and `convert::principal_of:93` maps an omitted principal → `grant_all` (whole-firm) |
+| gRPC RiskService | **ENFORCED (role) + desk-scoped (REMEDIATED §3)** | role gated as before; the reads now narrow the effective principal to the **session's desk** (`effective_principal`/`narrow_to_desk`) via the desk-identity bridge, so an omitted/grant-all body principal can no longer widen a non-admin trader to firm-wide (admin/no-session byte-identical) |
 | gRPC StreamService | **ENFORCED (REMEDIATED)** | `Session` now holds `caller: ResolvedCaller` pinned from the `Authenticate` frame; one gate `authorize_caller(self.access_mode, &self.caller, ReadAny)` runs before subscribe/modify/execute/resync; anonymous rejected under `Enforce` |
 | WS RFS stream (`dispatch`→`rfs_in_tx`) | **ENFORCED (REMEDIATED)** | `decode_stream_control` decodes `authenticate`; `is_stream_control` routes it to the SAME `Session` gate; the WS mirror enforces identically to gRPC |
 | WS unary RPCs (`handle_unary`) | **mirrors the service** | `ws/mod.rs:538` — token/principal ride in the body, so risk/fix-admin stay gated, pricing/quote stay ungated (no token-stripping bug) |
 | PricingService (`price`) | **UNGATED — plausibly by-design (public)** | `services/pricing.rs:84` — readiness only; pricing a hypothetical with client-supplied market is reasonably public |
-| QuoteService (`accept_quote`) | **UNGATED** | `quote.rs:684` — idempotency-key + last-look + panel-line integrity, but no caller/desk entitlement |
+| QuoteService (all 4 RPCs) | **GATED + bound (REMEDIATED §2)** | `request_quote`/`request_multi_dealer_quote`/`accept_quote`/`reject_quote` now `resolve_caller`+`authorize_caller(ReadAny)` before the forward branch; `accept_quote` binds to the **authenticated requester** (`RequesterBinding`) on top of the idempotency-key + last-look + panel-line integrity |
 
 ## Minimal fix (one seam, not per-handler)
 1. ✅ **DONE — Stream/WS:** authenticate the session open — `Session` carries a `caller: ResolvedCaller`
    pinned once from the `Authenticate` frame; one `authorize_caller(ReadAny)` gate runs before
    subscribe/modify/execute/resync on the gRPC stream AND the WS mirror; anonymous rejected under
    `Enforce`. All five clients authenticate-first (grant-all default). Live-validated under Enforce.
-2. ⤷ **FOLLOW-UP — Pricing/Quote:** if not intentionally public, add the same `resolve_caller`+`authorize_caller(ReadAny)`
-   two-liner; bind `accept_quote` to the requester's resolved principal, not just the idempotency key.
-3. ⤷ **FOLLOW-UP — Risk hardening:** intersect body `req.principal` with the session-derived `desk_scope`
-   in `aggregate_risk_impl`/`drill_risk_impl` so an omitted principal cannot widen to `grant_all`.
+2. ✅ **DONE (item B §2) — Quote:** all four QuoteService RPCs now `resolve_caller`+`authorize_caller(ReadAny)`
+   (PricingService stays intentionally public); `accept_quote` is **bound to the authenticated requester**
+   (`RequesterBinding::Authenticated(user_id)`), refusing a different authenticated caller on top of the
+   idempotency-key match. Pricing left public by design. Adversarially verified + live-e2e under Enforce.
+3. ✅ **DONE (item B §3) — Risk hardening:** body `req.principal` is intersected with the session-derived
+   desk in `aggregate_risk_impl`/`drill_risk_impl` (+ `list_positions`/`limit_status`) via the desk-identity
+   bridge, so an omitted/grant-all principal cannot widen a non-admin trader to `grant_all`.
+
+   **Design decision (2026-06-27, operator-chosen): build the desk-identity bridge.** The session's
+   desk is a `String` slug (`config::identity::DeskDef.id`) but risk facts are keyed by numeric
+   `risk_cube::DeskId(u64)` (set from wire `OrgKey.desk` at `risk/convert.rs:265`) — there is **no**
+   slug↔u64 bridge today, so a *silent narrowing* of a trader to their desk is impossible without one.
+   Rather than a deny-by-default clamp, the operator chose the complete fix: a **canonical desk
+   registry** mapping each identity desk slug → a stable risk `DeskId(u64)`, populated through the
+   book/attribution path so a logged-in trader's desk reconciles with their facts' `OrgKey.desk`; then
+   `aggregate_risk_impl`/`drill_risk_impl` narrow a non-admin session's effective principal to
+   `Rule::on(DimensionId::Desk, their_desk_u64) ∩ body_principal`. Admin / no-session / federation
+   paths stay byte-identical (`DeskScope::All` ⇒ no narrowing). This is item B §3 in
+   `docs/plan/NEXT-ARCHITECTURE-IMPLEMENTATION.md`.
 
 A single tonic interceptor + a WS pre-handshake auth check producing a `ResolvedCaller` threaded
 into the session is the uniform cross-cut the codebase currently lacks.

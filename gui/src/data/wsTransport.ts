@@ -777,6 +777,14 @@ export class WsTransport implements CelnetTransport {
         idempotency_key: idempotencyKey,
         instrument: instrumentToWire(instrument),
         conventions: conventionsToWire(conventions),
+        // Caller-authz (item B §2): the server gates QuoteService under Enforce
+        // and binds this requester to a later acceptQuote. The bearer
+        // `session_token` is auto-injected by `WsConnection.request` (the same one
+        // the stream `authenticate` frame uses); the entitlement `principal`
+        // defaults to the audited grant-all so the headline RFQ workflow is
+        // admitted under Enforce, exactly as the stream auth frame and the gated
+        // risk requests default.
+        principal: principalOrGrantAllToWire(undefined),
       },
       "quote",
       PRICING_REQUEST_TIMEOUT_MS,
@@ -801,6 +809,10 @@ export class WsTransport implements CelnetTransport {
         idempotency_key: idempotencyKey,
         instrument: instrumentToWire(instrument),
         conventions: conventionsToWire(conventions),
+        // Same caller-authz envelope as `request_quote` (item B §2): grant-all
+        // default principal + the auto-injected bearer token. The recording
+        // caller is bound to a later acceptQuote on any winning panel row.
+        principal: principalOrGrantAllToWire(undefined),
       },
       "multi_dealer_quote",
       PRICING_REQUEST_TIMEOUT_MS,
@@ -842,8 +854,10 @@ export class WsTransport implements CelnetTransport {
       "reject_quote",
       // The exact 64-bit minted quote id, as a `bigint` so `serializeFrame`
       // writes the full-precision literal (a lossy `Number(quoteId)` rounds ids
-      // beyond MAX_SAFE and the server refuses them as unknown).
-      { quote_id: quoteId, reason },
+      // beyond MAX_SAFE and the server refuses them as unknown). Caller-authz
+      // (item B §2): grant-all default principal + the auto-injected bearer
+      // token, so reject_quote is admitted under Enforce like the other RPCs.
+      { quote_id: quoteId, reason, principal: principalOrGrantAllToWire(undefined) },
       "reject_ack",
     );
   }

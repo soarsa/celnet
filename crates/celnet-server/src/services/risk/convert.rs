@@ -115,6 +115,75 @@ pub fn principal_of(principal: Option<&EntitlementPrincipal>) -> Result<Principa
     Ok(principal)
 }
 
+/// **Session-derived desk narrowing** (item B §3): intersect a caller's asserted
+/// (or grant-all-defaulted) `base` principal with their session's desk subtree, so
+/// a non-admin desk-bound session cannot widen to a firm-wide view via an
+/// omitted/grant-all body principal.
+///
+/// * a **grant-all** `base` becomes `scoped().grant(Desk = desk_value)` — exactly
+///   the explicit desk scope, never wider — with any deny barriers carried (deny
+///   wins, the §4 Chinese-wall semantics);
+/// * a **scoped** `base` has each of its grants conjoined with `Desk = desk_value`
+///   (`Rule::and`), so an asserted scope is *intersected* with the desk, never
+///   widened beyond it; denies carried unchanged.
+///
+/// This is the post-boundary algebraic narrowing the §3 hardening requires: it is
+/// invoked only for a desk-bound non-admin caller — admin / no-session
+/// (`DeskScope::All`) callers skip it entirely, so their result is byte-identical to
+/// before. `desk_value` is the caller's canonical numeric desk id
+/// (`PositionStore::intern(slug)`); `0` is the house/unowned desk (`DeskId(0)`), the
+/// deskless trader's narrowed view.
+#[must_use]
+pub fn narrow_to_desk(base: Principal, desk_value: u64) -> Principal {
+    let dim = DimensionId::Desk;
+    if base.is_grant_all() {
+        let mut p = Principal::scoped().grant(Rule::on(dim, desk_value));
+        for d in base.denies() {
+            p = p.deny(d.clone());
+        }
+        p
+    } else {
+        let mut p = Principal::scoped();
+        for g in base.grants() {
+            p = p.grant(g.clone().and(dim, desk_value));
+        }
+        for d in base.denies() {
+            p = p.deny(d.clone());
+        }
+        p
+    }
+}
+
+/// Map a domain [`Rule`] back onto a wire [`EntitlementRule`](celnet_proto::EntitlementRule)
+/// — the inverse of [`rule_of`]. Every domain [`Scope`](celnet_entitlements::Scope)
+/// carries its [`DimensionId`] and `u64` value verbatim, so the round-trip is exact.
+fn rule_to_wire(rule: &Rule) -> celnet_proto::EntitlementRule {
+    celnet_proto::EntitlementRule {
+        scopes: rule
+            .scopes()
+            .iter()
+            .map(|s| RiskScope {
+                dimension: dimension_to_wire(s.dimension),
+                value: s.value,
+            })
+            .collect(),
+    }
+}
+
+/// Map a domain [`Principal`] back onto a wire [`EntitlementPrincipal`] — the
+/// inverse of [`principal_of`]. Used by the distributed risk federation to forward
+/// the **desk-narrowed** principal (item B §3) to the backends, so each backend
+/// re-prunes by the same narrowed rule-set the aggregating edge resolved. The
+/// round-trip is exact: grant-all/scoped flag, every grant, every deny.
+#[must_use]
+pub fn principal_to_wire(principal: &Principal) -> EntitlementPrincipal {
+    EntitlementPrincipal {
+        grant_all: principal.is_grant_all(),
+        grants: principal.grants().iter().map(rule_to_wire).collect(),
+        denies: principal.denies().iter().map(rule_to_wire).collect(),
+    }
+}
+
 /// Map a wire [`EntitlementRule`](celnet_proto::EntitlementRule) (a conjunction of
 /// scopes) onto a domain [`Rule`]. An empty rule covers everything (the firm root).
 fn rule_of(rule: &celnet_proto::EntitlementRule) -> Result<Rule, Status> {

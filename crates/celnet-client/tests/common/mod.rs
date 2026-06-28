@@ -133,8 +133,8 @@ pub async fn start_panel_edge_and_client(clock: Clock, synthetic_lps: u32) -> (E
 /// `StreamAuth` is checked against — so a stream authenticated with it is admitted as
 /// that user under [`AccessMode::Enforce`].
 pub async fn login_seed_admin(addr: SocketAddr) -> String {
-    use celnet_proto::auth_service_client::AuthServiceClient;
     use celnet_proto::LoginRequest;
+    use celnet_proto::auth_service_client::AuthServiceClient;
 
     let mut auth = tokio::time::timeout(
         STEP_DEADLINE,

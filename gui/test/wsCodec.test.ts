@@ -329,14 +329,34 @@ describe("wsCodec — MultiDealerQuote panel frame (the server-emitted shape)", 
 });
 
 describe("wsCodec — accept_quote body (the multi-dealer line selector)", () => {
-  it("emits the byte-identical pre-panel body when no lpId is named", () => {
+  // The grant-all default principal the accept carries (item B §2 caller-authz):
+  // the SAME explicit grant-all the risk requests and the stream `authenticate`
+  // frame default to, so the accept presents a caller and the server's `Enforce`
+  // posture admits it (and binds it to the recording requester).
+  const GRANT_ALL = { grant_all: true, grants: [], denies: [] };
+
+  it("emits the pre-panel body plus the grant-all caller when no lpId is named", () => {
     const w = quoteAcceptToWire(42n, "BUY", "tkt-1");
-    // EXACT key set: no `lp_id` key at all (the server reads absent as "").
-    expect(Object.keys(w).sort()).toEqual(["idempotency_key", "quote_id", "side"]);
+    // EXACT key set: no `lp_id` key at all (the server reads absent as ""); the
+    // `principal` rides verbatim so QuoteService gates the accept under Enforce.
+    expect(Object.keys(w).sort()).toEqual([
+      "idempotency_key",
+      "principal",
+      "quote_id",
+      "side",
+    ]);
     // The quote_id stays the exact 64-bit identity (a `bigint`); on the wire
     // `serializeFrame` writes it as the same bare integer literal as before.
-    expect(w).toEqual({ quote_id: 42n, idempotency_key: "tkt-1", side: 0 });
-    expect(serializeFrame(w)).toBe('{"quote_id":42,"idempotency_key":"tkt-1","side":0}');
+    expect(w).toEqual({
+      quote_id: 42n,
+      idempotency_key: "tkt-1",
+      side: 0,
+      principal: GRANT_ALL,
+    });
+    expect(serializeFrame(w)).toBe(
+      '{"quote_id":42,"idempotency_key":"tkt-1","side":0,' +
+        '"principal":{"grant_all":true,"grants":[],"denies":[]}}',
+    );
   });
 
   it("treats an empty lpId exactly like an absent one (single-dealer accept)", () => {
@@ -344,6 +364,7 @@ describe("wsCodec — accept_quote body (the multi-dealer line selector)", () =>
       quote_id: 42n,
       idempotency_key: "tkt-1",
       side: 1,
+      principal: GRANT_ALL,
     });
   });
 
@@ -353,6 +374,7 @@ describe("wsCodec — accept_quote body (the multi-dealer line selector)", () =>
       idempotency_key: "tkt-1",
       side: 0,
       lp_id: "SYNTH-LP-2",
+      principal: GRANT_ALL,
     });
   });
 

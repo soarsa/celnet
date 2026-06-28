@@ -393,6 +393,17 @@ async fn scenario_forwarded_equals_owner() {
     .expect("within deadline");
 }
 
+/// The audited explicit grant-all principal every real client asserts (the RFQ
+/// path is now caller-gated, item B §2, and these forwarding edges boot under the
+/// `Enforce` default — so the request must carry a principal to be admitted).
+fn grant_all() -> celnet_proto::EntitlementPrincipal {
+    celnet_proto::EntitlementPrincipal {
+        grant_all: true,
+        grants: vec![],
+        denies: vec![],
+    }
+}
+
 /// **Quote: request → accept routes back to the issuing backend.** A `RequestQuote`
 /// through the front edge is forwarded to the pair's owner; the returned `quote_id`
 /// (minted under that backend's secret) is then accepted through the front edge,
@@ -417,6 +428,8 @@ async fn quote_request_then_accept_routes_to_issuer() {
                 correlation_id: Some(11),
                 surface_version: None,
                 attribution: None,
+                session_token: None,
+                principal: Some(grant_all()),
             })),
         )
         .await
@@ -434,6 +447,8 @@ async fn quote_request_then_accept_routes_to_issuer() {
                 idempotency_key: "fwd-key-1".to_owned(),
                 side: celnet_proto::Side::Buy as i32,
                 lp_id: String::new(),
+                session_token: None,
+                principal: Some(grant_all()),
             }))
             .await
             .expect("front accept routed to issuer + booked")
@@ -452,6 +467,8 @@ async fn quote_request_then_accept_routes_to_issuer() {
                 idempotency_key: "x".to_owned(),
                 side: celnet_proto::Side::Buy as i32,
                 lp_id: String::new(),
+                session_token: None,
+                principal: Some(grant_all()),
             }))
             .await
             .expect_err("unknown quote_id is not_found");
