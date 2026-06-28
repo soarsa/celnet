@@ -385,7 +385,12 @@ independently-landable feature. Format matches this file: dedup-key, evidence, a
   unary RPC already does) → server gates `Capability(Execute, FxOptions)` requiring an
   authenticated session (finding-#3 guard: a body principal must not self-grant) → e2e under
   Enforce: an un-`Execute` trader's accept is denied; gui affordance already disabled (slice
-  5b gates the button on `execute·fx_options`). **OPEN.**
+  5b gates the button on `execute·fx_options`). **DONE** (`db824c3`, 2026-06-29): `QuoteAccept`
+  already carried `session_token`/`principal`; the gap was the handler gating only `ReadAny`.
+  `accept_quote` now gates `Capability(Execute, FxOptions)`; a grant-all body principal
+  (admitted for read-side RequestQuote) is denied for AcceptQuote under Enforce. The FX server
+  half is closed; an Excel sign-in (see `excel-signin-affordance-gating`) is the remaining
+  client-UX item.
 - **[P1/M] `authz-stream-session-gating celnet-server/src/services/stream.rs`** — the
   streaming session (`StreamSession` subscribe / execute frames) is not capability-gated
   (`Stream` / `Execute`). Hot path; gate at the WS stream driver without alloc/lock/log in the
@@ -428,7 +433,9 @@ independently-landable feature. Format matches this file: dedup-key, evidence, a
   post-merge** — the concurrent xasset session whose WIP this was landed in `cc2e3b9`; confirm
   whether it is still red before scheduling.
   Evidence: `crates/celnet-bench` (the named test). Acceptance: the bench runs bounded and
-  reports p50/p99/p99.9 within the budget; `just`/cargo gate green. **OPEN (verify).**
+  reports p50/p99/p99.9 within the budget; `just`/cargo gate green. **DONE** (verified
+  2026-06-29): `cargo test -p celnet-bench wire_load_runs_bounded_and_reports` exits 0 — the
+  concurrent xasset session's WIP landed via the merges. No action needed.
 - **[P2/M] `rates-daycount-stir-convexity celnet-rates`** — the rates engine needs 30/360
   day-count handling and STIR (futures) convexity adjustment in the short-end bootstrap.
   Independent and self-contained. Original item.
