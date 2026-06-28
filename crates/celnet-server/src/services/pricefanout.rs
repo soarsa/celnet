@@ -521,7 +521,9 @@ mod tests {
         let p = pair("EUR", "USD");
         let seed = pair_seed(&p);
         let base = base_market(1.10);
-        let mut c = hub.subscribe(&Underlying::fx(p.clone()), base).expect("ring");
+        let mut c = hub
+            .subscribe(&Underlying::fx(p.clone()), base)
+            .expect("ring");
         // The cursor at subscribe time is the head this consumer started from
         // (received == skipped == 0 here); exact accounting is relative to it.
         let start_head = c.cursor();

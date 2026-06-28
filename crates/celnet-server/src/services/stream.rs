@@ -1809,10 +1809,9 @@ mod tests {
     /// fixture market — an honest deterministic mark, not a fabricated price).
     fn equity_call(strike: f64) -> Instrument {
         Instrument {
-            underlying: Some(celnet_proto::Underlying::equity(celnet_proto::EquityRef::new(
-                celnet_proto::Symbol::new("AAPL", "XNAS"),
-                "USD",
-            ))),
+            underlying: Some(celnet_proto::Underlying::equity(
+                celnet_proto::EquityRef::new(celnet_proto::Symbol::new("AAPL", "XNAS"), "USD"),
+            )),
             tenor: Some(celnet_proto::Tenor {
                 unit: celnet_proto::tenor::Unit::Years as i32,
                 count: 1,
@@ -1897,7 +1896,10 @@ mod tests {
                 other => panic!("a streamed equity must carry the Carry arm, got {other:?}"),
             }
             // The flat projection a legacy client reads is the (exact) dividend rho.
-            assert!(greeks.rho_for().abs() > 0.0, "flat dividend rho is non-zero");
+            assert!(
+                greeks.rho_for().abs() > 0.0,
+                "flat dividend rho is non-zero"
+            );
         })
         .await
         .expect("the cross-asset stream test completes within the deadline");

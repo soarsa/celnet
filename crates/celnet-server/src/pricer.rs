@@ -4264,10 +4264,9 @@ mod tests {
         // Cross-asset underlying → the generalized Carry arm; projecting it back to
         // the FX-shaped flat rhos recovers the originals bit-for-bit.
         let eq = Instrument {
-            underlying: Some(celnet_proto::Underlying::equity(celnet_proto::EquityRef::new(
-                celnet_proto::Symbol::new("AAPL", "XNAS"),
-                "USD",
-            ))),
+            underlying: Some(celnet_proto::Underlying::equity(
+                celnet_proto::EquityRef::new(celnet_proto::Symbol::new("AAPL", "XNAS"), "USD"),
+            )),
             ..Default::default()
         };
         match streamed_rate_sensitivities(&eq, &g) {

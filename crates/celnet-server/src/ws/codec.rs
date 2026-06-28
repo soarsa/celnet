@@ -2863,9 +2863,18 @@ mod tests {
         };
         let jf = greeks_to_json(&fx);
         assert_eq!(jf["rho_dom"].as_f64().unwrap().to_bits(), 0.5_f64.to_bits());
-        assert_eq!(jf["rho_for"].as_f64().unwrap().to_bits(), (-0.2_f64).to_bits());
-        assert_eq!(jf["rate_sensitivities"]["fx"]["rho_dom"].as_f64().unwrap(), 0.5);
-        assert_eq!(jf["rate_sensitivities"]["fx"]["rho_for"].as_f64().unwrap(), -0.2);
+        assert_eq!(
+            jf["rho_for"].as_f64().unwrap().to_bits(),
+            (-0.2_f64).to_bits()
+        );
+        assert_eq!(
+            jf["rate_sensitivities"]["fx"]["rho_dom"].as_f64().unwrap(),
+            0.5
+        );
+        assert_eq!(
+            jf["rate_sensitivities"]["fx"]["rho_for"].as_f64().unwrap(),
+            -0.2
+        );
         assert!(jf["rate_sensitivities"].get("carry").is_none());
 
         // Carry arm: discount_rho/carry_rho named, flat projection consistent.
@@ -2881,8 +2890,18 @@ mod tests {
             ..Default::default()
         };
         let jc = greeks_to_json(&carry);
-        assert_eq!(jc["rate_sensitivities"]["carry"]["discount_rho"].as_f64().unwrap(), 0.3);
-        assert_eq!(jc["rate_sensitivities"]["carry"]["carry_rho"].as_f64().unwrap(), 0.2);
+        assert_eq!(
+            jc["rate_sensitivities"]["carry"]["discount_rho"]
+                .as_f64()
+                .unwrap(),
+            0.3
+        );
+        assert_eq!(
+            jc["rate_sensitivities"]["carry"]["carry_rho"]
+                .as_f64()
+                .unwrap(),
+            0.2
+        );
         // Flat projection: rho_dom = discount + carry = 0.5; rho_for = −carry = −0.2.
         assert_eq!(jc["rho_dom"].as_f64().unwrap(), 0.5);
         assert_eq!(jc["rho_for"].as_f64().unwrap(), -0.2);
