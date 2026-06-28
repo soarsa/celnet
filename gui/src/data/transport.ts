@@ -25,10 +25,12 @@ import type {
   BookRatesPositionRequest,
   BookRatesPositionResponse,
   BrokerQuoteSet,
+  Capability,
   CcyPair,
   Conventions,
   CreateUserInput,
   DeskDesc,
+  UserCapabilities,
   DrillRiskRequest,
   DrillRiskResponse,
   Executed,
@@ -407,6 +409,24 @@ export interface CelnetTransport {
 
   /** AuthService.ResetPassword (admin) — set a user's password (the seeded-admin rotation path). */
   resetPassword(id: string, newPassword: string): Promise<void>;
+
+  /**
+   * AuthService.GetUserCapabilities (admin) — read a user's capability overlay
+   * (`grants`/`denies`) plus the server-resolved `effective` set (`role bundle ∪
+   * grants ∖ denies`, deny-wins), enumerated over every action × asset.
+   */
+  getUserCapabilities(id: string): Promise<UserCapabilities>;
+
+  /**
+   * AuthService.SetUserCapabilities (admin) — replace the overlay wholesale (the
+   * full new `grants`/`denies`, not a delta) and return the freshly-resolved set.
+   * A successful set revokes the target user's live sessions server-side.
+   */
+  setUserCapabilities(
+    id: string,
+    grants: readonly Capability[],
+    denies: readonly Capability[],
+  ): Promise<UserCapabilities>;
 
   /** AuthService.ListDesks (admin) — the full desk roster. */
   listDesks(): Promise<DeskDesc[]>;

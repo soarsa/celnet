@@ -1889,6 +1889,75 @@ export interface UpdateUserInput {
   disabled: boolean;
 }
 
+// --- per-user capability overlay (`AuthService.{Get,Set}UserCapabilities`) -----
+//
+// The "who may act" layer (orthogonal to the desk-scope read predicate): one
+// capability is one action on one asset class. The server resolves the effective
+// set a user holds as `role bundle ∪ grants ∖ denies`, deny-wins (mirrors
+// `celnet-entitlements::CapabilitySet`). Labels are the canonical snake_case the
+// wire carries; provenance lives in comments only (guardrail #8).
+
+/**
+ * One action a capability may authorize (`celnet.wire.CapabilityDesc.action`).
+ * The full set, in canonical order, is {@link CAPABILITY_ACTIONS}.
+ */
+export type CapabilityAction =
+  | "view"
+  | "price"
+  | "quote_respond"
+  | "rfq_respond"
+  | "ioi_respond"
+  | "stream"
+  | "execute"
+  | "book"
+  | "administer";
+
+/** The asset class a capability applies to (`celnet.wire.CapabilityDesc.asset`). */
+export type CapabilityAsset = "fx_options" | "fixed_income";
+
+/** One capability: an {@link CapabilityAction} on a {@link CapabilityAsset}. */
+export interface Capability {
+  action: CapabilityAction;
+  asset: CapabilityAsset;
+}
+
+/**
+ * The full action set in canonical (server discriminant) order — the row axis of
+ * the capability matrix and the enumeration domain for resolving `effective`.
+ */
+export const CAPABILITY_ACTIONS: readonly CapabilityAction[] = [
+  "view",
+  "price",
+  "quote_respond",
+  "rfq_respond",
+  "ioi_respond",
+  "stream",
+  "execute",
+  "book",
+  "administer",
+];
+
+/** Both asset classes in canonical order — the column axis of the matrix. */
+export const CAPABILITY_ASSETS: readonly CapabilityAsset[] = ["fx_options", "fixed_income"];
+
+/**
+ * A user's capability overlay plus the fully-resolved effective set
+ * (`AuthService.{Get,Set}UserCapabilities` response). `grants` widen beyond the
+ * user's role bundle, `denies` narrow it (deny-wins over any grant or role
+ * default), and `effective` is the server-computed `role bundle ∪ grants ∖
+ * denies` enumerated over every action × asset — the read-only source of truth
+ * for what the user can actually do. A successful Set replaces the overlay
+ * wholesale and revokes the target user's live sessions server-side.
+ */
+export interface UserCapabilities {
+  /** Per-user widenings beyond the role bundle. */
+  grants: Capability[];
+  /** Per-user narrowings; deny-wins over any grant or role default. */
+  denies: Capability[];
+  /** The fully-resolved set the server admits. Server-computed, read-only. */
+  effective: Capability[];
+}
+
 // ---------------------------------------------------------------------------
 // fixed-income (rates) — the linear-rates pricing contract (`PricingService
 // .PriceRates`). Mirrors the `celnet.wire` rates messages one-to-one: a

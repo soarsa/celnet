@@ -15,6 +15,7 @@ import { useState } from "react";
 
 import { useApp } from "../app/AppContext";
 import { Button } from "../components/Button";
+import { CapabilityMatrix } from "../components/CapabilityMatrix";
 import { Panel } from "../components/Panel";
 import { UserDialog, type UserDialogMode } from "../components/UserDialog";
 import type { DeskDesc, UserDesc } from "../data/contract";
@@ -42,6 +43,7 @@ export function AdminWorkspace(): React.ReactElement {
   const [dialog, setDialog] = useState<{ mode: UserDialogMode; user?: UserDesc } | null>(null);
   const [deskName, setDeskName] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
+  const [capUserId, setCapUserId] = useState<string | null>(null);
 
   // --- the sign-in / insufficient-role gate --------------------------------
   if (!auth.isAdmin) {
@@ -86,6 +88,7 @@ export function AdminWorkspace(): React.ReactElement {
   };
 
   const deskName_ = deskName.trim();
+  const capUser = capUserId ? (admin.users.find((u) => u.id === capUserId) ?? null) : null;
   const memberCount = (deskId: string): number =>
     admin.users.filter((u) => u.deskId === deskId).length;
   const deskLabel = (deskId: string | undefined): string => {
@@ -149,6 +152,13 @@ export function AdminWorkspace(): React.ReactElement {
                       <Button variant="secondary" onClick={() => setDialog({ mode: "reset", user: u })}>
                         Reset password
                       </Button>
+                      <Button
+                        variant="secondary"
+                        onClick={() => setCapUserId((id) => (id === u.id ? null : u.id))}
+                        aria-pressed={capUserId === u.id}
+                      >
+                        Permissions
+                      </Button>
                       <Button variant="ghost" onClick={() => void runAction(() => admin.deleteUser(u.id))}>
                         Delete
                       </Button>
@@ -160,6 +170,25 @@ export function AdminWorkspace(): React.ReactElement {
           </table>
         )}
       </Panel>
+
+      {capUser && (
+        <Panel
+          title="Permissions"
+          glyph="⚿"
+          actions={
+            <Button variant="ghost" onClick={() => setCapUserId(null)}>
+              Close
+            </Button>
+          }
+        >
+          <CapabilityMatrix
+            key={capUser.id}
+            user={capUser}
+            transport={app.transport}
+            signedInUserId={auth.user?.id}
+          />
+        </Panel>
+      )}
 
       <Panel title="Desks" glyph="▦">
         {admin.desks.length === 0 ? (
