@@ -19,6 +19,7 @@ import { Panel } from "../components/Panel";
 import { principalForScope } from "../data/riskView";
 import { DEFAULT_USD_SOFR_CURVE } from "../data/ratesPricing";
 import { fmtRate } from "../lib/format";
+import { capabilityDenialTitle } from "../lib/capabilityMatrix";
 import type { OisDirection, RatesPosition } from "../data/contract";
 import styles from "./RatesBookWorkspace.module.css";
 
@@ -78,7 +79,14 @@ export function RatesBookWorkspace(): React.ReactElement {
 
   const patch = useCallback((p: Partial<BookTicket>) => setTicket((t) => ({ ...t, ...p })), []);
 
+  // Capability gating (slice 5): booking a rates position is gated on
+  // `book·fixed_income` (disabled + tooltip, never hidden; handler no-ops
+  // defensively, the server still enforces). Anonymous ⇒ permissive.
+  const canBook = app.auth.can("book", "fixed_income");
+  const bookDeniedTitle = capabilityDenialTitle("book", "fixed_income");
+
   const book = useCallback(async () => {
+    if (!canBook) return;
     setBusy(true);
     setError(null);
     try {
@@ -103,7 +111,7 @@ export function RatesBookWorkspace(): React.ReactElement {
     } finally {
       setBusy(false);
     }
-  }, [app.transport, principal, ticket, refresh]);
+  }, [app.transport, principal, ticket, refresh, canBook]);
 
   const isOffline = !app.transport.label.startsWith("live");
   const totalMm = positions.reduce((acc, p) => acc + p.instrument.notional, 0) / MM;
@@ -179,7 +187,12 @@ export function RatesBookWorkspace(): React.ReactElement {
           </Field>
         </div>
         <div className={styles.ticketFoot}>
-          <Button variant="primary" disabled={busy} onClick={book}>
+          <Button
+            variant="primary"
+            disabled={busy || !canBook}
+            onClick={book}
+            title={canBook ? undefined : bookDeniedTitle}
+          >
             Book position
           </Button>
           <span className={styles.curveTag}>{DEFAULT_USD_SOFR_CURVE.currency}-SOFR</span>

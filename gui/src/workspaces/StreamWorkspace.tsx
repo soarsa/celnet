@@ -43,6 +43,7 @@
 import { useMemo, useState } from "react";
 import { useApp } from "../app/AppContext";
 import type { ScopeContext } from "../app/AppContext";
+import { capabilityDenialTitle } from "../lib/capabilityMatrix";
 import { PriceTile } from "../components/PriceTile";
 import { Sparkline, sparklineDirection, type SparklineDir } from "../components/Sparkline";
 import { StatusBadge } from "../components/StatusBadge";
@@ -386,7 +387,13 @@ function BlotterRow({
   const now = nowNanos();
   const sell = row.tradable.find((t) => t.side === "SELL");
   const buy = row.tradable.find((t) => t.side === "BUY");
-  const tradable = row.health === "HEALTHY" && (sell?.validUntilNanos ?? 0n) > now;
+  // Click-to-trade is an execute affordance on an FX-options surface; gate it on
+  // the signed-in user's `execute·fx_options` capability (disabled + tooltip,
+  // never hidden). Anonymous ⇒ permissive; the server still enforces.
+  const canExecute = app.auth.can("execute", "fx_options");
+  const executeDeniedTitle = capabilityDenialTitle("execute", "fx_options");
+  const tradable =
+    canExecute && row.health === "HEALTHY" && (sell?.validUntilNanos ?? 0n) > now;
 
   const spec = trendModeSpec(mode);
   // PREMIUM plots the row's OWN streamed premium mid (always live); a market-
@@ -441,8 +448,12 @@ function BlotterRow({
             key={col.key}
             className={`${styles.priceCell} ${styles.bidCell}`}
             disabled={!tradable || !sell}
-            onClick={() => sell && app.stream.execute(row.subscriptionId, "SELL")}
-            title={tradable ? "Hit the bid (SELL)" : "not tradable"}
+            onClick={() =>
+              canExecute && sell && app.stream.execute(row.subscriptionId, "SELL")
+            }
+            title={
+              !canExecute ? executeDeniedTitle : tradable ? "Hit the bid (SELL)" : "not tradable"
+            }
           >
             <PriceTile value={row.price.bid} format={fmtPremiumPct} side="bid" />
           </button>
@@ -459,8 +470,12 @@ function BlotterRow({
             key={col.key}
             className={`${styles.priceCell} ${styles.offerCell}`}
             disabled={!tradable || !buy}
-            onClick={() => buy && app.stream.execute(row.subscriptionId, "BUY")}
-            title={tradable ? "Lift the offer (BUY)" : "not tradable"}
+            onClick={() =>
+              canExecute && buy && app.stream.execute(row.subscriptionId, "BUY")
+            }
+            title={
+              !canExecute ? executeDeniedTitle : tradable ? "Lift the offer (BUY)" : "not tradable"
+            }
           >
             <PriceTile value={row.price.offer} format={fmtPremiumPct} side="offer" showGlyph />
           </button>

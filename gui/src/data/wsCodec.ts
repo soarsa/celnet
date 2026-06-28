@@ -2198,6 +2198,10 @@ export function loginResultFromWire(o: WireObject): LoginResult {
     token: str(o, "session_token"),
     user: userDescFromWire(user as WireObject),
     expiresNanos: numToBigInt(o, "expires_nanos"),
+    // The caller's OWN fully-resolved effective set (`role bundle ∪ grants ∖
+    // denies`), enumerated server-side over every action × asset — the source
+    // for the client's affordance gating. Absent ⇒ empty (deny-everything).
+    capabilities: capabilityListFromWire(o, "capabilities"),
   };
 }
 

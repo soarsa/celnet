@@ -75,10 +75,29 @@ describe("auth wire codec", () => {
         disabled: false,
       },
       expires_nanos: 1234567890,
+      // The caller's OWN effective set rides on the login reply (snake_case
+      // action/asset labels), driving the client's affordance gating.
+      capabilities: [
+        { action: "price", asset: "fx_options" },
+        { action: "execute", asset: "fixed_income" },
+      ],
     });
     expect(result.token).toBe("tok-abc");
     expect(result.user.role).toBe("ADMIN");
     expect(result.expiresNanos).toBe(1234567890n);
+    expect(result.capabilities).toEqual([
+      { action: "price", asset: "fx_options" },
+      { action: "execute", asset: "fixed_income" },
+    ]);
+
+    // An absent `capabilities` array decodes to an empty (deny-everything) set —
+    // never an accidental grant.
+    const noCaps = loginResultFromWire({
+      session_token: "tok-x",
+      user: { id: "u", email: "u@celnet.com", display_name: "U", role: 0, disabled: false },
+      expires_nanos: 1,
+    });
+    expect(noCaps.capabilities).toEqual([]);
 
     // create: a supplied desk rides through; the role maps to its wire tag.
     const create = createUserRequestToWire({
@@ -125,6 +144,31 @@ describe("MockTransport auth (offline parity)", () => {
     // Email match is case-insensitive.
     const upper = await t.login("ADMIN@CELNET.COM", "password");
     expect(upper.user.id).toBe("admin");
+  });
+
+  it("returns the caller's effective capability set on login (offline gating)", async () => {
+    const t = new MockTransport();
+    // The seeded admin's role bundle is grant-all (9 actions × 2 assets = 18),
+    // so offline affordance gating is coherent real behaviour, not a stub.
+    const result = await t.login("admin@celnet.com", "password");
+    expect(result.capabilities.length).toBe(18);
+    expect(
+      result.capabilities.some((c) => c.action === "execute" && c.asset === "fixed_income"),
+    ).toBe(true);
+    expect(
+      result.capabilities.some((c) => c.action === "administer" && c.asset === "fx_options"),
+    ).toBe(true);
+
+    // A freshly-created TRADER holds every action EXCEPT administer (8 × 2 = 16).
+    await t.createUser({
+      email: "trader@celnet.com",
+      displayName: "T",
+      role: "TRADER",
+      password: "traderpass12",
+    });
+    const trader = await t.login("trader@celnet.com", "traderpass12");
+    expect(trader.capabilities.length).toBe(16);
+    expect(trader.capabilities.some((c) => c.action === "administer")).toBe(false);
   });
 
   it("creates users with unique emails and the 12-char minimum", async () => {

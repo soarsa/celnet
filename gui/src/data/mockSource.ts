@@ -1295,7 +1295,15 @@ export class MockTransport implements CelnetTransport {
     this.mockTokens.add(token);
     // A 12-hour session, mirroring the server's TTL.
     const expiresNanos = nowNanos() + 12n * 60n * 60n * 1_000_000_000n;
-    return { token, user: { ...found.user }, expiresNanos };
+    // The caller's OWN effective set — the SAME `role bundle ∪ grants ∖ denies`
+    // resolution the live server runs (and that GetUserCapabilities returns), so
+    // offline affordance gating is coherent real behaviour, not a stub.
+    const capabilities = mockResolveEffective(
+      found.user.role,
+      found.grants,
+      found.denies,
+    );
+    return { token, user: { ...found.user }, expiresNanos, capabilities };
   }
 
   async logout(): Promise<boolean> {

@@ -1864,6 +1864,14 @@ export interface LoginResult {
   user: UserDesc;
   /** Absolute session expiry (epoch nanos); re-login is required past it. */
   expiresNanos: bigint;
+  /**
+   * The caller's OWN fully-resolved effective capability set (`role bundle ∪
+   * grants ∖ denies`, deny-wins, enumerated over every action × asset). This is
+   * the single source for "what may THIS signed-in user do" and drives the
+   * client's affordance gating. It self-refreshes: any capability change to a
+   * user revokes their sessions, so their next login re-derives this set.
+   */
+  capabilities: Capability[];
 }
 
 /** The create-a-user payload (`AuthService.CreateUser`). */

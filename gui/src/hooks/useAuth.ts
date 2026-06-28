@@ -18,10 +18,16 @@
  * identity over that path; it does not gate the workspace.
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
-import type { UserDesc } from "../data/contract";
+import type {
+  Capability,
+  CapabilityAction,
+  CapabilityAsset,
+  UserDesc,
+} from "../data/contract";
 import type { CelnetTransport } from "../data/transport";
+import { can as capabilitySetHas } from "../lib/capabilityMatrix";
 
 /** Narrow an unknown thrown value to a display string. */
 function messageOf(error: unknown): string {
@@ -34,6 +40,19 @@ export interface AuthApi {
   user: UserDesc | null;
   /** Whether the signed-in user is an administrator (false when anonymous). */
   isAdmin: boolean;
+  /**
+   * The signed-in user's OWN effective capability set (`LoginResult.capabilities`
+   * — the server-resolved `role bundle ∪ grants ∖ denies`). Empty when anonymous.
+   * The single source the client gates affordances on; the server still enforces.
+   */
+  capabilities: Capability[];
+  /**
+   * Whether the signed-in user holds `action` on `asset`. Anonymous ⇒ the legacy
+   * permissive path runs un-gated (the server admits the anonymous/demo edge), so
+   * `can` returns `true` when signed out — gating only ever NARROWS a real
+   * identity's affordances, never the pre-sign-in workspace.
+   */
+  can: (action: CapabilityAction, asset: CapabilityAsset) => boolean;
   /** True while a login/logout round-trip is in flight. */
   busy: boolean;
   /** The last sign-in error as a display string, or `null`. */
@@ -48,6 +67,7 @@ export interface AuthApi {
 
 export function useAuth(transport: CelnetTransport): AuthApi {
   const [user, setUser] = useState<UserDesc | null>(null);
+  const [capabilities, setCapabilities] = useState<Capability[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -60,6 +80,8 @@ export function useAuth(transport: CelnetTransport): AuthApi {
         // Install the bearer token so every gated RPC authenticates from here on.
         transport.setSessionToken(result.token);
         setUser(result.user);
+        // Retain the caller's OWN effective capability set for affordance gating.
+        setCapabilities(result.capabilities);
       } catch (e: unknown) {
         const msg = messageOf(e);
         setError(msg);
@@ -80,6 +102,7 @@ export function useAuth(transport: CelnetTransport): AuthApi {
     } finally {
       transport.setSessionToken(null);
       setUser(null);
+      setCapabilities([]);
       setError(null);
       setBusy(false);
     }
@@ -87,9 +110,21 @@ export function useAuth(transport: CelnetTransport): AuthApi {
 
   const clearError = useCallback(() => setError(null), []);
 
+  // Anonymous (signed-out) sessions run the server's permissive/legacy path, so
+  // `can` is permissive when there is no identity — gating only ever NARROWS a
+  // real signed-in user, never the optional pre-sign-in workspace.
+  const can = useMemo(
+    () =>
+      (action: CapabilityAction, asset: CapabilityAsset): boolean =>
+        user === null ? true : capabilitySetHas(capabilities, action, asset),
+    [user, capabilities],
+  );
+
   return {
     user,
     isAdmin: user?.role === "ADMIN",
+    capabilities,
+    can,
     busy,
     error,
     login,

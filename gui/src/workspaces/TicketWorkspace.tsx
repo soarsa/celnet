@@ -22,6 +22,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useApp } from "../app/AppContext";
+import { capabilityDenialTitle } from "../lib/capabilityMatrix";
 import type {
   BrokenDate,
   Instrument,
@@ -377,6 +378,18 @@ export function TicketWorkspace(): React.ReactElement {
   const structureViolations = spec.validate?.(inputs as never, effectiveCtx) ?? [];
   const structureLawful = structureViolations.length === 0;
 
+  // Capability gating (slice 5): this ticket is an FX-options surface, so each
+  // affordance is gated against `fx_options`. Anonymous sessions run the
+  // permissive/legacy path (`can` ⇒ true); a signed-in user is narrowed to their
+  // effective set. Controls are DISABLED with an explanatory tooltip, never
+  // hidden, and the handlers defensively no-op (the server still enforces).
+  const canPrice = app.auth.can("price", "fx_options");
+  const canExecute = app.auth.can("execute", "fx_options");
+  const canStream = app.auth.can("stream", "fx_options");
+  const priceDeniedTitle = capabilityDenialTitle("price", "fx_options");
+  const executeDeniedTitle = capabilityDenialTitle("execute", "fx_options");
+  const streamDeniedTitle = capabilityDenialTitle("stream", "fx_options");
+
   // A trader-facing expiry label that is honest for every mode: a declared
   // no-expiry family (the perpetual) reads "PERP" (it has no expiry date to
   // label); a broken date reads as its calendar date, never coerced into a
@@ -447,6 +460,9 @@ export function TicketWorkspace(): React.ReactElement {
     : app.pairCtx.market.vol;
 
   const requestQuote = useCallback(async () => {
+    // Capability guard (belt-and-suspenders; the button is disabled and the
+    // server enforces): never dial a price the signed-in user may not request.
+    if (!canPrice) return;
     // The LSV engine is server-side: do not request a price offline for an
     // LSV-priced instrument (the mock would have to fake it). Surface the honest
     // gate instead of dialling a price.
@@ -489,10 +505,21 @@ export function TicketWorkspace(): React.ReactElement {
     } finally {
       setBusy(false);
     }
-  }, [app, spec, inputs, effectiveCtx, lsvUnavailableOffline, rfqMode, structureLawful]);
+  }, [
+    app,
+    spec,
+    inputs,
+    effectiveCtx,
+    lsvUnavailableOffline,
+    rfqMode,
+    structureLawful,
+    canPrice,
+  ]);
 
   const accept = useCallback(
     async (side: "BUY" | "SELL") => {
+      // Capability guard (the accept buttons are disabled; the server enforces).
+      if (!canExecute) return;
       if (!quote) return;
       if (quote.validUntilNanos <= nowNanos()) {
         setFill("Quote expired — re-request");
@@ -511,7 +538,7 @@ export function TicketWorkspace(): React.ReactElement {
         setFill(`Refused — ${err instanceof Error ? err.message : String(err)}`);
       }
     },
-    [app, quote],
+    [app, quote, canExecute],
   );
 
   /**
@@ -521,6 +548,8 @@ export function TicketWorkspace(): React.ReactElement {
    */
   const bookDealerLine = useCallback(
     async (quoteId: bigint, lpId: string, side: "BUY" | "SELL") => {
+      // Capability guard (the dealer-row accept buttons are disabled too).
+      if (!canExecute) return;
       if (!dealerPanel) return;
       const row = dealerPanel.dealers.find((d) => d.lpId === lpId);
       if (!row) return;
@@ -546,7 +575,7 @@ export function TicketWorkspace(): React.ReactElement {
         setFill(`Refused ${lpId} — ${err instanceof Error ? err.message : String(err)}`);
       }
     },
-    [app, dealerPanel],
+    [app, dealerPanel, canExecute],
   );
 
   // ⏎ requests, ⌘⏎ accepts the offered side (keyboard-first, §4.1).
@@ -820,6 +849,8 @@ export function TicketWorkspace(): React.ReactElement {
               panel={dealerPanel}
               windowSeconds={8}
               onBook={(quoteId, lpId, side) => void bookDealerLine(quoteId, lpId, side)}
+              bookDisabled={!canExecute}
+              bookDisabledTitle={executeDeniedTitle}
             />
           </div>
         ) : quote && isSwap(structure) ? (
@@ -898,28 +929,46 @@ export function TicketWorkspace(): React.ReactElement {
             size="lg"
             onClick={requestQuote}
             kbd="⏎"
-            disabled={busy || !expiryReady || lsvUnavailableOffline || !structureLawful}
+            disabled={
+              busy || !expiryReady || lsvUnavailableOffline || !structureLawful || !canPrice
+            }
+            title={canPrice ? undefined : priceDeniedTitle}
           >
-            {busy
-              ? "Pricing…"
-              : !expiryReady
-                ? "Pick a date"
-                : !structureLawful
-                  ? "Fix structure"
-                  : lsvUnavailableOffline
-                    ? "LSV — live server only"
-                    : quote || dealerPanel
-                      ? "Re-request"
-                      : rfqMode === "PANEL"
-                        ? "Request panel"
-                        : "Request quote"}
+            {!canPrice
+              ? "Not permitted"
+              : busy
+                ? "Pricing…"
+                : !expiryReady
+                  ? "Pick a date"
+                  : !structureLawful
+                    ? "Fix structure"
+                    : lsvUnavailableOffline
+                      ? "LSV — live server only"
+                      : quote || dealerPanel
+                        ? "Re-request"
+                        : rfqMode === "PANEL"
+                          ? "Request panel"
+                          : "Request quote"}
           </Button>
           {quote && (
             <>
-              <Button variant="bid" size="lg" onClick={() => accept("SELL")}>
+              <Button
+                variant="bid"
+                size="lg"
+                onClick={() => accept("SELL")}
+                disabled={!canExecute}
+                title={canExecute ? undefined : executeDeniedTitle}
+              >
                 Sell {fmtPremiumPct(quote.price.bid)}
               </Button>
-              <Button variant="offer" size="lg" onClick={() => accept("BUY")} kbd="⌘⏎">
+              <Button
+                variant="offer"
+                size="lg"
+                onClick={() => accept("BUY")}
+                kbd="⌘⏎"
+                disabled={!canExecute}
+                title={canExecute ? undefined : executeDeniedTitle}
+              >
                 Buy {fmtPremiumPct(quote.price.offer)}
               </Button>
             </>
@@ -928,9 +977,12 @@ export function TicketWorkspace(): React.ReactElement {
             <Button
               variant="ghost"
               onClick={() => {
+                if (!canStream) return;
                 app.stream.subscribe(instrument, app.conventions, structureLabel(structure));
                 app.setWorkspace("stream");
               }}
+              disabled={!canStream}
+              title={canStream ? undefined : streamDeniedTitle}
             >
               Stream this ≋
             </Button>

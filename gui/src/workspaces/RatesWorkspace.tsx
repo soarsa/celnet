@@ -18,6 +18,7 @@ import { Panel } from "../components/Panel";
 import { DataGrid } from "../components/DataGrid";
 import type { ColumnDef } from "../lib/grid";
 import { fmtPnlAdaptive } from "../lib/format";
+import { capabilityDenialTitle } from "../lib/capabilityMatrix";
 import { DEFAULT_USD_SOFR_CURVE } from "../data/ratesPricing";
 import type {
   OisDirection,
@@ -85,9 +86,15 @@ export function RatesWorkspace(): React.ReactElement {
 
   const tenorValid = Number.isInteger(tenorYears) && tenorYears >= 1;
   const notionalValid = notionalMm > 0;
-  const canPrice = tenorValid && notionalValid && !busy;
+  // Capability gating (slice 5): pricing rates is a fixed-income affordance, gated
+  // on `price·fixed_income` (disabled + tooltip, never hidden; the handler no-ops
+  // defensively and the server still enforces). Anonymous ⇒ permissive.
+  const hasPriceCap = app.auth.can("price", "fixed_income");
+  const priceDeniedTitle = capabilityDenialTitle("price", "fixed_income");
+  const canPrice = tenorValid && notionalValid && !busy && hasPriceCap;
 
   const requestQuote = useCallback(async () => {
+    if (!hasPriceCap) return;
     if (!tenorValid || !notionalValid) return;
     setBusy(true);
     setError(null);
@@ -108,7 +115,17 @@ export function RatesWorkspace(): React.ReactElement {
     } finally {
       setBusy(false);
     }
-  }, [app.transport, curve, direction, fixedRatePct, notionalMm, tenorYears, tenorValid, notionalValid]);
+  }, [
+    app.transport,
+    curve,
+    direction,
+    fixedRatePct,
+    notionalMm,
+    tenorYears,
+    tenorValid,
+    notionalValid,
+    hasPriceCap,
+  ]);
 
   // Set the fixed rate to the par rate just priced (the zero-PV breakeven coupon).
   const setToPar = useCallback(() => {
@@ -235,7 +252,12 @@ export function RatesWorkspace(): React.ReactElement {
         </div>
 
         <div className={styles.actions}>
-          <Button variant="primary" onClick={requestQuote} disabled={!canPrice}>
+          <Button
+            variant="primary"
+            onClick={requestQuote}
+            disabled={!canPrice}
+            title={hasPriceCap ? undefined : priceDeniedTitle}
+          >
             {busy ? "Pricing…" : "Request quote"}
           </Button>
           {result && (

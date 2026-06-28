@@ -17,6 +17,19 @@
   transform: translateY(0.5px) scale(0.99);
 }
 
+/* A disabled control (busy, invalid input, OR capability-gated) reads as dead:
+   dimmed, desaturated, no hover lift, and a not-allowed cursor — so the user
+   sees it is unavailable. The accompanying `title` explains WHY (e.g. a
+   permissions denial), so the state is both visible and discoverable, never a
+   silent grey-out. */
+.btn:disabled {
+  opacity: 0.45;
+  filter: grayscale(0.35);
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
 .md {
   height: 30px;
   padding: 0 var(--space-4);

@@ -154,6 +154,54 @@ export function resolveEffective(role: UserRole, map: OverlayMap): Capability[] 
   return effective;
 }
 
+/**
+ * Membership test against a user's effective capability set: does `caps` contain
+ * the capability `action × asset`? This is the single selector the client gates
+ * affordances on — the effective set is the server's authoritative `role bundle ∪
+ * grants ∖ denies` (`LoginResult.capabilities`), so a `false` here mirrors a
+ * server deny exactly. An empty set denies everything (a coherent deny-by-default
+ * when the caller's capabilities are unknown). UX-only: the server still enforces.
+ */
+export function can(
+  caps: readonly Capability[],
+  action: CapabilityAction,
+  asset: CapabilityAsset,
+): boolean {
+  return caps.some((c) => c.action === action && c.asset === asset);
+}
+
+/** The asset-class adjective used in a human-readable denial tooltip. */
+const ASSET_ADJECTIVE: Record<CapabilityAsset, string> = {
+  fx_options: "FX-options",
+  fixed_income: "fixed-income",
+};
+
+/** The gerund phrase for each action, completed with the asset adjective. */
+const ACTION_PHRASE: Record<CapabilityAction, (asset: string) => string> = {
+  view: (a) => `viewing ${a} data`,
+  price: (a) => `requesting ${a} prices`,
+  quote_respond: (a) => `responding to ${a} dealer quote requests`,
+  rfq_respond: (a) => `responding to ${a} RFQs`,
+  ioi_respond: (a) => `responding to ${a} IOIs`,
+  stream: (a) => `streaming live ${a} prices`,
+  execute: (a) => `executing ${a} trades`,
+  book: (a) => `booking ${a} positions`,
+  administer: () => `administering Celnet`,
+};
+
+/**
+ * The explanatory tooltip shown on an affordance the signed-in user is NOT
+ * permitted to use — e.g. "Your permissions don't allow executing fixed-income
+ * trades." Gated controls are disabled (never hidden) and carry this text so the
+ * denial is discoverable and explained, not a silent grey-out.
+ */
+export function capabilityDenialTitle(
+  action: CapabilityAction,
+  asset: CapabilityAsset,
+): string {
+  return `Your permissions don't allow ${ACTION_PHRASE[action](ASSET_ADJECTIVE[asset])}.`;
+}
+
 /** Whether two overlay maps differ (used for the editor's dirty flag). */
 export function overlaysDiffer(a: OverlayMap, b: OverlayMap): boolean {
   if (a.size !== b.size) return true;

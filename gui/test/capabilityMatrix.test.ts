@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import { CAPABILITY_ACTIONS, CAPABILITY_ASSETS } from "../src/data/contract";
 import {
+  can,
   capKey,
   overlayFromCapabilities,
   overlayStateAt,
@@ -128,5 +129,43 @@ describe("resolveEffective — full enumeration matches the server algebra", () 
     const keys = new Set(resolveEffective("ADMIN", map).map((c) => capKey(c.action, c.asset)));
     expect(keys.has(capKey("book", "fx_options"))).toBe(false);
     expect(keys.has(capKey("book", "fixed_income"))).toBe(true);
+  });
+});
+
+describe("can — the affordance-gating membership selector", () => {
+  it("returns true exactly for a capability present in the effective set", () => {
+    const caps = [
+      { action: "price", asset: "fx_options" },
+      { action: "execute", asset: "fx_options" },
+    ] as const;
+    expect(can(caps, "price", "fx_options")).toBe(true);
+    expect(can(caps, "execute", "fx_options")).toBe(true);
+  });
+
+  it("returns false when the action is held on a DIFFERENT asset class", () => {
+    // A user who may execute FX must NOT thereby be able to execute fixed income.
+    const caps = [{ action: "execute", asset: "fx_options" }] as const;
+    expect(can(caps, "execute", "fx_options")).toBe(true);
+    expect(can(caps, "execute", "fixed_income")).toBe(false);
+  });
+
+  it("returns false for an absent action and for an empty (deny-all) set", () => {
+    const caps = [{ action: "view", asset: "fixed_income" }] as const;
+    expect(can(caps, "book", "fixed_income")).toBe(false);
+    expect(can([], "price", "fx_options")).toBe(false);
+  });
+
+  it("agrees with resolveEffective for a deny-narrowed trader", () => {
+    // Deny execute·fixed_income on a TRADER: every OTHER cell stays held, only
+    // that one affordance is gated off — exactly what the GUI disables.
+    const map = overlayFromCapabilities(
+      [],
+      [{ action: "execute", asset: "fixed_income" } as const],
+    );
+    const effective = resolveEffective("TRADER", map);
+    expect(can(effective, "execute", "fixed_income")).toBe(false);
+    expect(can(effective, "execute", "fx_options")).toBe(true);
+    expect(can(effective, "price", "fixed_income")).toBe(true);
+    expect(can(effective, "book", "fixed_income")).toBe(true);
   });
 });
