@@ -1,0 +1,3 @@
+---
+# Seconds to wait for a graceful drain on stop before SIGKILL.
+celnet_stop_drain_seconds: 35

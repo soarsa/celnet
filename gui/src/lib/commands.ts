@@ -27,6 +27,12 @@ import type { Command } from "../components/CommandPalette";
 /** Workspace ids the rail exposes (kept in sync with `AppContext.WorkspaceId`). */
 export type WorkspaceId =
   | "ticket"
+  | "rates"
+  | "curve"
+  | "ratesrisk"
+  | "quoting"
+  | "deals"
+  | "ratesbook"
   | "stream"
   | "surface"
   | "risk"
@@ -34,6 +40,21 @@ export type WorkspaceId =
   | "connections"
   | "admin"
   | "excel";
+
+/**
+ * A top-level product domain — the tab a workspace lives under. The Shell renders
+ * one tab per domain (Administration shown only to admins) and switching a tab
+ * jumps to that domain's last-active (or first) workspace. Every RAIL entry
+ * declares exactly one domain, so the three tabs partition the rail.
+ */
+export type Domain = "fx-options" | "fixed-income" | "administration";
+
+/** The top-tab bar order: FX Options, then Fixed Income, then Administration. */
+export const DOMAINS: readonly { id: Domain; label: string }[] = [
+  { id: "fx-options", label: "FX Options" },
+  { id: "fixed-income", label: "Fixed Income" },
+  { id: "administration", label: "Administration" },
+] as const;
 
 /** A logical grouping of related commands (sections the cheatsheet + palette use). */
 export type CommandGroup = "Global" | "Workspace" | "Scope" | "Action";
@@ -61,30 +82,56 @@ export interface CommandMeta {
 /**
  * The rail workspaces, in order. The data-driven rail (replacing the hard-coded
  * `RAIL`/`⌘1-5`): the `⌘N` hint and the `metaDigit` chord are DERIVED from this
- * order, so adding a 6th view needs only a row here — `⌘6` lights up for free
- * (uncapping the old `⌘1-5`). Glyph fix: Book is `▤` (a ledger), freeing `Σ` for
+ * order, so adding a view needs only a row here — its `⌘N` lights up for free
+ * (`⌘1..⌘9`, then `⌘0` for a tenth; uncapping the old `⌘1-5`). Glyph fix: Book is `▤` (a ledger), freeing `Σ` for
  * sum/vega-ladder use exclusively (one glyph, one meaning).
  */
 export const RAIL: readonly {
   id: WorkspaceId;
   glyph: string;
   label: string;
-  /** Optional grouping tag; `administration` workspaces are set off in their own rail section. */
-  group?: "administration";
+  /** The top-level product domain (tab) this workspace lives under. */
+  domain: Domain;
 }[] = [
-  { id: "ticket", glyph: "⌁", label: "Ticket" },
-  { id: "stream", glyph: "≋", label: "Stream" },
-  { id: "surface", glyph: "◷", label: "Surface" },
-  { id: "risk", glyph: "⊞", label: "Risk" },
-  { id: "book", glyph: "▤", label: "Book" },
-  { id: "connections", glyph: "⇄", label: "Connections", group: "administration" },
-  { id: "admin", glyph: "⚇", label: "Admin", group: "administration" },
-  { id: "excel", glyph: "▦", label: "Excel" },
+  // FX Options.
+  { id: "ticket", glyph: "⌁", label: "Ticket", domain: "fx-options" },
+  { id: "stream", glyph: "≋", label: "Stream", domain: "fx-options" },
+  { id: "surface", glyph: "◷", label: "Surface", domain: "fx-options" },
+  { id: "risk", glyph: "⊞", label: "Risk", domain: "fx-options" },
+  // Fixed Income.
+  { id: "rates", glyph: "≣", label: "Rates", domain: "fixed-income" },
+  { id: "curve", glyph: "∿", label: "Curve", domain: "fixed-income" },
+  { id: "ratesrisk", glyph: "⊟", label: "Rates Risk", domain: "fixed-income" },
+  { id: "quoting", glyph: "⇌", label: "Quoting", domain: "fixed-income" },
+  { id: "deals", glyph: "✓", label: "Deals", domain: "fixed-income" },
+  { id: "ratesbook", glyph: "▥", label: "Rates Book", domain: "fixed-income" },
+  { id: "book", glyph: "▤", label: "Book", domain: "fixed-income" },
+  // Administration.
+  { id: "connections", glyph: "⇄", label: "Connections", domain: "administration" },
+  { id: "admin", glyph: "⚇", label: "Admin", domain: "administration" },
+  { id: "excel", glyph: "▦", label: "Excel", domain: "administration" },
 ] as const;
 
-/** The `⌘N` chord hint for the rail position `index` (0-based). */
+/** The product domain (tab) a workspace belongs to — looked up via {@link RAIL}. */
+export function domainOf(id: WorkspaceId): Domain {
+  const entry = RAIL.find((r) => r.id === id);
+  if (!entry) {
+    throw new Error(`domainOf: unknown workspace id \`${id}\` (not in RAIL)`);
+  }
+  return entry.domain;
+}
+
+/**
+ * The `⌘N` chord hint for the rail position `index` (0-based). The single-digit
+ * grammar addresses the first nine views as `⌘1..⌘9`; a tenth view wraps onto
+ * `⌘0` (the browser-tab convention), the last slot the digit grammar can bind.
+ * A view BEYOND the ten single-digit slots (`index > 9`) has NO global chord — it
+ * returns an empty chord (palette-only), so the single-source invariant holds
+ * (no advertised-but-unhonoured key) rather than minting a bogus two-digit `⌘11`.
+ */
 export function railChord(index: number): string[] {
-  return ["⌘", String(index + 1)];
+  if (index > 9) return [];
+  return ["⌘", index === 9 ? "0" : String(index + 1)];
 }
 
 /**
@@ -237,8 +284,9 @@ export function resolveChord(
     if (c.kind === "meta" && e.meta && e.key.toLowerCase() === c.key) {
       return { id: cmd.id };
     }
-    if (c.kind === "metaDigit" && e.meta && /^[1-9]$/.test(e.key)) {
-      const idx = Number(e.key) - 1;
+    if (c.kind === "metaDigit" && e.meta && /^[0-9]$/.test(e.key)) {
+      // ⌘1..⌘9 ⇒ views 0..8; ⌘0 wraps to the tenth view (index 9).
+      const idx = e.key === "0" ? 9 : Number(e.key) - 1;
       if (idx < digitCount) return { id: `ws-${RAIL[idx]!.id}`, railIndex: idx };
     }
     if (c.kind === "plain" && !e.meta && e.key === c.key) {

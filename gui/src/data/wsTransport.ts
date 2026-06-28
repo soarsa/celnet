@@ -20,8 +20,14 @@
  */
 
 import type {
+  AcceptDeskQuoteRequest,
+  AcceptDeskQuoteResponse,
+  AggregateRatesRiskRequest,
+  AggregateRatesRiskResponse,
   AggregateRiskRequest,
   AggregateRiskResponse,
+  BookRatesPositionRequest,
+  BookRatesPositionResponse,
   BrokerQuoteSet,
   CcyPair,
   Conventions,
@@ -30,6 +36,18 @@ import type {
   DrillRiskRequest,
   DrillRiskResponse,
   Execution,
+  ListDealsRequest,
+  ListDealsResponse,
+  ListDeskRequestsRequest,
+  ListDeskRequestsResponse,
+  ListRatesPositionsRequest,
+  ListRatesPositionsResponse,
+  Notification,
+  NotificationScope,
+  RespondDeskRequestRequest,
+  RespondDeskRequestResponse,
+  SubmitDeskRequestRequest,
+  SubmitDeskRequestResponse,
   FixConnection,
   FixConnectionSpec,
   FixMessagePage,
@@ -42,7 +60,10 @@ import type {
   MarkedSurface,
   MarketContext,
   MultiDealerQuote,
+  OisInstrument,
   Quote,
+  RatesCurveSet,
+  RatesPricingResult,
   RiskBucketRequest,
   ScenarioResult,
   ShockAxis,
@@ -52,10 +73,28 @@ import type {
   UserDesc,
 } from "./contract";
 import {
+  acceptDeskQuoteToWire,
+  acceptDeskQuoteResponseFromWire,
+  aggregateRatesRiskRequestToWire,
+  aggregateRatesRiskResponseFromWire,
   aggregateRiskRequestToWire,
   aggregateRiskResponseFromWire,
+  bookRatesPositionToWire,
+  bookRatesPositionResponseFromWire,
   ccyPairToWire,
   conventionsToWire,
+  listDealsToWire,
+  listDealsResponseFromWire,
+  listDeskRequestsToWire,
+  listDeskRequestsResponseFromWire,
+  listRatesPositionsToWire,
+  listRatesPositionsResponseFromWire,
+  notificationFromWire,
+  respondDeskRequestToWire,
+  respondDeskRequestResponseFromWire,
+  submitDeskRequestToWire,
+  submitDeskRequestResponseFromWire,
+  subscribeNotificationsToWire,
   brokerQuoteSetToWire,
   createFixConnectionRequestToWire,
   deleteFixConnectionRequestToWire,
@@ -101,6 +140,9 @@ import {
   parseFrame,
   quoteAcceptToWire,
   quoteFromWire,
+  ratesCurveSetToWire,
+  ratesInstrumentToWire,
+  ratesPricingResultFromWire,
   riskBucketRequestToWire,
   scenarioResultFromWire,
   serializeFrame,
@@ -192,6 +234,17 @@ class WsConnection {
   private readonly outbox: string[] = [];
   /** The live RFS session bound to this connection, if any. */
   private session: WsStreamSession | null = null;
+  /**
+   * Live notification subscriptions, keyed by an opaque token: each holds its
+   * desk scope (so a reconnect re-opens it) and the decoded-frame handler the
+   * `notification` push frames route to. The notification stream is a dedicated
+   * server→client channel (NOT request/response), so it bypasses the waiter map
+   * and is dispatched by frame `type`.
+   */
+  private readonly notificationSubs = new Map<
+    symbol,
+    { readonly scope: NotificationScope | undefined; readonly onFrame: (frame: WireObject) => void }
+  >();
   /** Connection-state listeners (for the status ribbon / debugging). */
   private readonly stateListeners = new Set<(open: boolean) => void>();
   /**
@@ -255,6 +308,10 @@ class WsConnection {
       // its subscriptions (fresh subscribe + resync from last good sequence).
       for (const frame of this.outbox.splice(0)) ws.send(frame);
       this.session?.onReconnect();
+      // Re-open every live notification subscription from the last good scope so
+      // the push stream survives a blue-green cutover / transient drop, exactly
+      // as the RFS subscriptions are re-established above.
+      for (const sub of this.notificationSubs.values()) this.sendNotificationSubscribe(sub.scope);
       for (const l of this.stateListeners) l(true);
     };
     ws.onmessage = (ev: MessageEvent<unknown>) => {
@@ -312,6 +369,13 @@ class WsConnection {
         }
         return;
       }
+    }
+    // A notification push frame (the dedicated server→client stream): route it to
+    // every live notification subscriber. It carries no `correlation_id` (it is
+    // not a reply), so it never matches a waiter — dispatched purely by `type`.
+    if (type === "notification") {
+      for (const sub of this.notificationSubs.values()) sub.onFrame(frame);
+      return;
     }
     // Some contract reply messages do not carry a `correlation_id` — the `smile`,
     // `mark_surface_response`, `scenario_response` and `reject_ack` proto messages
@@ -385,6 +449,32 @@ class WsConnection {
    */
   setSessionToken(token: string | null): void {
     this.sessionToken = token;
+  }
+
+  /**
+   * Open a notification subscription: register the decoded-frame handler, send the
+   * `subscribe_notifications` control frame, and return a disposer. When the LAST
+   * subscriber disposes, the `unsubscribe_notifications` frame stops the server
+   * push. The handler routes by `type: "notification"` in {@link dispatch}.
+   */
+  subscribeNotifications(
+    scope: NotificationScope | undefined,
+    onFrame: (frame: WireObject) => void,
+  ): () => void {
+    const key = Symbol("notification-sub");
+    this.notificationSubs.set(key, { scope, onFrame });
+    this.sendNotificationSubscribe(scope);
+    return () => {
+      if (this.notificationSubs.delete(key) && this.notificationSubs.size === 0) {
+        this.send({ type: "unsubscribe_notifications" });
+      }
+    };
+  }
+
+  /** Send the `subscribe_notifications` control frame (injecting the bearer token). */
+  private sendNotificationSubscribe(scope: NotificationScope | undefined): void {
+    const auth = this.sessionToken ? { session_token: this.sessionToken } : {};
+    this.send({ type: "subscribe_notifications", ...subscribeNotificationsToWire(scope), ...auth });
   }
 
   private failAllWaiters(err: Error): void {
@@ -766,6 +856,26 @@ export class WsTransport implements CelnetTransport {
     };
   }
 
+  async priceRates(
+    curve: RatesCurveSet,
+    instrument: OisInstrument,
+  ): Promise<RatesPricingResult> {
+    // The `price_rates` RPC over the WS mirror: send the curve set + OIS
+    // instrument and decode the server-bootstrapped PV + risk. One unversioned
+    // contract, so the server-priced result is byte-identical to the offline
+    // in-app pricer (which reproduces the same `celnet-rates` math).
+    const reply = await this.conn.request(
+      "price_rates",
+      {
+        curve_set: ratesCurveSetToWire(curve),
+        instrument: ratesInstrumentToWire(instrument),
+      },
+      "rates_price_response",
+      PRICING_REQUEST_TIMEOUT_MS,
+    );
+    return ratesPricingResultFromWire(reply);
+  }
+
   async requestQuote(
     instrument: Instrument,
     conventions: Conventions,
@@ -936,6 +1046,18 @@ export class WsTransport implements CelnetTransport {
     return aggregateRiskResponseFromWire(reply);
   }
 
+  async aggregateRatesRisk(
+    request: AggregateRatesRiskRequest,
+    _conventions: Conventions,
+  ): Promise<AggregateRatesRiskResponse> {
+    const reply = await this.conn.request(
+      "aggregate_rates_risk",
+      aggregateRatesRiskRequestToWire(request),
+      "aggregate_rates_risk_response",
+    );
+    return aggregateRatesRiskResponseFromWire(reply);
+  }
+
   async drillRisk(request: DrillRiskRequest): Promise<DrillRiskResponse> {
     const reply = await this.conn.request(
       "drill_risk",
@@ -952,6 +1074,94 @@ export class WsTransport implements CelnetTransport {
       "limit_status_response",
     );
     return limitStatusResponseFromWire(reply);
+  }
+
+  // --- RfqDeskService — dealer-quoting RFQ/IOI desk --------------------------
+
+  async submitDeskRequest(
+    request: SubmitDeskRequestRequest,
+  ): Promise<SubmitDeskRequestResponse> {
+    const reply = await this.conn.request(
+      "submit_desk_request",
+      submitDeskRequestToWire(request),
+      "submit_desk_request_response",
+    );
+    return submitDeskRequestResponseFromWire(reply);
+  }
+
+  async respondDeskRequest(
+    request: RespondDeskRequestRequest,
+  ): Promise<RespondDeskRequestResponse> {
+    const reply = await this.conn.request(
+      "respond_desk_request",
+      respondDeskRequestToWire(request),
+      "respond_desk_request_response",
+    );
+    return respondDeskRequestResponseFromWire(reply);
+  }
+
+  async acceptDeskQuote(request: AcceptDeskQuoteRequest): Promise<AcceptDeskQuoteResponse> {
+    const reply = await this.conn.request(
+      "accept_desk_quote",
+      acceptDeskQuoteToWire(request),
+      "accept_desk_quote_response",
+    );
+    return acceptDeskQuoteResponseFromWire(reply);
+  }
+
+  async listDeskRequests(
+    request: ListDeskRequestsRequest,
+  ): Promise<ListDeskRequestsResponse> {
+    const reply = await this.conn.request(
+      "list_desk_requests",
+      listDeskRequestsToWire(request),
+      "list_desk_requests_response",
+    );
+    return listDeskRequestsResponseFromWire(reply);
+  }
+
+  async listDeals(request: ListDealsRequest): Promise<ListDealsResponse> {
+    const reply = await this.conn.request(
+      "list_deals",
+      listDealsToWire(request),
+      "list_deals_response",
+    );
+    return listDealsResponseFromWire(reply);
+  }
+
+  // --- RiskService rates Book ------------------------------------------------
+
+  async bookRatesPosition(
+    request: BookRatesPositionRequest,
+  ): Promise<BookRatesPositionResponse> {
+    const reply = await this.conn.request(
+      "book_rates_position",
+      bookRatesPositionToWire(request),
+      "book_rates_position_response",
+    );
+    return bookRatesPositionResponseFromWire(reply);
+  }
+
+  async listRatesPositions(
+    request: ListRatesPositionsRequest,
+  ): Promise<ListRatesPositionsResponse> {
+    const reply = await this.conn.request(
+      "list_rates_positions",
+      listRatesPositionsToWire(request),
+      "list_rates_positions_response",
+    );
+    return listRatesPositionsResponseFromWire(reply);
+  }
+
+  // --- NotificationService — dedicated server→client push stream -------------
+
+  streamNotifications(
+    scope: NotificationScope | undefined,
+    onNotification: (notification: Notification) => void,
+  ): () => void {
+    return this.conn.subscribeNotifications(scope, (frame) =>
+      onNotification(notificationFromWire(frame)),
+    );
   }
 
   // --- FixAdminService — manage the inbound FIX acceptor connections ---------

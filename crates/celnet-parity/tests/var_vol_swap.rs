@@ -122,30 +122,48 @@ fn adaptive<S: Smile>(
 }
 
 /// Independent oracle for the fair variance: adaptive-Simpson quadrature of the
-/// strike-space integrand over the OTM wings (truncated wide in σ√T units, the
-/// same place the integrand is numerically zero).
+/// strike-space integrand over the OTM wings, **seeded on σ√T log-moneyness
+/// sub-intervals**.
+///
+/// The wings span ±24·σ√T (≈ e^{8} of moneyness at long tenor) — well past where
+/// the 1/K²-weighted OTM integrand is numerically zero even for a smile whose far
+/// wings rise under extrapolation. Over a domain that wide the integrand's mass is
+/// a thin spike near the forward, so seeding adaptive Simpson on a *single*
+/// whole-wing interval lets the coarse initial samples step over the peak and the
+/// Richardson check terminate early — under-resolving by ~2e-6 at the long-tenor /
+/// wide-smile extreme (verified: the production log-space strip is converged there
+/// to ~1e-15 in nodes AND wing width; the gap was entirely this oracle's seed).
+/// Seeding on 1·σ√T sub-intervals keeps every adaptive call's coarse seed close to
+/// the local integrand, so it resolves the peak and converges to ~1e-11 — three
+/// orders inside the 1e-6 parity gate. Same strike-space integrand and adaptive
+/// scheme as the production strip's log-space Simpson; only the seed partition
+/// differs, so this stays a genuinely independent cross-check.
 fn oracle_fair_variance<S: Smile>(smile: &S, ctx: &VarSwapContext) -> f64 {
     let atm = smile.implied_vol(ctx.forward, ctx.forward, ctx.t).0;
-    // Truncate wide in σ√T units — well past where the 1/K²-weighted OTM
-    // integrand is numerically zero even for a smile whose far wings rise under
-    // extrapolation (the test smiles cap at ~0.35 σ√T, so 24·σ√T ≈ e^{8} of
-    // moneyness is deep in the dead tail) — so the oracle is itself converged.
-    let span = (24.0 * atm * ctx.t.sqrt()).exp();
-    let k_lo = ctx.forward / span;
-    let k_hi = ctx.forward * span;
     let f = ctx.forward;
-
-    // Adaptive tolerance ~1e-9 on each wing — three orders tighter than the 1e-6
+    // One σ√T per seed sub-interval, out to 24·σ√T per wing (the dead-tail edge).
+    let du = atm * ctx.t.sqrt();
+    let blocks = 24usize;
+    // Adaptive tolerance ~1e-10 per sub-interval — orders tighter than the 1e-6
     // parity gate, so the oracle is the reference, not the bottleneck.
-    let tol = 1e-9;
-    // Put wing (K_lo → F) and call wing (F → K_hi) integrated separately; the
-    // integrand is continuous through F (OTM put = OTM call there).
+    let tol = 1e-10;
     let mut total = 0.0;
-    for (a, b) in [(k_lo, f), (f, k_hi)] {
-        let fa = integrand(smile, ctx, a);
-        let fb = integrand(smile, ctx, b);
-        let whole = simpson(smile, ctx, a, b, fa, fb);
-        total += adaptive(smile, ctx, a, b, fa, fb, whole, tol, 50);
+    for j in 0..blocks {
+        // Call wing (u ∈ [j, j+1]·du) and put wing (u ∈ [−(j+1), −j]·du); the
+        // integrand is continuous through F (OTM put = OTM call there).
+        let edges = [
+            (f * (j as f64 * du).exp(), f * ((j + 1) as f64 * du).exp()),
+            (
+                f * (-((j + 1) as f64) * du).exp(),
+                f * (-(j as f64) * du).exp(),
+            ),
+        ];
+        for (a, b) in edges {
+            let fa = integrand(smile, ctx, a);
+            let fb = integrand(smile, ctx, b);
+            let whole = simpson(smile, ctx, a, b, fa, fb);
+            total += adaptive(smile, ctx, a, b, fa, fb, whole, tol, 50);
+        }
     }
     total
 }
@@ -284,6 +302,49 @@ fn production_strip_is_on_the_convergence_plateau() {
     assert!(
         (default - refined).abs() < 1e-7,
         "default strip not converged: {default} vs refined {refined}"
+    );
+}
+
+// The long-tenor / wide-smile extreme that exposed the oracle's seed under-
+// resolution (a proptest discovery): the production strip is converged to ~1e-15
+// here (in nodes AND wing width), so the σ√T-seeded oracle must agree with it far
+// inside the 1e-6 gate. Pinned as a deterministic regression so the fix can't
+// silently rot.
+#[test]
+fn oracle_resolves_long_tenor_peak() {
+    let (spot, t, atm, bf) = (
+        0.5_f64,
+        2.587149180539729_f64,
+        0.21061208923356387_f64,
+        0.036002690585578534_f64,
+    );
+    let c = ctx(spot, t, 0.0, 0.0);
+    let f = c.forward;
+    let (kp, kc) = (f / 1.10, f * 1.10);
+    let smile = MarketHedgeSmile::new([kp, f, kc], [atm + bf, atm, atm + bf], f, c.t);
+
+    let strip = fair_variance(&smile, &c).fair_variance;
+    // The strip is converged here: refining nodes 8× and widening the wing to
+    // 32·σ√T moves it < 1e-12 (so the production default is the right answer).
+    let refined = fair_variance_with(
+        &smile,
+        &c,
+        VarSwapStrip {
+            nodes_per_leg: 32000,
+            wing_std: 32.0,
+        },
+    )
+    .fair_variance;
+    assert!(
+        (strip - refined).abs() < 1e-9,
+        "strip not converged at long tenor: {strip} vs refined {refined}"
+    );
+
+    let oracle = oracle_fair_variance(&smile, &c);
+    let diff = (strip - oracle).abs();
+    assert!(
+        diff < 1e-6,
+        "seeded oracle must resolve the long-tenor peak: strip {strip} vs oracle {oracle} (|Δ|={diff:e})"
     );
 }
 

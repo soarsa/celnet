@@ -1,13 +1,22 @@
-//! The immutable discount/forward curve snapshot and its log-linear-on-log-DF interpolation.
+//! The immutable discount/forward curve snapshot and its term-structure interpolation.
 //!
-//! A [`Curve`] stores its pillars in **log-discount-factor space** and interpolates linearly in
-//! `ln DF(t)` against continuous year-fraction time `t`. This is the shipping default scheme
-//! (`FI-CURVES-SPEC.md` §4, Q10): it is local, cheap, exact at the pillars, and arbitrage-free in
-//! discount-factor space, with piecewise-constant continuously-compounded instantaneous forwards.
+//! A [`Curve`] stores its pillars in **log-discount-factor space** and supports two interpolation
+//! schemes selected at construction ([`Interpolation`]):
 //!
-//! The same construction is what an independent oracle (QuantLib's `InterpolatedDiscountCurve`
-//! with the `LogLinear` traits) computes, so the closed-form identity tests below double as the
-//! cross-engine agreement check for this scheme (`FI-VERIFICATION-CONTRACT.md`).
+//! - **Log-linear-on-log-DF** — the shipping default (`FI-CURVES-SPEC.md` §4, Q10): linear in
+//!   `ln DF(t)` against continuous year-fraction time `t`. Local, cheap, exact at the pillars, and
+//!   arbitrage-free in discount-factor space, with piecewise-constant continuously-compounded
+//!   instantaneous forwards. This is what an independent oracle (QuantLib's
+//!   `InterpolatedDiscountCurve` with the `LogLinear` traits) computes, so the closed-form identity
+//!   tests below double as the cross-engine agreement check (`FI-VERIFICATION-CONTRACT.md`).
+//! - **Monotone-convex-on-forwards** — the smooth view (`FI-CURVES-SPEC.md` §4): a
+//!   piecewise-quadratic instantaneous forward that reproduces every pillar discount factor exactly,
+//!   stays continuous across pillars (no log-linear sawtooth), and is monotonicity- and
+//!   convexity-preserving, so a monotone sequence of discrete forwards yields a monotone forward
+//!   curve with no spurious overshoot.
+//!
+//! Both schemes keep queries allocation-free; the monotone-convex knot forwards are precomputed once
+//! at construction. Method/paper provenance lives in prose only — never in identifiers (CLAUDE.md §8).
 
 use std::sync::Arc;
 
@@ -55,6 +64,15 @@ impl core::fmt::Display for CurveError {
 
 impl core::error::Error for CurveError {}
 
+/// The interpolation scheme a [`Curve`] evaluates between its pillars.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Interpolation {
+    /// Linear in `ln DF` against time: piecewise-constant instantaneous forwards (the default).
+    LogLinearDf,
+    /// Piecewise-quadratic, continuous, monotonicity-preserving instantaneous forwards (smooth view).
+    MonotoneConvexForward,
+}
+
 /// An immutable, cheaply-cloned term-structure snapshot in discount-factor space.
 ///
 /// The curve interpolates linearly in `ln DF` against year-fraction time (log-linear-on-log-DF).
@@ -68,6 +86,11 @@ impl core::error::Error for CurveError {}
 pub struct Curve {
     /// Pillars in ascending time order; `nodes[0]` is always the origin `(0, ln 1 = 0)`.
     nodes: Arc<[Node]>,
+    /// Instantaneous forward at each node, precomputed for [`Interpolation::MonotoneConvexForward`];
+    /// empty for the log-linear scheme, which needs no per-node state.
+    knot_fwds: Arc<[f64]>,
+    /// The interpolation scheme evaluated between pillars.
+    scheme: Interpolation,
 }
 
 impl Curve {
@@ -82,6 +105,65 @@ impl Curve {
     /// Returns a [`CurveError`] if the origin is missing, fewer than two pillars are supplied, times
     /// are not strictly increasing, or a discount factor is not strictly positive.
     pub fn from_log_linear_dfs(pillars: &[(Time, Df)]) -> Result<Self, CurveError> {
+        Ok(Self::from_nodes(
+            Self::parse_df_pillars(pillars)?,
+            Interpolation::LogLinearDf,
+        ))
+    }
+
+    /// Build a curve from `(time, discount factor)` pillars under monotone-convex-on-forwards
+    /// interpolation — the smooth view (`FI-CURVES-SPEC.md` §4).
+    ///
+    /// The pillar contract is identical to [`Curve::from_log_linear_dfs`]; only the interpolation
+    /// differs. The scheme fits a piecewise-quadratic instantaneous forward that (a) reproduces every
+    /// pillar discount factor exactly, (b) is continuous across pillars (no log-linear sawtooth), and
+    /// (c) is monotonicity- and convexity-preserving, so a monotone sequence of discrete forwards
+    /// yields a monotone forward curve with no spurious overshoot. Construction is `O(n)`; queries
+    /// stay allocation-free, evaluating one quadratic on the bracketing segment. With a single
+    /// segment the scheme coincides with log-linear (a constant forward).
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`CurveError`] on the same malformed-pillar conditions as
+    /// [`Curve::from_log_linear_dfs`].
+    pub fn from_monotone_convex_dfs(pillars: &[(Time, Df)]) -> Result<Self, CurveError> {
+        Ok(Self::from_nodes(
+            Self::parse_df_pillars(pillars)?,
+            Interpolation::MonotoneConvexForward,
+        ))
+    }
+
+    /// Build a curve from `(time, continuously-compounded zero rate)` pillars, `t > 0`.
+    ///
+    /// The origin `(0, DF = 1)` is prepended automatically; each pillar's discount factor is
+    /// `DF(t) = exp(-z·t)`. This is the convenient constructor for tests and for the bootstrap's
+    /// output, and produces exactly the same curve as passing the equivalent discount factors to
+    /// [`Curve::from_log_linear_dfs`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CurveError::TooFewPillars`] if empty, [`CurveError::NonPositiveZeroTime`] if any
+    /// pillar time is `<= 0`, or [`CurveError::NonMonotonicTime`] if times are not increasing.
+    pub fn from_zero_rates(pillars: &[(Time, Rate)]) -> Result<Self, CurveError> {
+        Self::from_log_linear_dfs(&Self::zero_rate_pillars(pillars)?)
+    }
+
+    /// Build a curve from `(time, continuously-compounded zero rate)` pillars under
+    /// monotone-convex-on-forwards interpolation.
+    ///
+    /// The origin `(0, DF = 1)` is prepended; see [`Curve::from_monotone_convex_dfs`] for the scheme
+    /// and [`Curve::from_zero_rates`] for the pillar contract.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CurveError::TooFewPillars`] if empty, [`CurveError::NonPositiveZeroTime`] if any
+    /// pillar time is `<= 0`, or [`CurveError::NonMonotonicTime`] if times are not increasing.
+    pub fn from_monotone_convex_zero_rates(pillars: &[(Time, Rate)]) -> Result<Self, CurveError> {
+        Self::from_monotone_convex_dfs(&Self::zero_rate_pillars(pillars)?)
+    }
+
+    /// Validate `(time, DF)` pillars and convert them to ascending log-DF nodes.
+    fn parse_df_pillars(pillars: &[(Time, Df)]) -> Result<Vec<Node>, CurveError> {
         if pillars.len() < 2 {
             return Err(CurveError::TooFewPillars);
         }
@@ -105,23 +187,11 @@ impl Curve {
                 ln_df: df.0.ln(),
             });
         }
-        Ok(Self {
-            nodes: Arc::from(nodes),
-        })
+        Ok(nodes)
     }
 
-    /// Build a curve from `(time, continuously-compounded zero rate)` pillars, `t > 0`.
-    ///
-    /// The origin `(0, DF = 1)` is prepended automatically; each pillar's discount factor is
-    /// `DF(t) = exp(-z·t)`. This is the convenient constructor for tests and for the bootstrap's
-    /// output, and produces exactly the same curve as passing the equivalent discount factors to
-    /// [`Curve::from_log_linear_dfs`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CurveError::TooFewPillars`] if empty, [`CurveError::NonPositiveZeroTime`] if any
-    /// pillar time is `<= 0`, or [`CurveError::NonMonotonicTime`] if times are not increasing.
-    pub fn from_zero_rates(pillars: &[(Time, Rate)]) -> Result<Self, CurveError> {
+    /// Prepend the origin pillar and convert `(time, zero rate)` pillars to `(time, DF)` pillars.
+    fn zero_rate_pillars(pillars: &[(Time, Rate)]) -> Result<Vec<(Time, Df)>, CurveError> {
         if pillars.is_empty() {
             return Err(CurveError::TooFewPillars);
         }
@@ -133,7 +203,26 @@ impl Curve {
             }
             dfs.push((t, Df((-z.0 * t.0).exp())));
         }
-        Self::from_log_linear_dfs(&dfs)
+        Ok(dfs)
+    }
+
+    /// Assemble a curve from validated nodes, precomputing knot forwards for the smooth scheme.
+    fn from_nodes(nodes: Vec<Node>, scheme: Interpolation) -> Self {
+        let knot_fwds: Vec<f64> = match scheme {
+            Interpolation::LogLinearDf => Vec::new(),
+            Interpolation::MonotoneConvexForward => knot_forwards(&nodes),
+        };
+        Self {
+            nodes: Arc::from(nodes),
+            knot_fwds: Arc::from(knot_fwds),
+            scheme,
+        }
+    }
+
+    /// The interpolation scheme this curve evaluates between its pillars.
+    #[must_use]
+    pub fn interpolation(&self) -> Interpolation {
+        self.scheme
     }
 
     /// The latest pillar time on the curve (its calibrated horizon); queries past this point
@@ -143,31 +232,85 @@ impl Curve {
         Time(self.nodes[self.nodes.len() - 1].t)
     }
 
-    /// `ln DF(t)` under log-linear interpolation, with flat-forward extrapolation at both ends.
-    ///
-    /// The bracketing segment is found by binary search; for `t` below the first or above the last
-    /// pillar the nearest segment's slope is extended (a constant instantaneous forward), which is
-    /// the standard, arbitrage-free extrapolation for this scheme.
-    fn ln_df(&self, t: f64) -> f64 {
+    /// Index `hi` of the first pillar with time strictly greater than `t`, clamped so that
+    /// `[hi - 1, hi]` is a real segment (binary search). Below the first or above the last pillar the
+    /// nearest segment is returned, giving the standard flat-forward extrapolation.
+    fn bracket(&self, t: f64) -> usize {
         let n = self.nodes.len();
-        // First index whose time is strictly greater than `t`; clamp so [lo, hi] is a real segment.
-        let hi = self.nodes.partition_point(|nd| nd.t <= t).clamp(1, n - 1);
-        let lo = hi - 1;
-        let a = self.nodes[lo];
+        self.nodes.partition_point(|nd| nd.t <= t).clamp(1, n - 1)
+    }
+
+    /// `ln DF(t)` under the active interpolation scheme, with flat-forward extrapolation at both ends.
+    fn ln_df(&self, t: f64) -> f64 {
+        match self.scheme {
+            Interpolation::LogLinearDf => self.ln_df_log_linear(t),
+            Interpolation::MonotoneConvexForward => self.ln_df_monotone_convex(t),
+        }
+    }
+
+    /// `ln DF(t)` for log-linear-on-log-DF: linear in `ln DF` with flat-forward extrapolation.
+    fn ln_df_log_linear(&self, t: f64) -> f64 {
+        let hi = self.bracket(t);
+        let a = self.nodes[hi - 1];
         let b = self.nodes[hi];
         let slope = (b.ln_df - a.ln_df) / (b.t - a.t);
         a.ln_df + slope * (t - a.t)
     }
 
-    /// The negated slope of the segment bracketing `t` — the (continuously-compounded) instantaneous
-    /// forward, which is piecewise-constant for this scheme.
-    fn segment_forward(&self, t: f64) -> f64 {
+    /// `ln DF(t)` for monotone-convex-on-forwards: integrate the piecewise-quadratic forward.
+    ///
+    /// On the bracketing segment `[t_{i-1}, t_i]` the instantaneous forward is `f^d_i + g(x)`, where
+    /// `x = (t − t_{i-1}) / Δt` and `g` is the region quadratic with `∫_0^1 g = 0` (so the segment
+    /// reprices its far pillar exactly). Hence
+    /// `ln DF(t) = ln DF(t_{i-1}) − [f^d_i·(t − t_{i-1}) + Δt·∫_0^x g]`. Beyond the last pillar the
+    /// forward is held flat at the final knot forward.
+    fn ln_df_monotone_convex(&self, t: f64) -> f64 {
         let n = self.nodes.len();
-        let hi = self.nodes.partition_point(|nd| nd.t <= t).clamp(1, n - 1);
-        let lo = hi - 1;
-        let a = self.nodes[lo];
+        let last = self.nodes[n - 1];
+        if t >= last.t {
+            return last.ln_df - self.knot_fwds[n - 1] * (t - last.t);
+        }
+        let hi = self.bracket(t);
+        let a = self.nodes[hi - 1];
+        let b = self.nodes[hi];
+        let dt = b.t - a.t;
+        let fdisc = (a.ln_df - b.ln_df) / dt;
+        let g0 = self.knot_fwds[hi - 1] - fdisc;
+        let g1 = self.knot_fwds[hi] - fdisc;
+        let x = (t - a.t) / dt;
+        let (_, integral) = mc_segment(g0, g1, x);
+        a.ln_df - (fdisc * (t - a.t) + dt * integral)
+    }
+
+    /// The negated slope of the segment bracketing `t` — the (continuously-compounded) instantaneous
+    /// forward, which is piecewise-constant for the log-linear scheme.
+    fn segment_forward(&self, t: f64) -> f64 {
+        let hi = self.bracket(t);
+        let a = self.nodes[hi - 1];
         let b = self.nodes[hi];
         -(b.ln_df - a.ln_df) / (b.t - a.t)
+    }
+
+    /// The continuous instantaneous forward under monotone-convex interpolation: `f^d_i + g(x)` on
+    /// the bracketing segment, held flat at the boundary knot forwards outside the calibrated range.
+    fn monotone_convex_forward(&self, t: f64) -> f64 {
+        let n = self.nodes.len();
+        if t <= 0.0 {
+            return self.knot_fwds[0];
+        }
+        if t >= self.nodes[n - 1].t {
+            return self.knot_fwds[n - 1];
+        }
+        let hi = self.bracket(t);
+        let a = self.nodes[hi - 1];
+        let b = self.nodes[hi];
+        let dt = b.t - a.t;
+        let fdisc = (a.ln_df - b.ln_df) / dt;
+        let g0 = self.knot_fwds[hi - 1] - fdisc;
+        let g1 = self.knot_fwds[hi] - fdisc;
+        let x = (t - a.t) / dt;
+        let (g, _) = mc_segment(g0, g1, x);
+        fdisc + g
     }
 
     /// The discount factor `DF(t)`. For `t <= 0` this is exactly 1 (the curve reference date).
@@ -186,7 +329,7 @@ impl Curve {
     #[must_use]
     pub fn zero_rate(&self, t: Time) -> Rate {
         if t.0 <= ORIGIN_TOL {
-            return Rate(self.segment_forward(0.0));
+            return self.instantaneous_forward(Time(0.0));
         }
         Rate(-self.ln_df(t.0) / t.0)
     }
@@ -194,10 +337,14 @@ impl Curve {
     /// The continuously-compounded instantaneous forward `f(t) = -d ln DF / dt`.
     ///
     /// Under log-linear-on-log-DF this is piecewise-constant within each pillar segment (the
-    /// characteristic "sawtooth" forward curve).
+    /// characteristic "sawtooth"); under monotone-convex-on-forwards it is a continuous,
+    /// monotonicity-preserving piecewise quadratic.
     #[must_use]
     pub fn instantaneous_forward(&self, t: Time) -> Rate {
-        Rate(self.segment_forward(t.0))
+        match self.scheme {
+            Interpolation::LogLinearDf => Rate(self.segment_forward(t.0)),
+            Interpolation::MonotoneConvexForward => Rate(self.monotone_convex_forward(t.0)),
+        }
     }
 
     /// The continuously-compounded forward rate over `[t1, t2]`:
@@ -222,6 +369,113 @@ impl Curve {
         let df1 = self.discount_factor(t1).0;
         let df2 = self.discount_factor(t2).0;
         Rate((df1 / df2 - 1.0) / (t2.0 - t1.0))
+    }
+}
+
+/// Instantaneous forwards at the pillar knots for the monotone-convex scheme.
+///
+/// Each interval `i` carries the discrete (continuously-compounded) forward
+/// `f^d_i = (ln DF(t_{i-1}) − ln DF(t_i)) / Δt_i`. An interior knot forward is the
+/// distance-weighted blend of its two neighbouring discrete forwards (so the closer interval gets
+/// the larger weight); the two boundary knots reflect the first/last interior knot through the
+/// adjacent discrete forward. A lone segment degenerates to a constant forward, where the scheme
+/// coincides with log-linear.
+fn knot_forwards(nodes: &[Node]) -> Vec<f64> {
+    let n = nodes.len();
+    let fdisc = |k: usize| (nodes[k - 1].ln_df - nodes[k].ln_df) / (nodes[k].t - nodes[k - 1].t);
+    let mut f = vec![0.0_f64; n];
+    for j in 1..n - 1 {
+        let span = nodes[j + 1].t - nodes[j - 1].t;
+        let weight_right = (nodes[j].t - nodes[j - 1].t) / span; // closer to interval j+1's forward
+        let weight_left = (nodes[j + 1].t - nodes[j].t) / span; // closer to interval j's forward
+        f[j] = weight_right * fdisc(j + 1) + weight_left * fdisc(j);
+    }
+    if n >= 3 {
+        f[0] = fdisc(1) - 0.5 * (f[1] - fdisc(1));
+        f[n - 1] = fdisc(n - 1) - 0.5 * (f[n - 2] - fdisc(n - 1));
+    } else {
+        let flat = fdisc(1);
+        f[0] = flat;
+        f[1] = flat;
+    }
+    f
+}
+
+/// Evaluate the monotone-convex segment deviation `g(x)` and its integral `∫_0^x g(u) du` for a
+/// normalized position `x ∈ [0, 1]`, given the endpoint deviations `g0 = g(0)` and `g1 = g(1)` of
+/// the instantaneous forward from the interval's discrete forward.
+///
+/// Each of the four `(g0, g1)`-plane regions selects a quadratic (region 1) or a pair of
+/// flat/quadratic pieces (regions 2–4) chosen so the result is monotonicity- and
+/// convexity-preserving while satisfying `∫_0^1 g = 0` — hence every segment reprices its far
+/// pillar exactly, for any region. The all-flat case `g0 = g1 = 0` returns `g ≡ 0`. The integrals
+/// here are the exact antiderivatives of the same `g`, so the forward and `ln DF` stay consistent.
+fn mc_segment(g0: f64, g1: f64, x: f64) -> (f64, f64) {
+    // A flat segment (both endpoints already on the discrete forward) contributes nothing.
+    if g0.abs() <= 0.0 && g1.abs() <= 0.0 {
+        return (0.0, 0.0);
+    }
+
+    let g1p2g0 = g1 + 2.0 * g0; // boundary line A
+    let g0p2g1 = g0 + 2.0 * g1; // boundary line B
+
+    let region1 = (g1p2g0 < 0.0 && g0p2g1 >= 0.0) || (g1p2g0 > 0.0 && g0p2g1 <= 0.0);
+    let region2 = (g0 < 0.0 && g1p2g0 >= 0.0) || (g0 > 0.0 && g1p2g0 <= 0.0);
+    let region3 = (g1 <= 0.0 && g0p2g1 > 0.0) || (g1 >= 0.0 && g0p2g1 < 0.0);
+
+    if region1 {
+        // g(x) = 3(g0+g1)x² − 2(g1+2g0)x + g0;  G(x) = (g0+g1)x³ − (g1+2g0)x² + g0·x.
+        let g = (3.0 * (g0 + g1) * x - 2.0 * g1p2g0) * x + g0;
+        let big_g = ((g0 + g1) * x - g1p2g0) * x * x + g0 * x;
+        (g, big_g)
+    } else if region2 {
+        // Flat at g0 over [0, eta], then quadratic to g1.
+        let eta = g1p2g0 / (g1 - g0);
+        if x > eta {
+            let w = 1.0 - eta;
+            let r = (x - eta) / w;
+            let g = g0 + (g1 - g0) * r * r;
+            let big_g = g0 * x + (g1 - g0) * (x - eta).powi(3) / (3.0 * w * w);
+            (g, big_g)
+        } else {
+            (g0, g0 * x)
+        }
+    } else if region3 {
+        // Quadratic from g0 over [0, eta], then flat at g1.
+        let eta = 3.0 * g1 / (g1 - g0);
+        if eta > 0.0 {
+            if x <= eta {
+                let r = (eta - x) / eta;
+                let g = g1 + (g0 - g1) * r * r;
+                let big_g =
+                    g1 * x + (g0 - g1) * (eta.powi(3) - (eta - x).powi(3)) / (3.0 * eta * eta);
+                (g, big_g)
+            } else {
+                (g1, g1 * x + (g0 - g1) * eta / 3.0)
+            }
+        } else {
+            // Degenerate eta = 0 (g1 = 0): the leading quadratic region has zero width.
+            (g1, g1 * x)
+        }
+    } else {
+        // Region 4: g0 and g1 share a sign; two quadratics meet at the shifted level `shift`.
+        let eta = g1 / (g0 + g1);
+        let shift = -0.5 * (eta * g0 + (1.0 - eta) * g1);
+        if x <= eta {
+            let r = (eta - x) / eta;
+            let g = shift + (g0 - shift) * r * r;
+            let big_g =
+                shift * x + (g0 - shift) * (eta.powi(3) - (eta - x).powi(3)) / (3.0 * eta * eta);
+            (g, big_g)
+        } else {
+            let w = 1.0 - eta;
+            let r = (x - eta) / w;
+            let g = shift + (g1 - shift) * r * r;
+            let big_g = shift * x
+                + (g0 - shift) * eta / 3.0
+                + (g1 - shift) * (x - eta).powi(3) / (3.0 * w * w);
+            (g, big_g)
+        }
     }
 }
 
@@ -404,5 +658,155 @@ mod tests {
             0.0,
         );
         assert_eq!(Arc::strong_count(&c.nodes), 2);
+    }
+
+    // ----------------------------------------------------------------------------------------------
+    // Monotone-convex-on-forwards (the smooth view).
+    // ----------------------------------------------------------------------------------------------
+
+    /// The same downward-sloping pillars as [`sample`], under monotone-convex interpolation.
+    fn sample_mc() -> Curve {
+        Curve::from_monotone_convex_dfs(&[
+            (Time(0.0), Df(1.0)),
+            (Time(0.5), Df(0.978_0)),
+            (Time(1.0), Df(0.955_0)),
+            (Time(2.0), Df(0.910_0)),
+            (Time(5.0), Df(0.790_0)),
+            (Time(10.0), Df(0.620_0)),
+        ])
+        .expect("valid pillars")
+    }
+
+    #[test]
+    fn interpolation_accessor_reports_the_scheme() {
+        assert_eq!(sample().interpolation(), Interpolation::LogLinearDf);
+        assert_eq!(
+            sample_mc().interpolation(),
+            Interpolation::MonotoneConvexForward
+        );
+    }
+
+    #[test]
+    fn monotone_convex_reproduces_pillar_discount_factors() {
+        // The defining property: every pillar DF is reproduced exactly, just like log-linear.
+        let c = sample_mc();
+        for &(t, df) in &[
+            (0.5, 0.978_0),
+            (1.0, 0.955_0),
+            (2.0, 0.910_0),
+            (5.0, 0.790_0),
+            (10.0, 0.620_0),
+        ] {
+            close(c.discount_factor(Time(t)).0, df, 1e-12);
+        }
+        close(c.discount_factor(Time(0.0)).0, 1.0, 0.0);
+    }
+
+    #[test]
+    fn monotone_convex_forward_is_continuous_across_pillars() {
+        // The smooth view's headline win over log-linear: no forward jump at the pillars.
+        let c = sample_mc();
+        let h = 1e-7;
+        for &t in &[0.5, 1.0, 2.0, 5.0] {
+            let left = c.instantaneous_forward(Time(t - h)).0;
+            let right = c.instantaneous_forward(Time(t + h)).0;
+            let at = c.instantaneous_forward(Time(t)).0;
+            close(left, right, 1e-4);
+            close(at, right, 1e-4);
+        }
+    }
+
+    #[test]
+    fn monotone_convex_forward_matches_the_log_discount_derivative() {
+        // Internal consistency: the instantaneous forward is exactly -d ln DF / dt, i.e. the stored
+        // integral is the antiderivative of the stored forward. Sample mid-segment to avoid kinks.
+        let c = sample_mc();
+        let h = 1e-6;
+        for &t in &[0.3, 0.7, 1.4, 3.2, 7.5] {
+            let ln_lo = c.discount_factor(Time(t - h)).0.ln();
+            let ln_hi = c.discount_factor(Time(t + h)).0.ln();
+            let fd = -(ln_hi - ln_lo) / (2.0 * h);
+            close(c.instantaneous_forward(Time(t)).0, fd, 1e-5);
+        }
+    }
+
+    #[test]
+    fn monotone_convex_continuous_forward_reprices_the_far_discount_factor() {
+        let c = sample_mc();
+        let (t1, t2) = (Time(1.0), Time(5.0));
+        let f = c.forward_rate_continuous(t1, t2).0;
+        let df1 = c.discount_factor(t1).0;
+        let df2 = c.discount_factor(t2).0;
+        close(df1 * (-f * (t2.0 - t1.0)).exp(), df2, 1e-12);
+    }
+
+    #[test]
+    fn monotone_convex_preserves_monotone_forwards() {
+        // Hagan-West guarantee: monotone discrete forwards yield a monotone forward curve (no
+        // spurious overshoot). Build a curve from strictly increasing per-segment forwards.
+        let fwds = [0.01_f64, 0.02, 0.03, 0.04, 0.05];
+        let mut ln_df = 0.0_f64;
+        let mut pillars = vec![(Time(0.0), Df(1.0))];
+        for (k, f) in fwds.iter().enumerate() {
+            ln_df -= f; // each segment has unit length, so Δln DF = -f
+            pillars.push((Time((k + 1) as f64), Df(ln_df.exp())));
+        }
+        let c = Curve::from_monotone_convex_dfs(&pillars).expect("valid pillars");
+
+        let mut prev = c.instantaneous_forward(Time(0.0)).0;
+        let mut t = 0.0;
+        while t <= 5.0 {
+            let f = c.instantaneous_forward(Time(t)).0;
+            assert!(f >= prev - 1e-9, "forward decreased at t={t}: {f} < {prev}");
+            prev = f;
+            t += 0.02;
+        }
+    }
+
+    #[test]
+    fn monotone_convex_coincides_with_log_linear_on_a_single_segment() {
+        // One interval has a constant forward under both schemes, so they must agree everywhere.
+        let pillars = [(Time(0.0), Df(1.0)), (Time(1.0), Df(0.955))];
+        let ll = Curve::from_log_linear_dfs(&pillars).expect("valid");
+        let mc = Curve::from_monotone_convex_dfs(&pillars).expect("valid");
+        for t in [0.1, 0.25, 0.5, 0.75, 0.9] {
+            close(
+                mc.discount_factor(Time(t)).0,
+                ll.discount_factor(Time(t)).0,
+                1e-14,
+            );
+            close(
+                mc.instantaneous_forward(Time(t)).0,
+                ll.instantaneous_forward(Time(t)).0,
+                1e-12,
+            );
+        }
+    }
+
+    #[test]
+    fn monotone_convex_zero_rates_round_trip() {
+        let pillars = [
+            (Time(1.0), Rate(0.043)),
+            (Time(2.0), Rate(0.040)),
+            (Time(5.0), Rate(0.041)),
+        ];
+        let c = Curve::from_monotone_convex_zero_rates(&pillars).expect("valid zero pillars");
+        for &(t, z) in &pillars {
+            close(c.zero_rate(t).0, z.0, 1e-12);
+            close(c.discount_factor(t).0, (-z.0 * t.0).exp(), 1e-12);
+        }
+        assert_eq!(c.interpolation(), Interpolation::MonotoneConvexForward);
+    }
+
+    #[test]
+    fn monotone_convex_allows_negative_rates() {
+        let c = Curve::from_monotone_convex_dfs(&[
+            (Time(0.0), Df(1.0)),
+            (Time(1.0), Df(1.004)),
+            (Time(2.0), Df(1.006)),
+        ])
+        .expect("negative-rate curve is valid");
+        assert!(c.zero_rate(Time(1.0)).0 < 0.0);
+        close(c.discount_factor(Time(1.0)).0, 1.004, 1e-12);
     }
 }

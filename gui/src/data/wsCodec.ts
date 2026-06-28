@@ -18,8 +18,14 @@
 
 import type {
   AdditiveRisk,
+  AggregateRatesRiskRequest,
+  AggregateRatesRiskResponse,
   AggregateRiskRequest,
   AggregateRiskResponse,
+  KeyRateDv01,
+  RatesPosition,
+  RatesRiskNode,
+  RatesRiskScope,
   ArbReport,
   AttributionRecord,
   BookId,
@@ -29,7 +35,27 @@ import type {
   CcyPair,
   Conventions,
   CrossGamma,
+  Deal,
   DealerQuote,
+  AcceptDeskQuoteRequest,
+  AcceptDeskQuoteResponse,
+  BookRatesPositionRequest,
+  BookRatesPositionResponse,
+  DeskQuote,
+  DeskRequest,
+  DeskRequestScope,
+  ListDealsRequest,
+  ListDealsResponse,
+  ListDeskRequestsRequest,
+  ListDeskRequestsResponse,
+  ListRatesPositionsRequest,
+  ListRatesPositionsResponse,
+  Notification,
+  NotificationScope,
+  RespondDeskRequestRequest,
+  RespondDeskRequestResponse,
+  SubmitDeskRequestRequest,
+  SubmitDeskRequestResponse,
   DrillRiskRequest,
   DrillRiskResponse,
   EntitlementPrincipal,
@@ -66,9 +92,12 @@ import type {
   MultiDealerQuote,
   NonAdditiveRisk,
   NumeraireRate,
+  OisInstrument,
   OrgKey,
   Owner,
   Quote,
+  RatesCurveSet,
+  RatesPricingResult,
   ReportingNumeraire,
   RiskBucketRequest,
   RiskNode,
@@ -784,6 +813,386 @@ function fixingScheduleToWire(s: FixingSchedule): WireObject {
 
 export function ccyPairFromWire(o: WireObject): CcyPair {
   return { base: str(o, "base"), quote: str(o, "quote") };
+}
+
+// --- fixed-income (rates): PriceRates request/response ----------------------
+//
+// The browser JSON projection of the `celnet.wire` rates messages. The request
+// body matches `RatesPriceRequest` minus the framing the `WsConnection` injects
+// (request_id / correlation_id); the reply is the `rates_price_response` frame's
+// `result` child. The OIS `direction` projects onto the wire `Side` integer
+// (PAY_FIXED = SIDE_BUY = 0, RECEIVE_FIXED = SIDE_SELL = 1), exactly as the
+// server's `ois_instrument_from_json` decodes it.
+
+/** Encode a `RatesCurveSet` to the wire `curve_set` object. */
+export function ratesCurveSetToWire(curve: RatesCurveSet): WireObject {
+  return {
+    currency: curve.currency,
+    reference_date: {
+      year: curve.referenceDate.year,
+      month: curve.referenceDate.month,
+      day: curve.referenceDate.day,
+    },
+    ois_pillars: curve.pillars.map((p) => ({
+      tenor_years: p.tenorYears,
+      par_rate: p.parRate,
+    })),
+  };
+}
+
+/** The wire `Side` code for an OIS direction (PAY_FIXED → BUY = 0; RECEIVE_FIXED → SELL = 1). */
+function oisDirectionToSide(direction: OisInstrument["direction"]): number {
+  return direction === "RECEIVE_FIXED" ? 1 : 0;
+}
+
+/** Encode an `OisInstrument` to the wire `instrument` object (the OIS oneof arm). */
+export function ratesInstrumentToWire(instrument: OisInstrument): WireObject {
+  return {
+    ois: {
+      tenor_years: instrument.tenorYears,
+      fixed_rate: instrument.fixedRate,
+      notional: instrument.notional,
+      side: oisDirectionToSide(instrument.direction),
+    },
+  };
+}
+
+/** Decode the `rates_price_response` frame's `result` into a `RatesPricingResult`. */
+export function ratesPricingResultFromWire(o: WireObject): RatesPricingResult {
+  const result = child(o, "result");
+  const raw = result["key_rate_ladder"];
+  if (!Array.isArray(raw)) {
+    throw new Error("`rates_price_response.result.key_rate_ladder` must be an array");
+  }
+  const keyRateLadder = raw.map((v, i) => {
+    if (typeof v !== "number" || !Number.isFinite(v)) {
+      throw new Error(`\`result.key_rate_ladder[${i}]\` must be a finite number`);
+    }
+    return v;
+  });
+  return {
+    pv: num(result, "pv"),
+    parRate: num(result, "par_rate"),
+    pv01: num(result, "pv01"),
+    dv01: num(result, "dv01"),
+    keyRateLadder,
+  };
+}
+
+// --- rates portfolio risk (RiskService.AggregateRatesRisk) -------------------
+// Byte-compatible with the server `ws::codec` rates-risk codec: the request
+// reuses the shared `price_rates` curve/instrument encoders, and the response
+// mirrors the per-currency `RatesRiskNode` + tenor ladder the server emits.
+
+/** Encode one `RatesPosition` to its wire object (the OIS oneof + booking cell). */
+function ratesPositionToWire(p: RatesPosition): WireObject {
+  return {
+    // `position_id` is a wire `uint64`; the connection's other ids ride as JSON
+    // numbers, so narrow the bigint exactly as the correlation id is narrowed.
+    position_id: Number(p.positionId),
+    entity: p.entity,
+    book: p.book,
+    instrument: ratesInstrumentToWire(p.instrument),
+  };
+}
+
+/** Encode the optional `(entity, book, ccy)` scope; absent fields are omitted. */
+function ratesRiskScopeToWire(s: RatesRiskScope): WireObject {
+  const w: WireObject = {};
+  if (s.entity !== undefined) w["entity"] = s.entity;
+  if (s.book !== undefined) w["book"] = s.book;
+  if (s.ccy !== undefined) w["ccy"] = s.ccy;
+  return w;
+}
+
+export function aggregateRatesRiskRequestToWire(r: AggregateRatesRiskRequest): WireObject {
+  const w: WireObject = {
+    curve_set: ratesCurveSetToWire(r.curveSet),
+    positions: r.positions.map(ratesPositionToWire),
+  };
+  // The audited explicit grant-all default clears the server's deny-by-default
+  // boundary, exactly as the options `aggregate_risk` request does.
+  w["principal"] = principalOrGrantAllToWire(r.principal);
+  if (r.scope) w["scope"] = ratesRiskScopeToWire(r.scope);
+  return w;
+}
+
+/** Decode one key-rate DV01 ladder bucket. */
+function keyRateDv01FromWire(o: WireObject): KeyRateDv01 {
+  return { tenorYears: num(o, "tenor_years"), dv01: num(o, "dv01") };
+}
+
+/** Decode one per-currency `RatesRiskNode` (netted scalars + tenor ladder). */
+function ratesRiskNodeFromWire(o: WireObject): RatesRiskNode {
+  return {
+    ccy: str(o, "ccy"),
+    netPv: num(o, "net_pv"),
+    netPv01: num(o, "net_pv01"),
+    netDv01: num(o, "net_dv01"),
+    keyRateLadder: array(o, "key_rate_ladder").map(keyRateDv01FromWire),
+  };
+}
+
+export function aggregateRatesRiskResponseFromWire(
+  o: WireObject,
+): AggregateRatesRiskResponse {
+  const res: AggregateRatesRiskResponse = {
+    nodes: array(o, "nodes").map(ratesRiskNodeFromWire),
+  };
+  const corr = optBigInt(o, "correlation_id");
+  if (corr !== undefined) res.correlationId = corr;
+  return res;
+}
+
+// ---------------------------------------------------------------------------
+// dealer-quoting desk + rates Book/List + notification push — the WS mirror of
+// RfqDeskService / RiskService(BookRatesPosition, ListRatesPositions) /
+// NotificationService (crates/celnet-server/src/ws/codec.rs). Reuses the shared
+// `price_rates` curve/instrument encoders and the `RatesPosition` codec so the
+// desk path speaks the IDENTICAL market shape. Enums are numeric proto tags; the
+// desk enums reserve `0` for an UNSPECIFIED member (see enums.ts offset codecs).
+// Request `correlation_id` is the WS-framing routing id the `WsConnection`
+// injects, so the GUI omits the (optional) business `correlation_id` here.
+// ---------------------------------------------------------------------------
+
+/**
+ * Decode the OIS arm of a wire `RatesInstrument` into an `OisInstrument`. The
+ * inverse of `ratesInstrumentToWire`: the wire `side` carries the OIS direction
+ * (PAY_FIXED → BUY = 0, RECEIVE_FIXED → SELL = 1).
+ */
+function ratesInstrumentFromWire(o: WireObject): OisInstrument {
+  const ois = child(o, "ois");
+  return {
+    tenorYears: num(ois, "tenor_years"),
+    fixedRate: num(ois, "fixed_rate"),
+    notional: num(ois, "notional"),
+    direction: enumNum(ois, "side") === 1 ? "RECEIVE_FIXED" : "PAY_FIXED",
+  };
+}
+
+/** Decode a wire `CurveSet` into a `RatesCurveSet`. */
+function ratesCurveSetFromWire(o: WireObject): RatesCurveSet {
+  const ref = child(o, "reference_date");
+  return {
+    currency: str(o, "currency"),
+    referenceDate: { year: num(ref, "year"), month: num(ref, "month"), day: num(ref, "day") },
+    pillars: array(o, "ois_pillars").map((p) => ({
+      tenorYears: num(p, "tenor_years"),
+      parRate: num(p, "par_rate"),
+    })),
+  };
+}
+
+/** Decode a wire `RatesPosition` (the inverse of `ratesPositionToWire`). */
+export function ratesPositionFromWire(o: WireObject): RatesPosition {
+  return {
+    positionId: numToBigInt(o, "position_id"),
+    entity: num(o, "entity"),
+    book: num(o, "book"),
+    instrument: ratesInstrumentFromWire(child(o, "instrument")),
+  };
+}
+
+/** Encode a `DeskQuote` to its wire object. */
+export function deskQuoteToWire(q: DeskQuote): WireObject {
+  return { price: q.price, notional: q.notional, valid_for_ms: q.validForMs, trader: q.trader };
+}
+
+/** Decode a presence-tracked wire `DeskQuote` (`null`/absent ⇒ undefined). */
+function deskQuoteFromWire(o: WireObject, key: string): DeskQuote | undefined {
+  const v = o[key];
+  if (!v || typeof v !== "object") return undefined;
+  const q = v as WireObject;
+  return {
+    price: num(q, "price"),
+    notional: num(q, "notional"),
+    validForMs: num(q, "valid_for_ms"),
+    trader: str(q, "trader"),
+  };
+}
+
+/** Decode a wire `DeskRequest`. */
+export function deskRequestFromWire(o: WireObject): DeskRequest {
+  const r: DeskRequest = {
+    requestId: str(o, "request_id"),
+    kind: e.deskRequestKind.fromWire(enumNum(o, "kind")),
+    counterparty: str(o, "counterparty"),
+    desk: str(o, "desk"),
+    instrument: ratesInstrumentFromWire(child(o, "instrument")),
+    curveSet: ratesCurveSetFromWire(child(o, "curve_set")),
+    side: e.side.fromWire(enumNum(o, "side")),
+    notional: num(o, "notional"),
+    receivedAtNanos: numToBigInt(o, "received_at_nanos"),
+    expiresAtNanos: numToBigInt(o, "expires_at_nanos"),
+    state: e.deskRequestState.fromWire(enumNum(o, "state")),
+  };
+  const quote = deskQuoteFromWire(o, "quote");
+  if (quote !== undefined) r.quote = quote;
+  const corr = o["correlation_id"];
+  if (typeof corr === "string" && corr.length > 0) r.correlationId = corr;
+  return r;
+}
+
+/** Decode a wire `Deal`. */
+export function dealFromWire(o: WireObject): Deal {
+  const d: Deal = {
+    dealId: str(o, "deal_id"),
+    requestId: str(o, "request_id"),
+    kind: e.deskRequestKind.fromWire(enumNum(o, "kind")),
+    counterparty: str(o, "counterparty"),
+    desk: str(o, "desk"),
+    instrument: ratesInstrumentFromWire(child(o, "instrument")),
+    curveSet: ratesCurveSetFromWire(child(o, "curve_set")),
+    side: e.side.fromWire(enumNum(o, "side")),
+    notional: num(o, "notional"),
+    price: num(o, "price"),
+    executedAtNanos: numToBigInt(o, "executed_at_nanos"),
+    trader: str(o, "trader"),
+  };
+  const pid = optBigInt(o, "position_id");
+  if (pid !== undefined) d.positionId = pid;
+  const corr = o["correlation_id"];
+  if (typeof corr === "string" && corr.length > 0) d.correlationId = corr;
+  return d;
+}
+
+/** Decode a wire `Notification` push frame (`type: "notification"`). */
+export function notificationFromWire(o: WireObject): Notification {
+  const n: Notification = {
+    notificationId: str(o, "notification_id"),
+    kind: e.notificationKind.fromWire(enumNum(o, "kind")),
+    atNanos: numToBigInt(o, "at_nanos"),
+    desk: str(o, "desk"),
+    counterparty: str(o, "counterparty"),
+    requestKind: e.deskRequestKind.fromWire(enumNum(o, "request_kind")),
+    headline: str(o, "headline"),
+  };
+  const rid = o["request_id"];
+  if (typeof rid === "string" && rid.length > 0) n.requestId = rid;
+  const detail = o["detail"];
+  if (typeof detail === "string" && detail.length > 0) n.detail = detail;
+  return n;
+}
+
+// --- desk request/response encoders + decoders ------------------------------
+
+export function submitDeskRequestToWire(r: SubmitDeskRequestRequest): WireObject {
+  return {
+    kind: e.deskRequestKind.toWire(r.kind),
+    counterparty: r.counterparty,
+    desk: r.desk,
+    instrument: ratesInstrumentToWire(r.instrument),
+    curve_set: ratesCurveSetToWire(r.curveSet),
+    side: e.side.toWire(r.side),
+    notional: r.notional,
+    ttl_ms: r.ttlMs,
+    principal: principalOrGrantAllToWire(r.principal),
+  };
+}
+
+export function submitDeskRequestResponseFromWire(o: WireObject): SubmitDeskRequestResponse {
+  return { request: deskRequestFromWire(child(o, "request")) };
+}
+
+export function respondDeskRequestToWire(r: RespondDeskRequestRequest): WireObject {
+  const w: WireObject = {
+    request_id: r.requestId,
+    principal: principalOrGrantAllToWire(r.principal),
+  };
+  // Exactly one oneof arm — `quote` OR `reject` — matching the server codec's
+  // `respond_desk_request_from_json` (it rejects a frame carrying both).
+  if (r.response.kind === "quote") {
+    w["quote"] = deskQuoteToWire(r.response.quote);
+  } else {
+    w["reject"] = { reason: r.response.reject.reason };
+  }
+  return w;
+}
+
+export function respondDeskRequestResponseFromWire(o: WireObject): RespondDeskRequestResponse {
+  return { request: deskRequestFromWire(child(o, "request")) };
+}
+
+export function acceptDeskQuoteToWire(r: AcceptDeskQuoteRequest): WireObject {
+  return { request_id: r.requestId, principal: principalOrGrantAllToWire(r.principal) };
+}
+
+export function acceptDeskQuoteResponseFromWire(o: WireObject): AcceptDeskQuoteResponse {
+  return {
+    deal: dealFromWire(child(o, "deal")),
+    request: deskRequestFromWire(child(o, "request")),
+  };
+}
+
+/** Encode the optional `(states, desk)` desk-request scope; absent fields omitted. */
+function deskRequestScopeToWire(s: DeskRequestScope): WireObject {
+  const w: WireObject = {};
+  if (s.states && s.states.length > 0) {
+    w["states"] = s.states.map((st) => e.deskRequestState.toWire(st));
+  }
+  if (s.desk !== undefined) w["desk"] = s.desk;
+  return w;
+}
+
+export function listDeskRequestsToWire(r: ListDeskRequestsRequest): WireObject {
+  const w: WireObject = { principal: principalOrGrantAllToWire(r.principal) };
+  if (r.scope) w["scope"] = deskRequestScopeToWire(r.scope);
+  return w;
+}
+
+export function listDeskRequestsResponseFromWire(o: WireObject): ListDeskRequestsResponse {
+  return { requests: array(o, "requests").map(deskRequestFromWire) };
+}
+
+export function listDealsToWire(r: ListDealsRequest): WireObject {
+  const w: WireObject = { principal: principalOrGrantAllToWire(r.principal) };
+  if (r.scope) {
+    const s: WireObject = {};
+    if (r.scope.desk !== undefined) s["desk"] = r.scope.desk;
+    w["scope"] = s;
+  }
+  return w;
+}
+
+export function listDealsResponseFromWire(o: WireObject): ListDealsResponse {
+  return { deals: array(o, "deals").map(dealFromWire) };
+}
+
+// --- rates Book/List encoders + decoders ------------------------------------
+
+export function bookRatesPositionToWire(r: BookRatesPositionRequest): WireObject {
+  return {
+    position: ratesPositionToWire(r.position),
+    principal: principalOrGrantAllToWire(r.principal),
+  };
+}
+
+export function bookRatesPositionResponseFromWire(o: WireObject): BookRatesPositionResponse {
+  return { position: ratesPositionFromWire(child(o, "position")) };
+}
+
+export function listRatesPositionsToWire(r: ListRatesPositionsRequest): WireObject {
+  const w: WireObject = { principal: principalOrGrantAllToWire(r.principal) };
+  if (r.scope) w["scope"] = ratesRiskScopeToWire(r.scope);
+  return w;
+}
+
+export function listRatesPositionsResponseFromWire(o: WireObject): ListRatesPositionsResponse {
+  return { positions: array(o, "positions").map(ratesPositionFromWire) };
+}
+
+// --- notification push subscribe body ---------------------------------------
+
+/**
+ * Encode the `subscribe_notifications` control-frame body (the `type` /
+ * `session_token` are added by the connection). Asserts an explicit grant-all
+ * principal exactly as the risk requests do, so the stream clears the server's
+ * deny-by-default boundary.
+ */
+export function subscribeNotificationsToWire(scope: NotificationScope | undefined): WireObject {
+  const w: WireObject = { principal: principalOrGrantAllToWire(undefined) };
+  if (scope) w["scope"] = { desks: [...scope.desks] };
+  return w;
 }
 
 export function conventionsFromWire(o: WireObject): Conventions {

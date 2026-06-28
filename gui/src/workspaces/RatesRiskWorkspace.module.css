@@ -1,0 +1,449 @@
+/*
+ * RatesRiskWorkspace — the fixed-income portfolio curve-risk view: an editable
+ * position book on the left, the per-ccy netted rollup (PV / PV01 / DV01 + a
+ * centre-anchored key-rate DV01 ladder) on the right. Layout-only; all colour,
+ * type, spacing and radius come from the design tokens (no hardcoded palette —
+ * `rules/web/coding-style`), reusing the RatesWorkspace idioms.
+ */
+
+.wrap {
+  display: grid;
+  grid-template-columns: minmax(420px, 1.05fr) minmax(360px, 0.95fr);
+  gap: var(--space-5);
+  padding: var(--space-5);
+  height: 100%;
+  box-sizing: border-box;
+  align-content: start;
+  overflow: auto;
+}
+
+@media (max-width: 960px) {
+  .wrap {
+    grid-template-columns: 1fr;
+  }
+}
+
+.builder,
+.results {
+  min-width: 0;
+}
+
+/* --- curve identity row --------------------------------------------------- */
+
+.curveRow {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding-bottom: var(--space-4);
+  margin-bottom: var(--space-4);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.curveLabel {
+  font-size: var(--type-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.curveName {
+  font-family: var(--font-mono);
+  font-weight: var(--weight-emphasis);
+  color: var(--text-primary);
+}
+
+.curveMeta {
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+}
+
+.engine {
+  margin-left: auto;
+  font-size: var(--type-micro);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+/* --- editable position table ---------------------------------------------- */
+
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.table thead th {
+  font-size: var(--type-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  font-weight: var(--weight-header);
+  text-align: right;
+  padding: 0 var(--space-2) var(--space-2);
+  white-space: nowrap;
+}
+
+.thSide {
+  text-align: left !important;
+}
+
+.thAct {
+  width: 28px;
+}
+
+.table tbody td {
+  padding: 2px var(--space-1);
+}
+
+.actCell {
+  text-align: center;
+}
+
+.cellInput,
+.cellSelect {
+  appearance: none;
+  width: 100%;
+  min-width: 56px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  background: var(--bg-inset);
+  color: var(--text-primary);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  padding: var(--space-1) var(--space-2);
+  height: var(--control-h);
+  box-sizing: border-box;
+  transition: border-color var(--ease-out);
+}
+
+.cellSelect {
+  font-family: var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.cellInput:focus,
+.cellSelect:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.cellInput:hover,
+.cellSelect:hover {
+  border-color: var(--accent-soft);
+}
+
+.rowRemove {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: var(--type-body);
+  line-height: 1;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: background var(--ease-out), color var(--ease-out);
+}
+
+.rowRemove:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--danger) 16%, transparent);
+  color: var(--danger);
+}
+
+.rowRemove:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.tableFoot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.rowCount {
+  font-size: var(--type-caption);
+  color: var(--text-tertiary);
+}
+
+/* --- scope filter --------------------------------------------------------- */
+
+.scope {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-4);
+  margin: var(--space-5) 0 0;
+  padding: var(--space-4);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  background: var(--bg-inset);
+}
+
+.scopeLegend {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--type-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  padding: 0 var(--space-2);
+}
+
+.scopeClear {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--type-micro);
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+
+.scopeClear:hover {
+  text-decoration: underline;
+}
+
+.scopeField {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.scopeFieldLabel {
+  font-size: var(--type-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.scopeInput {
+  appearance: none;
+  width: 6ch;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  background: var(--bg-raised);
+  color: var(--text-primary);
+  font: inherit;
+  font-family: var(--font-mono);
+  text-align: right;
+  padding: var(--space-1) var(--space-2);
+  height: var(--control-h);
+  box-sizing: border-box;
+}
+
+.scopeInput:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* --- error ---------------------------------------------------------------- */
+
+.error {
+  margin: var(--space-4) 0 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--r-sm);
+  background: color-mix(in oklab, var(--danger) 14%, transparent);
+  color: var(--danger);
+  font-size: var(--type-caption);
+}
+
+/* --- results: per-ccy node cards ------------------------------------------ */
+
+.nodes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.nodeCard {
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  background: var(--bg-inset);
+  padding: var(--space-4);
+}
+
+.nodeHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding-bottom: var(--space-3);
+  margin-bottom: var(--space-3);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.nodeCcy {
+  font-family: var(--font-mono);
+  font-size: var(--type-title);
+  font-weight: var(--weight-emphasis);
+  letter-spacing: 0.04em;
+  color: var(--text-primary);
+}
+
+.nodeTag {
+  font-size: var(--type-micro);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-3);
+  margin: 0 0 var(--space-4);
+}
+
+.metric {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-raised);
+  border-radius: var(--r-md);
+}
+
+.metricEmphatic {
+  grid-column: 1 / -1;
+  box-shadow: var(--shadow-panel);
+}
+
+.metricLabel {
+  font-size: var(--type-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin: 0;
+}
+
+.metricValue {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--type-title);
+  font-weight: var(--weight-emphasis);
+  color: var(--text-primary);
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.metricEmphatic .metricValue {
+  font-size: var(--type-headline);
+}
+
+.metricUnit {
+  font-family: var(--font-ui);
+  font-size: var(--type-caption);
+  font-weight: var(--weight-regular);
+  color: var(--text-tertiary);
+}
+
+/* --- key-rate DV01 ladder: centre-anchored diverging bars ----------------- */
+
+.ladder {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.ladderHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: var(--space-1);
+}
+
+.ladderTitle {
+  font-size: var(--type-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  font-weight: var(--weight-header);
+}
+
+.ladderRecon {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+}
+
+.ladderRow {
+  display: grid;
+  grid-template-columns: 36px 1fr 96px;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.bucketTenor {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--type-caption);
+  color: var(--text-secondary);
+  text-align: right;
+}
+
+.barTrack {
+  position: relative;
+  height: 14px;
+  background: var(--bg-raised);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+
+.barRail {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--hairline);
+}
+
+.barFill {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  border-radius: 2px;
+  min-width: 1px;
+}
+
+.barPos {
+  left: 50%;
+}
+
+.barNeg {
+  right: 50%;
+}
+
+.bucketVal {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--type-caption);
+  color: var(--text-primary);
+  text-align: right;
+}
+
+.empty {
+  margin: 0;
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: var(--type-callout);
+}

@@ -74,6 +74,7 @@ pub mod config;
 pub mod core_link;
 pub mod lsv_pricer;
 pub mod pricer;
+pub mod rates_pricing;
 pub mod readiness;
 pub mod services;
 pub mod spread;
@@ -414,6 +415,14 @@ impl Edge {
         // `docs/RISK-HIERARCHY.md` §3.4). In-process ⇒ the direct single-node path. The
         // SAME connected edge backs both the gRPC server and the WS mirror, shared
         // behind an `Arc`. It shares the edge-wide `sessions` registry built above.
+        // The shared dealer-quoting stores + notification broker: ONE rates position
+        // book is read/written by both the RiskService rates Book/List RPCs and the
+        // RfqDeskService (whose AcceptDeskQuote books accepted deals into it), so the
+        // Book workspace and the desk blotter stay coherent.
+        let rates_store = Arc::new(services::rates_book::RatesPositionStore::new());
+        let desk_requests = Arc::new(services::desk::store::DeskRequestStore::new());
+        let deals_store = Arc::new(services::desk::store::DealStore::new());
+        let notify_broker = Arc::new(services::desk::notify::NotificationBroker::new());
         let risk_edge = Arc::new(
             match &fleet {
                 Some(fleet) => {
@@ -421,9 +430,30 @@ impl Edge {
                 }
                 None => RiskEdge::new(Arc::clone(&store), Arc::clone(&gate)),
             }
-            .with_sessions(Arc::clone(&sessions)),
+            .with_sessions(Arc::clone(&sessions))
+            .with_rates_store(Arc::clone(&rates_store)),
         );
         let risk = RiskServiceServer::from_arc(Arc::clone(&risk_edge));
+        // The dealer-quoting desk edge implements BOTH RfqDeskService (capture /
+        // respond / accept / reads) and NotificationService (the push stream); one
+        // Arc is registered under both generated service servers.
+        let rfq_desk_edge = Arc::new(services::desk::RfqDeskEdge::new(
+            Arc::clone(&store),
+            Arc::clone(&sessions),
+            Arc::clone(&gate),
+            Arc::clone(&desk_requests),
+            Arc::clone(&deals_store),
+            Arc::clone(&rates_store),
+            Arc::clone(&notify_broker),
+            clock.clone(),
+        ));
+        let rfq_desk = celnet_proto::rfq_desk_service_server::RfqDeskServiceServer::from_arc(
+            Arc::clone(&rfq_desk_edge),
+        );
+        let notifications =
+            celnet_proto::notification_service_server::NotificationServiceServer::from_arc(
+                Arc::clone(&rfq_desk_edge),
+            );
 
         // The managed inbound FIX-acceptor registry: the persisted set of acceptor
         // connections (`fix-connections.json`, path from `CELNET_FIX_CONFIG`) the
@@ -518,6 +548,8 @@ impl Edge {
                 .add_service(risk)
                 .add_service(fix_admin)
                 .add_service(auth)
+                .add_service(rfq_desk)
+                .add_service(notifications)
                 .serve_with_incoming_shutdown(incoming, async {
                     let _ = grpc_rx.await;
                 })
@@ -543,6 +575,7 @@ impl Edge {
             Arc::clone(&risk_edge),
             Arc::clone(&fix_admin_edge),
             Arc::clone(&auth_edge),
+            Arc::clone(&rfq_desk_edge),
             fleet.clone(),
             panel,
         );

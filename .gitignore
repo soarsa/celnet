@@ -59,6 +59,10 @@ fix-connections.json.tmp
 identity.json
 identity.json.tmp
 
+# Serena tool cache/config (local code-intel scratch; lodestar is this project's
+# primary code graph). Not a product artifact.
+.serena/
+
 # >>> lodestar init >>>
 .lodestar/*
 !.lodestar/knowledge/

@@ -53,6 +53,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};
 
 use celnet_fix::dialect_fx::{self, ExerciseStyle, OptionDescriptor};
+use celnet_fix::dialect_rates;
 use celnet_fix::dictionary::MsgType;
 
 use super::fix_monitor::{FixDirection, FixMonitor};
@@ -529,6 +530,13 @@ impl FixSession {
     /// SHARED engine/surface path, returning the maker two-way (the SAME numbers the
     /// gRPC `QuoteService` would return for this instrument and market).
     async fn price_request(&self, frame: &FrameCursor<'_>) -> Result<PricedLine, ()> {
+        // Fixed-income (OIS) RFQs route to the rates pricing path, detected by
+        // SecurityType(167). The rate-valued two-way line then flows through the
+        // SAME token / Quote / lift / fill machinery as an FX option line.
+        if frame.get(167) == Some(dialect_rates::SEC_TYPE_OIS) {
+            return rates_line(frame);
+        }
+
         // The vol-time in years carried by the dialect (fully wire-specified, no date
         // dependency). Required for a deterministic, reproducible premium.
         let expiry_years = frame
@@ -589,6 +597,30 @@ struct PricedLine {
     bid: f64,
     offer: f64,
     size: f64,
+}
+
+/// The P0 maker half-spread for a fixed-income two-way rate market, in absolute
+/// rate (`0.00005` = 0.5bp each side ⇒ a 1bp-wide market). A documented constant
+/// until a rates-specific spread model lands.
+const RATES_HALF_SPREAD: f64 = 0.000_05;
+
+/// Price an inbound OIS RFQ to a two-way **rate** line: the par rate of the
+/// requested tenor on the P0 static USD-SOFR curve, split [`RATES_HALF_SPREAD`]
+/// either side, with the RFQ notional as the quote size. The rate-valued
+/// `bid`/`offer` reuse [`PricedLine`] unchanged, so the inbound RFQ is quoted,
+/// token-minted, lifted and filled exactly like an FX line — that reuse is what
+/// makes "the FIX API supports fixed income" true end-to-end without a parallel
+/// quote/order path.
+fn rates_line(frame: &FrameCursor<'_>) -> Result<PricedLine, ()> {
+    let rfq = dialect_rates::decode_rates_rfq(frame).map_err(|_| ())?;
+    let curve = crate::rates_pricing::default_usd_sofr_curve_set();
+    let par = crate::rates_pricing::par_rate_for(&curve, rfq.tenor_years).map_err(|_| ())?;
+    let (bid, offer) = dialect_rates::two_way_rates(par, RATES_HALF_SPREAD);
+    Ok(PricedLine {
+        bid,
+        offer,
+        size: rfq.notional,
+    })
 }
 
 /// Build the canonical [`Instrument`] from a decoded dialect descriptor and the

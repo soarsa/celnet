@@ -1,0 +1,85 @@
+#---------------------------------------------------------------------------
+# Celnet edge — MANAGED BY ANSIBLE. Environment: {{ celnet_deploy_name | default('default') }}
+# Terminates TLS for https://{{ celnet_domain }} and proxies to the local
+# celnet-server. HTTP is redirected to HTTPS. The browser/GUI path is the
+# WebSocket JSON mirror; gRPC (HTTP/2) is optionally exposed on a second port.
+#---------------------------------------------------------------------------
+global
+    log /dev/log local0
+    log /dev/log local1 notice
+    maxconn 20000
+    user haproxy
+    group haproxy
+    daemon
+    tune.ssl.default-dh-param 2048
+    ssl-default-bind-ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384
+    ssl-default-bind-options ssl-min-ver TLSv1.2 no-tls-tickets
+
+defaults
+    log     global
+    mode    http
+    option  httplog
+    option  dontlognull
+    option  forwardfor
+    option  http-server-close
+    timeout connect 5s
+    timeout client  1h
+    timeout server  1h
+    timeout tunnel  1h          # long-lived WebSocket connections
+
+{# When binding the wildcard, use the IPv6 wildcard [::] with `v4v6` so a single
+   dual-stack socket accepts BOTH IPv4 and IPv6 on every interface. A specific IP
+   binds verbatim. #}
+{% set _wild = celnet_bind_address in ['0.0.0.0', '*', '::', ''] %}
+{% set _host = '[::]' if _wild else celnet_bind_address %}
+{% set _dual = ' v4v6' if _wild else '' %}
+#--- HTTP :{{ celnet_http_port }} -> permanent redirect to HTTPS -------------
+frontend celnet_http_in
+    bind {{ _host }}:{{ celnet_http_port }}{{ _dual }}
+    mode http
+    # (Place ACME http-01 handling here if you later switch to a CA-issued cert.)
+    http-request redirect scheme https code 301 unless { ssl_fc }
+
+#--- HTTPS :{{ celnet_https_port }} -> WebSocket mirror ----------------------
+frontend celnet_https_in
+    bind {{ _host }}:{{ celnet_https_port }}{{ _dual }} ssl crt {{ celnet_tls_pem }} alpn http/1.1
+    mode http
+    http-request set-header X-Forwarded-Proto https
+    http-request set-header X-Forwarded-Port  %[dst_port]
+    # WebSocket upgrade -> celnet-server mirror (raw WS server).
+    # Everything else -> the GUI SPA served by nginx (or a health string if the
+    # GUI is not being served).
+    acl is_ws hdr(Upgrade) -i websocket
+    use_backend celnet_ws if is_ws
+{% if celnet_serve_gui | bool %}
+    default_backend celnet_web
+{% else %}
+    http-request return status 200 content-type "text/plain" string "celnet {{ celnet_deploy_name | default('uat') }} ok" if !is_ws
+    default_backend celnet_ws
+{% endif %}
+
+backend celnet_ws
+    mode http
+    option forwardfor
+    # HAProxy auto-handles the WebSocket Upgrade/Connection handshake in http mode.
+    server celnet1 {{ celnet_backend_ws }} check inter 5s rise 2 fall 3
+{% if celnet_serve_gui | bool %}
+
+backend celnet_web
+    mode http
+    option forwardfor
+    # nginx serves the built SPA from the current release.
+    server celnet_nginx 127.0.0.1:{{ celnet_nginx_port }} check inter 5s rise 2 fall 3
+{% endif %}
+
+{% if celnet_expose_grpc | bool %}
+#--- HTTPS :{{ celnet_grpc_https_port }} -> gRPC (HTTP/2) --------------------
+frontend celnet_grpc_in
+    bind {{ _host }}:{{ celnet_grpc_https_port }}{{ _dual }} ssl crt {{ celnet_tls_pem }} alpn h2
+    mode http
+    default_backend celnet_grpc
+
+backend celnet_grpc
+    mode http
+    server celnet_g1 {{ celnet_backend_grpc }} check proto h2
+{% endif %}

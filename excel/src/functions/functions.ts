@@ -45,6 +45,7 @@ import {
   formatMarkStatusSpill,
   formatPositionsSpill,
   formatPremiumSpill,
+  formatRatesSpill,
   formatRfqPanelSpill,
   formatRfqSpill,
   formatRiskSpill,
@@ -62,6 +63,8 @@ import {
   parseSmileModel,
   parseTenor,
   shapeCalibration,
+  shapeOisInstrument,
+  shapeRatesCurve,
   shapeReportingNumeraire,
   shapeVanillaInstrument,
   type SpillMatrix,
@@ -333,6 +336,48 @@ export async function GREEKS(
     }
     const quote = await getConnection().requestQuote(instrument, DEFAULT_CONVENTIONS, key);
     return formatGreeksSpill(quote.greeks, quote.conventions, quote.surfaceVersion, quote.epochNanos);
+  } catch (err) {
+    throw toCfError(err);
+  }
+}
+
+/**
+ * Price an overnight-indexed swap (OIS) against a self-discounting curve via the
+ * live `price_rates` engine RPC, and spill the priced PV + first-order risk. The
+ * add-in carries NO rates math: the calibrated `curve` (its par-OIS pillars) and
+ * the OIS terms are sent to the `celnet-rates` engine, which bootstraps the
+ * discount/forward curve and returns the authoritative result; this cell only
+ * shapes the inputs and lays out the reply.
+ *
+ * The spill is a labelled `(4 + pillars)×2` matrix: `pv`, `par_rate`, `pv01`,
+ * `dv01`, then the key-rate DV01 ladder — one `kr_dv01[<tenor>Y]` row per curve
+ * pillar (the ladder sums to `dv01` to first order). All measures are in the
+ * curve currency and carry the `direction` sign (payer and receiver of the same
+ * swap report equal-and-opposite numbers).
+ * @customfunction RATES
+ * @param curve The 2-column `[tenorYears, parRate]` curve range — one row per self-discounting OIS pillar, in strictly increasing tenor order.
+ * @param referenceDate The curve reference (spot-anchor) date — an Excel date cell or "YYYY-MM-DD".
+ * @param tenor The OIS tenor in whole years (e.g. 5 or "5Y").
+ * @param fixedRate The fixed-leg rate as a decimal (0.041 = 4.10%).
+ * @param direction "PAY_FIXED" (payer) or "RECEIVE_FIXED" (receiver).
+ * @param notional The (positive) notional in the curve currency.
+ * @param currency Optional ISO-4217 curve currency (defaults to USD).
+ * @returns A `(4 + pillars)×2` spill: pv, par_rate, pv01, dv01, then the key-rate DV01 ladder.
+ */
+export async function RATES(
+  curve: (string | number | boolean)[][],
+  referenceDate: number | string,
+  tenor: number | string,
+  fixedRate: number,
+  direction: string,
+  notional: number,
+  currency?: string,
+): Promise<SpillMatrix> {
+  try {
+    const curveSet = shapeRatesCurve({ curve, referenceDate, currency });
+    const instrument = shapeOisInstrument({ tenor, fixedRate, direction, notional });
+    const result = await getConnection().priceRates(curveSet, instrument);
+    return formatRatesSpill(result, curveSet.pillars);
   } catch (err) {
     throw toCfError(err);
   }

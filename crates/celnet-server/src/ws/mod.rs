@@ -19,7 +19,8 @@
 //!   `multi_dealer_quote` (the ranked LP panel; the matching `accept_quote` may
 //!   carry a panel row's `lp_id`), `accept_quote` → `execution`,
 //!   `reject_quote` → `reject_ack`;
-//! * **pricing** — `price` → `price_response`;
+//! * **pricing** — `price` → `price_response`, `price_rates` → `rates_price_response`
+//!   (the fixed-income linear-rates mirror of `PricingService::PriceRates`);
 //! * **surface** — `get_smile` → `smile`, `mark_surface` → `mark_surface_response`,
 //!   `scenario` → `scenario_response`;
 //! * **RFS** — `subscribe` / `modify` / `unsubscribe` / `resync` / `execute` /
@@ -84,6 +85,7 @@ use celnet_proto::auth_service_server::AuthService;
 use celnet_proto::fix_admin_service_server::FixAdminService;
 use celnet_proto::pricing_service_server::PricingService;
 use celnet_proto::quote_service_server::QuoteService;
+use celnet_proto::rfq_desk_service_server::RfqDeskService;
 use celnet_proto::risk_service_server::RiskService;
 use celnet_proto::surface_service_server::SurfaceService;
 use celnet_proto::{ClientStreamMessage, ServerStreamMessage, client_stream_message};
@@ -92,6 +94,8 @@ use crate::clock::Clock;
 use crate::core_link::CoreLink;
 use crate::readiness::{InFlightGuard, ReadinessGate};
 use crate::services::auth::AuthEdge;
+use crate::services::desk::RfqDeskEdge;
+use crate::services::desk::notify::NotificationBroker;
 use crate::services::fix_admin::FixAdminEdge;
 use crate::services::pricing::PricingEdge;
 use crate::services::quote::{LpPanelConfig, QuoteEdge};
@@ -130,6 +134,9 @@ pub struct WsServices {
     risk: Arc<RiskEdge>,
     fix_admin: Arc<FixAdminEdge>,
     auth: Arc<AuthEdge>,
+    /// The dealer-quoting desk edge (RFQ/IOI capture + response + accept + reads) and
+    /// the publisher behind the notification push channel.
+    rfq_desk: Arc<RfqDeskEdge>,
     gate: Arc<ReadinessGate>,
 }
 
@@ -152,6 +159,7 @@ impl WsServices {
         risk: Arc<RiskEdge>,
         fix_admin: Arc<FixAdminEdge>,
         auth: Arc<AuthEdge>,
+        rfq_desk: Arc<RfqDeskEdge>,
         fleet: Option<Arc<crate::services::risk::federate::Fleet>>,
         panel: LpPanelConfig,
     ) -> Self {
@@ -206,6 +214,7 @@ impl WsServices {
             risk,
             fix_admin,
             auth,
+            rfq_desk,
             gate,
         }
     }
@@ -370,6 +379,12 @@ async fn serve_connection(tcp: TcpStream, services: WsServices) {
         let _ = ws_tx.close().await;
     });
 
+    // The per-connection notification subscription (at most one; CLAUDE.md §11
+    // bounded-queue offload). Registered on the shared broker when the client sends a
+    // `subscribe_notifications` frame, drained by a spawned task onto `out_tx`, and
+    // torn down on `unsubscribe_notifications` or socket close.
+    let mut conn_notif = ConnNotif::default();
+
     // The reader loop: dispatch each inbound frame. Request/response calls reply on
     // `out_tx`; stream-control frames are forwarded to the RFS driver via `rfs_in_tx`.
     while let Some(frame) = ws_rx.next().await {
@@ -415,10 +430,14 @@ async fn serve_connection(tcp: TcpStream, services: WsServices) {
                 .await;
             break;
         }
-        if !dispatch(&services, &msg, &out_tx, &rfs_in_tx).await {
+        if !dispatch(&services, &msg, &out_tx, &rfs_in_tx, &mut conn_notif).await {
             break;
         }
     }
+
+    // Socket closed / reader ended: deregister any notification subscription so it
+    // never leaks (the drain task also self-deregisters when its broker rx closes).
+    conn_notif.shutdown(services.rfq_desk.broker());
 
     // Reader ended: tear the RFS session down (dropping `rfs_in_tx` closes its
     // inbound), let the writer drain, and release the in-flight guard.
@@ -438,6 +457,7 @@ async fn dispatch(
     raw: &str,
     out_tx: &mpsc::Sender<Outbound>,
     rfs_in_tx: &mpsc::Sender<ClientStreamMessage>,
+    conn_notif: &mut ConnNotif,
 ) -> bool {
     let value: Value = match serde_json::from_str(raw) {
         Ok(v) => v,
@@ -493,11 +513,109 @@ async fn dispatch(
                 .await
                 .is_ok(),
         }
+    } else if kind == "subscribe_notifications" {
+        // ---- notification push: subscribe this connection --------------------
+        handle_subscribe_notifications(services, o, out_tx, conn_notif).await
+    } else if kind == "unsubscribe_notifications" {
+        // ---- notification push: unsubscribe this connection ------------------
+        conn_notif.shutdown(services.rfq_desk.broker());
+        out_tx
+            .send(Outbound::Frame(serde_json::json!({
+                "type": "unsubscribe_notifications_response",
+                "correlation_id": correlation_id,
+            })))
+            .await
+            .is_ok()
     } else {
         // ---- request/response RPCs: run the same edge, reply inline ----------
         let reply = handle_unary(services, kind, o, correlation_id).await;
         out_tx.send(Outbound::Frame(reply)).await.is_ok()
     }
+}
+
+/// One connection's notification subscription: the broker-assigned id and the drain
+/// task that forwards bounded-queue notifications onto the connection's outbound sink.
+#[derive(Default)]
+struct ConnNotif {
+    sub: Option<NotifSub>,
+}
+
+/// A live per-connection notification subscription handle.
+struct NotifSub {
+    id: u64,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl ConnNotif {
+    /// Tear down the current subscription (if any): abort the drain task and
+    /// deregister from the broker. Idempotent.
+    fn shutdown(&mut self, broker: &Arc<NotificationBroker>) {
+        if let Some(sub) = self.sub.take() {
+            sub.task.abort();
+            broker.unsubscribe(sub.id);
+        }
+    }
+}
+
+/// Handle an inbound `subscribe_notifications` frame: resolve + authorize the caller
+/// against the SAME deny-by-default boundary the gRPC `StreamNotifications` uses,
+/// register a desk-scoped subscriber on the shared broker, and spawn a task that
+/// drains its bounded queue onto THIS connection's outbound sink as
+/// `{"type":"notification", …}` frames. A new subscription supersedes any prior one
+/// on the connection. Returns `false` only on a fatal outbound-channel close.
+async fn handle_subscribe_notifications(
+    services: &WsServices,
+    o: &Map<String, Value>,
+    out_tx: &mpsc::Sender<Outbound>,
+    conn_notif: &mut ConnNotif,
+) -> bool {
+    let correlation_id = o
+        .get("correlation_id")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let req = match codec::stream_notifications_request_from_json(o) {
+        Ok(r) => r,
+        Err(e) => {
+            return out_tx
+                .send(Outbound::Frame(codec::error_frame(&e.to_string(), None)))
+                .await
+                .is_ok();
+        }
+    };
+    // Supersede any prior subscription on this connection (one per connection).
+    conn_notif.shutdown(services.rfq_desk.broker());
+    let subscription = match services.rfq_desk.subscribe_notifications(&req) {
+        Ok(s) => s,
+        Err(status) => {
+            return out_tx
+                .send(Outbound::Frame(status_error(&status, None)))
+                .await
+                .is_ok();
+        }
+    };
+    let id = subscription.id;
+    let mut rx = subscription.rx;
+    let drain_tx = out_tx.clone();
+    let task = tokio::spawn(async move {
+        while let Some(n) = rx.recv().await {
+            if drain_tx
+                .send(Outbound::Frame(codec::notification_to_json(&n)))
+                .await
+                .is_err()
+            {
+                break; // the connection's writer is gone.
+            }
+        }
+    });
+    conn_notif.sub = Some(NotifSub { id, task });
+    out_tx
+        .send(Outbound::Frame(serde_json::json!({
+            "type": "subscribe_notifications_response",
+            "subscribed": true,
+            "correlation_id": correlation_id,
+        })))
+        .await
+        .is_ok()
 }
 
 /// Whether a frame `type` is an RFS stream-control verb (forwarded to the shared
@@ -596,6 +714,14 @@ async fn handle_unary(
                 codec::price_response_to_json
             )
         }
+        "price_rates" => {
+            let req = decode!(codec::rates_price_request_from_json(o));
+            call!(
+                services.pricing.price_rates(Request::new(req)),
+                "rates_price_response",
+                codec::rates_price_response_to_json
+            )
+        }
         "request_quote" => {
             let req = decode!(codec::quote_request_from_json(o));
             call!(
@@ -669,6 +795,14 @@ async fn handle_unary(
                 codec::aggregate_risk_response_to_json
             )
         }
+        "aggregate_rates_risk" => {
+            let req = decode!(codec::aggregate_rates_risk_request_from_json(o));
+            call!(
+                services.risk.aggregate_rates_risk(Request::new(req)),
+                "aggregate_rates_risk_response",
+                codec::aggregate_rates_risk_response_to_json
+            )
+        }
         "drill_risk" => {
             let req = decode!(codec::drill_risk_request_from_json(o));
             call!(
@@ -683,6 +817,64 @@ async fn handle_unary(
                 services.risk.limit_status(Request::new(req)),
                 "limit_status_response",
                 codec::limit_status_response_to_json
+            )
+        }
+        // ---- linear-rates Book/List (RiskService rates positions) ------------
+        "book_rates_position" => {
+            let req = decode!(codec::book_rates_position_request_from_json(o));
+            call!(
+                services.risk.book_rates_position(Request::new(req)),
+                "book_rates_position_response",
+                codec::book_rates_position_response_to_json
+            )
+        }
+        "list_rates_positions" => {
+            let req = decode!(codec::list_rates_positions_request_from_json(o));
+            call!(
+                services.risk.list_rates_positions(Request::new(req)),
+                "list_rates_positions_response",
+                codec::list_rates_positions_response_to_json
+            )
+        }
+        // ---- dealer-quoting desk (RfqDeskService) ----------------------------
+        "submit_desk_request" => {
+            let req = decode!(codec::submit_desk_request_from_json(o));
+            call!(
+                services.rfq_desk.submit_desk_request(Request::new(req)),
+                "submit_desk_request_response",
+                codec::submit_desk_request_response_to_json
+            )
+        }
+        "respond_desk_request" => {
+            let req = decode!(codec::respond_desk_request_from_json(o));
+            call!(
+                services.rfq_desk.respond_desk_request(Request::new(req)),
+                "respond_desk_request_response",
+                codec::respond_desk_request_response_to_json
+            )
+        }
+        "accept_desk_quote" => {
+            let req = decode!(codec::accept_desk_quote_from_json(o));
+            call!(
+                services.rfq_desk.accept_desk_quote(Request::new(req)),
+                "accept_desk_quote_response",
+                codec::accept_desk_quote_response_to_json
+            )
+        }
+        "list_desk_requests" => {
+            let req = decode!(codec::list_desk_requests_from_json(o));
+            call!(
+                services.rfq_desk.list_desk_requests(Request::new(req)),
+                "list_desk_requests_response",
+                codec::list_desk_requests_response_to_json
+            )
+        }
+        "list_deals" => {
+            let req = decode!(codec::list_deals_from_json(o));
+            call!(
+                services.rfq_desk.list_deals(Request::new(req)),
+                "list_deals_response",
+                codec::list_deals_response_to_json
             )
         }
         // ---- fix-admin: manage the inbound FIX acceptor connections ----------

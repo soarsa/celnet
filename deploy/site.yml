@@ -1,0 +1,42 @@
+---
+# Full setup & deploy: provision host -> build & release binaries -> HAProxy edge.
+# Idempotent: safe to re-run. Requires passwordless sudo for the celnet user.
+#
+#   ansible-playbook site.yml --limit uat
+- name: Celnet — full setup & deploy
+  hosts: "{{ target | default('uat') }}"
+  gather_facts: true
+  pre_tasks:
+    # Compute the release id ONCE and freeze it as a fact. A `vars:` lookup re-runs
+    # on every reference (so the timestamp would differ between "create bin dir" and
+    # "copy binaries"). set_fact evaluates once. Override with -e celnet_release_name=...
+    - name: Compute the release name (frozen for the whole run)
+      ansible.builtin.set_fact:
+        celnet_release_name: >-
+          {{ celnet_release_name | default(
+               lookup('pipe', 'git -C ' ~ playbook_dir ~ '/.. rev-parse --short HEAD')
+               ~ '-' ~ lookup('pipe', 'date -u +%Y%m%dT%H%M%SZ')) }}
+  roles:
+    - role: celnet_provision
+      become: true
+    - role: celnet_release
+      become: false
+    - role: celnet_web
+      become: true
+      when: celnet_serve_gui | bool
+    - role: celnet_haproxy
+      become: true
+      when: celnet_haproxy_enabled | bool
+  post_tasks:
+    - name: Start (or restart) celnet-server via celnetctl
+      ansible.builtin.command: "{{ celnet_bin_dir }}/celnetctl restart"
+      become: false
+      changed_when: true
+    - name: Deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "Release   : {{ celnet_release_name }}"
+          - "Current   : {{ celnet_current_link }} -> releases/{{ celnet_release_name }}"
+          - "gRPC      : {{ celnet_grpc_addr }}   WS: {{ celnet_ws_addr }}"
+          - "Edge URL  : https://{{ celnet_domain }}/"
+

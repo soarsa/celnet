@@ -1324,3 +1324,89 @@ export interface ScenarioResult {
   points: ScenarioPoint[];
   bucketedRisk: BucketedRisk;
 }
+
+// ---------------------------------------------------------------------------
+// fixed-income (rates) — the linear-rates pricing contract (`PricingService
+// .PriceRates`). Mirrors the `celnet.wire` rates messages one-to-one: a
+// `CurveSet` of par-OIS pillars + an `OisInstrument`, priced to a
+// `RatesPricingResult`. The oneof grows additively (FRA, IRS, basis) as each is
+// backed end-to-end; the OIS arm is the USD-SOFR P0 arm.
+// ---------------------------------------------------------------------------
+
+/** An explicit civil calendar date (`celnet.wire.BrokenDate`): 1-based month/day. */
+export interface BrokenDate {
+  year: number;
+  /** 1-based calendar month (1 = January). */
+  month: number;
+  /** 1-based day of month. */
+  day: number;
+}
+
+/** One self-discounting OIS curve pillar (`celnet.wire.OisPillar`). */
+export interface OisCurvePillar {
+  /** The swap tenor in whole years from spot (e.g. 2, 5, 10); `>= 1`. */
+  tenorYears: number;
+  /** The quoted par (fair fixed) rate as a decimal (0.041 = 4.10%). */
+  parRate: number;
+}
+
+/**
+ * A calibrated set of interest-rate curves (`celnet.wire.CurveSet`). For
+ * USD-SOFR (the P0 arm) this is exactly one self-discounting SOFR curve, carried
+ * as its dated par-OIS pillars plus the reference (spot-anchor) date; the engine
+ * bootstraps the discount/forward term structure from them.
+ */
+export interface RatesCurveSet {
+  /** ISO-4217 currency of the curve (USD for the P0 arm). */
+  currency: string;
+  /** The curve reference (spot-anchor) civil date the pillar schedules roll from. */
+  referenceDate: BrokenDate;
+  /** The self-discounting OIS pillars, in strictly increasing tenor order. */
+  pillars: readonly OisCurvePillar[];
+}
+
+/**
+ * The fixed-leg direction of an OIS from the client's perspective. The wire
+ * `Side` carries this: SIDE_BUY pays fixed (payer), SIDE_SELL receives fixed.
+ */
+export type OisDirection = "PAY_FIXED" | "RECEIVE_FIXED";
+
+/**
+ * An overnight-indexed swap to price (`celnet.wire.OisInstrument`) — fixed vs
+ * compounded overnight floating on a single self-discounting curve. The schedule
+ * is the spot-starting USD-SOFR schedule of `tenorYears`, reconstructed from the
+ * `RatesCurveSet` reference date.
+ */
+export interface OisInstrument {
+  /** The swap tenor in whole years from spot (e.g. 2, 5, 10); `>= 1`. */
+  tenorYears: number;
+  /** The fixed-leg rate as a decimal (0.041 = 4.10%). */
+  fixedRate: number;
+  /** The notional in the curve currency (always positive; direction is `direction`). */
+  notional: number;
+  /** Pay-fixed (payer) or receive-fixed (receiver). */
+  direction: OisDirection;
+}
+
+/**
+ * The priced result for a linear-rates instrument (`celnet.wire
+ * .RatesPricingResult`). All measures are in the curve currency and already
+ * carry the instrument direction sign (a payer and a receiver of the same swap
+ * report equal-and-opposite PV / PV01 / DV01 / ladder).
+ */
+export interface RatesPricingResult {
+  /** Present value in the curve currency (sign per direction). */
+  pv: number;
+  /** The par (fair fixed) rate of the schedule on the calibrated curve, a decimal. */
+  parRate: number;
+  /** Analytic PV01: the PV change per 1bp move in the fixed rate (signed per direction). */
+  pv01: number;
+  /** DV01: the PV change for a +1bp parallel bump of every calibrating pillar. */
+  dv01: number;
+  /**
+   * The key-rate (bucketed) DV01 ladder: one entry per curve pillar, in pillar
+   * order, each the PV change for a +1bp bump of that pillar alone. Sums to
+   * `dv01` to first order (the residual is curve cross-gamma).
+   */
+  keyRateLadder: readonly number[];
+}

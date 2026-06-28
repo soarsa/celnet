@@ -1,0 +1,34 @@
+---
+# ============================================================================
+# Celnet — UAT environment overrides (plaintext).
+# Secrets (sudo/become password) live in the encrypted sibling: vault.yml
+# Host: celnet@136.115.32.199  ->  https://app.uat.celnet.uk
+# ============================================================================
+celnet_deploy_name: uat
+celnet_domain: app.uat.celnet.uk
+
+# UAT keeps the default loopback bind ( only HAProxy is internet-facing ).
+celnet_grpc_addr: "127.0.0.1:50051"
+celnet_ws_addr:   "127.0.0.1:50061"
+
+# SSL: self-signed certificate generated on the host for app.uat.celnet.co.uk
+# at {{ celnet_tls_pem }} on first setup (default; stated explicitly).
+celnet_tls_generate_self_signed: true
+
+# --- SSH: key-based authentication ------------------------------------------
+# Bootstrap once:  ./scripts/setup-ssh-key.sh celnet@136.115.32.199
+celnet_ssh_key: "{{ lookup('env', 'CELNET_SSH_KEY') | default('~/.ssh/id_rsa', true) }}"
+ansible_ssh_private_key_file: "{{ celnet_ssh_key }}"
+ansible_ssh_common_args: "-o IdentitiesOnly=yes -o BatchMode=yes"
+
+# --- Privilege escalation: sudo password ------------------------------------
+# The sudo password is NOT set here. It is provided one of two ways:
+#   * encrypted vault  -> group_vars/uat/vault.yml defines `ansible_become_password`
+#                         directly (see vault.yml.example / ./scripts/vault-init.sh)
+#   * interactive      -> the menu adds `--ask-become-pass` when no vault exists,
+#                         so you are prompted for it.
+# We deliberately do NOT reference an undefined `vault_*` var here (that hard-fails
+# fact-gathering when no vault is present) and do NOT set `ansible_become`
+# globally (that would force sudo on unprivileged ops too). Only the provision +
+# HAProxy plays in site.yml escalate.
+ansible_become_method: sudo

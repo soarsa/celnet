@@ -1,0 +1,64 @@
+/*
+ * CurveChart — shared-axis term-structure line chart. Layout-only; all colour,
+ * type and spacing come from the design tokens (no hardcoded palette —
+ * `rules/web/coding-style`). The series tones resolve to the SAME tokens at paint
+ * time so the legend swatch and the drawn line agree.
+ */
+
+.wrap {
+  width: 100%;
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.legend {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-brand);
+  font-size: var(--type-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+
+.swatch {
+  width: 10px;
+  height: 2px;
+  border-radius: 1px;
+  display: inline-block;
+}
+
+.accent {
+  background: var(--accent);
+}
+
+.bid {
+  background: var(--bid);
+}
+
+.offer {
+  background: var(--offer);
+}
+
+.neutral {
+  background: var(--text-tertiary);
+}
+
+.xLabel {
+  margin-left: auto;
+  font-size: var(--type-micro);
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+}
+
+.canvas {
+  display: block;
+  width: 100%;
+}

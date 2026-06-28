@@ -11,16 +11,26 @@
  */
 
 import type {
+  AcceptDeskQuoteRequest,
+  AcceptDeskQuoteResponse,
   AdditiveRisk,
+  AggregateRatesRiskRequest,
+  AggregateRatesRiskResponse,
   AggregateRiskRequest,
   AggregateRiskResponse,
+  BookRatesPositionRequest,
+  BookRatesPositionResponse,
   BrokerQuoteSet,
   CcyExposureLeg,
   CcyPair,
   Conventions,
   CreateUserInput,
+  Deal,
   DealerQuote,
   DeskDesc,
+  DeskRequest,
+  DeskRequestKind,
+  DeskRequestState,
   DrillRiskRequest,
   DrillRiskResponse,
   Executed,
@@ -30,6 +40,12 @@ import type {
   FixMessage,
   FixMessagePage,
   Greeks,
+  ListDealsRequest,
+  ListDealsResponse,
+  ListDeskRequestsRequest,
+  ListDeskRequestsResponse,
+  ListRatesPositionsRequest,
+  ListRatesPositionsResponse,
   LoginResult,
   Heartbeat,
   Instrument,
@@ -42,8 +58,18 @@ import type {
   MarketSeriesPoint,
   MultiDealerQuote,
   NonAdditiveRisk,
+  Notification,
+  NotificationKind,
+  NotificationScope,
+  OisInstrument,
   Quote,
+  RatesCurveSet,
+  RatesPosition,
+  RatesPricingResult,
+  RatesRiskNode,
   ReportingNumeraire,
+  RespondDeskRequestRequest,
+  RespondDeskRequestResponse,
   RiskBucketRequest,
   RiskNode,
   ScenarioPoint,
@@ -53,6 +79,8 @@ import type {
   Smile,
   SmileModel,
   Snapshot,
+  SubmitDeskRequestRequest,
+  SubmitDeskRequestResponse,
   TradableToken,
   TwoWayPrice,
   Update,
@@ -61,6 +89,7 @@ import type {
   VegaBucket,
 } from "./contract";
 import { forward, priceInstrument, strikeFromDelta } from "./pricing";
+import { DEFAULT_USD_SOFR_CURVE, priceRatesOffline } from "./ratesPricing";
 import { Rng } from "./rng";
 import {
   brokerLadder,
@@ -652,9 +681,35 @@ export class MockTransport implements CelnetTransport {
   private readonly mockTokens = new Set<string>();
   private mockTokenSeq = 0n;
 
+  // --- dealer-quoting desk + rates Book (offline, fully in-memory) -----------
+  //
+  // A GENUINE offline implementation of the RfqDeskService / rates-Book lifecycle
+  // (not a stub): the desk inbox, the received-deals blotter and the booked rates
+  // book are real in-memory stores with monotonic ids; submit enqueues + pushes a
+  // notification; respond quotes/rejects; accept books a deal + a rates position;
+  // every list reads. Notifications fan out to local subscribers (the GUI's
+  // NotificationCenter), so the page is exercisable end-to-end with no server.
+
+  /** The desk inbox: request_id → DeskRequest (PENDING → QUOTED/REJECTED → ACCEPTED). */
+  private readonly deskRequests = new Map<string, DeskRequest>();
+  /** The received-deals blotter: deal_id → Deal (insertion order = mint order). */
+  private readonly deals = new Map<string, Deal>();
+  /** The booked linear-rates book: position_id → RatesPosition. */
+  private readonly ratesPositions = new Map<bigint, RatesPosition>();
+  /** Live notification subscribers (the global NotificationCenter), with desk scope. */
+  private readonly notificationSubs = new Set<{
+    scope: NotificationScope | undefined;
+    onNotification: (n: Notification) => void;
+  }>();
+  private deskRequestSeq = 1n;
+  private dealSeq = 1n;
+  private notificationSeq = 1n;
+  private ratesPositionSeq = 1n;
+
   constructor(opts: { seed?: bigint; tickMs?: number } = {}) {
     this.seed = opts.seed ?? 0xce1_5eed_d00dn;
     this.tickMs = opts.tickMs ?? 100; // 10 Hz tape; render conflates to a frame
+    this.seedOfflineDesk();
   }
 
   /** Retain the bearer session token (the offline mock does not enforce auth). */
@@ -682,6 +737,19 @@ export class MockTransport implements CelnetTransport {
     // closed-form product carries no stderr.
     if (priceStdError !== undefined) result.priceStdError = priceStdError;
     return result;
+  }
+
+  async priceRates(
+    curve: RatesCurveSet,
+    instrument: OisInstrument,
+  ): Promise<RatesPricingResult> {
+    // A GENUINE in-browser OIS computation: bootstrap the self-discounting curve
+    // from the par-OIS pillars and price the swap (PV / par / PV01 / DV01 /
+    // key-rate ladder), reproducing the server's `celnet-rates` math exactly so
+    // the offline number agrees with the live `price_rates` RPC. A malformed
+    // curve/instrument throws (mirroring the server refusal), surfaced by the
+    // workspace exactly as a live transport error would be.
+    return priceRatesOffline(curve, instrument);
   }
 
   async requestQuote(
@@ -938,6 +1006,80 @@ export class MockTransport implements CelnetTransport {
       numeraire: request.numeraire.numeraire,
       nodes: node.positionCount > 0 ? [node] : [],
     };
+    if (request.correlationId !== undefined) res.correlationId = request.correlationId;
+    return res;
+  }
+
+  async aggregateRatesRisk(
+    request: AggregateRatesRiskRequest,
+    _conventions: Conventions,
+  ): Promise<AggregateRatesRiskResponse> {
+    // A genuine in-browser portfolio-risk rollup — NOT a fabricated stub. Each
+    // position is priced through the SAME offline OIS core the live edge mirrors
+    // (`priceRatesOffline`), and the signed PV / PV01 / DV01 + per-pillar key-rate
+    // DV01 ladder are folded ADDITIVELY into one node per settlement currency.
+    //
+    // This reproduces the server's `services::rates_risk` semantics exactly: the
+    // settlement currency is the curve currency (never carried per position); each
+    // position is priced BEFORE the optional `(entity, book, ccy)` scope filter is
+    // applied; the fold is purely additive and per-ccy partitioned; and the ladder
+    // sums DV01 per curve-pillar tenor in ascending order (deterministic output).
+    const curve = request.curveSet;
+    const ccy = curve.currency;
+    const scope = request.scope;
+
+    // Accumulator: settlement ccy → netted scalars + a tenor→DV01 ladder map.
+    interface RatesNodeAccum {
+      netPv: number;
+      netPv01: number;
+      netDv01: number;
+      ladder: Map<number, number>;
+    }
+    const byCcy = new Map<string, RatesNodeAccum>();
+
+    for (const position of request.positions) {
+      // Price every position (the server prices then filters); an unpriceable
+      // position — e.g. a non-USD curve the offline core cannot bootstrap, or a
+      // malformed OIS — rejects the whole request, exactly as the live edge does.
+      const priced = priceRatesOffline(curve, position.instrument);
+
+      const inScope =
+        (scope?.entity === undefined || scope.entity === position.entity) &&
+        (scope?.book === undefined || scope.book === position.book) &&
+        (scope?.ccy === undefined ||
+          scope.ccy.toUpperCase() === ccy.toUpperCase());
+      if (!inScope) continue;
+
+      let existing = byCcy.get(ccy);
+      if (existing === undefined) {
+        existing = { netPv: 0, netPv01: 0, netDv01: 0, ladder: new Map() };
+        byCcy.set(ccy, existing);
+      }
+      const node = existing;
+      node.netPv += priced.pv;
+      node.netPv01 += priced.pv01;
+      node.netDv01 += priced.dv01;
+      // Zip each per-pillar DV01 onto its curve-pillar tenor and sum per bucket —
+      // the same pillar alignment the server's `fact_from_position` performs.
+      curve.pillars.forEach((pillar, i) => {
+        const prev = node.ladder.get(pillar.tenorYears) ?? 0;
+        node.ladder.set(pillar.tenorYears, prev + (priced.keyRateLadder[i] ?? 0));
+      });
+    }
+
+    const nodes: RatesRiskNode[] = [...byCcy.entries()]
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([nodeCcy, n]) => ({
+        ccy: nodeCcy,
+        netPv: n.netPv,
+        netPv01: n.netPv01,
+        netDv01: n.netDv01,
+        keyRateLadder: [...n.ladder.entries()]
+          .sort(([a], [b]) => a - b)
+          .map(([tenorYears, dv01]) => ({ tenorYears, dv01 })),
+      }));
+
+    const res: AggregateRatesRiskResponse = { nodes };
     if (request.correlationId !== undefined) res.correlationId = request.correlationId;
     return res;
   }
@@ -1248,6 +1390,271 @@ export class MockTransport implements CelnetTransport {
   /** The number of enabled (non-disabled) administrators in the offline roster. */
   private activeAdminCount(): number {
     return this.mockUsers.filter((u) => u.user.role === "ADMIN" && !u.user.disabled).length;
+  }
+
+  // --- RfqDeskService (offline) ----------------------------------------------
+
+  async submitDeskRequest(
+    request: SubmitDeskRequestRequest,
+  ): Promise<SubmitDeskRequestResponse> {
+    return { request: this.enqueueDeskRequest(request) };
+  }
+
+  async respondDeskRequest(
+    request: RespondDeskRequestRequest,
+  ): Promise<RespondDeskRequestResponse> {
+    const existing = this.deskRequests.get(request.requestId);
+    if (!existing) throw new Error(`unknown desk request ${request.requestId}`);
+    if (existing.state !== "PENDING") {
+      throw new Error(`desk request ${request.requestId} is ${existing.state}, not PENDING`);
+    }
+    let updated: DeskRequest;
+    if (request.response.kind === "quote") {
+      // Quote the request → QUOTED, storing the DeskQuote (no notification).
+      updated = { ...existing, state: "QUOTED", quote: request.response.quote };
+    } else {
+      // Reject the request → REJECTED, pushing a QUOTE_REJECTED notification.
+      updated = { ...existing, state: "REJECTED" };
+      this.emitNotification({
+        notificationId: `ntf-${this.notificationSeq++}`,
+        kind: "QUOTE_REJECTED",
+        atNanos: nowNanos(),
+        requestId: existing.requestId,
+        desk: existing.desk,
+        counterparty: existing.counterparty,
+        requestKind: existing.kind,
+        headline: `${existing.counterparty} ${existing.kind} declined`,
+        detail: request.response.reject.reason,
+      });
+    }
+    this.deskRequests.set(existing.requestId, updated);
+    return { request: updated };
+  }
+
+  async acceptDeskQuote(request: AcceptDeskQuoteRequest): Promise<AcceptDeskQuoteResponse> {
+    const existing = this.deskRequests.get(request.requestId);
+    if (!existing) throw new Error(`unknown desk request ${request.requestId}`);
+    if (existing.state !== "QUOTED" || !existing.quote) {
+      throw new Error(
+        `desk request ${request.requestId} is ${existing.state}; only a QUOTED request can be accepted`,
+      );
+    }
+    const now = nowNanos();
+    const quote = existing.quote;
+    // Book a rates position from the dealt OIS struck at the quoted rate, so the
+    // accepted deal shows in BOTH the deals blotter and the rates book.
+    const positionId = this.ratesPositionSeq++;
+    this.ratesPositions.set(positionId, {
+      positionId,
+      entity: 0,
+      book: 0,
+      instrument: { ...existing.instrument, fixedRate: quote.price, notional: quote.notional },
+    });
+    const dealId = `deal-${this.dealSeq++}`;
+    const deal: Deal = {
+      dealId,
+      requestId: existing.requestId,
+      kind: existing.kind,
+      counterparty: existing.counterparty,
+      desk: existing.desk,
+      instrument: existing.instrument,
+      curveSet: existing.curveSet,
+      side: existing.side,
+      notional: quote.notional,
+      price: quote.price,
+      executedAtNanos: now,
+      trader: quote.trader,
+      positionId,
+    };
+    this.deals.set(dealId, deal);
+    const updated: DeskRequest = { ...existing, state: "ACCEPTED" };
+    this.deskRequests.set(existing.requestId, updated);
+    this.emitNotification({
+      notificationId: `ntf-${this.notificationSeq++}`,
+      kind: "QUOTE_ACCEPTED",
+      atNanos: now,
+      requestId: existing.requestId,
+      desk: existing.desk,
+      counterparty: existing.counterparty,
+      requestKind: existing.kind,
+      headline: `${existing.counterparty} lifted ${existing.kind}: ${existing.instrument.tenorYears}y OIS @ ${(quote.price * 100).toFixed(3)}%`,
+      detail: `deal ${dealId} · ${(quote.notional / 1_000_000).toFixed(0)}mm`,
+    });
+    return { deal, request: updated };
+  }
+
+  async listDeskRequests(
+    request: ListDeskRequestsRequest,
+  ): Promise<ListDeskRequestsResponse> {
+    // Map insertion order is mint order; reverse for newest-first.
+    let requests = [...this.deskRequests.values()].reverse();
+    const scope = request.scope;
+    if (scope) {
+      if (scope.states && scope.states.length > 0) {
+        const states = new Set<DeskRequestState>(scope.states);
+        requests = requests.filter((r) => states.has(r.state));
+      }
+      if (scope.desk !== undefined) requests = requests.filter((r) => r.desk === scope.desk);
+    }
+    return { requests };
+  }
+
+  async listDeals(request: ListDealsRequest): Promise<ListDealsResponse> {
+    let deals = [...this.deals.values()].reverse();
+    if (request.scope?.desk !== undefined) {
+      deals = deals.filter((d) => d.desk === request.scope?.desk);
+    }
+    return { deals };
+  }
+
+  // --- RiskService rates Book (offline) --------------------------------------
+
+  async bookRatesPosition(
+    request: BookRatesPositionRequest,
+  ): Promise<BookRatesPositionResponse> {
+    const incoming = request.position;
+    // Mint a stable id when the caller books with a placeholder (0) id.
+    const positionId = incoming.positionId > 0n ? incoming.positionId : this.ratesPositionSeq++;
+    const position: RatesPosition = { ...incoming, positionId };
+    this.ratesPositions.set(positionId, position);
+    return { position };
+  }
+
+  async listRatesPositions(
+    request: ListRatesPositionsRequest,
+  ): Promise<ListRatesPositionsResponse> {
+    let positions = [...this.ratesPositions.values()];
+    const scope = request.scope;
+    if (scope) {
+      if (scope.entity !== undefined) positions = positions.filter((p) => p.entity === scope.entity);
+      if (scope.book !== undefined) positions = positions.filter((p) => p.book === scope.book);
+      // An OIS books in its curve currency (USD for the P0 arm); a non-USD ccy
+      // filter matches nothing, exactly as the server narrows by settlement ccy.
+      if (scope.ccy !== undefined && scope.ccy.toUpperCase() !== "USD") positions = [];
+    }
+    return { positions };
+  }
+
+  // --- NotificationService (offline) -----------------------------------------
+
+  streamNotifications(
+    scope: NotificationScope | undefined,
+    onNotification: (notification: Notification) => void,
+  ): () => void {
+    const sub = { scope, onNotification };
+    this.notificationSubs.add(sub);
+    return () => {
+      this.notificationSubs.delete(sub);
+    };
+  }
+
+  /** Enqueue a fresh PENDING desk request and push its `*_RECEIVED` notification. */
+  private enqueueDeskRequest(request: SubmitDeskRequestRequest): DeskRequest {
+    const now = nowNanos();
+    const ttlMs = request.ttlMs > 0 ? request.ttlMs : 60_000;
+    const requestId = `req-${this.deskRequestSeq++}`;
+    const desk: DeskRequest = {
+      requestId,
+      kind: request.kind,
+      counterparty: request.counterparty,
+      desk: request.desk,
+      instrument: request.instrument,
+      curveSet: request.curveSet,
+      side: request.side,
+      notional: request.notional,
+      receivedAtNanos: now,
+      expiresAtNanos: now + BigInt(ttlMs) * NS_PER_MS,
+      state: "PENDING",
+    };
+    this.deskRequests.set(requestId, desk);
+    const kind: NotificationKind = request.kind === "IOI" ? "IOI_RECEIVED" : "RFQ_RECEIVED";
+    this.emitNotification({
+      notificationId: `ntf-${this.notificationSeq++}`,
+      kind,
+      atNanos: now,
+      requestId,
+      desk: request.desk,
+      counterparty: request.counterparty,
+      requestKind: request.kind,
+      headline: `${request.kind} from ${request.counterparty}: ${request.instrument.tenorYears}y OIS ${(request.notional / 1_000_000).toFixed(0)}mm`,
+      detail: `${request.desk} · ${request.side === "BUY" ? "pay" : "receive"} fixed`,
+    });
+    return desk;
+  }
+
+  /** Fan a notification out to every subscriber whose desk scope admits it. */
+  private emitNotification(n: Notification): void {
+    for (const sub of this.notificationSubs) {
+      if (sub.scope && sub.scope.desks.length > 0 && !sub.scope.desks.includes(n.desk)) continue;
+      sub.onNotification(n);
+    }
+  }
+
+  /**
+   * Seed a small offline book so the rates Book blotter and the desk inbox show
+   * genuine content immediately (real positions/requests derived from the
+   * calibrating curve pillars — never baked-in results). The desk requests start
+   * PENDING; the trader quotes/rejects them in the Quoting workspace.
+   */
+  private seedOfflineDesk(): void {
+    const curve = DEFAULT_USD_SOFR_CURVE;
+    const parOf = (tenorYears: number): number =>
+      curve.pillars.find((p) => p.tenorYears === tenorYears)?.parRate ?? 0.04;
+
+    const bookSeeds: {
+      tenorYears: number;
+      entity: number;
+      book: number;
+      notionalMm: number;
+      direction: OisInstrument["direction"];
+      offsetBp: number;
+    }[] = [
+      { tenorYears: 2, entity: 1, book: 10, notionalMm: 50, direction: "RECEIVE_FIXED", offsetBp: -6 },
+      { tenorYears: 5, entity: 1, book: 10, notionalMm: 100, direction: "PAY_FIXED", offsetBp: 4 },
+      { tenorYears: 10, entity: 2, book: 20, notionalMm: 25, direction: "RECEIVE_FIXED", offsetBp: 9 },
+    ];
+    for (const s of bookSeeds) {
+      const positionId = this.ratesPositionSeq++;
+      this.ratesPositions.set(positionId, {
+        positionId,
+        entity: s.entity,
+        book: s.book,
+        instrument: {
+          tenorYears: s.tenorYears,
+          fixedRate: parOf(s.tenorYears) + s.offsetBp / 10_000,
+          notional: s.notionalMm * 1_000_000,
+          direction: s.direction,
+        },
+      });
+    }
+
+    const inboxSeeds: {
+      kind: DeskRequestKind;
+      counterparty: string;
+      tenorYears: number;
+      notionalMm: number;
+      side: "BUY" | "SELL";
+    }[] = [
+      { kind: "RFQ", counterparty: "Meridian Capital", tenorYears: 5, notionalMm: 75, side: "BUY" },
+      { kind: "IOI", counterparty: "Northwind AM", tenorYears: 10, notionalMm: 40, side: "SELL" },
+    ];
+    for (const s of inboxSeeds) {
+      this.enqueueDeskRequest({
+        kind: s.kind,
+        counterparty: s.counterparty,
+        desk: "g10-rates",
+        instrument: {
+          tenorYears: s.tenorYears,
+          fixedRate: parOf(s.tenorYears),
+          notional: s.notionalMm * 1_000_000,
+          direction: s.side === "BUY" ? "PAY_FIXED" : "RECEIVE_FIXED",
+        },
+        curveSet: curve,
+        side: s.side,
+        notional: s.notionalMm * 1_000_000,
+        ttlMs: 0,
+      });
+    }
   }
 }
 

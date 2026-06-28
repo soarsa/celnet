@@ -18,6 +18,8 @@ import {
   buildCommands,
   cheatsheet,
   COMMAND_META,
+  DOMAINS,
+  domainOf,
   RAIL,
   railChord,
   resolveChord,
@@ -82,6 +84,44 @@ describe("registry integrity", () => {
   });
 });
 
+describe("domains — the top-tab partition over the rail (GW-tabs)", () => {
+  it("declares the three product domains in tab order", () => {
+    expect(DOMAINS.map((d) => d.id)).toEqual([
+      "fx-options",
+      "fixed-income",
+      "administration",
+    ]);
+    for (const d of DOMAINS) expect(d.label.length).toBeGreaterThan(0);
+  });
+
+  it("every rail entry declares a valid domain", () => {
+    const valid = new Set(DOMAINS.map((d) => d.id));
+    for (const r of RAIL) expect(valid.has(r.domain)).toBe(true);
+  });
+
+  it("domainOf returns each rail entry's declared domain", () => {
+    for (const r of RAIL) expect(domainOf(r.id)).toBe(r.domain);
+  });
+
+  it("the three domains partition the rail (every entry in exactly one, none empty)", () => {
+    const counts = new Map<string, number>();
+    for (const r of RAIL) counts.set(r.domain, (counts.get(r.domain) ?? 0) + 1);
+    // Sum of per-domain counts == rail length (a partition: no entry double-counted).
+    const total = [...counts.values()].reduce((a, b) => a + b, 0);
+    expect(total).toBe(RAIL.length);
+    // Each declared domain is non-empty (so every tab has at least one workspace).
+    for (const d of DOMAINS) expect(counts.get(d.id) ?? 0).toBeGreaterThan(0);
+  });
+
+  it("places ratesrisk under Fixed Income with its glyph + label", () => {
+    const entry = RAIL.find((r) => r.id === "ratesrisk");
+    expect(entry).toBeDefined();
+    expect(entry!.domain).toBe("fixed-income");
+    expect(entry!.glyph.length).toBeGreaterThan(0);
+    expect(entry!.label).toBe("Rates Risk");
+  });
+});
+
 describe("single-source cheatsheet projection", () => {
   it("the cheatsheet is exactly the chord-bearing commands, in registry order", () => {
     const projected = cheatsheet().map((c) => c.id);
@@ -106,13 +146,23 @@ describe("resolveChord — honoured grammar == advertised grammar", () => {
     expect(resolveChord({ key: "?", meta: false }, RAIL.length)?.id).toBe("help");
   });
 
-  it("⌘1..n resolves to the rail view at that index, capped to the rail length", () => {
+  it("⌘1..n resolves to the rail view at that index, capped to the digit grammar", () => {
     for (let i = 0; i < RAIL.length; i += 1) {
-      const hit = resolveChord({ key: String(i + 1), meta: true }, RAIL.length);
+      const chord = railChord(i);
+      // A view beyond the ten single-digit slots (⌘1..⌘9, ⌘0) advertises NO chord
+      // and is palette-only — there is no digit keydown that could reach it.
+      if (chord.length === 0) continue;
+      // Drive the keydown from the digit the registry advertises for this view
+      // (railChord), so the honoured grammar is checked against its single source —
+      // ⌘1..⌘9 for the first nine, ⌘0 wrapping to a tenth.
+      const key = chord[1]!;
+      const hit = resolveChord({ key, meta: true }, RAIL.length);
       expect(hit?.id).toBe(`ws-${RAIL[i]!.id}`);
       expect(hit?.railIndex).toBe(i);
     }
-    // A digit beyond the rail length is NOT a command (no dead ⌘6 if 5 views).
+    // The eleventh-and-beyond views (admin Excel today) have no ⌘N chord at all.
+    expect(railChord(10)).toEqual([]);
+    // A two-digit "chord" is never honoured (the grammar is a single keypress).
     expect(resolveChord({ key: String(RAIL.length + 1), meta: true }, RAIL.length)).toBeNull();
   });
 

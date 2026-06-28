@@ -17,7 +17,9 @@ import { LoginScreen } from "./app/LoginScreen";
 import { LoginView } from "./app/LoginView";
 import { ReconnectOverlay } from "./app/ReconnectOverlay";
 import { Shell } from "./app/Shell";
+import { UpdateBanner } from "./app/UpdateBanner";
 import { resolveTransport } from "./data/transportConfig";
+import { useVersionWatch } from "./data/versionManifest";
 import { useAppearance } from "./design/appearance";
 import { useDensity } from "./design/density";
 import { useConnectionStatus } from "./hooks/useConnectionStatus";
@@ -43,6 +45,14 @@ export function App(): React.ReactElement {
   const [{ transport }] = useState(resolveTransport);
   const connection = useConnectionStatus(transport);
 
+  // Watch the deploy's /version.json: when a newer release lands under the running
+  // page, surface a reload prompt. Dismiss is keyed on the release hash so the
+  // banner reappears for the NEXT release, not the one already waved away.
+  const version = useVersionWatch(transport);
+  const [dismissedHash, setDismissedHash] = useState<string | null>(null);
+  const pendingRelease =
+    version.available && version.available.hash !== dismissedHash ? version.available : null;
+
   // Once the reconnect window elapses, drop to the sign-in screen. Latched in
   // local state so a late background reconnect does not yank the trader back into
   // a workspace they were already signed out of.
@@ -66,6 +76,13 @@ export function App(): React.ReactElement {
             remainingSeconds={connection.remainingSeconds}
             endpointLabel={transport.label}
             onSignInNow={() => setSignedOut(true)}
+          />
+        )}
+        {pendingRelease && (
+          <UpdateBanner
+            release={pendingRelease}
+            onReload={() => window.location.reload()}
+            onDismiss={() => setDismissedHash(pendingRelease.hash)}
           />
         )}
       </AuthGate>

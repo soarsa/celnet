@@ -49,6 +49,23 @@ use celnet_proto::{
     LoginResponse, LogoutRequest, LogoutResponse, ResetPasswordRequest, ResetPasswordResponse,
     UpdateUserRequest, UpdateUserResponse, UserDesc,
 };
+// Linear-rates (fixed-income) contract — the WS mirror of PricingService::PriceRates.
+use celnet_proto::{
+    CurveSet, OisInstrument, OisPillar, RatesInstrument, RatesPriceRequest, RatesPriceResponse,
+    RatesPricingResult, rates_instrument,
+};
+// Linear-rates portfolio risk — the WS mirror of RiskService::AggregateRatesRisk.
+use celnet_proto::{
+    AcceptDeskQuoteRequest, BookRatesPositionRequest, BookRatesPositionResponse, Deal, DeskQuote,
+    DeskReject, DeskRequest, DeskRequestScope, ListDealsRequest, ListDealsResponse,
+    ListDeskRequestsRequest, ListDeskRequestsResponse, ListRatesPositionsRequest,
+    ListRatesPositionsResponse, Notification, RespondDeskRequestRequest, SubmitDeskRequestRequest,
+    respond_desk_request_request::Response as RespondArm,
+};
+use celnet_proto::{
+    AggregateRatesRiskRequest, AggregateRatesRiskResponse, KeyRateDv01, RatesPosition,
+    RatesRiskNode, RatesRiskScope,
+};
 
 /// A codec error: a malformed or out-of-contract JSON message. Carries a
 /// human-readable reason echoed back to the client as a typed `error` frame.
@@ -109,6 +126,14 @@ fn opt_u64(o: &Map<String, Value>, key: &str) -> Option<u64> {
     match o.get(key) {
         None | Some(Value::Null) => None,
         Some(v) => v.as_u64(),
+    }
+}
+
+/// An optional presence-tracked `u32` field (`null`/absent/out-of-range ⇒ `None`).
+fn opt_u32(o: &Map<String, Value>, key: &str) -> Option<u32> {
+    match o.get(key) {
+        None | Some(Value::Null) => None,
+        Some(v) => v.as_u64().and_then(|n| u32::try_from(n).ok()),
     }
 }
 
@@ -1171,6 +1196,95 @@ pub(super) fn price_response_to_json(r: &PriceResponse) -> Value {
 }
 
 // ---------------------------------------------------------------------------
+// Linear rates (fixed income) — the WS mirror of PricingService::PriceRates
+// ---------------------------------------------------------------------------
+
+/// Decode a `u32` proto field carried as a JSON integer, range-checked.
+fn u32_field(o: &Map<String, Value>, key: &str) -> Result<u32> {
+    u32::try_from(u64_field(o, key)?).map_err(|_| err(format!("field `{key}` out of u32 range")))
+}
+
+/// Decode one OIS curve pillar `{ tenor_years, par_rate }`.
+fn ois_pillar_from_json(v: &Value) -> Result<OisPillar> {
+    let o = obj(v, "ois_pillar")?;
+    Ok(OisPillar {
+        tenor_years: u32_field(o, "tenor_years")?,
+        par_rate: f64_field(o, "par_rate")?,
+    })
+}
+
+/// Decode a `CurveSet` `{ currency, reference_date, ois_pillars[] }`.
+fn curve_set_from_json(v: &Value) -> Result<CurveSet> {
+    let o = obj(v, "curve_set")?;
+    let pillars = o
+        .get("ois_pillars")
+        .and_then(Value::as_array)
+        .ok_or_else(|| err("`curve_set.ois_pillars` must be an array"))?
+        .iter()
+        .map(ois_pillar_from_json)
+        .collect::<Result<Vec<_>>>()?;
+    Ok(CurveSet {
+        currency: string_field(o, "currency")?,
+        reference_date: Some(nested(o, "reference_date", broken_date_from_json)?),
+        ois_pillars: pillars,
+    })
+}
+
+/// Decode an `OisInstrument` `{ tenor_years, fixed_rate, notional, side }`.
+fn ois_instrument_from_json(v: &Value) -> Result<OisInstrument> {
+    let o = obj(v, "ois")?;
+    Ok(OisInstrument {
+        tenor_years: u32_field(o, "tenor_years")?,
+        fixed_rate: f64_field(o, "fixed_rate")?,
+        notional: f64_field(o, "notional")?,
+        side: enum_or_zero(o, "side"),
+    })
+}
+
+/// Decode a `RatesInstrument` oneof — exactly the `ois` arm in the P0 contract.
+fn rates_instrument_from_json(v: &Value) -> Result<RatesInstrument> {
+    let o = obj(v, "instrument")?;
+    let arm = if o.contains_key("ois") {
+        rates_instrument::Instrument::Ois(ois_instrument_from_json(o.get("ois").unwrap())?)
+    } else {
+        return Err(err("rates `instrument` oneof: expected an `ois` arm"));
+    };
+    Ok(RatesInstrument {
+        instrument: Some(arm),
+    })
+}
+
+/// Decode a `RatesPriceRequest`.
+pub(super) fn rates_price_request_from_json(o: &Map<String, Value>) -> Result<RatesPriceRequest> {
+    Ok(RatesPriceRequest {
+        request_id: u64_or_zero(o, "request_id"),
+        curve_set: Some(nested(o, "curve_set", curve_set_from_json)?),
+        instrument: Some(nested(o, "instrument", rates_instrument_from_json)?),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+/// Encode a `RatesPricingResult`.
+fn rates_pricing_result_to_json(r: &RatesPricingResult) -> Value {
+    json!({
+        "pv": r.pv,
+        "par_rate": r.par_rate,
+        "pv01": r.pv01,
+        "dv01": r.dv01,
+        "key_rate_ladder": r.key_rate_ladder,
+    })
+}
+
+/// Encode a `RatesPriceResponse`.
+pub(super) fn rates_price_response_to_json(r: &RatesPriceResponse) -> Value {
+    json!({
+        "request_id": r.request_id,
+        "result": r.result.as_ref().map(rates_pricing_result_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // RFS stream — client control (decode) and server messages (encode)
 // ---------------------------------------------------------------------------
 
@@ -1878,6 +1992,417 @@ pub(super) fn aggregate_risk_response_to_json(r: &AggregateRiskResponse) -> Valu
         "numeraire": r.numeraire,
         "nodes": Value::Array(r.nodes.iter().map(risk_node_to_json).collect()),
         "correlation_id": r.correlation_id,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Linear-rates portfolio risk — WS mirror of RiskService::AggregateRatesRisk.
+// Reuses the `price_rates` curve/instrument codecs (`curve_set_from_json`,
+// `rates_instrument_from_json`) so the risk path decodes the *identical* market
+// and economics the pricing edge does — no duplicate rates JSON shapes.
+// ---------------------------------------------------------------------------
+
+/// Decode one `RatesPosition` `{ position_id, entity, book, instrument }`. The
+/// `instrument` arm reuses the shared `price_rates` oneof decoder; `entity`/`book`
+/// are proto3 scalars (absent ⇒ the `0` default cell).
+fn rates_position_from_json(v: &Value) -> Result<RatesPosition> {
+    let o = obj(v, "position")?;
+    Ok(RatesPosition {
+        position_id: u64_or_zero(o, "position_id"),
+        entity: opt_u32(o, "entity").unwrap_or(0),
+        book: opt_u32(o, "book").unwrap_or(0),
+        instrument: Some(nested(o, "instrument", rates_instrument_from_json)?),
+    })
+}
+
+/// Decode the optional `RatesRiskScope` `{ entity?, book?, ccy? }` — each present
+/// field narrows the rollup; an absent field does not constrain.
+fn rates_risk_scope_from_json(v: &Value) -> Result<RatesRiskScope> {
+    let o = obj(v, "scope")?;
+    Ok(RatesRiskScope {
+        entity: opt_u32(o, "entity"),
+        book: opt_u32(o, "book"),
+        ccy: opt_string(o, "ccy"),
+    })
+}
+
+/// Decode an `AggregateRatesRiskRequest`. `session_token`/`principal` thread through
+/// exactly as `aggregate_risk_request_from_json` does, so the gRPC handler's
+/// deny-by-default entitlement check sees the same caller identity over WS as gRPC.
+pub(super) fn aggregate_rates_risk_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<AggregateRatesRiskRequest> {
+    let positions = o
+        .get("positions")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .map(rates_position_from_json)
+                .collect::<Result<Vec<_>>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    Ok(AggregateRatesRiskRequest {
+        curve_set: Some(nested(o, "curve_set", curve_set_from_json)?),
+        positions,
+        scope: opt_nested(o, "scope", rates_risk_scope_from_json)?,
+        principal: opt_nested(o, "principal", principal_from_json)?,
+        correlation_id: opt_u64(o, "correlation_id"),
+        session_token: opt_string(o, "session_token"),
+    })
+}
+
+/// Encode a `KeyRateDv01` `{ tenor_years, dv01 }` ladder bucket.
+fn key_rate_dv01_to_json(k: &KeyRateDv01) -> Value {
+    json!({
+        "tenor_years": k.tenor_years,
+        "dv01": k.dv01,
+    })
+}
+
+/// Encode a per-currency `RatesRiskNode` with its netted scalars + tenor ladder.
+fn rates_risk_node_to_json(n: &RatesRiskNode) -> Value {
+    json!({
+        "ccy": n.ccy,
+        "net_pv": n.net_pv,
+        "net_pv01": n.net_pv01,
+        "net_dv01": n.net_dv01,
+        "key_rate_ladder": Value::Array(n.key_rate_ladder.iter().map(key_rate_dv01_to_json).collect()),
+    })
+}
+
+/// Encode an `AggregateRatesRiskResponse` `{ nodes[], correlation_id }`.
+pub(super) fn aggregate_rates_risk_response_to_json(r: &AggregateRatesRiskResponse) -> Value {
+    json!({
+        "nodes": Value::Array(r.nodes.iter().map(rates_risk_node_to_json).collect()),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Dealer-quoting desk + linear-rates Book/List + notification push — the WS
+// mirror of RfqDeskService / RiskService(BookRatesPosition,ListRatesPositions) /
+// NotificationService. Reuses the shared `price_rates` curve/instrument codecs and
+// the `RatesPosition` decoder so the desk path speaks the IDENTICAL market shape.
+// ---------------------------------------------------------------------------
+
+// ---- shared sub-type encoders (the rates instrument/curve, mirrored to JSON) ----
+
+/// Encode a `BrokenDate` `{ year, month, day }`.
+fn broken_date_to_json(d: &celnet_proto::BrokenDate) -> Value {
+    json!({ "year": d.year, "month": d.month, "day": d.day })
+}
+
+/// Encode a `CurveSet` `{ currency, reference_date, ois_pillars[] }`.
+fn curve_set_to_json(c: &CurveSet) -> Value {
+    json!({
+        "currency": c.currency,
+        "reference_date": c.reference_date.as_ref().map(broken_date_to_json),
+        "ois_pillars": Value::Array(
+            c.ois_pillars
+                .iter()
+                .map(|p| json!({ "tenor_years": p.tenor_years, "par_rate": p.par_rate }))
+                .collect(),
+        ),
+    })
+}
+
+/// Encode a `RatesInstrument` oneof — the `ois` arm in the P0 contract.
+fn rates_instrument_to_json(i: &RatesInstrument) -> Value {
+    match i.instrument.as_ref() {
+        Some(rates_instrument::Instrument::Ois(ois)) => json!({
+            "ois": {
+                "tenor_years": ois.tenor_years,
+                "fixed_rate": ois.fixed_rate,
+                "notional": ois.notional,
+                "side": ois.side,
+            }
+        }),
+        None => json!({}),
+    }
+}
+
+/// Encode a `RatesPosition` `{ position_id, entity, book, instrument }`.
+fn rates_position_to_json(p: &RatesPosition) -> Value {
+    json!({
+        "position_id": p.position_id,
+        "entity": p.entity,
+        "book": p.book,
+        "instrument": p.instrument.as_ref().map(rates_instrument_to_json),
+    })
+}
+
+/// Decode a `DeskQuote` `{ price, notional, valid_for_ms, trader }`.
+fn desk_quote_from_json(v: &Value) -> Result<DeskQuote> {
+    let o = obj(v, "quote")?;
+    Ok(DeskQuote {
+        price: f64_field(o, "price")?,
+        notional: f64_field(o, "notional")?,
+        valid_for_ms: opt_u32(o, "valid_for_ms").unwrap_or(0),
+        trader: string_or_empty(o, "trader"),
+    })
+}
+
+/// Encode a `DeskQuote`.
+fn desk_quote_to_json(q: &DeskQuote) -> Value {
+    json!({
+        "price": q.price,
+        "notional": q.notional,
+        "valid_for_ms": q.valid_for_ms,
+        "trader": q.trader,
+    })
+}
+
+/// Encode a `DeskRequest` (the desk's view of an inbound RFQ/IOI).
+fn desk_request_to_json(r: &DeskRequest) -> Value {
+    json!({
+        "request_id": r.request_id,
+        "kind": r.kind,
+        "counterparty": r.counterparty,
+        "desk": r.desk,
+        "instrument": r.instrument.as_ref().map(rates_instrument_to_json),
+        "curve_set": r.curve_set.as_ref().map(curve_set_to_json),
+        "side": r.side,
+        "notional": r.notional,
+        "received_at_nanos": r.received_at_nanos,
+        "expires_at_nanos": r.expires_at_nanos,
+        "state": r.state,
+        "quote": r.quote.as_ref().map(desk_quote_to_json),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+/// Encode a `Deal` (a booked received deal).
+fn deal_to_json(d: &Deal) -> Value {
+    json!({
+        "deal_id": d.deal_id,
+        "request_id": d.request_id,
+        "kind": d.kind,
+        "counterparty": d.counterparty,
+        "desk": d.desk,
+        "instrument": d.instrument.as_ref().map(rates_instrument_to_json),
+        "curve_set": d.curve_set.as_ref().map(curve_set_to_json),
+        "side": d.side,
+        "notional": d.notional,
+        "price": d.price,
+        "executed_at_nanos": d.executed_at_nanos,
+        "trader": d.trader,
+        "position_id": d.position_id,
+        "correlation_id": d.correlation_id,
+    })
+}
+
+/// Encode a `Notification` (a server→client push event). Public to the WS layer so
+/// the notification drain task can frame it onto the connection's outbound sink.
+pub(super) fn notification_to_json(n: &Notification) -> Value {
+    json!({
+        "type": "notification",
+        "notification_id": n.notification_id,
+        "kind": n.kind,
+        "at_nanos": n.at_nanos,
+        "request_id": n.request_id,
+        "desk": n.desk,
+        "counterparty": n.counterparty,
+        "request_kind": n.request_kind,
+        "headline": n.headline,
+        "detail": n.detail,
+    })
+}
+
+// ---- BookRatesPosition / ListRatesPositions (RiskService rates Book/List) ----
+
+pub(super) fn book_rates_position_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<BookRatesPositionRequest> {
+    Ok(BookRatesPositionRequest {
+        session_token: opt_string(o, "session_token"),
+        position: Some(nested(o, "position", rates_position_from_json)?),
+        principal: opt_nested(o, "principal", principal_from_json)?,
+        correlation_id: opt_string(o, "correlation_id"),
+    })
+}
+
+pub(super) fn book_rates_position_response_to_json(r: &BookRatesPositionResponse) -> Value {
+    json!({ "position": r.position.as_ref().map(rates_position_to_json) })
+}
+
+pub(super) fn list_rates_positions_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<ListRatesPositionsRequest> {
+    Ok(ListRatesPositionsRequest {
+        session_token: opt_string(o, "session_token"),
+        scope: opt_nested(o, "scope", rates_risk_scope_from_json)?,
+        principal: opt_nested(o, "principal", principal_from_json)?,
+        correlation_id: opt_string(o, "correlation_id"),
+    })
+}
+
+pub(super) fn list_rates_positions_response_to_json(r: &ListRatesPositionsResponse) -> Value {
+    json!({
+        "positions": Value::Array(r.positions.iter().map(rates_position_to_json).collect()),
+    })
+}
+
+// ---- RfqDeskService unary requests / responses ----
+
+pub(super) fn submit_desk_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<SubmitDeskRequestRequest> {
+    Ok(SubmitDeskRequestRequest {
+        session_token: opt_string(o, "session_token"),
+        kind: enum_or_zero(o, "kind"),
+        counterparty: string_or_empty(o, "counterparty"),
+        desk: string_or_empty(o, "desk"),
+        instrument: Some(nested(o, "instrument", rates_instrument_from_json)?),
+        curve_set: Some(nested(o, "curve_set", curve_set_from_json)?),
+        side: enum_or_zero(o, "side"),
+        notional: f64_or_zero(o, "notional"),
+        ttl_ms: opt_u32(o, "ttl_ms").unwrap_or(0),
+        principal: opt_nested(o, "principal", principal_from_json)?,
+        correlation_id: opt_string(o, "correlation_id"),
+    })
+}
+
+pub(super) fn submit_desk_request_response_to_json(
+    r: &celnet_proto::SubmitDeskRequestResponse,
+) -> Value {
+    json!({ "request": r.request.as_ref().map(desk_request_to_json) })
+}
+
+pub(super) fn respond_desk_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<RespondDeskRequestRequest> {
+    // Exactly one of `quote` / `reject` selects the oneof arm.
+    let response = match (o.contains_key("quote"), o.contains_key("reject")) {
+        (true, false) => Some(RespondArm::Quote(desk_quote_from_json(
+            o.get("quote").unwrap(),
+        )?)),
+        (false, true) => {
+            let rj = obj(o.get("reject").unwrap(), "reject")?;
+            Some(RespondArm::Reject(DeskReject {
+                reason: string_or_empty(rj, "reason"),
+            }))
+        }
+        (false, false) => None,
+        (true, true) => {
+            return Err(err(
+                "respond: set exactly one of `quote` / `reject`, not both",
+            ));
+        }
+    };
+    Ok(RespondDeskRequestRequest {
+        session_token: opt_string(o, "session_token"),
+        request_id: string_or_empty(o, "request_id"),
+        principal: opt_nested(o, "principal", principal_from_json)?,
+        correlation_id: opt_string(o, "correlation_id"),
+        response,
+    })
+}
+
+pub(super) fn respond_desk_request_response_to_json(
+    r: &celnet_proto::RespondDeskRequestResponse,
+) -> Value {
+    json!({ "request": r.request.as_ref().map(desk_request_to_json) })
+}
+
+pub(super) fn accept_desk_quote_from_json(
+    o: &Map<String, Value>,
+) -> Result<AcceptDeskQuoteRequest> {
+    Ok(AcceptDeskQuoteRequest {
+        session_token: opt_string(o, "session_token"),
+        request_id: string_or_empty(o, "request_id"),
+        principal: opt_nested(o, "principal", principal_from_json)?,
+        correlation_id: opt_string(o, "correlation_id"),
+    })
+}
+
+pub(super) fn accept_desk_quote_response_to_json(
+    r: &celnet_proto::AcceptDeskQuoteResponse,
+) -> Value {
+    json!({
+        "deal": r.deal.as_ref().map(deal_to_json),
+        "request": r.request.as_ref().map(desk_request_to_json),
+    })
+}
+
+/// Decode an optional `DeskRequestScope` `{ states[], desk? }`.
+fn desk_request_scope_from_json(v: &Value) -> Result<DeskRequestScope> {
+    let o = obj(v, "scope")?;
+    let states = o
+        .get("states")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_i64)
+                .map(|n| n as i32)
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(DeskRequestScope {
+        states,
+        desk: opt_string(o, "desk"),
+    })
+}
+
+pub(super) fn list_desk_requests_from_json(
+    o: &Map<String, Value>,
+) -> Result<ListDeskRequestsRequest> {
+    Ok(ListDeskRequestsRequest {
+        session_token: opt_string(o, "session_token"),
+        scope: opt_nested(o, "scope", desk_request_scope_from_json)?,
+        principal: opt_nested(o, "principal", principal_from_json)?,
+        correlation_id: opt_string(o, "correlation_id"),
+    })
+}
+
+pub(super) fn list_desk_requests_response_to_json(r: &ListDeskRequestsResponse) -> Value {
+    json!({ "requests": Value::Array(r.requests.iter().map(desk_request_to_json).collect()) })
+}
+
+pub(super) fn list_deals_from_json(o: &Map<String, Value>) -> Result<ListDealsRequest> {
+    let scope = o
+        .get("scope")
+        .and_then(Value::as_object)
+        .map(|s| celnet_proto::DealScope {
+            desk: opt_string(s, "desk"),
+        });
+    Ok(ListDealsRequest {
+        session_token: opt_string(o, "session_token"),
+        scope,
+        principal: opt_nested(o, "principal", principal_from_json)?,
+        correlation_id: opt_string(o, "correlation_id"),
+    })
+}
+
+pub(super) fn list_deals_response_to_json(r: &ListDealsResponse) -> Value {
+    json!({ "deals": Value::Array(r.deals.iter().map(deal_to_json).collect()) })
+}
+
+/// Decode a `StreamNotificationsRequest` (the WS `subscribe_notifications` frame):
+/// `{ session_token?, scope:{ desks[] }?, principal?, correlation_id? }`.
+pub(super) fn stream_notifications_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<celnet_proto::StreamNotificationsRequest> {
+    let scope =
+        o.get("scope")
+            .and_then(Value::as_object)
+            .map(|s| celnet_proto::NotificationScope {
+                desks: s
+                    .get("desks")
+                    .and_then(Value::as_array)
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_owned)
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            });
+    Ok(celnet_proto::StreamNotificationsRequest {
+        session_token: opt_string(o, "session_token"),
+        scope,
+        principal: opt_nested(o, "principal", principal_from_json)?,
+        correlation_id: opt_string(o, "correlation_id"),
     })
 }
 
@@ -3099,5 +3624,299 @@ mod tests {
         // An unevaluated curvature is `null`, not a spurious zero.
         assert_eq!(node["nonadditive"]["curvature_spot"], Value::Null);
         assert_eq!(v["correlation_id"], json!(7));
+    }
+
+    /// A `price_rates` request decodes from the browser JSON shape into the proto
+    /// `RatesPriceRequest`, and the decoded curve + instrument price through the
+    /// engine — proving the WS mirror reaches the SAME rates path as gRPC.
+    #[test]
+    fn rates_price_request_decodes_and_prices() {
+        let body = json!({
+            "request_id": 9,
+            "curve_set": {
+                "currency": "USD",
+                "reference_date": { "year": 2026, "month": 6, "day": 25 },
+                "ois_pillars": [
+                    { "tenor_years": 1, "par_rate": 0.0432 },
+                    { "tenor_years": 2, "par_rate": 0.0418 },
+                    { "tenor_years": 5, "par_rate": 0.0405 }
+                ]
+            },
+            "instrument": {
+                "ois": { "tenor_years": 5, "fixed_rate": 0.0405, "notional": 100000000.0, "side": 1 }
+            },
+            "correlation_id": 7
+        });
+        let o = body.as_object().unwrap();
+        let req = rates_price_request_from_json(o).expect("decodes");
+        assert_eq!(req.request_id, 9);
+        assert_eq!(req.correlation_id, Some(7));
+        let curve = req.curve_set.as_ref().unwrap();
+        assert_eq!(curve.currency, "USD");
+        assert_eq!(curve.ois_pillars.len(), 3);
+        assert_eq!(curve.ois_pillars[2].tenor_years, 5);
+
+        // The decoded request prices through the engine: a 5y receive-fixed swap
+        // (side=1=SELL) at the 5y par rate is ~par, so PV ~ 0.
+        let result = crate::rates_pricing::price_rates(&req).expect("prices");
+        assert!(
+            (result.par_rate - 0.0405).abs() < 1e-6,
+            "par {}",
+            result.par_rate
+        );
+        assert!(result.pv.abs() < 1.0, "near-par PV {}", result.pv);
+        assert_eq!(result.key_rate_ladder.len(), 3);
+
+        // The response re-encodes to the browser shape.
+        let resp = celnet_proto::RatesPriceResponse {
+            request_id: req.request_id,
+            result: Some(result),
+            correlation_id: req.correlation_id,
+        };
+        let v = rates_price_response_to_json(&resp);
+        assert_eq!(v["request_id"], json!(9));
+        assert_eq!(v["correlation_id"], json!(7));
+        assert!(v["result"]["par_rate"].as_f64().unwrap() > 0.0);
+        assert_eq!(v["result"]["key_rate_ladder"].as_array().unwrap().len(), 3);
+    }
+
+    /// An `aggregate_rates_risk` request decodes from the browser JSON shape into
+    /// the proto `AggregateRatesRiskRequest`: the shared curve/instrument codecs
+    /// rebuild the market + economics, positions carry their `(entity, book)` cell,
+    /// the optional scope threads through, and `session_token`/`principal` survive
+    /// for the gRPC handler's entitlement check.
+    #[test]
+    fn aggregate_rates_risk_request_decodes() {
+        let body = json!({
+            "curve_set": {
+                "currency": "USD",
+                "reference_date": { "year": 2026, "month": 6, "day": 25 },
+                "ois_pillars": [
+                    { "tenor_years": 1, "par_rate": 0.0432 },
+                    { "tenor_years": 5, "par_rate": 0.0405 }
+                ]
+            },
+            "positions": [
+                {
+                    "position_id": 11,
+                    "entity": 1,
+                    "book": 100,
+                    "instrument": {
+                        "ois": { "tenor_years": 5, "fixed_rate": 0.0405, "notional": 1.0e8, "side": 1 }
+                    }
+                }
+            ],
+            "scope": { "entity": 1, "book": 100 },
+            "session_token": "sess-xyz",
+            "correlation_id": 42
+        });
+        let o = body.as_object().unwrap();
+        let req = aggregate_rates_risk_request_from_json(o).expect("decodes");
+
+        assert_eq!(req.correlation_id, Some(42));
+        assert_eq!(req.session_token.as_deref(), Some("sess-xyz"));
+        let curve = req.curve_set.as_ref().unwrap();
+        assert_eq!(curve.currency, "USD");
+        assert_eq!(curve.ois_pillars.len(), 2);
+        assert_eq!(req.positions.len(), 1);
+        let p = &req.positions[0];
+        assert_eq!(p.position_id, 11);
+        assert_eq!(p.entity, 1);
+        assert_eq!(p.book, 100);
+        assert!(p.instrument.is_some());
+        let scope = req.scope.as_ref().unwrap();
+        assert_eq!(scope.entity, Some(1));
+        assert_eq!(scope.book, Some(100));
+        assert_eq!(scope.ccy, None);
+
+        // The decoded request rolls up through the SAME edge the gRPC handler calls,
+        // proving the WS mirror reaches the identical rates-risk path.
+        let resp = crate::services::rates_risk::aggregate::single_node_aggregate(&req)
+            .expect("aggregates");
+        assert_eq!(resp.nodes.len(), 1);
+        assert_eq!(resp.nodes[0].ccy, "USD");
+
+        // The response re-encodes to the browser shape: per-ccy node + tenor ladder.
+        let v = aggregate_rates_risk_response_to_json(&resp);
+        assert_eq!(v["correlation_id"], json!(42));
+        let node = &v["nodes"][0];
+        assert_eq!(node["ccy"], json!("USD"));
+        assert!(node["net_dv01"].is_number());
+        let ladder = node["key_rate_ladder"].as_array().unwrap();
+        assert_eq!(ladder.len(), 2);
+        assert_eq!(ladder[0]["tenor_years"], json!(1));
+        assert!(ladder[0]["dv01"].is_number());
+    }
+
+    // ---- dealer-quoting desk + rates Book/List + notification codecs ----------
+
+    fn ois_instrument_json() -> Value {
+        json!({ "ois": { "tenor_years": 5, "fixed_rate": 0.0405, "notional": 25000000.0, "side": 0 } })
+    }
+
+    fn curve_json() -> Value {
+        json!({
+            "currency": "USD",
+            "reference_date": { "year": 2026, "month": 6, "day": 25 },
+            "ois_pillars": [ { "tenor_years": 1, "par_rate": 0.0432 }, { "tenor_years": 5, "par_rate": 0.0405 } ]
+        })
+    }
+
+    /// `book_rates_position` decodes its position + principal + correlation; the
+    /// response re-encodes the stored position.
+    #[test]
+    fn book_rates_position_round_trip() {
+        let o = json!({
+            "type": "book_rates_position",
+            "session_token": "tok",
+            "position": { "position_id": 0, "entity": 1, "book": 10, "instrument": ois_instrument_json() },
+            "principal": { "grant_all": true },
+            "correlation_id": "corr-7"
+        });
+        let req = book_rates_position_request_from_json(o.as_object().unwrap()).expect("decodes");
+        assert_eq!(req.session_token.as_deref(), Some("tok"));
+        assert_eq!(req.correlation_id.as_deref(), Some("corr-7"));
+        let pos = req.position.unwrap();
+        assert_eq!(pos.entity, 1);
+        assert_eq!(pos.book, 10);
+        let v = book_rates_position_response_to_json(&BookRatesPositionResponse {
+            position: Some(pos),
+        });
+        assert_eq!(v["position"]["book"], json!(10));
+        assert!(v["position"]["instrument"]["ois"]["tenor_years"].is_number());
+    }
+
+    /// `list_rates_positions` decodes its scope/principal; the response encodes the
+    /// positions array.
+    #[test]
+    fn list_rates_positions_round_trip() {
+        let o = json!({
+            "type": "list_rates_positions",
+            "scope": { "book": 10 },
+            "principal": { "grant_all": true },
+            "correlation_id": "c"
+        });
+        let req = list_rates_positions_request_from_json(o.as_object().unwrap()).expect("decodes");
+        assert_eq!(req.scope.unwrap().book, Some(10));
+        let v = list_rates_positions_response_to_json(&ListRatesPositionsResponse {
+            positions: vec![RatesPosition {
+                position_id: 3,
+                entity: 1,
+                book: 10,
+                instrument: None,
+            }],
+        });
+        assert_eq!(v["positions"].as_array().unwrap().len(), 1);
+        assert_eq!(v["positions"][0]["position_id"], json!(3));
+    }
+
+    /// `submit_desk_request` decodes the full RFQ shape including the shared rates
+    /// instrument + curve and the optional principal.
+    #[test]
+    fn submit_desk_request_decodes() {
+        let o = json!({
+            "type": "submit_desk_request",
+            "kind": 1,
+            "counterparty": "cp-bank",
+            "desk": "g10",
+            "instrument": ois_instrument_json(),
+            "curve_set": curve_json(),
+            "side": 0,
+            "notional": 25000000.0,
+            "ttl_ms": 30000,
+            "principal": { "grant_all": true },
+            "correlation_id": "c-1"
+        });
+        let req = submit_desk_request_from_json(o.as_object().unwrap()).expect("decodes");
+        assert_eq!(req.kind, 1);
+        assert_eq!(req.desk, "g10");
+        assert_eq!(req.ttl_ms, 30000);
+        assert_eq!(req.correlation_id.as_deref(), Some("c-1"));
+        assert!(req.instrument.is_some() && req.curve_set.is_some());
+    }
+
+    /// `respond_desk_request` decodes the `quote` and `reject` oneof arms, and
+    /// rejects setting both.
+    #[test]
+    fn respond_desk_request_oneof_decodes() {
+        let q = json!({
+            "type": "respond_desk_request",
+            "request_id": "desk-req-1",
+            "quote": { "price": 0.0411, "notional": 25000000.0, "valid_for_ms": 30000, "trader": "alice" }
+        });
+        let req = respond_desk_request_from_json(q.as_object().unwrap()).expect("decodes quote");
+        assert!(matches!(req.response, Some(RespondArm::Quote(_))));
+
+        let r = json!({
+            "type": "respond_desk_request",
+            "request_id": "desk-req-1",
+            "reject": { "reason": "off-market" }
+        });
+        let req = respond_desk_request_from_json(r.as_object().unwrap()).expect("decodes reject");
+        assert!(matches!(req.response, Some(RespondArm::Reject(_))));
+
+        let both = json!({
+            "type": "respond_desk_request", "request_id": "x",
+            "quote": { "price": 0.0, "notional": 1.0, "valid_for_ms": 0, "trader": "" },
+            "reject": { "reason": "no" }
+        });
+        assert!(respond_desk_request_from_json(both.as_object().unwrap()).is_err());
+    }
+
+    /// `accept_desk_quote` / `list_desk_requests` / `list_deals` decode their reads.
+    #[test]
+    fn desk_reads_decode() {
+        let a = json!({ "type": "accept_desk_quote", "request_id": "desk-req-1", "principal": { "grant_all": true } });
+        let req = accept_desk_quote_from_json(a.as_object().unwrap()).expect("decodes");
+        assert_eq!(req.request_id, "desk-req-1");
+
+        let l =
+            json!({ "type": "list_desk_requests", "scope": { "states": [1, 2], "desk": "g10" } });
+        let req = list_desk_requests_from_json(l.as_object().unwrap()).expect("decodes");
+        let scope = req.scope.unwrap();
+        assert_eq!(scope.states, vec![1, 2]);
+        assert_eq!(scope.desk.as_deref(), Some("g10"));
+
+        let d = json!({ "type": "list_deals", "scope": { "desk": "g10" } });
+        let req = list_deals_from_json(d.as_object().unwrap()).expect("decodes");
+        assert_eq!(req.scope.unwrap().desk.as_deref(), Some("g10"));
+    }
+
+    /// A `Notification` encodes as a `{"type":"notification", …}` push frame.
+    #[test]
+    fn notification_encodes_as_push_frame() {
+        let n = Notification {
+            notification_id: "notif-1".to_owned(),
+            kind: celnet_proto::NotificationKind::RfqReceived as i32,
+            at_nanos: 42,
+            request_id: Some("desk-req-1".to_owned()),
+            desk: "g10".to_owned(),
+            counterparty: "cp".to_owned(),
+            request_kind: celnet_proto::DeskRequestKind::Rfq as i32,
+            headline: "New RFQ".to_owned(),
+            detail: Some("needs pricing".to_owned()),
+        };
+        let v = notification_to_json(&n);
+        assert_eq!(v["type"], json!("notification"));
+        assert_eq!(v["notification_id"], json!("notif-1"));
+        assert_eq!(v["desk"], json!("g10"));
+        assert_eq!(v["request_id"], json!("desk-req-1"));
+        assert_eq!(v["detail"], json!("needs pricing"));
+    }
+
+    /// The `subscribe_notifications` frame decodes its desk scope + principal.
+    #[test]
+    fn stream_notifications_request_decodes() {
+        let o = json!({
+            "type": "subscribe_notifications",
+            "session_token": "tok",
+            "scope": { "desks": ["g10", "em"] },
+            "principal": { "grant_all": true },
+            "correlation_id": "c"
+        });
+        let req = stream_notifications_request_from_json(o.as_object().unwrap()).expect("decodes");
+        assert_eq!(req.session_token.as_deref(), Some("tok"));
+        assert_eq!(req.scope.unwrap().desks, vec!["g10", "em"]);
+        assert_eq!(req.correlation_id.as_deref(), Some("c"));
     }
 }

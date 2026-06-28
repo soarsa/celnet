@@ -1,6 +1,6 @@
 # Fixed Income — implementation status & outstanding features
 
-**Branch:** `feature/fixedincome` · **Updated:** 2026-06-25
+**Branch:** `fixedincom_risk_ui` · **Updated:** 2026-06-27
 **Scope tracked:** the locked P0 (USD-only, linear rates + cash, no vol/credit — see
 [`OPEN-QUESTIONS.md`](./OPEN-QUESTIONS.md) D3–D12) plus the cross-asset/UI items.
 
@@ -25,7 +25,37 @@ The `celnet-rates` crate — the disjoint-leaf numeric core (depends only on the
 **Net: a working USD-SOFR rates engine** — bootstrap a curve from dated OIS quotes → price any OIS →
 PV / PV01 / DV01 / key-rate ladder. `celnet-rates`: **37/37 tests**, clippy `-D` clean.
 
-GUI (separate from the rates core):
+Integration phase — the engine wired through the wire contract, server, and FIX edge:
+
+| Slice | Commit | What | Tests |
+|---|---|---|---|
+| C | `f4b82d7` | **Proto rates arms** — additive `CurveSet` / `OisPillar` / `OisInstrument` / `RatesInstrument` oneof / `RatesPricingResult` / `RatesPrice{Request,Response}` on the single unversioned `celnet.proto` (reuses `Side`+`BrokenDate`, no renumber). | 62 |
+| D | `5757a16` | **Server `PriceRates` rpc** — `rates_pricing` maps the wire `CurveSet`/`OisInstrument` → engine, prices via `ois_risk`, applies the client `side` sign; thin `PricingService` handler. Server path byte-identical to a direct engine call; par-swap PV≈0; payer == −receiver. | +12 |
+| E1 | `ea9e29d` | **FIX FI dialect** (`celnet-fix/dialect_rates`) — OIS `QuoteRequest` encode/decode, `RatesSide` (pay/receive/two-way), `SubscriptionRequest` (RFQ / RFS subscribe / unsubscribe), `TAG_TENOR_YEARS`. | +9 |
+| E2 | `2c49ab5` | **Live FIX routing** — `price_request` branches on `SecurityType=OIS` to a par-rate two-way line reusing the SAME keyed-MAC token / Quote / last-look / fill path. Real loopback FIX 4.4: OIS RFQ → Quote @ engine par+spread (1e-12) → pay-fixed lift → fill. | +1 e2e |
+
+**Net: "the FIX API supports fixed income" is true end-to-end** — an external FIX counterparty RFQs an
+OIS, gets a two-way rate market, and lifts to a fill, all on the live acceptor. gRPC `PriceRates`
+prices the same arm. Single unversioned contract; no placeholder arms (only OIS ships, additive).
+
+> **P0 market note:** the FIX edge prices against a documented **static USD-SOFR par-OIS ladder**
+> (`rates_pricing::default_usd_sofr_curve_set`) — a *real* calibrating market, not a stub — pending a
+> live SOFR feed (Q6, test-environment data-provider access, deferred). When the feed lands it
+> replaces the table; nothing else changes.
+
+Slice F — five-client parity (in progress):
+
+| Sub-slice | Commit | What | Tests |
+|---|---|---|---|
+| F1 — WS mirror | `61a23b6` | `price_rates` → `rates_price_response` on the WebSocket edge (codec + dispatch) so browser/GUI clients reach the rates path; gRPC and WS share one impl. | +1 codec |
+| F2 — Rust SDK | `32d5504` | `celnet-client::rates` — `UsdSofrCurve` / `Ois` fluent builders + `Client::price_rates` returning side-signed `RatesPriced`. | +4 |
+
+**Five-client status:** FIX ✅ (E2), WS edge ✅ (F1), Rust SDK ✅ (F2). **Remaining: GUI** (F3 —
+`Options | Fixed-Income` asset tabs + a rates pricing workspace, on the F1 WS transport), **Excel**
+(F4 — rates worksheet functions), **federation** (F5 — rates fan-out). The GUI is the largest piece
+and, per the web rules, wants visual-regression + a11y verification — best done in a focused session.
+
+GUI (existing):
 
 | Commit | What |
 |---|---|
@@ -36,15 +66,49 @@ GUI (separate from the rates core):
 ## ⏳ Outstanding (the integration phase — each a gated slice)
 
 ### A. More rates products (`celnet-rates`)
-- **FRA** — single forward-fixing off the curve's simple forward.
-- **Vanilla IRS conventions** — frequency/day-count variants beyond the annual OIS already built.
-- **STIR & bond futures** — convexity (deterministic placeholder per Q11), CF/CTD/implied-repo.
-- **Cash-bond analytics** — yield, **G-spread / Z-spread / ASW**, OAS on option-free (= Z).
+- **FRA** ✅ (`89b0588`) — single forward-fixing off the curve; PV ≡ one-period OIS swaplet, par
+  zeroes PV, analytic PV01, central-difference DV01 + key-rate ladder.
+- **Vanilla IRS conventions** ✅ (`0d9f55b`) — two-leg fixed-vs-float swap with per-leg payment
+  frequency (annual/semi/quarterly), independent schedules, explicit per-period float projection
+  (projection-curve seam), PV/par/PV01/DV01/key-rate. Verified by structural identities (par PV=0,
+  leg decomposition, exact PV01 finite-diff, ladder sums to DV01, explicit float == telescoping
+  DF(0)−DF(T), annual case == `ois_par_rate`). **30/360 fixed-leg basis deferred** — needs a
+  coordinated `celnet_types::DayCount` addition (proto / engine handoff / GUI+Excel enum mirrors);
+  the builder takes a supported `DayCount` (ACT/365F, ACT/360) until then.
+- **STIR & bond futures** ✅ (`36b853d`) — STIR: curve forward + deterministic one-factor Gaussian
+  convexity (`½σ²T₁T₂`, σ a caller input per Q11), `100·(1−rate)` price. Bond: conversion factor
+  (price at notional yield), gross basis, implied repo, CTD by max implied repo. Verified by
+  identities (zero-vol == forward, convexity ↑ in σ, CF == 1 on idealised par schedule, gross basis
+  vanishes at converted price, CTD selects max implied repo). Delivery-window accrued + stochastic
+  convexity deferred.
+- **Cash-bond analytics** ✅ (`eb24f0b`) — fixed-coupon bond reusing the swap coupon schedule:
+  PV on curve, periodic **yield-to-maturity**, **Z-spread** (cc spread over curve zeros),
+  **G-spread** (yield over same-cashflow curve yield), par-par **ASW**; yield/Z via the shared
+  Brent solver. Verified by identities (yield recovers its pricing rate, price↔yield round-trip,
+  monotone price/yield, Z/G/ASW vanish at curve-fair price with correct cheap/rich signs).
+  **Mid-period accrued (clean vs dirty)** deferred to the settlement-date layer; **callable OAS**
+  deferred (slice is option-free, where OAS ≡ Z).
 
 ### B. Curve completeness (`celnet-rates`)
-- **Monotone-convex-on-forwards** interpolation (the smooth-view scheme; log-linear-DF is shipped).
-- **Turn-of-year / central-bank-meeting** forward jumps.
-- **Deterministic STIR convexity** placeholder wired into the short-end build.
+- **Monotone-convex-on-forwards** interpolation (the smooth-view scheme) ✅ (`aaa9bb6`) — a second
+  scheme on `Curve` selected at construction (`Interpolation` enum + `from_monotone_convex_dfs`/
+  `_zero_rates`), alongside the shipped log-linear default. A piecewise-quadratic instantaneous
+  forward (Hagan-West region construction; provenance in prose only per §8) that reproduces every
+  pillar DF exactly, is continuous across pillars, and is monotonicity/convexity-preserving (no
+  overshoot on monotone discrete forwards). Knot forwards precomputed once at build; the query path
+  stays allocation-free (one quadratic on the bracketing segment via a scheme dispatch). Verified by
+  identities only (no external oracle): exact pillar reproduction, forward continuity at pillars,
+  `forward == −d lnDF/dt` by central difference (the stored integral is the exact antiderivative of
+  the forward), monotone-forward preservation, single-segment coincidence with log-linear, negative
+  rates. **Lane B core complete.**
+- **Turn-of-year / central-bank-meeting** forward jumps ✅ (`ae79a5c`) — `turns::with_turns`
+  overlays localized forward spikes by re-sampling the base curve at pillars + jump boundaries and
+  applying `exp(−size·overlap)`, then rebuilding a `Curve`. **Construction-only — hot query path
+  untouched.** Verified by identities (no-turns == base, DFs before unchanged, DFs after scaled by
+  `exp(−size·width)`, in-window forward raised by exactly `size`, inverted turn lowers it, multiple
+  turns compose, degenerate/out-of-range reject).
+- **Deterministic STIR convexity** ✅ delivered in lane-A futures (`36b853d`, `convexity_adjustment`);
+  wiring it into the short-end bootstrap build is the remaining integration step.
 
 ### C. Wire contract (`celnet-proto`, additive — single contract, guardrail #9)
 - New arms on the one `celnet.proto`: **`CurveSet`**, **`RatesInstrument`** oneof
@@ -64,13 +128,35 @@ GUI (separate from the rates core):
 - Gated by a loopback FIX initiator (mirror `tests/fix_acceptor.rs`).
 
 ### F. Five-client parity (slice 9)
-- **GUI** — the D2 **Options | Fixed-Income asset-class tab layer** (above the rail) + the FI
-  workspace set (Curve · Ticket · RFQ · IOI · RFS · Blotter), per FI-ARCHITECTURE §4 and the
-  [`mockups/`](./mockups/). *Real-GUI implementation pending the proto arms it renders.*
-- **Excel** add-in — `CELNET.*` rates functions (curve DF, swap PV, par, PV01/DV01, key-rate).
-- **Rust SDK** (`celnet-client`) — typed builders for the rates instrument vocab.
+- **GUI** — ✅ the **top-level domain tab bar** (FX Options · Fixed Income · Administration —
+  `034065a`; the active tab derives from the active workspace so the global `⌘N` chord grammar is
+  unchanged) + **three** of the four §4.2 FI workspaces:
+  **Ticket** (`RatesWorkspace.tsx` + offline pricer `ratesPricing.ts` + live `wsTransport.priceRates`:
+  curve → OIS → PV / par / PV01 / DV01 / key-rate ladder over `price_rates`; pricer unit-tested),
+  **Curve** (`ee3f29f`: `CurveWorkspace.tsx` + `CurveChart` — DF / zero / forward inspection over the
+  bootstrapped curve, log-linear-on-log-DF, curve-identity tested), and **Risk** ✅ (`034065a`:
+  `RatesRiskWorkspace.tsx` — editable OIS portfolio → `transport.aggregateRatesRisk` → per-ccy nodes
+  with net PV/PV01/DV01 + key-rate DV01 ladder; ladder-sum == net-DV01 identity tested). The Risk
+  workspace reaches the federated RPC over a **WS-mirror of `AggregateRatesRisk`** (`bad2625`: server
+  codec + dispatch arm + GUI transport/codec/in-app rollup, entitlement path preserved). The remaining
+  §4.2 workspace **Book** (rates blotter) still awaits the persisted rates position store. The
+  §C/mockup RFQ · IOI · RFS surfaces await their own server contracts.
+- **Excel** add-in — ✅ (`7722c59`) `=CELNET.RATES(...)` prices an OIS via the live `price_rates`
+  engine RPC, spilling PV / par / PV01 / DV01 + the key-rate DV01 ladder (contract + codec adapted
+  byte-for-byte from the proven GUI; tsc clean, vitest 445/445 incl. 16 new). Further `CELNET.*`
+  rates fns (standalone curve DF, multi-arm) follow as the proto arms beyond OIS land.
+- **Rust SDK** (`celnet-client`) — ✅ rates instrument vocab + `Client::price_rates`.
 - **FIX** — the dialect in (E).
-- **Federation** — rates pricing/risk fans out across shards.
+- **Federation** — ✅ cross-shard rates risk fan-out + bit-exact rollup in `celnet-risk-fleet`
+  (`af8ad25`: `RatesFleetReducer::fan_in_additive` == single-node, proptest-pinned bit-for-bit;
+  additive PV/PV01/DV01 + key-rate ladder by tenor; `PartitionKey::currency` for `(entity, ccy)` HRW
+  sharding) **and** the server-owned RPC that drives it: `RiskService.AggregateRatesRisk`
+  (`5bb8099`) — positions → `price_rates` → `partition_rates_facts` → `fan_in_additive` → per-ccy
+  rollup, deny-by-default entitlement, endpoint == `firm_aggregate_rates` bit-for-bit (additive proto
+  change). Now reachable from the GUI over a **WS-mirror** (`bad2625`: codec + dispatch arm + GUI
+  transport/in-app rollup) and surfaced in the **Rates Risk** workspace (`034065a`). Positions inline;
+  a persisted execution-fed rates position store is the remaining follow-up (it also unblocks the GUI
+  **Book** workspace).
 
 ---
 
@@ -84,13 +170,26 @@ GUI (separate from the rates core):
 
 ## UI changes — explicit status
 - **Administration tab:** ✅ done (`6c978cf`).
-- **FI asset-class tabs + FI workspace set:** ⏳ outstanding (item F above) — designed in
-  [`mockups/`](./mockups/) and FI-ARCHITECTURE §4; the real GUI build is sequenced behind the
-  `celnet-proto` arms (C) it renders, so the workspaces show live contract data, not placeholders.
+- **Top-level domain tab bar (FX Options · Fixed Income · Administration):** ✅ done (`034065a`) —
+  active tab derives from the active workspace; admin tab gated; chord grammar unchanged.
+- **FI asset-class tabs + FI workspace set:** 🟡 mostly delivered (slice F) — designed in
+  [`mockups/`](./mockups/) and FI-ARCHITECTURE §4. Delivered: WS mirror for `price_rates` (codec +
+  dispatch) ✅, Rust SDK `Client::price_rates` ✅, the GUI Fixed-Income tab + rates pricing
+  workspace (curve → OIS → PV / par / PV01 / DV01 / key-rate ladder) ✅, the **Curve** workspace ✅,
+  the **Rates Risk** workspace ✅ (`034065a`, over the `AggregateRatesRisk` WS-mirror `bad2625`), and
+  the Excel `=CELNET.RATES(...)` function ✅ (`7722c59`). Remaining F work: the **Book** blotter
+  (awaits the persisted rates position store) and the §C RFQ · IOI · RFS surfaces (own contracts).
 
 ---
 
 ## Build order for the outstanding phase
-**C (proto arms) → D (server consumes `celnet-rates`) → E (FIX dialect) → F (SDK · Excel · GUI ·
-federation)**, with A/B product breadth landing into `celnet-rates` in parallel (disjoint leaf).
-The proto arms (C) are the keystone every client surface depends on, so they go first.
+**C (proto arms) ✅ → D (server consumes `celnet-rates`) ✅ → E (FIX dialect) ✅ → F (WS mirror ✅ ·
+Rust SDK ✅ · GUI asset-tabs + rates workspace ✅ · Excel ✅ · federation rollup ✅) 🟡**, with A/B
+product breadth (FRA / IRS / futures / cash-bond RV) landing into `celnet-rates` in parallel
+(disjoint leaf). C/D/E committed and gated; F's five client surfaces are delivered, **3 of the 4** §4.2
+GUI FI workspaces (Ticket, Curve, **Rates Risk** — `034065a`), the federated
+`RiskService.AggregateRatesRisk` endpoint (`5bb8099`) + its **WS-mirror** (`bad2625`), and the
+**top-level domain tab bar** (`034065a`). Shipped to UAT via `deploy/celnet-deploy.sh` option 2
+(binary release; service verified RUNNING on release `1c90371-…`). Remaining: the GUI **Book**
+workspace + its persisted execution-fed rates position store; and the §C RFQ · IOI · RFS surfaces
+(own server contracts first).

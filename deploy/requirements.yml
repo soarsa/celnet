@@ -1,0 +1,6 @@
+# Ansible collection requirements for the Celnet deployment.
+# The menu (celnet-deploy.sh) installs these automatically on first run:
+#   ansible-galaxy collection install -r requirements.yml
+collections:
+  - name: ansible.posix      # provides `synchronize` (rsync source push)
+    version: ">=1.5.0"

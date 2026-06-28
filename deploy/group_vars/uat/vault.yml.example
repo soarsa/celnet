@@ -1,0 +1,9 @@
+---
+# Template for the ENCRYPTED vault. Do NOT commit a real password in plaintext.
+# Create the encrypted vault from this with:
+#     ./scripts/vault-init.sh uat
+# or manually:
+#     ansible-vault create group_vars/uat/vault.yml
+# then put the celnet account's sudo password on this line (Ansible reads it as
+# the become/sudo password directly):
+ansible_become_password: "CHANGE_ME_the_celnet_sudo_password"

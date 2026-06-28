@@ -1,0 +1,597 @@
+/**
+ * RatesRiskWorkspace — the fixed-income portfolio curve-risk view. A trader
+ * assembles a small book of overnight-indexed swaps (an editable position table)
+ * and the desk's netted rates risk rolls up live: one card per settlement
+ * currency with net PV / PV01 / DV01 and a key-rate DV01 ladder across the curve
+ * pillars.
+ *
+ * One contract, two transports (GUI-DESIGN §6.2): the workspace talks ONLY to the
+ * `CelnetTransport.aggregateRatesRisk` seam, so the SAME portfolio rolls up
+ * through the deterministic in-app source (a genuine in-browser OIS bootstrap +
+ * additive per-ccy netting, `src/data/mockSource.ts` → `src/data/ratesPricing.ts`)
+ * and through the live `RiskService.AggregateRatesRisk` edge — and cannot drift
+ * from the wire contract. Transport, conventions and entitlement principal are
+ * obtained exactly as RiskWorkspace / BookWorkspace do: `app.transport`,
+ * `app.conventions`, and `principalForScope(app.scope)` (grant-all today ⇒ the
+ * principal is omitted and the server applies its audited grant-all default).
+ *
+ * The positions are GENUINE user-editable inputs (seeded from the curve pillars),
+ * never hardcoded results; every number on the right is computed by the transport.
+ */
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useApp } from "../app/AppContext";
+import { Button } from "../components/Button";
+import { Panel } from "../components/Panel";
+import { principalForScope } from "../data/riskView";
+import { DEFAULT_USD_SOFR_CURVE } from "../data/ratesPricing";
+import { fmtPnlAdaptive } from "../lib/format";
+import { rampColor } from "../viz/ramp";
+import type {
+  AggregateRatesRiskRequest,
+  EntitlementPrincipal,
+  OisDirection,
+  RatesCurveSet,
+  RatesPosition,
+  RatesRiskNode,
+  RatesRiskScope,
+} from "../data/contract";
+import styles from "./RatesRiskWorkspace.module.css";
+
+/** One million — the notional input is denominated in millions of the curve ccy. */
+const MM = 1_000_000;
+
+// ---------------------------------------------------------------------------
+// pure helpers (exported for unit testing — no React, no transport)
+// ---------------------------------------------------------------------------
+
+/** One editable OIS position row in the portfolio table (the GUI input model). */
+export interface RatesRiskRow {
+  /** Stable React key — NOT sent on the wire. */
+  readonly id: string;
+  /** Legal-entity id the position books into (a scope filter dimension). */
+  readonly entity: number;
+  /** Trading-book id the position books into (a scope filter dimension). */
+  readonly book: number;
+  /** Swap tenor in whole years from spot (`>= 1`). */
+  readonly tenorYears: number;
+  /** Fixed-leg coupon in percent (4.05 = 4.05%). */
+  readonly fixedRatePct: number;
+  /** Notional in millions of the curve currency (always positive). */
+  readonly notionalMm: number;
+  /** Pay-fixed (payer) or receive-fixed (receiver). */
+  readonly direction: OisDirection;
+}
+
+/** The optional pre-rollup scope filter, as raw text-field inputs. */
+export interface RatesRiskScopeInput {
+  readonly entity: string;
+  readonly book: string;
+  readonly ccy: string;
+}
+
+/** A seed template anchored to a curve pillar; the coupon is `couponOffsetBp` off par. */
+interface SeedTemplate {
+  readonly tenorYears: number;
+  readonly entity: number;
+  readonly book: number;
+  readonly notionalMm: number;
+  readonly direction: OisDirection;
+  /** Coupon offset from the pillar par rate, in basis points (signed). */
+  readonly couponOffsetBp: number;
+}
+
+/**
+ * The seed book: a handful of swaps anchored to the calibrating curve pillars,
+ * spread across two entities / three books and both directions, each struck a few
+ * bp off its pillar par so the netted PV is real (not a degenerate zero). These
+ * are editable INPUTS derived from the curve pillars — never baked-in results.
+ */
+const SEED_TEMPLATES: readonly SeedTemplate[] = [
+  { tenorYears: 2, entity: 1, book: 10, notionalMm: 50, direction: "RECEIVE_FIXED", couponOffsetBp: -8 },
+  { tenorYears: 5, entity: 1, book: 10, notionalMm: 100, direction: "PAY_FIXED", couponOffsetBp: -5 },
+  { tenorYears: 10, entity: 1, book: 20, notionalMm: 75, direction: "RECEIVE_FIXED", couponOffsetBp: 10 },
+  { tenorYears: 30, entity: 2, book: 30, notionalMm: 25, direction: "PAY_FIXED", couponOffsetBp: 0 },
+];
+
+/** Round a percent figure to bp precision (4 decimal places of a percent). */
+function roundPct(pct: number): number {
+  return Number(pct.toFixed(4));
+}
+
+/**
+ * Build the seed portfolio rows from a curve set's pillars: each template's
+ * coupon is the matched pillar's par rate plus the template's bp offset, so the
+ * seed is genuinely derived from the live curve (not a constant).
+ */
+export function defaultRatesRiskRows(
+  curve: RatesCurveSet = DEFAULT_USD_SOFR_CURVE,
+): RatesRiskRow[] {
+  return SEED_TEMPLATES.map((t, i) => {
+    const pillar = curve.pillars.find((p) => p.tenorYears === t.tenorYears);
+    const parPct = (pillar ? pillar.parRate : 0.04) * 100;
+    return {
+      id: `seed-${t.tenorYears}y-${i}`,
+      entity: t.entity,
+      book: t.book,
+      tenorYears: t.tenorYears,
+      fixedRatePct: roundPct(parPct + t.couponOffsetBp / 100),
+      notionalMm: t.notionalMm,
+      direction: t.direction,
+    };
+  });
+}
+
+/**
+ * Project one editable row onto a wire {@link RatesPosition}: percent → decimal
+ * rate, millions → absolute notional, the row index → the informational
+ * `positionId` echo. The direction sign lives on the instrument, so the rollup
+ * nets long and short books by sign.
+ */
+export function rowToPosition(row: RatesRiskRow, index: number): RatesPosition {
+  return {
+    positionId: BigInt(index),
+    entity: row.entity,
+    book: row.book,
+    instrument: {
+      tenorYears: row.tenorYears,
+      fixedRate: row.fixedRatePct / 100,
+      notional: row.notionalMm * MM,
+      direction: row.direction,
+    },
+  };
+}
+
+/**
+ * Build the optional `(entity, book, ccy)` scope from raw text inputs: each blank
+ * / non-numeric entity-or-book field and each blank ccy field is omitted, so an
+ * empty filter returns `undefined` (the whole portfolio contributes).
+ */
+export function buildScope(input: RatesRiskScopeInput): RatesRiskScope | undefined {
+  const scope: RatesRiskScope = {};
+  const entity = Number.parseInt(input.entity, 10);
+  if (input.entity.trim() !== "" && Number.isFinite(entity)) scope.entity = entity;
+  const book = Number.parseInt(input.book, 10);
+  if (input.book.trim() !== "" && Number.isFinite(book)) scope.book = book;
+  const ccy = input.ccy.trim();
+  if (ccy !== "") scope.ccy = ccy;
+  return Object.keys(scope).length > 0 ? scope : undefined;
+}
+
+/** Optional inputs to {@link buildRatesRiskRequest} beyond the position rows. */
+export interface RatesRiskRequestOptions {
+  /** The shared curve set every position prices against (default USD-SOFR). */
+  readonly curve?: RatesCurveSet;
+  /** The optional pre-rollup `(entity, book, ccy)` filter. */
+  readonly scope?: RatesRiskScope;
+  /** The entitlement principal (omitted ⇒ the audited grant-all default). */
+  readonly principal?: EntitlementPrincipal;
+  /** Optional client correlation echo. */
+  readonly correlationId?: bigint;
+}
+
+/**
+ * Assemble the `AggregateRatesRiskRequest` from the editable rows: each row
+ * becomes a position, the optional scope / principal / correlation echo are
+ * threaded only when present. Pure — the React layer just hands it to the
+ * transport.
+ */
+export function buildRatesRiskRequest(
+  rows: readonly RatesRiskRow[],
+  opts: RatesRiskRequestOptions = {},
+): AggregateRatesRiskRequest {
+  const request: AggregateRatesRiskRequest = {
+    curveSet: opts.curve ?? DEFAULT_USD_SOFR_CURVE,
+    positions: rows.map(rowToPosition),
+  };
+  if (opts.scope !== undefined) request.scope = opts.scope;
+  if (opts.principal !== undefined) request.principal = opts.principal;
+  if (opts.correlationId !== undefined) request.correlationId = opts.correlationId;
+  return request;
+}
+
+/** The largest absolute bucket DV01 of a node's ladder (floored, for bar scaling). */
+export function ladderMaxAbs(node: RatesRiskNode): number {
+  return node.keyRateLadder.reduce((m, k) => Math.max(m, Math.abs(k.dv01)), 1e-9);
+}
+
+// ---------------------------------------------------------------------------
+// the workspace
+// ---------------------------------------------------------------------------
+
+/** Debounce (ms) before re-aggregating after a portfolio edit. */
+const REPRICE_DEBOUNCE_MS = 220;
+
+export function RatesRiskWorkspace(): React.ReactElement {
+  const app = useApp();
+  const curve = DEFAULT_USD_SOFR_CURVE;
+
+  const [rows, setRows] = useState<RatesRiskRow[]>(() => defaultRatesRiskRows(curve));
+  const [scopeInput, setScopeInput] = useState<RatesRiskScopeInput>({
+    entity: "",
+    book: "",
+    ccy: "",
+  });
+  const [nodes, setNodes] = useState<RatesRiskNode[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  // Monotone id source for rows the trader adds (seed rows carry `seed-*` ids).
+  const nextId = useRef(0);
+
+  // The transport label tells the trader which engine rolled this up (offline
+  // in-app rollup vs the live `AggregateRatesRisk` edge); both net the SAME book.
+  const isOffline = !app.transport.label.startsWith("live");
+
+  // The entitlement principal — obtained exactly as RiskWorkspace/BookWorkspace do
+  // (`principalForScope(app.scope)`); grant-all today ⇒ `undefined` ⇒ the request
+  // omits it and the server applies its audited grant-all default.
+  const principal = useMemo(() => principalForScope(app.scope), [app.scope]);
+
+  const scope = useMemo(() => buildScope(scopeInput), [scopeInput]);
+
+  const request = useMemo<AggregateRatesRiskRequest>(
+    () =>
+      buildRatesRiskRequest(rows, {
+        curve,
+        ...(scope ? { scope } : {}),
+        ...(principal ? { principal } : {}),
+      }),
+    [rows, curve, scope, principal],
+  );
+
+  // Live rollup: debounce the editable portfolio, then aggregate via the transport
+  // seam. A failure (a server refusal, a transport deadline, or an offline
+  // validation throw) is surfaced as a real error — never a fabricated rollup.
+  useEffect(() => {
+    let live = true;
+    setBusy(true);
+    const handle = setTimeout(() => {
+      void app.transport
+        .aggregateRatesRisk(request, app.conventions)
+        .then((res) => {
+          if (!live) return;
+          setNodes([...res.nodes]);
+          setError(null);
+          setBusy(false);
+        })
+        .catch((err) => {
+          if (!live) return;
+          setNodes(null);
+          setError(err instanceof Error ? err.message : "rates risk aggregation failed");
+          setBusy(false);
+        });
+    }, REPRICE_DEBOUNCE_MS);
+    return () => {
+      live = false;
+      clearTimeout(handle);
+    };
+  }, [app.transport, app.conventions, request]);
+
+  const updateRow = useCallback((id: string, patch: Partial<RatesRiskRow>) => {
+    setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  }, []);
+
+  const addRow = useCallback(() => {
+    setRows((rs) => [
+      ...rs,
+      {
+        id: `row-${nextId.current++}`,
+        entity: 1,
+        book: 10,
+        tenorYears: 5,
+        fixedRatePct: roundPct(curve.pillars[3]?.parRate ? curve.pillars[3].parRate * 100 : 4.05),
+        notionalMm: 25,
+        direction: "RECEIVE_FIXED",
+      },
+    ]);
+  }, [curve.pillars]);
+
+  const removeRow = useCallback((id: string) => {
+    setRows((rs) => rs.filter((r) => r.id !== id));
+  }, []);
+
+  const clearScope = useCallback(
+    () => setScopeInput({ entity: "", book: "", ccy: "" }),
+    [],
+  );
+
+  const scopeActive = scope !== undefined;
+
+  return (
+    <div className={styles.wrap}>
+      <Panel material="float" className={styles.builder} title="Portfolio">
+        <div className={styles.curveRow}>
+          <span className={styles.curveLabel}>Curve</span>
+          <span className={styles.curveName}>{curve.currency}-SOFR</span>
+          <span className={styles.curveMeta}>
+            {curve.pillars.length} pillars · ref {curve.referenceDate.year}-
+            {String(curve.referenceDate.month).padStart(2, "0")}-
+            {String(curve.referenceDate.day).padStart(2, "0")} · self-discounting
+          </span>
+          <span className={styles.engine}>{isOffline ? "in-app rollup" : "live edge"}</span>
+        </div>
+
+        <div className={styles.tableWrap}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th className={styles.thNum}>Entity</th>
+                <th className={styles.thNum}>Book</th>
+                <th className={styles.thNum}>Tenor</th>
+                <th className={styles.thNum}>Fixed %</th>
+                <th className={styles.thNum}>Notional</th>
+                <th className={styles.thSide}>Side</th>
+                <th className={styles.thAct} aria-label="remove" />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.id}>
+                  <td>
+                    <input
+                      className={styles.cellInput}
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={row.entity}
+                      aria-label="position entity id"
+                      onChange={(e) => updateRow(row.id, { entity: Math.trunc(Number(e.target.value)) })}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      className={styles.cellInput}
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={row.book}
+                      aria-label="position book id"
+                      onChange={(e) => updateRow(row.id, { book: Math.trunc(Number(e.target.value)) })}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      className={styles.cellInput}
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={row.tenorYears}
+                      aria-label="swap tenor in years"
+                      onChange={(e) => updateRow(row.id, { tenorYears: Math.trunc(Number(e.target.value)) })}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      className={styles.cellInput}
+                      type="number"
+                      step={0.01}
+                      value={row.fixedRatePct}
+                      aria-label="fixed rate in percent"
+                      onChange={(e) => updateRow(row.id, { fixedRatePct: Number(e.target.value) })}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      className={styles.cellInput}
+                      type="number"
+                      min={0}
+                      step={5}
+                      value={row.notionalMm}
+                      aria-label="notional in millions"
+                      onChange={(e) => updateRow(row.id, { notionalMm: Number(e.target.value) })}
+                    />
+                  </td>
+                  <td>
+                    <select
+                      className={styles.cellSelect}
+                      value={row.direction}
+                      aria-label="swap direction"
+                      onChange={(e) => updateRow(row.id, { direction: e.target.value as OisDirection })}
+                    >
+                      <option value="RECEIVE_FIXED">Receive</option>
+                      <option value="PAY_FIXED">Pay</option>
+                    </select>
+                  </td>
+                  <td className={styles.actCell}>
+                    <button
+                      type="button"
+                      className={styles.rowRemove}
+                      onClick={() => removeRow(row.id)}
+                      title="remove position"
+                      aria-label="remove position"
+                      disabled={rows.length === 1}
+                    >
+                      ×
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className={styles.tableFoot}>
+          <Button variant="secondary" onClick={addRow}>
+            + Add position
+          </Button>
+          <span className={styles.rowCount}>
+            {rows.length} position{rows.length === 1 ? "" : "s"}
+          </span>
+        </div>
+
+        <fieldset className={styles.scope}>
+          <legend className={styles.scopeLegend}>
+            Scope filter
+            {scopeActive && (
+              <button type="button" className={styles.scopeClear} onClick={clearScope}>
+                clear
+              </button>
+            )}
+          </legend>
+          <label className={styles.scopeField}>
+            <span className={styles.scopeFieldLabel}>Entity</span>
+            <input
+              className={styles.scopeInput}
+              type="number"
+              min={0}
+              step={1}
+              placeholder="all"
+              value={scopeInput.entity}
+              aria-label="filter by entity"
+              onChange={(e) => setScopeInput((s) => ({ ...s, entity: e.target.value }))}
+            />
+          </label>
+          <label className={styles.scopeField}>
+            <span className={styles.scopeFieldLabel}>Book</span>
+            <input
+              className={styles.scopeInput}
+              type="number"
+              min={0}
+              step={1}
+              placeholder="all"
+              value={scopeInput.book}
+              aria-label="filter by book"
+              onChange={(e) => setScopeInput((s) => ({ ...s, book: e.target.value }))}
+            />
+          </label>
+          <label className={styles.scopeField}>
+            <span className={styles.scopeFieldLabel}>Ccy</span>
+            <input
+              className={styles.scopeInput}
+              type="text"
+              placeholder="all"
+              maxLength={3}
+              value={scopeInput.ccy}
+              aria-label="filter by settlement currency"
+              onChange={(e) => setScopeInput((s) => ({ ...s, ccy: e.target.value.toUpperCase() }))}
+            />
+          </label>
+        </fieldset>
+
+        {error && (
+          <p className={styles.error} role="alert">
+            {error}
+          </p>
+        )}
+      </Panel>
+
+      <Panel className={styles.results} title="Netted rates risk">
+        <ResultsBody nodes={nodes} busy={busy} curve={curve} scopeActive={scopeActive} />
+      </Panel>
+    </div>
+  );
+}
+
+/** The right-hand rollup: per-ccy node cards, with explicit empty / loading states. */
+function ResultsBody({
+  nodes,
+  busy,
+  curve,
+  scopeActive,
+}: {
+  nodes: RatesRiskNode[] | null;
+  busy: boolean;
+  curve: RatesCurveSet;
+  scopeActive: boolean;
+}): React.ReactElement {
+  if (nodes === null) {
+    return <p className={styles.empty}>Aggregating portfolio risk…</p>;
+  }
+  if (nodes.length === 0) {
+    return (
+      <p className={styles.empty}>
+        {scopeActive
+          ? "No positions match the scope filter — widen or clear the scope."
+          : "Add a position to roll up the desk's netted rates risk."}
+      </p>
+    );
+  }
+  return (
+    <div className={styles.nodes} aria-busy={busy}>
+      {nodes.map((node) => (
+        <NodeCard key={node.ccy} node={node} curve={curve} />
+      ))}
+    </div>
+  );
+}
+
+/** One settlement-currency rollup: net measures + the key-rate DV01 ladder strip. */
+function NodeCard({
+  node,
+  curve,
+}: {
+  node: RatesRiskNode;
+  curve: RatesCurveSet;
+}): React.ReactElement {
+  const maxAbs = ladderMaxAbs(node);
+  const ladderSum = node.keyRateLadder.reduce((a, k) => a + k.dv01, 0);
+
+  return (
+    <article className={styles.nodeCard}>
+      <header className={styles.nodeHead}>
+        <span className={styles.nodeCcy}>{node.ccy}</span>
+        <span className={styles.nodeTag}>
+          {node.keyRateLadder.length} pillars · {curve.currency}-SOFR
+        </span>
+      </header>
+
+      <dl className={styles.metrics}>
+        <Metric label="Net PV" value={fmtPnlAdaptive(node.netPv)} unit={node.ccy} emphatic />
+        <Metric label="Net PV01" value={fmtPnlAdaptive(node.netPv01)} unit={`${node.ccy}/bp`} />
+        <Metric label="Net DV01" value={fmtPnlAdaptive(node.netDv01)} unit={`${node.ccy}/bp`} />
+      </dl>
+
+      <div className={styles.ladder}>
+        <div className={styles.ladderHead}>
+          <span className={styles.ladderTitle}>Key-rate DV01 ladder</span>
+          <span className={styles.ladderRecon} title="ladder buckets sum to the net DV01 to first order">
+            Σ {fmtPnlAdaptive(ladderSum)}
+          </span>
+        </div>
+        {node.keyRateLadder.map((bucket) => {
+          // Diverging tint + a centre-anchored bar: positive DV01 grows right of the
+          // zero rail, negative left, magnitude ∝ |dv01| / the node's peak bucket.
+          const frac = Math.abs(bucket.dv01) / maxAbs;
+          const t = 0.5 + (bucket.dv01 / maxAbs) * 0.5;
+          const positive = bucket.dv01 >= 0;
+          return (
+            <div key={bucket.tenorYears} className={styles.ladderRow}>
+              <span className={styles.bucketTenor}>{bucket.tenorYears}y</span>
+              <span className={styles.barTrack}>
+                <span className={styles.barRail} aria-hidden />
+                <span
+                  className={`${styles.barFill} ${positive ? styles.barPos : styles.barNeg}`}
+                  style={{ width: `${frac * 50}%`, background: rampColor(t) }}
+                />
+              </span>
+              <span className={styles.bucketVal}>{fmtPnlAdaptive(bucket.dv01)}</span>
+            </div>
+          );
+        })}
+      </div>
+    </article>
+  );
+}
+
+/** One headline measure: a labelled term/value pair in a node card. */
+function Metric({
+  label,
+  value,
+  unit,
+  emphatic,
+}: {
+  label: string;
+  value: string;
+  unit?: string;
+  emphatic?: boolean;
+}): React.ReactElement {
+  return (
+    <div className={`${styles.metric} ${emphatic ? styles.metricEmphatic : ""}`}>
+      <dt className={styles.metricLabel}>{label}</dt>
+      <dd className={styles.metricValue}>
+        {value}
+        {unit && <span className={styles.metricUnit}>{unit}</span>}
+      </dd>
+    </div>
+  );
+}

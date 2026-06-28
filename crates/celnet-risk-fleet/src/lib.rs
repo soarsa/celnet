@@ -88,6 +88,14 @@
 
 #![forbid(unsafe_code)]
 
+pub mod rates;
+
+pub use rates::{
+    KeyRateBucket, RatesFactKey, RatesFirmRollup, RatesFleetReducer, RatesLogicalShard,
+    RatesNodeAggregate, RatesRiskFact, firm_aggregate_rates, partition_rates_facts,
+    rates_partition_key_of,
+};
+
 use celnet_risk_cube::{
     Cube, DimensionId, NodeAggregate, RiskFact, Scenario, VarEs, VegaPillarMap,
 };
