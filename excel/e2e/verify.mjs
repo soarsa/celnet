@@ -144,6 +144,12 @@ async function startServer() {
     ...process.env,
     CELNET_WS_ADDR: "127.0.0.1:8081",
     CELNET_GRPC_ADDR: "127.0.0.1:50551",
+    // Run under the PRODUCTION deny-by-default posture (not the demo edge's friendly
+    // Permissive dev default), mirroring the GUI/Excel Playwright `demoEdge.ts` —
+    // so this harness verifies the add-in's entitlement default end-to-end: the
+    // Connection's grant-all `authenticate` admits the (FX and cross-asset) streamed
+    // subscribes under Enforce, exactly as against a real edge.
+    CELNET_ACCESS_MODE: process.env.CELNET_ACCESS_MODE ?? "enforce",
   };
   const proc = spawn(
     "cargo",
@@ -325,6 +331,66 @@ async function main() {
     } else {
       fail("could not recover the server ATM vol from the stream snapshot");
     }
+
+    // ---- C2. cross-asset (equity) STREAMED carry rho (item A, P3) ------------
+    // The carry seam reaching the STREAMED edge: subscribe a NON-FX (equity) line
+    // over the PRODUCTION transport (`Connection`) and assert the streamed Greeks
+    // — decoded by the PRODUCTION codec (`snapshotFromWire`/`greeksFromWire`) on
+    // `conn.onEvent` — carry the asset-class carry rho (an equity's dividend-yield
+    // rho = the flat `rhoFor` projection of the server's `RateSensitivities::Carry`
+    // arm), finite and NON-ZERO. The strike is ATM at the demo edge's spot (~1.10)
+    // so the equity line is non-degenerate at the fixture's market scale (the same
+    // discipline the request/reply cross-asset conformance uses). No mock: the
+    // server routes the equity `underlying` through the carry seam, the production
+    // codec decodes it, and the production transport carries it.
+    //
+    // HONESTY (UI-surface gap, reported): the Excel STREAMED cell (`CELNET.SUBSCRIBE`
+    // → `renderLiveCell`) surfaces price/health only — the streaming `LiveTick`
+    // carries no Greeks today — so the streamed carry rho is NOT yet rendered in an
+    // Excel cell (unlike the static `CELNET.GREEKS` spill, which IS now class-aware,
+    // step B path). This step proves the server + production-codec + production-
+    // transport STREAMED cross-asset path; surfacing streamed Greeks in a cell is a
+    // separate (larger) Excel surface deferred honestly.
+    const { shapeEquityVanilla } = await import(`${repoRoot}excel/src/functions/shaping.ts`);
+    const equityInstrument = shapeEquityVanilla({
+      ticker: "AAPL",
+      currency: "USD",
+      venue: "XNAS",
+      tenor: "1Y",
+      strikeOrDelta: "1.10",
+      callPut: "C",
+      notional: 1_000_000,
+    });
+    let eqSnapshotSeen = false;
+    let eqDivRho = NaN;
+    let eqTicks = 0;
+    const disposeEq = conn.onEvent((e) => {
+      if (e.kind === "snapshot") {
+        eqSnapshotSeen = true;
+        eqDivRho = e.snapshot.greeks.rhoFor; // the equity dividend-yield (carry) rho
+      } else if (e.kind === "update") {
+        eqTicks += 1;
+        eqDivRho = e.update.greeks.rhoFor;
+      }
+    });
+    const eqSubId = conn.subscribe(equityInstrument, DEFAULT_CONVENTIONS, "verify-xasset");
+    const startEq = Date.now();
+    while ((!eqSnapshotSeen || eqTicks < 2) && Date.now() - startEq < STEP_MS) {
+      await delay(100);
+    }
+    if (!eqSnapshotSeen) fail("cross-asset SUBSCRIBE never received a baseline snapshot");
+    if (eqTicks < 2) fail(`cross-asset SUBSCRIBE received only ${eqTicks} sequenced ticks (need >= 2)`);
+    if (!Number.isFinite(eqDivRho)) fail(`streamed equity carry rho is not finite: ${eqDivRho}`);
+    if (Math.abs(eqDivRho) <= 0) {
+      fail(`streamed equity carry rho is zero (degenerate line / not routed via the carry seam): ${eqDivRho}`);
+    }
+    conn.unsubscribe(eqSubId);
+    disposeEq();
+    await delay(150);
+    console.log(
+      `C2. cross-asset (equity) stream → snapshot=${eqSnapshotSeen} ticks=${eqTicks} ` +
+        `dividend-yield carry rho (rhoFor) = ${eqDivRho} (finite, non-zero)`,
+    );
 
     // ---- D. CELNET.MARK → surface_version pins a subsequent price ------------
     // Contribute a mark via the REAL transport (the server commit the task pane

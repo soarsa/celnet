@@ -46,6 +46,7 @@ import type { ScopeContext } from "../app/AppContext";
 import { PriceTile } from "../components/PriceTile";
 import { Sparkline, sparklineDirection, type SparklineDir } from "../components/Sparkline";
 import { StatusBadge } from "../components/StatusBadge";
+import { GreeksStrip } from "../components/GreeksStrip";
 import { Button } from "../components/Button";
 import { ownerLabel, type StreamRow } from "../hooks/useStreamSession";
 import { useTrendSeries, type TrendRowKey, type TrendSeries } from "../hooks/useTrendSeries";
@@ -374,6 +375,8 @@ function BlotterRow({
   trend,
   columns,
   template,
+  selected,
+  onSelect,
 }: {
   row: StreamRow;
   mode: TrendMode;
@@ -381,6 +384,10 @@ function BlotterRow({
   trend: TrendSeries | undefined;
   columns: readonly ColumnSpec[];
   template: string;
+  /** Whether this row is the one whose full (class-correct) Greeks detail is open. */
+  selected: boolean;
+  /** Select this row to open its full Greeks strip below the blotter. */
+  onSelect: () => void;
 }): React.ReactElement {
   const app = useApp();
   const now = nowNanos();
@@ -418,7 +425,17 @@ function BlotterRow({
         );
       case "structure":
         return (
-          <span key={col.key} className={styles.structure}>
+          // The structure cell selects the row to open its full, asset-class-correct
+          // Greeks strip below the blotter (the streamed carry-rho surface). A button
+          // so it is keyboard-reachable; `aria-pressed` carries the open state.
+          <button
+            key={col.key}
+            type="button"
+            className={`${styles.structure} ${styles.structureBtn} ${selected ? styles.structureSelected : ""}`}
+            onClick={onSelect}
+            aria-pressed={selected}
+            title={`${row.label} — show full Greeks`}
+          >
             {row.label}
             {/* Honest attribution: show the maker/owner only when the wire carries it
                 (engine-quoted edge flow is the auto-pricer); nothing when absent. */}
@@ -427,7 +444,7 @@ function BlotterRow({
                 {ownerLabel(row.attribution?.quotedBy)}
               </span>
             )}
-          </span>
+          </button>
         );
       case "tenor":
         return (
@@ -603,6 +620,9 @@ export function StreamWorkspace(): React.ReactElement {
   const [sort, setSort] = useState<SortState | null>(null);
   const [hidden, setHidden] = useState<ReadonlySet<ColumnKey>>(new Set());
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  // The streamed line whose full, asset-class-correct Greeks strip is open below the
+  // blotter (the carry-rho surface). Null until the trader picks a row's structure.
+  const [selectedSub, setSelectedSub] = useState<bigint | null>(null);
 
   const columns = useMemo(() => COLUMNS.filter((c) => !hidden.has(c.key)), [hidden]);
   const template = useMemo(() => gridTemplate(columns), [columns]);
@@ -634,6 +654,14 @@ export function StreamWorkspace(): React.ReactElement {
 
   // The group-meta cell spans every track after the label track (column 1).
   const metaSpan = Math.max(1, columns.length - 1);
+
+  // The selected row whose full, asset-class-correct Greeks strip is shown below
+  // the blotter. Resolved against the live (in-scope) rows so it clears if the line
+  // drops or scrolls out of the universe filter (never a stale/fabricated detail).
+  const selectedRow = useMemo(
+    () => (selectedSub === null ? undefined : rows.find((r) => r.subscriptionId === selectedSub)),
+    [rows, selectedSub],
+  );
 
   const toggleColumn = (key: ColumnKey): void =>
     setHidden((prev) => {
@@ -792,6 +820,12 @@ export function StreamWorkspace(): React.ReactElement {
                   trend={trendSeries.get(item.row.subscriptionId)}
                   columns={columns}
                   template={template}
+                  selected={selectedSub === item.row.subscriptionId}
+                  onSelect={() =>
+                    setSelectedSub((prev) =>
+                      prev === item.row.subscriptionId ? null : item.row.subscriptionId,
+                    )
+                  }
                 />
               );
             })}
@@ -800,6 +834,36 @@ export function StreamWorkspace(): React.ReactElement {
         )}
       </div>
       </section>
+
+      {/* The selected line's FULL, asset-class-correct Greeks strip — the streamed
+          edge of the carry seam reaching the blotter. GreeksStrip relabels the
+          rate-rho Greeks to the row's class (e.g. an equity's "rho (dividend
+          yield)", a commodity's "rho (net carry)", a crypto's "rho (funding)"),
+          reading the same server-computed rho values the row already carries. FX/
+          metal lines keep the two-rate domestic/foreign pair. No new wire field. */}
+      {selectedRow && (
+        <section
+          className={styles.detail}
+          aria-label={`full Greeks for ${selectedRow.label}`}
+        >
+          <span className={styles.detailHead}>
+            <span className={`num ${styles.detailPair}`}>
+              {selectedRow.instrument.pair.base}/{selectedRow.instrument.pair.quote}
+            </span>
+            <span className={styles.detailLabel}>{selectedRow.label}</span>
+            <button
+              type="button"
+              className={styles.detailClose}
+              onClick={() => setSelectedSub(null)}
+              aria-label="close Greeks detail"
+              title="Close"
+            >
+              ✕
+            </button>
+          </span>
+          <GreeksStrip greeks={selectedRow.greeks} assetClass={selectedRow.assetClass} />
+        </section>
+      )}
 
       <div className={styles.foot}>
         <Button variant="ghost" onClick={() => app.setPaletteOpen(true)}>

@@ -20,11 +20,21 @@ import type {
   TwoWayPrice,
 } from "../data/contract";
 import type { CelnetTransport, StreamSession } from "../data/transport";
+import type { AssetClass } from "../products/types";
+import { underlierAssetClass } from "../lib/assetUniverse";
 
 /** A live row in the blotter, derived from the multiplexed stream. */
 export interface StreamRow {
   subscriptionId: bigint;
   instrument: Instrument;
+  /**
+   * The streamed line's asset class, derived from the instrument's `underlying`
+   * arm (FX when the legacy FX instrument carries no `underlying`). It relabels the
+   * row's rate-rho Greeks to the class-correct carry identity (e.g. an equity's
+   * "rho (dividend yield)") — the streamed edge of the carry seam reaching the
+   * blotter. Pure projection of the instrument; never a fabricated class.
+   */
+  assetClass: AssetClass;
   label: string;
   conventions: Conventions;
   sequence: bigint;
@@ -176,6 +186,11 @@ export function useStreamSession(
       const row: StreamRow = {
         subscriptionId: s.subscriptionId,
         instrument: m.instrument,
+        // Class is a pure projection of the streamed instrument's underlying arm
+        // (FX when the legacy FX instrument carries no `underlying`).
+        assetClass: m.instrument.underlying
+          ? underlierAssetClass(m.instrument.underlying)
+          : "FX",
         label: m.label,
         conventions: s.conventions,
         sequence: s.sequence,

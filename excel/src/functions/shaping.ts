@@ -2891,6 +2891,50 @@ export const GREEK_ROWS: readonly { readonly label: string; readonly key: keyof 
 ];
 
 /**
+ * The two rate-rho row labels for an underlying's asset class, mirroring the GUI's
+ * `GreeksStrip.rhoGreeksFor`. The wire fields are unchanged — `rhoDom` is the
+ * discount-rate rho, `rhoFor` is the carry rho the server computes (`b = r − carry`,
+ * the carry seam's `RateSensitivities` arm losslessly projected to the flat pair) —
+ * but their MEANING differs by class, so an equity never spills "rho_for": FX/metal
+ * keep the two-rate domestic/foreign pair; equity shows rate + dividend-yield rho;
+ * commodity rate + net-carry rho; crypto rate + funding rho. Labels only — the same
+ * server-computed numbers, relabelled. An absent `underlying` (a legacy FX-only
+ * instrument) keeps the FX pair. The carry seam reaching the Excel spill.
+ */
+function rhoRowLabels(underlying: Underlying | undefined): { dom: string; for_: string } {
+  switch (underlying?.kind) {
+    case "equity":
+      return { dom: "rho_rate", for_: "rho_dividend_yield" };
+    case "commodity":
+      return { dom: "rho_rate", for_: "rho_net_carry" };
+    case "digitalAsset":
+      return { dom: "rho_rate", for_: "rho_funding" };
+    case "fx":
+    case "metal":
+    case undefined:
+    default:
+      return { dom: "rho_dom", for_: "rho_for" };
+  }
+}
+
+/**
+ * The 13-Greek rows with the two rate-rho rows relabelled to the underlying's asset
+ * class (FX/metal keep `rho_dom`/`rho_for`). FX is byte-identical to {@link GREEK_ROWS}.
+ */
+export function greekRowsFor(
+  underlying: Underlying | undefined,
+): readonly { readonly label: string; readonly key: keyof Greeks }[] {
+  const { dom, for_ } = rhoRowLabels(underlying);
+  return GREEK_ROWS.map((r) =>
+    r.key === "rhoDom"
+      ? { label: dom, key: r.key }
+      : r.key === "rhoFor"
+        ? { label: for_, key: r.key }
+        : r,
+  );
+}
+
+/**
  * Format the convention footer string stamped on every spill — the resolved
  * convention + surface_version + capture time (docs §3.4). Vendor-neutral, terse.
  */
@@ -2918,8 +2962,14 @@ export function formatGreeksSpill(
   conv: Conventions,
   surfaceVersion: bigint | undefined,
   epochNanos: bigint,
+  /**
+   * The instrument's underlying, so the rate-rho rows carry the asset-class-correct
+   * carry label (e.g. an equity's `rho_dividend_yield`). Omitted ⇒ the FX
+   * `rho_dom`/`rho_for` pair (byte-identical to the pre-carry-seam spill).
+   */
+  underlying?: Underlying,
 ): SpillMatrix {
-  const rows: SpillMatrix = GREEK_ROWS.map((r) => [r.label, greeks[r.key]]);
+  const rows: SpillMatrix = greekRowsFor(underlying).map((r) => [r.label, greeks[r.key]]);
   rows.push([conventionFooter(conv, surfaceVersion, epochNanos)]);
   return rectangular(rows);
 }
