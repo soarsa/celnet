@@ -35,8 +35,25 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Mutex;
 
+use celnet_entitlements::{Action, AssetClass, CapabilitySet};
+
 use crate::clock::Clock;
 use crate::config::identity::{Role, UserDef};
+
+/// The action bundle a desk `Trader` holds by default on **each** asset class:
+/// every action except [`Action::Administer`]. This is the slice-1 *role-derived*
+/// default; admin-editable per-user grants/denials layer on top in a later slice
+/// (`docs/plan/PERMISSIONS-ADMINISTRATION-REQUIREMENT.md` §3.3/§10).
+const TRADER_ACTIONS: [Action; 8] = [
+    Action::View,
+    Action::Price,
+    Action::QuoteRespond,
+    Action::RfqRespond,
+    Action::IoiRespond,
+    Action::Stream,
+    Action::Execute,
+    Action::Book,
+];
 
 /// Number of random bytes in a session token (256 bits).
 const TOKEN_BYTES: usize = 32;
@@ -79,6 +96,28 @@ impl AuthenticatedUser {
     #[must_use]
     pub fn is_admin(&self) -> bool {
         self.role.is_admin()
+    }
+
+    /// The effective **action capabilities** this caller holds, derived from their
+    /// role (`docs/plan/PERMISSIONS-ADMINISTRATION-REQUIREMENT.md` §3):
+    ///
+    /// * [`Role::Admin`] ⇒ [`CapabilitySet::grant_all`] (every action, both asset
+    ///   classes — including [`Action::Administer`]);
+    /// * [`Role::Trader`] ⇒ every non-admin action ([`TRADER_ACTIONS`]) on **both**
+    ///   FX options and fixed income, scoped at the resource edge by
+    ///   [`super::access::ResolvedCaller::desk_scope`].
+    ///
+    /// This is the role-derived resolution; admin-editable per-user grants/denials
+    /// (deny-wins) layer on in a later slice without changing this signature — the
+    /// returned set is already the single source the access boundary consults.
+    #[must_use]
+    pub fn capabilities(&self) -> CapabilitySet {
+        match self.role {
+            Role::Admin => CapabilitySet::grant_all(),
+            Role::Trader => CapabilitySet::empty()
+                .grant_actions(&TRADER_ACTIONS, AssetClass::FxOptions)
+                .grant_actions(&TRADER_ACTIONS, AssetClass::FixedIncome),
+        }
     }
 }
 
@@ -331,6 +370,25 @@ mod tests {
             reg.validate(&b1).is_some(),
             "bob's session survives alice's revocation"
         );
+    }
+
+    #[test]
+    fn admin_holds_grant_all_caps_trader_holds_no_admin_cap() {
+        use celnet_entitlements::{Action, AssetClass, Capability};
+        let admin = AuthenticatedUser {
+            role: Role::Admin,
+            ..alice()
+        };
+        let admin_caps = admin.capabilities();
+        assert!(admin_caps.is_grant_all());
+        assert!(admin_caps.allows(Capability::new(Action::Administer, AssetClass::FxOptions)));
+
+        // A trader can deal on both asset classes but cannot administer.
+        let trader_caps = alice().capabilities(); // alice is a Trader
+        assert!(trader_caps.allows(Capability::new(Action::Execute, AssetClass::FxOptions)));
+        assert!(trader_caps.allows(Capability::new(Action::RfqRespond, AssetClass::FixedIncome)));
+        assert!(!trader_caps.allows(Capability::new(Action::Administer, AssetClass::FxOptions)));
+        assert!(!trader_caps.allows(Capability::new(Action::Administer, AssetClass::FixedIncome)));
     }
 
     #[test]

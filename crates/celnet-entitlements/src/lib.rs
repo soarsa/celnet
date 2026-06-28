@@ -81,11 +81,13 @@
 
 #![forbid(unsafe_code)]
 
+pub mod capability;
 pub mod decision;
 pub mod filter;
 pub mod principal;
 pub mod scope;
 
+pub use capability::{Action, AssetClass, Capability, CapabilitySet};
 pub use decision::{AccessDecision, AccessMode, AccessReason};
 pub use filter::EntitlementFilter;
 pub use principal::Principal;

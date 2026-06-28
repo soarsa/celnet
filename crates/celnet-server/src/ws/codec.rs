@@ -28,10 +28,9 @@ use celnet_proto::{
     RiskBucketRequest, RiskNode, RiskPosition, RiskScope, ScenarioPoint, ScenarioRequest,
     ScenarioResponse, ShockAxis, SingleBarrier, Smile, SmilePoint, Snapshot, Solve, Strategy,
     StrategyKind, StreamAuth, StreamEnd, StreamReject, StrikeOrDelta, Subscribe, SubscriptionId,
-    Tarf, Tenor,
-    Touch, TradableToken, TwoWayPrice, Unsubscribe, Update, Vanilla, VanillaInputs, VarianceSwap,
-    VegaLadderBucket, VegaPillar, VolatilitySwap, WindowBarrier, instrument, shock_axis,
-    strike_or_delta, tenor,
+    Tarf, Tenor, Touch, TradableToken, TwoWayPrice, Unsubscribe, Update, Vanilla, VanillaInputs,
+    VarianceSwap, VegaLadderBucket, VegaPillar, VolatilitySwap, WindowBarrier, instrument,
+    shock_axis, strike_or_delta, tenor,
 };
 // The FIX-admin contract (manage the inbound FIX acceptor connections). Kept in a
 // dedicated `use` so the long alphabetized list above stays undisturbed.
