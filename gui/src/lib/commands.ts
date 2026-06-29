@@ -100,6 +100,7 @@ export const RAIL: readonly {
   { id: "stream", glyph: "≋", label: "Stream", domain: "fx-options" },
   { id: "surface", glyph: "◷", label: "Surface", domain: "fx-options" },
   { id: "risk", glyph: "⊞", label: "Risk", domain: "fx-options" },
+  { id: "excel", glyph: "▦", label: "Excel", domain: "fx-options" },
   // Fixed Income.
   { id: "rates", glyph: "≣", label: "Rates", domain: "fixed-income" },
   { id: "curve", glyph: "∿", label: "Curve", domain: "fixed-income" },
@@ -112,7 +113,6 @@ export const RAIL: readonly {
   { id: "connections", glyph: "⇄", label: "Connections", domain: "administration" },
   { id: "admin", glyph: "⚇", label: "Admin", domain: "administration" },
   { id: "permissions", glyph: "⚷", label: "Permissions", domain: "administration" },
-  { id: "excel", glyph: "▦", label: "Excel", domain: "administration" },
 ] as const;
 
 /** The product domain (tab) a workspace belongs to — looked up via {@link RAIL}. */
@@ -181,16 +181,14 @@ export function domainAccessible(domain: Domain, auth: NavAuth): boolean {
 
 /**
  * Whether a single WORKSPACE is reachable by this identity. Admin-only
- * workspaces require `isAdmin`; every other Administration-domain workspace (i.e.
- * Excel) is always reachable; FX/FI workspaces follow their domain's
- * accessibility. Used by the rail filter, the palette/⌘N command filter, and the
- * AppContext redirect so no path can strand a user on a hidden workspace.
+ * workspaces require `isAdmin`; every other workspace follows its domain's
+ * accessibility (FX/FI gate on `view`, Administration on `isAdmin`). Used by the
+ * rail filter, the palette/⌘N command filter, and the AppContext redirect so no
+ * path can strand a user on a hidden workspace.
  */
 export function workspaceAccessible(id: WorkspaceId, auth: NavAuth): boolean {
   if (ADMIN_ONLY_WORKSPACES.has(id)) return auth.isAdmin;
-  const domain = domainOf(id);
-  if (domain === "administration") return true; // non-admin-only admin domain (Excel).
-  return domainAccessible(domain, auth);
+  return domainAccessible(domainOf(id), auth);
 }
 
 /**

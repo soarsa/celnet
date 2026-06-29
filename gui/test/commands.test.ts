@@ -262,9 +262,14 @@ describe("navigation gating — domainAccessible / workspaceAccessible (slice 5c
       }
     });
 
-    it("Excel (Administration domain, not admin-only) is reachable by everyone", () => {
-      expect(workspaceAccessible("excel", navAuth({ isAdmin: false }))).toBe(true);
-      expect(workspaceAccessible("excel", navAuth({ isAdmin: true }))).toBe(true);
+    it("Excel (FX Options domain) follows fx-options view capability", () => {
+      expect(workspaceAccessible("excel", navAuth({ isAdmin: false }))).toBe(false);
+      expect(
+        workspaceAccessible(
+          "excel",
+          navAuth({ isAdmin: false, allow: new Set(["view·fx_options"]) }),
+        ),
+      ).toBe(true);
     });
 
     it("FX/FI workspaces follow their domain's view capability", () => {
@@ -299,10 +304,12 @@ describe("navigation gating — domainAccessible / workspaceAccessible (slice 5c
       expect(firstAccessibleWorkspace(admin)).toBe(RAIL[0]!.id);
     });
 
-    it("an identity with no asset view still falls back to Excel (never null in practice)", () => {
-      // No view on either asset, not admin: only Excel remains reachable.
+    it("an identity with no asset view and not admin reaches nothing (null)", () => {
+      // No view on either asset, not admin: every workspace gates on its domain
+      // (FX/FI on view, Administration on isAdmin), so nothing is reachable. The
+      // AppContext redirect treats a null target as "leave the workspace as-is".
       const none = navAuth({ isAdmin: false });
-      expect(firstAccessibleWorkspace(none)).toBe("excel");
+      expect(firstAccessibleWorkspace(none)).toBeNull();
     });
   });
 });
