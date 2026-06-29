@@ -77,7 +77,8 @@ beforeAll(async () => {
   // and `request_multi_dealer_quote` are admitted by the grant-all principal alone,
   // but booking a panel line needs the real session. This mirrors the bench/SDK fix
   // (the Rust wire-load logs in as the seed admin) and the GUI's login flow.
-  await conn.login("admin@celnet.com", "password");
+  const login = await conn.login("admin@celnet.com", "password");
+  conn.setSessionToken(login.token);
 });
 
 afterAll(() => {

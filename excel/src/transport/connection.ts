@@ -296,28 +296,6 @@ export class Connection {
   }
 
   /**
-   * `AuthService.Login` over the WS mirror: exchange email + password for a
-   * server-minted bearer `session_token`, INSTALL it on this connection (which
-   * re-authenticates the already-open stream — see {@link setSessionToken}), and
-   * return it. This is the Excel mirror of the GUI's `WsTransport.login`: a
-   * deployment gateway / a future task-pane sign-in calls it to obtain a
-   * capability-complete session so the production `Enforce` edge admits the gated
-   * trading frames (`accept_quote` ⇒ `Execute·FxOptions`; the stream `Subscribe`/
-   * `Execute` ⇒ `Stream`/`Execute·FxOptions`) — a body principal alone cannot
-   * self-grant those capabilities (finding #3). The token is a secret — returned
-   * for the caller to hold in memory, never persisted or logged here.
-   */
-  async login(email: string, password: string): Promise<string> {
-    const reply = await this.request("login", { email, password }, "login_result");
-    const token = reply["session_token"];
-    if (typeof token !== "string" || token.length === 0) {
-      throw new TransportError("login returned an empty session token");
-    }
-    this.setSessionToken(token);
-    return token;
-  }
-
-  /**
    * Build the opening `Authenticate` control frame: the bearer token (when held)
    * plus the asserted entitlement principal, defaulting — exactly like the gated
    * risk requests (`applyCommon` ⇒ `principal_or_grant_all`) — to the audited

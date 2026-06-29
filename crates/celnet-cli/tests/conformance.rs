@@ -1155,44 +1155,6 @@ async fn start_panel_edge(synthetic_lps: u32) -> (Edge, SocketAddr) {
     (edge, addr)
 }
 
-/// Log in as the default administrator over the edge's real `AuthService.Login` RPC
-/// and return the issued session token — the exact bearer a deployment threads onto a
-/// capability-gated request. The seed admin (`admin@celnet.com` / `password`) is always
-/// present (every `Edge::start*` ensures it). The token resolves to a capability-complete
-/// session against the edge's OWN registry, so an `AcceptQuote` carrying it is admitted as
-/// that user under `AccessMode::Enforce` — a body-asserted principal cannot self-grant the
-/// `Execute·FxOptions` capability (finding #3). Mirrors
-/// `celnet-client/tests/common/mod.rs::login_seed_admin`.
-async fn login_seed_admin(addr: SocketAddr) -> String {
-    use celnet_proto::LoginRequest;
-    use celnet_proto::auth_service_client::AuthServiceClient;
-
-    let mut auth = tokio::time::timeout(
-        Duration::from_secs(5),
-        AuthServiceClient::connect(format!("http://{addr}")),
-    )
-    .await
-    .expect("auth client connects in time")
-    .expect("auth client connects");
-    let resp = tokio::time::timeout(
-        Duration::from_secs(5),
-        auth.login(LoginRequest {
-            email: "admin@celnet.com".to_owned(),
-            password: "password".to_owned(),
-            correlation_id: None,
-        }),
-    )
-    .await
-    .expect("login resolves in time")
-    .expect("seed admin logs in")
-    .into_inner();
-    assert!(
-        !resp.session_token.is_empty(),
-        "Login mints a non-empty session token"
-    );
-    resp.session_token
-}
-
 #[tokio::test]
 async fn cli_rfq_panel_matches_the_sdk_panel_bit_for_bit() {
     const SYNTHETIC_LPS: u32 = 3;
@@ -1322,23 +1284,8 @@ async fn cli_rfq_panel_matches_the_sdk_panel_bit_for_bit() {
         .best_offer_lp_id
         .clone()
         .expect("a best offer exists on a ≥3-LP panel");
-    // `AcceptQuote` is capability-gated (`Execute·FxOptions`, item B §2); the panel
-    // DISPLAY above stays principal-gated (token-less, preserving its grant-all
-    // coverage), but the `--accept` invocation must authenticate with a real session
-    // token — capabilities resolve ONLY from an authenticated session, never from a
-    // body-asserted principal (finding #3). Log in as the always-seeded admin and pass
-    // `--session-token`; the token only AUTHORIZES — it must not change the booked price,
-    // which the bit-for-bit assertions below verify against the token-less SDK panel.
-    let session_token = login_seed_admin(addr).await;
     let mut accept_argv = argv.clone();
-    accept_argv.extend([
-        "--accept".into(),
-        lp.clone(),
-        "--side".into(),
-        "buy".into(),
-        "--session-token".into(),
-        session_token,
-    ]);
+    accept_argv.extend(["--accept".into(), lp.clone(), "--side".into(), "buy".into()]);
     let booked = tokio::task::spawn_blocking(move || run(&accept_argv))
         .await
         .expect("CLI accept run completes");
