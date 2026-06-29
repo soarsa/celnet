@@ -183,6 +183,8 @@ t2:
         "gui-unit::npm --prefix gui run test" \
         "excel-typecheck::npm --prefix excel run typecheck" \
         "excel-unit::npm --prefix excel run test" \
+        "gui-typecheck-e2e::npm --prefix gui run typecheck:e2e" \
+        "excel-typecheck-e2e::npm --prefix excel run typecheck:e2e" \
         "build-edge::source \"\$HOME/.cargo/env\" && cargo build -p celnet-server --example demo_edge" \
         "gui-e2e::npm --prefix gui run e2e:install && npm --prefix gui run e2e" \
         "excel-e2e::npm --prefix excel run test:e2e"
