@@ -14,22 +14,37 @@ workspace = true
 [dependencies]
 celnet-types.workspace = true
 celnet-conventions.workspace = true
-# The async edge needs the AsyncRead/AsyncWrite extension traits (`io-util`) on
-# top of the workspace tokio feature set; declared here (not relied upon via
-# cross-crate feature unification) so this crate builds standalone.
-tokio = { workspace = true, features = ["io-util"] }
+# The desk-backed gateway (`gateway` + `backend`) bridges the FIX rates dialect
+# onto the one current gRPC contract: it authenticates via `AuthService.Login`
+# and maps the quoting lifecycle onto `RfqDeskService`. The wire types + tonic
+# service clients come from `celnet-proto`; `tonic` supplies the transport
+# channel/endpoint and the gRPC `Status`.
+celnet-proto.workspace = true
+tonic.workspace = true
+# The async edge needs the AsyncRead/AsyncWrite extension traits (`io-util`), TCP
+# sockets + the multi-thread runtime + timers (the gateway/acceptor over a real
+# socket, with bounded desk-response polling) and the `#[tokio::main]` macro for
+# the gateway binary, on top of the workspace tokio feature set.
+tokio = { workspace = true, features = ["io-util", "net", "rt-multi-thread", "macros", "time"] }
+# UTC `SendingTime(52)` stamping for outbound frames (civil-date arithmetic only).
+time.workspace = true
+# The gateway binary's configuration surface (host/port/CompIDs/edge/credentials).
+clap.workspace = true
 
 [dev-dependencies]
 celnet-vanilla.workspace = true
 # golden reference tables (leaf test-data crate; not in the central dep table)
 celnet-golden.workspace = true
 proptest.workspace = true
-# The `fix_rfq_client` example is a real TCP price-taker: it needs the tokio
-# runtime, TCP sockets and the `#[tokio::main]` macro on top of the lib's
-# `io-util`. Declared as dev-deps so the library build stays minimal; feature
-# unification makes them available to the example.
-tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros"] }
 
 [[example]]
 name = "fix_rfq_client"
 path = "examples/fix_rfq_client.rs"
+
+# The desk-backed FIX↔gRPC gateway: a FIX acceptor that maps the rates quoting
+# lifecycle onto `RfqDeskService`, authenticated via `AuthService.Login`. Live
+# counterparty-venue connectivity is the deploy-tier cutover; everything else is
+# offline-complete and test-driven.
+[[bin]]
+name = "celnet-fix-gateway"
+path = "src/bin/celnet-fix-gateway.rs"

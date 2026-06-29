@@ -428,6 +428,7 @@ dependencies = [
  "celnet-core",
  "celnet-engine",
  "celnet-exotics",
+ "celnet-fix",
  "celnet-golden",
  "celnet-limits",
  "celnet-linear",
@@ -563,10 +564,14 @@ version = "0.0.0"
 dependencies = [
  "celnet-conventions",
  "celnet-golden",
+ "celnet-proto",
  "celnet-types",
  "celnet-vanilla",
+ "clap",
  "proptest",
+ "time",
  "tokio",
+ "tonic",
 ]
 
 [[package]]

@@ -60,6 +60,8 @@ pub enum MsgType {
     NewOrderMultileg,
     /// `8` — ExecutionReport.
     ExecutionReport,
+    /// `AG` — QuoteRequestReject (the desk declined / could not price an RFQ).
+    QuoteRequestReject,
 }
 
 impl MsgType {
@@ -81,6 +83,7 @@ impl MsgType {
             MsgType::NewOrderSingle => b"D",
             MsgType::NewOrderMultileg => b"AB",
             MsgType::ExecutionReport => b"8",
+            MsgType::QuoteRequestReject => b"AG",
         }
     }
 
@@ -102,6 +105,7 @@ impl MsgType {
             b"D" => MsgType::NewOrderSingle,
             b"AB" => MsgType::NewOrderMultileg,
             b"8" => MsgType::ExecutionReport,
+            b"AG" => MsgType::QuoteRequestReject,
             _ => return None,
         })
     }
@@ -520,6 +524,8 @@ pub const fn required_tags(mt: MsgType) -> &'static [u32] {
         MsgType::NewOrderSingle => &[35, 11, 54, 38],
         MsgType::NewOrderMultileg => &[35, 11, 555],
         MsgType::ExecutionReport => &[35, 37, 17, 150, 39],
+        // A reject must address the originating request (QuoteReqID).
+        MsgType::QuoteRequestReject => &[35, 131],
     }
 }
 
