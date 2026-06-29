@@ -39,7 +39,10 @@ crates: `celnet-linear` (outright forward / FX swap / NDF over the asset-class-a
 seam), `celnet-equity-vanilla` (generalized-BSM, dividend-yield carry), `celnet-commodity-vanilla`
 (futures-style undiscounted-forward pricing), `celnet-crypto-vanilla` (linear funding-carry +
 inverse coin-margined `1/S_T` payoff), and `celnet-rfq` (the multi-dealer RFQ-to-many engine:
-concurrent fan-out, ranking, deterministic tie-break, last-look). `celnet-plugin-host` is **built**: the tiered host (Tier-0
+concurrent fan-out, ranking, deterministic tie-break, last-look). The fixed-income/rates wave
+added `celnet-rates` (OIS/SOFR multi-curve bootstrap + FRA/IRS/STIR-futures/cash-bond PV +
+curve risk, now wired into the server's `RatesService` + FI dealer desk — see §"Fixed-income /
+rates subsystem"). `celnet-plugin-host` is **built**: the tiered host (Tier-0
 native registry + Tier-2 **wasmi** fuel-metered sandbox + replay harness) behind the frozen
 `celnet-plugin-api` contract — wasmtime was rejected for open RustSec advisories (see
 `docs/PLUGIN-HOST-ALT.md`).
@@ -65,10 +68,15 @@ celnet-risk-normalize →  pure leaf transform (no IO) over celnet-core/-types +
                          tier — celnet-{vanilla,equity-vanilla,commodity-vanilla,crypto-vanilla}
                          (grew cross-asset reach to canonicalize mixed-asset risk);
                          the convention/numeraire boundary the risk cube sits on
-celnet-rates          →  DEFERRED, built-but-unwired (the ADR-0008 §forward-compat `celnet-curve`):
-                         OIS/SOFR log-linear-DF Curve + bootstrap + PV01/DV01 + Brent solver, over
-                         celnet-types/-calendar only. Zero runtime in-edges today — it must enter the
-                         pricing path BEHIND the carry seam (`Carry::forward/discount`) when wired.
+celnet-rates          →  WIRED fixed-income/rates leaf: OIS/SOFR multi-curve bootstrap (log-linear-DF
+                         `Curve`) + FRA / IRS (`vanilla_swap`) / STIR-futures / cash-bond PV +
+                         par-rate / PV01 / DV01 + a key-rate-DV01 ladder + Brent solver, over
+                         celnet-types/-calendar only (no IO). **Now consumed by `celnet-server`**
+                         (`rates_pricing.rs` → `price_ois`/`par_rate_for`/`build_quotes` call
+                         `bootstrap_ois`/`ois_par_rate`/`ois_risk`), exposed via the `RatesService`
+                         RPCs (`PriceRates`/`AggregateRatesRisk`/`BookRatesPosition`/`ListRatesPositions`)
+                         and the FI dealer-quoting desk (`RfqDeskEdge` + `NotificationService`). See
+                         §"Fixed-income / rates subsystem"; convergence direction = ADR-0010.
 celnet-risk-cube      →  single-node OLAP cube over celnet-risk-normalize (+ -vanilla
                          for bump-and-revalue, -core, -types); no IO/market-data
 celnet-risk-fleet     →  cross-shard risk fan-out ALGEBRA over celnet-risk-cube + celnet-router
@@ -600,8 +608,18 @@ not positions) — no dead decoder.
   numeraire via `NodeAggregate::numeraire_view(SpotResolver)` (per-pillar for the vega ladder), and
   `check_scope` for `LimitStatus`. Wired into both the gRPC server (`RiskServiceServer`, added in
   `Edge::start_on`) and the WS mirror (four dispatch arms in `ws::handle_unary` over one `RiskEdge`), so
-  GUI/Excel reach the identical path. Honest scope: only **vanilla** fills become risk facts (an exotic
-  has no canonical-vanilla leaf — not recorded, never faked); a `LimitStatus` request scoped on
+  GUI/Excel reach the identical path. Honest scope (reconciled to built reality): the **RFS
+  click-to-trade auto-book** path (`record_booked_position`) and the wire-`RiskPosition` conversion
+  (`risk::convert::position_to_fact`, `exotic: None`) auto-record **vanilla FX** fills only. The
+  **cube/fleet aggregation itself is NOT vanilla-only**: `celnet_risk_cube::FactMeasure` carries
+  `exotic: Option<ExoticLeg>` and is keyed on a cross-asset `Underlying`, so an **exotic** leg
+  (`PositionStore::upsert_exotic` → real `ExoticLeg` Greeks as the additive carrier + exotic
+  bump-and-revalue for non-additive VaR/curvature) and a **cross-asset vanilla** leg both roll up in
+  the firm node and through `celnet-risk-fleet::fan_out_aggregate` (proven exotic-only by
+  `celnet-parity/tests/exotic_risk_cube.rs::exotic_only_fan_out_reconciles`). The remaining gap is the
+  **automatic ingestion of an exotic/cross-asset fill into the live store** (no production RPC/RFS path
+  wires `upsert_exotic` yet — an exotic must be staged explicitly); the algebra and data model already
+  cover it, never faked. A `LimitStatus` request scoped on
   `CCY_PAIR` is **rejected loudly** (a bare `u64` `RiskScope.value` cannot reconstruct the
   `base`/`quote` pair the limit tree keys on — `invalid_argument`, never a silent mis-scope); and the
   cross-pair / firm non-additive VaR/ES uses notional-scaled positions to express P&L in the common
@@ -785,6 +803,109 @@ behind the server edge; gated by `celnet-server/tests/multi_dealer.rs` + `tests/
 SDK `Client::request_multi_dealer_quote` → `MultiDealerRfq` (+ the `multi_dealer_trade`
 example), CLI `rfq`, Excel `CELNET.RFQ` (ranked panel spill; the task-pane accept books by
 `(quote_id, lp_id)`), GUI `DealerPanel`.
+
+---
+
+## Fixed-income / rates subsystem — `celnet-rates` + the rates server services
+
+The fixed-income/rates wave built a **multi-curve term-structure** leaf and **wired it into the
+server**, retiring the earlier "deferred / built-but-unwired" status. `celnet-rates` depends only on
+`celnet-types` + `celnet-calendar` (no IO). The convergence direction onto the carry seam is recorded
+in **ADR-0010** (a *design direction*, not yet implemented — the flat-carry FX path stays
+authoritative; `celnet-rates` stands side-by-side with the carry core today).
+
+### `celnet-rates` public surface (verified against the graph)
+
+- **Curve / term structure** (`curve.rs`) — `Curve` (log-linear-DF interpolation), `Node`,
+  `Interpolation`; `bootstrap_ois`, `ln_df`, `discount_factor`, `zero_rate`, `segment_forward`. A
+  bootstrapped discount/forward term structure (`Carry` is its degenerate flat single-point case — the
+  ADR-0010 insight). Year-end turn adjustments live in `turns.rs` (`TurnJump`); the root-finder in
+  `solver.rs` (Brent).
+- **Bootstrap** (`bootstrap.rs`) — `OisQuote`, `BootstrapError`, `bootstrap_ois` (curve from OIS quotes).
+- **Linear products** — FRA (`fra.rs`: `Fra`/`FraRisk`, `fra_pv`/`fra_pv01`/`fra_par_rate`/`fra_risk`);
+  OIS (`ois.rs`: `OisSchedule`, `ois_pv`/`ois_annuity`/`ois_par_rate`); IRS / vanilla swap
+  (`vanilla_swap.rs`: `VanillaSwap`/`SwapLeg`/`SwapRisk`/`PaymentFrequency`,
+  `fixed_annuity`/`swap_pv`/`swap_par_rate`); STIR futures (`futures.rs`: `StirFuture`/`Deliverable`,
+  `stir_futures_price`/`stir_futures_rate`/`stir_forward_rate`); cash bonds (`bond.rs`: `CashBond`,
+  `bond_pv`/`price_at_yield`/`yield_to_maturity`/`z_spread`/`g_spread`/`asset_swap_spread`).
+- **Curve risk** (`risk.rs`) — `OisRisk`, `ois_risk`: parallel DV01 **and** a key-rate-DV01 ladder by
+  finite difference (re-bootstrap-and-bump).
+
+### Server wiring (the rates services + the FI dealer desk)
+
+- **`celnet-server::rates_pricing`** consumes the leaf: `price_ois` / `par_rate_for` / `build_quotes`
+  call `bootstrap_ois` / `ois_par_rate` / `ois_risk` (11 CALLS edges from `rates_pricing.rs` into
+  `celnet-rates`). This is the live in-edge that closes the old "zero runtime in-edges" status.
+- **Wire (`celnet-proto`):** `RatesService` RPCs — `PriceRates`, `AggregateRatesRisk`,
+  `BookRatesPosition`, `ListRatesPositions` — with the `RatesInstrument` / `OisInstrument` / `CurveSet`
+  message arms (`RiskService.AggregateRatesRisk` is, per ADR-0010, a typed projection over the same
+  cube, not a permanent silo). The rates book store is `celnet-server::services::rates_book`
+  (`RatesPositionStore`); the rates-risk fact path is `services::rates_risk` (with its own
+  `RatesFleetReducer` in `celnet-risk-fleet::rates`).
+- **FI dealer-quoting desk + `NotificationService`:** the dealer desk lives in
+  `celnet-server::services::desk` (`RfqDeskEdge`). `NotificationService.StreamNotifications` (proto)
+  is implemented by `RfqDeskEdge::stream_notifications` with a WS mirror
+  (`ws::mod::handle_subscribe_notifications`) and GUI/mock clients (`streamNotifications`) — wired
+  end-to-end, not proto-only. Desk actions are capability-gated (see §"Permissions / administration").
+
+## Permissions / administration — the action-capability kernel (`celnet-entitlements::capability`)
+
+A just-merged permissions/administration program adds a **capability kernel** on top of the
+pre-aggregation entitlement predicate. It lives in `celnet-entitlements::capability` (pure, no IO).
+
+- **Action × AssetClass × desk, deny-wins.** `Action` is a 9-variant enum (`View`, `Price`,
+  `QuoteRespond`, `RfqRespond`, `IoiRespond`, `Stream`, `Execute`, `Book`, `Administer`); `AssetClass`
+  (with `label`/`from_label`) is the asset axis; the desk dimension comes from
+  `celnet-risk-cube::DimensionId::Desk`. A `Capability` (`Capability::new`, `action` field) is granted
+  or denied in a `CapabilitySet` (`grant`/`deny`). The decision is **deny-wins**:
+  `deny_wins_over_grant` / `deny_wins_over_grant_all` (`capability.rs`) and the information-barrier
+  variant `deny_wins_over_grant_information_barrier` (`lib.rs`) — a `deny(Rule::on(Book,b))` overlay
+  excises that book's facts even from a firm-wide `grant_all`.
+- **Per-user capability overlay — persisted + over the wire.** Config: `UserDef.capability_overlay`
+  (`celnet-server::config::identity`) parses per-user grants/denies. Session: snapshotted via
+  `sessions::from_user_snapshots_capability_overlay` (the overlay widens/narrows the role bundle).
+  Persistence: `AuthEdge::persist_and_commit`, projected with `overlay_to_wire`/`user_to_wire`. Wire:
+  the proto `GetUserCapabilities` / `SetUserCapabilities` RPCs.
+- **GUI capability-matrix admin editor.** The GUI consumes `GetUserCapabilities`/`SetUserCapabilities`
+  to render and edit the per-user Action × AssetClass × desk matrix (API-first — the same contract the
+  server enforces).
+- **FI-desk authz gating.** `BookRatesPosition` requires the `Book · FixedIncome` capability:
+  `RiskEdge::book_rates_position` is gated (test
+  `risk::mod::book_rates_position_requires_book_capability` — an unauthenticated `grant_all` body
+  principal is **denied under Enforce**, the production posture).
+
+> The pre-aggregation `EntitlementFilter` predicate (the §"Phase-2 `celnet-entitlements`" section above)
+> is the dimension-subtree pruning layer; the capability kernel here is the orthogonal *which-Action-on-
+> which-AssetClass-at-which-desk* gate. Both are deny-wins and both compose **upstream** of any roll-up.
+
+## Streamed carry seam (item A) — `celnet-server` per-underlying fan-out + the streamed `RateSensitivities` arm
+
+- **Per-underlying fan-out, deterministically seeded.** `celnet-server::services::pricefanout`:
+  `underlying_seed(&Underlying) -> u64` derives a deterministic seed from an `Underlying` identity
+  key; `producer_loop` keeps a per-`Underlying` `PairProducer` (its own `BroadcastRing<PriceTick>`),
+  so each distinct underlying fans out independently. FX is byte-identical to the prior pair-seed
+  (`underlying_seed_fx_is_byte_identical_to_pair_seed`).
+- **`RateSensitivities` on the streamed Snapshot/Update.** `pricer::streamed_rate_sensitivities`
+  emits the asset-class-correct arm — `RateSensitivities::Fx { rho_dom, rho_for }` for an FX
+  underlying, `RateSensitivities::Carry { discount_rho, carry_rho }` for a cross-asset underlying —
+  and `services::stream::streamed_wire_greeks` threads it onto the `greeks` of every
+  `ServerStreamMessage::Snapshot` / `Update` (`cross_asset_subscribe_streams_the_carry_arm_through_the_session`).
+
+## Carry → sensitivity mapper (item F) — single-source in `celnet-types`
+
+The carry↔flat-rho bijection and the variant→arm selector are single-sourced in **`celnet-types`**
+(where `Carry` and `RateSensitivities` are defined — orphan-rule placement, not `celnet-core`):
+
+- **`celnet_types::RateSensitivities`** — enum with `Fx { rho_dom, rho_for }` and
+  `Carry { discount_rho, carry_rho }`. `RateSensitivities::flat_rhos(&self) -> (f64, f64)` projects
+  BOTH arms to a common flat `(rho_dom_eff, rho_for_eff)` pair: `Fx` passes through; `Carry` returns
+  `(discount_rho + carry_rho, -carry_rho)`. A proto mirror (`celnet-proto::helpers`) carries the same
+  method on the decoded type.
+- **`celnet_types::Carry::rate_sensitivities(&self, a, b) -> RateSensitivities`** — the variant→arm
+  selector: a `Carry::FxRates` carry tags the scalar Greek pair `(a,b)` as `RateSensitivities::Fx`, a
+  `Carry::CostOfCarry` carry tags it as `RateSensitivities::Carry`. Adding a third `Carry` arm is a
+  one-edit change here. This collapsed the previously-duplicated server flatten/wrap sites; FX is
+  byte-identical (parity cross-asset corpus).
 
 ---
 
