@@ -139,6 +139,34 @@ async fn start_ready_edge() -> (Edge, SocketAddr) {
     (edge, addr)
 }
 
+/// Log in as the always-seeded admin over the real `AuthService.Login` RPC and
+/// return the session token. A `stream` subscribe is gated on the `Stream·FxOptions`
+/// capability, which the server resolves ONLY from an authenticated session (a body
+/// principal cannot self-grant it); the seed admin (`admin@celnet.com`/`password`),
+/// ensured by every `Edge::start`, holds it. The `risk`-read subcommands stay
+/// principal-gated (`ReadAny`) and need no token.
+async fn login_seed_admin(addr: SocketAddr) -> String {
+    use celnet_proto::LoginRequest;
+    use celnet_proto::auth_service_client::AuthServiceClient;
+    let mut auth = AuthServiceClient::connect(format!("http://{addr}"))
+        .await
+        .expect("auth client connects");
+    let resp = auth
+        .login(LoginRequest {
+            email: "admin@celnet.com".to_owned(),
+            password: "password".to_owned(),
+            correlation_id: None,
+        })
+        .await
+        .expect("seed admin logs in")
+        .into_inner();
+    assert!(
+        !resp.session_token.is_empty(),
+        "Login mints a non-empty session token"
+    );
+    resp.session_token
+}
+
 /// Parse the `delta_USD  <value>` line out of the CLI's `risk aggregate` report.
 fn parse_field(stdout: &str, label: &str) -> Option<f64> {
     stdout.lines().find_map(|line| {
@@ -403,6 +431,9 @@ async fn cli_stream_prints_sequenced_ticks_and_exits() {
     tokio::time::timeout(TEST_DEADLINE, async {
         let (edge, addr) = start_ready_edge().await;
         let endpoint = format!("http://{addr}");
+        // The stream is capability-gated (`Stream·FxOptions`); authenticate with a
+        // real Login session token (the `risk`-read subcommands above stay token-less).
+        let token = login_seed_admin(addr).await;
 
         let exe = env!("CARGO_BIN_EXE_celnet");
         let output = run_cli(
@@ -419,6 +450,8 @@ async fn cli_stream_prints_sequenced_ticks_and_exits() {
                 "1.12",
                 "--ticks",
                 "2",
+                "--session-token",
+                &token,
             ],
         );
         assert!(
