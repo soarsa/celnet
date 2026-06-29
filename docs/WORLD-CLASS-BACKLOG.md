@@ -417,7 +417,10 @@ independently-landable feature. Format matches this file: dedup-key, evidence, a
   defect; the other 8 a11y views + the slice-4/5 e2e specs pass).
   Evidence: `gui/e2e/a11y.e2e.ts` "Book view"; `gui/e2e/helpers.ts` `gotoWorkspace`;
   `gui/src/lib/commands.ts` (Book ∈ fixed-income domain). Acceptance: `gotoWorkspace` switches
-  domain before clicking the rail; the "Book view" a11y case passes. **OPEN.**
+  domain before clicking the rail; the "Book view" a11y case passes. **DONE** (resolved-by-merge,
+  2026-06-29): `gui/e2e/helpers.ts` now has a `RAIL_DOMAIN` map (`book`→"Fixed Income") and
+  `gotoWorkspace` selects that tab before clicking the rail — the concurrent fixed-income
+  session added it. No code change needed; confirm in the batched e2e run.
 - **[P2/L] `fi-fix-quoting-wiring`** — wire the FIX transport for FI / dealer-quoting (the live
   counterparty venue is a deploy-tier dependency). Original integration item.
   Evidence: FI dealer-quoting desk shipped (`25293f8`, see memory `fi-dealer-quoting-shipped`)
