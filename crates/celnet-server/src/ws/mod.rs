@@ -998,6 +998,22 @@ async fn handle_unary(
                 codec::set_user_capabilities_response_to_json
             )
         }
+        "get_role_capabilities" => {
+            let req = decode!(codec::get_role_capabilities_request_from_json(o));
+            call!(
+                services.auth.get_role_capabilities(Request::new(req)),
+                "role_capabilities",
+                codec::get_role_capabilities_response_to_json
+            )
+        }
+        "set_role_capabilities" => {
+            let req = decode!(codec::set_role_capabilities_request_from_json(o));
+            call!(
+                services.auth.set_role_capabilities(Request::new(req)),
+                "role_capabilities_set",
+                codec::set_role_capabilities_response_to_json
+            )
+        }
         "list_desks" => {
             let req = decode!(codec::list_desks_request_from_json(o));
             call!(

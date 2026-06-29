@@ -36,10 +36,12 @@ use celnet_proto::auth_service_server::AuthService;
 use celnet_proto::{
     CapabilityDesc, CreateDeskRequest, CreateDeskResponse, CreateUserRequest, CreateUserResponse,
     DeleteDeskRequest, DeleteDeskResponse, DeleteUserRequest, DeleteUserResponse, DeskDesc,
-    GetUserCapabilitiesRequest, GetUserCapabilitiesResponse, ListDesksRequest, ListDesksResponse,
-    ListUsersRequest, ListUsersResponse, LoginRequest, LoginResponse, LogoutRequest,
-    LogoutResponse, ResetPasswordRequest, ResetPasswordResponse, SetUserCapabilitiesRequest,
-    SetUserCapabilitiesResponse, UpdateUserRequest, UpdateUserResponse, UserDesc, UserRole,
+    GetRoleCapabilitiesRequest, GetRoleCapabilitiesResponse, GetUserCapabilitiesRequest,
+    GetUserCapabilitiesResponse, ListDesksRequest, ListDesksResponse, ListUsersRequest,
+    ListUsersResponse, LoginRequest, LoginResponse, LogoutRequest, LogoutResponse,
+    ResetPasswordRequest, ResetPasswordResponse, SetRoleCapabilitiesRequest,
+    SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest, SetUserCapabilitiesResponse,
+    UpdateUserRequest, UpdateUserResponse, UserDesc, UserRole,
 };
 use tonic::{Request, Response, Status};
 
@@ -249,9 +251,15 @@ impl AuthService for AuthEdge {
         };
         self.throttle.record_success(&email_key);
 
+        // Snapshot the user's resolved role base (the admin-editable per-role bundle)
+        // into the session, so a narrowed/widened bundle is reflected from this login.
+        let role_base = self.lock().role_base(user.role);
         let issued = self
             .sessions
-            .issue(AuthenticatedUser::from_user(&user))
+            .issue(AuthenticatedUser::from_user_with_role_base(
+                &user,
+                role_base.clone(),
+            ))
             .map_err(|e| Status::internal(format!("issue session: {e}")))?;
         Ok(Response::new(LoginResponse {
             session_token: issued.token,
@@ -259,7 +267,7 @@ impl AuthService for AuthEdge {
             expires_nanos: issued.expires_nanos,
             // The caller's own resolved set, so a client can gate its own
             // affordances without an admin-only capabilities round-trip.
-            capabilities: effective_caps(&user),
+            capabilities: effective_caps(&user, &role_base),
             correlation_id: req.correlation_id,
         }))
     }
@@ -501,15 +509,19 @@ impl AuthService for AuthEdge {
         let req = request.into_inner();
         self.require_admin(&req.session_token)?;
 
-        let user = self
-            .lock()
-            .user(&req.id)
-            .cloned()
-            .ok_or_else(|| Status::not_found(format!("no user with id `{}`", req.id)))?;
+        let (user, role_base) = {
+            let guard = self.lock();
+            let user = guard
+                .user(&req.id)
+                .cloned()
+                .ok_or_else(|| Status::not_found(format!("no user with id `{}`", req.id)))?;
+            let role_base = guard.role_base(user.role);
+            (user, role_base)
+        };
         Ok(Response::new(GetUserCapabilitiesResponse {
             grants: overlay_to_wire(&user.capability_grants),
             denies: overlay_to_wire(&user.capability_denies),
-            effective: effective_caps(&user),
+            effective: effective_caps(&user, &role_base),
             correlation_id: req.correlation_id,
         }))
     }
@@ -547,6 +559,9 @@ impl AuthService for AuthEdge {
             capability_denies: denies.iter().copied().map(PermissionGrant::of).collect(),
         };
 
+        // The per-user RPC never edits the role bundle, so the user's role base is
+        // unchanged; resolve it for the read-back before committing.
+        let role_base = guard.role_base(updated.role);
         let mut next = guard.clone();
         if let Some(slot) = next.users.iter_mut().find(|u| u.id == updated.id) {
             *slot = updated.clone();
@@ -561,7 +576,84 @@ impl AuthService for AuthEdge {
         Ok(Response::new(SetUserCapabilitiesResponse {
             grants: overlay_to_wire(&updated.capability_grants),
             denies: overlay_to_wire(&updated.capability_denies),
-            effective: effective_caps(&updated),
+            effective: effective_caps(&updated, &role_base),
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn get_role_capabilities(
+        &self,
+        request: Request<GetRoleCapabilitiesRequest>,
+    ) -> Result<Response<GetRoleCapabilitiesResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_admin(&req.session_token)?;
+
+        let role = role_from_wire(req.role)?;
+        // Admin is grant-all and immutable — report the full surface, never a stored
+        // bundle (the Admin role never has one).
+        let caps = if role.is_admin() {
+            grant_all_wire()
+        } else {
+            self.lock()
+                .role_base(role)
+                .iter()
+                .copied()
+                .map(cap_to_wire)
+                .collect()
+        };
+        Ok(Response::new(GetRoleCapabilitiesResponse {
+            capabilities: caps,
+            correlation_id: req.correlation_id,
+        }))
+    }
+
+    async fn set_role_capabilities(
+        &self,
+        request: Request<SetRoleCapabilitiesRequest>,
+    ) -> Result<Response<SetRoleCapabilitiesResponse>, Status> {
+        let _guard = self.gate.enter();
+        self.require_ready()?;
+        let req = request.into_inner();
+        self.require_admin(&req.session_token)?;
+
+        let role = role_from_wire(req.role)?;
+        // The Admin role is grant-all and can never be narrowed — narrowing it would
+        // risk an unadministrable edge, so the bundle is immutable.
+        if role.is_admin() {
+            return Err(Status::failed_precondition(
+                "the Admin role is grant-all and cannot be narrowed",
+            ));
+        }
+        // Parse + validate the whole bundle up front: an unknown action/asset label is
+        // rejected (`invalid_argument`), never silently dropped — the bundle that lands
+        // is exactly the one the admin sent or no change at all.
+        let caps = caps_from_wire(&req.capabilities)?;
+
+        let mut guard = self.lock();
+        let mut next = guard.clone();
+        next.role_bundles.insert(
+            role,
+            caps.iter().copied().map(PermissionGrant::of).collect(),
+        );
+        // Identify every holder of this role BEFORE committing, so the change can be
+        // forced to take effect by revoking their live sessions (next login re-derives
+        // the new base).
+        let holders: Vec<String> = guard
+            .users
+            .iter()
+            .filter(|u| u.role == role)
+            .map(|u| u.id.clone())
+            .collect();
+        self.persist_and_commit(&mut guard, next)?;
+        drop(guard);
+
+        for id in holders {
+            self.sessions.revoke_user(&id);
+        }
+        Ok(Response::new(SetRoleCapabilitiesResponse {
+            capabilities: caps.iter().copied().map(cap_to_wire).collect(),
             correlation_id: req.correlation_id,
         }))
     }
@@ -717,8 +809,8 @@ fn caps_from_wire(descs: &[CapabilityDesc]) -> Result<Vec<Capability>, Status> {
 /// enumerated over every action × asset. Built through the *same* resolution the
 /// access boundary uses ([`AuthenticatedUser::capabilities`]), so the read-back can
 /// never diverge from the live decision.
-fn effective_caps(user: &UserDef) -> Vec<CapabilityDesc> {
-    let set = AuthenticatedUser::from_user(user).capabilities();
+fn effective_caps(user: &UserDef, role_base: &[Capability]) -> Vec<CapabilityDesc> {
+    let set = AuthenticatedUser::from_user_with_role_base(user, role_base.to_vec()).capabilities();
     let mut out = Vec::new();
     for action in Action::ALL {
         for asset in AssetClass::ALL {
@@ -726,6 +818,19 @@ fn effective_caps(user: &UserDef) -> Vec<CapabilityDesc> {
             if set.allows(cap) {
                 out.push(cap_to_wire(cap));
             }
+        }
+    }
+    out
+}
+
+/// The full action × asset surface as wire capabilities — the grant-all set the
+/// immutable [`Role::Admin`] role confers. Used to report the Admin role bundle
+/// (which is never stored and never narrowable).
+fn grant_all_wire() -> Vec<CapabilityDesc> {
+    let mut out = Vec::new();
+    for action in Action::ALL {
+        for asset in AssetClass::ALL {
+            out.push(cap_to_wire(Capability::new(action, asset)));
         }
     }
     out
@@ -1223,6 +1328,139 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(missing.code(), tonic::Code::NotFound);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn set_role_capabilities_narrows_trader_base_persists_and_revokes() {
+        let (edge, path, sessions) = edge("set-role-caps");
+        let admin = login(&edge, "admin@celnet.com", "password").await.unwrap();
+        let (_trader_id, trader_token) =
+            make_trader(&edge, &admin.session_token, "rb@celnet.com").await;
+
+        // Baseline: the default trader role bundle includes book·fixed_income.
+        let base = edge
+            .get_role_capabilities(Request::new(GetRoleCapabilitiesRequest {
+                session_token: admin.session_token.clone(),
+                role: UserRole::Trader as i32,
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(has_cap(&base.capabilities, "book", "fixed_income"));
+        assert!(has_cap(&base.capabilities, "execute", "fx_options"));
+
+        // Narrow the bundle: drop book·fixed_income. The trader has a live session —
+        // setting the role bundle must revoke it (next login re-derives the new base).
+        assert!(sessions.validate(&trader_token).is_some());
+        let narrowed: Vec<CapabilityDesc> = base
+            .capabilities
+            .iter()
+            .filter(|c| !(c.action == "book" && c.asset == "fixed_income"))
+            .cloned()
+            .collect();
+        let set = edge
+            .set_role_capabilities(Request::new(SetRoleCapabilitiesRequest {
+                session_token: admin.session_token.clone(),
+                role: UserRole::Trader as i32,
+                capabilities: narrowed,
+                correlation_id: Some(9),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(set.correlation_id, Some(9));
+        assert!(!has_cap(&set.capabilities, "book", "fixed_income"));
+        assert!(sessions.validate(&trader_token).is_none());
+
+        // A trader re-logging in now lacks book·fixed_income in their effective set.
+        let relogged = login(&edge, "rb@celnet.com", "trader-pw-123")
+            .await
+            .unwrap();
+        assert!(!has_cap(&relogged.capabilities, "book", "fixed_income"));
+        assert!(has_cap(&relogged.capabilities, "execute", "fx_options"));
+
+        // Persisted: the narrowed bundle survives a reload from disk.
+        let reloaded = IdentityStore::load(&path).unwrap();
+        let stored = reloaded.role_base(Role::Trader);
+        assert!(!stored.contains(&Capability::new(Action::Book, AssetClass::FixedIncome)));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn admin_role_bundle_is_grant_all_and_set_is_rejected() {
+        let (edge, path, _s) = edge("admin-role-caps");
+        let admin = login(&edge, "admin@celnet.com", "password").await.unwrap();
+
+        // Get for Admin reports the full grant-all surface.
+        let got = edge
+            .get_role_capabilities(Request::new(GetRoleCapabilitiesRequest {
+                session_token: admin.session_token.clone(),
+                role: UserRole::Admin as i32,
+                correlation_id: None,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(
+            got.capabilities.len(),
+            Action::ALL.len() * AssetClass::ALL.len()
+        );
+
+        // Set for Admin is rejected — the role is immutable, never narrowable.
+        let err = edge
+            .set_role_capabilities(Request::new(SetRoleCapabilitiesRequest {
+                session_token: admin.session_token.clone(),
+                role: UserRole::Admin as i32,
+                capabilities: vec![cap("view", "fx_options")],
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn role_capability_rpcs_require_admin_and_reject_unknown_label() {
+        let (edge, path, _s) = edge("role-caps-authz");
+        let admin = login(&edge, "admin@celnet.com", "password").await.unwrap();
+        let (_id, trader_token) =
+            make_trader(&edge, &admin.session_token, "rauthz@celnet.com").await;
+
+        // A trader's token cannot read or write a role bundle.
+        let get_denied = edge
+            .get_role_capabilities(Request::new(GetRoleCapabilitiesRequest {
+                session_token: trader_token.clone(),
+                role: UserRole::Trader as i32,
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(get_denied.code(), tonic::Code::PermissionDenied);
+        let set_denied = edge
+            .set_role_capabilities(Request::new(SetRoleCapabilitiesRequest {
+                session_token: trader_token,
+                role: UserRole::Trader as i32,
+                capabilities: vec![],
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(set_denied.code(), tonic::Code::PermissionDenied);
+
+        // An admin sending an unknown label is rejected (invalid_argument).
+        let bad = edge
+            .set_role_capabilities(Request::new(SetRoleCapabilitiesRequest {
+                session_token: admin.session_token,
+                role: UserRole::Trader as i32,
+                capabilities: vec![cap("teleport", "fx_options")],
+                correlation_id: None,
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(bad.code(), tonic::Code::InvalidArgument);
         let _ = std::fs::remove_file(&path);
     }
 

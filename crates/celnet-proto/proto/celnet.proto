@@ -3609,6 +3609,49 @@ message SetUserCapabilitiesResponse {
   optional uint64 correlation_id = 4;
 }
 
+// Read a role's capability bundle — the base authority the role confers before
+// any per-user overlay (admin only).
+message GetRoleCapabilitiesRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The role whose bundle is read.
+  UserRole role = 2;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 3;
+}
+// A role's resolved capability bundle.
+message GetRoleCapabilitiesResponse {
+  // The capabilities the role confers as its base. For ADMIN this is the full
+  // action × asset surface (grant-all, immutable); for a non-admin role it is the
+  // admin-editable bundle, defaulting to every action but `administer` on both
+  // asset classes when none has been stored.
+  repeated CapabilityDesc capabilities = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
+// Replace a role's capability bundle (admin only). `capabilities` is the full new
+// bundle (not a delta); the change persists and revokes the live sessions of every
+// user holding the role so it takes effect on their next login. The ADMIN role is
+// grant-all and immutable — setting it is rejected with `failed_precondition`.
+message SetRoleCapabilitiesRequest {
+  // The caller's bearer token (must resolve to an admin).
+  string session_token = 1;
+  // The non-admin role whose bundle is replaced.
+  UserRole role = 2;
+  // The new base capability bundle for the role.
+  repeated CapabilityDesc capabilities = 3;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 4;
+}
+// The role's bundle after the update (an admin read-back).
+message SetRoleCapabilitiesResponse {
+  // The capabilities now in effect as the role's base.
+  repeated CapabilityDesc capabilities = 1;
+  // Echoed request correlation id.
+  optional uint64 correlation_id = 2;
+}
+
 // Server-enforced authentication + user/desk administration. Login mints a bearer
 // token the server validates on every subsequent RPC; administrative RPCs require
 // the resolved identity to be an admin. Accounts persist to disk and a default
@@ -3632,6 +3675,10 @@ service AuthService {
   rpc GetUserCapabilities(GetUserCapabilitiesRequest) returns (GetUserCapabilitiesResponse);
   // Replace a user's capability overlay (admin only).
   rpc SetUserCapabilities(SetUserCapabilitiesRequest) returns (SetUserCapabilitiesResponse);
+  // Read a role's capability bundle — its base authority (admin only).
+  rpc GetRoleCapabilities(GetRoleCapabilitiesRequest) returns (GetRoleCapabilitiesResponse);
+  // Replace a non-admin role's capability bundle (admin only).
+  rpc SetRoleCapabilities(SetRoleCapabilitiesRequest) returns (SetRoleCapabilitiesResponse);
   // List all desks (admin only).
   rpc ListDesks(ListDesksRequest) returns (ListDesksResponse);
   // Create a desk (admin only).

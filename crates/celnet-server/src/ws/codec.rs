@@ -45,10 +45,12 @@ use celnet_proto::{
 use celnet_proto::{
     CapabilityDesc, CreateDeskRequest, CreateDeskResponse, CreateUserRequest, CreateUserResponse,
     DeleteDeskRequest, DeleteDeskResponse, DeleteUserRequest, DeleteUserResponse, DeskDesc,
-    GetUserCapabilitiesRequest, GetUserCapabilitiesResponse, ListDesksRequest, ListDesksResponse,
-    ListUsersRequest, ListUsersResponse, LoginRequest, LoginResponse, LogoutRequest,
-    LogoutResponse, ResetPasswordRequest, ResetPasswordResponse, SetUserCapabilitiesRequest,
-    SetUserCapabilitiesResponse, UpdateUserRequest, UpdateUserResponse, UserDesc,
+    GetRoleCapabilitiesRequest, GetRoleCapabilitiesResponse, GetUserCapabilitiesRequest,
+    GetUserCapabilitiesResponse, ListDesksRequest, ListDesksResponse, ListUsersRequest,
+    ListUsersResponse, LoginRequest, LoginResponse, LogoutRequest, LogoutResponse,
+    ResetPasswordRequest, ResetPasswordResponse, SetRoleCapabilitiesRequest,
+    SetRoleCapabilitiesResponse, SetUserCapabilitiesRequest, SetUserCapabilitiesResponse,
+    UpdateUserRequest, UpdateUserResponse, UserDesc,
 };
 // Linear-rates (fixed-income) contract — the WS mirror of PricingService::PriceRates.
 use celnet_proto::{
@@ -2845,6 +2847,41 @@ pub(super) fn set_user_capabilities_response_to_json(r: &SetUserCapabilitiesResp
         "grants": capability_list_to_json(&r.grants),
         "denies": capability_list_to_json(&r.denies),
         "effective": capability_list_to_json(&r.effective),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn get_role_capabilities_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<GetRoleCapabilitiesRequest> {
+    Ok(GetRoleCapabilitiesRequest {
+        session_token: string_field(o, "session_token")?,
+        role: enum_or_zero(o, "role"),
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn get_role_capabilities_response_to_json(r: &GetRoleCapabilitiesResponse) -> Value {
+    json!({
+        "capabilities": capability_list_to_json(&r.capabilities),
+        "correlation_id": r.correlation_id,
+    })
+}
+
+pub(super) fn set_role_capabilities_request_from_json(
+    o: &Map<String, Value>,
+) -> Result<SetRoleCapabilitiesRequest> {
+    Ok(SetRoleCapabilitiesRequest {
+        session_token: string_field(o, "session_token")?,
+        role: enum_or_zero(o, "role"),
+        capabilities: capability_list_from_json(o, "capabilities")?,
+        correlation_id: opt_u64(o, "correlation_id"),
+    })
+}
+
+pub(super) fn set_role_capabilities_response_to_json(r: &SetRoleCapabilitiesResponse) -> Value {
+    json!({
+        "capabilities": capability_list_to_json(&r.capabilities),
         "correlation_id": r.correlation_id,
     })
 }

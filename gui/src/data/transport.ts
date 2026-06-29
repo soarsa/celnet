@@ -31,6 +31,8 @@ import type {
   CreateUserInput,
   DeskDesc,
   UserCapabilities,
+  RoleCapabilities,
+  UserRole,
   DrillRiskRequest,
   DrillRiskResponse,
   Executed,
@@ -427,6 +429,24 @@ export interface CelnetTransport {
     grants: readonly Capability[],
     denies: readonly Capability[],
   ): Promise<UserCapabilities>;
+
+  /**
+   * AuthService.GetRoleCapabilities (admin) — read a role's capability bundle (its
+   * base authority before any per-user overlay). `ADMIN` resolves to the full
+   * grant-all surface; a non-admin role to its admin-editable bundle.
+   */
+  getRoleCapabilities(role: UserRole): Promise<RoleCapabilities>;
+
+  /**
+   * AuthService.SetRoleCapabilities (admin) — replace a non-admin role's bundle
+   * wholesale (the full new set, not a delta) and return the freshly-stored bundle.
+   * A successful set revokes the live sessions of every user holding the role. The
+   * `ADMIN` role is grant-all and immutable — setting it is rejected server-side.
+   */
+  setRoleCapabilities(
+    role: UserRole,
+    capabilities: readonly Capability[],
+  ): Promise<RoleCapabilities>;
 
   /** AuthService.ListDesks (admin) — the full desk roster. */
   listDesks(): Promise<DeskDesc[]>;

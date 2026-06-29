@@ -23,6 +23,7 @@
 //! RFQ traffic). A user optionally belongs to one [`DeskDef`] by `desk_id`; desk
 //! membership is what scopes RFQ/monitor visibility (built on top of this store).
 
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -43,7 +44,11 @@ pub const SEED_ADMIN_EMAIL: &str = "admin@celnet.com";
 pub const SEED_ADMIN_PASSWORD: &str = "password";
 
 /// What a user is allowed to do on the edge.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `Ord`/`PartialOrd` are derived so a [`Role`] can key the persisted
+/// [`IdentityStore::role_bundles`] map deterministically (a `BTreeMap` orders its
+/// keys, so `identity.json` round-trips byte-identically).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
     /// Full administration: user/desk CRUD, password resets, FIX connections.
@@ -77,6 +82,27 @@ impl Role {
     pub fn is_admin(self) -> bool {
         matches!(self, Role::Admin)
     }
+}
+
+/// The default capability **bundle** of the [`Role::Trader`] role (and any future
+/// non-admin role): every action except [`Action::Administer`] on **both** asset
+/// classes. This is the slice-1 hardcoded base that the admin-editable
+/// [`IdentityStore::role_bundles`] overlay now persists and can narrow/widen
+/// (`docs/plan/PERMISSIONS-ADMINISTRATION-REQUIREMENT.md` §3.3/§10). A store with no
+/// persisted bundle for the role resolves to exactly this set, so an existing
+/// `identity.json` (which carries no `role_bundles`) behaves identically to before.
+#[must_use]
+pub fn default_trader_bundle() -> Vec<Capability> {
+    let mut caps = Vec::new();
+    for action in Action::ALL {
+        if matches!(action, Action::Administer) {
+            continue;
+        }
+        for asset in AssetClass::ALL {
+            caps.push(Capability::new(action, asset));
+        }
+    }
+    caps
 }
 
 /// One persisted user account.
@@ -201,6 +227,17 @@ pub struct IdentityStore {
     /// The desks traders can belong to, in creation order.
     #[serde(default)]
     pub desks: Vec<DeskDef>,
+    /// The admin-editable per-**role** capability bundles — the *base* authority a
+    /// role confers before the per-user overlay layers on top
+    /// (`docs/plan/PERMISSIONS-ADMINISTRATION-REQUIREMENT.md` §3.3/§10). Keyed by
+    /// [`Role`]; only **non-admin** roles appear here ([`Role::Admin`] is always
+    /// grant-all and is never narrowable, so it is never stored). A role absent from
+    /// the map resolves to [`default_trader_bundle`], so an existing `identity.json`
+    /// (which carries no `role_bundles`) loads unchanged — an additive serde-default
+    /// field (no `schema_version`). Each entry is stored as the kernel's stable
+    /// snake_case labels so the file stays human-editable and round-trips exactly.
+    #[serde(default)]
+    pub role_bundles: BTreeMap<Role, Vec<PermissionGrant>>,
 }
 
 impl IdentityStore {
@@ -236,18 +273,48 @@ impl IdentityStore {
         }
     }
 
-    /// Validate every user's capability overlay parses (unknown labels ⇒ error).
-    /// Called at [`load`](IdentityStore::load) so a broken `identity.json` fails
-    /// loudly rather than degrading authority resolution at runtime.
+    /// Validate every user's capability overlay **and** every persisted role bundle
+    /// parses (unknown labels ⇒ error). Called at [`load`](IdentityStore::load) so a
+    /// broken `identity.json` fails loudly rather than degrading authority resolution
+    /// at runtime.
     ///
     /// # Errors
-    /// The first user whose overlay carries an unknown action/asset label.
+    /// The first user overlay or role bundle carrying an unknown action/asset label.
     fn validate_capabilities(&self) -> Result<(), String> {
         for user in &self.users {
             user.capability_overlay()
                 .map_err(|e| format!("user {:?}: {e}", user.id))?;
         }
+        for (role, bundle) in &self.role_bundles {
+            for grant in bundle {
+                grant
+                    .parse()
+                    .map_err(|e| format!("role bundle {:?}: {e}", role.as_str()))?;
+            }
+        }
         Ok(())
+    }
+
+    /// The resolved capability **base** a role confers, before the per-user overlay.
+    ///
+    /// * [`Role::Admin`] ⇒ an empty set here — administration is grant-all and is
+    ///   resolved by the session's grant-all path, never narrowable, so the Admin
+    ///   role never has (and can never be given) a stored bundle.
+    /// * A non-admin role ⇒ its persisted [`role_bundles`](Self::role_bundles) entry,
+    ///   or [`default_trader_bundle`] if none is stored.
+    ///
+    /// Labels are validated at load and at every admin write, so a (load-impossible)
+    /// malformed entry is dropped per-list rather than panicking — dropping a base
+    /// capability fails closed (less authority), the safe direction.
+    #[must_use]
+    pub fn role_base(&self, role: Role) -> Vec<Capability> {
+        if role.is_admin() {
+            return Vec::new();
+        }
+        match self.role_bundles.get(&role) {
+            Some(bundle) => bundle.iter().filter_map(|g| g.parse().ok()).collect(),
+            None => default_trader_bundle(),
+        }
     }
 
     /// Persist **atomically**: pretty-print to a sibling `*.tmp` file then rename
@@ -586,6 +653,57 @@ mod tests {
         let (grants, denies) = user.capability_overlay().expect("known labels parse");
         assert_eq!(grants, vec![fi_book]);
         assert_eq!(denies, vec![fx_exec]);
+    }
+
+    /// A role with no persisted bundle resolves to the default trader bundle (every
+    /// action but `administer` on both assets); Admin resolves to the empty base
+    /// (its grant-all is the session's concern, never a stored bundle).
+    #[test]
+    fn role_base_defaults_then_persists() {
+        let mut store = IdentityStore::default();
+        assert_eq!(store.role_base(Role::Trader), default_trader_bundle());
+        assert!(store.role_base(Role::Admin).is_empty());
+
+        // Narrow the trader bundle to a single capability and round-trip it.
+        let only = Capability::new(Action::View, AssetClass::FxOptions);
+        store
+            .role_bundles
+            .insert(Role::Trader, vec![PermissionGrant::of(only)]);
+        assert_eq!(store.role_base(Role::Trader), vec![only]);
+
+        let bytes = serde_json::to_vec(&store).unwrap();
+        let back: IdentityStore = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(store, back);
+        assert_eq!(back.role_base(Role::Trader), vec![only]);
+    }
+
+    /// An identity file carrying an unknown role-bundle label is rejected at load
+    /// (`InvalidData`), exactly like a bad per-user overlay.
+    #[test]
+    fn load_rejects_unknown_role_bundle_label() {
+        let json = r#"{
+            "users": [],
+            "desks": [],
+            "role_bundles": { "trader": [{"action": "teleport", "asset": "fx_options"}] }
+        }"#;
+        let path = std::env::temp_dir().join("celnet-identity-badrole.json");
+        std::fs::write(&path, json).unwrap();
+        let err = IdentityStore::load(&path).expect_err("unknown label must be rejected");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// An identity file with no `role_bundles` key loads (serde-default empty map) and
+    /// the trader resolves to the default bundle — existing files behave unchanged.
+    #[test]
+    fn load_without_role_bundles_uses_default() {
+        let json = r#"{ "users": [], "desks": [] }"#;
+        let path = std::env::temp_dir().join("celnet-identity-norole.json");
+        std::fs::write(&path, json).unwrap();
+        let store = IdentityStore::load(&path).unwrap();
+        assert!(store.role_bundles.is_empty());
+        assert_eq!(store.role_base(Role::Trader), default_trader_bundle());
+        let _ = std::fs::remove_file(&path);
     }
 
     /// An identity file carrying an unknown capability label is rejected at load

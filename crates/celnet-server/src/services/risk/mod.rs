@@ -1569,6 +1569,7 @@ mod tests {
                 display_name: "Rates Trader".to_owned(),
                 role: crate::config::identity::Role::Trader,
                 desk_id: Some("g10".to_owned()),
+                role_caps: crate::config::identity::default_trader_bundle(),
                 cap_grants: Vec::new(),
                 cap_denies: Vec::new(),
             })
@@ -1689,6 +1690,7 @@ mod tests {
             display_name: id.to_owned(),
             role,
             desk_id: desk.map(str::to_owned),
+            role_caps: crate::config::identity::default_trader_bundle(),
             cap_grants: Vec::new(),
             cap_denies: Vec::new(),
         };

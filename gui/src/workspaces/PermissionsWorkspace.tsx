@@ -19,6 +19,7 @@ import { useEffect, useState } from "react";
 import { useApp } from "../app/AppContext";
 import { Button } from "../components/Button";
 import { ComponentAccessGrid } from "../components/ComponentAccessGrid";
+import { RoleCapabilityEditor } from "../components/RoleCapabilityEditor";
 import { Panel } from "../components/Panel";
 import type { UserDesc } from "../data/contract";
 import { useAdmin } from "../hooks/useAdmin";
@@ -138,6 +139,10 @@ export function PermissionsWorkspace(): React.ReactElement {
               Select a user on the left to view and edit their access to each component.
             </p>
           )}
+        </Panel>
+
+        <Panel title="Role bundles" glyph="⚷" className={styles.gridPanel}>
+          <RoleCapabilityEditor transport={app.transport} />
         </Panel>
       </div>
     </div>

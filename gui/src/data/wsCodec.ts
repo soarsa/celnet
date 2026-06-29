@@ -124,6 +124,7 @@ import type {
   TwoWayPrice,
   Underlying,
   Update,
+  RoleCapabilities,
   UserCapabilities,
   VanillaInputs,
   VegaBucket,
@@ -2309,6 +2310,31 @@ export function userCapabilitiesFromWire(o: WireObject): UserCapabilities {
     denies: capabilityListFromWire(o, "denies"),
     effective: capabilityListFromWire(o, "effective"),
   };
+}
+
+// per-role capability bundle -------------------------------------------------
+//
+// `get_role_capabilities` reads a role's base bundle; `set_role_capabilities`
+// replaces a non-admin role's bundle wholesale. The codec auto-injects the bearer
+// `session_token`. The role rides as its proto enum tag (TRADER = 0, ADMIN = 1).
+
+export function getRoleCapabilitiesRequestToWire(role: UserRole): WireObject {
+  return { role: userRoleToWire(role) };
+}
+
+export function setRoleCapabilitiesRequestToWire(
+  role: UserRole,
+  capabilities: readonly Capability[],
+): WireObject {
+  return {
+    role: userRoleToWire(role),
+    capabilities: capabilities.map(capabilityToWire),
+  };
+}
+
+/** Decode a `role_capabilities` / `role_capabilities_set` frame. */
+export function roleCapabilitiesFromWire(o: WireObject): RoleCapabilities {
+  return { capabilities: capabilityListFromWire(o, "capabilities") };
 }
 
 // desk CRUD ------------------------------------------------------------------

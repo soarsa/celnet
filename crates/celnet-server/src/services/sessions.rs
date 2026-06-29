@@ -35,25 +35,10 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Mutex;
 
-use celnet_entitlements::{Action, AssetClass, Capability, CapabilitySet};
+use celnet_entitlements::{Capability, CapabilitySet};
 
 use crate::clock::Clock;
-use crate::config::identity::{Role, UserDef};
-
-/// The action bundle a desk `Trader` holds by default on **each** asset class:
-/// every action except [`Action::Administer`]. This is the slice-1 *role-derived*
-/// default; admin-editable per-user grants/denials layer on top in a later slice
-/// (`docs/plan/PERMISSIONS-ADMINISTRATION-REQUIREMENT.md` §3.3/§10).
-const TRADER_ACTIONS: [Action; 8] = [
-    Action::View,
-    Action::Price,
-    Action::QuoteRespond,
-    Action::RfqRespond,
-    Action::IoiRespond,
-    Action::Stream,
-    Action::Execute,
-    Action::Book,
-];
+use crate::config::identity::{Role, UserDef, default_trader_bundle};
 
 /// Number of random bytes in a session token (256 bits).
 const TOKEN_BYTES: usize = 32;
@@ -77,6 +62,15 @@ pub struct AuthenticatedUser {
     pub role: Role,
     /// The desk the user belonged to at login, if any.
     pub desk_id: Option<String>,
+    /// The resolved capability **base** the user's role conferred at login — the
+    /// admin-editable per-role bundle snapshot
+    /// ([`IdentityStore::role_base`](crate::config::identity::IdentityStore::role_base)),
+    /// layered under the per-user overlay in [`capabilities`](Self::capabilities). An
+    /// [`Role::Admin`] session ignores this (it resolves to grant-all); a non-admin
+    /// session uses it as the base set. Because it is a snapshot, an admin edit to the
+    /// bundle takes effect only after the role's sessions are revoked (which the admin
+    /// path does) and the user logs in again.
+    pub role_caps: Vec<Capability>,
     /// The user's per-user capability **grants** at login (snapshot of
     /// [`UserDef::capability_grants`]), layered on top of the role bundle in
     /// [`capabilities`](Self::capabilities).
@@ -97,6 +91,22 @@ impl AuthenticatedUser {
     /// **grant** fails closed (less authority), the safe direction.
     #[must_use]
     pub fn from_user(user: &UserDef) -> Self {
+        Self::from_user_with_role_base(user, default_trader_bundle())
+    }
+
+    /// Snapshot a stored user into a session identity using an **explicit** resolved
+    /// role base (the admin-editable per-role bundle resolved from the live
+    /// [`IdentityStore`](crate::config::identity::IdentityStore)). The login path uses
+    /// this so a narrowed/widened role bundle is reflected; [`from_user`](Self::from_user)
+    /// is the convenience that defaults to the standard
+    /// [`default_trader_bundle`](crate::config::identity::default_trader_bundle).
+    ///
+    /// The per-user overlay is parsed from the user's persisted labels (validated at
+    /// load and at every admin write); a (load-impossible) malformed entry is dropped
+    /// per-list rather than panicking — dropping a **grant** fails closed (less
+    /// authority), the safe direction.
+    #[must_use]
+    pub fn from_user_with_role_base(user: &UserDef, role_caps: Vec<Capability>) -> Self {
         let cap_grants = user
             .capability_grants
             .iter()
@@ -113,6 +123,7 @@ impl AuthenticatedUser {
             display_name: user.display_name.clone(),
             role: user.role,
             desk_id: user.desk_id.clone(),
+            role_caps,
             cap_grants,
             cap_denies,
         }
@@ -128,9 +139,10 @@ impl AuthenticatedUser {
     /// role (`docs/plan/PERMISSIONS-ADMINISTRATION-REQUIREMENT.md` §3):
     ///
     /// * [`Role::Admin`] ⇒ [`CapabilitySet::grant_all`] (every action, both asset
-    ///   classes — including [`Action::Administer`]);
-    /// * [`Role::Trader`] ⇒ every non-admin action ([`TRADER_ACTIONS`]) on **both**
-    ///   FX options and fixed income, scoped at the resource edge by
+    ///   classes — including [`Action::Administer`](celnet_entitlements::Action::Administer)),
+    ///   never narrowable;
+    /// * a non-admin role ⇒ the admin-editable per-role bundle snapshotted at login
+    ///   ([`role_caps`](Self::role_caps)), scoped at the resource edge by
     ///   [`super::access::ResolvedCaller::desk_scope`].
     ///
     /// The role bundle is the **base**; the per-user overlay then applies
@@ -142,9 +154,13 @@ impl AuthenticatedUser {
     pub fn capabilities(&self) -> CapabilitySet {
         let mut set = match self.role {
             Role::Admin => CapabilitySet::grant_all(),
-            Role::Trader => CapabilitySet::empty()
-                .grant_actions(&TRADER_ACTIONS, AssetClass::FxOptions)
-                .grant_actions(&TRADER_ACTIONS, AssetClass::FixedIncome),
+            Role::Trader => {
+                let mut base = CapabilitySet::empty();
+                for &cap in &self.role_caps {
+                    base = base.grant(cap);
+                }
+                base
+            }
         };
         for &cap in &self.cap_grants {
             set = set.grant(cap);
@@ -334,6 +350,7 @@ mod tests {
             display_name: "Alice".into(),
             role: Role::Trader,
             desk_id: Some("g10".into()),
+            role_caps: default_trader_bundle(),
             cap_grants: Vec::new(),
             cap_denies: Vec::new(),
         }

@@ -89,6 +89,7 @@ import type {
   Update,
   UpdateUserInput,
   UserCapabilities,
+  RoleCapabilities,
   UserDesc,
   UserRole,
   VegaBucket,
@@ -691,6 +692,13 @@ export class MockTransport implements CelnetTransport {
     },
   ];
   private readonly mockDesks: DeskDesc[] = [];
+  /**
+   * The admin-editable per-role capability bundles (the role's base authority).
+   * Only **non-admin** roles are ever stored (`ADMIN` is grant-all and immutable); a
+   * role absent here resolves to {@link mockDefaultTraderBundle}, mirroring the
+   * server's `IdentityStore::role_bundles` serde-default behaviour.
+   */
+  private readonly mockRoleBundles = new Map<UserRole, Capability[]>();
   /** Issued session tokens (offline liveness for `logout`'s `ended` result). */
   private readonly mockTokens = new Set<string>();
   private mockTokenSeq = 0n;
@@ -1300,6 +1308,7 @@ export class MockTransport implements CelnetTransport {
     // offline affordance gating is coherent real behaviour, not a stub.
     const capabilities = mockResolveEffective(
       found.user.role,
+      this.mockRoleBase(found.user.role),
       found.grants,
       found.denies,
     );
@@ -1385,7 +1394,12 @@ export class MockTransport implements CelnetTransport {
     return {
       grants: entry.grants.map((c) => ({ ...c })),
       denies: entry.denies.map((c) => ({ ...c })),
-      effective: mockResolveEffective(entry.user.role, entry.grants, entry.denies),
+      effective: mockResolveEffective(
+        entry.user.role,
+        this.mockRoleBase(entry.user.role),
+        entry.grants,
+        entry.denies,
+      ),
     };
   }
 
@@ -1412,8 +1426,56 @@ export class MockTransport implements CelnetTransport {
     return {
       grants: entry.grants.map((c) => ({ ...c })),
       denies: entry.denies.map((c) => ({ ...c })),
-      effective: mockResolveEffective(entry.user.role, entry.grants, entry.denies),
+      effective: mockResolveEffective(
+        entry.user.role,
+        this.mockRoleBase(entry.user.role),
+        entry.grants,
+        entry.denies,
+      ),
     };
+  }
+
+  /**
+   * The resolved capability base a role confers (the admin-editable bundle).
+   * `ADMIN` resolves to an empty base here — its grant-all is handled by the
+   * resolver's role check, never a stored bundle; a non-admin role resolves to its
+   * stored bundle, or the default trader bundle when none has been set.
+   */
+  private mockRoleBase(role: UserRole): Capability[] {
+    if (role === "ADMIN") return [];
+    return this.mockRoleBundles.get(role) ?? mockDefaultTraderBundle();
+  }
+
+  async getRoleCapabilities(role: UserRole): Promise<RoleCapabilities> {
+    // ADMIN is grant-all and immutable; report the full surface, never a stored bundle.
+    const capabilities = role === "ADMIN" ? mockGrantAll() : this.mockRoleBase(role);
+    return { capabilities: capabilities.map((c) => ({ ...c })) };
+  }
+
+  async setRoleCapabilities(
+    role: UserRole,
+    capabilities: readonly Capability[],
+  ): Promise<RoleCapabilities> {
+    // The Admin role is grant-all and can never be narrowed (mirrors the server's
+    // `failed_precondition`).
+    if (role === "ADMIN") {
+      throw new Error("the Admin role is grant-all and cannot be narrowed");
+    }
+    // Server parity: an unknown action/asset label is rejected, never silently dropped.
+    for (const cap of capabilities) {
+      if (!CAPABILITY_ACTIONS.includes(cap.action) || !CAPABILITY_ASSETS.includes(cap.asset)) {
+        throw new Error(`unknown capability \`${cap.action}/${cap.asset}\``);
+      }
+    }
+    // The bundle is replaced wholesale. A successful set revokes the live sessions of
+    // every user holding the role server-side; offline the single in-browser session
+    // is the admin's own, so there is nothing to revoke here — the contract semantics
+    // are surfaced to the admin by the workspace's success note.
+    this.mockRoleBundles.set(
+      role,
+      capabilities.map((c) => ({ ...c })),
+    );
+    return { capabilities: this.mockRoleBase(role).map((c) => ({ ...c })) };
   }
 
   async listDesks(): Promise<DeskDesc[]> {
@@ -1724,6 +1786,29 @@ const MOCK_MIN_PASSWORD_LEN = 12;
  * except `administer` (mirrors the server's `TRADER_ACTIONS`). `ADMIN` is grant-all. */
 const MOCK_TRADER_DENIED_ACTION: CapabilityAction = "administer";
 
+/** The full action-by-asset surface (the ADMIN grant-all bundle). */
+function mockGrantAll(): Capability[] {
+  const caps: Capability[] = [];
+  for (const action of CAPABILITY_ACTIONS) {
+    for (const asset of CAPABILITY_ASSETS) caps.push({ action, asset });
+  }
+  return caps;
+}
+
+/**
+ * The default non-admin role bundle: every action except `administer` on both
+ * asset classes (mirrors the server's `default_trader_bundle`). The base a role
+ * confers until an admin narrows or widens it.
+ */
+function mockDefaultTraderBundle(): Capability[] {
+  const caps: Capability[] = [];
+  for (const action of CAPABILITY_ACTIONS) {
+    if (action === MOCK_TRADER_DENIED_ACTION) continue;
+    for (const asset of CAPABILITY_ASSETS) caps.push({ action, asset });
+  }
+  return caps;
+}
+
 /** A stable key for set membership over a capability. */
 function mockCapKey(action: CapabilityAction, asset: CapabilityAsset): string {
   return `${action} ${asset}`;
@@ -1738,9 +1823,11 @@ function mockCapKey(action: CapabilityAction, asset: CapabilityAsset): string {
  */
 function mockResolveEffective(
   role: UserRole,
+  roleBase: readonly Capability[],
   grants: readonly Capability[],
   denies: readonly Capability[],
 ): Capability[] {
+  const baseSet = new Set(roleBase.map((c) => mockCapKey(c.action, c.asset)));
   const grantSet = new Set(grants.map((c) => mockCapKey(c.action, c.asset)));
   const denySet = new Set(denies.map((c) => mockCapKey(c.action, c.asset)));
   const effective: Capability[] = [];
@@ -1748,7 +1835,7 @@ function mockResolveEffective(
     for (const asset of CAPABILITY_ASSETS) {
       const key = mockCapKey(action, asset);
       if (denySet.has(key)) continue; // deny-wins
-      const roleAllows = role === "ADMIN" || action !== MOCK_TRADER_DENIED_ACTION;
+      const roleAllows = role === "ADMIN" || baseSet.has(key);
       if (roleAllows || grantSet.has(key)) effective.push({ action, asset });
     }
   }

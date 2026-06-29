@@ -71,6 +71,8 @@ import type {
   SmileModel,
   UpdateUserInput,
   UserCapabilities,
+  RoleCapabilities,
+  UserRole,
   UserDesc,
   Capability,
 } from "./contract";
@@ -126,6 +128,9 @@ import {
   getUserCapabilitiesRequestToWire,
   setUserCapabilitiesRequestToWire,
   userCapabilitiesFromWire,
+  getRoleCapabilitiesRequestToWire,
+  setRoleCapabilitiesRequestToWire,
+  roleCapabilitiesFromWire,
   loginRequestToWire,
   loginResultFromWire,
   logoutRequestToWire,
@@ -1308,6 +1313,27 @@ export class WsTransport implements CelnetTransport {
       "user_capabilities_set",
     );
     return userCapabilitiesFromWire(reply);
+  }
+
+  async getRoleCapabilities(role: UserRole): Promise<RoleCapabilities> {
+    const reply = await this.conn.request(
+      "get_role_capabilities",
+      getRoleCapabilitiesRequestToWire(role),
+      "role_capabilities",
+    );
+    return roleCapabilitiesFromWire(reply);
+  }
+
+  async setRoleCapabilities(
+    role: UserRole,
+    capabilities: readonly Capability[],
+  ): Promise<RoleCapabilities> {
+    const reply = await this.conn.request(
+      "set_role_capabilities",
+      setRoleCapabilitiesRequestToWire(role, capabilities),
+      "role_capabilities_set",
+    );
+    return roleCapabilitiesFromWire(reply);
   }
 
   async listDesks(): Promise<DeskDesc[]> {

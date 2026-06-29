@@ -2099,6 +2099,7 @@ mod tests {
             display_name: "Stream Trader".into(),
             role: Role::Trader,
             desk_id: Some("g10".into()),
+            role_caps: crate::config::identity::default_trader_bundle(),
             cap_grants: Vec::new(),
             cap_denies: Vec::new(),
         })

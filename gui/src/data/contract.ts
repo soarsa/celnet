@@ -1966,6 +1966,20 @@ export interface UserCapabilities {
   effective: Capability[];
 }
 
+/**
+ * A role's capability **bundle** — the base authority the role confers before any
+ * per-user overlay (`AuthService.{Get,Set}RoleCapabilities` response). For `ADMIN`
+ * this is the full action × asset surface (grant-all, immutable — a Set is
+ * rejected server-side); for a non-admin role it is the admin-editable bundle,
+ * defaulting to every action but `administer` on both asset classes when none has
+ * been stored. A successful Set replaces the bundle wholesale and revokes the live
+ * sessions of every user holding the role, so it takes effect on their next login.
+ */
+export interface RoleCapabilities {
+  /** The capabilities the role confers as its base. */
+  capabilities: Capability[];
+}
+
 // ---------------------------------------------------------------------------
 // fixed-income (rates) — the linear-rates pricing contract (`PricingService
 // .PriceRates`). Mirrors the `celnet.wire` rates messages one-to-one: a
