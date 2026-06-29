@@ -16,13 +16,11 @@ use celnet_client::{
     Attribution, BookId, BrokerQuoteSet, Calibration, Observable, Seat, SeriesEvent, Side,
     StreamEvent,
 };
-use celnet_server::Clock;
 use celnet_types::Tenor;
 
-use celnet_client::Client;
 use common::{
-    STEP_DEADLINE, TEST_DEADLINE, conventions, eurusd, start_edge_and_client, start_ready_edge,
-    vanilla_call,
+    STEP_DEADLINE, TEST_DEADLINE, conventions, eurusd, start_edge_and_authed_client,
+    start_edge_and_client, vanilla_call,
 };
 
 /// A market-hedge mark and a stochastic-vol mark of the *same* broker quotes both
@@ -152,11 +150,9 @@ async fn every_calibration_model_round_trips_through_the_sdk() {
 #[tokio::test]
 async fn market_series_emits_real_observed_points_over_one_session() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, addr) = start_ready_edge(Clock::system()).await;
-        let client = tokio::time::timeout(STEP_DEADLINE, Client::connect(format!("http://{addr}")))
-            .await
-            .expect("connects in time")
-            .expect("connects");
+        // Authenticated: `subscribe_series` opens a `MarketSeriesSubscribe` frame, which
+        // needs the `Stream·FxOptions` capability under Enforce.
+        let (edge, client) = start_edge_and_authed_client().await;
 
         let session = tokio::time::timeout(STEP_DEADLINE, client.open_session())
             .await
@@ -248,7 +244,9 @@ async fn market_series_emits_real_observed_points_over_one_session() {
 #[tokio::test]
 async fn wing_observable_series_carries_its_delta() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, client) = start_edge_and_client().await;
+        // Authenticated: `subscribe_series` opens a `MarketSeriesSubscribe` frame
+        // (`Stream·FxOptions`).
+        let (edge, client) = start_edge_and_authed_client().await;
         let session = tokio::time::timeout(STEP_DEADLINE, client.open_session())
             .await
             .expect("session opens in time")
@@ -289,7 +287,9 @@ async fn wing_observable_series_carries_its_delta() {
 #[tokio::test]
 async fn rfq_carries_attribution_to_quote_and_execution() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, client) = start_edge_and_client().await;
+        // Authenticated: the booked execution goes through the capability-gated
+        // `AcceptQuote` (`Execute·FxOptions`). Attribution is unrelated to authz.
+        let (edge, client) = start_edge_and_authed_client().await;
 
         let requesting = Attribution::quoted_by(BookId::new("EM-VOL-1", Seat::trader("alice")));
         let rfq = client
@@ -334,7 +334,8 @@ async fn rfq_carries_attribution_to_quote_and_execution() {
 #[tokio::test]
 async fn rfs_subscription_echoes_attribution_on_snapshot() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, client) = start_edge_and_client().await;
+        // Authenticated: the attributed `Subscribe` frame needs `Stream·FxOptions`.
+        let (edge, client) = start_edge_and_authed_client().await;
         let session = tokio::time::timeout(STEP_DEADLINE, client.open_session())
             .await
             .expect("session opens in time")

@@ -33,7 +33,8 @@ use celnet_client::{ClientError, DealerQuote, Side};
 use celnet_server::Clock;
 
 use common::{
-    STEP_DEADLINE, TEST_DEADLINE, conventions, start_panel_edge_and_client, vanilla_call,
+    STEP_DEADLINE, TEST_DEADLINE, conventions, start_panel_edge_and_authed_client,
+    start_panel_edge_and_client, vanilla_call,
 };
 
 /// The synthetic demo/test panel breadth every test boots (native maker + 3).
@@ -184,7 +185,10 @@ async fn panel_ranks_per_engine_law_rechecked_from_raw_rows() {
 async fn booking_best_offer_winner_books_that_rows_offer_bit_for_bit() {
     tokio::time::timeout(TEST_DEADLINE, async {
         let clock = Clock::manual(1_000_000_000);
-        let (edge, client) = start_panel_edge_and_client(clock.clone(), SYNTHETIC_LPS).await;
+        // Authenticated: the winner booking goes through the capability-gated
+        // `AcceptQuote` (`Execute·FxOptions`); the token only authorizes, the bit-for-bit
+        // premium below proves it does not re-price.
+        let (edge, client) = start_panel_edge_and_authed_client(clock.clone(), SYNTHETIC_LPS).await;
 
         let md = client.request_multi_dealer_quote(vanilla_call(1.12), conventions());
         let panel = tokio::time::timeout(STEP_DEADLINE, md.request())
@@ -254,7 +258,9 @@ async fn booking_best_offer_winner_books_that_rows_offer_bit_for_bit() {
 async fn default_accept_is_single_dealer_path_byte_identical() {
     tokio::time::timeout(TEST_DEADLINE, async {
         let clock = Clock::manual(1_000_000_000);
-        let (edge, client) = start_panel_edge_and_client(clock.clone(), SYNTHETIC_LPS).await;
+        // Authenticated: both the panel default accept and the single-dealer accept go
+        // through the capability-gated `AcceptQuote` (`Execute·FxOptions`).
+        let (edge, client) = start_panel_edge_and_authed_client(clock.clone(), SYNTHETIC_LPS).await;
 
         // The single-dealer reference: a plain RFQ on the same instrument at the
         // same frozen instant — the maker's deterministic pricing makes its line
@@ -327,7 +333,10 @@ async fn default_accept_is_single_dealer_path_byte_identical() {
 async fn accept_after_panel_row_last_look_is_refused() {
     tokio::time::timeout(TEST_DEADLINE, async {
         let clock = Clock::manual(1_000_000_000);
-        let (edge, client) = start_panel_edge_and_client(clock.clone(), SYNTHETIC_LPS).await;
+        // Authenticated: the accept must clear the `Execute·FxOptions` capability gate
+        // so it reaches the per-row last-look refusal this test asserts on (an
+        // unauthenticated accept would be refused at the gate first, never reaching it).
+        let (edge, client) = start_panel_edge_and_authed_client(clock.clone(), SYNTHETIC_LPS).await;
 
         let md = client.request_multi_dealer_quote(vanilla_call(1.12), conventions());
         let panel = tokio::time::timeout(STEP_DEADLINE, md.request())

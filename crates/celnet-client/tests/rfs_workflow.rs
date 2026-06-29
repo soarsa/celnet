@@ -39,7 +39,8 @@ use celnet_types::{OptionType, Tenor, VanillaInputs};
 
 use common::{
     FIXTURE_SPOT, STEP_DEADLINE, TEST_DEADLINE, conventions, eurusd, live_market, login_seed_admin,
-    start_edge_and_client_with, start_ready_edge, vanilla_call,
+    start_edge_and_authed_client, start_edge_and_authed_client_with, start_edge_and_client_with,
+    start_ready_edge, vanilla_call,
 };
 
 /// A 1Y EURUSD 25-delta risk reversal: long the 25Δ call, short the 25Δ put.
@@ -117,11 +118,8 @@ async fn drive_ticks(sub: &mut Subscription, n: usize, mut last_seq: u64) -> Str
 #[tokio::test]
 async fn market_maker_streams_many_instruments_over_one_session() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, addr) = start_ready_edge(Clock::system()).await;
-        let client = tokio::time::timeout(STEP_DEADLINE, Client::connect(format!("http://{addr}")))
-            .await
-            .expect("client connects in time")
-            .expect("client connects");
+        // Authenticated: every `Subscribe` frame needs `Stream·FxOptions` under Enforce.
+        let (edge, client) = start_edge_and_authed_client().await;
 
         // ONE session multiplexing four subscriptions.
         let session: StreamSession = tokio::time::timeout(STEP_DEADLINE, client.open_session())
@@ -211,11 +209,9 @@ async fn market_maker_streams_many_instruments_over_one_session() {
 #[tokio::test]
 async fn taker_click_trades_a_streamed_line_within_the_window() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, addr) = start_ready_edge(Clock::system()).await;
-        let client = tokio::time::timeout(STEP_DEADLINE, Client::connect(format!("http://{addr}")))
-            .await
-            .expect("client connects in time")
-            .expect("client connects");
+        // Authenticated: the `Subscribe` frames need `Stream·FxOptions` and the
+        // click-to-trade `Execute` frame needs `Execute·FxOptions` under Enforce.
+        let (edge, client) = start_edge_and_authed_client().await;
 
         let session = tokio::time::timeout(STEP_DEADLINE, client.open_session())
             .await
@@ -313,7 +309,10 @@ async fn stale_click_token_is_rejected_not_booked() {
     tokio::time::timeout(TEST_DEADLINE, async {
         // A manual clock we keep a handle to, so we can age the token past its window.
         let clock = Clock::manual(1_000_000_000);
-        let (edge, client) = start_edge_and_client_with(clock.clone()).await;
+        // Authenticated: the subscribe (`Stream·FxOptions`) and the click-to-trade
+        // `Execute` (`Execute·FxOptions`) both need a session under Enforce; the click is
+        // then declined at last-look (its window aged out), which is what this asserts.
+        let (edge, client) = start_edge_and_authed_client_with(clock.clone()).await;
 
         let session = tokio::time::timeout(STEP_DEADLINE, client.open_session())
             .await
@@ -485,28 +484,34 @@ async fn risk_manager_pulls_book_shaped_risk_equals_direct_fd() {
     .expect("test must not hang");
 }
 
-/// **Streaming-path authentication, end-to-end.** The server now rejects an
-/// unauthenticated `StreamSession` under the production deny-by-default posture
-/// (`AccessMode::Enforce`, set by the test harness). This proves the SDK closes that
-/// seam: it sends an `Authenticate` frame as the FIRST control frame whenever it
-/// opens a session, so the subscribe that follows is admitted.
+/// **Streaming-path authentication, end-to-end.** Each live-price stream frame is
+/// now capability-gated (`Subscribe`/`Modify`/`Resync`/`MarketSeriesSubscribe` need
+/// `Stream·FxOptions`, the click-to-trade `Execute` needs `Execute·FxOptions`), and a
+/// capability resolves ONLY from an authenticated session — a body-asserted principal,
+/// even grant-all, cannot self-grant one (finding #3). Under the production
+/// deny-by-default posture (`AccessMode::Enforce`, set by the test harness) this gives
+/// two outcomes the SDK must surface faithfully:
 ///
-/// * **Real Login token.** The taker logs in via the edge's real `AuthService.Login`
-///   RPC (the seed admin), attaches the issued bearer with
-///   [`Client::with_session_token`], and the SDK authenticates the stream as that
-///   user — the token validated against the edge's OWN session registry, the same
-///   one `StreamAuth` is checked against.
-/// * **Grant-all default.** A client that attaches no token still authenticates: the
-///   SDK sends the audited explicit grant-all `Authenticate` frame (parity with the
-///   gated risk requests), which `Enforce` admits. Both subscribe and stream.
+/// * **Real Login token → admitted.** The taker logs in via the edge's real
+///   `AuthService.Login` RPC (the seed admin), attaches the issued bearer with
+///   [`Client::with_session_token`], and the SDK authenticates the stream as that user
+///   — the token validated against the edge's OWN session registry, the same one
+///   `StreamAuth` is checked against — so the subscribe is admitted and streams.
+/// * **Grant-all default (no token) → refused.** A client that attaches no token sends
+///   the audited explicit grant-all `Authenticate` frame, but that body principal
+///   carries no capability: under `Enforce` the gated subscribe is refused
+///   `unauthenticated` (finding #3 — a grant-all body principal cannot self-grant
+///   `Stream·FxOptions`). This is the deny-by-default streaming boundary; a deployment
+///   that wants the stream serves it by logging in (the admitted path above).
 #[tokio::test]
 async fn stream_authenticates_under_enforce_with_login_token_and_grant_all_default() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        // Force a fresh seed of the default admin (`admin@celnet.com` / `password`)
-        // into the gitignored CWD `identity.json`, so the login below works with the
-        // default credential regardless of any prior run's rotated password. Safe
-        // under the gate's serial (`--test-threads 1`) execution.
-        let _ = std::fs::remove_file("identity.json");
+        // The seed admin (`admin@celnet.com` / `password`) is ensured by every
+        // `Edge::start` into the gitignored CWD `identity.json` and is never rotated by
+        // the suite, so the login below uses the default credential. (We do NOT remove
+        // `identity.json` here: that would race every other concurrently-booting edge in
+        // this binary mid-seed — the login-based auth tests across the suite all rely on
+        // this same always-present admin.)
         let (edge, addr) = start_ready_edge(Clock::system()).await;
 
         // ---- (a) a real Login-issued session token authenticates the stream -------
@@ -537,7 +542,11 @@ async fn stream_authenticates_under_enforce_with_login_token_and_grant_all_defau
         drop(sub);
         drop(session);
 
-        // ---- (b) the grant-all default (no token) is also admitted under Enforce --
+        // ---- (b) the grant-all default (no token) is REFUSED under Enforce ---------
+        // The stream frames are capability-gated and a grant-all body principal cannot
+        // self-grant `Stream·FxOptions` (finding #3), so the subscribe is refused. The
+        // SDK opens the session (the `Authenticate` frame is accepted) and surfaces the
+        // refusal as the subscription's first event: an `unauthenticated` status.
         let default_client =
             tokio::time::timeout(STEP_DEADLINE, Client::connect(format!("http://{addr}")))
                 .await
@@ -553,10 +562,20 @@ async fn stream_authenticates_under_enforce_with_login_token_and_grant_all_defau
         )
         .await
         .expect("subscribe resolves in time")
-        .expect("the grant-all default Authenticate admits the subscribe under Enforce");
-        match next_event(&mut sub2).await {
-            StreamEvent::Snapshot { line, .. } => assert_eq!(line.sequence, 1),
-            other => panic!("expected an admitted Snapshot, got {other:?}"),
+        .expect("the SDK opens the subscription handle (the refusal arrives as an event)");
+        let first = tokio::time::timeout(STEP_DEADLINE, sub2.next_event())
+            .await
+            .expect("a refusal event arrives before the deadline")
+            .expect("the stream yields the refusal, not end-of-stream");
+        match first {
+            Err(celnet_client::ClientError::Status(s)) => assert_eq!(
+                s.code(),
+                tonic::Code::Unauthenticated,
+                "a token-less grant-all subscribe is refused unauthenticated under Enforce, got {s:?}"
+            ),
+            other => panic!(
+                "expected an Unauthenticated refusal for the token-less subscribe, got {other:?}"
+            ),
         }
 
         drop(sub2);

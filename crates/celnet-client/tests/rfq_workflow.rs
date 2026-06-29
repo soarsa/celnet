@@ -31,8 +31,8 @@ use celnet_server::Clock;
 use celnet_types::{OptionType, Tenor, VanillaInputs};
 
 use common::{
-    STEP_DEADLINE, TEST_DEADLINE, conventions, eurusd, live_market, start_edge_and_client,
-    start_edge_and_client_with, vanilla_call,
+    STEP_DEADLINE, TEST_DEADLINE, conventions, eurusd, live_market, start_edge_and_authed_client,
+    start_edge_and_authed_client_with, start_edge_and_client, vanilla_call,
 };
 
 /// Build a 1Y EURUSD double-no-touch with a `[lower, upper]` corridor and a
@@ -54,7 +54,9 @@ fn dnt(lower: f64, upper: f64, rebate: f64) -> InstrumentSpec {
 #[tokio::test]
 async fn taker_rfqs_dnt_accepts_and_books() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, client) = start_edge_and_client().await;
+        // Authenticated: booking goes through the capability-gated `AcceptQuote`
+        // (`Execute·FxOptions`); the token only authorizes, it does not re-price.
+        let (edge, client) = start_edge_and_authed_client().await;
 
         let lower = 1.00;
         let upper = 1.20;
@@ -170,7 +172,9 @@ async fn vanilla_rfq_mid_equals_direct_garman_kohlhagen() {
 #[tokio::test]
 async fn idempotent_quote_retry_never_double_books() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, client) = start_edge_and_client().await;
+        // Authenticated: the retried-accept idempotency assertion goes through the
+        // capability-gated `AcceptQuote` (`Execute·FxOptions`).
+        let (edge, client) = start_edge_and_authed_client().await;
 
         let rfq = client.request_quote(vanilla_call(1.10), conventions());
         // The handle owns one stable key reused on every call.
@@ -230,7 +234,10 @@ async fn idempotent_quote_retry_never_double_books() {
 async fn accept_after_last_look_is_rejected() {
     tokio::time::timeout(TEST_DEADLINE, async {
         let clock = Clock::manual(1_000_000_000);
-        let (edge, client) = start_edge_and_client_with(clock.clone()).await;
+        // Authenticated: the accept must clear the `Execute·FxOptions` capability gate
+        // so it reaches the last-look deadline check this test asserts on (an
+        // unauthenticated accept would be refused at the gate first, never reaching it).
+        let (edge, client) = start_edge_and_authed_client_with(clock.clone()).await;
 
         let rfq = client.request_quote(vanilla_call(1.10), conventions());
         let quote = tokio::time::timeout(STEP_DEADLINE, rfq.request())
@@ -301,7 +308,11 @@ const _: fn() = || {
 #[tokio::test]
 async fn reject_returns_typed_ack_and_quote_cannot_be_accepted() {
     tokio::time::timeout(TEST_DEADLINE, async {
-        let (edge, client) = start_edge_and_client().await;
+        // Authenticated: the accept-after-reject must clear the `Execute·FxOptions`
+        // capability gate so it reaches the reject-state precondition this test asserts
+        // on (an unauthenticated accept would be refused at the gate first). `reject`
+        // itself is principal-gated (`ReadAny`) and unaffected by the token.
+        let (edge, client) = start_edge_and_authed_client().await;
 
         let rfq = client.request_quote(vanilla_call(1.10), conventions());
         let quote = tokio::time::timeout(STEP_DEADLINE, rfq.request())
