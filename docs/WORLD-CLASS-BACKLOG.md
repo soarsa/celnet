@@ -426,7 +426,13 @@ independently-landable feature. Format matches this file: dedup-key, evidence, a
   hardcoded match; admin-only `Get/SetRoleCapabilities` RPCs (proto + regen + WS codec + client) with
   fail-fast label validation + session-revoke-on-change for all holders; a GUI "Roles" section reusing
   the slice-4 matrix. Acceptance: e2e under Enforce — admin narrows the Trader bundle, every trader's
-  effective set narrows on next login. **OPEN.**
+  effective set narrows on next login. **DONE** (`4072beb`, 2026-06-29): `IdentityStore.role_bundles`
+  (serde-default, fail-fast label validation); `AuthenticatedUser.role_caps` snapshotted at login via
+  `from_user_with_role_base`; `capabilities()` uses it as the non-admin base (Admin stays grant-all,
+  immutable — Admin Set ⇒ `failed_precondition`). `Get/SetRoleCapabilities` RPCs (admin-only; Set
+  revokes all holders' sessions) + WS codec/dispatch; GUI `RoleCapabilityEditor` panel. 318 server +
+  842 gui tests; live e2e under Enforce (admin removes `book·fixed_income` from Trader → re-logged
+  trader's Book-position control disabled).
 - **[P3/S] `gui-a11y-book-view-domain-nav gui/e2e`** — `e2e/a11y.e2e.ts` "Book view" times out:
   `gotoWorkspace(page,"book")` clicks the Book rail button **without switching to the
   `fixed-income` domain**, where Book lives (`gui/src/lib/commands.ts`); the test starts in FX
