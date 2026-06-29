@@ -1,7 +1,9 @@
 /**
  * The custom-function runtime singletons: the one WS connection (the single
- * multiplexed session, docs §3.2) and the ref-counted stream registry, shared by
- * every CELNET.* cell in the workbook.
+ * multiplexed session, docs §3.2), the ref-counted stream registry, and the
+ * signed-in user session — all shared by every CELNET.* cell AND the task pane in
+ * the workbook (the add-in runs them in one Office shared runtime, so a sign-in in
+ * the pane authenticates the cells too).
  *
  * The endpoint is read from a workbook setting (set in the task pane) or a
  * `<meta>`/global injected at sideload time, defaulting to the local dev edge.
@@ -11,6 +13,7 @@
 
 import { Connection } from "../transport/connection";
 import { browserWebSocketFactory } from "../transport/socket";
+import { UserSession } from "../transport/session";
 import { SeriesRegistry } from "./seriesRegistry";
 import { StreamRegistry } from "./streamRegistry";
 
@@ -28,6 +31,7 @@ function resolveEndpoint(): string {
 let connection: Connection | null = null;
 let registry: StreamRegistry | null = null;
 let seriesRegistry: SeriesRegistry | null = null;
+let session: UserSession | null = null;
 
 /** The shared connection (lazily opened on first use). */
 export function getConnection(): Connection {
@@ -54,4 +58,16 @@ export function getSeriesRegistry(): SeriesRegistry {
     seriesRegistry = new SeriesRegistry(getConnection());
   }
   return seriesRegistry;
+}
+
+/**
+ * The shared signed-in user session over the shared connection. The task pane
+ * drives sign-in/out on it; the CELNET.* cell functions read it to gate their
+ * affordances for the signed-in caller (anonymous stays permissive).
+ */
+export function getSession(): UserSession {
+  if (!session) {
+    session = new UserSession(getConnection());
+  }
+  return session;
 }
