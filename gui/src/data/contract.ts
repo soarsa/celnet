@@ -1856,6 +1856,50 @@ export interface DeskDesc {
   name: string;
 }
 
+// --- legal-entity / netting-book registry (`AuthService` entity/book admin) ---
+//
+// The admin-managed registry that names the `(entity, book)` `uint32` partition
+// keys a `RatesPosition` books into (`celnet.wire.EntityDesc`/`BookDesc`). A
+// position still carries opaque `uint32` keys on the wire; this registry is the
+// display-name ↔ key map the booking form resolves a named selection through and
+// the Book/blotter views resolve a key back to a name with. Listing is open to
+// any authenticated user (it populates the booking form); create/update/delete
+// are admin-only (server-enforced). The wire JSON carries snake_case
+// `entity_key`; the codec layer maps it to this camelCase `entityKey`.
+
+/** A named legal entity / account a position books into (`celnet.wire.EntityDesc`). */
+export interface EntityDesc {
+  /** The `uint32` partition key carried on `RatesPosition.entity` (immutable identity). */
+  key: number;
+  /** Human-friendly legal-entity name, e.g. "Celnet Global Markets". */
+  name: string;
+  /** Short code, e.g. "CGM" (unique). */
+  code: string;
+}
+
+/** A named netting book under an entity (`celnet.wire.BookDesc`). */
+export interface BookDesc {
+  /** The `uint32` partition key carried on `RatesPosition.book` (immutable identity). */
+  key: number;
+  /** Human-friendly book name, e.g. "Rates Trading". */
+  name: string;
+  /** The owning entity's `EntityDesc.key`. */
+  entityKey: number;
+}
+
+/** The create/update-an-entity payload (`AuthService.{Create,Update}Entity`). */
+export interface EntityInput {
+  name: string;
+  code: string;
+}
+
+/** The create/update-a-book payload (`AuthService.{Create,Update}Book`). */
+export interface BookInput {
+  name: string;
+  /** The owning entity's `EntityDesc.key`. */
+  entityKey: number;
+}
+
 /** The issued session on a successful login (`celnet.wire.LoginResponse`). */
 export interface LoginResult {
   /** The opaque bearer token to present on subsequent RPCs (a secret). */

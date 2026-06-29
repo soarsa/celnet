@@ -18,6 +18,7 @@ import { Button } from "../components/Button";
 import { CapabilityMatrix } from "../components/CapabilityMatrix";
 import { Panel } from "../components/Panel";
 import { UserDialog, type UserDialogMode } from "../components/UserDialog";
+import { BooksPanel, EntitiesPanel } from "./RegistryPanels";
 import type { DeskDesc, UserDesc } from "../data/contract";
 import { useAdmin } from "../hooks/useAdmin";
 import styles from "./AdminWorkspace.module.css";
@@ -237,6 +238,24 @@ export function AdminWorkspace(): React.ReactElement {
           </Button>
         </form>
       </Panel>
+
+      <EntitiesPanel
+        entities={admin.entities}
+        books={admin.books}
+        onCreate={admin.createEntity}
+        onUpdate={admin.updateEntity}
+        onDelete={admin.deleteEntity}
+        run={runAction}
+      />
+
+      <BooksPanel
+        entities={admin.entities}
+        books={admin.books}
+        onCreate={admin.createBook}
+        onUpdate={admin.updateBook}
+        onDelete={admin.deleteBook}
+        run={runAction}
+      />
 
       <UserDialog
         open={dialog !== null}

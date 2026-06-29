@@ -218,6 +218,36 @@ pub struct DeskDef {
     pub books: Vec<String>,
 }
 
+/// One persisted **legal entity / account**: a named regulatory-capital unit that
+/// maps to the `uint32` `RatesPosition.entity` partition key on the wire. The
+/// position wire stays numeric — this registry only names the existing key so the
+/// booking form and the Book/blotter views show a name, never a raw number.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EntityDef {
+    /// The `uint32` wire partition key (`RatesPosition.entity`) this entry names.
+    pub key: u32,
+    /// Human-friendly legal-entity / account name, e.g. `ACME Capital` — unique
+    /// across the store (case-insensitive).
+    pub name: String,
+    /// Short display code shown in compact cells, e.g. `ACME` — unique across the
+    /// store (case-insensitive).
+    pub code: String,
+}
+
+/// One persisted **netting book**: a named book that maps to the `uint32`
+/// `RatesPosition.book` key on the wire, belonging to exactly one [`EntityDef`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BookDef {
+    /// The `uint32` wire key (`RatesPosition.book`) this entry names.
+    pub key: u32,
+    /// Human-friendly book name, e.g. `Rates Trading` — unique across the store
+    /// (case-insensitive).
+    pub name: String,
+    /// The [`EntityDef::key`] of the entity this book belongs to — every book must
+    /// resolve to an existing entity (validated at load and at every admin write).
+    pub entity_key: u32,
+}
+
 /// The persisted document: the users and desks of the edge.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IdentityStore {
@@ -227,6 +257,17 @@ pub struct IdentityStore {
     /// The desks traders can belong to, in creation order.
     #[serde(default)]
     pub desks: Vec<DeskDef>,
+    /// The named legal entities / accounts that map `RatesPosition.entity` keys to
+    /// display names, in creation order. An additive serde-default field (no
+    /// `schema_version`), so an existing `identity.json` (which carries no
+    /// `entities`) loads unchanged.
+    #[serde(default)]
+    pub entities: Vec<EntityDef>,
+    /// The named netting books that map `RatesPosition.book` keys to display names,
+    /// in creation order. Each belongs to an entity by [`BookDef::entity_key`]. An
+    /// additive serde-default field, so an existing `identity.json` loads unchanged.
+    #[serde(default)]
+    pub books: Vec<BookDef>,
     /// The admin-editable per-**role** capability bundles — the *base* authority a
     /// role confers before the per-user overlay layers on top
     /// (`docs/plan/PERMISSIONS-ADMINISTRATION-REQUIREMENT.md` §3.3/§10). Keyed by
@@ -266,6 +307,12 @@ impl IdentityStore {
                 store
                     .validate_capabilities()
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+                // A corrupt entity/book registry (duplicate keys/names or a book whose
+                // `entity_key` dangles) is rejected at load too, so the name↔key map is
+                // always sound before any booking form resolves against it.
+                store
+                    .validate_registry()
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
                 Ok(store)
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
@@ -293,6 +340,145 @@ impl IdentityStore {
             }
         }
         Ok(())
+    }
+
+    /// Validate the entity/book registry: within each list keys are unique, names
+    /// and (for entities) codes are unique case-insensitively, and every book's
+    /// `entity_key` resolves to an existing entity. Called at
+    /// [`load`](IdentityStore::load) so a corrupt registry fails loudly rather than
+    /// resolving a booking-form selection to a wrong or missing key at runtime.
+    ///
+    /// # Errors
+    /// The first duplicate key/name/code, or a book whose `entity_key` dangles.
+    fn validate_registry(&self) -> Result<(), String> {
+        let mut entity_keys = std::collections::HashSet::new();
+        let mut entity_names = std::collections::HashSet::new();
+        let mut entity_codes = std::collections::HashSet::new();
+        for e in &self.entities {
+            if e.name.trim().is_empty() {
+                return Err(format!("entity key {} has an empty name", e.key));
+            }
+            if e.code.trim().is_empty() {
+                return Err(format!("entity key {} has an empty code", e.key));
+            }
+            if !entity_keys.insert(e.key) {
+                return Err(format!("duplicate entity key {}", e.key));
+            }
+            if !entity_names.insert(e.name.to_ascii_lowercase()) {
+                return Err(format!("duplicate entity name {:?}", e.name));
+            }
+            if !entity_codes.insert(e.code.to_ascii_lowercase()) {
+                return Err(format!("duplicate entity code {:?}", e.code));
+            }
+        }
+        let mut book_keys = std::collections::HashSet::new();
+        let mut book_names = std::collections::HashSet::new();
+        for b in &self.books {
+            if b.name.trim().is_empty() {
+                return Err(format!("book key {} has an empty name", b.key));
+            }
+            if !book_keys.insert(b.key) {
+                return Err(format!("duplicate book key {}", b.key));
+            }
+            if !book_names.insert(b.name.to_ascii_lowercase()) {
+                return Err(format!("duplicate book name {:?}", b.name));
+            }
+            if !entity_keys.contains(&b.entity_key) {
+                return Err(format!(
+                    "book {:?} (key {}) references unknown entity_key {}",
+                    b.name, b.key, b.entity_key
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Seed a small, realistic default registry on a store that has **no** entities,
+    /// so a fresh edge can book named positions immediately; report `true` (the
+    /// caller should persist). A store that already has any entity is left untouched
+    /// and reports `false` (idempotent, mirroring [`ensure_seed_admin`]). The seeded
+    /// strings are sample DATA, not product identifiers.
+    pub fn ensure_seed_registry(&mut self) -> bool {
+        if !self.entities.is_empty() {
+            return false;
+        }
+        self.entities = vec![
+            EntityDef {
+                key: 1,
+                name: "Celnet Global Markets".to_string(),
+                code: "CGM".to_string(),
+            },
+            EntityDef {
+                key: 2,
+                name: "Celnet Securities".to_string(),
+                code: "CSEC".to_string(),
+            },
+        ];
+        self.books = vec![
+            BookDef {
+                key: 1,
+                name: "Rates Trading".to_string(),
+                entity_key: 1,
+            },
+            BookDef {
+                key: 2,
+                name: "Rates Relative Value".to_string(),
+                entity_key: 1,
+            },
+            BookDef {
+                key: 3,
+                name: "Government Bonds".to_string(),
+                entity_key: 2,
+            },
+            BookDef {
+                key: 4,
+                name: "Swaps".to_string(),
+                entity_key: 2,
+            },
+        ];
+        true
+    }
+
+    /// Borrow an entity by its `uint32` wire key.
+    #[must_use]
+    pub fn entity_by_key(&self, key: u32) -> Option<&EntityDef> {
+        self.entities.iter().find(|e| e.key == key)
+    }
+
+    /// Borrow a book by its `uint32` wire key.
+    #[must_use]
+    pub fn book_by_key(&self, key: u32) -> Option<&BookDef> {
+        self.books.iter().find(|b| b.key == key)
+    }
+
+    /// The display name of an entity key, or `None` if no entity names it. The
+    /// blotter/Book views resolve `RatesPosition.entity` through this so a raw number
+    /// is never shown.
+    #[must_use]
+    pub fn entity_name(&self, key: u32) -> Option<&str> {
+        self.entity_by_key(key).map(|e| e.name.as_str())
+    }
+
+    /// The display name of a book key, or `None` if no book names it.
+    #[must_use]
+    pub fn book_name(&self, key: u32) -> Option<&str> {
+        self.book_by_key(key).map(|b| b.name.as_str())
+    }
+
+    /// The lowest `uint32` key not already used by an entity (for auto-assignment
+    /// when an admin creates an entity without pinning a specific key). Starts at 1
+    /// (0 is the protobuf default/"unset" sentinel, never a registry key).
+    #[must_use]
+    pub fn next_entity_key(&self) -> u32 {
+        (1..)
+            .find(|k| self.entity_by_key(*k).is_none())
+            .unwrap_or(1)
+    }
+
+    /// The lowest `uint32` key not already used by a book (for auto-assignment).
+    #[must_use]
+    pub fn next_book_key(&self) -> u32 {
+        (1..).find(|k| self.book_by_key(*k).is_none()).unwrap_or(1)
     }
 
     /// The resolved capability **base** a role confers, before the per-user overlay.
@@ -703,6 +889,88 @@ mod tests {
         let store = IdentityStore::load(&path).unwrap();
         assert!(store.role_bundles.is_empty());
         assert_eq!(store.role_base(Role::Trader), default_trader_bundle());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The seeded registry is non-empty, valid, idempotent, and round-trips through
+    /// `identity.json` (entities + books survive a save/reload byte-for-byte).
+    #[test]
+    fn seed_registry_is_idempotent_and_round_trips() {
+        let mut store = IdentityStore::default();
+        assert!(store.ensure_seed_registry(), "first call seeds");
+        assert_eq!(store.entities.len(), 2);
+        assert_eq!(store.books.len(), 4);
+        store.validate_registry().expect("seeded registry is valid");
+        // Resolution helpers map keys → names.
+        assert_eq!(store.entity_name(1), Some("Celnet Global Markets"));
+        assert_eq!(store.book_name(1), Some("Rates Trading"));
+        assert_eq!(store.entity_name(99), None);
+        // A second call is a no-op (entities already present).
+        assert!(!store.ensure_seed_registry(), "second call is idempotent");
+
+        let path =
+            std::env::temp_dir().join(format!("celnet-identity-reg-{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        store.save(&path).unwrap();
+        let reloaded = IdentityStore::load(&path).unwrap();
+        assert_eq!(store, reloaded);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// `next_entity_key`/`next_book_key` return the lowest free key starting at 1.
+    #[test]
+    fn next_keys_fill_lowest_gap() {
+        let mut store = IdentityStore::default();
+        assert_eq!(store.next_entity_key(), 1);
+        assert_eq!(store.next_book_key(), 1);
+        store.ensure_seed_registry();
+        // Seeded entities use 1,2 and books use 1..=4.
+        assert_eq!(store.next_entity_key(), 3);
+        assert_eq!(store.next_book_key(), 5);
+    }
+
+    /// A book whose `entity_key` does not resolve is rejected at load (`InvalidData`).
+    #[test]
+    fn load_rejects_dangling_book_entity_key() {
+        let json = r#"{
+            "users": [], "desks": [],
+            "entities": [{"key": 1, "name": "ACME Capital", "code": "ACME"}],
+            "books": [{"key": 1, "name": "Rates Trading", "entity_key": 7}]
+        }"#;
+        let path = std::env::temp_dir().join("celnet-identity-dangling.json");
+        std::fs::write(&path, json).unwrap();
+        let err = IdentityStore::load(&path).expect_err("dangling entity_key must be rejected");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A registry with duplicate entity keys is rejected at load.
+    #[test]
+    fn load_rejects_duplicate_entity_key() {
+        let json = r#"{
+            "users": [], "desks": [],
+            "entities": [
+                {"key": 1, "name": "A", "code": "A"},
+                {"key": 1, "name": "B", "code": "B"}
+            ],
+            "books": []
+        }"#;
+        let path = std::env::temp_dir().join("celnet-identity-dupkey.json");
+        std::fs::write(&path, json).unwrap();
+        let err = IdentityStore::load(&path).expect_err("duplicate key must be rejected");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// An identity file with no `entities`/`books` keys loads (serde-default empty)
+    /// — existing files behave unchanged.
+    #[test]
+    fn load_without_registry_is_empty() {
+        let json = r#"{ "users": [], "desks": [] }"#;
+        let path = std::env::temp_dir().join("celnet-identity-noreg.json");
+        std::fs::write(&path, json).unwrap();
+        let store = IdentityStore::load(&path).unwrap();
+        assert!(store.entities.is_empty() && store.books.is_empty());
         let _ = std::fs::remove_file(&path);
     }
 

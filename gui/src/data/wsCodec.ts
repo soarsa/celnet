@@ -67,6 +67,10 @@ import type {
   Execution,
   CreateUserInput,
   DeskDesc,
+  EntityDesc,
+  EntityInput,
+  BookDesc,
+  BookInput,
   FixConnection,
   FixConnectionKind,
   FixConnectionSpec,
@@ -2360,4 +2364,79 @@ export function deskResponseFromWire(o: WireObject): DeskDesc {
 
 export function deleteDeskRequestToWire(id: string): WireObject {
   return { id };
+}
+
+// --- legal-entity / netting-book registry (entity/book admin) ---------------
+//
+// The WS mirror of `AuthService.{List,Create,Update,Delete}{Entity,Book}`. The
+// wire JSON carries snake_case `entity_key`; these codecs map it to the GUI's
+// camelCase `entityKey` (the only snake↔camel rename on this surface). The
+// `session_token` + framing `correlation_id` are auto-injected by
+// `WsConnection.request`, so the request encoders carry only the business body.
+// A create with `key: 0` asks the server to auto-assign the lowest free key.
+
+/** A legal entity from its wire form. */
+export function entityDescFromWire(o: WireObject): EntityDesc {
+  return { key: num(o, "key"), name: str(o, "name"), code: str(o, "code") };
+}
+
+/** A netting book from its wire form (maps `entity_key` → `entityKey`). */
+export function bookDescFromWire(o: WireObject): BookDesc {
+  return { key: num(o, "key"), name: str(o, "name"), entityKey: num(o, "entity_key") };
+}
+
+export function listEntitiesRequestToWire(): WireObject {
+  return {};
+}
+
+export function entitiesResponseFromWire(o: WireObject): EntityDesc[] {
+  const arr = o["entities"];
+  return Array.isArray(arr) ? (arr as WireObject[]).map(entityDescFromWire) : [];
+}
+
+export function createEntityRequestToWire(input: EntityInput): WireObject {
+  // `key: 0` ⇒ the server auto-assigns the lowest free key.
+  return { name: input.name, code: input.code, key: 0 };
+}
+
+export function updateEntityRequestToWire(key: number, input: EntityInput): WireObject {
+  return { key, name: input.name, code: input.code };
+}
+
+/** A single-entity response (`{ entity: {...} }`) from create / update. */
+export function entityResponseFromWire(o: WireObject): EntityDesc {
+  const e = o["entity"];
+  return entityDescFromWire(e && typeof e === "object" ? (e as WireObject) : {});
+}
+
+export function deleteEntityRequestToWire(key: number): WireObject {
+  return { key };
+}
+
+export function listBooksRequestToWire(): WireObject {
+  return {};
+}
+
+export function booksResponseFromWire(o: WireObject): BookDesc[] {
+  const arr = o["books"];
+  return Array.isArray(arr) ? (arr as WireObject[]).map(bookDescFromWire) : [];
+}
+
+export function createBookRequestToWire(input: BookInput): WireObject {
+  // `key: 0` ⇒ the server auto-assigns the lowest free key.
+  return { name: input.name, entity_key: input.entityKey, key: 0 };
+}
+
+export function updateBookRequestToWire(key: number, input: BookInput): WireObject {
+  return { key, name: input.name, entity_key: input.entityKey };
+}
+
+/** A single-book response (`{ book: {...} }`) from create / update. */
+export function bookResponseFromWire(o: WireObject): BookDesc {
+  const b = o["book"];
+  return bookDescFromWire(b && typeof b === "object" ? (b as WireObject) : {});
+}
+
+export function deleteBookRequestToWire(key: number): WireObject {
+  return { key };
 }

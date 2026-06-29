@@ -28,6 +28,10 @@ import type {
   CcyPair,
   Conventions,
   CreateUserInput,
+  EntityDesc,
+  EntityInput,
+  BookDesc,
+  BookInput,
   Deal,
   DealerQuote,
   DeskDesc,
@@ -692,6 +696,23 @@ export class MockTransport implements CelnetTransport {
     },
   ];
   private readonly mockDesks: DeskDesc[] = [];
+  /**
+   * The offline legal-entity / netting-book registry, seeded to MIRROR the
+   * server's default registry (`celnet-server` `IdentityStore::seed_registry`) so
+   * the rates booking form's named dropdowns and the Book/blotter name-resolution
+   * behave identically with no server. Stores are real (admin CRUD mutates them);
+   * `next*Key` mints the lowest free key, exactly like the server.
+   */
+  private readonly mockEntities: EntityDesc[] = [
+    { key: 1, name: "Celnet Global Markets", code: "CGM" },
+    { key: 2, name: "Celnet Securities", code: "CSEC" },
+  ];
+  private readonly mockBooks: BookDesc[] = [
+    { key: 1, name: "Rates Trading", entityKey: 1 },
+    { key: 2, name: "Rates Relative Value", entityKey: 1 },
+    { key: 3, name: "Government Bonds", entityKey: 2 },
+    { key: 4, name: "Swaps", entityKey: 2 },
+  ];
   /**
    * The admin-editable per-role capability bundles (the role's base authority).
    * Only **non-admin** roles are ever stored (`ADMIN` is grant-all and immutable); a
@@ -1511,6 +1532,114 @@ export class MockTransport implements CelnetTransport {
   /** The number of enabled (non-disabled) administrators in the offline roster. */
   private activeAdminCount(): number {
     return this.mockUsers.filter((u) => u.user.role === "ADMIN" && !u.user.disabled).length;
+  }
+
+  // --- legal-entity / netting-book registry (offline) ------------------------
+  //
+  // A GENUINE in-memory registry (not a stub): admin CRUD mutates the stores and
+  // create auto-assigns the lowest free key (`key: 0` ⇒ auto), exactly like the
+  // server. Listing is unauthenticated here (offline has no role gate); the live
+  // server enforces admin-only mutation and any-user listing.
+
+  /** The lowest free key ≥ 1 across the given used keys (server parity). */
+  private static lowestFreeKey(used: readonly number[]): number {
+    const set = new Set(used);
+    let k = 1;
+    while (set.has(k)) k += 1;
+    return k;
+  }
+
+  async listEntities(): Promise<EntityDesc[]> {
+    return this.mockEntities.map((e) => ({ ...e }));
+  }
+
+  async createEntity(input: EntityInput): Promise<EntityDesc> {
+    const name = input.name.trim();
+    const code = input.code.trim();
+    if (name.length === 0) throw new Error("entity name is required");
+    if (code.length === 0) throw new Error("entity code is required");
+    if (this.mockEntities.some((e) => e.name === name)) {
+      throw new Error(`an entity named \`${name}\` already exists`);
+    }
+    if (this.mockEntities.some((e) => e.code === code)) {
+      throw new Error(`an entity with code \`${code}\` already exists`);
+    }
+    const key = MockTransport.lowestFreeKey(this.mockEntities.map((e) => e.key));
+    const entity: EntityDesc = { key, name, code };
+    this.mockEntities.push(entity);
+    return { ...entity };
+  }
+
+  async updateEntity(key: number, input: EntityInput): Promise<EntityDesc> {
+    const existing = this.mockEntities.find((e) => e.key === key);
+    if (!existing) throw new Error(`no entity with key ${key}`);
+    const name = input.name.trim();
+    const code = input.code.trim();
+    if (name.length === 0) throw new Error("entity name is required");
+    if (code.length === 0) throw new Error("entity code is required");
+    if (this.mockEntities.some((e) => e.key !== key && e.name === name)) {
+      throw new Error(`an entity named \`${name}\` already exists`);
+    }
+    if (this.mockEntities.some((e) => e.key !== key && e.code === code)) {
+      throw new Error(`an entity with code \`${code}\` already exists`);
+    }
+    existing.name = name;
+    existing.code = code;
+    return { ...existing };
+  }
+
+  async deleteEntity(key: number): Promise<boolean> {
+    // Referential integrity: refuse while any book still references the entity
+    // (mirrors the server's FailedPrecondition).
+    if (this.mockBooks.some((b) => b.entityKey === key)) {
+      throw new Error("cannot delete an entity while books still reference it");
+    }
+    const idx = this.mockEntities.findIndex((e) => e.key === key);
+    if (idx < 0) return false;
+    this.mockEntities.splice(idx, 1);
+    return true;
+  }
+
+  async listBooks(): Promise<BookDesc[]> {
+    return this.mockBooks.map((b) => ({ ...b }));
+  }
+
+  async createBook(input: BookInput): Promise<BookDesc> {
+    const name = input.name.trim();
+    if (name.length === 0) throw new Error("book name is required");
+    if (!this.mockEntities.some((e) => e.key === input.entityKey)) {
+      throw new Error(`no entity with key ${input.entityKey}`);
+    }
+    if (this.mockBooks.some((b) => b.name === name)) {
+      throw new Error(`a book named \`${name}\` already exists`);
+    }
+    const key = MockTransport.lowestFreeKey(this.mockBooks.map((b) => b.key));
+    const book: BookDesc = { key, name, entityKey: input.entityKey };
+    this.mockBooks.push(book);
+    return { ...book };
+  }
+
+  async updateBook(key: number, input: BookInput): Promise<BookDesc> {
+    const existing = this.mockBooks.find((b) => b.key === key);
+    if (!existing) throw new Error(`no book with key ${key}`);
+    const name = input.name.trim();
+    if (name.length === 0) throw new Error("book name is required");
+    if (!this.mockEntities.some((e) => e.key === input.entityKey)) {
+      throw new Error(`no entity with key ${input.entityKey}`);
+    }
+    if (this.mockBooks.some((b) => b.key !== key && b.name === name)) {
+      throw new Error(`a book named \`${name}\` already exists`);
+    }
+    existing.name = name;
+    existing.entityKey = input.entityKey;
+    return { ...existing };
+  }
+
+  async deleteBook(key: number): Promise<boolean> {
+    const idx = this.mockBooks.findIndex((b) => b.key === key);
+    if (idx < 0) return false;
+    this.mockBooks.splice(idx, 1);
+    return true;
   }
 
   // --- RfqDeskService (offline) ----------------------------------------------

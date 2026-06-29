@@ -15,7 +15,16 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import type { CreateUserInput, DeskDesc, UpdateUserInput, UserDesc } from "../data/contract";
+import type {
+  BookDesc,
+  BookInput,
+  CreateUserInput,
+  DeskDesc,
+  EntityDesc,
+  EntityInput,
+  UpdateUserInput,
+  UserDesc,
+} from "../data/contract";
 import type { CelnetTransport } from "../data/transport";
 
 /** Narrow an unknown thrown value to a display string. */
@@ -29,6 +38,10 @@ export interface AdminApi {
   users: UserDesc[];
   /** The current desk roster. */
   desks: DeskDesc[];
+  /** The current legal-entity registry. */
+  entities: EntityDesc[];
+  /** The current netting-book registry. */
+  books: BookDesc[];
   /** True while a load (or refetch) is in flight. */
   isLoading: boolean;
   /** The last load error as a display string, or `null`. */
@@ -47,11 +60,25 @@ export interface AdminApi {
   createDesk: (name: string) => Promise<DeskDesc>;
   /** Delete a desk (its members become unassigned). */
   deleteDesk: (id: string) => Promise<void>;
+  /** Create a legal entity; resolves to the created entity or rejects. */
+  createEntity: (input: EntityInput) => Promise<EntityDesc>;
+  /** Update a legal entity's name/code (key immutable). */
+  updateEntity: (key: number, input: EntityInput) => Promise<EntityDesc>;
+  /** Delete a legal entity (rejected if any book references it). */
+  deleteEntity: (key: number) => Promise<void>;
+  /** Create a netting book under an entity; resolves to the created book or rejects. */
+  createBook: (input: BookInput) => Promise<BookDesc>;
+  /** Update a netting book's name/owning entity (key immutable). */
+  updateBook: (key: number, input: BookInput) => Promise<BookDesc>;
+  /** Delete a netting book. */
+  deleteBook: (key: number) => Promise<void>;
 }
 
 export function useAdmin(transport: CelnetTransport, enabled: boolean): AdminApi {
   const [users, setUsers] = useState<UserDesc[]>([]);
   const [desks, setDesks] = useState<DeskDesc[]>([]);
+  const [entities, setEntities] = useState<EntityDesc[]>([]);
+  const [books, setBooks] = useState<BookDesc[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -59,18 +86,24 @@ export function useAdmin(transport: CelnetTransport, enabled: boolean): AdminApi
     if (!enabled) {
       setUsers([]);
       setDesks([]);
+      setEntities([]);
+      setBooks([]);
       setError(null);
       return;
     }
     setIsLoading(true);
     try {
       // Independent rosters — fetch in parallel (no request waterfall).
-      const [nextUsers, nextDesks] = await Promise.all([
+      const [nextUsers, nextDesks, nextEntities, nextBooks] = await Promise.all([
         transport.listUsers(),
         transport.listDesks(),
+        transport.listEntities(),
+        transport.listBooks(),
       ]);
       setUsers(nextUsers);
       setDesks(nextDesks);
+      setEntities(nextEntities);
+      setBooks(nextBooks);
       setError(null);
     } catch (e: unknown) {
       setError(messageOf(e));
@@ -133,9 +166,63 @@ export function useAdmin(transport: CelnetTransport, enabled: boolean): AdminApi
     [transport, refetch],
   );
 
+  const createEntity = useCallback(
+    async (input: EntityInput): Promise<EntityDesc> => {
+      const created = await transport.createEntity(input);
+      await refetch();
+      return created;
+    },
+    [transport, refetch],
+  );
+
+  const updateEntity = useCallback(
+    async (key: number, input: EntityInput): Promise<EntityDesc> => {
+      const updated = await transport.updateEntity(key, input);
+      await refetch();
+      return updated;
+    },
+    [transport, refetch],
+  );
+
+  const deleteEntity = useCallback(
+    async (key: number): Promise<void> => {
+      await transport.deleteEntity(key);
+      await refetch();
+    },
+    [transport, refetch],
+  );
+
+  const createBook = useCallback(
+    async (input: BookInput): Promise<BookDesc> => {
+      const created = await transport.createBook(input);
+      await refetch();
+      return created;
+    },
+    [transport, refetch],
+  );
+
+  const updateBook = useCallback(
+    async (key: number, input: BookInput): Promise<BookDesc> => {
+      const updated = await transport.updateBook(key, input);
+      await refetch();
+      return updated;
+    },
+    [transport, refetch],
+  );
+
+  const deleteBook = useCallback(
+    async (key: number): Promise<void> => {
+      await transport.deleteBook(key);
+      await refetch();
+    },
+    [transport, refetch],
+  );
+
   return {
     users,
     desks,
+    entities,
+    books,
     isLoading,
     error,
     refetch,
@@ -145,5 +232,11 @@ export function useAdmin(transport: CelnetTransport, enabled: boolean): AdminApi
     resetPassword,
     createDesk,
     deleteDesk,
+    createEntity,
+    updateEntity,
+    deleteEntity,
+    createBook,
+    updateBook,
+    deleteBook,
   };
 }

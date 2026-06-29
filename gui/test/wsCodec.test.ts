@@ -15,12 +15,22 @@ import {
   aggregateRiskRequestToWire,
   attributionFromWire,
   attributionToWire,
+  booksResponseFromWire,
+  bookResponseFromWire,
   ccyPairFromWire,
   ccyPairToWire,
   conventionsFromWire,
   conventionsToWire,
+  createBookRequestToWire,
+  createEntityRequestToWire,
+  deleteBookRequestToWire,
+  deleteEntityRequestToWire,
   drillRiskRequestToWire,
+  entitiesResponseFromWire,
+  entityResponseFromWire,
   limitStatusRequestToWire,
+  listBooksRequestToWire,
+  listEntitiesRequestToWire,
   listPositionsRequestToWire,
   marketFromWire,
   marketToWire,
@@ -29,6 +39,8 @@ import {
   quoteAcceptToWire,
   serializeFrame,
   smileModelToWire,
+  updateBookRequestToWire,
+  updateEntityRequestToWire,
   type WireObject,
 } from "../src/data/wsCodec";
 import type {
@@ -451,5 +463,108 @@ describe("wsCodec — risk requests always carry an explicit grant-all principal
       grants: [{ scopes: [{ dimension: 2, value: 7n }] }],
       denies: [],
     });
+  });
+});
+
+describe("wsCodec — legal-entity / netting-book registry", () => {
+  it("encodes list requests as an empty body (session_token is auto-injected)", () => {
+    expect(listEntitiesRequestToWire()).toEqual({});
+    expect(listBooksRequestToWire()).toEqual({});
+  });
+
+  it("decodes an `entities` frame into the camelCase EntityDesc roster", () => {
+    const frame: WireObject = {
+      entities: [
+        { key: 1, name: "Celnet Global Markets", code: "CGM" },
+        { key: 2, name: "Celnet Securities", code: "CSEC" },
+      ],
+    };
+    expect(entitiesResponseFromWire(frame)).toEqual([
+      { key: 1, name: "Celnet Global Markets", code: "CGM" },
+      { key: 2, name: "Celnet Securities", code: "CSEC" },
+    ]);
+  });
+
+  it("decodes an absent `entities` array as an empty roster", () => {
+    expect(entitiesResponseFromWire({})).toEqual([]);
+  });
+
+  it("encodes create_entity with key 0 (server auto-assigns the lowest free key)", () => {
+    expect(createEntityRequestToWire({ name: "ACME Capital", code: "ACME" })).toEqual({
+      name: "ACME Capital",
+      code: "ACME",
+      key: 0,
+    });
+  });
+
+  it("encodes update_entity carrying the immutable key", () => {
+    expect(updateEntityRequestToWire(7, { name: "ACME Capital", code: "ACME" })).toEqual({
+      key: 7,
+      name: "ACME Capital",
+      code: "ACME",
+    });
+  });
+
+  it("decodes a single `entity_created` / `entity_updated` frame", () => {
+    const frame: WireObject = { entity: { key: 5, name: "ACME Capital", code: "ACME" } };
+    expect(entityResponseFromWire(frame)).toEqual({
+      key: 5,
+      name: "ACME Capital",
+      code: "ACME",
+    });
+  });
+
+  it("encodes delete_entity by key", () => {
+    expect(deleteEntityRequestToWire(3)).toEqual({ key: 3 });
+  });
+
+  it("decodes a `books` frame mapping snake_case entity_key → camelCase entityKey", () => {
+    const frame: WireObject = {
+      books: [
+        { key: 1, name: "Rates Trading", entity_key: 1 },
+        { key: 3, name: "Government Bonds", entity_key: 2 },
+      ],
+    };
+    expect(booksResponseFromWire(frame)).toEqual([
+      { key: 1, name: "Rates Trading", entityKey: 1 },
+      { key: 3, name: "Government Bonds", entityKey: 2 },
+    ]);
+  });
+
+  it("encodes create_book mapping entityKey → wire entity_key with key 0 (auto)", () => {
+    expect(createBookRequestToWire({ name: "Rates Trading", entityKey: 4 })).toEqual({
+      name: "Rates Trading",
+      entity_key: 4,
+      key: 0,
+    });
+  });
+
+  it("encodes update_book carrying the immutable key + re-homed entity_key", () => {
+    expect(updateBookRequestToWire(9, { name: "Rates Vol", entityKey: 2 })).toEqual({
+      key: 9,
+      name: "Rates Vol",
+      entity_key: 2,
+    });
+  });
+
+  it("decodes a single `book_created` / `book_updated` frame", () => {
+    const frame: WireObject = { book: { key: 11, name: "Rates Trading", entity_key: 1 } };
+    expect(bookResponseFromWire(frame)).toEqual({
+      key: 11,
+      name: "Rates Trading",
+      entityKey: 1,
+    });
+  });
+
+  it("encodes delete_book by key", () => {
+    expect(deleteBookRequestToWire(11)).toEqual({ key: 11 });
+  });
+
+  it("round-trips a book through the create encoder and the response decoder", () => {
+    // The wire `entity_key` the encoder emits is exactly what the response codec
+    // reads back as `entityKey` (the only snake↔camel rename on this surface).
+    const encoded = createBookRequestToWire({ name: "Swaps", entityKey: 2 });
+    const decoded = bookResponseFromWire({ book: { ...encoded, key: 4 } });
+    expect(decoded).toEqual({ key: 4, name: "Swaps", entityKey: 2 });
   });
 });
